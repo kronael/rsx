@@ -138,7 +138,7 @@ use userspace networkign and speed optimized protocols
 
 ingrews is json .. but this is a translationlayer translating to internal protocols
 
-networking is two fold.. if they are same machine... sharedmem. if on different ... then same struct networking. ... thiugh verify the speeduo will be measuravle.. estimate this
+networking - see FUTURE.md for SMRB and transport layer optimizations
 
 Datastructures
 
