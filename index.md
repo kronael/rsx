@@ -6,6 +6,7 @@
 - [RPC.md](RPC.md) - Async RPC: UUIDv7 tracking, LIFO VecDeque optimization, backpressure, error handling
 - [PROTOCOL.md](PROTOCOL.md) - Wire protocol: order states, gRPC message definitions, fill streaming, completion signals
 - [SMRB.md](SMRB.md) - Low-latency IPC: SPSC ring buffers, protocol comparison, SSL/TLS guidance, performance optimizations
+- [CONSISTENCY.md](CONSISTENCY.md) - Event fan-out: SPSC delivery to risk/persistence/market data, ordering guarantees, failure handling
 - [UDS.md](UDS.md) - UDS vs shared memory: latency/throughput comparison, hybrid patterns, Rust examples
 
 ## Matching Engine
