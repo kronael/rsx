@@ -20,21 +20,13 @@ spec for multi-source mark price aggregation, staleness handling, or fallback.
 **Accuracy check:** This extends `RISK.md` (which only has Binance). If v1 stays
 single-source, this section should be downgraded to Nice-to-Have or removed.
 
-Touches: RISK.md (price feeds), CONSISTENCY.md (mark price stream), PROTOCOL.md (optional telemetry)
+Touches: RISK.md (price feeds), CONSISTENCY.md (mark price stream), GRPC.md (optional telemetry)
 
-### Fees
+### ~~Fees~~ DONE
 
-Completely absent from all specs. No fee field in OrderFill proto,
-no fee calc in risk engine, no fee column in fills table.
-
-Needed:
-- Fee config per symbol (maker_fee_bps, taker_fee_bps) in TOML
-- Fee calc in risk engine on fill: `fee = qty * price * fee_rate`
-- Deduct from user collateral on fill
-- Add `fee` field to OrderFill in PROTOCOL.md
-- Add `fee` column to `fills` table in RISK.md
-
-Touches: PROTOCOL.md, RISK.md (small additions, not a new spec)
+Specified in GRPC.md (OrderFill fee fields), RISK.md (fee calc,
+pre-trade fee reserve, fills table columns), WEBPROTO.md (F
+message fee field). Maker rebates supported (negative maker_fee).
 
 ### ~~Liquidation Order Generation~~ DONE
 
@@ -66,7 +58,7 @@ Auth, sessions, TLS, rate limiting all specified across:
 - NETWORK.md: responsibilities, scaling, security boundary, TLS 1.3
 - WEBPROTO.md: auth message, heartbeat
 - RPC.md: session handling, token bucket rate limiting with numbers
-- PROTOCOL.md: order flow, backpressure
+- GRPC.md: order flow, backpressure
 
 Implementable as-is. No new spec needed.
 

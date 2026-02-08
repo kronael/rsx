@@ -55,7 +55,7 @@ L2 depth, BBO, and trade derivation from these events.
 - Within a symbol: total order (single-threaded, monotonic `seq_no`)
 - Across symbols: no ordering (independent processes)
 - Across consumers: same FIFO order, different processing latency
-- Fills precede ORDER_DONE (ref PROTOCOL.md)
+- Fills precede ORDER_DONE (ref GRPC.md)
 
 ## 3. Backpressure
 
@@ -109,6 +109,9 @@ fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
             }
             Event::OrderInserted { .. } => {
                 links.market_data.push_spin(event);
+            }
+            Event::BBO { .. } => {
+                links.risk.push_spin(event);
             }
         }
     }
