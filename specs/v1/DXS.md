@@ -248,6 +248,11 @@ sections):
 | Market data | ME events (fills, BBO, orders) | Matching engine |
 | Risk events | Risk state changes | Risk engine |
 | Mark prices | MarkPriceEvent stream | Mark price aggregator |
+| MARKETDATA | ME events (recovery/replay) | Matching engine |
+
+MARKETDATA also connects as a DXS consumer for recovery (replay
+from ME WAL on startup). See [MARKETDATA.md](MARKETDATA.md)
+section 8.
 
 **Daily rotation:** at UTC midnight, close current file, open new
 file with next date. No retention limit on archive files (managed

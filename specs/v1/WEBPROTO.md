@@ -127,6 +127,38 @@ Fields:
 Fields:
 - `ts`: client or server timestamp (ms)
 
+### Market Data Messages (Public WS, see [MARKETDATA.md](MARKETDATA.md))
+
+Separate public WS endpoint (no auth required). Same frame shape.
+
+**Client -> Server:**
+
+```
+{S:[sym, channels]}     // subscribe (channels: 1=bbo, 2=depth, 4=trades)
+{X:[sym, channels]}     // unsubscribe
+{X:[0, 0]}              // unsubscribe all
+```
+
+**Server -> Client:**
+
+```
+{B:[sym, bp, bq, bc, ap, aq, ac]}              // BBO update
+{L:[sym, seq, [[p,q,c], ...], [[p,q,c], ...]]} // L2 snapshot
+{D:[sym, seq, side, p, q, c]}                   // L2 delta
+{T:[sym, p, q, s, ts]}                          // trade
+```
+
+### Q: Liquidation Event (Private WS, see [LIQUIDATOR.md](LIQUIDATOR.md))
+
+```
+{Q:[sym, status, round, side, qty, price, slip_bps]}
+// status: 0=started, 1=round_placed, 2=filled,
+//         3=cancelled, 4=completed
+```
+
+Risk engine pushes to gateway SPSC ring. Gateway routes to user
+by user_id. Fire-and-forget delivery.
+
 ## Notes
 
 - Gateway multiplexes many users over a single gRPC stream to the risk engine.

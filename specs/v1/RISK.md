@@ -44,7 +44,8 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)
 - Push to replica ring (tip sync)
- - Apply config updates from matcher `CONFIG_APPLIED` events (METADATA.md)
+- Apply config updates from matcher `CONFIG_APPLIED` events (METADATA.md)
+- Forward `CONFIG_APPLIED` to Gateway for cache sync
 
 ### 2. Position Manager
 
@@ -130,6 +131,8 @@ Margin recalculated on every price tick for all exposed users.
 **From matching engines** (SPSC ring, same as fills):
 - BBO updates: `(symbol_id, best_bid, best_bid_qty, best_ask,
   best_ask_qty)`
+- BBO is also derived by MARKETDATA from its shadow orderbook
+  (see [MARKETDATA.md](MARKETDATA.md) section 4)
 - Risk engine calculates **index price** per symbol:
   `index = (best_bid * ask_qty + best_ask * bid_qty)
            / (bid_qty + ask_qty)`
