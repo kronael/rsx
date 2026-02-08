@@ -52,7 +52,7 @@ L2 depth, BBO, and trade derivation from these events.
 
 ## 2. Ordering Guarantees
 
-- Within a symbol: total order (single-threaded, monotonic `seq_no`)
+- Within a symbol: total order (single-threaded, monotonic `seq`)
 - Across symbols: no ordering (independent processes)
 - Across consumers: same FIFO order, different processing latency
 - Fills precede ORDER_DONE (ref GRPC.md)
@@ -125,7 +125,7 @@ fn push_spin<T>(ring: &mut SpscProducer<T>, item: &T) {
 
 ## Key Invariants
 
-1. Events within a symbol are totally ordered (`seq_no` monotonic)
+1. Events within a symbol are totally ordered (`seq` monotonic)
 2. No cross-symbol ordering
 3. All consumers see same event order (SPSC = FIFO)
 4. Matching engine never drops events (ring full = stall)

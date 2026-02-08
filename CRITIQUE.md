@@ -1,28 +1,27 @@
-# Critique (Refreshed)
+# Critique (Current)
 
 ## What Is Solid
 
-- **Clear dataflow**: Gateway → Risk → Matching, with dedicated market-data service.
-- **Deterministic math**: fixed-point price/qty across the stack.
-- **WAL + snapshot**: explicit durability path for orderbook and replay for risk.
-- **Config scheduling**: metadata is scheduled and synchronized via `CONFIG_APPLIED` events.
+- Clear dataflow: Gateway → Risk → Matching, plus separate market-data service.
+- Deterministic fixed-point arithmetic across all critical paths.
+- WAL + snapshot for orderbook; replay for risk.
+- Metadata scheduling with `CONFIG_APPLIED` sync events.
+- Reduce‑only enforcement is specified at the matcher with per‑user net positions.
+- Fee fields and accounting exist in `GRPC.md` + `RISK.md`.
 
 ## Critical Gaps
 
-1. **Fees still missing**: gRPC and risk do not include fee fields or accounting. PnL and balances will be wrong without this.
-2. **Reduce‑only correctness**: safe resting reduce‑only requires matcher‑side per‑user state or a strict policy (IOC/no other orders). Not specified.
-3. **Market data resync**: drop‑and‑resnapshot policy exists, but no explicit sequence numbers or recovery guarantees.
-4. **Fixed‑record WAL completeness**: field sets are defined, but some records (e.g., cancel reason, fee, client_order_id) may be needed for downstream correctness.
+1. **Market-data resync semantics** are underspecified (no sequence numbers; drop+snapshot policy needs clearer guarantees).
+2. **Fixed-record WAL completeness**: fixed records do not yet carry fee or `client_order_id`, so downstream replay can lose accounting/context.
+3. **Intent loss is accepted**: order intents can be lost on risk crash (by design). This is fine only if client ACKs are explicitly non‑durable.
 
 ## Risky Assumptions
 
-- **Order intents can be lost** on risk crash (by design). This is acceptable only if clients treat ACK as non‑durable.
-- **Backpressure relies on stall**. If a component fails to stall, loss bounds are invalid.
-- **Clock skew**: config scheduling uses UTC wall clock; correctness relies on monotonic `config_version` and sane time sync.
+- Backpressure correctness depends on strict stalling; any bypass breaks loss bounds.
+- Clock skew: metadata scheduling relies on UTC wall clock + monotonic config_version.
 
-## Suggested Next Fixes (Small)
+## Small Next Fixes
 
-- Add fee fields to `GRPC.md` and fee handling in `RISK.md`.
-- Decide reduce‑only enforcement policy and document it.
-- Add sequence numbers to market‑data deltas, or document that resync is required after any drop.
-- Review fixed‑record structs for missing fields (client_order_id, fee, cancel reason).
+- Add fee and client_order_id to fixed WAL records where needed (Fill/OrderDone/OrderCancelled).
+- Add a minimal sequence field to market‑data deltas or formalize drop+snapshot recovery.
+- Make “ACK is non‑durable” explicit in gateway docs.

@@ -363,7 +363,7 @@ Verified across all test levels:
 
 7. **Event ordering preserved in SPSC**
    - Events arrive at consumers in FIFO order
-   - seq_no monotonic within symbol
+   - seq monotonic within symbol
 
 8. **Slab no-leak**
    - allocated = free + active

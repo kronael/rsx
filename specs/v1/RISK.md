@@ -3,9 +3,11 @@
 ## Context
 
 The risk engine sits between gateway and matching engines. It performs
-pre-trade margin checks, ingests fills to update positions, tracks
-mark/index prices for risk and funding, and persists state to Postgres.
-It must never lose fills and must recover from any crash combination.
+pre-trade margin checks, ingests orderbook events to update positions,
+tracks mark/index prices for risk and funding, and persists state to a
+durable store (Postgres in v1). Order intents at ingress are not WAL’d;
+they may be lost on risk crash before execution. Risk must recover from
+orderbook WAL replay.
 
 ## Architecture Overview
 
@@ -33,13 +35,13 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 
 ## Components
 
-### 1. Fill Ingestion
+### 1. Orderbook Event Ingestion
 
 - SPSC consumer ring from each matching engine
 - Each fill contains `taker_user_id`, `maker_user_id`, `symbol_id`,
-  `seq_no`
+  `seq`
 - Filter: `user_in_shard(user_id)` via range or bitmask check
-- Dedup: skip if `seq_no <= tips[symbol_id]`
+- Dedup: skip if `seq <= tips[symbol_id]`
 - Apply fill to both taker and maker positions (if in shard)
 - Fee calculation on each fill:
   - `taker_fee = qty * price * taker_fee_bps / 10_000`
@@ -49,6 +51,7 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
     rebate credited)
   - Fee rates from symbol config (METADATA.md)
   - Persist fee with fill record
+- Apply order_done/cancel/failed to release frozen margin
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)
 - Push to replica ring (tip sync)
@@ -274,6 +277,10 @@ fn on_price_update(symbol_idx: u16):
 
 ## Persistence
 
+**Retention (v1):** Postgres keeps per-user order state and positions. History
+retention in Postgres is a v1 choice; v2 will move long-term history off
+Postgres.
+
 ### Postgres Schema
 
 ```sql
@@ -310,17 +317,17 @@ CREATE TABLE fills (
     qty           BIGINT NOT NULL,
     taker_fee     BIGINT NOT NULL DEFAULT 0,
     maker_fee     BIGINT NOT NULL DEFAULT 0,
-    seq_no        BIGINT NOT NULL,
+    seq        BIGINT NOT NULL,
     timestamp_ns  BIGINT NOT NULL,
     inserted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 ) PARTITION BY RANGE (timestamp_ns);
 
-CREATE INDEX idx_fills_symbol_seq ON fills (symbol_id, seq_no);
+CREATE INDEX idx_fills_symbol_seq ON fills (symbol_id, seq);
 
 CREATE TABLE tips (
     instance_id  INT NOT NULL,
     symbol_id    INT NOT NULL,
-    last_seq_no  BIGINT NOT NULL DEFAULT 0,
+    last_seq  BIGINT NOT NULL DEFAULT 0,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (instance_id, symbol_id)
 );
@@ -374,7 +381,7 @@ Per WAL.md:
 1. Acquire Postgres advisory lock: `pg_advisory_lock(shard_id)`
 2. Load positions, accounts, tips from Postgres
 3. Request replay from each ME via DXS consumer
-   ([DXS.md](DXS.md) section 6): `from_seq_no = tips[symbol_id] + 1`
+   ([DXS.md](DXS.md) section 6): `from_seq = tips[symbol_id] + 1`
 4. Process replay fills (same code path as live)
 5. On `CaughtUp` for all streams: connect gateway, go live
 6. Main loop: poll ME rings -> poll gateway -> renew lease (~1s)
@@ -406,7 +413,7 @@ Per WAL.md:
 1. New instance acquires advisory lock
 2. Reads positions + tips from Postgres (up to 10ms stale)
 3. Requests replay via DXS consumer ([DXS.md](DXS.md)):
-   `from_seq_no = tips[symbol_id] + 1`
+   `from_seq = tips[symbol_id] + 1`
 4. MEs serve from 10min WAL retention (DXS.md section 2)
 5. Replays to current, goes live, starts new replica
 
@@ -414,7 +421,7 @@ Per WAL.md:
 
 - ME replica starts sending (lease-based authority)
 - ME main shuts up when it detects replica's authoritative stream
-- Risk engine deduplicates by `(symbol_id, seq_no)` -- no restart
+- Risk engine deduplicates by `(symbol_id, seq)` -- no restart
   needed
 
 ## Main Loop Pseudocode
@@ -620,13 +627,13 @@ Producers generate random fills. Shard processes, prints stats
 fill_for_shard_user_updates_position
 fill_for_other_shard_ignored
 fill_both_users_in_shard_updates_both
-fill_dedup_by_seq_no
+fill_dedup_by_seq
 fill_advances_tip_per_symbol
 tip_monotonic_never_decreases
 
 // fill ingestion -- edge cases
-fill_seq_no_gap_still_advances_tip
-fill_seq_no_zero_first_ever
+fill_seq_gap_still_advances_tip
+fill_seq_zero_first_ever
 fill_for_unknown_symbol_advances_tip_only
 fill_taker_in_shard_maker_not
 fill_maker_in_shard_taker_not
@@ -758,7 +765,7 @@ Start new replica for the promoted main.
 
 ```rust
 buffer_fills_in_order
-drain_up_to_seq_no
+drain_up_to_seq
 drain_partial_leaves_remainder
 buffer_empty_drain_returns_empty
 buffer_multi_symbol_independent
@@ -775,7 +782,7 @@ main_crash_replica_promotes
 replica_applies_buffered_fills_on_promotion
 replica_state_matches_main
 both_crash_recovery_from_postgres
-me_failover_dedup_by_seq_no
+me_failover_dedup_by_seq
 promotion_no_fill_loss
 split_brain_prevented_by_advisory_lock
 ```
@@ -866,7 +873,7 @@ Verified across all test levels:
    where side=buy)`. Verified after every test scenario.
 
 3. **Tips monotonic** -- `tips[symbol_id]` never decreases. After
-   recovery, tip = last persisted seq_no.
+   recovery, tip = last persisted seq.
 
 4. **Margin consistent with positions** -- margin recalc from scratch
    matches incremental state. Verified periodically in long-running

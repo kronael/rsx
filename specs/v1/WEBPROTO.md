@@ -143,7 +143,7 @@ Separate public WS endpoint (no auth required). Same frame shape.
 **Client -> Server:**
 
 ```
-{S:[sym, channels]}     // subscribe (channels: 1=bbo, 2=depth, 4=trades)
+{S:[sym, channels]}     // subscribe (channels: 1=bbo, 2=depth)
 {X:[sym, channels]}     // unsubscribe
 {X:[0, 0]}              // unsubscribe all
 ```
@@ -151,11 +151,14 @@ Separate public WS endpoint (no auth required). Same frame shape.
 **Server -> Client:**
 
 ```
-{B:[sym, bp, bq, bc, ap, aq, ac]}              // BBO update
-{L:[sym, seq, [[p,q,c], ...], [[p,q,c], ...]]} // L2 snapshot
-{D:[sym, seq, side, p, q, c]}                   // L2 delta
-{T:[sym, p, q, s, ts]}                          // trade
+{BBO:[sym, bp, bq, bc, ap, aq, ac, ts, u]}      // BBO update
+{B:[sym, [[p,q,c], ...], [[p,q,c], ...], ts, u]} // L2 snapshot
+{D:[sym, side, p, q, c, ts, u]}                 // L2 delta
 ```
+
+`u`: matching engine height (uint64, monotonic per symbol).
+Gap detection: if `u` jumps > 1, re-subscribe for snapshot.
+Server sends `B` snapshot on subscribe before any `D` deltas.
 
 ### Q: Liquidation Event (Private WS, see [LIQUIDATOR.md](LIQUIDATOR.md))
 
