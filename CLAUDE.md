@@ -30,6 +30,28 @@ crates/
 - Tracing + structured logs, NOT Prometheus -- dump metrics as
   structured log lines, a separate reader ships them elsewhere
 
+## Patterns from funding-bot/trader (proven in production)
+
+1. **Crate-per-concern, flat modules inside**: types/, common/,
+   clients/, engine/ each a separate crate. Inside each crate,
+   lib.rs lists all pub modules flat (no nested mod dirs). This
+   matches rsx layout: rsx-types, rsx-book, rsx-dxs, rsx-risk.
+
+2. **Re-export key types from lib.rs**: lib.rs re-exports the
+   handful of types other crates use most. Keeps downstream
+   imports clean. Example: `pub use error::RestError;` in lib.rs
+   so consumers write `use clients::RestError;` not
+   `use clients::error::RestError;`.
+
+3. **Tests in dedicated `tests/` dir with `_test.rs` suffix**:
+   funding-bot uses `clients/tests/rest_client_tests.rs`,
+   `tests/error_handling_tests.rs`. NOT inline `#[cfg(test)]`.
+   Keeps source files clean, test files discoverable.
+
+4. **`_utils` suffix for stateless helpers**: `math_utils.rs`,
+   `json_utils.rs`, `time_utils.rs`, `static_order_util.rs`.
+   Pure functions, no state. If it holds state, it's not a util.
+
 ## Rust Patterns
 
 - Single import per line (`use tracing::info;` not
