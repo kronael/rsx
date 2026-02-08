@@ -223,6 +223,12 @@ Logically part of risk engine, could be extracted later.
 
 ```
 process_order(order):
+    // Reduce-only: pass through to ME (ME enforces)
+    // is_liquidation: skip margin check entirely
+    if order.is_liquidation:
+        route order to matching engine
+        return  // no frozen margin, no margin check
+
     // Collect all positions for this user
     user_positions = get_user_positions(order.user_id)
     // Full portfolio margin recalc with latest mark prices

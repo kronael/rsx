@@ -536,7 +536,7 @@ struct OrderSlot {
     price: Price,           // i64, 8B
     remaining_qty: Qty,     // i64, 8B
     side: u8,               // 1B (0=Buy, 1=Sell)
-    flags: u8,              // 1B (is_active, etc.)
+    flags: u8,              // 1B (bit 0: is_active, bit 1: reduce_only)
     _pad1: [u8; 6],         // 6B alignment
     next: SlabIdx,          // u32, 4B — next in price level
     prev: SlabIdx,          // u32, 4B — prev in price level
@@ -612,6 +612,12 @@ struct Orderbook {
 
     event_buf: [Event; MAX_EVENTS], // fixed array, no heap
     event_len: u32,                 // reset to 0 each cycle
+
+    // Active user position tracking (per symbol)
+    user_states: Vec<UserState>,       // indexed by active_user_id
+    user_map: FxHashMap<u32, u16>,     // user_id -> active_user_id
+    user_free_list: Vec<u16>,          // deferred reclamation
+    user_bump: u16,                    // next virgin slot
 }
 ```
 
@@ -647,6 +653,22 @@ fn process_new_order(book, incoming):
     book.event_len = 0    // single store, no clear needed
     validate_price_tick(incoming.price, book.config)
     validate_qty_lot(incoming.qty, incoming.price, book.config)
+
+    // Reduce-only enforcement (before matching)
+    if incoming.reduce_only:
+        let user_state = book.user_map.get(&incoming.user_id)
+            .map(|&idx| &book.user_states[idx as usize])
+        if user_state is None or
+           (incoming.side == Buy and user_state.net_qty >= 0) or
+           (incoming.side == Sell and user_state.net_qty <= 0):
+            book.emit(OrderFailed {
+                user_id: incoming.user_id,
+                reason: REDUCE_ONLY_VIOLATION })
+            return
+        // Clamp qty to position size
+        incoming.remaining_qty = min(
+            incoming.remaining_qty,
+            user_state.net_qty.unsigned_abs())
 
     // Phase 1: Match against opposite side
     if incoming.side == Buy:
@@ -709,6 +731,10 @@ fn match_at_level(book, tick, aggressor):
             qty:            fill_qty,
             timestamp:      now_ns(),
         })
+
+        update_positions_on_fill(book,
+            aggressor.user_id, maker.user_id,
+            aggressor.side, fill_qty)
 
         next_cursor = maker.next
 
@@ -785,6 +811,10 @@ enum Event {
         user_id: u32,
         reason: u8,         // 0=filled, 1=cancelled
     },
+    OrderFailed {
+        user_id: u32,
+        reason: u8,         // maps to FailureReason enum
+    },
 }
 
 fn emit(&mut self, event: Event) {
@@ -802,6 +832,59 @@ fan out to downstream consumers:
 - Persistence layer (trade log)
 - Market data dissemination (shadow orderbook, see [MARKETDATA.md](MARKETDATA.md))
 - Recorder (archival via DXS consumer, see [DXS.md](DXS.md) section 8)
+
+### 6.5 User Position Tracking
+
+```rust
+/// Per-user position state tracked by matching engine.
+/// Updated on every fill. Used for reduce-only enforcement.
+struct UserState {
+    user_id: u32,
+    net_qty: i64,        // long - short (signed)
+    order_count: u16,    // resting orders in book
+    _pad: [u8; 2],
+}
+
+/// Assign active_user_id on first order for a user on this
+/// symbol. Gateway provides the mapping; ME uses it as Vec
+/// index.
+fn get_or_assign_user(book: &mut Orderbook, user_id: u32)
+    -> u16 {
+    if let Some(&idx) = book.user_map.get(&user_id) {
+        return idx;
+    }
+    let idx = if let Some(free) = book.user_free_list.pop() {
+        book.user_states[free as usize] =
+            UserState::new(user_id);
+        free
+    } else {
+        let idx = book.user_bump;
+        book.user_bump += 1;
+        book.user_states.push(UserState::new(user_id));
+        idx
+    };
+    book.user_map.insert(user_id, idx);
+    idx
+}
+
+/// On fill: update both taker and maker positions.
+fn update_positions_on_fill(book: &mut Orderbook,
+    taker_user_id: u32, maker_user_id: u32,
+    taker_side: Side, qty: i64) {
+    let sign = if taker_side == Buy { 1 } else { -1 };
+    let taker_idx = get_or_assign_user(book, taker_user_id);
+    book.user_states[taker_idx as usize].net_qty +=
+        sign * qty;
+    let maker_idx = get_or_assign_user(book, maker_user_id);
+    book.user_states[maker_idx as usize].net_qty -=
+        sign * qty;
+}
+```
+
+Deferred reclamation: periodically scan for users with
+`net_qty == 0 && order_count == 0`, reclaim after configurable
+delay (e.g. 60s). Avoids slot churn for active traders who
+close and reopen positions.
 
 How events are consistently delivered to these systems, ordering guarantees,
 and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).

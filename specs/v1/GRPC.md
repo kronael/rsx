@@ -128,6 +128,7 @@ message NewOrder {
     int64 price = 5;         // Fixed-point: price in smallest tick units
     int64 qty = 6;           // Fixed-point: qty in smallest lot units
     uint64 timestamp_ns = 7; // Nanosecond epoch (for latency tracking)
+    bool reduce_only = 8;   // ME enforces: clamp to position
 }
 
 message CancelOrder {
@@ -153,6 +154,8 @@ message RiskNewOrder {
     int64 qty = 7;
     TimeInForce tif = 8;
     uint64 timestamp_ns = 9;
+    bool reduce_only = 10;      // pass to ME
+    bool is_liquidation = 11;   // skip margin check at risk
 }
 
 message RiskCancelOrder {
@@ -274,6 +277,7 @@ enum FailureReason {
     INSUFFICIENT_MARGIN = 4;     // Risk check failed (should be Gateway's job, but double-check)
     OVERLOADED = 5;              // Ingress backpressure at gateway
     INTERNAL_ERROR = 6;          // Matching engine error (should not happen)
+    REDUCE_ONLY_VIOLATION = 7;   // No position to reduce
 }
 ```
 
