@@ -44,6 +44,7 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)
 - Push to replica ring (tip sync)
+ - Apply config updates from matcher `CONFIG_APPLIED` events (METADATA.md)
 
 ### 2. Position Manager
 

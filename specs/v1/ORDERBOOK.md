@@ -86,6 +86,24 @@ Variable tick sizes (changing with price) are a v2 feature — see
 
 ---
 
+## 2.9 Symbol Config Distribution (Fees, Ticks, Metadata)
+
+All components must use the same symbol config to avoid mismatches. v1 uses
+scheduled configs from the metadata store (see METADATA.md). `symbol_id` is
+immutable; all other fields can change in v1.
+
+**Source + scheduling:**
+- Matching polls the metadata store every 10 minutes.
+- Applies configs by `effective_at_ms` and `config_version`.
+- Emits `CONFIG_APPLIED` to sync Risk and Gateway caches.
+
+**Enforcement:**
+- Matching validates tick/lot sizes and status.
+- Risk applies fee schedule and margin logic.
+- Gateway validates basic constraints (tick/lot alignment) to fail fast.
+
+---
+
 ## 2.5 How Compressed Indexing Bounds the Array
 
 ### The Problem with Naive Indexing

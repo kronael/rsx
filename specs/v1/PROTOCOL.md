@@ -141,6 +141,7 @@ message MatcherMessage {
         OrderFill fill = 1;
         OrderDone done = 2;
         OrderFailed failed = 3;
+        ConfigApplied config_applied = 4;
     }
 }
 
@@ -172,6 +173,13 @@ message OrderFailed {
     bytes order_id = 1;
     FailureReason reason = 2;
     string details = 3;  // Human-readable error message
+}
+
+message ConfigApplied {
+    uint32 symbol_id = 1;
+    uint64 config_version = 2;
+    uint64 effective_at_ms = 3;
+    uint64 applied_at_ns = 4;
 }
 
 enum FailureReason {

@@ -11,6 +11,7 @@
 - [CONSISTENCY.md](specs/v1/CONSISTENCY.md) - Event fan-out: SPSC delivery to risk/persistence/market data, ordering guarantees, failure handling
 - [WAL.md](specs/v1/WAL.md) - Shared WAL architecture: bounded loss windows, backpressure, replica sync
 - [DATABASE.md](specs/v1/DATABASE.md) - Async write-behind persistence architecture
+- [METADATA.md](specs/v1/METADATA.md) - Scheduled symbol config: ticks, fees, limits, risk params
 
 ### Matching Engine
 

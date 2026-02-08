@@ -3,7 +3,7 @@
 Matching engine produces events into a fixed array buffer. Events fan out
 directly to consumers via SPSC rings. Matching engine persists its state via
 WAL + online snapshot, so orderbook state is recoverable after crash. Positions
-are persisted at the risk engine (see [PERSISTENCE.md](PERSISTENCE.md)).
+are persisted at the risk engine (see [WAL.md](WAL.md)).
 
 ---
 
@@ -20,8 +20,8 @@ are persisted at the risk engine (see [PERSISTENCE.md](PERSISTENCE.md)).
 ```
 
 Matching engine drains `event_buf[0..event_len]` directly into per-consumer
-SPSC rings. Events are emitted per-fill as they happen. A mirrored stream
-is also emitted to a hot spare matching engine.
+SPSC rings *within the same process*. Events are emitted per-fill as they
+happen. A mirrored stream is also emitted to a hot spare matching engine.
 
 Event routing:
 
