@@ -12,7 +12,7 @@ spec for multi-source mark price aggregation, staleness handling, or fallback.
 **Spec (TLDR):**
 - Inputs: per-symbol price streams from N sources (e.g., Binance, Coinbase).
 - Output: `mark_price[symbol_id]` updated on each tick.
-- Method: median of last valid prices (ignore stale/outlier).
+- Method: median of last valid prices (ignore stale/outliers).
 - Staleness: source stale if no update > 10s; drop from median.
 - Fallback: if <2 sources active, use index price (BBO-derived).
 - Publish: push `(symbol_id, mark_price, ts, source_mask)` to risk hot path (SPSC).
@@ -36,33 +36,18 @@ Needed:
 
 Touches: PROTOCOL.md, RISK.md (small additions, not a new spec)
 
-### Liquidation Order Generation
+### ~~Liquidation Order Generation~~ DONE
 
-Detection is fully specified (RISK.md per-tick margin recalc,
-`needs_liquidation`, `enqueue_liquidation`). Missing: what happens
-inside `enqueue_liquidation`.
-
-Needed:
-- Sizing: close entire position or reduce to safe margin?
-- Pricing: market order or aggressive limit at some spread?
-- Priority: if 100 users need liquidation, largest shortfall first?
-- Loss handling: what if liquidation fills at a loss? (insurance
-  fund can be deferred, but the loss path must be defined)
-
-Touches: RISK.md section 7 (20-line pseudocode addition)
+Specified in LIQUIDATOR.md. Progressive reduce-only limit orders
+with linear backoff and quadratic slippage.
 
 ## Nice to Have (not blocking, add when needed)
 
-### Market Data (L2 Feed)
+### ~~Market Data (L2 Feed)~~ DONE
 
-Raw event plumbing exists (CONSISTENCY.md: MktData gets Fill,
-OrderInserted, OrderCancelled via SPSC ring). Missing: how
-events become L2 snapshots/deltas for clients.
-
-When needed, add to WEBPROTO.md:
-- Snapshot message: `{B:[sym, bids, asks]}`
-- Delta message: `{D:[sym, side, px, qty]}`
-- Subscription protocol
+Specified in MARKETDATA.md. Shadow orderbook per symbol via shared
+`rsx-book` crate, L2 depth/BBO/trades, public WS endpoint,
+snapshot-then-incremental protocol.
 
 ### Binance Feed Details
 

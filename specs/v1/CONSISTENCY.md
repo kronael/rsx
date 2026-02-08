@@ -16,7 +16,8 @@ are persisted at the risk engine (see [WAL.md](WAL.md)).
          /    |    \       \
      [SPSC] [SPSC] [SPSC]  [DXS]
        |      |       |       |
-     Risk  Gateway  MktData  Recorder
+     Risk  Gateway  MktData      Recorder
+                    (MARKETDATA.md)
 ```
 
 Matching engine drains `event_buf[0..event_len]` directly into per-consumer
@@ -35,6 +36,10 @@ Event routing:
 | OrderInserted   | no   | no      | yes     |
 | OrderCancelled  | no   | yes     | yes     |
 | OrderDone       | yes  | yes     | no      |
+
+MktData consumer maintains a shadow orderbook per symbol using the
+shared `rsx-book` crate. See [MARKETDATA.md](MARKETDATA.md) for
+L2 depth, BBO, and trade derivation from these events.
 
 ## 2. Ordering Guarantees
 

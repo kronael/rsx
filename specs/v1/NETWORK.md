@@ -14,8 +14,11 @@ Web Users (WS)
                   ↘
 Native Clients     ──→  Gateway (WS overlay)  ──→  Risk Engine  ──→  Matching Engine
 (gRPC)                 (monolithic process)        (monolithic)     (one per symbol)
-                  ↗
-Mobile Apps (gRPC)
+                  ↗                                                       |
+Mobile Apps (gRPC)                                                   [SPSC events]
+                                                                          |
+                                                                     MARKETDATA
+Web Users (WS) ──────────────────────────────────────────────────→  (public WS)
 ```
 
 ## Why This Topology
@@ -167,6 +170,7 @@ Gateway3 ────┘
 **Transport:**
 - gRPC bidirectional streaming (v1, inter-process/network)
 - SPSC rings are used for *in-process* tile communication
+- WAL stores protobuf payloads only (no gRPC envelope)
 - One multiplexed stream Gateway ↔ Risk
 - One multiplexed stream Risk ↔ Matching Engine (per matcher)
 
@@ -424,9 +428,26 @@ Risk checks happen BOTH:
 - Risk returns error to gateway
 - Mitigation: UUIDv7 deduplication in matching engine (reference PROTOCOL.md)
 
+### MARKETDATA (Public Market Data)
+
+**Responsibilities:**
+- Maintains shadow orderbook per symbol (shared `rsx-book` crate)
+- Derives L2 depth, BBO, and trades from ME events
+- Serves public WebSocket endpoint for market data subscriptions
+- Recovery via DXS replay from ME WAL
+
+**Architecture:**
+- Single-threaded, dedicated core, busy-spin
+- Non-blocking epoll for WS I/O (no Tokio)
+- One SPSC consumer ring per matching engine
+- Separate process from gateway (public, no auth)
+
+See [MARKETDATA.md](MARKETDATA.md) for full specification.
+
 ## Cross-References
 
 - **ORDERBOOK.md**: Matching engine internals, orderbook data structure
+- **MARKETDATA.md**: Market data dissemination, shadow orderbook, L2/BBO/trades
 - **SMRB.md**: Low-latency IPC options, SPSC ring buffer design
 - **UDS.md**: UDS vs shared memory comparison, latency numbers
 - **RPC.md**: Async request handling, pending order tracking

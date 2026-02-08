@@ -487,6 +487,11 @@ is migrated first. Zero special handling beyond the one `is_migrating()` branch.
 
 ## 3. Orderbook Data Structure
 
+The core Book struct (PriceLevel, OrderSlot, Slab, CompressionMap)
+is extracted into the shared `rsx-book` crate. Both matching engine
+and MARKETDATA import it. See [MARKETDATA.md](MARKETDATA.md)
+section 2 for the shared abstraction and BookObserver trait.
+
 ### Architecture: Array-Indexed Price Levels + Slab Arena
 
 ```
@@ -795,7 +800,7 @@ Events are drained after each order is processed. Multiple SPSC ring buffers
 fan out to downstream consumers:
 - Risk engine (position updates from fills, OrderDone for margin release)
 - Persistence layer (trade log)
-- Market data dissemination (orderbook updates)
+- Market data dissemination (shadow orderbook, see [MARKETDATA.md](MARKETDATA.md))
 - Recorder (archival via DXS consumer, see [DXS.md](DXS.md) section 8)
 
 How events are consistently delivered to these systems, ordering guarantees,
