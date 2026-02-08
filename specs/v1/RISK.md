@@ -44,8 +44,11 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 - Dedup: skip if `seq <= tips[symbol_id]`
 - Apply fill to both taker and maker positions (if in shard)
 - Fee calculation on each fill:
-  - `taker_fee = qty * price * taker_fee_bps / 10_000`
-  - `maker_fee = qty * price * maker_fee_bps / 10_000`
+  - `taker_fee = floor(qty * price * taker_fee_bps / 10_000)`
+  - `maker_fee = floor(qty * price * maker_fee_bps / 10_000)`
+    (Floor always — exchange keeps the sub-tick remainder.
+    Integer division in Rust truncates toward zero, which
+    equals floor for positive values.)
   - Deduct: `taker.collateral -= taker_fee`
   - Deduct: `maker.collateral -= maker_fee` (negative fee =
     rebate credited)
@@ -55,7 +58,12 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)
 - Push to replica ring (tip sync)
-- Apply config updates from matcher `CONFIG_APPLIED` events (METADATA.md)
+- Apply config updates from matcher `CONFIG_APPLIED` events.
+  On cold start, Risk bootstraps current config from Postgres
+  (ME writes applied config to `symbol_config_applied` table
+  on each CONFIG_APPLIED event). CONFIG_APPLIED on the DXS
+  stream is an optimization for live sync; Postgres is source
+  of truth for cold start. See METADATA.md.
 - Forward `CONFIG_APPLIED` to Gateway for cache sync
 
 ### 2. Position Manager
@@ -224,6 +232,14 @@ Logically part of risk engine, could be extracted later.
 - Rate calculated continuously (updated on each price tick)
 - Applied atomically at settlement time
 - Settlement: UTC 00:00, 08:00, 16:00
+- **Idempotency key:** `interval_id = unix_epoch_secs / 28800`
+  (28800 = 8 hours). Each funding settlement is keyed by
+  `(symbol_id, interval_id)`. Duplicate settlement for same
+  interval_id is a no-op.
+- **Clock requirement:** NTP required on all hosts. Maximum
+  allowed clock skew: 100ms. Funding settlement uses wall
+  clock; skew >100ms could cause interval_id mismatch between
+  components.
 - Missed intervals: settle on next startup
 - Mark price at settlement = latest available
 - Funding payments persisted to Postgres (append-only)
@@ -270,6 +286,13 @@ fn on_price_update(symbol_idx: u16):
             enqueue_liquidation(user_id)
             // see LIQUIDATOR.md
 ```
+
+**No liquidation race condition:** The risk engine main loop is
+single-threaded. Fills and liquidation round processing are
+serialized: a fill updates the position before
+`maybe_process_liquidations()` runs. No concurrent reads of
+partial state. The single-threaded design eliminates the race
+between fill arrival and escalation decision.
 
 - Runs on every tick -- sharding keeps it fast
 - Only checks users with exposure in the updated symbol
@@ -428,6 +451,13 @@ from `tips[symbol_id] + 1`.
    `from_seq = tips[symbol_id] + 1`
 4. MEs serve from 10min WAL retention (DXS.md section 2)
 5. Replays to current, goes live, starts new replica
+
+**Idempotent replay:** Fill processing is idempotent — replaying
+a fill with `seq <= tips[symbol_id]` is a no-op (dedup by seq).
+Tip persistence is an optimization (reduces replay window). Even
+if tip is stale, `position = sum(fills)` is always rebuildable
+from ME WAL. The system converges to correct state regardless of
+tip staleness.
 
 **100ms loss bound proof:** Risk flushes to Postgres every 10ms. If both
 instances crash before flush, max loss = 10ms of position updates. If Postgres

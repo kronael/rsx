@@ -60,11 +60,22 @@ margin or all positions closed.
 
 ## 3. Order Generation
 
-Per-position limit orders. Each open position gets a closing
-order at `mark_price +/- round^2 * base_slip_bps`:
+Per-position limit orders. Price determined by fallback chain:
 
-- Long position -> sell at `mark_price - slippage`
-- Short position -> buy at `mark_price + slippage`
+1. **Mark price** (primary): from mark price aggregator
+2. **Index price** (fallback): BBO-derived index from risk engine
+3. **Last known mark price** (final fallback): most recent valid
+   mark price cached by risk engine
+
+The liquidator NEVER stalls waiting for price. If all sources
+are unavailable, it uses the last known mark price (which may
+be stale but prevents indefinite liquidation delay).
+
+Each open position gets a closing order at
+`price_source +/- round^2 * base_slip_bps`:
+
+- Long position -> sell at `price - slippage`
+- Short position -> buy at `price + slippage`
 
 Order properties:
 - `reduce_only = true` (NewOrder field 8, ME enforces)
@@ -172,6 +183,14 @@ base_slip_bps = 1               # 1bp
 max_slip_bps = 500              # 5% cap
 max_rounds = 50
 ```
+
+**Post-max-rounds behavior:** After `max_rounds` is reached,
+liquidation continues at `max_slip_bps` (100% slippage cap
+from config) with no further delay between rounds. If the
+position still cannot be closed (no counterparty at any
+price), the remaining loss is socialized via the insurance
+fund. Insurance fund deduction is logged as a
+`liquidation_events` row with `status = 3` (socialized).
 
 ## 10. Performance Targets
 

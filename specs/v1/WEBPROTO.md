@@ -52,18 +52,13 @@ ACK semantics:
 - 6 = INTERNAL_ERROR
 - 7 = REDUCE_ONLY_VIOLATION
 
-### A: Auth (optional fallback)
+### Authentication
 
-Primary auth is via WebSocket upgrade headers. This message is a fallback for clients that cannot set headers.
-
-```
-{A:[token, ts, nonce]}
-```
-
-Fields:
-- `token`: JWT string
-- `ts`: client timestamp (ms)
-- `nonce`: client nonce
+Auth is via WebSocket upgrade headers only (JWT in
+`Authorization` header). No in-band auth frame. Clients that
+cannot set upgrade headers must use the gRPC API instead.
+Connections without valid auth in upgrade headers are rejected
+with HTTP 401 before WebSocket handshake completes.
 
 ### N: New Order
 
@@ -76,7 +71,7 @@ Fields:
 - `side`: enum `Side`
 - `px`: price in tick units (int64)
 - `qty`: quantity in lot units (int64)
-- `cid`: client order id (uint64)
+- `cid`: client order id (fixed 20-char string, zero-padded)
 - `tif`: enum `Time in Force`
 - `ro`: reduce-only (0=normal, 1=reduce-only, optional,
   default 0)
@@ -88,7 +83,9 @@ Fields:
 ```
 
 Fields:
-- `cid_or_oid`: client order id or server order id
+- `cid_or_oid`: client order id (20-char string) or server
+  order id (UUIDv7, 32-char hex). Server distinguishes by
+  length: 20 chars = cid, 32 chars = oid.
 
 ### U: Order Update / Ack
 
@@ -128,15 +125,26 @@ Fields:
 - `code`: error code
 - `msg`: human readable error
 
+**Parse error handling:** On malformed frame (missing fields,
+unknown message type, wrong value types, empty arrays), server
+sends `{E:[code, msg]}` describing the parse failure. Server
+does NOT close the connection on parse errors — the client can
+continue sending valid frames. Connection is closed only on:
+fatal protocol violations (binary frame, oversized message),
+or auth failure.
+
 ### H: Heartbeat
 
 ```
 {H:[ts]}
 ```
 
-Server sends `{H:[ts]}` every 5s. Client must respond within
-10s or server closes connection. Client may also initiate;
-server echoes.
+Server sends `{H:[ts]}` every 5s. Client must respond with
+`{H:[ts]}` (echoing its own timestamp) within 10s or server
+closes connection. Client may also initiate heartbeats;
+server echoes. Simultaneous heartbeats from both sides are
+harmless (no sequence number needed, each side tracks its
+own timeout independently).
 
 Fields:
 - `ts`: client or server timestamp (ms)
@@ -160,6 +168,32 @@ Separate public WS endpoint (no auth required). Same frame shape.
 {B:[sym, [[p,q,c], ...], [[p,q,c], ...], ts, u]} // L2 snapshot
 {D:[sym, side, p, q, c, ts, u]}                 // L2 delta
 ```
+
+**B snapshot format:** In the `B` frame, the first array is
+bids `[[price, qty, count], ...]` sorted descending by price.
+The second array is asks `[[price, qty, count], ...]` sorted
+ascending by price.
+
+**WS <-> gRPC market data field mapping:**
+
+| WS Field | gRPC Field (MARKETDATA.md) |
+|----------|---------------------------|
+| BBO.sym | BboUpdate.symbol_id |
+| BBO.bp | BboUpdate.bid_px |
+| BBO.bq | BboUpdate.bid_qty |
+| BBO.bc | BboUpdate.bid_count |
+| BBO.ap | BboUpdate.ask_px |
+| BBO.aq | BboUpdate.ask_qty |
+| BBO.ac | BboUpdate.ask_count |
+| BBO.ts | BboUpdate.timestamp_ns |
+| BBO.u | BboUpdate.seq |
+| D.sym | L2Delta.symbol_id |
+| D.side | L2Delta.side |
+| D.p | L2Delta.price |
+| D.q | L2Delta.qty |
+| D.c | L2Delta.count |
+| D.ts | L2Delta.timestamp_ns |
+| D.u | L2Delta.seq |
 
 `u`: matching engine height (uint64, monotonic per symbol).
 Gap detection: if `u` jumps > 1, re-subscribe for snapshot.

@@ -183,6 +183,17 @@ Gateway3 ────┘
 6. Risk updates user positions, forwards fills to Gateway
 7. Gateway forwards fills to user
 
+**Backpressure layers (independent):**
+- **Gateway ingress:** Gateway rejects new orders with
+  `OVERLOADED` when its buffer exceeds capacity. This is
+  the external-facing backpressure mechanism.
+- **ME internal rings:** ME stalls on SPSC ring full (bare
+  busy-spin). This is internal backpressure between
+  co-located components. Gateway never sees this directly.
+- These two layers are independent. Gateway rejection
+  protects against external flood; ME stall protects against
+  internal consumer lag.
+
 **Stream semantics:**
 - Long-lived (duration of process uptime)
 - Bidirectional: Gateway → Risk → Matching (ORDER, CANCEL), reverse for FILL, ORDER_DONE
@@ -192,6 +203,12 @@ Gateway3 ────┘
 **Transport options:**
 - v1: gRPC over TCP/UDS
 - No v2 planned (see FUTURE.md)
+
+**Replication transport:** ME and Risk replicas receive event
+streams via standard gRPC bidirectional streaming (same as
+DXS replay, see DXS.md section 5). No special replication
+protocol — replicas are DXS consumers with the same
+replay/live-tail mechanism used by all consumers.
 
 ## Data Flow
 
@@ -367,6 +384,56 @@ Risk checks happen BOTH:
 - Network configuration (private VLAN, routing)
 - Service discovery (how risk finds matching engines)
 - Failure handling (stream reconnection, order replay)
+
+## Service Discovery
+
+### v1: Environment Variables
+
+Static configuration via environment variables with component
+prefix:
+
+```
+RSX_ME_BTC_ADDR=127.0.0.1:9001
+RSX_ME_ETH_ADDR=127.0.0.1:9002
+RSX_RISK_ADDR=127.0.0.1:9010
+RSX_GATEWAY_ADDR=0.0.0.0:8080
+RSX_MARK_ADDR=127.0.0.1:9200
+RSX_POSTGRES_URL=postgres://localhost:5432/rsx
+```
+
+Each component reads its own address and the addresses of its
+dependencies from environment variables. No service registry
+for v1.
+
+### Dynamic Discovery (Optional)
+
+For deployments with more than a handful of components, optional
+Consul or DNS-based discovery can replace env vars. This is
+independent of the static config mechanism — components check
+env vars first, fall back to Consul/DNS if configured.
+
+Discovery and static config are independent mechanisms. They
+do not interact or override each other.
+
+## Startup Ordering
+
+Components can start in any order. Each component retries
+connecting to its dependencies with exponential backoff
+(1s/2s/4s/8s, max 30s).
+
+- **Matching engine:** starts independently, begins WAL
+  replay. Serves DXS replay once ready.
+- **Risk engine:** retries ME connections with backoff.
+  Replays from DXS on each successful connect.
+- **Gateway:** retries Risk connection with backoff. Rejects
+  all user orders with `OVERLOADED` until Risk stream is
+  established and Risk reports ready (CaughtUp on all
+  streams).
+- **Mark aggregator:** starts independently, connects to
+  external feeds with backoff.
+
+No component blocks on another's availability. The system
+converges to ready state as components come online.
 
 ## Failure Modes
 
