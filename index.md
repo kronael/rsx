@@ -11,6 +11,7 @@
 - [MARKETDATA.md](specs/v1/MARKETDATA.md) - Market data gRPC: BBO + L2 snapshot/delta schema
 - [CONSISTENCY.md](specs/v1/CONSISTENCY.md) - Event fan-out: SPSC delivery to risk/persistence/market data, ordering guarantees, failure handling
 - [WAL.md](specs/v1/WAL.md) - Shared WAL architecture: bounded loss windows, backpressure, replica sync
+- [ARCHIVE.md](specs/v1/ARCHIVE.md) - WAL offload + replay from flat files
 - [DATABASE.md](specs/v1/DATABASE.md) - Async write-behind persistence architecture
 - [METADATA.md](specs/v1/METADATA.md) - Scheduled symbol config: ticks, fees, limits, risk params
 
@@ -25,6 +26,13 @@
 ### Testing
 
 - [TESTING.md](specs/v1/TESTING.md) - Testing strategy: unit/e2e/integration/smoke/perf targets, test data patterns, correctness invariants, CI/CD pipeline
+
+### Guarantees & Recovery
+
+- [GUARANTEES.md](GUARANTEES.md) - Formal system guarantees: consistency model, durability bounds, failure scenarios, data loss limits, recovery objectives
+- [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) - Operational recovery procedures: detection, triage, step-by-step recovery for each failure scenario
+- [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) - Detailed crash analysis: 15+ failure scenarios with preconditions, effects, recovery paths, verification
+- [MONITORING.md](MONITORING.md) - Metrics, dashboards, alerts: track guarantees, detect violations, measure performance
 
 ## Specs (v2)
 

@@ -376,6 +376,14 @@ Per WAL.md:
 
 ## Replication & Failover
 
+**Failover guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for complete
+specification of failover behavior, data loss bounds (single crash: 10ms,
+dual crash: 100ms), and recovery time objectives.
+
+**Failover procedures:** See [RECOVERY-RUNBOOK.md](../../RECOVERY-RUNBOOK.md)
+§2.2 for step-by-step recovery from Risk master crash, and §4 for dual
+crash scenarios.
+
 ### Main Behavior
 
 1. Acquire Postgres advisory lock: `pg_advisory_lock(shard_id)`
@@ -410,12 +418,21 @@ Per WAL.md:
 
 ### Recovery: Both Crash
 
+**Data loss bound:** 100ms positions (worst case if both crash before Postgres
+flush). Fills are NEVER lost — ME WAL retains all fills for 10min, Risk replays
+from `tips[symbol_id] + 1`.
+
 1. New instance acquires advisory lock
 2. Reads positions + tips from Postgres (up to 10ms stale)
 3. Requests replay via DXS consumer ([DXS.md](DXS.md)):
    `from_seq = tips[symbol_id] + 1`
 4. MEs serve from 10min WAL retention (DXS.md section 2)
 5. Replays to current, goes live, starts new replica
+
+**100ms loss bound proof:** Risk flushes to Postgres every 10ms. If both
+instances crash before flush, max loss = 10ms of position updates. If Postgres
+ALSO slow to commit (transaction in progress), max loss extends to 100ms. After
+recovery, all positions are reconstructed from ME fills (position = sum(fills)).
 
 ### Matching Engine Failover
 

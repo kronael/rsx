@@ -26,6 +26,10 @@ ingress are **not** WAL’d; they can be lost if risk dies before execution.
 - **Hard backpressure**: if persistence or replication lags beyond bounds, the system stalls.
 - **Reusable infra**: risk and orderbook use the same WAL pattern, but implementations may diverge if sharing is impractical.
 
+**Formal guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for complete
+specification of durability guarantees, data loss bounds, and recovery
+procedures.
+
 ## Architecture
 
 ```
@@ -44,9 +48,18 @@ Producer (matching engine)
 
 ### WAL Flush
 
-- Flush to durable storage every **10ms** or on size threshold.
+- Flush to durable storage every **10ms** or on size threshold (1000 records).
 - Each flush is a batch and **must fsync** to make the 10ms bound real.
 - If flush falls behind, the producer **must stall** to preserve the bound.
+
+**10ms flush guarantee:** All fills emitted by the matching engine are written
+to WAL and flushed to disk within 10ms. This provides the **0ms fill loss
+guarantee** — any fill that was emitted can be replayed from WAL, even if Risk
+was offline when the fill occurred.
+
+**Backpressure enforcement:** If flush lag exceeds 10ms (disk slow), the
+producer (ME) stalls on order processing. This prevents unbounded loss window
+and ensures the 10ms bound holds under all conditions.
 
 ### Offload Worker (Durable Commit)
 
