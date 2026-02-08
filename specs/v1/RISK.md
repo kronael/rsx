@@ -370,9 +370,9 @@ All persistence happens on a **separate write-behind thread**:
 ### Backpressure
 
 Per WAL.md:
-- Persistence ring full -> stall hot path (ME stalls upstream)
-- Flush lag > 10ms -> stall hot path
-- Replica ring full -> stall hot path (configurable, 100ms bound)
+- Persistence ring full -> **must stall** hot path (ME stalls upstream)
+- Flush lag > 10ms -> **must stall** hot path
+- Replica ring full -> **must stall** hot path (configurable, 100ms bound)
 
 ## Replication & Failover
 

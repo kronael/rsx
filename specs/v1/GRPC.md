@@ -111,6 +111,10 @@ service RiskGateway {
     rpc Stream(stream GatewayToRisk) returns (stream RiskToGateway);
 }
 
+// ACK semantics: there is no "order accepted" ACK. The first response is
+// an OrderUpdate/Fill from the matching engine path. Orders may become stale;
+// clients should cancel and forget if no update arrives within their timeout.
+
 // Gateway → Matching Engine
 message GatewayMessage {
     oneof msg {
