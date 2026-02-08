@@ -18,10 +18,23 @@ crates/
   rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
 ```
 
+## Implementation Philosophy
+
+- Minimal implementation -- do the simplest thing that works
+- Simple names, not abbreviated: `position` not `pos`, but not
+  `user_position_state_container` either
+- Do things simply, not intertwinedly -- each module does one thing
+- Use traits where applicable for testability (mock boundaries)
+- Flat file hierarchies: one level of modules, avoid deep nesting
+- Copy standard macros from `../trader` where applicable
+- Tracing + structured logs, NOT Prometheus -- dump metrics as
+  structured log lines, a separate reader ships them elsewhere
+
 ## Rust Patterns
 
-- Single import per line (`use tracing::info;` not `use tracing::{info, debug};`)
-- `#[repr(C, align(64))]` on all hot-path structs (cache line alignment)
+- Single import per line (`use tracing::info;` not
+  `use tracing::{info, debug};`) -- cleaner git diffs
+- `#[repr(C, align(64))]` on all hot-path structs (cache line)
 - Fixed-point i64 for all prices/quantities -- NEVER float
 - `Price(pub i64)`, `Qty(pub i64)` newtypes (`#[repr(transparent)]`)
 - Slab arena allocator for fixed-size objects (orders, levels)
@@ -44,7 +57,7 @@ crates/
 
 ## Build & Dev
 
-- `cargo check` first (fastest feedback, no codegen)
+- `cargo check` first, always (fastest feedback, no codegen)
 - Debug builds default (~3x faster compile than release)
 - 80 char line width, max 120
 - `make test`: unit tests <5s, every commit
@@ -58,7 +71,8 @@ crates/
 
 ## Testing
 
-- Unit tests: `#[cfg(test)]` in same file, no I/O, <5s total
+- Tests in dedicated files, separate from code:
+  `src/margin.rs` -> `tests/margin_test.rs` (not inline #[cfg(test)])
 - E2E tests: real component + mocked deps, `tests/` dir
 - Integration: testcontainers-rs (Postgres), `tests/` dir
 - `--test-threads=1` if global state via DashMap/RwLock

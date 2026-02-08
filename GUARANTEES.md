@@ -743,10 +743,10 @@ dedicated core.
 
 | Component | Dedup Key | Window | On Duplicate |
 |-----------|-----------|--------|--------------|
-| Gateway orders | `order_id` (UUIDv7) | 5min | Reject: DUPLICATE_ORDER_ID |
-| Risk fills | `(symbol_id, seq)` | Forever (tip tracking) | Ignore (applied) |
-| Risk tips (Postgres) | `(instance_id, symbol_id)` | Forever | UPSERT (last wins) |
-| Postgres positions | `(user_id, symbol_id, version)` | Forever | UPSERT + version check |
+| Gateway orders | `order_id` (UUIDv7) | 5min | Reject |
+| Risk fills | `(symbol_id, seq)` | Forever | Ignore |
+| Risk tips (PG) | `(instance_id, symbol_id)` | Forever | UPSERT |
+| PG positions | `(user_id, symbol_id, ver)` | Forever | UPSERT |
 
 **Gateway dedup:** UUIDv7 order_id includes timestamp. Dedup window is
 rolling 5min in-memory. After 5min, order_id can be reused (unlikely
