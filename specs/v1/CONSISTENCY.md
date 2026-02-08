@@ -1,13 +1,9 @@
 # Consistency — Event Fan-Out
 
 Matching engine produces events into a fixed array buffer. Events fan out
-directly to consumers via SPSC rings. No persistence at the matching engine
-— it's ephemeral. If the orderbook crashes, it starts empty. Positions are
-persisted at the risk engine (see [PERSISTENCE.md](PERSISTENCE.md)).
-
-Risk engine has timestamps of both input and output, so outstanding orders
-can potentially be reconstructed from risk engine data. Orderbook
-checkpointing may be added later. This document covers event flow only.
+directly to consumers via SPSC rings. Matching engine persists its state via
+WAL + online snapshot, so orderbook state is recoverable after crash. Positions
+are persisted at the risk engine (see [PERSISTENCE.md](PERSISTENCE.md)).
 
 ---
 
@@ -24,8 +20,8 @@ checkpointing may be added later. This document covers event flow only.
 ```
 
 Matching engine drains `event_buf[0..event_len]` directly into per-consumer
-SPSC rings. No persistence tile in the path. Events are emitted per-fill as
-they happen.
+SPSC rings. Events are emitted per-fill as they happen. A mirrored stream
+is also emitted to a hot spare matching engine.
 
 Event routing:
 
@@ -45,9 +41,10 @@ Event routing:
 
 ## 3. Backpressure
 
+- Ingress backpressure is primary: gateway rejects new orders when buffer is full.
+- Internal rings should be kept small to avoid hiding latency.
 - Ring full = matching engine stalls (bare busy-spin, no `spin_loop()`)
 - Per-consumer rings — slow market data doesn't stall risk
-- Ring sizing: 64K slots, 8MB per ring at 128B/event
 
 ## 4. Positions & Risk
 
@@ -61,15 +58,12 @@ Event routing:
 
 | Component | On crash | Recovery |
 |-----------|----------|----------|
-| Matching engine | Book lost | Starts empty. Outstanding orders potentially reconstructable from risk engine data (has input/output timestamps). Future: checkpointing. |
+| Matching engine | Book lost | Restores from snapshot + WAL replay. |
 | Risk engine | Positions persisted | Restarts from persisted state. See PERSISTENCE.md. |
 | Gateway | User sessions drop | Users reconnect and re-submit. |
 
 ## 6. Deferred
 
-- Orderbook persistence / WAL (PERSISTENCE.md covers risk engine only)
-- Orderbook checkpointing for faster recovery
-- Reconstructing book from risk engine data
 - Cross-symbol ordering (portfolio margining)
 
 ---
@@ -115,8 +109,8 @@ fn push_spin<T>(ring: &mut SpscProducer<T>, item: &T) {
 3. All consumers see same event order (SPSC = FIFO)
 4. Matching engine never drops events (ring full = stall)
 5. ORDER_DONE is the commit boundary for multi-fill sequences
-6. Risk engine is the only durable state — positions persisted there
-7. Orderbook is ephemeral — crash = empty
+6. Risk engine persists positions
+7. Matching engine persists orderbook via snapshot + WAL
 
 ## Verification
 

@@ -10,8 +10,9 @@ without blocking on individual order execution.
 **Key design points:**
 - UUIDv7 order IDs generated at Gateway entry (globally unique, timeline-sortable)
 - LIFO VecDeque for pending order tracking (optimized for typical response ordering)
-- Bidirectional gRPC streams (Gateway ↔ Matching Engine)
+- Bidirectional gRPC streams (Gateway ↔ Risk ↔ Matching Engine), multiplexed
 - NO automatic retry (failed orders fail, user must manually retry)
+- Ingress backpressure: Gateway rejects new orders when its buffer exceeds 10k
 
 ## Order ID Design (UUIDv7)
 
@@ -48,10 +49,10 @@ User ──ORDER──→ Gateway
 - Matching Engine (Gateway already needs ID for pending tracking)
 
 **Carried in all messages:**
-- ORDER: Gateway → Matching Engine
-- FILL: Matching Engine → Gateway
-- ORDER_DONE: Matching Engine → Gateway
-- ORDER_FAILED: Matching Engine → Gateway
+- ORDER: Gateway → Risk → Matching Engine
+- FILL: Matching Engine → Risk → Gateway
+- ORDER_DONE: Matching Engine → Risk → Gateway
+- ORDER_FAILED: Matching Engine → Risk → Gateway
 
 ### Benefits
 
@@ -180,7 +181,7 @@ PENDING ──→ PARTIAL_FILL* ──→ DONE
 ```
 
 **States:**
-- PENDING: Order sent to matching engine, awaiting response
+- PENDING: Order sent to risk engine, awaiting response
 - PARTIAL_FILL: Order partially filled, still matching (may repeat)
 - DONE: Order fully filled OR resting in orderbook (no more fills)
 - FAILED: Order rejected (risk, validation, duplicate, etc.)
@@ -192,16 +193,11 @@ PENDING ──→ PARTIAL_FILL* ──→ DONE
 User ──ORDER(symbol, side, price, qty)──→ Gateway
 ```
 
-**2. Gateway validates and assigns ID:**
+**2. Gateway validates ingress and assigns ID:**
 ```rust
 // Validate user session, rate limits
 if !check_rate_limit(user_id) {
     return ORDER_FAILED(RATE_LIMIT);
-}
-
-// Check risk (margin, position limits)
-if !check_margin(user_id, symbol, side, price, qty) {
-    return ORDER_FAILED(INSUFFICIENT_MARGIN);
 }
 
 // Assign UUIDv7 order ID
@@ -217,12 +213,23 @@ pending.queue.push_back((order_id, OrderContext {
 }));
 ```
 
-**3. Gateway sends to matching engine:**
+**3. Gateway sends to risk engine:**
 ```
-Gateway ──ORDER(order_id, user_id, symbol, side, price, qty)──→ Matching
+Gateway ──ORDER(order_id, user_id, symbol, side, price, qty)──→ Risk
 ```
 
-**4. Matching engine processes:**
+**4. Risk engine processes:**
+```rust
+// Check risk (margin, position limits)
+if !check_margin(user_id, symbol, side, price, qty) {
+    return ORDER_FAILED(INSUFFICIENT_MARGIN);
+}
+
+// Forward to matching engine
+stream.send(ORDER { order_id, ... });
+```
+
+**5. Matching engine processes:**
 ```rust
 // Validate tick/lot size
 if !validate_price_tick(price, symbol_config) {
@@ -246,7 +253,7 @@ for fill in fills {
 stream.send(ORDER_DONE { order_id, final_status });
 ```
 
-**5. Gateway receives responses:**
+**6. Gateway receives responses:**
 ```rust
 // Receive FILL messages (0+)
 loop {
@@ -291,30 +298,30 @@ loop {
 
 ### Stream Semantics
 
-**Gateway → Matching Engine:**
+**Gateway → Risk:**
 - ORDER: Submit new order
 - CANCEL: Cancel existing order (by order_id)
 - MODIFY: Modify existing order (by order_id, not implemented in v1)
 
-**Matching Engine → Gateway:**
+**Risk → Matching Engine:**
+- ORDER: Submit new order
+- CANCEL: Cancel existing order (by order_id)
+- MODIFY: Modify existing order (by order_id, not implemented in v1)
+
+**Matching Engine → Risk → Gateway:**
 - FILL: Partial or full fill (0+ per order)
 - ORDER_DONE: Order complete (fully filled OR resting in orderbook)
 - ORDER_FAILED: Order rejected (validation, risk, duplicate)
 
 **Stream lifecycle:**
-- Opened when user first trades a symbol
-- Kept open while user has active orders OR session is active
-- Closed when user disconnects OR timeout (no activity for 5min)
-
-**Stream multiplexing:**
-- One stream per (user_id, symbol) pair
-- Example: User trades BTC-PERP and ETH-PERP = 2 streams
-- Gateway manages stream pool (open/close on demand)
+- One long-lived stream Gateway ↔ Risk
+- One long-lived stream Risk ↔ each Matching Engine
+- Streams are multiplexed by user_id and symbol
 
 ### Message Ordering
 
 **Within one stream:**
-- Gateway sends: ORDER(A), ORDER(B), ORDER(C)
+- Risk sends: ORDER(A), ORDER(B), ORDER(C)
 - Matching receives in order: A, B, C
 - Responses may be out of order: DONE(A), DONE(C), DONE(B)
 
@@ -333,13 +340,13 @@ loop {
 
 ### Network Errors
 
-**Stream disconnect (Gateway ↔ Matching Engine):**
+**Stream disconnect (Gateway ↔ Risk):**
 ```
-Gateway ──ORDER──→ Matching
-                     ↓
-                  [network partition]
-                     ↓
-                  ORDER lost
+Gateway ──ORDER──→ Risk
+                   ↓
+                [network partition]
+                   ↓
+                ORDER lost
 ```
 
 **Handling:**
@@ -413,26 +420,28 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 - INVALID_TICK_SIZE: Price doesn't align to tick size
 - INVALID_LOT_SIZE: Qty doesn't align to lot size
 - SYMBOL_NOT_FOUND: Symbol doesn't exist
-- INSUFFICIENT_MARGIN: Risk check failed (should be caught at Gateway, but double-check)
+- INSUFFICIENT_MARGIN: Risk check failed (risk engine)
+- OVERLOADED: Gateway ingress backpressure
 
 **Handling:**
 - Matching engine sends ORDER_FAILED(reason)
-- Gateway logs error (should not happen, Gateway should validate first)
+- Gateway logs error (validation errors should be caught early)
 - User sees rejection with reason code
 
 ## Backpressure Strategies
 
-### gRPC Flow Control
+### Ingress Backpressure (Primary)
 
-**HTTP/2 window management:**
-- gRPC uses HTTP/2 streams (one HTTP/2 connection = many gRPC streams)
-- HTTP/2 flow control: receiver advertises window size (how much data it can accept)
-- Sender blocks when window is full (backpressure)
+- Gateway maintains a small ingress buffer (cap 10k orders).
+- If buffer is full, Gateway rejects new orders immediately.
+- Error response uses ORDER_FAILED(OVERLOADED).
+- Goal: fail fast rather than allow latency to explode.
 
-**RSX behavior:**
-- Matching engine sets window size based on orderbook capacity
-- If Gateway floods orders → window fills → Gateway send() blocks
-- Gateway can detect block, return error to user (rate limit, try later)
+### gRPC Flow Control (Secondary)
+
+- HTTP/2 flow control can still apply on long-lived streams.
+- It is not the primary backpressure mechanism in RSX.
+- Configure consistently across gateway, risk, and matcher to avoid stalls.
 
 ### Application-Level Rate Limiting
 
@@ -465,25 +474,9 @@ impl RateLimiter {
 - If rate limit exceeded → ORDER_FAILED(RATE_LIMIT)
 - No queueing (fail fast, user retries later)
 
-### Matching Engine NACK
-
-**Scenario:**
-- Matching engine is overwhelmed (CPU 100%, order queue full)
-- New stream connection request arrives
-
-**Handling:**
-- Matching engine rejects stream connection (gRPC UNAVAILABLE)
-- Gateway receives error, returns to user: "Symbol temporarily unavailable"
-- User retries later (exponential backoff)
-
-**Why NACK:**
-- Better than accepting stream and queueing orders indefinitely
-- Prevents matching engine from falling behind (order latency explosion)
-- Allows Gateway to route user to different matching engine (if replicas exist)
-
 ### Circuit Breaker
 
-**Gateway tracks matching engine health:**
+**Risk tracks matching engine health:**
 ```rust
 struct CircuitBreaker {
     failures: u32,
@@ -515,25 +508,14 @@ enum State {
 
 **One task per user session:**
 ```rust
-async fn handle_user_session(user_id: u32, stream: UserStream) {
-    let mut matching_streams = HashMap::new();
-
+async fn handle_user_session(user_id: u32, stream: UserStream, risk: RiskStream) {
     loop {
         match stream.recv().await {
             ORDER { symbol, side, price, qty } => {
-                // Get or create stream to matching engine
-                let matcher_stream = matching_streams
-                    .entry(symbol)
-                    .or_insert_with(|| {
-                        connect_to_matching_engine(symbol).await
-                    });
-
-                // Send order
                 let order_id = UUIDv7::new();
                 pending.push_back((order_id, ...));
-                matcher_stream.send(ORDER { order_id, ... }).await;
+                risk.send(ORDER { order_id, ... }).await;
             }
-
             DISCONNECT => break,
         }
     }
@@ -543,36 +525,29 @@ async fn handle_user_session(user_id: u32, stream: UserStream) {
 **Concurrency:**
 - Thousands of tasks (one per user session)
 - Tokio scheduler multiplexes tasks on thread pool
-- No OS threads per user (too expensive)
-- No locks (each task owns its data)
+- Single multiplexed gRPC stream to Risk
 
 ### Matching Engine: Single-Threaded Event Loop
 
-**Main loop:**
+**Main loop (single stream from Risk):**
 ```rust
 fn main() {
     let mut orderbook = Orderbook::new();
-    let mut streams = HashMap::new();  // user_id -> gRPC stream
+    let mut stream = connect_to_risk();
 
     loop {
-        // Poll all incoming streams (non-blocking)
-        for (user_id, stream) in &mut streams {
-            if let Some(msg) = stream.try_recv() {
-                match msg {
-                    ORDER { order_id, side, price, qty } => {
-                        // Process order (synchronous, O(1))
-                        let fills = orderbook.process_order(...);
-
-                        // Send fills back
-                        for fill in fills {
-                            stream.send(FILL { ... });
-                        }
-                        stream.send(ORDER_DONE { ... });
+        if let Some(msg) = stream.try_recv() {
+            match msg {
+                ORDER { order_id, side, price, qty } => {
+                    let fills = orderbook.process_order(...);
+                    for fill in fills {
+                        stream.send(FILL { ... });
                     }
-                    CANCEL { order_id } => {
-                        orderbook.cancel_order(order_id);
-                        stream.send(ORDER_CANCELED { ... });
-                    }
+                    stream.send(ORDER_DONE { ... });
+                }
+                CANCEL { order_id } => {
+                    orderbook.cancel_order(order_id);
+                    stream.send(ORDER_CANCELED { ... });
                 }
             }
         }
@@ -585,10 +560,6 @@ fn main() {
 - Cache-friendly (no inter-thread communication, no MESI invalidation)
 - O(1) operations (reference ORDERBOOK.md)
 - Dedicated core (pinned, no context switches)
-
-**Reference:**
-- ORDERBOOK.md: Single-threaded matching design
-- SMRB.md: SPSC queue for single-producer, single-consumer
 
 ## Performance Considerations
 

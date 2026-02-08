@@ -2,16 +2,17 @@
 
 ## Overview
 
-RSX uses gRPC bidirectional streaming for Gateway ↔ Matching Engine
+RSX uses gRPC bidirectional streaming for Gateway ↔ Risk ↔ Matching Engine
 communication (v1). Messages are defined in Protocol Buffers (protobuf) with
-fixed-point integer representation for prices and quantities.
+fixed-point integer representation for prices and quantities. Streams are
+multiplexed by user_id and symbol (no per-user streams).
+
+**Operational note:** HTTP/2 flow control and keepalive policies can affect
+long-lived streams. Configure consistently across gateway, risk, and matcher.
 
 **Future evolution:**
 - v1: gRPC + protobuf (balance of ergonomics and performance)
-- v2: Raw structs over SMRB (same machine, 10x faster)
-- v3: Raw structs over TCP/TLS (cross-machine, zerocopy)
-
-See blog/picking-a-wire-format.md for serialization trade-offs.
+- No v2 planned (see FUTURE.md)
 
 ## Order States
 
@@ -179,7 +180,8 @@ enum FailureReason {
     SYMBOL_NOT_FOUND = 2;        // Symbol doesn't exist
     DUPLICATE_ORDER_ID = 3;      // Order ID already exists (idempotency check)
     INSUFFICIENT_MARGIN = 4;     // Risk check failed (should be Gateway's job, but double-check)
-    INTERNAL_ERROR = 5;          // Matching engine error (should not happen)
+    OVERLOADED = 5;              // Ingress backpressure at gateway
+    INTERNAL_ERROR = 6;          // Matching engine error (should not happen)
 }
 ```
 
@@ -218,7 +220,11 @@ Gateway:
   2. Convert: price = 50000.00 / 0.01 = 5000000 (tick units)
               qty = 100 / 0.001 = 100000 (lot units)
   3. Send: NewOrder { order_id, user_id=42, symbol=BTC_PERP, side=BUY,
-                      price=5000000, qty=100000, timestamp_ns=... }
+                      price=5000000, qty=100000, timestamp_ns=... } to Risk
+
+Risk:
+  1. Validate margin and position limits
+  2. Forward NewOrder to Matching Engine
 
 Matching Engine:
   1. Validate tick size: 5000000 % tick_size(5000000) == 0 ✓
@@ -251,6 +257,10 @@ User: "Buy 100 BTC-PERP @ $48,000" (limit below market)
 
 Gateway:
   1. Send: NewOrder { ..., price=4800000, qty=100000, ... }
+
+Risk:
+  1. Validate margin and position limits
+  2. Forward to Matching Engine
 
 Matching Engine:
   1. Validate ✓
@@ -298,6 +308,10 @@ Better Gateway validation:
       return ORDER_FAILED(INVALID_TICK_SIZE);
   }
 
+Risk:
+  1. Validate margin and position limits
+  2. Forward to Matching Engine
+
 Matching Engine (if Gateway missed validation):
   1. Validate: 5000000 % tick_size(5000000) != 0 ✗
   2. Send: OrderFailed { order_id, reason=INVALID_TICK_SIZE,
@@ -317,6 +331,9 @@ User: "Cancel order X"
 
 Gateway:
   1. Send: CancelOrder { order_id=X, user_id=42 }
+
+Risk:
+  1. Forward cancel to Matching Engine
 
 Matching Engine:
   1. Lookup order X in FxHashMap
