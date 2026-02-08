@@ -78,7 +78,7 @@ message L2Level {
 
 - Public endpoint (no auth).
 - Server-stream only; clients subscribe with `symbol_id` list.
-- Backpressure: if client falls behind, server may drop deltas and resend a fresh snapshot.
+- Backpressure: if client falls behind, server may **drop deltas**. Client must re-subscribe with `send_snapshot = true`.
 - `seq` is the matching engine event height. Monotonic per symbol.
   Gap in seq -> client re-subscribes with `send_snapshot = true`.
 - Server sends L2Snapshot on initial subscription before any deltas.

@@ -854,7 +854,7 @@ struct UserState {
 }
 
 /// Assign active_user_id on first order for a user on this
-/// symbol. Gateway provides the mapping; ME uses it as Vec
+/// symbol. Risk engine provides the mapping; ME uses it as Vec
 /// index.
 fn get_or_assign_user(book: &mut Orderbook, user_id: u32)
     -> u16 {
