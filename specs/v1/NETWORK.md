@@ -81,7 +81,7 @@ focuses on network topology and communication patterns.
 - Single-threaded matching (cache-friendly, O(1) operations)
 - Generates FILL events with balance/risk impact
 - Stateless regarding users (no position tracking, no margin checks)
-- Deduplicates orders via UUIDv7 tracking (reference RPC.md, PROTOCOL.md)
+- Deduplicates orders via UUIDv7 tracking (reference RPC.md, GRPC.md)
 
 **Architecture:**
 - Monolithic per symbol (NOT distributed across machines)
@@ -163,14 +163,14 @@ Gateway3 ────┘
 - gRPC streaming (bidirectional)
 - Authentication via gRPC metadata (JWT)
 - Native clients (desktop, mobile, trading bots)
-- Protocol defined in PROTOCOL.md
+- Protocol defined in GRPC.md
 
 ### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
 - gRPC bidirectional streaming (v1, inter-process/network)
 - SPSC rings are used for *in-process* tile communication
-- WAL stores protobuf payloads only (no gRPC envelope)
+- WAL stores fixed-record payloads (no gRPC envelope)
 - One multiplexed stream Gateway ↔ Risk
 - One multiplexed stream Risk ↔ Matching Engine (per matcher)
 
@@ -227,7 +227,7 @@ User ──ORDER──→ Gateway
 ```
 
 See RPC.md for async request handling details.
-See PROTOCOL.md for message format definitions.
+See GRPC.md for message format definitions.
 
 ### Fill Notification Flow
 
@@ -426,7 +426,7 @@ Risk checks happen BOTH:
 **Risk ↔ Matching Engine partition:**
 - Risk cannot send orders to matcher
 - Risk returns error to gateway
-- Mitigation: UUIDv7 deduplication in matching engine (reference PROTOCOL.md)
+- Mitigation: UUIDv7 deduplication in matching engine (reference GRPC.md)
 
 ### MARKETDATA (Public Market Data)
 
@@ -451,5 +451,5 @@ See [MARKETDATA.md](MARKETDATA.md) for full specification.
 - **SMRB.md**: Low-latency IPC options, SPSC ring buffer design
 - **UDS.md**: UDS vs shared memory comparison, latency numbers
 - **RPC.md**: Async request handling, pending order tracking
-- **PROTOCOL.md**: Message format, gRPC service definitions
+- **GRPC.md**: Message format, gRPC service definitions
 - **WEBPROTO.md**: WebSocket overlay and compact wire protocol

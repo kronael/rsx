@@ -119,6 +119,11 @@ Internal (UDS)       ──Raw structs───→ Matching Engine
 - **Less portable:** hardware-specific, NIC compatibility
 - **Overkill for v1:** gRPC is fast enough (<100us)
 
+## WAL Format
+
+**Implemented in v1:** fixed-record WAL with `#[repr(C, align(64))]` structs,
+explicit little-endian fields, and versioned headers. No v2 work needed.
+
 **When to consider:**
 - Sub-10us latency requirement (HFT, market making)
 - Dedicated hardware (FPGA, SmartNIC)

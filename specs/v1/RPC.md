@@ -69,7 +69,7 @@ User ──ORDER──→ Gateway
 **Deduplication:**
 - Matching engine uses order_id as idempotency key
 - Duplicate order_id → reject (already processed)
-- See PROTOCOL.md section 7 for deduplication strategy
+- See GRPC.md section 7 for deduplication strategy
 
 ## Pending Request Management
 
@@ -168,7 +168,7 @@ struct MatchingEngine {
 - Periodic scan (every 10s): pop old entries from front of pruning_queue
 - Remove from both pruning_queue AND FxHashMap after 5min
 
-See PROTOCOL.md section 7 for full deduplication design.
+See GRPC.md section 7 for full deduplication design.
 
 ## Request Lifecycle
 
@@ -621,7 +621,7 @@ fn main() {
 
 ## Cross-References
 
-- **PROTOCOL.md**: Message definitions (ORDER, FILL, ORDER_DONE, ORDER_FAILED)
+- **GRPC.md**: Message definitions (ORDER, FILL, ORDER_DONE, ORDER_FAILED)
 - **ORDERBOOK.md**: Single-threaded matching model, O(1) operations
 - **NETWORK.md**: Component topology, stream lifecycle
 - **SMRB.md**: Low-latency IPC, SPSC queue design
