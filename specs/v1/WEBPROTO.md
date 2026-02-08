@@ -18,6 +18,11 @@ Rules:
 - Value is a JSON array with fixed positional fields for that type.
 - No permessage-deflate or other compression.
 
+ACK semantics:
+- There is no "order accepted" ACK.
+- The first response is an order update/fill from the matching engine path.
+- Orders may become stale; clients should cancel and forget if no update arrives within their timeout.
+
 ## Types
 
 ## Enums

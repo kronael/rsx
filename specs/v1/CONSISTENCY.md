@@ -61,7 +61,7 @@ L2 depth, BBO, and trade derivation from these events.
 
 - Ingress backpressure is primary: gateway rejects new orders when buffer is full.
 - Internal rings should be kept small to avoid hiding latency.
-- Ring full = matching engine stalls (bare busy-spin, no `spin_loop()`)
+- Ring full = matching engine **must stall** (bare busy-spin, no `spin_loop()`).
 - Per-consumer rings — slow market data doesn't stall risk
 
 ## 4. Positions & Risk

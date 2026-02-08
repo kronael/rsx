@@ -40,13 +40,13 @@ Producer (matching engine)
 
 - Append-only ring buffer with a hard cap.
 - Append is O(1) and the only operation on the hot path.
-- If the buffer is full, the producer **stalls** (or rejects new work, per component policy).
+- If the buffer is full, the producer **must stall**. This is required for correctness.
 
 ### WAL Flush
 
 - Flush to durable storage every **10ms** or on size threshold.
 - Each flush is a batch and **must fsync** to make the 10ms bound real.
-- If flush falls behind, the producer stalls to preserve the bound.
+- If flush falls behind, the producer **must stall** to preserve the bound.
 
 ### Offload Worker (Durable Commit)
 
@@ -58,7 +58,7 @@ Producer (matching engine)
 ### Replica Sync (Risk Engine)
 
 - A hot replica of the risk engine consumes the WAL stream.
-- Replica sync has a looser bound (e.g., **100ms**). If exceeded, the system stalls.
+- Replica sync has a looser bound (e.g., **100ms**). If exceeded, the system **must stall**.
 - This preserves a bounded failover window without unlimited drift.
 
 ## Orderbook Usage
