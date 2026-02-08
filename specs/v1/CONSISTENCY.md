@@ -5,6 +5,9 @@ directly to consumers via SPSC rings. Matching engine persists its state via
 WAL + online snapshot, so orderbook state is recoverable after crash. Positions
 are persisted at the risk engine (see [WAL.md](WAL.md)).
 
+**System guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for formal
+specification of consistency model, durability bounds, and recovery guarantees.
+
 ---
 
 ## 1. Fan-Out: Direct SPSC from Matching Engine
@@ -79,6 +82,13 @@ L2 depth, BBO, and trade derivation from these events.
 | Matching engine | Book lost | Restores from snapshot + WAL replay. |
 | Risk engine | Positions persisted | Restarts from persisted state. See PERSISTENCE.md. |
 | Gateway | User sessions drop | Users reconnect and re-submit. |
+
+**Detailed crash scenarios:** See [CRASH-SCENARIOS.md](../../CRASH-SCENARIOS.md)
+for comprehensive analysis of all failure modes including dual component
+crashes, network partitions, and data loss bounds.
+
+**Recovery procedures:** See [RECOVERY-RUNBOOK.md](../../RECOVERY-RUNBOOK.md)
+for step-by-step operational recovery procedures.
 
 ## 6. Deferred
 

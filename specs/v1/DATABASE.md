@@ -46,6 +46,10 @@ You can get "fast path" latency (comparable to an `rtrb` write) by making the
 in short batches. This does **not** make Postgres faster; it shifts durability
 to the application and bounds loss to the buffer window.
 
+**Guaranteed bounds:** See [GUARANTEES.md](../../GUARANTEES.md) for formal
+specification of write-behind lag bounds (10ms target, 100ms stall threshold)
+and recovery guarantees.
+
 ### Architecture (Write-Behind Buffer)
 
 ```
@@ -79,6 +83,11 @@ If the background writer falls behind (e.g., Postgres slow), you must either:
 - **Block**: slow the risk engine input.
 
 Otherwise the buffer grows and your "10ms bound" is no longer true.
+
+**Enforcement:** Risk engine stalls fill processing when Postgres write-behind
+lag exceeds 100ms. This prevents unbounded memory growth and enforces the data
+loss bound. See [GUARANTEES.md](../../GUARANTEES.md) §6 for backpressure
+guarantees.
 
 ## Are You Rolling Your Own Database?
 
