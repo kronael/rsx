@@ -403,6 +403,36 @@ fn migrate_batch(&mut self, batch_size: u32) {
 }
 ```
 
+---
+
+## 2.8 Durability: WAL + Online Snapshot
+
+The matching engine persists orderbook state using an append-only WAL plus
+online snapshots. Recovery restores the latest snapshot and replays the WAL.
+
+### WAL
+
+- Append every order, cancel, and fill to the WAL.
+- WAL is per-symbol, local disk, append-only.
+- WAL entries are also streamed to a hot spare matching engine.
+
+### Online Snapshot (Shared Algorithm)
+
+Snapshots reuse the same traversal logic as migration to keep code minimal.
+The snapshot walk iterates price levels and order lists exactly as migration
+does, then serializes the live orderbook state.
+
+Key rules:
+- Never migrate during a snapshot.
+- If migration is active, snapshot waits.
+- Snapshot runs incrementally during idle cycles or on access.
+
+### Recovery
+
+1. Load latest snapshot.
+2. Replay WAL from snapshot offset.
+3. Resume matching.
+
 ### Tail Event Efficiency
 
 **50% crash:** mid drops fast, trigger fires, migration starts.

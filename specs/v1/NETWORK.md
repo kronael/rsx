@@ -2,30 +2,29 @@
 
 ## Overview
 
-RSX uses a two-tier architecture separating user-scoped concerns (gateway,
-auth, risk) from symbol-scoped execution (matching engine). Both tiers run as
-monolithic processes — no distributed consensus, no Raft, no cross-process
+RSX uses a three-stage flow that separates ingress adaptation (gateway),
+user-scoped risk, and symbol-scoped execution (matching engine). Each stage
+is a monolithic process — no distributed consensus, no Raft, no cross-process
 coordination within a tier.
 
 ```
-External                Internal               Execution
-─────────────────────   ────────────────────   ──────────────────
-Web Users (JSON/WS)
+External                Internal                        Execution
+─────────────────────   ──────────────────────────────  ──────────────────
+Web Users (WS)
                   ↘
-Native Clients     ──→  Gateway/Risk Engine  ──→  Matching Engine
-(gRPC web)             (monolithic process)      (one per symbol)
-                  ↗                               (monolithic)
+Native Clients     ──→  Gateway (WS overlay)  ──→  Risk Engine  ──→  Matching Engine
+(gRPC)                 (monolithic process)        (monolithic)     (one per symbol)
+                  ↗
 Mobile Apps (gRPC)
 ```
 
 ## Why This Topology
 
-**Gateway + Risk Engine merged:**
-- Both user-scoped (operate on user positions, balances, sessions)
-- Both monolithic (no sharding within a component)
-- Merging eliminates one network hop (auth → risk → matching becomes auth+risk → matching)
-- Shared context: user balances, positions, margin calculations
-- Simpler: fewer moving parts, fewer failure modes
+**Gateway before Risk Engine:**
+- Gateway adapts web traffic to a compact WebSocket protocol
+- Risk engine remains user-scoped (positions, balances, margin)
+- Separation keeps gateway lightweight and latency-focused
+- Risk engine stays isolated from external traffic and parsing
 
 **Matching Engine separate:**
 - Symbol-scoped (one process per symbol or symbol group)
@@ -36,24 +35,35 @@ Mobile Apps (gRPC)
 
 ## Component Architecture
 
-### Gateway/Risk Engine (Merged)
+### Gateway (Ingress Overlay)
 
 **Responsibilities:**
-- WebSocket JSON API for web clients (design only, not v1 implementation)
-- gRPC web passthrough for native clients (v1 focus)
+- WebSocket overlay for web clients (see WEBPROTO.md)
+- gRPC passthrough for native clients
 - User authentication and session management
 - Rate limiting per user/IP
+- Ingress backpressure and overload rejection (cap 10k orders)
+
+**Architecture:**
+- Monolithic process
+- Async runtime (Tokio) for concurrent client sessions
+- One WebSocket connection per client app
+- Single multiplexed gRPC stream to Risk Engine
+- Horizontal scaling: shard by user ID hash (load balancer routes by user_id)
+- No cross-instance coordination (each instance owns its users)
+
+### Risk Engine
+
+**Responsibilities:**
 - Position tracking (long/short qty per symbol)
 - Margin calculation (initial margin, maintenance margin)
 - Risk checks BEFORE sending orders to matching engine
 - Fill ingestion and position update after matching
 
 **Architecture:**
-- Monolithic process (can handle thousands of users, but single process)
-- Async runtime (Tokio) for concurrent user sessions
-- One task per user WebSocket/gRPC stream
-- Horizontal scaling: shard by user ID hash (load balancer routes by user_id)
-- No cross-instance coordination (each instance owns its users)
+- Monolithic process
+- Single multiplexed gRPC stream from Gateway
+- Single multiplexed gRPC stream to each Matching Engine
 
 **Design Note:**
 Risk engine internals (margin models, position tracking, liquidation logic)
@@ -74,7 +84,7 @@ focuses on network topology and communication patterns.
 - Monolithic per symbol (NOT distributed across machines)
 - Single-threaded event loop (no locks, no mutexes)
 - Pre-allocated orderbook array (reference ORDERBOOK.md section 7)
-- Event emission to Gateway/Risk via bidirectional gRPC stream
+- Event emission to Risk via bidirectional gRPC stream
 
 **Scaling:**
 - Horizontal by symbol: one process per symbol or symbol group
@@ -84,7 +94,7 @@ focuses on network topology and communication patterns.
 
 ## Scaling Strategy
 
-### Gateway/Risk: User Sharding
+### Gateway: User Sharding
 
 ```
                    Load Balancer
@@ -104,9 +114,9 @@ focuses on network topology and communication patterns.
 - Failures affect only that gateway's users
 
 **Scaling constraints:**
-- Each gateway must connect to ALL active matching engines
-- User can trade any symbol, so all gateways talk to all matchers
-- Gateway-to-matcher streams are long-lived (one per active user per symbol)
+- Each gateway connects to its Risk Engine
+- Risk Engine connects to all active matching engines
+- Streams are long-lived and multiplexed (no per-user streams)
 
 ### Matching Engine: Symbol Isolation
 
@@ -138,80 +148,77 @@ Gateway3 ────┘
 
 ### External → Gateway (Internet-Facing)
 
-**WebSocket JSON API (design only, not v1):**
+**WebSocket API (v1):**
 - TLS encrypted
-- JSON message framing
+- Compact JSON frames (single-letter types, positional arrays)
 - Authentication via JWT in headers
 - Session management via WebSocket connection ID
-- Not implemented in v1 (future work)
+- Protocol defined in WEBPROTO.md
 
-**gRPC Web (v1 implementation):**
+**gRPC (v1 implementation):**
 - TLS encrypted
 - gRPC streaming (bidirectional)
 - Authentication via gRPC metadata (JWT)
 - Native clients (desktop, mobile, trading bots)
 - Protocol defined in PROTOCOL.md
 
-### Internal: Gateway ↔ Matching Engine
+### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
 - gRPC bidirectional streaming (v1)
-- One stream per user session per symbol
-- Example: User trading BTC-PERP and ETH-PERP = 2 streams
+- One multiplexed stream Gateway ↔ Risk
+- One multiplexed stream Risk ↔ Matching Engine (per matcher)
 
 **Connection lifecycle:**
 1. User opens WebSocket/gRPC connection to Gateway
 2. User sends order for BTC-PERP
-3. Gateway opens bidirectional stream to BTC-PERP matching engine (if not already open)
-4. Gateway validates risk, sends ORDER message to matching engine
-5. Matching engine processes, sends FILL messages back
-6. Gateway updates user positions, forwards fills to user
+3. Gateway forwards order over its single stream to Risk
+4. Risk validates and forwards order over its single stream to Matching Engine
+5. Matching engine processes, sends FILL messages back to Risk
+6. Risk updates user positions, forwards fills to Gateway
+7. Gateway forwards fills to user
 
 **Stream semantics:**
-- Long-lived (duration of user session)
-- Bidirectional: Gateway → Matching (ORDER, CANCEL), Matching → Gateway (FILL, ORDER_DONE)
-- One stream per (user_id, symbol) pair
-- Closed when user disconnects or stops trading that symbol
+- Long-lived (duration of process uptime)
+- Bidirectional: Gateway → Risk → Matching (ORDER, CANCEL), reverse for FILL, ORDER_DONE
+- Multiplexed by user_id and symbol (no per-user streams)
+- Closed only on process shutdown or reconnect
 
-**Transport options (evolution path):**
-```
-v1: gRPC over TCP/UDS
-  ↓ (replace serialization)
-v2: Raw structs over SMRB (same machine)
-  ↓ (add TLS for cross-machine)
-v3: Raw structs over TCP/TLS (cross-machine)
-```
-
-See SMRB.md, UDS.md, and blog/picking-a-wire-format.md for trade-offs.
+**Transport options:**
+- v1: gRPC over TCP/UDS
+- No v2 planned (see FUTURE.md)
 
 ## Data Flow
 
 ### Order Submission Flow
 
 ```
-User ──ORDER──→ Gateway/Risk
+User ──ORDER──→ Gateway
                    │
                    ├─ Authenticate
                    ├─ Rate limit check
-                   ├─ Margin check (risk)
+                   ├─ Ingress backpressure (fail fast)
                    │
                    ├─ Assign UUIDv7 order ID
                    ├─ Add to pending VecDeque
                    │
-                   └──ORDER──→ Matching Engine
+                   └──ORDER──→ Risk Engine
+                                  │
+                                  ├─ Margin check (risk)
+                                  └──ORDER──→ Matching Engine
                                   │
                                   ├─ Validate tick/lot size
                                   ├─ Match against orderbook
                                   ├─ Generate FILL events
                                   │
-                                  ├──FILL──→ Gateway (0+ times)
-                                  └──ORDER_DONE/FAILED──→ Gateway
+                                  ├──FILL──→ Risk (0+ times)
+                                  └──ORDER_DONE/FAILED──→ Risk
                                      │
                                      ├─ Pop from pending VecDeque
                                      ├─ Update user positions
                                      ├─ Recalculate margin
                                      │
-                                     └──FILL/DONE──→ User
+                                     └──FILL/DONE──→ Gateway → User
 ```
 
 See RPC.md for async request handling details.
@@ -237,7 +244,7 @@ Matching Engine
 ### Risk Update Flow
 
 ```
-Gateway receives FILL
+Risk receives FILL
   ↓
 Update position (long_qty, short_qty)
   ↓
@@ -257,8 +264,8 @@ Risk checks happen BOTH:
 ### External (Internet-Facing)
 
 **Protocols:**
-- JSON over WebSocket (web clients, design only)
-- gRPC web (native clients, v1 focus)
+- WebSocket (compact JSON, WEBPROTO.md)
+- gRPC (native clients)
 
 **Security:**
 - TLS 1.3 encryption
@@ -278,13 +285,11 @@ Risk checks happen BOTH:
 - Lowest latency (~50-100us for gRPC, reference UDS.md)
 
 **Cross-machine (same private VLAN):**
-- gRPC over TCP (no TLS in v1)
-- Private network, trusted environment
-- Optional: IPsec at network layer (no per-message cost)
+- gRPC over TCP
+- IPsec at the network layer (no per-message cost)
 
 **Cross-machine (untrusted network):**
-- gRPC over TCP + TLS
-- Performance cost: ~50-100us extra per message (reference SMRB.md)
+- Not supported in v1 (internal IPsec required)
 
 ## Performance Characteristics
 
@@ -299,7 +304,7 @@ Risk checks happen BOTH:
 - Network latency (internet → data center)
 - TLS encryption/decryption (mitigated by connection reuse)
 
-### Gateway → Matching Engine
+### Gateway → Risk → Matching Engine
 
 **Latency (same machine, gRPC over UDS):**
 - ~50-100us per message (reference UDS.md)
@@ -309,10 +314,8 @@ Risk checks happen BOTH:
 - ~100-300us per message (reference SMRB.md)
 - Includes: gRPC frame, protobuf, TCP loopback, network switch
 
-**Future optimization (raw structs over SMRB, same machine):**
-- ~50-200ns per message (reference SMRB.md, blog/picking-a-wire-format.md)
-- Removes: gRPC overhead, protobuf serialization, kernel copy
-- Adds: manual framing, no schema evolution, same-machine only
+**Future optimization:**
+- No v2 planned (see FUTURE.md)
 
 ## Deployment Topologies
 
@@ -322,9 +325,9 @@ Risk checks happen BOTH:
 ┌─────────────────────────────────────┐
 │         Machine 1                    │
 │                                      │
-│  Gateway/Risk ──UDS──→ Matching BTC  │
-│       │                              │
-│       └─────────UDS──→ Matching ETH  │
+│  Gateway ──UDS──→ Risk ──UDS──→ Matching BTC  │
+│                      │                        │
+│                      └─────────UDS──→ Matching ETH  │
 └─────────────────────────────────────┘
 ```
 
@@ -342,12 +345,12 @@ Risk checks happen BOTH:
 ┌──────────────────┐       ┌──────────────────┐
 │   Machine 1       │       │   Machine 2       │
 │                   │       │                   │
-│  Gateway1 ────────┼──TCP──┼──→ Matching BTC   │
-│  Gateway2 ────────┼──TCP──┼──→ Matching ETH   │
+│  Gateway1 ────────┼──TCP──┼──→ Risk ──TCP──→ Matching BTC   │
+│  Gateway2 ────────┼──TCP──┼──→ Risk ──TCP──→ Matching ETH   │
 └──────────────────┘       └──────────────────┘
        │                            │
        └──────────TCP───────────────┘
-          (all gateways talk to all matchers)
+          (all gateways talk to risk; risk talks to all matchers)
 ```
 
 **Benefits:**
@@ -357,7 +360,7 @@ Risk checks happen BOTH:
 
 **Complexity:**
 - Network configuration (private VLAN, routing)
-- Service discovery (how gateways find matching engines)
+- Service discovery (how risk finds matching engines)
 - Failure handling (stream reconnection, order replay)
 
 ## Failure Modes
@@ -379,30 +382,45 @@ Risk checks happen BOTH:
 - Simpler than distributed transaction log
 - Acceptable for v1 (users can retry)
 
+### Risk Engine Failure
+
+**Impact:**
+- Gateways cannot submit orders
+- Matching engines continue running but receive no new orders
+- Users see errors and must retry after recovery
+
+**Recovery:**
+- Restart risk engine process
+- Gateways reconnect the single stream
+- Order flow resumes
+
 ### Matching Engine Failure
 
 **Impact:**
 - Symbol becomes untradable (e.g., BTC-PERP down)
-- All gateways lose streams to that matching engine
+- Risk loses stream to that matching engine
 - Other symbols unaffected (ETH-PERP still works)
 
 **Recovery:**
 - Restart matching engine process
-- Rebuild orderbook from persistence layer (order log)
-- Gateways reconnect streams
+- Rebuild orderbook from snapshot + WAL
+- Risk reconnects stream
 - Users can submit new orders
 
 **Orderbook persistence:**
-- Append-only order log (every order, cancel, fill)
-- Replay log on startup (rebuild orderbook state)
-- Snapshot periodically (reduce replay time)
+- Append-only WAL (every order, cancel, fill)
+- Online snapshot periodically (reduce replay time)
+- Replay WAL after snapshot on startup
 
 ### Network Partition
 
-**Gateway ↔ Matching Engine partition:**
-- Gateway cannot send orders to matching engine
-- Gateway queues orders OR returns error to user (config-dependent)
-- Risk: user sees order rejected, but it was already sent (duplicate after reconnect)
+**Gateway ↔ Risk partition:**
+- Gateway cannot send orders to risk
+- Gateway rejects orders at ingress when buffer is full
+
+**Risk ↔ Matching Engine partition:**
+- Risk cannot send orders to matcher
+- Risk returns error to gateway
 - Mitigation: UUIDv7 deduplication in matching engine (reference PROTOCOL.md)
 
 ## Cross-References
@@ -412,4 +430,4 @@ Risk checks happen BOTH:
 - **UDS.md**: UDS vs shared memory comparison, latency numbers
 - **RPC.md**: Async request handling, pending order tracking
 - **PROTOCOL.md**: Message format, gRPC service definitions
-- **blog/picking-a-wire-format.md**: Why gRPC now, raw structs later
+- **WEBPROTO.md**: WebSocket overlay and compact wire protocol

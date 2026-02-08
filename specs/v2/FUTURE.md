@@ -1,8 +1,8 @@
 # Future Optimizations & Improvements
 
-This document collects future optimization ideas, protocol improvements, and
-design evolutions that are NOT part of v1 implementation. These are noted for
-future consideration but explicitly deferred.
+This document collects optimization ideas and protocol improvements that are
+NOT part of v1 implementation. These are archival notes only. There is no v2
+planned at this time.
 
 ## Transport Layer
 
@@ -10,7 +10,7 @@ future consideration but explicitly deferred.
 
 **Current (v1):** gRPC + protobuf over UDS (~50-100us)
 
-**Future (v2):**
+**Archived (not planned):**
 - Raw `#[repr(C)]` structs over SPSC ring buffer (reference SMRB.md)
 - Latency: ~50-200ns (500x faster than gRPC)
 - Removes: gRPC framing, protobuf serialization, kernel copy
@@ -55,7 +55,7 @@ let msg: &OrderMessage = bytemuck::from_bytes(bytes);
 
 **Current (v1):** gRPC + protobuf for all APIs
 
-**Future:**
+**Archived (not planned):**
 - Use FlatBuffers for external user-facing API (WebSocket, REST)
 - Keep gRPC + protobuf for internal Gateway ↔ Matching Engine
 - Or use raw structs for internal (if same machine)
@@ -85,7 +85,7 @@ Internal (UDS)       ──Raw structs───→ Matching Engine
 
 **Current (v1):** gRPC over TCP, no TLS (private VLAN, trusted network)
 
-**Future (if untrusted network):**
+**Archived (not planned):**
 - Add TLS 1.3 encryption for Gateway ↔ Matching Engine
 - Performance cost: ~50-100us extra per message (reference SMRB.md)
 - Alternative: IPsec at network layer (no per-message cost)
@@ -108,7 +108,7 @@ Internal (UDS)       ──Raw structs───→ Matching Engine
 
 **Current (v1):** Kernel networking (TCP, gRPC, standard socket API)
 
-**Future (extreme optimization):**
+**Archived (not planned):**
 - Userspace networking: bypass kernel, direct NIC access
 - Technologies: DPDK, io_uring, AF_XDP
 - Latency: ~1-5us (kernel bypass, zero-copy)
@@ -134,7 +134,7 @@ Internal (UDS)       ──Raw structs───→ Matching Engine
 
 **Current (v1):** Protobuf serialization (~50-200ns encode, ~20-100ns decode)
 
-**Future (v2):**
+**Archived (not planned):**
 - Raw `#[repr(C)]` structs with `zerocopy` crate
 - Zero serialization (direct memory copy)
 - Requires: same binary version, same endianness
@@ -188,7 +188,7 @@ Matching Engine ──FILL(qty=10)──→ Gateway
                 ──ORDER_DONE────→ Gateway
 ```
 
-**Future (v2):** Batch fills in single message
+**Archived (not planned):** Batch fills in single message
 ```
 Matching Engine ──ORDER_RESULT(fills=[10,20,30], status=FILLED)──→ Gateway
 ```

@@ -1,5 +1,7 @@
 # Orderbook V2 Considerations
 
+**Status:** Not planned. This document is archival only.
+
 Future extensions that are NOT in v1. Kept separate to avoid polluting the v1 design.
 
 ---
