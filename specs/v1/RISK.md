@@ -41,6 +41,14 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 - Filter: `user_in_shard(user_id)` via range or bitmask check
 - Dedup: skip if `seq_no <= tips[symbol_id]`
 - Apply fill to both taker and maker positions (if in shard)
+- Fee calculation on each fill:
+  - `taker_fee = qty * price * taker_fee_bps / 10_000`
+  - `maker_fee = qty * price * maker_fee_bps / 10_000`
+  - Deduct: `taker.collateral -= taker_fee`
+  - Deduct: `maker.collateral -= maker_fee` (negative fee =
+    rebate credited)
+  - Fee rates from symbol config (METADATA.md)
+  - Persist fee with fill record
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)
 - Push to replica ring (tip sync)
@@ -176,6 +184,10 @@ process_order(order):
     margin_needed = portfolio_margin.check_order(
         account, user_positions, order, mark_prices)
     if err: reject to gateway
+    // Reserve worst-case taker fee
+    order_notional = order.price * order.qty
+    fee_reserve = order_notional * taker_fee_bps / 10_000
+    margin_needed += fee_reserve
     account.frozen_margin += margin_needed
     route order to matching engine for symbol_id
 ```
@@ -239,6 +251,8 @@ CREATE TABLE fills (
     side          SMALLINT NOT NULL,
     price         BIGINT NOT NULL,
     qty           BIGINT NOT NULL,
+    taker_fee     BIGINT NOT NULL DEFAULT 0,
+    maker_fee     BIGINT NOT NULL DEFAULT 0,
     seq_no        BIGINT NOT NULL,
     timestamp_ns  BIGINT NOT NULL,
     inserted_at   TIMESTAMPTZ NOT NULL DEFAULT now()

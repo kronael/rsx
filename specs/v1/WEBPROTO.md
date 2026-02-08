@@ -98,7 +98,7 @@ Fields:
 ### F: Fill
 
 ```
-{F:[taker_oid, maker_oid, px, qty, ts]}
+{F:[taker_oid, maker_oid, px, qty, ts, fee]}
 ```
 
 Fields:
@@ -107,6 +107,8 @@ Fields:
 - `px`: price in tick units (int64)
 - `qty`: quantity in lot units (int64)
 - `ts`: nanosecond timestamp
+- `fee`: fee charged to this user (signed int64, negative =
+  rebate)
 
 ### E: Error
 
