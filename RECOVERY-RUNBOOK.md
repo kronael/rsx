@@ -4,13 +4,52 @@ Operational procedures for detecting and recovering from component failures in
 the RSX perpetuals exchange. This runbook enables 24/7 operations with step-by-
 step instructions for each failure scenario.
 
-**Prerequisites:** Familiarity with [GUARANTEES.md](GUARANTEES.md) for data
-loss bounds and consistency guarantees.
+**Prerequisites:**
+- Familiarity with [GUARANTEES.md](GUARANTEES.md) for data loss bounds and consistency guarantees
+- Database credentials configured (set environment variables before operations):
+
+```bash
+export PGHOST=postgres-master
+export PGUSER=rsx
+export PGDATABASE=rsx
+export PGPASSWORD=$(cat /srv/secrets/postgres_password)
+# With these set, psql commands use: psql -c "QUERY"
+# For clarity, this runbook shows full flags: psql -h $PGHOST -U $PGUSER -d $PGDATABASE -c "QUERY"
+```
 
 **Severity Classification:**
 - **P0:** Data loss risk (seq gap, position mismatch, no main)
 - **P1:** Trading halted or degraded (component down, backpressure)
 - **P2:** Shadow component down (replica offline, mktdata down)
+
+**Emergency Quick Reference:**
+
+```bash
+# Check all component health
+curl http://me-btcusd:9100/health
+curl http://risk-shard0:9200/health
+curl http://gateway:8080/health
+pg_isready -h postgres-master
+
+# Check advisory locks (expect 1 per shard)
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT objid, COUNT(*) FROM pg_locks WHERE locktype='advisory' GROUP BY objid;"
+
+# Quick position reconciliation (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+
+# Restart components (safe operations, idempotent)
+systemctl restart rsx-matching@BTCUSD
+systemctl restart rsx-risk@shard0
+systemctl restart rsx-gateway
+```
+
+---
+
+**Cross-References:**
+- [GUARANTEES.md](GUARANTEES.md) - Data loss bounds and recovery time objectives
+- [TESTING.md](specs/v1/TESTING.md) - Testing procedures referenced in verification steps
+- Component-specific test specs in specs/v1/TESTING-*.md
 
 ---
 
@@ -87,12 +126,12 @@ systemctl status rsx-matching-replica@BTCUSD
 
 # 2. If replica healthy, promote it (fastest path)
 #    Replica has same WAL, can serve immediately
-#    Update DNS or load balancer to point to replica
-#    (Actual command depends on infrastructure)
-# For now, assume manual process:
-echo "Promote replica to master:"
-echo "  - Update Consul KV: matching/BTCUSD/master = replica_addr"
-echo "  - Restart Risk to reconnect to new master"
+#    Implementation: Update service discovery to point Risk to replica
+#    Example for Consul:
+consul kv put matching/BTCUSD/master "replica-host:9100"
+#    Alternative: Update haproxy backend or DNS CNAME
+#    Then restart Risk to reconnect:
+systemctl restart rsx-risk@shard0
 
 # 3. Restart crashed master (becomes new replica)
 systemctl restart rsx-matching@BTCUSD
@@ -101,27 +140,28 @@ systemctl restart rsx-matching@BTCUSD
 curl http://localhost:9100/health
 # Expected: {"status": "ok", "role": "master", "seq": 12345678}
 
-# 5. Check ME WAL has no gaps
-cargo run --bin rsx-wal-check -- \
+# 5. Check ME WAL has no gaps (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin dxs-verify -- \
   --wal-dir /srv/data/rsx/wal/1 \
   --from-seq 0
+# Expected: "No sequence gaps detected"
 
 # 6. Verify Risk received all fills
-psql -c "SELECT symbol_id, last_seq FROM tips WHERE symbol_id = 1;"
-# Compare with ME seq, should be within 10ms lag
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT symbol_id, last_seq, updated_at FROM tips WHERE symbol_id = 1;"
+# Compare last_seq with ME health endpoint seq, should match within seconds
 
-# 7. Run position reconciliation
-cargo run --bin rsx-position-reconcile -- \
+# 7. Run position reconciliation (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
   --symbol-id 1 \
   --max-delta 0
-
-# Expected: "All positions match fills."
+# Expected output: "All positions match fills. Checked: 1234 users"
 ```
 
 **Expected Recovery Time:** 5-10s (replica promotion) OR 20-60s (master restart
 from snapshot)
 
-**Data Loss:** 10ms orders (accepted but not in WAL), 0ms fills
+**Data Loss:** See [GUARANTEES.md](GUARANTEES.md) section 3.1 for ME crash bounds
 
 **Rollback Plan:**
 - If promoted replica has issues, roll back DNS to original master
@@ -130,14 +170,20 @@ from snapshot)
 **Post-Recovery Verification:**
 ```bash
 # Orders flow through
-curl -X POST http://gateway/api/v1/orders \
+curl -X POST http://gateway:8080/api/v1/orders \
+  -H "Content-Type: application/json" \
   -d '{"symbol":"BTCUSD","side":"buy","price":50000,"qty":0.1}'
+# Expected: {"status":"ok","order_id":"01234567-89ab-cdef-0123-456789abcdef"}
 
-# Fills emit correctly
-tail -f /srv/data/rsx/wal/1/1_*.wal | xxd | head
+# Check latest WAL file exists and is growing
+ls -lth /srv/data/rsx/wal/1/ | head -n 3
+stat /srv/data/rsx/wal/1/$(ls -t /srv/data/rsx/wal/1/ | head -1)
+# Wait 1s and check size increased:
+sleep 1 && stat /srv/data/rsx/wal/1/$(ls -t /srv/data/rsx/wal/1/ | head -1)
 
 # Risk positions update
-psql -c "SELECT * FROM positions WHERE symbol_id = 1 LIMIT 5;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT user_id, symbol_id, long_qty, short_qty, updated_at FROM positions WHERE symbol_id = 1 ORDER BY updated_at DESC LIMIT 5;"
 ```
 
 ---
@@ -162,8 +208,9 @@ systemctl status rsx-risk-replica@shard0
 
 # 2. Replica should auto-promote (polls advisory lock every 500ms)
 #    Wait 1s, then check if replica acquired lock
-psql -c "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 1 row with pid from replica process
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT locktype, objid, pid, granted FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: 1 row with granted=t and pid from replica process
 
 # 3. If replica did NOT auto-promote (bug or network issue):
 #    Manually restart Risk instance
@@ -174,29 +221,30 @@ curl http://localhost:9200/health
 # Expected: {"status": "ok", "role": "main", "shard_id": 0}
 
 # 5. Check Risk loaded positions from Postgres
-psql -c "SELECT COUNT(*) FROM positions WHERE user_id % 16 = 0;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT COUNT(*) FROM positions WHERE user_id % 16 = 0;"
+# Expected: Row count matching number of users in shard 0
 # (Assuming 16 shards, shard 0 owns user_id % 16 = 0)
 
 # 6. Check Risk requested DXS replay from ME
-#    (Should see log: "Requesting DXS replay from seq=12345678")
-journalctl -u rsx-risk@shard0 -n 100 | grep "DXS replay"
+journalctl -u rsx-risk@shard0 -n 100 --no-pager | grep "requesting dxs replay"
+# Expected to see line like: "requesting dxs replay from seq=12345678"
 
-# 7. Wait for CaughtUp from all symbols
-#    (Should see log: "CaughtUp for all symbols, going live")
-journalctl -u rsx-risk@shard0 -f | grep "CaughtUp"
+# 7. Wait for CaughtUp from all symbols (timeout after 60s)
+timeout 60 journalctl -u rsx-risk@shard0 -f --no-pager | grep -m 1 "caught up"
+# Expected to see: "caught up for all symbols, going live"
 
-# 8. Verify positions match fills
-cargo run --bin rsx-position-reconcile -- \
+# 8. Verify positions match fills (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --max-delta 0
-
-# Expected: "All positions match fills."
+# Expected output: "All positions match fills. Checked: 6250 users"
 ```
 
 **Expected Recovery Time:** 2-5s (replica auto-promote) OR 10-30s (manual
 restart + replay)
 
-**Data Loss:** 10ms positions (fills received but not flushed to Postgres)
+**Data Loss:** See [GUARANTEES.md](GUARANTEES.md) section 3.2 for Risk crash bounds
 
 **Rollback Plan:**
 - If replica promotion fails, restart original master
@@ -205,14 +253,19 @@ restart + replay)
 **Post-Recovery Verification:**
 ```bash
 # Orders accepted
-curl -X POST http://gateway/api/v1/orders \
+curl -X POST http://gateway:8080/api/v1/orders \
+  -H "Content-Type: application/json" \
   -d '{"symbol":"BTCUSD","side":"buy","price":50000,"qty":0.1}'
+# Expected: {"status":"ok","order_id":"..."}
 
 # Positions update
-psql -c "SELECT * FROM positions WHERE user_id = 123 AND symbol_id = 1;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT user_id, symbol_id, long_qty, short_qty, updated_at FROM positions WHERE user_id = 123 AND symbol_id = 1;"
+# Expected: 1 row with recent updated_at timestamp
 
 # Margin calculated
 curl http://localhost:9200/api/v1/margin?user_id=123
+# Expected: {"user_id":123,"available_margin":10000.00,"margin_ratio":0.15}
 ```
 
 ---
@@ -248,8 +301,7 @@ watch 'curl -s http://localhost:8080/health | jq .connections'
 
 **Expected Recovery Time:** <1s (stateless restart)
 
-**Data Loss:** 0ms for critical state (Gateway is stateless), orders in flight
-lost (users resubmit)
+**Data Loss:** None (Gateway is stateless, users resubmit in-flight orders)
 
 **Rollback Plan:** N/A (stateless, no rollback needed)
 
@@ -301,23 +353,25 @@ pg_isready -h postgres-master
 # Expected: accepting connections
 
 # 5. Risk will auto-reconnect and resume flushing
-#    Monitor write-behind lag
-psql -c "SELECT pg_stat_get_db_xact_commit(oid) FROM pg_database WHERE datname = 'rsx';"
+#    Check Risk logs for reconnection
+journalctl -u rsx-risk@shard0 -n 50 --no-pager | grep -i "postgres"
+# Expected to see: "connected to postgres" or "reconnected"
 
 # 6. Verify positions are being written
-psql -c "SELECT MAX(updated_at) FROM positions;"
-# Expected: recent timestamp (within 10ms)
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT MAX(updated_at) FROM positions;"
+# Expected: timestamp within last few seconds (e.g., "2026-02-08 14:32:15.123")
 
 # 7. Verify no data loss (if synchronous replica)
 #    All committed transactions should be present
-psql -c "SELECT COUNT(*) FROM positions;"
+psql -h postgres-master -U rsx -d rsx -c "SELECT COUNT(*) FROM positions;"
 # Compare with pre-crash count (should be equal or higher)
+# Save pre-crash count first: echo "12345" > /tmp/positions_count_before.txt
 ```
 
 **Expected Recovery Time:** 30-60s (Postgres recovery process)
 
-**Data Loss:** 0ms for committed transactions, 10ms for uncommitted batches
-(Risk replays from ME fills)
+**Data Loss:** See [GUARANTEES.md](GUARANTEES.md) section 3.3 for Postgres crash bounds
 
 **Rollback Plan:**
 - If promoted replica has issues, restore from backup + replay ME WAL
@@ -325,12 +379,13 @@ psql -c "SELECT COUNT(*) FROM positions;"
 
 **Post-Recovery Verification:**
 ```bash
-# Risk writing to Postgres
-watch 'psql -c "SELECT MAX(updated_at) FROM positions;"'
+# Risk writing to Postgres (watch for 10s)
+watch -n 1 'psql -h postgres-master -U rsx -d rsx -c "SELECT MAX(updated_at) FROM positions;"'
+# Press Ctrl-C after confirming timestamp advances every second
 
-# Write-behind lag < 10ms
+# Write-behind lag normal
 curl http://risk:9200/metrics | grep write_behind_lag_ms
-# Expected: p99 < 10ms
+# Expected: risk_postgres_write_lag_ms_p99 < 10
 ```
 
 ---
@@ -355,17 +410,21 @@ curl http://risk:9200/metrics | grep write_behind_lag_ms
 df -h /srv/data/rsx/wal
 # If >90% full, rotate and archive old WAL files
 
-# 2. Check disk I/O
+# 2. Check disk I/O (10 samples, 1 second apart)
 iostat -x 1 10
-# Look for high await times (>10ms)
+# Look for high await times (>10ms) in output columns
+# Focus on device with /srv/data/rsx/wal mounted
 
-# 3. Check if fsync is slow
-strace -p $(pgrep rsx-matching) -e fsync -T
-# Look for fsync taking >10ms
+# 3. Check if fsync is slow (run for 10s, then Ctrl-C)
+mkdir -p /home/onvos/sandbox/rsx/tmp
+timeout 10 strace -p $(pgrep rsx-matching) -e fsync -T 2>&1 | tee /home/onvos/sandbox/rsx/tmp/fsync_trace.log
+# Review tmp/fsync_trace.log, look for: fsync(3) = 0 <0.015234>
+# If times consistently >0.010 seconds, disk is slow
 
 # 4. If disk full, archive old WAL files
 find /srv/data/rsx/wal -name "*.wal" -mmin +20 -exec gzip {} \;
-mv /srv/data/rsx/wal/*.wal.gz /srv/archive/
+mkdir -p /srv/archive/wal
+mv /srv/data/rsx/wal/*.wal.gz /srv/archive/wal/
 
 # 5. If disk slow, check for hardware issues
 smartctl -a /dev/sda
@@ -410,20 +469,25 @@ curl http://me:9100/metrics | grep backpressure_stalls
 
 ```bash
 # 1. Check active queries
-psql -c "SELECT pid, query, state, wait_event FROM pg_stat_activity WHERE state = 'active';"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT pid, usename, query, state, wait_event, query_start FROM pg_stat_activity WHERE state = 'active';"
 
 # 2. Check locks
-psql -c "SELECT * FROM pg_locks WHERE NOT granted;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT locktype, relation::regclass, mode, pid, granted FROM pg_locks WHERE NOT granted;"
 
 # 3. Check if vacuum running
-psql -c "SELECT * FROM pg_stat_progress_vacuum;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT pid, datname, relid::regclass, phase, heap_blks_scanned, heap_blks_total FROM pg_stat_progress_vacuum;"
 
 # 4. If vacuum running and causing contention, consider canceling
 #    (Only if P1 severity and trading is degraded)
-psql -c "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE query LIKE '%VACUUM%';"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE query ILIKE '%VACUUM%' AND state = 'active';"
 
-# 5. Check for slow queries
-psql -c "SELECT query, mean_exec_time, calls FROM pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 10;"
+# 5. Check for slow queries (requires pg_stat_statements extension)
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT LEFT(query, 80) AS query, ROUND(mean_exec_time::numeric, 2) AS mean_ms, calls FROM pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 10;"
 
 # 6. If network latency, check route
 ping -c 10 postgres-master
@@ -529,37 +593,45 @@ systemctl restart rsx-risk@shard0
 
 # 3. Wait for master to acquire lock
 sleep 5
-psql -c "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 1 row with pid from master process
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT locktype, objid, pid, granted FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: 1 row with granted=t and pid from master process
 
 # 4. Restart replica
 systemctl restart rsx-risk-replica@shard0
 
 # 5. Verify replica did NOT acquire lock (main holds it)
-psql -c "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 1 (only main)
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: count = 1 (only main)
 
-# 6. Run position reconciliation
-cargo run --bin rsx-position-reconcile -- \
+# 6. Run position reconciliation (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --max-delta 0
+# Expected: "All positions match fills"
 ```
 
 **Expected Recovery Time:** 30-60s (both instances restart + replay)
 
-**Data Loss:** 100ms positions (both crashed before flush, worst case)
+**Data Loss:** See [GUARANTEES.md](GUARANTEES.md) section 4.1 for dual crash bounds
 
 **Post-Recovery Verification:**
 ```bash
 # Main acquired lock
-psql -c "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT locktype, objid, pid, granted FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: 1 row with granted=t
 
 # Orders accepted
-curl -X POST http://gateway/api/v1/orders \
+curl -X POST http://gateway:8080/api/v1/orders \
+  -H "Content-Type: application/json" \
   -d '{"symbol":"BTCUSD","side":"buy","price":50000,"qty":0.1}'
+# Expected: {"status":"ok","order_id":"..."}
 
-# Positions consistent
-cargo run --bin rsx-position-reconcile -- --shard-id 0
+# Positions consistent (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+# Expected: "All positions match fills"
 ```
 
 ---
@@ -580,55 +652,62 @@ systemctl stop rsx-risk@shard0
 systemctl stop rsx-risk-replica@shard0
 
 # 2. Check Postgres locks (should be 0 after halt)
-psql -c "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 0 rows
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT locktype, objid, pid FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: 0 rows (both stopped)
 
 # 3. Identify which instance has newer state
-psql -c "SELECT instance_id, symbol_id, last_seq, updated_at FROM tips WHERE instance_id IN (0, 100) ORDER BY symbol_id, updated_at DESC;"
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT instance_id, symbol_id, last_seq, updated_at FROM tips WHERE instance_id IN (0, 100) ORDER BY symbol_id, updated_at DESC;"
 # (Assuming master=0, replica=100)
+# Choose instance with higher last_seq values
 
 # 4. Choose the instance with higher tips (more recent state)
-#    Let's say master has higher tips, keep master state
+#    Example: If master (instance_id=0) has higher tips, keep master state
 
 # 5. Restart master only
 systemctl start rsx-risk@shard0
 
 # 6. Wait for master to acquire lock
 sleep 5
-psql -c "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 1
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: count = 1
 
 # 7. Restart replica (will NOT acquire lock, main holds it)
 systemctl start rsx-risk-replica@shard0
 
 # 8. Verify only 1 lock held
-psql -c "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 1
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: count = 1
 
 # 9. Run position reconciliation (critical!)
-cargo run --bin rsx-position-reconcile -- \
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --max-delta 0
-# If ANY mismatch, investigate which fills were applied by which instance
+# If ANY mismatch detected, investigate which fills were applied by which instance
 ```
 
 **Expected Recovery Time:** 30-60s (manual intervention required)
 
-**Data Loss:** Potentially unbounded (if both instances wrote to Postgres,
-manual merge required)
+**Data Loss:** Potentially unbounded (split-brain requires manual reconciliation)
 
 **Post-Recovery Verification:**
 ```bash
 # Only 1 lock held
-psql -c "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
-# Expected: 1
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
+# Expected: count = 1
 
 # Positions consistent
-cargo run --bin rsx-position-reconcile -- --shard-id 0
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+# Expected: "All positions match fills"
 
 # No duplicate fills applied
-psql -c "SELECT symbol_id, seq, COUNT(*) FROM fills WHERE symbol_id = 1 GROUP BY symbol_id, seq HAVING COUNT(*) > 1;"
-# Expected: 0 rows
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT symbol_id, seq, COUNT(*) FROM fills WHERE symbol_id = 1 GROUP BY symbol_id, seq HAVING COUNT(*) > 1;"
+# Expected: 0 rows (no duplicates)
 ```
 
 **Root Cause Analysis:**
@@ -652,23 +731,27 @@ psql -c "SELECT symbol_id, seq, COUNT(*) FROM fills WHERE symbol_id = 1 GROUP BY
 # 1. HALT all trading immediately
 systemctl stop rsx-gateway
 
-# 2. Identify gap location
-cargo run --bin rsx-wal-check -- \
+# 2. Identify gap location (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin dxs-verify -- \
   --wal-dir /srv/data/rsx/wal/1 \
   --from-seq 0
-# Expected output: "Gap detected: seq 12345678 missing"
+# Expected output: "Gap detected at seq=12345678" or "No gaps detected"
 
 # 3. Check if gap in WAL file or just in-memory
 ls -lt /srv/data/rsx/wal/1/
 # Find file containing seq before gap and seq after gap
 
-# 4. Inspect WAL files manually
-xxd /srv/data/rsx/wal/1/1_12345000_12346000.wal | grep -A 5 -B 5 "seq"
+# 4. Inspect WAL file manually (view hex dump of first 512 bytes)
+xxd -l 512 /srv/data/rsx/wal/1/$(ls -t /srv/data/rsx/wal/1/ | head -1)
+# Look for record structure: 16B header + payload
+# Seq field is in header at offset 8 (i64 little-endian)
 
 # 5. Check if DXS replay server can serve missing seq
 curl -X POST http://me:9100/dxs/replay \
-  -d '{"stream_id":1,"from_seq":12345678}'
-# If server returns record, gap is in Risk, not ME
+  -H "Content-Type: application/json" \
+  -d '{"stream_id":1,"from_seq":12345678}' | head -c 200
+# If server returns binary data (starts with fill record), gap is in Risk only, not ME
+# If server returns error or empty, gap is in ME WAL (critical)
 
 # 6. If gap in ME WAL (fill actually lost):
 #    This is a CRITICAL BUG, need immediate patch
@@ -693,12 +776,14 @@ journalctl -u rsx-matching@BTCUSD -S "10 minutes ago" | grep "seq=12345678"
 
 **Post-Mitigation Verification:**
 ```bash
-# No gaps in WAL
-cargo run --bin rsx-wal-check -- --wal-dir /srv/data/rsx/wal/1 --from-seq 0
-# Expected: "No gaps detected"
+# No gaps in WAL (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin dxs-verify -- \
+  --wal-dir /srv/data/rsx/wal/1 \
+  --from-seq 0
+# Expected: "No sequence gaps detected"
 
-# Positions match fills
-cargo run --bin rsx-position-reconcile -- --symbol-id 1
+# Positions match fills (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --symbol-id 1
 # Expected: "All positions match fills"
 ```
 
@@ -718,29 +803,30 @@ cargo run --bin rsx-position-reconcile -- --symbol-id 1
 # 1. HALT all trading immediately
 systemctl stop rsx-gateway
 
-# 2. Run detailed reconciliation
-cargo run --bin rsx-position-reconcile -- \
+# 2. Run detailed reconciliation (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --verbose
-# Expected output: List of mismatched positions
+# Expected output: List of mismatched positions with deltas
 
 # 3. For each mismatched position, compare with fills
-psql -c "
+psql -h postgres-master -U rsx -d rsx -c "
 SELECT user_id, symbol_id,
-       (SELECT SUM(qty) FROM fills WHERE taker_user_id = p.user_id AND symbol_id = p.symbol_id AND side = 0) AS fills_buy,
-       (SELECT SUM(qty) FROM fills WHERE taker_user_id = p.user_id AND symbol_id = p.symbol_id AND side = 1) AS fills_sell,
+       (SELECT COALESCE(SUM(qty), 0) FROM fills WHERE taker_user_id = p.user_id AND symbol_id = p.symbol_id AND side = 0) AS fills_buy,
+       (SELECT COALESCE(SUM(qty), 0) FROM fills WHERE taker_user_id = p.user_id AND symbol_id = p.symbol_id AND side = 1) AS fills_sell,
        long_qty, short_qty
 FROM positions p
 WHERE user_id = 123 AND symbol_id = 1;
 "
+# Compare fills_buy with long_qty, fills_sell with short_qty
 
 # 4. Check if fills are missing in Risk (not applied)
-psql -c "
+psql -h postgres-master -U rsx -d rsx -c "
 SELECT seq FROM fills
 WHERE symbol_id = 1 AND taker_user_id = 123
-AND seq > (SELECT last_seq FROM tips WHERE symbol_id = 1);
+AND seq > (SELECT last_seq FROM tips WHERE symbol_id = 1 AND instance_id = 0);
 "
-# If rows returned, Risk didn't process these fills
+# If rows returned, Risk didn't process these fills yet
 
 # 5. Check if fills were double-applied (dedup failed)
 #    (Check Risk logs for duplicate seq)
@@ -753,12 +839,16 @@ journalctl -u rsx-risk@shard0 -S "1 hour ago" | grep "Duplicate fill"
 
 # 7. Correct positions manually (emergency fix)
 #    Recompute from fills and update Postgres
-psql -c "
+psql -h postgres-master -U rsx -d rsx -c "
 UPDATE positions SET
-  long_qty = (SELECT SUM(qty) FROM fills WHERE taker_user_id = 123 AND symbol_id = 1 AND side = 0),
-  short_qty = (SELECT SUM(qty) FROM fills WHERE taker_user_id = 123 AND symbol_id = 1 AND side = 1)
+  long_qty = (SELECT COALESCE(SUM(qty), 0) FROM fills WHERE taker_user_id = 123 AND symbol_id = 1 AND side = 0),
+  short_qty = (SELECT COALESCE(SUM(qty), 0) FROM fills WHERE taker_user_id = 123 AND symbol_id = 1 AND side = 1),
+  updated_at = NOW()
 WHERE user_id = 123 AND symbol_id = 1;
 "
+# Verify update:
+psql -h postgres-master -U rsx -d rsx -c \
+  "SELECT user_id, symbol_id, long_qty, short_qty FROM positions WHERE user_id = 123 AND symbol_id = 1;"
 
 # 8. Notify engineering team for root cause analysis
 ```
@@ -769,12 +859,13 @@ WHERE user_id = 123 AND symbol_id = 1;
 
 **Post-Mitigation Verification:**
 ```bash
-# All positions match fills
-cargo run --bin rsx-position-reconcile -- --shard-id 0
-# Expected: "All positions match fills"
+# All positions match fills (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+# Expected: "All positions match fills. Checked: 6250 users"
 
 # Margin recalculated correctly
 curl http://risk:9200/api/v1/margin?user_id=123
+# Expected: {"user_id":123,"available_margin":10000.00,"margin_ratio":0.15}
 ```
 
 ---
@@ -788,20 +879,20 @@ curl http://risk:9200/api/v1/margin?user_id=123
 **Procedure:**
 
 ```bash
-# Run chaos test for 10min
-cargo run --bin rsx-chaos-test -- \
+# Run chaos test for 10min (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
   --duration 10m \
   --kill-interval 30s \
   --components ME,Risk,Gateway
 
 # Chaos test will:
-# - Random kill component every 30s
+# - Randomly kill component every 30s
 # - Verify recovery within RTO
 # - Verify no data loss (position = fills)
 # - Verify no seq gaps
 # - Verify advisory lock always held
 
-# Expected: System survives, all invariants hold
+# Expected output: "System survived 10min chaos test. All invariants hold."
 ```
 
 ---
@@ -813,8 +904,8 @@ cargo run --bin rsx-chaos-test -- \
 **Procedure:**
 
 ```bash
-# Crash ME master + replica within 10ms
-cargo run --bin rsx-chaos-test -- \
+# Crash ME master + replica within 10ms (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
   --scenario dual-me-crash \
   --symbol BTCUSD
 
@@ -824,8 +915,8 @@ cargo run --bin rsx-chaos-test -- \
 # - Recovery time <= 20s
 # - Positions consistent after recovery
 
-# Crash Risk master + replica within 10ms
-cargo run --bin rsx-chaos-test -- \
+# Crash Risk master + replica within 10ms (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
   --scenario dual-risk-crash \
   --shard-id 0
 
@@ -845,8 +936,8 @@ cargo run --bin rsx-chaos-test -- \
 **Procedure:**
 
 ```bash
-# Simulate disk full
-cargo run --bin rsx-chaos-test -- \
+# Simulate disk full (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
   --scenario disk-full \
   --component ME
 
@@ -856,8 +947,8 @@ cargo run --bin rsx-chaos-test -- \
 # - Alert fires (disk full)
 # - Recovery after disk space freed
 
-# Simulate disk slow (inject latency)
-cargo run --bin rsx-chaos-test -- \
+# Simulate disk slow (inject latency, from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
   --scenario disk-slow \
   --component ME \
   --latency 50ms
@@ -877,8 +968,8 @@ cargo run --bin rsx-chaos-test -- \
 **Procedure:**
 
 ```bash
-# Partition Risk <-> ME for 5min
-cargo run --bin rsx-chaos-test -- \
+# Partition Risk <-> ME for 5min (from project root)
+cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
   --scenario partition \
   --source Risk \
   --target ME \
@@ -899,21 +990,28 @@ cargo run --bin rsx-chaos-test -- \
 
 ### 7.1 Advisory Lock Status
 
-```sql
--- Check advisory locks per shard
+```bash
+# Check advisory locks per shard
+psql -h postgres-master -U rsx -d rsx -c "
 SELECT objid AS shard_id, COUNT(*) AS lock_count, array_agg(pid) AS holder_pids
 FROM pg_locks
 WHERE locktype = 'advisory'
 GROUP BY objid
 ORDER BY objid;
-
--- Expected: Each shard has exactly 1 lock
+"
+# Expected: Each shard (0-15) has exactly 1 lock
+# Example output:
+#  shard_id | lock_count | holder_pids
+# ----------+------------+-------------
+#         0 |          1 | {12345}
+#         1 |          1 | {12346}
 ```
 
 ### 7.2 Position Reconciliation
 
-```sql
--- Quick reconciliation check (sample 1%)
+```bash
+# Quick reconciliation check (sample 1%)
+psql -h postgres-master -U rsx -d rsx -c "
 WITH fills_sum AS (
   SELECT
     taker_user_id AS user_id,
@@ -938,39 +1036,46 @@ SELECT
 FROM positions p
 JOIN fills_sum f ON p.user_id = f.user_id AND p.symbol_id = f.symbol_id
 WHERE p.long_qty != f.fills_buy OR p.short_qty != f.fills_sell;
-
--- Expected: 0 rows (all match)
+"
+# Expected: 0 rows (all match)
+# If rows returned, positions are inconsistent - escalate to P0
 ```
 
 ### 7.3 Tips Monotonic Check
 
 ```sql
 -- Verify tips never decreased
-SELECT
-  instance_id,
-  symbol_id,
-  last_seq,
-  updated_at,
-  LAG(last_seq) OVER (PARTITION BY instance_id, symbol_id ORDER BY updated_at) AS prev_seq
-FROM tips
-WHERE last_seq < LAG(last_seq) OVER (PARTITION BY instance_id, symbol_id ORDER BY updated_at);
+WITH tips_with_lag AS (
+  SELECT
+    instance_id,
+    symbol_id,
+    last_seq,
+    updated_at,
+    LAG(last_seq) OVER (PARTITION BY instance_id, symbol_id ORDER BY updated_at) AS prev_seq
+  FROM tips
+)
+SELECT instance_id, symbol_id, last_seq, prev_seq, updated_at
+FROM tips_with_lag
+WHERE prev_seq IS NOT NULL AND last_seq < prev_seq;
 
 -- Expected: 0 rows (tips always increase)
 ```
 
 ### 7.4 Funding Zero-Sum Check
 
-```sql
--- Verify funding payments sum to zero per interval
+```bash
+# Verify funding payments sum to zero per interval
+psql -h postgres-master -U rsx -d rsx -c "
 SELECT
   symbol_id,
   settlement_ts,
   SUM(amount) AS total_funding
 FROM funding_payments
 GROUP BY symbol_id, settlement_ts
-HAVING ABS(SUM(amount)) > 100;  -- Allow small rounding error
-
--- Expected: 0 rows (all zero-sum)
+HAVING ABS(SUM(amount)) > 100;
+"
+# Expected: 0 rows (all zero-sum within rounding error of 100 units)
+# If rows returned, funding calculation has bug - escalate to engineering
 ```
 
 ---

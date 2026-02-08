@@ -18,6 +18,11 @@ Source specs: [notes/SMRB.md](../../notes/SMRB.md),
 | S7 | Per-consumer rings (isolation) | CONSISTENCY.md §1 |
 | S8 | Producer stalls on full (backpressure) | WAL.md, CONSISTENCY.md |
 | S9 | Acquire/release atomics only (no CAS) | SMRB.md |
+| S10 | Flat structs, no serialization (same struct both sides) | SMRB.md |
+| S11 | Core pinning: producer and consumer on dedicated cores, same NUMA node | SMRB.md |
+| S12 | Huge pages (2MB) for shared memory region | SMRB.md |
+| S13 | no_std compatible (with alloc) | SMRB.md |
+| S14 | Event routing matches CONSISTENCY.md table (per-event, per-consumer) | CONSISTENCY.md §1 |
 
 ---
 
@@ -51,6 +56,10 @@ push_spin_no_data_loss_under_contention
 // isolation
 per_consumer_ring_independence
 slow_consumer_does_not_block_other_rings
+
+// struct constraints
+flat_struct_no_serialization_both_sides
+no_std_compatible_with_alloc
 ```
 
 ---
@@ -70,6 +79,9 @@ fanout_slow_consumer_stalls_producer_on_that_ring
 fanout_event_routing_fill_to_risk_gateway_mktdata
 fanout_bbo_only_to_risk
 fanout_order_inserted_only_to_mktdata
+fanout_order_cancelled_to_gateway_and_mktdata_not_risk
+fanout_order_done_to_risk_and_gateway_not_mktdata
+fanout_order_failed_not_fanned_out
 
 // cross-type messages
 ring_of_enum_events_fill_bbo_done_inserted
@@ -101,11 +113,19 @@ Targets from SMRB.md:
 ## Integration Points
 
 - Matching engine drain_events() fans out to 3+ SPSC rings
-  (CONSISTENCY.md drain loop)
+  (CONSISTENCY.md §1 drain loop)
+- Mirrored stream to hot spare ME via SPSC
+  (CONSISTENCY.md §1)
+- Recorder connects as DXS consumer for archival
+  (CONSISTENCY.md §1, DXS.md §8)
+- Event routing per consumer matches CONSISTENCY.md §1 table:
+  Fill to risk/gateway/mktdata, BBO to risk, OrderInserted to
+  mktdata, OrderCancelled to gateway/mktdata, OrderDone to
+  risk/gateway
 - Risk engine main loop polls ME rings (RISK.md §main loop)
 - Gateway receives fills/done via SPSC from risk
 - Mark price aggregator pushes SourcePrice via SPSC
   (MARK.md §1)
 - WAL writer backpressure: buf full triggers stall (DXS.md §3)
 - System-level: verify no data loss across component boundaries
-  under sustained 100K msg/sec load (TESTING.md load tests)
+  under sustained 100K msg/sec load (TESTING.md §6 load tests)

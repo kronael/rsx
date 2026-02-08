@@ -34,6 +34,12 @@ points.
 | L18 | Persistence: append-only liquidation_events table | §8 |
 | L19 | Configurable base_delay, base_slip, max_slip | §9 |
 | L20 | Max rounds configurable | §9 |
+| L21 | Order failed (symbol halted): pause that symbol | §4 |
+| L22 | Order failed (other): treat as unfilled, escalate | §4 |
+| L23 | Status transitions: Active -> Cancelled or Completed | §1 |
+| L24 | ME clamps qty to position size (reduce_only) | §3 |
+| L25 | Orders routed via same SPSC ring as normal orders | §3 |
+| L26 | Persisted via same write-behind worker as fills | §8 |
 
 ---
 
@@ -57,6 +63,9 @@ full_fill_closes_position
 user_recovers_cancels_liquidation
 max_slippage_cap_enforced
 max_rounds_clamp_slippage
+max_rounds_reached_stops_escalation
+status_active_to_cancelled_on_recovery
+status_active_to_completed_on_close
 ```
 
 ### Edge Cases
@@ -82,6 +91,12 @@ bbo_update_rechecks_liquidating_users
 empty_position_skipped_no_order
 single_position_single_order
 cancel_unfilled_on_round_escalation
+order_failed_symbol_halted_pauses_symbol
+order_failed_other_escalates_next_round
+order_seq_tracked_in_pending_orders
+pending_orders_bounded_by_max_symbols
+orders_routed_via_normal_spsc_ring
+recheck_margin_on_round_before_placing
 ```
 
 ### Config
@@ -107,6 +122,8 @@ liquidation_partial_fill_then_full_close
 liquidation_across_multiple_symbols
 liquidation_interleaved_with_normal_orders
 liquidation_with_funding_settlement_concurrent
+liquidation_max_rounds_exhausted
+liquidation_order_failed_symbol_halted
 ```
 
 ### Cascade / Stress
@@ -143,6 +160,8 @@ liquidation_events_persisted_on_flush
 liquidation_recovery_after_crash
 liquidation_state_rebuilt_from_positions
 concurrent_liquidation_and_funding_persist
+liquidation_event_fields_match_schema
+liquidation_persisted_via_write_behind_worker
 ```
 
 ---
@@ -155,7 +174,7 @@ bench_generate_orders_1_position    // target <500ns
 bench_generate_orders_10_positions  // target <5us
 bench_round_escalation              // target <1us
 bench_cascade_100_users             // target <100us
-bench_margin_recheck_during_liq     // target <10us/user
+bench_margin_recheck_during_liq     // target <10us/user (RISK.md)
 ```
 
 Targets from LIQUIDATOR.md §10:
@@ -180,6 +199,11 @@ Targets from LIQUIDATOR.md §10:
 5. **No frozen margin on liquidation orders** -- user already
    underwater
 6. **Non-liq orders rejected** -- while user is in liquidation
+7. **Status terminal** -- Cancelled and Completed are terminal states,
+   no further rounds placed
+8. **Slippage monotonic** -- slippage never decreases across rounds
+   (capped at max_slip_bps)
+9. **Order count bounded** -- pending_orders.len() <= MAX_SYMBOLS
 
 ---
 
@@ -187,8 +211,13 @@ Targets from LIQUIDATOR.md §10:
 
 - Embedded in risk engine main loop (RISK.md §main loop step 5.5)
 - Triggered by per-tick margin recalc (RISK.md §7)
-- Generates reduce_only + is_liquidation orders to ME SPSC ring
-- Fills processed by normal fill path in risk engine
+- Generates reduce_only + is_liquidation orders to ME via same
+  SPSC ring as normal orders (LIQUIDATOR.md §3)
+- ME clamps qty to position size via position tracking
+  (ORDERBOOK.md §6.5)
+- Fills processed by normal fill path in risk engine (RISK.md §1)
+- Cancels non-liquidation orders on entry, releasing frozen
+  margin (RISK.md §6, LIQUIDATOR.md §6)
 - Events persisted via risk write-behind worker (RISK.md §persistence)
 - Gateway notified via Q frame on private WS (WEBPROTO.md §Q)
 - System-level: liquidation cascade under price crash

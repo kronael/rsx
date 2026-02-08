@@ -1,6 +1,7 @@
 # TESTING-BOOK.md — Shared Orderbook Crate Tests
 
-Source spec: [ORDERBOOK.md](ORDERBOOK.md)
+Source specs: [ORDERBOOK.md](ORDERBOOK.md),
+[CONSISTENCY.md](CONSISTENCY.md)
 
 Crate: `rsx-book` — shared by matching engine and market data.
 
@@ -33,6 +34,14 @@ Crate: `rsx-book` — shared by matching engine and market data.
 | B21 | Zero allocation on hot path | §7 |
 | B22 | ~617K level slots, ~14.8MB per array | §2.5 |
 | B23 | 78M order slots, ~10GB per book | §7 |
+| B24 | Modify order (price change) = cancel + re-insert, loses time priority | §4 |
+| B25 | Modify order (qty down) = in-place reduction, keeps time priority | §4 |
+| B26 | SymbolConfig distribution: ME polls metadata, emits CONFIG_APPLIED | §2.9 |
+| B27 | Single thread per orderbook, no locking | Design Goals |
+| B28 | Hot/cold cache line split: matching touches only line 1 (48B) | §7 |
+| B29 | GTC limit orders only, perpetuals only (no market orders, no spot) | Design Goals |
+| B30 | WAL + online snapshot for durability/recovery | §2.8 |
+| B31 | Snapshot never runs during migration | §2.8 |
 
 ---
 
@@ -50,6 +59,7 @@ validate_order_qty_not_aligned_rejects
 validate_order_qty_zero_rejects
 validate_order_price_zero_rejects
 validate_order_price_negative_rejects
+validate_order_qty_negative_rejects
 ```
 
 ### Compression Map / Zone Lookup
@@ -70,6 +80,26 @@ price_to_index_ask_side_increasing
 price_to_index_symmetric_around_mid
 price_to_index_extreme_distance_catchall
 total_slot_count_matches_expected
+```
+
+### Modify Order
+
+```rust
+modify_price_cancels_and_reinserts
+modify_price_loses_time_priority
+modify_qty_down_in_place
+modify_qty_down_keeps_time_priority
+modify_qty_down_updates_level_total_qty
+modify_qty_down_to_zero_removes_order
+```
+
+### Struct Layout
+
+```rust
+order_slot_size_is_128_bytes
+order_slot_alignment_is_64
+price_level_size_is_24_bytes
+order_slot_hot_fields_in_first_cache_line
 ```
 
 ### Slab Allocator
@@ -166,6 +196,15 @@ user_state_assigned_on_first_order
 user_state_reclaimed_after_idle
 ```
 
+### Symbol Config
+
+```rust
+config_applied_emitted_on_update
+config_tick_size_change_validates_new_orders
+config_lot_size_change_validates_new_orders
+config_version_monotonic
+```
+
 ### Recentering
 
 ```rust
@@ -181,6 +220,8 @@ migrate_completes_when_all_levels_drained
 cancel_during_migration_resolves_first
 insert_during_migration_goes_to_new_array
 best_bid_ask_correct_after_recenter
+snapshot_blocked_during_migration
+snapshot_runs_after_migration_completes
 ```
 
 ---
@@ -206,6 +247,18 @@ btc_3x_rally_recenter_catchall_absorbs
 rapid_orders_during_migration_correct
 migration_completes_in_idle_cycles
 
+// modify order lifecycle
+modify_price_cancel_reinsert_full_lifecycle
+modify_qty_down_partial_then_fill
+
+// config updates
+config_applied_mid_session_validates_new_tick
+config_applied_propagates_to_consumers
+
+// snapshot + recovery
+snapshot_and_wal_recovery_restores_book
+snapshot_waits_for_migration_before_running
+
 // stress
 1m_insert_cancel_cycles_no_slab_leak
 alternating_fill_cancel_slab_reuse
@@ -229,6 +282,8 @@ bench_recenter_10k_orders          // target <10ms
 bench_recenter_lazy_per_access     // target <3us
 bench_event_buffer_drain_100       // target <1us
 bench_best_bid_scan_after_cancel   // target <100ns amortized
+bench_modify_order_price_change    // target <1us (cancel + insert)
+bench_modify_order_qty_down        // target <100ns (in-place)
 ```
 
 Targets from ORDERBOOK.md §4 and TESTING.md:
@@ -238,6 +293,8 @@ Targets from ORDERBOOK.md §4 and TESTING.md:
 | Add order | O(1), 100-500ns |
 | Cancel order | O(1), 100-300ns |
 | Match per fill (zone 0) | O(1), 100-500ns |
+| Modify (price change) | O(1) + O(1), <1us |
+| Modify (qty down) | O(1), <100ns |
 | Recentering per access | O(1) amortized, ~1-3us |
 | Memory: 78M orders | ~10GB (128B slots) |
 | Price level arrays | ~30MB (2 x 617K x 24B) |
@@ -252,6 +309,16 @@ Targets from ORDERBOOK.md §4 and TESTING.md:
   (MARKETDATA.md §2, NETWORK.md §MARKETDATA)
 - BookObserver trait allows different event handling per consumer
 - Event buffer drained into SPSC rings (CONSISTENCY.md §1)
-- WAL records correspond to book events (DXS.md §1)
+- Event routing per consumer: Fill to risk/gateway/mktdata,
+  BBO to risk, OrderInserted to mktdata, OrderCancelled to
+  gateway/mktdata, OrderDone to risk/gateway
+  (CONSISTENCY.md §1)
+- Mirrored stream to hot spare ME (CONSISTENCY.md §1)
+- WAL + online snapshot for book persistence and recovery
+  (ORDERBOOK.md §2.8, DXS.md §3)
+- Replica takeover via DXS consumer on ME WAL stream
+  (ORDERBOOK.md §2.8)
+- SymbolConfig distributed from metadata store, CONFIG_APPLIED
+  syncs risk and gateway caches (ORDERBOOK.md §2.9)
 - System-level tests verify matching engine uses book correctly
   under load (TESTING.md §6 load tests)

@@ -29,6 +29,15 @@ Crate: `rsx-dxs`
 | D17 | Recorder: daily rotation, same fixed-record format | DXS.md §8 |
 | D18 | Bounded loss window: 10ms (WAL.md) | WAL.md |
 | D19 | Replica lag bound: 100ms, stall if exceeded | WAL.md |
+| D20 | Unknown version: stop replay and fail fast (no skip) | DXS.md §1 |
+| D21 | CancelReason enum: 6 values (0-5) | DXS.md §1 |
+| D22 | No file header, no index, sequential read only | DXS.md §2 |
+| D23 | Active file uses temp name `{stream_id}_active.wal` | DXS.md §2 |
+| D24 | GC runs on rotation, not on timer | DXS.md §2,3 |
+| D25 | Archive fallback when from_seq older than hot retention | DXS.md §2 |
+| D26 | Local WAL full: stall producer | WAL.md |
+| D27 | Flush lag >10ms: stall producer | WAL.md |
+| D28 | Flush on size threshold (1000 records) in addition to 10ms | WAL.md |
 
 ---
 
@@ -57,7 +66,11 @@ record_crc32_mismatch_detected
 record_truncated_header_detected
 record_truncated_payload_detected
 record_zero_length_payload_valid
-record_unknown_type_skippable
+record_unknown_version_fails_fast_no_skip
+
+// cancel reason
+cancel_reason_all_6_values_roundtrip
+cancel_reason_maps_to_correct_semantics
 ```
 
 ### WalWriter
@@ -75,6 +88,10 @@ writer_gc_preserves_recent_files
 writer_backpressure_stalls_at_2x_buffer
 writer_empty_flush_no_io
 writer_seq_starts_at_1
+writer_gc_runs_on_rotation_not_timer
+writer_flush_on_size_threshold_1000_records
+writer_local_wal_full_stalls_producer
+writer_flush_lag_exceeding_10ms_stalls_producer
 ```
 
 ### WalReader
@@ -91,6 +108,8 @@ reader_handles_empty_wal_directory
 reader_handles_single_file
 reader_handles_multiple_files_sorted
 reader_crc32_invalid_truncates_stream
+reader_unknown_version_stops_replay_fails_fast
+reader_no_file_header_no_index_sequential_only
 ```
 
 ### DxsConsumer
@@ -139,6 +158,13 @@ recorder_archive_format_matches_wal_format
 // backpressure
 writer_stall_on_buffer_full_then_resume
 flush_lag_exceeding_10ms_stalls_producer
+
+// archive fallback
+consumer_from_seq_older_than_hot_falls_back_to_archive
+archive_to_hot_tail_seamless_transition
+
+// replica lag
+replica_lag_exceeding_100ms_stalls_producer
 ```
 
 ---
@@ -167,6 +193,7 @@ Targets from DXS.md §10:
 | WAL read (sequential) | >500 MB/s |
 | Replay 100K records | <1s |
 | Recorder sustained write | >100K records/s |
+| Tip persist | every 10ms, batched |
 
 ---
 
@@ -185,3 +212,10 @@ Targets from DXS.md §10:
   (MARKETDATA.md §8)
 - WAL backpressure rules propagate to matching engine stall
   (WAL.md, CONSISTENCY.md §3)
+- Archive fallback when hot WAL retention exceeded
+  (DXS.md §2)
+- Cross-host live streaming via gRPC / gRPC over QUIC
+  (DXS.md §7)
+- SPSC rings for in-process hot-path (ME -> risk, risk ->
+  gateway), DXS for cross-host and replay (DXS.md §7,
+  NETWORK.md §internal)

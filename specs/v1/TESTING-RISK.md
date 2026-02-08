@@ -34,6 +34,17 @@ points.
 | R18 | Config updates from ME CONFIG_APPLIED events | §1 |
 | R19 | Reduce-only/liquidation orders skip margin check | §6 |
 | R20 | Main loop priority: fills > orders > mark > BBO | §main loop |
+| R21 | Forward CONFIG_APPLIED to gateway for cache sync | §1 |
+| R22 | Backpressure: stall on ring full / flush lag / replica lag | §persistence |
+| R23 | Promotion invariant: apply fills up to last tip only | §replication |
+| R24 | Replay via DXS consumer from tips + 1, CaughtUp signal | §replication |
+| R25 | Missed funding intervals settled on next startup | §5 |
+| R26 | ME failover: dedup by (symbol_id, seq), no restart | §ME failover |
+| R27 | Account persistence: collateral, frozen_margin to Postgres | §persistence |
+| R28 | Both-crash recovery: 100ms data loss bound | §recovery |
+| R29 | Index price fallback: no BBO ever -> use mark price | §4 |
+| R30 | Funding payments persisted append-only to Postgres | §5 |
+| R31 | Fills persisted via COPY binary bulk insert | §persistence |
 
 ---
 
@@ -55,12 +66,14 @@ zero_qty_after_exact_close
 // position.rs -- edge cases
 flip_long_to_short_single_fill
 flip_short_to_long_single_fill
+flip_realizes_pnl_then_opens_at_fill_price
 fill_at_same_price_no_pnl
 realized_pnl_accumulates_across_fills
 self_trade_taker_and_maker_same_user
 max_qty_no_overflow
 max_price_no_overflow
 position_version_increments_per_fill
+empty_position_zero_notional_zero_upnl
 
 // margin.rs -- core
 portfolio_margin_single_position
@@ -79,11 +92,13 @@ check_order_one_unit_over_limit_rejects
 margin_with_zero_collateral_rejects_all
 margin_with_no_positions_all_available
 margin_unrealized_pnl_affects_equity
+margin_mark_price_unavailable_uses_index
 margin_mark_price_zero_handled
 margin_max_leverage_enforced
 frozen_margin_across_multiple_pending_orders
 order_done_partial_fill_releases_remaining_frozen
 order_failed_releases_all_frozen
+fee_reserve_included_in_pretrade_check
 
 // price.rs -- core
 index_price_size_weighted_mid
@@ -91,8 +106,9 @@ index_price_balanced_book_equals_mid
 index_price_imbalanced_favors_thicker_side
 
 // price.rs -- edge cases
-index_price_one_side_zero_qty
-index_price_both_sides_zero_qty
+index_price_one_side_zero_qty_uses_that_side
+index_price_both_sides_zero_qty_keeps_last
+index_price_no_bbo_ever_uses_mark_price
 index_price_max_values_no_overflow
 index_price_spread_zero_equals_price
 
@@ -111,6 +127,9 @@ funding_with_position_opened_mid_interval
 funding_extreme_divergence_clamped
 funding_settlement_idempotent
 funding_index_price_zero_handled
+funding_missed_interval_settled_on_startup
+funding_settlement_uses_latest_mark_price
+funding_payment_formula_qty_times_mark_times_rate
 
 // exposure index -- core
 exposure_add_user_on_fill
@@ -151,6 +170,16 @@ fill_taker_fee_deducted_from_collateral
 fill_maker_fee_deducted_from_collateral
 fill_maker_rebate_credited_to_collateral
 fill_fee_persisted_with_fill_record
+fill_fee_uses_symbol_config_rates
+
+// order_done/cancel/failed -- frozen margin release
+order_done_releases_frozen_margin_for_order
+order_cancel_releases_frozen_margin_for_order
+order_failed_releases_all_frozen_for_order
+
+// config updates
+config_applied_event_updates_symbol_params
+config_applied_forwarded_to_gateway
 
 // main loop ordering
 fills_processed_before_bbo
@@ -160,6 +189,8 @@ stale_bbo_replaced_by_latest
 mark_price_update_triggers_margin_recalc
 empty_rings_no_crash
 burst_fills_then_idle
+funding_check_amortized_in_loop
+liquidation_check_in_loop_after_funding
 
 // pre-trade risk -- core
 order_accepted_margin_sufficient
@@ -198,6 +229,7 @@ shard_order_accepted_then_rejected_margin_used
 shard_cancel_restores_margin_for_next_order
 shard_mark_price_divergence_triggers_liquidation
 shard_funding_settlement_at_interval
+shard_config_applied_updates_margin_rates
 shard_idle_no_resource_leak
 ```
 
@@ -219,6 +251,9 @@ rapid_open_close_cycles
 max_users_per_shard_performance
 fill_burst_after_idle_period
 funding_with_position_changes_during_interval
+funding_missed_interval_settled_on_restart
+me_failover_no_restart_dedup_by_seq
+config_applied_forwarded_to_gateway_e2e
 ```
 
 ---
@@ -241,7 +276,13 @@ persist_handles_pg_connection_drop
 persist_backpressure_ring_full
 persist_empty_batch_no_transaction
 persist_position_overwritten_by_later_version
+persist_accounts_roundtrip
+persist_fills_via_copy_binary
+persist_no_version_guard_on_upsert
 cold_start_with_empty_postgres
+cold_start_loads_accounts
+backpressure_flush_lag_stalls_hot_path
+backpressure_replica_ring_full_stalls_hot_path
 ```
 
 ### Phase 4: Replication + Failover
@@ -250,9 +291,17 @@ cold_start_with_empty_postgres
 main_acquires_lease_replica_cannot
 main_crash_replica_promotes
 replica_applies_buffered_fills_on_promotion
+replica_applies_fills_up_to_tip_on_sync
+replica_buffers_fills_per_symbol
+replica_polls_advisory_lock_500ms
 replica_state_matches_main
 both_crash_recovery_from_postgres
+both_crash_loss_bounded_100ms
+replay_from_tips_plus_one_via_dxs
+replay_caught_up_signal_goes_live
 me_failover_dedup_by_seq
+promotion_invariant_only_up_to_last_tip
+promotion_connects_gateway_starts_writebehind
 promotion_no_fill_loss
 split_brain_prevented_by_advisory_lock
 ```
@@ -265,6 +314,8 @@ backpressure_slow_postgres
 multi_shard_same_fill_different_users
 funding_persisted_to_postgres
 concurrent_shard_leases_independent
+funding_payments_persisted_append_only
+accounts_persisted_on_flush
 ```
 
 ---
@@ -289,7 +340,7 @@ risk_engine_replica_running
 bench_apply_fill_to_position        // target <100ns
 bench_portfolio_margin_10_positions  // target <10us
 bench_portfolio_margin_50_positions
-bench_index_price_calculation        // target <50ns
+bench_index_price_calculation        // target <100ns
 bench_exposure_lookup_100_users      // target <50ns
 bench_exposure_lookup_1000_users
 ```
@@ -303,7 +354,7 @@ bench_shard_fill_throughput_100_symbols
 bench_pretrade_check_latency             // target <5us
 bench_margin_recalc_100_users_1_symbol   // target <10us/user
 bench_margin_recalc_100_users_10_symbols
-bench_bbo_processing                     // target <200ns
+bench_bbo_processing                     // target <100ns
 bench_main_loop_idle                     // target <1us
 ```
 
@@ -367,19 +418,31 @@ Targets from RISK.md §performance:
 6. **Exposure index consistent** -- matches actual positions
 7. **Advisory lock exclusive** -- at most one main per shard
 8. **Seq dedup prevents double-counting** -- replay = no change
+9. **Promotion invariant** -- replica applies fills only up to last
+   tip from main, never beyond
+10. **Backpressure stall** -- hot path stalls when persistence ring
+    full, flush lag > 10ms, or replica ring full (100ms bound)
+11. **Account balance consistent** -- collateral - fees + rebates +
+    realized_pnl + funding = expected balance
 
 ---
 
 ## Integration Points
 
-- Receives fills/BBO from matching engine SPSC rings
-  (CONSISTENCY.md §1)
-- Receives orders from gateway SPSC ring (NETWORK.md)
+- Receives fills/BBO/OrderDone from matching engine SPSC rings
+  (CONSISTENCY.md §1, event routing table)
+- Receives orders from gateway SPSC ring (NETWORK.md §data flow)
 - Receives mark prices from DXS consumer (MARK.md §1)
-- Sends orders to matching engine SPSC ring
-- Sends fills/done to gateway SPSC ring
-- Persists to Postgres via write-behind worker
-- Replica sync via SPSC tip channel
+- Sends orders to matching engine SPSC ring (RISK.md §6)
+- Sends fills/done to gateway SPSC ring (CONSISTENCY.md §1)
+- Forwards CONFIG_APPLIED to gateway (RISK.md §1)
+- Persists positions/accounts/fills/tips to Postgres via
+  write-behind worker (RISK.md §persistence)
+- Replica sync via SPSC tip channel (RISK.md §replication)
+- Advisory lock via Postgres pg_advisory_lock (RISK.md §replication)
+- Replay via DXS consumer from ME WAL (RISK.md §replication)
 - Liquidation via embedded liquidator (LIQUIDATOR.md)
-- Funding via embedded funding engine
+- Funding via embedded funding engine (RISK.md §5)
+- ME failover: dedup by (symbol_id, seq) (RISK.md §ME failover)
+- Backpressure: stalls on ring full (CONSISTENCY.md §3)
 - System-level: full crash/recovery tests (TESTING.md §3)

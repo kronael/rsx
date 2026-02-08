@@ -35,7 +35,9 @@ enables proactive detection of failures before user impact.
 | `me_orderbook_levels` | Gauge | Active price levels | - | count |
 | `me_slab_allocated` | Gauge | Slab slots allocated | - | count |
 | `me_slab_free` | Gauge | Slab slots free | >1000 | count |
+| `me_slab_leaked_total` | Counter | Slab slot leaks detected | 0 | count |
 | `me_snapshot_duration_ms` | Histogram | Snapshot save duration | p99 <100 | ms |
+| `me_replica_heartbeat_last_seen_sec` | Gauge | Seconds since replica heartbeat | <5 | seconds |
 | `me_replay_duration_ms` | Histogram | WAL replay duration | p99 <5000 | ms |
 | `me_dxs_consumers` | Gauge | Active DXS consumers | - | count |
 
@@ -60,8 +62,15 @@ enables proactive detection of failures before user impact.
 | `risk_postgres_conn_errors_total` | Counter | Postgres connection errors | 0 | count |
 | `risk_replica_lag_ms` | Histogram | Replica lag behind main | p99 <100 | ms |
 | `risk_tips_per_symbol` | Gauge | Last seq per symbol | - | seq |
+| `risk_tips_decreased_total` | Counter | Tips decreased (violations) | 0 | count |
 | `risk_advisory_lock_held` | Gauge | Advisory lock status (0 or 1) | 1 | bool |
+| `risk_advisory_lock_count` | Gauge | Advisory lock count per shard | 1 | count |
+| `risk_position_reconciliation_mismatch_total` | Counter | Position reconciliation mismatches | 0 | count |
+| `risk_funding_zero_sum_violations_total` | Counter | Funding zero-sum violations | 0 | count |
 | `risk_dxs_replay_duration_ms` | Histogram | DXS replay duration | p99 <5000 | ms |
+| `risk_replica_heartbeat_last_seen_sec` | Gauge | Seconds since replica heartbeat | <5 | seconds |
+| `risk_spsc_ordering_violation_total` | Counter | SPSC ordering violations | 0 | count |
+| `risk_margin_drift_total` | Counter | Margin drift (scratch != incremental) | 0 | count |
 
 ### 1.3 Gateway
 
@@ -87,6 +96,7 @@ enables proactive detection of failures before user impact.
 | `marketdata_shadow_book_orders` | Gauge | Orders in shadow book | - | count |
 | `marketdata_shadow_book_levels` | Gauge | Levels in shadow book | - | count |
 | `marketdata_me_lag_ms` | Histogram | Lag behind ME seq | p99 <100 | ms |
+| `marketdata_replica_heartbeat_last_seen_sec` | Gauge | Seconds since replica heartbeat | <5 | seconds |
 
 ### 1.5 Postgres
 
@@ -109,33 +119,36 @@ enables proactive detection of failures before user impact.
 | Alert | Condition | Threshold | Runbook |
 |-------|-----------|-----------|---------|
 | ME seq gap | `me_wal_seq_gap_total > 0` | 0 gaps | RECOVERY-RUNBOOK.md §5.1 |
-| Position mismatch | Reconciliation delta > 0 | 0 delta | RECOVERY-RUNBOOK.md §5.2 |
+| Position mismatch | `risk_position_reconciliation_mismatch_total > 0` | 0 delta | RECOVERY-RUNBOOK.md §5.2 |
 | Advisory lock lost | `risk_advisory_lock_held == 0` | Must be 1 | RECOVERY-RUNBOOK.md §4.1 |
-| Split-brain | `COUNT(advisory_lock) > 1` | Must be 1 | RECOVERY-RUNBOOK.md §4.2 |
-| Funding not zero-sum | `ABS(SUM(funding)) > 1bps` | Must be 0 | RECOVERY-RUNBOOK.md §5.2 |
-| Tips decreased | `tips[symbol_id] < prev_tip` | Never decrease | RECOVERY-RUNBOOK.md §5.2 |
+| Split-brain | `risk_advisory_lock_count > 1` | Must be 1 | RECOVERY-RUNBOOK.md §4.2 |
+| Funding not zero-sum | `risk_funding_zero_sum_violations_total > 0` | Must be 0 (within 1bps) | RECOVERY-RUNBOOK.md §5.2 |
+| Tips decreased | `risk_tips_decreased_total > 0` | Never decrease | RECOVERY-RUNBOOK.md §5.2 |
+| Slab leak | `me_slab_leaked_total > 0` | 0 leaks | RECOVERY-RUNBOOK.md §5.1 |
+| SPSC ordering violation | `risk_spsc_ordering_violation_total > 0` | 0 violations | RECOVERY-RUNBOOK.md §5.1 |
+| Margin drift | `risk_margin_drift_total > 0` | 0 drift | RECOVERY-RUNBOOK.md §5.2 |
 
 ### 2.2 P1: Degraded Service (Page During Hours)
 
 | Alert | Condition | Threshold | Runbook |
 |-------|-----------|-----------|---------|
-| ME heartbeat timeout | `me_heartbeat_last_seen_sec > 5` | <5s | RECOVERY-RUNBOOK.md §2.1 |
-| Risk heartbeat timeout | `risk_heartbeat_last_seen_sec > 5` | <5s | RECOVERY-RUNBOOK.md §2.2 |
-| Gateway heartbeat timeout | `gateway_heartbeat_last_seen_sec > 5` | <5s | RECOVERY-RUNBOOK.md §2.3 |
+| ME heartbeat timeout | `time() - me_heartbeat_last_seen_sec > 5` | <5s | RECOVERY-RUNBOOK.md §2.1 |
+| Risk heartbeat timeout | `time() - risk_heartbeat_last_seen_sec > 5` | <5s | RECOVERY-RUNBOOK.md §2.2 |
+| Gateway heartbeat timeout | `time() - gateway_heartbeat_last_seen_sec > 5` | <5s | RECOVERY-RUNBOOK.md §2.3 |
 | Postgres down | `postgres_up == 0` | Must be 1 | RECOVERY-RUNBOOK.md §2.4 |
-| ME WAL flush lag | `me_wal_flush_lag_ms p99 > 15` | <10ms (warn), <50ms (crit) | RECOVERY-RUNBOOK.md §3.1 |
-| Risk Postgres lag | `risk_postgres_write_lag_ms p99 > 50` | <10ms (warn), <100ms (crit) | RECOVERY-RUNBOOK.md §3.2 |
-| Risk replica lag | `risk_replica_lag_ms p99 > 500` | <100ms (warn), <1000ms (crit) | RECOVERY-RUNBOOK.md §3.3 |
-| ME backpressure stalls | `rate(me_backpressure_stalls_total) > 10` | 0/sec | RECOVERY-RUNBOOK.md §3.1 |
-| Postgres locks waiting | `postgres_locks_waiting > 5` | 0 | RECOVERY-RUNBOOK.md §3.2 |
+| ME WAL flush lag | `histogram_quantile(0.99, rate(me_wal_flush_lag_ms[1m])) > 10` | p99 <10ms (target), >15ms (warn), >50ms (crit) | RECOVERY-RUNBOOK.md §3.1 |
+| Risk Postgres lag | `histogram_quantile(0.99, rate(risk_postgres_write_lag_ms[1m])) > 10` | p99 <10ms (target), >50ms (warn), >100ms (crit) | RECOVERY-RUNBOOK.md §3.2 |
+| Risk replica lag | `histogram_quantile(0.99, rate(risk_replica_lag_ms[1m])) > 100` | p99 <100ms (target), >500ms (warn), >1000ms (crit) | RECOVERY-RUNBOOK.md §3.3 |
+| ME backpressure stalls | `rate(me_backpressure_stalls_total[1m]) > 0` | 0/sec | RECOVERY-RUNBOOK.md §3.1 |
+| Postgres locks waiting | `postgres_locks_waiting > 0` | 0 | RECOVERY-RUNBOOK.md §3.2 |
 
 ### 2.3 P2: Shadow Component Down (Email/Slack)
 
 | Alert | Condition | Threshold | Runbook |
 |-------|-----------|-----------|---------|
-| ME replica offline | `me_replica_heartbeat > 10` | <5s | RECOVERY-RUNBOOK.md §2.1 |
-| Risk replica offline | `risk_replica_heartbeat > 10` | <5s | RECOVERY-RUNBOOK.md §2.2 |
-| MARKETDATA offline | `marketdata_heartbeat > 10` | <5s | RECOVERY-RUNBOOK.md §2 |
+| ME replica offline | `time() - me_replica_heartbeat_last_seen_sec > 10` | <5s | RECOVERY-RUNBOOK.md §2.1 |
+| Risk replica offline | `time() - risk_replica_heartbeat_last_seen_sec > 10` | <5s | RECOVERY-RUNBOOK.md §2.2 |
+| MARKETDATA offline | `time() - marketdata_heartbeat_last_seen_sec > 10` | <5s | RECOVERY-RUNBOOK.md §2.3 |
 | Postgres replica offline | `postgres_replica_up == 0` | Must be 1 | RECOVERY-RUNBOOK.md §2.4 |
 
 ---
@@ -208,7 +221,7 @@ enables proactive detection of failures before user impact.
 
 **Panels:**
 1. Position reconciliation status (query every 10min)
-   - Sample 1% of users, compare positions vs fills
+   - Sample 1% of users (user_id % 100 = 0), compare positions vs fills
    - Show: users checked, mismatches found
 2. Seq gap detection (continuous)
    - Check ME WAL for gaps
@@ -217,11 +230,20 @@ enables proactive detection of failures before user impact.
    - Check tips table for decreases
    - Show: symbols checked, violations found
 4. Funding zero-sum check (after each settlement)
-   - Check funding_payments sum per symbol/interval
+   - Check funding_payments sum per symbol/interval (tolerance: 1bps)
    - Show: settlements checked, violations found
 5. Advisory lock check (continuous)
    - Check pg_locks for advisory lock count per shard
    - Show: shards checked, violations found (!=1)
+6. Slab allocator check (continuous)
+   - ME slab: allocated = free + active_orders
+   - Show: symbols checked, leaks detected
+7. SPSC ordering check (sampling)
+   - Verify fills arrive in seq order at Risk
+   - Show: samples checked, ordering violations found
+8. Margin consistency check (periodic, every 1000 fills in tests)
+   - Recalc margin from scratch vs incremental
+   - Show: users checked, drift detected
 
 **Refresh:** 10s (except position reconciliation: 10min)
 
@@ -246,7 +268,27 @@ lazy_static! {
 
     pub static ref ME_WAL_FLUSH_LAG: Histogram = Histogram::with_opts(
         HistogramOpts::new("me_wal_flush_lag_ms", "WAL flush lag in ms")
-            .buckets(vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0])
+            .buckets(vec![1.0, 5.0, 10.0, 15.0, 25.0, 50.0, 100.0])
+    ).unwrap();
+
+    pub static ref ME_SLAB_LEAKED: Counter = Counter::new(
+        "me_slab_leaked_total",
+        "Total slab slot leaks detected"
+    ).unwrap();
+
+    pub static ref RISK_TIPS_DECREASED: Counter = Counter::new(
+        "risk_tips_decreased_total",
+        "Total tip decreases detected (violations)"
+    ).unwrap();
+
+    pub static ref RISK_POSITION_MISMATCH: Counter = Counter::new(
+        "risk_position_reconciliation_mismatch_total",
+        "Total position reconciliation mismatches"
+    ).unwrap();
+
+    pub static ref RISK_FUNDING_VIOLATIONS: Counter = Counter::new(
+        "risk_funding_zero_sum_violations_total",
+        "Total funding zero-sum violations"
     ).unwrap();
 }
 
@@ -451,13 +493,53 @@ groups:
 
       # P0: Tips decreased
       - alert: TipsDecreased
-        expr: (risk_tips_per_symbol - risk_tips_per_symbol offset 1m) < 0
+        expr: increase(risk_tips_decreased_total[1m]) > 0
         for: 0s
         labels:
           severity: p0
         annotations:
           summary: "Tips decreased for symbol {{ $labels.symbol_id }}"
           description: "Tips must be monotonic. See RECOVERY-RUNBOOK.md §5.2"
+
+      # P0: Slab leak
+      - alert: SlabLeak
+        expr: me_slab_leaked_total > 0
+        for: 0s
+        labels:
+          severity: p0
+        annotations:
+          summary: "Slab leak detected for {{ $labels.symbol }}"
+          description: "ME slab allocator leak (critical bug). See RECOVERY-RUNBOOK.md §5.1"
+
+      # P0: SPSC ordering violation
+      - alert: SPSCOrderingViolation
+        expr: risk_spsc_ordering_violation_total > 0
+        for: 0s
+        labels:
+          severity: p0
+        annotations:
+          summary: "SPSC ordering violation for shard {{ $labels.shard_id }}"
+          description: "Out-of-order fills (critical bug). See RECOVERY-RUNBOOK.md §5.1"
+
+      # P0: Margin drift
+      - alert: MarginDrift
+        expr: risk_margin_drift_total > 0
+        for: 0s
+        labels:
+          severity: p0
+        annotations:
+          summary: "Margin drift detected for shard {{ $labels.shard_id }}"
+          description: "Incremental margin != scratch recalc (critical bug). See RECOVERY-RUNBOOK.md §5.2"
+
+      # P0: Funding zero-sum violation
+      - alert: FundingZeroSumViolation
+        expr: risk_funding_zero_sum_violations_total > 0
+        for: 0s
+        labels:
+          severity: p0
+        annotations:
+          summary: "Funding zero-sum violated for symbol {{ $labels.symbol_id }}"
+          description: "Funding payments don't sum to zero. See RECOVERY-RUNBOOK.md §5.2"
 
 # alerts/performance.yml
 groups:
@@ -486,53 +568,53 @@ groups:
 
       # P1: WAL flush lag (warning)
       - alert: MEWalFlushLagWarning
-        expr: histogram_quantile(0.99, me_wal_flush_lag_ms) > 15
+        expr: histogram_quantile(0.99, rate(me_wal_flush_lag_ms_bucket[1m])) > 15
         for: 1m
         labels:
           severity: p1
         annotations:
           summary: "ME WAL flush lag high for {{ $labels.symbol }}"
-          description: "p99 > 15ms. Check disk. See RECOVERY-RUNBOOK.md §3.1"
+          description: "p99 > 15ms (target: <10ms). Check disk. See RECOVERY-RUNBOOK.md §3.1"
 
       # P1: WAL flush lag (critical)
       - alert: MEWalFlushLagCritical
-        expr: histogram_quantile(0.99, me_wal_flush_lag_ms) > 50
+        expr: histogram_quantile(0.99, rate(me_wal_flush_lag_ms_bucket[1m])) > 50
         for: 30s
         labels:
           severity: p1
         annotations:
           summary: "ME WAL flush lag critical for {{ $labels.symbol }}"
-          description: "p99 > 50ms. Disk failure? See RECOVERY-RUNBOOK.md §3.1"
+          description: "p99 > 50ms (target: <10ms). Disk failure? See RECOVERY-RUNBOOK.md §3.1"
 
       # P1: Postgres write lag (warning)
       - alert: RiskPostgresLagWarning
-        expr: histogram_quantile(0.99, risk_postgres_write_lag_ms) > 50
+        expr: histogram_quantile(0.99, rate(risk_postgres_write_lag_ms_bucket[1m])) > 50
         for: 1m
         labels:
           severity: p1
         annotations:
           summary: "Risk Postgres write lag high for shard {{ $labels.shard_id }}"
-          description: "p99 > 50ms. Check DB. See RECOVERY-RUNBOOK.md §3.2"
+          description: "p99 > 50ms (target: <10ms). Check DB. See RECOVERY-RUNBOOK.md §3.2"
 
       # P1: Postgres write lag (critical)
       - alert: RiskPostgresLagCritical
-        expr: histogram_quantile(0.99, risk_postgres_write_lag_ms) > 100
+        expr: histogram_quantile(0.99, rate(risk_postgres_write_lag_ms_bucket[1m])) > 100
         for: 30s
         labels:
           severity: p1
         annotations:
           summary: "Risk Postgres write lag critical for shard {{ $labels.shard_id }}"
-          description: "p99 > 100ms. DB failure? See RECOVERY-RUNBOOK.md §3.2"
+          description: "p99 > 100ms (target: <10ms). DB failure? See RECOVERY-RUNBOOK.md §3.2"
 
       # P1: Replica lag
       - alert: RiskReplicaLagHigh
-        expr: histogram_quantile(0.99, risk_replica_lag_ms) > 500
+        expr: histogram_quantile(0.99, rate(risk_replica_lag_ms_bucket[1m])) > 500
         for: 1m
         labels:
           severity: p1
         annotations:
           summary: "Risk replica lag high for shard {{ $labels.shard_id }}"
-          description: "p99 > 500ms. Replica slow. See RECOVERY-RUNBOOK.md §3.3"
+          description: "p99 > 500ms (target: <100ms). Replica slow. See RECOVERY-RUNBOOK.md §3.3"
 
       # P1: Backpressure stalls
       - alert: MEBackpressureStalls
@@ -612,17 +694,18 @@ JOIN fills_sum f ON p.user_id = f.user_id AND p.symbol_id = f.symbol_id;
 
 ```sql
 -- Check for seq gaps in fills table
-SELECT
-  symbol_id,
-  COUNT(*) AS gaps
-FROM (
+WITH seq_diffs AS (
   SELECT
     symbol_id,
     seq,
     LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) AS prev_seq
   FROM fills
-  WHERE seq - LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) > 1
-) t
+)
+SELECT
+  symbol_id,
+  COUNT(*) AS gaps
+FROM seq_diffs
+WHERE seq - prev_seq > 1
 GROUP BY symbol_id;
 
 -- Export to Prometheus:
@@ -633,19 +716,20 @@ GROUP BY symbol_id;
 
 ```sql
 -- Check for tip decreases
-SELECT
-  instance_id,
-  symbol_id,
-  COUNT(*) AS violations
-FROM (
+WITH tip_history AS (
   SELECT
     instance_id,
     symbol_id,
     last_seq,
     LAG(last_seq) OVER (PARTITION BY instance_id, symbol_id ORDER BY updated_at) AS prev_seq
   FROM tips
-  WHERE last_seq < LAG(last_seq) OVER (PARTITION BY instance_id, symbol_id ORDER BY updated_at)
-) t
+)
+SELECT
+  instance_id,
+  symbol_id,
+  COUNT(*) AS violations
+FROM tip_history
+WHERE last_seq < prev_seq
 GROUP BY instance_id, symbol_id;
 
 -- Export to Prometheus:
@@ -655,14 +739,15 @@ GROUP BY instance_id, symbol_id;
 ### 6.4 Funding Zero-Sum Check (Run After Each Settlement)
 
 ```sql
--- Check funding payments sum to zero
+-- Check funding payments sum to zero (within 1bps tolerance)
 SELECT
   symbol_id,
   settlement_ts,
-  ABS(SUM(amount)) AS abs_sum
+  ABS(SUM(amount)) AS abs_sum,
+  COUNT(*) AS position_count
 FROM funding_payments
 GROUP BY symbol_id, settlement_ts
-HAVING ABS(SUM(amount)) > 100;  -- Allow 1bps rounding error
+HAVING ABS(SUM(amount)) > 100;  -- 100 = 1bps in fixed-point (10000 basis)
 
 -- Export to Prometheus:
 -- risk_funding_zero_sum_violations_total{symbol_id} = COUNT(rows)
@@ -682,6 +767,55 @@ GROUP BY objid;
 -- Export to Prometheus:
 -- risk_advisory_lock_count{shard_id} = lock_count
 -- (Alert if != 1)
+```
+
+### 6.6 Slab Allocator Check (Run Continuously)
+
+```rust
+// In ME metrics collection (every 100ms)
+let allocated = slab.total_slots();
+let free = slab.free_slots();
+let active = book.active_orders();
+
+if allocated != free + active {
+    ME_SLAB_LEAKED.inc();
+}
+
+ME_SLAB_ALLOCATED.set(allocated as f64);
+ME_SLAB_FREE.set(free as f64);
+```
+
+### 6.7 SPSC Ordering Check (Sampling)
+
+```rust
+// In Risk fill processing (sample 1 in 1000 fills)
+if fill.seq % 1000 == 0 {
+    let prev_seq = tips[fill.symbol_id];
+    if fill.seq != prev_seq + 1 {
+        // CRITICAL: Out-of-order fill or gap
+        // This should NEVER happen with SPSC rings
+        RISK_SPSC_ORDERING_VIOLATION.inc();
+    }
+}
+```
+
+### 6.8 Margin Consistency Check (Periodic)
+
+```rust
+// In Risk tests (every 1000 fills)
+// In production (every 10min, sample 1% of users)
+if fill_count % 1000 == 0 {
+    for user_id in sample_users() {
+        let incremental = accounts[user_id].margin_state;
+        let from_scratch = portfolio_margin.calculate(
+            get_user_positions(user_id),
+            &mark_prices
+        );
+        if incremental.equity != from_scratch.equity {
+            RISK_MARGIN_DRIFT.inc();
+        }
+    }
+}
 ```
 
 ---
