@@ -148,6 +148,13 @@ price may change due to fewer sources).
 `MarkPriceEvent` is emitted. Risk engines fall back to index price
 (size-weighted mid from BBO) per RISK.md section 4.
 
+**Liquidation fallback:** If mark price is unavailable (all
+sources stale), the liquidator uses this fallback chain:
+mark -> index price (BBO) -> last known mark. See
+LIQUIDATOR.md section 3 for the complete fallback chain.
+The mark aggregator does NOT block or stall — it simply
+stops publishing. Consumers handle the absence.
+
 ---
 
 ## 5. Serving Subscribers

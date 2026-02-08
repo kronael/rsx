@@ -150,7 +150,7 @@ message GatewayToRisk {
 
 message RiskNewOrder {
     bytes order_id = 1;          // UUIDv7 (16 bytes)
-    uint64 client_order_id = 2;
+    bytes client_order_id = 2;  // fixed 20 bytes, zero-padded
     uint32 user_id = 3;
     uint32 symbol_id = 4;
     uint32 active_user_id = 5;  // dense per-symbol id (from risk)
@@ -169,7 +169,7 @@ message RiskCancelOrder {
     uint32 active_user_id = 3;
     oneof key {
         bytes order_id = 4;
-        uint64 client_order_id = 5;
+        bytes client_order_id = 5;  // fixed 20 bytes
     }
     uint64 timestamp_ns = 6;
 }
@@ -207,7 +207,7 @@ message RiskToGateway {
 
 message RiskOrderUpdate {
     bytes order_id = 1;
-    uint64 client_order_id = 2;
+    bytes client_order_id = 2;  // fixed 20 bytes, zero-padded
     uint32 user_id = 3;
     uint32 symbol_id = 4;
     OrderStatus status = 5;
@@ -284,6 +284,9 @@ enum FailureReason {
     OVERLOADED = 5;              // Ingress backpressure at gateway
     INTERNAL_ERROR = 6;          // Matching engine error (should not happen)
     REDUCE_ONLY_VIOLATION = 7;   // No position to reduce
+    NETWORK_ERROR = 8;           // Stream disconnect
+    RATE_LIMIT = 9;              // Per-user rate limit exceeded
+    TIMEOUT = 10;                // Order processing timeout
 }
 ```
 

@@ -15,6 +15,16 @@ This document describes the shared WAL architecture for the risk engine and the 
 - Versioning lives in the header (`version`), not in the payload.
 - Concrete record layouts are defined in **DXS.md** and reused for storage + streaming.
 
+### Version Policy
+
+- **Additive changes** (new record types, trailing fields):
+  no version bump. Readers ignore trailing bytes beyond known
+  payload.
+- **Breaking changes** (field reorder, type change): bump
+  version in header + fail-fast on unknown version.
+- See DXS.md section 1 for full version handling
+  specification.
+
 **Scope (v1):** WAL is written by the **matching engine** and contains all
 orderbook events (new/cancel/fill/done/failed/config). Order intents at
 ingress are **not** WAL’d; they can be lost if risk dies before execution.
@@ -79,6 +89,15 @@ and ensures the 10ms bound holds under all conditions.
 - Matching engine uses the same WAL pattern to persist orders, cancels, and fills.
 - WAL flush + snapshot restore is the recovery path (see ORDERBOOK.md).
 - The 10ms bound is acceptable to reach target latency; faster durability implies higher latency.
+
+**Crash mid-rotation:** WAL files are append-only. The active
+file uses a temporary name (`{stream_id}_active.wal`).
+Rotation renames the active file with its seq range. If the
+process crashes mid-rotation, the active file remains with
+its temporary name. On recovery, the reader treats
+`_active.wal` as the last file and replays from the last
+complete record (CRC validation truncates at first invalid
+record). No data loss.
 
 ## Risk Usage
 

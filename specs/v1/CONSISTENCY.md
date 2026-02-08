@@ -62,10 +62,17 @@ L2 depth, BBO, and trade derivation from these events.
 
 ## 3. Backpressure
 
-- Ingress backpressure is primary: gateway rejects new orders when buffer is full.
+- **Gateway ingress** (external): gateway rejects new orders
+  with `OVERLOADED` when buffer is full. This is the primary
+  user-facing backpressure mechanism.
+- **ME SPSC rings** (internal): ring full = matching engine
+  **must stall** (bare busy-spin, no `spin_loop()`). This is
+  internal backpressure between co-located components.
+- These two layers are independent. Gateway rejection protects
+  against external overload; ME stall protects against slow
+  consumers.
 - Internal rings should be kept small to avoid hiding latency.
-- Ring full = matching engine **must stall** (bare busy-spin, no `spin_loop()`).
-- Per-consumer rings — slow market data doesn't stall risk
+- Per-consumer rings — slow market data doesn't stall risk.
 
 ## 4. Positions & Risk
 
@@ -82,6 +89,12 @@ L2 depth, BBO, and trade derivation from these events.
 | Matching engine | Book lost | Restores from snapshot + WAL replay. |
 | Risk engine | Positions persisted | Restarts from persisted state. See PERSISTENCE.md. |
 | Gateway | User sessions drop | Users reconnect and re-submit. |
+
+**Graceful shutdown:** SIGTERM is treated identically to a
+crash. No special shutdown logic (no drain, no flush, no
+notification). Recovery handles all state restoration. This
+simplifies the codebase — there is exactly one recovery path,
+exercised on every restart regardless of cause.
 
 **Detailed crash scenarios:** See [CRASH-SCENARIOS.md](../../CRASH-SCENARIOS.md)
 for comprehensive analysis of all failure modes including dual component

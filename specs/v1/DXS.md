@@ -31,6 +31,20 @@ Readers validate `crc32` and truncate the WAL on the first invalid record.
 **Version handling:** if `version` is unknown, the reader must stop replay
 and fail fast (no skip).
 
+**Version policy:**
+
+- **Additive changes** (new record types, new trailing fields
+  in existing records): no version bump. Readers ignore
+  unknown record types and trailing bytes beyond expected
+  payload length.
+- **Breaking changes** (field reordering, type changes,
+  removed fields): bump `version` in header. Readers
+  encountering an unknown version MUST fail fast (no skip,
+  no guess).
+- **Upgrade order:** deploy consumers first (they ignore
+  unknown trailing bytes), then deploy producers emitting
+  new records.
+
 **Record types (v1):**
 - `RECORD_FILL`
 - `RECORD_BBO`
@@ -39,6 +53,7 @@ and fail fast (no skip).
 - `RECORD_ORDER_DONE`
 - `RECORD_CONFIG_APPLIED`
 - `RECORD_CAUGHT_UP` (replay marker)
+- `RECORD_ORDER_ACCEPTED` (dedup record)
 
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
@@ -57,6 +72,18 @@ no padding beyond `#[repr(C, align(64))]`.
 - expiry: time-in-force expiry (IOC/FOK)
 - post_only_reject: post-only would take
 - system: internal kill switch or maintenance
+
+**Dedup record:**
+
+Order deduplication survives ME restart via WAL. On each
+accepted order, ME appends `RECORD_ORDER_ACCEPTED {
+user_id, order_id }` to WAL before processing. On replay,
+ME rebuilds the dedup set from these records. Dedup key is
+`(user_id, order_id)`.
+
+The dedup window is bounded by the same 5min pruning as
+in-memory (GRPC.md section 7). During replay, records older
+than 5min from WAL tip are skipped.
 
 **Payload layouts (v1):**
 ```
@@ -308,6 +335,20 @@ message WalBytes {
 
 Use a fixed record type `RECORD_CAUGHT_UP` with payload:
 `{live_seq: u64}`.
+
+**CaughtUp semantics:**
+
+- `live_seq` = last seq the consumer has seen (inclusive).
+  The consumer's WAL reader has delivered all records up to
+  and including `live_seq`.
+- After CaughtUp, the consumer resumes processing at
+  `live_seq + 1` (the next record appended by the producer).
+- CaughtUp is **per-symbol stream** (one per `stream_id`),
+  not a global sync point. A consumer with multiple streams
+  receives independent CaughtUp markers for each.
+- Risk engine "goes live" after receiving CaughtUp for
+  **all** subscribed streams (per RISK.md replication
+  section).
 
 **Concurrency:** one gRPC handler per connected consumer. Each
 handler has its own WalReader. Live broadcast uses a notify

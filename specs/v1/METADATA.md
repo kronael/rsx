@@ -60,6 +60,14 @@ Fields:
 - Older versions are ignored.
 - Gateway may validate basic constraints with its cached config, but matcher is authoritative.
 
+**Cold start bootstrap:** ME writes each applied config to a
+Postgres table (`symbol_config_applied`) alongside the
+`CONFIG_APPLIED` event. On cold start, Risk and Gateway load
+current configs from this table (not from the schedule). This
+ensures new instances get current config even if they missed
+the CONFIG_APPLIED stream event. ME is the only writer to
+this table.
+
 ## Notes
 
 - v1 allows changes to all fields except `symbol_id`.

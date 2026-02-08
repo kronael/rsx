@@ -352,6 +352,8 @@ Gateway ──ORDER──→ Risk
 **Handling:**
 - Gateway detects stream disconnect (gRPC error)
 - All pending orders on that stream → ORDER_FAILED(NETWORK_ERROR)
+- NETWORK_ERROR (8), RATE_LIMIT (9), and TIMEOUT (10) are
+  defined in GRPC.md FailureReason enum.
 - Notify user: "Order submission failed, please retry"
 - NO automatic retry (user must resubmit)
 

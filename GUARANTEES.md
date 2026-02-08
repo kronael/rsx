@@ -856,6 +856,11 @@ GROUP BY symbol_id, settlement_ts;
 
 Sum must be 0 (within rounding error of fixed-point arithmetic).
 
+**Clock requirement:** Funding settlement depends on wall clock.
+All hosts MUST run NTP with skew <100ms. Funding uses
+`interval_id = unix_epoch_secs / 28800` as idempotency key
+to prevent double-settlement even under clock drift.
+
 ### 8.6 Fills Idempotent
 
 Replaying same fill = no position change.
@@ -876,6 +881,12 @@ AND objid = ?;  -- shard_id
 ```
 
 Must return exactly 1.
+
+**Auto-release:** Postgres advisory locks are per-connection.
+When the holding connection drops (process crash, network
+failure), Postgres automatically releases the lock. No stale
+lock cleanup needed. The replica detects lock release via
+`pg_try_advisory_lock()` polling (every ~500ms).
 
 ### 8.8 Slab No-Leak (Matching Engine)
 

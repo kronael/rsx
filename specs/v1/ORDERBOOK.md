@@ -449,12 +449,17 @@ does, then serializes the live orderbook state.
 Key rules:
 - Never migrate during a snapshot.
 - If migration is active, snapshot waits.
+- Mechanism: snapshot checks `book.state`. If `Migrating`,
+  snapshot returns early (no-op). Next snapshot cycle retries.
+  No lock needed — single-threaded main loop serializes access.
 - Snapshot runs incrementally during idle cycles or on access.
 
 ### Recovery
 
-1. Load latest snapshot.
-2. Replay WAL from snapshot offset.
+1. Load latest snapshot (includes all state up to
+   `snapshot_seq`).
+2. Replay WAL from `snapshot_seq + 1` (exclusive —
+   snapshot already includes `snapshot_seq`).
 3. Resume matching.
 
 ### Replica Takeover (Same Mechanism as Risk)
@@ -545,12 +550,13 @@ struct OrderSlot {
     remaining_qty: Qty,     // i64, 8B
     side: u8,               // 1B (0=Buy, 1=Sell)
     flags: u8,              // 1B (bit 0: is_active, bit 1: reduce_only)
-    _pad1: [u8; 6],         // 6B alignment
+    tif: u8,                // 1B (0=GTC, 1=IOC, 2=FOK)
+    _pad1: [u8; 5],         // 5B alignment
     next: SlabIdx,          // u32, 4B — next in price level
     prev: SlabIdx,          // u32, 4B — prev in price level
     tick_index: u32,        // u32, 4B — backpointer to price level
     _pad2: u32,             // 4B
-    // subtotal: 48 bytes, fits in one cache line with padding to 64
+    // subtotal: 48B, fits in one cache line with padding to 64
 
     // === Cache line 2: cold fields ===
     user_id: u32,           // 4B
@@ -652,13 +658,14 @@ adds one `is_migrating()` branch (predicted away in Normal state).
 
 ---
 
-## 5. Matching Algorithm (GTC Limit Orders)
+## 5. Matching Algorithm
 
 ### Main Loop
 
 ```
 fn process_new_order(book, incoming):
     book.event_len = 0    // single store, no clear needed
+    let saved_event_len = book.event_len    // for FOK rollback
     validate_price_tick(incoming.price, book.config)
     validate_qty_lot(incoming.qty, incoming.price, book.config)
 
@@ -706,10 +713,31 @@ fn process_new_order(book, incoming):
             if bid_level.order_count == 0:
                 book.best_bid_tick = scan_next_bid(book, book.best_bid_tick)
 
+    // Phase 1.5: Time-in-force enforcement
+    if incoming.tif == FOK:
+        if incoming.remaining_qty > 0:
+            // FOK not fully filled — reject entire order
+            // Undo any fills emitted above (revert event_len)
+            book.event_len = saved_event_len
+            book.emit(OrderFailed {
+                user_id: incoming.user_id,
+                reason: FOK_NOT_FILLED })
+            return
+
     // Phase 2: Insert remainder as resting order
     if incoming.remaining_qty > 0:
-        handle = insert_resting(book, incoming)
-        book.emit(OrderInserted { handle, ... })
+        if incoming.tif == IOC:
+            // IOC: cancel remainder, don't insert
+            book.emit(OrderDone {
+                user_id: incoming.user_id,
+                reason: CANCELLED,
+                filled_qty: incoming.original_qty
+                    - incoming.remaining_qty,
+                remaining_qty:
+                    incoming.remaining_qty })
+        else:
+            handle = insert_resting(book, incoming)
+            book.emit(OrderInserted { handle, ... })
 
     // caller drains book.event_buf[0..book.event_len], then event_len resets next call
 ```
@@ -892,7 +920,8 @@ fn update_positions_on_fill(book: &mut Orderbook,
 Active user_id lifecycle:
 - Assign on first order for this symbol (risk supplies mapping).
 - Reclaim only when `net_qty == 0 && order_count == 0` for a grace
-  period (e.g., 60s) to avoid churn.
+  period (300s) to avoid churn. Grace period is disabled
+  during WAL replay (reclamation deferred until live).
 - Reuse reclaimed slots via free list.
 
 How events are consistently delivered to these systems, ordering guarantees,
