@@ -29,6 +29,19 @@ Binary: `rsx-gateway`
 | G16 | Config cache synced via CONFIG_APPLIED | GRPC.md |
 | G17 | Tick/lot pre-validation (fail fast) | ORDERBOOK.md §2.9 |
 | G18 | Out-of-order response handling via order_id | RPC.md §pending |
+| G19 | Stale order policy: 5 min, client cancels/forgets | RPC.md §timeout |
+| G20 | Per-instance throughput cap: 1000 orders/s | RPC.md §rate-limit |
+| G21 | Enum validation: Side, TIF, OrderStatus, FailureReason | WEBPROTO.md §enums |
+| G22 | Reduce-only (ro) field in N frame (optional, default 0) | WEBPROTO.md §N |
+| G23 | Fill fee field: signed int64, negative=rebate | WEBPROTO.md §F |
+| G24 | Error frame E: code + msg | WEBPROTO.md §E |
+| G25 | No permessage-deflate compression | WEBPROTO.md §frame-shape |
+| G26 | Horizontal scaling: user_id hash sharding | NETWORK.md §scaling |
+| G27 | Dedup: 5-min window in ME, fresh UUIDv7 on retry | RPC.md §dedup |
+| G28 | OrderDone/OrderFailed exactly one per order | GRPC.md §completion |
+| G29 | Fills precede ORDER_DONE in stream | GRPC.md §fill-streaming |
+| G30 | Fixed-point price/qty: int64, no float | GRPC.md §field-encodings |
+| G31 | Exactly one key per WS frame | WEBPROTO.md §frame-shape |
 
 ---
 
@@ -61,6 +74,22 @@ parse_x_frame_unsubscribe_all
 // heartbeat
 parse_h_frame_server_initiated
 parse_h_frame_client_echo
+
+// error
+parse_e_frame_error_code_and_msg
+
+// liquidation
+parse_q_frame_liquidation_all_statuses
+
+// market data (server->client outbound)
+parse_bbo_frame_all_fields
+parse_b_snapshot_frame
+parse_d_delta_frame
+
+// validation
+parse_frame_rejects_multiple_keys
+parse_frame_rejects_non_letter_key
+parse_n_frame_invalid_tif_rejected
 ```
 
 ### WS Protocol Serialization
@@ -74,6 +103,43 @@ serialize_bbo_frame
 serialize_b_frame_l2_snapshot
 serialize_d_frame_l2_delta
 serialize_q_frame_liquidation
+serialize_s_frame_subscribe
+serialize_x_frame_unsubscribe
+```
+
+### Enum Validation
+
+```rust
+enum_side_valid_0_1_only
+enum_tif_valid_0_1_2_only
+enum_order_status_valid_0_1_2_3
+enum_failure_reason_valid_0_through_7
+enum_unknown_value_rejected
+```
+
+### Fill Fee Handling
+
+```rust
+fill_fee_positive_taker
+fill_fee_negative_rebate_maker
+fill_fee_zero
+fill_fee_forwarded_in_f_frame
+```
+
+### Reduce-Only
+
+```rust
+n_frame_ro_default_zero_when_absent
+n_frame_ro_1_maps_to_grpc_reduce_only
+```
+
+### Fixed-Point Conversion
+
+```rust
+price_float_to_fixed_point_correct
+qty_float_to_fixed_point_correct
+price_fractional_tick_rejected
+qty_fractional_lot_rejected
 ```
 
 ### UUIDv7 Order ID
@@ -107,6 +173,7 @@ rate_limit_per_user_independent
 rate_limit_per_ip_independent
 rate_limit_10_per_sec_per_user
 rate_limit_100_per_sec_per_ip
+rate_limit_1000_per_sec_per_instance
 ```
 
 ### Ingress Backpressure
@@ -160,6 +227,9 @@ ws_new_order_rejected_overloaded
 ws_new_order_timeout_returns_error
 grpc_new_order_fill_done_complete
 grpc_cancel_order_done
+ws_reduce_only_order_lifecycle
+ws_fill_with_fee_forwarded
+ws_error_frame_sent_on_invalid_input
 ```
 
 ### Multi-User
@@ -191,6 +261,16 @@ risk_engine_reconnect_circuit_closes
 matching_engine_timeout_order_failed
 network_partition_pending_orders_failed
 duplicate_order_id_rejected_by_me
+stale_order_5min_no_update_client_cancels
+```
+
+### Stream Ordering
+
+```rust
+fills_precede_order_done_in_stream
+exactly_one_completion_per_order
+order_done_or_failed_never_both
+no_permessage_deflate_negotiated
 ```
 
 ### Liquidation Notification
@@ -215,6 +295,11 @@ bench_rate_limit_check              // target <50ns
 bench_grpc_order_serialization      // target <1us
 bench_100_concurrent_sessions       // target stable throughput
 bench_1000_orders_sec_per_user      // target <1ms per order
+bench_ws_parse_c_frame              // target <200ns
+bench_ws_parse_a_frame              // target <500ns
+bench_backpressure_reject           // target <100ns
+bench_fill_fee_extraction           // target <50ns
+bench_fixed_point_conversion        // target <50ns
 ```
 
 Targets from NETWORK.md:
@@ -242,3 +327,7 @@ Targets from NETWORK.md:
   (TESTING.md §2 e2e)
 - Load tests: 10K concurrent users, 100K orders/sec burst
   (TESTING.md §6 load tests)
+- Fixed-point price/qty conversion at gateway ingress
+  (GRPC.md §field-encodings)
+- Horizontal scaling via user_id hash sharding
+  (NETWORK.md §gateway-scaling)

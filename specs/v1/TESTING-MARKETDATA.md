@@ -28,6 +28,16 @@ Binary: `rsx-marketdata`
 | MD14 | Recovery via DXS replay from ME WAL | DXS.md §8 |
 | MD15 | WS JSON: BBO, B (snapshot), D (delta), S, X | WEBPROTO.md |
 | MD16 | Event routing: Fill + OrderInserted + Cancelled | CONSISTENCY.md §1 |
+| MD17 | gRPC schema mirrors WS JSON (B/D/BBO) | MARKETDATA.md §notes |
+| MD18 | BBO includes order count per side (bid_count, ask_count) | MARKETDATA.md §messages |
+| MD19 | Snapshot consistency: point-in-time best effort | MARKETDATA.md §transport |
+| MD20 | OrderDone NOT routed to market data | CONSISTENCY.md §1 table |
+| MD21 | MktData derives own BBO from shadow book (not ME BBO) | CONSISTENCY.md §1 |
+| MD22 | WS seq gap: u jumps >1 triggers re-subscribe | WEBPROTO.md §market data |
+| MD23 | `u` field is WS alias for gRPC `seq` | WEBPROTO.md §market data |
+| MD24 | Server sends B snapshot on subscribe before D deltas | WEBPROTO.md §market data |
+| MD25 | Trades derived from fill events | NETWORK.md §MARKETDATA |
+| MD26 | Subscribe depth parameter: 10, 25, 50 | MARKETDATA.md §subscribe |
 
 ---
 
@@ -43,6 +53,8 @@ shadow_book_fill_removes_exhausted_order
 shadow_book_bbo_derived_correctly
 shadow_book_empty_returns_no_bbo
 shadow_book_seq_monotonic
+shadow_book_order_done_not_applied
+shadow_book_uses_rsx_book_crate
 ```
 
 ### BBO Derivation
@@ -54,6 +66,8 @@ bbo_no_update_if_unchanged
 bbo_includes_count_and_qty
 bbo_correct_after_fill_at_best
 bbo_correct_after_cancel_at_best
+bbo_includes_bid_count_and_ask_count
+bbo_derived_from_shadow_book_not_me_bbo
 ```
 
 ### L2 Snapshot
@@ -89,6 +103,8 @@ unsubscribe_removes_symbol
 unsubscribe_all_clears_all
 subscribe_with_depth_parameter
 resubscribe_sends_fresh_snapshot
+subscribe_depth_10_25_50
+subscribe_send_snapshot_false_skips_snapshot
 ```
 
 ### Backpressure
@@ -98,6 +114,42 @@ slow_client_deltas_dropped
 slow_client_gets_fresh_snapshot
 slow_client_does_not_block_other_clients
 backpressure_threshold_configurable
+```
+
+### Trade Derivation
+
+```rust
+trade_from_fill_event_correct
+trade_price_and_qty_from_fill
+trade_taker_side_preserved
+trade_timestamp_from_fill
+```
+
+### Event Routing
+
+```rust
+fill_event_routed_to_marketdata
+order_inserted_routed_to_marketdata
+order_cancelled_routed_to_marketdata
+order_done_not_routed_to_marketdata
+bbo_event_not_routed_to_marketdata
+```
+
+### WS Frame Format
+
+```rust
+ws_bbo_frame_includes_u_seq_field
+ws_b_snapshot_includes_u_seq_field
+ws_d_delta_includes_u_seq_field
+ws_u_field_equals_grpc_seq
+ws_seq_gap_detected_when_u_jumps
+```
+
+### Snapshot Consistency
+
+```rust
+snapshot_point_in_time_consistent
+snapshot_before_deltas_on_subscribe
 ```
 
 ---
@@ -128,6 +180,8 @@ ws_bbo_frame_format_correct
 ws_b_snapshot_frame_format_correct
 ws_d_delta_frame_format_correct
 ws_seq_gap_client_resnapshots
+ws_s_subscribe_frame_parsed
+ws_x_unsubscribe_frame_parsed
 
 // recovery
 dxs_replay_rebuilds_shadow_book
@@ -138,6 +192,16 @@ recovery_snapshot_sent_after_catchup
 me_disconnect_shadow_book_stale
 me_reconnect_resumes_events
 me_restart_replay_from_wal
+
+// gRPC stream
+grpc_subscribe_by_symbol_id_list
+grpc_subscribe_with_depth_parameter
+grpc_send_snapshot_true_sends_snapshot_first
+grpc_send_snapshot_false_skips_snapshot
+grpc_mirrors_ws_json_schema
+
+// trades
+fill_event_produces_trade_to_client
 ```
 
 ---
@@ -156,6 +220,8 @@ bench_ws_serialize_bbo               // target <500ns
 bench_ws_serialize_snapshot_10       // target <2us
 bench_100_clients_broadcast          // target <100us per event
 bench_subscribe_snapshot_latency     // target <1ms
+bench_trade_derivation_from_fill    // target <100ns
+bench_event_routing_filter          // target <50ns
 ```
 
 No explicit performance targets in MARKETDATA.md.
@@ -181,3 +247,9 @@ same machine, TESTING.md §6) and throughput requirements
   (TESTING.md §5 smoke)
 - Load tests: 100 clients, Zipf symbol distribution
   (TESTING.md §6)
+- Does NOT receive OrderDone or BBO events from ME
+  (CONSISTENCY.md §1 event routing table)
+- Derives own BBO from shadow book, not from ME BBO event
+  (CONSISTENCY.md §1)
+- WS `u` field maps to gRPC `seq` for gap detection
+  (WEBPROTO.md §market data)

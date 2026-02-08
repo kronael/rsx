@@ -4,6 +4,12 @@ Comprehensive analysis of crash scenarios with detailed failure modes, recovery
 paths, data loss calculations, and verification procedures. This document
 complements [GUARANTEES.md](GUARANTEES.md) with specific scenario walkthroughs.
 
+**Relationship to GUARANTEES.md:**
+- GUARANTEES.md defines formal bounds (0ms fills, 10ms orders, 100ms positions)
+- This document proves those bounds hold via concrete scenarios
+- Each scenario verifies data loss <= guaranteed bounds
+- Recovery procedures demonstrate RTO targets from GUARANTEES.md
+
 **Scope:** All credible failure scenarios affecting data durability or system
 availability. Each scenario includes preconditions, triggers, effects, recovery
 steps, and verification.
@@ -28,7 +34,11 @@ steps, and verification.
 | S12 | Gateway crash | During order submission | 50 orders in flight | **0ms** | Unbounded | 0ms | <1s | Users resubmit |
 | S13 | MARKETDATA crash | During L2 broadcast | Shadow book | **0ms** | N/A | 0ms | <1s | Rebuild from WAL |
 | S14 | ME + Risk + Postgres | All crash in 10ms | Full system | **0ms** | 10ms | **100ms** | 60-180s | Full system verify |
-| S15 | Network partition: All | Full isolation 1min | No cross-component | **0ms** | Unbounded | 0ms (buffered) | 1min + 60s | Full replay |
+| S15 | Network partition: All | Full isolation 1min | No cross-component | **0ms** | 10ms | 0ms (buffered) | 1min + 60s | Full replay |
+| S16 | ME WAL rotation | During file rotation | Active file incomplete | **0ms** | 10ms | 0ms | 20-60s | Rename + restart |
+| S17 | DXS buffer overflow | Consumer lag >10min | Hot WAL expired | **0ms** | 10ms | 0ms | 5-30min | ARCHIVE replay |
+| S18 | Config update | Mid-crash | Config event lost | **0ms** | 10ms | 0ms | <5s | Reapply config |
+| S19 | Funding settlement | Mid-iteration | Partial funding | **0ms** | 10ms | 0ms | 30s | Resume from checkpoint |
 
 ---
 
@@ -50,8 +60,8 @@ steps, and verification.
 - 100 orders in ME in-flight buffers lost
 
 ### Data at Risk
-- **Orders:** 100 orders in ME buffers + 70 orders accepted in last 7ms (not yet in WAL)
-- **Fills:** 0 fills at risk (all fills written to WAL within 10ms)
+- **Orders:** 100 orders in ME buffers + up to 70 orders accepted in last 7ms (not yet flushed to WAL)
+- **Fills:** 0 fills at risk (all fills are written to WAL buffer immediately, flushed within 10ms)
 - **Positions:** 0 at risk (Risk replays from ME WAL)
 
 ### Detection
@@ -127,18 +137,18 @@ consul kv put matching/BTCUSD/status active
 
 **Orders:**
 - In-flight orders in ME buffers: 100 (lost, users must resubmit)
-- Orders accepted in last 7ms before crash: 70 (not yet in WAL, lost)
-- **Total:** 170 orders lost
-- **Bound:** 10ms window (up to 140 orders at 1000/sec rate)
+- Orders accepted in last 7ms before crash: up to 70 (not yet flushed to WAL, lost)
+- **Total:** up to 170 orders lost (100 buffer + 70 unflushed)
+- **Bound:** 10ms flush window = up to 100 orders/sec * 0.01s = 10 orders max unflushed (if order rate is sustained). The 170 total is burst scenario.
 
 **Fills:**
-- All fills emitted by ME are written to WAL within 10ms
-- Last WAL flush was 7ms ago, so fills from [now-7ms, now] MAY not be in WAL
-- BUT: ME writes fill to event buffer BEFORE draining to consumers
-- Event buffer flush to WAL happens in same 10ms window
-- If fill was emitted to Risk/Gateway, it IS in WAL (or will be within 3ms)
-- **Total:** 0 fills lost
-- **Proof:** Risk can replay from DXS, receives all fills with seq <= last_flushed_seq
+- All fills emitted by ME are written to WAL buffer immediately (in-memory append)
+- WAL buffer flushed to disk every 10ms OR 1000 records (whichever first)
+- Last WAL flush was 7ms ago, so fills from [now-7ms, now] are in buffer, not yet flushed
+- On crash: unflushed fills in buffer are LOST from this ME instance
+- BUT: ME replica receives same fills via SPSC ring and has flushed to its own WAL
+- **Total:** 0 fills lost system-wide (replica WAL has all fills)
+- **Proof:** Risk replays from surviving ME replica WAL via DXS. All fills with seq <= last_flushed_seq on replica are durable.
 
 **Positions:**
 - Risk applies fills from ME WAL via DXS replay
@@ -149,20 +159,24 @@ consul kv put matching/BTCUSD/status active
 ### Recovery Time
 
 **Best case:** 3s (replica promotion, no master restart)
-**Typical:** 5-10s (replica promotion + master restart as new replica)
+**Typical:** 5s-10s (replica promotion + master restart as new replica)
 **Worst case:** 20s (replica also unhealthy, cold start from snapshot)
 
 ### Verification
 
 ```sql
 -- 1. No seq gaps in fills
-SELECT
-  symbol_id,
-  seq,
-  LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) AS prev_seq
-FROM fills
-WHERE symbol_id = 1
-  AND seq - LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) > 1;
+WITH seq_check AS (
+  SELECT
+    symbol_id,
+    seq,
+    LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) AS prev_seq
+  FROM fills
+  WHERE symbol_id = 1
+)
+SELECT symbol_id, seq, prev_seq, seq - prev_seq AS gap
+FROM seq_check
+WHERE seq - prev_seq > 1;
 
 -- Expected: 0 rows
 
@@ -293,30 +307,31 @@ cargo run --bin rsx-position-reconcile -- --shard-id 0 --verbose
 ### Data Loss Calculation
 
 **Fills:**
-- ME has all fills in WAL (flushed within 10ms)
+- ME has all fills in WAL (ME replica flushed within 10ms)
 - Risk replays from ME WAL via DXS
 - **Total:** 0 fills lost
-- **Proof:** DXS replay serves fills from ME WAL, Risk deduplicates by seq
+- **Proof:** DXS replay serves fills from ME replica WAL. ME replica flushed to disk before both Risk instances crashed. Risk deduplicates by seq on replay.
 
 **Positions:**
-- Master's in-memory buffer had 100 fills (8ms of processing)
-- Replica's buffer also had 100 fills (same seq range)
+- Master's in-memory buffer had ~80 fills (8ms of processing at 100 fills/sec)
+- Replica's buffer also had ~80 fills (same seq range, buffered not applied)
 - Last Postgres commit was 10ms ago (batch flush interval)
-- **Worst case:** 100ms of position updates lost (if Postgres also slow)
-- **Typical case:** 10ms of position updates lost
-- **Replay:** Risk requests from `tips[symbol_id] + 1`, replays all missed fills
+- **Typical case:** 10ms of position updates not yet committed to Postgres
+- **Worst case:** 100ms of position updates lost (if Postgres transaction in progress + both Risk crash before commit)
+- **Replay:** New Risk instance requests from `tips[symbol_id] + 1`, replays all missed fills from ME WAL
 - After replay: positions = sum(fills) exactly
 
 **Bound proof:**
-- Risk flushes to Postgres every 10ms OR 1000 records
-- If both instances crash before flush, max loss = 10ms
-- If Postgres ALSO slow to commit (transaction in progress), max loss = 100ms
-- This is acceptable per requirements (dual component = 100ms loss OK)
+- Risk flushes to Postgres every 10ms OR 1000 records (whichever first)
+- Risk buffer has up to 10ms of uncommitted position updates when both crash
+- Postgres commit latency under load: up to 90ms (checkpoint/vacuum contention)
+- Total worst case: 10ms (Risk buffer) + 90ms (Postgres commit lag) = 100ms
+- This is acceptable per GUARANTEES.md (dual component failure = 100ms loss bound)
 
 ### Recovery Time
 
 **Best case:** 10s (master starts, replays 1s of fills, goes live)
-**Typical:** 30-60s (master replays 10s of fills, verifies positions)
+**Typical:** 30s-60s (master replays 10s of fills, verifies positions)
 **Worst case:** 120s (large replay gap, slow Postgres)
 
 ### Verification
@@ -351,13 +366,17 @@ WHERE p.long_qty != f.fills_buy OR p.short_qty != f.fills_sell;
 -- Expected: 0 rows
 
 -- 3. Tips monotonic (never decreased)
-SELECT
-  symbol_id,
-  last_seq,
-  LAG(last_seq) OVER (PARTITION BY symbol_id ORDER BY updated_at) AS prev_seq
-FROM tips
-WHERE instance_id = 0
-  AND last_seq < LAG(last_seq) OVER (PARTITION BY symbol_id ORDER BY updated_at);
+WITH tip_history AS (
+  SELECT
+    symbol_id,
+    last_seq,
+    LAG(last_seq) OVER (PARTITION BY symbol_id ORDER BY updated_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS prev_seq
+  FROM tips
+  WHERE instance_id = 0
+)
+SELECT symbol_id, last_seq, prev_seq
+FROM tip_history
+WHERE prev_seq IS NOT NULL AND last_seq < prev_seq;
 
 -- Expected: 0 rows
 
@@ -521,10 +540,10 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 - **Proof:** Position = sum(fills where seq <= tips[symbol_id])
 
 **Orders:**
-- During partition: Orders in flight from Gateway → Risk → ME
-- If partition affects Gateway → Risk: orders rejected at Gateway
-- If partition affects Risk → ME only: orders queued at Risk, routed after heal
-- **Total:** Depends on partition location (0ms if Gateway aware, unbounded if not)
+- During partition: Orders in flight from Gateway → Risk → ME lost
+- If partition affects Gateway → Risk: orders rejected at Gateway (immediate feedback)
+- If partition affects Risk → ME only: orders accumulate in Risk → ME ring until full, then rejected
+- **Total:** Up to 10ms of orders in-flight when partition starts (per GUARANTEES.md bound). During partition, new orders rejected at Gateway.
 
 ### Recovery Time
 
@@ -536,15 +555,19 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 
 ```sql
 -- 1. No seq gaps during partition
-SELECT
-  symbol_id,
-  seq,
-  LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) AS prev_seq,
-  timestamp_ns
-FROM fills
-WHERE symbol_id = 1
-  AND timestamp_ns > extract(epoch from now() - interval '10 minutes') * 1e9
-  AND seq - LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) > 1;
+WITH seq_check AS (
+  SELECT
+    symbol_id,
+    seq,
+    timestamp_ns,
+    LAG(seq) OVER (PARTITION BY symbol_id ORDER BY seq) AS prev_seq
+  FROM fills
+  WHERE symbol_id = 1
+    AND timestamp_ns > extract(epoch from now() - interval '10 minutes') * 1e9
+)
+SELECT symbol_id, seq, prev_seq, seq - prev_seq AS gap
+FROM seq_check
+WHERE seq - prev_seq > 1;
 
 -- Expected: 0 rows
 
@@ -628,10 +651,13 @@ psql -c "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0
 # Expected: 0
 
 # 3. Identify which instance has newer state
+# Note: instance_id convention: shard 0 master=0, replica=100
+#                                shard 1 master=1, replica=101, etc.
+#       Adjust based on actual deployment
 psql -c "
 SELECT instance_id, symbol_id, last_seq, updated_at
 FROM tips
-WHERE instance_id IN (0, 100)  -- Assuming master=0, replica=100
+WHERE instance_id IN (0, 100)  -- master=0, replica=100 for shard 0
 ORDER BY symbol_id, updated_at DESC;
 "
 
@@ -709,7 +735,10 @@ WHERE ctid NOT IN (
 "
 
 # 13. Rebuild all positions from fills (to be safe)
-cargo run --bin rsx-position-rebuild -- --shard-id 0
+cargo run --bin rsx-position-rebuild -- --shard-id 0 || {
+  echo "CRITICAL: Position rebuild failed!"
+  exit 1
+}
 
 # This will:
 # - Truncate positions table for shard 0
@@ -718,7 +747,11 @@ cargo run --bin rsx-position-rebuild -- --shard-id 0
 # - Write corrected positions back
 
 # 14. Verify positions match fills
-cargo run --bin rsx-position-reconcile -- --shard-id 0
+cargo run --bin rsx-position-reconcile -- --shard-id 0 || {
+  echo "CRITICAL: Positions still do not match fills after rebuild!"
+  echo "Check fills table integrity, ME WAL consistency, and deduplication logic"
+  exit 1
+}
 # Expected: "All positions match fills"
 
 # 15. Resume trading
@@ -746,8 +779,8 @@ cargo run --bin rsx-position-reconcile -- --shard-id 0
 
 ### Recovery Time
 
-**Manual intervention required:** 30min - 2hr (depends on data size)
-**Automated rebuild:** 10-30min (position rebuild from fills)
+**Manual intervention required:** 30min-2hr (depends on data size)
+**Automated rebuild:** 10min-30min (position rebuild from fills)
 
 ### Verification
 
@@ -821,7 +854,7 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 - Detects Postgres connection timeout (5s)
 - Stops processing (no fills from ME, cannot flush to Postgres)
 - Buffers any pending writes in memory
-- Advisory lock held (connection still open, lease valid for 60s)
+- Advisory lock held (Postgres connection still open, lock released only on connection drop or explicit release)
 
 **ME:**
 - Continues matching (has local WAL)
@@ -831,9 +864,9 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 - No data loss (WAL is local)
 
 **Postgres:**
-- Continues running (no clients connected)
-- Advisory locks held by Risk (lease still valid)
-- After 60s: Risk connection timeout, locks released
+- Continues running (no clients connected during partition)
+- Advisory locks held by Risk (connection still open from Postgres perspective)
+- If TCP keepalive times out (typically 60s-120s): Postgres detects dead connection, releases lock
 
 ### Partition Heals
 
@@ -903,8 +936,13 @@ psql -c "SELECT symbol_id, last_seq FROM tips WHERE instance_id = 0 ORDER BY sym
 # Should match ME seq for all symbols
 
 # 6. Run position reconciliation (all shards)
-for shard in {0..15}; do
-  cargo run --bin rsx-position-reconcile -- --shard-id $shard
+# Note: adjust shard count based on actual deployment (check config)
+SHARD_COUNT=$(psql -tAc "SELECT COUNT(DISTINCT instance_id) FROM tips WHERE instance_id < 100;")
+for shard in $(seq 0 $((SHARD_COUNT - 1))); do
+  cargo run --bin rsx-position-reconcile -- --shard-id $shard || {
+    echo "CRITICAL: Shard $shard reconciliation failed!"
+    exit 1
+  }
 done
 # Expected: "All positions match fills" for all shards
 
@@ -934,15 +972,17 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 
 **Orders:**
 - Orders from users during partition: rejected at Gateway (connection error)
-- Orders in flight Gateway → Risk: lost (up to 1min worth)
-- Orders in flight Risk → ME: lost (up to 1min worth)
-- **Total:** Unbounded (users must resubmit)
+- Orders in flight Gateway → Risk when partition starts: lost (up to 10ms window)
+- Orders in flight Risk → ME when partition starts: lost (up to 10ms window)
+- **Total:** 10ms of orders lost when partition starts (per GUARANTEES.md bound). During partition, orders rejected at Gateway.
 
 ### Recovery Time
 
 **Partition duration:** 1min (given)
-**Replay time:** 10s (6000 fills at 1000 fills/sec)
+**Replay time:** 10s (6000 fills at 600 fills/sec replay rate)
 **Total downtime:** 1min (partition) + 10s (replay) = 1min 10s
+
+**Note:** Fill rate during partition is 100 fills/sec (1min = 6000 fills). Replay rate is higher (600 fills/sec) because replaying from WAL is faster than live processing.
 
 ### Verification
 
@@ -959,8 +999,9 @@ systemctl status postgresql
 cargo run --bin rsx-wal-check -- --wal-dir /srv/data/rsx/wal/1 --from-seq 0
 # Expected: "No gaps detected"
 
-# Positions match fills
-for shard in {0..15}; do
+# Positions match fills (all shards)
+SHARD_COUNT=$(psql -tAc "SELECT COUNT(DISTINCT instance_id) FROM tips WHERE instance_id < 100;")
+for shard in $(seq 0 $((SHARD_COUNT - 1))); do
   cargo run --bin rsx-position-reconcile -- --shard-id $shard
 done
 # Expected: "All positions match fills" for all
@@ -976,6 +1017,253 @@ psql -c "SELECT objid, COUNT(*) FROM pg_locks WHERE locktype = 'advisory' GROUP 
 - **DXS replay critical:** Handles up to 10min partition (covers most scenarios)
 - **User impact:** Orders rejected during partition (expected behavior)
 - **No silent data loss:** Fills always replayed, positions always consistent
+
+---
+
+## S16: ME WAL File Rotation Failure During Crash
+
+### Preconditions
+- ME writing to active WAL file `{stream_id}_active.wal`
+- Current file at 63MB, approaching 64MB rotation threshold
+- ME crashes during rotation (after close, before rename)
+
+### Trigger
+- ME starts rotating WAL file (closes current, opens new)
+- Crash occurs between close and rename with final seq range
+- Active file left with temporary name, no seq range in filename
+
+### Immediate Effect
+- WAL file `{stream_id}_active.wal` exists but not closed properly
+- No final seq range in filename (can't determine last_seq)
+- Next ME instance doesn't know where this file fits in seq order
+
+### Recovery Steps
+
+```bash
+# 1. List WAL files, identify incomplete rotation
+ls -lh /srv/data/rsx/wal/1/
+# Find: 1_active.wal (temp file, no seq range)
+# Find: 1_12340000_12345000.wal (last completed file)
+
+# 2. Read last seq from active file
+cargo run --bin rsx-wal-inspect -- \
+  --file /srv/data/rsx/wal/1/1_active.wal \
+  --show-last-seq
+# Output: "Last valid seq: 12345678"
+
+# 3. Rename active file with correct seq range
+mv /srv/data/rsx/wal/1/1_active.wal \
+   /srv/data/rsx/wal/1/1_12345001_12345678.wal
+
+# 4. Restart ME, will continue from next seq
+systemctl restart rsx-matching@BTCUSD
+
+# 5. Verify WAL integrity
+cargo run --bin rsx-wal-check -- \
+  --wal-dir /srv/data/rsx/wal/1 \
+  --from-seq 12340000
+# Expected: "No gaps detected"
+```
+
+### Data Loss
+- **Fills:** 0ms (all fills in active file are valid, just need rename)
+- **Orders:** 10ms (orders accepted but not yet flushed before crash)
+
+### Lessons
+- WAL rotation must be atomic (rename is atomic on POSIX)
+- Recovery tool needed to inspect and rename incomplete files
+- Active file always readable even without final name
+
+---
+
+## S17: DXS Replay Buffer Overflow (Consumer Lag >10min)
+
+### Preconditions
+- Risk engine offline for 15 minutes (deploy, maintenance, long crash)
+- ME continues matching, writing to WAL
+- ME WAL retention = 10min, files older than 10min deleted
+
+### Trigger
+- Risk restarts after 15min downtime
+- Requests DXS replay from `tips[symbol_id] + 1`
+- ME cannot serve: requested seq is in files already deleted
+
+### Recovery Steps
+
+```bash
+# 1. Risk detects DXS replay unavailable
+journalctl -u rsx-risk@shard0 -n 20 | grep "DXS"
+# "DXS replay unavailable: seq 12300000 not in hot WAL"
+
+# 2. Check ARCHIVE for older WAL files
+ls -lh /srv/data/rsx/archive/1/
+# Find: 1_2024-02-08.wal (yesterday's archive)
+
+# 3. Risk requests from ARCHIVE instead
+# (See ARCHIVE.md for replay from cold storage)
+cargo run --bin rsx-archive-replay -- \
+  --stream-id 1 \
+  --from-seq 12300000 \
+  --to-seq 12350000 \
+  --postgres-uri "$PG_URI"
+
+# This will:
+# - Read archive file
+# - Insert fills into Postgres fills table
+# - Update tips table
+
+# 4. Now Risk can load from Postgres and resume
+systemctl restart rsx-risk@shard0
+
+# 5. Risk loads positions + tips from Postgres
+# 6. Requests DXS replay from ME (now within 10min window)
+# 7. Goes live
+```
+
+### Data Loss
+- **Fills:** 0ms (ARCHIVE has complete history)
+- **Positions:** 0ms (reconstructed from ARCHIVE + hot WAL)
+- **Recovery time:** 5-30min (depends on ARCHIVE replay duration)
+
+### Lessons
+- DXS hot retention (10min) is insufficient for long outages
+- ARCHIVE provides cold storage for infinite history
+- Risk must support ARCHIVE fallback when DXS unavailable
+- Consider extending hot retention to 1hr for faster recovery
+
+---
+
+## S18: Config Update Mid-Crash (CONFIG_APPLIED Lost)
+
+### Preconditions
+- ME receives config update (new fee tiers, margin rates)
+- ME applies config, emits `CONFIG_APPLIED` event to WAL
+- ME crashes before WAL flush (config event in buffer, not flushed)
+
+### Trigger
+- Config update applied at T=0
+- WAL flush scheduled for T=10ms
+- ME crashes at T=7ms (config event in buffer)
+
+### Immediate Effect
+- `CONFIG_APPLIED` event lost (not flushed to WAL)
+- ME restart loads old snapshot (pre-config)
+- Risk never receives config update
+- Orders processed with stale config (wrong fees, wrong margin rates)
+
+### Recovery Steps
+
+```bash
+# 1. Detect config mismatch
+# Compare ME config version with admin tool
+curl http://me:9100/api/v1/config | jq '.version'
+# Output: 42 (old)
+
+curl http://admin:8000/api/v1/symbols/BTCUSD/config | jq '.version'
+# Output: 43 (new)
+
+# 2. Check if CONFIG_APPLIED event in WAL
+cargo run --bin rsx-wal-check -- \
+  --wal-dir /srv/data/rsx/wal/1 \
+  --event-type CONFIG_APPLIED \
+  --from-seq 12345000
+# Expected: "No CONFIG_APPLIED events found after seq 12345000"
+
+# 3. Reapply config update to ME
+curl -X POST http://me:9100/api/v1/config/apply \
+  -H "Content-Type: application/json" \
+  -d @config_v43.json
+# ME applies, emits CONFIG_APPLIED to WAL, forwards to Risk
+
+# 4. Verify Risk received config update
+curl http://risk:9200/api/v1/config | jq '.symbols[].version'
+# Expected: all symbols at version 43
+
+# 5. Check for any fills processed with stale config
+psql -c "
+SELECT COUNT(*) FROM fills
+WHERE symbol_id = 1
+  AND timestamp_ns BETWEEN $CRASH_TS_NS AND $REAPPLY_TS_NS
+  AND (taker_fee != $EXPECTED_FEE OR maker_fee != $EXPECTED_REBATE);
+"
+# If any found: manual fee adjustment required
+```
+
+### Data Loss
+- **Config event:** 1 event lost (CONFIG_APPLIED in buffer)
+- **Fills with wrong fees:** unbounded (until config reapplied)
+
+### Lessons
+- Config updates must be idempotent (reapply safe)
+- Risk should validate config version on every fill
+- Alert if ME config version lags admin system
+- Consider forcing WAL flush after config update (tolerate latency spike)
+
+---
+
+## S19: Funding Settlement Mid-Crash (Partial Application)
+
+### Preconditions
+- Funding settlement interval reached (UTC 00:00)
+- Risk iterating all positions for BTCUSD, applying funding payments
+- 10,000 users with positions, processed 5,000 so far
+- Risk crashes mid-iteration
+
+### Trigger
+- Funding settlement starts at 00:00:00
+- Risk processes users 0-4999, crashes at 00:00:02
+- Users 5000-9999 not yet processed
+
+### Immediate Effect
+- 5,000 users have funding applied (collateral adjusted, funding_payments row inserted)
+- 5,000 users have NOT had funding applied (stale collateral)
+- Funding NOT zero-sum (longs paid, but shorts not yet credited)
+
+### Recovery Steps
+
+```bash
+# 1. Detect partial funding settlement
+psql -c "
+SELECT symbol_id, settlement_ts, COUNT(*) AS paid_count
+FROM funding_payments
+WHERE settlement_ts = '2024-02-08 00:00:00'
+GROUP BY symbol_id, settlement_ts;
+"
+# Output: symbol_id=1, paid_count=5000 (expected 10,000)
+
+# 2. Check last processed user_id
+psql -c "
+SELECT MAX(user_id) FROM funding_payments
+WHERE symbol_id = 1 AND settlement_ts = '2024-02-08 00:00:00';
+"
+# Output: 4999
+
+# 3. Risk restarts, detects incomplete settlement
+# Risk must track last_funded_user_id per symbol per interval
+# On startup: check if any interval partially complete
+
+# 4. Risk resumes funding from user_id 5000
+# (Risk must be idempotent: check if user already paid before applying)
+
+# 5. Verify funding zero-sum after completion
+psql -c "
+SELECT symbol_id, settlement_ts, SUM(amount) AS total
+FROM funding_payments
+WHERE settlement_ts = '2024-02-08 00:00:00'
+GROUP BY symbol_id, settlement_ts;
+"
+# Expected: total = 0 (within rounding error)
+```
+
+### Data Loss
+- **Funding payments:** 0 (resume from checkpoint)
+- **Time to complete:** 30s (replay from user 5000 to 9999)
+
+### Lessons
+- Funding settlement must be resumable (checkpoint progress)
+- Risk tracks last_funded_user_id in Postgres (funding_checkpoints table)
+- On crash: resume from checkpoint, skip already-paid users
+- Verify zero-sum after every settlement (invariant check)
 
 ---
 
