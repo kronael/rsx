@@ -654,6 +654,10 @@ fn cleanup_old_orders(&mut self) {
 - 5min provides safety margin (duplicate cancels rejected)
 - After 5min: memory freed, order_id can be reused (unlikely, UUIDv7 is unique)
 
+**After ME restart:** dedup map empty. Duplicate order_ids
+in first 5min undetected. Accepted: UUIDv7 collisions
+effectively impossible.
+
 **Why keep cancelled orders in FxHashMap:**
 - Prevent duplicate cancel requests (user spams cancel button)
 - Avoid "cancel → cleanup → duplicate cancel → cancel succeeds on wrong order"

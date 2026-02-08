@@ -189,6 +189,9 @@ Margin recalculated on every price tick for all exposed users.
 - Risk engine calculates **index price** per symbol:
   `index = (best_bid * ask_qty + best_ask * bid_qty)
            / (bid_qty + ask_qty)`
+- If `bid_qty + ask_qty == 0`: use last known index
+- If only one side has qty: use that side's price
+- If no BBO ever received: use mark price
 - O(1) per BBO update, stored in `Vec<IndexPrice>`
 
 **From Mark Price Aggregator** (DXS consumer, see [MARK.md](MARK.md)):
@@ -217,6 +220,9 @@ Logically part of risk engine, could be extracted later.
   - `funding_payment = position_qty * mark_price * funding_rate`
 - Rate calculated continuously (updated on each price tick)
 - Applied atomically at settlement time
+- Settlement: UTC 00:00, 08:00, 16:00
+- Missed intervals: settle on next startup
+- Mark price at settlement = latest available
 - Funding payments persisted to Postgres (append-only)
 
 ### 6. Pre-Trade Risk Check

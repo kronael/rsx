@@ -129,6 +129,10 @@ Fields:
 {H:[ts]}
 ```
 
+Server sends `{H:[ts]}` every 5s. Client must respond within
+10s or server closes connection. Client may also initiate;
+server echoes.
+
 Fields:
 - `ts`: client or server timestamp (ms)
 
