@@ -889,10 +889,11 @@ fn update_positions_on_fill(book: &mut Orderbook,
 }
 ```
 
-Deferred reclamation: periodically scan for users with
-`net_qty == 0 && order_count == 0`, reclaim after configurable
-delay (e.g. 60s). Avoids slot churn for active traders who
-close and reopen positions.
+Active user_id lifecycle:
+- Assign on first order for this symbol (risk supplies mapping).
+- Reclaim only when `net_qty == 0 && order_count == 0` for a grace
+  period (e.g., 60s) to avoid churn.
+- Reuse reclaimed slots via free list.
 
 How events are consistently delivered to these systems, ordering guarantees,
 and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).

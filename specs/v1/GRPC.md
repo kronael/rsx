@@ -153,23 +153,25 @@ message RiskNewOrder {
     uint64 client_order_id = 2;
     uint32 user_id = 3;
     uint32 symbol_id = 4;
-    Side side = 5;
-    int64 price = 6;
-    int64 qty = 7;
-    TimeInForce tif = 8;
-    uint64 timestamp_ns = 9;
-    bool reduce_only = 10;      // pass to ME
-    bool is_liquidation = 11;   // skip margin check at risk
+    uint32 active_user_id = 5;  // dense per-symbol id (from risk)
+    Side side = 6;
+    int64 price = 7;
+    int64 qty = 8;
+    TimeInForce tif = 9;
+    uint64 timestamp_ns = 10;
+    bool reduce_only = 11;      // pass to ME
+    bool is_liquidation = 12;   // skip margin check at risk
 }
 
 message RiskCancelOrder {
     uint32 user_id = 1;
     uint32 symbol_id = 2;
+    uint32 active_user_id = 3;
     oneof key {
-        bytes order_id = 3;
-        uint64 client_order_id = 4;
+        bytes order_id = 4;
+        uint64 client_order_id = 5;
     }
-    uint64 timestamp_ns = 5;
+    uint64 timestamp_ns = 6;
 }
 
 enum Side {
@@ -266,7 +268,7 @@ message ConfigApplied {
     uint64 applied_at_ns = 4;
 }
 
-// Tip sync used by risk main → risk replica (matching replica usage TBD)
+// Tip sync used by risk main → risk replica (SPSC channel)
 message TipSync {
     uint32 symbol_id = 1;
     uint64 seq = 2;            // last fully applied seq for this symbol
