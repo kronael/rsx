@@ -103,6 +103,43 @@ On each price tick (BBO or mark price update), recalculate
 margin for all users with exposure in that symbol. Scale
 horizontally by adding more user shards.
 
+**Formulas** (all values fixed-point integers):
+
+Per-position:
+```
+net_qty  = long_qty - short_qty  (signed, + = long)
+notional = |net_qty| * mark_price
+avg_entry = entry_cost / |net_qty|
+  (long_entry_cost if net_qty > 0, short_entry_cost if < 0)
+unrealized_pnl = net_qty * (mark_price - avg_entry)
+```
+
+Per-user (across all positions):
+```
+equity     = collateral + sum(unrealized_pnl_i)
+initial_margin = sum(notional_i * initial_margin_rate_i)
+maint_margin   = sum(notional_i * maintenance_margin_rate_i)
+available  = equity - initial_margin - frozen_margin
+```
+
+Pre-trade (section 6):
+```
+order_im  = order_notional * initial_margin_rate
+order_fee = order_notional * taker_fee_bps / 10_000
+accept if: available >= order_im + order_fee
+```
+
+Liquidation trigger (section 7):
+```
+if equity < maint_margin: enqueue_liquidation(user_id)
+```
+
+Edge cases:
+- Empty position (qty=0): upnl=0, notional=0
+- Position flip: close old at fill price (realize PnL),
+  open new with entry = fill price. Two-step in apply_fill.
+- Mark price unavailable: use index price (section 4)
+
 ```rust
 struct PortfolioMargin {
     // Per-symbol risk parameters (loaded from config)
@@ -129,6 +166,14 @@ impl PortfolioMargin {
 
     /// Is this user below maintenance margin?
     fn needs_liquidation(&self, state: &MarginState) -> bool;
+}
+
+struct MarginState {
+    equity: i64,
+    unrealized_pnl: i64,
+    initial_margin: i64,
+    maintenance_margin: i64,
+    available_margin: i64,
 }
 ```
 
