@@ -465,11 +465,30 @@ Verified across all test levels:
 
 ---
 
+## Component Test Specs
+
+Each component has a dedicated test spec with requirements
+checklist, unit tests, e2e tests, benchmarks, and integration
+points.
+
+| Component | Test Spec | Source Spec |
+|-----------|-----------|-------------|
+| SPSC ring buffer | [TESTING-SMRB.md](TESTING-SMRB.md) | notes/SMRB.md |
+| Shared orderbook | [TESTING-BOOK.md](TESTING-BOOK.md) | ORDERBOOK.md |
+| DXS (WAL + replay) | [TESTING-DXS.md](TESTING-DXS.md) | DXS.md, WAL.md |
+| Matching engine | [TESTING-MATCHING.md](TESTING-MATCHING.md) | ORDERBOOK.md, CONSISTENCY.md |
+| Risk engine | [TESTING-RISK.md](TESTING-RISK.md) | RISK.md |
+| Liquidator | [TESTING-LIQUIDATOR.md](TESTING-LIQUIDATOR.md) | LIQUIDATOR.md |
+| Mark price | [TESTING-MARK.md](TESTING-MARK.md) | MARK.md |
+| Gateway | [TESTING-GATEWAY.md](TESTING-GATEWAY.md) | NETWORK.md, WEBPROTO.md, RPC.md, GRPC.md |
+| Market data | [TESTING-MARKETDATA.md](TESTING-MARKETDATA.md) | MARKETDATA.md |
+
+---
+
 ## References
 
 - [ORDERBOOK.md](ORDERBOOK.md) - Matching internals, data structures
 - [GRPC.md](GRPC.md) - gRPC proto, message definitions
 - [CONSISTENCY.md](CONSISTENCY.md) - Event fan-out, ordering guarantees
-- [TASKS.md](TASKS.md) - Crate tasks, API sketches
-- [SMRB.md](SMRB.md) - SPSC ring buffer design
+- [SMRB.md](../../notes/SMRB.md) - SPSC ring buffer design
 - [NETWORK.md](NETWORK.md) - System topology, component communication

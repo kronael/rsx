@@ -163,6 +163,7 @@ Separate public WS endpoint (no auth required). Same frame shape.
 
 `u`: matching engine height (uint64, monotonic per symbol).
 Gap detection: if `u` jumps > 1, re-subscribe for snapshot.
+`u` is the WS alias for `seq` used in gRPC.
 Server sends `B` snapshot on subscribe before any `D` deltas.
 
 ### Q: Liquidation Event (Private WS, see [LIQUIDATOR.md](LIQUIDATOR.md))

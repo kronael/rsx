@@ -48,6 +48,13 @@ no padding beyond `#[repr(C, align(64))]`.
 - 4 = post_only_reject
 - 5 = other
 
+**Mapping (simple):**
+- user_cancel: explicit client cancel request
+- reduce_only: reduce-only clamp/reject
+- expiry: time-in-force expiry (IOC/FOK)
+- post_only_reject: post-only would take
+- system: internal kill switch or maintenance
+
 **Payload layouts (v1):**
 ```
 #[repr(C, align(64))]
@@ -184,7 +191,7 @@ wal/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal
 ```
 
 - Rotate by size: 64MB default.
-- Retention: 10min for hot replay.
+- Retention: 10min for hot replay (in-memory). Offload to durable storage for infinite retention.
 - No file header, no index. Sequential read only.
 - Filenames encode seq range for O(1) file selection.
 
@@ -192,8 +199,8 @@ wal/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal
 with `last_seq` in filename), open a new file. The active file
 uses a temporary name `{stream_id}_active.wal` until rotation.
 
-**GC:** delete files where `last_seq` timestamp is older than
-retention window. GC runs on rotation (no timer needed).
+**GC:** delete hot WAL files where `last_seq` timestamp is older than
+retention window *after offload*. GC runs on rotation (no timer needed).
 
 ---
 

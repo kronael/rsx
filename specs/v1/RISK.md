@@ -403,7 +403,7 @@ Per WAL.md:
 ### Promotion (Replica -> Main)
 
 1. Acquire advisory lock (main's connection dropped, lock released)
-2. Apply all remaining buffered fills beyond main's last tip
+2. Apply all buffered fills **up to the last tip** (promotion invariant)
 3. Connect outbound to gateway
 4. Start write-behind worker
 5. Resume processing new orders
@@ -513,102 +513,6 @@ prints position state and margin after each fill.
 **Files:** `position.rs`, `account.rs`, `margin.rs`, `price.rs`,
 `funding.rs`, `types.rs`
 
-#### Unit Tests
-
-```rust
-// position.rs -- core
-apply_buy_fill_opens_long
-apply_sell_fill_opens_short
-apply_opposing_fill_reduces_position
-apply_fill_closing_position_realizes_pnl
-avg_entry_price_weighted_correctly
-multiple_fills_same_side_accumulate
-fill_larger_than_position_flips_side
-zero_qty_after_exact_close
-
-// position.rs -- edge cases
-flip_long_to_short_single_fill
-flip_short_to_long_single_fill
-fill_at_same_price_no_pnl
-realized_pnl_accumulates_across_fills
-self_trade_taker_and_maker_same_user
-max_qty_no_overflow
-max_price_no_overflow
-position_version_increments_per_fill
-
-// margin.rs -- core
-portfolio_margin_single_position
-portfolio_margin_multi_symbol
-portfolio_margin_long_short_offset
-check_order_sufficient_margin_accepts
-check_order_insufficient_margin_rejects
-needs_liquidation_below_maintenance
-needs_liquidation_above_maintenance_ok
-frozen_margin_reserved_on_order
-frozen_margin_released_on_done
-
-// margin.rs -- edge cases
-check_order_exactly_at_margin_limit_accepts
-check_order_one_unit_over_limit_rejects
-margin_with_zero_collateral_rejects_all
-margin_with_no_positions_all_available
-margin_unrealized_pnl_affects_equity
-margin_mark_price_zero_handled
-margin_max_leverage_enforced
-frozen_margin_across_multiple_pending_orders
-order_done_partial_fill_releases_remaining_frozen
-order_failed_releases_all_frozen
-
-// price.rs -- core
-index_price_size_weighted_mid
-index_price_balanced_book_equals_mid
-index_price_imbalanced_favors_thicker_side
-
-// price.rs -- edge cases
-index_price_one_side_zero_qty
-index_price_both_sides_zero_qty
-index_price_max_values_no_overflow
-index_price_spread_zero_equals_price
-
-// funding.rs -- core
-funding_rate_mark_above_index_positive
-funding_rate_mark_below_index_negative
-funding_rate_clamped_to_bounds
-funding_payment_long_pays_when_positive
-funding_payment_short_pays_when_negative
-funding_zero_position_no_payment
-
-// funding.rs -- edge cases
-funding_rate_mark_equals_index_zero
-funding_zero_sum_across_all_users
-funding_with_position_opened_mid_interval
-funding_extreme_divergence_clamped
-funding_settlement_idempotent
-funding_index_price_zero_handled
-
-// exposure index -- core
-exposure_add_user_on_fill
-exposure_remove_user_on_close
-exposure_no_duplicate_entries
-
-// exposure index -- edge cases
-exposure_user_in_multiple_symbols
-exposure_close_one_symbol_keeps_others
-exposure_symbol_idx_out_of_bounds_panics
-exposure_empty_vec_for_unused_symbol
-```
-
-#### Benchmarks
-
-```rust
-bench_apply_fill_to_position        // target <100ns
-bench_portfolio_margin_10_positions  // target <10us
-bench_portfolio_margin_50_positions
-bench_index_price_calculation        // target <50ns
-bench_exposure_lookup_100_users      // target <50ns
-bench_exposure_lookup_1000_users
-```
-
 ### Phase 2: Fill Ingestion + Main Loop (mocked rings)
 
 RiskShard with main loop processing fills, orders, and BBO from
@@ -619,85 +523,6 @@ Producers generate random fills. Shard processes, prints stats
 (fills/sec, margin recalcs/sec, position count).
 
 **Files:** `shard.rs`, `fill.rs`, `tip.rs`, `config.rs`
-
-#### Unit Tests
-
-```rust
-// fill ingestion -- core
-fill_for_shard_user_updates_position
-fill_for_other_shard_ignored
-fill_both_users_in_shard_updates_both
-fill_dedup_by_seq
-fill_advances_tip_per_symbol
-tip_monotonic_never_decreases
-
-// fill ingestion -- edge cases
-fill_seq_gap_still_advances_tip
-fill_seq_zero_first_ever
-fill_for_unknown_symbol_advances_tip_only
-fill_taker_in_shard_maker_not
-fill_maker_in_shard_taker_not
-fill_self_trade_same_user_both_sides
-fill_rapid_sequence_same_symbol
-fill_interleaved_symbols
-tip_not_advanced_on_duplicate_fill
-
-// main loop ordering
-fills_processed_before_bbo
-orders_processed_after_fills
-bbo_skipped_under_load
-stale_bbo_replaced_by_latest
-mark_price_update_triggers_margin_recalc
-empty_rings_no_crash
-burst_fills_then_idle
-
-// pre-trade risk -- core
-order_accepted_margin_sufficient
-order_rejected_margin_insufficient
-frozen_margin_accumulates_on_multiple_orders
-order_done_releases_frozen_margin
-
-// pre-trade risk -- edge cases
-order_for_user_not_in_shard_rejected
-order_while_user_being_liquidated_rejected  // LIQUIDATOR.md
-order_reducing_position_always_accepted
-order_with_zero_qty_rejected
-order_duplicate_id_within_dedup_window
-order_cancel_releases_frozen_margin
-```
-
-#### E2E Tests
-
-```rust
-shard_processes_1000_fills_positions_correct
-shard_multi_symbol_tips_advance_independently
-shard_margin_recalc_on_bbo_update
-shard_order_accept_reject_flow
-shard_liquidation_detected_on_price_drop  // LIQUIDATOR.md
-shard_bbo_skip_under_fill_pressure
-shard_multiple_users_same_symbol
-shard_user_opens_closes_reopens
-shard_position_flip_through_fills
-shard_fill_updates_exposure_index
-shard_order_accepted_then_rejected_margin_used
-shard_cancel_restores_margin_for_next_order
-shard_mark_price_divergence_triggers_liquidation  // LIQUIDATOR.md
-shard_funding_settlement_at_interval
-shard_idle_no_resource_leak
-```
-
-#### Benchmarks
-
-```rust
-bench_shard_fill_throughput_1_symbol     // target >1M fills/sec
-bench_shard_fill_throughput_10_symbols
-bench_shard_fill_throughput_100_symbols
-bench_pretrade_check_latency             // target <5us
-bench_margin_recalc_100_users_1_symbol   // target <10us/user
-bench_margin_recalc_100_users_10_symbols
-bench_bbo_processing                     // target <200ns
-bench_main_loop_idle                     // target <1us
-```
 
 ### Phase 3: Persistence (testcontainers Postgres)
 
@@ -710,46 +535,6 @@ match pre-crash state (within 10ms bounded loss).
 
 **Files:** `persist.rs`, `replay.rs`, migrations
 
-#### Unit Tests
-
-```rust
-worker_drains_ring_on_interval
-worker_batches_multiple_position_updates
-worker_deduplicates_same_position_in_batch
-worker_single_transaction_per_flush
-```
-
-#### Integration Tests
-
-```rust
-persist_positions_roundtrip
-persist_fills_copy_batch
-persist_tips_roundtrip
-persist_funding_payments_append
-cold_start_loads_positions
-cold_start_loads_tips
-recovery_bounded_loss_10ms
-upsert_idempotent_on_replay
-fill_partitioning_works
-persist_handles_pg_connection_drop
-persist_backpressure_ring_full
-persist_empty_batch_no_transaction
-persist_position_overwritten_by_later_version
-cold_start_with_empty_postgres
-```
-
-#### Benchmarks
-
-```rust
-bench_flush_100_positions       // target <5ms
-bench_flush_1000_positions      // target <15ms
-bench_copy_1000_fills           // target <5ms
-bench_copy_10000_fills          // target <20ms
-bench_load_10k_positions        // target <500ms
-bench_load_100k_positions       // target <2s
-bench_sustained_flush_10ms_interval_60s
-```
-
 ### Phase 4: Replication + Failover
 
 Main/replica pair with fill buffering, tip sync, promotion, and
@@ -761,158 +546,21 @@ Start new replica for the promoted main.
 
 **Files:** `replica.rs`, `lease.rs`
 
-#### Unit Tests
-
-```rust
-buffer_fills_in_order
-drain_up_to_seq
-drain_partial_leaves_remainder
-buffer_empty_drain_returns_empty
-buffer_multi_symbol_independent
-lease_acquire_succeeds_when_free
-lease_acquire_fails_when_held
-lease_released_on_connection_drop
-```
-
-#### Integration Tests
-
-```rust
-main_acquires_lease_replica_cannot
-main_crash_replica_promotes
-replica_applies_buffered_fills_on_promotion
-replica_state_matches_main
-both_crash_recovery_from_postgres
-me_failover_dedup_by_seq
-promotion_no_fill_loss
-split_brain_prevented_by_advisory_lock
-```
-
-#### Benchmarks
-
-```rust
-bench_failover_detection_time        // target <600ms
-bench_replica_drain_1000_fills       // target <100us
-bench_replica_drain_10000_fills      // target <1ms
-bench_promotion_total_time           // target <1s
-```
-
 ### Phase 5: Full System (all components)
 
 Complete risk engine with all components integrated. Multi-symbol,
-multi-user, with funding, Binance feed, persistence, replication.
+multi-user, with funding, mark price feed, persistence, replication.
 
 **Demo:** Full system with N mocked matching engines, M users.
 Dashboard showing: fills/sec, margin recalcs/sec, Postgres flush
 latency, position count, funding rates. Inject price crash ->
 observe liquidations.
 
-**Files:** `main.rs`, `binance.rs`, all integrated
+**Files:** `main.rs`, all integrated
 
-#### E2E Tests
+## Tests
 
-```rust
-full_lifecycle_order_fill_position_margin
-multi_user_multi_symbol_positions_independent
-funding_settlement_8h_correct
-funding_rate_updates_on_price_change
-binance_feed_updates_mark_price
-binance_reconnect_on_disconnect
-liquidation_cascade_under_price_crash  // LIQUIDATOR.md
-bbo_skip_under_heavy_fill_load
-order_rejected_during_liquidation  // LIQUIDATOR.md
-shard_boundary_fill_taker_shard0_maker_shard1
-all_symbols_simultaneous_bbo_update
-mark_price_stale_binance_disconnect
-rapid_open_close_cycles
-max_users_per_shard_performance
-fill_burst_after_idle_period
-funding_with_position_changes_during_interval
-```
-
-#### Integration Tests
-
-```rust
-full_crash_recovery_end_to_end
-backpressure_slow_postgres
-multi_shard_same_fill_different_users
-funding_persisted_to_postgres
-concurrent_shard_leases_independent
-```
-
-#### Smoke Tests
-
-```rust
-risk_engine_responds_to_order
-risk_engine_positions_update_on_fill
-risk_engine_margin_query_returns
-risk_engine_funding_rate_available
-risk_engine_replica_running
-```
-
-#### Benchmarks
-
-```rust
-bench_e2e_fill_to_margin_latency          // target <15us
-bench_sustained_1m_fills_10_symbols_100_users
-    // target >100K fills/sec/shard
-bench_margin_recalc_1000_users_10_symbols  // target <10ms
-bench_memory_10k_positions                 // target <10MB
-bench_memory_100k_positions                // target <100MB
-bench_funding_settlement_10k_positions     // target <50ms
-bench_cold_start_10k_positions_50_symbols  // target <5s
-```
-
-## Correctness Invariants
-
-Verified across all test levels:
-
-1. **Fills never lost** -- sum of applied fills = sum of ME-emitted
-   fills (for shard users). After any crash/recovery, no fill missing.
-
-2. **Position = sum of fills** -- `position.long_qty = sum(fill.qty
-   where side=buy)`. Verified after every test scenario.
-
-3. **Tips monotonic** -- `tips[symbol_id]` never decreases. After
-   recovery, tip = last persisted seq.
-
-4. **Margin consistent with positions** -- margin recalc from scratch
-   matches incremental state. Verified periodically in long-running
-   tests.
-
-5. **Funding zero-sum** -- `sum(funding_payments) = 0` across all
-   users per symbol per interval. Longs pay exactly what shorts
-   receive (and vice versa).
-
-6. **Exposure index consistent** -- `exposure[sym]` contains exactly
-   users with `position.qty != 0`. No phantom entries, no missing
-   entries.
-
-7. **Advisory lock exclusive** -- at most one main per shard at any
-   time. Verified via Postgres `pg_locks` query in tests.
-
-8. **Seq_no dedup prevents double-counting** -- replay of
-   already-processed fills = no position change.
-
-## Test Data Patterns
-
-### Normal Market
-- 10 symbols, 100 users per shard
-- 1-2 tick spread, balanced buy/sell
-- 1K fills/sec per symbol
-
-### Price Crash (50% drop)
-- Mark price drops 50% over 10s
-- Triggers liquidations for leveraged users
-- Tests margin recalc under rapid price changes
-
-### Funding Divergence
-- Mark price 5% above index for extended period
-- Tests funding rate calculation and settlement
-
-### Shard Boundary
-- Fill where taker hash -> shard 0, maker hash -> shard 1
-- Both shards process independently
-
-### Replay Burst
-- 100K fills replayed on cold start
-- Tests replay throughput and correctness
+Tests: see [TESTING-RISK.md](TESTING-RISK.md) for complete unit
+tests, e2e tests, integration tests, smoke tests, benchmarks,
+correctness invariants, and test data patterns across all five
+implementation phases.

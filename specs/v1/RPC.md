@@ -391,6 +391,10 @@ tokio::select! {
 
 **Scenario:**
 ```
+
+**Stale order policy (v1):**
+- An order is considered stale after **5 minutes** without any update.
+- Clients should cancel and forget stale orders.
 Gateway sends ORDER(id=X) at T=0
   ↓
 Network partition, timeout, Gateway retries
