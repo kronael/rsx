@@ -3,7 +3,7 @@
 Brokerless WAL streaming. Each producer IS the server for its own
 stream. Consumers connect directly to producers. No central broker.
 
-The WAL disk format = protobuf wire format = what gets streamed.
+The WAL disk format = fixed-record wire format = what gets streamed.
 No transformation between storage and network.
 
 Crate: `rsx-dxs`. Embedded by all producers and consumers.
@@ -12,34 +12,140 @@ Crate: `rsx-dxs`. Embedded by all producers and consumers.
 
 ## 1. WAL Record Format
 
-Each record on disk is a length-delimited protobuf message. The
-protobuf definitions serve as both the wire format AND the storage
-format.
+Each record on disk is a **fixed-size** struct with a 16-byte header:
 
-```protobuf
-message WalRecord {
-  uint64 seq_no = 1;
-  uint64 timestamp_ns = 2;
-  uint32 stream_id = 3;
-  oneof payload {
-    FillEvent fill = 10;
-    BBOEvent bbo = 11;
-    OrderInserted order_inserted = 12;
-    OrderCancelled order_cancelled = 13;
-    OrderDone order_done = 14;
-    MarkPriceEvent mark_price = 20;
-    // risk events: 30+
-  }
+```
+struct WalHeader {
+  u16 version;       // format version
+  u16 record_type;   // enum
+  u32 len;           // payload bytes (<= 64KB)
+  u32 stream_id;     // symbol_id or stream id
+  u32 crc32;         // checksum of payload bytes
 }
 ```
 
-On disk: `[4-byte len][protobuf bytes][4-byte len][protobuf bytes]...`
+The payload immediately follows the header and is a fixed-record
+struct for that `record_type` (`#[repr(C, align(64))]`, little-endian).
+Readers validate `crc32` and truncate the WAL on the first invalid record.
 
-Over gRPC: same protobuf messages streamed directly.
+**Record types (v1):**
+- `RECORD_FILL`
+- `RECORD_BBO`
+- `RECORD_ORDER_INSERTED`
+- `RECORD_ORDER_CANCELLED`
+- `RECORD_ORDER_DONE`
+- `RECORD_CONFIG_APPLIED`
+- `RECORD_CAUGHT_UP` (replay marker)
 
-The 4-byte length prefix is little-endian u32. Maximum record size
-is 64KB (fits any single event with margin). Length does not include
-itself.
+Each payload is a fixed struct with explicit little-endian fields and
+no padding beyond `#[repr(C, align(64))]`.
+
+**Payload layouts (v1):**
+```
+#[repr(C, align(64))]
+struct FillRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 symbol_id;
+  u32 taker_user_id;
+  u32 maker_user_id;
+  u32 _pad0;
+  u64 taker_order_id_hi;
+  u64 taker_order_id_lo;
+  u64 maker_order_id_hi;
+  u64 maker_order_id_lo;
+  i64 price;
+  i64 qty;
+  u8  taker_side;
+  u8  _pad1[7];
+}
+
+#[repr(C, align(64))]
+struct BboRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 symbol_id;
+  u32 _pad0;
+  i64 bid_px;
+  i64 bid_qty;
+  u32 bid_count;
+  u32 _pad1;
+  i64 ask_px;
+  i64 ask_qty;
+  u32 ask_count;
+  u32 _pad2;
+}
+
+#[repr(C, align(64))]
+struct OrderInsertedRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 symbol_id;
+  u32 user_id;
+  u64 order_id_hi;
+  u64 order_id_lo;
+  i64 price;
+  i64 qty;
+  u8  side;
+  u8  _pad1[7];
+}
+
+#[repr(C, align(64))]
+struct OrderCancelledRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 symbol_id;
+  u32 user_id;
+  u64 order_id_hi;
+  u64 order_id_lo;
+  i64 remaining_qty;
+  u8  reason;        // optional cancel reason
+  u8  _pad1[7];
+}
+
+#[repr(C, align(64))]
+struct OrderDoneRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 symbol_id;
+  u32 user_id;
+  u64 order_id_hi;
+  u64 order_id_lo;
+  i64 filled_qty;
+  i64 remaining_qty;
+  u8  final_status;
+  u8  _pad1[7];
+}
+
+#[repr(C, align(64))]
+struct ConfigAppliedRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 symbol_id;
+  u32 _pad0;
+  u64 config_version;
+  u64 effective_at_ms;
+  u64 applied_at_ns;
+}
+
+#[repr(C, align(64))]
+struct CaughtUpRecord {
+  u64 seq_no;
+  u64 ts_ns;
+  u32 stream_id;
+  u32 _pad0;
+  u64 live_seq_no;
+  u8  _pad1[40];
+}
+```
+
+All fields are encoded little-endian on disk/wire.
+
+On disk: `[header][payload][header][payload]...`
+
+Over gRPC: the same fixed records are streamed as raw bytes.
+
+Maximum record size is 64KB.
 
 ---
 
@@ -81,7 +187,7 @@ struct WalWriter {
 }
 ```
 
-**Append:** serialize WalRecord to buf with length prefix. Assign
+**Append:** serialize fixed record to buf. Assign
 monotonic `seq_no` (producer-local, no coordination). O(1) memcpy.
 
 **Flush:** every 10ms, write buf to file + fsync. Resets buf.
@@ -122,9 +228,9 @@ struct WalFileInfo {
 
 **Open from seq_no:** list files, parse filenames, binary search
 for the file containing `target_seq`. Seek within file by reading
-length-prefixed records until `seq_no >= target_seq`.
+fixed records until `seq_no >= target_seq`.
 
-**Iteration:** read 4-byte len, read len bytes, decode protobuf.
+**Iteration:** read header + payload, decode fixed record.
 Returns `Option<WalRecord>` — `None` at EOF.
 
 **File transition:** when current file is exhausted, open next
@@ -140,12 +246,16 @@ consumers.
 
 ```protobuf
 service DxsReplay {
-  rpc Stream(ReplayRequest) returns (stream WalRecord);
+  rpc Stream(ReplayRequest) returns (stream WalBytes);
 }
 
 message ReplayRequest {
   uint32 stream_id = 1;
   uint64 from_seq_no = 2;
+}
+
+message WalBytes {
+  bytes record = 1;  // header + payload, fixed-record format
 }
 ```
 
@@ -163,13 +273,8 @@ message ReplayRequest {
 
 **CaughtUp marker:**
 
-```protobuf
-message CaughtUp {
-  uint64 live_seq_no = 1;  // seq_no of last replayed record
-}
-```
-
-Added to the `WalRecord.payload` oneof (field 50).
+Use a fixed record type `RECORD_CAUGHT_UP` with payload:
+`{live_seq_no: u64}`.
 
 **Concurrency:** one gRPC handler per connected consumer. Each
 handler has its own WalReader. Live broadcast uses a notify
@@ -238,7 +343,7 @@ daily archive files.
 archive/{stream_id}/{stream_id}_{YYYY-MM-DD}.wal
 ```
 
-Same protobuf length-delimited format on disk. No transformation.
+Same fixed-record format on disk. No transformation.
 
 **Three recorder instances** (separate processes or config
 sections):

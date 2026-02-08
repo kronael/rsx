@@ -57,7 +57,7 @@ appropriate. Run on every PR.
   - Multi-fill sequences (large taker crosses multiple makers)
   - Out-of-order response handling (LIFO VecDeque)
 - Event fan-out verification (risk/gateway/mktdata get correct events)
-- ORDER_DONE precedes all fills (ref PROTOCOL.md)
+- ORDER_DONE precedes all fills (ref GRPC.md)
 
 **Characteristics:**
 - Mocked data and transport where appropriate
@@ -126,7 +126,7 @@ fn tail_event_recentering() {
 #[test]
 fn matching_engine_crash_recovery() {
     // Crash matching engine mid-order
-    // Verify: risk engine positions intact, book restarts empty
+    // Verify: risk engine positions intact, book restores via WAL+snapshot
 }
 
 #[test]
@@ -138,7 +138,28 @@ fn ring_full_backpressure() {
 
 ---
 
-## 4. `make smoke` - Smoke Tests (against deployed systems)
+## 4. `make wal` - WAL Correctness Tests (<10s)
+
+**Purpose:** Validate fixed-record WAL format and replay.
+
+**Scope:**
+- Record header parsing (version/type/len)
+- Fixed-record encode/decode (little-endian)
+- Sequence monotonicity
+- Replay from tip + 1
+
+**Example tests:**
+```rust
+#[test]
+fn wal_record_roundtrip_fixed() { ... }
+
+#[test]
+fn wal_tip_replay_resumes_at_tip_plus_one() { ... }
+```
+
+---
+
+## 5. `make smoke` - Smoke Tests (against deployed systems)
 
 **Purpose:** Quick validation that deployed systems are operational. Run
 post-deployment.
@@ -174,7 +195,7 @@ fn risk_engine_responds() { ... }
 
 ---
 
-## 5. `make perf` - Performance Benchmarks (long-running)
+## 6. `make perf` - Performance Benchmarks (long-running)
 
 **Purpose:** Performance characterization and regression detection. Run
 nightly or on-demand.
@@ -247,6 +268,15 @@ nightly or on-demand.
 - TSC (rdtsc) for nanosecond precision
 - Flame graphs for bottleneck identification
 - Statistical distribution (p50/p99/p99.9)
+
+### WAL Benchmark (Fixed vs Protobuf Baseline)
+
+**Purpose:** Compare fixed-record WAL append vs protobuf serialization baseline.
+
+**Method:**
+- Fixed-record: write header+payload (no protobuf).
+- Protobuf baseline: serialize equivalent event to protobuf, length-prefix.
+- Report records/sec, MB/sec, CPU%.
 
 ### Profiling & Metrics
 
@@ -438,7 +468,7 @@ Verified across all test levels:
 ## References
 
 - [ORDERBOOK.md](ORDERBOOK.md) - Matching internals, data structures
-- [PROTOCOL.md](PROTOCOL.md) - Wire protocol, message definitions
+- [GRPC.md](GRPC.md) - gRPC proto, message definitions
 - [CONSISTENCY.md](CONSISTENCY.md) - Event fan-out, ordering guarantees
 - [TASKS.md](TASKS.md) - Crate tasks, API sketches
 - [SMRB.md](SMRB.md) - SPSC ring buffer design

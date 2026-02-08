@@ -7,6 +7,18 @@
 
 This document describes the shared WAL architecture for the risk engine and the matching engine. It is optimized for latency by accepting a bounded loss window and enforcing backpressure when persistence falls behind.
 
+## Record Format (v1)
+
+- WAL uses **fixed-size records** (no protobuf, no gRPC envelope).
+- Records are `#[repr(C, align(64))]` with explicit little-endian fields.
+- Each record starts with a 16-byte header: `{version, record_type, len, reserved}`.
+- Versioning lives in the header (`version`), not in the payload.
+- Concrete record layouts are defined in **DXS.md** and reused for storage + streaming.
+
+**Scope (v1):** WAL is written by the **matching engine** and contains all
+orderbook events (new/cancel/fill/done/failed/config). Order intents at
+ingress are **not** WAL’d; they can be lost if risk dies before execution.
+
 ## Goals
 
 - **Low latency**: hot path is an in-memory append (ring buffer).
@@ -17,7 +29,7 @@ This document describes the shared WAL architecture for the risk engine and the 
 ## Architecture
 
 ```
-Producer (risk/orderbook)
+Producer (matching engine)
   ├─ local WAL buffer (in-memory ring; fast append)
   ├─ WAL flusher (fsync every 10ms or when size threshold reached)
   ├─ Offload worker (batched commit to durable storage)
