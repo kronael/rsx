@@ -10,10 +10,10 @@ It must never lose fills and must recover from any crash combination.
 ## Architecture Overview
 
 ```
-Binance WS -+  (same process, async task)
-             |
+Mark Aggregator -+  (DXS consumer, see MARK.md)
+                  |
            [SPSC: mark prices]
-             |
+                  |
 Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
                        |        ^                     |
                        |        | [SPSC: BBO + fills]  |
@@ -135,12 +135,16 @@ Margin recalculated on every price tick for all exposed users.
            / (bid_qty + ask_qty)`
 - O(1) per BBO update, stored in `Vec<IndexPrice>`
 
-**From Binance** (WebSocket, async task in same process):
-- Async tokio task connects to Binance mark price WS
-- Handles reconnects, parsing
-- Pushes `(symbol_id, mark_price)` to risk hot path via SPSC ring
+**From Mark Price Aggregator** (DXS consumer, see [MARK.md](MARK.md)):
+- Risk engine connects as a DXS consumer to the mark price
+  aggregator ([DXS.md](DXS.md) section 6)
+- Receives `MarkPriceEvent` records via DXS streaming
+- DXS consumer callback pushes to risk hot path via SPSC ring
+  (same integration point as before)
 - Risk engine reads mark prices into `Vec<i64>`
 - Used for margin/risk calculations (unrealized PnL, liquidation)
+- Fallback: if mark price aggregator has zero sources (all stale),
+  no `MarkPriceEvent` is published. Risk uses index price from BBO.
 
 ### 5. Funding Engine
 
@@ -281,9 +285,10 @@ Per WAL.md:
 
 1. Acquire Postgres advisory lock: `pg_advisory_lock(shard_id)`
 2. Load positions, accounts, tips from Postgres
-3. Request replay from each ME: `seq_no > tips[symbol_id]`
+3. Request replay from each ME via DXS consumer
+   ([DXS.md](DXS.md) section 6): `from_seq_no = tips[symbol_id] + 1`
 4. Process replay fills (same code path as live)
-5. On `ReplayDone` for all symbols: connect gateway, go live
+5. On `CaughtUp` for all streams: connect gateway, go live
 6. Main loop: poll ME rings -> poll gateway -> renew lease (~1s)
 7. Send every processed tip advance to replica via SPSC
 
@@ -312,8 +317,9 @@ Per WAL.md:
 
 1. New instance acquires advisory lock
 2. Reads positions + tips from Postgres (up to 10ms stale)
-3. Requests replay from MEs: `seq_no > tips[symbol_id]`
-4. MEs serve from 10min in-memory buffer, or WAL for older
+3. Requests replay via DXS consumer ([DXS.md](DXS.md)):
+   `from_seq_no = tips[symbol_id] + 1`
+4. MEs serve from 10min WAL retention (DXS.md section 2)
 5. Replays to current, goes live, starts new replica
 
 ### Matching Engine Failover
@@ -338,8 +344,8 @@ loop {
     while let Ok(order) = gateway_ring.try_pop():
         process_order(order)
 
-    // 3. Mark prices from Binance feeder
-    while let Ok(mp) = binance_ring.try_pop():
+    // 3. Mark prices from aggregator (DXS consumer, see MARK.md)
+    while let Ok(mp) = mark_ring.try_pop():
         mark_prices[mp.symbol_id] = mp.price
 
     // 4. BBO price updates (LAST, skippable under load)
@@ -375,7 +381,7 @@ crates/rsx-risk/src/
     replica.rs        -- Replica loop, fill buffer, promotion
     persist.rs        -- Write-behind worker, Postgres batching
     replay.rs         -- Replay request/response, cold start
-    binance.rs        -- Binance WS mark price feeder (async task)
+    mark_consumer.rs  -- DXS consumer for mark prices (MARK.md)
     config.rs         -- TOML config
     types.rs          -- Price, Qty, type aliases
     risk_utils.rs     -- helpers

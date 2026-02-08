@@ -1,5 +1,10 @@
 # WAL Infrastructure (Risk + Orderbook)
 
+> **Note:** The concrete WAL implementation (file format, writer,
+> reader, replay server, consumer) is specified in
+> [DXS.md](DXS.md). This document describes the shared design
+> principles and backpressure rules.
+
 This document describes the shared WAL architecture for the risk engine and the matching engine. It is optimized for latency by accepting a bounded loss window and enforcing backpressure when persistence falls behind.
 
 ## Goals
