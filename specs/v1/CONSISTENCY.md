@@ -13,15 +13,19 @@ are persisted at the risk engine (see [WAL.md](WAL.md)).
         Matching Engine
              |
         drain_events()
-         /    |    \
-     [SPSC] [SPSC] [SPSC]
-       |      |       |
-     Risk  Gateway  MktData
+         /    |    \       \
+     [SPSC] [SPSC] [SPSC]  [DXS]
+       |      |       |       |
+     Risk  Gateway  MktData  Recorder
 ```
 
 Matching engine drains `event_buf[0..event_len]` directly into per-consumer
 SPSC rings *within the same process*. Events are emitted per-fill as they
 happen. A mirrored stream is also emitted to a hot spare matching engine.
+
+Additionally, Recorder instances connect as DXS consumers
+([DXS.md](DXS.md) section 8) to archive event streams to daily
+files. Recorders are asynchronous — they do not affect the hot path.
 
 Event routing:
 

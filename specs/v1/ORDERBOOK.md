@@ -425,14 +425,20 @@ fn migrate_batch(&mut self, batch_size: u32) {
 
 ## 2.8 Durability: WAL + Online Snapshot
 
-The matching engine persists orderbook state using an append-only WAL plus
-online snapshots. Recovery restores the latest snapshot and replays the WAL.
+The matching engine persists orderbook state using DXS WalWriter
+([DXS.md](DXS.md)) plus online snapshots. Recovery restores the
+latest snapshot and replays the WAL. The ME also embeds a DxsReplay
+server so downstream consumers (risk engines, recorders) can
+subscribe to its event stream.
 
 ### WAL
 
-- Append every order, cancel, and fill to the WAL.
-- WAL is per-symbol, local disk, append-only.
-- WAL entries are also streamed to a hot spare matching engine.
+- ME embeds DXS WalWriter ([DXS.md](DXS.md) section 3).
+- Append every order, cancel, and fill as DXS WalRecords.
+- WAL is per-symbol (`stream_id` = `symbol_id`), local disk.
+- Same protobuf bytes on disk and over the wire — no transformation.
+- DxsReplay server ([DXS.md](DXS.md) section 5) serves replay and
+  live tail to risk engines and other consumers.
 
 ### Online Snapshot (Shared Algorithm)
 
@@ -790,6 +796,7 @@ fan out to downstream consumers:
 - Risk engine (position updates from fills, OrderDone for margin release)
 - Persistence layer (trade log)
 - Market data dissemination (orderbook updates)
+- Recorder (archival via DXS consumer, see [DXS.md](DXS.md) section 8)
 
 How events are consistently delivered to these systems, ordering guarantees,
 and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).
