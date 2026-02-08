@@ -28,6 +28,9 @@ The payload immediately follows the header and is a fixed-record
 struct for that `record_type` (`#[repr(C, align(64))]`, little-endian).
 Readers validate `crc32` and truncate the WAL on the first invalid record.
 
+**Version handling:** if `version` is unknown, the reader must stop replay
+and fail fast (no skip).
+
 **Record types (v1):**
 - `RECORD_FILL`
 - `RECORD_BBO`
@@ -69,11 +72,8 @@ struct FillRecord {
   u64 taker_order_id_lo;
   u64 maker_order_id_hi;
   u64 maker_order_id_lo;
-  u64 client_order_id;
   i64 price;
   i64 qty;
-  i64 taker_fee;
-  i64 maker_fee;
   u8  taker_side;
   u8  reduce_only;
   u8  tif;
@@ -105,7 +105,6 @@ struct OrderInsertedRecord {
   u32 user_id;
   u64 order_id_hi;
   u64 order_id_lo;
-  u64 client_order_id;
   i64 price;
   i64 qty;
   u8  side;
@@ -123,7 +122,6 @@ struct OrderCancelledRecord {
   u32 user_id;
   u64 order_id_hi;
   u64 order_id_lo;
-  u64 client_order_id;
   i64 remaining_qty;
   u8  reason;        // CancelReason
   u8  reduce_only;
@@ -140,11 +138,8 @@ struct OrderDoneRecord {
   u32 user_id;
   u64 order_id_hi;
   u64 order_id_lo;
-  u64 client_order_id;
   i64 filled_qty;
   i64 remaining_qty;
-  i64 taker_fee;
-  i64 maker_fee;
   u8  final_status;
   u8  reduce_only;
   u8  tif;
@@ -191,7 +186,7 @@ wal/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal
 ```
 
 - Rotate by size: 64MB default.
-- Retention: 10min for hot replay (in-memory). Offload to durable storage for infinite retention.
+- Retention: 10min for hot replay (in-memory). Offload to ARCHIVE for infinite retention.
 - No file header, no index. Sequential read only.
 - Filenames encode seq range for O(1) file selection.
 
@@ -201,6 +196,9 @@ uses a temporary name `{stream_id}_active.wal` until rotation.
 
 **GC:** delete hot WAL files where `last_seq` timestamp is older than
 retention window *after offload*. GC runs on rotation (no timer needed).
+
+**Archive fallback:** if `from_seq_no` is older than hot retention, consumers
+request replay from ARCHIVE (see ARCHIVE.md), then resume from DXS hot tail.
 
 ---
 
