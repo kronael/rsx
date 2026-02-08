@@ -265,7 +265,7 @@ message ConfigApplied {
 // Tip sync used by risk main → risk replica (matching replica usage TBD)
 message TipSync {
     uint32 symbol_id = 1;
-    uint64 seq_no = 2;         // last fully applied seq for this symbol
+    uint64 seq = 2;            // last fully applied seq for this symbol
     uint64 timestamp_ns = 3;
 }
 

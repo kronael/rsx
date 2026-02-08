@@ -40,11 +40,19 @@ Readers validate `crc32` and truncate the WAL on the first invalid record.
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
 
+**CancelReason (u8):**
+- 0 = user_cancel
+- 1 = reduce_only
+- 2 = expiry
+- 3 = system
+- 4 = post_only_reject
+- 5 = other
+
 **Payload layouts (v1):**
 ```
 #[repr(C, align(64))]
 struct FillRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 taker_user_id;
@@ -54,15 +62,21 @@ struct FillRecord {
   u64 taker_order_id_lo;
   u64 maker_order_id_hi;
   u64 maker_order_id_lo;
+  u64 client_order_id;
   i64 price;
   i64 qty;
+  i64 taker_fee;
+  i64 maker_fee;
   u8  taker_side;
-  u8  _pad1[7];
+  u8  reduce_only;
+  u8  tif;
+  u8  post_only;
+  u8  _pad1[4];
 }
 
 #[repr(C, align(64))]
 struct BboRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 _pad0;
@@ -78,48 +92,62 @@ struct BboRecord {
 
 #[repr(C, align(64))]
 struct OrderInsertedRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
   u64 order_id_hi;
   u64 order_id_lo;
+  u64 client_order_id;
   i64 price;
   i64 qty;
   u8  side;
-  u8  _pad1[7];
+  u8  reduce_only;
+  u8  tif;
+  u8  post_only;
+  u8  _pad1[4];
 }
 
 #[repr(C, align(64))]
 struct OrderCancelledRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
   u64 order_id_hi;
   u64 order_id_lo;
+  u64 client_order_id;
   i64 remaining_qty;
-  u8  reason;        // optional cancel reason
-  u8  _pad1[7];
+  u8  reason;        // CancelReason
+  u8  reduce_only;
+  u8  tif;
+  u8  post_only;
+  u8  _pad1[4];
 }
 
 #[repr(C, align(64))]
 struct OrderDoneRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
   u64 order_id_hi;
   u64 order_id_lo;
+  u64 client_order_id;
   i64 filled_qty;
   i64 remaining_qty;
+  i64 taker_fee;
+  i64 maker_fee;
   u8  final_status;
-  u8  _pad1[7];
+  u8  reduce_only;
+  u8  tif;
+  u8  post_only;
+  u8  _pad1[4];
 }
 
 #[repr(C, align(64))]
 struct ConfigAppliedRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 _pad0;
@@ -130,11 +158,11 @@ struct ConfigAppliedRecord {
 
 #[repr(C, align(64))]
 struct CaughtUpRecord {
-  u64 seq_no;
+  u64 seq;
   u64 ts_ns;
   u32 stream_id;
   u32 _pad0;
-  u64 live_seq_no;
+  u64 live_seq;
   u8  _pad1[40];
 }
 ```
@@ -180,7 +208,7 @@ struct WalWriter {
     buf: Vec<u8>,         // write buffer, flushed periodically
     file: File,           // current WAL file
     file_size: u64,       // bytes written to current file
-    first_seq: u64,       // first seq_no in current file
+    first_seq: u64,       // first seq in current file
     wal_dir: PathBuf,
     max_file_size: u64,   // 64MB default
     retention_ns: u64,    // 10min default
@@ -188,7 +216,7 @@ struct WalWriter {
 ```
 
 **Append:** serialize fixed record to buf. Assign
-monotonic `seq_no` (producer-local, no coordination). O(1) memcpy.
+monotonic `seq` (producer-local, no coordination). O(1) memcpy.
 
 **Flush:** every 10ms, write buf to file + fsync. Resets buf.
 Flush is called by the producer's main loop (not a background
@@ -226,9 +254,9 @@ struct WalFileInfo {
 }
 ```
 
-**Open from seq_no:** list files, parse filenames, binary search
+**Open from seq:** list files, parse filenames, binary search
 for the file containing `target_seq`. Seek within file by reading
-fixed records until `seq_no >= target_seq`.
+fixed records until `seq >= target_seq`.
 
 **Iteration:** read header + payload, decode fixed record.
 Returns `Option<WalRecord>` — `None` at EOF.
@@ -251,7 +279,7 @@ service DxsReplay {
 
 message ReplayRequest {
   uint32 stream_id = 1;
-  uint64 from_seq_no = 2;
+  uint64 from_seq = 2;
 }
 
 message WalBytes {
@@ -261,8 +289,8 @@ message WalBytes {
 
 **Protocol:**
 
-1. Consumer sends `ReplayRequest` with `from_seq_no`.
-2. Server opens WalReader at `from_seq_no`.
+1. Consumer sends `ReplayRequest` with `from_seq`.
+2. Server opens WalReader at `from_seq`.
 3. Server streams WalRecords from WAL files.
 4. When reader exhausts all files (caught up to live): server
    sends a WalRecord with a `CaughtUp` marker payload, then
@@ -274,7 +302,7 @@ message WalBytes {
 **CaughtUp marker:**
 
 Use a fixed record type `RECORD_CAUGHT_UP` with payload:
-`{live_seq_no: u64}`.
+`{live_seq: u64}`.
 
 **Concurrency:** one gRPC handler per connected consumer. Each
 handler has its own WalReader. Live broadcast uses a notify
@@ -293,7 +321,7 @@ producer's DxsReplay service, tracks processing tips.
 struct DxsConsumer {
     stream_id: u32,
     producer_addr: SocketAddr,
-    tip: u64,              // last processed seq_no
+    tip: u64,              // last processed seq
     tip_file: PathBuf,     // persisted tip
     callback: Box<dyn FnMut(WalRecord)>,
 }
@@ -303,14 +331,14 @@ struct DxsConsumer {
 
 1. Load tip from `tip_file` (0 if missing).
 2. Connect to producer's DxsReplay service.
-3. Send `ReplayRequest { stream_id, from_seq_no: tip + 1 }`.
+3. Send `ReplayRequest { stream_id, from_seq: tip + 1 }`.
 4. Process replayed records via callback, advancing tip.
 5. On `CaughtUp`: transition to live processing.
 6. Continue processing live records via callback.
 
 **Tip persistence:** flush tip to `tip_file` every 10ms (batched
 with other I/O). On crash, replay from last persisted tip. Records
-are idempotent or deduped by `seq_no` at the consumer.
+are idempotent or deduped by `seq` at the consumer.
 
 **Reconnect:** on disconnect, reconnect with backoff (1s/2s/4s/8s,
 max 30s). Resume from `tip + 1`.
