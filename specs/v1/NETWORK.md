@@ -165,7 +165,8 @@ Gateway3 ────┘
 ### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
-- gRPC bidirectional streaming (v1)
+- gRPC bidirectional streaming (v1, inter-process/network)
+- SPSC rings are used for *in-process* tile communication
 - One multiplexed stream Gateway ↔ Risk
 - One multiplexed stream Risk ↔ Matching Engine (per matcher)
 
