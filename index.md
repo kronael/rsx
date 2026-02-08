@@ -13,6 +13,10 @@
 
 - [ORDERBOOK.md](ORDERBOOK.md) - Orderbook data structures, matching algorithm, tick/lot size curves, memory layout
 
+## Testing
+
+- [TESTING.md](TESTING.md) - Testing strategy: unit/e2e/integration/smoke/perf targets, test data patterns, correctness invariants, CI/CD pipeline
+
 ## Memory & Allocation
 
 - [ARENA.md](ARENA.md) - Arena/bump allocators: fast allocation, bulk-free, graph-friendly lifetimes, Rust allocator landscape
