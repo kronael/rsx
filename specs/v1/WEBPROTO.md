@@ -45,6 +45,7 @@ Rules:
 - 4 = INSUFFICIENT_MARGIN
 - 5 = OVERLOADED
 - 6 = INTERNAL_ERROR
+- 7 = REDUCE_ONLY_VIOLATION
 
 ### A: Auth (optional fallback)
 
@@ -62,7 +63,7 @@ Fields:
 ### N: New Order
 
 ```
-{N:[sym, side, px, qty, cid, tif]}
+{N:[sym, side, px, qty, cid, tif, ro]}
 ```
 
 Fields:
@@ -72,6 +73,8 @@ Fields:
 - `qty`: quantity in lot units (int64)
 - `cid`: client order id (uint64)
 - `tif`: enum `Time in Force`
+- `ro`: reduce-only (0=normal, 1=reduce-only, optional,
+  default 0)
 
 ### C: Cancel
 

@@ -33,9 +33,18 @@ Event routing:
 | Event           | Risk | Gateway | MktData |
 |-----------------|------|---------|---------|
 | Fill            | yes  | yes     | yes     |
+| BBO             | yes  | no      | no      |
 | OrderInserted   | no   | no      | yes     |
 | OrderCancelled  | no   | yes     | yes     |
 | OrderDone       | yes  | yes     | no      |
+
+BBO emitted by ME after any order that changes best bid/ask.
+Risk uses it for index price. MktData derives its own BBO from
+shadow book.
+
+Fills also update ME-internal position tracking (section 6.5
+of ORDERBOOK.md) for reduce-only enforcement. No new event row
+needed.
 
 MktData consumer maintains a shadow orderbook per symbol using the
 shared `rsx-book` crate. See [MARKETDATA.md](MARKETDATA.md) for

@@ -67,9 +67,10 @@ order at `mark_price +/- round^2 * base_slip_bps`:
 - Short position -> buy at `mark_price + slippage`
 
 Order properties:
-- Reduce-only flag (ME enforces, never opens new position)
-- Skip pre-trade margin check (user is already underwater)
-- Liquidation flag so risk engine doesn't reject them
+- `reduce_only = true` (NewOrder field 8, ME enforces)
+- `is_liquidation = true` (RiskNewOrder field 11, risk skips
+  margin check)
+- ME clamps qty to position size via position tracking
 - Routed to ME via same SPSC ring as normal orders
 
 ## 4. Lifecycle
@@ -93,6 +94,10 @@ on_fill(fill) for liquidation order:
 
 on_order_done(order) for liquidation order:
   -> remove from pending_orders (fully filled handled above)
+
+on_order_failed(order) for liquidation order:
+  -> symbol halted: pause liquidation for that symbol
+  -> otherwise: treat as unfilled, escalate next round
 
 maybe_process_liquidations() [called each main loop iteration]:
   -> for each Active liquidation where now >= next_round_at_ns:
