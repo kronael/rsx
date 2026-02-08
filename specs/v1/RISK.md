@@ -193,6 +193,7 @@ fn on_price_update(symbol_idx: u16):
         accounts[user_id].margin_state = state
         if portfolio_margin.needs_liquidation(&state):
             enqueue_liquidation(user_id)
+            // see LIQUIDATOR.md
 ```
 
 - Runs on every tick -- sharding keeps it fast
@@ -248,6 +249,19 @@ CREATE TABLE tips (
     last_seq_no  BIGINT NOT NULL DEFAULT 0,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (instance_id, symbol_id)
+);
+
+CREATE TABLE liquidation_events (
+    user_id       INT NOT NULL,
+    symbol_id     INT NOT NULL,
+    round         INT NOT NULL,
+    side          SMALLINT NOT NULL,
+    price         BIGINT NOT NULL,
+    qty           BIGINT NOT NULL,
+    slippage_bps  INT NOT NULL,
+    status        SMALLINT NOT NULL, -- 0=placed, 1=filled, 2=cancelled
+    timestamp_ns  BIGINT NOT NULL,
+    inserted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE funding_payments (
@@ -359,6 +373,9 @@ loop {
     // 5. Funding check (amortized, every 8h)
     maybe_settle_funding()
 
+    // 5.5. Liquidation processing (see LIQUIDATOR.md)
+    maybe_process_liquidations()
+
     // 6. Lease renewal (every ~1s)
     maybe_renew_lease()
 }
@@ -375,6 +392,7 @@ crates/rsx-risk/src/
     margin.rs         -- PortfolioMargin, exposure_index, liquidation
     price.rs          -- IndexPrice (size-weighted mid), mark price
     funding.rs        -- FundingEngine, rate calc, settlement
+    liquidation.rs    -- LiquidationEngine, state, order gen (LIQUIDATOR.md)
     fill.rs           -- FillEvent types
     tip.rs            -- Tip tracking
     lease.rs          -- Advisory lock acquire/renew/release
@@ -560,7 +578,7 @@ order_done_releases_frozen_margin
 
 // pre-trade risk -- edge cases
 order_for_user_not_in_shard_rejected
-order_while_user_being_liquidated_rejected
+order_while_user_being_liquidated_rejected  // LIQUIDATOR.md
 order_reducing_position_always_accepted
 order_with_zero_qty_rejected
 order_duplicate_id_within_dedup_window
@@ -574,7 +592,7 @@ shard_processes_1000_fills_positions_correct
 shard_multi_symbol_tips_advance_independently
 shard_margin_recalc_on_bbo_update
 shard_order_accept_reject_flow
-shard_liquidation_detected_on_price_drop
+shard_liquidation_detected_on_price_drop  // LIQUIDATOR.md
 shard_bbo_skip_under_fill_pressure
 shard_multiple_users_same_symbol
 shard_user_opens_closes_reopens
@@ -582,7 +600,7 @@ shard_position_flip_through_fills
 shard_fill_updates_exposure_index
 shard_order_accepted_then_rejected_margin_used
 shard_cancel_restores_margin_for_next_order
-shard_mark_price_divergence_triggers_liquidation
+shard_mark_price_divergence_triggers_liquidation  // LIQUIDATOR.md
 shard_funding_settlement_at_interval
 shard_idle_no_resource_leak
 ```
@@ -718,9 +736,9 @@ funding_settlement_8h_correct
 funding_rate_updates_on_price_change
 binance_feed_updates_mark_price
 binance_reconnect_on_disconnect
-liquidation_cascade_under_price_crash
+liquidation_cascade_under_price_crash  // LIQUIDATOR.md
 bbo_skip_under_heavy_fill_load
-order_rejected_during_liquidation
+order_rejected_during_liquidation  // LIQUIDATOR.md
 shard_boundary_fill_taker_shard0_maker_shard1
 all_symbols_simultaneous_bbo_update
 mark_price_stale_binance_disconnect
