@@ -80,6 +80,7 @@ impl Orderbook {
         }
     }
 
+    #[inline]
     pub fn emit(&mut self, event: Event) {
         self.event_buf[self.event_len as usize] = event;
         self.event_len += 1;

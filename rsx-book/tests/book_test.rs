@@ -2,7 +2,7 @@ use rsx_book::book::Orderbook;
 use rsx_types::NONE;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
-use rsx_types::TimeInForce;
+
 
 fn test_config() -> SymbolConfig {
     SymbolConfig {

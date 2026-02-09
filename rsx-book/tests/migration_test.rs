@@ -31,7 +31,7 @@ fn trigger_fires_when_mid_drifts() {
 #[test]
 fn recenter_swaps_active_staging() {
     let mut book = test_book();
-    let old_len = book.active_levels.len();
+    let _old_len = book.active_levels.len();
     book.trigger_recenter(52_000);
     assert_eq!(book.state, BookState::Migrating);
     // Active levels should be new size
@@ -89,7 +89,7 @@ fn insert_during_migration_goes_to_new() {
     book.trigger_recenter(52_000);
 
     // Insert goes to new active array
-    let h = book.insert_resting(
+    let _h = book.insert_resting(
         52_100, 100, Side::Sell, 0, 1, false, 0,
     );
     assert_ne!(book.best_ask_tick, NONE);
