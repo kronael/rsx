@@ -123,6 +123,19 @@ for notional = price * qty at risk boundary.
 - Backpressure: buffer full or flush lag > 10ms -> stall producer
 - Tip persistence: every 10ms, idempotent replay from tip+1
 
+## Networking Stack
+
+- **Primary:** monoio with io_uring (zero-copy, kernel submission queues)
+- **NOT tokio** for network I/O (epoll slower than io_uring)
+- **Pluggable:** designed for future userspace networking (DPDK, AF_XDP)
+- **Tiles:** separate threads per network concern (see `specs/v1/TILES.md`)
+- Gateway WS + Market Data: monoio from day one
+- DXS gRPC: tonic (tokio) for prototype, migrate to monoio gRPC later
+- Reference impl: `/home/onvos/app/trader/monoio-client/`
+  - `ws_monoio.rs`: WebSocket client/server on monoio
+  - `web_client.rs`: HTTP client with monoio
+  - Proven in production (funding-bot, trader)
+
 ## SPSC Ring Patterns
 
 - rtrb for same-process IPC (~50-170ns latency)
@@ -134,6 +147,7 @@ for notional = price * qty at risk boundary.
 
 | Component | Spec | Test Spec |
 |-----------|------|-----------|
+| Architecture | TILES.md (networking, tiles) | - |
 | Shared orderbook | ORDERBOOK.md | TESTING-BOOK.md |
 | Matching engine | ORDERBOOK.md, CONSISTENCY.md | TESTING-MATCHING.md |
 | DXS (WAL + replay) | DXS.md, WAL.md | TESTING-DXS.md |
