@@ -122,3 +122,26 @@ fn funding_missed_interval_settled_on_startup() {
     assert!(is_settlement_due(1, 28800 * 3, 28800));
     assert!(is_settlement_due(2, 28800 * 3, 28800));
 }
+
+#[test]
+fn funding_settlement_uses_latest_mark_price() {
+    // Payment depends on mark price at settlement time.
+    // Two settlements with different marks -> different
+    // payments for the same position.
+    let qty = 10;
+    let rate = 50; // 50 bps
+    let p1 = calculate_payment(qty, 1000, rate);
+    let p2 = calculate_payment(qty, 2000, rate);
+    assert_eq!(p1, 50); // 10*1000*50/10000
+    assert_eq!(p2, 100); // 10*2000*50/10000
+    assert_ne!(p1, p2);
+}
+
+#[test]
+fn funding_payment_formula_qty_times_mark_times_rate() {
+    // Explicit known-value formula verification.
+    // qty=10, mark=1000, rate=50 bps
+    // payment = 10 * 1000 * 50 / 10000 = 50
+    let p = calculate_payment(10, 1000, 50);
+    assert_eq!(p, 50);
+}
