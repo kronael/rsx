@@ -5,6 +5,7 @@ members = [
     "rsx-matching",
     "rsx-dxs",
     "rsx-recorder",
+    "rsx-risk",
 ]
 resolver = "2"
 
