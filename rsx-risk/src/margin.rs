@@ -74,6 +74,9 @@ impl PortfolioMargin {
         if order.is_liquidation {
             return Ok(0);
         }
+        if order.reduce_only {
+            return Ok(0);
+        }
         let state =
             self.calculate(account, positions, mark_prices);
         let order_notional = (order.price as i128

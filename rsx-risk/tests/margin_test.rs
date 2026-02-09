@@ -376,3 +376,22 @@ fn exposure_empty_vec_for_unused_symbol() {
     let idx = ExposureIndex::new(4);
     assert!(idx.users_for_symbol(3).is_empty());
 }
+
+#[test]
+#[should_panic]
+fn exposure_symbol_idx_out_of_bounds_panics() {
+    let mut idx = ExposureIndex::new(4);
+    idx.add_user(99, 1);
+}
+
+#[test]
+fn check_order_reduce_only_bypasses_margin() {
+    let pm = make_pm(1);
+    let a = Account::new(1, 0); // zero collateral
+    let marks = vec![100];
+    let mut order = make_order(1, 0, 100, 10, 0);
+    order.reduce_only = true;
+    let result =
+        pm.check_order(&a, &[], &order, &marks, 10);
+    assert_eq!(result, Ok(0));
+}
