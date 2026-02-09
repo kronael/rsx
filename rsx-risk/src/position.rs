@@ -1,5 +1,6 @@
 /// RISK.md §2. All fields i64 fixed-point.
 #[derive(Clone, Debug, Default)]
+#[repr(C, align(64))]
 pub struct Position {
     pub user_id: u32,
     pub symbol_id: u32,
@@ -34,46 +35,57 @@ impl Position {
             if self.short_qty > 0 {
                 // Opposing: reduce short
                 let close_qty = qty.min(self.short_qty);
-                let avg = self.short_entry_cost
-                    / self.short_qty;
-                self.realized_pnl +=
-                    close_qty * (avg - price);
+                let close_cost = (self.short_entry_cost
+                    as i128
+                    * close_qty as i128
+                    / self.short_qty as i128)
+                    as i64;
+                self.realized_pnl += (close_cost as i128
+                    - price as i128 * close_qty as i128)
+                    as i64;
                 self.short_qty -= close_qty;
-                self.short_entry_cost -= avg * close_qty;
+                self.short_entry_cost -= close_cost;
                 let remaining = qty - close_qty;
                 if remaining > 0 {
-                    // Flip to long
                     self.long_qty += remaining;
                     self.long_entry_cost +=
-                        price * remaining;
+                        (price as i128 * remaining as i128)
+                            as i64;
                 }
             } else {
                 // Accumulate long
                 self.long_qty += qty;
-                self.long_entry_cost += price * qty;
+                self.long_entry_cost +=
+                    (price as i128 * qty as i128) as i64;
             }
         } else {
             // Sell fill
             if self.long_qty > 0 {
                 // Opposing: reduce long
                 let close_qty = qty.min(self.long_qty);
-                let avg = self.long_entry_cost
-                    / self.long_qty;
+                let close_cost = (self.long_entry_cost
+                    as i128
+                    * close_qty as i128
+                    / self.long_qty as i128)
+                    as i64;
                 self.realized_pnl +=
-                    close_qty * (price - avg);
+                    (price as i128 * close_qty as i128
+                        - close_cost as i128)
+                        as i64;
                 self.long_qty -= close_qty;
-                self.long_entry_cost -= avg * close_qty;
+                self.long_entry_cost -= close_cost;
                 let remaining = qty - close_qty;
                 if remaining > 0 {
-                    // Flip to short
                     self.short_qty += remaining;
                     self.short_entry_cost +=
-                        price * remaining;
+                        (price as i128 * remaining as i128)
+                            as i64;
                 }
             } else {
                 // Accumulate short
                 self.short_qty += qty;
-                self.short_entry_cost += price * qty;
+                self.short_entry_cost +=
+                    (price as i128 * qty as i128) as i64;
             }
         }
         self.version += 1;
@@ -86,7 +98,8 @@ impl Position {
 
     /// RISK.md §3.
     pub fn notional(&self, mark_price: i64) -> i64 {
-        self.net_qty().abs() * mark_price
+        (self.net_qty().abs() as i128
+            * mark_price as i128) as i64
     }
 
     pub fn avg_entry(&self) -> i64 {
@@ -109,7 +122,9 @@ impl Position {
         if nq == 0 {
             return 0;
         }
-        nq * (mark_price - self.avg_entry())
+        (nq as i128
+            * (mark_price - self.avg_entry()) as i128)
+            as i64
     }
 
     pub fn is_empty(&self) -> bool {

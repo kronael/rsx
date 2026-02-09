@@ -43,11 +43,12 @@ impl PortfolioMargin {
             upnl += pos.unrealized_pnl(mark);
             let notional = pos.notional(mark);
             let params = &self.symbol_params[sid];
-            im += notional * params.initial_margin_rate
-                / 10_000;
-            mm += notional
-                * params.maintenance_margin_rate
-                / 10_000;
+            im += (notional as i128
+                * params.initial_margin_rate as i128
+                / 10_000) as i64;
+            mm += (notional as i128
+                * params.maintenance_margin_rate as i128
+                / 10_000) as i64;
         }
         let equity = account.collateral + upnl;
         let available =
@@ -75,12 +76,13 @@ impl PortfolioMargin {
         }
         let state =
             self.calculate(account, positions, mark_prices);
-        let order_notional = order.price * order.qty;
+        let order_notional = (order.price as i128
+            * order.qty as i128) as i64;
         let sid = order.symbol_id as usize;
         let params = &self.symbol_params[sid];
-        let order_im = order_notional
-            * params.initial_margin_rate
-            / 10_000;
+        let order_im = (order_notional as i128
+            * params.initial_margin_rate as i128
+            / 10_000) as i64;
         let order_fee = calculate_fee(
             order.qty,
             order.price,
