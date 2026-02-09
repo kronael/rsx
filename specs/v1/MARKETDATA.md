@@ -1,6 +1,8 @@
-# Market Data Service (gRPC)
+# Market Data Service (quinn QUIC)
 
-Market data is served by a dedicated service. It consumes orderbook events and exposes a minimal gRPC stream.
+Market data is served by a dedicated service. It consumes orderbook
+events and exposes a minimal QUIC stream carrying WAL wire format
+records.
 
 ## Service
 
@@ -70,9 +72,11 @@ message L2Level {
 
 ## Notes
 
-- This mirrors the WS JSON schema (`B` snapshot, `D` delta) in gRPC form.
+- This mirrors the WS JSON schema (`B` snapshot, `D` delta) in
+  QUIC + raw #[repr(C)] records.
 - BBO includes both price and quantity and order count.
-- The event stream already exists in the matching engine; this service is a fan-out layer.
+- The event stream already exists in the matching engine; this
+  service is a fan-out layer.
 
 ## Transport Details (v1)
 

@@ -82,7 +82,7 @@ ME rebuilds the dedup set from these records. Dedup key is
 `(user_id, order_id)`.
 
 The dedup window is bounded by the same 5min pruning as
-in-memory (GRPC.md section 7). During replay, records older
+in-memory (MESSAGES.md section 7). During replay, records older
 than 5min from WAL tip are skipped.
 
 **Payload layouts (v1):**
@@ -200,7 +200,7 @@ All fields are encoded little-endian on disk/wire.
 
 On disk: `[header][payload][header][payload]...`
 
-Over gRPC: the same fixed records are streamed as raw bytes.
+Over QUIC (quinn): the same fixed records are streamed as raw bytes.
 
 Maximum record size is 64KB.
 
@@ -301,23 +301,19 @@ file in sorted order. Returns `None` when all files exhausted
 
 ## 5. Replay Server
 
-gRPC service embedded in each producer. Serves WAL records to
-consumers.
+QUIC service embedded in each producer (quinn). Serves WAL records
+to consumers.
 
-```protobuf
-service DxsReplay {
-  rpc Stream(ReplayRequest) returns (stream WalBytes);
-}
-
-message ReplayRequest {
-  uint32 stream_id = 1;
-  uint64 from_seq = 2;
-}
-
-message WalBytes {
-  bytes record = 1;  // header + payload, fixed-record format
+**Request format (fixed 12-byte record):**
+```
+struct ReplayRequest {
+  u32 stream_id;
+  u64 from_seq;
 }
 ```
+
+**Response format:**
+Streams raw WAL bytes (header + payload, fixed-record format).
 
 **Protocol:**
 
@@ -350,11 +346,13 @@ Use a fixed record type `RECORD_CAUGHT_UP` with payload:
   **all** subscribed streams (per RISK.md replication
   section).
 
-**Concurrency:** one gRPC handler per connected consumer. Each
-handler has its own WalReader. Live broadcast uses a notify
+**Concurrency:** one gRPC stream per connected consumer. Each
+stream has its own WalReader. Live broadcast uses a notify
 mechanism (e.g., `tokio::sync::Notify` or eventfd).
 
-**Transport:** gRPC over TCP. Latency is not critical for replay.
+**Transport:** gRPC (tonic) over HTTP/2. The interface is
+"stream records from seq N" and raw fixed records minimize
+serialization overhead.
 
 ---
 
@@ -376,7 +374,7 @@ struct DxsConsumer {
 **Startup sequence:**
 
 1. Load tip from `tip_file` (0 if missing).
-2. Connect to producer's DxsReplay service.
+2. Connect to producer's gRPC endpoint (tonic).
 3. Send `ReplayRequest { stream_id, from_seq: tip + 1 }`.
 4. Process replayed records via callback, advancing tip.
 5. On `CaughtUp`: transition to live processing.
@@ -398,10 +396,8 @@ the live event path uses SPSC rings within the same host (unchanged
 from current design). DXS serves the **cross-host** and **replay**
 paths.
 
-The replay/streaming path uses gRPC. For cross-host live streaming
-where latency matters, gRPC over QUIC provides lower latency than
-TCP (0-RTT reconnect, no head-of-line blocking). Regular gRPC over
-TCP is acceptable for replay where latency is not paramount.
+The replay/streaming path uses gRPC (tonic) over HTTP/2 as a
+cold path. Low-latency cross-host streaming is out of scope for v1.
 
 ---
 
@@ -490,10 +486,10 @@ The callback writes records to the daily archive file.
 crates/rsx-dxs/src/
     lib.rs        -- public API: WalWriter, WalReader, DxsConsumer
     wal.rs        -- WalWriter, WalReader, file layout, GC
-    server.rs     -- DxsReplay gRPC service
+    server.rs     -- DxsReplay gRPC service (tonic)
     client.rs     -- DxsConsumer, tip tracking, reconnect
     recorder.rs   -- Recorder (daily archival callback)
-    config.rs     -- TOML config structs
+    config.rs     -- env config parsing
 
 crates/rsx-recorder/src/
     main.rs       -- recorder binary entrypoint

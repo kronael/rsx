@@ -21,7 +21,7 @@ Crate: `rsx-dxs`
 | D9 | WalWriter: GC deletes files outside retention | DXS.md §3 |
 | D10 | WalReader: open from seq via filename binary search | DXS.md §4 |
 | D11 | WalReader: sequential iteration across files | DXS.md §4 |
-| D12 | DxsReplay server: gRPC stream from from_seq | DXS.md §5 |
+| D12 | DxsReplay server: quinn QUIC stream from from_seq | DXS.md §5 |
 | D13 | DxsReplay: CaughtUp marker then live tail | DXS.md §5 |
 | D14 | DxsConsumer: tip persistence every 10ms | DXS.md §6 |
 | D15 | DxsConsumer: reconnect with backoff 1/2/4/8/30s | DXS.md §6 |
@@ -214,7 +214,7 @@ Targets from DXS.md §10:
   (WAL.md, CONSISTENCY.md §3)
 - Archive fallback when hot WAL retention exceeded
   (DXS.md §2)
-- Cross-host live streaming via gRPC / gRPC over QUIC
+- Cross-host live streaming via quinn QUIC + WAL wire format
   (DXS.md §7)
 - SPSC rings for in-process hot-path (ME -> risk, risk ->
   gateway), DXS for cross-host and replay (DXS.md §7,

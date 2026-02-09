@@ -30,11 +30,12 @@ Built with [Claude](https://claude.ai) and
 ## Status
 
 Spec-first project. All specifications are in `specs/v1/`.
-No implementation code yet.
+Core crates exist (`rsx-types`, `rsx-book`, `rsx-dxs`,
+`rsx-recorder`). `rsx-matching` is a stub binary.
 
 ## Architecture
 
-Gateway accepts WS and gRPC connections, forwards orders
+Gateway accepts WS and QUIC connections, forwards orders
 through SPSC rings to the risk engine, which validates margin
 and routes to per-symbol matching engines. Fills flow back
 through SPSC rings to risk (position updates) and gateway
@@ -49,7 +50,7 @@ See [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md).
   pinned core, GTC limit orders
 - **Risk Engine** -- pre-trade margin, position tracking,
   funding, liquidation triggers
-- **Gateway** -- WS overlay + gRPC passthrough, auth,
+- **Gateway** -- WS overlay + QUIC passthrough, auth,
   rate limiting
 - **Mark Price Aggregator** -- external exchange feeds,
   median price, staleness detection
@@ -61,31 +62,26 @@ See [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md).
 ## Crate Layout
 
 ```
-crates/
-  rsx-book/       orderbook (PriceLevel, OrderSlot, Slab)
-  rsx-matching/   matching engine binary (one per symbol)
-  rsx-risk/       risk engine binary (one per user shard)
-  rsx-dxs/        WAL writer/reader, DxsReplay server
-  rsx-mark/       mark price aggregator
-  rsx-gateway/    WS overlay + gRPC passthrough
-  rsx-marketdata/ market data fan-out (shadow book, L2/BBO)
-  rsx-recorder/   archival consumer (daily WAL files)
-  rsx-types/      Price, Qty, Side, SymbolConfig newtypes
+rsx-book/       orderbook (PriceLevel, OrderSlot, Slab)
+rsx-matching/   matching engine binary (stub)
+rsx-risk/       risk engine binary (planned)
+rsx-dxs/        WAL writer/reader, DxsReplay server
+rsx-mark/       mark price aggregator (planned)
+rsx-gateway/    WS overlay + QUIC passthrough (planned)
+rsx-marketdata/ market data fan-out (planned)
+rsx-recorder/   archival consumer (daily WAL files)
+rsx-types/      Price, Qty, Side, SymbolConfig newtypes
 ```
 
 ## Build and Test
 
 ```
-make test           # unit tests, <5s
-make e2e            # component tests, ~30s
-make integration    # testcontainers (Postgres), 1-5min
-make wal            # WAL correctness, <10s
-make smoke          # deployed system, <1min
-make perf           # Criterion benchmarks, nightly
+cargo test
+cargo bench -p rsx-dxs
 ```
 
-TOML config as first CLI argument, API keys as second.
-No implementation yet -- these are target commands.
+Planned targets (not implemented yet): `e2e`, `integration`,
+`wal`, `smoke`, `perf`.
 
 ## Specs
 

@@ -1,18 +1,15 @@
-# Wire Protocol & Message Definitions
+# Message Definitions
 
 ## Overview
 
-RSX uses gRPC bidirectional streaming for Gateway ↔ Risk ↔ Matching Engine
-communication (v1). Messages are defined in Protocol Buffers (protobuf) with
-fixed-point integer representation for prices and quantities. Streams are
-multiplexed by user_id and symbol (no per-user streams).
+Message semantics for Gateway ↔ Risk ↔ Matching Engine
+communication. Messages are raw `#[repr(C)]` fixed records
+(WAL wire format) with fixed-point integer representation
+for prices and quantities. Streams are multiplexed by
+user_id and symbol (no per-user streams).
 
-**Operational note:** HTTP/2 flow control and keepalive policies can affect
-long-lived streams. Configure consistently across gateway, risk, and matcher.
-
-**Future evolution:**
-- v1: gRPC + protobuf (balance of ergonomics and performance)
-- No v2 planned (see FUTURE.md)
+Transport: quinn QUIC (see NETWORK.md). Flow control via
+QUIC stream-level and application backpressure.
 
 ## Order States
 
@@ -92,9 +89,9 @@ FILLED or CANCELLED (if user cancels)
 - User receives ORDER_FAILED(reason)
 - Never enters orderbook
 
-## gRPC Service Definition
+## Message Schema
 
-### Protocol Buffers Schema
+### Record Definitions
 
 ```proto
 syntax = "proto3";
@@ -792,18 +789,18 @@ enum Event {
 
 ### Zero-Allocation Principle
 
-**v1 (gRPC + protobuf):**
-- Allocates (protobuf encoding, gRPC buffers)
-- Acceptable for v1 (ergonomics > performance)
+**v1 (raw #[repr(C)] over QUIC):**
+- Minimal allocation (QUIC send buffers only)
+- WAL wire format: zero-copy on read path
 
 **Future (raw structs over SMRB):**
 - Zero allocation (pre-allocated ring buffer)
-- See blog/picking-a-wire-format.md for evolution path
+- Eliminates QUIC overhead for co-located processes
 
 ## Cross-References
 
 - **ORDERBOOK.md**: Price/Qty types, tick/lot size validation, matching algorithm
 - **RPC.md**: Async handling, pending tracking, LIFO VecDeque optimization
 - **NETWORK.md**: Component communication, stream lifecycle, topology
-- **blog/picking-a-wire-format.md**: Why gRPC now, raw structs later
+- **blog/picking-a-wire-format.md**: Wire format decision history
 - **SMRB.md**: Future transport layer (raw structs over shared memory)

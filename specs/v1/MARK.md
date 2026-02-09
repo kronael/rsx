@@ -35,20 +35,21 @@ Coinbase WS ──┘            (single thread)        |
 
 ## 2. Data Structures
 
-### Protobuf (wire + storage)
+### WAL wire format
 
-```protobuf
-message MarkPriceEvent {
-  uint32 symbol_id = 1;
-  int64 mark_price = 2;     // fixed-point, same scale as Price
-  uint64 timestamp_ns = 3;
-  uint32 source_mask = 4;   // bitmask of contributing sources
-  uint32 source_count = 5;  // number of non-stale sources
+```rust
+#[repr(C, align(64))]
+struct MarkPriceEvent {
+  symbol_id: u32,
+  mark_price: i64,     // fixed-point, same scale as Price
+  timestamp_ns: u64,
+  source_mask: u32,    // bitmask of contributing sources
+  source_count: u32,   // number of non-stale sources
+  _pad: [u8; 12],      // align to 64 bytes
 }
 ```
 
-This message is the `mark_price` variant in the DXS `WalRecord`
-oneof (field 20).
+This record is one of the WAL event types streamed by DXS.
 
 ### In-memory
 
@@ -266,5 +267,5 @@ crates/rsx-mark/src/
     source.rs      -- PriceSource trait, SPSC setup
     binance.rs     -- BinanceSource implementation
     types.rs       -- MarkPriceEvent, SourcePrice, SymbolMarkState
-    config.rs      -- TOML config structs
+    config.rs      -- env config parsing
 ```

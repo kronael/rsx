@@ -1,7 +1,7 @@
 # TESTING-GATEWAY.md — Gateway Tests
 
 Source specs: [NETWORK.md](NETWORK.md), [WEBPROTO.md](WEBPROTO.md),
-[RPC.md](RPC.md), [GRPC.md](GRPC.md)
+[RPC.md](RPC.md), [MESSAGES.md](MESSAGES.md)
 
 Binary: `rsx-gateway`
 
@@ -12,7 +12,7 @@ Binary: `rsx-gateway`
 | # | Requirement | Source |
 |---|-------------|--------|
 | G1 | WS overlay: compact JSON, single-letter types | WEBPROTO.md |
-| G2 | gRPC passthrough for native clients | NETWORK.md |
+| G2 | QUIC + WAL wire format for native clients | NETWORK.md |
 | G3 | JWT auth via WS upgrade headers (A fallback) | WEBPROTO.md |
 | G4 | UUIDv7 order ID generated at gateway | RPC.md §order-id |
 | G5 | LIFO VecDeque pending order tracking | RPC.md §pending |
@@ -21,12 +21,12 @@ Binary: `rsx-gateway`
 | G8 | Heartbeat: 5s interval, 10s timeout | WEBPROTO.md §H |
 | G9 | Order timeout: 10s | RPC.md §timeout |
 | G10 | No ACK on order -- first response is update/fill | WEBPROTO.md |
-| G11 | Fill streaming: 0+ fills then ORDER_DONE/FAILED | GRPC.md §fills |
+| G11 | Fill streaming: 0+ fills then ORDER_DONE/FAILED | MESSAGES.md §fills |
 | G12 | Circuit breaker: 10 failures -> open -> half-open | RPC.md §circuit |
 | G13 | Market data WS: S subscribe, X unsubscribe | WEBPROTO.md §S |
 | G14 | Liquidation event Q frame to user WS | WEBPROTO.md §Q |
-| G15 | Multiplexed gRPC stream to risk engine | NETWORK.md |
-| G16 | Config cache synced via CONFIG_APPLIED | GRPC.md |
+| G15 | Multiplexed quinn QUIC stream to risk engine | NETWORK.md |
+| G16 | Config cache synced via CONFIG_APPLIED | MESSAGES.md |
 | G17 | Tick/lot pre-validation (fail fast) | ORDERBOOK.md §2.9 |
 | G18 | Out-of-order response handling via order_id | RPC.md §pending |
 | G19 | Stale order policy: 5 min, client cancels/forgets | RPC.md §timeout |
@@ -38,9 +38,9 @@ Binary: `rsx-gateway`
 | G25 | No permessage-deflate compression | WEBPROTO.md §frame-shape |
 | G26 | Horizontal scaling: user_id hash sharding | NETWORK.md §scaling |
 | G27 | Dedup: 5-min window in ME, fresh UUIDv7 on retry | RPC.md §dedup |
-| G28 | OrderDone/OrderFailed exactly one per order | GRPC.md §completion |
-| G29 | Fills precede ORDER_DONE in stream | GRPC.md §fill-streaming |
-| G30 | Fixed-point price/qty: int64, no float | GRPC.md §field-encodings |
+| G28 | OrderDone/OrderFailed exactly one per order | MESSAGES.md §completion |
+| G29 | Fills precede ORDER_DONE in stream | MESSAGES.md §fill-streaming |
+| G30 | Fixed-point price/qty: int64, no float | MESSAGES.md §field-encodings |
 | G31 | Exactly one key per WS frame | WEBPROTO.md §frame-shape |
 
 ---
@@ -130,7 +130,7 @@ fill_fee_forwarded_in_f_frame
 
 ```rust
 n_frame_ro_default_zero_when_absent
-n_frame_ro_1_maps_to_grpc_reduce_only
+n_frame_ro_1_maps_to_quic_reduce_only
 ```
 
 ### Fixed-Point Conversion
@@ -225,8 +225,8 @@ ws_new_order_rejected_insufficient_margin
 ws_new_order_rejected_invalid_tick
 ws_new_order_rejected_overloaded
 ws_new_order_timeout_returns_error
-grpc_new_order_fill_done_complete
-grpc_cancel_order_done
+quic_new_order_fill_done_complete
+quic_cancel_order_done
 ws_reduce_only_order_lifecycle
 ws_fill_with_fee_forwarded
 ws_error_frame_sent_on_invalid_input
@@ -292,7 +292,7 @@ bench_uuid_v7_generation            // target <50ns
 bench_pending_lifo_pop_5_orders     // target <100ns
 bench_pending_linear_scan_10        // target <100ns
 bench_rate_limit_check              // target <50ns
-bench_grpc_order_serialization      // target <1us
+bench_quic_order_serialization      // target <1us
 bench_100_concurrent_sessions       // target stable throughput
 bench_1000_orders_sec_per_user      // target <1ms per order
 bench_ws_parse_c_frame              // target <200ns
@@ -314,13 +314,13 @@ Targets from NETWORK.md:
 
 ## Integration Points
 
-- Single multiplexed gRPC stream to risk engine
+- Single multiplexed quinn QUIC stream to risk engine
   (NETWORK.md)
-- Receives fills/done/failed from risk via SPSC or gRPC
+- Receives fills/done/failed from risk via SPSC or QUIC
 - Receives liquidation events from risk SPSC
   (WEBPROTO.md §Q)
 - Forwards CONFIG_APPLIED to local config cache
-  (GRPC.md §ConfigApplied)
+  (MESSAGES.md §ConfigApplied)
 - Public market data WS endpoint separate from trading WS
   (WEBPROTO.md §market data)
 - System-level: full order lifecycle gateway -> risk -> ME
@@ -328,6 +328,6 @@ Targets from NETWORK.md:
 - Load tests: 10K concurrent users, 100K orders/sec burst
   (TESTING.md §6 load tests)
 - Fixed-point price/qty conversion at gateway ingress
-  (GRPC.md §field-encodings)
+  (MESSAGES.md §field-encodings)
 - Horizontal scaling via user_id hash sharding
   (NETWORK.md §gateway-scaling)

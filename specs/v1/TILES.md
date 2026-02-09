@@ -1,174 +1,197 @@
-# TILES: Tile-based Architecture for High-Performance Networking
+# TILES: Thread-per-Concern Architecture
 
 ## Overview
 
-RSX uses a tile-based architecture where each "tile" is a separate thread
-or thread pool handling a specific concern. Critical components use fast
-networking stacks with pluggable I/O backends.
+Every RSX process uses **tiles** -- pinned threads, one per
+concern, communicating via SPSC rings (rtrb, 50-170ns)
+within the process. Between processes: quinn QUIC with raw
+WAL wire format. See NETWORK.md for process topology.
 
-## Networking Stack Requirements
+## Processes
 
-### Primary Stack: monoio with io_uring
+Each is a separate monolithic process (see NETWORK.md):
 
-All network I/O uses **monoio** (io_uring-based async runtime) for
-maximum performance on Linux:
+- **Gateway** -- WS/QUIC ingress, auth, rate limit
+- **Risk Engine** -- margin, positions, liquidation
+- **Matching Engine** -- one per symbol, orderbook
+- **Marketdata** -- shadow book, L2/BBO/trades fan-out
+- **Recorder** -- daily WAL archival (DXS consumer)
+- **Mark** -- external price aggregator
 
-- WebSocket connections (gateway, market data fan-out)
-- HTTP REST APIs (if needed)
-- gRPC can be implemented on top (custom impl, not tonic)
-- QUIC for future userspace networking
+Between processes: quinn QUIC with raw WAL wire format (one
+multiplexed stream per link). Latency: 10-100us.
 
-### Why monoio?
+## Tile Pattern (within each process)
 
-- Zero-copy I/O via io_uring
-- Lower latency than tokio (epoll-based)
-- Direct kernel submission queue (no syscall per operation)
-- Batched completions
-- Proven in production (see ../trader, ../funding-bot)
+Each process internally runs pinned threads (tiles) for
+its own concerns, connected by SPSC rings (rtrb):
 
-### Implementation Reference
+```
+Example: Matching Engine process
++===============================================+
+|  +-------+  SPSC  +---------+  SPSC  +------+ |
+|  |  Net  |------->| Matching|------->| WAL  | |
+|  | tile  |<-------| tile    |------->|Writer| |
+|  |(monoio|  fills |         | events | tile | |
+|  +-------+        +---------+        +--+---+ |
+|                        |           +----v----+ |
+|                        | SPSC     |DxsReplay | |
+|                        v          |  tile    | |
+|                   +---------+     +---------+  |
+|                   |MARKETDATA|                  |
+|                   | tile     |                  |
+|                   +---------+                  |
++===============================================+
+         QUIC ↕              DXS ↕
+     Risk Engine          Recorder, Mark
+```
 
-See `/home/onvos/app/trader/monoio-client/` for production patterns:
-- `ws_monoio.rs`: WebSocket client/server
+**Within process:** SPSC rings (rtrb). Same address space,
+pinned threads, zero syscall overhead, 50-170ns per hop.
+
+**Between processes:** quinn QUIC with raw WAL wire format.
+DXS streams WAL records to external consumers.
+
+## Networking Stack
+
+### monoio with io_uring
+
+Gateway and Market Data tiles use **monoio** (io_uring) for
+all client-facing network I/O:
+
+- WebSocket accept/read/write (gateway, market data)
+- HTTP client (mark price aggregator)
+- Zero-copy via kernel submission queues
+- Lower latency than tokio (epoll)
+
+### Why not tokio everywhere?
+
+tokio is epoll-based. Each I/O operation is a syscall. For a
+gateway handling 100K+ connections, that's too many syscalls.
+io_uring batches submissions and completions in shared
+kernel/userspace rings.
+
+DxsReplay uses quinn (QUIC) -- it's a cold path (external
+consumers, not hot-path matching). Raw fixed records minimize
+serialization overhead.
+
+### Reference Implementation
+
+`/home/onvos/app/trader/monoio-client/`:
+- `ws_monoio.rs`: WebSocket client/server on monoio
 - `web_client.rs`: HTTP client with monoio
-- `utils/monoio.rs`: Timeout and helper utilities
+- Production-proven in funding-bot and trader
 
-## Tile Breakdown
+## Tiles Within rsx-engine
 
-### Tile 1: Gateway WebSocket (monoio)
+### Gateway Tile (monoio, thread pool)
 
-**Purpose:** Accept client WebSocket connections, authenticate, route
-commands to matching engine via gRPC or shared memory.
+Accepts client WebSocket and QUIC connections. Authenticates,
+rate-limits, validates basic fields. Pushes commands to Risk
+tile via SPSC ring. Receives fills/dones from Risk via SPSC
+ring, sends back to client.
 
-**Stack:**
-- monoio TcpListener
-- WebSocket handshake + framing
-- Thread-per-core or thread pool (8-16 threads)
-- Communicates with matching engine via SPSC rings or gRPC
+### Risk Tile (CPU-pinned, per user shard)
 
-**Files:**
-- `rsx-gateway/src/ws_server.rs` (monoio WebSocket server)
-- `rsx-gateway/src/auth.rs` (session management)
-- `rsx-gateway/src/router.rs` (command routing)
+Pre-trade: checks portfolio margin across all symbols for the
+user. Post-trade: applies fills, recalculates margin, triggers
+liquidation if equity < maintenance margin. Sits **between**
+gateway and ME -- all orders pass through risk first.
 
-### Tile 2: Gateway gRPC Passthrough (monoio)
+Communicates:
+- Gateway → Risk: SPSC (orders in)
+- Risk → ME: SPSC (validated orders)
+- ME → Risk: SPSC (fills, dones)
+- Risk → Gateway: SPSC (fills, dones back to user)
+- Risk → Postgres: SPSC write-behind (positions, accounts)
 
-**Purpose:** Expose gRPC API for programmatic clients (alternative to WS).
+### Matching Engine Tile (CPU-pinned, per symbol)
 
-**Stack:**
-- Custom gRPC impl on monoio (NOT tonic/tokio)
-- HTTP/2 framing over monoio TcpStream
-- Same backend as WebSocket tile (SPSC rings to matching engine)
+Pure computation. No network I/O. Reads validated orders from
+SPSC ring (from Risk). Matches against book. Drains events to
+WAL Writer tile via SPSC ring.
 
-**Note:** May start with tonic for prototype, replace with monoio gRPC
-when performance matters.
+Single-threaded, bare busy-spin, dedicated core.
 
-### Tile 3: Matching Engine (CPU-pinned, no network I/O)
+### WAL Writer Tile (CPU-pinned)
 
-**Purpose:** Order matching, book maintenance, deterministic core.
+Reads events from SPSC ring (from ME). Appends to in-memory
+buffer. Flushes to disk with fsync every 10ms. Rotates at
+64MB. Notifies DxsReplay tile on flush via Arc<Notify>.
 
-**Stack:**
-- No network I/O (pure computation)
-- Reads commands from SPSC ring (from gateway)
-- Writes events to DXS WalWriter (SPSC ring)
-- Single-threaded, CPU-pinned, zero allocation hot path
+No network I/O.
 
-### Tile 4: DXS WAL Writer (CPU-pinned)
+### DxsReplay Tile (quinn/tokio)
 
-**Purpose:** Persist all events to WAL with fsync.
+QUIC server (quinn). Reads WAL files, streams raw fixed
+records to external consumers (recorder, mark aggregator,
+or risk during recovery replay). Multiple consumers get
+independent streams.
 
-**Stack:**
-- No network I/O
-- Reads from SPSC ring (from matching engine, mark aggregator)
-- Writes to disk with fsync
-- Notifies DxsReplay server on flush (via Arc<Notify>)
+quinn is ideal for DXS: this is a cold path (external
+consumers, not hot-path matching). The interface is
+"stream records from seq N" and raw fixed records minimize
+serialization overhead.
 
-### Tile 5: DXS Replay Server (monoio gRPC)
+This is the **only tile that talks to external processes**.
 
-**Purpose:** Stream WAL records to consumers (risk engine, market data,
-recorder).
+### Market Data Tile (monoio WebSocket server)
 
-**Stack:**
-- Custom gRPC on monoio (or tonic for now)
-- Reads WAL files (blocking I/O in separate thread pool)
-- Streams via gRPC to consumers
-- Multiple consumers get independent streams
+Maintains shadow orderbook from ME events (via SPSC from WAL
+writer or directly from ME). Computes L2/BBO/trades.
+Broadcasts to subscriber WebSocket connections.
 
-### Tile 6: Risk Engine (per-user shard)
+### Postgres Write-Behind Tile
 
-**Purpose:** Track positions, margin, liquidations.
+Receives position/account updates from Risk via SPSC. Batches
+writes to Postgres every 10ms (COPY for fills, UPSERT for
+positions). sync_commit=on.
 
-**Stack:**
-- DxsConsumer (gRPC client, monoio)
-- CPU-bound logic (position accounting)
-- Writes to own WAL via DXS (risk events)
+## External Processes
 
-### Tile 7: Market Data Fan-out (monoio WebSocket)
+### rsx-recorder (separate binary)
 
-**Purpose:** Broadcast BBO/trades/L2 to subscribers.
+Connects to rsx-engine's DxsReplay QUIC endpoint (quinn).
+Writes daily archive files. Same WAL format, infinite
+retention. Runs on same or different host.
 
-**Stack:**
-- Shadow orderbook (DxsConsumer ingests fills/inserts/cancels)
-- monoio WebSocket server (broadcast to N clients)
-- Thread-per-core, lock-free broadcast
+### rsx-mark (separate binary)
 
-### Tile 8: Mark Price Aggregator (monoio HTTP client)
+Fetches mark prices from external exchanges (Binance, etc.)
+via monoio HTTP client. Publishes to rsx-engine via QUIC.
+Runs on same or different host.
 
-**Purpose:** Fetch external mark prices, publish to DXS.
+## SPSC Ring Topology (within rsx-engine)
 
-**Stack:**
-- monoio HTTP client to external exchanges
-- Publishes mark price updates to DXS
-- Single-threaded, timed loop
+```
+Gateway --[orders]--> Risk --[validated]--> ME
+Gateway <--[fills]--- Risk <--[fills]------ ME
+                      Risk --[positions]--> PG write-behind
+                                     ME --[events]--> WAL Writer
+                           WAL Writer --[notify]--> DxsReplay
+                                     ME --[events]--> Marketdata
+```
 
-## Thread Communication
-
-All inter-tile communication via:
-1. **SPSC rings** (rtrb crate) for same-process, low-latency
-2. **gRPC over monoio** for cross-process or networked
-3. **Shared WAL files** for persistence + replay
-
-No locks on hot path. Producer stalls if consumer can't keep up
-(backpressure).
+Each arrow is a dedicated rtrb SPSC ring. Per-consumer rings:
+slow market data broadcast doesn't stall risk. Ring full =
+producer stalls (backpressure).
 
 ## Future: Userspace Networking
 
-Replace kernel network stack with userspace (DPDK, AF_XDP, or custom):
-- NIC directly writes to userspace ring buffers
-- Zero kernel involvement
-- Sub-microsecond latency
-- Requires kernel bypass, dedicated NIC queues
-
-Architecture supports this via pluggable I/O:
-- Gateway tile swaps monoio TcpListener for userspace socket
-- Same WebSocket/gRPC framing logic
-- No changes to matching engine (still reads from SPSC ring)
+Replace monoio (kernel io_uring) with userspace networking:
+- DPDK or AF_XDP: NIC → userspace ring buffer, no kernel
+- Sub-microsecond latency for gateway
+- Same tile architecture, swap the I/O layer
+- No changes to ME (still reads from SPSC ring)
 
 ## Performance Targets
 
-| Tile | Latency Target | Throughput Target |
-|------|----------------|-------------------|
-| Gateway WS | <50µs per message | >1M msgs/sec |
-| Matching Engine | <1µs per order | >1M orders/sec |
-| DXS WAL Writer | <1ms fsync (10ms batch) | >100K writes/sec |
-| DXS Replay | <10µs per record | >500 MB/s |
-| Risk Engine | <10µs per fill | >100K fills/sec |
-| Market Data | <50µs broadcast | >1M msgs/sec |
-
-## Implementation Order
-
-1. **Phase 1 (prototype):** tokio for all network I/O (tonic gRPC)
-2. **Phase 2 (production):** monoio for Gateway WS + Market Data
-3. **Phase 3 (optimization):** Custom monoio gRPC (replace tonic)
-4. **Phase 4 (future):** Userspace networking
-
-Current DXS implementation uses tonic (Phase 1). Gateway and Market
-Data will use monoio from the start (Phase 2).
-
-## References
-
-- Monoio client implementation: `/home/onvos/app/trader/monoio-client/`
-- SPSC ring spec: `notes/SMRB.md`
-- DXS spec: `DXS.md`, `WAL.md`
-- Gateway spec: `NETWORK.md`, `WEBPROTO.md`
-- Market data spec: `MARKETDATA.md`
+| Path | Latency | Notes |
+|------|---------|-------|
+| SPSC hop | 50-170ns | intra-process, same cache |
+| ME match | 100-500ns | per order |
+| Risk pre-trade | <5us | margin check |
+| Risk post-trade | <1us | apply fill |
+| End-to-end (GW→ME→GW) | <50us | same machine |
+| DxsReplay stream | 10-100us | QUIC, external |
+| Gateway WS | <50us | client-facing |

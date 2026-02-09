@@ -20,11 +20,12 @@ spec for multi-source mark price aggregation, staleness handling, or fallback.
 **Accuracy check:** This extends `RISK.md` (which only has Binance). If v1 stays
 single-source, this section should be downgraded to Nice-to-Have or removed.
 
-Touches: RISK.md (price feeds), CONSISTENCY.md (mark price stream), GRPC.md (optional telemetry)
+Touches: RISK.md (price feeds), CONSISTENCY.md (mark price stream),
+MESSAGES.md (optional telemetry)
 
 ### ~~Fees~~ DONE
 
-Specified in GRPC.md (OrderFill fee fields), RISK.md (fee calc,
+Specified in MESSAGES.md (OrderFill fee fields), RISK.md (fee calc,
 pre-trade fee reserve, fills table columns), WEBPROTO.md (F
 message fee field). Maker rebates supported (negative maker_fee).
 

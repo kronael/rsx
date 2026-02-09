@@ -10,7 +10,7 @@ without blocking on individual order execution.
 **Key design points:**
 - UUIDv7 order IDs generated at Gateway entry (globally unique, timeline-sortable)
 - LIFO VecDeque for pending order tracking (optimized for typical response ordering)
-- Bidirectional gRPC streams (Gateway ↔ Risk ↔ Matching Engine), multiplexed
+- Bidirectional QUIC streams (Gateway ↔ Risk ↔ Matching Engine), multiplexed
 - NO automatic retry (failed orders fail, user must manually retry)
 - Ingress backpressure: Gateway rejects new orders when its buffer exceeds 10k
 
@@ -69,7 +69,7 @@ User ──ORDER──→ Gateway
 **Deduplication:**
 - Matching engine uses order_id as idempotency key
 - Duplicate order_id → reject (already processed)
-- See GRPC.md section 7 for deduplication strategy
+- See MESSAGES.md section 7 for deduplication strategy
 
 ## Pending Request Management
 
@@ -168,7 +168,7 @@ struct MatchingEngine {
 - Periodic scan (every 10s): pop old entries from front of pruning_queue
 - Remove from both pruning_queue AND FxHashMap after 5min
 
-See GRPC.md section 7 for full deduplication design.
+See MESSAGES.md section 7 for full deduplication design.
 
 ## Request Lifecycle
 
@@ -213,7 +213,7 @@ pending.queue.push_back((order_id, OrderContext {
 }));
 ```
 
-**3. Gateway sends to risk engine:**
+**3. Gateway sends to risk engine (QUIC stream):**
 ```
 Gateway ──ORDER(order_id, user_id, symbol, side, price, qty)──→ Risk
 ```
@@ -350,10 +350,10 @@ Gateway ──ORDER──→ Risk
 ```
 
 **Handling:**
-- Gateway detects stream disconnect (gRPC error)
+- Gateway detects stream disconnect (QUIC error)
 - All pending orders on that stream → ORDER_FAILED(NETWORK_ERROR)
 - NETWORK_ERROR (8), RATE_LIMIT (9), and TIMEOUT (10) are
-  defined in GRPC.md FailureReason enum.
+  defined in MESSAGES.md FailureReason enum (message semantics).
 - Notify user: "Order submission failed, please retry"
 - NO automatic retry (user must resubmit)
 
@@ -443,7 +443,7 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 - Error response uses ORDER_FAILED(OVERLOADED).
 - Goal: fail fast rather than allow latency to explode.
 
-### gRPC Flow Control (Secondary)
+### QUIC Flow Control (Secondary)
 
 - HTTP/2 flow control can still apply on long-lived streams.
 - It is not the primary backpressure mechanism in RSX.
@@ -531,7 +531,7 @@ async fn handle_user_session(user_id: u32, stream: UserStream, risk: RiskStream)
 **Concurrency:**
 - Thousands of tasks (one per user session)
 - Tokio scheduler multiplexes tasks on thread pool
-- Single multiplexed gRPC stream to Risk
+- Single multiplexed QUIC stream to Risk (quinn)
 
 ### Matching Engine: Single-Threaded Event Loop
 
@@ -627,8 +627,7 @@ fn main() {
 
 ## Cross-References
 
-- **GRPC.md**: Message definitions (ORDER, FILL, ORDER_DONE, ORDER_FAILED)
+- **MESSAGES.md**: Message semantics (transport is now QUIC)
 - **ORDERBOOK.md**: Single-threaded matching model, O(1) operations
 - **NETWORK.md**: Component topology, stream lifecycle
 - **SMRB.md**: Low-latency IPC, SPSC queue design
-- **blog/picking-a-wire-format.md**: Why gRPC now, raw structs later
