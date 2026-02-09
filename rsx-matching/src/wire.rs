@@ -14,6 +14,8 @@ pub struct OrderMessage {
     pub user_id: u32,
     pub _pad2: u32,
     pub timestamp_ns: u64,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
 }
 
 impl OrderMessage {
@@ -37,6 +39,8 @@ impl OrderMessage {
             user_id: self.user_id,
             reduce_only: self.reduce_only != 0,
             timestamp_ns: self.timestamp_ns,
+            order_id_hi: self.order_id_hi,
+            order_id_lo: self.order_id_lo,
         }
     }
 }
@@ -51,6 +55,10 @@ pub enum EventMessage {
         price: i64,
         qty: i64,
         side: u8,
+        maker_order_id_hi: u64,
+        maker_order_id_lo: u64,
+        taker_order_id_hi: u64,
+        taker_order_id_lo: u64,
     },
     OrderInserted {
         handle: u32,
@@ -58,16 +66,24 @@ pub enum EventMessage {
         side: u8,
         price: i64,
         qty: i64,
+        order_id_hi: u64,
+        order_id_lo: u64,
     },
     OrderCancelled {
         handle: u32,
         user_id: u32,
         remaining_qty: i64,
+        order_id_hi: u64,
+        order_id_lo: u64,
     },
     OrderDone {
         handle: u32,
         user_id: u32,
         reason: u8,
+        filled_qty: i64,
+        remaining_qty: i64,
+        order_id_hi: u64,
+        order_id_lo: u64,
     },
     OrderFailed {
         user_id: u32,
@@ -92,12 +108,20 @@ impl EventMessage {
                 price,
                 qty,
                 side,
+                maker_order_id_hi,
+                maker_order_id_lo,
+                taker_order_id_hi,
+                taker_order_id_lo,
             } => EventMessage::Fill {
                 maker_handle,
                 taker_user_id,
                 price: price.0,
                 qty: qty.0,
                 side,
+                maker_order_id_hi,
+                maker_order_id_lo,
+                taker_order_id_hi,
+                taker_order_id_lo,
             },
             rsx_book::event::Event::OrderInserted {
                 handle,
@@ -105,30 +129,46 @@ impl EventMessage {
                 side,
                 price,
                 qty,
+                order_id_hi,
+                order_id_lo,
             } => EventMessage::OrderInserted {
                 handle,
                 user_id,
                 side,
                 price: price.0,
                 qty: qty.0,
+                order_id_hi,
+                order_id_lo,
             },
             rsx_book::event::Event::OrderCancelled {
                 handle,
                 user_id,
                 remaining_qty,
+                order_id_hi,
+                order_id_lo,
             } => EventMessage::OrderCancelled {
                 handle,
                 user_id,
                 remaining_qty: remaining_qty.0,
+                order_id_hi,
+                order_id_lo,
             },
             rsx_book::event::Event::OrderDone {
                 handle,
                 user_id,
                 reason,
+                filled_qty,
+                remaining_qty,
+                order_id_hi,
+                order_id_lo,
             } => EventMessage::OrderDone {
                 handle,
                 user_id,
                 reason,
+                filled_qty: filled_qty.0,
+                remaining_qty: remaining_qty.0,
+                order_id_hi,
+                order_id_lo,
             },
             rsx_book::event::Event::OrderFailed {
                 user_id,

@@ -6,10 +6,11 @@ Spec-first perpetuals exchange. All specs in `specs/v1/`.
 
 - Separate processes: Gateway, Risk, ME (per symbol),
   Marketdata, Recorder, Mark
-- Between processes: QUIC + WAL wire format (quinn)
+- Between processes: QRPC (C structs over UDP or QUIC)
+  - Live path: QRPC/UDP (order flow, fills)
+  - Cold path: QRPC/QUIC (WAL replay, replication)
 - Within each process: tile architecture (pinned threads
-  + SPSC rings for intra-process communication)
-- DXS: WAL streaming to consumers (tonic gRPC)
+  + SPSC rings for intra-process IPC, see TILES.md)
 - Hot path I/O: monoio (io_uring), not tokio (epoll)
 - Later: DPDK/AF_XDP swaps I/O layer, same interfaces
 - Target: <50us GW→ME→GW, <500ns ME match
@@ -150,8 +151,8 @@ for notional = price * qty at risk boundary.
 - **Later:** userspace networking (DPDK, AF_XDP) swaps the
   I/O layer inside the same tile. No changes to SPSC rings
   or ME.
-- **DXS:** tonic gRPC (tokio) streaming raw WAL bytes.
-  Transport is impl detail of rsx-dxs (stream from seq N).
+- **DXS:** QRPC (C structs over QUIC, quinn) streaming raw
+  WAL bytes. Same wire format as disk. See QRPC.md.
 - Reference impl: `/home/onvos/app/trader/monoio-client/`
   - `ws_monoio.rs`: WebSocket client/server on monoio
   - `web_client.rs`: HTTP client with monoio
@@ -171,7 +172,7 @@ for notional = price * qty at risk boundary.
 | Architecture | TILES.md (networking, tiles) | - |
 | Shared orderbook | ORDERBOOK.md | TESTING-BOOK.md |
 | Matching engine | ORDERBOOK.md, CONSISTENCY.md | TESTING-MATCHING.md |
-| DXS (WAL + replay) | DXS.md, WAL.md | TESTING-DXS.md |
+| DXS (WAL + replay) | DXS.md, WAL.md, QRPC.md | TESTING-DXS.md |
 | Risk engine | RISK.md | TESTING-RISK.md |
 | Liquidator | LIQUIDATOR.md | TESTING-LIQUIDATOR.md |
 | Mark price | MARK.md | TESTING-MARK.md |

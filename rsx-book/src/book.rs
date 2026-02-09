@@ -104,6 +104,8 @@ impl Orderbook {
         user_id: u32,
         reduce_only: bool,
         timestamp_ns: u64,
+        order_id_hi: u64,
+        order_id_lo: u64,
     ) -> u32 {
         let tick =
             self.compression.price_to_index(price);
@@ -121,6 +123,8 @@ impl Orderbook {
         slot.user_id = user_id;
         slot.tick_index = tick;
         slot.timestamp_ns = timestamp_ns;
+        slot.order_id_hi = order_id_hi;
+        slot.order_id_lo = order_id_lo;
         slot.next = NONE;
         slot.prev = NONE;
         self.sequence += 1;
@@ -244,12 +248,15 @@ impl Orderbook {
         user_id: u32,
         reduce_only: bool,
         timestamp_ns: u64,
+        order_id_hi: u64,
+        order_id_lo: u64,
     ) -> u32 {
         let qty = self.orders.get(handle).remaining_qty.0;
         self.cancel_order(handle);
         self.insert_resting(
             new_price, qty, side, tif, user_id,
             reduce_only, timestamp_ns,
+            order_id_hi, order_id_lo,
         )
     }
 

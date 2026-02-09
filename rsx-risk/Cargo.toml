@@ -3,11 +3,29 @@ name = "rsx-risk"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "rsx_risk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rsx-risk"
+path = "src/main.rs"
+
 [dependencies]
 rsx-types = { path = "../rsx-types" }
 rsx-matching = { path = "../rsx-matching" }
+rsx-dxs = { path = "../rsx-dxs" }
 rustc-hash = "2"
 rtrb = "0.3"
+tokio = { version = "1", features = ["rt", "time"] }
+tokio-postgres = "0.7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+core_affinity = "0.8"
 
 [dev-dependencies]
 rtrb = "0.3"
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

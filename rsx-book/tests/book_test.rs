@@ -24,7 +24,7 @@ fn test_book() -> Orderbook {
 fn insert_bid_updates_best_bid() {
     let mut book = test_book();
     book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     assert_ne!(book.best_bid_tick, NONE);
 }
@@ -33,7 +33,7 @@ fn insert_bid_updates_best_bid() {
 fn insert_ask_updates_best_ask() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     assert_ne!(book.best_ask_tick, NONE);
 }
@@ -42,11 +42,11 @@ fn insert_ask_updates_best_ask() {
 fn insert_below_best_bid_no_change() {
     let mut book = test_book();
     book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let best = book.best_bid_tick;
     book.insert_resting(
-        49_800, 100, Side::Buy, 0, 2, false, 0,
+        49_800, 100, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     assert_eq!(book.best_bid_tick, best);
 }
@@ -55,10 +55,10 @@ fn insert_below_best_bid_no_change() {
 fn cancel_updates_best_bid() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let _h2 = book.insert_resting(
-        49_800, 100, Side::Buy, 0, 2, false, 0,
+        49_800, 100, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     let old_best = book.best_bid_tick;
     book.cancel_order(h1);
@@ -70,7 +70,7 @@ fn cancel_updates_best_bid() {
 fn empty_book_after_all_cancels() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.cancel_order(h);
     assert_eq!(book.best_bid_tick, NONE);
@@ -80,10 +80,10 @@ fn empty_book_after_all_cancels() {
 fn level_head_tail_count_qty_correct() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let h2 = book.insert_resting(
-        49_900, 200, Side::Buy, 0, 2, false, 0,
+        49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     let tick =
         book.compression.price_to_index(49_900);
@@ -98,11 +98,11 @@ fn level_head_tail_count_qty_correct() {
 fn slab_reuse_after_cancel() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.cancel_order(h);
     let h2 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 2, false, 0,
+        49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     assert_eq!(h2, h); // reused
 }
@@ -111,10 +111,10 @@ fn slab_reuse_after_cancel() {
 fn best_bid_less_than_best_ask() {
     let mut book = test_book();
     book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0,
+        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     assert!(book.best_bid_tick < book.best_ask_tick);
 }
@@ -124,13 +124,13 @@ fn modify_price_cancels_and_reinserts() {
     let mut book = test_book();
     // Insert two orders so slab won't reuse h1 as h2
     let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let _h_extra = book.insert_resting(
-        49_800, 50, Side::Buy, 0, 2, false, 0,
+        49_800, 50, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     let h2 = book.modify_order_price(
-        h1, 49_700, Side::Buy, 0, 1, false, 0,
+        h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     // h1 was freed and reused as h2 (slab reuse)
     // Just verify the new order has correct state
@@ -153,14 +153,15 @@ fn modify_price_cancels_and_reinserts() {
 fn modify_price_loses_time_priority() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let h2 = book.insert_resting(
-        49_900, 200, Side::Buy, 0, 2, false, 0,
+        49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     // Move h1 to same price -- should go behind h2
     let h3 = book.modify_order_price(
         h1, 49_900, Side::Buy, 0, 1, false, 1,
+        0, 0,
     );
     let tick =
         book.compression.price_to_index(49_900);
@@ -173,7 +174,7 @@ fn modify_price_loses_time_priority() {
 fn modify_qty_down_in_place() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     assert!(book.modify_order_qty_down(h, 60));
     assert_eq!(book.orders.get(h).remaining_qty, Qty(60));
@@ -183,10 +184,10 @@ fn modify_qty_down_in_place() {
 fn modify_qty_down_keeps_time_priority() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let h2 = book.insert_resting(
-        49_900, 200, Side::Buy, 0, 2, false, 0,
+        49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0,
     );
     book.modify_order_qty_down(h1, 50);
     let tick =
@@ -201,7 +202,7 @@ fn modify_qty_down_keeps_time_priority() {
 fn modify_qty_down_updates_level_total_qty() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.modify_order_qty_down(h, 40);
     let tick =
@@ -216,7 +217,7 @@ fn modify_qty_down_updates_level_total_qty() {
 fn modify_qty_down_to_zero_removes_order() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     assert!(book.modify_order_qty_down(h, 0));
     assert!(!book.orders.get(h).is_active());

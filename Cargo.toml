@@ -6,6 +6,9 @@ members = [
     "rsx-dxs",
     "rsx-recorder",
     "rsx-risk",
+    "rsx-mark",
+    "rsx-gateway",
+    "rsx-marketdata",
 ]
 resolver = "2"
 

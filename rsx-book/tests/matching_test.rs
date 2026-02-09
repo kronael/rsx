@@ -42,6 +42,8 @@ fn incoming(
         user_id,
         reduce_only: false,
         timestamp_ns: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     }
 }
 
@@ -49,7 +51,7 @@ fn incoming(
 fn match_buy_against_single_ask() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -67,7 +69,7 @@ fn match_buy_against_single_ask() {
 fn match_sell_against_single_bid() {
     let mut book = test_book();
     book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(49_900, 100, Side::Sell, TimeInForce::GTC, 2);
@@ -84,10 +86,10 @@ fn match_sell_against_single_bid() {
 fn match_multiple_makers_same_level() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 2, false, 0,
+        50_100, 50, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 3);
@@ -105,10 +107,10 @@ fn match_multiple_makers_same_level() {
 fn match_crosses_multiple_levels() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     book.insert_resting(
-        50_101, 50, Side::Sell, 0, 2, false, 0,
+        50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_101, 100, Side::Buy, TimeInForce::GTC, 3);
@@ -126,7 +128,7 @@ fn match_crosses_multiple_levels() {
 fn match_partial_fill_maker_remains() {
     let mut book = test_book();
     let h = book.insert_resting(
-        50_100, 200, Side::Sell, 0, 1, false, 0,
+        50_100, 200, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -141,7 +143,7 @@ fn match_partial_fill_maker_remains() {
 fn match_partial_fill_taker_rests() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -159,7 +161,7 @@ fn match_partial_fill_taker_rests() {
 fn match_no_cross_taker_rests() {
     let mut book = test_book();
     book.insert_resting(
-        50_200, 100, Side::Sell, 0, 1, false, 0,
+        50_200, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -181,7 +183,7 @@ fn match_no_cross_taker_rests() {
 fn match_fill_price_is_maker_price() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     // Taker buys at 50_200, but fill should be at
     // maker's 50_100
@@ -200,10 +202,10 @@ fn match_fill_price_is_maker_price() {
 fn match_fifo_within_level() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let _h2 = book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0,
+        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 3);
@@ -223,7 +225,7 @@ fn match_fifo_within_level() {
 fn ioc_cancels_remainder() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 2);
@@ -247,7 +249,7 @@ fn ioc_cancels_remainder() {
 fn fok_rejects_if_not_full() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::FOK, 2);
@@ -271,7 +273,7 @@ fn fok_rejects_if_not_full() {
 fn fok_succeeds_when_full() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::FOK, 2);
@@ -293,7 +295,7 @@ fn fok_succeeds_when_full() {
 fn fills_precede_order_done() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -317,7 +319,7 @@ fn fills_precede_order_done() {
 fn exactly_one_completion() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -357,7 +359,7 @@ fn reduce_only_buy_rejected_if_long() {
     let mut book = test_book();
     // Create a long position: buy fills
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0,
+        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut buy =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 1);
@@ -383,7 +385,7 @@ fn reduce_only_sell_accepted_if_long() {
     let mut book = test_book();
     // Create a long position
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0,
+        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut buy =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 1);
@@ -391,7 +393,7 @@ fn reduce_only_sell_accepted_if_long() {
 
     // Reduce-only sell should be accepted (closing)
     book.insert_resting(
-        50_050, 100, Side::Buy, 0, 3, false, 0,
+        50_050, 100, Side::Buy, 0, 3, false, 0, 0, 0,
     );
     let mut ro =
         incoming(50_050, 50, Side::Sell, TimeInForce::GTC, 1);
@@ -409,7 +411,7 @@ fn reduce_only_sell_accepted_if_long() {
 fn position_tracking_on_fills() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order =
         incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
@@ -473,10 +475,10 @@ fn smooshed_level_orders_with_different_prices() {
     // 52_509 map to the same slot.
     let mut book = test_book();
     let h1 = book.insert_resting(
-        52_500, 100, Side::Sell, 0, 1, false, 0,
+        52_500, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let h2 = book.insert_resting(
-        52_509, 100, Side::Sell, 0, 2, false, 0,
+        52_509, 100, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let t1 = book.orders.get(h1).tick_index;
     let t2 = book.orders.get(h2).tick_index;
@@ -493,7 +495,7 @@ fn smooshed_match_skips_orders_outside_limit() {
     let mut book = test_book();
     // Resting sell at 52_509 in zone 1 (compression=10)
     book.insert_resting(
-        52_509, 100, Side::Sell, 0, 1, false, 0,
+        52_509, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     // Buy at 52_500 -- can't afford 52_509
     let mut order = incoming(
@@ -515,10 +517,10 @@ fn smooshed_match_skips_orders_outside_limit() {
 fn smooshed_match_fills_qualifying_orders_only() {
     let mut book = test_book();
     book.insert_resting(
-        52_500, 50, Side::Sell, 0, 1, false, 0,
+        52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     book.insert_resting(
-        52_509, 50, Side::Sell, 0, 2, false, 0,
+        52_509, 50, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     // Buy at 52_505: fills 52_500 maker, skips 52_509
     let mut order = incoming(
@@ -539,10 +541,10 @@ fn smooshed_match_fills_qualifying_orders_only() {
 fn smooshed_match_preserves_time_priority() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        52_500, 50, Side::Sell, 0, 1, false, 0,
+        52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let _h2 = book.insert_resting(
-        52_501, 50, Side::Sell, 0, 2, false, 0,
+        52_501, 50, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     // Both at same tick. Buy enough for one fill.
     let mut order = incoming(
@@ -569,10 +571,10 @@ fn event_buffer_multiple_fills_single_order() {
     let mut book = test_book();
     // Two sells at different levels
     book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     book.insert_resting(
-        50_101, 50, Side::Sell, 0, 2, false, 0,
+        50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut order = incoming(
         50_101, 100, Side::Buy, TimeInForce::GTC, 3,
@@ -592,10 +594,10 @@ fn event_buffer_multiple_fills_single_order() {
 fn event_buffer_fills_before_done() {
     let mut book = test_book();
     let h1 = book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0,
+        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let h2 = book.insert_resting(
-        50_101, 50, Side::Sell, 0, 2, false, 0,
+        50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0,
     );
     let mut order = incoming(
         50_101, 100, Side::Buy, TimeInForce::GTC, 3,

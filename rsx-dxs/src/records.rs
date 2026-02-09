@@ -7,6 +7,7 @@ pub const RECORD_ORDER_DONE: u16 = 4;
 pub const RECORD_CONFIG_APPLIED: u16 = 5;
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_ORDER_ACCEPTED: u16 = 7;
+pub const RECORD_MARK_PRICE: u16 = 8;
 
 /// CancelReason enum (u8)
 pub const CANCEL_REASON_USER_CANCEL: u8 = 0;

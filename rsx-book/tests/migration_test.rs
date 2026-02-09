@@ -50,7 +50,7 @@ fn frontier_starts_at_new_mid() {
 fn resolve_level_migrates_on_access() {
     let mut book = test_book();
     book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.trigger_recenter(50_500);
     // Access a price outside frontier
@@ -72,7 +72,7 @@ fn migrate_empty_level_is_noop() {
 fn cancel_during_migration() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false, 0,
+        49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.trigger_recenter(50_500);
 
@@ -90,7 +90,7 @@ fn insert_during_migration_goes_to_new() {
 
     // Insert goes to new active array
     let _h = book.insert_resting(
-        52_100, 100, Side::Sell, 0, 1, false, 0,
+        52_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     assert_ne!(book.best_ask_tick, NONE);
 }
@@ -99,10 +99,10 @@ fn insert_during_migration_goes_to_new() {
 fn best_bid_ask_correct_after_recenter() {
     let mut book = test_book();
     book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false, 0,
+        49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.insert_resting(
-        50_050, 100, Side::Sell, 0, 2, false, 0,
+        50_050, 100, Side::Sell, 0, 2, false, 0, 0, 0,
     );
 
     book.trigger_recenter(50_500);
@@ -129,7 +129,7 @@ fn snapshot_blocked_during_migration() {
 fn batch_migration() {
     let mut book = test_book();
     book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false, 0,
+        49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.trigger_recenter(50_500);
 

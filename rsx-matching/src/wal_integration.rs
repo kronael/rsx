@@ -27,9 +27,11 @@ pub fn write_events_to_wal(
                 price,
                 qty,
                 side,
+                maker_order_id_hi,
+                maker_order_id_lo,
+                taker_order_id_hi,
+                taker_order_id_lo,
             } => {
-                let maker_oid = maker_handle as u128;
-                let taker_oid = taker_user_id as u128;
                 let record = FillRecord {
                     seq: 0,
                     ts_ns,
@@ -37,10 +39,10 @@ pub fn write_events_to_wal(
                     taker_user_id,
                     maker_user_id: maker_handle,
                     _pad0: 0,
-                    taker_order_id_hi: (taker_oid >> 64) as u64,
-                    taker_order_id_lo: taker_oid as u64,
-                    maker_order_id_hi: (maker_oid >> 64) as u64,
-                    maker_order_id_lo: maker_oid as u64,
+                    taker_order_id_hi,
+                    taker_order_id_lo,
+                    maker_order_id_hi,
+                    maker_order_id_lo,
                     price: price.0,
                     qty: qty.0,
                     taker_side: side,
@@ -53,20 +55,21 @@ pub fn write_events_to_wal(
                 writer.append(RECORD_FILL, bytes)?;
             }
             Event::OrderInserted {
-                handle,
+                handle: _,
                 user_id,
                 side,
                 price,
                 qty,
+                order_id_hi,
+                order_id_lo,
             } => {
-                let oid = handle as u128;
                 let record = OrderInsertedRecord {
                     seq: 0,
                     ts_ns,
                     symbol_id,
                     user_id,
-                    order_id_hi: (oid >> 64) as u64,
-                    order_id_lo: oid as u64,
+                    order_id_hi,
+                    order_id_lo,
                     price: price.0,
                     qty: qty.0,
                     side,
@@ -81,18 +84,19 @@ pub fn write_events_to_wal(
                 )?;
             }
             Event::OrderCancelled {
-                handle,
+                handle: _,
                 user_id,
                 remaining_qty,
+                order_id_hi,
+                order_id_lo,
             } => {
-                let oid = handle as u128;
                 let record = OrderCancelledRecord {
                     seq: 0,
                     ts_ns,
                     symbol_id,
                     user_id,
-                    order_id_hi: (oid >> 64) as u64,
-                    order_id_lo: oid as u64,
+                    order_id_hi,
+                    order_id_lo,
                     remaining_qty: remaining_qty.0,
                     reason: 1,
                     reduce_only: 0,
@@ -106,20 +110,23 @@ pub fn write_events_to_wal(
                 )?;
             }
             Event::OrderDone {
-                handle,
+                handle: _,
                 user_id,
                 reason,
+                filled_qty,
+                remaining_qty,
+                order_id_hi,
+                order_id_lo,
             } => {
-                let oid = handle as u128;
                 let record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
                     symbol_id,
                     user_id,
-                    order_id_hi: (oid >> 64) as u64,
-                    order_id_lo: oid as u64,
-                    filled_qty: 0,
-                    remaining_qty: 0,
+                    order_id_hi,
+                    order_id_lo,
+                    filled_qty: filled_qty.0,
+                    remaining_qty: remaining_qty.0,
                     final_status: reason,
                     reduce_only: 0,
                     tif: 0,

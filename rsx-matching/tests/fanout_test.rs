@@ -35,7 +35,7 @@ fn drain_ring(
 fn fill_sent_to_risk_gateway_mktdata() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order = IncomingOrder {
         price: 50_100,
@@ -46,6 +46,8 @@ fn fill_sent_to_risk_gateway_mktdata() {
         user_id: 2,
         reduce_only: false,
         timestamp_ns: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     process_new_order(&mut book, &mut order);
 
@@ -90,6 +92,8 @@ fn order_inserted_sent_to_mktdata_only() {
         user_id: 1,
         reduce_only: false,
         timestamp_ns: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     process_new_order(&mut book, &mut order);
 
@@ -118,7 +122,7 @@ fn order_inserted_sent_to_mktdata_only() {
 fn order_done_sent_to_risk_gateway() {
     let mut book = test_book();
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order = IncomingOrder {
         price: 50_100,
@@ -129,6 +133,8 @@ fn order_done_sent_to_risk_gateway() {
         user_id: 2,
         reduce_only: false,
         timestamp_ns: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     process_new_order(&mut book, &mut order);
 
@@ -164,7 +170,7 @@ fn order_done_sent_to_risk_gateway() {
 fn order_cancelled_sent_to_gateway_mktdata() {
     let mut book = test_book();
     let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0,
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
     );
     book.cancel_order(h);
     // Emit the cancel event manually since cancel_order
@@ -175,6 +181,8 @@ fn order_cancelled_sent_to_gateway_mktdata() {
         handle: h,
         user_id: 1,
         remaining_qty: rsx_types::Qty(100),
+        order_id_hi: 0,
+        order_id_lo: 0,
     });
 
     let (mut rp, mut rc) =
@@ -213,6 +221,8 @@ fn drain_empties_buffer() {
         user_id: 1,
         reduce_only: false,
         timestamp_ns: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     process_new_order(&mut book, &mut order);
     assert!(book.event_len > 0);

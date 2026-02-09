@@ -107,6 +107,11 @@ impl RecorderState {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("fatal: {}", info);
+        std::process::exit(1);
+    }));
+
     tracing_subscriber::fmt::init();
 
     let config = RecorderConfig::from_env()?;

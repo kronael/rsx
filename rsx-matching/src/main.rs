@@ -11,6 +11,8 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tracing::info;
 
 fn get_env_u32(key: &str) -> io::Result<u32> {
@@ -76,8 +78,9 @@ fn load_config_from_env() -> io::Result<SymbolConfig> {
 }
 
 fn main() {
-    std::panic::set_hook(Box::new(|_| {
-        std::process::exit(0);
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("fatal: {}", info);
+        std::process::exit(1);
     }));
 
     tracing_subscriber::fmt::init();
@@ -128,6 +131,32 @@ fn main() {
     let (mut mkt_prod, _mkt_cons) =
         rtrb::RingBuffer::<EventMessage>::new(8192);
 
+    // DXS sidecar
+    if let Ok(dxs_addr) = env::var("RSX_ME_DXS_ADDR") {
+        let addr: std::net::SocketAddr = dxs_addr
+            .parse()
+            .expect("invalid RSX_ME_DXS_ADDR");
+        let wal_path = PathBuf::from(&wal_dir);
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder
+                ::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime for dxs");
+            let service =
+                rsx_dxs::DxsReplayService::new(wal_path);
+            rt.block_on(async {
+                service
+                    .serve(addr)
+                    .await
+                    .expect("dxs server failed");
+            });
+        });
+        info!(
+            "dxs sidecar spawned on {}", dxs_addr
+        );
+    }
+
     info!("matching engine started");
 
     loop {
@@ -144,7 +173,10 @@ fn main() {
                 &mut wal_writer,
                 &book,
                 symbol_id,
-                0, // TODO: real timestamp
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
             );
             let _ = flush_if_due(
                 &mut wal_writer,
