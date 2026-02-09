@@ -1,6 +1,5 @@
 use rsx_book::slab::Slab;
 use rsx_book::slab::SlabItem;
-use rsx_types::NONE;
 
 #[derive(Default)]
 struct TestItem {

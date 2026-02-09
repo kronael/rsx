@@ -1,5 +1,11 @@
 [workspace]
-members = ["rsx-dxs", "rsx-recorder"]
+members = [
+    "rsx-types",
+    "rsx-book",
+    "rsx-matching",
+    "rsx-dxs",
+    "rsx-recorder",
+]
 resolver = "2"
 
 [profile.release]

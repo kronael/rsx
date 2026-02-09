@@ -1,7 +1,4 @@
 use rsx_book::book::Orderbook;
-use rsx_book::event::Event;
-use rsx_book::matching::IncomingOrder;
-use rsx_book::matching::process_new_order;
 use rsx_types::SymbolConfig;
 
 fn main() {
@@ -34,8 +31,9 @@ fn main() {
     }
 }
 
+#[allow(dead_code)]
 fn drain_events(book: &Orderbook) {
-    for event in book.events() {
+    for _event in book.events() {
         // TODO: push to SPSC ring for downstream
         // consumers (risk, mktdata, recorder)
     }

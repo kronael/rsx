@@ -7,9 +7,6 @@ use rsx_book::event::REASON_CANCELLED;
 use rsx_book::event::REASON_FILLED;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
-use rsx_types::NONE;
-use rsx_types::Price;
-use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -437,7 +434,7 @@ fn event_buffer_reset_each_cycle() {
     let mut o1 =
         incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut o1);
-    let len1 = book.event_len;
+    let _len1 = book.event_len;
 
     let mut o2 =
         incoming(49_800, 100, Side::Buy, TimeInForce::GTC, 2);
