@@ -48,9 +48,9 @@ skeleton, panic handler, busy-spin. SPSC ring wiring TODO.
   OrderDone, ConfigApplied, CaughtUp, OrderAccepted -- all
   `#[repr(C, align(64))]`
 - 16-byte header: version(2)+type(2)+len(4)+stream_id(4)+crc32(4)
-- DxsReplayService: quinn QUIC, historical replay + CaughtUp
+- DxsReplayService: tonic gRPC, historical replay + CaughtUp
   marker + live tail via tokio::sync::Notify
-- DxsConsumer: QUIC client, tip persistence (atomic write
+- DxsConsumer: gRPC client, tip persistence (atomic write
   every 10ms), reconnect backoff 1/2/4/8/30s
 - Config: env only
 - 39 tests, 8 Criterion benchmarks
@@ -130,8 +130,8 @@ file. Replay service reads from the beginning. No broker, no
 ZooKeeper, no consumer groups. The recorder IS the replica --
 it's a consumer that writes to a different disk.
 
-**quinn QUIC on the cold path.** Streaming of raw #[repr(C)] WAL
-records over QUIC. Same bytes on disk, on wire, in memory. Hot
+**tonic gRPC on the cold path.** Streaming of raw #[repr(C)] WAL
+records over HTTP/2. Same bytes on disk, on wire, in memory. Hot
 path optimizations are deferred. Gateway + market data use monoio
 (io_uring). Reference impl in `../trader/monoio-client/` is
 production-proven.

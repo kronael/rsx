@@ -176,12 +176,11 @@ Written via same write-behind worker as positions/fills.
 
 ## 9. Config
 
-```toml
-[liquidation]
-base_delay_ns = 1_000_000_000   # 1s
-base_slip_bps = 1               # 1bp
-max_slip_bps = 500              # 5% cap
-max_rounds = 50
+```
+RSX_LIQUIDATION_BASE_DELAY_NS=1000000000
+RSX_LIQUIDATION_BASE_SLIP_BPS=1
+RSX_LIQUIDATION_MAX_SLIP_BPS=500
+RSX_LIQUIDATION_MAX_ROUNDS=50
 ```
 
 **Post-max-rounds behavior:** After `max_rounds` is reached,

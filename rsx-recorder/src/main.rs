@@ -107,41 +107,11 @@ impl RecorderState {
     }
 }
 
-fn load_config(path: &str) -> io::Result<RecorderConfig> {
-    let content = fs::read_to_string(path)?;
-    let wrapper: toml::Value =
-        toml::from_str(&content).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("toml parse: {}", e),
-            )
-        })?;
-    let recorder = wrapper
-        .get("recorder")
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "missing [recorder] section",
-            )
-        })?;
-    let config: RecorderConfig =
-        recorder.clone().try_into().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("config: {}", e),
-            )
-        })?;
-    Ok(config)
-}
-
 #[tokio::main]
 async fn main() -> io::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "recorder.toml".to_string());
-    let config = load_config(&config_path)?;
+    let config = RecorderConfig::from_env()?;
 
     let state = Arc::new(Mutex::new(RecorderState::new(
         &config.archive_dir,

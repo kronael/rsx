@@ -110,7 +110,7 @@ source_mask_max_8_bits
 ### Config
 
 ```rust
-config_parse_valid_toml
+config_parse_valid_env
 config_staleness_ns_overrides_default
 config_source_enabled_false_skipped
 config_listen_addr_and_wal_dir

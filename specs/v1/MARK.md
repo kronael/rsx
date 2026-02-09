@@ -205,25 +205,21 @@ connectors) run on a separate tokio runtime in background threads.
 
 ## 7. Config
 
-```toml
-[mark]
-listen_addr = "0.0.0.0:9200"
-wal_dir = "./wal/mark"
-stream_id = 100
-staleness_ns = 10_000_000_000  # 10s
+```
+RSX_MARK_LISTEN_ADDR=0.0.0.0:9200
+RSX_MARK_WAL_DIR=./wal/mark
+RSX_MARK_STREAM_ID=100
+RSX_MARK_STALENESS_NS=10000000000
 
-[[mark.sources]]
-name = "binance"
-ws_url = "wss://fstream.binance.com/ws/!markPrice@arr@1s"
-reconnect_base_ms = 1000
-reconnect_max_ms = 30000
+RSX_MARK_SOURCE_BINANCE_WS_URL=wss://fstream.binance.com/ws/!markPrice@arr@1s
+RSX_MARK_SOURCE_BINANCE_ENABLED=1
+RSX_MARK_SOURCE_BINANCE_RECONNECT_BASE_MS=1000
+RSX_MARK_SOURCE_BINANCE_RECONNECT_MAX_MS=30000
 
-[[mark.sources]]
-name = "coinbase"
-ws_url = "wss://ws-feed.exchange.coinbase.com"
-reconnect_base_ms = 1000
-reconnect_max_ms = 30000
-enabled = false
+RSX_MARK_SOURCE_COINBASE_WS_URL=wss://ws-feed.exchange.coinbase.com
+RSX_MARK_SOURCE_COINBASE_ENABLED=0
+RSX_MARK_SOURCE_COINBASE_RECONNECT_BASE_MS=1000
+RSX_MARK_SOURCE_COINBASE_RECONNECT_MAX_MS=30000
 ```
 
 ---
