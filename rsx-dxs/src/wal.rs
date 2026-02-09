@@ -374,6 +374,14 @@ impl WalReader {
         }
     }
 
+    pub fn stream_id(&self) -> u32 {
+        self.stream_id
+    }
+
+    pub fn wal_dir(&self) -> &Path {
+        &self.wal_dir
+    }
+
     fn advance_file(&mut self) -> io::Result<bool> {
         self.file_idx += 1;
         if self.file_idx < self.files.len() {

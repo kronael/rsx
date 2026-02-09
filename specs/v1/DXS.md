@@ -200,7 +200,7 @@ All fields are encoded little-endian on disk/wire.
 
 On disk: `[header][payload][header][payload]...`
 
-Over QUIC (quinn): the same fixed records are streamed as raw bytes.
+Over gRPC (tonic): the same fixed records are streamed as raw bytes.
 
 Maximum record size is 64KB.
 
@@ -301,7 +301,7 @@ file in sorted order. Returns `None` when all files exhausted
 
 ## 5. Replay Server
 
-QUIC service embedded in each producer (quinn). Serves WAL records
+gRPC service embedded in each producer (tonic). Serves WAL records
 to consumers.
 
 **Request format (fixed 12-byte record):**
@@ -435,11 +435,11 @@ externally).
 
 **Config:**
 
-```toml
-[recorder]
-stream_id = 1
-producer_addr = "10.0.0.1:9100"
-archive_dir = "./archive"
+```
+RSX_RECORDER_STREAM_ID=1
+RSX_RECORDER_PRODUCER_ADDR=10.0.0.1:9100
+RSX_RECORDER_ARCHIVE_DIR=./archive
+RSX_RECORDER_TIP_FILE=./archive/1.tip
 ```
 
 **File organization:**

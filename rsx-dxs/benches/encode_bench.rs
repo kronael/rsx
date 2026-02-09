@@ -2,7 +2,6 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
 use rsx_dxs::*;
-use std::mem;
 
 fn bench_fill_record_encode(c: &mut Criterion) {
     let record = FillRecord {

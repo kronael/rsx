@@ -65,6 +65,6 @@ Implementable as-is. No new spec needed.
 
 ### Admin/Config
 
-TOML config + restart is sufficient for v1. Symbol config structs
+Env config + restart is sufficient for v1. Symbol config structs
 defined in ORDERBOOK.md and RISK.md. Hot reload and runtime admin
 API are v2 concerns.

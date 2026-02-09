@@ -34,11 +34,6 @@ These are real gaps that block a usable pipeline.
 
 These are concrete doc → code mismatches that remain.
 
-- **DXS transport alignment:** `specs/v1/DXS.md` and `PROGRESS.md` call for
-  QUIC (quinn). Implementation being updated to match spec.
-- **Config mismatch in PROGRESS.** `PROGRESS.md` still says “Config: TOML with
-  serde defaults” and “Config from TOML” for recorder, but the implementation
-  is env-only.
 - **RSX matching status in PROGRESS.** It still calls `rsx-matching` a stub,
   but there is now real WAL integration and fanout logic (even if ingress is
   still missing).
