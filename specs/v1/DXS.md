@@ -200,7 +200,8 @@ All fields are encoded little-endian on disk/wire.
 
 On disk: `[header][payload][header][payload]...`
 
-Over gRPC (tonic): the same fixed records are streamed as raw bytes.
+Over QUIC (QRPC): the same fixed records are streamed as raw bytes.
+See [QRPC.md](QRPC.md) for the transport specification.
 
 Maximum record size is 64KB.
 
@@ -301,29 +302,34 @@ file in sorted order. Returns `None` when all files exhausted
 
 ## 5. Replay Server
 
-gRPC service embedded in each producer (tonic). Serves WAL records
-to consumers.
+QRPC server embedded in each producer. Serves WAL records
+to consumers over QUIC streams. See [QRPC.md](QRPC.md).
 
-**Request format (fixed 12-byte record):**
+**Request format (WAL record):**
 ```
+#[repr(C, align(64))]
 struct ReplayRequest {
   u32 stream_id;
+  u32 _pad0;
   u64 from_seq;
+  u8  _pad1[48];
 }
 ```
 
 **Response format:**
-Streams raw WAL bytes (header + payload, fixed-record format).
+Streams raw WAL bytes (header + payload, fixed-record format)
+over a QUIC stream.
 
 **Protocol:**
 
-1. Consumer sends `ReplayRequest` with `from_seq`.
-2. Server opens WalReader at `from_seq`.
-3. Server streams WalRecords from WAL files.
-4. When reader exhausts all files (caught up to live): server
+1. Consumer opens QUIC connection to producer.
+2. Consumer sends `ReplayRequest` as a WAL record.
+3. Server opens WalReader at `from_seq`.
+4. Server streams WalRecords over the QUIC stream.
+5. When reader exhausts all files (caught up to live): server
    sends a WalRecord with a `CaughtUp` marker payload, then
    transitions to broadcasting new records as they are appended.
-5. Live broadcast: server registers as a listener on WalWriter.
+6. Live broadcast: server registers as a listener on WalWriter.
    Each flush notifies listeners. Server reads new records and
    streams them.
 
@@ -346,13 +352,13 @@ Use a fixed record type `RECORD_CAUGHT_UP` with payload:
   **all** subscribed streams (per RISK.md replication
   section).
 
-**Concurrency:** one gRPC stream per connected consumer. Each
+**Concurrency:** one QUIC stream per connected consumer. Each
 stream has its own WalReader. Live broadcast uses a notify
-mechanism (e.g., `tokio::sync::Notify` or eventfd).
+mechanism (e.g., eventfd or channel).
 
-**Transport:** gRPC (tonic) over HTTP/2. The interface is
-"stream records from seq N" and raw fixed records minimize
-serialization overhead.
+**Transport:** QRPC over QUIC (quinn). Same WAL record format
+on wire as on disk. Zero serialization overhead. See
+[QRPC.md](QRPC.md) for full transport specification.
 
 ---
 
@@ -374,7 +380,7 @@ struct DxsConsumer {
 **Startup sequence:**
 
 1. Load tip from `tip_file` (0 if missing).
-2. Connect to producer's gRPC endpoint (tonic).
+2. Connect to producer's QRPC endpoint (quinn).
 3. Send `ReplayRequest { stream_id, from_seq: tip + 1 }`.
 4. Process replayed records via callback, advancing tip.
 5. On `CaughtUp`: transition to live processing.
@@ -389,15 +395,15 @@ max 30s). Resume from `tip + 1`.
 
 ---
 
-## 7. Transport for Live Path
+## 7. Transport
 
-For the inner hot-path connections (ME -> risk, risk -> gateway),
-the live event path uses SPSC rings within the same host (unchanged
-from current design). DXS serves the **cross-host** and **replay**
-paths.
+Two transport modes, same WAL records:
 
-The replay/streaming path uses gRPC (tonic) over HTTP/2 as a
-cold path. Low-latency cross-host streaming is out of scope for v1.
+- **Live path** (Gateway <-> Risk <-> ME): QRPC/UDP. One
+  WAL record per UDP datagram. Seq-based gap detection,
+  retransmit from WAL. See [QRPC.md](QRPC.md) section 3.
+- **Replay/replication path**: QRPC/QUIC. Reliable streaming
+  over QUIC. See [QRPC.md](QRPC.md) section 4.
 
 ---
 

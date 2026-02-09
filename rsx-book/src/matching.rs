@@ -24,6 +24,8 @@ pub struct IncomingOrder {
     pub user_id: u32,
     pub reduce_only: bool,
     pub timestamp_ns: u64,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
 }
 
 pub fn process_new_order(
@@ -150,10 +152,18 @@ pub fn process_new_order(
     // Phase 2: Insert remainder or cancel
     if order.remaining_qty > 0 {
         if order.tif == TimeInForce::IOC {
+            let filled = order.qty
+                - order.remaining_qty;
             book.emit(Event::OrderDone {
                 handle: NONE,
                 user_id: order.user_id,
                 reason: REASON_CANCELLED,
+                filled_qty: Qty(filled),
+                remaining_qty: Qty(
+                    order.remaining_qty,
+                ),
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
             });
         } else {
             let handle = book.insert_resting(
@@ -164,6 +174,8 @@ pub fn process_new_order(
                 order.user_id,
                 order.reduce_only,
                 order.timestamp_ns,
+                order.order_id_hi,
+                order.order_id_lo,
             );
             book.emit(Event::OrderInserted {
                 handle,
@@ -171,6 +183,8 @@ pub fn process_new_order(
                 side: order.side as u8,
                 price: Price(order.price),
                 qty: Qty(order.remaining_qty),
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
             });
         }
     } else {
@@ -179,6 +193,10 @@ pub fn process_new_order(
             handle: NONE,
             user_id: order.user_id,
             reason: REASON_FILLED,
+            filled_qty: Qty(order.qty),
+            remaining_qty: Qty(0),
+            order_id_hi: order.order_id_hi,
+            order_id_lo: order.order_id_lo,
         });
     }
 }
@@ -198,6 +216,8 @@ pub fn match_at_level(
         let maker_price = maker.price.0;
         let maker_qty = maker.remaining_qty.0;
         let maker_user_id = maker.user_id;
+        let maker_oid_hi = maker.order_id_hi;
+        let maker_oid_lo = maker.order_id_lo;
         let next_cursor = maker.next;
 
         // Smooshed tick check: verify actual price
@@ -236,6 +256,10 @@ pub fn match_at_level(
             price: Price(maker_price),
             qty: Qty(fill_qty),
             side: aggressor.side as u8,
+            maker_order_id_hi: maker_oid_hi,
+            maker_order_id_lo: maker_oid_lo,
+            taker_order_id_hi: aggressor.order_id_hi,
+            taker_order_id_lo: aggressor.order_id_lo,
         });
 
         update_positions_on_fill(
@@ -273,10 +297,17 @@ pub fn match_at_level(
             level.order_count -= 1;
 
             // Emit OrderDone for maker
+            let orig_qty = book.orders
+                .get(cursor)
+                .original_qty;
             book.emit(Event::OrderDone {
                 handle: cursor,
                 user_id: maker_user_id,
                 reason: REASON_FILLED,
+                filled_qty: orig_qty,
+                remaining_qty: Qty(0),
+                order_id_hi: maker_oid_hi,
+                order_id_lo: maker_oid_lo,
             });
 
             book.orders

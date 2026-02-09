@@ -15,6 +15,8 @@ fn order_message_roundtrip_buy() {
         user_id: 42,
         _pad2: 0,
         timestamp_ns: 1_000_000,
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     let incoming = msg.to_incoming();
     assert_eq!(incoming.price, 50_000);
@@ -37,6 +39,8 @@ fn order_message_roundtrip_sell_ioc() {
         user_id: 7,
         _pad2: 0,
         timestamp_ns: 999,
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     let incoming = msg.to_incoming();
     assert_eq!(incoming.side, Side::Sell);
@@ -52,6 +56,10 @@ fn event_message_from_fill() {
         price: rsx_types::Price(50_000),
         qty: rsx_types::Qty(100),
         side: Side::Buy as u8,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 0,
     };
     let msg = EventMessage::from_book_event(&event);
     match msg {
@@ -61,6 +69,7 @@ fn event_message_from_fill() {
             price,
             qty,
             side,
+            ..
         } => {
             assert_eq!(maker_handle, 1);
             assert_eq!(taker_user_id, 2);
@@ -80,6 +89,8 @@ fn event_message_from_order_inserted() {
         side: Side::Sell as u8,
         price: rsx_types::Price(49_000),
         qty: rsx_types::Qty(200),
+        order_id_hi: 0,
+        order_id_lo: 0,
     };
     let msg = EventMessage::from_book_event(&event);
     assert!(matches!(

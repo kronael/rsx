@@ -22,7 +22,9 @@ pub struct OrderSlot {
     pub _pad3: [u8; 2],
     pub original_qty: Qty,
     pub timestamp_ns: u64,
-    pub _pad4: [u8; 40],
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+    pub _pad4: [u8; 24],
 }
 
 const _: () = assert!(
@@ -68,7 +70,9 @@ impl Default for OrderSlot {
             _pad3: [0; 2],
             original_qty: Qty(0),
             timestamp_ns: 0,
-            _pad4: [0; 40],
+            order_id_hi: 0,
+            order_id_lo: 0,
+            _pad4: [0; 24],
         }
     }
 }

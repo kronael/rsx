@@ -40,7 +40,7 @@ fn wal_records_written_for_all_event_types() {
 
     // Resting sell -> buy crosses -> fill + done events
     book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0,
+        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
     );
     let mut order = IncomingOrder {
         price: 50_100,
@@ -50,6 +50,8 @@ fn wal_records_written_for_all_event_types() {
         tif: TimeInForce::GTC,
         user_id: 2,
         reduce_only: false,
+        order_id_hi: 0,
+        order_id_lo: 0,
         timestamp_ns: 1000,
     };
     process_new_order(&mut book, &mut order);
@@ -69,6 +71,8 @@ fn wal_records_written_for_all_event_types() {
         tif: TimeInForce::GTC,
         user_id: 3,
         reduce_only: false,
+        order_id_hi: 0,
+        order_id_lo: 0,
         timestamp_ns: 2000,
     };
     process_new_order(&mut book, &mut order2);

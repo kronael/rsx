@@ -161,11 +161,11 @@ Gateway3 ────┘
 ### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
-- quinn QUIC with WAL wire format (v1, inter-process/network)
-- SPSC rings are used for *in-process* tile communication
+- QRPC/UDP for live order/fill path (lowest latency)
+- QRPC/QUIC for WAL replay and replication (reliable streaming)
 - WAL stores fixed-record payloads (raw #[repr(C)] structs)
-- QUIC connection Gateway ↔ Risk (multiplexed streams)
-- QUIC connection Risk ↔ Matching Engine (multiplexed streams, per matcher)
+- Same wire format on disk, UDP, and QUIC — no transformation
+- See QRPC.md for full transport specification
 
 **Connection lifecycle:**
 1. User opens WebSocket connection to Gateway
@@ -194,14 +194,14 @@ Gateway3 ────┘
 - Closed only on process shutdown or reconnect
 
 **Transport:**
-- v1: quinn QUIC with raw WAL wire format
-- No v2 planned (see FUTURE.md)
+- v1: QRPC/UDP for live path, QRPC/QUIC for replay/replication
+- See QRPC.md for full specification
 
 **Replication transport:** ME and Risk replicas receive event
-streams via DXS gRPC streaming (same as DXS replay, see DXS.md
-section 5). No special replication protocol — replicas are
-DXS consumers with the same replay/live-tail mechanism used
-by all consumers.
+streams via DXS QRPC streaming (same WAL records over QUIC,
+see QRPC.md and DXS.md section 5). No special replication
+protocol — replicas are DXS consumers with the same
+replay/live-tail mechanism used by all consumers.
 
 ## Data Flow
 
@@ -321,13 +321,13 @@ Risk checks happen BOTH:
 
 ### Gateway → Risk → Matching Engine
 
-**Latency (same machine, QUIC over localhost):**
-- ~50-100us per message (reference UDS.md)
-- Includes: QUIC frame, fixed record memcpy, UDP, kernel copy
+**Latency (same machine, QRPC/UDP):**
+- <10us per message
+- Includes: sendto, fixed record memcpy, recvfrom
 
-**Latency (cross-machine, QUIC over UDP):**
-- ~100-300us per message (reference SMRB.md)
-- Includes: QUIC frame, fixed record, UDP, network switch
+**Latency (same datacenter, QRPC/UDP):**
+- <50us per message
+- Includes: sendto, fixed record, network switch, recvfrom
 
 **Future optimization:**
 - No v2 planned (see FUTURE.md)

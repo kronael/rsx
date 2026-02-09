@@ -9,21 +9,40 @@ Feb 9 06:58  orderbook + matching logic shipped
 Feb 9 07:47  refined (warnings cleared)
 Feb 9 08:30  DXS + recorder shipped
 Feb 9 09:00  TILES.md + blog post 4
+Feb 9 12:00  rsx-risk shipped (margin, funding, persist, shard)
+Feb 9 15:00  rsx-mark shipped (aggregator, config, main)
+Feb 9 15:00  ME timestamp fix (real ns clock)
+Feb 9 19:30  rsx-risk Phase 3: Postgres persistence
+Feb 9 21:00  rsx-gateway shipped (protocol, rate limit, circuit
+             breaker, pending orders, wire types, UUIDv7)
+Feb 9 21:30  rsx-marketdata shipped (shadow book, BBO, L2,
+             trades, subscriptions, WS protocol)
+Feb 9 22:00  spec compliance audit: 14 tests added,
+             clippy fixes across rsx-mark
+Feb 9 23:30  CRITIQUE fixes: real order IDs, risk binary,
+             DXS sidecar, production panic/retry patterns,
+             rsx-types macros crate
 ```
 
 33 hours from first spec to working orderbook + matching logic.
 36 hours to WAL/streaming infrastructure.
+42 hours to risk engine + mark price aggregator.
+48 hours to all 9 crates shipping (pure logic complete).
 
 ## What Shipped
 
-Five crates: `rsx-types`, `rsx-book`, `rsx-matching`,
-`rsx-dxs`, `rsx-recorder`.
+Nine crates: `rsx-types`, `rsx-book`, `rsx-matching`,
+`rsx-dxs`, `rsx-recorder`, `rsx-risk`, `rsx-mark`,
+`rsx-gateway`, `rsx-marketdata`.
 
-**rsx-types** (55 lines) -- Price/Qty newtypes (i64,
-repr(transparent)), Side/TimeInForce enums, SymbolConfig,
-validate_order. 12 tests.
+**rsx-types** (~150 lines) -- Price/Qty newtypes (i64,
+repr(transparent)), Side/TimeInForce/OrderStatus/FinalStatus/
+FailureReason enums, SymbolConfig, validate_order.
+Production macros: install_panic_handler, DeferCall/defer!,
+on_error_continue!, on_none_continue!, on_error_return_ok!,
+on_none_return_ok!. 15 tests.
 
-**rsx-book** (1,263 lines) -- The core orderbook:
+**rsx-book** (1,342 lines) -- The core orderbook:
 - Slab arena allocator (generic, O(1) alloc/free)
 - CompressionMap (5-zone price indexing, ~617K slots)
 - PriceLevel (24 bytes, compile-time assert)
@@ -32,12 +51,16 @@ validate_order. 12 tests.
 - Incremental CoW recentering (frontier-based migration)
 - User position tracking (reduce-only enforcement)
 - Event buffer (fixed array, no heap)
-- 50 tests across 7 test files
+- 75 tests across 7 test files
 
-**rsx-matching** (40 lines) -- Binary stub with main loop
-skeleton, panic handler, busy-spin. SPSC ring wiring TODO.
+**rsx-matching** (~600 lines) -- ME binary with main loop,
+WAL integration, wire format encoding, fanout to SPSC
+rings, panic handler, busy-spin. Real nanosecond timestamps.
+DXS sidecar (spawns DxsReplayService if RSX_ME_DXS_ADDR set).
+Real order IDs (UUIDv7 hi/lo) wired through all events/WAL.
+11 tests (5 fanout + 2 WAL integration + 4 wire).
 
-**rsx-dxs** (~1,558 lines) -- WAL + event streaming:
+**rsx-dxs** (1,488 lines) -- WAL + event streaming:
 - WalWriter: append is memcpy (0ns I/O), flush+fsync every
   10ms, rotation at 64MB, GC past retention, backpressure
   stalls producer at 2x buffer limit
@@ -53,13 +76,86 @@ skeleton, panic handler, busy-spin. SPSC ring wiring TODO.
 - DxsConsumer: gRPC client, tip persistence (atomic write
   every 10ms), reconnect backoff 1/2/4/8/30s
 - Config: env only
-- 39 tests, 8 Criterion benchmarks
+- 68 tests, 8 Criterion benchmarks
 
-**rsx-recorder** (150 lines) -- Daily archival consumer:
+**rsx-recorder** (138 lines) -- Daily archival consumer:
 - Connects via DxsConsumer, writes same WAL format to
   `archive/{stream_id}/{stream_id}_{YYYY-MM-DD}.wal`
 - UTC midnight rotation, buffered writes, flush every 1000
 - Config from env vars
+
+**rsx-risk** (~1,600 lines src + 2,250 lines tests + 72 SQL)
+Risk engine per user shard with binary entry point:
+- Account state (collateral, frozen margin, version tracking)
+- Margin checking (initial/maintenance, portfolio offset)
+- Fee calculation (floor division, rebates)
+- Funding rate + settlement (8h intervals, zero-sum,
+  clamp to bounds, idempotent)
+- Exposure tracking (per-symbol user sets)
+- Shard orchestration (main loop, WAL consumer, persist)
+- Phase 3: Postgres persistence layer:
+  - Write-behind worker: SPSC ring from hot path, 10ms
+    flush, single tx per batch (positions/accounts/fills/
+    tips/funding payments)
+  - Cold start: load from Postgres, replay WAL from tips
+  - Schema migration (idempotent DO $migration$ pattern)
+  - Advisory lock (pg_advisory_lock per shard)
+- Config from env vars
+- Tests: 72 total (57 pass without Docker,
+  15 Docker-gated via testcontainers)
+  Phase 1 unit tests: complete (55/55 unit)
+  Phase 2 shard tests: 2 non-Docker tests pass
+  Phase 3 persist tests: 17 total (15 need Docker,
+    2 pass without: backpressure_ring_full,
+    replay_from_wal_rebuilds_positions)
+
+**rsx-mark** (384 lines) -- Mark price aggregator:
+- MarkPriceEvent (64-byte repr(C) WAL record)
+- SymbolMarkState (8 sources, bitmask, staleness tracking)
+- Median aggregation (lower median for even count > 2,
+  average for 2 sources)
+- Staleness sweep (10s threshold, 1s interval)
+- PriceSource trait (exchange connector interface)
+- Main loop skeleton (drain -> sweep -> WAL flush)
+- Config from env vars (per-source settings)
+- 40 tests (27 aggregator + 7 types + 6 config)
+
+**rsx-gateway** (1,172 lines) -- Gateway tile pure logic:
+- WS protocol parser/serializer (672 lines): N/C/U/F/E/H/Q
+  frames per WEBPROTO.md, single-letter JSON keys, positional
+  arrays, BBO/L2 snapshot/delta frames
+- Fixed-point conversion: price_to_fixed, qty_to_fixed,
+  validate_tick_alignment, validate_lot_alignment
+- Token bucket rate limiter: 10/s per user, 100/s per IP,
+  1000/s per instance, refill over elapsed time
+- Circuit breaker: closed/open/half-open state machine,
+  10 failures threshold, 30s cooldown, probe-on-half-open
+- Pending orders: VecDeque LIFO pop, linear scan fallback,
+  10k cap backpressure, stale order timeout removal
+- Wire types: RiskNewOrder, RiskCancelOrder, RiskOrderUpdate,
+  OrderFill, StreamError -- all #[repr(C, align(64))]
+- UUIDv7 order ID generation (16 bytes, time-sortable,
+  monotonic within millisecond)
+- Config from env vars (RSX_GW_* prefix)
+- Main loop skeleton (panic handler, config, spin_loop)
+- 91 tests across 8 test files
+
+**rsx-marketdata** (643 lines) -- Marketdata tile pure logic:
+- ShadowBook wrapping rsx_book::Orderbook: apply_fill,
+  apply_insert, apply_cancel, derive_bbo, derive_l2_snapshot,
+  derive_l2_delta, make_trade
+- Types: BboUpdate, L2Level, L2Snapshot, L2Delta, TradeEvent,
+  MarketDataMessage enum
+- WS protocol: serialize BBO/L2 snapshot/L2 delta/trade
+  frames, parse S (subscribe) and X (unsubscribe) frames,
+  sequence numbers per spec
+- SubscriptionManager: per-client symbol+channel tracking,
+  BBO/depth channel bitmask, depth parameter (10/25/50),
+  subscribe/unsubscribe/unsubscribe_all
+- Config from env vars (RSX_MD_* prefix)
+- Main loop skeleton (panic handler, config, SPSC drain ->
+  shadow book -> broadcast)
+- 57 tests across 4 test files
 
 ## Infrastructure
 
@@ -83,10 +179,10 @@ of Rust. Items like "IOC/FOK missing from matching",
 "dedup window unsafe across restarts", "no clock sync for
 funding settlement".
 
-**8,856 lines of spec for 3,086 lines of code.** 2.9:1
+**8,883 lines of spec for 7,310 lines of code.** 1.2:1
 spec-to-code ratio. The specs cover matching, risk, WAL,
 liquidation, mark price, gateway, market data, networking,
-and testing -- most of which isn't implemented yet.
+and testing. Implementation now covers all nine crates.
 
 **The infinite loop bug.** First test run hung on
 `match_no_cross_taker_rests`. A buy at 50,100 with best
@@ -154,24 +250,47 @@ production-proven.
 
 ## What's Next
 
-| Crate | Status | Blocked By |
-|-------|--------|------------|
-| rsx-matching wiring | stubbed | SPSC rings (rtrb) |
-| rsx-risk | not started | rsx-dxs (consumer) |
-| rsx-mark | not started | rsx-dxs (consumer) |
-| rsx-gateway | not started | monoio WS server |
-| rsx-marketdata | not started | rsx-dxs, rsx-book |
+All pure logic is shipped. Remaining work is networking
+and system integration:
 
-Priority: wire rsx-matching (SPSC + WAL), then rsx-risk
-(positions + margin), then rsx-gateway (monoio WS).
+| Area | Description | Blocked By |
+|------|-------------|------------|
+| monoio WS | Gateway + marketdata I/O layer | monoio setup |
+| QUIC transport | quinn inter-process communication | quinn setup |
+| SPSC rings | rtrb intra-process IPC (real impl) | - |
+| System integration | Wire all tiles together | above 3 |
+| Liquidator | LIQUIDATOR.md implementation | risk + matching |
+| rsx-risk Phase 4-5 | Replication, full system tests | integration |
+
+Priority: SPSC rings (no external deps), then monoio WS,
+then QUIC transport, then wire everything together.
 
 ## Numbers
 
 ```
-Implementation:     3,086 lines across 5 crates
-Tests:              1,115 lines, 114 tests, all passing
-Specifications:     8,856 lines across 28 files
+Implementation:     7,310 lines across 9 crates
+                    + 72 lines SQL migration
+Tests:              7,941 lines, 414 tests passing
+                    (15 more Docker-gated, 429 total)
+Specifications:     8,883 lines across 28 files
 Blog:               1,114 lines across 4 posts
 Docs:               ~16 root-level markdown files
-Ratio spec:code:    2.9:1
+Ratio spec:code:    1.2:1
+```
+
+### Per-crate breakdown
+
+```
+Crate            Src    Tests  #Tests
+rsx-types         88      148      15
+rsx-book       1,342    1,271      75
+rsx-matching     556      450      11
+rsx-dxs        1,488    1,260      68
+rsx-recorder     138        -       -
+rsx-risk       1,499    2,250   57+15
+rsx-mark         384      591      40
+rsx-gateway    1,172    1,169      91
+rsx-marketdata   643      802      57
+─────────────────────────────────────
+Total          7,310    7,941     429
 ```
