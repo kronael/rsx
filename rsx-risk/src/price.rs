@@ -25,10 +25,9 @@ pub fn calculate_index(
     if ask_qty == 0 {
         return bid_px;
     }
-    (bid_px as i128 * ask_qty as i128
+    ((bid_px as i128 * ask_qty as i128
         + ask_px as i128 * bid_qty as i128)
-        as i64
-        / total
+        / total as i128) as i64
 }
 
 impl IndexPrice {

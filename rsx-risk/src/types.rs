@@ -1,5 +1,6 @@
 /// From ME SPSC ring. RISK.md §1.
 #[derive(Clone, Debug)]
+#[repr(C, align(64))]
 pub struct FillEvent {
     pub symbol_id: u32,
     pub taker_user_id: u32,
@@ -13,6 +14,7 @@ pub struct FillEvent {
 
 /// From Gateway SPSC ring. RISK.md §6.
 #[derive(Clone, Debug)]
+#[repr(C, align(64))]
 pub struct OrderRequest {
     pub user_id: u32,
     pub symbol_id: u32,
@@ -34,6 +36,7 @@ pub enum RejectReason {
 
 /// From ME SPSC ring. RISK.md §4.
 #[derive(Clone, Debug)]
+#[repr(C, align(64))]
 pub struct BboUpdate {
     pub symbol_id: u32,
     pub bid_px: i64,

@@ -5,3 +5,15 @@ pub mod margin;
 pub mod price;
 pub mod funding;
 pub mod risk_utils;
+
+pub use account::Account;
+pub use funding::FundingConfig;
+pub use margin::MarginState;
+pub use margin::PortfolioMargin;
+pub use margin::SymbolRiskParams;
+pub use position::Position;
+pub use price::IndexPrice;
+pub use types::BboUpdate;
+pub use types::FillEvent;
+pub use types::OrderRequest;
+pub use types::RejectReason;

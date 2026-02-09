@@ -1,5 +1,6 @@
 /// RISK.md §2.
 #[derive(Clone, Debug, Default)]
+#[repr(C, align(64))]
 pub struct Account {
     pub user_id: u32,
     pub collateral: i64,
