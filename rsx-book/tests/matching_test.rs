@@ -460,3 +460,170 @@ fn validation_failure_emits_order_failed() {
         } if *reason == FAIL_VALIDATION
     )));
 }
+
+// ── Smooshed-tick tests ─────────────────────────
+
+/// Two orders at different raw prices map to same tick
+/// (compression > 1). Both should coexist in the level.
+#[test]
+fn smooshed_level_orders_with_different_prices() {
+    // Use config where tick_size=1, mid=50_000.
+    // Zone 1 has compression=10, so prices 52_500 and
+    // 52_509 map to the same slot.
+    let mut book = test_book();
+    let h1 = book.insert_resting(
+        52_500, 100, Side::Sell, 0, 1, false, 0,
+    );
+    let h2 = book.insert_resting(
+        52_509, 100, Side::Sell, 0, 2, false, 0,
+    );
+    let t1 = book.orders.get(h1).tick_index;
+    let t2 = book.orders.get(h2).tick_index;
+    assert_eq!(t1, t2); // same tick slot
+    let level = &book.active_levels[t1 as usize];
+    assert_eq!(level.order_count, 2);
+}
+
+/// Buy aggressor at 52_500 should skip a resting sell
+/// at 52_509 (within same smooshed tick) because maker
+/// price > limit.
+#[test]
+fn smooshed_match_skips_orders_outside_limit() {
+    let mut book = test_book();
+    // Resting sell at 52_509 in zone 1 (compression=10)
+    book.insert_resting(
+        52_509, 100, Side::Sell, 0, 1, false, 0,
+    );
+    // Buy at 52_500 -- can't afford 52_509
+    let mut order = incoming(
+        52_500, 100, Side::Buy, TimeInForce::GTC, 2,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let fills: Vec<_> = book
+        .events()
+        .iter()
+        .filter(|e| matches!(e, Event::Fill { .. }))
+        .collect();
+    assert_eq!(fills.len(), 0);
+}
+
+/// Buy at 52_509 should fill the resting sell at
+/// 52_500 (maker price <= limit).
+#[test]
+fn smooshed_match_fills_qualifying_orders_only() {
+    let mut book = test_book();
+    book.insert_resting(
+        52_500, 50, Side::Sell, 0, 1, false, 0,
+    );
+    book.insert_resting(
+        52_509, 50, Side::Sell, 0, 2, false, 0,
+    );
+    // Buy at 52_505: fills 52_500 maker, skips 52_509
+    let mut order = incoming(
+        52_505, 100, Side::Buy, TimeInForce::GTC, 3,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let fills: Vec<_> = book
+        .events()
+        .iter()
+        .filter(|e| matches!(e, Event::Fill { .. }))
+        .collect();
+    assert_eq!(fills.len(), 1);
+}
+
+/// Within a smooshed tick, FIFO order is preserved.
+#[test]
+fn smooshed_match_preserves_time_priority() {
+    let mut book = test_book();
+    let h1 = book.insert_resting(
+        52_500, 50, Side::Sell, 0, 1, false, 0,
+    );
+    let _h2 = book.insert_resting(
+        52_501, 50, Side::Sell, 0, 2, false, 0,
+    );
+    // Both at same tick. Buy enough for one fill.
+    let mut order = incoming(
+        52_501, 50, Side::Buy, TimeInForce::GTC, 3,
+    );
+    process_new_order(&mut book, &mut order);
+
+    // First fill should be h1 (earlier insert)
+    if let Event::Fill { maker_handle, .. } =
+        book.events()[0]
+    {
+        assert_eq!(maker_handle, h1);
+    } else {
+        panic!("expected fill");
+    }
+}
+
+// ── Event buffer tests ──────────────────────────
+
+/// Multiple partial fills against one maker produce
+/// multiple Fill events.
+#[test]
+fn event_buffer_multiple_fills_single_order() {
+    let mut book = test_book();
+    // Two sells at different levels
+    book.insert_resting(
+        50_100, 50, Side::Sell, 0, 1, false, 0,
+    );
+    book.insert_resting(
+        50_101, 50, Side::Sell, 0, 2, false, 0,
+    );
+    let mut order = incoming(
+        50_101, 100, Side::Buy, TimeInForce::GTC, 3,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let fills: Vec<_> = book
+        .events()
+        .iter()
+        .filter(|e| matches!(e, Event::Fill { .. }))
+        .collect();
+    assert_eq!(fills.len(), 2);
+}
+
+/// For each maker, its Fill event precedes its OrderDone.
+#[test]
+fn event_buffer_fills_before_done() {
+    let mut book = test_book();
+    let h1 = book.insert_resting(
+        50_100, 50, Side::Sell, 0, 1, false, 0,
+    );
+    let h2 = book.insert_resting(
+        50_101, 50, Side::Sell, 0, 2, false, 0,
+    );
+    let mut order = incoming(
+        50_101, 100, Side::Buy, TimeInForce::GTC, 3,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let events = book.events();
+    // For each maker handle, fill comes before done
+    for handle in [h1, h2] {
+        let fill_pos = events
+            .iter()
+            .position(|e| matches!(
+                e,
+                Event::Fill { maker_handle, .. }
+                    if *maker_handle == handle
+            ))
+            .unwrap();
+        let done_pos = events
+            .iter()
+            .position(|e| matches!(
+                e,
+                Event::OrderDone { handle: h, .. }
+                    if *h == handle
+            ))
+            .unwrap();
+        assert!(
+            fill_pos < done_pos,
+            "fill at {} should precede done at {} for handle {}",
+            fill_pos, done_pos, handle,
+        );
+    }
+}

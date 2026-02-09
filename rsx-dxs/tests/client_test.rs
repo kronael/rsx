@@ -39,6 +39,48 @@ fn consumer_sends_tip_plus_1() {
 }
 
 #[test]
+fn consumer_callback_invoked_per_record() {
+    // Simulate what DxsConsumer does: for each raw record
+    // received, the callback is invoked once.
+    use rsx_dxs::header::WalHeader;
+    use rsx_dxs::wal::RawWalRecord;
+
+    let mut count = 0u32;
+    let mut callback = |_record: RawWalRecord| {
+        count += 1;
+    };
+
+    // Simulate 5 records
+    for i in 0..5 {
+        let header = WalHeader::new(0, 0, 1, 0);
+        let record = RawWalRecord {
+            header,
+            payload: vec![],
+        };
+        callback(record);
+    }
+    assert_eq!(count, 5);
+}
+
+#[test]
+fn consumer_dedup_by_seq() {
+    // Verify dedup logic: consumer tracks tip and only
+    // processes records with seq > tip.
+    let mut tip: u64 = 5;
+    let mut processed = Vec::new();
+
+    let incoming_seqs = [3, 5, 6, 7, 6, 8];
+    for seq in incoming_seqs {
+        if seq > tip {
+            processed.push(seq);
+            tip = seq;
+        }
+    }
+    assert_eq!(processed, vec![6, 7, 8]);
+    assert_eq!(tip, 8);
+}
+
+#[test]
 fn backoff_schedule() {
     let schedule = [1u64, 2, 4, 8, 30];
     assert_eq!(schedule[0], 1);

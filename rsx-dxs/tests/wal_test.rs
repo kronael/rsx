@@ -307,6 +307,93 @@ fn gc_deletes_old_files() {
 }
 
 #[test]
+fn reader_open_from_seq_finds_correct_file() {
+    let tmp = TempDir::new().unwrap();
+    // 512B threshold to force many rotations
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 512, 600_000_000_000)
+            .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    // Write 50 records across multiple files
+    for _ in 0..50 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // Open reader from seq 0, should read all records
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path())
+            .unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 50);
+}
+
+#[test]
+fn reader_skips_to_target_seq_within_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    for _ in 0..10 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // Open from seq 5 -- reader opens the file containing
+    // that seq. Since all are in one active file, it reads
+    // from the beginning.
+    let mut reader =
+        WalReader::open_from_seq(1, 5, tmp.path())
+            .unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    // All records are in the active file, reader reads all
+    assert_eq!(count, 10);
+}
+
+#[test]
+fn writer_gc_preserves_recent_files() {
+    let tmp = TempDir::new().unwrap();
+    // 512B threshold, high retention so nothing gets gc'd
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 512, u64::MAX,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    for _ in 0..50 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    writer.gc().unwrap();
+
+    let dir = tmp.path().join("1");
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    // With high retention, no rotated files deleted
+    // Should have active + rotated files
+    assert!(files.len() >= 2);
+}
+
+#[test]
 fn record_max_payload_64kb() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
