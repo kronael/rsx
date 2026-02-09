@@ -42,7 +42,7 @@ Example: Matching Engine process
 |                   | tile     |                  |
 |                   +---------+                  |
 +===============================================+
-         QUIC ↕              DXS ↕
+         QUIC ↕              gRPC ↕
      Risk Engine          Recorder, Mark
 ```
 
@@ -71,7 +71,7 @@ gateway handling 100K+ connections, that's too many syscalls.
 io_uring batches submissions and completions in shared
 kernel/userspace rings.
 
-DxsReplay uses quinn (QUIC) -- it's a cold path (external
+DxsReplay uses tonic gRPC -- it's a cold path (external
 consumers, not hot-path matching). Raw fixed records minimize
 serialization overhead.
 
@@ -121,14 +121,14 @@ buffer. Flushes to disk with fsync every 10ms. Rotates at
 
 No network I/O.
 
-### DxsReplay Tile (quinn/tokio)
+### DxsReplay Tile (tonic/tokio)
 
 QUIC server (quinn). Reads WAL files, streams raw fixed
 records to external consumers (recorder, mark aggregator,
 or risk during recovery replay). Multiple consumers get
 independent streams.
 
-quinn is ideal for DXS: this is a cold path (external
+gRPC is acceptable for DXS: this is a cold path (external
 consumers, not hot-path matching). The interface is
 "stream records from seq N" and raw fixed records minimize
 serialization overhead.
@@ -151,7 +151,7 @@ positions). sync_commit=on.
 
 ### rsx-recorder (separate binary)
 
-Connects to rsx-engine's DxsReplay QUIC endpoint (quinn).
+Connects to rsx-engine's DxsReplay gRPC endpoint (tonic).
 Writes daily archive files. Same WAL format, infinite
 retention. Runs on same or different host.
 
@@ -193,5 +193,5 @@ Replace monoio (kernel io_uring) with userspace networking:
 | Risk pre-trade | <5us | margin check |
 | Risk post-trade | <1us | apply fill |
 | End-to-end (GW→ME→GW) | <50us | same machine |
-| DxsReplay stream | 10-100us | QUIC, external |
+| DxsReplay stream | 10-100us | gRPC, external |
 | Gateway WS | <50us | client-facing |

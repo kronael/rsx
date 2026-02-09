@@ -36,13 +36,13 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
 ```
 
 Transports:
-- **Between processes:** quinn QUIC with raw WAL wire format
+- **Between processes:** QUIC for hot path; DXS replay/streaming uses gRPC (tonic) on the cold path
   (Gateway↔Risk↔ME). One multiplexed stream per link.
 - **Within each process:** tiles (pinned threads) + SPSC
   rings (rtrb, 50-170ns). Every process uses tiles for
   its internal concerns (network I/O, logic, WAL, etc).
 - **DXS:** WAL streaming to consumers (recorder, mark).
-  Transport is quinn QUIC (cold path, raw fixed records).
+  Transport is gRPC (tonic) over HTTP/2 on the cold path.
 
 See `TILES.md` for tile pattern, `NETWORK.md` for process
 topology.
@@ -140,7 +140,7 @@ Latency targets (same machine, SPSC):
         |
   +-----v------+     +------------------+
   | DxsReplay  |---->| Risk (consumer)  |
-  | QUIC server|     | replay tips+1    |
+  | gRPC server|     | replay tips+1    |
   +-----+------+     +------------------+
         |
   +-----v------+

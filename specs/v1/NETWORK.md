@@ -198,7 +198,7 @@ Gateway3 ────┘
 - No v2 planned (see FUTURE.md)
 
 **Replication transport:** ME and Risk replicas receive event
-streams via DXS QUIC streaming (same as DXS replay, see DXS.md
+streams via DXS gRPC streaming (same as DXS replay, see DXS.md
 section 5). No special replication protocol — replicas are
 DXS consumers with the same replay/live-tail mechanism used
 by all consumers.

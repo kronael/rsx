@@ -9,7 +9,7 @@ Spec-first perpetuals exchange. All specs in `specs/v1/`.
 - Between processes: QUIC + WAL wire format (quinn)
 - Within each process: tile architecture (pinned threads
   + SPSC rings for intra-process communication)
-- DXS: WAL streaming to consumers (quinn QUIC)
+- DXS: WAL streaming to consumers (tonic gRPC)
 - Hot path I/O: monoio (io_uring), not tokio (epoll)
 - Later: DPDK/AF_XDP swaps I/O layer, same interfaces
 - Target: <50us GW→ME→GW, <500ns ME match
@@ -150,7 +150,7 @@ for notional = price * qty at risk boundary.
 - **Later:** userspace networking (DPDK, AF_XDP) swaps the
   I/O layer inside the same tile. No changes to SPSC rings
   or ME.
-- **DXS:** quinn QUIC (tokio) streaming raw WAL bytes.
+- **DXS:** tonic gRPC (tokio) streaming raw WAL bytes.
   Transport is impl detail of rsx-dxs (stream from seq N).
 - Reference impl: `/home/onvos/app/trader/monoio-client/`
   - `ws_monoio.rs`: WebSocket client/server on monoio

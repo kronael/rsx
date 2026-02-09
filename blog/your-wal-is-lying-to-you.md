@@ -119,10 +119,10 @@ We have one:
 
 ```
 Matching Engine → WalWriter → disk (fsync)
-                           ↘ DxsReplay → consumers (QUIC stream)
+                           ↘ DxsReplay → consumers (gRPC stream)
 ```
 
-The WAL file IS the stream. Consumers connect to a QUIC service that reads
+The WAL file IS the stream. Consumers connect to a gRPC service that reads
 the same WAL files and streams them. Historical replay? Read old files.
 Live tail? Wait for flush notification, read new records.
 
@@ -139,7 +139,7 @@ live mode—waiting for flush notifications and streaming new records as
 they arrive.
 
 No Kafka. No ZooKeeper. No broker. Producer writes to disk. Consumer reads
-from disk (or from the network, via QUIC). That's it.
+from disk (or from the network, via gRPC). That's it.
 
 ## Backpressure Means Stalling The Matching Engine
 
@@ -233,7 +233,7 @@ tip. Simple, boring, correct.
 
 ## Why Tokio Is Temporary
 
-We use quinn (tokio) for the DxsReplay QUIC service. This is wrong.
+We use tonic gRPC (tokio) for the DxsReplay cold-path service.
 
 Tokio is epoll-based. epoll means syscalls per I/O operation. For a
 streaming service pushing 100K+ records/sec to multiple consumers, that's a
@@ -241,7 +241,7 @@ lot of syscalls.
 
 The plan:
 
-1. **Now:** quinn/tokio. It works. Ship it.
+1. **Now:** tonic/tokio. It works. Ship it.
 2. **Next:** monoio with io_uring. Zero-copy I/O, batched submissions,
    kernel does the work.
 3. **Later:** userspace networking. NIC writes directly to ring buffers.
