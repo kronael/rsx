@@ -1,0 +1,15 @@
+syntax = "proto3";
+package dxs;
+
+service DxsReplay {
+  rpc Stream(ReplayRequest) returns (stream WalBytes);
+}
+
+message ReplayRequest {
+  uint32 stream_id = 1;
+  uint64 from_seq = 2;
+}
+
+message WalBytes {
+  bytes record = 1;
+}

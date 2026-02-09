@@ -1,0 +1,5 @@
+[recorder]
+stream_id = 1
+producer_addr = "127.0.0.1:9100"
+archive_dir = "./archive"
+tip_file = "./archive/tip"
