@@ -231,6 +231,55 @@ impl Orderbook {
         true
     }
 
+    /// Modify order price: cancel at old price, reinsert
+    /// at new price. Returns new slab handle. Loses time
+    /// priority (new order at back of queue).
+    pub fn modify_order_price(
+        &mut self,
+        handle: u32,
+        new_price: i64,
+        side: Side,
+        tif: u8,
+        user_id: u32,
+        reduce_only: bool,
+        timestamp_ns: u64,
+    ) -> u32 {
+        let qty = self.orders.get(handle).remaining_qty;
+        self.cancel_order(handle);
+        self.insert_resting(
+            new_price, qty, side, tif, user_id,
+            reduce_only, timestamp_ns,
+        )
+    }
+
+    /// Reduce remaining qty in-place. Preserves time
+    /// priority. If new_qty == 0, cancels the order.
+    /// Returns true if order was active.
+    pub fn modify_order_qty_down(
+        &mut self,
+        handle: u32,
+        new_qty: i64,
+    ) -> bool {
+        let slot = self.orders.get(handle);
+        if !slot.is_active() {
+            return false;
+        }
+        if new_qty == 0 {
+            return self.cancel_order(handle);
+        }
+        let old_qty = slot.remaining_qty;
+        if new_qty >= old_qty {
+            return false; // not a reduction
+        }
+        let tick = slot.tick_index;
+        let diff = old_qty - new_qty;
+        self.orders.get_mut(handle).remaining_qty =
+            new_qty;
+        self.active_levels[tick as usize].total_qty -=
+            diff;
+        true
+    }
+
     pub fn scan_next_bid(&self, from: u32) -> u32 {
         if from == 0 || from == NONE {
             return NONE;
