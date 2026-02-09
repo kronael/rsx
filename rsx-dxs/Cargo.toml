@@ -13,7 +13,6 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 chrono = "0.4"
-rustc-hash = "1.1"
 tokio-stream = "0.1"
 
 [build-dependencies]

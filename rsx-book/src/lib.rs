@@ -8,10 +8,11 @@ pub mod book;
 pub mod matching;
 pub mod migration;
 
+pub use book::BookState;
 pub use book::Orderbook;
+pub use compression::CompressionMap;
 pub use event::Event;
+pub use level::PriceLevel;
 pub use order::OrderSlot;
 pub use slab::Slab;
-pub use compression::CompressionMap;
-pub use level::PriceLevel;
 pub use user::UserState;

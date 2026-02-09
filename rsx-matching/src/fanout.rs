@@ -11,16 +11,17 @@ fn push_spin(
     msg: EventMessage,
 ) {
     loop {
-        match prod.push(msg) {
-            Ok(()) => return,
-            Err(_) => {} // busy-spin
+        // busy-spin until push succeeds
+        if let Ok(()) = prod.push(msg) {
+            return;
         }
     }
 }
 
 /// Drain book event buffer and fan out to downstream
-/// SPSC rings per routing table:
+/// SPSC rings per routing table (CONSISTENCY.md section 1):
 ///   Fill       -> risk + gateway + mktdata
+///   BBO        -> risk
 ///   OrderDone  -> risk + gateway
 ///   OrderInserted -> mktdata
 ///   OrderCancelled -> gateway + mktdata
@@ -52,6 +53,9 @@ pub fn drain_and_fanout(
             }
             EventMessage::OrderFailed { .. } => {
                 push_spin(gw_prod, msg);
+            }
+            EventMessage::BBO { .. } => {
+                push_spin(risk_prod, msg);
             }
         }
     }

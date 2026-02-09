@@ -1,5 +1,7 @@
 use rsx_book::book::Orderbook;
 use rsx_types::NONE;
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 
@@ -133,8 +135,11 @@ fn modify_price_cancels_and_reinserts() {
     // h1 was freed and reused as h2 (slab reuse)
     // Just verify the new order has correct state
     assert!(book.orders.get(h2).is_active());
-    assert_eq!(book.orders.get(h2).price, 49_700);
-    assert_eq!(book.orders.get(h2).remaining_qty, 100);
+    assert_eq!(book.orders.get(h2).price, Price(49_700));
+    assert_eq!(
+        book.orders.get(h2).remaining_qty,
+        Qty(100)
+    );
     // Old tick level should have lost the order
     let old_tick =
         book.compression.price_to_index(49_900);
@@ -171,7 +176,7 @@ fn modify_qty_down_in_place() {
         49_900, 100, Side::Buy, 0, 1, false, 0,
     );
     assert!(book.modify_order_qty_down(h, 60));
-    assert_eq!(book.orders.get(h).remaining_qty, 60);
+    assert_eq!(book.orders.get(h).remaining_qty, Qty(60));
 }
 
 #[test]

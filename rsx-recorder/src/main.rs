@@ -24,7 +24,7 @@ struct RecorderState {
 
 impl RecorderState {
     fn new(
-        archive_dir: &PathBuf,
+        archive_dir: &std::path::Path,
         stream_id: u32,
     ) -> io::Result<Self> {
         let today = Utc::now().date_naive();
@@ -36,14 +36,13 @@ impl RecorderState {
         ));
         let file = OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(&path)?;
 
         info!("recording to {}", path.display());
 
         Ok(Self {
-            archive_dir: archive_dir.clone(),
+            archive_dir: archive_dir.to_path_buf(),
             stream_id,
             current_date: today,
             file,
@@ -69,7 +68,7 @@ impl RecorderState {
         self.record_count += 1;
 
         // flush every 1000 records
-        if self.record_count % 1000 == 0 {
+        if self.record_count.is_multiple_of(1000) {
             self.flush()?;
         }
 
@@ -98,7 +97,6 @@ impl RecorderState {
         ));
         self.file = OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(&path)?;
         self.current_date = new_date;

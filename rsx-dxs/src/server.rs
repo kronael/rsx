@@ -1,3 +1,32 @@
+// QUINN MIGRATION NOTES:
+// Current: tonic gRPC over HTTP/2 (tokio)
+// Target: quinn QUIC + WAL wire format
+//
+// Files to change:
+// - proto/dxs.proto: delete (no protobuf with quinn)
+// - build.rs: delete (no tonic-build)
+// - Cargo.toml: replace tonic/prost with quinn
+//
+// Surface area:
+// 1. DxsReplayService::serve(): Replace tonic::transport::Server
+//    with quinn::Endpoint::server(). Listen on UDP instead of TCP.
+// 2. stream() RPC: Replace tonic::Request/Response with quinn's
+//    bi-directional stream API. ReplayRequest becomes a fixed
+//    12-byte struct (u32 stream_id + u64 from_seq) sent as raw
+//    bytes. No protobuf encoding.
+// 3. Response streaming: Replace tokio_stream::wrappers with
+//    direct writes to quinn's SendStream. Each WalRecord is
+//    already raw bytes (header + payload), so just write directly.
+// 4. Live tail notify: Same tokio::sync::Notify (unchanged).
+// 5. Error handling: Replace tonic::Status with custom error
+//    codes sent as leading u8 in response.
+//
+// Wire format (unchanged):
+// - Request: [u32 stream_id][u64 from_seq] (12 bytes fixed)
+// - Response: stream of [WalHeader(16B)][payload(N bytes)]
+//
+// No gRPC overhead, no HTTP/2 framing. Pure WAL bytes over QUIC.
+
 use crate::proto::dxs_replay_server::DxsReplay;
 use crate::proto::dxs_replay_server::DxsReplayServer;
 use crate::proto::ReplayRequest;
@@ -143,8 +172,9 @@ impl DxsReplay for DxsReplayService {
                     .unwrap_or_default()
                     .as_nanos() as u64,
                 stream_id,
+                _pad0: 0,
                 live_seq: last_seq,
-                _pad1: [0; 36],
+                _pad1: [0; 40],
             };
             let payload = unsafe {
                 std::slice::from_raw_parts(

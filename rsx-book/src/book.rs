@@ -1,4 +1,6 @@
 use rsx_types::NONE;
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rustc_hash::FxHashMap;
@@ -27,7 +29,7 @@ pub struct Orderbook {
     pub state: BookState,
     pub config: SymbolConfig,
     pub sequence: u64,
-    pub event_buf: Vec<Event>,
+    pub event_buf: [Event; MAX_EVENTS],
     pub event_len: u32,
     // User position tracking
     pub user_states: Vec<UserState>,
@@ -54,9 +56,6 @@ impl Orderbook {
             vec![PriceLevel::default(); total];
         let staging_levels =
             vec![PriceLevel::default(); total];
-        let mut event_buf =
-            Vec::with_capacity(MAX_EVENTS);
-        event_buf.resize(MAX_EVENTS, Event::default());
         Self {
             active_levels,
             staging_levels,
@@ -67,7 +66,7 @@ impl Orderbook {
             state: BookState::Normal,
             config,
             sequence: 0,
-            event_buf,
+            event_buf: [Event::default(); MAX_EVENTS],
             event_len: 0,
             user_states: Vec::with_capacity(256),
             user_map: FxHashMap::default(),
@@ -95,6 +94,7 @@ impl Orderbook {
     }
 
     /// Insert a resting order into the book.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_resting(
         &mut self,
         price: i64,
@@ -109,9 +109,9 @@ impl Orderbook {
             self.compression.price_to_index(price);
         let handle = self.orders.alloc();
         let slot = self.orders.get_mut(handle);
-        slot.price = price;
-        slot.remaining_qty = qty;
-        slot.original_qty = qty;
+        slot.price = Price(price);
+        slot.remaining_qty = Qty(qty);
+        slot.original_qty = Qty(qty);
         slot.side = side as u8;
         slot.tif = tif;
         slot.flags = 1; // active
@@ -181,7 +181,7 @@ impl Orderbook {
         }
         let tick = slot.tick_index;
         let side = slot.side;
-        let qty = slot.remaining_qty;
+        let qty = slot.remaining_qty.0;
         let prev = slot.prev;
         let next = slot.next;
         let user_id = slot.user_id;
@@ -234,6 +234,7 @@ impl Orderbook {
     /// Modify order price: cancel at old price, reinsert
     /// at new price. Returns new slab handle. Loses time
     /// priority (new order at back of queue).
+    #[allow(clippy::too_many_arguments)]
     pub fn modify_order_price(
         &mut self,
         handle: u32,
@@ -244,7 +245,7 @@ impl Orderbook {
         reduce_only: bool,
         timestamp_ns: u64,
     ) -> u32 {
-        let qty = self.orders.get(handle).remaining_qty;
+        let qty = self.orders.get(handle).remaining_qty.0;
         self.cancel_order(handle);
         self.insert_resting(
             new_price, qty, side, tif, user_id,
@@ -267,14 +268,14 @@ impl Orderbook {
         if new_qty == 0 {
             return self.cancel_order(handle);
         }
-        let old_qty = slot.remaining_qty;
+        let old_qty = slot.remaining_qty.0;
         if new_qty >= old_qty {
             return false; // not a reduction
         }
         let tick = slot.tick_index;
         let diff = old_qty - new_qty;
         self.orders.get_mut(handle).remaining_qty =
-            new_qty;
+            Qty(new_qty);
         self.active_levels[tick as usize].total_qty -=
             diff;
         true

@@ -116,3 +116,33 @@ fn validate_order_rejects_negative_qty() {
 fn none_sentinel_is_u32_max() {
     assert_eq!(NONE, u32::MAX);
 }
+
+#[test]
+fn final_status_repr_values() {
+    assert_eq!(FinalStatus::Filled as u8, 0);
+    assert_eq!(FinalStatus::Resting as u8, 1);
+    assert_eq!(FinalStatus::Cancelled as u8, 2);
+}
+
+#[test]
+fn order_status_repr_values() {
+    assert_eq!(OrderStatus::Filled as u8, 0);
+    assert_eq!(OrderStatus::Resting as u8, 1);
+    assert_eq!(OrderStatus::Cancelled as u8, 2);
+    assert_eq!(OrderStatus::Failed as u8, 3);
+}
+
+#[test]
+fn failure_reason_repr_values() {
+    assert_eq!(FailureReason::InvalidTickSize as u8, 0);
+    assert_eq!(FailureReason::InvalidLotSize as u8, 1);
+    assert_eq!(FailureReason::SymbolNotFound as u8, 2);
+    assert_eq!(FailureReason::DuplicateOrderId as u8, 3);
+    assert_eq!(FailureReason::InsufficientMargin as u8, 4);
+    assert_eq!(FailureReason::Overloaded as u8, 5);
+    assert_eq!(FailureReason::InternalError as u8, 6);
+    assert_eq!(FailureReason::ReduceOnlyViolation as u8, 7);
+    assert_eq!(FailureReason::NetworkError as u8, 8);
+    assert_eq!(FailureReason::RateLimit as u8, 9);
+    assert_eq!(FailureReason::Timeout as u8, 10);
+}

@@ -395,3 +395,15 @@ fn check_order_reduce_only_bypasses_margin() {
         pm.check_order(&a, &[], &order, &marks, 10);
     assert_eq!(result, Ok(0));
 }
+
+#[test]
+fn check_order_liquidation_order_skips_margin_check() {
+    let pm = make_pm(1);
+    let a = Account::new(1, 0); // zero collateral
+    let marks = vec![100];
+    let mut order = make_order(1, 0, 100, 10, 0);
+    order.is_liquidation = true;
+    let result =
+        pm.check_order(&a, &[], &order, &marks, 10);
+    assert_eq!(result, Ok(0));
+}

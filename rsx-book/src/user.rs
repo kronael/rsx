@@ -49,6 +49,7 @@ pub fn get_or_assign_user(
     idx
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_positions_on_fill(
     user_states: &mut Vec<UserState>,
     user_map: &mut FxHashMap<u32, u16>,

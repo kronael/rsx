@@ -1049,7 +1049,7 @@ name = "rsx-book"
 version = "0.1.0"
 dependencies = [
  "rsx-types",
- "rustc-hash 2.1.1",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -1061,7 +1061,6 @@ dependencies = [
  "crc32fast",
  "criterion",
  "prost",
- "rustc-hash 1.1.0",
  "serde",
  "tempfile",
  "tokio",
@@ -1102,7 +1101,7 @@ name = "rsx-risk"
 version = "0.1.0"
 dependencies = [
  "rsx-types",
- "rustc-hash 2.1.1",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -1114,12 +1113,6 @@ name = "rtrb"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
-
-[[package]]
-name = "rustc-hash"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"

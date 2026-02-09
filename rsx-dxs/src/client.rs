@@ -1,3 +1,24 @@
+// QUINN MIGRATION NOTES:
+// Current: tonic gRPC client (tokio)
+// Target: quinn QUIC client
+//
+// Surface area:
+// 1. DxsConsumer::connect_and_stream(): Replace
+//    DxsReplayClient::connect() with quinn::Endpoint::client().
+//    Open bi-directional stream via endpoint.connect().await?.
+//    open_bi().await?.
+// 2. Send request: Write fixed 12-byte struct directly to
+//    SendStream (u32 stream_id + u64 from_seq, little-endian).
+// 3. Receive response: Read from RecvStream in a loop. Parse
+//    WalHeader (16 bytes) then read payload of header.len bytes.
+//    No protobuf decoding.
+// 4. Backoff/reconnect: Same logic (unchanged).
+// 5. Tip persistence: Same logic (unchanged).
+//
+// Wire format (unchanged from current):
+// - Request: [u32 stream_id][u64 from_seq]
+// - Response: stream of [WalHeader][payload]
+
 use crate::proto::dxs_replay_client::DxsReplayClient;
 use crate::proto::ReplayRequest;
 use crate::wal::RawWalRecord;
@@ -160,7 +181,7 @@ fn load_tip(path: &Path) -> io::Result<u64> {
 fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
     // atomic write: write to temp, rename
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, &tip.to_le_bytes())?;
+    fs::write(&tmp, tip.to_le_bytes())?;
     fs::rename(&tmp, path)?;
     Ok(())
 }

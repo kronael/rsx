@@ -45,3 +45,12 @@ fn header_from_bytes_too_short_returns_none() {
 fn header_size_is_16() {
     assert_eq!(WalHeader::SIZE, 16);
 }
+
+#[test]
+fn wal_header_crc32_matches_payload() {
+    use rsx_dxs::compute_crc32;
+    let payload = b"test payload data";
+    let crc = compute_crc32(payload);
+    let header = WalHeader::new(1, payload.len() as u32, 42, crc);
+    assert_eq!(header.crc32, crc);
+}

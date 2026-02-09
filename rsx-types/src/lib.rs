@@ -29,6 +29,39 @@ pub enum TimeInForce {
     FOK = 2,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum FinalStatus {
+    Filled = 0,
+    Resting = 1,
+    Cancelled = 2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum OrderStatus {
+    Filled = 0,
+    Resting = 1,
+    Cancelled = 2,
+    Failed = 3,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum FailureReason {
+    InvalidTickSize = 0,
+    InvalidLotSize = 1,
+    SymbolNotFound = 2,
+    DuplicateOrderId = 3,
+    InsufficientMargin = 4,
+    Overloaded = 5,
+    InternalError = 6,
+    ReduceOnlyViolation = 7,
+    NetworkError = 8,
+    RateLimit = 9,
+    Timeout = 10,
+}
+
 /// Sentinel for "no index" in slab/level linked lists.
 pub const NONE: u32 = u32::MAX;
 

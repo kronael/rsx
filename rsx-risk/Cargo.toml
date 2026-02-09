@@ -5,4 +5,9 @@ edition = "2021"
 
 [dependencies]
 rsx-types = { path = "../rsx-types" }
+rsx-matching = { path = "../rsx-matching" }
 rustc-hash = "2"
+rtrb = "0.3"
+
+[dev-dependencies]
+rtrb = "0.3"

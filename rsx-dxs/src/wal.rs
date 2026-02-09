@@ -46,7 +46,6 @@ impl WalWriter {
         ));
         let file = OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(&active_path)?;
 
@@ -155,7 +154,6 @@ impl WalWriter {
 
         self.file = OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(&active_path)?;
         self.file_size = 0;
@@ -255,9 +253,7 @@ impl WalReader {
         files.sort_by_key(|f| f.first_seq);
 
         // start from first file if target_seq is 0
-        let file_idx = if files.is_empty() {
-            0
-        } else if target_seq == 0 {
+        let file_idx = if files.is_empty() || target_seq == 0 {
             0
         } else {
             // find file containing target_seq
@@ -294,6 +290,7 @@ impl WalReader {
     }
 
     /// Read next record. Returns None at EOF.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(
         &mut self,
     ) -> io::Result<Option<RawWalRecord>> {

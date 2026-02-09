@@ -57,6 +57,10 @@ impl<T: SlabItem + Default> Slab<T> {
         self.bump_next
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn capacity(&self) -> u32 {
         self.slots.len() as u32
     }
