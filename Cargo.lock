@@ -1098,6 +1098,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsx-risk"
+version = "0.1.0"
+dependencies = [
+ "rsx-types",
+ "rustc-hash 2.1.1",
+]
+
+[[package]]
 name = "rsx-types"
 version = "0.1.0"
 

@@ -1,0 +1,8 @@
+[package]
+name = "rsx-risk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rsx-types = { path = "../rsx-types" }
+rustc-hash = "2"
