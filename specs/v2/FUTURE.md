@@ -8,17 +8,17 @@ planned at this time.
 
 ### Raw Structs Over SMRB (Same Machine)
 
-**Current (v1):** gRPC + protobuf over UDS (~50-100us)
+**Current (v1):** quinn QUIC + WAL wire format (~10-50us)
 
 **Archived (not planned):**
 - Raw `#[repr(C)]` structs over SPSC ring buffer (reference SMRB.md)
-- Latency: ~50-200ns (500x faster than gRPC)
-- Removes: gRPC framing, protobuf serialization, kernel copy
+- Latency: ~50-200ns (50-250x faster than QUIC)
+- Removes: QUIC framing, kernel copy, network stack
 - Requires: same machine, same binary version
 
 **Trade-offs:**
-- **Faster:** 50-200ns vs 50-100us (reference blog/picking-a-wire-format.md)
-- **Simpler:** direct memory copy, no serialization
+- **Faster:** 50-200ns vs 10-50us (reference blog/picking-a-wire-format.md)
+- **Simpler:** direct memory copy, no network stack
 - **More fragile:** no schema evolution, version breaks everything
 - **Same-machine only:** cannot use across processes on different machines
 
@@ -48,17 +48,17 @@ let msg: &OrderMessage = bytemuck::from_bytes(bytes);
 
 **Reference:**
 - SMRB.md: SPSC ring buffer design
-- blog/picking-a-wire-format.md: Raw structs vs protobuf trade-offs
+- blog/picking-a-wire-format.md: Raw structs vs wire format trade-offs
 - blog/dont-yolo-structs-over-the-wire.md: Safety considerations
 
 ### FlatBuffers for External API
 
-**Current (v1):** gRPC + protobuf for all APIs
+**Current (v1):** JSON/MsgPack for WebSocket, WAL wire format for internal
 
 **Archived (not planned):**
 - Use FlatBuffers for external user-facing API (WebSocket, REST)
-- Keep gRPC + protobuf for internal Gateway ↔ Matching Engine
-- Or use raw structs for internal (if same machine)
+- Keep WAL wire format for internal Gateway ↔ Matching Engine
+- Or use raw structs over SMRB for internal (if same machine)
 
 **Why FlatBuffers for external:**
 - Schema evolution (add/remove fields without breaking clients)
@@ -74,7 +74,7 @@ let msg: &OrderMessage = bytemuck::from_bytes(bytes);
 ```
 External (WebSocket) ──FlatBuffers──→ Gateway
                                         │
-Internal (UDS)       ──Raw structs───→ Matching Engine
+Internal (QUIC)      ──WAL structs──→ Matching Engine
 ```
 
 **Reference:**
@@ -83,11 +83,11 @@ Internal (UDS)       ──Raw structs───→ Matching Engine
 
 ### TLS for Cross-Machine Communication
 
-**Current (v1):** gRPC over TCP, no TLS (private VLAN, trusted network)
+**Current (v1):** QUIC (TLS 1.3 built-in), private VLAN
 
 **Archived (not planned):**
-- Add TLS 1.3 encryption for Gateway ↔ Matching Engine
-- Performance cost: ~50-100us extra per message (reference SMRB.md)
+- Additional encryption layers beyond QUIC TLS
+- QUIC already includes TLS 1.3 (~1-5us per message)
 - Alternative: IPsec at network layer (no per-message cost)
 
 **When to use:**
@@ -106,18 +106,18 @@ Internal (UDS)       ──Raw structs───→ Matching Engine
 
 ### Userspace Networking (DPDK-Style)
 
-**Current (v1):** Kernel networking (TCP, gRPC, standard socket API)
+**Current (v1):** Kernel networking (io_uring, QUIC, standard socket API)
 
 **Archived (not planned):**
 - Userspace networking: bypass kernel, direct NIC access
-- Technologies: DPDK, io_uring, AF_XDP
+- Technologies: DPDK, AF_XDP
 - Latency: ~1-5us (kernel bypass, zero-copy)
 
 **Trade-offs:**
-- **Much faster:** ~1-5us vs ~50-100us (kernel bypass)
+- **Much faster:** ~1-5us vs ~10-50us (kernel bypass)
 - **Much harder:** custom network stack, NIC drivers, packet parsing
 - **Less portable:** hardware-specific, NIC compatibility
-- **Overkill for v1:** gRPC is fast enough (<100us)
+- **Overkill for v1:** io_uring + QUIC is fast enough (<50us)
 
 ## WAL Format
 
@@ -135,14 +135,14 @@ explicit little-endian fields, and versioned headers. No v2 work needed.
 
 ## Protocol Optimizations
 
-### Replace Protobuf with Raw Structs + Zerocopy
+### Replace QUIC with SMRB (Same Machine)
 
-**Current (v1):** Protobuf serialization (~50-200ns encode, ~20-100ns decode)
+**Current (v1):** QUIC wire format (~10-50us including network stack)
 
 **Archived (not planned):**
-- Raw `#[repr(C)]` structs with `zerocopy` crate
-- Zero serialization (direct memory copy)
-- Requires: same binary version, same endianness
+- Raw `#[repr(C)]` structs over SMRB (SPSC ring buffer)
+- Zero network overhead (direct memory copy)
+- Requires: same machine, same binary version
 
 **Implementation:**
 ```rust
@@ -174,8 +174,8 @@ let msg = OrderMessage::read_from(bytes).unwrap();
 ```
 
 **Benefits:**
-- Faster: ~5-10ns vs ~50-200ns (protobuf)
-- Smaller: 64 bytes vs ~80-100 bytes (protobuf varint overhead)
+- Faster: ~50-200ns vs ~10-50us (QUIC)
+- No network stack: direct memory copy, no syscalls
 - Cache-friendly: fixed size, aligned, no pointer chasing
 
 **Costs:**
@@ -220,7 +220,7 @@ Matching Engine ──ORDER_RESULT(fills=[10,20,30], status=FILLED)──→ Gat
 
 ### Pre-Allocated Message Pools (Zero Allocation on Hot Path)
 
-**Current (v1):** Allocate protobuf messages on heap (Vec, String)
+**Current (v1):** Fixed-size WAL structs, minimal heap allocation
 
 **Future (v2):**
 - Pre-allocate message pool (e.g., 10,000 message slots)

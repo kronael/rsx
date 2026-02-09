@@ -1,54 +1,63 @@
-# Critique (Factual, Tested)
+# Critique (Refined, Functionality-First)
 
-This critique only lists real, verified problems. I ran `cargo test` and
-`make test`, and cross-checked the claims in `README.md`, `CLAUDE.md`, and
-`PROGRESS.md` against the actual repo state.
+This critique reflects the current code and tests. I re-ran `cargo test` and
+re-checked README/CLAUDE/PROGRESS/spec claims against actual implementation.
 
-## Test Results
+## What Has Improved
 
-- `cargo test` passes, but it emits warnings in `rsx-dxs` about unused fields
-  (`WalReader.stream_id`, `WalReader.wal_dir`). This contradicts the
-  "refined (zero warnings)" claim in `PROGRESS.md`.
-- `make test` fails because there is no `Makefile` and no `test` target.
+- `rsx-matching` now has real building blocks: inbound wire types, fanout
+  routing to SPSC rings, and WAL write integration with tests.
+- There are now targeted tests for fanout routing, WAL integration, and
+  message conversion.
+- Config is now env-only in the implemented binaries.
 
-## README.md: Incorrect Or Stale Claims
+## Remaining Functional Deficiencies
 
-- **"No implementation code yet."** False. There are real crates with
-  code and tests: `rsx-book`, `rsx-types`, `rsx-dxs`, `rsx-recorder`,
-  and `rsx-matching`.
-- **Crate layout path.** README lists a `crates/` directory, but the crates
-  live at the repo root (`rsx-book/`, `rsx-dxs/`, etc). The documented layout
-  does not match the actual layout.
-- **Missing crates in layout.** README lists `rsx-risk`, `rsx-mark`,
-  `rsx-gateway`, and `rsx-marketdata`, but those directories do not exist.
-- **Build/test commands.** README lists `make test`, `make e2e`, etc, but
-  there is no `Makefile`, so those commands are not runnable.
-- **WAL recovery and SPSC performance claims.** README asserts properties like
-  "0ms fill loss" and "50-170ns latency" as design principles, but there is
-  no end-to-end system or benchmark in the repo to validate those claims yet.
-  That makes the statements aspirational, not verified.
+These are real gaps that block a usable pipeline.
 
-## CLAUDE.md: Incorrect Or Stale Claims
+- **No real ingress.** `rsx-matching` creates an ingress ring but never exposes
+  a producer or a network endpoint, so it still processes zero orders in
+  practice.
+- **No runnable end-to-end flow.** There is still no gateway, risk engine, or
+  market data service. The system cannot accept external orders or produce
+  user-visible fills outside of tests.
+- **No live DXS streaming in practice.** The matching engine writes WAL, but no
+  process runs `DxsReplayService` alongside it, and no plumbing connects the
+  producer to a running recorder or other consumers.
+- **Timestamps are not wired.** `rsx-matching` writes WAL records with `ts_ns = 0`
+  in the main loop, so WAL timestamps are invalid in practice.
+- **Order identifiers are placeholders.** WAL records use slab handles and
+  user IDs in `oid` fields because the book events don’t carry real order IDs.
+  This makes `oid` semantics incorrect for consumers.
 
-- **"No implementation code yet."** Same issue as README: there is already
-  code and tests in multiple crates.
-- **Crate layout path mismatch.** It documents `crates/` but the repo uses
-  top-level crate directories instead.
+## Verified Documentation Mismatches
 
-## PROGRESS.md: Incorrect Or Stale Claims
+These are concrete doc → code mismatches that remain.
 
-- **Commit count.** `PROGRESS.md` says 35 commits; `git rev-list --count HEAD`
-  reports 38.
-- **Test count.** `PROGRESS.md` claims 75 tests passing. Current `cargo test`
-  runs 114 tests across `rsx-book`, `rsx-dxs`, and `rsx-types`.
-- **Zero warnings.** Current build emits warnings (see Test Results).
-- **"Three crates shipped."** The workspace includes `rsx-dxs` and
-  `rsx-recorder` with active code/tests, so the summary is incomplete.
+- **DXS transport alignment:** `specs/v1/DXS.md` and `PROGRESS.md` call for
+  QUIC (quinn). Implementation being updated to match spec.
+- **Config mismatch in PROGRESS.** `PROGRESS.md` still says “Config: TOML with
+  serde defaults” and “Config from TOML” for recorder, but the implementation
+  is env-only.
+- **RSX matching status in PROGRESS.** It still calls `rsx-matching` a stub,
+  but there is now real WAL integration and fanout logic (even if ingress is
+  still missing).
+
+## Test Surface vs Reality
+
+- **Proven:** Orderbook correctness, WAL encoding/decoding, WAL read/write
+  behavior, fanout routing, and WAL integration are covered by tests.
+- **Not proven:** Any real multi-process or network flow (matching → DXS server
+  → recorder), risk checks, gateway ingress, or recovery across processes.
+
+## Minor Build Hygiene
+
+- `cargo test` emits a warning in `rsx-dxs/tests/client_test.rs` about an
+  unused loop variable. This is small but contradicts “warnings cleared.”
 
 ## Bottom Line
 
-The main problems are documentation drift and verifiable claim mismatches:
-README/CLAUDE/PROGRESS describe a different state than what is currently in
-the repo. The fixes are straightforward: update the docs to the actual crate
-layout, existing implementations, current test counts, and real build entry
-points.
+The core building blocks are now more integrated, but the system still doesn’t
+run end-to-end. The highest-value next step is to wire a minimal producer and
+consumer path (matching → DXS server → recorder) so the pipeline runs outside
+unit tests.

@@ -57,7 +57,7 @@ appropriate. Run on every PR.
   - Multi-fill sequences (large taker crosses multiple makers)
   - Out-of-order response handling (LIFO VecDeque)
 - Event fan-out verification (risk/gateway/mktdata get correct events)
-- ORDER_DONE precedes all fills (ref GRPC.md)
+- ORDER_DONE precedes all fills (ref MESSAGES.md)
 
 **Characteristics:**
 - Mocked data and transport where appropriate
@@ -110,7 +110,7 @@ PR or on-demand.
 **Characteristics:**
 - Testcontainers for services
 - Real SPSC rings
-- Real gRPC streams
+- Real quinn QUIC streams
 - Multi-process scenarios
 - Runs in variable time (typically 1-5min)
 - CI: every PR or on-demand
@@ -269,13 +269,13 @@ nightly or on-demand.
 - Flame graphs for bottleneck identification
 - Statistical distribution (p50/p99/p99.9)
 
-### WAL Benchmark (Fixed vs Protobuf Baseline)
+### WAL Benchmark (Fixed-Record Baseline)
 
-**Purpose:** Compare fixed-record WAL append vs protobuf serialization baseline.
+**Purpose:** Compare fixed-record WAL append vs baseline serialization.
 
 **Method:**
-- Fixed-record: write header+payload (no protobuf).
-- Protobuf baseline: serialize equivalent event to protobuf, length-prefix.
+- Fixed-record: write header+payload (raw #[repr(C)] records).
+- Baseline: serialize equivalent event with length-prefix.
 - Report records/sec, MB/sec, CPU%.
 
 ### Profiling & Metrics
@@ -387,7 +387,7 @@ Verified across all test levels:
 ### Integration Tests
 - `tests/` directory (separate from `src/`)
 - testcontainers-rs for services
-- Real gRPC streams
+- Real quinn QUIC streams
 - Run with `make integration`
 
 ### Benchmarks
@@ -480,7 +480,7 @@ points.
 | Risk engine | [TESTING-RISK.md](TESTING-RISK.md) | RISK.md |
 | Liquidator | [TESTING-LIQUIDATOR.md](TESTING-LIQUIDATOR.md) | LIQUIDATOR.md |
 | Mark price | [TESTING-MARK.md](TESTING-MARK.md) | MARK.md |
-| Gateway | [TESTING-GATEWAY.md](TESTING-GATEWAY.md) | NETWORK.md, WEBPROTO.md, RPC.md, GRPC.md |
+| Gateway | [TESTING-GATEWAY.md](TESTING-GATEWAY.md) | NETWORK.md, WEBPROTO.md, RPC.md, MESSAGES.md |
 | Market data | [TESTING-MARKETDATA.md](TESTING-MARKETDATA.md) | MARKETDATA.md |
 
 ---
@@ -488,7 +488,7 @@ points.
 ## References
 
 - [ORDERBOOK.md](ORDERBOOK.md) - Matching internals, data structures
-- [GRPC.md](GRPC.md) - gRPC proto, message definitions
+- [MESSAGES.md](MESSAGES.md) - QUIC + WAL wire format, message definitions
 - [CONSISTENCY.md](CONSISTENCY.md) - Event fan-out, ordering guarantees
 - [SMRB.md](../../notes/SMRB.md) - SPSC ring buffer design
 - [NETWORK.md](NETWORK.md) - System topology, component communication

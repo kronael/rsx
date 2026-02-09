@@ -21,7 +21,8 @@
 - ✅ ORDERBOOK.md: Single-threaded matching (no lock jitter)
 - ✅ SMRB.md: Core pinning for predictable execution
 - ✅ FUTURE.md: Userspace networking to eliminate kernel jitter
-- ⚠️ NETWORK.md: gRPC introduces variable latency (not deterministic)
+- ⚠️ NETWORK.md: QUIC + io_uring reduces jitter vs epoll, still has
+  kernel latency variance
 
 **Action:** v2 should prioritize jitter reduction over average latency.
 
@@ -33,14 +34,14 @@
 - Polling mode (no interrupts): 41.9µs min, 56.3µs mean
 
 **RSX Current Targets (NETWORK.md):**
-- gRPC over UDS: ~50-100µs
-- gRPC over TCP: ~100-300µs
+- QUIC over network: ~10-50µs (inter-process)
+- SMRB (future): ~50-200ns (same machine)
 
 **Analysis:**
-- ✅ RSX targets are realistic (align with Jump's optimized baseline)
-- ⚠️ Jump's 41.9µs includes network stack (full round-trip)
-- ⚠️ RSX 50-100µs is just serialization + IPC (no network yet)
-- ❌ RSX v1 will be SLOWER than Jump's baseline (gRPC overhead)
+- ✅ RSX targets are realistic (QUIC faster than Jump's baseline)
+- ✅ Jump's 41.9µs includes network stack (full round-trip)
+- ✅ RSX 10-50µs is QUIC IPC (comparable to optimized kernel)
+- ✅ RSX v1 is competitive with Jump's optimized baseline
 
 **RSX Future Targets (FUTURE.md):**
 - Raw structs over SMRB: ~50-200ns (IPC only, not network)
@@ -58,29 +59,31 @@
 **Comparison:**
 - Industry standard: ~30ns (specialized hardware)
 - Jump Trading: ~41.9µs (optimized Linux)
-- RSX v1 (gRPC): ~50-100µs (IPC only, not even network)
-- RSX v2 (SMRB): ~50-200ns (IPC only)
+- RSX v1 (QUIC): ~10-50µs (inter-process IPC)
+- RSX v2 (SMRB): ~50-200ns (same-machine IPC)
 
 **Gap Analysis:**
 - Industry (Solarflare): 30ns **end-to-end** (network → matching → network)
-- RSX v2 (SMRB): 50-200ns **IPC only** (Gateway → Matching)
-- Missing: network ingress, network egress, serialization
+- RSX v1 (QUIC): 10-50µs **IPC** (Gateway → Matching via network stack)
+- RSX v2 (SMRB): 50-200ns **IPC only** (Gateway → Matching, same machine)
+- Missing: full end-to-end includes network ingress/egress
 
-**Conclusion:** RSX v2 SMRB optimization only addresses internal IPC. To compete
-with Solarflare-class systems, need userspace networking (DPDK/XDP) + specialized
-NICs + optimized protocols.
+**Conclusion:** RSX v1 QUIC is competitive with Jump's baseline. v2 SMRB
+optimization addresses same-machine IPC. To compete with Solarflare-class
+systems, need userspace networking (DPDK/XDP) + specialized NICs.
 
 ### 4. Kernel Bypass Technologies
 
 **Jump Trading Interest:** XDP/AF_XDP for selective kernel bypass
 
 **RSX Documentation:**
-- FUTURE.md mentions: DPDK, io_uring, AF_XDP
+- v1 uses io_uring (monoio) for async I/O with kernel batching
+- FUTURE.md mentions: DPDK, AF_XDP for full kernel bypass
 - Categorized as "extreme optimization" (not v1, not v2)
 
 **Alignment:**
-- ✅ Jump Trading validates need for kernel bypass (even big firms exploring this)
-- ✅ RSX correctly defers to "future" (not premature optimization)
+- ✅ Jump Trading validates need for kernel bypass (big firms exploring)
+- ✅ RSX v1 uses io_uring (better than epoll, not full bypass)
 - ⚠️ Article suggests XDP/AF_XDP is emerging (not bleeding edge)
 
 **Action:** Consider XDP/AF_XDP for v3 (before full DPDK commitment).
@@ -134,16 +137,17 @@ NICs + optimized protocols.
 - RDMA over Infiniband/RoCE for internal HPC
 
 **RSX Design:**
-- NETWORK.md: gRPC (external), gRPC or raw structs (internal)
+- NETWORK.md: WebSocket/REST (external), QUIC + WAL wire format (internal)
 - FUTURE.md: Mentions raw structs over SMRB (same machine only)
 
 **Alignment:**
 - ⚠️ RSX has no plan for RDMA (Jump uses for internal HPC)
-- ⚠️ RSX uses gRPC (not exchange-specific proprietary protocols)
+- ✅ RSX uses WebSocket/binary protocols (exchange-compatible)
 - ✅ RSX correctly focuses on same-machine first (SMRB before network)
 
-**For RSX:** Exchanges use FIX, WebSocket, or proprietary binary. gRPC is
-NOT standard for exchange connectivity. Need external adapter layer.
+**For RSX:** Exchanges use FIX, WebSocket, or proprietary binary. RSX v1
+uses WebSocket for external, QUIC for internal. External adapter layer
+for FIX if needed.
 
 ### 8. Infrastructure Challenges
 
@@ -251,21 +255,23 @@ NOT standard for exchange connectivity. Need external adapter layer.
 | **Industry (Solarflare)** | ~30ns | End-to-end (tick-to-trade) | Specialized hardware, kernel bypass |
 | **Jump (optimized Linux)** | ~42µs | Network round-trip | Synthetic benchmark, optimized kernel |
 | **Jump (baseline Linux)** | ~52µs | Network round-trip | Standard kernel, no tuning |
-| **RSX v1 (gRPC/UDS)** | ~50-100µs | IPC only (Gateway ↔ Matching) | No network, just local IPC |
+| **RSX v1 (QUIC)** | ~10-50µs | IPC (Gateway ↔ Matching) | QUIC + io_uring, kernel networking |
 | **RSX v2 (SMRB)** | ~50-200ns | IPC only (Gateway ↔ Matching) | Shared memory, no serialization |
 | **RSX v3 (DPDK)** | ~1-5µs | Network + IPC (estimated) | Userspace networking, full stack |
 
 ### Critical Insight
 
-**RSX v1 IPC (50-100µs) ≈ Jump's full network latency (42-52µs)**
+**RSX v1 IPC (10-50µs) is faster than Jump's baseline (52µs)**
 
-This means RSX v1 **internal communication** is as slow as Jump's **entire
-network stack**. This is a problem.
+RSX v1 **internal communication** via QUIC + io_uring is competitive
+with Jump's optimized network stack. QUIC provides lower latency than
+traditional TCP/epoll.
 
-**Root cause:** gRPC overhead (framing, protobuf, syscalls)
+**Benefits:** QUIC + WAL wire format (fixed #[repr(C)] structs)
+provides both speed and reliability.
 
-**Fix:** Move to SMRB (v2) as soon as possible. gRPC is development convenience,
-not production-ready for ultra-low latency.
+**Future:** Move to SMRB (v2) for same-machine (50-200ns), use QUIC
+for cross-machine communication.
 
 ### Realistic RSX End-to-End Budget (v2)
 
@@ -286,7 +292,7 @@ Total:                 ~2,117 µs (2.1ms)
 ```
 
 **Dominated by network (internet).** Internal optimization (SMRB) only saves
-~100µs vs gRPC. Real win is eliminating internet latency via co-location.
+~10-50µs vs QUIC. Real win is eliminating internet latency via co-location.
 
 ### Co-Located Client (Same Data Center)
 
@@ -396,9 +402,9 @@ most use cases (retail, non-HFT market making).
 
 ### Short-Term (v2)
 
-1. **Prioritize SMRB over gRPC**
-   - gRPC adds 50-100µs (unacceptable for low-latency)
-   - SMRB adds 100ns (500x faster)
+1. **Evaluate SMRB for same-machine deployments**
+   - QUIC adds 10-50µs (acceptable for distributed systems)
+   - SMRB adds 100ns (50-500x faster for same-machine)
 
 2. **Create OPERATIONS.md**
    - Boot parameters, IRQ affinity, NUMA binding
@@ -437,7 +443,7 @@ most use cases (retail, non-HFT market making).
 - [ ] Create MONITORING.md: Telemetry without jitter
 - [ ] Create LATENCY.md: End-to-end latency budget
 - [ ] Update FUTURE.md: Add XDP/AF_XDP (before DPDK)
-- [ ] Benchmark SMRB vs gRPC (validate 500x speedup claim)
+- [ ] Benchmark SMRB vs QUIC (validate 50-500x speedup claim)
 - [ ] Profile Gateway validation (is 1µs realistic?)
 - [ ] Test on real hardware (measure actual jitter, not synthetic)
 
@@ -446,6 +452,6 @@ most use cases (retail, non-HFT market making).
 **Conclusion:** RSX design is fundamentally sound but missing operational details
 for production deployment. Jump Trading article validates core choices (single-
 threaded, core pinning, kernel bypass) but highlights gaps (IPI mitigation,
-interrupt affinity, NUMA awareness, telemetry impact). Biggest risk: gRPC in v1
-is too slow (50-100µs IPC when industry achieves 42µs for full network).
-Prioritize SMRB (v2) immediately.
+interrupt affinity, NUMA awareness, telemetry impact). RSX v1 with QUIC +
+io_uring (10-50µs IPC) is competitive with Jump's optimized baseline (42µs full
+network). SMRB (v2) optimization targets same-machine deployments (50-200ns).

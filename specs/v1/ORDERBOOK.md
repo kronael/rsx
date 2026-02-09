@@ -436,7 +436,7 @@ subscribe to its event stream.
 - ME embeds DXS WalWriter ([DXS.md](DXS.md) section 3).
 - Append every order, cancel, and fill as DXS WalRecords.
 - WAL is per-symbol (`stream_id` = `symbol_id`), local disk.
-- Same protobuf bytes on disk and over the wire — no transformation.
+- Same raw bytes on disk and over the wire — no transformation.
 - DxsReplay server ([DXS.md](DXS.md) section 5) serves replay and
   live tail to risk engines and other consumers.
 

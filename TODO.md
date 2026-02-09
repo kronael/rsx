@@ -123,7 +123,8 @@ Matching engine
 
 receives user orsers and executes them
 
-receives an order on behalf of user fro the risk engine over grpc stream and matches it 
+receives an order on behalf of user from risk engine over QUIC stream
+and matches it 
 
 Matchign
 

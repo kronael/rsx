@@ -58,7 +58,7 @@ L2 depth, BBO, and trade derivation from these events.
 - Within a symbol: total order (single-threaded, monotonic `seq`)
 - Across symbols: no ordering (independent processes)
 - Across consumers: same FIFO order, different processing latency
-- Fills precede ORDER_DONE (ref GRPC.md)
+- Fills precede ORDER_DONE (ref MESSAGES.md)
 
 ## 3. Backpressure
 

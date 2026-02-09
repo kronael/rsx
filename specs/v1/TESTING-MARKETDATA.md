@@ -15,7 +15,7 @@ Binary: `rsx-marketdata`
 | MD1 | Shadow orderbook per symbol (shared rsx-book) | NETWORK.md §MARKETDATA |
 | MD2 | Derive BBO from shadow book | MARKETDATA.md |
 | MD3 | Derive L2 depth (snapshot + delta) from events | MARKETDATA.md |
-| MD4 | gRPC MarketData.Stream service | MARKETDATA.md §service |
+| MD4 | quinn QUIC MarketData.Stream service | MARKETDATA.md §service |
 | MD5 | Subscribe by symbol_id list + depth | MARKETDATA.md §subscribe |
 | MD6 | L2Snapshot sent on initial subscribe | MARKETDATA.md §transport |
 | MD7 | Deltas after snapshot, seq monotonic per symbol | MARKETDATA.md §transport |
@@ -28,13 +28,13 @@ Binary: `rsx-marketdata`
 | MD14 | Recovery via DXS replay from ME WAL | DXS.md §8 |
 | MD15 | WS JSON: BBO, B (snapshot), D (delta), S, X | WEBPROTO.md |
 | MD16 | Event routing: Fill + OrderInserted + Cancelled | CONSISTENCY.md §1 |
-| MD17 | gRPC schema mirrors WS JSON (B/D/BBO) | MARKETDATA.md §notes |
+| MD17 | QUIC schema mirrors WS JSON (B/D/BBO) | MARKETDATA.md §notes |
 | MD18 | BBO includes order count per side (bid_count, ask_count) | MARKETDATA.md §messages |
 | MD19 | Snapshot consistency: point-in-time best effort | MARKETDATA.md §transport |
 | MD20 | OrderDone NOT routed to market data | CONSISTENCY.md §1 table |
 | MD21 | MktData derives own BBO from shadow book (not ME BBO) | CONSISTENCY.md §1 |
 | MD22 | WS seq gap: u jumps >1 triggers re-subscribe | WEBPROTO.md §market data |
-| MD23 | `u` field is WS alias for gRPC `seq` | WEBPROTO.md §market data |
+| MD23 | `u` field is WS alias for QUIC `seq` | WEBPROTO.md §market data |
 | MD24 | Server sends B snapshot on subscribe before D deltas | WEBPROTO.md §market data |
 | MD25 | Trades derived from fill events | NETWORK.md §MARKETDATA |
 | MD26 | Subscribe depth parameter: 10, 25, 50 | MARKETDATA.md §subscribe |
@@ -141,7 +141,7 @@ bbo_event_not_routed_to_marketdata
 ws_bbo_frame_includes_u_seq_field
 ws_b_snapshot_includes_u_seq_field
 ws_d_delta_includes_u_seq_field
-ws_u_field_equals_grpc_seq
+ws_u_field_equals_quic_seq
 ws_seq_gap_detected_when_u_jumps
 ```
 
@@ -193,12 +193,12 @@ me_disconnect_shadow_book_stale
 me_reconnect_resumes_events
 me_restart_replay_from_wal
 
-// gRPC stream
-grpc_subscribe_by_symbol_id_list
-grpc_subscribe_with_depth_parameter
-grpc_send_snapshot_true_sends_snapshot_first
-grpc_send_snapshot_false_skips_snapshot
-grpc_mirrors_ws_json_schema
+// QUIC stream
+quic_subscribe_by_symbol_id_list
+quic_subscribe_with_depth_parameter
+quic_send_snapshot_true_sends_snapshot_first
+quic_send_snapshot_false_skips_snapshot
+quic_mirrors_ws_json_schema
 
 // trades
 fill_event_produces_trade_to_client
@@ -239,7 +239,7 @@ same machine, TESTING.md §6) and throughput requirements
   from matching engine (CONSISTENCY.md §1)
 - Connects as DXS consumer for ME WAL replay on startup
   (DXS.md §8)
-- Serves gRPC MarketData.Stream to external clients
+- Serves quinn QUIC MarketData.Stream to external clients
   (MARKETDATA.md §service)
 - Serves public WS endpoint with BBO/B/D frames
   (WEBPROTO.md §market data)
@@ -251,5 +251,5 @@ same machine, TESTING.md §6) and throughput requirements
   (CONSISTENCY.md §1 event routing table)
 - Derives own BBO from shadow book, not from ME BBO event
   (CONSISTENCY.md §1)
-- WS `u` field maps to gRPC `seq` for gap detection
+- WS `u` field maps to QUIC `seq` for gap detection
   (WEBPROTO.md §market data)

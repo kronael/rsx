@@ -1,6 +1,8 @@
 # WebSocket Wire Protocol (WS Overlay)
 
-Gateway exposes a compact WebSocket protocol and translates messages to gRPC for the risk engine. The goal is minimal parsing cost and small payloads.
+Gateway exposes a compact WebSocket protocol and translates
+messages to QUIC + WAL wire format for the risk engine. The
+goal is minimal parsing cost and small payloads.
 
 ## Frame Shape
 
@@ -56,7 +58,7 @@ ACK semantics:
 
 Auth is via WebSocket upgrade headers only (JWT in
 `Authorization` header). No in-band auth frame. Clients that
-cannot set upgrade headers must use the gRPC API instead.
+cannot set upgrade headers must use the QUIC API instead.
 Connections without valid auth in upgrade headers are rejected
 with HTTP 401 before WebSocket handshake completes.
 
@@ -174,19 +176,19 @@ bids `[[price, qty, count], ...]` sorted descending by price.
 The second array is asks `[[price, qty, count], ...]` sorted
 ascending by price.
 
-**WS <-> gRPC market data field mapping:**
+**WS <-> WAL record field mapping:**
 
-| WS Field | gRPC Field (MARKETDATA.md) |
-|----------|---------------------------|
-| BBO.sym | BboUpdate.symbol_id |
-| BBO.bp | BboUpdate.bid_px |
-| BBO.bq | BboUpdate.bid_qty |
-| BBO.bc | BboUpdate.bid_count |
-| BBO.ap | BboUpdate.ask_px |
-| BBO.aq | BboUpdate.ask_qty |
-| BBO.ac | BboUpdate.ask_count |
-| BBO.ts | BboUpdate.timestamp_ns |
-| BBO.u | BboUpdate.seq |
+| WS Field | WAL Record Field (MARKETDATA.md) |
+|----------|----------------------------------|
+| BBO.sym | BboRecord.symbol_id |
+| BBO.bp | BboRecord.bid_px |
+| BBO.bq | BboRecord.bid_qty |
+| BBO.bc | BboRecord.bid_count |
+| BBO.ap | BboRecord.ask_px |
+| BBO.aq | BboRecord.ask_qty |
+| BBO.ac | BboRecord.ask_count |
+| BBO.ts | BboRecord.timestamp_ns |
+| BBO.u | BboRecord.seq |
 | D.sym | L2Delta.symbol_id |
 | D.side | L2Delta.side |
 | D.p | L2Delta.price |
@@ -197,7 +199,7 @@ ascending by price.
 
 `u`: matching engine height (uint64, monotonic per symbol).
 Gap detection: if `u` jumps > 1, re-subscribe for snapshot.
-`u` is the WS alias for `seq` used in gRPC.
+`u` is the WS alias for `seq` used in WAL records.
 Server sends `B` snapshot on subscribe before any `D` deltas.
 
 ### Q: Liquidation Event (Private WS, see [LIQUIDATOR.md](LIQUIDATOR.md))
@@ -213,6 +215,9 @@ by user_id. Fire-and-forget delivery.
 
 ## Notes
 
-- Gateway multiplexes many users over a single gRPC stream to the risk engine.
-- Risk engine multiplexes orders over a single gRPC stream to each matching engine.
-- Backpressure is enforced at ingress. If the gateway buffer is full, it rejects new orders with OVERLOADED.
+- Gateway multiplexes many users over a single QUIC stream to
+  the risk engine.
+- Risk engine multiplexes orders over a single QUIC stream to
+  each matching engine.
+- Backpressure is enforced at ingress. If the gateway buffer
+  is full, it rejects new orders with OVERLOADED.

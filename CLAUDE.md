@@ -1,22 +1,36 @@
 # RSX Exchange
 
 Spec-first perpetuals exchange. All specs in `specs/v1/`.
-No implementation code yet -- this file guides future impl.
+
+## Architecture (see specs/v1/NETWORK.md, TILES.md)
+
+- Separate processes: Gateway, Risk, ME (per symbol),
+  Marketdata, Recorder, Mark
+- Between processes: QUIC + WAL wire format (quinn)
+- Within each process: tile architecture (pinned threads
+  + SPSC rings for intra-process communication)
+- DXS: WAL streaming to consumers (quinn QUIC)
+- Hot path I/O: monoio (io_uring), not tokio (epoll)
+- Later: DPDK/AF_XDP swaps I/O layer, same interfaces
+- Target: <50us GW→ME→GW, <500ns ME match
+- Zero heap on hot path, i64 fixed-point, no floats
 
 ## Crate Layout
 
 ```
-crates/
-  rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab, CompressionMap)
-  rsx-matching/   matching engine binary (one per symbol)
-  rsx-risk/       risk engine binary (one per user shard)
-  rsx-dxs/        WAL writer/reader, DxsConsumer, DxsReplay server
-  rsx-mark/       mark price aggregator (standalone service)
-  rsx-gateway/    WS overlay + gRPC passthrough
-  rsx-marketdata/ market data fan-out (shadow book, L2/BBO/trades)
-  rsx-recorder/   archival consumer (daily WAL files)
-  rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
+rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
+rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab, CompressionMap)
+rsx-matching/   ME tile logic (one instance per symbol)
+rsx-risk/       Risk tile logic (one per user shard)
+rsx-dxs/        WAL writer/reader, DxsConsumer, DxsReplay server
+rsx-gateway/    Gateway tile, WS ingress + QUIC to risk
+rsx-marketdata/ Marketdata tile, shadow book, L2/BBO/trades
+rsx-mark/       Mark price aggregator (separate process)
+rsx-recorder/   Archival DXS consumer (separate process)
 ```
+
+Each process is a separate binary. Crates are libraries
+linked into their respective process binaries.
 
 ## Implementation Philosophy
 
@@ -88,7 +102,7 @@ crates/
 - `make wal`: WAL correctness <10s
 - `make smoke`: deployed system <1min
 - `make perf`: Criterion benchmarks, nightly
-- TOML config as first CLI param, API keys as second
+- Config via env vars only (no TOML args)
 - Entrypoint always called `main`
 
 ## Testing
@@ -125,12 +139,19 @@ for notional = price * qty at risk boundary.
 
 ## Networking Stack
 
-- **Primary:** monoio with io_uring (zero-copy, kernel submission queues)
-- **NOT tokio** for network I/O (epoll slower than io_uring)
-- **Pluggable:** designed for future userspace networking (DPDK, AF_XDP)
-- **Tiles:** separate threads per network concern (see `specs/v1/TILES.md`)
-- Gateway WS + Market Data: monoio from day one
-- DXS gRPC: tonic (tokio) for prototype, migrate to monoio gRPC later
+- **Gateway + Market Data:** monoio with io_uring. These are
+  on the critical path (<50us end-to-end GW→ME→GW). Every
+  epoll syscall adds latency. io_uring batches submissions
+  in shared kernel/userspace rings -- fewer syscalls, lower
+  tail latency. Each tile is a dedicated pinned thread with
+  one SPSC downqueue (orders in) and one SPSC upqueue
+  (fills out). The I/O multiplexing inside the tile is the
+  only part that touches the network stack.
+- **Later:** userspace networking (DPDK, AF_XDP) swaps the
+  I/O layer inside the same tile. No changes to SPSC rings
+  or ME.
+- **DXS:** quinn QUIC (tokio) streaming raw WAL bytes.
+  Transport is impl detail of rsx-dxs (stream from seq N).
 - Reference impl: `/home/onvos/app/trader/monoio-client/`
   - `ws_monoio.rs`: WebSocket client/server on monoio
   - `web_client.rs`: HTTP client with monoio
@@ -154,7 +175,7 @@ for notional = price * qty at risk boundary.
 | Risk engine | RISK.md | TESTING-RISK.md |
 | Liquidator | LIQUIDATOR.md | TESTING-LIQUIDATOR.md |
 | Mark price | MARK.md | TESTING-MARK.md |
-| Gateway | NETWORK.md, WEBPROTO.md, RPC.md, GRPC.md | TESTING-GATEWAY.md |
+| Gateway | NETWORK.md, WEBPROTO.md, RPC.md, MESSAGES.md | TESTING-GATEWAY.md |
 | Market data | MARKETDATA.md | TESTING-MARKETDATA.md |
 | SPSC rings | notes/SMRB.md | TESTING-SMRB.md |
 

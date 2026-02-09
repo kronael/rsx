@@ -4,11 +4,14 @@
 
 ### Architecture & Communication
 
-- [NETWORK.md](specs/v1/NETWORK.md) - System topology: Gateway -> Risk -> Matching, scaling strategy, multiplexed gRPC streams
+- [NETWORK.md](specs/v1/NETWORK.md) - System topology: Gateway -> Risk ->
+  Matching, scaling strategy, multiplexed QUIC streams
 - [WEBPROTO.md](specs/v1/WEBPROTO.md) - WebSocket overlay: compact wire protocol for web clients
 - [RPC.md](specs/v1/RPC.md) - Async RPC: UUIDv7 tracking, LIFO VecDeque optimization, backpressure, error handling
-- [GRPC.md](specs/v1/GRPC.md) - gRPC proto: order states, message definitions, fill streaming, completion signals
-- [MARKETDATA.md](specs/v1/MARKETDATA.md) - Market data gRPC: BBO + L2 snapshot/delta schema
+- [MESSAGES.md](specs/v1/MESSAGES.md) - Message semantics: order states,
+  definitions, fill streaming, completion signals
+- [MARKETDATA.md](specs/v1/MARKETDATA.md) - Market data QUIC: BBO + L2
+  snapshot/delta schema
 - [CONSISTENCY.md](specs/v1/CONSISTENCY.md) - Event fan-out: SPSC delivery to risk/persistence/market data, ordering guarantees, failure handling
 - [WAL.md](specs/v1/WAL.md) - Shared WAL architecture: bounded loss windows, backpressure, replica sync
 - [ARCHIVE.md](specs/v1/ARCHIVE.md) - WAL offload + replay from flat files

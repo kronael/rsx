@@ -2,7 +2,7 @@
 
 Source specs: [ORDERBOOK.md](ORDERBOOK.md),
 [CONSISTENCY.md](CONSISTENCY.md), [RPC.md](RPC.md),
-[GRPC.md](GRPC.md)
+[MESSAGES.md](MESSAGES.md)
 
 Binary: `rsx-matching` (one process per symbol or symbol group)
 
@@ -16,11 +16,11 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M2 | GTC limit orders only in v1 | ORDERBOOK.md §5 |
 | M3 | Tick/lot validation before matching | ORDERBOOK.md §5 |
 | M4 | Reduce-only enforcement before matching | ORDERBOOK.md §5 |
-| M5 | UUIDv7 dedup via FxHashMap, 5min window | RPC.md, GRPC.md §7 |
+| M5 | UUIDv7 dedup via FxHashMap, 5min window | RPC.md, MESSAGES.md §7 |
 | M6 | Event fan-out to risk/gateway/mktdata SPSC | CONSISTENCY.md §1 |
 | M7 | push_spin on ring full (stall, no drop) | CONSISTENCY.md §3 |
-| M8 | Fills precede ORDER_DONE | GRPC.md §fills |
-| M9 | Exactly-one completion per order | GRPC.md §completion |
+| M8 | Fills precede ORDER_DONE | MESSAGES.md §fills |
+| M9 | Exactly-one completion per order | MESSAGES.md §completion |
 | M10 | Fill price = maker price | ORDERBOOK.md §5 |
 | M11 | BBO emitted after best bid/ask change | CONSISTENCY.md §1 |
 | M12 | WAL persistence via embedded WalWriter | ORDERBOOK.md §2.8 |

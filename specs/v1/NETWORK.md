@@ -13,9 +13,9 @@ External                Internal                        Execution
 Web Users (WS)
                   ↘
 Native Clients     ──→  Gateway (WS overlay)  ──→  Risk Engine  ──→  Matching Engine
-(gRPC)                 (monolithic process)        (monolithic)     (one per symbol)
+(WebSocket)            (monolithic process)        (monolithic)     (one per symbol)
                   ↗                                                       |
-Mobile Apps (gRPC)                                                   [SPSC events]
+Mobile Apps (WS)                                                     [SPSC events]
                                                                           |
                                                                      MARKETDATA
 Web Users (WS) ──────────────────────────────────────────────────→  (public WS)
@@ -24,7 +24,7 @@ Web Users (WS) ─────────────────────�
 ## Why This Topology
 
 **Gateway before Risk Engine:**
-- Gateway adapts web traffic to a compact WebSocket protocol
+- Gateway adapts web traffic to compact WebSocket protocol
 - Risk engine remains user-scoped (positions, balances, margin)
 - Separation keeps gateway lightweight and latency-focused
 - Risk engine stays isolated from external traffic and parsing
@@ -42,7 +42,7 @@ Web Users (WS) ─────────────────────�
 
 **Responsibilities:**
 - WebSocket overlay for web clients (see WEBPROTO.md)
-- gRPC passthrough for native clients
+- WebSocket for native clients
 - User authentication and session management
 - Rate limiting per user/IP
 - Ingress backpressure and overload rejection (cap 10k orders)
@@ -51,7 +51,7 @@ Web Users (WS) ─────────────────────�
 - Monolithic process
 - Async runtime (Tokio) for concurrent client sessions
 - One WebSocket connection per client app
-- Single multiplexed gRPC stream to Risk Engine
+- QUIC connection to Risk Engine (multiplexed streams)
 - Horizontal scaling: shard by user ID hash (load balancer routes by user_id)
 - No cross-instance coordination (each instance owns its users)
 
@@ -65,8 +65,8 @@ Web Users (WS) ─────────────────────�
 
 **Architecture:**
 - Monolithic process
-- Single multiplexed gRPC stream from Gateway
-- Single multiplexed gRPC stream to each Matching Engine
+- QUIC connection from Gateway (multiplexed streams)
+- QUIC connection to each Matching Engine (multiplexed streams)
 
 **Design Note:**
 Risk engine internals (margin models, position tracking, liquidation logic)
@@ -81,13 +81,13 @@ focuses on network topology and communication patterns.
 - Single-threaded matching (cache-friendly, O(1) operations)
 - Generates FILL events with balance/risk impact
 - Stateless regarding users (no position tracking, no margin checks)
-- Deduplicates orders via UUIDv7 tracking (reference RPC.md, GRPC.md)
+- Deduplicates orders via UUIDv7 tracking (reference RPC.md)
 
 **Architecture:**
 - Monolithic per symbol (NOT distributed across machines)
 - Single-threaded event loop (no locks, no mutexes)
 - Pre-allocated orderbook array (reference ORDERBOOK.md section 7)
-- Event emission to Risk via bidirectional gRPC stream
+- Event emission to Risk via QUIC streams
 
 **Scaling:**
 - Horizontal by symbol: one process per symbol or symbol group
@@ -107,7 +107,7 @@ focuses on network topology and communication patterns.
           users      users       users
           0-999      1000-1999   2000-2999
             ↓           ↓           ↓
-         [all matching engines accessible from all gateways]
+         [all matching engines accessible via QUIC from all gateways]
 ```
 
 **Why user sharding:**
@@ -158,27 +158,20 @@ Gateway3 ────┘
 - Session management via WebSocket connection ID
 - Protocol defined in WEBPROTO.md
 
-**gRPC (v1 implementation):**
-- TLS encrypted
-- gRPC streaming (bidirectional)
-- Authentication via gRPC metadata (JWT)
-- Native clients (desktop, mobile, trading bots)
-- Protocol defined in GRPC.md
-
 ### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
-- gRPC bidirectional streaming (v1, inter-process/network)
+- quinn QUIC with WAL wire format (v1, inter-process/network)
 - SPSC rings are used for *in-process* tile communication
-- WAL stores fixed-record payloads (no gRPC envelope)
-- One multiplexed stream Gateway ↔ Risk
-- One multiplexed stream Risk ↔ Matching Engine (per matcher)
+- WAL stores fixed-record payloads (raw #[repr(C)] structs)
+- QUIC connection Gateway ↔ Risk (multiplexed streams)
+- QUIC connection Risk ↔ Matching Engine (multiplexed streams, per matcher)
 
 **Connection lifecycle:**
-1. User opens WebSocket/gRPC connection to Gateway
+1. User opens WebSocket connection to Gateway
 2. User sends order for BTC-PERP
-3. Gateway forwards order over its single stream to Risk
-4. Risk validates and forwards order over its single stream to Matching Engine
+3. Gateway forwards order over QUIC to Risk
+4. Risk validates and forwards order over QUIC to Matching Engine
 5. Matching engine processes, sends FILL messages back to Risk
 6. Risk updates user positions, forwards fills to Gateway
 7. Gateway forwards fills to user
@@ -200,15 +193,15 @@ Gateway3 ────┘
 - Multiplexed by user_id and symbol (no per-user streams)
 - Closed only on process shutdown or reconnect
 
-**Transport options:**
-- v1: gRPC over TCP/UDS
+**Transport:**
+- v1: quinn QUIC with raw WAL wire format
 - No v2 planned (see FUTURE.md)
 
 **Replication transport:** ME and Risk replicas receive event
-streams via standard gRPC bidirectional streaming (same as
-DXS replay, see DXS.md section 5). No special replication
-protocol — replicas are DXS consumers with the same
-replay/live-tail mechanism used by all consumers.
+streams via DXS QUIC streaming (same as DXS replay, see DXS.md
+section 5). No special replication protocol — replicas are
+DXS consumers with the same replay/live-tail mechanism used
+by all consumers.
 
 ## Data Flow
 
@@ -244,7 +237,7 @@ User ──ORDER──→ Gateway
 ```
 
 See RPC.md for async request handling details.
-See GRPC.md for message format definitions.
+See MESSAGES.md for message semantics (transport is now QUIC).
 
 ### Fill Notification Flow
 
@@ -287,7 +280,7 @@ Risk checks happen BOTH:
 
 **Protocols:**
 - WebSocket (compact JSON, WEBPROTO.md)
-- gRPC (native clients)
+- QUIC (native clients, raw fixed records)
 
 **Security:**
 - TLS 1.3 encryption
@@ -302,16 +295,16 @@ Risk checks happen BOTH:
 ### Internal (Same Data Center)
 
 **Same machine:**
-- gRPC over UDS (Unix Domain Sockets)
-- No TLS (process isolation via OS)
-- Lowest latency (~50-100us for gRPC, reference UDS.md)
+- QUIC over localhost (quinn)
+- TLS 1.3 built into QUIC
+- Lowest latency (~50-100us, reference UDS.md)
 
 **Cross-machine (same private VLAN):**
-- gRPC over TCP
-- IPsec at the network layer (no per-message cost)
+- QUIC over UDP (quinn)
+- TLS 1.3 built into QUIC (no external IPsec)
 
 **Cross-machine (untrusted network):**
-- Not supported in v1 (internal IPsec required)
+- QUIC with mutual TLS (certificate validation)
 
 ## Performance Characteristics
 
@@ -320,21 +313,21 @@ Risk checks happen BOTH:
 **Latency:**
 - Internet → TLS handshake: ~50-200ms (initial)
 - JSON WebSocket message: ~1-10ms (after handshake)
-- gRPC web message: ~1-5ms (lower serialization overhead)
+- QUIC message: ~1-5ms (lower serialization overhead)
 
 **Bottleneck:**
 - Network latency (internet → data center)
-- TLS encryption/decryption (mitigated by connection reuse)
+- TLS encryption/decryption (mitigated by 0-RTT reconnect)
 
 ### Gateway → Risk → Matching Engine
 
-**Latency (same machine, gRPC over UDS):**
+**Latency (same machine, QUIC over localhost):**
 - ~50-100us per message (reference UDS.md)
-- Includes: gRPC frame, protobuf serialize, UDS write, kernel copy, protobuf deserialize
+- Includes: QUIC frame, fixed record memcpy, UDP, kernel copy
 
-**Latency (cross-machine, gRPC over TCP):**
+**Latency (cross-machine, QUIC over UDP):**
 - ~100-300us per message (reference SMRB.md)
-- Includes: gRPC frame, protobuf, TCP loopback, network switch
+- Includes: QUIC frame, fixed record, UDP, network switch
 
 **Future optimization:**
 - No v2 planned (see FUTURE.md)
@@ -347,14 +340,14 @@ Risk checks happen BOTH:
 ┌─────────────────────────────────────┐
 │         Machine 1                    │
 │                                      │
-│  Gateway ──UDS──→ Risk ──UDS──→ Matching BTC  │
+│  Gateway ──QUIC──→ Risk ──QUIC──→ Matching BTC  │
 │                      │                        │
-│                      └─────────UDS──→ Matching ETH  │
+│                      └─────────QUIC──→ Matching ETH  │
 └─────────────────────────────────────┘
 ```
 
 **Benefits:**
-- Lowest latency (UDS, no network)
+- Lowest latency (QUIC localhost, no network)
 - Simplest deployment (single binary, single config)
 
 **Limits:**
@@ -367,11 +360,11 @@ Risk checks happen BOTH:
 ┌──────────────────┐       ┌──────────────────┐
 │   Machine 1       │       │   Machine 2       │
 │                   │       │                   │
-│  Gateway1 ────────┼──TCP──┼──→ Risk ──TCP──→ Matching BTC   │
-│  Gateway2 ────────┼──TCP──┼──→ Risk ──TCP──→ Matching ETH   │
+│  Gateway1 ────────┼──QUIC─┼──→ Risk ──QUIC─→ Matching BTC   │
+│  Gateway2 ────────┼──QUIC─┼──→ Risk ──QUIC─→ Matching ETH   │
 └──────────────────┘       └──────────────────┘
        │                            │
-       └──────────TCP───────────────┘
+       └──────────QUIC──────────────┘
           (all gateways talk to risk; risk talks to all matchers)
 ```
 
@@ -493,7 +486,8 @@ converges to ready state as components come online.
 **Risk ↔ Matching Engine partition:**
 - Risk cannot send orders to matcher
 - Risk returns error to gateway
-- Mitigation: UUIDv7 deduplication in matching engine (reference GRPC.md)
+- Mitigation: UUIDv7 deduplication in matching engine
+  (reference MESSAGES.md for semantics)
 
 ### MARKETDATA (Public Market Data)
 
@@ -518,5 +512,5 @@ See [MARKETDATA.md](MARKETDATA.md) for full specification.
 - **SMRB.md**: Low-latency IPC options, SPSC ring buffer design
 - **UDS.md**: UDS vs shared memory comparison, latency numbers
 - **RPC.md**: Async request handling, pending order tracking
-- **GRPC.md**: Message format, gRPC service definitions
+- **MESSAGES.md**: Message semantics (transport is now QUIC)
 - **WEBPROTO.md**: WebSocket overlay and compact wire protocol

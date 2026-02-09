@@ -9,12 +9,12 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
                        External
                     +------------+
                     |  Web (WS)  |
-                    |  gRPC      |
+                    |  QUIC      |
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS overlay + gRPC passthrough
-                    |  (Tokio)   |  auth, rate limit, ingress bp
+                    |  Gateway   |  WS overlay + QUIC passthrough
+                    | (monoio)   |  auth, rate limit, ingress bp
                     +-----+------+
                           | SPSC
                     +-----v------+     SPSC    +---------------+
@@ -23,7 +23,7 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
                     | (1 shard)  |  SPSC fills +-------+-------+
                     +--+---+--+-+              |       |
                        |   |  |          +-----+  +----+-----+
-                 gRPC  |   |  | SPSC     |WAL     |SPSC      |SPSC
+                 QUIC  |   |  | SPSC     |WAL     |SPSC      |SPSC
               +--------+   |  +------+   |        |          |
               v            |         v   v        v          v
          +--------+  +----+---+ +--------+  +---------+ +--------+
@@ -35,30 +35,42 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
                       +-------+    DXS          DXS
 ```
 
-Transports: SPSC rings (rtrb) for same-host hot path.
-gRPC for cross-host, replay, and cold paths. DXS (WAL
-streaming) for replay and archival consumers.
+Transports:
+- **Between processes:** quinn QUIC with raw WAL wire format
+  (Gateway↔Risk↔ME). One multiplexed stream per link.
+- **Within each process:** tiles (pinned threads) + SPSC
+  rings (rtrb, 50-170ns). Every process uses tiles for
+  its internal concerns (network I/O, logic, WAL, etc).
+- **DXS:** WAL streaming to consumers (recorder, mark).
+  Transport is quinn QUIC (cold path, raw fixed records).
+
+See `TILES.md` for tile pattern, `NETWORK.md` for process
+topology.
 
 ## Crate Map
 
 | Crate | Role |
 |-------|------|
 | rsx-book | Shared orderbook: PriceLevel, OrderSlot, Slab, CompressionMap |
-| rsx-matching | ME binary, one per symbol, single-threaded |
-| rsx-risk | Risk binary, one per user shard, margin + funding + liquidation |
-| rsx-dxs | WAL writer/reader, DxsConsumer, DxsReplay gRPC server |
-| rsx-mark | Mark price aggregator, external WS feeds, median |
-| rsx-gateway | WS overlay + gRPC passthrough, auth, rate limit |
-| rsx-marketdata | Shadow book, L2/BBO/trades fan-out, public WS |
-| rsx-recorder | Archival DXS consumer, daily WAL files |
+| rsx-matching | ME tile logic, one instance per symbol, single-threaded |
+| rsx-risk | Risk tile logic, one per user shard, margin + funding + liquidation |
+| rsx-dxs | WAL writer/reader, DxsConsumer, DxsReplay server (transport-agnostic) |
+| rsx-mark | Mark price aggregator (separate process), external WS feeds, median |
+| rsx-gateway | Gateway tile, WS overlay + QUIC passthrough, auth, rate limit |
+| rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |
+| rsx-recorder | Archival DXS consumer (separate process), daily WAL files |
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
+
+Each process is a separate binary. Tile crates (rsx-book,
+rsx-matching, rsx-risk, etc.) are libraries linked into
+their respective process binaries.
 
 ## Order Lifecycle
 
 ```
 User                Gateway          Risk           ME (BTC-PERP)
  |                    |                |                |
- |--WS/gRPC order---->|                |                |
+ |--WS/QUIC order---->|                |                |
  |                    |--SPSC order--->|                |
  |                    |                |--margin chk--->|
  |                    |                |--SPSC order--->|
@@ -69,10 +81,10 @@ User                Gateway          Risk           ME (BTC-PERP)
  |                    |                |  position upd  |
  |                    |                |--PG write-behind
  |                    |<-SPSC fill(s)--|                |
- |<--WS/gRPC fill(s)--|                |                |
+ |<--WS/QUIC fill(s)--|                |                |
  |                    |                |                |
  |                    |<-SPSC done-----|<-SPSC done-----|
- |<--WS/gRPC done-----|                |                |
+ |<--WS/QUIC done-----|                |                |
 ```
 
 Pre-trade: Risk checks portfolio margin (all positions, all
@@ -128,7 +140,7 @@ Latency targets (same machine, SPSC):
         |
   +-----v------+     +------------------+
   | DxsReplay  |---->| Risk (consumer)  |
-  | gRPC server|     | replay tips+1    |
+  | QUIC server|     | replay tips+1    |
   +-----+------+     +------------------+
         |
   +-----v------+
@@ -191,10 +203,10 @@ Durability guarantees:
 | METADATA.md | Symbol config scheduling, propagation, cold start |
 | CONSISTENCY.md | Event fan-out, SPSC routing, ordering guarantees |
 | NETWORK.md | Topology, transport, service discovery, startup ordering |
-| GRPC.md | Protobuf schema, order states, deduplication |
+| MESSAGES.md | Message semantics (transport is now QUIC) |
 | WEBPROTO.md | WS compact JSON protocol, frame types |
 | RPC.md | Async order handling, UUIDv7, pending tracking |
-| MARKETDATA.md | Shadow book, L2/BBO/trades, public WS/gRPC |
+| MARKETDATA.md | Shadow book, L2/BBO/trades, public WS |
 | DATABASE.md | Postgres as system of record, write-behind pattern |
 | DEPLOY.md | Single-machine topology, env config, ring sizing |
 | ARCHIVE.md | WAL offload, infinite retention, gap handling |

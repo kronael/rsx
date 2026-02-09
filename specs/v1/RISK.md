@@ -528,7 +528,7 @@ crates/rsx-risk/src/
     persist.rs        -- Write-behind worker, Postgres batching
     replay.rs         -- Replay request/response, cold start
     mark_consumer.rs  -- DXS consumer for mark prices (MARK.md)
-    config.rs         -- TOML config
+    config.rs         -- env config parsing
     types.rs          -- Price, Qty, type aliases
     risk_utils.rs     -- helpers
 ```

@@ -119,10 +119,10 @@ We have one:
 
 ```
 Matching Engine → WalWriter → disk (fsync)
-                           ↘ DxsReplay → consumers (gRPC stream)
+                           ↘ DxsReplay → consumers (QUIC stream)
 ```
 
-The WAL file IS the stream. Consumers connect to a gRPC service that reads
+The WAL file IS the stream. Consumers connect to a QUIC service that reads
 the same WAL files and streams them. Historical replay? Read old files.
 Live tail? Wait for flush notification, read new records.
 
@@ -139,7 +139,7 @@ live mode—waiting for flush notifications and streaming new records as
 they arrive.
 
 No Kafka. No ZooKeeper. No broker. Producer writes to disk. Consumer reads
-from disk (or from the network, via gRPC). That's it.
+from disk (or from the network, via QUIC). That's it.
 
 ## Backpressure Means Stalling The Matching Engine
 
@@ -231,9 +231,9 @@ read archive files with the same WalReader. The recorder persists its tip
 (last seen seq) to disk every 10ms. On crash, it resumes from the last
 tip. Simple, boring, correct.
 
-## Why gRPC Is Temporary
+## Why Tokio Is Temporary
 
-We use tonic (tokio) for the DxsReplay gRPC service. This is wrong.
+We use quinn (tokio) for the DxsReplay QUIC service. This is wrong.
 
 Tokio is epoll-based. epoll means syscalls per I/O operation. For a
 streaming service pushing 100K+ records/sec to multiple consumers, that's a
@@ -241,16 +241,16 @@ lot of syscalls.
 
 The plan:
 
-1. **Now:** tonic/tokio. It works. Ship it.
+1. **Now:** quinn/tokio. It works. Ship it.
 2. **Next:** monoio with io_uring. Zero-copy I/O, batched submissions,
    kernel does the work.
 3. **Later:** userspace networking. NIC writes directly to ring buffers.
    No kernel involvement at all.
 
 The architecture supports this because the WAL is the interface, not the
-transport. Swap the gRPC server for a monoio server, the WAL files don't
-change, the consumers don't change (they just reconnect), and the matching
-engine doesn't know the difference.
+transport. Swap the tokio runtime for monoio, the WAL files don't change,
+the consumers don't change (they just reconnect), and the matching engine
+doesn't know the difference.
 
 ## What We Didn't Build
 

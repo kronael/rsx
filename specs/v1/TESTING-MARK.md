@@ -24,7 +24,7 @@ Binary: `rsx-mark` (standalone service)
 | K12 | Main loop single-threaded, busy-spin | §6 |
 | K13 | Recorder archives mark price stream | §1, DXS.md §8 |
 | K14 | MarkPriceEvent: symbol_id, mark_price, ts, mask, count | §2 |
-| K15 | TOML config: staleness_ns, per-source enabled flag | §7 |
+| K15 | Env config: staleness_ns, per-source enabled flag | §7 |
 | K16 | Main loop: drain rings -> staleness sweep -> wal flush | §6 |
 | K17 | Coinbase source disabled by default (enabled=false) | §7 |
 | K18 | WS tasks on separate tokio runtime, main loop busy-spin | §6 |
@@ -192,6 +192,6 @@ Targets from MARK.md §9:
   index price (RISK.md §4)
 - System-level: mark price divergence triggers liquidation
   (TESTING-RISK.md, TESTING-LIQUIDATOR.md)
-- TOML config loaded as first CLI param (MARK.md §7)
+- Env config loaded at startup (MARK.md §7)
 - Async WS connector tasks on separate tokio runtime
   (MARK.md §6)
