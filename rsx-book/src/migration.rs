@@ -149,10 +149,10 @@ impl Orderbook {
             let next =
                 self.orders.get(cursor).next;
             let price =
-                self.orders.get(cursor).price;
+                self.orders.get(cursor).price.0;
             let qty =
                 self.orders.get(cursor)
-                    .remaining_qty;
+                    .remaining_qty.0;
             let side =
                 self.orders.get(cursor).side;
             let new_idx = self

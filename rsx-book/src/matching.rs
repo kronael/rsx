@@ -135,16 +135,16 @@ pub fn process_new_order(
     }
 
     // Phase 1.5: TIF enforcement
-    if order.tif == TimeInForce::FOK {
-        if order.remaining_qty > 0 {
-            // Rollback events
-            book.event_len = saved_event_len;
-            book.emit(Event::OrderFailed {
-                user_id: order.user_id,
-                reason: FAIL_FOK,
-            });
-            return;
-        }
+    if order.tif == TimeInForce::FOK
+        && order.remaining_qty > 0
+    {
+        // Rollback events
+        book.event_len = saved_event_len;
+        book.emit(Event::OrderFailed {
+            user_id: order.user_id,
+            reason: FAIL_FOK,
+        });
+        return;
     }
 
     // Phase 2: Insert remainder or cancel
@@ -195,8 +195,8 @@ pub fn match_at_level(
         && aggressor.remaining_qty > 0
     {
         let maker = book.orders.get(cursor);
-        let maker_price = maker.price;
-        let maker_qty = maker.remaining_qty;
+        let maker_price = maker.price.0;
+        let maker_qty = maker.remaining_qty.0;
         let maker_user_id = maker.user_id;
         let next_cursor = maker.next;
 
@@ -223,9 +223,9 @@ pub fn match_at_level(
         aggressor.remaining_qty -= fill_qty;
         let maker_slot =
             book.orders.get_mut(cursor);
-        maker_slot.remaining_qty -= fill_qty;
+        maker_slot.remaining_qty.0 -= fill_qty;
         let maker_remaining =
-            maker_slot.remaining_qty;
+            maker_slot.remaining_qty.0;
 
         book.active_levels[tick as usize]
             .total_qty -= fill_qty;

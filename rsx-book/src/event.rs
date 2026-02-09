@@ -39,6 +39,12 @@ pub enum Event {
         user_id: u32,
         reason: u8,
     },
+    BBO {
+        bid_px: Price,
+        bid_qty: Qty,
+        ask_px: Price,
+        ask_qty: Qty,
+    },
 }
 
 impl Default for Event {

@@ -73,6 +73,12 @@ pub enum EventMessage {
         user_id: u32,
         reason: u8,
     },
+    BBO {
+        bid_px: i64,
+        bid_qty: i64,
+        ask_px: i64,
+        ask_qty: i64,
+    },
 }
 
 impl EventMessage {
@@ -130,6 +136,17 @@ impl EventMessage {
             } => EventMessage::OrderFailed {
                 user_id,
                 reason,
+            },
+            rsx_book::event::Event::BBO {
+                bid_px,
+                bid_qty,
+                ask_px,
+                ask_qty,
+            } => EventMessage::BBO {
+                bid_px: bid_px.0,
+                bid_qty: bid_qty.0,
+                ask_px: ask_px.0,
+                ask_qty: ask_qty.0,
             },
         }
     }

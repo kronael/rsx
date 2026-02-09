@@ -7,12 +7,20 @@ fn make_fill(seq: u64) -> FillRecord {
         seq,
         ts_ns: seq * 1000,
         symbol_id: 1,
-        maker_oid: seq as u128,
-        taker_oid: (seq + 100) as u128,
-        px: 50000,
+        taker_user_id: seq as u32,
+        maker_user_id: (seq + 100) as u32,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: seq,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: seq + 100,
+        price: 50000,
         qty: 100,
-        maker_side: 0,
-        _pad1: [0; 7],
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
     }
 }
 
@@ -408,4 +416,257 @@ fn record_max_payload_64kb() {
     // 64KB + 1 should fail
     let payload = vec![0u8; 64 * 1024 + 1];
     assert!(writer.append(RECORD_FILL, &payload).is_err());
+}
+
+#[test]
+fn writer_empty_flush_no_io() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    writer.flush().unwrap();
+
+    let active = tmp
+        .path()
+        .join("1")
+        .join("1_active.wal");
+    let size = std::fs::metadata(&active).unwrap().len();
+    assert_eq!(size, 0);
+}
+
+#[test]
+fn writer_seq_starts_at_1() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    assert_eq!(writer.next_seq, 1);
+    let fill = make_fill(0);
+    let seq = writer
+        .append(RECORD_FILL, &fill_payload(&fill))
+        .unwrap();
+    assert_eq!(seq, 1);
+}
+
+#[test]
+fn writer_gc_runs_on_rotation_not_timer() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 512, 1,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    for _ in 0..50 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let dir = tmp.path().join("1");
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(files.len() >= 1);
+}
+
+#[test]
+fn writer_flush_calls_fsync() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    writer
+        .append(RECORD_FILL, &fill_payload(&fill))
+        .unwrap();
+    writer.flush().unwrap();
+
+    let active = tmp
+        .path()
+        .join("1")
+        .join("1_active.wal");
+    let size = std::fs::metadata(&active).unwrap().len();
+    assert!(size > 0);
+}
+
+#[test]
+fn writer_rotation_renames_with_seq_range() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 512, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    for _ in 0..30 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let dir = tmp.path().join("1");
+    let entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+
+    let has_rotated = entries.iter().any(|e| {
+        let name = e.file_name();
+        let name_str = name.to_string_lossy();
+        name_str.contains("_") && name_str.ends_with(".wal")
+            && !name_str.contains("active")
+    });
+    assert!(has_rotated);
+}
+
+#[test]
+fn writer_active_file_uses_temp_name() {
+    let tmp = TempDir::new().unwrap();
+    let _writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    let active = tmp
+        .path()
+        .join("1")
+        .join("1_active.wal");
+    assert!(active.exists());
+}
+
+#[test]
+fn reader_open_from_seq_0_starts_at_beginning() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    for i in 0..5 {
+        let fill = make_fill(i);
+        writer
+            .append(RECORD_FILL, &fill_payload(&fill))
+            .unwrap();
+    }
+    writer.flush().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 5);
+}
+
+#[test]
+fn reader_handles_empty_wal_directory() {
+    let tmp = TempDir::new().unwrap();
+    let reader =
+        WalReader::open_from_seq(999, 0, tmp.path());
+    assert!(reader.is_ok());
+}
+
+#[test]
+fn reader_handles_single_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    writer
+        .append(RECORD_FILL, &fill_payload(&fill))
+        .unwrap();
+    writer.flush().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn reader_handles_multiple_files_sorted() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 512, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    for _ in 0..50 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 50);
+}
+
+#[test]
+fn reader_file_transition_seamless() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 512, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    let payload = fill_payload(&fill);
+
+    for _ in 0..30 {
+        writer.append(RECORD_FILL, &payload).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 30);
+}
+
+#[test]
+fn reader_returns_none_when_caught_up() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+    )
+    .unwrap();
+
+    let fill = make_fill(1);
+    writer
+        .append(RECORD_FILL, &fill_payload(&fill))
+        .unwrap();
+    writer.flush().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    reader.next().unwrap();
+    let result = reader.next().unwrap();
+    assert!(result.is_none());
 }

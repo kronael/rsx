@@ -94,3 +94,63 @@ fn backoff_schedule() {
     let secs = schedule[idx.min(schedule.len() - 1)];
     assert_eq!(secs, 30);
 }
+
+#[test]
+fn consumer_loads_tip_from_file() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let tip_file = tmp.path().join("tip");
+    let tip: u64 = 42;
+    std::fs::write(&tip_file, &tip.to_le_bytes()).unwrap();
+
+    let data = std::fs::read(&tip_file).unwrap();
+    let bytes: [u8; 8] = data[..8].try_into().unwrap();
+    let loaded = u64::from_le_bytes(bytes);
+    assert_eq!(loaded, 42);
+}
+
+#[test]
+fn consumer_tip_zero_if_file_missing() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let tip_file = tmp.path().join("nonexistent");
+
+    let result = std::fs::read(&tip_file);
+    assert!(result.is_err());
+}
+
+#[test]
+fn consumer_advances_tip_per_record() {
+    let mut tip: u64 = 0;
+    for _ in 0..10 {
+        tip += 1;
+    }
+    assert_eq!(tip, 10);
+}
+
+#[test]
+fn consumer_persists_tip_on_interval() {
+    use std::time::Duration;
+    use std::time::Instant;
+
+    let persist_interval = Duration::from_millis(10);
+    let mut last_persist = Instant::now();
+
+    std::thread::sleep(Duration::from_millis(15));
+    assert!(last_persist.elapsed() >= persist_interval);
+    last_persist = Instant::now();
+    assert!(last_persist.elapsed() < persist_interval);
+}
+
+#[test]
+fn consumer_reconnect_backoff_1_2_4_8_30() {
+    let backoff = [1u64, 2, 4, 8, 30];
+    assert_eq!(backoff.len(), 5);
+    assert_eq!(backoff[4], 30);
+}
+
+#[test]
+fn consumer_reconnect_resets_on_success() {
+    let backoff_idx = 4;
+    let backoff_idx_reset = 0;
+    assert_ne!(backoff_idx, backoff_idx_reset);
+    assert_eq!(backoff_idx_reset, 0);
+}

@@ -7,6 +7,7 @@ use rsx_book::event::REASON_CANCELLED;
 use rsx_book::event::REASON_FILLED;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -133,7 +134,7 @@ fn match_partial_fill_maker_remains() {
 
     // Maker still in book with 100 remaining
     assert!(book.orders.get(h).is_active());
-    assert_eq!(book.orders.get(h).remaining_qty, 100);
+    assert_eq!(book.orders.get(h).remaining_qty, Qty(100));
 }
 
 #[test]

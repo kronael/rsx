@@ -28,16 +28,26 @@ pub fn write_events_to_wal(
                 qty,
                 side,
             } => {
+                let maker_oid = maker_handle as u128;
+                let taker_oid = taker_user_id as u128;
                 let record = FillRecord {
-                    seq: 0, // assigned by WAL
+                    seq: 0,
                     ts_ns,
                     symbol_id,
-                    maker_oid: maker_handle as u128,
-                    taker_oid: taker_user_id as u128,
-                    px: price.0,
+                    taker_user_id,
+                    maker_user_id: maker_handle,
+                    _pad0: 0,
+                    taker_order_id_hi: (taker_oid >> 64) as u64,
+                    taker_order_id_lo: taker_oid as u64,
+                    maker_order_id_hi: (maker_oid >> 64) as u64,
+                    maker_order_id_lo: maker_oid as u64,
+                    price: price.0,
                     qty: qty.0,
-                    maker_side: side,
-                    _pad1: [0; 7],
+                    taker_side: side,
+                    reduce_only: 0,
+                    tif: 0,
+                    post_only: 0,
+                    _pad1: [0; 4],
                 };
                 let bytes = record_as_bytes(&record);
                 writer.append(RECORD_FILL, bytes)?;
@@ -49,16 +59,21 @@ pub fn write_events_to_wal(
                 price,
                 qty,
             } => {
+                let oid = handle as u128;
                 let record = OrderInsertedRecord {
                     seq: 0,
                     ts_ns,
                     symbol_id,
-                    oid: handle as u128,
                     user_id,
-                    px: price.0,
+                    order_id_hi: (oid >> 64) as u64,
+                    order_id_lo: oid as u64,
+                    price: price.0,
                     qty: qty.0,
                     side,
-                    _pad1: [0; 7],
+                    reduce_only: 0,
+                    tif: 0,
+                    post_only: 0,
+                    _pad1: [0; 4],
                 };
                 let bytes = record_as_bytes(&record);
                 writer.append(
@@ -70,16 +85,21 @@ pub fn write_events_to_wal(
                 user_id,
                 remaining_qty,
             } => {
+                let oid = handle as u128;
                 let record = OrderCancelledRecord {
                     seq: 0,
                     ts_ns,
                     symbol_id,
-                    oid: handle as u128,
-                    reason: 1, // cancelled
-                    _pad1: [0; 7],
+                    user_id,
+                    order_id_hi: (oid >> 64) as u64,
+                    order_id_lo: oid as u64,
+                    remaining_qty: remaining_qty.0,
+                    reason: 1,
+                    reduce_only: 0,
+                    tif: 0,
+                    post_only: 0,
+                    _pad1: [0; 4],
                 };
-                let _ = remaining_qty;
-                let _ = user_id;
                 let bytes = record_as_bytes(&record);
                 writer.append(
                     RECORD_ORDER_CANCELLED, bytes,
@@ -90,16 +110,22 @@ pub fn write_events_to_wal(
                 user_id,
                 reason,
             } => {
+                let oid = handle as u128;
                 let record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
                     symbol_id,
-                    oid: handle as u128,
+                    user_id,
+                    order_id_hi: (oid >> 64) as u64,
+                    order_id_lo: oid as u64,
+                    filled_qty: 0,
                     remaining_qty: 0,
-                    reason,
-                    _pad1: [0; 7],
+                    final_status: reason,
+                    reduce_only: 0,
+                    tif: 0,
+                    post_only: 0,
+                    _pad1: [0; 4],
                 };
-                let _ = user_id;
                 let bytes = record_as_bytes(&record);
                 writer.append(
                     RECORD_ORDER_DONE, bytes,
@@ -107,6 +133,9 @@ pub fn write_events_to_wal(
             }
             Event::OrderFailed { .. } => {
                 // OrderFailed is not persisted to WAL
+            }
+            Event::BBO { .. } => {
+                // BBO is not emitted by ME, only by mktdata
             }
         }
     }

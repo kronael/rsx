@@ -1,11 +1,13 @@
 use rsx_types::NONE;
+use rsx_types::Price;
+use rsx_types::Qty;
 use crate::slab::SlabItem;
 
 #[repr(C, align(64))]
 pub struct OrderSlot {
     // Cache line 1: hot fields
-    pub price: i64,
-    pub remaining_qty: i64,
+    pub price: Price,
+    pub remaining_qty: Qty,
     pub side: u8,
     pub flags: u8,       // bit 0: active, bit 1: reduce_only
     pub tif: u8,
@@ -18,7 +20,7 @@ pub struct OrderSlot {
     pub user_id: u32,
     pub sequence: u16,
     pub _pad3: [u8; 2],
-    pub original_qty: i64,
+    pub original_qty: Qty,
     pub timestamp_ns: u64,
     pub _pad4: [u8; 40],
 }
@@ -51,8 +53,8 @@ impl OrderSlot {
 impl Default for OrderSlot {
     fn default() -> Self {
         Self {
-            price: 0,
-            remaining_qty: 0,
+            price: Price(0),
+            remaining_qty: Qty(0),
             side: 0,
             flags: 0,
             tif: 0,
@@ -64,7 +66,7 @@ impl Default for OrderSlot {
             user_id: 0,
             sequence: 0,
             _pad3: [0; 2],
-            original_qty: 0,
+            original_qty: Qty(0),
             timestamp_ns: 0,
             _pad4: [0; 40],
         }
