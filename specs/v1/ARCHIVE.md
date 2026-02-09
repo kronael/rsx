@@ -12,7 +12,7 @@ Archive serves historical WAL records from flat files on disk. It is used when h
 - **Single authoritative archive per WAL stream.**
 - Other nodes may keep mirrors, but only one archive is authoritative.
 
-## API (quinn QUIC)
+## API (tonic gRPC)
 
 ```proto
 service ArchiveReplay {

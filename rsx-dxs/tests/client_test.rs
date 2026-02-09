@@ -51,7 +51,7 @@ fn consumer_callback_invoked_per_record() {
     };
 
     // Simulate 5 records
-    for i in 0..5 {
+    for _i in 0..5 {
         let header = WalHeader::new(0, 0, 1, 0);
         let record = RawWalRecord {
             header,
