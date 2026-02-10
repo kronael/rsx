@@ -398,13 +398,10 @@ fn run_main(
                                     OrderDoneRecord,
                         )
                     };
-                    shard.process_order_done(
-                        &rsx_risk::types::OrderDoneEvent {
-                            seq: rec.seq,
-                            user_id: rec.user_id,
-                            symbol_id: rec.symbol_id,
-                            frozen_amount: 0,
-                        },
+                    shard.release_frozen_for_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
                     );
                     let _ = gw_sender.send_raw(
                         RECORD_ORDER_DONE,
@@ -417,6 +414,18 @@ fn run_main(
                             OrderCancelledRecord,
                         >() =>
                 {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const
+                                    OrderCancelledRecord,
+                        )
+                    };
+                    shard.release_frozen_for_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
+                    );
                     let _ = gw_sender.send_raw(
                         RECORD_ORDER_CANCELLED,
                         &payload,

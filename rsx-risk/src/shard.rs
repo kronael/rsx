@@ -45,6 +45,7 @@ pub struct RiskShard {
     maker_fee_bps: Vec<i64>,
     stashed_bbo: Vec<Option<BboUpdate>>,
     pub insurance_funds: FxHashMap<u32, InsuranceFund>,
+    frozen_orders: FxHashMap<u128, (u32, i64)>,
 
     pub config_versions: Vec<u64>,
     pub fills_processed: u64,
@@ -87,6 +88,7 @@ impl RiskShard {
             maker_fee_bps: config.maker_fee_bps,
             stashed_bbo: vec![None; max],
             insurance_funds: FxHashMap::default(),
+            frozen_orders: FxHashMap::default(),
             config_versions: vec![0u64; max],
             fills_processed: 0,
             orders_processed: 0,
@@ -449,6 +451,13 @@ impl RiskShard {
                     .get_mut(&order.user_id)
                     .unwrap()
                     .freeze_margin(margin_needed);
+                self.frozen_orders.insert(
+                    order_key(
+                        order.order_id_hi,
+                        order.order_id_lo,
+                    ),
+                    (order.user_id, margin_needed),
+                );
                 self.orders_processed += 1;
                 let acct =
                     self.accounts[&order.user_id].clone();
@@ -472,21 +481,27 @@ impl RiskShard {
     }
 
     /// Release frozen margin when order completes.
-    pub fn process_order_done(
+    pub fn release_frozen_for_order(
         &mut self,
-        event: &crate::types::OrderDoneEvent,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
     ) {
-        if !self.user_in_shard(event.user_id) {
+        if !self.user_in_shard(user_id) {
             return;
         }
-        if let Some(acct) =
-            self.accounts.get_mut(&event.user_id)
-        {
-            acct.release_margin(event.frozen_amount);
+        let key = order_key(order_id_hi, order_id_lo);
+        let entry = self.frozen_orders.remove(&key);
+        let Some((owner, amount)) = entry else {
+            return;
+        };
+        if owner != user_id {
+            return;
+        }
+        if let Some(acct) = self.accounts.get_mut(&user_id) {
+            acct.release_margin(amount);
             let snapshot = acct.clone();
-            self.push_persist(
-                PersistEvent::Account(snapshot),
-            );
+            self.push_persist(PersistEvent::Account(snapshot));
         }
     }
 
@@ -843,4 +858,8 @@ impl RiskShard {
             .map(|r| r.total_buffered())
             .unwrap_or(0)
     }
+}
+
+fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {
+    ((order_id_hi as u128) << 64) | order_id_lo as u128
 }
