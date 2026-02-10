@@ -20,10 +20,14 @@ pub enum OrderResponse {
     Accepted {
         user_id: u32,
         margin_reserved: i64,
+        order_id_hi: u64,
+        order_id_lo: u64,
     },
     Rejected {
         user_id: u32,
         reason: crate::types::RejectReason,
+        order_id_hi: u64,
+        order_id_lo: u64,
     },
 }
 
@@ -34,4 +38,5 @@ pub struct ShardRings {
     pub mark_consumer: Consumer<MarkPriceUpdate>,
     pub bbo_consumers: Vec<Consumer<BboUpdate>>,
     pub response_producer: Producer<OrderResponse>,
+    pub accepted_producer: Producer<OrderRequest>,
 }

@@ -60,6 +60,16 @@ impl PendingOrders {
         self.queue.len() >= self.capacity
     }
 
+    /// Find a pending order by order_id.
+    pub fn find_by_order_id(
+        &self,
+        order_id: &[u8; 16],
+    ) -> Option<&PendingOrder> {
+        self.queue
+            .iter()
+            .find(|o| &o.order_id == order_id)
+    }
+
     /// Remove orders older than `cutoff_ns` timestamp.
     /// Returns removed orders.
     pub fn remove_stale(

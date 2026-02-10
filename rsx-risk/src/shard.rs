@@ -294,6 +294,8 @@ impl RiskShard {
             return OrderResponse::Rejected {
                 user_id: order.user_id,
                 reason: RejectReason::NotInShard,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
             };
         }
 
@@ -315,6 +317,8 @@ impl RiskShard {
             return OrderResponse::Rejected {
                 user_id: order.user_id,
                 reason: RejectReason::UserInLiquidation,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
             };
         }
 
@@ -340,11 +344,15 @@ impl RiskShard {
                 OrderResponse::Accepted {
                     user_id: order.user_id,
                     margin_reserved: margin_needed,
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
                 }
             }
             Err(reason) => OrderResponse::Rejected {
                 user_id: order.user_id,
                 reason,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
             },
         }
     }
@@ -491,6 +499,14 @@ impl RiskShard {
         // 2. Drain orders
         while let Ok(order) = rings.order_consumer.pop() {
             let resp = self.process_order(&order);
+            if matches!(
+                resp,
+                OrderResponse::Accepted { .. }
+            ) {
+                let _ = rings
+                    .accepted_producer
+                    .push(order.clone());
+            }
             let _ = rings.response_producer.push(resp);
         }
 
