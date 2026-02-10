@@ -38,8 +38,20 @@ points.
 | L22 | Order failed (other): treat as unfilled, escalate | §4 |
 | L23 | Status transitions: Active -> Cancelled or Completed | §1 |
 | L24 | ME clamps qty to position size (reduce_only) | §3 |
-| L25 | Orders routed via same SPSC ring as normal orders | §3 |
+| L25 | Orders routed via same CMP/UDP link as normal orders | §3 |
 | L26 | Persisted via same write-behind worker as fills | §8 |
+| L27 | First order fires immediately (last_order_ns=0) | §10.1 |
+| L28 | Mark price=0 pauses round, no increment | §10.2 |
+| L29 | Zero position during liq sets Done | §10.2 |
+| L30 | Multiple symbols liquidate independently | §10.3 |
+| L31 | Round timers per-symbol, not per-user | §10.3 |
+| L32 | Monotonic clock assumed (no time backwards) | §10.4 |
+| L33 | Rapid maybe_process calls safe (no dupe orders) | §10.4 |
+| L34 | Slippage escalates even if orders filled | §10.5 |
+| L35 | Socialized loss when round > max_rounds | §10.6 |
+| L36 | base_delay_ns=0 fires all rounds immediately | §10.7 |
+| L37 | max_rounds=0 allows round 1 then socializes | §10.7 |
+| L38 | max_slip_bps caps prevent negative prices | §10.7 |
 
 ---
 
@@ -97,6 +109,34 @@ order_seq_tracked_in_pending_orders
 pending_orders_bounded_by_max_symbols
 orders_routed_via_normal_spsc_ring
 recheck_margin_on_round_before_placing
+```
+
+### Edge Cases from LIQUIDATOR.md §10
+
+```rust
+first_order_fires_immediately_no_delay
+round_delay_calculation_cumulative_not_from_enqueue
+max_rounds_boundary_strict_inequality
+slippage_overflow_prevented_by_config_cap
+price_calculation_no_underflow_with_max_slip
+zero_position_marks_done_skips_order
+mark_price_zero_pauses_round_no_increment
+mark_price_recovery_continues_from_current_round
+multiple_symbols_independent_round_timers
+round_sync_not_enforced_across_symbols
+partial_recovery_one_symbol_closes_others_continue
+rapid_fire_maybe_process_no_duplicate_orders
+order_immediately_filled_next_round_higher_slip
+order_partially_filled_then_cancelled_uses_updated_position
+socialized_loss_when_round_exceeds_max_rounds
+multiple_symbols_reach_max_rounds_independent_events
+zero_mark_price_at_max_rounds_recorded_as_zero
+base_delay_zero_all_rounds_immediate
+base_slip_zero_orders_at_mark_exactly
+max_slip_zero_caps_all_rounds_to_mark
+max_rounds_zero_allows_round_one_then_socializes
+max_rounds_one_single_attempt_before_socialization
+extreme_slippage_prevented_by_max_slip_cap
 ```
 
 ### Config
@@ -204,6 +244,18 @@ Targets from LIQUIDATOR.md §10:
 8. **Slippage monotonic** -- slippage never decreases across rounds
    (capped at max_slip_bps)
 9. **Order count bounded** -- pending_orders.len() <= MAX_SYMBOLS
+10. **First order immediate** -- round 1 fires on first maybe_process,
+    no delay (last_order_ns=0 special case)
+11. **Price non-negative** -- with max_slip_bps cap, liquidation
+    prices never negative (sell >= 0, buy > 0)
+12. **Round monotonic** -- round number only increases, never
+    decreases or resets during Active status
+13. **Zero position terminal** -- if position becomes zero during
+    liquidation, status moves to Done, no further orders
+14. **Mark price stall pauses, not fails** -- zero mark price pauses
+    liquidation without incrementing round or marking failed
+15. **Symbol independence** -- multiple symbols for same user liquidate
+    independently, each with own round timer and state
 
 ---
 
@@ -212,7 +264,7 @@ Targets from LIQUIDATOR.md §10:
 - Embedded in risk engine main loop (RISK.md §main loop step 5.5)
 - Triggered by per-tick margin recalc (RISK.md §7)
 - Generates reduce_only + is_liquidation orders to ME via same
-  SPSC ring as normal orders (LIQUIDATOR.md §3)
+  CMP/UDP link as normal orders (LIQUIDATOR.md §3)
 - ME clamps qty to position size via position tracking
   (ORDERBOOK.md §6.5)
 - Fills processed by normal fill path in risk engine (RISK.md §1)
