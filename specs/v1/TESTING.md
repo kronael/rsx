@@ -1,5 +1,8 @@
 # Testing Strategy
 
+For comprehensive edge case documentation across all validation layers,
+see [VALIDATION-EDGE-CASES.md](VALIDATION-EDGE-CASES.md).
+
 ## Test Organization
 
 RSX testing is organized into five levels with corresponding make targets,
@@ -252,13 +255,13 @@ nightly or on-demand.
 
 ### E2E Latency Measurement
 
-**Target: <50us end-to-end (same machine, SPSC)**
+**Target: <50us end-to-end (same machine, CMP/UDP)**
 
 **Breakdown:**
 - Gateway: receive order → send to matching (~5-10us)
-- SPSC: producer push → consumer pop (~50-100ns)
+- CMP/UDP: send → recv (kernel bound)
 - Matching: insert + match + event gen (~100-500ns)
-- SPSC: event push → risk/gateway pop (~50-100ns)
+- CMP/UDP: event send → recv (kernel bound)
 - Risk: update position (~1-5us)
 - Total: <50us (same machine, dedicated cores)
 
@@ -289,7 +292,7 @@ nightly or on-demand.
 **Metrics (Prometheus + Grafana):**
 - Orders/sec (throughput)
 - Match latency histogram
-- SPSC ring depth (backpressure indicator)
+- CMP flow control counters (backpressure indicator)
 - Slab utilization (allocated vs free)
 - Recentering frequency
 
@@ -360,7 +363,7 @@ Verified across all test levels:
    - best_bid < best_ask (no crossed book)
    - best_bid/ask point to populated levels
 
-7. **Event ordering preserved in SPSC**
+7. **Event ordering preserved per CMP stream**
    - Events arrive at consumers in FIFO order
    - seq monotonic within symbol
 
@@ -378,8 +381,8 @@ Verified across all test levels:
 - Run with `make test`
 
 ### E2E Tests
-- Mock SPSC for isolation
-- Real SPSC for full stack
+- Mock CMP for isolation
+- Real CMP for full stack
 - Custom test harness (order submission helpers)
 - Run with `make e2e`
 
