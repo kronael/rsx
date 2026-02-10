@@ -6,6 +6,7 @@ use crate::protocol::parse;
 use crate::protocol::serialize;
 use crate::protocol::CancelKey;
 use crate::protocol::WsFrame;
+use crate::rate_limit::per_user;
 use crate::state::GatewayState;
 use crate::ws::ws_handshake;
 use crate::ws::ws_read_frame;
@@ -148,6 +149,40 @@ pub async fn handle_connection(
                 tif,
                 reduce_only,
             } => {
+                // Rate limit check
+                {
+                    let mut st = state.borrow_mut();
+                    let limiter = st
+                        .user_limiters
+                        .entry(user_id)
+                        .or_insert_with(per_user);
+                    if !limiter.try_consume() {
+                        drop(st);
+                        send_error(
+                            &mut stream,
+                            1006,
+                            "rate limited",
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+
+                // Circuit breaker check
+                {
+                    let mut st = state.borrow_mut();
+                    if !st.circuit.allow() {
+                        drop(st);
+                        send_error(
+                            &mut stream,
+                            5,
+                            "overloaded",
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+
                 let oid = generate_order_id();
                 let now_ns = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -323,6 +358,22 @@ pub async fn handle_connection(
                         }
                     }
                 }
+            }
+            WsFrame::Heartbeat { .. } => {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let resp = serialize(
+                    &WsFrame::Heartbeat {
+                        timestamp_ms: now_ms,
+                    },
+                );
+                let _ = ws_write_text(
+                    &mut stream,
+                    resp.as_bytes(),
+                )
+                .await;
             }
             _ => {
                 // Other frame types not yet handled
