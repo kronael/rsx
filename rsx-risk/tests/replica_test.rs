@@ -330,3 +330,157 @@ async fn both_crash_recovery_from_postgres() {
     // State is either empty or contains persisted data
     assert_eq!(state.tips.len(), 4);
 }
+
+#[test]
+fn replica_polls_advisory_lock_500ms() {
+    let config = ReplicationConfig::default();
+    assert_eq!(config.lease_poll_interval_ms, 500);
+
+    let custom = ReplicationConfig {
+        is_replica: true,
+        lease_poll_interval_ms: 250,
+        lease_renew_interval_ms: 1000,
+        replica_sync_ring_size: 1024,
+    };
+    assert_eq!(custom.lease_poll_interval_ms, 250);
+}
+
+#[test]
+fn replica_state_matches_main() {
+    let make_config = |is_replica: bool| ShardConfig {
+        shard_id: 0,
+        shard_count: 1,
+        max_symbols: 4,
+        symbol_params: vec![
+            SymbolRiskParams {
+                initial_margin_rate: 1000,
+                maintenance_margin_rate: 500,
+                max_leverage: 10,
+            };
+            4
+        ],
+        taker_fee_bps: vec![5; 4],
+        maker_fee_bps: vec![-1; 4],
+        funding_config: FundingConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig {
+            is_replica,
+            lease_poll_interval_ms: 500,
+            lease_renew_interval_ms: 1000,
+            replica_sync_ring_size: 1024,
+        },
+    };
+
+    let fills: Vec<FillEvent> = (1..=5)
+        .map(|seq| FillEvent {
+            seq,
+            symbol_id: 0,
+            taker_user_id: 100,
+            maker_user_id: 200,
+            price: 50000_0000,
+            qty: 10_0000,
+            taker_side: 0,
+            timestamp_ns: seq * 1000,
+        })
+        .collect();
+
+    // Main path
+    let mut main_shard = RiskShard::new(make_config(false));
+    for fill in &fills {
+        main_shard.process_fill(fill);
+    }
+
+    // Replica path
+    let mut replica_shard =
+        RiskShard::new(make_config(true));
+    for fill in &fills {
+        replica_shard
+            .buffer_fill_for_replica(fill.clone());
+    }
+    replica_shard.apply_tip_from_main(0, 5);
+
+    // Tips match
+    assert_eq!(main_shard.tips[0], replica_shard.tips[0]);
+
+    // Positions match
+    let main_pos = main_shard
+        .positions
+        .get(&(100, 0))
+        .expect("main taker position");
+    let replica_pos = replica_shard
+        .positions
+        .get(&(100, 0))
+        .expect("replica taker position");
+    assert_eq!(main_pos.long_qty, replica_pos.long_qty);
+    assert_eq!(
+        main_pos.long_entry_cost,
+        replica_pos.long_entry_cost
+    );
+
+    let main_maker = main_shard
+        .positions
+        .get(&(200, 0))
+        .expect("main maker position");
+    let replica_maker = replica_shard
+        .positions
+        .get(&(200, 0))
+        .expect("replica maker position");
+    assert_eq!(
+        main_maker.short_qty,
+        replica_maker.short_qty
+    );
+}
+
+#[test]
+fn me_failover_dedup_by_seq() {
+    let config = ShardConfig {
+        shard_id: 0,
+        shard_count: 1,
+        max_symbols: 4,
+        symbol_params: vec![
+            SymbolRiskParams {
+                initial_margin_rate: 1000,
+                maintenance_margin_rate: 500,
+                max_leverage: 10,
+            };
+            4
+        ],
+        taker_fee_bps: vec![5; 4],
+        maker_fee_bps: vec![-1; 4],
+        funding_config: FundingConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig::default(),
+    };
+
+    let mut shard = RiskShard::new(config);
+
+    let fill = FillEvent {
+        seq: 1,
+        symbol_id: 0,
+        taker_user_id: 100,
+        maker_user_id: 200,
+        price: 50000_0000,
+        qty: 10_0000,
+        taker_side: 0,
+        timestamp_ns: 1000,
+    };
+
+    // First apply
+    shard.process_fill(&fill);
+    let pos_after_first = shard
+        .positions
+        .get(&(100, 0))
+        .expect("position exists")
+        .long_qty;
+
+    // Duplicate apply (same seq) -- should be ignored
+    shard.process_fill(&fill);
+    let pos_after_dup = shard
+        .positions
+        .get(&(100, 0))
+        .expect("position exists")
+        .long_qty;
+
+    assert_eq!(pos_after_first, pos_after_dup);
+    assert_eq!(shard.tips[0], 1);
+}

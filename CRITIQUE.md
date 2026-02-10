@@ -1,141 +1,120 @@
 # Critique (Current State)
 
 This critique reflects the repo as it exists now. I did not run tests.
+It is based on code+specs cross-check and the CODEPATHS map.
 
-## Summary (Top Issues)
+## Top Findings (Ordered by Severity)
 
-1) **Price feeds into risk are broken.**
-   Mark does not send CMP to risk; risk has no ME BBO ingestion.
-   Result: `mark_prices` and `index_prices` stay stale/zero.
-   - Files: `rsx-mark/src/main.rs`, `rsx-risk/src/main.rs`
+### Critical
 
-2) **Frozen margin release is incorrect.**
-   `OrderDoneEvent.frozen_amount` is always 0 and cancel path does not
-   release margin at all. This over-reserves margin indefinitely.
-   - Files: `rsx-risk/src/main.rs`, `rsx-risk/src/shard.rs`
+1) **Price inputs to risk are still brittle.**
+   Mark now sends CMP, and risk ingests it, but there is no end‑to‑end
+   test for mark→risk or ME BBO→risk. If either feed is down, margin
+   checks use stale/zero prices with no fallback.
+   - Code: `rsx-mark/src/main.rs`, `rsx-risk/src/main.rs`
+   - Tests missing: no integration tests for mark/BBO feed.
 
-3) **Client-facing order status is inconsistent with ME outcomes.**
-   Gateway ignores `OrderDoneRecord.final_status` and always reports
-   status=filled; cancels routed through OrderDone are misreported.
-   - Files: `rsx-gateway/src/main.rs`, `rsx-dxs/src/records.rs`
+2) **Frozen margin release relies on per‑order map with no replay path.**
+   The new `frozen_orders` map is memory‑only; on restart, frozen margin
+   remains in account state but per‑order entries are lost, so cancel/done
+   after restart cannot release correctly.
+   - Code: `rsx-risk/src/shard.rs` (`frozen_orders`)
+   - Underspec: no persistence/replay for per‑order frozen tracking.
 
-4) **Reject reason codes don’t match WEBPROTO.**
-   Risk encodes reject reasons as 1..3; WEBPROTO expects different
-   numeric mapping (e.g., insufficient margin = 4). Gateway forwards raw.
-   - Files: `rsx-risk/src/main.rs`, `rsx-gateway/src/main.rs`, `specs/v1/WEBPROTO.md`
+3) **OrderDone status mapping is underspecified.**
+   Gateway maps `final_status` to WS `status`, but spec doesn’t define
+   the mapping explicitly. This is now code-defined behavior.
+   - Code: `rsx-gateway/src/main.rs`
+   - Spec gap: `specs/v1/WEBPROTO.md` lacks mapping from `final_status`.
 
-5) **Gateway sends a “pending” ack despite WEBPROTO’s no‑ack rule.**
-   Spec says first response is from matching; implementation sends an
-   immediate pending OrderUpdate.
-   - Files: `rsx-gateway/src/handler.rs`, `specs/v1/WEBPROTO.md`
+### High
+
+4) **Cancel path still depends on gateway state.**
+   Cancels by client‑id require `pending` lookup. There is no stateless
+   cancel correlation on the wire (order_id only).
+   - Code: `rsx-gateway/src/pending.rs`, `rsx-gateway/src/handler.rs`
+   - Spec gap: no explicit statement that gateway must persist pending
+     for cancel by `cid`.
+
+5) **Marketdata backpressure semantics still weak.**
+   Outbound queue drops silently; seq gaps trigger snapshots but do not
+   inform clients of dropped deltas. Empty‑book subscribe still yields
+   no snapshot.
+   - Code: `rsx-marketdata/src/state.rs`, `rsx-marketdata/src/handler.rs`
+   - Tests missing: empty‑book snapshot; drop/resubscribe policy.
+
+### Medium
+
+6) **Risk reject reason mapping is hard-coded to FailureReason.**
+   This fixes client codes but conflates `UserInLiquidation` and
+   `NotInShard` as `InternalError`. That mapping is now policy without
+   spec backing.
+   - Code: `rsx-risk/src/main.rs`
+   - Spec gap: WEBPROTO lacks explicit mapping for risk‑side rejections.
+
+7) **Matching fan‑out tests still model SPSC, not CMP.**
+   `rsx-matching/tests/fanout_test.rs` validates in‑process SPSC fanout;
+   it does not cover CMP payload encoding or network ordering.
 
 ## Component-by-Component Mismatch Review
 
 ### Gateway
 
-**Spec expectations (v1):** No pre-trade ack; order updates only from ME
-path; failure codes align with WEBPROTO; optional heartbeat.
-
-**Implementation:**
-- Sends immediate pending ack on new order.
-- Forwards OrderFailed from risk (pre-trade) as status=failed.
-- Reports OrderDone as filled regardless of final_status.
-- JWT auth enforced in WS handshake; fallback `X-User-Id`.
-
-**Mismatches:**
-- Pending ack violates WEBPROTO.
-- Status mapping for OrderDone ignores final_status.
-- Failure reason codes don’t match WEBPROTO enum.
+- **Spec vs code:** Spec says no pre‑trade ack; code now complies. Good.
+- **Remaining gaps:** Cancel by `cid` requires pending state; no stateless
+  cancel. OrderDone status mapping not defined in spec.
+- **Tests:** parsing+rate-limit+JWT exist; no e2e WS order lifecycle test.
 
 ### Risk
 
-**Spec expectations (v1):** Ingest fills+BBO, mark feeds; release frozen
-margin on cancel/done; forward CONFIG_APPLIED to gateway; replica sync via
-SPSC or defined channel.
-
-**Implementation:**
-- Ingests fills, cancels, done, config_applied from ME over CMP.
-- Ingests mark price from CMP (expects Mark to send it).
-- No BBO ingestion path.
-- Sends OrderFailed to gateway on reject.
-- Replica mode: advisory lease + CMP tip sync channel (record_type 0x20).
-
-**Mismatches:**
-- Mark feed not actually connected (Mark doesn’t send CMP).
-- No BBO ingestion, so index price never updates.
-- Frozen margin not released on cancel/done.
-- Tip sync protocol is ad‑hoc (0x20) and undocumented in v1.
+- **Spec vs code:** CMP between processes; replica exists via CMP tip sync.
+- **Gaps:** per‑order frozen map not persisted; no replay linkage; mark/BBO
+  integration untested; rejection mapping policy undefined.
+- **Tests:** margin/position/replication tests exist; no mark/BBO ingestion tests.
 
 ### Matching
 
-**Spec expectations (v1):** Fan-out events; BBO to risk; WAL + DXS replay;
-config polling; dedup, reduce-only, etc.
-
-**Implementation:**
-- Sends fills/insert/cancel/done/config to risk; fills/insert/cancel to
-  marketdata.
-- WAL + DXS replay present.
-- ConfigApplied emitted at startup (version=1).
-
-**Mismatches:**
-- BBO not emitted to risk (no RECORD_BBO path).
-- Config polling behavior not present (only startup emit).
+- **Spec vs code:** emits events + WAL + DXS. BBO is emitted but only
+  tested via SPSC fanout tests.
+- **Gaps:** no CMP‑level fanout tests; config polling not implemented.
 
 ### Marketdata
 
-**Spec expectations (v1):** Shadow book; snapshots on subscribe; seq gap
-handling; backpressure resubscribe; replay from DXS.
-
-**Implementation:**
-- Replay bootstrap from DXS supported (optional).
-- Seq gap detection and snapshot resend implemented.
-- Snapshot only sent if book exists (empty-book subscribe yields none).
-- No explicit backpressure resubscribe policy; outbound drops silently.
-
-**Mismatches:**
-- Empty-book snapshot handling not defined/implemented.
-- Backpressure policy still weak (drops without resubscribe signal).
+- **Spec vs code:** CMP ingest, replay bootstrap, seq‑gap detection. Good.
+- **Gaps:** empty‑book snapshot missing; backpressure semantics underspecified.
+- **Tests:** replay/seq‑gap/shadow tests exist; no empty‑book snapshot test.
 
 ### Mark
 
-**Spec expectations (v1):** Mark aggregator publishes mark prices (ideally
-to risk) and via DXS.
-
-**Implementation:**
-- Aggregates and writes MarkPrice to WAL; exposes DXS replay server.
-- No CMP sender; risk’s CMP mark receiver never gets updates.
-
-**Mismatch:**
-- Mark → Risk live feed not implemented.
+- **Spec vs code:** now sends CMP to risk + WAL/DXS. Good.
+- **Gaps:** no tests for CMP feed or symbol_map correctness end‑to‑end.
 
 ### DXS/CMP/WAL
 
-**Spec expectations (v1):** CMP header + payload; seq in payload; flow
-control; WAL flush.
+- **Spec vs code:** header+payload; flow control via bool return; fsync flush.
+- **Gaps:** CMP retry/backpressure behavior not covered by tests.
 
-**Implementation:**
-- WalHeader = (record_type, len, crc32, reserved[8]); payload seq for data.
-- Flow control enforced in `send` (returns false when window closed).
-- WAL flush fsyncs; retention by timestamp.
+## Underspecified Areas (Spec Gaps)
 
-**Mismatch:**
-- Some spec text still assumes “stall on send” instead of bool return;
-  updated in v1 spec already.
+- Mapping from `OrderDone.final_status` to WS `OrderStatus`.
+- Mapping from risk reject reasons to WEBPROTO failure codes.
+- Behavior on mark/BBO feed loss (fallback/timeout policy).
+- Cancel by client_id: requirement for gateway state or wire support.
+- Marketdata behavior on empty‑book subscribe and delta drops.
+- Persistence/replay model for per‑order frozen margin tracking.
 
-## Verified Improvements Since Last Critique
+## Test Coverage Gaps (by Codepath)
 
-- Marketdata now has replay bootstrap, seq-gap detection, and heartbeats.
-- Risk forwards ME events to Gateway and emits OrderFailed on reject.
-- Gateway handles OrderFailed and adds heartbeat broadcast.
-- Specs updated to reflect CMP/UDP inter-process links.
-
-## Test Reality
-
-- Not run in this pass.
+- Mark→Risk CMP integration.
+- ME BBO→Risk integration.
+- Cancel/done margin release through full CMP flow.
+- End‑to‑end WS order lifecycle (NewOrder→ME→Fill/Done/Fail).
+- Marketdata empty‑book snapshot and drop/resubscribe policy.
+- CMP flow‑control/NAK retransmit behavior.
 
 ## Bottom Line
 
-The core plumbing is largely in place, but risk price inputs and margin
-release semantics are still incorrect. Client-facing status/reason mapping
-also needs alignment with WEBPROTO. Marketdata is closer, but empty-book
-snapshot and backpressure semantics remain undefined.
+Major flows are implemented, but pricing feeds, margin release durability,
+status/reason mapping policy, and marketdata backpressure remain under‑specified
+and under‑tested. The system is close, but correctness still depends on
+implicit behaviors not codified in specs or tests.
