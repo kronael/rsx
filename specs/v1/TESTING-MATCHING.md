@@ -6,6 +6,14 @@ Source specs: [ORDERBOOK.md](ORDERBOOK.md),
 
 Binary: `rsx-matching` (one process per symbol or symbol group)
 
+## Table of Contents
+
+- [Requirements Checklist](#requirements-checklist)
+- [Unit Tests](#unit-tests)
+- [E2E Tests](#e2e-tests)
+- [Benchmarks](#benchmarks)
+- [Integration Points](#integration-points)
+
 ---
 
 ## Requirements Checklist

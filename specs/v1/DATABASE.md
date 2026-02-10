@@ -1,5 +1,19 @@
 # Database Choice for Positions
 
+## Table of Contents
+
+- [Recommendation](#recommendation)
+- [PostgreSQL (Primary)](#postgresql-primary)
+- [Redis (Optional Cache)](#redis-optional-cache)
+- [Practical Pattern](#practical-pattern)
+- [Async Persistence with Bounded Loss](#async-persistence-with-bounded-loss-eg-10ms)
+- [Are You Rolling Your Own Database?](#are-you-rolling-your-own-database)
+- [Critique of the Claims](#critique-of-the-claims)
+- [Open Inputs](#open-inputs-if-you-want-a-concrete-config)
+- [Five Key Points (Postgres vs RocksDB)](#five-key-points-postgres-vs-rocksdb)
+
+---
+
 ## Recommendation
 
 Use **PostgreSQL as the system of record** for positions and, if needed, **Redis only as a cache**.

@@ -1,9 +1,13 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::encode_utils::compute_crc32;
 use rsx_dxs::header::WalHeader;
+use rsx_dxs::records::Nak;
 use rsx_dxs::records::FillRecord;
+use rsx_dxs::records::RECORD_NAK;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::StatusMessage;
+use rsx_dxs::wal::WalWriter;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::path::PathBuf;
@@ -213,4 +217,51 @@ fn crc_mismatch_rejected() {
     thread::sleep(Duration::from_millis(10));
     let result = receiver.try_recv();
     assert!(result.is_none());
+}
+
+#[test]
+fn nak_retransmit_from_wal() {
+    let wal_dir = PathBuf::from("./tmp/cmp_nak_wal");
+    let _ = std::fs::create_dir_all(&wal_dir);
+
+    let mut writer = WalWriter::new(1, &wal_dir, None, 1024 * 1024, 0).unwrap();
+    let mut fill = fill_payload(0);
+    let _ = writer.append(&mut fill).unwrap();
+    let _ = writer.flush().unwrap();
+
+    let recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let tmp = UdpSocket::bind(recv_addr).unwrap();
+    let recv_local = tmp.local_addr().unwrap();
+    drop(tmp);
+
+    let mut sender = CmpSender::new(recv_local, 1, &wal_dir).unwrap();
+    let sender_addr = sender.local_addr().unwrap();
+    let mut receiver = CmpReceiver::new(recv_local, sender_addr, 1).unwrap();
+
+    // Send NAK to sender
+    let nak = Nak { from_seq: 1, count: 1, _pad1: [0u8; 48] };
+    let payload = as_bytes(&nak);
+    let crc = compute_crc32(payload);
+    let hdr = WalHeader::new(RECORD_NAK, payload.len() as u16, crc);
+    let hdr_bytes = hdr.to_bytes();
+    let mut buf = vec![0u8; 16 + payload.len()];
+    buf[..16].copy_from_slice(&hdr_bytes);
+    buf[16..].copy_from_slice(payload);
+
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sock.send_to(&buf, sender_addr).unwrap();
+
+    // Process control and expect retransmit at receiver
+    sender.recv_control();
+    thread::sleep(Duration::from_millis(10));
+    let result = receiver.try_recv();
+    assert!(result.is_some());
+    let (hdr, payload) = result.unwrap();
+    assert_eq!(hdr.record_type, RECORD_FILL);
+    let decoded = unsafe {
+        std::ptr::read_unaligned(
+            payload.as_ptr() as *const FillRecord,
+        )
+    };
+    assert_eq!(decoded.seq, 1);
 }

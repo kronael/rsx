@@ -4,6 +4,15 @@ Source specs: [DXS.md](DXS.md), [WAL.md](WAL.md)
 
 Crate: `rsx-dxs`
 
+## Table of Contents
+
+- [Requirements Checklist](#requirements-checklist)
+- [Unit Tests](#unit-tests)
+- [E2E Tests](#e2e-tests)
+- [Edge Case Tests](#edge-case-tests)
+- [Benchmarks](#benchmarks)
+- [Integration Points](#integration-points)
+
 ---
 
 ## Requirements Checklist

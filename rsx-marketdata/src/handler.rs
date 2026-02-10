@@ -81,18 +81,16 @@ pub async fn handle_connection(
                     channels,
                     snapshot_depth,
                 );
-                if is_new && (channels & 2) != 0 {
-                    if let Some(snapshot) = st.snapshot_msg(
+                if (channels & 2) != 0 {
+                    st.ensure_book(symbol_id, 0);
+                    st.send_snapshot_to_client(
+                        conn_id,
                         symbol_id,
                         snapshot_depth,
-                    ) {
-                        st.push_to_client(
-                            conn_id,
-                            snapshot,
-                            max_outbound,
-                        );
-                    }
+                        max_outbound,
+                    );
                 }
+                let _ = is_new;
             }
             Ok(MdFrame::Unsubscribe {
                 symbol_id,
@@ -108,7 +106,7 @@ pub async fn handle_connection(
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
                 let echo = format!("{{\"H\":[{}]}}", timestamp_ms);
-                st.push_to_client(
+                let _ = st.push_to_client(
                     conn_id,
                     echo,
                     max_outbound,

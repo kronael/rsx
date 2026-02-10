@@ -1,5 +1,20 @@
 # TILES: Thread-per-Concern Architecture
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Processes](#processes)
+- [Tile Pattern](#tile-pattern-within-each-process)
+- [Runtime Selection](#runtime-selection)
+- [Networking Stack](#networking-stack)
+- [Tiles Within Each Process](#tiles-within-each-process)
+- [External Processes](#external-processes)
+- [Inter-Process Communication Topology](#inter-process-communication-topology)
+- [Future: Userspace Networking](#future-userspace-networking)
+- [Performance Targets](#performance-targets)
+
+---
+
 ## Overview
 
 Tiles describe the intended thread-per-concern architecture.

@@ -9,6 +9,18 @@ state is recoverable after crash. Positions are persisted at the risk engine
 **System guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for formal
 specification of consistency model, durability bounds, and recovery guarantees.
 
+## Table of Contents
+
+- [1. Fan-Out: CMP/UDP Between Processes](#1-fan-out-cmpudp-between-processes-spsc-optional-in-process)
+- [2. Ordering Guarantees](#2-ordering-guarantees)
+- [3. Backpressure](#3-backpressure)
+- [4. Positions & Risk](#4-positions--risk)
+- [5. Crash Behavior](#5-crash-behavior)
+- [6. Deferred](#6-deferred)
+- [Drain Loop Pseudocode (CMP)](#drain-loop-pseudocode-cmp)
+- [Key Invariants](#key-invariants)
+- [Verification](#verification)
+
 ---
 
 ## 1. Fan-Out: CMP/UDP Between Processes (SPSC Optional In-Process)

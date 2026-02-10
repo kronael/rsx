@@ -1,5 +1,18 @@
 # PROCESSES: Process + Tile Composition
 
+## Table of Contents
+
+- [Scope](#scope)
+- [Terms](#terms)
+- [Generic Process Template](#generic-process-template)
+- [Inter-Process Links](#inter-process-links)
+- [Telemetry](#telemetry)
+- [Process Instantiations](#process-instantiations)
+- [Busy-Spin Guidance](#busy-spin-guidance)
+- [Heartbeats](#heartbeats)
+
+---
+
 ## Scope
 
 This document defines **processes** (monolithic binaries),

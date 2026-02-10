@@ -8,6 +8,18 @@ Tests extracted from RISK.md phases 1-5 and expanded with
 missing edge cases, requirements checklist, and integration
 points.
 
+## Table of Contents
+
+- [Requirements Checklist](#requirements-checklist)
+- [Unit Tests](#unit-tests)
+- [E2E Tests](#e2e-tests)
+- [Integration Tests (testcontainers Postgres)](#integration-tests-testcontainers-postgres)
+- [Smoke Tests](#smoke-tests)
+- [Benchmarks](#benchmarks)
+- [Correctness Invariants](#correctness-invariants)
+- [Integration Points](#integration-points)
+- [Implementation Status](#implementation-status-2026-02-10)
+
 ---
 
 ## Requirements Checklist

@@ -1,5 +1,24 @@
 # Orderbook Data Structures & Matching Algorithm
 
+## Table of Contents
+
+- [Design Goals](#design-goals-from-todomd)
+- [1. Price & Quantity Representation](#1-price--quantity-representation)
+- [2. Tick Size & Lot Size](#2-tick-size--lot-size)
+- [2.5 How Compressed Indexing Bounds the Array](#25-how-compressed-indexing-bounds-the-array)
+- [2.6 Smooshed Ticks](#26-smooshed-ticks)
+- [2.7 Incremental Copy-on-Write Recentering](#27-incremental-copy-on-write-recentering)
+- [2.8 Durability: WAL + Online Snapshot](#28-durability-wal--online-snapshot)
+- [2.9 Symbol Config Distribution](#29-symbol-config-distribution-fees-ticks-metadata)
+- [3. Orderbook Data Structure](#3-orderbook-data-structure)
+- [4. Operation Complexity](#4-operation-complexity)
+- [5. Matching Algorithm](#5-matching-algorithm)
+- [6. Event Types](#6-event-types)
+- [7. Memory Layout & Performance](#7-memory-layout--performance)
+- [8. Why This Design](#8-why-this-design-alternatives-considered)
+
+---
+
 ## Design Goals (from TODO.md)
 
 - Single core/thread per orderbook — no locking

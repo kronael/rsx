@@ -4,6 +4,14 @@ Source spec: [MARK.md](MARK.md)
 
 Binary: `rsx-mark` (standalone service)
 
+## Table of Contents
+
+- [Requirements Checklist](#requirements-checklist)
+- [Unit Tests](#unit-tests)
+- [E2E Tests](#e2e-tests)
+- [Benchmarks](#benchmarks)
+- [Integration Points](#integration-points)
+
 ---
 
 ## Requirements Checklist

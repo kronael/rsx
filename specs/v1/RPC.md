@@ -1,5 +1,20 @@
 # Async RPC Request Handling
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Order ID Design (UUIDv7)](#order-id-design-uuidv7)
+- [Pending Request Management](#pending-request-management)
+- [Request Lifecycle](#request-lifecycle)
+- [Bidirectional Stream Protocol](#bidirectional-stream-protocol)
+- [Error Handling](#error-handling)
+- [Backpressure Strategies](#backpressure-strategies)
+- [Concurrency Model](#concurrency-model)
+- [Performance Considerations](#performance-considerations)
+- [Cross-References](#cross-references)
+
+---
+
 ## Overview
 
 RSX uses an async, non-blocking RPC model for order processing. Orders are

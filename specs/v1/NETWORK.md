@@ -1,5 +1,23 @@
 # System Network Topology
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Why This Topology](#why-this-topology)
+- [Component Architecture](#component-architecture)
+- [Scaling Strategy](#scaling-strategy)
+- [Communication Topology](#communication-topology)
+- [Data Flow](#data-flow)
+- [Network Boundaries](#network-boundaries)
+- [Performance Characteristics](#performance-characteristics)
+- [Deployment Topologies](#deployment-topologies)
+- [Service Discovery](#service-discovery)
+- [Startup Ordering](#startup-ordering)
+- [Failure Modes](#failure-modes)
+- [Cross-References](#cross-references)
+
+---
+
 ## Overview
 
 RSX uses a three-stage flow that separates ingress adaptation (gateway),

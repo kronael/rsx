@@ -7,6 +7,22 @@ CONSISTENCY.md §4, LIQUIDATOR.md §4-6.
 **Key invariant:** `position = sum(fills)` always holds after
 replay (GUARANTEES.md §8.1).
 
+## Table of Contents
+
+- [1. Position State Transitions](#1-position-state-transitions)
+- [2. Arithmetic Edge Cases](#2-arithmetic-edge-cases)
+- [3. Multi-User Interactions](#3-multi-user-interactions)
+- [4. Crash and Recovery Edge Cases](#4-crash-and-recovery-edge-cases)
+- [5. Liquidation Edge Cases](#5-liquidation-edge-cases)
+- [6. Price Feed Edge Cases](#6-price-feed-edge-cases)
+- [7. Fee and Collateral Edge Cases](#7-fee-and-collateral-edge-cases)
+- [8. Concurrency and Ordering Edge Cases](#8-concurrency-and-ordering-edge-cases)
+- [9. Symbol Config Edge Cases](#9-symbol-config-edge-cases)
+- [10. Replay and Reconciliation Edge Cases](#10-replay-and-reconciliation-edge-cases)
+- [11. Network and Partition Edge Cases](#11-network-and-partition-edge-cases)
+- [12. Summary of Critical Invariants](#12-summary-of-critical-invariants)
+- [13. References](#13-references)
+
 ---
 
 ## 1. Position State Transitions

@@ -7,21 +7,14 @@ It is based on code+specs cross-check and the CODEPATHS map.
 
 ### Critical
 
-1) **Price inputs to risk are still brittle.**
-   Mark now sends CMP, and risk ingests it, but there is no end‑to‑end
-   test for mark→risk or ME BBO→risk. If either feed is down, margin
-   checks use stale/zero prices with no fallback.
-   - Code: `rsx-mark/src/main.rs`, `rsx-risk/src/main.rs`
-   - Tests missing: no integration tests for mark/BBO feed.
-
-2) **Frozen margin release relies on per‑order map with no replay path.**
+1) **Frozen margin release relies on per‑order map with no replay path.**
    The new `frozen_orders` map is memory‑only; on restart, frozen margin
    remains in account state but per‑order entries are lost, so cancel/done
    after restart cannot release correctly.
    - Code: `rsx-risk/src/shard.rs` (`frozen_orders`)
    - Underspec: no persistence/replay for per‑order frozen tracking.
 
-3) **OrderDone status mapping is underspecified.**
+2) **OrderDone status mapping is underspecified.**
    Gateway maps `final_status` to WS `status`, but spec doesn’t define
    the mapping explicitly. This is now code-defined behavior.
    - Code: `rsx-gateway/src/main.rs`
@@ -29,30 +22,29 @@ It is based on code+specs cross-check and the CODEPATHS map.
 
 ### High
 
-4) **Cancel path still depends on gateway state.**
+3) **Cancel path still depends on gateway state.**
    Cancels by client‑id require `pending` lookup. There is no stateless
    cancel correlation on the wire (order_id only).
    - Code: `rsx-gateway/src/pending.rs`, `rsx-gateway/src/handler.rs`
    - Spec gap: no explicit statement that gateway must persist pending
      for cancel by `cid`.
 
-5) **Marketdata backpressure semantics still weak.**
-   Outbound queue drops silently; seq gaps trigger snapshots but do not
-   inform clients of dropped deltas. Empty‑book subscribe still yields
-   no snapshot.
-   - Code: `rsx-marketdata/src/state.rs`, `rsx-marketdata/src/handler.rs`
-   - Tests missing: empty‑book snapshot; drop/resubscribe policy.
+4) **Feed‑loss behavior remains underspecified.**
+   Mark/BBO ingestion now has CMP tests, but there is no explicit policy
+   for feed loss, staleness cutoffs, or fallback index/mark behavior.
+   - Code: `rsx-risk/src/shard.rs`, `rsx-mark/src/main.rs`
+   - Spec gap: no feed‑loss timeout policy.
 
 ### Medium
 
-6) **Risk reject reason mapping is hard-coded to FailureReason.**
+5) **Risk reject reason mapping is hard-coded to FailureReason.**
    This fixes client codes but conflates `UserInLiquidation` and
    `NotInShard` as `InternalError`. That mapping is now policy without
    spec backing.
    - Code: `rsx-risk/src/main.rs`
    - Spec gap: WEBPROTO lacks explicit mapping for risk‑side rejections.
 
-7) **Matching fan‑out tests still model SPSC, not CMP.**
+6) **Matching fan‑out tests still model SPSC, not CMP.**
    `rsx-matching/tests/fanout_test.rs` validates in‑process SPSC fanout;
    it does not cover CMP payload encoding or network ordering.
 
@@ -69,8 +61,8 @@ It is based on code+specs cross-check and the CODEPATHS map.
 
 - **Spec vs code:** CMP between processes; replica exists via CMP tip sync.
 - **Gaps:** per‑order frozen map not persisted; no replay linkage; mark/BBO
-  integration untested; rejection mapping policy undefined.
-- **Tests:** margin/position/replication tests exist; no mark/BBO ingestion tests.
+  feed‑loss policy undefined; rejection mapping policy undefined.
+- **Tests:** margin/position/replication tests exist; mark/BBO CMP ingest tests exist.
 
 ### Matching
 
@@ -81,18 +73,19 @@ It is based on code+specs cross-check and the CODEPATHS map.
 ### Marketdata
 
 - **Spec vs code:** CMP ingest, replay bootstrap, seq‑gap detection. Good.
-- **Gaps:** empty‑book snapshot missing; backpressure semantics underspecified.
-- **Tests:** replay/seq‑gap/shadow tests exist; no empty‑book snapshot test.
+- **Gaps:** none obvious in current implementation, but drop policy is
+  still implicit (snapshots on enqueue failure).
+- **Tests:** replay/seq‑gap/shadow tests exist; empty‑book snapshot/backpressure tests exist.
 
 ### Mark
 
 - **Spec vs code:** now sends CMP to risk + WAL/DXS. Good.
-- **Gaps:** no tests for CMP feed or symbol_map correctness end‑to‑end.
+- **Gaps:** feed‑loss policy still unspecified; no symbol_map e2e test.
 
 ### DXS/CMP/WAL
 
 - **Spec vs code:** header+payload; flow control via bool return; fsync flush.
-- **Gaps:** CMP retry/backpressure behavior not covered by tests.
+- **Gaps:** CMP retry/backpressure behavior partially covered by tests.
 
 ## Underspecified Areas (Spec Gaps)
 
@@ -105,12 +98,8 @@ It is based on code+specs cross-check and the CODEPATHS map.
 
 ## Test Coverage Gaps (by Codepath)
 
-- Mark→Risk CMP integration.
-- ME BBO→Risk integration.
 - Cancel/done margin release through full CMP flow.
 - End‑to‑end WS order lifecycle (NewOrder→ME→Fill/Done/Fail).
-- Marketdata empty‑book snapshot and drop/resubscribe policy.
-- CMP flow‑control/NAK retransmit behavior.
 
 ## Bottom Line
 
