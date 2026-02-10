@@ -1,3 +1,4 @@
+use crate::config::TlsConfig;
 use crate::encode_utils::encode_record;
 use crate::header::WalHeader;
 use crate::records::CaughtUpRecord;
@@ -6,8 +7,13 @@ use crate::records::RECORD_CAUGHT_UP;
 use crate::records::RECORD_REPLAY_REQUEST;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
+use rustls::pki_types::CertificateDer;
+use rustls::pki_types::PrivateKeyDer;
+use rustls::ServerConfig;
 use rsx_types::time::time_ns;
 use std::collections::HashMap;
+use std::fs;
+use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,24 +23,42 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
+use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing::warn;
 
+#[derive(Clone)]
 pub struct DxsReplayService {
     pub wal_dir: PathBuf,
     pub listeners: Arc<
         RwLock<HashMap<u32, Vec<Arc<Notify>>>>,
     >,
+    pub tls_acceptor: Option<TlsAcceptor>,
 }
 
 impl DxsReplayService {
-    pub fn new(wal_dir: PathBuf) -> Self {
-        Self {
+    pub fn new(
+        wal_dir: PathBuf,
+        tls_config: Option<TlsConfig>,
+    ) -> io::Result<Self> {
+        let tls_acceptor = if let Some(cfg) = tls_config {
+            if cfg.enabled {
+                cfg.validate_server()?;
+                Some(build_tls_acceptor(&cfg)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
             wal_dir,
             listeners: Arc::new(RwLock::new(
                 HashMap::new(),
             )),
-        }
+            tls_acceptor,
+        })
     }
 
     pub async fn add_listener(
@@ -54,7 +78,11 @@ impl DxsReplayService {
         addr: SocketAddr,
     ) -> std::io::Result<()> {
         let listener = TcpListener::bind(addr).await?;
-        info!("dxs replay server listening on {}", addr);
+        let tls_enabled = self.tls_acceptor.is_some();
+        info!(
+            "dxs replay server listening on {} (tls={})",
+            addr, tls_enabled
+        );
         let svc = Arc::new(self);
         loop {
             let (stream, peer) =
@@ -62,9 +90,26 @@ impl DxsReplayService {
             info!("dxs client connected from {}", peer);
             let svc = svc.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    handle_client(svc, stream).await
+                let result = if let Some(ref acceptor) =
+                    svc.tls_acceptor
                 {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            handle_client_tls(
+                                svc,
+                                tls_stream,
+                            )
+                            .await
+                        }
+                        Err(e) => Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("tls handshake failed: {}", e),
+                        )),
+                    }
+                } else {
+                    handle_client_plain(svc, stream).await
+                };
+                if let Err(e) = result {
                     warn!(
                         "dxs client {} error: {}",
                         peer, e
@@ -75,10 +120,29 @@ impl DxsReplayService {
     }
 }
 
-async fn handle_client(
+async fn handle_client_plain(
     svc: Arc<DxsReplayService>,
-    mut stream: TcpStream,
-) -> std::io::Result<()> {
+    stream: TcpStream,
+) -> io::Result<()> {
+    handle_client(svc, stream).await
+}
+
+async fn handle_client_tls(
+    svc: Arc<DxsReplayService>,
+    stream: tokio_rustls::server::TlsStream<
+        TcpStream,
+    >,
+) -> io::Result<()> {
+    handle_client(svc, stream).await
+}
+
+async fn handle_client<S>(
+    svc: Arc<DxsReplayService>,
+    mut stream: S,
+) -> io::Result<()>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
     // Read ReplayRequest: WalHeader(16) + payload(64)
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     stream.read_exact(&mut hdr_buf).await?;
@@ -211,4 +275,76 @@ async fn handle_client(
             }
         }
     }
+}
+
+fn build_tls_acceptor(
+    cfg: &TlsConfig,
+) -> io::Result<TlsAcceptor> {
+    let cert_path =
+        cfg.cert_path.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cert_path required",
+            )
+        })?;
+    let key_path =
+        cfg.key_path.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "key_path required",
+            )
+        })?;
+
+    let cert_pem = fs::read(cert_path)?;
+    let key_pem = fs::read(key_path)?;
+
+    let certs = load_certs(&cert_pem)?;
+    let key = load_private_key(&key_pem)?;
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("tls config error: {}", e),
+            )
+        })?;
+
+    Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+fn load_certs(
+    pem: &[u8],
+) -> io::Result<Vec<CertificateDer<'static>>> {
+    let mut cursor = io::Cursor::new(pem);
+    rustls_pemfile::certs(&mut cursor)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("bad cert pem: {}", e),
+            )
+        })
+}
+
+fn load_private_key(
+    pem: &[u8],
+) -> io::Result<PrivateKeyDer<'static>> {
+    let mut cursor = io::Cursor::new(pem);
+    let keys =
+        rustls_pemfile::private_key(&mut cursor)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("bad key pem: {}", e),
+                )
+            })?;
+
+    keys.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "no private key found",
+        )
+    })
 }
