@@ -3,8 +3,8 @@ use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
-use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::OrderFailedRecord;
+use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::RECORD_CONFIG_APPLIED;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
@@ -77,12 +77,10 @@ fn main() {
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
 
-    // Run monoio event loop
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .build()
-    .expect("failed to build monoio runtime");
+    let mut rt =
+        monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+            .build()
+            .expect("failed to build monoio runtime");
 
     let listen_addr = config.listen_addr.clone();
     rt.block_on(async move {
@@ -216,10 +214,7 @@ fn main() {
                             &state, &rec,
                         );
                     }
-                    RECORD_CONFIG_APPLIED => {
-                        // No-op: gateway does not
-                        // validate tick/lot yet.
-                    }
+                    RECORD_CONFIG_APPLIED => {}
                     _ => {}
                 }
             }
@@ -263,6 +258,14 @@ fn main() {
                     let mut st =
                         state.borrow_mut();
                     for id in &stale {
+                        if let Some(c) =
+                            st.connections.get(id)
+                        {
+                            info!(
+                                "closing idle connection user_id={}",
+                                c.user_id
+                            );
+                        }
                         st.remove_connection(*id);
                     }
                 }
@@ -277,18 +280,15 @@ fn main() {
     });
 }
 
-fn oid_hex(hi: u64, lo: u64) -> String {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&hi.to_be_bytes());
-    bytes[8..].copy_from_slice(&lo.to_be_bytes());
-    order_id_to_hex(&bytes)
-}
-
 fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&hi.to_be_bytes());
     bytes[8..].copy_from_slice(&lo.to_be_bytes());
     bytes
+}
+
+fn oid_hex(hi: u64, lo: u64) -> String {
+    order_id_to_hex(&oid_bytes(hi, lo))
 }
 
 fn route_fill(
@@ -370,9 +370,7 @@ fn route_order_failed(
     state: &Rc<RefCell<GatewayState>>,
     rec: &OrderFailedRecord,
 ) {
-    let oid = oid_hex(
-        rec.order_id_hi, rec.order_id_lo,
-    );
+    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
     let msg = serialize(&WsFrame::OrderUpdate {
         order_id: oid,
         status: 3, // failed
