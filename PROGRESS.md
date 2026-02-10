@@ -9,7 +9,7 @@
 **Status:** Phases 1-5 complete, Phase 6 not started.
 Full order pipeline wired: Gateway -> Risk -> ME ->
 Risk -> Gateway, ME -> Marketdata. Liquidation engine
-complete with insurance fund. ~560 tests passing.
+complete with insurance fund. ~580 tests passing.
 
 **Overall completion: ~97%** (weighted by criticality)
 
