@@ -62,6 +62,8 @@ fn main() {
     );
 
     let max_pending = config.max_pending;
+    let circuit_threshold = config.circuit_threshold;
+    let circuit_cooldown_ms = config.circuit_cooldown_ms;
 
     // Run monoio event loop
     let mut rt = monoio::RuntimeBuilder::<
@@ -73,7 +75,11 @@ fn main() {
     let listen_addr = config.listen_addr.clone();
     rt.block_on(async move {
         let state = Rc::new(RefCell::new(
-            GatewayState::new(max_pending),
+            GatewayState::new(
+                max_pending,
+                circuit_threshold,
+                circuit_cooldown_ms,
+            ),
         ));
         let sender =
             Rc::new(RefCell::new(cmp_sender));

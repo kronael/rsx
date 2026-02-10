@@ -13,6 +13,8 @@ pub struct MarkConfig {
     pub wal_dir: String,
     pub stream_id: u32,
     pub staleness_ns: u64,
+    pub price_scale: i64,
+    pub symbol_map: crate::types::SymbolMap,
     pub sources: Vec<SourceConfig>,
 }
 
@@ -28,6 +30,13 @@ fn env_u32(key: &str, default: u32) -> u32 {
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_i64(key: &str, default: i64) -> i64 {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -65,6 +74,26 @@ fn load_source(name: &str) -> SourceConfig {
     }
 }
 
+fn parse_symbol_map(raw: &str) -> crate::types::SymbolMap {
+    let mut map = crate::types::SymbolMap::new();
+    for pair in raw.split(',') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let mut it = pair.split('=');
+        let sym = it.next().unwrap_or("").trim();
+        let id = it.next().unwrap_or("").trim();
+        if sym.is_empty() || id.is_empty() {
+            continue;
+        }
+        if let Ok(parsed) = id.parse::<u32>() {
+            map.insert(sym.to_string(), parsed);
+        }
+    }
+    map
+}
+
 pub fn load_mark_config() -> io::Result<MarkConfig> {
     let listen_addr = env_str(
         "RSX_MARK_LISTEN_ADDR",
@@ -79,6 +108,10 @@ pub fn load_mark_config() -> io::Result<MarkConfig> {
         "RSX_MARK_STALENESS_NS",
         10_000_000_000,
     );
+    let price_scale = env_i64("RSX_MARK_PRICE_SCALE", 1_000_000);
+    let symbol_map = parse_symbol_map(
+        &env_str("RSX_MARK_SYMBOL_MAP", ""),
+    );
 
     let source_names = ["BINANCE", "COINBASE"];
     let sources: Vec<SourceConfig> = source_names
@@ -92,6 +125,8 @@ pub fn load_mark_config() -> io::Result<MarkConfig> {
         wal_dir,
         stream_id,
         staleness_ns,
+        price_scale,
+        symbol_map,
         sources,
     })
 }

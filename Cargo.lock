@@ -1609,7 +1609,9 @@ dependencies = [
  "base64 0.22.1",
  "monoio",
  "rsx-dxs",
+ "rsx-risk",
  "rsx-types",
+ "rustc-hash",
  "serde_json",
  "sha1",
  "tracing",
@@ -1632,11 +1634,13 @@ dependencies = [
 name = "rsx-marketdata"
 version = "0.1.0"
 dependencies = [
+ "base64 0.21.7",
  "monoio",
  "rsx-book",
  "rsx-dxs",
  "rsx-types",
  "serde_json",
+ "sha1",
  "tracing",
  "tracing-subscriber",
 ]

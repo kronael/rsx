@@ -21,10 +21,14 @@ pub struct OrderRequest {
     pub symbol_id: u32,
     pub price: i64,
     pub qty: i64,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+    pub timestamp_ns: u64,
     pub side: u8,
     pub tif: u8,
     pub reduce_only: bool,
     pub is_liquidation: bool,
+    pub _pad: [u8; 4],
 }
 
 /// RISK.md §6: reject reasons.

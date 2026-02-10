@@ -30,12 +30,10 @@ where
 }
 
 /// Perform WebSocket upgrade handshake on a raw
-/// TcpStream. Returns Ok((key, user_id)) if upgrade
-/// succeeded and auth was present.
+/// TcpStream. Returns Ok(key) if upgrade succeeded.
 pub async fn ws_handshake(
     stream: &mut TcpStream,
-) -> io::Result<(String, u32)> {
-    // Read HTTP upgrade request
+) -> io::Result<String> {
     let buf = vec![0u8; 4096];
     let (res, buf) = stream.read(buf).await;
     let n = res?;
@@ -48,36 +46,15 @@ pub async fn ws_handshake(
 
     let request = String::from_utf8_lossy(&buf[..n]);
 
-    // Extract Sec-WebSocket-Key
-    let key = extract_ws_key(&request).ok_or_else(
-        || {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "missing Sec-WebSocket-Key",
-            )
-        },
-    )?;
+    let key = extract_ws_key(&request).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "missing Sec-WebSocket-Key",
+        )
+    })?;
 
-    // Extract user_id from auth headers
-    let user_id = match extract_user_id(&request) {
-        Some(id) => id,
-        None => {
-            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
-                Connection: close\r\n\r\n";
-            let (res, _) =
-                stream.write_all(resp.to_vec()).await;
-            let _ = res;
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "missing or invalid auth",
-            ));
-        }
-    };
-
-    // Compute accept key
     let accept = compute_accept_key(&key);
 
-    // Send upgrade response
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\n\
          Upgrade: websocket\r\n\
@@ -89,38 +66,7 @@ pub async fn ws_handshake(
     let (res, _) = stream.write_all(resp_bytes).await;
     res?;
 
-    Ok((key, user_id))
-}
-
-/// Extract user_id from HTTP headers.
-/// Checks Authorization (Bearer token) then X-User-Id.
-/// TODO: validate JWT in production instead of parsing
-/// Bearer token as raw u32.
-fn extract_user_id(request: &str) -> Option<u32> {
-    for line in request.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("authorization:") {
-            let val = line
-                .split_once(':')
-                .map(|(_, v)| v.trim())?;
-            let token = val
-                .strip_prefix("Bearer ")
-                .or_else(|| {
-                    val.strip_prefix("bearer ")
-                })?;
-            return token.trim().parse::<u32>().ok();
-        }
-    }
-    for line in request.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("x-user-id:") {
-            let val = line
-                .split_once(':')
-                .map(|(_, v)| v.trim())?;
-            return val.parse::<u32>().ok();
-        }
-    }
-    None
+    Ok(key)
 }
 
 fn extract_ws_key(request: &str) -> Option<String> {
@@ -152,7 +98,6 @@ fn compute_accept_key(key: &str) -> String {
 pub async fn ws_read_frame(
     stream: &mut TcpStream,
 ) -> io::Result<(u8, Vec<u8>)> {
-    // Read first 2 bytes
     let preamble = vec![0u8; 2];
     let (res, preamble) = stream.read_exact(preamble).await;
     res?;
@@ -195,8 +140,7 @@ pub async fn ws_read_frame(
     }
 
     if let Some(mask) = mask_key {
-        for (i, byte) in payload.iter_mut().enumerate()
-        {
+        for (i, byte) in payload.iter_mut().enumerate() {
             *byte ^= mask[i % 4];
         }
     }
@@ -227,6 +171,16 @@ pub async fn ws_write_text(
     frame.extend_from_slice(data);
 
     let (res, _) = stream.write_all(frame).await;
+    res?;
+    Ok(())
+}
+
+/// Write a raw WebSocket frame payload (already framed).
+pub async fn ws_write_raw(
+    stream: &mut TcpStream,
+    data: &[u8],
+) -> io::Result<()> {
+    let (res, _) = stream.write_all(data.to_vec()).await;
     res?;
     Ok(())
 }
