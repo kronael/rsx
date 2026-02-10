@@ -12,13 +12,12 @@ use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_matching::wire::OrderMessage;
 use rsx_types::install_panic_handler;
 use rsx_types::SymbolConfig;
+use rsx_types::time::time_ns;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use tracing::info;
 
 fn get_env_u32(key: &str) -> io::Result<u32> {
@@ -147,16 +146,16 @@ fn main() {
 
     // CMP/UDP: send events to Marketdata
     let mkt_addr: SocketAddr =
-        env::var("RSX_MKT_CMP_ADDR")
+        env::var("RSX_MD_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9103".into())
             .parse()
-            .expect("invalid RSX_MKT_CMP_ADDR");
+            .expect("invalid RSX_MD_CMP_ADDR");
     let mut mkt_sender = CmpSender::new(
         mkt_addr,
         symbol_id,
         &PathBuf::from(&wal_dir),
     )
-    .expect("failed to create MKT CMP sender");
+    .expect("failed to create MD CMP sender");
 
     // DXS sidecar
     if let Ok(dxs_addr) = env::var("RSX_ME_DXS_ADDR") {
@@ -208,10 +207,7 @@ fn main() {
                 );
 
                 // Write events to WAL
-                let ts_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64;
+                let ts_ns = time_ns();
                 let _ = write_events_to_wal(
                     &mut wal_writer,
                     &book,
@@ -219,7 +215,7 @@ fn main() {
                     ts_ns,
                 );
 
-                // Send events to Risk + Marketdata
+                // Send events to Risk (all types)
                 for event in book.events() {
                     let _ = send_event_cmp(
                         &mut cmp_sender,
@@ -227,7 +223,11 @@ fn main() {
                         symbol_id,
                         ts_ns,
                     );
-                    let _ = send_event_cmp(
+                }
+
+                // Send events to Marketdata (no OrderDone)
+                for event in book.events() {
+                    let _ = send_event_marketdata(
                         &mut mkt_sender,
                         event,
                         symbol_id,
@@ -369,4 +369,22 @@ fn send_event_cmp(
         _ => {}
     }
     Ok(())
+}
+
+/// Send events to Marketdata -- Fill, OrderInserted,
+/// OrderCancelled only. OrderDone excluded per MD20.
+fn send_event_marketdata(
+    sender: &mut CmpSender,
+    event: &rsx_book::event::Event,
+    symbol_id: u32,
+    ts_ns: u64,
+) -> io::Result<()> {
+    match *event {
+        rsx_book::event::Event::Fill { .. }
+        | rsx_book::event::Event::OrderInserted { .. }
+        | rsx_book::event::Event::OrderCancelled {
+            ..
+        } => send_event_cmp(sender, event, symbol_id, ts_ns),
+        _ => Ok(()),
+    }
 }

@@ -9,7 +9,6 @@ use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
-use rsx_dxs::records::RECORD_ORDER_RESPONSE;
 use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::persist::run_persist_worker;
@@ -25,12 +24,11 @@ use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
 use rsx_risk::PersistEvent;
 use rsx_types::install_panic_handler;
+use rsx_types::time::time;
 use std::env;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use tracing::error;
 use tracing::info;
 
@@ -245,10 +243,7 @@ fn run(
     info!("risk shard {} running", shard_id);
 
     loop {
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now_secs = time();
 
         // Pump CMP -> SPSC rings
         // Orders from Gateway

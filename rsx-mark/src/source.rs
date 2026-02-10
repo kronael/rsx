@@ -1,6 +1,7 @@
 use crate::types::SourcePrice;
 use crate::types::SymbolMap;
 use futures_util::StreamExt;
+use rsx_types::time::time_ns;
 use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_tungstenite::connect_async;
@@ -57,6 +58,7 @@ impl PriceSource for BinanceSource {
         let price_scale = self.price_scale;
 
         tokio::spawn(async move {
+            let mut tx = tx;
             let mut backoff = base;
             loop {
                 match connect_async(&ws_url).await {
@@ -77,7 +79,7 @@ impl PriceSource for BinanceSource {
                                     source_id,
                                     price_scale,
                                     &symbol_map,
-                                    &tx,
+                                    &mut tx,
                                 );
                             }
                         }
@@ -105,6 +107,7 @@ impl PriceSource for CoinbaseSource {
         let price_scale = self.price_scale;
 
         tokio::spawn(async move {
+            let mut tx = tx;
             let mut backoff = base;
             loop {
                 match connect_async(&ws_url).await {
@@ -125,7 +128,7 @@ impl PriceSource for CoinbaseSource {
                                     source_id,
                                     price_scale,
                                     &symbol_map,
-                                    &tx,
+                                    &mut tx,
                                 );
                             }
                         }
@@ -145,7 +148,7 @@ fn handle_binance_msg(
     source_id: u8,
     price_scale: i64,
     symbol_map: &SymbolMap,
-    tx: &rtrb::Producer<SourcePrice>,
+    tx: &mut rtrb::Producer<SourcePrice>,
 ) {
     match val {
         serde_json::Value::Array(arr) => {
@@ -176,11 +179,10 @@ fn handle_binance_msg(
                 Some(p) => p,
                 None => return,
             };
-            let now_ns = now_ns();
             let _ = tx.push(SourcePrice {
                 source_id,
                 price,
-                timestamp_ns: now_ns,
+                timestamp_ns: time_ns(),
                 symbol_id,
             });
         }
@@ -193,7 +195,7 @@ fn handle_coinbase_msg(
     source_id: u8,
     price_scale: i64,
     symbol_map: &SymbolMap,
-    tx: &rtrb::Producer<SourcePrice>,
+    tx: &mut rtrb::Producer<SourcePrice>,
 ) {
     let obj = match val.as_object() {
         Some(o) => o,
@@ -215,11 +217,10 @@ fn handle_coinbase_msg(
         Some(p) => p,
         None => return,
     };
-    let now_ns = now_ns();
     let _ = tx.push(SourcePrice {
         source_id,
         price,
-        timestamp_ns: now_ns,
+        timestamp_ns: time_ns(),
         symbol_id,
     });
 }
@@ -244,13 +245,4 @@ fn parse_price(raw: &str, scale: i64) -> Option<i64> {
         frac_scaled.parse().ok()?
     };
     Some(whole_val * scale + frac_val)
-}
-
-fn now_ns() -> u64 {
-    use std::time::SystemTime;
-    use std::time::UNIX_EPOCH;
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
 }
