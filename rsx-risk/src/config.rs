@@ -2,6 +2,22 @@ use crate::funding::FundingConfig;
 use crate::margin::SymbolRiskParams;
 use std::io;
 
+pub struct LiquidationConfig {
+    pub base_delay_ns: u64,
+    pub base_slip_bps: u64,
+    pub max_rounds: u32,
+}
+
+impl Default for LiquidationConfig {
+    fn default() -> Self {
+        Self {
+            base_delay_ns: 100_000_000, // 100ms
+            base_slip_bps: 1,
+            max_rounds: 10,
+        }
+    }
+}
+
 pub struct ShardConfig {
     pub shard_id: u32,
     pub shard_count: u32,
@@ -10,6 +26,7 @@ pub struct ShardConfig {
     pub taker_fee_bps: Vec<i64>,
     pub maker_fee_bps: Vec<i64>,
     pub funding_config: FundingConfig,
+    pub liquidation_config: LiquidationConfig,
 }
 
 fn env_u32(key: &str, default: u32) -> u32 {
@@ -53,5 +70,7 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         taker_fee_bps,
         maker_fee_bps,
         funding_config: FundingConfig::default(),
+        liquidation_config:
+            LiquidationConfig::default(),
     })
 }
