@@ -1,28 +1,38 @@
-.PHONY: test e2e integration wal smoke perf clean
+.PHONY: check test e2e integration wal smoke perf \
+       lint clean
 
-# Unit tests (<5s) - fast feedback loop
+# Type check only (fastest feedback, no codegen)
+check:
+	cargo check --workspace
+
+# Unit tests (<5s)
 test:
-	cargo test --lib --bins
+	cargo test --workspace
 
-# E2E component tests (~30s) - complete order lifecycle with mocked components
+# E2E component tests (~30s)
 e2e:
-	cargo test --test '*' --no-fail-fast
+	cargo test --workspace --test '*' --no-fail-fast
 
-# Integration tests (1-5min) - full system stack with testcontainers
+# Integration tests (1-5min) - testcontainers
 integration:
-	cargo test --test '*' -- --ignored --test-threads=1
+	cargo test --workspace --test '*' \
+		-- --ignored --test-threads=1
 
 # WAL correctness tests (<10s)
 wal:
 	cargo test -p rsx-dxs
 
-# Smoke tests (<1min) - against deployed systems
+# Smoke tests (<1min) - deployed systems
 smoke:
-	@echo "Smoke tests not yet implemented"
+	@echo "smoke tests not yet implemented"
 
-# Performance benchmarks (long-running)
+# Performance benchmarks
 perf:
 	cargo bench
+
+# Lint
+lint:
+	cargo clippy --workspace -- -D warnings
 
 # Clean build artifacts
 clean:

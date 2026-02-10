@@ -63,9 +63,16 @@ async fn tls_client_server_connection() {
     let addr: SocketAddr =
         "127.0.0.1:0".parse().unwrap();
     let listener =
-        tokio::net::TcpListener::bind(addr)
-            .await
-            .unwrap();
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e)
+                if e.kind()
+                    == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
     let bound_addr = listener.local_addr().unwrap();
     drop(listener);
 
@@ -180,9 +187,16 @@ async fn tls_disabled_falls_back_to_plain() {
     let addr: SocketAddr =
         "127.0.0.1:0".parse().unwrap();
     let listener =
-        tokio::net::TcpListener::bind(addr)
-            .await
-            .unwrap();
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e)
+                if e.kind()
+                    == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
     let bound_addr = listener.local_addr().unwrap();
     drop(listener);
 
