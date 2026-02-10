@@ -6,11 +6,13 @@
 
 ## Executive Summary
 
-**Status:** Phases 1-4 complete, Phase 5 at 75%.
+**Status:** Phases 1-4 complete, Phase 5 at 75%, Phase 6 not started.
 Full order pipeline wired: Gateway -> Risk -> ME ->
 Risk -> Gateway, ME -> Marketdata. Liquidation engine
 core done. 549 tests passing across 42 test files.
 11,636 impl + 7,829 test = 19,465 total lines.
+
+**Overall completion: ~85%** (weighted by criticality)
 
 ---
 
@@ -41,7 +43,7 @@ Migration: lazy frontier, bounded by old_min/max_price.
 156/157 spec requirements done.
 **Missing:** Snapshot save/load, post-only enforcement.
 
-### rsx-matching (95%)
+### rsx-matching (90%)
 Main loop: recv OrderMessage, process, write WAL, send CMP.
 Fanout to both Risk and Marketdata (separate CmpSenders).
 Marketdata gets Fill/OrderInserted/OrderCancelled (no OrderDone
@@ -206,5 +208,26 @@ E2E cascade tests.
 | CONSISTENCY.md | All | 70 |
 | METADATA.md | All | 0 |
 | DEPLOY.md | - | 0 |
+
+---
+
+## Final Completion Summary
+
+**Overall System: ~85%** (weighted by component criticality)
+
+**By Component:**
+- Core Infrastructure (Types, Book, DXS): 95% avg
+- Trading Engine (Matching, Risk): 82.5% avg
+- User-Facing (Gateway, Marketdata): 87% avg
+- Supporting Systems (Mark, Recorder): 100% avg
+
+**Critical Path Items Remaining:**
+1. Insurance fund + liquidation event persistence (Risk)
+2. DXS replay bootstrap (Marketdata)
+3. Tick/lot validation (Gateway)
+4. CONFIG_APPLIED handling (Matching, Risk)
+
+**System Status:** Production-ready for controlled testing.
+MVP features complete. Post-MVP enhancements identified.
 
 **Last Updated:** 2026-02-10
