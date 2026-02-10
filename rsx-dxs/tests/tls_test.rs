@@ -1,4 +1,3 @@
-use rustls::crypto::aws_lc_rs;
 use rsx_dxs::config::TlsConfig;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::RECORD_CAUGHT_UP;
