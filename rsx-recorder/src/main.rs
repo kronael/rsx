@@ -123,7 +123,8 @@ async fn main() -> io::Result<()> {
         config.stream_id,
         config.producer_addr,
         config.tip_file,
-    );
+        None,
+    )?;
 
     let state_clone = state.clone();
     consumer

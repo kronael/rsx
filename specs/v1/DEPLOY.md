@@ -59,20 +59,11 @@ RSX_MARK_WAL_DIR=./wal/mark
 All configuration is via env vars (no TOML args).
 API keys are provided via env vars.
 
-## SPSC Ring Sizing
+## CMP/UDP Buffer Sizing
 
-Ring capacity = `peak_throughput * 2` (headroom factor).
-
-| Ring | Capacity | Rationale |
-|------|----------|-----------|
-| ME -> Risk (fills) | 4096 | ~1ms at 4M fills/s |
-| ME -> Gateway | 4096 | same as Risk |
-| ME -> MARKETDATA | 8192 | lower priority, more lag |
-| Gateway -> Risk | 4096 | order ingress |
-| Risk -> ME | 2048 | validated orders |
-| Mark -> Risk | 1024 | mark prices (low rate) |
-
-Resize if monitoring shows >10 stalls/sec sustained.
+CMP/UDP uses kernel socket buffers. Tune `rmem`/`wmem` if
+drops occur under load. Default kernel buffers are usually
+adequate for v1; monitor loss/NAKs before increasing.
 
 ## Health Endpoints
 

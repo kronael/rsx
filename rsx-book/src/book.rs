@@ -97,6 +97,10 @@ impl Orderbook {
         self.state == BookState::Migrating
     }
 
+    pub fn update_config(&mut self, new_config: SymbolConfig) {
+        self.config = new_config;
+    }
+
     /// Insert a resting order into the book.
     #[allow(clippy::too_many_arguments)]
     pub fn insert_resting(

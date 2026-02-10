@@ -6,3 +6,4 @@ pub mod config;
 pub mod handler;
 pub mod state;
 pub mod ws;
+pub mod replay;

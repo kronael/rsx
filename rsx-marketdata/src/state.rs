@@ -3,11 +3,13 @@ use crate::shadow::ShadowBook;
 use crate::subscription::SubscriptionManager;
 use crate::types::BboUpdate;
 use rsx_types::SymbolConfig;
+use rsx_types::time::time_ns;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
 pub struct ConnectionState {
     pub outbound: VecDeque<String>,
+    pub last_heartbeat_ns: u64,
 }
 
 pub struct MarketDataState {
@@ -47,6 +49,7 @@ impl MarketDataState {
             id,
             ConnectionState {
                 outbound: VecDeque::new(),
+                last_heartbeat_ns: time_ns(),
             },
         );
         id
@@ -168,5 +171,32 @@ impl MarketDataState {
 
     pub fn last_bbo_mut(&mut self, symbol_id: u32) -> Option<&mut Option<BboUpdate>> {
         self.last_bbo.get_mut(symbol_id as usize)
+    }
+
+    pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {
+        let msg = format!("{{\"H\":[{}]}}", ts_ms);
+        for conn in self.connections.values_mut() {
+            conn.outbound.push_back(msg.clone());
+        }
+    }
+
+    pub fn update_heartbeat(&mut self, conn_id: u64) {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
+            conn.last_heartbeat_ns = time_ns();
+        }
+    }
+
+    pub fn check_timeouts(&mut self, timeout_ns: u64) -> Vec<u64> {
+        let now = time_ns();
+        let mut timed_out = Vec::new();
+        for (conn_id, conn) in &self.connections {
+            if now - conn.last_heartbeat_ns >= timeout_ns {
+                timed_out.push(*conn_id);
+            }
+        }
+        for conn_id in &timed_out {
+            self.remove_connection(*conn_id);
+        }
+        timed_out
     }
 }

@@ -187,7 +187,7 @@ ascending by price.
 | BBO.ap | BboRecord.ask_px |
 | BBO.aq | BboRecord.ask_qty |
 | BBO.ac | BboRecord.ask_count |
-| BBO.ts | BboRecord.timestamp_ns |
+| BBO.ts | BboRecord.ts_ns |
 | BBO.u | BboRecord.seq |
 | D.sym | L2Delta.symbol_id |
 | D.side | L2Delta.side |

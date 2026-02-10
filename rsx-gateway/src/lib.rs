@@ -9,3 +9,4 @@ pub mod order_id;
 pub mod ws;
 pub mod handler;
 pub mod state;
+pub mod jwt;

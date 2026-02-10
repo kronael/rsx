@@ -55,6 +55,7 @@ pub fn serialize_trade(trade: &TradeEvent) -> String {
 pub enum MdFrame {
     Subscribe { symbol_id: u32, channels: u32 },
     Unsubscribe { symbol_id: u32, channels: u32 },
+    Heartbeat { timestamp_ms: u64 },
 }
 
 #[derive(Debug)]
@@ -123,6 +124,19 @@ pub fn parse_client_frame(
                 symbol_id: sym,
                 channels: ch,
             })
+        }
+        "H" => {
+            if arr.is_empty() {
+                return Err(MdParseError::MissingField(
+                    "H needs 1 field".into(),
+                ));
+            }
+            let ts = arr[0]
+                .as_u64()
+                .ok_or(MdParseError::InvalidValue(
+                    "timestamp_ms".into(),
+                ))?;
+            Ok(MdFrame::Heartbeat { timestamp_ms: ts })
         }
         other => {
             Err(MdParseError::UnknownType(other.into()))

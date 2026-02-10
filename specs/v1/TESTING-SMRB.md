@@ -112,18 +112,17 @@ Targets from SMRB.md:
 
 ## Integration Points
 
-- Matching engine drain_events() fans out to 3+ SPSC rings
-  (CONSISTENCY.md §1 drain loop)
-- Mirrored stream to hot spare ME via SPSC
-  (CONSISTENCY.md §1)
+- SPSC rings are used for in-process handoff only; matching
+  fan-out uses CMP/UDP in v1 (CONSISTENCY.md §1)
+- Mirrored stream to hot spare ME via SPSC is not implemented in v1
 - Recorder connects as DXS consumer for archival
   (CONSISTENCY.md §1, DXS.md §8)
 - Event routing per consumer matches CONSISTENCY.md §1 table:
   Fill to risk/gateway/mktdata, BBO to risk, OrderInserted to
   mktdata, OrderCancelled to gateway/mktdata, OrderDone to
   risk/gateway
-- Risk engine main loop polls ME rings (RISK.md §main loop)
-- Gateway receives fills/done via SPSC from risk
+- Risk engine receives ME events via CMP/UDP (RISK.md §main loop)
+- Gateway receives fills/done via CMP/UDP from risk
 - Mark price aggregator pushes SourcePrice via SPSC
   (MARK.md §1)
 - WAL writer backpressure: buf full triggers stall (DXS.md §3)

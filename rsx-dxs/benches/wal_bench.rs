@@ -32,6 +32,7 @@ fn bench_wal_append_in_memory(c: &mut Criterion) {
     let mut writer = WalWriter::new(
         1,
         tmp.path(),
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )
@@ -50,6 +51,7 @@ fn bench_wal_flush_fsync(c: &mut Criterion) {
     let mut writer = WalWriter::new(
         1,
         tmp.path(),
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )
@@ -72,6 +74,7 @@ fn bench_wal_read_sequential(c: &mut Criterion) {
     let mut writer = WalWriter::new(
         1,
         tmp.path(),
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )
@@ -106,6 +109,7 @@ fn bench_replay_100k_records(c: &mut Criterion) {
     let mut writer = WalWriter::new(
         1,
         tmp.path(),
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )

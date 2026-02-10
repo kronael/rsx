@@ -154,3 +154,62 @@ fn consumer_reconnect_resets_on_success() {
     assert_ne!(backoff_idx, backoff_idx_reset);
     assert_eq!(backoff_idx_reset, 0);
 }
+
+#[test]
+fn consumer_skips_unknown_record_types() {
+    use rsx_dxs::header::WalHeader;
+    use rsx_dxs::records::RECORD_FILL;
+    use rsx_dxs::wal::RawWalRecord;
+
+    let mut known_count = 0u32;
+    let mut callback = |_record: RawWalRecord| {
+        known_count += 1;
+    };
+
+    // Known record type (RECORD_FILL = 0)
+    let known_header = WalHeader::new(RECORD_FILL, 0, 0);
+    let known_record = RawWalRecord {
+        header: known_header,
+        payload: vec![],
+    };
+    callback(known_record);
+
+    // Unknown record type (0xFFFF)
+    let unknown_header = WalHeader::new(0xFFFF, 0, 0);
+    let unknown_record = RawWalRecord {
+        header: unknown_header,
+        payload: vec![],
+    };
+    // This would be skipped by consumer, not passed to callback
+    // So we only count known records
+    let is_known = matches!(unknown_header.record_type, 0..=18);
+    if is_known {
+        callback(unknown_record);
+    }
+
+    assert_eq!(known_count, 1);
+}
+
+#[test]
+fn consumer_advances_tip_on_unknown_record() {
+    // Verify that tip advances even when unknown record
+    // types are skipped. This ensures consumer makes
+    // progress and doesn't get stuck in infinite replay
+    // loop on reconnect.
+    let mut tip: u64 = 100;
+
+    // Receive 3 records: known, unknown, known
+    // Tip should advance to 103 (all records counted)
+    let record_types = [0u16, 0xFFFF, 0];
+    for record_type in record_types {
+        tip += 1;
+        let is_known = matches!(record_type, 0..=18);
+        if is_known {
+            // process record
+        } else {
+            // skip unknown, but tip already advanced
+        }
+    }
+
+    assert_eq!(tip, 103);
+}

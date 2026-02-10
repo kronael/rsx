@@ -23,5 +23,7 @@ monoio = "0.2"
 sha1 = "0.10"
 base64 = "0.22"
 rustc-hash = "2"
+jsonwebtoken = "9"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

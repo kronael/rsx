@@ -28,6 +28,7 @@ pub struct WalWriter {
     first_seq: u64,
     last_seq: u64,
     wal_dir: PathBuf,
+    archive_dir: Option<PathBuf>,
     max_file_size: u64,
     retention_ns: u64,
     listeners: Vec<Arc<Notify>>,
@@ -37,11 +38,17 @@ impl WalWriter {
     pub fn new(
         stream_id: u32,
         wal_dir: &Path,
+        archive_dir: Option<PathBuf>,
         max_file_size: u64,
         retention_ns: u64,
     ) -> io::Result<Self> {
         let dir = wal_dir.join(stream_id.to_string());
         fs::create_dir_all(&dir)?;
+
+        if let Some(ref archive) = archive_dir {
+            let archive_stream_dir = archive.join(stream_id.to_string());
+            fs::create_dir_all(&archive_stream_dir)?;
+        }
 
         let active_path = dir.join(format!(
             "{}_active.wal", stream_id
@@ -62,6 +69,7 @@ impl WalWriter {
             first_seq: 1,
             last_seq: 0,
             wal_dir: dir,
+            archive_dir,
             max_file_size,
             retention_ns,
             listeners: Vec::new(),
@@ -171,6 +179,7 @@ impl WalWriter {
     }
 
     /// Delete rotated files older than retention window.
+    /// If archive_dir configured, move to archive first.
     pub fn gc(&self) -> io::Result<()> {
         let entries = fs::read_dir(&self.wal_dir)?;
         for entry in entries {
@@ -203,14 +212,45 @@ impl WalWriter {
                 if age.as_nanos() as u64
                     > self.retention_ns
                 {
-                    debug!(
-                        "gc deleting {}",
-                        entry.path().display()
-                    );
-                    fs::remove_file(entry.path())?;
+                    if let Some(ref archive) = self.archive_dir {
+                        self.archive_file(&entry.path(), archive)?;
+                    } else {
+                        debug!(
+                            "gc deleting {}",
+                            entry.path().display()
+                        );
+                        fs::remove_file(entry.path())?;
+                    }
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Move WAL file to archive directory.
+    fn archive_file(
+        &self,
+        source: &Path,
+        archive_dir: &Path,
+    ) -> io::Result<()> {
+        let filename = source.file_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no filename",
+            )
+        })?;
+        let dest = archive_dir
+            .join(self.stream_id.to_string())
+            .join(filename);
+
+        debug!(
+            "archiving {} -> {}",
+            source.display(),
+            dest.display()
+        );
+
+        fs::rename(source, &dest)?;
+        info!("archived to {}", dest.display());
         Ok(())
     }
 
@@ -254,10 +294,13 @@ fn parse_wal_filename(name: &str) -> Option<WalFileInfo> {
 pub struct WalReader {
     stream_id: u32,
     wal_dir: PathBuf,
+    hot_wal_dir: PathBuf,
+    archive_dir: Option<PathBuf>,
     file: Option<File>,
     files: Vec<WalFileInfo>,
     file_idx: usize,
     header_buf: [u8; WalHeader::SIZE],
+    in_archive: bool,
 }
 
 impl WalReader {
@@ -267,9 +310,69 @@ impl WalReader {
         target_seq: u64,
         wal_dir: &Path,
     ) -> io::Result<Self> {
-        let dir = wal_dir.join(stream_id.to_string());
-        let mut files = list_wal_files(stream_id, &dir)?;
+        Self::open_from_seq_with_archive(
+            stream_id, target_seq, wal_dir, None,
+        )
+    }
+
+    /// Open reader with archive fallback support.
+    pub fn open_from_seq_with_archive(
+        stream_id: u32,
+        target_seq: u64,
+        wal_dir: &Path,
+        archive_dir: Option<&Path>,
+    ) -> io::Result<Self> {
+        let hot_dir = wal_dir.join(stream_id.to_string());
+        let mut files = list_wal_files(stream_id, &hot_dir)?;
         files.sort_by_key(|f| f.first_seq);
+
+        // check if target_seq is in hot WAL range
+        let in_hot_range = if files.is_empty() {
+            // if hot WAL is empty and we have archive,
+            // fallback to archive (in_hot_range = false)
+            // if no archive, treat as in_hot_range (will
+            // return empty)
+            archive_dir.is_none()
+        } else {
+            // find first non-active file's first_seq
+            let first_available = files
+                .iter()
+                .find(|f| !f.is_active)
+                .map(|f| f.first_seq)
+                .unwrap_or(u64::MAX);
+
+            // if target_seq is 0 (start from beginning) and we
+            // have an archive, check archive first
+            if target_seq == 0 && archive_dir.is_some() {
+                false // fallback to archive
+            } else {
+                target_seq >= first_available
+                    || (target_seq == 0
+                        && first_available == u64::MAX)
+            }
+        };
+
+        // if not in hot range, try archive fallback
+        let (files, current_dir, in_archive) =
+            if !in_hot_range && archive_dir.is_some() {
+                debug!(
+                "target_seq {} not in hot WAL, falling back to archive",
+                target_seq
+            );
+                let archive = archive_dir
+                    .unwrap()
+                    .join(stream_id.to_string());
+                let mut archive_files =
+                    list_wal_files(stream_id, &archive)?;
+                archive_files.sort_by_key(|f| f.first_seq);
+                if archive_files.is_empty() {
+                    (files, hot_dir.clone(), false)
+                } else {
+                    (archive_files, archive, true)
+                }
+            } else {
+                (files, hot_dir.clone(), false)
+            };
 
         // start from first file if target_seq is 0
         let file_idx = if files.is_empty() || target_seq == 0 {
@@ -298,13 +401,35 @@ impl WalReader {
             None
         };
 
+        // if archive was empty, immediately transition to hot
+        let (file, files, file_idx, wal_dir, in_archive) =
+            if in_archive && file.is_none() {
+                debug!(
+                    "archive is empty, transitioning to hot WAL"
+                );
+                let mut hot_files =
+                    list_wal_files(stream_id, &hot_dir)?;
+                hot_files.sort_by_key(|f| f.first_seq);
+                let f = if !hot_files.is_empty() {
+                    Some(File::open(&hot_files[0].path)?)
+                } else {
+                    None
+                };
+                (f, hot_files, 0, hot_dir.clone(), false)
+            } else {
+                (file, files, file_idx, current_dir, in_archive)
+            };
+
         Ok(Self {
             stream_id,
-            wal_dir: dir,
+            wal_dir,
+            hot_wal_dir: hot_dir,
+            archive_dir: archive_dir.map(|p| p.to_path_buf()),
             file,
             files,
             file_idx,
             header_buf: [0u8; WalHeader::SIZE],
+            in_archive,
         })
     }
 
@@ -396,6 +521,29 @@ impl WalReader {
             )?);
             return Ok(true);
         }
+
+        // if we exhausted archive files, transition to hot WAL
+        if self.in_archive && self.archive_dir.is_some() {
+            debug!(
+                "archive exhausted, transitioning to hot WAL"
+            );
+            self.in_archive = false;
+            self.wal_dir = self.hot_wal_dir.clone();
+            let mut hot_files = list_wal_files(
+                self.stream_id,
+                &self.hot_wal_dir,
+            )?;
+            hot_files.sort_by_key(|f| f.first_seq);
+            self.files = hot_files;
+            self.file_idx = 0;
+            if !self.files.is_empty() {
+                self.file = Some(File::open(
+                    &self.files[0].path,
+                )?);
+                return Ok(true);
+            }
+        }
+
         self.file = None;
         Ok(false)
     }

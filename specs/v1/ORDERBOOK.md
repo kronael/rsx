@@ -862,8 +862,8 @@ fn emit(&mut self, event: Event) {
 `OrderDone` signals the risk engine and user that an order no longer exists (fully
 filled or cancelled). Emitted after the last fill or after a cancel.
 
-Events are drained after each order is processed. Multiple SPSC ring buffers
-fan out to downstream consumers:
+Events are drained after each order is processed. CMP/UDP fan-out to
+downstream consumers:
 - Risk engine (position updates from fills, OrderDone for margin release)
 - Persistence layer (trade log)
 - Market data dissemination (shadow orderbook, see [MARKETDATA.md](MARKETDATA.md))

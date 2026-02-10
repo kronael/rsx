@@ -104,6 +104,16 @@ pub async fn handle_connection(
                     state.borrow_mut().unsubscribe(conn_id, symbol_id);
                 }
             }
+            Ok(MdFrame::Heartbeat { timestamp_ms }) => {
+                let mut st = state.borrow_mut();
+                st.update_heartbeat(conn_id);
+                let echo = format!("{{\"H\":[{}]}}", timestamp_ms);
+                st.push_to_client(
+                    conn_id,
+                    echo,
+                    max_outbound,
+                );
+            }
             Err(MdParseError::InvalidJson) => continue,
             Err(_) => continue,
         }

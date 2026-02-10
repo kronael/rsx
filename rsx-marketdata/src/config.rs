@@ -10,6 +10,11 @@ pub struct MarketDataConfig {
     pub price_decimals: u8,
     pub qty_decimals: u8,
     pub max_outbound: usize,
+    pub replay_addr: Option<String>,
+    pub stream_id: u32,
+    pub tip_file: String,
+    pub heartbeat_interval_ms: u64,
+    pub heartbeat_timeout_ms: u64,
 }
 
 fn env_str(key: &str, default: &str) -> String {
@@ -45,7 +50,16 @@ fn env_u8(key: &str, default: u8) -> u8 {
         .unwrap_or(default)
 }
 
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 pub fn load_marketdata_config() -> MarketDataConfig {
+    let replay_addr = std::env::var("RSX_MD_REPLAY_ADDR")
+        .ok();
     MarketDataConfig {
         listen_addr: env_str(
             "RSX_MD_LISTEN",
@@ -82,5 +96,16 @@ pub fn load_marketdata_config() -> MarketDataConfig {
             "RSX_MD_MAX_OUTBOUND",
             1024,
         ),
+        replay_addr,
+        stream_id: env_u32("RSX_MD_STREAM_ID", 1),
+        tip_file: env_str("RSX_MD_TIP_FILE", "./tmp/md.tip"),
+        heartbeat_interval_ms: env_u64(
+            "RSX_MD_HEARTBEAT_INTERVAL_S",
+            5,
+        ) * 1000,
+        heartbeat_timeout_ms: env_u64(
+            "RSX_MD_IDLE_TIMEOUT_S",
+            10,
+        ) * 1000,
     }
 }

@@ -272,7 +272,7 @@ Targets from TESTING.md §6:
 | Insert | 100-500ns (p50/p99/p99.9) |
 | Match | 100-500ns |
 | Cancel | 100-300ns |
-| E2E latency (same machine, SPSC) | <50us |
+| E2E latency (same machine, CMP/UDP) | <50us |
 | Normal load | 10K orders/sec sustained 10min |
 | Burst load | 100K orders/sec spike 10s |
 | Recentering (lazy) | ~1-3us per level |
@@ -287,9 +287,9 @@ Targets from TESTING.md §6:
   (ORDERBOOK.md §3)
 - Embeds `rsx-dxs` WalWriter + DxsReplay server
   (ORDERBOOK.md §2.8, DXS.md §5)
-- SPSC fan-out to risk, gateway, mktdata rings
+- CMP/UDP fan-out to risk, gateway, mktdata
   (CONSISTENCY.md §1)
-- Receives orders from risk engine via SPSC ring
+- Receives orders from risk engine via CMP/UDP
   (NETWORK.md, RISK.md §6)
 - System-level: participates in full order lifecycle tests
   (TESTING.md §2 e2e, §3 integration)

@@ -39,7 +39,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
             )
         })?;
     let wal_dir = PathBuf::from(&config.wal_dir);
-    let service = DxsReplayService::new(wal_dir.clone());
+    let service = DxsReplayService::new(wal_dir.clone(), None)?;
     rt.spawn(async move {
         if let Err(e) = service.serve(dxs_addr).await {
             tracing::error!("dxs server error: {e}");
@@ -49,6 +49,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
     let mut wal_writer = WalWriter::new(
         config.stream_id,
         &wal_dir,
+        None,
         64 * 1024 * 1024,
         10 * 60 * 1_000_000_000,
     )?;

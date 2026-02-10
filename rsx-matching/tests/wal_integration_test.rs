@@ -32,6 +32,7 @@ fn wal_records_written_for_all_event_types() {
     let mut writer = WalWriter::new(
         1,
         tmp.path(),
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )
@@ -103,6 +104,7 @@ fn flush_timer_fires_at_10ms() {
     let mut writer = WalWriter::new(
         1,
         tmp.path(),
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )

@@ -270,3 +270,25 @@ fn trade_serialize_format() {
     assert_eq!(arr[1], 300);
     assert_eq!(arr[5], 66);
 }
+
+#[test]
+fn ws_h_heartbeat_frame_parsed() {
+    let frame =
+        parse_client_frame("{\"H\":[12345]}").unwrap();
+    assert_eq!(
+        frame,
+        MdFrame::Heartbeat { timestamp_ms: 12345 }
+    );
+}
+
+#[test]
+fn ws_h_heartbeat_missing_timestamp_fails() {
+    let result = parse_client_frame("{\"H\":[]}");
+    assert!(result.is_err());
+}
+
+#[test]
+fn ws_h_heartbeat_invalid_timestamp_fails() {
+    let result = parse_client_frame("{\"H\":[\"not_a_number\"]}");
+    assert!(result.is_err());
+}
