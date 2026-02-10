@@ -1,6 +1,7 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_dxs::FillRecord;
 use rsx_dxs::wal::WalReader;
 use rsx_dxs::wal::WalWriter;
 use rsx_matching::wal_integration::flush_if_due;
@@ -107,9 +108,26 @@ fn flush_timer_fires_at_10ms() {
 
     // last_flush = now, so flush_if_due should NOT flush
     let mut last_flush = Instant::now();
-    writer
-        .append(0, &[0u8; 16])
-        .unwrap();
+    let mut dummy_record = FillRecord {
+        seq: 1,
+        ts_ns: 1000,
+        symbol_id: 1,
+        taker_user_id: 1,
+        maker_user_id: 2,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 0,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 0,
+        price: 50000,
+        qty: 100,
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
+    };
+    writer.append(&mut dummy_record).unwrap();
     flush_if_due(&mut writer, &mut last_flush).unwrap();
 
     let active = tmp

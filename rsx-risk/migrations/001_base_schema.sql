@@ -49,7 +49,7 @@ BEGIN
         CREATE TABLE tips (
             instance_id INT NOT NULL,
             symbol_id   INT NOT NULL,
-            seq         BIGINT NOT NULL DEFAULT 0,
+            last_seq    BIGINT NOT NULL DEFAULT 0,
             PRIMARY KEY (instance_id, symbol_id)
         );
 

@@ -9,6 +9,10 @@ pub const FAIL_VALIDATION: u8 = 0;
 pub const FAIL_REDUCE_ONLY: u8 = 1;
 pub const FAIL_FOK: u8 = 2;
 
+pub const CANCEL_USER: u8 = 0;
+pub const CANCEL_REDUCE_ONLY: u8 = 1;
+pub const CANCEL_IOC: u8 = 2;
+
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     Fill {
@@ -36,6 +40,7 @@ pub enum Event {
         handle: u32,
         user_id: u32,
         remaining_qty: Qty,
+        reason: u8,
         order_id_hi: u64,
         order_id_lo: u64,
     },

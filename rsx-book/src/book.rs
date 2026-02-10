@@ -41,6 +41,8 @@ pub struct Orderbook {
     pub old_compression: Option<CompressionMap>,
     pub bid_frontier: i64,
     pub ask_frontier: i64,
+    pub old_min_price: i64,
+    pub old_max_price: i64,
 }
 
 impl Orderbook {
@@ -76,6 +78,8 @@ impl Orderbook {
             old_compression: None,
             bid_frontier: mid_price,
             ask_frontier: mid_price,
+            old_min_price: 0,
+            old_max_price: 0,
         }
     }
 

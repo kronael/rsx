@@ -134,9 +134,12 @@ impl RiskShard {
         let sid = fill.symbol_id as usize;
 
         // Dedup: skip if seq <= tip for this symbol
-        if fill.preamble.seq <= self.tips[sid] {
+        if fill.seq <= self.tips[sid] {
             return;
         }
+
+        let mut taker_fee_val = 0i64;
+        let mut maker_fee_val = 0i64;
 
         // Process taker if in shard
         if self.user_in_shard(fill.taker_user_id) {
@@ -156,9 +159,9 @@ impl RiskShard {
                 fill.taker_side,
                 fill.price,
                 fill.qty,
-                fill.preamble.seq,
+                fill.seq,
             );
-            let fee = calculate_fee(
+            taker_fee_val = calculate_fee(
                 fill.qty,
                 fill.price,
                 self.taker_fee_bps[sid],
@@ -166,7 +169,7 @@ impl RiskShard {
             self.accounts
                 .get_mut(&fill.taker_user_id)
                 .unwrap()
-                .deduct_fee(fee);
+                .deduct_fee(taker_fee_val);
             self.update_exposure(
                 fill.taker_user_id,
                 fill.symbol_id,
@@ -196,9 +199,9 @@ impl RiskShard {
                 maker_side,
                 fill.price,
                 fill.qty,
-                fill.preamble.seq,
+                fill.seq,
             );
-            let fee = calculate_fee(
+            maker_fee_val = calculate_fee(
                 fill.qty,
                 fill.price,
                 self.maker_fee_bps[sid],
@@ -206,14 +209,14 @@ impl RiskShard {
             self.accounts
                 .get_mut(&fill.maker_user_id)
                 .unwrap()
-                .deduct_fee(fee);
+                .deduct_fee(maker_fee_val);
             self.update_exposure(
                 fill.maker_user_id,
                 fill.symbol_id,
             );
         }
 
-        self.tips[sid] = fill.preamble.seq;
+        self.tips[sid] = fill.seq;
         self.fills_processed += 1;
 
         // Persist fill + updated positions + tip
@@ -223,10 +226,10 @@ impl RiskShard {
             maker_user_id: fill.maker_user_id,
             price: fill.price,
             qty: fill.qty,
-            taker_fee: 0,
-            maker_fee: 0,
+            taker_fee: taker_fee_val,
+            maker_fee: maker_fee_val,
             taker_side: fill.taker_side,
-            seq: fill.preamble.seq,
+            seq: fill.seq,
             timestamp_ns: fill.timestamp_ns,
         }));
         if self.user_in_shard(fill.taker_user_id) {
@@ -263,7 +266,7 @@ impl RiskShard {
         }
         self.push_persist(PersistEvent::Tip {
             symbol_id: fill.symbol_id,
-            seq: fill.preamble.seq,
+            seq: fill.seq,
         });
     }
 
@@ -343,6 +346,25 @@ impl RiskShard {
                 user_id: order.user_id,
                 reason,
             },
+        }
+    }
+
+    /// Release frozen margin when order completes.
+    pub fn process_order_done(
+        &mut self,
+        event: &crate::types::OrderDoneEvent,
+    ) {
+        if !self.user_in_shard(event.user_id) {
+            return;
+        }
+        if let Some(acct) =
+            self.accounts.get_mut(&event.user_id)
+        {
+            acct.release_margin(event.frozen_amount);
+            let snapshot = acct.clone();
+            self.push_persist(
+                PersistEvent::Account(snapshot),
+            );
         }
     }
 

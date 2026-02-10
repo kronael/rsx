@@ -1,7 +1,6 @@
 use crate::encode_utils::encode_record;
 use crate::header::WalHeader;
 use crate::records::CaughtUpRecord;
-use crate::records::PayloadPreamble;
 use crate::records::ReplayRequest;
 use crate::records::RECORD_CAUGHT_UP;
 use crate::records::RECORD_REPLAY_REQUEST;
@@ -81,20 +80,20 @@ async fn handle_client(
     // Read ReplayRequest: WalHeader(16) + payload(64)
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     stream.read_exact(&mut hdr_buf).await?;
-    let preamble = WalHeader::from_bytes(&hdr_buf)
+    let hdr = WalHeader::from_bytes(&hdr_buf)
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "bad header",
             )
         })?;
-    if preamble.record_type != RECORD_REPLAY_REQUEST {
+    if hdr.record_type != RECORD_REPLAY_REQUEST {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "expected replay request",
         ));
     }
-    let payload_len = preamble.len as usize;
+    let payload_len = hdr.len as usize;
     let mut payload_buf = vec![0u8; payload_len];
     stream.read_exact(&mut payload_buf).await?;
 
@@ -142,7 +141,12 @@ async fn handle_client(
                 stream
                     .write_all(&record.payload)
                     .await?;
-                last_seq = last_seq.max(from_seq);
+                let seq = u64::from_le_bytes(
+                    record.payload[..8]
+                        .try_into()
+                        .unwrap(),
+                );
+                last_seq = seq;
             }
             Ok(None) => break,
             Err(e) => {
@@ -154,14 +158,7 @@ async fn handle_client(
 
     // Send CaughtUp marker
     let caught_up = CaughtUpRecord {
-        preamble: PayloadPreamble {
-            seq: 0,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<CaughtUpRecord>()
-                as u32,
-        },
+        seq: 0,
         ts_ns: std::time::SystemTime::now()
             .duration_since(
                 std::time::UNIX_EPOCH,
@@ -182,7 +179,6 @@ async fn handle_client(
     };
     let encoded = encode_record(
         RECORD_CAUGHT_UP,
-        stream_id,
         payload,
     );
     stream.write_all(&encoded).await?;
@@ -212,7 +208,12 @@ async fn handle_client(
                     stream
                         .write_all(&record.payload)
                         .await?;
-                    last_seq += 1;
+                    let seq = u64::from_le_bytes(
+                        record.payload[..8]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    last_seq = seq;
                 }
                 Ok(None) => break,
                 Err(_) => break,

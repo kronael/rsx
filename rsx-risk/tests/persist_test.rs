@@ -336,9 +336,7 @@ async fn advisory_lock_exclusive() {
 #[tokio::test]
 async fn replay_from_wal_rebuilds_positions() {
     use rsx_dxs::FillRecord;
-    use rsx_dxs::RECORD_FILL;
     use rsx_dxs::WalWriter;
-    use std::mem;
 
     let wal_dir =
         tempfile::tempdir().unwrap();
@@ -353,14 +351,8 @@ async fn replay_from_wal_rebuilds_positions() {
     )
     .unwrap();
     for i in 1..=3u64 {
-        let fill = FillRecord {
-            preamble: rsx_dxs::records::PayloadPreamble {
-                seq: i,
-                ver: 1,
-                kind: 0,
-                _pad0: 0,
-                len: std::mem::size_of::<FillRecord>() as u32,
-            },
+        let mut fill = FillRecord {
+            seq: i,
             ts_ns: 1000 + i,
             symbol_id: 0,
             taker_user_id: 0,
@@ -378,14 +370,7 @@ async fn replay_from_wal_rebuilds_positions() {
             post_only: 0,
             _pad1: [0; 4],
         };
-        let payload = unsafe {
-            std::slice::from_raw_parts(
-                &fill as *const FillRecord
-                    as *const u8,
-                mem::size_of::<FillRecord>(),
-            )
-        };
-        writer.append(RECORD_FILL, payload).unwrap();
+        writer.append(&mut fill).unwrap();
     }
     writer.flush().unwrap();
 

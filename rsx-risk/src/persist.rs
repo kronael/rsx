@@ -134,10 +134,10 @@ pub async fn upsert_tips(
     for &(symbol_id, seq) in tips {
         tx.execute(
             "INSERT INTO tips \
-             (instance_id, symbol_id, seq) \
+             (instance_id, symbol_id, last_seq) \
              VALUES ($1,$2,$3) \
              ON CONFLICT (instance_id, symbol_id) \
-             DO UPDATE SET seq = $3",
+             DO UPDATE SET last_seq = $3",
             &[
                 &(instance_id as i32),
                 &(symbol_id as i32),

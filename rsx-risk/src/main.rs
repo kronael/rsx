@@ -271,7 +271,7 @@ fn run(
                     )
                 };
                 let _ = fill_prod.push(FillEvent {
-                    preamble: fill.preamble,
+                    seq: fill.seq,
                     symbol_id: fill.symbol_id,
                     taker_user_id: fill.taker_user_id,
                     maker_user_id: fill.maker_user_id,
@@ -298,7 +298,7 @@ fn run(
                 )
             };
             let _ =
-                gw_sender.send_record(0x20, bytes);
+                gw_sender.send_raw(0x20, bytes);
         }
 
         // CMP housekeeping

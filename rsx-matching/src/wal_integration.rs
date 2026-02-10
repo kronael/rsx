@@ -1,15 +1,10 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_dxs::wal::WalWriter;
-use rsx_dxs::records::RECORD_FILL;
-use rsx_dxs::records::RECORD_ORDER_INSERTED;
-use rsx_dxs::records::RECORD_ORDER_CANCELLED;
-use rsx_dxs::records::RECORD_ORDER_DONE;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
-use rsx_dxs::records::PayloadPreamble;
 use std::io;
 use std::time::Instant;
 
@@ -34,8 +29,8 @@ pub fn write_events_to_wal(
                 taker_order_id_hi,
                 taker_order_id_lo,
             } => {
-                let record = FillRecord {
-                    preamble: make_prefix::<FillRecord>(),
+                let mut record = FillRecord {
+                    seq: 0,
                     ts_ns,
                     symbol_id,
                     taker_user_id,
@@ -53,8 +48,7 @@ pub fn write_events_to_wal(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                let bytes = record_as_bytes(&record);
-                writer.append(RECORD_FILL, bytes)?;
+                writer.append(&mut record)?;
             }
             Event::OrderInserted {
                 handle: _,
@@ -65,8 +59,8 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let record = OrderInsertedRecord {
-                    preamble: make_prefix::<OrderInsertedRecord>(),
+                let mut record = OrderInsertedRecord {
+                    seq: 0,
                     ts_ns,
                     symbol_id,
                     user_id,
@@ -80,36 +74,31 @@ pub fn write_events_to_wal(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                let bytes = record_as_bytes(&record);
-                writer.append(
-                    RECORD_ORDER_INSERTED, bytes,
-                )?;
+                writer.append(&mut record)?;
             }
             Event::OrderCancelled {
                 handle: _,
                 user_id,
                 remaining_qty,
+                reason,
                 order_id_hi,
                 order_id_lo,
             } => {
-                let record = OrderCancelledRecord {
-                    preamble: make_prefix::<OrderCancelledRecord>(),
+                let mut record = OrderCancelledRecord {
+                    seq: 0,
                     ts_ns,
                     symbol_id,
                     user_id,
                     order_id_hi,
                     order_id_lo,
                     remaining_qty: remaining_qty.0,
-                    reason: 1,
+                    reason,
                     reduce_only: 0,
                     tif: 0,
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                let bytes = record_as_bytes(&record);
-                writer.append(
-                    RECORD_ORDER_CANCELLED, bytes,
-                )?;
+                writer.append(&mut record)?;
             }
             Event::OrderDone {
                 handle: _,
@@ -120,8 +109,8 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let record = OrderDoneRecord {
-                    preamble: make_prefix::<OrderDoneRecord>(),
+                let mut record = OrderDoneRecord {
+                    seq: 0,
                     ts_ns,
                     symbol_id,
                     user_id,
@@ -135,10 +124,7 @@ pub fn write_events_to_wal(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                let bytes = record_as_bytes(&record);
-                writer.append(
-                    RECORD_ORDER_DONE, bytes,
-                )?;
+                writer.append(&mut record)?;
             }
             Event::OrderFailed { .. } => {
                 // OrderFailed is not persisted to WAL
@@ -164,23 +150,4 @@ pub fn flush_if_due(
         *last_flush = now;
     }
     Ok(())
-}
-
-fn record_as_bytes<T>(record: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            record as *const T as *const u8,
-            std::mem::size_of::<T>(),
-        )
-    }
-}
-
-fn make_prefix<T>() -> PayloadPreamble {
-    PayloadPreamble {
-        seq: 0,
-        ver: 1,
-        kind: 0,
-        _pad0: 0,
-        len: std::mem::size_of::<T>() as u32,
-    }
 }

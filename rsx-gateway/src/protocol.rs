@@ -296,9 +296,9 @@ fn parse_order_update(
     let filled_qty = as_i64(&arr[2], "filled")?;
     let remaining_qty = as_i64(&arr[3], "remaining")?;
     let reason = as_u8(&arr[4], "reason")?;
-    if reason > 7 {
+    if reason > 10 {
         return Err(ParseError::InvalidValue(
-            "reason must be 0-7".to_string(),
+            "reason must be 0-10".to_string(),
         ));
     }
     Ok(WsFrame::OrderUpdate {

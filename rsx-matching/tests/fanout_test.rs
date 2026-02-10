@@ -181,6 +181,7 @@ fn order_cancelled_sent_to_gateway_mktdata() {
         handle: h,
         user_id: 1,
         remaining_qty: rsx_types::Qty(100),
+        reason: 0,
         order_id_hi: 0,
         order_id_lo: 0,
     });

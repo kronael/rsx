@@ -122,14 +122,13 @@ impl DxsConsumer {
             )
         };
         let crc = compute_crc32(payload);
-        let preamble = WalHeader::new(
+        let hdr = WalHeader::new(
             RECORD_REPLAY_REQUEST,
-            payload.len() as u32,
-            self.stream_id,
+            payload.len() as u16,
             crc,
         );
         stream
-            .write_all(&preamble.to_bytes())
+            .write_all(&hdr.to_bytes())
             .await?;
         stream.write_all(payload).await?;
 

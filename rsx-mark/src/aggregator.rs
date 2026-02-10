@@ -105,20 +105,14 @@ fn make_event(
     now_ns: u64,
 ) -> MarkPriceEvent {
     MarkPriceEvent {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq: 0,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<MarkPriceEvent>() as u32,
-        },
+        seq: 0,
         symbol_id,
         _pad0: 0,
         mark_price: state.mark_price,
         timestamp_ns: now_ns,
         source_mask: state.source_mask,
         source_count: state.source_count as u32,
-        _pad1: [0; 16],
+        _pad1: [0; 24],
     }
 }
 

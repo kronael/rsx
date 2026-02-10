@@ -1,20 +1,18 @@
 //! Mark price data structures. MARK.md §2.
 
-use rsx_dxs::records::PayloadPreamble;
-
 /// WAL wire format for mark price events.
-/// Prefix(16) + 4 + 4 + 8 + 8 + 4 + 4 + 16(pad) = 64 bytes
+/// seq(8) + 4 + 4 + 8 + 8 + 4 + 4 + 24(pad) = 64 bytes
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct MarkPriceEvent {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
     pub mark_price: i64,
     pub timestamp_ns: u64,
     pub source_mask: u32,
     pub source_count: u32,
-    pub _pad1: [u8; 16],
+    pub _pad1: [u8; 24],
 }
 
 /// A single price update from one exchange source.

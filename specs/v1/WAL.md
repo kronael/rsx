@@ -12,19 +12,19 @@ This document describes the shared WAL architecture for the risk engine and the 
 - WAL uses **fixed-size records** (no protobuf, no extra envelope).
 - Records are `#[repr(C, align(64))]` with explicit little-endian fields.
 - Each record starts with a 16-byte header:
-  `{version, record_type, len, stream_id, crc32}`.
-- Payloads begin with the CMP prefix (seq/ver/kind/len).
-- Header `version` is the WAL wire-format version; payload
-  `ver` is the record schema version.
+  `{record_type: u16, len: u16, crc32: u32, _reserved: [u8; 8]}`.
+- Data payloads implement CmpRecord trait with `seq: u64` as
+  first field. Sequence assigned by WalWriter::append or
+  CmpSender::send.
 - Concrete record layouts are defined in **DXS.md** and reused for storage + streaming.
 
 ### Version Policy
 
-- **Additive changes** (new record types, trailing fields):
-  no version bump. Readers ignore trailing bytes beyond known
-  payload.
-- **Breaking changes** (field reorder, type change): bump
-  version in header + fail-fast on unknown version.
+- **Additive changes** (new record types): readers ignore
+  unknown types (log + continue).
+- **Breaking changes** (field reorder, type change): require
+  coordinated deployment (stop all producers, upgrade all
+  readers, restart).
 - See DXS.md section 1 for full version handling
   specification.
 

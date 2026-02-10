@@ -41,13 +41,7 @@ fn fill(
     seq: u64,
 ) -> FillEvent {
     FillEvent {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<FillEvent>() as u32,
-        },
+        seq,
         symbol_id: sym,
         taker_user_id: taker,
         maker_user_id: maker,
@@ -65,13 +59,7 @@ fn order(
     qty: i64,
 ) -> OrderRequest {
     OrderRequest {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<OrderRequest>() as u32,
-        },
+        seq: 1,
         user_id,
         symbol_id,
         price,
@@ -278,13 +266,7 @@ fn liquidation_order_accepted() {
 fn bbo_updates_index_price() {
     let mut s = make_shard();
     let bbo = BboUpdate {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<BboUpdate>() as u32,
-        },
+        seq: 1,
         symbol_id: 0,
         bid_px: 9900,
         bid_qty: 100,
@@ -307,13 +289,7 @@ fn mark_update_stored() {
 fn stash_bbo_keeps_latest() {
     let mut s = make_shard();
     s.stash_bbo(BboUpdate {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<BboUpdate>() as u32,
-        },
+        seq: 1,
         symbol_id: 0,
         bid_px: 100,
         bid_qty: 10,
@@ -321,13 +297,7 @@ fn stash_bbo_keeps_latest() {
         ask_qty: 10,
     });
     s.stash_bbo(BboUpdate {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<BboUpdate>() as u32,
-        },
+        seq: 1,
         symbol_id: 0,
         bid_px: 300,
         bid_qty: 10,

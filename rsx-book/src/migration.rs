@@ -64,6 +64,10 @@ impl Orderbook {
 
         self.old_levels = Some(old_levels);
         self.old_compression = Some(old_compression);
+        if let Some(ref old) = self.old_compression {
+            self.old_min_price = old.min_price();
+            self.old_max_price = old.max_price();
+        }
         self.bid_frontier = new_mid;
         self.ask_frontier = new_mid;
         self.state = BookState::Migrating;
@@ -191,8 +195,9 @@ impl Orderbook {
                 {
                     self.best_bid_tick = new_idx;
                 }
-            } else if self.best_ask_tick == NONE
-                || new_idx < self.best_ask_tick
+            } else if side == Side::Sell as u8
+                && (self.best_ask_tick == NONE
+                    || new_idx < self.best_ask_tick)
             {
                 self.best_ask_tick = new_idx;
             }
@@ -233,8 +238,10 @@ impl Orderbook {
             self.migrate_price(self.ask_frontier);
             migrated += 1;
 
-            // Check if migration complete
-            if self.is_migration_complete() {
+            if self.bid_frontier <= self.old_min_price
+                && self.ask_frontier
+                    >= self.old_max_price
+            {
                 self.complete_migration();
                 break;
             }

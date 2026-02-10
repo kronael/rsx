@@ -127,8 +127,10 @@ Single-threaded, bare busy-spin, dedicated core.
 ### WAL Writer Tile (CPU-pinned)
 
 Reads events from SPSC ring (from ME). Appends to in-memory
-buffer. Flushes to disk with fsync every 10ms. Rotates at
-64MB. Notifies DxsReplay tile on flush via Arc<Notify>.
+buffer via `append<T: CmpRecord>(record: &mut T)`, which
+assigns monotonic seq numbers. Flushes to disk with fsync
+every 10ms. Rotates at 64MB. Notifies DxsReplay tile on
+flush via Arc<Notify>.
 
 No network I/O.
 

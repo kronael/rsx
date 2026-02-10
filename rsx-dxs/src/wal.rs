@@ -1,6 +1,6 @@
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::records::PayloadPreamble;
+use crate::records::CmpRecord;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -15,7 +15,7 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
-const MAX_PAYLOAD: u32 = 64 * 1024;
+const MAX_PAYLOAD: u16 = 65535;
 
 /// WalWriter: append-only WAL with buffered flush + rotation
 pub struct WalWriter {
@@ -67,24 +67,18 @@ impl WalWriter {
         })
     }
 
-    /// Append record to in-memory buffer. No I/O. O(1).
+    /// Append typed CMP record to in-memory buffer.
+    /// Assigns seq via CmpRecord::set_seq. No I/O. O(1).
     /// Returns assigned seq.
-    pub fn append(
+    pub fn append<T: CmpRecord>(
         &mut self,
-        record_type: u16,
-        payload: &[u8],
+        record: &mut T,
     ) -> io::Result<u64> {
-        let len = payload.len() as u32;
-        if len > MAX_PAYLOAD {
+        let payload_len = std::mem::size_of::<T>();
+        if payload_len > MAX_PAYLOAD as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "payload exceeds 64KB",
-            ));
-        }
-        if (len as usize) < PayloadPreamble::SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "payload missing CMP prefix",
             ));
         }
 
@@ -99,24 +93,22 @@ impl WalWriter {
             ));
         }
 
-        let mut tmp = Vec::with_capacity(payload.len());
-        tmp.extend_from_slice(payload);
-
         let seq = self.next_seq;
         self.next_seq += 1;
         self.last_seq = seq;
 
-        // Patch seq + len into prefix (do not touch ver/kind)
-        tmp[0..8].copy_from_slice(&seq.to_le_bytes());
-        tmp[12..16].copy_from_slice(&len.to_le_bytes());
+        record.set_seq(seq);
 
-        let crc = compute_crc32(&tmp);
+        let payload = as_bytes(record);
+        let crc = compute_crc32(payload);
         let header = WalHeader::new(
-            record_type, len, self.stream_id, crc,
+            T::record_type(),
+            payload_len as u16,
+            crc,
         );
 
         self.buf.extend_from_slice(&header.to_bytes());
-        self.buf.extend_from_slice(&tmp);
+        self.buf.extend_from_slice(payload);
         Ok(seq)
     }
 
@@ -193,11 +185,23 @@ impl WalWriter {
                 if info.stream_id != self.stream_id {
                     continue;
                 }
-                let age_seqs = self.next_seq
-                    .saturating_sub(info.last_seq);
-                let retention_seqs =
-                    (self.retention_ns / 1_000).max(1_000);
-                if age_seqs > retention_seqs {
+                let meta = match std::fs::metadata(
+                    entry.path(),
+                ) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                let age = std::time::SystemTime::now()
+                    .duration_since(
+                        meta.modified()
+                            .unwrap_or(
+                                std::time::SystemTime::now()
+                            ),
+                    )
+                    .unwrap_or_default();
+                if age.as_nanos() as u64
+                    > self.retention_ns
+                {
                     debug!(
                         "gc deleting {}",
                         entry.path().display()
@@ -337,16 +341,6 @@ impl WalReader {
                         )
                     })?;
 
-            if header.version != WalHeader::VERSION {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "unknown wal version {}",
-                        header.version
-                    ),
-                ));
-            }
-
             if header.len > MAX_PAYLOAD {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -446,4 +440,25 @@ fn list_wal_files(
         }
     }
     Ok(files)
+}
+
+fn as_bytes<T>(val: &T) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            val as *const T as *const u8,
+            std::mem::size_of::<T>(),
+        )
+    }
+}
+
+/// Extract seq from first 8 bytes of payload
+/// (CmpRecord convention: seq at offset 0).
+pub fn extract_seq(payload: &[u8]) -> Option<u64> {
+    if payload.len() < 8 {
+        return None;
+    }
+    Some(u64::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+        payload[4], payload[5], payload[6], payload[7],
+    ]))
 }

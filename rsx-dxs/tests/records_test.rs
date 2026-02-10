@@ -1,16 +1,6 @@
 use rsx_dxs::*;
 use std::mem;
 
-fn prefix<T>(seq: u64) -> PayloadPreamble {
-    PayloadPreamble {
-        seq,
-        ver: 1,
-        kind: 0,
-        _pad0: 0,
-        len: std::mem::size_of::<T>() as u32,
-    }
-}
-
 #[test]
 fn fill_record_is_64_aligned() {
     assert_eq!(mem::align_of::<FillRecord>(), 64);
@@ -54,7 +44,7 @@ fn order_accepted_record_is_64_aligned() {
 #[test]
 fn fill_record_encode_decode_roundtrip() {
     let record = FillRecord {
-        preamble: prefix::<FillRecord>(42),
+        seq: 42,
         ts_ns: 1_000_000_000,
         symbol_id: 1,
         taker_user_id: 10,
@@ -72,12 +62,12 @@ fn fill_record_encode_decode_roundtrip() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    let encoded = encode_fill_record(1, &record);
+    let encoded = encode_fill_record(&record);
     let header = WalHeader::from_bytes(&encoded).unwrap();
     assert_eq!(header.record_type, RECORD_FILL);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_fill_record(payload).unwrap();
-    assert_eq!(decoded.preamble.seq, 42);
+    assert_eq!(decoded.seq, 42);
     assert_eq!(decoded.price, 50000);
     assert_eq!(decoded.qty, 1000);
     assert_eq!(decoded.maker_order_id_lo, 100);
@@ -89,7 +79,7 @@ fn fill_record_encode_decode_roundtrip() {
 #[test]
 fn bbo_record_encode_decode_roundtrip() {
     let record = BboRecord {
-        preamble: prefix::<BboRecord>(1),
+        seq: 1,
         ts_ns: 2,
         symbol_id: 3,
         _pad0: 0,
@@ -102,7 +92,7 @@ fn bbo_record_encode_decode_roundtrip() {
         ask_count: 6,
         _pad2: 0,
     };
-    let encoded = encode_bbo_record(1, &record);
+    let encoded = encode_bbo_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_bbo_record(payload).unwrap();
     assert_eq!(decoded.bid_px, 100);
@@ -114,7 +104,7 @@ fn bbo_record_encode_decode_roundtrip() {
 #[test]
 fn order_inserted_encode_decode_roundtrip() {
     let record = OrderInsertedRecord {
-        preamble: prefix::<OrderInsertedRecord>(5),
+        seq: 5,
         ts_ns: 10,
         symbol_id: 1,
         user_id: 42,
@@ -128,7 +118,7 @@ fn order_inserted_encode_decode_roundtrip() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    let encoded = encode_order_inserted_record(1, &record);
+    let encoded = encode_order_inserted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded =
         decode_order_inserted_record(payload).unwrap();
@@ -140,7 +130,7 @@ fn order_inserted_encode_decode_roundtrip() {
 #[test]
 fn order_cancelled_encode_decode_roundtrip() {
     let record = OrderCancelledRecord {
-        preamble: prefix::<OrderCancelledRecord>(6),
+        seq: 6,
         ts_ns: 11,
         symbol_id: 1,
         user_id: 42,
@@ -153,7 +143,7 @@ fn order_cancelled_encode_decode_roundtrip() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    let encoded = encode_order_cancelled_record(1, &record);
+    let encoded = encode_order_cancelled_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded =
         decode_order_cancelled_record(payload).unwrap();
@@ -165,7 +155,7 @@ fn order_cancelled_encode_decode_roundtrip() {
 #[test]
 fn order_done_encode_decode_roundtrip() {
     let record = OrderDoneRecord {
-        preamble: prefix::<OrderDoneRecord>(7),
+        seq: 7,
         ts_ns: 12,
         symbol_id: 1,
         user_id: 42,
@@ -179,7 +169,7 @@ fn order_done_encode_decode_roundtrip() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    let encoded = encode_order_done_record(1, &record);
+    let encoded = encode_order_done_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_order_done_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 777);
@@ -191,7 +181,7 @@ fn order_done_encode_decode_roundtrip() {
 #[test]
 fn config_applied_encode_decode_roundtrip() {
     let record = ConfigAppliedRecord {
-        preamble: prefix::<ConfigAppliedRecord>(8),
+        seq: 8,
         ts_ns: 13,
         symbol_id: 2,
         _pad0: 0,
@@ -199,7 +189,7 @@ fn config_applied_encode_decode_roundtrip() {
         effective_at_ms: 1000,
         applied_at_ns: 2000,
     };
-    let encoded = encode_config_applied_record(1, &record);
+    let encoded = encode_config_applied_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded =
         decode_config_applied_record(payload).unwrap();
@@ -211,14 +201,14 @@ fn config_applied_encode_decode_roundtrip() {
 #[test]
 fn caught_up_encode_decode_roundtrip() {
     let record = CaughtUpRecord {
-        preamble: prefix::<CaughtUpRecord>(9),
+        seq: 9,
         ts_ns: 14,
         stream_id: 1,
         _pad0: 0,
         live_seq: 100,
         _pad1: [0; 40],
     };
-    let encoded = encode_caught_up_record(1, &record);
+    let encoded = encode_caught_up_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_caught_up_record(payload).unwrap();
     assert_eq!(decoded.live_seq, 100);
@@ -227,7 +217,7 @@ fn caught_up_encode_decode_roundtrip() {
 #[test]
 fn order_accepted_encode_decode_roundtrip() {
     let record = OrderAcceptedRecord {
-        preamble: prefix::<OrderAcceptedRecord>(10),
+        seq: 10,
         ts_ns: 15,
         user_id: 42,
         _pad0: 0,
@@ -235,7 +225,7 @@ fn order_accepted_encode_decode_roundtrip() {
         order_id_lo: 555,
         _pad1: [0; 32],
     };
-    let encoded = encode_order_accepted_record(1, &record);
+    let encoded = encode_order_accepted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded =
         decode_order_accepted_record(payload).unwrap();
@@ -246,7 +236,7 @@ fn order_accepted_encode_decode_roundtrip() {
 #[test]
 fn crc32_mismatch_detected() {
     let record = FillRecord {
-        preamble: prefix::<FillRecord>(1),
+        seq: 1,
         ts_ns: 2,
         symbol_id: 3,
         taker_user_id: 4,
@@ -264,7 +254,7 @@ fn crc32_mismatch_detected() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    let mut encoded = encode_fill_record(1, &record);
+    let mut encoded = encode_fill_record(&record);
     // corrupt a payload byte
     encoded[WalHeader::SIZE] ^= 0xFF;
     let header = WalHeader::from_bytes(&encoded).unwrap();
@@ -276,7 +266,7 @@ fn crc32_mismatch_detected() {
 #[test]
 fn wal_record_seq_accessor() {
     let record = WalRecord::Fill(FillRecord {
-        preamble: prefix::<FillRecord>(42),
+        seq: 42,
         ts_ns: 0,
         symbol_id: 0,
         taker_user_id: 0,
@@ -300,7 +290,7 @@ fn wal_record_seq_accessor() {
 #[test]
 fn wal_record_type_accessor() {
     let record = WalRecord::Bbo(BboRecord {
-        preamble: prefix::<BboRecord>(0),
+        seq: 0,
         ts_ns: 0,
         symbol_id: 0,
         _pad0: 0,
@@ -350,7 +340,7 @@ fn record_truncated_header_detected() {
 #[test]
 fn record_truncated_payload_detected() {
     let record = FillRecord {
-        preamble: prefix::<FillRecord>(1),
+        seq: 1,
         ts_ns: 2,
         symbol_id: 1,
         taker_user_id: 1,
@@ -381,6 +371,38 @@ fn record_truncated_payload_detected() {
 #[test]
 fn record_zero_length_payload_valid() {
     use rsx_dxs::WalHeader;
-    let header = WalHeader::new(RECORD_FILL, 0, 1, 0);
+    let header = WalHeader::new(RECORD_FILL, 0, 0);
     assert_eq!(header.len, 0);
+}
+
+#[test]
+fn cmp_record_trait_set_seq_roundtrip() {
+    let mut fill = FillRecord {
+        seq: 0,
+        ts_ns: 1000,
+        symbol_id: 1,
+        taker_user_id: 10,
+        maker_user_id: 20,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 100,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 200,
+        price: 50000,
+        qty: 100,
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
+    };
+    assert_eq!(fill.seq(), 0);
+    fill.set_seq(42);
+    assert_eq!(fill.seq(), 42);
+}
+
+#[test]
+fn header_reserved_bytes_zeroed() {
+    let header = WalHeader::new(RECORD_FILL, 64, 0x12345678);
+    assert_eq!(header._reserved, [0u8; 8]);
 }

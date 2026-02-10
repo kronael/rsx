@@ -50,13 +50,7 @@ fn index_price_no_bbo_ever_uses_mark_price() {
 
     // After BBO, valid becomes true
     ip.update_from_bbo(&BboUpdate {
-        preamble: rsx_dxs::records::PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<BboUpdate>() as u32,
-        },
+        seq: 1,
         symbol_id: 0,
         bid_px: 100,
         bid_qty: 10,
