@@ -2,6 +2,8 @@ use crate::account::Account;
 use crate::config::ShardConfig;
 use crate::funding;
 use crate::funding::FundingConfig;
+use crate::liquidation::LiquidationEngine;
+use crate::liquidation::LiquidationOrder;
 use crate::margin::ExposureIndex;
 use crate::margin::PortfolioMargin;
 use crate::persist::FundingPaymentRecord;
@@ -19,6 +21,7 @@ use crate::types::OrderRequest;
 use crate::types::RejectReason;
 use rtrb::Producer;
 use rustc_hash::FxHashMap;
+use tracing::info;
 use tracing::warn;
 
 pub struct RiskShard {
@@ -42,6 +45,7 @@ pub struct RiskShard {
     pub fills_processed: u64,
     pub orders_processed: u64,
     persist_producer: Option<Producer<PersistEvent>>,
+    pub liquidation: LiquidationEngine,
 }
 
 impl RiskShard {
@@ -71,6 +75,12 @@ impl RiskShard {
             fills_processed: 0,
             orders_processed: 0,
             persist_producer: None,
+            liquidation: LiquidationEngine::new(
+                config.liquidation_config.base_delay_ns,
+                config.liquidation_config.base_slip_bps
+                    as i64,
+                config.liquidation_config.max_rounds,
+            ),
         }
     }
 
@@ -219,6 +229,16 @@ impl RiskShard {
         self.tips[sid] = fill.seq;
         self.fills_processed += 1;
 
+        // Check liquidation for both sides
+        self.check_liquidation_for(
+            fill.taker_user_id,
+            fill.timestamp_ns,
+        );
+        self.check_liquidation_for(
+            fill.maker_user_id,
+            fill.timestamp_ns,
+        );
+
         // Persist fill + updated positions + tip
         self.push_persist(PersistEvent::Fill(PersistFill {
             symbol_id: fill.symbol_id,
@@ -282,6 +302,63 @@ impl RiskShard {
         } else {
             self.exposure
                 .add_user(symbol_id as usize, user_id);
+        }
+    }
+
+    /// Check if user needs liquidation after fill.
+    /// Enqueues into liquidation engine if so.
+    fn check_liquidation_for(
+        &mut self,
+        user_id: u32,
+        now_ns: u64,
+    ) {
+        if !self.user_in_shard(user_id) {
+            return;
+        }
+        let account = match self.accounts.get(&user_id) {
+            Some(a) => a,
+            None => return,
+        };
+        let positions = self.positions_for_user(user_id);
+        let state = self.margin.calculate(
+            account,
+            &positions,
+            &self.mark_prices,
+        );
+        if self.margin.needs_liquidation(&state) {
+            let syms: Vec<u32> = positions
+                .iter()
+                .filter(|p| !p.is_empty())
+                .map(|p| p.symbol_id)
+                .collect();
+            for sid in syms {
+                self.liquidation.enqueue(
+                    user_id, sid, now_ns,
+                );
+            }
+        }
+    }
+
+    /// Convert LiquidationOrder to OrderRequest.
+    fn liq_to_order(
+        &self,
+        liq: &LiquidationOrder,
+        now_ns: u64,
+    ) -> OrderRequest {
+        OrderRequest {
+            seq: 0,
+            user_id: liq.user_id,
+            symbol_id: liq.symbol_id,
+            price: liq.price,
+            qty: liq.qty,
+            order_id_hi: 0,
+            order_id_lo: 0,
+            timestamp_ns: now_ns,
+            side: liq.side,
+            tif: 1, // IOC
+            reduce_only: true,
+            is_liquidation: true,
+            _pad: [0; 4],
         }
     }
 
@@ -495,6 +572,44 @@ impl RiskShard {
                 self.process_fill(&fill);
             }
         }
+
+        // 1b. Process pending liquidations
+        let now_ns = now_secs * 1_000_000_000;
+        let liq_orders = {
+            let positions = &self.positions;
+            let mark_prices = &self.mark_prices;
+            self.liquidation.maybe_process(
+                now_ns,
+                &|uid, sid| {
+                    positions
+                        .get(&(uid, sid))
+                        .map(|p| p.net_qty())
+                        .unwrap_or(0)
+                },
+                &|sid| mark_prices[sid as usize],
+            )
+        };
+        for liq in &liq_orders {
+            let order = self.liq_to_order(liq, now_ns);
+            let resp = self.process_order(&order);
+            if matches!(
+                resp,
+                OrderResponse::Accepted { .. }
+            ) {
+                let _ = rings
+                    .accepted_producer
+                    .push(order);
+                info!(
+                    "liquidation order sent: \
+                     user={} symbol={} side={} qty={}",
+                    liq.user_id,
+                    liq.symbol_id,
+                    liq.side,
+                    liq.qty,
+                );
+            }
+        }
+        self.liquidation.remove_done();
 
         // 2. Drain orders
         while let Ok(order) = rings.order_consumer.pop() {
