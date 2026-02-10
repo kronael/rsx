@@ -6,6 +6,20 @@ happens at multiple stages: Gateway (basic field validation),
 Risk (margin/position checks), and Matching Engine (tick/lot
 size enforcement).
 
+## Table of Contents
+
+- [Validation Layers](#validation-layers)
+- [1. Field Validation Edge Cases (Gateway Layer)](#1-field-validation-edge-cases-gateway-layer)
+- [2. Margin & Risk Edge Cases (Risk Layer)](#2-margin--risk-edge-cases-risk-layer)
+- [3. Matching Engine Edge Cases](#3-matching-engine-edge-cases)
+- [4. Cross-Layer Edge Cases](#4-cross-layer-edge-cases)
+- [5. Validation Order & Responsibility](#5-validation-order--responsibility)
+- [6. Testing Strategy](#6-testing-strategy)
+- [7. Monitoring & Alerts](#7-monitoring--alerts)
+- [Cross-References](#cross-references)
+
+---
+
 ## Validation Layers
 
 ```

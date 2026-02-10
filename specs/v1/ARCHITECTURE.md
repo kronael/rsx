@@ -3,6 +3,18 @@
 Perpetuals exchange. Fixed-point arithmetic, single-threaded
 matching per symbol, CMP/UDP between processes, WAL-based recovery.
 
+## Table of Contents
+
+- [System Overview](#system-overview)
+- [Crate Map](#crate-map)
+- [Order Lifecycle](#order-lifecycle)
+- [Hot Path](#hot-path)
+- [Persistence and Recovery](#persistence-and-recovery)
+- [Key Design Decisions](#key-design-decisions)
+- [Spec Index](#spec-index)
+
+---
+
 ## System Overview
 
 ```

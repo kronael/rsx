@@ -7,6 +7,20 @@
 
 This document describes the shared WAL architecture for the risk engine and the matching engine. It is optimized for latency by accepting a bounded loss window and enforcing backpressure when persistence falls behind.
 
+## Table of Contents
+
+- [Record Format (v1)](#record-format-v1)
+- [Goals](#goals)
+- [Architecture](#architecture)
+- [Orderbook Usage](#orderbook-usage)
+- [Risk Usage](#risk-usage)
+- [Hard Backpressure Rules](#hard-backpressure-rules)
+- [Critique and Verification](#critique-and-verification)
+- [Decision Summary](#decision-summary)
+- [Replay Edge Cases and Recovery](#replay-edge-cases-and-recovery)
+
+---
+
 ## Record Format (v1)
 
 - WAL uses **fixed-size records** (no protobuf, no extra envelope).

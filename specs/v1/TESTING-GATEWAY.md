@@ -5,6 +5,15 @@ Source specs: [NETWORK.md](NETWORK.md), [WEBPROTO.md](WEBPROTO.md),
 
 Binary: `rsx-gateway`
 
+## Table of Contents
+
+- [Requirements Checklist](#requirements-checklist)
+- [Unit Tests](#unit-tests)
+- [E2E Tests](#e2e-tests)
+- [Benchmarks](#benchmarks)
+- [Integration Points](#integration-points)
+- [Implementation Status](#implementation-status-2026-02-10)
+
 ---
 
 ## Requirements Checklist

@@ -1,5 +1,24 @@
 # Liquidator Specification
 
+## Table of Contents
+
+- [Context](#context)
+- [1. Liquidation State](#1-liquidation-state)
+- [2. Backoff Schedule](#2-backoff-schedule)
+- [3. Order Generation](#3-order-generation)
+- [4. Lifecycle](#4-lifecycle)
+- [5. Margin Recovery (Cancellation)](#5-margin-recovery-cancellation)
+- [6. Frozen Margin Interaction](#6-frozen-margin-interaction)
+- [7. Main Loop Integration](#7-main-loop-integration)
+- [8. Persistence](#8-persistence)
+- [9. Config](#9-config)
+- [10. Edge Cases and Boundary Conditions](#10-edge-cases-and-boundary-conditions)
+- [11. Performance Targets](#11-performance-targets)
+- [12. File Organization](#12-file-organization)
+- [13. Tests](#13-tests)
+
+---
+
 ## Context
 
 The liquidator is embedded in the risk engine (like the funding

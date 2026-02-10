@@ -1,5 +1,20 @@
 # Risk Engine Specification
 
+## Table of Contents
+
+- [Context](#context)
+- [Architecture Overview](#architecture-overview)
+- [Components](#components)
+- [Persistence](#persistence)
+- [Replication & Failover](#replication--failover)
+- [Main Loop Pseudocode](#main-loop-pseudocode)
+- [File Organization](#file-organization)
+- [Performance Targets](#performance-targets)
+- [Implementation Phases](#implementation-phases)
+- [Tests](#tests)
+
+---
+
 ## Context
 
 The risk engine sits between gateway and matching engines. It performs

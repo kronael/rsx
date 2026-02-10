@@ -413,9 +413,21 @@ fn handle_fill(
     if let Some(msg) = trade_msg {
         let clients = st.clients_for_symbol(rec.symbol_id);
         for client_id in clients {
-            if st.has_depth(client_id, rec.symbol_id) {
-                st.push_to_client(client_id, msg.clone(), max_outbound);
-            }
+                if st.has_depth(client_id, rec.symbol_id) {
+                    if !st.push_to_client(
+                        client_id,
+                        msg.clone(),
+                        max_outbound,
+                    ) {
+                        let depth = st.client_depth(client_id);
+                        st.send_snapshot_to_client(
+                            client_id,
+                            rec.symbol_id,
+                            depth,
+                            max_outbound,
+                        );
+                    }
+                }
         }
     }
 }
@@ -457,11 +469,26 @@ fn broadcast_updates(
     let clients = st.clients_for_symbol(symbol_id);
     for client_id in clients {
         if st.has_depth(client_id, symbol_id) {
-            st.push_to_client(client_id, delta_msg.clone(), max_outbound);
+            if !st.push_to_client(
+                client_id,
+                delta_msg.clone(),
+                max_outbound,
+            ) {
+                st.send_snapshot_to_client(
+                    client_id,
+                    symbol_id,
+                    st.client_depth(client_id),
+                    max_outbound,
+                );
+            }
         }
         if let Some(ref msg) = bbo_msg {
             if st.has_bbo(client_id, symbol_id) {
-                st.push_to_client(client_id, msg.clone(), max_outbound);
+                let _ = st.push_to_client(
+                    client_id,
+                    msg.clone(),
+                    max_outbound,
+                );
             }
         }
     }

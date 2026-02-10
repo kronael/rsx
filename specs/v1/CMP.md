@@ -12,6 +12,19 @@ Two transport modes:
 
 Both carry identical WAL records. Only the transport differs.
 
+## Table of Contents
+
+- [1. Design](#1-design)
+- [2. Wire Format](#2-wire-format)
+- [3. Transport: CMP/UDP (hot path)](#3-transport-cmpudp-hot-path)
+- [4. Transport: WAL Replication over TCP (cold path)](#4-transport-wal-replication-over-tcp-cold-path)
+- [5. Protocol Patterns](#5-protocol-patterns)
+- [6. Known Pitfalls](#6-known-pitfalls)
+- [7. Comparison](#7-comparison)
+- [8. Implementation](#8-implementation)
+- [9. Performance Targets](#9-performance-targets)
+- [Cross-References](#cross-references)
+
 ---
 
 ## 1. Design

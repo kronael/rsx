@@ -4,6 +4,15 @@ Gateway exposes a compact WebSocket protocol and translates
 messages to CMP/WAL wire format for the risk engine. The
 goal is minimal parsing cost and small payloads.
 
+## Table of Contents
+
+- [Frame Shape](#frame-shape)
+- [Types](#types)
+- [Enums](#enums)
+- [Notes](#notes)
+
+---
+
 ## Frame Shape
 
 Each message is a JSON object with a single key. The key is the 1-letter message type and the value is a positional array payload.

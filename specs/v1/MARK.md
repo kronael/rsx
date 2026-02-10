@@ -7,6 +7,19 @@ streaming ([DXS.md](DXS.md)).
 Single process. Replaces the per-shard Binance async task that was
 embedded in each risk engine (RISK.md section 4).
 
+## Table of Contents
+
+- [1. Architecture](#1-architecture)
+- [2. Data Structures](#2-data-structures)
+- [3. Source Connectors](#3-source-connectors)
+- [4. Aggregation Logic](#4-aggregation-logic)
+- [5. Serving Subscribers](#5-serving-subscribers)
+- [6. Main Loop](#6-main-loop)
+- [7. Config](#7-config)
+- [8. RISK.md Changes](#8-riskmd-changes)
+- [9. Performance Targets](#9-performance-targets)
+- [10. File Organization](#10-file-organization)
+
 ---
 
 ## 1. Architecture

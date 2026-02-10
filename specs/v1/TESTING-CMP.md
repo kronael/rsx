@@ -4,6 +4,19 @@ Version: 1.0
 Status: Draft
 Depends on: CMP.md, DXS.md, TILES.md, NETWORK.md
 
+## Table of Contents
+
+- [1. Requirements Checklist](#1-requirements-checklist)
+- [2. Unit Tests](#2-unit-tests)
+- [3. E2E Tests](#3-e2e-tests)
+- [4. Benchmarks](#4-benchmarks)
+- [5. Integration Points](#5-integration-points)
+- [6. monoio / io_uring Test Considerations](#6-monoio--io_uring-test-considerations)
+- [7. Test File Organization](#7-test-file-organization)
+- [8. Coverage Matrix](#8-coverage-matrix)
+
+---
+
 ## 1. Requirements Checklist
 
 Every requirement maps to one or more tests. Status

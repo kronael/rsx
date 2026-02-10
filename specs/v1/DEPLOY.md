@@ -3,6 +3,19 @@
 Single-machine development topology. Production deployment is
 a superset (same components, distributed across machines).
 
+## Table of Contents
+
+- [v1 Targets](#v1-targets)
+- [Single-Machine Topology](#single-machine-topology)
+- [Configuration](#configuration)
+- [CMP/UDP Buffer Sizing](#cmpudp-buffer-sizing)
+- [Health Endpoints](#health-endpoints)
+- [Process Supervision](#process-supervision)
+- [Log Rotation](#log-rotation)
+- [Disk Layout](#disk-layout)
+
+---
+
 ## v1 Targets
 
 - 1 matching engine per symbol

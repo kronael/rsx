@@ -1,5 +1,20 @@
 # Message Definitions
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Order States](#order-states)
+- [Message Schema](#message-schema)
+- [Message Flow Sequences](#message-flow-sequences)
+- [Fill Streaming Details](#fill-streaming-details)
+- [Completion Signals](#completion-signals)
+- [Idempotency & Deduplication](#idempotency--deduplication)
+- [Risk Integration](#risk-integration)
+- [Alignment with Existing Architecture](#alignment-with-existing-architecture)
+- [Cross-References](#cross-references)
+
+---
+
 ## Overview
 
 Message semantics for Gateway ↔ Risk ↔ Matching Engine

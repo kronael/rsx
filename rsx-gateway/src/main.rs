@@ -13,9 +13,11 @@ use rsx_dxs::records::RECORD_ORDER_FAILED;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
-use rsx_gateway::order_id::order_id_to_hex;
-use rsx_gateway::protocol::serialize;
-use rsx_gateway::protocol::WsFrame;
+use rsx_gateway::route::route_fill;
+use rsx_gateway::route::route_order_cancelled;
+use rsx_gateway::route::route_order_done;
+use rsx_gateway::route::route_order_failed;
+use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
 use rsx_types::install_panic_handler;
 use rsx_types::time::time_ns;
@@ -284,115 +286,4 @@ fn main() {
             .await;
         }
     });
-}
-
-fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&hi.to_be_bytes());
-    bytes[8..].copy_from_slice(&lo.to_be_bytes());
-    bytes
-}
-
-fn oid_hex(hi: u64, lo: u64) -> String {
-    order_id_to_hex(&oid_bytes(hi, lo))
-}
-
-fn route_fill(
-    state: &Rc<RefCell<GatewayState>>,
-    rec: &FillRecord,
-) {
-    let taker_oid =
-        oid_hex(rec.taker_order_id_hi, rec.taker_order_id_lo);
-    let maker_oid =
-        oid_hex(rec.maker_order_id_hi, rec.maker_order_id_lo);
-    let msg = serialize(&WsFrame::Fill {
-        taker_order_id: taker_oid.clone(),
-        maker_order_id: maker_oid.clone(),
-        price: rec.price,
-        qty: rec.qty,
-        timestamp_ns: rec.ts_ns,
-        fee: 0,
-    });
-    let mut st = state.borrow_mut();
-    st.push_to_user(rec.taker_user_id, msg.clone());
-    st.push_to_user(rec.maker_user_id, msg);
-}
-
-fn route_order_inserted(
-    state: &Rc<RefCell<GatewayState>>,
-    rec: &OrderInsertedRecord,
-) {
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    let msg = serialize(&WsFrame::OrderUpdate {
-        order_id: oid,
-        status: 1, // resting/accepted from matching
-        filled_qty: 0,
-        remaining_qty: rec.qty,
-        reason: 0,
-    });
-    let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
-}
-
-fn route_order_done(
-    state: &Rc<RefCell<GatewayState>>,
-    rec: &OrderDoneRecord,
-) {
-    let status = match rec.final_status {
-        0 => 0, // filled
-        1 => 1, // resting (unexpected for done)
-        2 => 2, // cancelled
-        _ => 0,
-    };
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    let msg = serialize(&WsFrame::OrderUpdate {
-        order_id: oid,
-        status,
-        filled_qty: rec.filled_qty,
-        remaining_qty: rec.remaining_qty,
-        reason: 0,
-    });
-    let oid_bytes_val =
-        oid_bytes(rec.order_id_hi, rec.order_id_lo);
-    let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
-    st.pending.remove(&oid_bytes_val);
-}
-
-fn route_order_cancelled(
-    state: &Rc<RefCell<GatewayState>>,
-    rec: &OrderCancelledRecord,
-) {
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    let msg = serialize(&WsFrame::OrderUpdate {
-        order_id: oid,
-        status: 2, // cancelled
-        filled_qty: 0,
-        remaining_qty: rec.remaining_qty,
-        reason: 0,
-    });
-    let oid_bytes_val =
-        oid_bytes(rec.order_id_hi, rec.order_id_lo);
-    let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
-    st.pending.remove(&oid_bytes_val);
-}
-
-fn route_order_failed(
-    state: &Rc<RefCell<GatewayState>>,
-    rec: &OrderFailedRecord,
-) {
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    let msg = serialize(&WsFrame::OrderUpdate {
-        order_id: oid,
-        status: 3, // failed
-        filled_qty: 0,
-        remaining_qty: 0,
-        reason: rec.reason,
-    });
-    let oid_bytes_val =
-        oid_bytes(rec.order_id_hi, rec.order_id_lo);
-    let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
-    st.pending.remove(&oid_bytes_val);
 }

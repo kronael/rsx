@@ -69,14 +69,16 @@ impl MarketDataState {
         conn_id: u64,
         msg: String,
         max_outbound: usize,
-    ) {
+    ) -> bool {
         if let Some(conn) = self.connections.get_mut(&conn_id)
         {
             if conn.outbound.len() >= max_outbound {
-                return;
+                return false;
             }
             conn.outbound.push_back(msg);
+            return true;
         }
+        false
     }
 
     pub fn drain_outbound(
@@ -135,10 +137,21 @@ impl MarketDataState {
         depth: u32,
     ) -> Option<String> {
         let book = self.books.get(symbol_id as usize)?;
-        let book = book.as_ref()?;
-        Some(serialize_l2_snapshot(&book.derive_l2_snapshot(
-            depth as usize,
-        )))
+        if let Some(book) = book.as_ref() {
+            return Some(serialize_l2_snapshot(
+                &book.derive_l2_snapshot(depth as usize),
+            ));
+        }
+        // empty-book snapshot
+        Some(serialize_l2_snapshot(
+            &crate::types::L2Snapshot {
+                symbol_id,
+                bids: Vec::new(),
+                asks: Vec::new(),
+                timestamp_ns: 0,
+                seq: 0,
+            },
+        ))
     }
 
     pub fn client_depth(&self, conn_id: u64) -> u32 {
@@ -225,13 +238,34 @@ impl MarketDataState {
             let clients = self.subs.clients_for_symbol(symbol_id);
             for client_id in clients {
                 if self.subs.has_depth(client_id, symbol_id) {
-                    self.push_to_client(
+                    let _ = self.push_to_client(
                         client_id,
                         snapshot.clone(),
                         max_outbound,
                     );
                 }
             }
+        }
+    }
+
+    pub fn send_snapshot_to_client(
+        &mut self,
+        client_id: u64,
+        symbol_id: u32,
+        depth: u32,
+        max_outbound: usize,
+    ) {
+        if let Some(conn) = self.connections.get_mut(&client_id)
+        {
+            conn.outbound.clear();
+        }
+        if let Some(snapshot) = self.snapshot_msg(symbol_id, depth)
+        {
+            let _ = self.push_to_client(
+                client_id,
+                snapshot,
+                max_outbound,
+            );
         }
     }
 

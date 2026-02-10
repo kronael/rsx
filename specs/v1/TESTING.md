@@ -3,6 +3,25 @@
 For comprehensive edge case documentation across all validation layers,
 see [VALIDATION-EDGE-CASES.md](VALIDATION-EDGE-CASES.md).
 
+## Table of Contents
+
+- [Test Organization](#test-organization)
+- [1. `make test` - Unit Tests (<5s)](#1-make-test---unit-tests-5s)
+- [2. `make e2e` - E2E Tests (~30s)](#2-make-e2e---e2e-tests-30s)
+- [3. `make integration` - Integration Tests](#3-make-integration---integration-tests-with-testcontainers)
+- [4. `make wal` - WAL Correctness Tests (<10s)](#4-make-wal---wal-correctness-tests-10s)
+- [5. `make smoke` - Smoke Tests](#5-make-smoke---smoke-tests-against-deployed-systems)
+- [6. `make perf` - Performance Benchmarks](#6-make-perf---performance-benchmarks-long-running)
+- [Test Data Patterns](#test-data-patterns)
+- [Correctness Invariants](#correctness-invariants)
+- [Test Framework & Tooling](#test-framework--tooling)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Deferred to Future](#deferred-to-future)
+- [Component Test Specs](#component-test-specs)
+- [References](#references)
+
+---
+
 ## Test Organization
 
 RSX testing is organized into five levels with corresponding make targets,

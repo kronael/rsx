@@ -8,6 +8,21 @@ No transformation between storage and network.
 
 Crate: `rsx-dxs`. Embedded by all producers and consumers.
 
+## Table of Contents
+
+- [1. WAL Record Format](#1-wal-record-format)
+- [2. File Layout](#2-file-layout)
+- [3. WalWriter](#3-walwriter)
+- [4. WalReader](#4-walreader)
+- [5. Replay Server](#5-replay-server)
+- [6. Consumer](#6-consumer)
+- [7. Transport](#7-transport)
+- [8. Recorder Pattern](#8-recorder-pattern)
+- [9. How DXS Replaces Existing Specs](#9-how-dxs-replaces-existing-specs)
+- [10. WAL Replay Edge Cases](#10-wal-replay-edge-cases)
+- [11. Performance Targets](#11-performance-targets)
+- [12. File Organization](#12-file-organization)
+
 ---
 
 ## 1. WAL Record Format
