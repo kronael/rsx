@@ -64,6 +64,27 @@ BEGIN
         CREATE INDEX idx_funding_user_symbol
             ON funding_payments (user_id, symbol_id);
 
+        CREATE TABLE insurance_fund (
+            symbol_id INT    NOT NULL PRIMARY KEY,
+            balance   BIGINT NOT NULL DEFAULT 0,
+            version   BIGINT NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE liquidation_events (
+            user_id      INT     NOT NULL,
+            symbol_id    INT     NOT NULL,
+            round        INT     NOT NULL,
+            side         SMALLINT NOT NULL,
+            price        BIGINT  NOT NULL,
+            qty          BIGINT  NOT NULL,
+            slippage_bps INT     NOT NULL,
+            status       SMALLINT NOT NULL,
+            timestamp_ns BIGINT  NOT NULL
+        );
+
+        CREATE INDEX idx_liquidation_user_symbol
+            ON liquidation_events (user_id, symbol_id);
+
         INSERT INTO migrations (id)
             VALUES ('001_base_schema');
 

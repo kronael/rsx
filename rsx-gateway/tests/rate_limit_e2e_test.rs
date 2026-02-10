@@ -5,7 +5,7 @@ use std::net::IpAddr;
 
 #[test]
 fn per_ip_rate_limit_enforced_per_ip() {
-    let mut state = GatewayState::new(1000, 10, 30_000);
+    let mut state = GatewayState::new(1000, 10, 30_000, vec![]);
     let ip1: IpAddr = "192.168.1.1".parse().unwrap();
     let ip2: IpAddr = "192.168.1.2".parse().unwrap();
 
@@ -42,7 +42,7 @@ fn per_ip_rate_limit_enforced_per_ip() {
 
 #[test]
 fn per_ip_and_per_user_limits_enforced_independently() {
-    let mut state = GatewayState::new(1000, 10, 30_000);
+    let mut state = GatewayState::new(1000, 10, 30_000, vec![]);
     let ip: IpAddr = "192.168.1.1".parse().unwrap();
     let user_id = 42;
 
@@ -79,7 +79,7 @@ fn per_ip_and_per_user_limits_enforced_independently() {
 
 #[test]
 fn multiple_users_from_same_ip_share_ip_limit() {
-    let mut state = GatewayState::new(1000, 10, 30_000);
+    let mut state = GatewayState::new(1000, 10, 30_000, vec![]);
     let ip: IpAddr = "192.168.1.1".parse().unwrap();
     let user1 = 10;
     let user2 = 20;
@@ -125,7 +125,7 @@ fn ip_limiter_refills_over_time() {
     use std::thread;
     use std::time::Duration;
 
-    let mut state = GatewayState::new(1000, 10, 30_000);
+    let mut state = GatewayState::new(1000, 10, 30_000, vec![]);
     let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
     // Exhaust IP limit

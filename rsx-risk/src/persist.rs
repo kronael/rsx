@@ -1,4 +1,5 @@
 use crate::account::Account;
+use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use rtrb::Consumer;
 use tokio_postgres::Client;
@@ -12,6 +13,8 @@ pub enum PersistEvent {
     Fill(PersistFill),
     Tip { symbol_id: u32, seq: u64 },
     FundingPayment(FundingPaymentRecord),
+    InsuranceFund(InsuranceFund),
+    LiquidationEvent(LiquidationEventRecord),
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +38,19 @@ pub struct FundingPaymentRecord {
     pub amount: i64,
     pub rate: i64,
     pub settlement_ts: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiquidationEventRecord {
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub round: u32,
+    pub side: u8,
+    pub price: i64,
+    pub qty: i64,
+    pub slippage_bps: i64,
+    pub status: u8,
+    pub timestamp_ns: u64,
 }
 
 pub async fn upsert_positions(
@@ -172,6 +188,55 @@ pub async fn insert_funding(
     Ok(())
 }
 
+pub async fn upsert_insurance_funds(
+    tx: &tokio_postgres::Transaction<'_>,
+    funds: &[InsuranceFund],
+) -> Result<(), Error> {
+    for f in funds {
+        tx.execute(
+            "INSERT INTO insurance_fund \
+             (symbol_id, balance, version) \
+             VALUES ($1,$2,$3) \
+             ON CONFLICT (symbol_id) \
+             DO UPDATE SET balance = $2, version = $3",
+            &[
+                &(f.symbol_id as i32),
+                &f.balance,
+                &(f.version as i64),
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn insert_liquidation_events(
+    tx: &tokio_postgres::Transaction<'_>,
+    events: &[LiquidationEventRecord],
+) -> Result<(), Error> {
+    for e in events {
+        tx.execute(
+            "INSERT INTO liquidation_events \
+             (user_id, symbol_id, round, side, price, \
+              qty, slippage_bps, status, timestamp_ns) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            &[
+                &(e.user_id as i32),
+                &(e.symbol_id as i32),
+                &(e.round as i32),
+                &(e.side as i16),
+                &e.price,
+                &e.qty,
+                &(e.slippage_bps as i32),
+                &(e.status as i16),
+                &(e.timestamp_ns as i64),
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn flush_batch(
     client: &mut Client,
     shard_id: u32,
@@ -186,6 +251,8 @@ pub async fn flush_batch(
     let mut fills = Vec::new();
     let mut tips = Vec::new();
     let mut funding = Vec::new();
+    let mut insurance_funds = Vec::new();
+    let mut liquidation_events = Vec::new();
 
     for e in events {
         match e {
@@ -204,6 +271,12 @@ pub async fn flush_batch(
             PersistEvent::FundingPayment(fp) => {
                 funding.push(fp.clone())
             }
+            PersistEvent::InsuranceFund(fund) => {
+                insurance_funds.push(fund.clone())
+            }
+            PersistEvent::LiquidationEvent(liq) => {
+                liquidation_events.push(liq.clone())
+            }
         }
     }
 
@@ -213,6 +286,8 @@ pub async fn flush_batch(
     insert_fills(&tx, &fills).await?;
     upsert_tips(&tx, shard_id, &tips).await?;
     insert_funding(&tx, &funding).await?;
+    upsert_insurance_funds(&tx, &insurance_funds).await?;
+    insert_liquidation_events(&tx, &liquidation_events).await?;
     tx.commit().await?;
     Ok(())
 }

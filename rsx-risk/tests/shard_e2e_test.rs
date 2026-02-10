@@ -5,6 +5,7 @@ use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
+use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
@@ -27,6 +28,8 @@ fn config_single_shard() -> ShardConfig {
         funding_config: FundingConfig::default(),
         liquidation_config:
             LiquidationConfig::default(),
+        replication_config:
+            ReplicationConfig::default(),
     }
 }
 

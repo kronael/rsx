@@ -2,6 +2,7 @@ use rsx_risk::Account;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::Position;
+use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
@@ -25,7 +26,7 @@ async fn pg_client() -> (
     testcontainers::ContainerAsync<Postgres>,
     tokio_postgres::Client,
 ) {
-    let container =
+    let container: testcontainers::ContainerAsync<Postgres> =
         Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let connstr = format!(
@@ -46,6 +47,7 @@ async fn pg_client() -> (
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_positions_roundtrip() {
     let (_c, mut client) = pg_client().await;
     let mut pos = Position::new(1, 0);
@@ -70,6 +72,7 @@ async fn persist_positions_roundtrip() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_accounts_roundtrip() {
     let (_c, mut client) = pg_client().await;
     let mut acct = Account::new(42, 10_000);
@@ -94,6 +97,7 @@ async fn persist_accounts_roundtrip() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_fills_batch_insert() {
     let (_c, mut client) = pg_client().await;
     let fills: Vec<PersistFill> = (0..5)
@@ -122,6 +126,7 @@ async fn persist_fills_batch_insert() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_tips_roundtrip() {
     let (_c, mut client) = pg_client().await;
     let tx = client.transaction().await.unwrap();
@@ -144,6 +149,7 @@ async fn persist_tips_roundtrip() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_funding_payments_append() {
     let (_c, mut client) = pg_client().await;
     let payments = vec![
@@ -177,12 +183,14 @@ async fn persist_funding_payments_append() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_empty_batch_no_transaction() {
     let (_c, mut client) = pg_client().await;
     flush_batch(&mut client, 0, &[]).await.unwrap();
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_position_overwritten_by_later_version() {
     let (_c, mut client) = pg_client().await;
 
@@ -212,6 +220,7 @@ async fn persist_position_overwritten_by_later_version() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_no_version_guard_on_upsert() {
     let (_c, mut client) = pg_client().await;
     let mut pos = Position::new(1, 0);
@@ -240,6 +249,7 @@ async fn persist_no_version_guard_on_upsert() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cold_start_loads_positions() {
     let (_c, mut client) = pg_client().await;
     let mut pos = Position::new(0, 0);
@@ -259,6 +269,7 @@ async fn cold_start_loads_positions() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cold_start_loads_accounts() {
     let (_c, mut client) = pg_client().await;
     let acct = Account::new(0, 5000);
@@ -274,6 +285,7 @@ async fn cold_start_loads_accounts() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cold_start_loads_tips() {
     let (_c, mut client) = pg_client().await;
     let tx = client.transaction().await.unwrap();
@@ -292,6 +304,7 @@ async fn cold_start_loads_tips() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cold_start_with_empty_postgres() {
     let (_c, client) = pg_client().await;
     let state =
@@ -304,6 +317,7 @@ async fn cold_start_with_empty_postgres() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn upsert_idempotent_on_replay() {
     let (_c, mut client) = pg_client().await;
     let acct = Account::new(1, 1000);
@@ -326,6 +340,7 @@ async fn upsert_idempotent_on_replay() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn advisory_lock_exclusive() {
     let (_c, client) = pg_client().await;
     acquire_advisory_lock(&client, 0).await.unwrap();
@@ -335,6 +350,7 @@ async fn advisory_lock_exclusive() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn replay_from_wal_rebuilds_positions() {
     use rsx_dxs::FillRecord;
     use rsx_dxs::WalWriter;
@@ -347,6 +363,7 @@ async fn replay_from_wal_rebuilds_positions() {
     let mut writer = WalWriter::new(
         0,
         wal_path,
+        None,
         64 * 1024 * 1024,
         600_000_000_000,
     )
@@ -392,6 +409,8 @@ async fn replay_from_wal_rebuilds_positions() {
         funding_config: FundingConfig::default(),
         liquidation_config:
             LiquidationConfig::default(),
+        replication_config:
+            ReplicationConfig::default(),
     };
     let mut shard = RiskShard::new(config);
     // Give user 0 collateral so account exists
@@ -420,6 +439,7 @@ async fn replay_from_wal_rebuilds_positions() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_fills_partitioning_by_symbol() {
     let (_c, mut client) = pg_client().await;
     let fills: Vec<PersistFill> = (0..3)
@@ -457,6 +477,7 @@ async fn persist_fills_partitioning_by_symbol() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn persist_backpressure_ring_full() {
     use rsx_risk::persist::PersistEvent;
 

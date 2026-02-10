@@ -1,3 +1,5 @@
+use rsx_types::SymbolConfig;
+
 pub struct GatewayConfig {
     pub listen_addr: String,
     pub risk_addr: String,
@@ -10,6 +12,8 @@ pub struct GatewayConfig {
     pub rate_limit_per_instance: u32,
     pub circuit_threshold: u32,
     pub circuit_cooldown_ms: u64,
+    pub jwt_secret: String,
+    pub symbol_configs: Vec<SymbolConfig>,
 }
 
 fn env_str(key: &str, default: &str) -> String {
@@ -36,6 +40,35 @@ fn env_usize(key: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+fn load_symbol_configs() -> Vec<SymbolConfig> {
+    let max = env_usize("RSX_MAX_SYMBOLS", 16);
+    let tick = env_u64("RSX_DEFAULT_TICK_SIZE", 1) as i64;
+    let lot = env_u64("RSX_DEFAULT_LOT_SIZE", 1) as i64;
+    (0..max)
+        .map(|i| {
+            let t = std::env::var(
+                format!("RSX_SYMBOL_{i}_TICK_SIZE"),
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(tick);
+            let l = std::env::var(
+                format!("RSX_SYMBOL_{i}_LOT_SIZE"),
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(lot);
+            SymbolConfig {
+                symbol_id: i as u32,
+                price_decimals: 8,
+                qty_decimals: 8,
+                tick_size: t,
+                lot_size: l,
+            }
+        })
+        .collect()
 }
 
 pub fn load_gateway_config() -> GatewayConfig {
@@ -84,5 +117,10 @@ pub fn load_gateway_config() -> GatewayConfig {
             "RSX_GW_CB_COOLDOWN_MS",
             30_000,
         ),
+        jwt_secret: env_str(
+            "RSX_GW_JWT_SECRET",
+            "dev-secret-change-in-production",
+        ),
+        symbol_configs: load_symbol_configs(),
     }
 }

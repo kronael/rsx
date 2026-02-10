@@ -2,7 +2,7 @@ use rsx_gateway::state::GatewayState;
 
 #[test]
 fn rate_limiter_created_on_demand() {
-    let mut state = GatewayState::new(100, 10, 30_000);
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
     assert!(state.user_limiters.is_empty());
     state.add_connection(42);
     assert!(state.user_limiters.is_empty());
@@ -10,14 +10,14 @@ fn rate_limiter_created_on_demand() {
 
 #[test]
 fn circuit_breaker_default_closed() {
-    let state = GatewayState::new(100, 10, 30_000);
+    let state = GatewayState::new(100, 10, 30_000, vec![]);
     assert!(std::mem::size_of_val(&state.circuit) > 0);
 }
 
 #[test]
 fn broadcast_heartbeat_adds_to_outbound() {
     let mut state =
-        GatewayState::new(100, 10, 30_000);
+        GatewayState::new(100, 10, 30_000, vec![]);
     let c1 = state.add_connection(1);
     let c2 = state.add_connection(2);
     state.broadcast_heartbeat(12345);
@@ -32,7 +32,7 @@ fn broadcast_heartbeat_adds_to_outbound() {
 #[test]
 fn stale_connections_detected() {
     let mut state =
-        GatewayState::new(100, 10, 30_000);
+        GatewayState::new(100, 10, 30_000, vec![]);
     let c1 = state.add_connection(1);
     let c2 = state.add_connection(2);
     // c1 active long ago, c2 recent
