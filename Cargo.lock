@@ -1816,6 +1816,7 @@ dependencies = [
 name = "rsx-book"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "rsx-types",
  "rustc-hash",
 ]
@@ -1905,11 +1906,13 @@ name = "rsx-matching"
 version = "0.1.0"
 dependencies = [
  "core_affinity",
+ "criterion",
  "rsx-book",
  "rsx-dxs",
  "rsx-types",
- "rtrb",
  "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -1950,6 +1953,9 @@ dependencies = [
 [[package]]
 name = "rsx-types"
 version = "0.1.0"
+dependencies = [
+ "criterion",
+]
 
 [[package]]
 name = "rtrb"
