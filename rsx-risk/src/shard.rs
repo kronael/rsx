@@ -42,6 +42,7 @@ pub struct RiskShard {
     maker_fee_bps: Vec<i64>,
     stashed_bbo: Vec<Option<BboUpdate>>,
 
+    pub config_versions: Vec<u64>,
     pub fills_processed: u64,
     pub orders_processed: u64,
     persist_producer: Option<Producer<PersistEvent>>,
@@ -72,6 +73,7 @@ impl RiskShard {
             taker_fee_bps: config.taker_fee_bps,
             maker_fee_bps: config.maker_fee_bps,
             stashed_bbo: vec![None; max],
+            config_versions: vec![0u64; max],
             fills_processed: 0,
             orders_processed: 0,
             persist_producer: None,
@@ -465,6 +467,19 @@ impl RiskShard {
         price: i64,
     ) {
         self.mark_prices[symbol_id as usize] = price;
+    }
+
+    /// Track config version per symbol. Future:
+    /// update symbol_params, fee rates from metadata.
+    pub fn process_config_applied(
+        &mut self,
+        symbol_id: u32,
+        config_version: u64,
+    ) {
+        let sid = symbol_id as usize;
+        if sid < self.config_versions.len() {
+            self.config_versions[sid] = config_version;
+        }
     }
 
     pub fn stash_bbo(&mut self, bbo: BboUpdate) {

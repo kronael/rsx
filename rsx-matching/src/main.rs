@@ -2,6 +2,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
@@ -182,6 +183,13 @@ fn main() {
             "dxs sidecar spawned on {}", dxs_addr
         );
     }
+
+    // Emit CONFIG_APPLIED for this symbol on startup
+    emit_startup_config(
+        &mut wal_writer,
+        &mut cmp_sender,
+        symbol_id,
+    );
 
     info!("matching engine started");
 
@@ -369,6 +377,29 @@ fn send_event_cmp(
         _ => {}
     }
     Ok(())
+}
+
+fn emit_startup_config(
+    wal: &mut WalWriter,
+    risk_sender: &mut CmpSender,
+    symbol_id: u32,
+) {
+    let ts = time_ns();
+    let mut record = ConfigAppliedRecord {
+        seq: 0,
+        ts_ns: ts,
+        symbol_id,
+        _pad0: 0,
+        config_version: 1,
+        effective_at_ms: 0,
+        applied_at_ns: ts,
+    };
+    let _ = wal.append(&mut record);
+    let _ = risk_sender.send(&mut record);
+    info!(
+        "emitted config_applied for symbol {}",
+        symbol_id,
+    );
 }
 
 /// Send events to Marketdata -- Fill, OrderInserted,
