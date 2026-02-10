@@ -24,7 +24,7 @@ Binary: `rsx-marketdata`
 | MD10 | Public endpoint, no auth | MARKETDATA.md |
 | MD11 | Single-threaded, dedicated core, busy-spin | NETWORK.md §MARKETDATA |
 | MD12 | Non-blocking epoll for WS I/O (no Tokio) | NETWORK.md §MARKETDATA |
-| MD13 | SPSC consumer ring per matching engine | NETWORK.md §MARKETDATA |
+| MD13 | CMP/UDP input from matching engine | NETWORK.md §MARKETDATA |
 | MD14 | Recovery via DXS replay from ME WAL | DXS.md §8 |
 | MD15 | WS JSON: BBO, B (snapshot), D (delta), S, X | WEBPROTO.md |
 | MD16 | Event routing: Fill + OrderInserted + Cancelled | CONSISTENCY.md §1 |

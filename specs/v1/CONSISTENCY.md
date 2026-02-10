@@ -10,28 +10,28 @@ specification of consistency model, durability bounds, and recovery guarantees.
 
 ---
 
-## 1. Fan-Out: Direct SPSC from Matching Engine
+## 1. Fan-Out: CMP/UDP Between Processes (SPSC Optional In-Process)
 
 ```
         Matching Engine
              |
         drain_events()
          /    |    \       \
-     [SPSC] [SPSC] [SPSC]  [DXS]
-       |      |       |       |
-     Risk  Gateway  MktData      Recorder
-                    (MARKETDATA.md)
+     [CMP]  [CMP]  [CMP]   [DXS]
+       |      |      |       |
+     Risk  Gateway  MktData    Recorder
 ```
 
-Matching engine drains `event_buf[0..event_len]` directly into per-consumer
-SPSC rings *within the same process*. Events are emitted per-fill as they
-happen. A mirrored stream is also emitted to a hot spare matching engine.
+Matching engine drains `event_buf[0..event_len]` and emits per-consumer
+CMP/UDP datagrams to Risk, Gateway, and Marketdata. When co-located, an
+SPSC ring MAY be used instead, but CMP is the default for inter-process
+fan-out. A mirrored stream is also emitted to a hot spare matching engine.
 
 Additionally, Recorder instances connect as DXS consumers
 ([DXS.md](DXS.md) section 8) to archive event streams to daily
 files. Recorders are asynchronous — they do not affect the hot path.
 
-Event routing:
+Event routing (transport-agnostic):
 
 | Event           | Risk | Gateway | MktData |
 |-----------------|------|---------|---------|
@@ -65,9 +65,11 @@ L2 depth, BBO, and trade derivation from these events.
 - **Gateway ingress** (external): gateway rejects new orders
   with `OVERLOADED` when buffer is full. This is the primary
   user-facing backpressure mechanism.
-- **ME SPSC rings** (internal): ring full = matching engine
+- **ME SPSC rings** (optional, internal): ring full = matching engine
   **must stall** (bare busy-spin, no `spin_loop()`). This is
   internal backpressure between co-located components.
+- **CMP/UDP consumers** (default): UDP may drop under load; consumers
+  are responsible for gap detection and resubscribe/replay where needed.
 - These two layers are independent. Gateway rejection protects
   against external overload; ME stall protects against slow
   consumers.
@@ -109,7 +111,7 @@ for step-by-step operational recovery procedures.
 
 ---
 
-## Drain Loop Pseudocode
+## Drain Loop Pseudocode (CMP)
 
 ```rust
 fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
@@ -118,31 +120,26 @@ fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
 
         match event {
             Event::Fill { .. } => {
-                links.risk.push_spin(event);
-                links.gateway.push_spin(event);
-                links.market_data.push_spin(event);
+                links.risk.send_cmp(event);
+                links.gateway.send_cmp(event);
+                links.market_data.send_cmp(event);
             }
             Event::OrderDone { .. } => {
-                links.risk.push_spin(event);
-                links.gateway.push_spin(event);
+                links.risk.send_cmp(event);
+                links.gateway.send_cmp(event);
             }
             Event::OrderCancelled { .. } => {
-                links.gateway.push_spin(event);
-                links.market_data.push_spin(event);
+                links.gateway.send_cmp(event);
+                links.market_data.send_cmp(event);
             }
             Event::OrderInserted { .. } => {
-                links.market_data.push_spin(event);
+                links.market_data.send_cmp(event);
             }
             Event::BBO { .. } => {
-                links.risk.push_spin(event);
+                links.risk.send_cmp(event);
             }
         }
     }
-}
-
-// Bare spin, dedicated core
-fn push_spin<T>(ring: &mut SpscProducer<T>, item: &T) {
-    while ring.try_push(item).is_err() {}
 }
 ```
 
