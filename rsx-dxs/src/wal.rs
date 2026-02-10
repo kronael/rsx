@@ -359,6 +359,7 @@ impl WalReader {
                 "target_seq {} not in hot WAL, falling back to archive",
                 target_seq
             );
+                // SAFETY: guarded by archive_dir.is_some() check above
                 let archive = archive_dir
                     .unwrap()
                     .join(stream_id.to_string());
