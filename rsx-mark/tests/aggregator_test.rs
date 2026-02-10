@@ -8,6 +8,7 @@ use rsx_mark::types::SymbolMarkState;
 
 fn sp(id: u8, price: i64, ts: u64) -> SourcePrice {
     SourcePrice {
+        symbol_id: 0,
         source_id: id,
         price,
         timestamp_ns: ts,
@@ -272,6 +273,7 @@ fn sweep_reaggregates_and_publishes() {
     let t1 = t0 + STALENESS_NS + 1;
     // manually update source 1 timestamp without aggregate
     state.sources[1] = Some(SourcePrice {
+        symbol_id: 0,
         source_id: 1,
         price: 300,
         timestamp_ns: t1,
@@ -363,7 +365,7 @@ fn source_mask_single_source_sets_bit() {
     let mut state = SymbolMarkState::new();
     let now = 1_000_000_000u64;
     state.sources[3] = Some(sp(3, 100, now));
-    let mask = compute_mask(&state, now);
+    let mask = compute_mask(&state, now, STALENESS_NS);
     assert_eq!(mask, 1 << 3);
 }
 
@@ -373,7 +375,7 @@ fn source_mask_two_sources_sets_both_bits() {
     let now = 1_000_000_000u64;
     state.sources[0] = Some(sp(0, 100, now));
     state.sources[5] = Some(sp(5, 200, now));
-    let mask = compute_mask(&state, now);
+    let mask = compute_mask(&state, now, STALENESS_NS);
     assert_eq!(mask, (1 << 0) | (1 << 5));
 }
 
@@ -382,7 +384,7 @@ fn source_mask_stale_source_clears_bit() {
     let mut state = SymbolMarkState::new();
     let now = 20_000_000_000u64;
     state.sources[2] = Some(sp(2, 100, 0)); // stale
-    let mask = compute_mask(&state, now);
+    let mask = compute_mask(&state, now, STALENESS_NS);
     assert_eq!(mask, 0);
 }
 
@@ -393,6 +395,6 @@ fn source_mask_max_8_bits() {
     for i in 0..8u8 {
         state.sources[i as usize] = Some(sp(i, 100, now));
     }
-    let mask = compute_mask(&state, now);
+    let mask = compute_mask(&state, now, STALENESS_NS);
     assert_eq!(mask, 0xFF);
 }
