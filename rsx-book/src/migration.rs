@@ -248,14 +248,6 @@ impl Orderbook {
         }
     }
 
-    fn is_migration_complete(&self) -> bool {
-        let old_levels = match &self.old_levels {
-            Some(l) => l,
-            None => return true,
-        };
-        old_levels.iter().all(|l| l.order_count == 0)
-    }
-
     fn complete_migration(&mut self) {
         self.staging_levels =
             self.old_levels.take().unwrap_or_default();

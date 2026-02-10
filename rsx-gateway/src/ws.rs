@@ -30,10 +30,11 @@ where
 }
 
 /// Perform WebSocket upgrade handshake on a raw
-/// TcpStream. Returns Ok(key) if upgrade succeeded.
+/// TcpStream. Returns Ok((key, user_id)) if upgrade
+/// succeeded and auth was present.
 pub async fn ws_handshake(
     stream: &mut TcpStream,
-) -> io::Result<String> {
+) -> io::Result<(String, u32)> {
     // Read HTTP upgrade request
     let buf = vec![0u8; 4096];
     let (res, buf) = stream.read(buf).await;
@@ -57,6 +58,22 @@ pub async fn ws_handshake(
         },
     )?;
 
+    // Extract user_id from auth headers
+    let user_id = match extract_user_id(&request) {
+        Some(id) => id,
+        None => {
+            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
+                Connection: close\r\n\r\n";
+            let (res, _) =
+                stream.write_all(resp.to_vec()).await;
+            let _ = res;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "missing or invalid auth",
+            ));
+        }
+    };
+
     // Compute accept key
     let accept = compute_accept_key(&key);
 
@@ -72,7 +89,38 @@ pub async fn ws_handshake(
     let (res, _) = stream.write_all(resp_bytes).await;
     res?;
 
-    Ok(key)
+    Ok((key, user_id))
+}
+
+/// Extract user_id from HTTP headers.
+/// Checks Authorization (Bearer token) then X-User-Id.
+/// TODO: validate JWT in production instead of parsing
+/// Bearer token as raw u32.
+fn extract_user_id(request: &str) -> Option<u32> {
+    for line in request.lines() {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("authorization:") {
+            let val = line
+                .split_once(':')
+                .map(|(_, v)| v.trim())?;
+            let token = val
+                .strip_prefix("Bearer ")
+                .or_else(|| {
+                    val.strip_prefix("bearer ")
+                })?;
+            return token.trim().parse::<u32>().ok();
+        }
+    }
+    for line in request.lines() {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("x-user-id:") {
+            let val = line
+                .split_once(':')
+                .map(|(_, v)| v.trim())?;
+            return val.parse::<u32>().ok();
+        }
+    }
+    None
 }
 
 fn extract_ws_key(request: &str) -> Option<String> {

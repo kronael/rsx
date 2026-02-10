@@ -60,10 +60,14 @@ fn order(
         symbol_id,
         price,
         qty,
+        order_id_hi: 0,
+        order_id_lo: 0,
+        timestamp_ns: 0,
         side: 0,
         tif: 0,
         reduce_only: false,
         is_liquidation: false,
+        _pad: [0; 4],
     }
 }
 

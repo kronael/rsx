@@ -8,6 +8,9 @@ pub const RECORD_CONFIG_APPLIED: u16 = 5;
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_ORDER_ACCEPTED: u16 = 7;
 pub const RECORD_MARK_PRICE: u16 = 8;
+pub const RECORD_ORDER_REQUEST: u16 = 9;
+pub const RECORD_ORDER_RESPONSE: u16 = 10;
+pub const RECORD_CANCEL_REQUEST: u16 = 11;
 pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
@@ -224,7 +227,8 @@ pub struct MarkPriceRecord {
     pub symbol_id: u32,
     pub _pad0: u32,
     pub mark_price: i64,
-    pub index_price: i64,
+    pub source_mask: u32,
+    pub source_count: u32,
     pub _pad1: [u8; 24],
 }
 
@@ -232,6 +236,25 @@ impl CmpRecord for MarkPriceRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_MARK_PRICE }
+}
+
+/// CancelRequest (64-byte aligned)
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct CancelRequest {
+    pub seq: u64,
+    pub ts_ns: u64,
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+    pub _pad: [u8; 24],
+}
+
+impl CmpRecord for CancelRequest {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_CANCEL_REQUEST }
 }
 
 /// CMP StatusMessage (64-byte aligned)

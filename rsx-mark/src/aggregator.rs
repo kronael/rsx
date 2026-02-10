@@ -37,11 +37,12 @@ pub fn median(sorted: &[i64]) -> i64 {
 pub fn compute_mask(
     state: &SymbolMarkState,
     now_ns: u64,
+    staleness_ns: u64,
 ) -> u32 {
     let mut mask: u32 = 0;
     for sp in state.sources.iter().flatten() {
         if now_ns.saturating_sub(sp.timestamp_ns)
-            < STALENESS_NS
+            < staleness_ns
         {
             mask |= 1 << sp.source_id;
         }
@@ -63,7 +64,7 @@ pub fn aggregate(
 
     state.sources[sid] = Some(update);
 
-    reaggregate(state, now_ns, symbol_id)
+    reaggregate(state, now_ns, symbol_id, STALENESS_NS)
 }
 
 /// Re-aggregate from current sources. Returns event if
@@ -72,17 +73,19 @@ pub fn reaggregate(
     state: &mut SymbolMarkState,
     now_ns: u64,
     symbol_id: u32,
+    staleness_ns: u64,
 ) -> Option<MarkPriceEvent> {
     let mut fresh: Vec<i64> = Vec::with_capacity(MAX_SOURCES);
     for sp in state.sources.iter().flatten() {
         if now_ns.saturating_sub(sp.timestamp_ns)
-            < STALENESS_NS
+            < staleness_ns
         {
             fresh.push(sp.price);
         }
     }
 
-    state.source_mask = compute_mask(state, now_ns);
+    state.source_mask =
+        compute_mask(state, now_ns, staleness_ns);
     state.source_count = fresh.len() as u8;
 
     match fresh.len() {
@@ -106,10 +109,10 @@ fn make_event(
 ) -> MarkPriceEvent {
     MarkPriceEvent {
         seq: 0,
+        ts_ns: now_ns,
         symbol_id,
         _pad0: 0,
         mark_price: state.mark_price,
-        timestamp_ns: now_ns,
         source_mask: state.source_mask,
         source_count: state.source_count as u32,
         _pad1: [0; 24],
@@ -126,12 +129,44 @@ pub fn sweep_stale(
 ) -> Option<MarkPriceEvent> {
     // Check if any previously-fresh source is now stale
     let old_mask = state.source_mask;
-    let new_mask = compute_mask(state, now_ns);
+    let new_mask = compute_mask(state, now_ns, STALENESS_NS);
 
     if new_mask == old_mask {
         return None;
     }
 
     // A source became stale, re-aggregate
-    reaggregate(state, now_ns, symbol_id)
+    reaggregate(state, now_ns, symbol_id, STALENESS_NS)
+}
+
+/// Same as aggregate but with configurable staleness.
+pub fn aggregate_with_staleness(
+    state: &mut SymbolMarkState,
+    update: SourcePrice,
+    now_ns: u64,
+    symbol_id: u32,
+    staleness_ns: u64,
+) -> Option<MarkPriceEvent> {
+    let sid = update.source_id as usize;
+    if sid >= MAX_SOURCES {
+        return None;
+    }
+
+    state.sources[sid] = Some(update);
+    reaggregate(state, now_ns, symbol_id, staleness_ns)
+}
+
+/// Same as sweep_stale but with configurable staleness.
+pub fn sweep_stale_with_staleness(
+    state: &mut SymbolMarkState,
+    now_ns: u64,
+    symbol_id: u32,
+    staleness_ns: u64,
+) -> Option<MarkPriceEvent> {
+    let old_mask = state.source_mask;
+    let new_mask = compute_mask(state, now_ns, staleness_ns);
+    if new_mask == old_mask {
+        return None;
+    }
+    reaggregate(state, now_ns, symbol_id, staleness_ns)
 }

@@ -64,10 +64,14 @@ fn order(
         symbol_id,
         price,
         qty,
+        order_id_hi: 0,
+        order_id_lo: 0,
+        timestamp_ns: 0,
         side: 0,
         tif: 0,
         reduce_only: false,
         is_liquidation: false,
+        _pad: [0; 4],
     }
 }
 
@@ -340,12 +344,15 @@ fn run_once_empty_rings_no_crash() {
     let (_, bbo_c) = rtrb::RingBuffer::<BboUpdate>::new(4);
     let (resp_p, _) =
         rtrb::RingBuffer::<OrderResponse>::new(4);
+    let (accepted_p, _accepted_c) =
+        rtrb::RingBuffer::<OrderRequest>::new(4);
     let mut rings = rsx_risk::ShardRings {
         fill_consumers: vec![fill_c],
         order_consumer: order_c,
         mark_consumer: mark_c,
         bbo_consumers: vec![bbo_c],
         response_producer: resp_p,
+        accepted_producer: accepted_p,
     };
     s.run_once(&mut rings, 0);
     assert_eq!(s.fills_processed, 0);
@@ -368,6 +375,8 @@ fn run_once_fills_before_orders() {
     let (_, bbo_c) = rtrb::RingBuffer::<BboUpdate>::new(4);
     let (resp_p, mut resp_c) =
         rtrb::RingBuffer::<OrderResponse>::new(4);
+    let (accepted_p, _accepted_c) =
+        rtrb::RingBuffer::<OrderRequest>::new(4);
 
     fill_p.push(fill(0, 1, 0, 10_000, 100, 1)).unwrap();
     order_p.push(order(0, 0, 10_000, 10)).unwrap();
@@ -378,6 +387,7 @@ fn run_once_fills_before_orders() {
         mark_consumer: mark_c,
         bbo_consumers: vec![bbo_c],
         response_producer: resp_p,
+        accepted_producer: accepted_p,
     };
     s.run_once(&mut rings, 0);
 
