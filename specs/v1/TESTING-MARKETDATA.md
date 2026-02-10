@@ -235,7 +235,7 @@ same machine, TESTING.md §6) and throughput requirements
 
 - Imports `rsx-book` crate for shadow orderbook
   (NETWORK.md §MARKETDATA)
-- Receives Fill, OrderInserted, OrderCancelled via SPSC
+- Receives Fill, OrderInserted, OrderCancelled via CMP/UDP
   from matching engine (CONSISTENCY.md §1)
 - Connects as DXS consumer for ME WAL replay on startup
   (DXS.md §8)

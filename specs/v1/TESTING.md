@@ -49,7 +49,7 @@ appropriate. Run on every PR.
 **Scope:**
 - Single user, single symbol scenarios
 - Full order lifecycle: submit → match → fills → completion
-- Mocked SPSC rings for isolation (real orderbook + mocked transport)
+- Mocked transports for isolation (real orderbook + mocked CMP where needed)
 - Edge cases:
   - Pre-trade margin check failure
   - Duplicate order_id (5min dedup window)
@@ -90,7 +90,7 @@ PR or on-demand.
 
 **Scope:**
 - Full system stack running (gateway, matching, risk, mktdata)
-- Real SPSC rings (not mocked)
+- Real CMP/UDP links (not mocked)
 - Multi-symbol, multi-user scenarios
 - Tail event handling:
   - 50% crash/rally triggers recentering
@@ -104,12 +104,11 @@ PR or on-demand.
 - Failure mode testing:
   - Matching engine crash/restart (book starts empty)
   - Risk engine crash/restart (positions persisted)
-  - SPSC ring full (backpressure verification)
+  - CMP flow control/backpressure verification
   - Network partition (circuit breaker behavior)
 
 **Characteristics:**
 - Testcontainers for services
-- Real SPSC rings
 - Real CMP/UDP links
 - Multi-process scenarios
 - Runs in variable time (typically 1-5min)
@@ -131,8 +130,8 @@ fn matching_engine_crash_recovery() {
 
 #[test]
 fn ring_full_backpressure() {
-    // Fill SPSC ring to capacity
-    // Verify: matching engine stalls on push, no data loss
+    // Simulate CMP backpressure/NAK
+    // Verify: sender retries, no data loss
 }
 ```
 
