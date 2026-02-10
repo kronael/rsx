@@ -170,6 +170,129 @@ replica_lag_exceeding_100ms_stalls_producer
 
 ---
 
+## Edge Case Tests
+
+### Crash and Corruption Scenarios
+
+```rust
+// 10.1 crash mid-rotation
+crash_mid_rotation_recovers_from_active_file
+crash_during_rename_active_file_intact
+rotation_atomic_or_recoverable
+
+// 10.2 partial record at eof
+partial_record_header_only_truncates
+partial_record_incomplete_payload_truncates
+eof_during_payload_read_returns_none
+
+// 10.3 crc mismatch mid-file
+crc_mismatch_truncates_at_first_bad_record
+corruption_mid_file_ignores_subsequent_valid_records
+disk_corruption_detected_by_crc_check
+
+// 10.4 unknown record type
+unknown_record_type_returned_as_raw
+consumer_skips_unknown_record_types
+version_mismatch_new_types_ignored
+breaking_change_requires_coordinated_deploy
+
+// 10.5 gap in sequence numbers
+seq_gap_detected_by_consumer
+gc_expired_files_causes_gap
+consumer_falls_back_to_archive_on_gap
+retention_window_prevents_gaps_during_replay
+
+// 10.6 replay from future sequence
+replay_from_future_seq_returns_none_immediately
+future_seq_caught_up_with_current_tip
+consumer_tip_corrupted_replays_from_available
+
+// 10.7 active file exists but empty
+empty_active_file_returns_none
+empty_active_file_reused_on_next_append
+writer_crash_before_first_flush_safe
+
+// 10.8 interleaved rotation during replay
+gc_deletes_file_during_active_replay
+consumer_reconnects_on_file_not_found
+retention_window_buffers_active_replay
+consumer_lag_vs_retention_monitoring
+
+// 10.9 multiple active files
+orphaned_active_file_ignored
+operator_renames_orphaned_to_rotated_format
+deterministic_active_file_naming
+
+// 10.10 concurrent readers on same wal
+multiple_consumers_concurrent_replay_safe
+concurrent_read_no_locking_needed
+immutable_rotated_files_append_only_active
+
+// 10.11 tip persistence lag
+tip_lag_causes_duplicate_replay
+consumer_callback_idempotent
+dedup_by_seq_handles_replays
+10ms_tip_interval_bounds_duplicate_window
+
+// 10.12 caught_up marker timing
+caught_up_during_concurrent_appends_no_gap
+live_tail_delivers_buffered_records_immediately
+caught_up_live_seq_inclusive_next_starts_plus_1
+
+// 10.13 network partition during live tail
+tcp_disconnect_triggers_reconnect_with_backoff
+consumer_persists_tip_before_reconnect
+replay_after_partition_no_data_loss
+disconnect_during_live_tail_recovers
+
+// 10.14 writer flush lag exceeds bound
+flush_lag_backpressure_stalls_producer
+disk_slow_append_returns_would_block
+matching_engine_stalls_on_backpressure
+monitor_flush_latency_alert_on_p99_exceeds_5ms
+
+// 10.15 replay from seq 0
+replay_from_seq_0_starts_at_first_available
+replay_from_seq_0_empty_wal_returns_none
+no_prior_tip_fresh_start_safe
+
+// 10.16 rotation boundary replay
+replay_across_rotation_boundary_seamless
+last_record_file_n_first_record_file_n_plus_1_continuous
+file_transition_no_gap_no_duplicate
+```
+
+### Invariant Verification Tests
+
+```rust
+// sequence monotonicity
+seq_monotonic_across_rotations
+seq_monotonic_across_crashes
+seq_never_decreases_per_stream
+
+// crc integrity
+all_complete_records_have_valid_crc
+partial_records_never_processed
+crc_mismatch_stops_replay
+
+// file immutability
+rotated_files_never_modified
+active_file_append_only
+no_reader_writer_conflicts
+
+// idempotency
+duplicate_replay_no_side_effects
+position_updates_idempotent
+ack_messages_idempotent
+
+// atomicity
+rotation_atomic_via_rename
+tip_persistence_atomic_via_rename
+fsync_ensures_durability
+```
+
+---
+
 ## Benchmarks
 
 ```rust
@@ -217,6 +340,6 @@ Targets from DXS.md §10:
   (DXS.md §2)
 - Cross-host live streaming via WAL/TCP + WAL wire format
   (DXS.md §7)
-- SPSC rings for in-process hot-path (ME -> risk, risk ->
+- CMP/UDP for hot-path between processes (ME -> risk, risk ->
   gateway), DXS for cross-host and replay (DXS.md §7,
   NETWORK.md §internal)

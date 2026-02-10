@@ -145,3 +145,59 @@ These rules keep the loss window bounded and prevent silent latency inflation.
 - Enforce stalls if flush or replica sync exceeds bounds.
 - Offload to Postgres asynchronously with batching.
 - Apply the same pattern to orderbook and risk, but keep the option to diverge.
+
+## Replay Edge Cases and Recovery
+
+**Comprehensive edge case documentation:** See [DXS.md](DXS.md)
+section 10 for detailed edge case handling during WAL replay,
+including:
+
+- Crash mid-rotation (active file recovery)
+- Partial records at EOF (CRC truncation)
+- CRC mismatches mid-file (conservative truncation)
+- Unknown record types (version compatibility)
+- Sequence gaps (GC and archive fallback)
+- Tip persistence lag (idempotent replay)
+- Network partitions during live tail (reconnect protocol)
+- Concurrent readers (filesystem safety)
+- Rotation boundaries (seamless file transition)
+
+**Key principles:**
+
+1. **Idempotency:** All consumers must handle duplicate replay.
+   Position updates, acks, and state transitions must be
+   idempotent or deduplicated by sequence number.
+
+2. **Conservative truncation:** On any corruption (CRC mismatch,
+   partial record), WAL reader stops at first bad record. This
+   prevents processing potentially inconsistent data.
+
+3. **Crash = restart:** SIGTERM treated identically to crash. No
+   graceful shutdown path. Recovery handles all state restoration.
+   Single code path exercised on every restart.
+
+4. **Bounded loss window:** 10ms flush interval + backpressure
+   enforcement ensures at most 10ms of data loss on crash. Records
+   in buffer but not yet flushed may be lost. WAL replay starts
+   from last fsync'd record.
+
+5. **Tip persistence lag:** Consumer tip flushed every 10ms. On
+   crash, replay from last persisted tip may deliver duplicates.
+   Bounded by tip persistence interval (typically <100 records at
+   target throughput).
+
+6. **Archive fallback:** If consumer offline longer than retention
+   window (default 10min), hot WAL files are GC'd. Consumer must
+   request replay from archive (cold storage). If archive
+   unavailable, consumer cannot recover missing range.
+
+**Operational monitoring:**
+
+- WAL flush latency (alert on p99 > 5ms)
+- Consumer lag vs retention window (alert if lag > 50% retention)
+- Backpressure stalls (indicates disk or consumer slowness)
+- CRC errors (indicates disk corruption or software bug)
+- Sequence gaps in consumer replay (indicates GC or configuration issue)
+
+**Testing requirements:** See [TESTING-DXS.md](TESTING-DXS.md)
+for comprehensive edge case test coverage.
