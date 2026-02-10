@@ -1,3 +1,4 @@
+use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::CmpHeartbeat;
@@ -24,6 +25,8 @@ const HEARTBEAT_INTERVAL: Duration =
 const STATUS_INTERVAL: Duration =
     Duration::from_millis(10);
 const DEFAULT_WINDOW: u64 = 64 * 1024;
+/// UDP send/recv buffer = header(16) + max payload(65535)
+const PACKET_BUF_SIZE: usize = 65536;
 
 pub struct CmpSender {
     socket: UdpSocket,
@@ -34,7 +37,7 @@ pub struct CmpSender {
     peer_window: u64,
     last_heartbeat: Instant,
     wal_dir: PathBuf,
-    buf: [u8; 65536],
+    buf: [u8; PACKET_BUF_SIZE],
 }
 
 impl CmpSender {
@@ -55,7 +58,7 @@ impl CmpSender {
             peer_window: DEFAULT_WINDOW,
             last_heartbeat: Instant::now(),
             wal_dir: wal_dir.to_path_buf(),
-            buf: [0u8; 65536],
+            buf: [0u8; PACKET_BUF_SIZE],
         })
     }
 
@@ -273,7 +276,7 @@ pub struct CmpReceiver {
     reorder_buf: BTreeMap<u64, Vec<u8>>,
     last_status: Instant,
     window: u64,
-    buf: [u8; 65536],
+    buf: [u8; PACKET_BUF_SIZE],
 }
 
 impl CmpReceiver {
@@ -292,7 +295,7 @@ impl CmpReceiver {
             reorder_buf: BTreeMap::new(),
             last_status: Instant::now(),
             window: DEFAULT_WINDOW,
-            buf: [0u8; 65536],
+            buf: [0u8; PACKET_BUF_SIZE],
         })
     }
 
@@ -533,14 +536,5 @@ impl CmpReceiver {
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.socket.local_addr()
-    }
-}
-
-fn as_bytes<T>(val: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            val as *const T as *const u8,
-            std::mem::size_of::<T>(),
-        )
     }
 }

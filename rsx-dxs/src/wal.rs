@@ -1,3 +1,4 @@
+use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::CmpRecord;
@@ -440,15 +441,6 @@ fn list_wal_files(
         }
     }
     Ok(files)
-}
-
-fn as_bytes<T>(val: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            val as *const T as *const u8,
-            std::mem::size_of::<T>(),
-        )
-    }
 }
 
 /// Extract seq from first 8 bytes of payload
