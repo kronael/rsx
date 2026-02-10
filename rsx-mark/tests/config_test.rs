@@ -1,5 +1,8 @@
 use rsx_mark::config::load_mark_config;
 use std::env;
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn clear_env() {
     for key in &[
@@ -22,6 +25,7 @@ fn clear_env() {
 
 #[test]
 fn config_parse_valid_env() {
+    let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
     env::set_var(
         "RSX_MARK_SOURCE_BINANCE_ENABLED",
@@ -43,6 +47,7 @@ fn config_parse_valid_env() {
 
 #[test]
 fn config_staleness_ns_overrides_default() {
+    let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
     env::set_var("RSX_MARK_STALENESS_NS", "5000000000");
     let cfg = load_mark_config().unwrap();
@@ -52,6 +57,7 @@ fn config_staleness_ns_overrides_default() {
 
 #[test]
 fn config_source_enabled_false_skipped() {
+    let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
     env::set_var(
         "RSX_MARK_SOURCE_BINANCE_ENABLED",
@@ -68,6 +74,7 @@ fn config_source_enabled_false_skipped() {
 
 #[test]
 fn config_listen_addr_and_wal_dir() {
+    let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
     env::set_var(
         "RSX_MARK_LISTEN_ADDR",
@@ -82,6 +89,7 @@ fn config_listen_addr_and_wal_dir() {
 
 #[test]
 fn config_stream_id_set() {
+    let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
     env::set_var("RSX_MARK_STREAM_ID", "42");
     let cfg = load_mark_config().unwrap();
@@ -91,6 +99,7 @@ fn config_stream_id_set() {
 
 #[test]
 fn config_reconnect_base_and_max_ms() {
+    let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
     env::set_var(
         "RSX_MARK_SOURCE_BINANCE_ENABLED",

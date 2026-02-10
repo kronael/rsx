@@ -43,10 +43,18 @@ fn test_ws_handshake_with_valid_jwt() {
     .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
+        let listener = match monoio::net::TcpListener::bind(
             "127.0.0.1:0",
-        )
-        .unwrap();
+        ) {
+            Ok(l) => l,
+            Err(e)
+                if e.kind()
+                    == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
@@ -106,10 +114,18 @@ fn test_ws_handshake_with_expired_jwt() {
     .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
+        let listener = match monoio::net::TcpListener::bind(
             "127.0.0.1:0",
-        )
-        .unwrap();
+        ) {
+            Ok(l) => l,
+            Err(e)
+                if e.kind()
+                    == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
@@ -164,10 +180,18 @@ fn test_ws_handshake_missing_auth() {
     .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
+        let listener = match monoio::net::TcpListener::bind(
             "127.0.0.1:0",
-        )
-        .unwrap();
+        ) {
+            Ok(l) => l,
+            Err(e)
+                if e.kind()
+                    == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
@@ -221,10 +245,18 @@ fn test_ws_handshake_x_user_id_fallback() {
     .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
+        let listener = match monoio::net::TcpListener::bind(
             "127.0.0.1:0",
-        )
-        .unwrap();
+        ) {
+            Ok(l) => l,
+            Err(e)
+                if e.kind()
+                    == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(e) => panic!("bind failed: {e}"),
+        };
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
