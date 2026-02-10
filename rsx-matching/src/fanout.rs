@@ -1,3 +1,6 @@
+// Future: intra-process tile decomposition (TILES.md).
+// Currently unused -- between processes CMP replaces
+// this routing. Kept for tile-based single-process mode.
 use rtrb::Producer;
 
 use crate::wire::EventMessage;

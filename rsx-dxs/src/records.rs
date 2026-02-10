@@ -13,19 +13,13 @@ pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
 pub const RECORD_REPLAY_REQUEST: u16 = 0x13;
 
-/// Common prefix for all CMP data payloads.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PayloadPreamble {
-    pub seq: u64,
-    pub ver: u16,
-    pub kind: u8,
-    pub _pad0: u8,
-    pub len: u32,
-}
-
-impl PayloadPreamble {
-    pub const SIZE: usize = 16;
+/// Trait for all CMP data records. Guarantees seq is
+/// readable/writable at a known location in the payload.
+/// All implementors are #[repr(C, align(64))], Copy.
+pub trait CmpRecord: Copy {
+    fn seq(&self) -> u64;
+    fn set_seq(&mut self, seq: u64);
+    fn record_type() -> u16;
 }
 
 /// CancelReason enum (u8)
@@ -36,12 +30,11 @@ pub const CANCEL_REASON_SYSTEM: u8 = 3;
 pub const CANCEL_REASON_POST_ONLY_REJECT: u8 = 4;
 pub const CANCEL_REASON_OTHER: u8 = 5;
 
-/// FillRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+/// FillRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub taker_user_id: u32,
@@ -60,12 +53,17 @@ pub struct FillRecord {
     pub _pad1: [u8; 4],
 }
 
-/// BboRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for FillRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_FILL }
+}
+
+/// BboRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct BboRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
@@ -79,12 +77,17 @@ pub struct BboRecord {
     pub _pad2: u32,
 }
 
-/// OrderInsertedRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for BboRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_BBO }
+}
+
+/// OrderInsertedRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderInsertedRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub user_id: u32,
@@ -99,12 +102,17 @@ pub struct OrderInsertedRecord {
     pub _pad1: [u8; 4],
 }
 
-/// OrderCancelledRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for OrderInsertedRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_ORDER_INSERTED }
+}
+
+/// OrderCancelledRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderCancelledRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub user_id: u32,
@@ -118,12 +126,17 @@ pub struct OrderCancelledRecord {
     pub _pad1: [u8; 4],
 }
 
-/// OrderDoneRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for OrderCancelledRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_ORDER_CANCELLED }
+}
+
+/// OrderDoneRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderDoneRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub user_id: u32,
@@ -138,12 +151,17 @@ pub struct OrderDoneRecord {
     pub _pad1: [u8; 4],
 }
 
-/// ConfigAppliedRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for OrderDoneRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_ORDER_DONE }
+}
+
+/// ConfigAppliedRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigAppliedRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
@@ -152,12 +170,18 @@ pub struct ConfigAppliedRecord {
     pub applied_at_ns: u64,
 }
 
-/// CaughtUpRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for ConfigAppliedRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_CONFIG_APPLIED }
+}
+
+/// CaughtUpRecord (64-byte aligned)
+/// Keeps stream_id (TCP coordination msg).
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct CaughtUpRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub stream_id: u32,
     pub _pad0: u32,
@@ -165,13 +189,18 @@ pub struct CaughtUpRecord {
     pub _pad1: [u8; 40],
 }
 
-/// OrderAcceptedRecord (64 bytes aligned)
-/// Spec: DXS.md section 1 payload layouts
+impl CmpRecord for CaughtUpRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_CAUGHT_UP }
+}
+
+/// OrderAcceptedRecord (64-byte aligned)
 /// Dedup key is (user_id, order_id)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderAcceptedRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub user_id: u32,
     pub _pad0: u32,
@@ -180,11 +209,17 @@ pub struct OrderAcceptedRecord {
     pub _pad1: [u8; 32],
 }
 
-/// MarkPriceRecord (64 bytes aligned)
+impl CmpRecord for OrderAcceptedRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_ORDER_ACCEPTED }
+}
+
+/// MarkPriceRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct MarkPriceRecord {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
@@ -193,43 +228,44 @@ pub struct MarkPriceRecord {
     pub _pad1: [u8; 24],
 }
 
-/// CMP StatusMessage (64 bytes aligned)
+impl CmpRecord for MarkPriceRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_MARK_PRICE }
+}
+
+/// CMP StatusMessage (64-byte aligned)
 /// Receiver -> sender, every 10ms
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct StatusMessage {
-    pub stream_id: u32,
-    pub _pad0: u32,
     pub consumption_seq: u64,
     pub receiver_window: u64,
-    pub _pad1: [u8; 40],
+    pub _pad1: [u8; 48],
 }
 
-/// CMP Nak (64 bytes aligned)
+/// CMP Nak (64-byte aligned)
 /// Receiver -> sender, on gap detection
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct Nak {
-    pub stream_id: u32,
-    pub _pad0: u32,
     pub from_seq: u64,
     pub count: u64,
-    pub _pad1: [u8; 40],
+    pub _pad1: [u8; 48],
 }
 
-/// CMP Heartbeat (64 bytes aligned)
+/// CMP Heartbeat (64-byte aligned)
 /// Sender -> receiver, every 10ms
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct CmpHeartbeat {
-    pub stream_id: u32,
-    pub _pad0: u32,
     pub highest_seq: u64,
-    pub _pad1: [u8; 48],
+    pub _pad1: [u8; 56],
 }
 
-/// ReplayRequest (64 bytes aligned)
-/// Client -> server for WAL/TCP replay
+/// ReplayRequest (64-byte aligned)
+/// Client -> server for WAL/TCP replay.
+/// Keeps stream_id (TCP routing).
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct ReplayRequest {
@@ -255,14 +291,14 @@ pub enum WalRecord {
 impl WalRecord {
     pub fn seq(&self) -> u64 {
         match self {
-            WalRecord::Fill(r) => r.preamble.seq,
-            WalRecord::Bbo(r) => r.preamble.seq,
-            WalRecord::OrderInserted(r) => r.preamble.seq,
-            WalRecord::OrderCancelled(r) => r.preamble.seq,
-            WalRecord::OrderDone(r) => r.preamble.seq,
-            WalRecord::ConfigApplied(r) => r.preamble.seq,
-            WalRecord::CaughtUp(r) => r.preamble.seq,
-            WalRecord::OrderAccepted(r) => r.preamble.seq,
+            WalRecord::Fill(r) => r.seq,
+            WalRecord::Bbo(r) => r.seq,
+            WalRecord::OrderInserted(r) => r.seq,
+            WalRecord::OrderCancelled(r) => r.seq,
+            WalRecord::OrderDone(r) => r.seq,
+            WalRecord::ConfigApplied(r) => r.seq,
+            WalRecord::CaughtUp(r) => r.seq,
+            WalRecord::OrderAccepted(r) => r.seq,
         }
     }
 
@@ -270,12 +306,20 @@ impl WalRecord {
         match self {
             WalRecord::Fill(_) => RECORD_FILL,
             WalRecord::Bbo(_) => RECORD_BBO,
-            WalRecord::OrderInserted(_) => RECORD_ORDER_INSERTED,
-            WalRecord::OrderCancelled(_) => RECORD_ORDER_CANCELLED,
+            WalRecord::OrderInserted(_) => {
+                RECORD_ORDER_INSERTED
+            }
+            WalRecord::OrderCancelled(_) => {
+                RECORD_ORDER_CANCELLED
+            }
             WalRecord::OrderDone(_) => RECORD_ORDER_DONE,
-            WalRecord::ConfigApplied(_) => RECORD_CONFIG_APPLIED,
+            WalRecord::ConfigApplied(_) => {
+                RECORD_CONFIG_APPLIED
+            }
             WalRecord::CaughtUp(_) => RECORD_CAUGHT_UP,
-            WalRecord::OrderAccepted(_) => RECORD_ORDER_ACCEPTED,
+            WalRecord::OrderAccepted(_) => {
+                RECORD_ORDER_ACCEPTED
+            }
         }
     }
 }

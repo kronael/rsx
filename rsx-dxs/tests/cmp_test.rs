@@ -1,7 +1,6 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::header::WalHeader;
-use rsx_dxs::records::PayloadPreamble;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::StatusMessage;
@@ -43,13 +42,7 @@ fn loopback_pair() -> (CmpSender, CmpReceiver) {
 
 fn fill_payload(seq: u64) -> FillRecord {
     FillRecord {
-        preamble: PayloadPreamble {
-            seq,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<FillRecord>() as u32,
-        },
+        seq,
         ts_ns: 1000,
         symbol_id: 1,
         taker_user_id: 10,
@@ -81,10 +74,8 @@ fn as_bytes<T>(val: &T) -> &[u8] {
 #[test]
 fn send_recv_roundtrip() {
     let (mut sender, mut receiver) = loopback_pair();
-    let fill = fill_payload(1);
-    sender
-        .send_record(RECORD_FILL, as_bytes(&fill))
-        .unwrap();
+    let mut fill = fill_payload(1);
+    sender.send(&mut fill).unwrap();
 
     thread::sleep(Duration::from_millis(10));
 
@@ -101,7 +92,7 @@ fn send_recv_roundtrip() {
             payload.as_ptr() as *const FillRecord,
         )
     };
-    assert_eq!(decoded.preamble.seq, 1);
+    assert_eq!(decoded.seq, 1);
     assert_eq!(decoded.price, 50000);
     assert_eq!(decoded.qty, 100);
 }
@@ -110,15 +101,11 @@ fn send_recv_roundtrip() {
 fn sender_seq_increments() {
     let (mut sender, _receiver) = loopback_pair();
     assert_eq!(sender.next_seq(), 1);
-    let fill = fill_payload(1);
-    sender
-        .send_record(RECORD_FILL, as_bytes(&fill))
-        .unwrap();
+    let mut fill = fill_payload(1);
+    sender.send(&mut fill).unwrap();
     assert_eq!(sender.next_seq(), 2);
-    let fill2 = fill_payload(2);
-    sender
-        .send_record(RECORD_FILL, as_bytes(&fill2))
-        .unwrap();
+    let mut fill2 = fill_payload(2);
+    sender.send(&mut fill2).unwrap();
     assert_eq!(sender.next_seq(), 3);
 }
 
@@ -126,11 +113,9 @@ fn sender_seq_increments() {
 fn status_message_updates_sender_window() {
     let (mut sender, _receiver) = loopback_pair();
     let msg = StatusMessage {
-        stream_id: 1,
-        _pad0: 0,
         consumption_seq: 42,
         receiver_window: 1024,
-        _pad1: [0u8; 40],
+        _pad1: [0u8; 48],
     };
     sender.handle_status(&msg);
     assert_eq!(sender.peer_consumption_seq(), 42);
@@ -140,24 +125,18 @@ fn status_message_updates_sender_window() {
 fn flow_control_stalls_sender() {
     let (mut sender, _receiver) = loopback_pair();
     let msg = StatusMessage {
-        stream_id: 1,
-        _pad0: 0,
         consumption_seq: 0,
         receiver_window: 1,
-        _pad1: [0u8; 40],
+        _pad1: [0u8; 48],
     };
     sender.handle_status(&msg);
 
-    let fill = fill_payload(1);
-    let sent = sender
-        .send_record(RECORD_FILL, as_bytes(&fill))
-        .unwrap();
+    let mut fill = fill_payload(1);
+    let sent = sender.send(&mut fill).unwrap();
     assert!(sent);
 
-    let fill2 = fill_payload(2);
-    let sent2 = sender
-        .send_record(RECORD_FILL, as_bytes(&fill2))
-        .unwrap();
+    let mut fill2 = fill_payload(2);
+    let sent2 = sender.send(&mut fill2).unwrap();
     assert!(!sent2);
 }
 
@@ -166,10 +145,8 @@ fn receiver_expected_seq_advances() {
     let (mut sender, mut receiver) = loopback_pair();
     assert_eq!(receiver.expected_seq(), 1);
 
-    let fill = fill_payload(1);
-    sender
-        .send_record(RECORD_FILL, as_bytes(&fill))
-        .unwrap();
+    let mut fill = fill_payload(1);
+    sender.send(&mut fill).unwrap();
     thread::sleep(Duration::from_millis(10));
     receiver.try_recv();
     assert_eq!(receiver.expected_seq(), 2);
@@ -179,13 +156,8 @@ fn receiver_expected_seq_advances() {
 fn multiple_records_in_order() {
     let (mut sender, mut receiver) = loopback_pair();
     for i in 1..=5u64 {
-        let fill = fill_payload(i);
-        sender
-            .send_record(
-                RECORD_FILL,
-                as_bytes(&fill),
-            )
-            .unwrap();
+        let mut fill = fill_payload(i);
+        sender.send(&mut fill).unwrap();
     }
     thread::sleep(Duration::from_millis(20));
 
@@ -196,7 +168,7 @@ fn multiple_records_in_order() {
                 payload.as_ptr() as *const FillRecord,
             )
         };
-        seqs.push(decoded.preamble.seq);
+        seqs.push(decoded.seq);
     }
     assert_eq!(seqs, vec![1, 2, 3, 4, 5]);
 }
@@ -229,8 +201,7 @@ fn crc_mismatch_rejected() {
     let bad_crc = 0xDEADBEEFu32;
     let preamble = WalHeader::new(
         RECORD_FILL,
-        payload.len() as u32,
-        1,
+        payload.len() as u16,
         bad_crc,
     );
     let hdr_bytes = preamble.to_bytes();

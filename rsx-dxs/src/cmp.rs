@@ -1,18 +1,18 @@
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::CmpHeartbeat;
-use crate::records::PayloadPreamble;
+use crate::records::CmpRecord;
 use crate::records::Nak;
 use crate::records::RECORD_HEARTBEAT;
 use crate::records::RECORD_NAK;
 use crate::records::RECORD_STATUS_MESSAGE;
 use crate::records::StatusMessage;
 use crate::wal::WalReader;
+use crate::wal::extract_seq;
 use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
-use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
@@ -41,7 +41,7 @@ impl CmpSender {
     pub fn new(
         dest: SocketAddr,
         stream_id: u32,
-        wal_dir: &Path,
+        wal_dir: &std::path::Path,
     ) -> io::Result<Self> {
         let socket =
             UdpSocket::bind("0.0.0.0:0")?;
@@ -59,48 +59,27 @@ impl CmpSender {
         })
     }
 
-    pub fn send_record(
+    /// Send a typed CMP record. Assigns seq via
+    /// CmpRecord::set_seq. Returns false if flow
+    /// control stalls.
+    pub fn send<T: CmpRecord>(
         &mut self,
-        record_type: u16,
-        payload: &[u8],
+        record: &mut T,
     ) -> io::Result<bool> {
-        if payload.len() < PayloadPreamble::SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "payload missing CMP prefix",
-            ));
-        }
-
-        let prefix = unsafe {
-            std::ptr::read_unaligned(
-                payload.as_ptr() as *const PayloadPreamble,
-            )
-        };
-        if prefix.len as usize != payload.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "payload len does not match prefix",
-            ));
-        }
-
         let seq = self.next_seq;
         let limit = self.peer_consumption_seq
             + self.peer_window;
         if seq > limit && limit > 0 {
             return Ok(false);
         }
-        if prefix.seq != seq {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "prefix seq does not match next_seq",
-            ));
-        }
 
+        record.set_seq(seq);
+
+        let payload = as_bytes(record);
         let crc = compute_crc32(payload);
         let header = WalHeader::new(
-            record_type,
-            payload.len() as u32,
-            self.stream_id,
+            T::record_type(),
+            payload.len() as u16,
             crc,
         );
         let hdr_bytes = header.to_bytes();
@@ -121,18 +100,15 @@ impl CmpSender {
             >= HEARTBEAT_INTERVAL
         {
             let hb = CmpHeartbeat {
-                stream_id: self.stream_id,
-                _pad0: 0,
                 highest_seq: self.next_seq
                     .saturating_sub(1),
-                _pad1: [0u8; 48],
+                _pad1: [0u8; 56],
             };
             let payload = as_bytes(&hb);
             let crc = compute_crc32(payload);
             let header = WalHeader::new(
                 RECORD_HEARTBEAT,
-                payload.len() as u32,
-                self.stream_id,
+                payload.len() as u16,
                 crc,
             );
             let hdr_bytes = header.to_bytes();
@@ -199,7 +175,7 @@ impl CmpSender {
                     if n < WalHeader::SIZE {
                         continue;
                     }
-                    let preamble = match WalHeader::from_bytes(
+                    let hdr = match WalHeader::from_bytes(
                         &cbuf[..WalHeader::SIZE],
                     ) {
                         Some(h) => h,
@@ -207,7 +183,7 @@ impl CmpSender {
                     };
                     let payload =
                         &cbuf[WalHeader::SIZE..n];
-                    match preamble.record_type {
+                    match hdr.record_type {
                         RECORD_STATUS_MESSAGE => {
                             if payload.len()
                                 >= std::mem::size_of::<
@@ -215,7 +191,7 @@ impl CmpSender {
                                 >()
                             {
                                 let msg = unsafe {
-                                    std::ptr::read(
+                                    std::ptr::read_unaligned(
                                         payload.as_ptr()
                                             as *const StatusMessage,
                                     )
@@ -230,7 +206,7 @@ impl CmpSender {
                                 >()
                             {
                                 let nak = unsafe {
-                                    std::ptr::read(
+                                    std::ptr::read_unaligned(
                                         payload.as_ptr()
                                             as *const Nak,
                                     )
@@ -252,6 +228,30 @@ impl CmpSender {
         }
     }
 
+    /// Send raw bytes with explicit record_type.
+    /// Does NOT assign seq (for non-CmpRecord payloads).
+    pub fn send_raw(
+        &mut self,
+        record_type: u16,
+        payload: &[u8],
+    ) -> io::Result<bool> {
+        let crc = compute_crc32(payload);
+        let header = WalHeader::new(
+            record_type,
+            payload.len() as u16,
+            crc,
+        );
+        let hdr_bytes = header.to_bytes();
+        let total = WalHeader::SIZE + payload.len();
+        self.buf[..WalHeader::SIZE]
+            .copy_from_slice(&hdr_bytes);
+        self.buf[WalHeader::SIZE..total]
+            .copy_from_slice(payload);
+        self.socket
+            .send_to(&self.buf[..total], self.dest)?;
+        Ok(true)
+    }
+
     pub fn next_seq(&self) -> u64 {
         self.next_seq
     }
@@ -268,7 +268,6 @@ impl CmpSender {
 pub struct CmpReceiver {
     socket: UdpSocket,
     sender_addr: SocketAddr,
-    stream_id: u32,
     expected_seq: u64,
     highest_seen: u64,
     reorder_buf: BTreeMap<u64, Vec<u8>>,
@@ -281,14 +280,13 @@ impl CmpReceiver {
     pub fn new(
         bind_addr: SocketAddr,
         sender_addr: SocketAddr,
-        stream_id: u32,
+        _stream_id: u32,
     ) -> io::Result<Self> {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_nonblocking(true)?;
         Ok(Self {
             socket,
             sender_addr,
-            stream_id,
             expected_seq: 1,
             highest_seen: 0,
             reorder_buf: BTreeMap::new(),
@@ -307,13 +305,13 @@ impl CmpReceiver {
                     if n < WalHeader::SIZE {
                         continue;
                     }
-                    let preamble = match WalHeader::from_bytes(
+                    let hdr = match WalHeader::from_bytes(
                         &self.buf[..WalHeader::SIZE],
                     ) {
                         Some(h) => h,
                         None => continue,
                     };
-                    let payload_len = preamble.len as usize;
+                    let payload_len = hdr.len as usize;
                     if WalHeader::SIZE + payload_len > n {
                         continue;
                     }
@@ -322,11 +320,11 @@ impl CmpReceiver {
                             ..WalHeader::SIZE
                                 + payload_len];
                     let crc = compute_crc32(payload);
-                    if crc != preamble.crc32 {
+                    if crc != hdr.crc32 {
                         continue;
                     }
 
-                    match preamble.record_type {
+                    match hdr.record_type {
                         RECORD_HEARTBEAT => {
                             if payload_len
                                 >= std::mem::size_of::<
@@ -334,7 +332,7 @@ impl CmpReceiver {
                                 >()
                             {
                                 let hb = unsafe {
-                                    std::ptr::read(
+                                    std::ptr::read_unaligned(
                                         payload.as_ptr()
                                             as *const CmpHeartbeat,
                                     )
@@ -346,20 +344,13 @@ impl CmpReceiver {
                                         hb.highest_seq;
                                 }
                                 if self.highest_seen
-                                    >= self.expected_seq
-                                    && self.highest_seen
-                                        > self
-                                            .expected_seq
-                                            .saturating_sub(
-                                                1,
-                                            )
+                                    > self.expected_seq
                                 {
                                     self.send_nak(
                                         self.expected_seq,
                                         self.highest_seen
                                             - self
-                                                .expected_seq
-                                            + 1,
+                                                .expected_seq,
                                     );
                                 }
                             }
@@ -372,6 +363,8 @@ impl CmpReceiver {
                         _ => {}
                     }
 
+                    // Extract seq from payload
+                    // (CmpRecord convention: first 8 bytes)
                     let seq = match extract_seq(payload) {
                         Some(s) => s,
                         None => continue,
@@ -391,7 +384,7 @@ impl CmpReceiver {
                         let data =
                             payload.to_vec();
                         self.drain_reorder();
-                        return Some((preamble, data));
+                        return Some((hdr, data));
                     } else {
                         if self.reorder_buf.len()
                             < REORDER_BUF_LIMIT
@@ -402,7 +395,8 @@ impl CmpReceiver {
                                         + payload_len,
                                 );
                             full.extend_from_slice(
-                                &self.buf[..WalHeader::SIZE],
+                                &self.buf
+                                    [..WalHeader::SIZE],
                             );
                             full.extend_from_slice(
                                 payload,
@@ -452,12 +446,12 @@ impl CmpReceiver {
                 let data = entry.remove();
                 self.expected_seq += 1;
                 self.drain_reorder();
-                let preamble = WalHeader::from_bytes(
+                let hdr = WalHeader::from_bytes(
                     &data[..WalHeader::SIZE],
                 )?;
                 let payload =
                     data[WalHeader::SIZE..].to_vec();
-                return Some((preamble, payload));
+                return Some((hdr, payload));
             }
         }
         None
@@ -465,18 +459,15 @@ impl CmpReceiver {
 
     fn send_nak(&self, from_seq: u64, count: u64) {
         let nak = Nak {
-            stream_id: self.stream_id,
-            _pad0: 0,
             from_seq,
             count,
-            _pad1: [0u8; 40],
+            _pad1: [0u8; 48],
         };
         let payload = as_bytes(&nak);
         let crc = compute_crc32(payload);
         let header = WalHeader::new(
             RECORD_NAK,
-            payload.len() as u32,
-            self.stream_id,
+            payload.len() as u16,
             crc,
         );
         let hdr_bytes = header.to_bytes();
@@ -501,20 +492,17 @@ impl CmpReceiver {
             >= STATUS_INTERVAL
         {
             let msg = StatusMessage {
-                stream_id: self.stream_id,
-                _pad0: 0,
                 consumption_seq: self
                     .expected_seq
                     .saturating_sub(1),
                 receiver_window: self.window,
-                _pad1: [0u8; 40],
+                _pad1: [0u8; 48],
             };
             let payload = as_bytes(&msg);
             let crc = compute_crc32(payload);
             let header = WalHeader::new(
                 RECORD_STATUS_MESSAGE,
-                payload.len() as u32,
-                self.stream_id,
+                payload.len() as u16,
                 crc,
             );
             let hdr_bytes = header.to_bytes();
@@ -555,19 +543,4 @@ fn as_bytes<T>(val: &T) -> &[u8] {
             std::mem::size_of::<T>(),
         )
     }
-}
-
-fn extract_seq(payload: &[u8]) -> Option<u64> {
-    if payload.len() < PayloadPreamble::SIZE {
-        return None;
-    }
-    let prefix = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr() as *const PayloadPreamble,
-        )
-    };
-    if prefix.len as usize != payload.len() {
-        return None;
-    }
-    Some(prefix.seq)
 }

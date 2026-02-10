@@ -38,11 +38,10 @@ Every CMP message is a WAL record (see DXS.md section 1):
 
 ```
 struct WalHeader {       // 16 bytes
-    version: u16,        // format version (1)
     record_type: u16,    // message type enum
-    len: u32,            // payload length in bytes
-    stream_id: u32,      // routing key (symbol_id)
+    len: u16,            // payload length in bytes
     crc32: u32,          // CRC32 of payload
+    _reserved: [u8; 8],  // reserved for future use
 }
 ```
 
@@ -50,9 +49,17 @@ Payload immediately follows header. All fields little-endian.
 All payloads are `#[repr(C, align(64))]` with explicit
 padding fields.
 
+### CmpRecord convention
+
+All data records implement the CmpRecord trait, which requires
+a `seq: u64` field as the first 8 bytes of the payload.
+Sequence numbers are monotonic per stream and are assigned by
+WalWriter::append or CmpSender::send. Control messages
+(StatusMessage, Nak, Heartbeat) do not carry `seq`.
+
 ### Maximum message size
 
-`len` is u32 but capped at 64KB (`MAX_PAYLOAD`). Messages
+`len` is u16 and capped at 64KB (`MAX_PAYLOAD`). Messages
 larger than 64KB are rejected at the sender. This prevents
 DoS via length field and keeps allocation bounded.
 
@@ -83,31 +90,24 @@ are <=64 bytes (one cache line), well under MTU.
 - Kernel bypass ready (DPDK/AF_XDP swaps sendto for
   direct NIC write)
 
-### Data record requirement
+### CmpRecord trait
 
-All **data** records share a mandatory payload prefix:
+All **data** records implement the CmpRecord trait:
 
-```
-struct PayloadPreamble {
-    seq: u64;     // monotonic per stream
-    ver: u16;     // payload version
-    kind: u8;     // message discriminator
-    _pad0: u8;
-    len: u32;     // payload length, bytes (including prefix)
+```rust
+pub trait CmpRecord: Copy {
+    fn seq(&self) -> u64;
+    fn set_seq(&mut self, seq: u64);
 }
 ```
 
-- Prefix starts at payload offset 0 (not rewritten).
-- Header `len` must match prefix `len`.
-- Header `version` is the WAL wire-format version; prefix
-  `ver` is the payload schema version.
-- Header `record_type` identifies the record family; `kind`
-  selects the variant within that family.
-- Control messages (StatusMessage, Nak, Heartbeat) are the
-  only CMP records that do **not** carry the prefix.
-
-Do not use Rust data-carrying enums on the wire; use tagged
-structs with `kind`.
+- First 8 bytes of every data payload are `seq: u64`
+  (monotonic per stream).
+- WalWriter::append<T: CmpRecord> and CmpSender::send<T:
+  CmpRecord> assign `seq` before encoding.
+- extract_seq(payload: &[u8]) reads first 8 bytes as u64.
+- Control messages (StatusMessage, Nak, Heartbeat) do NOT
+  implement CmpRecord and have no seq field.
 
 ### Control Messages
 
@@ -125,11 +125,9 @@ RECORD_HEARTBEAT      = 0x12
 ```
 #[repr(C, align(64))]
 struct StatusMessage {
-    stream_id: u32,
-    _pad0: u32,
     consumption_seq: u64,   // last fully received seq
     receiver_window: u64,   // bytes willing to receive
-    _pad1: [u8; 40],
+    _pad1: [u8; 48],
 }
 ```
 
@@ -137,22 +135,18 @@ struct StatusMessage {
 ```
 #[repr(C, align(64))]
 struct Nak {
-    stream_id: u32,
-    _pad0: u32,
     from_seq: u64,          // first missing seq
     count: u64,             // number of missing records
-    _pad1: [u8; 40],
+    _pad1: [u8; 48],
 }
 ```
 
-**Heartbeat** (sender -> receiver, every 10ms):
+**CmpHeartbeat** (sender -> receiver, every 10ms):
 ```
 #[repr(C, align(64))]
-struct Heartbeat {
-    stream_id: u32,
-    _pad0: u32,
+struct CmpHeartbeat {
     highest_seq: u64,       // last sent seq
-    _pad1: [u8; 48],
+    _pad1: [u8; 56],
 }
 ```
 
@@ -188,6 +182,14 @@ pub struct CmpSender {
     peer_window: u64,
     last_heartbeat: Instant,
     wal_reader: WalReader,
+}
+
+impl CmpSender {
+    pub fn send<T: CmpRecord>(&mut self, record: &mut T) -> Result<()> {
+        record.set_seq(self.next_seq);
+        self.next_seq += 1;
+        // encode header + payload, sendto
+    }
 }
 ```
 
@@ -366,14 +368,19 @@ differently.
 `_pad` fields. Compile-time `assert_eq!(size_of::<T>(), N)`
 for every wire type. All padding bytes set to zero.
 
-### 6.3 No Schema Evolution
+### 6.3 Limited Schema Evolution
 
-Cannot add, remove, or reorder fields in existing record
-types without breaking all readers.
+Cannot remove or reorder fields in existing record types
+without breaking all readers.
 
-**Mitigation:** Version field in header. New features use
-new record types (additive). Breaking changes bump version
-and require coordinated deployment.
+**Mitigation:** New record types are additive. Readers ignore
+unknown record types. Breaking changes (field reorder, type
+changes) require coordinated deployment (stop all producers,
+upgrade all readers, restart).
+
+**Version policy:** New record types added without version
+bump. Unknown record types are logged and ignored. Breaking
+changes = coordinated deploy window.
 
 **Upgrade order:** consumers first (they ignore unknown
 record types), then producers.

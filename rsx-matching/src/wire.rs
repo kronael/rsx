@@ -1,12 +1,11 @@
 use rsx_types::Side;
 use rsx_types::TimeInForce;
-use rsx_dxs::records::PayloadPreamble;
 
 /// Inbound order from risk engine via SPSC ring.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct OrderMessage {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub price: i64,
     pub qty: i64,
     pub side: u8,
@@ -149,6 +148,7 @@ impl EventMessage {
                 handle,
                 user_id,
                 remaining_qty,
+                reason: _,
                 order_id_hi,
                 order_id_lo,
             } => EventMessage::OrderCancelled {

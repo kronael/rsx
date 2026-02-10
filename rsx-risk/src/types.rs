@@ -2,7 +2,7 @@
 #[derive(Clone, Debug)]
 #[repr(C, align(64))]
 pub struct FillEvent {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub symbol_id: u32,
     pub taker_user_id: u32,
     pub maker_user_id: u32,
@@ -16,7 +16,7 @@ pub struct FillEvent {
 #[derive(Clone, Debug)]
 #[repr(C, align(64))]
 pub struct OrderRequest {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub user_id: u32,
     pub symbol_id: u32,
     pub price: i64,
@@ -39,11 +39,21 @@ pub enum RejectReason {
 #[derive(Clone, Debug)]
 #[repr(C, align(64))]
 pub struct BboUpdate {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub symbol_id: u32,
     pub bid_px: i64,
     pub bid_qty: i64,
     pub ask_px: i64,
     pub ask_qty: i64,
 }
-use rsx_dxs::records::PayloadPreamble;
+
+/// From ME: order completed or failed. Releases frozen
+/// margin.
+#[derive(Clone, Debug)]
+#[repr(C, align(64))]
+pub struct OrderDoneEvent {
+    pub seq: u64,
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub frozen_amount: i64,
+}

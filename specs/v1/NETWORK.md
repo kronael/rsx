@@ -49,7 +49,7 @@ Web Users (WS) ─────────────────────�
 
 **Architecture:**
 - Monolithic process
-- Async runtime (Tokio) for concurrent client sessions
+- Async runtime (monoio with io_uring) for concurrent client sessions
 - One WebSocket connection per client app
 - CMP/UDP to Risk Engine (live orders/fills)
 - Horizontal scaling: shard by user ID hash (load balancer routes by user_id)

@@ -5,13 +5,7 @@ use rsx_dxs::*;
 
 fn bench_fill_record_encode(c: &mut Criterion) {
     let record = FillRecord {
-        preamble: PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<FillRecord>() as u32,
-        },
+        seq: 1,
         ts_ns: 1000,
         symbol_id: 1,
         taker_user_id: 1,
@@ -30,19 +24,13 @@ fn bench_fill_record_encode(c: &mut Criterion) {
         _pad1: [0; 4],
     };
     c.bench_function("fill_record_encode", |b| {
-        b.iter(|| encode_fill_record(1, &record));
+        b.iter(|| encode_fill_record(&record));
     });
 }
 
 fn bench_fill_record_decode(c: &mut Criterion) {
     let record = FillRecord {
-        preamble: PayloadPreamble {
-            seq: 1,
-            ver: 1,
-            kind: 0,
-            _pad0: 0,
-            len: std::mem::size_of::<FillRecord>() as u32,
-        },
+        seq: 1,
         ts_ns: 1000,
         symbol_id: 1,
         taker_user_id: 1,
@@ -60,7 +48,7 @@ fn bench_fill_record_decode(c: &mut Criterion) {
         post_only: 0,
         _pad1: [0; 4],
     };
-    let encoded = encode_fill_record(1, &record);
+    let encoded = encode_fill_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
 
     c.bench_function("fill_record_decode", |b| {
@@ -76,7 +64,7 @@ fn bench_crc32_compute_128b(c: &mut Criterion) {
 }
 
 fn bench_header_encode_decode(c: &mut Criterion) {
-    let header = WalHeader::new(0, 64, 1, 0xDEADBEEF);
+    let header = WalHeader::new(0, 64, 0xDEADBEEF);
     c.bench_function("header_encode", |b| {
         b.iter(|| header.to_bytes());
     });

@@ -49,6 +49,42 @@ impl Default for DxsConfig {
     }
 }
 
+impl DxsConfig {
+    pub fn from_env() -> io::Result<Self> {
+        Ok(Self {
+            wal_dir: env::var("RSX_WAL_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| default_wal_dir()),
+            max_file_size: env::var(
+                "RSX_WAL_MAX_FILE_SIZE",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(default_max_file_size),
+            retention_ns: env::var(
+                "RSX_WAL_RETENTION_NS",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(default_retention_ns),
+            flush_interval_ms: env::var(
+                "RSX_WAL_FLUSH_INTERVAL_MS",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(default_flush_interval_ms),
+            flush_size_threshold: env::var(
+                "RSX_WAL_FLUSH_SIZE_THRESHOLD",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(
+                default_flush_size_threshold,
+            ),
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct RecorderConfig {
     pub stream_id: u32,

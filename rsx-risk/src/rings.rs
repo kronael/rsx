@@ -1,7 +1,6 @@
 use crate::types::BboUpdate;
 use crate::types::FillEvent;
 use crate::types::OrderRequest;
-use rsx_dxs::records::PayloadPreamble;
 use rtrb::Consumer;
 use rtrb::Producer;
 
@@ -9,7 +8,7 @@ use rtrb::Producer;
 #[derive(Clone, Copy, Debug)]
 #[repr(C, align(64))]
 pub struct MarkPriceUpdate {
-    pub preamble: PayloadPreamble,
+    pub seq: u64,
     pub symbol_id: u32,
     pub price: i64,
 }

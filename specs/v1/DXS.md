@@ -16,48 +16,44 @@ Each record on disk is a **fixed-size** struct with a 16-byte header:
 
 ```
 struct WalHeader {
-  u16 version;       // format version
   u16 record_type;   // enum
-  u32 len;           // payload bytes (<= 64KB)
-  u32 stream_id;     // symbol_id or stream id
+  u16 len;           // payload bytes (<= 64KB)
   u32 crc32;         // checksum of payload bytes
+  u8  _reserved[8];  // reserved for future use
 }
 ```
 
 The payload immediately follows the header and is a fixed-record
 struct for that `record_type` (`#[repr(C, align(64))]`, little-endian).
-All data payloads begin with the CMP prefix:
 
-```
-struct PayloadPreamble {
-  u64 seq;
-  u16 ver;
-  u8  kind;
-  u8  _pad0;
-  u32 len;
+### CmpRecord trait
+
+All **data** payloads implement the CmpRecord trait and have
+`seq: u64` as the first 8 bytes:
+
+```rust
+pub trait CmpRecord: Copy {
+    fn seq(&self) -> u64;
+    fn set_seq(&mut self, seq: u64);
 }
 ```
 
-Header `len` must match prefix `len`. Header `version` is
-the WAL wire-format version; prefix `ver` is the record
-schema version. Readers validate `crc32` and truncate the
-WAL on the first invalid record.
+Sequence numbers are assigned by WalWriter::append<T: CmpRecord>
+or CmpSender::send<T: CmpRecord>. Control messages
+(StatusMessage, Nak, CmpHeartbeat) do NOT implement CmpRecord.
 
-**Version handling:** if `version` is unknown, the reader must stop replay
-and fail fast (no skip).
+Readers validate `crc32` and truncate the WAL on the first
+invalid record.
 
 **Version policy:**
 
-- **Additive changes** (new record types, new trailing fields
-  in existing records): no version bump. Readers ignore
-  unknown record types and trailing bytes beyond expected
-  payload length.
+- **Additive changes** (new record types): readers ignore
+  unknown record types (log + continue).
 - **Breaking changes** (field reordering, type changes,
-  removed fields): bump `version` in header. Readers
-  encountering an unknown version MUST fail fast (no skip,
-  no guess).
+  removed fields): require coordinated deployment (stop all
+  producers, upgrade all readers, restart).
 - **Upgrade order:** deploy consumers first (they ignore
-  unknown trailing bytes), then deploy producers emitting
+  unknown record types), then deploy producers emitting
   new records.
 
 **Record types (v1):**
@@ -107,7 +103,7 @@ than 5min from WAL tip are skipped.
 ```
 #[repr(C, align(64))]
 struct FillRecord {
-  PayloadPreamble p;
+  u64 seq;           // CmpRecord first field
   u64 ts_ns;
   u32 symbol_id;
   u32 taker_user_id;
@@ -128,7 +124,7 @@ struct FillRecord {
 
 #[repr(C, align(64))]
 struct BboRecord {
-  PayloadPreamble p;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 _pad0;
@@ -144,7 +140,7 @@ struct BboRecord {
 
 #[repr(C, align(64))]
 struct OrderInsertedRecord {
-  PayloadPreamble p;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
@@ -161,7 +157,7 @@ struct OrderInsertedRecord {
 
 #[repr(C, align(64))]
 struct OrderCancelledRecord {
-  PayloadPreamble p;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
@@ -177,7 +173,7 @@ struct OrderCancelledRecord {
 
 #[repr(C, align(64))]
 struct OrderDoneRecord {
-  PayloadPreamble p;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
@@ -194,7 +190,7 @@ struct OrderDoneRecord {
 
 #[repr(C, align(64))]
 struct ConfigAppliedRecord {
-  PayloadPreamble p;
+  u64 seq;
   u64 ts_ns;
   u32 symbol_id;
   u32 _pad0;
@@ -205,9 +201,9 @@ struct ConfigAppliedRecord {
 
 #[repr(C, align(64))]
 struct CaughtUpRecord {
-  PayloadPreamble p;
+  u64 seq;
   u64 ts_ns;
-  u32 stream_id;
+  u32 stream_id;     // coordination/routing
   u32 _pad0;
   u64 live_seq;
   u8  _pad1[40];
@@ -267,8 +263,9 @@ struct WalWriter {
 }
 ```
 
-**Append:** serialize fixed record to buf. Assign
-monotonic `seq` (producer-local, no coordination). O(1) memcpy.
+**Append:** `append<T: CmpRecord>(record: &mut T)` assigns
+monotonic `seq`, serializes fixed record to buf.
+Producer-local sequence, no coordination. O(1) memcpy.
 
 **Flush:** every 10ms, write buf to file + fsync. Resets buf.
 Flush is called by the producer's main loop (not a background
@@ -328,12 +325,15 @@ to consumers over TCP. See [CMP.md](CMP.md).
 ```
 #[repr(C, align(64))]
 struct ReplayRequest {
-  u32 stream_id;
+  u32 stream_id;     // routing for TCP connection
   u32 _pad0;
   u64 from_seq;
   u8  _pad1[48];
 }
 ```
+
+ReplayRequest does NOT implement CmpRecord (no seq field).
+It uses `stream_id` for TCP connection routing.
 
 **Response format:**
 Streams raw WAL bytes (header + payload, fixed-record format)

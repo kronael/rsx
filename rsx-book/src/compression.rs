@@ -108,4 +108,14 @@ impl CompressionMap {
     pub fn total_slots(&self) -> u32 {
         self.zone_slots.iter().sum()
     }
+
+    pub fn min_price(&self) -> i64 {
+        self.mid_price
+            - self.thresholds[3]
+    }
+
+    pub fn max_price(&self) -> i64 {
+        self.mid_price
+            + self.thresholds[3]
+    }
 }

@@ -78,7 +78,7 @@ pub async fn load_from_postgres(
     let mut tips = vec![0u64; max_symbols];
     let rows = client
         .query(
-            "SELECT symbol_id, seq FROM tips \
+            "SELECT symbol_id, last_seq FROM tips \
              WHERE instance_id = $1",
             &[&(shard_id as i32)],
         )
@@ -125,13 +125,7 @@ pub fn replay_from_wal(
                 None => continue,
             };
             shard.process_fill(&FillEvent {
-                preamble: rsx_dxs::records::PayloadPreamble {
-                    seq: fill.preamble.seq,
-                    ver: fill.preamble.ver,
-                    kind: fill.preamble.kind,
-                    _pad0: fill.preamble._pad0,
-                    len: fill.preamble.len,
-                },
+                seq: fill.seq,
                 symbol_id: fill.symbol_id,
                 taker_user_id: fill.taker_user_id,
                 maker_user_id: fill.maker_user_id,

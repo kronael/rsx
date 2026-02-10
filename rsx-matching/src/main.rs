@@ -2,11 +2,6 @@ use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::records::RECORD_FILL;
-use rsx_dxs::records::RECORD_ORDER_CANCELLED;
-use rsx_dxs::records::RECORD_ORDER_DONE;
-use rsx_dxs::records::RECORD_ORDER_INSERTED;
-use rsx_dxs::records::PayloadPreamble;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
@@ -240,7 +235,6 @@ fn send_event_cmp(
     symbol_id: u32,
     ts_ns: u64,
 ) -> io::Result<()> {
-    let seq = sender.next_seq();
     match *event {
         rsx_book::event::Event::Fill {
             maker_user_id,
@@ -254,8 +248,8 @@ fn send_event_cmp(
             taker_order_id_lo,
             ..
         } => {
-            let record = FillRecord {
-                preamble: make_prefix::<FillRecord>(seq),
+            let mut record = FillRecord {
+                seq: 0,
                 ts_ns,
                 symbol_id,
                 taker_user_id,
@@ -273,8 +267,7 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let bytes = record_as_bytes(&record);
-            let _ = sender.send_record(RECORD_FILL, bytes)?;
+            let _ = sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderInserted {
             user_id,
@@ -285,8 +278,8 @@ fn send_event_cmp(
             order_id_lo,
             ..
         } => {
-            let record = OrderInsertedRecord {
-                preamble: make_prefix::<OrderInsertedRecord>(seq),
+            let mut record = OrderInsertedRecord {
+                seq: 0,
                 ts_ns,
                 symbol_id,
                 user_id,
@@ -300,34 +293,31 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let bytes = record_as_bytes(&record);
-            let _ =
-                sender.send_record(RECORD_ORDER_INSERTED, bytes)?;
+            let _ = sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderCancelled {
             user_id,
             remaining_qty,
+            reason,
             order_id_hi,
             order_id_lo,
             ..
         } => {
-            let record = OrderCancelledRecord {
-                preamble: make_prefix::<OrderCancelledRecord>(seq),
+            let mut record = OrderCancelledRecord {
+                seq: 0,
                 ts_ns,
                 symbol_id,
                 user_id,
                 order_id_hi,
                 order_id_lo,
                 remaining_qty: remaining_qty.0,
-                reason: 1,
+                reason,
                 reduce_only: 0,
                 tif: 0,
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let bytes = record_as_bytes(&record);
-            let _ =
-                sender.send_record(RECORD_ORDER_CANCELLED, bytes)?;
+            let _ = sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderDone {
             user_id,
@@ -338,8 +328,8 @@ fn send_event_cmp(
             order_id_lo,
             ..
         } => {
-            let record = OrderDoneRecord {
-                preamble: make_prefix::<OrderDoneRecord>(seq),
+            let mut record = OrderDoneRecord {
+                seq: 0,
                 ts_ns,
                 symbol_id,
                 user_id,
@@ -353,30 +343,9 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let bytes = record_as_bytes(&record);
-            let _ =
-                sender.send_record(RECORD_ORDER_DONE, bytes)?;
+            let _ = sender.send(&mut record)?;
         }
         _ => {}
     }
     Ok(())
-}
-
-fn record_as_bytes<T>(record: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            record as *const T as *const u8,
-            std::mem::size_of::<T>(),
-        )
-    }
-}
-
-fn make_prefix<T>(seq: u64) -> PayloadPreamble {
-    PayloadPreamble {
-        seq,
-        ver: 1,
-        kind: 0,
-        _pad0: 0,
-        len: std::mem::size_of::<T>() as u32,
-    }
 }
