@@ -494,7 +494,306 @@ The callback writes records to the daily archive file.
 
 ---
 
-## 10. Performance Targets
+## 10. WAL Replay Edge Cases
+
+This section documents critical edge cases for WAL replay that
+consumers must handle correctly.
+
+### 10.1 Crash Mid-Rotation
+
+**Scenario:** Writer crashes during file rotation (between rename
+and opening new active file).
+
+**State:** Active file exists but may be partially written. New
+file not yet created.
+
+**Handling:** Reader treats `{stream_id}_active.wal` as the last
+file. CRC validation truncates at first invalid record. No data
+loss — rotation is atomic (rename) or recoverable (partial write
+detected by CRC).
+
+**Test:** `write_flush_crash_recover_from_last_fsync` (TESTING-DXS.md)
+
+### 10.2 Partial Record at EOF
+
+**Scenario:** Writer crashes mid-write after writing header but
+before completing payload write or fsync.
+
+**State:** WAL file ends with valid header but truncated/missing
+payload.
+
+**Handling:** Reader detects `UnexpectedEof` when reading payload
+after header. Logs warning and returns `None` (end of valid data).
+Subsequent replay from tip+1 will skip the partial record.
+
+**Implementation:** `wal.rs:393-404` (payload read with EOF check)
+
+**Invariant:** All complete records have valid CRC. Partial
+records are never processed.
+
+### 10.3 CRC Mismatch Mid-File
+
+**Scenario:** Disk corruption or incomplete write causes CRC
+mismatch on a record in the middle of a file.
+
+**State:** File contains N valid records, then one corrupted
+record, then potentially more valid records.
+
+**Handling:** Reader computes CRC, compares to header. On
+mismatch, logs warning and returns `None` (truncates at first
+bad record). All subsequent records in file and later files are
+ignored.
+
+**Implementation:** `wal.rs:407-414` (CRC validation)
+
+**Trade-off:** Conservative truncation vs attempting to skip bad
+record. We truncate because: (1) simpler, (2) avoids processing
+potentially inconsistent data, (3) WAL should never have mid-file
+corruption in normal operation (fsync guarantees).
+
+### 10.4 Unknown Record Type
+
+**Scenario:** Reader encounters a record type it doesn't recognize
+(future version, corruption, or version mismatch).
+
+**State:** Header is valid (CRC matches payload), but `record_type`
+field is not in reader's known set.
+
+**Handling (v1):** Reader returns record as `RawWalRecord` without
+failing. Consumer is responsible for handling unknown types:
+- **Matching engine:** skip unknown types, log warning
+- **Risk engine:** skip unknown types, log warning
+- **Market data:** skip unknown types, log warning
+
+**Version policy:** Additive changes (new record types) are safe.
+Consumers ignore unknown types. Breaking changes (field reorder,
+type change) require coordinated deployment (stop producers,
+upgrade consumers, restart).
+
+**Implementation:** Reader does not validate record type (returns
+all records). Consumers filter in their callback.
+
+**Future:** If strict version enforcement needed, add version
+field to WalHeader and fail fast on version mismatch.
+
+### 10.5 Gap in Sequence Numbers
+
+**Scenario:** Consumer replays from seq N but first record in WAL
+is seq M > N. Gap: (N, M).
+
+**Cause:** WAL retention window expired (GC deleted old files), or
+consumer offline longer than retention period.
+
+**Handling:** Consumer should check first replayed seq against
+requested `from_seq`. If gap detected, consumer must:
+1. Request replay from ARCHIVE (cold storage) for missing range
+2. Resume from hot WAL after archive replay completes
+3. Fail if archive unavailable and gap is unacceptable
+
+**Implementation:** Archive fallback not yet implemented (DXS.md
+requirement D25). Current behavior: consumer replays from first
+available seq, effectively skipping gap. Risk engine would have
+inconsistent state.
+
+**Mitigation:** Set retention window > max expected consumer
+offline duration (default 10min). Monitor consumer lag.
+
+### 10.6 Replay from Future Sequence
+
+**Scenario:** Consumer requests `from_seq = 1000` but WAL
+`last_seq = 500`.
+
+**Cause:** Consumer tip file corrupted, manual override, or clock
+skew.
+
+**Handling:** Reader opens WAL at `from_seq`, finds no files
+containing that seq, returns `None` immediately (caught up at
+current tip). Consumer processes no records, sends CaughtUp with
+`live_seq = 500`, then waits for new records.
+
+**Invariant:** Replay from future is safe (no-op) but indicates
+configuration error. Should log warning.
+
+### 10.7 Active File Exists But Empty
+
+**Scenario:** Writer created active file but crashed before first
+append+flush.
+
+**State:** `{stream_id}_active.wal` exists with size 0.
+
+**Handling:** Reader opens file, attempts to read header, gets
+`UnexpectedEof`, advances to next file (none), returns `None`.
+No records replayed. Next writer append will reuse the empty
+active file.
+
+**Implementation:** `wal.rs:362-374` (EOF handling)
+
+### 10.8 Interleaved Rotation During Replay
+
+**Scenario:** Consumer is replaying historical WAL while writer
+rotates files (deletes old, creates new).
+
+**State:** Reader has file list snapshot. Writer GC may delete a
+file the reader hasn't processed yet.
+
+**Handling:** Reader opens files by path. If file deleted before
+reader opens it, returns `Err` (file not found). Consumer should
+reconnect and retry from last persisted tip.
+
+**Mitigation:** Retention window provides buffer. If consumer lag
+< retention window, files won't be GC'd during active replay.
+Monitor consumer lag vs retention window.
+
+**Future:** Advisory lock on WAL files during active replay, or
+reference-counted file handles.
+
+### 10.9 Multiple Active Files
+
+**Scenario:** Writer crashed, operator manually renamed active
+file, writer restarted and created new active file. Now two
+active files exist.
+
+**State:** `{stream_id}_active.wal` (new) and
+`{stream_id}_active.wal.old` (orphaned).
+
+**Handling:** Reader lists files with `_active.wal` suffix. Finds
+one match (naming is deterministic). Orphaned file is ignored
+unless manually renamed to rotated format.
+
+**Operator action:** Rename orphaned active file to proper seq
+range format: `{stream_id}_{first}_{last}.wal` (parse first/last
+from file contents), or delete if known to be incomplete.
+
+### 10.10 Concurrent Readers on Same WAL
+
+**Scenario:** Multiple consumers (e.g., Risk replica + Recorder +
+Market data) replay from same WAL directory concurrently.
+
+**State:** Readers open separate file handles. No locking.
+
+**Handling:** Filesystem provides concurrent read safety. Each
+reader maintains independent position. Writers use append-only
+mode with atomic fsync. No coordination needed.
+
+**Invariant:** WAL files are immutable after rotation. Active file
+is append-only. No reader-writer or reader-reader conflicts.
+
+### 10.11 Tip Persistence Lag
+
+**Scenario:** Consumer processes records faster than tip
+persistence interval (10ms). Crash before tip flushed.
+
+**State:** Consumer processed records up to seq 150, but persisted
+tip = 100.
+
+**Handling:** On restart, consumer replays from tip+1 = 101.
+Records 101-150 are reprocessed. Consumer callback must be
+idempotent or deduplicate by seq.
+
+**Mitigation:** 10ms tip persistence interval bounds duplicate
+replay window to ~10ms of events (hundreds to thousands of
+records at target throughput).
+
+**Implementation:** Consumer dedup by seq. Risk engine position
+updates are idempotent (fill with seq N applied exactly once even
+if replayed). Gateway ORDER_DONE ack is idempotent (client_order_id
+dedup).
+
+### 10.12 CaughtUp Marker Timing
+
+**Scenario:** Consumer receives CaughtUp with `live_seq = 500`,
+but writer appends records 501-510 during the CaughtUp send.
+
+**State:** Consumer transitions to live mode at seq 501, but
+records 501-510 already exist in WAL.
+
+**Handling:** After CaughtUp, server transitions to live tail
+mode. It opens new reader at `last_seq + 1` (501 in this case).
+If records already exist in WAL (501-510), they are immediately
+streamed. Consumer processes them, then waits for notify on new
+records. No gap, no duplicate.
+
+**Invariant:** CaughtUp.live_seq is inclusive (last seq delivered).
+Next replay starts at live_seq+1. Live tail notify is edge-
+triggered (wakes on new flush), so buffered records are delivered
+immediately.
+
+### 10.13 Network Partition During Live Tail
+
+**Scenario:** DXS consumer in live tail mode. Network partition
+or server restart causes TCP disconnect.
+
+**State:** Consumer loses connection mid-stream. Records may have
+been appended to WAL but not delivered.
+
+**Handling:** Consumer detects disconnect (TCP error on read/write),
+persists current tip, reconnects with backoff (1/2/4/8/30s).
+Sends new ReplayRequest from tip+1. Server replays any missed
+records, sends new CaughtUp, resumes live tail.
+
+**Duplicate handling:** If consumer received records but didn't
+persist tip before disconnect, records will be replayed. Consumer
+dedup by seq ensures idempotency.
+
+**Implementation:** `client.rs` (not yet implemented in crate,
+specified in DXS.md §6)
+
+### 10.14 Writer Flush Lag Exceeds Bound
+
+**Scenario:** Disk slow, fsync takes >10ms. Writer buffer fills
+faster than flush rate.
+
+**State:** Buffer exceeds backpressure threshold (2x max_file_size).
+
+**Handling:** Writer append returns `Err(WouldBlock)`. Matching
+engine stalls (stops processing new orders). This is intentional
+backpressure to preserve 10ms durability bound. System latency
+increases, but correctness maintained.
+
+**Mitigation:** Use fast SSD with consistent <1ms fsync. Monitor
+flush latency. Alert on >5ms p99.
+
+**Implementation:** `wal.rs:94-103` (backpressure check)
+
+### 10.15 Replay from Seq 0
+
+**Scenario:** Consumer requests replay from seq 0 (fresh start,
+no prior tip).
+
+**State:** WAL may have files starting at seq > 0 (early files
+GC'd), or WAL may be empty (no records yet).
+
+**Handling:** Reader opens from seq 0. If files exist, starts at
+first available seq (may be > 0). If no files exist, returns
+`None` immediately (caught up). Consumer receives CaughtUp with
+`live_seq = 0` (or first available seq), then waits for new
+records.
+
+**Implementation:** `wal.rs:314-333` (file selection logic treats
+seq 0 as "start from beginning")
+
+### 10.16 Rotation Boundary Replay
+
+**Scenario:** Consumer replays across a rotation boundary. Last
+record in file N is seq 499, first record in file N+1 is seq 500.
+
+**State:** Two files: `{stream_id}_1_499.wal` and
+`{stream_id}_500_998.wal`.
+
+**Handling:** Reader exhausts file N (last record seq 499),
+advances to file N+1, seamlessly reads first record (seq 500).
+No gap, no duplicate.
+
+**Invariant:** `last_seq` in filename is inclusive. `first_seq`
+in next file is `last_seq + 1` of previous file (if consecutive).
+Gap in filename seq ranges is allowed (GC), but reader handles
+via file-level transition.
+
+**Implementation:** `wal.rs:431-441` (advance_file)
+
+---
+
+## 11. Performance Targets
 
 | Operation | Target |
 |-----------|--------|
@@ -507,7 +806,7 @@ The callback writes records to the daily archive file.
 
 ---
 
-## 11. File Organization
+## 12. File Organization
 
 ```
 crates/rsx-dxs/src/

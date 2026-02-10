@@ -17,6 +17,12 @@ Cross-references: [specs/v1/CONSISTENCY.md](specs/v1/CONSISTENCY.md),
 [specs/v1/DATABASE.md](specs/v1/DATABASE.md),
 [specs/v1/DXS.md](specs/v1/DXS.md)
 
+**Edge case handling:** See [specs/v1/DXS.md](specs/v1/DXS.md)
+section 10 for comprehensive WAL replay edge cases (crash
+mid-rotation, CRC corruption, sequence gaps, tip lag, etc.) and
+[specs/v1/TESTING-DXS.md](specs/v1/TESTING-DXS.md) for test
+coverage requirements.
+
 ---
 
 ## 1. Consistency Model
