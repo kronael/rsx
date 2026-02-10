@@ -338,10 +338,16 @@ fn route_order_done(
     state: &Rc<RefCell<GatewayState>>,
     rec: &OrderDoneRecord,
 ) {
+    let status = match rec.final_status {
+        0 => 0, // filled
+        1 => 1, // resting (unexpected for done)
+        2 => 2, // cancelled
+        _ => 0,
+    };
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
     let msg = serialize(&WsFrame::OrderUpdate {
         order_id: oid,
-        status: 0, // filled/done
+        status,
         filled_qty: rec.filled_qty,
         remaining_qty: rec.remaining_qty,
         reason: 0,

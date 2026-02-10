@@ -1,3 +1,5 @@
+use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::records::RECORD_MARK_PRICE;
 use rsx_dxs::wal::WalWriter;
 use rsx_dxs::DxsReplayService;
 use rsx_mark::aggregator::aggregate_with_staleness;
@@ -12,6 +14,7 @@ use rsx_mark::types::SymbolMarkState;
 use rsx_types::time::time_ns;
 use rsx_types::install_panic_handler;
 use std::io;
+use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,6 +55,23 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         None,
         64 * 1024 * 1024,
         10 * 60 * 1_000_000_000,
+    )?;
+
+    let mark_dest: std::net::SocketAddr = env::var(
+        "RSX_RISK_MARK_CMP_ADDR",
+    )
+    .unwrap_or_else(|_| "127.0.0.1:9105".into())
+    .parse()
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid RSX_RISK_MARK_CMP_ADDR",
+        )
+    })?;
+    let mut mark_sender = CmpSender::new(
+        mark_dest,
+        config.stream_id,
+        &wal_dir,
     )?;
 
     let symbol_map = Arc::new(config.symbol_map.clone());
@@ -124,7 +144,18 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
-                    let _ = wal_writer.append(&mut evt);
+                    if wal_writer.append(&mut evt).is_ok() {
+                        let bytes = unsafe {
+                            std::slice::from_raw_parts(
+                                &evt as *const _ as *const u8,
+                                std::mem::size_of_val(&evt),
+                            )
+                        };
+                        let _ = mark_sender.send_raw(
+                            RECORD_MARK_PRICE,
+                            bytes,
+                        );
+                    }
                 }
             }
         }
@@ -146,7 +177,18 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
-                    let _ = wal_writer.append(&mut evt);
+                    if wal_writer.append(&mut evt).is_ok() {
+                        let bytes = unsafe {
+                            std::slice::from_raw_parts(
+                                &evt as *const _ as *const u8,
+                                std::mem::size_of_val(&evt),
+                            )
+                        };
+                        let _ = mark_sender.send_raw(
+                            RECORD_MARK_PRICE,
+                            bytes,
+                        );
+                    }
                 }
             }
             last_sweep = now;
@@ -159,6 +201,9 @@ fn run(config: &MarkConfig) -> io::Result<()> {
             let _ = wal_writer.flush();
             last_flush = now;
         }
+
+        let _ = mark_sender.tick();
+        mark_sender.recv_control();
 
         // bare busy-spin: no yield, dedicated core
     }
