@@ -6,6 +6,7 @@ use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_dxs::wal::extract_seq;
 use rsx_marketdata::config::load_marketdata_config;
 use rsx_marketdata::handler::handle_connection;
 use rsx_marketdata::protocol::serialize_bbo;
@@ -181,6 +182,32 @@ fn main() {
         loop {
             while let Some((hdr, payload)) = cmp_receiver.try_recv()
             {
+                // Seq gap detection: extract seq from payload
+                // and check for gaps. On gap, resend snapshot.
+                if let Some(seq) = extract_seq(&payload) {
+                    let symbol_id = extract_symbol_id(
+                        hdr.record_type,
+                        &payload,
+                    );
+                    if let Some(sid) = symbol_id {
+                        let gap = state
+                            .borrow_mut()
+                            .check_seq(sid, seq);
+                        if gap {
+                            tracing::warn!(
+                                "seq gap symbol={} seq={}",
+                                sid,
+                                seq,
+                            );
+                            state.borrow_mut().resend_snapshot(
+                                sid,
+                                config.snapshot_depth,
+                                config.max_outbound,
+                            );
+                        }
+                    }
+                }
+
                 match hdr.record_type {
                     RECORD_ORDER_INSERTED => {
                         if payload.len()
@@ -263,6 +290,31 @@ fn main() {
             .await;
         }
     });
+}
+
+/// Extract symbol_id from CMP record payload.
+/// All records have seq(8) + ts_ns(8) + symbol_id(4) layout.
+fn extract_symbol_id(
+    record_type: u16,
+    payload: &[u8],
+) -> Option<u32> {
+    match record_type {
+        RECORD_ORDER_INSERTED
+        | RECORD_ORDER_CANCELLED
+        | RECORD_FILL => {
+            if payload.len() >= 20 {
+                Some(u32::from_le_bytes([
+                    payload[16],
+                    payload[17],
+                    payload[18],
+                    payload[19],
+                ]))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn handle_insert(

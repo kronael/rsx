@@ -146,6 +146,56 @@ fn get_env_u32(key: &str) -> io::Result<u32> {
 }
 
 #[derive(Debug, Clone)]
+pub struct CmpConfig {
+    pub reorder_buf_limit: usize,
+    pub heartbeat_interval_ms: u64,
+    pub status_interval_ms: u64,
+    pub default_window: u64,
+}
+
+impl Default for CmpConfig {
+    fn default() -> Self {
+        Self {
+            reorder_buf_limit: 512,
+            heartbeat_interval_ms: 10,
+            status_interval_ms: 10,
+            default_window: 64 * 1024,
+        }
+    }
+}
+
+impl CmpConfig {
+    pub fn from_env() -> Self {
+        Self {
+            reorder_buf_limit: env::var(
+                "RSX_CMP_REORDER_BUF_LIMIT",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(512),
+            heartbeat_interval_ms: env::var(
+                "RSX_CMP_HEARTBEAT_INTERVAL_MS",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10),
+            status_interval_ms: env::var(
+                "RSX_CMP_STATUS_INTERVAL_MS",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10),
+            default_window: env::var(
+                "RSX_CMP_DEFAULT_WINDOW",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(64 * 1024),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub enabled: bool,
     pub cert_path: Option<PathBuf>,

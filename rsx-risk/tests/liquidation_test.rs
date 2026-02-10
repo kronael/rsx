@@ -314,3 +314,47 @@ fn multiple_users_independent_rounds() {
     );
     assert_eq!(orders.len(), 2);
 }
+
+#[test]
+fn halt_symbol_skips_liquidation() {
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    e.halt_symbol(0);
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 100,
+        &|_| 50000,
+    );
+    assert!(orders.is_empty());
+    assert!(e.is_halted(0));
+}
+
+#[test]
+fn resume_symbol_allows_liquidation() {
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    e.halt_symbol(0);
+    e.resume_symbol(0);
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 100,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 1);
+    assert!(!e.is_halted(0));
+}
+
+#[test]
+fn halt_only_affects_target_symbol() {
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    e.enqueue(2, 1, 0);
+    e.halt_symbol(0);
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 100,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].symbol_id, 1);
+}
