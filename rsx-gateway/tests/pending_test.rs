@@ -154,3 +154,30 @@ fn backpressure_resumes_after_drain() {
     p.remove(&id);
     assert!(p.push(make_order(5)));
 }
+
+#[test]
+fn find_by_client_order_id() {
+    let mut pending = PendingOrders::new(10);
+    let mut cid = [0u8; 20];
+    cid[..5].copy_from_slice(b"test1");
+    let order = PendingOrder {
+        order_id: [1u8; 16],
+        user_id: 42,
+        symbol_id: 0,
+        client_order_id: cid,
+        timestamp_ns: 100,
+    };
+    pending.push(order);
+
+    assert!(pending.find_by_client_order_id(&cid).is_some());
+    assert_eq!(
+        pending.find_by_client_order_id(&cid).unwrap().user_id,
+        42,
+    );
+
+    let mut other_cid = [0u8; 20];
+    other_cid[..5].copy_from_slice(b"test2");
+    assert!(
+        pending.find_by_client_order_id(&other_cid).is_none()
+    );
+}
