@@ -341,7 +341,7 @@ fn route_order_done(
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
     let msg = serialize(&WsFrame::OrderUpdate {
         order_id: oid,
-        status: 2, // done
+        status: 0, // filled/done
         filled_qty: rec.filled_qty,
         remaining_qty: rec.remaining_qty,
         reason: 0,
@@ -360,7 +360,7 @@ fn route_order_cancelled(
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
     let msg = serialize(&WsFrame::OrderUpdate {
         order_id: oid,
-        status: 3, // cancelled
+        status: 2, // cancelled
         filled_qty: 0,
         remaining_qty: rec.remaining_qty,
         reason: 0,

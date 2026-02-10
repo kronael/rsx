@@ -36,10 +36,10 @@ perf_counter).
 
 ### rsx-book (99%)
 Slab arena, CompressionMap (5 zones), PriceLevel, OrderSlot.
-Matching: FIFO, smooshed tick, IOC/FOK, reduce-only.
+Matching: FIFO, smooshed tick, IOC/FOK, reduce-only, post-only.
 Migration: lazy frontier, bounded by old_min/max_price.
-156/157 spec requirements done.
-**Missing:** Snapshot save/load, post-only enforcement.
+157/157 spec requirements done.
+**Missing:** Snapshot save/load.
 
 ### rsx-matching (100%)
 Main loop: recv OrderMessage, process, write WAL, send CMP.
@@ -69,14 +69,15 @@ ME replay, lease renewal, backpressure enforcement, symbol
 halt/resume on ORDER_FAILED in liquidation engine.
 **Missing:** Replication & failover (Phase 4).
 
-### rsx-gateway (95%)
+### rsx-gateway (97%)
 Per-connection handler: WS -> CMP. Order + cancel routing.
 JWT auth (HS256) with X-User-Id fallback, rate limiting
 (token bucket per-user/per-IP/per-instance), circuit breaker.
 Heartbeat echo. Handles fill/done/cancelled from Risk, routes
 to user WS. Pending order tracking by oid/cid. ORDER_FAILED
 routing, server heartbeat config + timeout. Tick/lot
-validation at order entry.
+validation at order entry. Status codes aligned with WEBPROTO
+spec (0=FILLED, 1=RESTING, 2=CANCELLED, 3=FAILED).
 
 ### rsx-marketdata (98%)
 ShadowBook, L2/BBO/Trade serialization, SubscriptionManager.
@@ -139,13 +140,13 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 | ARCHIVE.md | rsx-recorder | 100 |
 | MARK.md | rsx-mark | 100 |
 | MARKETDATA.md | rsx-marketdata | 98 |
-| WEBPROTO.md | rsx-gateway | 95 |
-| RPC.md | rsx-gateway | 95 |
-| MESSAGES.md | rsx-gateway | 95 |
-| GATEWAY.md | rsx-gateway | 95 |
-| TILES.md | All | 70 |
-| NETWORK.md | All | 70 |
-| CONSISTENCY.md | All | 70 |
+| WEBPROTO.md | rsx-gateway | 97 |
+| RPC.md | rsx-gateway | 97 |
+| MESSAGES.md | rsx-gateway | 97 |
+| GATEWAY.md | rsx-gateway | 97 |
+| TILES.md | All | 95 |
+| NETWORK.md | All | 95 |
+| CONSISTENCY.md | All | 95 |
 | METADATA.md | All | 0 |
 | DEPLOY.md | - | 0 |
 
