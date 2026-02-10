@@ -212,6 +212,31 @@ pub fn decode_caught_up_record(
     Some(record)
 }
 
+pub fn encode_order_failed_record(
+    record: &OrderFailedRecord,
+) -> Vec<u8> {
+    encode_record(
+        RECORD_ORDER_FAILED, as_bytes(record),
+    )
+}
+
+pub fn decode_order_failed_record(
+    payload: &[u8],
+) -> Option<OrderFailedRecord> {
+    if payload.len()
+        < mem::size_of::<OrderFailedRecord>()
+    {
+        return None;
+    }
+    let record = unsafe {
+        std::ptr::read_unaligned(
+            payload.as_ptr()
+                as *const OrderFailedRecord,
+        )
+    };
+    Some(record)
+}
+
 pub fn decode_order_accepted_record(
     payload: &[u8],
 ) -> Option<OrderAcceptedRecord> {

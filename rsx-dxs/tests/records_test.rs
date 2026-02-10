@@ -424,6 +424,48 @@ fn cancel_request_layout() {
 }
 
 #[test]
+fn order_failed_record_layout() {
+    assert_eq!(
+        mem::size_of::<OrderFailedRecord>(),
+        64,
+    );
+    assert_eq!(
+        mem::align_of::<OrderFailedRecord>(),
+        64,
+    );
+    assert_eq!(
+        OrderFailedRecord::record_type(),
+        RECORD_ORDER_FAILED,
+    );
+}
+
+#[test]
+fn order_failed_record_seq() {
+    let mut rec = OrderFailedRecord {
+        seq: 0,
+        ts_ns: 100,
+        user_id: 42,
+        _pad0: 0,
+        order_id_hi: 0,
+        order_id_lo: 999,
+        reason: 1,
+        _pad: [0; 23],
+    };
+    assert_eq!(rec.seq(), 0);
+    rec.set_seq(77);
+    assert_eq!(rec.seq(), 77);
+
+    let encoded = encode_order_failed_record(&rec);
+    let payload = &encoded[WalHeader::SIZE..];
+    let decoded =
+        decode_order_failed_record(payload).unwrap();
+    assert_eq!(decoded.seq(), 77);
+    assert_eq!(decoded.user_id, 42);
+    assert_eq!(decoded.order_id_lo, 999);
+    assert_eq!(decoded.reason, 1);
+}
+
+#[test]
 fn cancel_request_seq() {
     let mut cr = CancelRequest {
         seq: 0,

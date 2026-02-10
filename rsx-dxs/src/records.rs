@@ -11,6 +11,7 @@ pub const RECORD_MARK_PRICE: u16 = 8;
 pub const RECORD_ORDER_REQUEST: u16 = 9;
 pub const RECORD_ORDER_RESPONSE: u16 = 10;
 pub const RECORD_CANCEL_REQUEST: u16 = 11;
+pub const RECORD_ORDER_FAILED: u16 = 12;
 pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
@@ -238,6 +239,31 @@ impl CmpRecord for MarkPriceRecord {
     fn record_type() -> u16 { RECORD_MARK_PRICE }
 }
 
+/// OrderFailedRecord (64-byte aligned)
+/// Sent by Risk when pre-trade check rejects an order.
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct OrderFailedRecord {
+    pub seq: u64,
+    pub ts_ns: u64,
+    pub user_id: u32,
+    pub _pad0: u32,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+    pub reason: u8,
+    pub _pad: [u8; 23],
+}
+
+impl CmpRecord for OrderFailedRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_FAILED
+    }
+}
+
 /// CancelRequest (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -309,6 +335,7 @@ pub enum WalRecord {
     ConfigApplied(ConfigAppliedRecord),
     CaughtUp(CaughtUpRecord),
     OrderAccepted(OrderAcceptedRecord),
+    OrderFailed(OrderFailedRecord),
 }
 
 impl WalRecord {
@@ -322,6 +349,7 @@ impl WalRecord {
             WalRecord::ConfigApplied(r) => r.seq,
             WalRecord::CaughtUp(r) => r.seq,
             WalRecord::OrderAccepted(r) => r.seq,
+            WalRecord::OrderFailed(r) => r.seq,
         }
     }
 
@@ -342,6 +370,9 @@ impl WalRecord {
             WalRecord::CaughtUp(_) => RECORD_CAUGHT_UP,
             WalRecord::OrderAccepted(_) => {
                 RECORD_ORDER_ACCEPTED
+            }
+            WalRecord::OrderFailed(_) => {
+                RECORD_ORDER_FAILED
             }
         }
     }

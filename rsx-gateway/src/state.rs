@@ -9,6 +9,7 @@ use std::time::Duration;
 pub struct ConnectionState {
     pub user_id: u32,
     pub outbound: VecDeque<String>,
+    pub last_activity_ns: u64,
 }
 
 /// Shared gateway state (single-threaded, Rc<RefCell>).
@@ -49,6 +50,7 @@ impl GatewayState {
             ConnectionState {
                 user_id,
                 outbound: VecDeque::new(),
+                last_activity_ns: 0,
             },
         );
         id
@@ -67,6 +69,43 @@ impl GatewayState {
             if conn.user_id == user_id {
                 conn.outbound.push_back(msg.clone());
             }
+        }
+    }
+
+    pub fn broadcast_heartbeat(
+        &mut self,
+        ts_ms: u64,
+    ) {
+        let msg =
+            format!("{{\"H\":[{}]}}", ts_ms);
+        for conn in self.connections.values_mut() {
+            conn.outbound.push_back(msg.clone());
+        }
+    }
+
+    pub fn stale_connections(
+        &self,
+        cutoff_ns: u64,
+    ) -> Vec<u64> {
+        self.connections
+            .iter()
+            .filter(|(_, c)| {
+                c.last_activity_ns > 0
+                    && c.last_activity_ns < cutoff_ns
+            })
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    pub fn touch_connection(
+        &mut self,
+        conn_id: u64,
+        now_ns: u64,
+    ) {
+        if let Some(conn) =
+            self.connections.get_mut(&conn_id)
+        {
+            conn.last_activity_ns = now_ns;
         }
     }
 
