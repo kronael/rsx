@@ -1,12 +1,14 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::records::ConfigAppliedRecord;
+use rsx_dxs::records::BboRecord;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::MarkPriceRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
 use rsx_dxs::records::OrderFailedRecord;
 use rsx_dxs::records::OrderInsertedRecord;
+use rsx_dxs::records::RECORD_BBO;
 use rsx_dxs::records::RECORD_CONFIG_APPLIED;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_MARK_PRICE;
@@ -30,6 +32,7 @@ use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
 use rsx_risk::PersistEvent;
 use rsx_types::install_panic_handler;
+use rsx_types::FailureReason;
 use rsx_types::time::time;
 use std::env;
 use std::net::SocketAddr;
@@ -100,6 +103,7 @@ fn run_main(
 
     let mut lease = AdvisoryLease::new(shard_id);
     let pg_client = if let Some(ref url) = db_url {
+        // SAFETY: rt is Some when db_url is Some
         let rt = rt.as_ref().unwrap();
         let client = rt.block_on(async {
             let (client, connection) =
@@ -233,7 +237,7 @@ fn run_main(
 
     // Receive fills from ME
     let mut me_receiver = CmpReceiver::new(
-        "127.0.0.1:0".parse().unwrap(), me_addr, 0,
+        "127.0.0.1:0".parse().expect("valid addr"), me_addr, 0,
     )
     .expect("failed to bind ME fill receiver");
 
@@ -282,7 +286,7 @@ fn run_main(
         rtrb::RingBuffer::<OrderRequest>::new(2048);
     let (mut mark_prod, mark_cons) =
         rtrb::RingBuffer::<MarkPriceUpdate>::new(256);
-    let (_bbo_prod, bbo_cons) =
+    let (mut bbo_prod, bbo_cons) =
         rtrb::RingBuffer::<BboUpdate>::new(256);
     let (resp_prod, mut resp_cons) =
         rtrb::RingBuffer::<OrderResponse>::new(2048);
@@ -330,6 +334,27 @@ fn run_main(
             me_receiver.try_recv()
         {
             match preamble.record_type {
+                RECORD_BBO
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            BboRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const BboRecord,
+                        )
+                    };
+                    let _ = bbo_prod.push(BboUpdate {
+                        seq: rec.seq,
+                        symbol_id: rec.symbol_id,
+                        bid_px: rec.bid_px,
+                        bid_qty: rec.bid_qty,
+                        ask_px: rec.ask_px,
+                        ask_qty: rec.ask_qty,
+                    });
+                }
                 RECORD_FILL
                     if payload.len()
                         >= std::mem::size_of::<
@@ -476,12 +501,16 @@ fn run_main(
             } = resp
             {
                 let reason_u8 = match reason {
-                    rsx_risk::RejectReason
-                        ::InsufficientMargin => 1,
-                    rsx_risk::RejectReason
-                        ::UserInLiquidation => 2,
-                    rsx_risk::RejectReason
-                        ::NotInShard => 3,
+                    rsx_risk::RejectReason::InsufficientMargin => {
+                        FailureReason::InsufficientMargin
+                            as u8
+                    }
+                    rsx_risk::RejectReason::UserInLiquidation => {
+                        FailureReason::InternalError as u8
+                    }
+                    rsx_risk::RejectReason::NotInShard => {
+                        FailureReason::InternalError as u8
+                    }
                 };
                 let rec = OrderFailedRecord {
                     seq: 0,
@@ -674,7 +703,7 @@ fn run_replica(
             .parse()
             .expect("invalid RSX_ME_CMP_ADDR");
     let mut me_receiver = CmpReceiver::new(
-        "127.0.0.1:0".parse().unwrap(),
+        "127.0.0.1:0".parse().expect("valid addr"),
         me_addr,
         0,
     )
