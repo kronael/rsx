@@ -15,13 +15,12 @@ use rsx_gateway::protocol::serialize;
 use rsx_gateway::protocol::WsFrame;
 use rsx_gateway::state::GatewayState;
 use rsx_types::install_panic_handler;
+use rsx_types::time::time_ns;
 use std::cell::RefCell;
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use tracing::info;
 
 const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
@@ -117,7 +116,7 @@ fn main() {
             }
         });
 
-        let mut last_pending_sweep = now_ns();
+        let mut last_pending_sweep = time_ns();
 
         // CMP polling loop (yields to monoio)
         loop {
@@ -199,7 +198,7 @@ fn main() {
             cmp_receiver.tick();
             sender.borrow_mut().recv_control();
 
-            let now = now_ns();
+            let now = time_ns();
             if now - last_pending_sweep
                 >= PENDING_SWEEP_INTERVAL_US * 1000
             {
@@ -307,11 +306,4 @@ fn route_order_cancelled(
     let mut st = state.borrow_mut();
     st.push_to_user(rec.user_id, msg);
     st.pending.remove(&oid_bytes_val);
-}
-
-fn now_ns() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
 }

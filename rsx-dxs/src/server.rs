@@ -6,6 +6,7 @@ use crate::records::RECORD_CAUGHT_UP;
 use crate::records::RECORD_REPLAY_REQUEST;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
+use rsx_types::time::time_ns;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -157,12 +158,7 @@ async fn handle_client(
     // Send CaughtUp marker
     let caught_up = CaughtUpRecord {
         seq: 0,
-        ts_ns: std::time::SystemTime::now()
-            .duration_since(
-                std::time::UNIX_EPOCH,
-            )
-            .unwrap_or_default()
-            .as_nanos() as u64,
+        ts_ns: time_ns(),
         stream_id,
         _pad0: 0,
         live_seq: last_seq,

@@ -9,6 +9,7 @@ use rsx_mark::source::CoinbaseSource;
 use rsx_mark::source::PriceSource;
 use rsx_mark::types::SourcePrice;
 use rsx_mark::types::SymbolMarkState;
+use rsx_types::time::time_ns;
 use rsx_types::install_panic_handler;
 use std::io;
 use std::path::PathBuf;
@@ -58,8 +59,10 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         .copied()
         .max()
         .unwrap_or(0) as usize;
-    let mut states =
-        vec![SymbolMarkState::new(); max_symbol + 1];
+    let mut states: Vec<SymbolMarkState> =
+        (0..max_symbol + 1)
+            .map(|_| SymbolMarkState::new())
+            .collect();
 
     let mut consumers = Vec::new();
     for (idx, source) in config.sources.iter().enumerate()
@@ -115,7 +118,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                     aggregate_with_staleness(
                         &mut states[sid],
                         update,
-                        now_ns(),
+                        time_ns(),
                         update.symbol_id,
                         config.staleness_ns,
                     )
@@ -130,7 +133,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         if now.duration_since(last_sweep)
             >= SWEEP_INTERVAL
         {
-            let now_ns = now_ns();
+            let now_ns = time_ns();
             for (sid, state) in
                 states.iter_mut().enumerate()
             {
@@ -158,15 +161,6 @@ fn run(config: &MarkConfig) -> io::Result<()> {
 
         // bare busy-spin: no yield, dedicated core
     }
-}
-
-fn now_ns() -> u64 {
-    use std::time::SystemTime;
-    use std::time::UNIX_EPOCH;
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
 }
 
 fn main() {

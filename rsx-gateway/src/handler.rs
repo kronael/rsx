@@ -19,8 +19,8 @@ use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_risk::types::OrderRequest;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+use rsx_types::time::time_ms;
+use rsx_types::time::time_ns;
 use tracing::info;
 use tracing::warn;
 
@@ -187,11 +187,7 @@ pub async fn handle_connection(
                 }
 
                 let oid = generate_order_id();
-                let now_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()
-                    as u64;
+                let now_ns = time_ns();
 
                 let mut cid_bytes = [0u8; 20];
                 let src = client_order_id.as_bytes();
@@ -367,10 +363,7 @@ pub async fn handle_connection(
                 }
             }
             WsFrame::Heartbeat { .. } => {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                let now_ms = time_ms();
                 let resp = serialize(
                     &WsFrame::Heartbeat {
                         timestamp_ms: now_ms,
@@ -401,13 +394,6 @@ pub async fn handle_connection(
     }
 }
 
-fn now_ns() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
-}
-
 fn build_cancel(
     user_id: u32,
     symbol_id: u32,
@@ -419,7 +405,7 @@ fn build_cancel(
         u64::from_be_bytes(order_id[8..16].try_into().unwrap());
     CancelRequest {
         seq: 0,
-        ts_ns: now_ns(),
+        ts_ns: time_ns(),
         user_id,
         symbol_id,
         order_id_hi: oid_hi,
