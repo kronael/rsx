@@ -1,17 +1,19 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::FillRecord;
+use rsx_dxs::records::MarkPriceRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
+use rsx_dxs::records::OrderFailedRecord;
 use rsx_dxs::records::OrderInsertedRecord;
+use rsx_dxs::records::RECORD_CONFIG_APPLIED;
 use rsx_dxs::records::RECORD_FILL;
+use rsx_dxs::records::RECORD_MARK_PRICE;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
-use rsx_dxs::records::RECORD_ORDER_INSERTED;
-use rsx_dxs::records::OrderFailedRecord;
-use rsx_dxs::records::MarkPriceRecord;
-use rsx_dxs::records::RECORD_MARK_PRICE;
 use rsx_dxs::records::RECORD_ORDER_FAILED;
+use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
@@ -53,7 +55,7 @@ fn main() {
     );
 
     loop {
-        match run(shard_id, shard_count, max_symbols) {
+        match run(shard_id, max_symbols) {
             Ok(()) => break,
             Err(e) => {
                 error!(
@@ -69,13 +71,11 @@ fn main() {
 
 fn run(
     shard_id: u32,
-    _shard_count: u32,
     max_symbols: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
     let mut shard = RiskShard::new(config);
 
-    // Cold start from Postgres if DATABASE_URL set
     let db_url = env::var("DATABASE_URL").ok();
     if let Some(ref url) = db_url {
         let rt =
@@ -109,7 +109,6 @@ fn run(
         })?;
     }
 
-    // WAL replay
     let wal_dir = env::var("RSX_RISK_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".into());
     let symbol_ids: Vec<u32> =
@@ -123,7 +122,6 @@ fn run(
         info!("replayed {} fills from wal", replayed);
     }
 
-    // Persist worker (if DB available)
     let (persist_prod, persist_cons) =
         rtrb::RingBuffer::<PersistEvent>::new(8192);
     shard.set_persist_producer(persist_prod);
@@ -160,7 +158,6 @@ fn run(
         });
     }
 
-    // Pin to core if specified
     if let Ok(core_str) =
         env::var("RSX_RISK_CORE_ID")
     {
@@ -176,7 +173,6 @@ fn run(
         }
     }
 
-    // CMP/UDP connections
     let risk_addr: SocketAddr =
         env::var("RSX_RISK_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
@@ -193,7 +189,6 @@ fn run(
             .parse()
             .expect("invalid RSX_ME_CMP_ADDR");
 
-    // Receive orders from Gateway
     let mut gw_receiver = CmpReceiver::new(
         risk_addr, gw_addr, 0,
     )
@@ -370,6 +365,33 @@ fn run(
                 {
                     let _ = gw_sender.send_raw(
                         RECORD_ORDER_INSERTED,
+                        &payload,
+                    );
+                }
+                RECORD_CONFIG_APPLIED
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            ConfigAppliedRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const
+                                    ConfigAppliedRecord,
+                        )
+                    };
+                    shard.process_config_applied(
+                        rec.symbol_id,
+                        rec.config_version,
+                    );
+                    info!(
+                        "config_applied: symbol={} v={}",
+                        rec.symbol_id,
+                        rec.config_version,
+                    );
+                    let _ = gw_sender.send_raw(
+                        RECORD_CONFIG_APPLIED,
                         &payload,
                     );
                 }

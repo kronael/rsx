@@ -5,6 +5,7 @@ use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
 use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::OrderFailedRecord;
+use rsx_dxs::records::RECORD_CONFIG_APPLIED;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
@@ -214,6 +215,10 @@ fn main() {
                         route_order_failed(
                             &state, &rec,
                         );
+                    }
+                    RECORD_CONFIG_APPLIED => {
+                        // No-op: gateway does not
+                        // validate tick/lot yet.
                     }
                     _ => {}
                 }

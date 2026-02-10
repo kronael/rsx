@@ -1,3 +1,6 @@
+use rsx_dxs::encode_utils::as_bytes;
+use rsx_dxs::encode_utils::decode_config_applied_record;
+use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_matching::wire::EventMessage;
 use rsx_matching::wire::OrderMessage;
 use rsx_types::Side;
@@ -100,4 +103,25 @@ fn event_message_from_order_inserted() {
         msg,
         EventMessage::OrderInserted { handle: 5, .. }
     ));
+}
+
+#[test]
+fn config_applied_record_roundtrip() {
+    let record = ConfigAppliedRecord {
+        seq: 42,
+        ts_ns: 1_000_000_000,
+        symbol_id: 7,
+        _pad0: 0,
+        config_version: 3,
+        effective_at_ms: 500,
+        applied_at_ns: 1_000_000_000,
+    };
+    let bytes = as_bytes(&record);
+    let decoded =
+        decode_config_applied_record(bytes).unwrap();
+    assert_eq!(decoded.seq, 42);
+    assert_eq!(decoded.symbol_id, 7);
+    assert_eq!(decoded.config_version, 3);
+    assert_eq!(decoded.effective_at_ms, 500);
+    assert_eq!(decoded.applied_at_ns, 1_000_000_000);
 }

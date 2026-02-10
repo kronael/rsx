@@ -502,3 +502,15 @@ fn tip_not_advanced_on_duplicate_fill() {
     assert_eq!(s.tips[0], 5);
     assert_eq!(s.fills_processed, 1);
 }
+
+#[test]
+fn process_config_applied_tracks_version() {
+    let mut s = make_shard();
+    assert_eq!(s.config_versions[0], 0);
+    s.process_config_applied(0, 5);
+    assert_eq!(s.config_versions[0], 5);
+    s.process_config_applied(0, 10);
+    assert_eq!(s.config_versions[0], 10);
+    // Out of range symbol is a no-op
+    s.process_config_applied(999, 1);
+}
