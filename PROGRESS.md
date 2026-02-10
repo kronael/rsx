@@ -46,16 +46,18 @@ Main loop: recv OrderMessage, process, write WAL, send CMP.
 Fanout to both Risk and Marketdata (separate CmpSenders).
 BBO emission after best bid/ask changes (routed to Risk
 only). Config polling every 10min with CONFIG_APPLIED
-emission to WAL, Risk, and Marketdata.
+emission to WAL, Risk, and Marketdata. Order dedup with
+5min pruning (DedupTracker, OrderAcceptedRecord in WAL,
+OrderFailed on duplicate).
 
-### rsx-dxs (96%)
+### rsx-dxs (97%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
 CMP: sender/receiver, flow control, heartbeat, NACK,
 configurable via CmpConfig (env vars).
 DxsReplayService: TCP replay, live_seq from payload, TLS.
 DxsConsumer: tip tracking, reconnect backoff, TLS, unknown
 record skip. Archive fallback test fixed.
-**Missing:** 5min dedup pruning, WAL dump tool.
+**Missing:** WAL dump tool.
 
 ### rsx-risk (95%)
 **Done:** Position tracking, margin calc, fees, funding,
@@ -120,7 +122,6 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 **Post-MVP:**
 - Replication & failover (rsx-risk Phase 4)
 - Snapshot save/load (rsx-book)
-- 5min dedup pruning (rsx-dxs)
 - WAL dump debug tool (rsx-dxs)
 
 ---

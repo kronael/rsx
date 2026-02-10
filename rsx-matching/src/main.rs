@@ -5,8 +5,10 @@ use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::records::BboRecord;
 use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::FillRecord;
+use rsx_dxs::records::OrderAcceptedRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
+use rsx_dxs::records::OrderFailedRecord;
 use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::wal::WalWriter;
 use rsx_matching::config::load_applied_config;
@@ -19,6 +21,7 @@ use rsx_types::install_panic_handler;
 use rsx_types::SymbolConfig;
 use rsx_types::time::time_ms;
 use rsx_types::time::time_ns;
+use rsx_matching::dedup::DedupTracker;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
@@ -28,6 +31,8 @@ use tokio_postgres::NoTls;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+
+const REASON_DUPLICATE: u8 = 10;
 
 fn get_env_u32(key: &str) -> io::Result<u32> {
     let raw = env::var(key).map_err(|_| {
@@ -263,6 +268,8 @@ fn main() {
         );
     }
 
+    let mut dedup = DedupTracker::new();
+
     info!("matching engine started");
 
     loop {
@@ -280,44 +287,92 @@ fn main() {
                             as *const OrderMessage,
                     )
                 };
-                let mut incoming =
-                    order_msg.to_incoming();
-                process_new_order(
-                    &mut book, &mut incoming,
+
+                // Dedup check
+                let is_dup = dedup.check_and_insert(
+                    order_msg.user_id,
+                    order_msg.order_id_hi,
+                    order_msg.order_id_lo,
                 );
 
-                // Write events to WAL
-                let ts_ns = time_ns();
-                let _ = write_events_to_wal(
-                    &mut wal_writer,
-                    &book,
-                    symbol_id,
-                    ts_ns,
-                );
+                if is_dup {
+                    let ts = time_ns();
+                    let mut fail = OrderFailedRecord {
+                        seq: 0,
+                        ts_ns: ts,
+                        user_id: order_msg.user_id,
+                        _pad0: 0,
+                        order_id_hi: order_msg
+                            .order_id_hi,
+                        order_id_lo: order_msg
+                            .order_id_lo,
+                        reason: REASON_DUPLICATE,
+                        _pad: [0; 23],
+                    };
+                    let _ =
+                        wal_writer.append(&mut fail);
+                    let _ =
+                        cmp_sender.send(&mut fail);
+                } else {
+                    // Record acceptance in WAL
+                    let ts = time_ns();
+                    let mut accepted =
+                        OrderAcceptedRecord {
+                            seq: 0,
+                            ts_ns: ts,
+                            user_id: order_msg.user_id,
+                            _pad0: 0,
+                            order_id_hi: order_msg
+                                .order_id_hi,
+                            order_id_lo: order_msg
+                                .order_id_lo,
+                            _pad1: [0; 32],
+                        };
+                    let _ = wal_writer
+                        .append(&mut accepted);
 
-                // Send events to Risk (all types)
-                for event in book.events() {
-                    let _ = send_event_cmp(
-                        &mut cmp_sender,
-                        event,
+                    let mut incoming =
+                        order_msg.to_incoming();
+                    process_new_order(
+                        &mut book, &mut incoming,
+                    );
+
+                    // Write events to WAL
+                    let ts_ns = time_ns();
+                    let _ = write_events_to_wal(
+                        &mut wal_writer,
+                        &book,
                         symbol_id,
                         ts_ns,
                     );
-                }
 
-                // Send events to Marketdata (no OrderDone)
-                for event in book.events() {
-                    let _ = send_event_marketdata(
-                        &mut mkt_sender,
-                        event,
-                        symbol_id,
-                        ts_ns,
-                    );
+                    // Send events to Risk (all)
+                    for event in book.events() {
+                        let _ = send_event_cmp(
+                            &mut cmp_sender,
+                            event,
+                            symbol_id,
+                            ts_ns,
+                        );
+                    }
+
+                    // Send to Marketdata (no OrderDone)
+                    for event in book.events() {
+                        let _ =
+                            send_event_marketdata(
+                                &mut mkt_sender,
+                                event,
+                                symbol_id,
+                                ts_ns,
+                            );
+                    }
                 }
             }
         } else if book.is_migrating() {
             book.migrate_batch(100);
         }
+
+        dedup.maybe_cleanup();
 
         // Poll config every 10 minutes
         if last_config_poll.elapsed().as_secs() >= 600 {
