@@ -1,228 +1,155 @@
 # RSX Implementation Progress
 
-**Last audit: 2026-02-10. Spec compliance fixes applied.**
+**Last audit: 2026-02-10. Deep codebase scan, all crates compile.**
 
 ---
 
 ## Executive Summary
 
-**Status:** Phase 1 complete, Phase 1.5 (spec compliance) complete.
-Risk → ME order forwarding now works. 486 tests passing across
-40 test files. 9,548 impl lines + 8,192 test lines = 17,740 total.
-
-**Phase 1 (CMP/Payload) — DONE:**
-1. CmpRecord trait, seq injection, unified wire format
-2. UB fix (ptr::read_unaligned), header simplification
-3. 5 specs updated
-
-**Phase 1.5 (Spec Compliance) — DONE:**
-1. server.rs: last_seq tracks actual record seq (was stuck)
-2. cmp.rs: NAK count off-by-one fixed
-3. shard.rs: fees persisted (were zeroed), frozen margin
-   released on OrderDone
-4. migration.rs: sell guard on BBA rescan, frontier bounded
-5. wal.rs: GC uses file mtime (was seq-as-time proxy)
-6. event.rs: OrderCancelled carries reason (was hardcoded)
-7. config.rs: DxsConfig::from_env() added
-8. protocol.rs: reason range 0-10 (was 0-7)
-9. NETWORK.md: Tokio → monoio
-10. tips column: seq → last_seq
-11. Risk → ME order forwarding via accepted_producer +
-    CMP send_raw
-
-**Remaining Critical Issues:**
-1. ❌ Marketdata never receives events (ME doesn't fanout)
-2. ❌ Mark price aggregator (no source connectors)
-3. ❌ rsx-mark compile error (tokio ref in source.rs)
-4. ❌ rsx-marketdata compile error (ShadowBook Clone)
+**Status:** Phases 1-3 complete. Full order pipeline wired:
+Gateway → Risk → ME → Risk → Gateway, ME → Marketdata.
+494 tests passing across 40 test files. 11,310 impl +
+8,272 test = 19,582 total lines.
 
 ---
 
 ## Per-Crate Status
 
-### 1. rsx-types — ✅ COMPLETE (100%)
+| Crate | Impl | Test | Tests | % |
+|-------|------|------|-------|---|
+| rsx-types | 209 | 148 | 15 | 100 |
+| rsx-book | 1,401 | 1,274 | 75 | 90 |
+| rsx-matching | 809 | 497 | 11 | 90 |
+| rsx-dxs | 2,229 | 1,476 | 79 | 90 |
+| rsx-risk | 1,963 | 2,267 | 123 | 90 |
+| rsx-gateway | 2,242 | 1,211 | 94 | 85 |
+| rsx-marketdata | 1,524 | 802 | 57 | 85 |
+| rsx-mark | 792 | 597 | 40 | 75 |
+| rsx-recorder | 141 | 0 | 0 | 100 |
+| **Total** | **11,310** | **8,272** | **494** | - |
 
-175 impl lines, 148 test lines, 15 tests.
+### rsx-types (100%)
 Price, Qty, Side, TimeInForce, SymbolConfig, validate_order,
-panic handler, macros.
+panic handler, macros, time module (time_ns/time_ms/time/
+perf_counter).
 
-### 2. rsx-book — ✅ LARGELY COMPLETE (90%)
-
-1,401 impl lines, 1,274 test lines, 75 tests.
-
-- Slab arena, CompressionMap (5 zones), PriceLevel, OrderSlot
-- Matching: FIFO, smooshed tick, IOC/FOK, reduce-only
-- Migration: lazy frontier, bounded by old_min/max_price
-- OrderCancelled now carries reason (CANCEL_USER/REDUCE_ONLY/IOC)
-- BBA rescan sell guard fixed
-
+### rsx-book (90%)
+Slab arena, CompressionMap (5 zones), PriceLevel, OrderSlot.
+Matching: FIFO, smooshed tick, IOC/FOK, reduce-only.
+Migration: lazy frontier, bounded by old_min/max_price.
 **Missing:** Snapshot save/load, post-only enforcement.
 
-### 3. rsx-matching — ⚠️ PARTIAL (70%)
+### rsx-matching (90%)
+Main loop: recv OrderMessage, process, write WAL, send CMP.
+Fanout to both Risk and Marketdata (separate CmpSenders).
+Marketdata gets Fill/OrderInserted/OrderCancelled (no OrderDone
+per MD20). OrderCancelled reason propagated.
+**Missing:** BBO emission, CONFIG_APPLIED.
 
-770 impl lines, 497 test lines, 11 tests.
-
-- Main loop: recv OrderMessage, process, write WAL, send CMP
-- OrderCancelled reason propagated from event to WAL/CMP
-- fanout.rs: ready for future intra-process tile decomposition
-
-**Missing:** Fanout to Marketdata, BBO emission, CONFIG_APPLIED.
-
-### 4. rsx-dxs — ✅ GOOD (90%)
-
-2,212 impl lines, 1,444 test lines, 77 tests.
-
-- WAL: write/read/rotate/GC (mtime-based), CRC32
-- CMP: sender/receiver, flow control, heartbeat, NACK (fixed)
-- DxsReplayService: TCP replay, live_seq from payload
-- DxsConsumer: tip tracking, reconnect backoff
-- DxsConfig::from_env() with RSX_* env vars
-- 11 record types including ORDER_REQUEST/ORDER_RESPONSE
-
+### rsx-dxs (90%)
+WAL: write/read/rotate/GC (mtime-based), CRC32.
+CMP: sender/receiver, flow control, heartbeat, NACK.
+DxsReplayService: TCP replay, live_seq from payload.
+DxsConsumer: tip tracking, reconnect backoff.
 **Missing:** CMP stress tests (packet loss, reorder).
 
-### 5. rsx-risk — ✅ GOOD (85%)
-
-1,902 impl lines, 2,267 test lines, 116 tests.
-
-- process_fill: dedup, fee calculation, fee persistence (fixed)
-- process_order: margin check, freeze_margin
-- process_order_done: release_margin (new)
-- Risk → ME forwarding: accepted_producer SPSC → CMP send_raw
-- OrderRequest now has order_id_hi/lo, timestamp_ns
-- Persist: tips column renamed to last_seq
-- Cold start, WAL replay, funding settlement
-
+### rsx-risk (90%)
+process_fill (dedup, fees), process_order (margin, freeze),
+process_order_done (release_margin). Risk → ME forwarding via
+accepted_producer + CMP send_raw. Receives all ME event types
+(fill, done, cancelled, inserted) and forwards to Gateway.
+OrderResponse has order_id_hi/lo.
 **Missing:** Liquidation processing, mark price DXS consumer.
 
-### 6. rsx-gateway — ⚠️ PARTIAL (70%)
+### rsx-gateway (85%)
+Per-connection handler: WS → CMP. Order + cancel routing.
+Auth (Bearer u32), rate limiting (token bucket), circuit
+breaker. Heartbeat echo. Handles fill/done/cancelled from
+Risk, routes to user WS. Pending order tracking by oid/cid.
+**Missing:** Server-initiated heartbeats + timeout, JWT.
 
-~1,900 impl lines, ~1,250 test lines, 97 tests.
+### rsx-marketdata (85%)
+ShadowBook, L2/BBO/Trade serialization, SubscriptionManager.
+CMP decode loop: handles insert/cancel/fill, updates shadow
+book, broadcasts to WS clients.
+**Missing:** SubscriptionManager wiring in main loop.
 
-- Per-connection handler: WS accept → handshake → frame loop
-- Order routing: NewOrder → CMP → Risk, response routing back
-- Cancel handler: by oid or cid, CancelRequest via CMP
-- Auth: user_id from Authorization/X-User-Id headers (401 on missing)
-- Rate limiting: per-user token bucket, wired in handler
-- Circuit breaker: wired in handler, blocks CMP on open
-- Heartbeat echo: server echoes H[ts] on client heartbeat
-- Pending tracking: LIFO VecDeque, find by oid or cid
+### rsx-mark (75%)
+SymbolMarkState (median aggregation), sweep_stale.
+BinanceSource + CoinbaseSource (tokio-tungstenite WS).
+SPSC rings, config loading, main loop skeleton.
+**Missing:** Source connector startup, DXS replay server.
 
-**Missing:** Server-initiated heartbeats + timeout, JWT
-validation (currently Bearer u32), market data subscription
-routing, dedup at ME.
-
-### 7. rsx-marketdata — ❌ SKELETON (30%)
-
-684 impl lines, 802 test lines, 57 tests.
-
-- ShadowBook, L2/BBO/Trade serialization, SubscriptionManager
-- All tested but not wired in main loop
-
-**Missing:** CMP event decoding, WS broadcast, subscription
-manager instance.
-
-### 8. rsx-mark — ❌ SKELETON (20%)
-
-403 impl lines, 591 test lines, 40 tests.
-
-- SymbolMarkState (median aggregation), sweep_stale
-- MarkSource trait, MarkPriceEvent record
-- Compile error: tokio ref in source.rs
-
-**Missing:** Source connectors, SPSC rings, DXS replay server.
-
-### 9. rsx-recorder — ✅ COMPLETE (100%)
-
-141 impl lines, 0 test lines.
+### rsx-recorder (100%)
 RecorderState, daily rotation, raw WAL append.
 
 ---
 
-## Spec Compliance Matrix
+## Phase Status
 
-| Spec | Crate | Status | % |
-|------|-------|--------|---|
-| ORDERBOOK.md | rsx-book | ✅ Good | 90 |
-| DXS.md | rsx-dxs | ✅ Good | 90 |
-| WAL.md | rsx-dxs | ✅ Good | 90 |
-| CMP.md | rsx-dxs | ✅ Good | 85 |
-| RISK.md | rsx-risk | ✅ Good | 85 |
-| DATABASE.md | rsx-risk | ✅ Good | 90 |
-| ARCHIVE.md | rsx-recorder | ✅ Complete | 100 |
-| TILES.md | All | ⚠️ Partial | 65 |
-| NETWORK.md | All | ⚠️ Partial | 65 |
-| CONSISTENCY.md | All | ⚠️ Partial | 65 |
-| MARK.md | rsx-mark | ❌ Skeleton | 20 |
-| MARKETDATA.md | rsx-marketdata | ❌ Skeleton | 30 |
-| WEBPROTO.md | rsx-gateway | ⚠️ Partial | 70 |
-| RPC.md | rsx-gateway | ✅ Good | 80 |
-| MESSAGES.md | rsx-gateway | ⚠️ Partial | 70 |
-| LIQUIDATOR.md | rsx-risk | ❌ None | 0 |
-| METADATA.md | All | ❌ None | 0 |
-| DEPLOY.md | - | ❌ None | 0 |
+### Phase 1: CMP/Payload — DONE
+CmpRecord trait, seq injection, UB fix, header simplification.
 
----
-
-## Test Coverage
-
-**486 tests passing, 40 test files, 8,192 lines**
-
-| Crate | Files | Lines | Tests |
-|-------|-------|-------|-------|
-| rsx-types | 1 | 148 | 15 |
-| rsx-book | 7 | 1,274 | 75 |
-| rsx-dxs | 5 | 1,444 | 77 |
-| rsx-matching | 3 | 497 | 11 |
-| rsx-risk | 9 | 2,267 | 116 |
-| rsx-gateway | 8 | 1,169 | 92 |
-| rsx-marketdata | 4 | 802 | 57 |
-| rsx-mark | 3 | 591 | 40 |
-| rsx-recorder | 0 | 0 | 0 |
-
-Note: rsx-risk persist/shard_e2e tests (7) need Docker.
-rsx-mark has a compile error blocking test execution.
-
----
-
-## Critical Path
+### Phase 1.5: Spec Compliance — DONE
+10 fixes: last_seq tracking, NAK off-by-one, fee persistence,
+margin release, migration sell guard, GC mtime, cancel reason,
+DxsConfig, reason range, monoio docs.
 
 ### Phase 2: Gateway Wiring — DONE
+Handler, order/cancel routing, auth, rate limit, circuit
+breaker, heartbeat echo, pending tracking.
 
-1. ✅ Per-connection handler (WS frames → CMP)
-2. ✅ Gateway → Risk order routing via CMP
-3. ✅ Risk → Gateway response routing via CMP
-4. ✅ Cancel handler, rate limiting, circuit breaker, auth
-5. ❌ Server-initiated heartbeats + timeout (future)
-6. ❌ JWT validation (future)
+### Phase 3: Event Forwarding — DONE
+ME → Risk → Gateway (fill/done/cancelled/inserted).
+ME → Marketdata (fill/inserted/cancelled, no done).
+OrderResponse carries order_id. Risk relays all event types.
+Consolidated time helpers in rsx_types::time.
 
-### Phase 3: Marketdata Fan-Out
+### Phase 4: Mark Price — 75%
+Source connectors written. Main loop skeleton.
+Not yet: source startup, DXS consumer in risk.
 
-5. ME fanout to Marketdata (new CMP sender)
-6. Marketdata CMP decode + shadow book
-7. WS broadcast loop
-
-### Phase 4: Mark Price
-
-8. Source connectors (Binance, Bybit)
-9. SPSC rings, SymbolMarkState instances
-10. DXS replay server
-
-### Phase 5: E2E Smoke Test
-
-11. Start all binaries, send order, verify fill
+### Phase 5: E2E Smoke Test — NOT STARTED
 
 ---
 
-## Summary
+## Remaining Work
 
-| Metric | Value |
-|--------|-------|
-| Impl lines | 9,548 |
-| Test lines | 8,192 |
-| Total lines | 17,740 |
-| Test files | 40 |
-| Tests passing | 486 |
-| Crates | 9 |
+**Critical path to MVP:**
+1. Marketdata WS broadcast loop (wire SubscriptionManager)
+2. Risk mark price DXS consumer
+3. Liquidation order generation
+
+**Post-MVP:**
+- Server-initiated heartbeats + client timeout
+- JWT validation (replace Bearer u32)
+- Post-only enforcement
+- Snapshot save/load
+- CMP stress tests
+
+---
+
+## Spec Compliance
+
+| Spec | Crate | % |
+|------|-------|---|
+| ORDERBOOK.md | rsx-book | 90 |
+| DXS.md | rsx-dxs | 90 |
+| WAL.md | rsx-dxs | 90 |
+| CMP.md | rsx-dxs | 85 |
+| RISK.md | rsx-risk | 90 |
+| DATABASE.md | rsx-risk | 90 |
+| ARCHIVE.md | rsx-recorder | 100 |
+| TILES.md | All | 70 |
+| NETWORK.md | All | 70 |
+| CONSISTENCY.md | All | 70 |
+| MARK.md | rsx-mark | 40 |
+| MARKETDATA.md | rsx-marketdata | 85 |
+| WEBPROTO.md | rsx-gateway | 75 |
+| RPC.md | rsx-gateway | 80 |
+| MESSAGES.md | rsx-gateway | 75 |
+| LIQUIDATOR.md | rsx-risk | 0 |
+| METADATA.md | All | 0 |
+| DEPLOY.md | - | 0 |
 
 **Last Updated:** 2026-02-10
