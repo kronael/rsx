@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub struct DxsConfig {
     #[serde(default = "default_wal_dir")]
     pub wal_dir: PathBuf,
+    #[serde(default = "default_archive_dir")]
+    pub archive_dir: Option<PathBuf>,
     #[serde(default = "default_max_file_size")]
     pub max_file_size: u64,
     #[serde(default = "default_retention_ns")]
@@ -19,6 +21,10 @@ pub struct DxsConfig {
 
 fn default_wal_dir() -> PathBuf {
     PathBuf::from("./wal")
+}
+
+fn default_archive_dir() -> Option<PathBuf> {
+    None
 }
 
 fn default_max_file_size() -> u64 {
@@ -41,6 +47,7 @@ impl Default for DxsConfig {
     fn default() -> Self {
         Self {
             wal_dir: default_wal_dir(),
+            archive_dir: default_archive_dir(),
             max_file_size: default_max_file_size(),
             retention_ns: default_retention_ns(),
             flush_interval_ms: default_flush_interval_ms(),
@@ -55,6 +62,9 @@ impl DxsConfig {
             wal_dir: env::var("RSX_WAL_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| default_wal_dir()),
+            archive_dir: env::var("RSX_WAL_ARCHIVE_DIR")
+                .ok()
+                .map(PathBuf::from),
             max_file_size: env::var(
                 "RSX_WAL_MAX_FILE_SIZE",
             )
@@ -133,4 +143,60 @@ fn get_env_u32(key: &str) -> io::Result<u32> {
             format!("invalid {}: {}", key, raw),
         )
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    pub enabled: bool,
+    pub cert_path: Option<PathBuf>,
+    pub key_path: Option<PathBuf>,
+}
+
+impl TlsConfig {
+    pub fn from_env() -> Self {
+        let enabled = env::var("RSX_REPL_TLS")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let cert_path = env::var("RSX_REPL_CERT_PATH")
+            .ok()
+            .map(PathBuf::from);
+        let key_path = env::var("RSX_REPL_KEY_PATH")
+            .ok()
+            .map(PathBuf::from);
+        Self {
+            enabled,
+            cert_path,
+            key_path,
+        }
+    }
+
+    pub fn validate_server(&self) -> io::Result<()> {
+        if self.enabled {
+            if self.cert_path.is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "RSX_REPL_CERT_PATH required when TLS enabled",
+                ));
+            }
+            if self.key_path.is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "RSX_REPL_KEY_PATH required when TLS enabled",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_client(&self) -> io::Result<()> {
+        if self.enabled {
+            if self.cert_path.is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "RSX_REPL_CERT_PATH required when TLS enabled",
+                ));
+            }
+        }
+        Ok(())
+    }
 }

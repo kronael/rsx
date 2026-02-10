@@ -23,7 +23,7 @@ core done. 549 tests passing across 42 test files.
 | rsx-types | 185 | 133 | 15 | 100 |
 | rsx-book | 1,290 | 1,151 | 75 | 99 |
 | rsx-matching | 777 | 454 | 11 | 90 |
-| rsx-dxs | 2,055 | 1,318 | 79 | 88 |
+| rsx-dxs | 2,055 | 1,318 | 83 | 91 |
 | rsx-risk | 1,995 | 2,397 | 171 | 75 |
 | rsx-gateway | 2,097 | 1,105 | 97 | 85 |
 | rsx-marketdata | 1,409 | 736 | 57 | 89 |
@@ -51,13 +51,13 @@ per MD20). OrderCancelled reason propagated. BBO emission after
 best bid/ask changes (routed to Risk only).
 **Missing:** CONFIG_APPLIED.
 
-### rsx-dxs (88%)
+### rsx-dxs (91%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
 CMP: sender/receiver, flow control, heartbeat, NACK.
-DxsReplayService: TCP replay, live_seq from payload.
-DxsConsumer: tip tracking, reconnect backoff.
+DxsReplayService: TCP replay, live_seq from payload, TLS.
+DxsConsumer: tip tracking, reconnect backoff, TLS.
 **Missing:** Unknown record type log+skip, 5min dedup
-pruning, ARCHIVE fallback, TLS, CMP config env vars,
+pruning, ARCHIVE fallback, CMP config env vars,
 WAL dump tool.
 
 ### rsx-risk (75%)
@@ -173,7 +173,6 @@ E2E cascade tests.
 **Post-MVP:**
 - Replication & failover (rsx-risk Phase 4)
 - JWT validation (replace Bearer u32)
-- TLS for WAL replication
 - ARCHIVE fallback for old replays
 - Per-IP/per-instance rate limiting
 - Snapshot save/load (rsx-book)
@@ -190,9 +189,9 @@ E2E cascade tests.
 |------|-------|---|
 | ORDERBOOK.md | rsx-book | 99 |
 | MATCHING.md | rsx-matching | 90 |
-| DXS.md | rsx-dxs | 88 |
-| WAL.md | rsx-dxs | 88 |
-| CMP.md | rsx-dxs | 88 |
+| DXS.md | rsx-dxs | 91 |
+| WAL.md | rsx-dxs | 91 |
+| CMP.md | rsx-dxs | 91 |
 | RISK.md | rsx-risk | 75 |
 | LIQUIDATOR.md | rsx-risk | 75 |
 | DATABASE.md | rsx-risk | 80 |
