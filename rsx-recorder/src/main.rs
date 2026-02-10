@@ -129,7 +129,10 @@ async fn main() -> io::Result<()> {
     let state_clone = state.clone();
     consumer
         .run(move |record: RawWalRecord| {
-            let mut s = state_clone.lock().unwrap();
+            // SAFETY: recover from mutex poison
+            let mut s = state_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Err(e) = s.write_record(&record) {
                 tracing::error!(
                     "write archive error: {}", e
