@@ -41,12 +41,13 @@ Migration: lazy frontier, bounded by old_min/max_price.
 156/157 spec requirements done.
 **Missing:** Snapshot save/load, post-only enforcement.
 
-### rsx-matching (90%)
+### rsx-matching (95%)
 Main loop: recv OrderMessage, process, write WAL, send CMP.
 Fanout to both Risk and Marketdata (separate CmpSenders).
 Marketdata gets Fill/OrderInserted/OrderCancelled (no OrderDone
-per MD20). OrderCancelled reason propagated.
-**Missing:** BBO emission, CONFIG_APPLIED.
+per MD20). OrderCancelled reason propagated. BBO emission after
+best bid/ask changes (routed to Risk only).
+**Missing:** CONFIG_APPLIED.
 
 ### rsx-dxs (88%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
@@ -95,6 +96,28 @@ Main loop: drain rings, sweep 1s, flush 10ms, busy-spin.
 
 ### rsx-recorder (100%)
 RecorderState, daily rotation, raw WAL append.
+
+---
+
+## Documentation Additions
+
+**POSITION-EDGE-CASES.md** added 2026-02-10. Comprehensive
+catalog of 60+ edge cases for position tracking across Risk,
+ME, Gateway, Liquidator. Covers:
+- Position state transitions (empty, flip, partial, accumulation)
+- Arithmetic edge cases (overflow, division by zero, negative collateral)
+- Multi-user interactions (self-trade, concurrent fills/orders)
+- Crash/recovery (staleness, dual crash, replay with flip/funding)
+- Liquidation (margin recovery, reduce-only clamping, frozen margin)
+- Price feeds (mark unavailable, mark=0, crossed mark vs index)
+- Fees (negative rebate, reserve, collateral exhaustion)
+- Concurrency (fill before ORDER_DONE, BBO lag, tip persistence)
+- Symbol config (updates during liquidation, max position exceeded)
+- Replay/reconciliation (seq gaps, position mismatch, funding zero-sum)
+- Network partitions (ME isolation, Postgres isolation)
+
+Cross-references all related specs (RISK, GUARANTEES, CONSISTENCY,
+LIQUIDATOR, ORDERBOOK, TESTING-RISK, CMP, DXS).
 
 ---
 
