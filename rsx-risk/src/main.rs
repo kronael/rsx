@@ -9,6 +9,8 @@ use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_dxs::records::OrderFailedRecord;
+use rsx_dxs::records::MarkPriceRecord;
+use rsx_dxs::records::RECORD_MARK_PRICE;
 use rsx_dxs::records::RECORD_ORDER_FAILED;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
@@ -203,6 +205,28 @@ fn run(
     )
     .expect("failed to bind ME fill receiver");
 
+    // Receive mark prices from Mark process
+    let mark_addr: SocketAddr =
+        env::var("RSX_RISK_MARK_CMP_ADDR")
+            .unwrap_or_else(|_| {
+                "127.0.0.1:9105".into()
+            })
+            .parse()
+            .expect("invalid RSX_RISK_MARK_CMP_ADDR");
+    let mark_sender_addr: SocketAddr =
+        env::var("RSX_MARK_CMP_ADDR")
+            .unwrap_or_else(|_| {
+                "127.0.0.1:9106".into()
+            })
+            .parse()
+            .expect("invalid RSX_MARK_CMP_ADDR");
+    let mut mark_receiver = CmpReceiver::new(
+        mark_addr,
+        mark_sender_addr,
+        0,
+    )
+    .expect("failed to bind mark CMP receiver");
+
     // Send validated orders to ME
     let mut me_sender = CmpSender::new(
         me_addr,
@@ -224,7 +248,7 @@ fn run(
         rtrb::RingBuffer::<FillEvent>::new(4096);
     let (mut order_prod, order_cons) =
         rtrb::RingBuffer::<OrderRequest>::new(2048);
-    let (_mark_prod, mark_cons) =
+    let (mut mark_prod, mark_cons) =
         rtrb::RingBuffer::<MarkPriceUpdate>::new(256);
     let (_bbo_prod, bbo_cons) =
         rtrb::RingBuffer::<BboUpdate>::new(256);
@@ -353,6 +377,30 @@ fn run(
             }
         }
 
+        // Mark prices from Mark process
+        while let Some((preamble, payload)) =
+            mark_receiver.try_recv()
+        {
+            if preamble.record_type == RECORD_MARK_PRICE
+                && payload.len()
+                    >= std::mem::size_of::<
+                        MarkPriceRecord,
+                    >()
+            {
+                let rec = unsafe {
+                    std::ptr::read_unaligned(
+                        payload.as_ptr()
+                            as *const MarkPriceRecord,
+                    )
+                };
+                let _ = mark_prod.push(MarkPriceUpdate {
+                    seq: rec.seq,
+                    symbol_id: rec.symbol_id,
+                    price: rec.mark_price,
+                });
+            }
+        }
+
         // Run risk engine
         shard.run_once(&mut rings, now_secs);
 
@@ -439,6 +487,7 @@ fn run(
         let _ = gw_sender.tick();
         gw_receiver.tick();
         me_receiver.tick();
+        mark_receiver.tick();
         me_sender.recv_control();
         gw_sender.recv_control();
     }
