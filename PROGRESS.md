@@ -22,10 +22,10 @@ core done. 549 tests passing across 42 test files.
 |-------|------|------|-------|---|
 | rsx-types | 185 | 133 | 15 | 100 |
 | rsx-book | 1,290 | 1,151 | 75 | 99 |
-| rsx-matching | 777 | 454 | 11 | 90 |
+| rsx-matching | 777 | 454 | 11 | 100 |
 | rsx-dxs | 2,055 | 1,318 | 83 | 93 |
 | rsx-risk | 1,995 | 2,397 | 171 | 75 |
-| rsx-gateway | 2,097 | 1,105 | 97 | 85 |
+| rsx-gateway | 2,097 | 1,105 | 109 | 90 |
 | rsx-marketdata | 1,409 | 736 | 57 | 89 |
 | rsx-mark | 705 | 535 | 40 | 100 |
 | rsx-recorder | 123 | 0 | 0 | 100 |
@@ -43,13 +43,13 @@ Migration: lazy frontier, bounded by old_min/max_price.
 156/157 spec requirements done.
 **Missing:** Snapshot save/load, post-only enforcement.
 
-### rsx-matching (90%)
+### rsx-matching (100%)
 Main loop: recv OrderMessage, process, write WAL, send CMP.
 Fanout to both Risk and Marketdata (separate CmpSenders).
 Marketdata gets Fill/OrderInserted/OrderCancelled (no OrderDone
 per MD20). OrderCancelled reason propagated. BBO emission after
-best bid/ask changes (routed to Risk only).
-**Missing:** CONFIG_APPLIED.
+best bid/ask changes (routed to Risk only). Config polling every
+10min with CONFIG_APPLIED emission to WAL, Risk, and Marketdata.
 
 ### rsx-dxs (93%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
@@ -72,14 +72,14 @@ halt pause), replication & failover (Phase 4, 0%),
 CONFIG_APPLIED, backpressure enforcement, DXS consumer
 for ME replay, lease renewal.
 
-### rsx-gateway (85%)
+### rsx-gateway (90%)
 Per-connection handler: WS -> CMP. Order + cancel routing.
-Auth (Bearer u32), rate limiting (token bucket), circuit
-breaker. Heartbeat echo. Handles fill/done/cancelled from
-Risk, routes to user WS. Pending order tracking by oid/cid.
-ORDER_FAILED routing, server heartbeat config + timeout.
-**Missing:** JWT validation, per-IP/per-instance rate
-limiting, tick/lot validation at GW.
+JWT auth (HS256) with X-User-Id fallback, rate limiting
+(token bucket per-user/per-IP/per-instance), circuit breaker.
+Heartbeat echo. Handles fill/done/cancelled from Risk, routes
+to user WS. Pending order tracking by oid/cid. ORDER_FAILED
+routing, server heartbeat config + timeout.
+**Missing:** tick/lot validation at GW.
 
 ### rsx-marketdata (89%)
 ShadowBook, L2/BBO/Trade serialization, SubscriptionManager.
@@ -172,9 +172,7 @@ E2E cascade tests.
 
 **Post-MVP:**
 - Replication & failover (rsx-risk Phase 4)
-- JWT validation (replace Bearer u32)
 - ARCHIVE fallback for old replays
-- Per-IP/per-instance rate limiting
 - Snapshot save/load (rsx-book)
 - Post-only enforcement (rsx-book)
 - Unknown record type log+skip (rsx-dxs)
