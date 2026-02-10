@@ -20,7 +20,7 @@ complete with insurance fund. ~580 tests passing.
 | Crate | Tests | % |
 |-------|-------|---|
 | rsx-types | 15 | 100 |
-| rsx-book | 80 | 99 |
+| rsx-book | 97 | 100 |
 | rsx-matching | 30 | 100 |
 | rsx-dxs | 83 | 96 |
 | rsx-risk | 198 | 95 |
@@ -34,12 +34,12 @@ Price, Qty, Side, TimeInForce, SymbolConfig, validate_order,
 panic handler, macros, time module (time_ns/time_ms/time/
 perf_counter).
 
-### rsx-book (99%)
+### rsx-book (100%)
 Slab arena, CompressionMap (5 zones), PriceLevel, OrderSlot.
 Matching: FIFO, smooshed tick, IOC/FOK, reduce-only, post-only.
 Migration: lazy frontier, bounded by old_min/max_price.
-157/157 spec requirements done.
-**Missing:** Snapshot save/load.
+Snapshot save/load with binary serialization (blocks during
+migration). 9 snapshot tests. All spec requirements done.
 
 ### rsx-matching (100%)
 Main loop: recv OrderMessage, process, write WAL, send CMP.
@@ -121,7 +121,6 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 
 **Post-MVP:**
 - Replication & failover (rsx-risk Phase 4)
-- Snapshot save/load (rsx-book)
 - WAL dump debug tool (rsx-dxs)
 
 ---
@@ -130,7 +129,7 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 
 | Spec | Crate | % |
 |------|-------|---|
-| ORDERBOOK.md | rsx-book | 99 |
+| ORDERBOOK.md | rsx-book | 100 |
 | MATCHING.md | rsx-matching | 100 |
 | DXS.md | rsx-dxs | 95 |
 | WAL.md | rsx-dxs | 95 |

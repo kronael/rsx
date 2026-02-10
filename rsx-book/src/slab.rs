@@ -64,4 +64,9 @@ impl<T: SlabItem + Default> Slab<T> {
     pub fn capacity(&self) -> u32 {
         self.slots.len() as u32
     }
+
+    /// Set bump_next for snapshot restore.
+    pub fn set_bump_next(&mut self, val: u32) {
+        self.bump_next = val;
+    }
 }
