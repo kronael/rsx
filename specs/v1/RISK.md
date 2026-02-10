@@ -12,20 +12,18 @@ orderbook WAL replay.
 ## Architecture Overview
 
 ```
-Mark Aggregator -+  (DXS consumer, see MARK.md)
+Mark Aggregator -+  (DXS producer, see MARK.md)
                   |
-           [SPSC: mark prices]
+           [not wired to risk in v1]
                   |
-Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
+Gateway -[CMP/UDP]-> Risk Shard (main) -[CMP/UDP]-> Matching Engines
                        |        ^                     |
-                       |        | [SPSC: BBO + fills]  |
+                       |        | [CMP/UDP: BBO + fills]|
                        |        +---------------------+
                        |
-                  [SPSC: tip sync]
+                  [replica sync TBD]
                        |
                   Risk Shard (replica)
-                       ^
-                       | [SPSC: BBO + fills from MEs directly]
 ```
 
 - **N risk shards** by `user_id` hash, each with a dedicated replica
@@ -37,7 +35,7 @@ Gateway -[SPSC]-> Risk Shard (main) -[SPSC]-> Matching Engines
 
 ### 1. Orderbook Event Ingestion
 
-- SPSC consumer ring from each matching engine
+- CMP/UDP receiver from each matching engine
 - Each fill contains `taker_user_id`, `maker_user_id`, `symbol_id`,
   `seq`
 - Filter: `user_in_shard(user_id)` via range or bitmask check
@@ -192,7 +190,7 @@ Margin recalculated on every price tick for all exposed users.
 
 ### 4. Price Feeds
 
-**From matching engines** (SPSC ring, same as fills):
+**From matching engines** (CMP/UDP, same as fills):
 - BBO updates: `(symbol_id, best_bid, best_bid_qty, best_ask,
   best_ask_qty)`
 - BBO is also derived by MARKETDATA from its shadow orderbook
@@ -209,7 +207,7 @@ Margin recalculated on every price tick for all exposed users.
 - Risk engine connects as a DXS consumer to the mark price
   aggregator ([DXS.md](DXS.md) section 6)
 - Receives `MarkPriceEvent` records via DXS streaming
-- DXS consumer callback pushes to risk hot path via SPSC ring
+- DXS mark price feed not wired into risk in v1 (planned)
   (same integration point as before)
 - Risk engine reads mark prices into `Vec<i64>`
 - Used for margin/risk calculations (unrealized PnL, liquidation)
@@ -381,7 +379,7 @@ CREATE TABLE funding_payments (
 ### Write Patterns
 
 All persistence happens on a **separate write-behind thread**:
-- Hot path pushes to rtrb SPSC rings (non-blocking)
+- Hot path uses in-process SPSC rings only for internal queues
 - Write-behind thread drains rings every 10ms (or on threshold)
 - Single Postgres transaction per flush:
   1. Positions: batched `UPSERT` (no version guard -- advisory lock
@@ -416,14 +414,14 @@ crash scenarios.
 4. Process replay fills (same code path as live)
 5. On `CaughtUp` for all streams: connect gateway, go live
 6. Main loop: poll ME rings -> poll gateway -> renew lease (~1s)
-7. Send every processed tip advance to replica via SPSC
+7. Replica sync not implemented in v1
 
 ### Replica Behavior
 
 1. Try advisory lock (expected to fail, main holds it)
 2. Load same positions/tips from Postgres as baseline
-3. Connect SPSC consumers to all matching engines (direct)
-4. Connect SPSC consumer to main (tip sync channel)
+3. Connect CMP/UDP receivers to all matching engines (direct)
+4. Replica sync channel not implemented in v1
 5. Replica loop:
    - Buffer fills from MEs into `Vec<Fill>` per symbol
      (already ordered)

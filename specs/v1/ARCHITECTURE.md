@@ -1,7 +1,7 @@
 # Architecture
 
 Perpetuals exchange. Fixed-point arithmetic, single-threaded
-matching per symbol, SPSC rings for IPC, WAL-based recovery.
+matching per symbol, CMP/UDP between processes, WAL-based recovery.
 
 ## System Overview
 
@@ -16,13 +16,13 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
                     | (monoio)   |  auth, rate limit, ingress bp
                     +-----+------+
                           | CMP/UDP
-                    +-----v------+     SPSC    +---------------+
+                    +-----v------+   CMP/UDP   +---------------+
                     |   Risk     +------------>| Matching Eng  |
                     |  Engine    |<------------+ (1 per symbol) |
-                    | (1 shard)  |  SPSC fills +-------+-------+
+                    | (1 shard)  |  CMP fills  +-------+-------+
                     +--+---+--+-+              |       |
                        |   |  |          +-----+  +----+-----+
-              CMP/UDP  |   |  | SPSC     |WAL     |SPSC      |SPSC
+              CMP/UDP  |   |  | CMP/UDP  |WAL     |CMP/UDP   |CMP/UDP
               +--------+   |  +------+   |        |          |
               v            |         v   v        v          v
          +--------+  +----+---+ +--------+  +---------+ +--------+
@@ -38,8 +38,7 @@ Transports:
 - **Between processes:** CMP/UDP for hot path; WAL/TCP for cold path
   (Gateway↔Risk↔ME). One record per datagram or TCP byte stream.
 - **Within each process:** tiles (pinned threads) + SPSC
-  rings (rtrb, 50-170ns). Every process uses tiles for
-  its internal concerns (network I/O, logic, WAL, etc).
+  rings (rtrb, 50-170ns) for internal handoff only.
 - **DXS:** WAL streaming to consumers (recorder, mark).
   Transport is WAL/TCP on the cold path.
 
@@ -94,7 +93,7 @@ triggers liquidation if equity < maintenance margin.
 ## Hot Path
 
 Single-threaded ME per symbol. Dedicated pinned core.
-Bare busy-spin on SPSC rings (no spin_loop, no yield).
+Bare busy-spin on event loop (no spin_loop, no yield).
 
 Key structures:
 - OrderSlot: 128B, `#[repr(C, align(64))]`, hot fields in
@@ -108,7 +107,7 @@ Zero heap allocation during matching. All prices/quantities
 are i64 fixed-point (never float). Price-to-index via
 bisection: 2-3 comparisons (~2-5ns).
 
-Latency targets (same machine, SPSC):
+Latency targets (same machine, intra-process SPSC):
 - ME insert/match/cancel: 100-500ns
 - SPSC hop: 50-170ns
 - Risk fill processing: <1us
