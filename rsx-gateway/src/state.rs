@@ -3,7 +3,9 @@ use crate::pending::PendingOrders;
 use crate::rate_limit::RateLimiter;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::time::Duration;
+use rsx_types::SymbolConfig;
 
 /// Per-connection state.
 pub struct ConnectionState {
@@ -18,7 +20,9 @@ pub struct GatewayState {
     pub pending: PendingOrders,
     pub next_conn_id: u64,
     pub user_limiters: FxHashMap<u32, RateLimiter>,
+    pub ip_limiters: FxHashMap<IpAddr, RateLimiter>,
     pub circuit: CircuitBreaker,
+    pub symbol_configs: Vec<SymbolConfig>,
 }
 
 impl GatewayState {
@@ -26,16 +30,19 @@ impl GatewayState {
         max_pending: usize,
         circuit_threshold: u32,
         circuit_cooldown_ms: u64,
+        symbol_configs: Vec<SymbolConfig>,
     ) -> Self {
         Self {
             connections: FxHashMap::default(),
             pending: PendingOrders::new(max_pending),
             next_conn_id: 0,
             user_limiters: FxHashMap::default(),
+            ip_limiters: FxHashMap::default(),
             circuit: CircuitBreaker::new(
                 circuit_threshold,
                 Duration::from_millis(circuit_cooldown_ms),
             ),
+            symbol_configs,
         }
     }
 

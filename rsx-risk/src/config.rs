@@ -18,6 +18,24 @@ impl Default for LiquidationConfig {
     }
 }
 
+pub struct ReplicationConfig {
+    pub is_replica: bool,
+    pub lease_poll_interval_ms: u64,
+    pub lease_renew_interval_ms: u64,
+    pub replica_sync_ring_size: usize,
+}
+
+impl Default for ReplicationConfig {
+    fn default() -> Self {
+        Self {
+            is_replica: false,
+            lease_poll_interval_ms: 500,
+            lease_renew_interval_ms: 1000,
+            replica_sync_ring_size: 1024,
+        }
+    }
+}
+
 pub struct ShardConfig {
     pub shard_id: u32,
     pub shard_count: u32,
@@ -27,6 +45,7 @@ pub struct ShardConfig {
     pub maker_fee_bps: Vec<i64>,
     pub funding_config: FundingConfig,
     pub liquidation_config: LiquidationConfig,
+    pub replication_config: ReplicationConfig,
 }
 
 fn env_u32(key: &str, default: u32) -> u32 {
@@ -37,6 +56,20 @@ fn env_u32(key: &str, default: u32) -> u32 {
 }
 
 fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -62,6 +95,13 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         maker_fee_bps.push(-1); // -0.01% rebate
     }
 
+    let is_replica =
+        env_bool("RSX_RISK_IS_REPLICA", false);
+    let lease_poll_interval_ms =
+        env_u64("RSX_RISK_LEASE_POLL_MS", 500);
+    let lease_renew_interval_ms =
+        env_u64("RSX_RISK_LEASE_RENEW_MS", 1000);
+
     Ok(ShardConfig {
         shard_id,
         shard_count,
@@ -72,5 +112,11 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         funding_config: FundingConfig::default(),
         liquidation_config:
             LiquidationConfig::default(),
+        replication_config: ReplicationConfig {
+            is_replica,
+            lease_poll_interval_ms,
+            lease_renew_interval_ms,
+            replica_sync_ring_size: 1024,
+        },
     })
 }

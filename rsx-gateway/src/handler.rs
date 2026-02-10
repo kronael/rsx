@@ -1,3 +1,5 @@
+use crate::convert::validate_lot_alignment;
+use crate::convert::validate_tick_alignment;
 use crate::order_id::generate_order_id;
 use crate::order_id::hex_to_order_id;
 use crate::order_id::order_id_to_hex;
@@ -6,6 +8,7 @@ use crate::protocol::parse;
 use crate::protocol::serialize;
 use crate::protocol::CancelKey;
 use crate::protocol::WsFrame;
+use crate::rate_limit::per_ip;
 use crate::rate_limit::per_user;
 use crate::state::GatewayState;
 use crate::ws::ws_handshake;
@@ -17,26 +20,33 @@ use rsx_dxs::records::CancelRequest;
 use rsx_dxs::records::RECORD_CANCEL_REQUEST;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_risk::types::OrderRequest;
-use std::cell::RefCell;
-use std::rc::Rc;
 use rsx_types::time::time_ms;
 use rsx_types::time::time_ns;
+use std::cell::RefCell;
+use std::net::SocketAddr;
+use std::rc::Rc;
 use tracing::info;
 use tracing::warn;
 
 pub async fn handle_connection(
     mut stream: TcpStream,
+    peer: SocketAddr,
     state: Rc<RefCell<GatewayState>>,
     cmp_sender: Rc<RefCell<CmpSender>>,
+    jwt_secret: &str,
 ) {
-    let user_id =
-        match ws_handshake(&mut stream).await {
-            Ok((_key, uid)) => uid,
-            Err(e) => {
-                warn!("handshake failed: {e}");
-                return;
-            }
-        };
+    let user_id = match ws_handshake(
+        &mut stream,
+        jwt_secret,
+    )
+    .await
+    {
+        Ok((_key, uid)) => uid,
+        Err(e) => {
+            warn!("handshake failed: {e}");
+            return;
+        }
+    };
 
     let conn_id =
         state.borrow_mut().add_connection(user_id);
@@ -157,6 +167,24 @@ pub async fn handle_connection(
             } => {
                 {
                     let mut st = state.borrow_mut();
+                    let ip_limiter = st
+                        .ip_limiters
+                        .entry(peer.ip())
+                        .or_insert_with(per_ip);
+                    if !ip_limiter.try_consume() {
+                        drop(st);
+                        send_error(
+                            &mut stream,
+                            1006,
+                            "rate limited",
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+
+                {
+                    let mut st = state.borrow_mut();
                     let limiter = st
                         .user_limiters
                         .entry(user_id)
@@ -181,6 +209,48 @@ pub async fn handle_connection(
                             &mut stream,
                             5,
                             "overloaded",
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+
+                // Tick/lot validation
+                {
+                    let st = state.borrow();
+                    let sid = symbol_id as usize;
+                    if sid >= st.symbol_configs.len() {
+                        drop(st);
+                        send_error(
+                            &mut stream,
+                            1007,
+                            "unknown symbol",
+                        )
+                        .await;
+                        continue;
+                    }
+                    let cfg = &st.symbol_configs[sid];
+                    if !validate_tick_alignment(
+                        price,
+                        cfg.tick_size,
+                    ) {
+                        drop(st);
+                        send_error(
+                            &mut stream,
+                            1008,
+                            "price not tick aligned",
+                        )
+                        .await;
+                        continue;
+                    }
+                    if !validate_lot_alignment(
+                        qty, cfg.lot_size,
+                    ) {
+                        drop(st);
+                        send_error(
+                            &mut stream,
+                            1009,
+                            "qty not lot aligned",
                         )
                         .await;
                         continue;

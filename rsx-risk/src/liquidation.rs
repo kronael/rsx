@@ -26,6 +26,17 @@ pub struct LiquidationOrder {
     pub qty: i64,
 }
 
+#[derive(Clone, Debug)]
+pub struct SocializedLoss {
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub round: u32,
+    pub side: u8,
+    pub price: i64,
+    pub qty: i64,
+    pub timestamp_ns: u64,
+}
+
 pub struct LiquidationEngine {
     pub active: Vec<LiquidationState>,
     base_delay_ns: u64,
@@ -76,8 +87,9 @@ impl LiquidationEngine {
         now_ns: u64,
         get_position_fn: &dyn Fn(u32, u32) -> i64,
         get_mark_fn: &dyn Fn(u32) -> i64,
-    ) -> Vec<LiquidationOrder> {
+    ) -> (Vec<LiquidationOrder>, Vec<SocializedLoss>) {
         let mut orders = Vec::new();
+        let mut socialized = Vec::new();
         for state in &mut self.active {
             if state.status != LiquidationStatus::Active {
                 continue;
@@ -99,14 +111,33 @@ impl LiquidationEngine {
             if mark == 0 {
                 continue;
             }
+
+            if state.round > self.max_rounds {
+                let (side, price) = if net_qty > 0 {
+                    (1u8, mark)
+                } else {
+                    (0u8, mark)
+                };
+                let qty = net_qty.abs();
+                socialized.push(SocializedLoss {
+                    user_id: state.user_id,
+                    symbol_id: state.symbol_id,
+                    round: state.round,
+                    side,
+                    price,
+                    qty,
+                    timestamp_ns: now_ns,
+                });
+                state.status = LiquidationStatus::Done;
+                continue;
+            }
+
             let slip = state.round as i64
                 * state.round as i64
                 * self.base_slip_bps;
             let (side, price) = if net_qty > 0 {
-                // Long -> sell
                 (1u8, mark * (10_000 - slip) / 10_000)
             } else {
-                // Short -> buy
                 (0u8, mark * (10_000 + slip) / 10_000)
             };
             let qty = net_qty.abs();
@@ -119,11 +150,8 @@ impl LiquidationEngine {
             });
             state.last_order_ns = now_ns;
             state.round += 1;
-            if state.round > self.max_rounds {
-                state.status = LiquidationStatus::Done;
-            }
         }
-        orders
+        (orders, socialized)
     }
 
     pub fn cancel_if_recovered(

@@ -76,6 +76,7 @@ fn main() {
         config.heartbeat_timeout_ms * NS_PER_MS;
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
+    let jwt_secret = config.jwt_secret.clone();
 
     let mut rt =
         monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
@@ -89,6 +90,7 @@ fn main() {
                 max_pending,
                 circuit_threshold,
                 circuit_cooldown_ms,
+                config.symbol_configs,
             ),
         ));
         let sender =
@@ -98,17 +100,21 @@ fn main() {
         let ws_addr = listen_addr;
         let state_accept = state.clone();
         let sender_accept = sender.clone();
+        let jwt_secret_accept = jwt_secret.clone();
         monoio::spawn(async move {
             if let Err(e) =
                 rsx_gateway::ws::ws_accept_loop(
                     &ws_addr,
-                    move |stream| {
+                    move |stream, peer| {
                         let st = state_accept.clone();
                         let snd =
                             sender_accept.clone();
+                        let secret =
+                            jwt_secret_accept.clone();
                         monoio::spawn(async move {
                             handle_connection(
-                                stream, st, snd,
+                                stream, peer, st, snd,
+                                &secret,
                             )
                             .await;
                         });

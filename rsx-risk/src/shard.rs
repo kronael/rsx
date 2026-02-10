@@ -2,15 +2,18 @@ use crate::account::Account;
 use crate::config::ShardConfig;
 use crate::funding;
 use crate::funding::FundingConfig;
+use crate::insurance::InsuranceFund;
 use crate::liquidation::LiquidationEngine;
 use crate::liquidation::LiquidationOrder;
 use crate::margin::ExposureIndex;
 use crate::margin::PortfolioMargin;
 use crate::persist::FundingPaymentRecord;
+use crate::persist::LiquidationEventRecord;
 use crate::persist::PersistEvent;
 use crate::persist::PersistFill;
 use crate::position::Position;
 use crate::price::IndexPrice;
+use crate::replica::ReplicaState;
 use crate::replay::ColdStartState;
 use crate::rings::OrderResponse;
 use crate::rings::ShardRings;
@@ -41,17 +44,27 @@ pub struct RiskShard {
     taker_fee_bps: Vec<i64>,
     maker_fee_bps: Vec<i64>,
     stashed_bbo: Vec<Option<BboUpdate>>,
+    pub insurance_funds: FxHashMap<u32, InsuranceFund>,
 
     pub config_versions: Vec<u64>,
     pub fills_processed: u64,
     pub orders_processed: u64,
+    pub backpressured: bool,
     persist_producer: Option<Producer<PersistEvent>>,
+    replica_tip_producer: Option<Producer<(u32, u64)>>,
+    pub replica_state: Option<ReplicaState>,
     pub liquidation: LiquidationEngine,
 }
 
 impl RiskShard {
     pub fn new(config: ShardConfig) -> Self {
         let max = config.max_symbols;
+        let replica_state =
+            if config.replication_config.is_replica {
+                Some(ReplicaState::new(max))
+            } else {
+                None
+            };
         Self {
             shard_id: config.shard_id,
             shard_count: config.shard_count,
@@ -73,10 +86,14 @@ impl RiskShard {
             taker_fee_bps: config.taker_fee_bps,
             maker_fee_bps: config.maker_fee_bps,
             stashed_bbo: vec![None; max],
+            insurance_funds: FxHashMap::default(),
             config_versions: vec![0u64; max],
             fills_processed: 0,
             orders_processed: 0,
+            backpressured: false,
             persist_producer: None,
+            replica_tip_producer: None,
+            replica_state,
             liquidation: LiquidationEngine::new(
                 config.liquidation_config.base_delay_ns,
                 config.liquidation_config.base_slip_bps
@@ -96,6 +113,7 @@ impl RiskShard {
     pub fn load_state(&mut self, state: ColdStartState) {
         self.accounts = state.accounts;
         self.positions = state.positions;
+        self.insurance_funds = state.insurance_funds;
         let len = self.tips.len().min(state.tips.len());
         self.tips[..len]
             .copy_from_slice(&state.tips[..len]);
@@ -104,9 +122,21 @@ impl RiskShard {
     fn push_persist(&mut self, event: PersistEvent) {
         if let Some(ref mut p) = self.persist_producer {
             if p.push(event).is_err() {
-                warn!("persist ring full, dropping");
+                warn!("persist ring full, stalling");
+                self.backpressured = true;
             }
         }
+    }
+
+    /// Per WAL.md: persist ring full -> stall hot path.
+    pub fn is_backpressured(&self) -> bool {
+        if self.backpressured {
+            return true;
+        }
+        if let Some(ref p) = self.persist_producer {
+            return p.slots() == 0;
+        }
+        false
     }
 
     pub fn user_in_shard(&self, user_id: u32) -> bool {
@@ -574,6 +604,63 @@ impl RiskShard {
         self.last_funding_id = new_id;
     }
 
+    /// LIQUIDATOR.md §9. Process socialized loss event.
+    /// Deduct loss from insurance fund, persist events.
+    fn process_socialized_loss(
+        &mut self,
+        loss: &crate::liquidation::SocializedLoss,
+        now_ns: u64,
+    ) {
+        let loss_amount = loss.qty * loss.price;
+
+        // Ensure insurance fund exists for symbol
+        let fund = self
+            .insurance_funds
+            .entry(loss.symbol_id)
+            .or_insert_with(|| {
+                InsuranceFund::new(loss.symbol_id, 0)
+            });
+
+        // Deduct from insurance fund (balance can go negative)
+        fund.deduct(loss_amount);
+
+        // Clone fund for persistence before releasing borrow
+        let fund_snapshot = fund.clone();
+
+        warn!(
+            "socialized loss: user={} symbol={} \
+             round={} qty={} price={} loss={}",
+            loss.user_id,
+            loss.symbol_id,
+            loss.round,
+            loss.qty,
+            loss.price,
+            loss_amount
+        );
+
+        // Persist liquidation event with status=3 (socialized)
+        self.push_persist(
+            PersistEvent::LiquidationEvent(
+                LiquidationEventRecord {
+                    user_id: loss.user_id,
+                    symbol_id: loss.symbol_id,
+                    round: loss.round,
+                    side: loss.side,
+                    price: loss.price,
+                    qty: loss.qty,
+                    slippage_bps: 0,
+                    status: 3,
+                    timestamp_ns: now_ns,
+                },
+            ),
+        );
+
+        // Persist updated insurance fund
+        self.push_persist(
+            PersistEvent::InsuranceFund(fund_snapshot),
+        );
+    }
+
     /// One iteration of the main loop.
     /// Priority: fills > orders > mark > bbo > funding.
     pub fn run_once(
@@ -581,6 +668,19 @@ impl RiskShard {
         rings: &mut ShardRings,
         now_secs: u64,
     ) {
+        // Backpressure: stall if persist ring full
+        if self.backpressured {
+            if let Some(ref p) = self.persist_producer {
+                if p.slots() > 0 {
+                    self.backpressured = false;
+                } else {
+                    return;
+                }
+            } else {
+                self.backpressured = false;
+            }
+        }
+
         // 1. Drain all fills (highest priority)
         for consumer in &mut rings.fill_consumers {
             while let Ok(fill) = consumer.pop() {
@@ -590,7 +690,7 @@ impl RiskShard {
 
         // 1b. Process pending liquidations
         let now_ns = now_secs * 1_000_000_000;
-        let liq_orders = {
+        let (liq_orders, socialized_losses) = {
             let positions = &self.positions;
             let mark_prices = &self.mark_prices;
             self.liquidation.maybe_process(
@@ -624,6 +724,12 @@ impl RiskShard {
                 );
             }
         }
+
+        // Process socialized losses (LIQUIDATOR.md §9)
+        for loss in &socialized_losses {
+            self.process_socialized_loss(loss, now_ns);
+        }
+
         self.liquidation.remove_done();
 
         // 2. Drain orders
@@ -655,5 +761,81 @@ impl RiskShard {
 
         // 5. Funding settlement
         self.maybe_settle_funding(now_secs);
+    }
+
+    pub fn set_replica_tip_producer(
+        &mut self,
+        producer: Producer<(u32, u64)>,
+    ) {
+        self.replica_tip_producer = Some(producer);
+    }
+
+    pub fn push_tip_to_replica(
+        &mut self,
+        symbol_id: u32,
+        tip: u64,
+    ) {
+        if let Some(ref mut p) = self.replica_tip_producer {
+            if p.push((symbol_id, tip)).is_err() {
+                warn!(
+                    "replica tip ring full for sym {}",
+                    symbol_id
+                );
+            }
+        }
+    }
+
+    pub fn is_replica(&self) -> bool {
+        self.replica_state.is_some()
+    }
+
+    pub fn buffer_fill_for_replica(
+        &mut self,
+        fill: FillEvent,
+    ) {
+        if let Some(ref mut r) = self.replica_state {
+            r.buffer_fill(fill);
+        }
+    }
+
+    pub fn apply_tip_from_main(
+        &mut self,
+        symbol_id: u32,
+        tip: u64,
+    ) {
+        if let Some(ref mut r) = self.replica_state {
+            r.apply_tip(symbol_id, tip);
+            let fills =
+                r.drain_fills_up_to_tip(symbol_id);
+            for fill in fills {
+                self.process_fill(&fill);
+            }
+        }
+    }
+
+    pub fn promote_from_replica(
+        &mut self,
+    ) -> Vec<FillEvent> {
+        if let Some(ref mut r) = self.replica_state {
+            let fills = r.drain_all_up_to_tips();
+            for fill in &fills {
+                self.process_fill(fill);
+            }
+            info!(
+                shard_id = self.shard_id,
+                fills_applied = fills.len(),
+                "promoted from replica"
+            );
+            fills
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn replica_buffered_count(&self) -> usize {
+        self.replica_state
+            .as_ref()
+            .map(|r| r.total_buffered())
+            .unwrap_or(0)
     }
 }

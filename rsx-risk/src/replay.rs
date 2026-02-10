@@ -1,4 +1,5 @@
 use crate::account::Account;
+use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::shard::RiskShard;
 use crate::types::FillEvent;
@@ -11,6 +12,7 @@ pub struct ColdStartState {
     pub accounts: FxHashMap<u32, Account>,
     pub positions: FxHashMap<(u32, u32), Position>,
     pub tips: Vec<u64>,
+    pub insurance_funds: FxHashMap<u32, InsuranceFund>,
 }
 
 pub async fn load_from_postgres(
@@ -91,10 +93,27 @@ pub async fn load_from_postgres(
         }
     }
 
+    let mut insurance_funds = FxHashMap::default();
+    let rows = client
+        .query(
+            "SELECT symbol_id, balance, version \
+             FROM insurance_fund",
+            &[],
+        )
+        .await?;
+    for row in &rows {
+        let sid: i32 = row.get(0);
+        let mut fund =
+            InsuranceFund::new(sid as u32, row.get(1));
+        fund.version = row.get::<_, i64>(2) as u64;
+        insurance_funds.insert(sid as u32, fund);
+    }
+
     Ok(ColdStartState {
         accounts,
         positions,
         tips,
+        insurance_funds,
     })
 }
 

@@ -17,8 +17,8 @@ use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
+use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker;
-use rsx_risk::replay::acquire_advisory_lock;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::replay::replay_from_wal;
 use rsx_risk::rings::MarkPriceUpdate;
@@ -34,9 +34,13 @@ use rsx_types::time::time;
 use std::env;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 fn main() {
     install_panic_handler();
@@ -48,14 +52,20 @@ fn main() {
     let shard_id = config.shard_id;
     let shard_count = config.shard_count;
     let max_symbols = config.max_symbols;
+    let is_replica = config.replication_config.is_replica;
 
     info!(
-        "risk shard {} starting ({} shards, {} symbols)",
-        shard_id, shard_count, max_symbols,
+        "risk shard {} starting ({} shards, {} symbols, replica={})",
+        shard_id, shard_count, max_symbols, is_replica,
     );
 
     loop {
-        match run(shard_id, max_symbols) {
+        let result = if is_replica {
+            run_replica(shard_id, max_symbols)
+        } else {
+            run_main(shard_id, max_symbols)
+        };
+        match result {
             Ok(()) => break,
             Err(e) => {
                 error!(
@@ -69,20 +79,29 @@ fn main() {
     }
 }
 
-fn run(
+fn run_main(
     shard_id: u32,
     max_symbols: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
+    let lease_renew_interval_ms = config.replication_config.lease_renew_interval_ms;
     let mut shard = RiskShard::new(config);
 
     let db_url = env::var("DATABASE_URL").ok();
-    if let Some(ref url) = db_url {
-        let rt =
+    let rt = if db_url.is_some() {
+        Some(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()?;
-        rt.block_on(async {
+                .build()?,
+        )
+    } else {
+        None
+    };
+
+    let mut lease = AdvisoryLease::new(shard_id);
+    let pg_client = if let Some(ref url) = db_url {
+        let rt = rt.as_ref().unwrap();
+        let client = rt.block_on(async {
             let (client, connection) =
                 tokio_postgres::connect(
                     url,
@@ -94,20 +113,24 @@ fn run(
                     error!("pg connection error: {e}");
                 }
             });
-            acquire_advisory_lock(&client, shard_id)
-                .await?;
+            lease.acquire(&client).await?;
             let state = load_from_postgres(
                 &client,
                 shard_id,
-                shard_id, // same shard
+                shard_id,
                 max_symbols,
             )
             .await?;
             shard.load_state(state);
             info!("cold start loaded from postgres");
-            Ok::<(), Box<dyn std::error::Error>>(())
+            Ok::<_, Box<dyn std::error::Error>>(
+                client,
+            )
         })?;
-    }
+        Some(client)
+    } else {
+        None
+    };
 
     let wal_dir = env::var("RSX_RISK_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".into());
@@ -125,6 +148,20 @@ fn run(
     let (persist_prod, persist_cons) =
         rtrb::RingBuffer::<PersistEvent>::new(8192);
     shard.set_persist_producer(persist_prod);
+
+    // Tip sync channel for replica (if replica is running)
+    let replica_addr: Option<SocketAddr> =
+        env::var("RSX_RISK_REPLICA_ADDR")
+            .ok()
+            .and_then(|s| s.parse().ok());
+    let mut tip_sender = replica_addr.map(|addr| {
+        CmpSender::new(
+            addr,
+            0,
+            Path::new(&wal_dir),
+        )
+        .expect("failed to create replica tip sender")
+    });
 
     if let Some(ref url) = db_url {
         let url = url.clone();
@@ -262,6 +299,9 @@ fn run(
     };
 
     info!("risk shard {} running", shard_id);
+
+    let mut last_lease_renew_secs = time();
+    let lease_renew_interval_secs = (lease_renew_interval_ms / 1000).max(1);
 
     loop {
         let now_secs = time();
@@ -512,5 +552,255 @@ fn run(
         mark_receiver.tick();
         me_sender.recv_control();
         gw_sender.recv_control();
+
+        // Send tips to replica if configured
+        if let Some(ref mut sender) = tip_sender {
+            for (symbol_id, &tip) in
+                shard.tips.iter().enumerate()
+            {
+                // Send tip update to replica
+                let tip_msg = TipSyncMessage {
+                    symbol_id: symbol_id as u32,
+                    tip,
+                    _pad: [0; 48],
+                };
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        &tip_msg as *const TipSyncMessage
+                            as *const u8,
+                        std::mem::size_of::<
+                            TipSyncMessage,
+                        >(),
+                    )
+                };
+                let _ = sender.send_raw(0x20, bytes);
+            }
+            let _ = sender.tick();
+        }
+
+        // Lease renewal (~1s interval)
+        if now_secs - last_lease_renew_secs
+            >= lease_renew_interval_secs
+        {
+            last_lease_renew_secs = now_secs;
+            if let (Some(ref client), Some(ref rt)) =
+                (&pg_client, &rt)
+            {
+                let held = rt.block_on(async {
+                    lease.renew(client).await
+                })?;
+                if !held {
+                    error!(
+                        "lease lost, exiting for restart"
+                    );
+                    return Err("lease lost".into());
+                }
+            }
+        }
     }
+}
+
+#[repr(C, align(64))]
+struct TipSyncMessage {
+    symbol_id: u32,
+    tip: u64,
+    _pad: [u8; 48],
+}
+
+fn run_replica(
+    shard_id: u32,
+    max_symbols: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_shard_config()?;
+    let mut shard = RiskShard::new(config);
+
+    let db_url = env::var("DATABASE_URL")
+        .expect("DATABASE_URL required for replica");
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    let mut lease = AdvisoryLease::new(shard_id);
+    let client = rt.block_on(async {
+        let (client, connection) =
+            tokio_postgres::connect(
+                &db_url,
+                tokio_postgres::NoTls,
+            )
+            .await?;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                error!("pg connection error: {e}");
+            }
+        });
+
+        // Try to acquire lock (should fail, main holds it)
+        match lease.try_acquire(&client).await {
+            Ok(true) => {
+                warn!(
+                    "replica acquired lock immediately, \
+                     main not running?"
+                );
+            }
+            Ok(false) => {
+                info!(
+                    "replica starting, main holds lock"
+                );
+            }
+            Err(e) => {
+                return Err(Box::new(e)
+                    as Box<dyn std::error::Error>);
+            }
+        }
+
+        // Load baseline state from Postgres
+        let state = load_from_postgres(
+            &client,
+            shard_id,
+            shard_id,
+            max_symbols,
+        )
+        .await?;
+        shard.load_state(state);
+        info!("replica loaded baseline from postgres");
+        Ok::<_, Box<dyn std::error::Error>>(client)
+    })?;
+
+    // Set up CMP receivers from MEs (same as main)
+    let me_addr: SocketAddr =
+        env::var("RSX_ME_CMP_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9100".into())
+            .parse()
+            .expect("invalid RSX_ME_CMP_ADDR");
+    let mut me_receiver = CmpReceiver::new(
+        "127.0.0.1:0".parse().unwrap(),
+        me_addr,
+        0,
+    )
+    .expect("failed to bind replica ME receiver");
+
+    // Replica receives tip sync from main
+    let replica_addr: SocketAddr =
+        env::var("RSX_RISK_REPLICA_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9111".into())
+            .parse()
+            .expect("invalid RSX_RISK_REPLICA_ADDR");
+    let main_addr: SocketAddr =
+        env::var("RSX_RISK_CMP_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9101".into())
+            .parse()
+            .expect("invalid RSX_RISK_CMP_ADDR");
+    let mut tip_receiver = CmpReceiver::new(
+        replica_addr, main_addr, 0,
+    )
+    .expect("failed to bind replica tip receiver");
+
+    let lease_poll_interval_ms = env::var(
+        "RSX_RISK_LEASE_POLL_MS",
+    )
+    .ok()
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(500u64);
+
+    let mut last_poll_ms = 0u64;
+    let promoted = Arc::new(AtomicBool::new(false));
+
+    info!(
+        "replica {} running, polling for promotion",
+        shard_id
+    );
+
+    loop {
+        let now_secs = time();
+        let now_ms = now_secs * 1000;
+
+        // Buffer fills from ME
+        while let Some((preamble, payload)) =
+            me_receiver.try_recv()
+        {
+            if preamble.record_type == RECORD_FILL
+                && payload.len()
+                    >= std::mem::size_of::<FillRecord>()
+            {
+                let fill = unsafe {
+                    std::ptr::read_unaligned(
+                        payload.as_ptr()
+                            as *const FillRecord,
+                    )
+                };
+                let fill_event = FillEvent {
+                    seq: fill.seq,
+                    symbol_id: fill.symbol_id,
+                    taker_user_id: fill.taker_user_id,
+                    maker_user_id: fill.maker_user_id,
+                    price: fill.price,
+                    qty: fill.qty,
+                    taker_side: fill.taker_side,
+                    timestamp_ns: fill.ts_ns,
+                };
+                shard.buffer_fill_for_replica(fill_event);
+            }
+        }
+
+        // Receive tip sync from main
+        while let Some((preamble, payload)) =
+            tip_receiver.try_recv()
+        {
+            if preamble.record_type == 0x20
+                && payload.len()
+                    >= std::mem::size_of::<
+                        TipSyncMessage,
+                    >()
+            {
+                let msg = unsafe {
+                    std::ptr::read_unaligned(
+                        payload.as_ptr()
+                            as *const TipSyncMessage,
+                    )
+                };
+                shard.apply_tip_from_main(
+                    msg.symbol_id,
+                    msg.tip,
+                );
+            }
+        }
+
+        // Poll for advisory lock
+        if now_ms - last_poll_ms
+            >= lease_poll_interval_ms
+        {
+            last_poll_ms = now_ms;
+            let acquired = rt.block_on(async {
+                lease.try_acquire(&client).await
+            })?;
+            if acquired {
+                info!(
+                    "replica acquired lock, promoting"
+                );
+                promoted.store(true, Ordering::Release);
+                break;
+            }
+        }
+
+        me_receiver.tick();
+        tip_receiver.tick();
+    }
+
+    // Promotion: apply buffered fills up to last tips
+    info!(
+        "promoting replica to main, buffered={}",
+        shard.replica_buffered_count()
+    );
+    let fills = shard.promote_from_replica();
+    info!(
+        "promotion applied {} fills, restarting as main",
+        fills.len()
+    );
+
+    // After promotion, restart as main
+    drop(lease);
+    drop(client);
+    std::env::set_var("RSX_RISK_IS_REPLICA", "false");
+    run_main(shard_id, max_symbols)
 }
