@@ -1,3 +1,4 @@
+use crate::config::CmpConfig;
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
@@ -19,12 +20,6 @@ use std::time::Duration;
 use std::time::Instant;
 use tracing::warn;
 
-const REORDER_BUF_LIMIT: usize = 512;
-const HEARTBEAT_INTERVAL: Duration =
-    Duration::from_millis(10);
-const STATUS_INTERVAL: Duration =
-    Duration::from_millis(10);
-const DEFAULT_WINDOW: u64 = 64 * 1024;
 /// UDP send/recv buffer = header(16) + max payload(65535)
 const PACKET_BUF_SIZE: usize = 65536;
 
@@ -36,6 +31,7 @@ pub struct CmpSender {
     peer_consumption_seq: u64,
     peer_window: u64,
     last_heartbeat: Instant,
+    heartbeat_interval: Duration,
     wal_dir: PathBuf,
     buf: [u8; PACKET_BUF_SIZE],
 }
@@ -46,6 +42,20 @@ impl CmpSender {
         stream_id: u32,
         wal_dir: &std::path::Path,
     ) -> io::Result<Self> {
+        Self::with_config(
+            dest,
+            stream_id,
+            wal_dir,
+            &CmpConfig::default(),
+        )
+    }
+
+    pub fn with_config(
+        dest: SocketAddr,
+        stream_id: u32,
+        wal_dir: &std::path::Path,
+        config: &CmpConfig,
+    ) -> io::Result<Self> {
         let socket =
             UdpSocket::bind("0.0.0.0:0")?;
         socket.set_nonblocking(true)?;
@@ -55,8 +65,11 @@ impl CmpSender {
             stream_id,
             next_seq: 1,
             peer_consumption_seq: 0,
-            peer_window: DEFAULT_WINDOW,
+            peer_window: config.default_window,
             last_heartbeat: Instant::now(),
+            heartbeat_interval: Duration::from_millis(
+                config.heartbeat_interval_ms,
+            ),
             wal_dir: wal_dir.to_path_buf(),
             buf: [0u8; PACKET_BUF_SIZE],
         })
@@ -100,7 +113,7 @@ impl CmpSender {
     pub fn tick(&mut self) -> io::Result<()> {
         let now = Instant::now();
         if now.duration_since(self.last_heartbeat)
-            >= HEARTBEAT_INTERVAL
+            >= self.heartbeat_interval
         {
             let hb = CmpHeartbeat {
                 highest_seq: self.next_seq
@@ -274,7 +287,9 @@ pub struct CmpReceiver {
     expected_seq: u64,
     highest_seen: u64,
     reorder_buf: BTreeMap<u64, Vec<u8>>,
+    reorder_buf_limit: usize,
     last_status: Instant,
+    status_interval: Duration,
     window: u64,
     buf: [u8; PACKET_BUF_SIZE],
 }
@@ -285,6 +300,20 @@ impl CmpReceiver {
         sender_addr: SocketAddr,
         _stream_id: u32,
     ) -> io::Result<Self> {
+        Self::with_config(
+            bind_addr,
+            sender_addr,
+            _stream_id,
+            &CmpConfig::default(),
+        )
+    }
+
+    pub fn with_config(
+        bind_addr: SocketAddr,
+        sender_addr: SocketAddr,
+        _stream_id: u32,
+        config: &CmpConfig,
+    ) -> io::Result<Self> {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_nonblocking(true)?;
         Ok(Self {
@@ -293,8 +322,13 @@ impl CmpReceiver {
             expected_seq: 1,
             highest_seen: 0,
             reorder_buf: BTreeMap::new(),
+            reorder_buf_limit: config
+                .reorder_buf_limit,
             last_status: Instant::now(),
-            window: DEFAULT_WINDOW,
+            status_interval: Duration::from_millis(
+                config.status_interval_ms,
+            ),
+            window: config.default_window,
             buf: [0u8; PACKET_BUF_SIZE],
         })
     }
@@ -390,7 +424,7 @@ impl CmpReceiver {
                         return Some((hdr, data));
                     } else {
                         if self.reorder_buf.len()
-                            < REORDER_BUF_LIMIT
+                            < self.reorder_buf_limit
                         {
                             let mut full =
                                 Vec::with_capacity(
@@ -492,7 +526,7 @@ impl CmpReceiver {
     pub fn tick(&mut self) {
         let now = Instant::now();
         if now.duration_since(self.last_status)
-            >= STATUS_INTERVAL
+            >= self.status_interval
         {
             let msg = StatusMessage {
                 consumption_seq: self

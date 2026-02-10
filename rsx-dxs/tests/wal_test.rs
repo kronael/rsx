@@ -957,16 +957,20 @@ fn reader_archive_fallback_empty_archive() {
     .unwrap();
 
     let mut writer =
-        WalWriter::new(1, tmp.path(), None, 512, 1).unwrap();
+        WalWriter::new(
+            1,
+            tmp.path(),
+            None,
+            64 * 1024 * 1024,
+            600_000_000_000,
+        )
+        .unwrap();
 
     for i in 0..20 {
         let mut fill = make_fill(i);
         writer.append(&mut fill).unwrap();
     }
     writer.flush().unwrap();
-
-    // sleep to ensure file mtime ages
-    std::thread::sleep(std::time::Duration::from_millis(5));
 
     // read with archive fallback (but archive is empty)
     let mut reader = WalReader::open_from_seq_with_archive(

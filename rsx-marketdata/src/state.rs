@@ -18,6 +18,8 @@ pub struct MarketDataState {
     subs: SubscriptionManager,
     books: Vec<Option<ShadowBook>>,
     last_bbo: Vec<Option<BboUpdate>>,
+    expected_seq: Vec<u64>,
+    gap_count: u64,
     base_config: SymbolConfig,
     book_capacity: u32,
     mid_price_default: i64,
@@ -36,6 +38,8 @@ impl MarketDataState {
             subs: SubscriptionManager::new(),
             books: (0..max_symbols).map(|_| None).collect(),
             last_bbo: (0..max_symbols).map(|_| None).collect(),
+            expected_seq: vec![0; max_symbols],
+            gap_count: 0,
             base_config,
             book_capacity,
             mid_price_default,
@@ -171,6 +175,64 @@ impl MarketDataState {
 
     pub fn last_bbo_mut(&mut self, symbol_id: u32) -> Option<&mut Option<BboUpdate>> {
         self.last_bbo.get_mut(symbol_id as usize)
+    }
+
+    /// Track sequence for a symbol. Returns true if a gap
+    /// was detected (caller should trigger snapshot resend).
+    pub fn check_seq(
+        &mut self,
+        symbol_id: u32,
+        seq: u64,
+    ) -> bool {
+        let idx = symbol_id as usize;
+        if idx >= self.expected_seq.len() || seq == 0 {
+            return false;
+        }
+        let expected = self.expected_seq[idx];
+        if expected == 0 {
+            // first seq seen for this symbol
+            self.expected_seq[idx] = seq + 1;
+            return false;
+        }
+        if seq == expected {
+            self.expected_seq[idx] = seq + 1;
+            return false;
+        }
+        if seq > expected {
+            // gap detected
+            self.gap_count += 1;
+            self.expected_seq[idx] = seq + 1;
+            return true;
+        }
+        // seq < expected: duplicate, ignore
+        false
+    }
+
+    pub fn gap_count(&self) -> u64 {
+        self.gap_count
+    }
+
+    /// Broadcast L2 snapshot to all depth subscribers
+    /// for a symbol (used after seq gap detection).
+    pub fn resend_snapshot(
+        &mut self,
+        symbol_id: u32,
+        depth: u32,
+        max_outbound: usize,
+    ) {
+        if let Some(snapshot) = self.snapshot_msg(symbol_id, depth)
+        {
+            let clients = self.subs.clients_for_symbol(symbol_id);
+            for client_id in clients {
+                if self.subs.has_depth(client_id, symbol_id) {
+                    self.push_to_client(
+                        client_id,
+                        snapshot.clone(),
+                        max_outbound,
+                    );
+                }
+            }
+        }
     }
 
     pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {

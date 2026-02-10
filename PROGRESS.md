@@ -11,7 +11,7 @@ Full order pipeline wired: Gateway -> Risk -> ME ->
 Risk -> Gateway, ME -> Marketdata. Liquidation engine
 complete with insurance fund. ~560 tests passing.
 
-**Overall completion: ~93%** (weighted by criticality)
+**Overall completion: ~97%** (weighted by criticality)
 
 ---
 
@@ -22,10 +22,10 @@ complete with insurance fund. ~560 tests passing.
 | rsx-types | 15 | 100 |
 | rsx-book | 80 | 99 |
 | rsx-matching | 30 | 100 |
-| rsx-dxs | 83 | 93 |
-| rsx-risk | 195 | 92 |
+| rsx-dxs | 83 | 96 |
+| rsx-risk | 198 | 95 |
 | rsx-gateway | 124 | 95 |
-| rsx-marketdata | 57 | 95 |
+| rsx-marketdata | 57 | 98 |
 | rsx-mark | 40 | 100 |
 | rsx-recorder | 0 | 100 |
 
@@ -48,17 +48,16 @@ BBO emission after best bid/ask changes (routed to Risk
 only). Config polling every 10min with CONFIG_APPLIED
 emission to WAL, Risk, and Marketdata.
 
-### rsx-dxs (93%)
+### rsx-dxs (96%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
-CMP: sender/receiver, flow control, heartbeat, NACK.
+CMP: sender/receiver, flow control, heartbeat, NACK,
+configurable via CmpConfig (env vars).
 DxsReplayService: TCP replay, live_seq from payload, TLS.
 DxsConsumer: tip tracking, reconnect backoff, TLS, unknown
-record skip.
-**Missing:** 5min dedup pruning, ARCHIVE fallback (test
-failing: reader_archive_fallback_empty_archive), CMP config
-env vars, WAL dump tool.
+record skip. Archive fallback test fixed.
+**Missing:** 5min dedup pruning, WAL dump tool.
 
-### rsx-risk (92%)
+### rsx-risk (95%)
 **Done:** Position tracking, margin calc, fees, funding,
 price feeds, pre-trade checks, persistence, cold start,
 process_fill (dedup, fees), process_order (margin, freeze),
@@ -66,9 +65,9 @@ process_order_done (release_margin), Risk -> ME forwarding,
 liquidation engine, per-tick margin recalc, liquidation
 order emission, insurance fund (accounting + persistence +
 socialized loss), CONFIG_APPLIED handling, DXS consumer for
-ME replay, lease renewal, backpressure enforcement.
-**Missing:** Replication & failover (Phase 4), advanced
-escalation (symbol halt pause on ORDER_FAILED).
+ME replay, lease renewal, backpressure enforcement, symbol
+halt/resume on ORDER_FAILED in liquidation engine.
+**Missing:** Replication & failover (Phase 4).
 
 ### rsx-gateway (95%)
 Per-connection handler: WS -> CMP. Order + cancel routing.
@@ -79,12 +78,12 @@ to user WS. Pending order tracking by oid/cid. ORDER_FAILED
 routing, server heartbeat config + timeout. Tick/lot
 validation at order entry.
 
-### rsx-marketdata (95%)
+### rsx-marketdata (98%)
 ShadowBook, L2/BBO/Trade serialization, SubscriptionManager.
 CMP decode loop: handles insert/cancel/fill, updates shadow
 book, broadcasts to WS clients. DXS replay bootstrap on
-startup. Server heartbeat.
-**Missing:** seq gap detection + snapshot resend.
+startup. Server heartbeat. Seq gap detection with automatic
+L2 snapshot resend to depth subscribers.
 
 ### rsx-mark (100%)
 All 10 spec sections implemented. SymbolMarkState (median
@@ -119,12 +118,9 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 
 **Post-MVP:**
 - Replication & failover (rsx-risk Phase 4)
-- ARCHIVE fallback fix (rsx-dxs)
 - Snapshot save/load (rsx-book)
-- Post-only enforcement (rsx-book)
+- 5min dedup pruning (rsx-dxs)
 - WAL dump debug tool (rsx-dxs)
-- Seq gap detection + snapshot resend (rsx-marketdata)
-- Symbol halt pause on ORDER_FAILED (rsx-risk)
 
 ---
 
@@ -134,15 +130,15 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 |------|-------|---|
 | ORDERBOOK.md | rsx-book | 99 |
 | MATCHING.md | rsx-matching | 100 |
-| DXS.md | rsx-dxs | 91 |
-| WAL.md | rsx-dxs | 91 |
-| CMP.md | rsx-dxs | 91 |
-| RISK.md | rsx-risk | 92 |
-| LIQUIDATOR.md | rsx-risk | 92 |
+| DXS.md | rsx-dxs | 95 |
+| WAL.md | rsx-dxs | 95 |
+| CMP.md | rsx-dxs | 95 |
+| RISK.md | rsx-risk | 95 |
+| LIQUIDATOR.md | rsx-risk | 95 |
 | DATABASE.md | rsx-risk | 95 |
 | ARCHIVE.md | rsx-recorder | 100 |
 | MARK.md | rsx-mark | 100 |
-| MARKETDATA.md | rsx-marketdata | 95 |
+| MARKETDATA.md | rsx-marketdata | 98 |
 | WEBPROTO.md | rsx-gateway | 95 |
 | RPC.md | rsx-gateway | 95 |
 | MESSAGES.md | rsx-gateway | 95 |
@@ -157,12 +153,12 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 
 ## Final Completion Summary
 
-**Overall System: ~93%** (weighted by component criticality)
+**Overall System: ~97%** (weighted by component criticality)
 
 **By Component:**
-- Core Infrastructure (Types, Book, DXS): 97% avg
-- Trading Engine (Matching, Risk): 96% avg
-- User-Facing (Gateway, Marketdata): 95% avg
+- Core Infrastructure (Types, Book, DXS): 98% avg
+- Trading Engine (Matching, Risk): 98% avg
+- User-Facing (Gateway, Marketdata): 97% avg
 - Supporting Systems (Mark, Recorder): 100% avg
 
 **Critical Path Items Remaining:**

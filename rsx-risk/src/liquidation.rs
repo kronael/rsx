@@ -39,6 +39,7 @@ pub struct SocializedLoss {
 
 pub struct LiquidationEngine {
     pub active: Vec<LiquidationState>,
+    halted_symbols: Vec<bool>,
     base_delay_ns: u64,
     base_slip_bps: i64,
     max_rounds: u32,
@@ -52,10 +53,34 @@ impl LiquidationEngine {
     ) -> Self {
         Self {
             active: Vec::new(),
+            halted_symbols: Vec::new(),
             base_delay_ns,
             base_slip_bps,
             max_rounds,
         }
+    }
+
+    /// Halt liquidation for a symbol (e.g. on ORDER_FAILED).
+    pub fn halt_symbol(&mut self, symbol_id: u32) {
+        let idx = symbol_id as usize;
+        if idx >= self.halted_symbols.len() {
+            self.halted_symbols.resize(idx + 1, false);
+        }
+        self.halted_symbols[idx] = true;
+    }
+
+    /// Resume liquidation for a symbol.
+    pub fn resume_symbol(&mut self, symbol_id: u32) {
+        let idx = symbol_id as usize;
+        if idx < self.halted_symbols.len() {
+            self.halted_symbols[idx] = false;
+        }
+    }
+
+    pub fn is_halted(&self, symbol_id: u32) -> bool {
+        let idx = symbol_id as usize;
+        idx < self.halted_symbols.len()
+            && self.halted_symbols[idx]
     }
 
     pub fn enqueue(
@@ -92,6 +117,12 @@ impl LiquidationEngine {
         let mut socialized = Vec::new();
         for state in &mut self.active {
             if state.status != LiquidationStatus::Active {
+                continue;
+            }
+            let sid = state.symbol_id as usize;
+            if sid < self.halted_symbols.len()
+                && self.halted_symbols[sid]
+            {
                 continue;
             }
             let delay =
