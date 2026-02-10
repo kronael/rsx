@@ -23,7 +23,7 @@ core done. 549 tests passing across 42 test files.
 | rsx-types | 185 | 133 | 15 | 100 |
 | rsx-book | 1,290 | 1,151 | 75 | 99 |
 | rsx-matching | 777 | 454 | 11 | 90 |
-| rsx-dxs | 2,055 | 1,318 | 83 | 91 |
+| rsx-dxs | 2,055 | 1,318 | 83 | 93 |
 | rsx-risk | 1,995 | 2,397 | 171 | 75 |
 | rsx-gateway | 2,097 | 1,105 | 97 | 85 |
 | rsx-marketdata | 1,409 | 736 | 57 | 89 |
@@ -51,14 +51,14 @@ per MD20). OrderCancelled reason propagated. BBO emission after
 best bid/ask changes (routed to Risk only).
 **Missing:** CONFIG_APPLIED.
 
-### rsx-dxs (91%)
+### rsx-dxs (93%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
 CMP: sender/receiver, flow control, heartbeat, NACK.
 DxsReplayService: TCP replay, live_seq from payload, TLS.
-DxsConsumer: tip tracking, reconnect backoff, TLS.
-**Missing:** Unknown record type log+skip, 5min dedup
-pruning, ARCHIVE fallback, CMP config env vars,
-WAL dump tool.
+DxsConsumer: tip tracking, reconnect backoff, TLS, unknown
+record skip.
+**Missing:** 5min dedup pruning, ARCHIVE fallback, CMP
+config env vars, WAL dump tool.
 
 ### rsx-risk (75%)
 **Done:** Position tracking, margin calc, fees, funding,
