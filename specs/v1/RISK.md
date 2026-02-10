@@ -561,7 +561,7 @@ prints position state and margin after each fill.
 ### Phase 2: Fill Ingestion + Main Loop (mocked rings)
 
 RiskShard with main loop processing fills, orders, and BBO from
-mocked SPSC rings. No Postgres. State in-memory only.
+mocked CMP/UDP links. No Postgres. State in-memory only.
 
 **Demo:** Binary that creates a shard with mocked ME producers.
 Producers generate random fills. Shard processes, prints stats

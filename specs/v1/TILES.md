@@ -2,10 +2,11 @@
 
 ## Overview
 
-Every RSX process uses **tiles** -- pinned threads, one per
-concern, communicating via SPSC rings (rtrb, 50-170ns)
-within the process. Between processes: CMP/UDP (hot path)
-and WAL replication over TCP (cold path). See NETWORK.md.
+Tiles describe the intended thread-per-concern architecture.
+In v1 code, most processes run as a single main loop with
+inline concerns; SPSC rings are used only where implemented.
+Between processes: CMP/UDP (hot path) and WAL/TCP (cold path).
+See NETWORK.md.
 
 ## Processes
 

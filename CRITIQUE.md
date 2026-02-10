@@ -6,46 +6,42 @@ This critique reflects the repo as it exists now. I did not run tests.
 
 ### Critical
 
-1) **Marketdata topology still violates spec.**
-   Spec calls for in-process SPSC fan-out from Matching; implementation
-   uses CMP/UDP and does not support DXS/WAL replay. This breaks ordering
-   guarantees and recovery expectations for marketdata.
-   - Files: `rsx-marketdata/src/main.rs`, `specs/v1/CONSISTENCY.md`
-
-2) **Risk does not release frozen margin on cancel/done events.**
-   `process_order_done` exists, but `OrderDoneEvent.frozen_amount` is set
-   to `0` and cancels do not trigger release at all. Margin can remain
-   over-reserved indefinitely.
+1) **Risk margin release is still incorrect on cancel/done.**
+   `OrderDoneEvent.frozen_amount` is set to 0 and cancels do not release
+   frozen margin at all. This over-reserves margin indefinitely.
    - Files: `rsx-risk/src/main.rs`, `rsx-risk/src/shard.rs`
+
+2) **Gateway has no client-visible rejection path when Risk rejects pre-trade.**
+   With pre-trade acks removed, a rejected order never reaches Matching,
+   so no event is emitted and the client gets no response.
+   - Files: `rsx-risk/src/main.rs`, `rsx-gateway/src/main.rs`
 
 ### High
 
-3) **Gateway emits no client-visible response on rejected orders.**
-   With ack removal, if Risk rejects an order before it reaches Matching,
-   the client never receives a response (no matching event). This violates
-   expected UX and can leave clients waiting until timeout.
-   - Files: `rsx-risk/src/main.rs`, `rsx-gateway/src/main.rs`, `specs/v1/WEBPROTO.md`
+3) **Marketdata WS flow still incomplete.**
+   No snapshot on subscribe when book is empty, no seq-gap detection,
+   no resubscribe-on-backpressure. Deltas can be silently dropped.
+   - Files: `rsx-marketdata/src/main.rs`, `rsx-marketdata/src/state.rs`
 
-4) **Marketdata WS flow is incomplete relative to spec.**
-   No snapshot on subscribe when book is empty, no seq-gap detection, no
-   backpressure resubscribe path. Deltas can be silently dropped.
-   - Files: `rsx-marketdata/src/main.rs`, `rsx-marketdata/src/state.rs`,
-     `specs/v1/TESTING-MARKETDATA.md`
+4) **Risk not wired to mark/BBO feeds.**
+   `mark_prices` and `index_prices` remain zero unless manually updated;
+   risk checks can be wrong under real prices.
+   - Files: `rsx-risk/src/main.rs`, `rsx-risk/src/shard.rs`
 
 ### Medium
 
-5) **Order correlation for gateway cancel by client ID is still stateful.**
-   Gateway keeps a pending queue to resolve `cid -> order_id`, but no
-   matching event carries `client_order_id`. This means correlation still
-   depends on gateway state, contrary to the stated goal.
-   - Files: `rsx-gateway/src/pending.rs`, `rsx-gateway/src/handler.rs`
+5) **Marketdata recovery via DXS replay is not implemented.**
+   Specs now mark this as planned; code has no DXS consumer or replay.
+   - Files: `rsx-marketdata/src/main.rs`, `specs/v1/MARKETDATA.md`
 
 ## Verified Improvements
 
 - Gateway now routes `OrderInserted`, `OrderCancelled`, `OrderDone`, and
-  `Fill` events back to clients.
-- Risk forwards ME events to Gateway and no longer sends pre-trade acks.
-- Time utilities unified via `rsx-types/src/time.rs`.
+  `Fill` events to clients (no pre-trade ack).
+- Risk forwards ME events to Gateway via CMP/UDP.
+- Mark aggregator has connectors and a running main loop.
+- Time utilities unified in `rsx-types/src/time.rs`.
+- Specs updated to reflect CMP/UDP inter-process links.
 
 ## Test Reality
 
@@ -53,7 +49,6 @@ This critique reflects the repo as it exists now. I did not run tests.
 
 ## Bottom Line
 
-Order flow is closer to spec, but marketdata topology and risk margin
-release are still correctness blockers. Gateway correlation for `cid`
-still depends on local state, so stateless correlation has not been
-achieved.
+Order flow is closer to spec, but risk margin release and rejection
+visibility are still correctness blockers. Marketdata still needs
+snapshot/seq-gap/backpressure handling to be reliable.

@@ -27,7 +27,7 @@ fn make_fill(seq: u64) -> FillRecord {
 fn writer_assigns_monotonic_seq() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
     let mut fill1 = make_fill(0);
@@ -43,7 +43,7 @@ fn writer_assigns_monotonic_seq() {
 fn writer_append_to_buffer_no_io() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
     let mut fill = make_fill(1);
@@ -61,7 +61,7 @@ fn writer_append_to_buffer_no_io() {
 fn writer_flush_writes_to_file() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
     let mut fill = make_fill(1);
@@ -82,7 +82,7 @@ fn writer_rotation_at_threshold() {
     // 1KB threshold - each fill record is ~80 bytes
     // (16 header + 64 payload), so ~12 records to rotate
     let mut writer = WalWriter::new(
-        1, tmp.path(), 1024, 600_000_000_000,
+        1, tmp.path(), None, 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -109,7 +109,7 @@ fn writer_backpressure_stalls() {
     let tmp = TempDir::new().unwrap();
     // small max so backpressure = max(2*4096, 256KB) = 256KB
     let mut writer = WalWriter::new(
-        1, tmp.path(), 4096, 600_000_000_000,
+        1, tmp.path(), None, 4096, 600_000_000_000,
     )
     .unwrap();
 
@@ -140,7 +140,7 @@ fn writer_backpressure_stalls() {
 fn reader_sequential_iteration_all_records() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -163,7 +163,7 @@ fn reader_sequential_iteration_all_records() {
 fn reader_returns_none_at_eof() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -181,7 +181,7 @@ fn reader_returns_none_at_eof() {
 fn reader_crc32_invalid_truncates_stream() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -208,7 +208,7 @@ fn reader_crc32_invalid_truncates_stream() {
 fn reader_unknown_record_type_handled() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -239,7 +239,7 @@ fn write_rotate_read_across_files() {
     let tmp = TempDir::new().unwrap();
     // 1KB threshold to force multiple rotations
     let mut writer = WalWriter::new(
-        1, tmp.path(), 1024, 600_000_000_000,
+        1, tmp.path(), None, 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -264,7 +264,7 @@ fn gc_deletes_old_files() {
     let tmp = TempDir::new().unwrap();
     // 1KB threshold, retention = 1ns (basically zero)
     let mut writer =
-        WalWriter::new(1, tmp.path(), 1024, 1).unwrap();
+        WalWriter::new(1, tmp.path(), None, 1024, 1).unwrap();
 
     for i in 0..100 {
         let mut fill = make_fill(i);
@@ -290,7 +290,7 @@ fn reader_open_from_seq_finds_correct_file() {
     let tmp = TempDir::new().unwrap();
     // 512B threshold to force many rotations
     let mut writer =
-        WalWriter::new(1, tmp.path(), 512, 600_000_000_000)
+        WalWriter::new(1, tmp.path(), None, 512, 600_000_000_000)
             .unwrap();
 
     // Write 50 records across multiple files
@@ -315,7 +315,7 @@ fn reader_open_from_seq_finds_correct_file() {
 fn reader_skips_to_target_seq_within_file() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -344,7 +344,7 @@ fn writer_gc_preserves_recent_files() {
     let tmp = TempDir::new().unwrap();
     // 512B threshold, high retention so nothing gets gc'd
     let mut writer = WalWriter::new(
-        1, tmp.path(), 512, u64::MAX,
+        1, tmp.path(), None, 512, u64::MAX,
     )
     .unwrap();
 
@@ -370,7 +370,7 @@ fn writer_gc_preserves_recent_files() {
 fn record_max_payload_64kb() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -383,7 +383,7 @@ fn record_max_payload_64kb() {
 fn writer_empty_flush_no_io() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -401,7 +401,7 @@ fn writer_empty_flush_no_io() {
 fn writer_seq_starts_at_1() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -415,7 +415,7 @@ fn writer_seq_starts_at_1() {
 fn writer_gc_runs_on_rotation_not_timer() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 512, 1,
+        1, tmp.path(), None, 512, 1,
     )
     .unwrap();
 
@@ -437,7 +437,7 @@ fn writer_gc_runs_on_rotation_not_timer() {
 fn writer_flush_calls_fsync() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -457,7 +457,7 @@ fn writer_flush_calls_fsync() {
 fn writer_rotation_renames_with_seq_range() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 512, 600_000_000_000,
+        1, tmp.path(), None, 512, 600_000_000_000,
     )
     .unwrap();
 
@@ -486,7 +486,7 @@ fn writer_rotation_renames_with_seq_range() {
 fn writer_active_file_uses_temp_name() {
     let tmp = TempDir::new().unwrap();
     let _writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -501,7 +501,7 @@ fn writer_active_file_uses_temp_name() {
 fn reader_open_from_seq_0_starts_at_beginning() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -532,7 +532,7 @@ fn reader_handles_empty_wal_directory() {
 fn reader_handles_single_file() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -553,7 +553,7 @@ fn reader_handles_single_file() {
 fn reader_handles_multiple_files_sorted() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 512, 600_000_000_000,
+        1, tmp.path(), None, 512, 600_000_000_000,
     )
     .unwrap();
 
@@ -576,7 +576,7 @@ fn reader_handles_multiple_files_sorted() {
 fn reader_file_transition_seamless() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 512, 600_000_000_000,
+        1, tmp.path(), None, 512, 600_000_000_000,
     )
     .unwrap();
 
@@ -599,7 +599,7 @@ fn reader_file_transition_seamless() {
 fn reader_returns_none_when_caught_up() {
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024, 600_000_000_000,
+        1, tmp.path(), None, 64 * 1024 * 1024, 600_000_000_000,
     )
     .unwrap();
 
@@ -612,4 +612,376 @@ fn reader_returns_none_when_caught_up() {
     reader.next().unwrap();
     let result = reader.next().unwrap();
     assert!(result.is_none());
+}
+
+#[test]
+fn writer_archive_dir_created_on_init() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+    let _writer = WalWriter::new(
+        1,
+        tmp.path(),
+        Some(archive.clone()),
+        64 * 1024 * 1024,
+        600_000_000_000,
+    )
+    .unwrap();
+
+    let archive_stream_dir = archive.join("1");
+    assert!(
+        archive_stream_dir.exists(),
+        "archive dir not created"
+    );
+}
+
+#[test]
+fn writer_gc_moves_to_archive_instead_of_delete() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+
+    let mut writer = WalWriter::new(
+        1,
+        tmp.path(),
+        Some(archive.clone()),
+        1024,
+        1,
+    )
+    .unwrap();
+
+    for i in 0..100 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    writer.gc().unwrap();
+
+    let wal_dir = tmp.path().join("1");
+    let archive_dir = archive.join("1");
+
+    let wal_files: Vec<_> = std::fs::read_dir(&wal_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name_str = name.to_string_lossy();
+            !name_str.contains("active")
+        })
+        .collect();
+
+    let archive_files: Vec<_> = std::fs::read_dir(&archive_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+
+    assert!(
+        archive_files.len() > 0,
+        "no files moved to archive"
+    );
+    assert!(
+        wal_files.len() == 0,
+        "old files still in wal dir"
+    );
+}
+
+#[test]
+fn writer_archive_preserves_filename() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+
+    let mut writer = WalWriter::new(
+        1,
+        tmp.path(),
+        Some(archive.clone()),
+        512,
+        1,
+    )
+    .unwrap();
+
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    writer.gc().unwrap();
+
+    let archive_dir = archive.join("1");
+    let files: Vec<_> = std::fs::read_dir(&archive_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+
+    assert!(files.len() > 0);
+    for file in files {
+        let name = file.file_name();
+        let name_str = name.to_string_lossy();
+        assert!(
+            name_str.starts_with("1_"),
+            "filename format incorrect"
+        );
+        assert!(name_str.ends_with(".wal"));
+    }
+}
+
+#[test]
+fn reader_can_read_from_archive() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+
+    let mut writer = WalWriter::new(
+        1,
+        tmp.path(),
+        Some(archive.clone()),
+        512,
+        1,
+    )
+    .unwrap();
+
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    writer.gc().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, &archive).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert!(count > 0, "no records read from archive");
+}
+
+#[test]
+fn writer_without_archive_deletes_on_gc() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), None, 512, 1).unwrap();
+
+    for i in 0..50 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    writer.gc().unwrap();
+
+    let wal_dir = tmp.path().join("1");
+    let files: Vec<_> = std::fs::read_dir(&wal_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name_str = name.to_string_lossy();
+            !name_str.contains("active")
+        })
+        .collect();
+
+    assert_eq!(files.len(), 0, "old files not deleted");
+}
+
+#[test]
+fn reader_archive_fallback_when_seq_not_in_hot() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+
+    let mut writer = WalWriter::new(
+        1,
+        tmp.path(),
+        Some(archive.clone()),
+        512,
+        1,
+    )
+    .unwrap();
+
+    // write records that will get archived
+    for i in 0..50 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // trigger GC to move old files to archive
+    writer.gc().unwrap();
+
+    // write more records to hot WAL
+    for i in 50..60 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // request replay from seq 1 (which is now in archive)
+    let mut reader = WalReader::open_from_seq_with_archive(
+        1,
+        1,
+        tmp.path(),
+        Some(&archive),
+    )
+    .unwrap();
+
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+
+    // should read all records (archive + hot)
+    assert_eq!(count, 60, "should read from archive and hot");
+}
+
+#[test]
+fn reader_archive_to_hot_seamless_transition() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+
+    let mut writer = WalWriter::new(
+        1,
+        tmp.path(),
+        Some(archive.clone()),
+        512,
+        1,
+    )
+    .unwrap();
+
+    // write and archive first batch
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // sleep to ensure file mtime ages past retention
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    writer.gc().unwrap();
+
+    // check archive dir
+    let archive_dir = archive.join("1");
+    let archive_files: Vec<_> = std::fs::read_dir(&archive_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    eprintln!("Archive files after GC: {}", archive_files.len());
+
+    // write second batch to hot
+    for i in 30..50 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // read with archive fallback
+    let mut reader = WalReader::open_from_seq_with_archive(
+        1,
+        0,
+        tmp.path(),
+        Some(&archive),
+    )
+    .unwrap();
+
+    eprintln!("Reader wal_dir: {}", reader.wal_dir().display());
+
+    let mut seqs = Vec::new();
+    while let Ok(Some(rec)) = reader.next() {
+        if let Some(seq) = extract_seq(&rec.payload) {
+            seqs.push(seq);
+        }
+    }
+
+    eprintln!("Total records read: {}", seqs.len());
+
+    // verify continuous seq from 1 to 50
+    assert_eq!(seqs.len(), 50);
+    assert_eq!(seqs[0], 1);
+    assert_eq!(seqs[49], 50);
+    for i in 0..49 {
+        assert_eq!(
+            seqs[i] + 1,
+            seqs[i + 1],
+            "gap at seq {}",
+            seqs[i]
+        );
+    }
+}
+
+#[test]
+fn reader_no_archive_fallback_without_archive_dir() {
+    let tmp = TempDir::new().unwrap();
+
+    let mut writer =
+        WalWriter::new(1, tmp.path(), None, 512, 1).unwrap();
+
+    for i in 0..50 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // delete old files (simulating GC without archive)
+    writer.gc().unwrap();
+
+    // write new records
+    for i in 50..60 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // request from seq 1 (no longer available, no archive)
+    let mut reader = WalReader::open_from_seq_with_archive(
+        1, 1, tmp.path(), None,
+    )
+    .unwrap();
+
+    // should start from first available (seq 50+)
+    if let Ok(Some(rec)) = reader.next() {
+        if let Some(seq) = extract_seq(&rec.payload) {
+            assert!(
+                seq >= 50,
+                "should skip missing seqs, got {}",
+                seq
+            );
+        }
+    }
+}
+
+#[test]
+fn reader_archive_fallback_empty_archive() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("archive");
+    std::fs::create_dir_all(
+        archive.join("1"),
+    )
+    .unwrap();
+
+    let mut writer =
+        WalWriter::new(1, tmp.path(), None, 512, 1).unwrap();
+
+    for i in 0..20 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    // sleep to ensure file mtime ages
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // read with archive fallback (but archive is empty)
+    let mut reader = WalReader::open_from_seq_with_archive(
+        1,
+        0,
+        tmp.path(),
+        Some(&archive),
+    )
+    .unwrap();
+
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+
+    // should read from hot WAL only
+    assert_eq!(count, 20);
 }

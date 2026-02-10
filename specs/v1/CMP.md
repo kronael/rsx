@@ -156,8 +156,8 @@ struct CmpHeartbeat {
   from the latest StatusMessage
 - Sender won't send beyond that limit (backpressure)
 - Receiver sends StatusMessage every 10ms
-- If sender has no room, it stalls (same as SPSC ring
-  full — producer waits)
+- If sender has no room, `send` returns `false`. Caller may
+  stall/retry or drop based on policy.
 
 ### Gap Detection (Aeron model)
 

@@ -18,14 +18,14 @@ pub async fn ws_accept_loop<F>(
     handler: F,
 ) -> io::Result<()>
 where
-    F: Fn(TcpStream) + 'static,
+    F: Fn(TcpStream, std::net::SocketAddr) + 'static,
 {
     let listener = TcpListener::bind(addr)?;
     info!("ws listening on {}", addr);
     loop {
         let (stream, peer) = listener.accept().await?;
         info!("ws connection from {}", peer);
-        handler(stream);
+        handler(stream, peer);
     }
 }
 
@@ -34,6 +34,7 @@ where
 /// succeeded and auth was present.
 pub async fn ws_handshake(
     stream: &mut TcpStream,
+    jwt_secret: &str,
 ) -> io::Result<(String, u32)> {
     // Read HTTP upgrade request
     let buf = vec![0u8; 4096];
@@ -59,20 +60,21 @@ pub async fn ws_handshake(
     )?;
 
     // Extract user_id from auth headers
-    let user_id = match extract_user_id(&request) {
-        Some(id) => id,
-        None => {
-            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
+    let user_id =
+        match extract_user_id(&request, jwt_secret) {
+            Some(id) => id,
+            None => {
+                let resp = b"HTTP/1.1 401 Unauthorized\r\n\
                 Connection: close\r\n\r\n";
-            let (res, _) =
-                stream.write_all(resp.to_vec()).await;
-            let _ = res;
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "missing or invalid auth",
-            ));
-        }
-    };
+                let (res, _) =
+                    stream.write_all(resp.to_vec()).await;
+                let _ = res;
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "missing or invalid auth",
+                ));
+            }
+        };
 
     // Compute accept key
     let accept = compute_accept_key(&key);
@@ -93,10 +95,12 @@ pub async fn ws_handshake(
 }
 
 /// Extract user_id from HTTP headers.
-/// Checks Authorization (Bearer token) then X-User-Id.
-/// TODO: validate JWT in production instead of parsing
-/// Bearer token as raw u32.
-fn extract_user_id(request: &str) -> Option<u32> {
+/// Validates JWT token from Authorization header.
+/// Falls back to X-User-Id for dev/test environments.
+fn extract_user_id(
+    request: &str,
+    jwt_secret: &str,
+) -> Option<u32> {
     for line in request.lines() {
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("authorization:") {
@@ -105,10 +109,12 @@ fn extract_user_id(request: &str) -> Option<u32> {
                 .map(|(_, v)| v.trim())?;
             let token = val
                 .strip_prefix("Bearer ")
-                .or_else(|| {
-                    val.strip_prefix("bearer ")
-                })?;
-            return token.trim().parse::<u32>().ok();
+                .or_else(|| val.strip_prefix("bearer "))?;
+            return crate::jwt::validate_jwt(
+                token.trim(),
+                jwt_secret,
+            )
+            .ok();
         }
     }
     for line in request.lines() {

@@ -308,7 +308,7 @@ Targets from ORDERBOOK.md §4 and TESTING.md:
 - Market data service imports `rsx-book` for shadow orderbook
   (MARKETDATA.md §2, NETWORK.md §MARKETDATA)
 - BookObserver trait allows different event handling per consumer
-- Event buffer drained into SPSC rings (CONSISTENCY.md §1)
+- Event buffer drained into CMP/UDP fan-out (CONSISTENCY.md §1)
 - Event routing per consumer: Fill to risk/gateway/mktdata,
   BBO to risk, OrderInserted to mktdata, OrderCancelled to
   gateway/mktdata, OrderDone to risk/gateway

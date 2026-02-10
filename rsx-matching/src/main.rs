@@ -9,18 +9,25 @@ use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
 use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::wal::WalWriter;
+use rsx_matching::config::load_applied_config;
+use rsx_matching::config::poll_scheduled_configs;
+use rsx_matching::config::write_applied_config;
 use rsx_matching::wal_integration::flush_if_due;
 use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_matching::wire::OrderMessage;
 use rsx_types::install_panic_handler;
 use rsx_types::SymbolConfig;
+use rsx_types::time::time_ms;
 use rsx_types::time::time_ns;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
+use tokio_postgres::NoTls;
+use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 fn get_env_u32(key: &str) -> io::Result<u32> {
     let raw = env::var(key).map_err(|_| {
@@ -89,7 +96,7 @@ fn main() {
 
     tracing_subscriber::fmt::init();
 
-    let config = match load_config_from_env() {
+    let initial_config = match load_config_from_env() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("config error: {}", e);
@@ -109,9 +116,65 @@ fn main() {
         }
     }
 
-    let symbol_id = config.symbol_id;
-    let mut book =
-        Orderbook::new(config, 1024, 50_000);
+    let symbol_id = initial_config.symbol_id;
+
+    // Database connection (optional, for config polling)
+    let db_url = env::var("RSX_ME_DATABASE_URL").ok();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+
+    let (pg_client, mut config_version) = if let Some(url) = &db_url {
+        match rt.block_on(async {
+            let (client, conn) = tokio_postgres::connect(url, NoTls)
+                .await
+                .map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("db connect: {}", e),
+                    )
+                })?;
+            tokio::spawn(async move {
+                if let Err(e) = conn.await {
+                    error!("db connection error: {}", e);
+                }
+            });
+            Ok::<_, io::Error>(client)
+        }) {
+            Ok(client) => {
+                let applied = rt.block_on(load_applied_config(&client, symbol_id));
+                match applied {
+                    Ok(Some(cfg)) => {
+                        info!(
+                            "loaded applied config v{} for symbol {}",
+                            cfg.config_version, symbol_id
+                        );
+                        (Some(client), cfg.config_version)
+                    }
+                    Ok(None) => {
+                        info!(
+                            "no applied config found, using env config"
+                        );
+                        (Some(client), 0)
+                    }
+                    Err(e) => {
+                        warn!("failed to load applied config: {}", e);
+                        (Some(client), 0)
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("database unavailable: {}, using env config", e);
+                (None, 0)
+            }
+        }
+    } else {
+        info!("no database url, config polling disabled");
+        (None, 0)
+    };
+
+    let mut book = Orderbook::new(initial_config, 1024, 50_000);
 
     // WAL writer
     let wal_dir = env::var("RSX_ME_WAL_DIR")
@@ -119,11 +182,13 @@ fn main() {
     let mut wal_writer = WalWriter::new(
         symbol_id,
         &PathBuf::from(&wal_dir),
-        64 * 1024 * 1024,       // 64MB rotation
-        10 * 60 * 1_000_000_000, // 10min retention
+        None,
+        64 * 1024 * 1024,
+        10 * 60 * 1_000_000_000,
     )
     .expect("failed to create wal writer");
     let mut last_flush = Instant::now();
+    let mut last_config_poll = Instant::now();
 
     // CMP/UDP: receive orders from Risk
     let me_addr: SocketAddr = env::var("RSX_ME_CMP_ADDR")
@@ -172,7 +237,8 @@ fn main() {
                 .build()
                 .expect("tokio runtime for dxs");
             let service =
-                rsx_dxs::DxsReplayService::new(wal_path);
+                rsx_dxs::DxsReplayService::new(wal_path, None)
+                    .expect("failed to create dxs service");
             rt.block_on(async {
                 service
                     .serve(addr)
@@ -185,12 +251,17 @@ fn main() {
         );
     }
 
-    // Emit CONFIG_APPLIED for this symbol on startup
-    emit_startup_config(
-        &mut wal_writer,
-        &mut cmp_sender,
-        symbol_id,
-    );
+    // Emit CONFIG_APPLIED for this symbol on startup (if we have a version)
+    if config_version > 0 {
+        emit_config_applied(
+            &mut wal_writer,
+            &mut cmp_sender,
+            &mut mkt_sender,
+            symbol_id,
+            config_version,
+            0,
+        );
+    }
 
     info!("matching engine started");
 
@@ -246,6 +317,46 @@ fn main() {
             }
         } else if book.is_migrating() {
             book.migrate_batch(100);
+        }
+
+        // Poll config every 10 minutes
+        if last_config_poll.elapsed().as_secs() >= 600 {
+            if let Some(ref client) = pg_client {
+                let now_ms = time_ms();
+                match rt.block_on(poll_scheduled_configs(
+                    client,
+                    symbol_id,
+                    config_version,
+                    now_ms,
+                )) {
+                    Ok(configs) => {
+                        for cfg in configs {
+                            let new_config = cfg.to_symbol_config(symbol_id);
+                            book.update_config(new_config);
+                            config_version = cfg.config_version;
+                            let ts = time_ns();
+                            let _ = rt.block_on(write_applied_config(
+                                client,
+                                symbol_id,
+                                &cfg,
+                                ts,
+                            ));
+                            emit_config_applied(
+                                &mut wal_writer,
+                                &mut cmp_sender,
+                                &mut mkt_sender,
+                                symbol_id,
+                                cfg.config_version,
+                                cfg.effective_at_ms,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("config poll failed: {}", e);
+                    }
+                }
+            }
+            last_config_poll = Instant::now();
         }
 
         let _ = flush_if_due(
@@ -402,10 +513,13 @@ fn send_event_cmp(
     Ok(())
 }
 
-fn emit_startup_config(
+fn emit_config_applied(
     wal: &mut WalWriter,
     risk_sender: &mut CmpSender,
+    mkt_sender: &mut CmpSender,
     symbol_id: u32,
+    config_version: u64,
+    effective_at_ms: u64,
 ) {
     let ts = time_ns();
     let mut record = ConfigAppliedRecord {
@@ -413,15 +527,16 @@ fn emit_startup_config(
         ts_ns: ts,
         symbol_id,
         _pad0: 0,
-        config_version: 1,
-        effective_at_ms: 0,
+        config_version,
+        effective_at_ms,
         applied_at_ns: ts,
     };
     let _ = wal.append(&mut record);
     let _ = risk_sender.send(&mut record);
+    let _ = mkt_sender.send(&mut record);
     info!(
-        "emitted config_applied for symbol {}",
-        symbol_id,
+        "emitted config_applied v{} for symbol {}",
+        config_version, symbol_id,
     );
 }
 

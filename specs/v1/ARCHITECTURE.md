@@ -167,8 +167,8 @@ Durability guarantees:
 
 - **Fixed-point i64**: deterministic arithmetic, no float
   rounding across architectures
-- **SPSC over broker**: rtrb rings for IPC, no Kafka/NATS;
-  50-170ns latency, producer stalls on full ring
+- **CMP/UDP over broker**: direct UDP between processes,
+  no Kafka/NATS; per-stream ordering and flow control
 - **Slab arena**: pre-allocated 78M slots (~10GB), O(1)
   alloc/free, no malloc on hot path
 - **Compressed indexing**: 5 distance-based zones reduce
@@ -199,7 +199,7 @@ Durability guarantees:
 | WAL.md | Shared WAL design, backpressure rules, flush bounds |
 | MARK.md | Mark price aggregator, external feeds, median, staleness |
 | METADATA.md | Symbol config scheduling, propagation, cold start |
-| CONSISTENCY.md | Event fan-out, SPSC routing, ordering guarantees |
+| CONSISTENCY.md | Event fan-out, CMP/UDP routing, ordering guarantees |
 | NETWORK.md | Topology, transport, service discovery, startup ordering |
 | MESSAGES.md | Message semantics (transport is CMP/UDP) |
 | WEBPROTO.md | WS compact JSON protocol, frame types |

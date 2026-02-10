@@ -247,6 +247,10 @@ impl DxsConsumer {
                 ));
             }
 
+            // Advance tip BEFORE unknown check to ensure
+            // consumer makes progress even when skipping
+            // unknown record types (prevents infinite
+            // replay loop on reconnect).
             self.tip += 1;
 
             if !is_known_record_type(

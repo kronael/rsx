@@ -11,12 +11,16 @@ use rsx_marketdata::handler::handle_connection;
 use rsx_marketdata::protocol::serialize_bbo;
 use rsx_marketdata::protocol::serialize_l2_delta;
 use rsx_marketdata::protocol::serialize_trade;
+use rsx_marketdata::replay::run_replay_bootstrap_blocking;
 use rsx_marketdata::state::MarketDataState;
 use rsx_types::SymbolConfig;
 use rsx_types::install_panic_handler;
+use rsx_types::time::time_ms;
+use rsx_types::time::time_ns;
 use std::cell::RefCell;
 use std::env;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::info;
 
@@ -26,6 +30,88 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     let config = load_marketdata_config();
+
+    let base_config = SymbolConfig {
+        symbol_id: 0,
+        price_decimals: config.price_decimals,
+        qty_decimals: config.qty_decimals,
+        tick_size: config.tick_size,
+        lot_size: config.lot_size,
+    };
+
+    let mut state = MarketDataState::new(
+        config.max_symbols,
+        base_config.clone(),
+        config.book_capacity,
+        config.mid_price,
+    );
+
+    if let Some(ref replay_addr) = config.replay_addr {
+        info!(
+            "starting replay bootstrap from {}",
+            replay_addr
+        );
+        let tip_file = PathBuf::from(&config.tip_file);
+        match run_replay_bootstrap_blocking(
+            config.stream_id,
+            replay_addr.clone(),
+            tip_file,
+        ) {
+            Ok(result) => {
+                info!(
+                    "replay bootstrap complete: {} events, \
+                     caught_up={}, last_seq={}",
+                    result.events.len(),
+                    result.caught_up,
+                    result.last_seq
+                );
+                for event in result.events {
+                    if let Some(rec) = event.insert {
+                        state.ensure_book(rec.symbol_id, rec.price);
+                        if let Some(book) =
+                            state.book_mut(rec.symbol_id)
+                        {
+                            book.apply_insert_by_id(
+                                rec.price,
+                                rec.qty,
+                                rec.side,
+                                rec.user_id,
+                                rec.ts_ns,
+                                rec.order_id_hi,
+                                rec.order_id_lo,
+                            );
+                        }
+                    } else if let Some(rec) = event.cancel {
+                        if let Some(book) =
+                            state.book_mut(rec.symbol_id)
+                        {
+                            book.apply_cancel_by_order_id(
+                                rec.order_id_hi,
+                                rec.order_id_lo,
+                                rec.ts_ns,
+                            );
+                        }
+                    } else if let Some(rec) = event.fill {
+                        if let Some(book) =
+                            state.book_mut(rec.symbol_id)
+                        {
+                            book.apply_fill_by_order_id(
+                                rec.maker_order_id_hi,
+                                rec.maker_order_id_lo,
+                                rec.qty,
+                                rec.ts_ns,
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                info!("replay bootstrap failed: {}", e);
+            }
+        }
+    }
+
+    let state = Rc::new(RefCell::new(state));
 
     let mkt_addr: SocketAddr =
         env::var("RSX_MKT_CMP_ADDR")
@@ -57,19 +143,6 @@ fn main() {
     .expect("failed to build monoio runtime");
 
     rt.block_on(async move {
-        let base_config = SymbolConfig {
-            symbol_id: 0,
-            price_decimals: config.price_decimals,
-            qty_decimals: config.qty_decimals,
-            tick_size: config.tick_size,
-            lot_size: config.lot_size,
-        };
-        let state = Rc::new(RefCell::new(MarketDataState::new(
-            config.max_symbols,
-            base_config,
-            config.book_capacity,
-            config.mid_price,
-        )));
 
         let ws_addr = config.listen_addr.clone();
         let state_accept = state.clone();
@@ -96,6 +169,14 @@ fn main() {
                 tracing::error!("ws accept error: {e}");
             }
         });
+
+        const NS_PER_MS: u64 = 1_000_000;
+        let heartbeat_interval_ns =
+            config.heartbeat_interval_ms * NS_PER_MS;
+        let heartbeat_timeout_ns =
+            config.heartbeat_timeout_ms * NS_PER_MS;
+        let mut last_heartbeat_ns = time_ns();
+        let mut last_timeout_check_ns = time_ns();
 
         loop {
             while let Some((hdr, payload)) = cmp_receiver.try_recv()
@@ -160,6 +241,21 @@ fn main() {
             }
 
             cmp_receiver.tick();
+
+            let now = time_ns();
+            if now - last_heartbeat_ns >= heartbeat_interval_ns {
+                let ts_ms = time_ms();
+                state.borrow_mut().broadcast_heartbeat(ts_ms);
+                last_heartbeat_ns = now;
+            }
+
+            if now - last_timeout_check_ns >= heartbeat_timeout_ns {
+                let timed_out = state.borrow_mut().check_timeouts(heartbeat_timeout_ns);
+                for conn_id in timed_out {
+                    info!("conn {} timed out (no heartbeat)", conn_id);
+                }
+                last_timeout_check_ns = now;
+            }
 
             monoio::time::sleep(
                 std::time::Duration::from_micros(100),
