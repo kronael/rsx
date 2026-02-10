@@ -180,6 +180,7 @@ for notional = price * qty at risk boundary.
 | Gateway | NETWORK.md, WEBPROTO.md, RPC.md, MESSAGES.md | TESTING-GATEWAY.md |
 | Market data | MARKETDATA.md | TESTING-MARKETDATA.md |
 | SPSC rings | notes/SMRB.md | TESTING-SMRB.md |
+| Validation edge cases | VALIDATION-EDGE-CASES.md | (cross-references all) |
 
 ## Correctness Invariants (system-wide)
 
