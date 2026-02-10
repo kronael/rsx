@@ -1,7 +1,7 @@
 # WebSocket Wire Protocol (WS Overlay)
 
 Gateway exposes a compact WebSocket protocol and translates
-messages to QUIC + WAL wire format for the risk engine. The
+messages to CMP/WAL wire format for the risk engine. The
 goal is minimal parsing cost and small payloads.
 
 ## Frame Shape
@@ -57,10 +57,10 @@ ACK semantics:
 ### Authentication
 
 Auth is via WebSocket upgrade headers only (JWT in
-`Authorization` header). No in-band auth frame. Clients that
-cannot set upgrade headers must use the QUIC API instead.
-Connections without valid auth in upgrade headers are rejected
-with HTTP 401 before WebSocket handshake completes.
+`Authorization` header). No in-band auth frame. Clients must
+use the WS API. Connections without valid auth in upgrade
+headers are rejected with HTTP 401 before WebSocket handshake
+completes.
 
 ### N: New Order
 
@@ -215,9 +215,9 @@ by user_id. Fire-and-forget delivery.
 
 ## Notes
 
-- Gateway multiplexes many users over a single QUIC stream to
+- Gateway multiplexes many users over a single CMP/UDP link to
   the risk engine.
-- Risk engine multiplexes orders over a single QUIC stream to
+- Risk engine multiplexes orders over a single CMP/UDP link to
   each matching engine.
 - Backpressure is enforced at ingress. If the gateway buffer
   is full, it rejects new orders with OVERLOADED.

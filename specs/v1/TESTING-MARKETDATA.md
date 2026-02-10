@@ -15,26 +15,26 @@ Binary: `rsx-marketdata`
 | MD1 | Shadow orderbook per symbol (shared rsx-book) | NETWORK.md §MARKETDATA |
 | MD2 | Derive BBO from shadow book | MARKETDATA.md |
 | MD3 | Derive L2 depth (snapshot + delta) from events | MARKETDATA.md |
-| MD4 | quinn QUIC MarketData.Stream service | MARKETDATA.md §service |
-| MD5 | Subscribe by symbol_id list + depth | MARKETDATA.md §subscribe |
-| MD6 | L2Snapshot sent on initial subscribe | MARKETDATA.md §transport |
-| MD7 | Deltas after snapshot, seq monotonic per symbol | MARKETDATA.md §transport |
-| MD8 | Backpressure: drop deltas, resend snapshot | MARKETDATA.md §transport |
-| MD9 | Seq gap -> client re-subscribes for snapshot | MARKETDATA.md §transport |
-| MD10 | Public endpoint, no auth | MARKETDATA.md §transport |
+| MD4 | WS public feed (BBO/L2/trades) | WEBPROTO.md |
+| MD5 | Subscribe by symbol_id list + depth | WEBPROTO.md §market data |
+| MD6 | L2Snapshot sent on initial subscribe | WEBPROTO.md §market data |
+| MD7 | Deltas after snapshot, seq monotonic per symbol | WEBPROTO.md §market data |
+| MD8 | Backpressure: drop deltas, resend snapshot | MARKETDATA.md §notes |
+| MD9 | Seq gap -> client re-subscribes for snapshot | WEBPROTO.md §market data |
+| MD10 | Public endpoint, no auth | MARKETDATA.md |
 | MD11 | Single-threaded, dedicated core, busy-spin | NETWORK.md §MARKETDATA |
 | MD12 | Non-blocking epoll for WS I/O (no Tokio) | NETWORK.md §MARKETDATA |
 | MD13 | SPSC consumer ring per matching engine | NETWORK.md §MARKETDATA |
 | MD14 | Recovery via DXS replay from ME WAL | DXS.md §8 |
 | MD15 | WS JSON: BBO, B (snapshot), D (delta), S, X | WEBPROTO.md |
 | MD16 | Event routing: Fill + OrderInserted + Cancelled | CONSISTENCY.md §1 |
-| MD17 | QUIC schema mirrors WS JSON (B/D/BBO) | MARKETDATA.md §notes |
+| MD17 | WS schema mirrors JSON (B/D/BBO) | WEBPROTO.md |
 | MD18 | BBO includes order count per side (bid_count, ask_count) | MARKETDATA.md §messages |
 | MD19 | Snapshot consistency: point-in-time best effort | MARKETDATA.md §transport |
 | MD20 | OrderDone NOT routed to market data | CONSISTENCY.md §1 table |
 | MD21 | MktData derives own BBO from shadow book (not ME BBO) | CONSISTENCY.md §1 |
 | MD22 | WS seq gap: u jumps >1 triggers re-subscribe | WEBPROTO.md §market data |
-| MD23 | `u` field is WS alias for QUIC `seq` | WEBPROTO.md §market data |
+| MD23 | `u` field is WS alias for `seq` | WEBPROTO.md §market data |
 | MD24 | Server sends B snapshot on subscribe before D deltas | WEBPROTO.md §market data |
 | MD25 | Trades derived from fill events | NETWORK.md §MARKETDATA |
 | MD26 | Subscribe depth parameter: 10, 25, 50 | MARKETDATA.md §subscribe |
@@ -193,7 +193,7 @@ me_disconnect_shadow_book_stale
 me_reconnect_resumes_events
 me_restart_replay_from_wal
 
-// QUIC stream
+// WS feed
 quic_subscribe_by_symbol_id_list
 quic_subscribe_with_depth_parameter
 quic_send_snapshot_true_sends_snapshot_first
@@ -239,7 +239,7 @@ same machine, TESTING.md §6) and throughput requirements
   from matching engine (CONSISTENCY.md §1)
 - Connects as DXS consumer for ME WAL replay on startup
   (DXS.md §8)
-- Serves quinn QUIC MarketData.Stream to external clients
+- Serves WS marketdata feed to external clients
   (MARKETDATA.md §service)
 - Serves public WS endpoint with BBO/B/D frames
   (WEBPROTO.md §market data)
@@ -251,5 +251,5 @@ same machine, TESTING.md §6) and throughput requirements
   (CONSISTENCY.md §1 event routing table)
 - Derives own BBO from shadow book, not from ME BBO event
   (CONSISTENCY.md §1)
-- WS `u` field maps to QUIC `seq` for gap detection
+- WS `u` field maps to `seq` for gap detection
   (WEBPROTO.md §market data)

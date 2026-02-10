@@ -252,6 +252,7 @@ pub fn match_at_level(
 
         book.emit(Event::Fill {
             maker_handle: cursor,
+            maker_user_id: maker_user_id,
             taker_user_id: aggressor.user_id,
             price: Price(maker_price),
             qty: Qty(fill_qty),

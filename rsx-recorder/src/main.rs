@@ -3,6 +3,7 @@ use chrono::Utc;
 use rsx_dxs::DxsConsumer;
 use rsx_dxs::RawWalRecord;
 use rsx_dxs::RecorderConfig;
+use rsx_types::install_panic_handler;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -107,10 +108,7 @@ impl RecorderState {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    std::panic::set_hook(Box::new(|info| {
-        eprintln!("fatal: {}", info);
-        std::process::exit(1);
-    }));
+    install_panic_handler();
 
     tracing_subscriber::fmt::init();
 

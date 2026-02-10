@@ -13,6 +13,7 @@ pub const FAIL_FOK: u8 = 2;
 pub enum Event {
     Fill {
         maker_handle: u32,
+        maker_user_id: u32,
         taker_user_id: u32,
         price: Price,
         qty: Qty,

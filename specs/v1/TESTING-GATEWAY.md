@@ -12,7 +12,7 @@ Binary: `rsx-gateway`
 | # | Requirement | Source |
 |---|-------------|--------|
 | G1 | WS overlay: compact JSON, single-letter types | WEBPROTO.md |
-| G2 | QUIC + WAL wire format for native clients | NETWORK.md |
+| G2 | CMP/WAL wire format for internal links | NETWORK.md |
 | G3 | JWT auth via WS upgrade headers (A fallback) | WEBPROTO.md |
 | G4 | UUIDv7 order ID generated at gateway | RPC.md §order-id |
 | G5 | LIFO VecDeque pending order tracking | RPC.md §pending |
@@ -25,7 +25,7 @@ Binary: `rsx-gateway`
 | G12 | Circuit breaker: 10 failures -> open -> half-open | RPC.md §circuit |
 | G13 | Market data WS: S subscribe, X unsubscribe | WEBPROTO.md §S |
 | G14 | Liquidation event Q frame to user WS | WEBPROTO.md §Q |
-| G15 | Multiplexed quinn QUIC stream to risk engine | NETWORK.md |
+| G15 | Single CMP/UDP link to risk engine | NETWORK.md |
 | G16 | Config cache synced via CONFIG_APPLIED | MESSAGES.md |
 | G17 | Tick/lot pre-validation (fail fast) | ORDERBOOK.md §2.9 |
 | G18 | Out-of-order response handling via order_id | RPC.md §pending |
@@ -314,9 +314,9 @@ Targets from NETWORK.md:
 
 ## Integration Points
 
-- Single multiplexed quinn QUIC stream to risk engine
+- Single CMP/UDP link to risk engine
   (NETWORK.md)
-- Receives fills/done/failed from risk via SPSC or QUIC
+- Receives fills/done/failed from risk via CMP/UDP
 - Receives liquidation events from risk SPSC
   (WEBPROTO.md §Q)
 - Forwards CONFIG_APPLIED to local config cache

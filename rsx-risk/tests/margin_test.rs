@@ -28,6 +28,13 @@ fn make_order(
     side: u8,
 ) -> OrderRequest {
     OrderRequest {
+        preamble: rsx_dxs::records::PayloadPreamble {
+            seq: 1,
+            ver: 1,
+            kind: 0,
+            _pad0: 0,
+            len: std::mem::size_of::<OrderRequest>() as u32,
+        },
         user_id,
         symbol_id,
         price,

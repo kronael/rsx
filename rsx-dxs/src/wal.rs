@@ -1,5 +1,6 @@
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
+use crate::records::PayloadPreamble;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -80,6 +81,12 @@ impl WalWriter {
                 "payload exceeds 64KB",
             ));
         }
+        if (len as usize) < PayloadPreamble::SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "payload missing CMP prefix",
+            ));
+        }
 
         // backpressure: stall if buf > 2x max_file_size
         let limit = (self.max_file_size as usize)
@@ -92,17 +99,24 @@ impl WalWriter {
             ));
         }
 
-        let crc = compute_crc32(payload);
+        let mut tmp = Vec::with_capacity(payload.len());
+        tmp.extend_from_slice(payload);
+
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.last_seq = seq;
+
+        // Patch seq + len into prefix (do not touch ver/kind)
+        tmp[0..8].copy_from_slice(&seq.to_le_bytes());
+        tmp[12..16].copy_from_slice(&len.to_le_bytes());
+
+        let crc = compute_crc32(&tmp);
         let header = WalHeader::new(
             record_type, len, self.stream_id, crc,
         );
 
         self.buf.extend_from_slice(&header.to_bytes());
-        self.buf.extend_from_slice(payload);
-
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        self.last_seq = seq;
+        self.buf.extend_from_slice(&tmp);
         Ok(seq)
     }
 

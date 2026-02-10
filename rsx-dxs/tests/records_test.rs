@@ -1,6 +1,16 @@
 use rsx_dxs::*;
 use std::mem;
 
+fn prefix<T>(seq: u64) -> PayloadPreamble {
+    PayloadPreamble {
+        seq,
+        ver: 1,
+        kind: 0,
+        _pad0: 0,
+        len: std::mem::size_of::<T>() as u32,
+    }
+}
+
 #[test]
 fn fill_record_is_64_aligned() {
     assert_eq!(mem::align_of::<FillRecord>(), 64);
@@ -44,7 +54,7 @@ fn order_accepted_record_is_64_aligned() {
 #[test]
 fn fill_record_encode_decode_roundtrip() {
     let record = FillRecord {
-        seq: 42,
+        preamble: prefix::<FillRecord>(42),
         ts_ns: 1_000_000_000,
         symbol_id: 1,
         taker_user_id: 10,
@@ -67,7 +77,7 @@ fn fill_record_encode_decode_roundtrip() {
     assert_eq!(header.record_type, RECORD_FILL);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_fill_record(payload).unwrap();
-    assert_eq!(decoded.seq, 42);
+    assert_eq!(decoded.preamble.seq, 42);
     assert_eq!(decoded.price, 50000);
     assert_eq!(decoded.qty, 1000);
     assert_eq!(decoded.maker_order_id_lo, 100);
@@ -79,7 +89,7 @@ fn fill_record_encode_decode_roundtrip() {
 #[test]
 fn bbo_record_encode_decode_roundtrip() {
     let record = BboRecord {
-        seq: 1,
+        preamble: prefix::<BboRecord>(1),
         ts_ns: 2,
         symbol_id: 3,
         _pad0: 0,
@@ -104,7 +114,7 @@ fn bbo_record_encode_decode_roundtrip() {
 #[test]
 fn order_inserted_encode_decode_roundtrip() {
     let record = OrderInsertedRecord {
-        seq: 5,
+        preamble: prefix::<OrderInsertedRecord>(5),
         ts_ns: 10,
         symbol_id: 1,
         user_id: 42,
@@ -130,7 +140,7 @@ fn order_inserted_encode_decode_roundtrip() {
 #[test]
 fn order_cancelled_encode_decode_roundtrip() {
     let record = OrderCancelledRecord {
-        seq: 6,
+        preamble: prefix::<OrderCancelledRecord>(6),
         ts_ns: 11,
         symbol_id: 1,
         user_id: 42,
@@ -155,7 +165,7 @@ fn order_cancelled_encode_decode_roundtrip() {
 #[test]
 fn order_done_encode_decode_roundtrip() {
     let record = OrderDoneRecord {
-        seq: 7,
+        preamble: prefix::<OrderDoneRecord>(7),
         ts_ns: 12,
         symbol_id: 1,
         user_id: 42,
@@ -181,7 +191,7 @@ fn order_done_encode_decode_roundtrip() {
 #[test]
 fn config_applied_encode_decode_roundtrip() {
     let record = ConfigAppliedRecord {
-        seq: 8,
+        preamble: prefix::<ConfigAppliedRecord>(8),
         ts_ns: 13,
         symbol_id: 2,
         _pad0: 0,
@@ -201,7 +211,7 @@ fn config_applied_encode_decode_roundtrip() {
 #[test]
 fn caught_up_encode_decode_roundtrip() {
     let record = CaughtUpRecord {
-        seq: 9,
+        preamble: prefix::<CaughtUpRecord>(9),
         ts_ns: 14,
         stream_id: 1,
         _pad0: 0,
@@ -217,7 +227,7 @@ fn caught_up_encode_decode_roundtrip() {
 #[test]
 fn order_accepted_encode_decode_roundtrip() {
     let record = OrderAcceptedRecord {
-        seq: 10,
+        preamble: prefix::<OrderAcceptedRecord>(10),
         ts_ns: 15,
         user_id: 42,
         _pad0: 0,
@@ -236,7 +246,7 @@ fn order_accepted_encode_decode_roundtrip() {
 #[test]
 fn crc32_mismatch_detected() {
     let record = FillRecord {
-        seq: 1,
+        preamble: prefix::<FillRecord>(1),
         ts_ns: 2,
         symbol_id: 3,
         taker_user_id: 4,
@@ -266,7 +276,7 @@ fn crc32_mismatch_detected() {
 #[test]
 fn wal_record_seq_accessor() {
     let record = WalRecord::Fill(FillRecord {
-        seq: 42,
+        preamble: prefix::<FillRecord>(42),
         ts_ns: 0,
         symbol_id: 0,
         taker_user_id: 0,
@@ -290,7 +300,7 @@ fn wal_record_seq_accessor() {
 #[test]
 fn wal_record_type_accessor() {
     let record = WalRecord::Bbo(BboRecord {
-        seq: 0,
+        preamble: prefix::<BboRecord>(0),
         ts_ns: 0,
         symbol_id: 0,
         _pad0: 0,
@@ -340,7 +350,7 @@ fn record_truncated_header_detected() {
 #[test]
 fn record_truncated_payload_detected() {
     let record = FillRecord {
-        seq: 1,
+        preamble: prefix::<FillRecord>(1),
         ts_ns: 2,
         symbol_id: 1,
         taker_user_id: 1,

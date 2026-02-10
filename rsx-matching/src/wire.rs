@@ -1,10 +1,12 @@
 use rsx_types::Side;
 use rsx_types::TimeInForce;
+use rsx_dxs::records::PayloadPreamble;
 
 /// Inbound order from risk engine via SPSC ring.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct OrderMessage {
+    pub preamble: PayloadPreamble,
     pub price: i64,
     pub qty: i64,
     pub side: u8,
@@ -51,6 +53,7 @@ impl OrderMessage {
 pub enum EventMessage {
     Fill {
         maker_handle: u32,
+        maker_user_id: u32,
         taker_user_id: u32,
         price: i64,
         qty: i64,
@@ -104,6 +107,7 @@ impl EventMessage {
         match *event {
             rsx_book::event::Event::Fill {
                 maker_handle,
+                maker_user_id,
                 taker_user_id,
                 price,
                 qty,
@@ -114,6 +118,7 @@ impl EventMessage {
                 taker_order_id_lo,
             } => EventMessage::Fill {
                 maker_handle,
+                maker_user_id,
                 taker_user_id,
                 price: price.0,
                 qty: qty.0,

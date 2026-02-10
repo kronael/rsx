@@ -7,15 +7,29 @@ use tempfile::TempDir;
 
 fn fill_payload() -> Vec<u8> {
     let record = FillRecord {
-        seq: 1,
+        preamble: PayloadPreamble {
+            seq: 1,
+            ver: 1,
+            kind: 0,
+            _pad0: 0,
+            len: mem::size_of::<FillRecord>() as u32,
+        },
         ts_ns: 1000,
         symbol_id: 1,
-        maker_oid: 100,
-        taker_oid: 200,
-        px: 50000,
+        taker_user_id: 1,
+        maker_user_id: 2,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 200,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 100,
+        price: 50000,
         qty: 100,
-        maker_side: 0,
-        _pad1: [0; 7],
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
     };
     unsafe {
         std::slice::from_raw_parts(

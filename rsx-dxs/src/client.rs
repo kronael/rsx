@@ -1,39 +1,20 @@
-// QUINN MIGRATION NOTES:
-// Current: tonic gRPC client (tokio)
-// Target: quinn QUIC client
-//
-// Surface area:
-// 1. DxsConsumer::connect_and_stream(): Replace
-//    DxsReplayClient::connect() with quinn::Endpoint::client().
-//    Open bi-directional stream via endpoint.connect().await?.
-//    open_bi().await?.
-// 2. Send request: Write fixed 12-byte struct directly to
-//    SendStream (u32 stream_id + u64 from_seq, little-endian).
-// 3. Receive response: Read from RecvStream in a loop. Parse
-//    WalHeader (16 bytes) then read payload of header.len bytes.
-//    No protobuf decoding.
-// 4. Backoff/reconnect: Same logic (unchanged).
-// 5. Tip persistence: Same logic (unchanged).
-//
-// Wire format (unchanged from current):
-// - Request: [u32 stream_id][u64 from_seq]
-// - Response: stream of [WalHeader][payload]
-
-use crate::proto::dxs_replay_client::DxsReplayClient;
-use crate::proto::ReplayRequest;
-use crate::wal::RawWalRecord;
+use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
+use crate::records::ReplayRequest;
+use crate::records::RECORD_REPLAY_REQUEST;
+use crate::wal::RawWalRecord;
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
-use tokio_stream::StreamExt;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use tracing::info;
 use tracing::warn;
 
-/// DxsConsumer: subscribes to a producer's DxsReplay stream
 pub struct DxsConsumer {
     pub stream_id: u32,
     pub producer_addr: String,
@@ -51,7 +32,8 @@ impl DxsConsumer {
     ) -> Self {
         let tip = load_tip(&tip_file).unwrap_or(0);
         info!(
-            "dxs consumer stream_id={} tip={} addr={}",
+            "dxs consumer stream_id={} tip={} \
+             addr={}",
             stream_id, tip, producer_addr
         );
         Self {
@@ -60,12 +42,11 @@ impl DxsConsumer {
             tip,
             tip_file,
             last_tip_persist: Instant::now(),
-            tip_persist_interval: Duration::from_millis(10),
+            tip_persist_interval:
+                Duration::from_millis(10),
         }
     }
 
-    /// Run the consumer loop with reconnect.
-    /// Calls `callback` for each record received.
     pub async fn run<F>(
         &mut self,
         mut callback: F,
@@ -77,23 +58,34 @@ impl DxsConsumer {
         let mut backoff_idx = 0;
 
         loop {
-            match self.connect_and_stream(&mut callback).await {
+            match self
+                .connect_and_stream(&mut callback)
+                .await
+            {
                 Ok(()) => {
-                    info!("stream ended cleanly, reconnecting");
+                    info!(
+                        "stream ended, reconnecting"
+                    );
                     backoff_idx = 0;
                 }
                 Err(e) => {
-                    let secs =
-                        backoff_schedule[backoff_idx.min(
-                            backoff_schedule.len() - 1,
+                    let secs = backoff_schedule
+                        [backoff_idx.min(
+                            backoff_schedule.len()
+                                - 1,
                         )];
                     warn!(
-                        "stream error: {}, retrying in {}s",
+                        "stream error: {}, \
+                         retrying in {}s",
                         e, secs
                     );
-                    tokio::time::sleep(Duration::from_secs(secs))
-                        .await;
-                    if backoff_idx < backoff_schedule.len() - 1 {
+                    tokio::time::sleep(
+                        Duration::from_secs(secs),
+                    )
+                    .await;
+                    if backoff_idx
+                        < backoff_schedule.len() - 1
+                    {
                         backoff_idx += 1;
                     }
                 }
@@ -104,60 +96,94 @@ impl DxsConsumer {
     async fn connect_and_stream<F>(
         &mut self,
         callback: &mut F,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    ) -> io::Result<()>
     where
         F: FnMut(RawWalRecord),
     {
-        let endpoint = format!(
-            "http://{}",
-            self.producer_addr
-        );
-        let mut client =
-            DxsReplayClient::connect(endpoint).await?;
+        let mut stream = TcpStream::connect(
+            &self.producer_addr,
+        )
+        .await?;
 
-        let request = ReplayRequest {
+        // Send ReplayRequest as WAL record
+        let req = ReplayRequest {
             stream_id: self.stream_id,
+            _pad0: 0,
             from_seq: self.tip + 1,
+            _pad1: [0u8; 48],
         };
+        let payload = unsafe {
+            std::slice::from_raw_parts(
+                &req as *const ReplayRequest
+                    as *const u8,
+                std::mem::size_of::<
+                    ReplayRequest,
+                >(),
+            )
+        };
+        let crc = compute_crc32(payload);
+        let preamble = WalHeader::new(
+            RECORD_REPLAY_REQUEST,
+            payload.len() as u32,
+            self.stream_id,
+            crc,
+        );
+        stream
+            .write_all(&preamble.to_bytes())
+            .await?;
+        stream.write_all(payload).await?;
 
-        let response = client.stream(request).await?;
-        let mut stream = response.into_inner();
-
-        while let Some(msg) = stream.next().await {
-            let msg = msg?;
-            let bytes = &msg.record;
-
-            if bytes.len() < WalHeader::SIZE {
-                warn!("received undersized record");
-                continue;
+        // Read WAL records
+        let mut hdr_buf = [0u8; WalHeader::SIZE];
+        loop {
+            match stream
+                .read_exact(&mut hdr_buf)
+                .await
+            {
+                Ok(_) => {}
+                Err(ref e)
+                    if e.kind()
+                        == io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(e) => return Err(e),
             }
 
             let header =
-                WalHeader::from_bytes(bytes).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "bad header",
-                    )
-                })?;
+                WalHeader::from_bytes(&hdr_buf)
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "bad header",
+                        )
+                    })?;
 
-            let payload =
-                bytes[WalHeader::SIZE..].to_vec();
+            let payload_len = header.len as usize;
+            let mut payload =
+                vec![0u8; payload_len];
+            stream
+                .read_exact(&mut payload)
+                .await?;
 
-            let record = RawWalRecord { header, payload };
+            let record =
+                RawWalRecord { header, payload };
             callback(record);
 
             self.tip += 1;
 
-            // persist tip every 10ms
             if self.last_tip_persist.elapsed()
                 >= self.tip_persist_interval
             {
-                persist_tip(&self.tip_file, self.tip)?;
-                self.last_tip_persist = Instant::now();
+                persist_tip(
+                    &self.tip_file,
+                    self.tip,
+                )?;
+                self.last_tip_persist =
+                    Instant::now();
             }
         }
 
-        // persist final tip
         persist_tip(&self.tip_file, self.tip)?;
         Ok(())
     }
@@ -178,8 +204,10 @@ fn load_tip(path: &Path) -> io::Result<u64> {
     Ok(u64::from_le_bytes(bytes))
 }
 
-fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
-    // atomic write: write to temp, rename
+fn persist_tip(
+    path: &Path,
+    tip: u64,
+) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, tip.to_le_bytes())?;
     fs::rename(&tmp, path)?;

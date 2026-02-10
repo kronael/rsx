@@ -4,22 +4,28 @@
 
 Every RSX process uses **tiles** -- pinned threads, one per
 concern, communicating via SPSC rings (rtrb, 50-170ns)
-within the process. Between processes: quinn QUIC with raw
-WAL wire format. See NETWORK.md for process topology.
+within the process. Between processes: CMP/UDP (hot path)
+and WAL replication over TCP (cold path). See NETWORK.md.
 
 ## Processes
 
 Each is a separate monolithic process (see NETWORK.md):
 
-- **Gateway** -- WS/QUIC ingress, auth, rate limit
+- **Gateway** -- WS ingress, auth, rate limit
 - **Risk Engine** -- margin, positions, liquidation
 - **Matching Engine** -- one per symbol, orderbook
 - **Marketdata** -- shadow book, L2/BBO/trades fan-out
 - **Recorder** -- daily WAL archival (DXS consumer)
 - **Mark** -- external price aggregator
 
-Between processes: quinn QUIC with raw WAL wire format (one
-multiplexed stream per link). Latency: 10-100us.
+Between processes: CMP/UDP for hot path (orders, fills),
+WAL replication over TCP for cold path (replay, archival).
+See CMP.md, NETWORK.md.
+
+Terminology:
+- **Process**: monolithic binary (Gateway, Risk, Matching, etc.)
+- **Tile**: pinned thread loop inside a process
+- **Link**: inter-process CMP/UDP or WAL/TCP connection
 
 ## Tile Pattern (within each process)
 
@@ -35,22 +41,27 @@ Example: Matching Engine process
 |  |(monoio|  fills |         | events | tile | |
 |  +-------+        +---------+        +--+---+ |
 |                        |           +----v----+ |
-|                        | SPSC     |DxsReplay | |
-|                        v          |  tile    | |
-|                   +---------+     +---------+  |
-|                   |MARKETDATA|                  |
-|                   | tile     |                  |
-|                   +---------+                  |
+|                        |          |DxsReplay | |
+|                        |          |  tile    | |
+|                        |          +---------+  |
 +===============================================+
-         QUIC ↕              gRPC ↕
+       CMP/UDP ↕             TCP ↕
      Risk Engine          Recorder, Mark
 ```
 
 **Within process:** SPSC rings (rtrb). Same address space,
 pinned threads, zero syscall overhead, 50-170ns per hop.
 
-**Between processes:** quinn QUIC with raw WAL wire format.
-DXS streams WAL records to external consumers.
+**Between processes:** CMP/UDP for hot path, WAL/TCP for
+cold path. DXS streams WAL records to external consumers.
+
+## Runtime Selection
+
+- **Hot path tiles** (network ingress, matching, risk,
+  marketdata): use **monoio** where possible.
+- **Auxiliary tiles** (telemetry, archival, persistence,
+  external integrations): **tokio** is acceptable for
+  broader library support.
 
 ## Networking Stack
 
@@ -71,7 +82,7 @@ gateway handling 100K+ connections, that's too many syscalls.
 io_uring batches submissions and completions in shared
 kernel/userspace rings.
 
-DxsReplay uses tonic gRPC -- it's a cold path (external
+DxsReplay uses WAL/TCP -- it's a cold path (external
 consumers, not hot-path matching). Raw fixed records minimize
 serialization overhead.
 
@@ -82,14 +93,14 @@ serialization overhead.
 - `web_client.rs`: HTTP client with monoio
 - Production-proven in funding-bot and trader
 
-## Tiles Within rsx-engine
+## Tiles Within Each Process
 
 ### Gateway Tile (monoio, thread pool)
 
-Accepts client WebSocket and QUIC connections. Authenticates,
-rate-limits, validates basic fields. Pushes commands to Risk
-tile via SPSC ring. Receives fills/dones from Risk via SPSC
-ring, sends back to client.
+Accepts client WebSocket connections. Authenticates,
+rate-limits, validates basic fields. Sends orders to Risk
+via CMP/UDP. Receives fills/dones from Risk via CMP/UDP,
+sends back to client.
 
 ### Risk Tile (CPU-pinned, per user shard)
 
@@ -99,10 +110,10 @@ liquidation if equity < maintenance margin. Sits **between**
 gateway and ME -- all orders pass through risk first.
 
 Communicates:
-- Gateway → Risk: SPSC (orders in)
-- Risk → ME: SPSC (validated orders)
-- ME → Risk: SPSC (fills, dones)
-- Risk → Gateway: SPSC (fills, dones back to user)
+- Gateway → Risk: CMP/UDP (orders in)
+- Risk → ME: CMP/UDP (validated orders)
+- ME → Risk: CMP/UDP (fills, dones)
+- Risk → Gateway: CMP/UDP (fills, dones back to user)
 - Risk → Postgres: SPSC write-behind (positions, accounts)
 
 ### Matching Engine Tile (CPU-pinned, per symbol)
@@ -121,17 +132,17 @@ buffer. Flushes to disk with fsync every 10ms. Rotates at
 
 No network I/O.
 
-### DxsReplay Tile (tonic/tokio)
+### DxsReplay Tile (TCP)
 
-QUIC server (quinn). Reads WAL files, streams raw fixed
-records to external consumers (recorder, mark aggregator,
-or risk during recovery replay). Multiple consumers get
-independent streams.
+TCP server. Reads WAL files, streams raw fixed records to
+external consumers (recorder, mark aggregator, or risk
+during recovery replay). Multiple consumers get independent
+streams.
 
-gRPC is acceptable for DXS: this is a cold path (external
-consumers, not hot-path matching). The interface is
-"stream records from seq N" and raw fixed records minimize
-serialization overhead.
+TCP streaming is used for DXS: this is a cold path
+(external consumers, not hot-path matching). The interface
+is "stream records from seq N" and raw fixed records
+minimize serialization overhead.
 
 This is the **only tile that talks to external processes**.
 
@@ -147,33 +158,41 @@ Receives position/account updates from Risk via SPSC. Batches
 writes to Postgres every 10ms (COPY for fills, UPSERT for
 positions). sync_commit=on.
 
+### Telemetry Tile (out-of-band)
+
+Each process includes a telemetry tile that receives
+structured events/heartbeats via SPSC and appends to an
+on-disk telemetry log. A separate telemetry service may
+poll/ship these logs asynchronously.
+
 ## External Processes
 
 ### rsx-recorder (separate binary)
 
-Connects to rsx-engine's DxsReplay gRPC endpoint (tonic).
+Connects to rsx-engine's DxsReplay TCP endpoint.
 Writes daily archive files. Same WAL format, infinite
 retention. Runs on same or different host.
 
 ### rsx-mark (separate binary)
 
 Fetches mark prices from external exchanges (Binance, etc.)
-via monoio HTTP client. Publishes to rsx-engine via QUIC.
+via monoio HTTP client. Publishes to rsx-engine via CMP/UDP.
 Runs on same or different host.
 
-## SPSC Ring Topology (within rsx-engine)
+## Inter-Process Communication Topology
 
 ```
-Gateway --[orders]--> Risk --[validated]--> ME
-Gateway <--[fills]--- Risk <--[fills]------ ME
-                      Risk --[positions]--> PG write-behind
-                                     ME --[events]--> WAL Writer
-                           WAL Writer --[notify]--> DxsReplay
-                                     ME --[events]--> Marketdata
+Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
+Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
+                       Risk --[SPSC]-----> PG write-behind
+                                    ME --[SPSC]--> WAL Writer
+                          WAL Writer --[notify]--> DxsReplay
+                                    ME --[CMP/UDP]--> Marketdata
 ```
 
-Each arrow is a dedicated rtrb SPSC ring. Per-consumer rings:
-slow market data broadcast doesn't stall risk. Ring full =
+Between processes: CMP/UDP (hot path). Within a process:
+SPSC rings (rtrb, 50-170ns). Per-consumer rings: slow
+market data broadcast doesn't stall risk. Ring full =
 producer stalls (backpressure).
 
 ## Future: Userspace Networking
@@ -193,5 +212,5 @@ Replace monoio (kernel io_uring) with userspace networking:
 | Risk pre-trade | <5us | margin check |
 | Risk post-trade | <1us | apply fill |
 | End-to-end (GW→ME→GW) | <50us | same machine |
-| DxsReplay stream | 10-100us | gRPC, external |
+| DxsReplay stream | 10-100us | TCP, external |
 | Gateway WS | <50us | client-facing |

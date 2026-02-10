@@ -1,14 +1,25 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
+use rsx_dxs::cmp::CmpReceiver;
+use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::records::RECORD_FILL;
+use rsx_dxs::records::RECORD_ORDER_CANCELLED;
+use rsx_dxs::records::RECORD_ORDER_DONE;
+use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_dxs::records::PayloadPreamble;
+use rsx_dxs::records::FillRecord;
+use rsx_dxs::records::OrderCancelledRecord;
+use rsx_dxs::records::OrderDoneRecord;
+use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::wal::WalWriter;
-use rsx_matching::fanout::drain_and_fanout;
 use rsx_matching::wal_integration::flush_if_due;
 use rsx_matching::wal_integration::write_events_to_wal;
-use rsx_matching::wire::EventMessage;
 use rsx_matching::wire::OrderMessage;
+use rsx_types::install_panic_handler;
 use rsx_types::SymbolConfig;
 use std::env;
 use std::io;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -78,10 +89,7 @@ fn load_config_from_env() -> io::Result<SymbolConfig> {
 }
 
 fn main() {
-    std::panic::set_hook(Box::new(|info| {
-        eprintln!("fatal: {}", info);
-        std::process::exit(1);
-    }));
+    install_panic_handler();
 
     tracing_subscriber::fmt::init();
 
@@ -121,15 +129,26 @@ fn main() {
     .expect("failed to create wal writer");
     let mut last_flush = Instant::now();
 
-    // SPSC rings
-    let (_ingress_prod, mut ingress_cons) =
-        rtrb::RingBuffer::<OrderMessage>::new(2048);
-    let (mut risk_prod, _risk_cons) =
-        rtrb::RingBuffer::<EventMessage>::new(4096);
-    let (mut gw_prod, _gw_cons) =
-        rtrb::RingBuffer::<EventMessage>::new(4096);
-    let (mut mkt_prod, _mkt_cons) =
-        rtrb::RingBuffer::<EventMessage>::new(8192);
+    // CMP/UDP: receive orders from Risk
+    let me_addr: SocketAddr = env::var("RSX_ME_CMP_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:9100".into())
+        .parse()
+        .expect("invalid RSX_ME_CMP_ADDR");
+    let risk_addr: SocketAddr =
+        env::var("RSX_RISK_CMP_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9101".into())
+            .parse()
+            .expect("invalid RSX_RISK_CMP_ADDR");
+
+    let mut cmp_receiver = CmpReceiver::new(
+        me_addr, risk_addr, symbol_id,
+    )
+    .expect("failed to bind CMP receiver");
+
+    let mut cmp_sender = CmpSender::new(
+        risk_addr, symbol_id, &PathBuf::from(&wal_dir),
+    )
+    .expect("failed to create CMP sender");
 
     // DXS sidecar
     if let Ok(dxs_addr) = env::var("RSX_ME_DXS_ADDR") {
@@ -160,31 +179,204 @@ fn main() {
     info!("matching engine started");
 
     loop {
-        if let Ok(order_msg) = ingress_cons.pop() {
-            let mut incoming = order_msg.to_incoming();
-            process_new_order(&mut book, &mut incoming);
-            drain_and_fanout(
-                &book,
-                &mut risk_prod,
-                &mut gw_prod,
-                &mut mkt_prod,
-            );
-            let _ = write_events_to_wal(
-                &mut wal_writer,
-                &book,
-                symbol_id,
-                SystemTime::now()
+        // Receive orders via CMP/UDP from Risk
+        if let Some((_hdr, payload)) =
+            cmp_receiver.try_recv()
+        {
+            // Decode OrderMessage from payload
+            if payload.len()
+                >= std::mem::size_of::<OrderMessage>()
+            {
+                let order_msg = unsafe {
+                    std::ptr::read(
+                        payload.as_ptr()
+                            as *const OrderMessage,
+                    )
+                };
+                let mut incoming =
+                    order_msg.to_incoming();
+                process_new_order(
+                    &mut book, &mut incoming,
+                );
+
+                // Write events to WAL
+                let ts_ns = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos() as u64,
-            );
-            let _ = flush_if_due(
-                &mut wal_writer,
-                &mut last_flush,
-            );
+                    .as_nanos() as u64;
+                let _ = write_events_to_wal(
+                    &mut wal_writer,
+                    &book,
+                    symbol_id,
+                    ts_ns,
+                );
+
+                // Send events to Risk via CMP
+                for event in book.events() {
+                    let _ = send_event_cmp(
+                        &mut cmp_sender,
+                        event,
+                        symbol_id,
+                        ts_ns,
+                    );
+                }
+            }
         } else if book.is_migrating() {
             book.migrate_batch(100);
         }
-        // bare busy-spin: no yield, dedicated core
+
+        let _ = flush_if_due(
+            &mut wal_writer, &mut last_flush,
+        );
+        let _ = cmp_sender.tick();
+        cmp_receiver.tick();
+        cmp_sender.recv_control();
+    }
+}
+
+fn send_event_cmp(
+    sender: &mut CmpSender,
+    event: &rsx_book::event::Event,
+    symbol_id: u32,
+    ts_ns: u64,
+) -> io::Result<()> {
+    let seq = sender.next_seq();
+    match *event {
+        rsx_book::event::Event::Fill {
+            maker_user_id,
+            taker_user_id,
+            price,
+            qty,
+            side,
+            maker_order_id_hi,
+            maker_order_id_lo,
+            taker_order_id_hi,
+            taker_order_id_lo,
+            ..
+        } => {
+            let record = FillRecord {
+                preamble: make_prefix::<FillRecord>(seq),
+                ts_ns,
+                symbol_id,
+                taker_user_id,
+                maker_user_id,
+                _pad0: 0,
+                taker_order_id_hi,
+                taker_order_id_lo,
+                maker_order_id_hi,
+                maker_order_id_lo,
+                price: price.0,
+                qty: qty.0,
+                taker_side: side,
+                reduce_only: 0,
+                tif: 0,
+                post_only: 0,
+                _pad1: [0; 4],
+            };
+            let bytes = record_as_bytes(&record);
+            let _ = sender.send_record(RECORD_FILL, bytes)?;
+        }
+        rsx_book::event::Event::OrderInserted {
+            user_id,
+            side,
+            price,
+            qty,
+            order_id_hi,
+            order_id_lo,
+            ..
+        } => {
+            let record = OrderInsertedRecord {
+                preamble: make_prefix::<OrderInsertedRecord>(seq),
+                ts_ns,
+                symbol_id,
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                price: price.0,
+                qty: qty.0,
+                side,
+                reduce_only: 0,
+                tif: 0,
+                post_only: 0,
+                _pad1: [0; 4],
+            };
+            let bytes = record_as_bytes(&record);
+            let _ =
+                sender.send_record(RECORD_ORDER_INSERTED, bytes)?;
+        }
+        rsx_book::event::Event::OrderCancelled {
+            user_id,
+            remaining_qty,
+            order_id_hi,
+            order_id_lo,
+            ..
+        } => {
+            let record = OrderCancelledRecord {
+                preamble: make_prefix::<OrderCancelledRecord>(seq),
+                ts_ns,
+                symbol_id,
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                remaining_qty: remaining_qty.0,
+                reason: 1,
+                reduce_only: 0,
+                tif: 0,
+                post_only: 0,
+                _pad1: [0; 4],
+            };
+            let bytes = record_as_bytes(&record);
+            let _ =
+                sender.send_record(RECORD_ORDER_CANCELLED, bytes)?;
+        }
+        rsx_book::event::Event::OrderDone {
+            user_id,
+            reason,
+            filled_qty,
+            remaining_qty,
+            order_id_hi,
+            order_id_lo,
+            ..
+        } => {
+            let record = OrderDoneRecord {
+                preamble: make_prefix::<OrderDoneRecord>(seq),
+                ts_ns,
+                symbol_id,
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                filled_qty: filled_qty.0,
+                remaining_qty: remaining_qty.0,
+                final_status: reason,
+                reduce_only: 0,
+                tif: 0,
+                post_only: 0,
+                _pad1: [0; 4],
+            };
+            let bytes = record_as_bytes(&record);
+            let _ =
+                sender.send_record(RECORD_ORDER_DONE, bytes)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn record_as_bytes<T>(record: &T) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            record as *const T as *const u8,
+            std::mem::size_of::<T>(),
+        )
+    }
+}
+
+fn make_prefix<T>(seq: u64) -> PayloadPreamble {
+    PayloadPreamble {
+        seq,
+        ver: 1,
+        kind: 0,
+        _pad0: 0,
+        len: std::mem::size_of::<T>() as u32,
     }
 }

@@ -110,7 +110,7 @@ PR or on-demand.
 **Characteristics:**
 - Testcontainers for services
 - Real SPSC rings
-- Real quinn QUIC streams
+- Real CMP/UDP links
 - Multi-process scenarios
 - Runs in variable time (typically 1-5min)
 - CI: every PR or on-demand
@@ -387,7 +387,7 @@ Verified across all test levels:
 ### Integration Tests
 - `tests/` directory (separate from `src/`)
 - testcontainers-rs for services
-- Real quinn QUIC streams
+- Real CMP/UDP links
 - Run with `make integration`
 
 ### Benchmarks
@@ -488,7 +488,7 @@ points.
 ## References
 
 - [ORDERBOOK.md](ORDERBOOK.md) - Matching internals, data structures
-- [MESSAGES.md](MESSAGES.md) - QUIC + WAL wire format, message definitions
+- [MESSAGES.md](MESSAGES.md) - CMP/WAL wire format, message definitions
 - [CONSISTENCY.md](CONSISTENCY.md) - Event fan-out, ordering guarantees
 - [SMRB.md](../../notes/SMRB.md) - SPSC ring buffer design
 - [NETWORK.md](NETWORK.md) - System topology, component communication
