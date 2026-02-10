@@ -6,43 +6,46 @@ This critique reflects the repo as it exists now. I did not run tests.
 
 ### Critical
 
-1) **Risk is not wired to mark or BBO feeds, so margin checks use zero prices.**
-   `mark_prices` and `index_prices` stay at 0 because nothing feeds the
-   `MarkPriceUpdate` or `BboUpdate` rings. This makes liquidation checks,
-   margin requirements, and funding calculations incorrect.
-   - Files: `rsx-risk/src/main.rs`, `rsx-risk/src/shard.rs`
+1) **Marketdata topology still violates spec.**
+   Spec calls for in-process SPSC fan-out from Matching; implementation
+   uses CMP/UDP and does not support DXS/WAL replay. This breaks ordering
+   guarantees and recovery expectations for marketdata.
+   - Files: `rsx-marketdata/src/main.rs`, `specs/v1/CONSISTENCY.md`
 
-2) **Order lifecycle events are not consumed by Risk, so frozen margin is never released.**
-   Risk only ingests fills; it ignores `OrderCancelled/OrderDone` from ME.
-   `process_order_done` exists but is never called. This will over-reserve
-   margin indefinitely.
-   - Files: `rsx-risk/src/main.rs`, `rsx-risk/src/shard.rs`, `rsx-matching/src/main.rs`
+2) **Risk does not release frozen margin on cancel/done events.**
+   `process_order_done` exists, but `OrderDoneEvent.frozen_amount` is set
+   to `0` and cancels do not trigger release at all. Margin can remain
+   over-reserved indefinitely.
+   - Files: `rsx-risk/src/main.rs`, `rsx-risk/src/shard.rs`
 
 ### High
 
-3) **Marketdata process is still a stub.**
-   CMP receive loop discards payloads, shadow book not updated, WS broadcast
-   loop is TODO. No live marketdata dissemination.
-   - Files: `rsx-marketdata/src/main.rs`
+3) **Gateway emits no client-visible response on rejected orders.**
+   With ack removal, if Risk rejects an order before it reaches Matching,
+   the client never receives a response (no matching event). This violates
+   expected UX and can leave clients waiting until timeout.
+   - Files: `rsx-risk/src/main.rs`, `rsx-gateway/src/main.rs`, `specs/v1/WEBPROTO.md`
 
-4) **Gateway cannot correlate accepts/rejects to the client order.**
-   `OrderResponse` lacks `order_id`; gateway pending queue is unused; response
-   messages are sent with empty `order_id`. This breaks client reconciliation.
-   - Files: `rsx-risk/src/rings.rs`, `rsx-gateway/src/handler.rs`, `rsx-gateway/src/main.rs`
+4) **Marketdata WS flow is incomplete relative to spec.**
+   No snapshot on subscribe when book is empty, no seq-gap detection, no
+   backpressure resubscribe path. Deltas can be silently dropped.
+   - Files: `rsx-marketdata/src/main.rs`, `rsx-marketdata/src/state.rs`,
+     `specs/v1/TESTING-MARKETDATA.md`
 
 ### Medium
 
-5) **Mark aggregator crate likely does not compile due to missing deps.**
-   `rsx-mark` now uses tokio/tungstenite/serde_json but `Cargo.toml` does not
-   include those deps. Build/test will fail until added.
-   - Files: `rsx-mark/Cargo.toml`, `rsx-mark/src/source.rs`
+5) **Order correlation for gateway cancel by client ID is still stateful.**
+   Gateway keeps a pending queue to resolve `cid -> order_id`, but no
+   matching event carries `client_order_id`. This means correlation still
+   depends on gateway state, contrary to the stated goal.
+   - Files: `rsx-gateway/src/pending.rs`, `rsx-gateway/src/handler.rs`
 
 ## Verified Improvements
 
-- Gateway → Risk → Matching wiring is present; orders flow into ME and fills
-  flow back to Risk.
-- Matching writes events to WAL and sends fills over CMP.
-- CMP/WAL format is aligned (WalHeader + CmpRecord), no payload preamble drift.
+- Gateway now routes `OrderInserted`, `OrderCancelled`, `OrderDone`, and
+  `Fill` events back to clients.
+- Risk forwards ME events to Gateway and no longer sends pre-trade acks.
+- Time utilities unified via `rsx-types/src/time.rs`.
 
 ## Test Reality
 
@@ -50,6 +53,7 @@ This critique reflects the repo as it exists now. I did not run tests.
 
 ## Bottom Line
 
-Core flow is closer, but risk correctness still hinges on missing price feeds
-and order lifecycle accounting. Marketdata and gateway response correlation are
-next blockers for a usable system.
+Order flow is closer to spec, but marketdata topology and risk margin
+release are still correctness blockers. Gateway correlation for `cid`
+still depends on local state, so stateless correlation has not been
+achieved.
