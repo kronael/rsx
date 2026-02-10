@@ -1,0 +1,157 @@
+/// LIQUIDATOR.md. Embedded liquidation engine.
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LiquidationStatus {
+    Pending,
+    Active,
+    Done,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiquidationState {
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub round: u32,
+    pub status: LiquidationStatus,
+    pub enqueued_at_ns: u64,
+    pub last_order_ns: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiquidationOrder {
+    pub symbol_id: u32,
+    pub user_id: u32,
+    pub side: u8,
+    pub price: i64,
+    pub qty: i64,
+}
+
+pub struct LiquidationEngine {
+    pub active: Vec<LiquidationState>,
+    base_delay_ns: u64,
+    base_slip_bps: i64,
+    max_rounds: u32,
+}
+
+impl LiquidationEngine {
+    pub fn new(
+        base_delay_ns: u64,
+        base_slip_bps: i64,
+        max_rounds: u32,
+    ) -> Self {
+        Self {
+            active: Vec::new(),
+            base_delay_ns,
+            base_slip_bps,
+            max_rounds,
+        }
+    }
+
+    pub fn enqueue(
+        &mut self,
+        user_id: u32,
+        symbol_id: u32,
+        now_ns: u64,
+    ) {
+        let already = self.active.iter().any(|s| {
+            s.user_id == user_id
+                && s.symbol_id == symbol_id
+                && s.status != LiquidationStatus::Done
+        });
+        if already {
+            return;
+        }
+        self.active.push(LiquidationState {
+            user_id,
+            symbol_id,
+            round: 1,
+            status: LiquidationStatus::Active,
+            enqueued_at_ns: now_ns,
+            last_order_ns: 0,
+        });
+    }
+
+    pub fn maybe_process(
+        &mut self,
+        now_ns: u64,
+        get_position_fn: &dyn Fn(u32, u32) -> i64,
+        get_mark_fn: &dyn Fn(u32) -> i64,
+    ) -> Vec<LiquidationOrder> {
+        let mut orders = Vec::new();
+        for state in &mut self.active {
+            if state.status != LiquidationStatus::Active {
+                continue;
+            }
+            let delay =
+                state.round as u64 * self.base_delay_ns;
+            if state.last_order_ns != 0
+                && now_ns < state.last_order_ns + delay
+            {
+                continue;
+            }
+            let net_qty =
+                get_position_fn(state.user_id, state.symbol_id);
+            if net_qty == 0 {
+                state.status = LiquidationStatus::Done;
+                continue;
+            }
+            let mark = get_mark_fn(state.symbol_id);
+            if mark == 0 {
+                continue;
+            }
+            let slip = state.round as i64
+                * state.round as i64
+                * self.base_slip_bps;
+            let (side, price) = if net_qty > 0 {
+                // Long -> sell
+                (1u8, mark * (10_000 - slip) / 10_000)
+            } else {
+                // Short -> buy
+                (0u8, mark * (10_000 + slip) / 10_000)
+            };
+            let qty = net_qty.abs();
+            orders.push(LiquidationOrder {
+                symbol_id: state.symbol_id,
+                user_id: state.user_id,
+                side,
+                price,
+                qty,
+            });
+            state.last_order_ns = now_ns;
+            state.round += 1;
+            if state.round > self.max_rounds {
+                state.status = LiquidationStatus::Done;
+            }
+        }
+        orders
+    }
+
+    pub fn cancel_if_recovered(
+        &mut self,
+        user_id: u32,
+        symbol_id: u32,
+    ) {
+        self.active.retain(|s| {
+            !(s.user_id == user_id
+                && s.symbol_id == symbol_id)
+        });
+    }
+
+    pub fn remove_done(&mut self) {
+        self.active.retain(|s| {
+            s.status != LiquidationStatus::Done
+        });
+    }
+
+    pub fn is_in_liquidation(
+        &self,
+        user_id: u32,
+        symbol_id: u32,
+    ) -> bool {
+        self.active.iter().any(|s| {
+            s.user_id == user_id
+                && s.symbol_id == symbol_id
+                && s.status == LiquidationStatus::Active
+        })
+    }
+}
