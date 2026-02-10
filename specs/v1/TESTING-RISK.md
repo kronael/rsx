@@ -446,3 +446,102 @@ Targets from RISK.md §performance:
 - ME failover: dedup by (symbol_id, seq) (RISK.md §ME failover)
 - Backpressure: stalls on ring full (CONSISTENCY.md §3)
 - System-level: full crash/recovery tests (TESTING.md §3)
+
+## Implementation Status (2026-02-10)
+
+171 tests across 11 files. Persist tests need Docker.
+
+### Unit Tests -- Phase 1
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| apply_buy_fill_opens_long | DONE | position_test.rs |
+| apply_sell_fill_opens_short | DONE | position_test.rs |
+| apply_opposing_fill_reduces_position | DONE | position_test.rs |
+| apply_fill_closing_position_realizes_pnl | DONE | position_test.rs |
+| avg_entry_price_weighted_correctly | DONE | position_test.rs |
+| multiple_fills_same_side_accumulate | DONE | position_test.rs |
+| fill_larger_than_position_flips_side | DONE | position_test.rs |
+| flip_long_to_short_single_fill | DONE | position_test.rs |
+| flip_short_to_long_single_fill | DONE | position_test.rs |
+| flip_realizes_pnl_then_opens_at_fill_price | DONE | position_test.rs |
+| max_qty_no_overflow | DONE | position_test.rs |
+| max_price_no_overflow | DONE | position_test.rs |
+| portfolio_margin_single_position | DONE | margin_test.rs:50 |
+| portfolio_margin_multi_symbol | DONE | margin_test.rs:70 |
+| portfolio_margin_long_short_offset | DONE | margin_test.rs:86 |
+| check_order_sufficient_margin_accepts | DONE | margin_test.rs:99 |
+| check_order_insufficient_margin_rejects | DONE | margin_test.rs:110 |
+| needs_liquidation_below_maintenance | DONE | margin_test.rs:124 |
+| needs_liquidation_above_maintenance_ok | DONE | margin_test.rs:135 |
+| frozen_margin_reserved_on_order | DONE | margin_test.rs:146 |
+| frozen_margin_released_on_done | DONE | margin_test.rs:159 |
+| check_order_exactly_at_margin_limit | DONE | margin_test.rs:169 |
+| margin_with_zero_collateral_rejects | DONE | margin_test.rs:197 |
+| margin_unrealized_pnl_affects_equity | DONE | margin_test.rs:221 |
+| margin_mark_price_unavailable_uses_index | DONE | margin_test.rs:232 |
+| frozen_margin_across_multiple_orders | DONE | margin_test.rs:278 |
+| order_failed_releases_all_frozen | DONE | margin_test.rs:307 |
+| fee_reserve_included_in_pretrade_check | DONE | margin_test.rs:315 |
+| exposure_add_user_on_fill | DONE | margin_test.rs:338 |
+| exposure_remove_user_on_close | DONE | margin_test.rs:345 |
+| reduce_only_bypasses_margin | DONE | margin_test.rs:393 |
+| liquidation_order_skips_margin | DONE | margin_test.rs:405 |
+| index_price_size_weighted_mid | DONE | price_test.rs |
+| index_price_balanced_book_equals_mid | DONE | price_test.rs |
+| index_price_one_side_zero | DONE | price_test.rs |
+| index_price_no_bbo_ever_uses_mark | DONE | price_test.rs |
+| funding_rate_mark_above_index_positive | DONE | funding_test.rs |
+| funding_rate_mark_below_index_negative | DONE | funding_test.rs |
+| funding_rate_clamped_to_bounds | DONE | funding_test.rs |
+| funding_payment_long_pays_when_positive | DONE | funding_test.rs |
+| funding_zero_sum_across_all_users | DONE | funding_test.rs |
+| funding_missed_interval_settled | DONE | funding_test.rs |
+| fee_floor_division_truncates | DONE | fee_test.rs |
+| fee_negative_bps_is_rebate | DONE | fee_test.rs |
+
+### Unit Tests -- Phase 2
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| fill_for_shard_user_updates_position | DONE | shard_test.rs |
+| fill_for_other_shard_ignored | DONE | shard_test.rs |
+| fill_dedup_by_seq | DONE | shard_test.rs |
+| fill_advances_tip_per_symbol | DONE | shard_test.rs |
+| order_accepted_margin_sufficient | DONE | shard_test.rs |
+| order_rejected_margin_insufficient | DONE | shard_test.rs |
+| order_while_user_liquidated_rejected | TODO | Need integration |
+| mark_price_update_triggers_recalc | DONE | margin_recalc_test.rs |
+| config_applied_event_updates_params | TODO | |
+| config_applied_forwarded_to_gateway | TODO | |
+
+### Integration Tests (Postgres)
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| persist_positions_roundtrip | DONE | persist_test.rs |
+| persist_tips_roundtrip | DONE | persist_test.rs |
+| cold_start_loads_positions | DONE | persist_test.rs |
+| cold_start_loads_tips | DONE | persist_test.rs |
+| cold_start_loads_accounts | DONE | persist_test.rs |
+| cold_start_with_empty_postgres | DONE | persist_test.rs |
+| upsert_idempotent_on_replay | DONE | persist_test.rs |
+| advisory_lock_exclusive | DONE | persist_test.rs |
+| replay_from_wal_rebuilds_positions | DONE | persist_test.rs |
+| main_acquires_lease_replica_cannot | TODO | Phase 4 |
+| main_crash_replica_promotes | TODO | Phase 4 |
+| replica_applies_buffered_fills | TODO | Phase 4 |
+| both_crash_recovery_from_postgres | TODO | Phase 4 |
+
+### E2E Tests
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| shard_processes_1000_fills | DONE | shard_e2e_test.rs |
+| shard_multi_symbol_tips | DONE | shard_e2e_test.rs |
+| shard_order_accept_reject_flow | DONE | shard_e2e_test.rs |
+| shard_liquidation_on_price_drop | DONE | shard_e2e_test.rs |
+| shard_funding_settlement | DONE | shard_e2e_test.rs |
+| full_lifecycle_order_fill_margin | TODO | Phase 5 |
+| liquidation_cascade | TODO | Phase 5 |
+| me_failover_dedup_by_seq | TODO | Phase 4 |

@@ -331,3 +331,149 @@ Targets from NETWORK.md:
   (MESSAGES.md §field-encodings)
 - Horizontal scaling via user_id hash sharding
   (NETWORK.md §gateway-scaling)
+
+## Implementation Status (2026-02-10)
+
+97 tests across 9 files.
+
+### WS Protocol Parsing/Serialization
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| parse_n_frame_all_fields | DONE | protocol_test.rs |
+| parse_n_frame_reduce_only_default_0 | DONE | protocol_test.rs |
+| parse_n_frame_reduce_only_1 | DONE | protocol_test.rs |
+| parse_n_frame_invalid_side_rejected | DONE | protocol_test.rs |
+| parse_n_frame_missing_field_rejected | DONE | protocol_test.rs |
+| parse_c_frame_by_cid | DONE | protocol_test.rs |
+| parse_c_frame_by_oid | DONE | protocol_test.rs |
+| parse_h_frame_server_initiated | DONE | protocol_test.rs |
+| parse_h_frame_client_echo | DONE | protocol_test.rs |
+| parse_e_frame_error_code_and_msg | DONE | protocol_test.rs |
+| parse_q_frame_liquidation_all_statuses | DONE | protocol_test.rs |
+| parse_s_frame_subscribe_bbo | DONE | protocol_test.rs |
+| parse_s_frame_subscribe_depth | DONE | protocol_test.rs |
+| parse_x_frame_unsubscribe | DONE | protocol_test.rs |
+| parse_x_frame_unsubscribe_all | DONE | protocol_test.rs |
+| parse_frame_rejects_multiple_keys | DONE | protocol_test.rs |
+| parse_frame_rejects_non_letter_key | DONE | protocol_test.rs |
+| parse_n_frame_invalid_tif_rejected | DONE | protocol_test.rs |
+| serialize_u_frame_order_update | DONE | protocol_test.rs |
+| serialize_f_frame_fill | DONE | protocol_test.rs |
+| serialize_e_frame_error | DONE | protocol_test.rs |
+| serialize_h_frame_heartbeat | DONE | protocol_test.rs |
+| serialize_bbo_frame | DONE | protocol_test.rs |
+| serialize_b_frame_l2_snapshot | DONE | protocol_test.rs |
+| serialize_d_frame_l2_delta | DONE | protocol_test.rs |
+| serialize_q_frame_liquidation | DONE | protocol_test.rs |
+| serialize_s_frame_subscribe | DONE | protocol_test.rs |
+| serialize_x_frame_unsubscribe | DONE | protocol_test.rs |
+| parse_b_snapshot_frame | DONE | protocol_test.rs |
+| parse_bbo_frame_all_fields | DONE | protocol_test.rs |
+| parse_d_delta_frame | DONE | protocol_test.rs |
+
+### Enum Validation
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| enum_side_valid_0_1_only | DONE | protocol_test.rs |
+| enum_tif_valid_0_1_2_only | DONE | protocol_test.rs |
+| enum_order_status_valid_0_1_2_3 | DONE | protocol_test.rs |
+| enum_failure_reason_valid_0_through_7 | DONE | protocol_test.rs |
+| enum_unknown_value_rejected | DONE | protocol_test.rs |
+
+### Fill Fee / Reduce-Only / Fixed-Point
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| fill_fee_positive_taker | DONE | protocol_test.rs |
+| fill_fee_negative_rebate_maker | DONE | protocol_test.rs |
+| fill_fee_zero | DONE | protocol_test.rs |
+| fill_fee_forwarded_in_f_frame | DONE | protocol_test.rs |
+| n_frame_ro_default_zero_when_absent | DONE | protocol_test.rs |
+| n_frame_ro_1_maps_to_quic_reduce_only | DONE | protocol_test.rs |
+| price_float_to_fixed_point_correct | DONE | convert_test.rs |
+| qty_float_to_fixed_point_correct | DONE | convert_test.rs |
+| price_fractional_tick_rejected | DONE | convert_test.rs |
+| qty_fractional_lot_rejected | DONE | convert_test.rs |
+
+### UUIDv7 Order ID
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| uuid_v7_monotonic_within_millisecond | DONE | order_id_test.rs |
+| uuid_v7_globally_unique | DONE | order_id_test.rs |
+| uuid_v7_time_sortable | DONE | order_id_test.rs |
+| uuid_v7_16_bytes_binary | DONE | order_id_test.rs |
+
+### Pending Order Tracking
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| pending_push_back_new_order | DONE | pending_test.rs |
+| pending_pop_back_lifo_match | DONE | pending_test.rs |
+| pending_linear_scan_on_mismatch | DONE | pending_test.rs |
+| pending_remove_by_order_id | DONE | pending_test.rs |
+| pending_empty_after_all_removed | DONE | pending_test.rs |
+| pending_timeout_removes_stale_order | DONE | pending_test.rs |
+| pending_multiple_orders_same_user | DONE | pending_test.rs |
+
+### Rate Limiting
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| rate_limit_allows_under_threshold | DONE | rate_limit_test.rs |
+| rate_limit_rejects_at_threshold | DONE | rate_limit_test.rs |
+| rate_limit_refills_over_time | DONE | rate_limit_test.rs |
+| rate_limit_per_user_independent | DONE | rate_limit_test.rs |
+| rate_limit_per_ip_independent | DONE | rate_limit_test.rs |
+| rate_limit_10_per_sec_per_user | DONE | rate_limit_test.rs |
+| rate_limit_100_per_sec_per_ip | DONE | rate_limit_test.rs |
+| rate_limit_1000_per_sec_per_instance | DONE | rate_limit_test.rs |
+
+### Backpressure
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| backpressure_accepts_under_10k | DONE | pending_test.rs |
+| backpressure_rejects_at_10k_overloaded | DONE | pending_test.rs |
+| backpressure_resumes_after_drain | DONE | pending_test.rs |
+
+### Circuit Breaker
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| circuit_closed_allows_orders | DONE | circuit_test.rs |
+| circuit_open_after_10_failures | DONE | circuit_test.rs |
+| circuit_open_rejects_immediately | DONE | circuit_test.rs |
+| circuit_half_open_after_30s | DONE | circuit_test.rs |
+| circuit_half_open_success_closes | DONE | circuit_test.rs |
+| circuit_half_open_failure_reopens | DONE | circuit_test.rs |
+
+### Heartbeat
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| heartbeat_sent_every_5s | TODO | Config exists, no timer test |
+| heartbeat_timeout_closes_at_10s | TODO | Config exists, no timer test |
+| heartbeat_client_response_resets_timer | TODO | Need handler integration |
+
+### Pre-validation
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| tick_size_validation_rejects_early | DONE | convert_test.rs |
+| lot_size_validation_rejects_early | DONE | convert_test.rs |
+| symbol_not_found_rejects_early | TODO | Need config cache |
+| config_cache_updated_on_config_applied | TODO | Need CONFIG_APPLIED |
+
+### E2E Tests
+
+| Spec Test | Status | File |
+|-----------|--------|------|
+| ws_new_order_fill_update_complete | TODO | E2E |
+| ws_new_order_rejected_insufficient_margin | TODO | E2E |
+| 100_concurrent_ws_sessions | TODO | E2E |
+| fills_precede_order_done_in_stream | TODO | E2E |
+| liquidation_event_routed_to_correct_user | TODO | E2E |
+| risk_engine_disconnect_circuit_opens | TODO | E2E |
