@@ -14,7 +14,7 @@ a superset (same components, distributed across machines).
 
 ```
 +-----------------------------------------+
-|  Gateway (WS + QUIC)                    |
+|  Gateway (WS + CMP)                     |
 |    +- Risk Engine (1 shard)             |
 |         +- ME: BTC-PERP  (core 2)      |
 |         +- ME: ETH-PERP  (core 3)      |
@@ -49,7 +49,6 @@ RSX_RISK_ME_ADDRS=127.0.0.1:9001,127.0.0.1:9002
 
 # /etc/rsx/env/gateway.env
 RSX_GATEWAY_WS_ADDR=0.0.0.0:8080
-RSX_GATEWAY_QUIC_ADDR=0.0.0.0:8081
 RSX_GATEWAY_RISK_ADDR=127.0.0.1:9010
 
 # /etc/rsx/env/mark.env

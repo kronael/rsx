@@ -8,8 +8,8 @@ communication. Messages are raw `#[repr(C)]` fixed records
 for prices and quantities. Streams are multiplexed by
 user_id and symbol (no per-user streams).
 
-Transport: quinn QUIC (see NETWORK.md). Flow control via
-QUIC stream-level and application backpressure.
+Transport: CMP/UDP (see NETWORK.md). Flow control via
+StatusMessage window + application backpressure.
 
 ## Order States
 
@@ -91,224 +91,13 @@ FILLED or CANCELLED (if user cancels)
 
 ## Message Schema
 
-### Record Definitions
+Messages are fixed-size `#[repr(C, align(64))]` records sent over
+CMP/UDP. All data payloads start with the CMP prefix:
+`seq:u64, ver:u16, kind:u8, _pad:u8, len:u32` (CMP.md).
 
-```proto
-syntax = "proto3";
-
-package rsx.matching;
-
-service MatchingEngine {
-    // Bidirectional stream: Gateway sends orders, Matching Engine sends fills
-    rpc OrderStream(stream GatewayMessage) returns (stream MatcherMessage);
-}
-
-service RiskGateway {
-    // Bidirectional stream: Gateway sends orders, Risk sends updates/fills/errors
-    rpc Stream(stream GatewayToRisk) returns (stream RiskToGateway);
-}
-
-// ACK semantics: there is no "order accepted" ACK. The first response is
-// an OrderUpdate/Fill from the matching engine path. Orders may become stale;
-// clients should cancel and forget if no update arrives within their timeout.
-
-// Gateway → Matching Engine
-message GatewayMessage {
-    oneof msg {
-        NewOrder new_order = 1;
-        CancelOrder cancel_order = 2;
-        // ModifyOrder modify_order = 3;  // future
-    }
-}
-
-message NewOrder {
-    bytes order_id = 1;      // UUIDv7 (16 bytes)
-    uint32 user_id = 2;
-    uint32 symbol = 3;
-    Side side = 4;
-    int64 price = 5;         // Fixed-point: price in smallest tick units
-    int64 qty = 6;           // Fixed-point: qty in smallest lot units
-    uint64 timestamp_ns = 7; // Nanosecond epoch (for latency tracking)
-    bool reduce_only = 8;   // ME enforces: clamp to position
-}
-
-message CancelOrder {
-    bytes order_id = 1;      // UUIDv7 of order to cancel
-    uint32 user_id = 2;      // For validation (must match original order)
-}
-
-// Gateway → Risk
-message GatewayToRisk {
-    oneof msg {
-        RiskNewOrder new_order = 1;
-        RiskCancelOrder cancel_order = 2;
-    }
-}
-
-message RiskNewOrder {
-    bytes order_id = 1;          // UUIDv7 (16 bytes)
-    bytes client_order_id = 2;  // fixed 20 bytes, zero-padded
-    uint32 user_id = 3;
-    uint32 symbol_id = 4;
-    uint32 active_user_id = 5;  // dense per-symbol id (from risk)
-    Side side = 6;
-    int64 price = 7;
-    int64 qty = 8;
-    TimeInForce tif = 9;
-    uint64 timestamp_ns = 10;
-    bool reduce_only = 11;      // pass to ME
-    bool is_liquidation = 12;   // skip margin check at risk
-}
-
-message RiskCancelOrder {
-    uint32 user_id = 1;
-    uint32 symbol_id = 2;
-    uint32 active_user_id = 3;
-    oneof key {
-        bytes order_id = 4;
-        bytes client_order_id = 5;  // fixed 20 bytes
-    }
-    uint64 timestamp_ns = 6;
-}
-
-enum Side {
-    BUY = 0;
-    SELL = 1;
-}
-
-enum TimeInForce {
-    GTC = 0;
-    IOC = 1;
-    FOK = 2;
-}
-
-// Matching Engine → Gateway
-message MatcherMessage {
-    oneof msg {
-        OrderFill fill = 1;
-        OrderDone done = 2;
-        OrderFailed failed = 3;
-        ConfigApplied config_applied = 4;
-    }
-}
-
-// Risk → Gateway
-message RiskToGateway {
-    oneof msg {
-        RiskOrderUpdate order_update = 1;
-        OrderFill fill = 2;
-        StreamError error = 3;
-        ConfigApplied config_applied = 4;
-    }
-}
-
-message RiskOrderUpdate {
-    bytes order_id = 1;
-    bytes client_order_id = 2;  // fixed 20 bytes, zero-padded
-    uint32 user_id = 3;
-    uint32 symbol_id = 4;
-    OrderStatus status = 5;
-    int64 filled_qty = 6;
-    int64 remaining_qty = 7;
-    FailureReason reason = 8;  // set only when status == FAILED
-    string details = 9;
-}
-
-message StreamError {
-    uint32 code = 1;
-    string msg = 2;
-}
-
-message OrderFill {
-    bytes taker_order_id = 1;     // UUIDv7 of aggressor (user who submitted order)
-    bytes maker_order_id = 2;     // UUIDv7 of resting order (matched against)
-    uint32 taker_user_id = 3;
-    uint32 maker_user_id = 4;
-    int64 price = 5;              // Fill price (maker's price)
-    int64 qty = 6;                // Fill qty
-    Side taker_side = 7;          // Side of aggressor
-    uint64 timestamp_ns = 8;      // Fill timestamp
-    int64 taker_fee = 9;          // fee charged to taker (>= 0)
-    int64 maker_fee = 10;         // fee to maker (negative = rebate)
-}
-
-message OrderDone {
-    bytes order_id = 1;
-    FinalStatus final_status = 2;
-    int64 filled_qty = 3;         // Total filled qty
-    int64 remaining_qty = 4;      // Remaining qty (resting or cancelled)
-}
-
-enum FinalStatus {
-    FILLED = 0;      // Completely filled
-    RESTING = 1;     // Partially filled or unfilled, now in orderbook
-    CANCELLED = 2;   // User-cancelled (via CancelOrder)
-}
-
-enum OrderStatus {
-    FILLED = 0;
-    RESTING = 1;
-    CANCELLED = 2;
-    FAILED = 3;
-}
-
-message OrderFailed {
-    bytes order_id = 1;
-    FailureReason reason = 2;
-    string details = 3;  // Human-readable error message
-}
-
-message ConfigApplied {
-    uint32 symbol_id = 1;
-    uint64 config_version = 2;
-    uint64 effective_at_ms = 3;
-    uint64 applied_at_ns = 4;
-}
-
-// Tip sync used by risk main → risk replica (SPSC channel)
-message TipSync {
-    uint32 symbol_id = 1;
-    uint64 seq = 2;            // last fully applied seq for this symbol
-    uint64 timestamp_ns = 3;
-}
-
-enum FailureReason {
-    INVALID_TICK_SIZE = 0;       // Price doesn't align to tick size
-    INVALID_LOT_SIZE = 1;        // Qty doesn't align to lot size
-    SYMBOL_NOT_FOUND = 2;        // Symbol doesn't exist
-    DUPLICATE_ORDER_ID = 3;      // Order ID already exists (idempotency check)
-    INSUFFICIENT_MARGIN = 4;     // Risk check failed (should be Gateway's job, but double-check)
-    OVERLOADED = 5;              // Ingress backpressure at gateway
-    INTERNAL_ERROR = 6;          // Matching engine error (should not happen)
-    REDUCE_ONLY_VIOLATION = 7;   // No position to reduce
-    NETWORK_ERROR = 8;           // Stream disconnect
-    RATE_LIMIT = 9;              // Per-user rate limit exceeded
-    TIMEOUT = 10;                // Order processing timeout
-}
-```
-
-### Field Encodings
-
-**order_id (bytes, 16B):**
-- UUIDv7 encoded as 16-byte binary (not string)
-- String encoding (36 chars) wastes wire space
-- Binary encoding: 16 bytes vs 36 bytes (2.25x smaller)
-
-**price, qty (int64):**
-- Fixed-point integer (reference ORDERBOOK.md section 1)
-- Example: BTC-PERP tick_size=0.01 USD, price=$50,000.00 → `price=5000000`
-- Example: BTC-PERP lot_size=0.001 BTC, qty=1.5 BTC → `qty=1500`
-- Conversion at Gateway (human-readable → fixed-point)
-- NO floating point (non-deterministic, precision errors)
-
-**timestamp_ns (uint64):**
-- Nanosecond epoch (Unix timestamp * 1e9 + nanos)
-- For latency tracking (order submission → fill)
-- Matching Engine uses monotonic clock (not wall clock)
-
-**user_id, symbol (uint32):**
-- Internal IDs (not strings)
-- Gateway maintains string → ID mapping (symbol name → symbol ID)
+Record layouts are defined in:
+- `rsx-dxs` records (DXS/WAL types)
+- per-service wire types (Gateway/Risk/Matching)
 
 ## Message Flow Sequences
 
@@ -789,13 +578,13 @@ enum Event {
 
 ### Zero-Allocation Principle
 
-**v1 (raw #[repr(C)] over QUIC):**
-- Minimal allocation (QUIC send buffers only)
+**v1 (raw #[repr(C)] over CMP/UDP):**
+- Minimal allocation (UDP send buffers only)
 - WAL wire format: zero-copy on read path
 
 **Future (raw structs over SMRB):**
 - Zero allocation (pre-allocated ring buffer)
-- Eliminates QUIC overhead for co-located processes
+- Eliminates extra transport overhead for co-located processes
 
 ## Cross-References
 

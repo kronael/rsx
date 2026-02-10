@@ -6,9 +6,10 @@ Spec-first perpetuals exchange. All specs in `specs/v1/`.
 
 - Separate processes: Gateway, Risk, ME (per symbol),
   Marketdata, Recorder, Mark
-- Between processes: QRPC (C structs over UDP or QUIC)
-  - Live path: QRPC/UDP (order flow, fills)
-  - Cold path: QRPC/QUIC (WAL replay, replication)
+- Between processes: CMP (C structs over UDP) + WAL
+  replication (TCP)
+  - Live path: CMP/UDP (order flow, fills)
+  - Cold path: WAL replication over TCP (replay, replication)
 - Within each process: tile architecture (pinned threads
   + SPSC rings for intra-process IPC, see TILES.md)
 - Hot path I/O: monoio (io_uring), not tokio (epoll)
@@ -24,7 +25,7 @@ rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab, CompressionMap)
 rsx-matching/   ME tile logic (one instance per symbol)
 rsx-risk/       Risk tile logic (one per user shard)
 rsx-dxs/        WAL writer/reader, DxsConsumer, DxsReplay server
-rsx-gateway/    Gateway tile, WS ingress + QUIC to risk
+rsx-gateway/    Gateway tile, WS ingress + CMP/UDP to risk
 rsx-marketdata/ Marketdata tile, shadow book, L2/BBO/trades
 rsx-mark/       Mark price aggregator (separate process)
 rsx-recorder/   Archival DXS consumer (separate process)
@@ -80,7 +81,7 @@ linked into their respective process binaries.
 - FxHashMap for integer-keyed maps (not std HashMap)
 - SPSC rings via rtrb for intra-process IPC
 - Pin hot threads to cores via core_affinity
-- Panic handler: `std::panic::set_hook(Box::new(|_| std::process::exit(0)));`
+- Panic handler: `install_panic_handler()` from rsx_types
 - Document lock acquisition order where locks exist
 
 ## Naming
@@ -151,8 +152,8 @@ for notional = price * qty at risk boundary.
 - **Later:** userspace networking (DPDK, AF_XDP) swaps the
   I/O layer inside the same tile. No changes to SPSC rings
   or ME.
-- **DXS:** QRPC (C structs over QUIC, quinn) streaming raw
-  WAL bytes. Same wire format as disk. See QRPC.md.
+- **DXS:** CMP/UDP for hot path, WAL replication over TCP
+  for cold path. Same wire format as disk. See CMP.md.
 - Reference impl: `/home/onvos/app/trader/monoio-client/`
   - `ws_monoio.rs`: WebSocket client/server on monoio
   - `web_client.rs`: HTTP client with monoio
@@ -172,7 +173,7 @@ for notional = price * qty at risk boundary.
 | Architecture | TILES.md (networking, tiles) | - |
 | Shared orderbook | ORDERBOOK.md | TESTING-BOOK.md |
 | Matching engine | ORDERBOOK.md, CONSISTENCY.md | TESTING-MATCHING.md |
-| DXS (WAL + replay) | DXS.md, WAL.md, QRPC.md | TESTING-DXS.md |
+| DXS (WAL + replay) | DXS.md, WAL.md, CMP.md | TESTING-DXS.md |
 | Risk engine | RISK.md | TESTING-RISK.md |
 | Liquidator | LIQUIDATOR.md | TESTING-LIQUIDATOR.md |
 | Mark price | MARK.md | TESTING-MARK.md |

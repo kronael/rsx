@@ -9,6 +9,7 @@ use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
+use rsx_dxs::records::PayloadPreamble;
 use std::io;
 use std::time::Instant;
 
@@ -22,7 +23,8 @@ pub fn write_events_to_wal(
     for event in book.events() {
         match *event {
             Event::Fill {
-                maker_handle,
+                maker_handle: _,
+                maker_user_id,
                 taker_user_id,
                 price,
                 qty,
@@ -33,11 +35,11 @@ pub fn write_events_to_wal(
                 taker_order_id_lo,
             } => {
                 let record = FillRecord {
-                    seq: 0,
+                    preamble: make_prefix::<FillRecord>(),
                     ts_ns,
                     symbol_id,
                     taker_user_id,
-                    maker_user_id: maker_handle,
+                    maker_user_id,
                     _pad0: 0,
                     taker_order_id_hi,
                     taker_order_id_lo,
@@ -64,7 +66,7 @@ pub fn write_events_to_wal(
                 order_id_lo,
             } => {
                 let record = OrderInsertedRecord {
-                    seq: 0,
+                    preamble: make_prefix::<OrderInsertedRecord>(),
                     ts_ns,
                     symbol_id,
                     user_id,
@@ -91,7 +93,7 @@ pub fn write_events_to_wal(
                 order_id_lo,
             } => {
                 let record = OrderCancelledRecord {
-                    seq: 0,
+                    preamble: make_prefix::<OrderCancelledRecord>(),
                     ts_ns,
                     symbol_id,
                     user_id,
@@ -119,7 +121,7 @@ pub fn write_events_to_wal(
                 order_id_lo,
             } => {
                 let record = OrderDoneRecord {
-                    seq: 0,
+                    preamble: make_prefix::<OrderDoneRecord>(),
                     ts_ns,
                     symbol_id,
                     user_id,
@@ -170,5 +172,15 @@ fn record_as_bytes<T>(record: &T) -> &[u8] {
             record as *const T as *const u8,
             std::mem::size_of::<T>(),
         )
+    }
+}
+
+fn make_prefix<T>() -> PayloadPreamble {
+    PayloadPreamble {
+        seq: 0,
+        ver: 1,
+        kind: 0,
+        _pad0: 0,
+        len: std::mem::size_of::<T>() as u32,
     }
 }

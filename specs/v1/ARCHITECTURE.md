@@ -9,21 +9,20 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
                        External
                     +------------+
                     |  Web (WS)  |
-                    |  QUIC      |
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS overlay + QUIC passthrough
+                    |  Gateway   |  WS overlay + CMP bridge
                     | (monoio)   |  auth, rate limit, ingress bp
                     +-----+------+
-                          | SPSC
+                          | CMP/UDP
                     +-----v------+     SPSC    +---------------+
                     |   Risk     +------------>| Matching Eng  |
                     |  Engine    |<------------+ (1 per symbol) |
                     | (1 shard)  |  SPSC fills +-------+-------+
                     +--+---+--+-+              |       |
                        |   |  |          +-----+  +----+-----+
-                 QUIC  |   |  | SPSC     |WAL     |SPSC      |SPSC
+              CMP/UDP  |   |  | SPSC     |WAL     |SPSC      |SPSC
               +--------+   |  +------+   |        |          |
               v            |         v   v        v          v
          +--------+  +----+---+ +--------+  +---------+ +--------+
@@ -36,13 +35,13 @@ matching per symbol, SPSC rings for IPC, WAL-based recovery.
 ```
 
 Transports:
-- **Between processes:** QUIC for hot path; DXS replay/streaming uses gRPC (tonic) on the cold path
-  (Gateway↔Risk↔ME). One multiplexed stream per link.
+- **Between processes:** CMP/UDP for hot path; WAL/TCP for cold path
+  (Gateway↔Risk↔ME). One record per datagram or TCP byte stream.
 - **Within each process:** tiles (pinned threads) + SPSC
   rings (rtrb, 50-170ns). Every process uses tiles for
   its internal concerns (network I/O, logic, WAL, etc).
 - **DXS:** WAL streaming to consumers (recorder, mark).
-  Transport is gRPC (tonic) over HTTP/2 on the cold path.
+  Transport is WAL/TCP on the cold path.
 
 See `TILES.md` for tile pattern, `NETWORK.md` for process
 topology.
@@ -56,7 +55,7 @@ topology.
 | rsx-risk | Risk tile logic, one per user shard, margin + funding + liquidation |
 | rsx-dxs | WAL writer/reader, DxsConsumer, DxsReplay server (transport-agnostic) |
 | rsx-mark | Mark price aggregator (separate process), external WS feeds, median |
-| rsx-gateway | Gateway tile, WS overlay + QUIC passthrough, auth, rate limit |
+| rsx-gateway | Gateway tile, WS overlay + CMP bridge, auth, rate limit |
 | rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |
 | rsx-recorder | Archival DXS consumer (separate process), daily WAL files |
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
@@ -70,21 +69,21 @@ their respective process binaries.
 ```
 User                Gateway          Risk           ME (BTC-PERP)
  |                    |                |                |
- |--WS/QUIC order---->|                |                |
- |                    |--SPSC order--->|                |
- |                    |                |--margin chk--->|
- |                    |                |--SPSC order--->|
- |                    |                |                |--match book
- |                    |                |                |--WAL append
- |                    |                |<-SPSC fill(s)--|
- |                    |                |--apply fill--->|
- |                    |                |  position upd  |
- |                    |                |--PG write-behind
- |                    |<-SPSC fill(s)--|                |
- |<--WS/QUIC fill(s)--|                |                |
- |                    |                |                |
- |                    |<-SPSC done-----|<-SPSC done-----|
- |<--WS/QUIC done-----|                |                |
+|--WS order--------->|                |                |
+|                    |--CMP/UDP order>|                |
+|                    |                |--margin chk--->|
+|                    |                |--CMP/UDP order>|
+|                    |                |                |--match book
+|                    |                |                |--WAL append
+|                    |                |<-CMP/UDP fills-|
+|                    |                |--apply fill--->|
+|                    |                |  position upd  |
+|                    |                |--PG write-behind
+|                    |<-CMP/UDP fills-|                |
+|<--WS fill(s)-------|                |                |
+|                    |                |                |
+|                    |<-CMP/UDP done--|<-CMP/UDP done--|
+|<--WS done----------|                |                |
 ```
 
 Pre-trade: Risk checks portfolio margin (all positions, all
@@ -140,7 +139,7 @@ Latency targets (same machine, SPSC):
         |
   +-----v------+     +------------------+
   | DxsReplay  |---->| Risk (consumer)  |
-  | gRPC server|     | replay tips+1    |
+  | TCP server |     | replay tips+1    |
   +-----+------+     +------------------+
         |
   +-----v------+
@@ -203,7 +202,7 @@ Durability guarantees:
 | METADATA.md | Symbol config scheduling, propagation, cold start |
 | CONSISTENCY.md | Event fan-out, SPSC routing, ordering guarantees |
 | NETWORK.md | Topology, transport, service discovery, startup ordering |
-| MESSAGES.md | Message semantics (transport is now QUIC) |
+| MESSAGES.md | Message semantics (transport is CMP/UDP) |
 | WEBPROTO.md | WS compact JSON protocol, frame types |
 | RPC.md | Async order handling, UUIDv7, pending tracking |
 | MARKETDATA.md | Shadow book, L2/BBO/trades, public WS |

@@ -11,6 +11,7 @@ Crate: `rsx-dxs`
 | # | Requirement | Source |
 |---|-------------|--------|
 | D1 | Fixed-record format: 16B header + repr(C) payload | DXS.md §1 |
+| D1a | Payload begins with CMP prefix | CMP.md |
 | D2 | CRC32 validation on read, truncate on invalid | DXS.md §1 |
 | D3 | Little-endian encoding for all fields | DXS.md §1 |
 | D4 | File layout: `wal/{stream_id}/{stream_id}_{first}_{last}.wal` | DXS.md §2 |
@@ -21,7 +22,7 @@ Crate: `rsx-dxs`
 | D9 | WalWriter: GC deletes files outside retention | DXS.md §3 |
 | D10 | WalReader: open from seq via filename binary search | DXS.md §4 |
 | D11 | WalReader: sequential iteration across files | DXS.md §4 |
-| D12 | DxsReplay server: gRPC stream from from_seq | DXS.md §5 |
+| D12 | DxsReplay server: TCP stream from from_seq | DXS.md §5 |
 | D13 | DxsReplay: CaughtUp marker then live tail | DXS.md §5 |
 | D14 | DxsConsumer: tip persistence every 10ms | DXS.md §6 |
 | D15 | DxsConsumer: reconnect with backoff 1/2/4/8/30s | DXS.md §6 |
@@ -214,7 +215,7 @@ Targets from DXS.md §10:
   (WAL.md, CONSISTENCY.md §3)
 - Archive fallback when hot WAL retention exceeded
   (DXS.md §2)
-- Cross-host live streaming via gRPC (tonic) + WAL wire format
+- Cross-host live streaming via WAL/TCP + WAL wire format
   (DXS.md §7)
 - SPSC rings for in-process hot-path (ME -> risk, risk ->
   gateway), DXS for cross-host and replay (DXS.md §7,

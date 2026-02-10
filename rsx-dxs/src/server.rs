@@ -1,49 +1,23 @@
-// QUINN MIGRATION NOTES:
-// Current: tonic gRPC over HTTP/2 (tokio)
-// Target: quinn QUIC + WAL wire format
-//
-// Files to change:
-// - proto/dxs.proto: delete (no protobuf with quinn)
-// - build.rs: delete (no tonic-build)
-// - Cargo.toml: replace tonic/prost with quinn
-//
-// Surface area:
-// 1. DxsReplayService::serve(): Replace tonic::transport::Server
-//    with quinn::Endpoint::server(). Listen on UDP instead of TCP.
-// 2. stream() RPC: Replace tonic::Request/Response with quinn's
-//    bi-directional stream API. ReplayRequest becomes a fixed
-//    12-byte struct (u32 stream_id + u64 from_seq) sent as raw
-//    bytes. No protobuf encoding.
-// 3. Response streaming: Replace tokio_stream::wrappers with
-//    direct writes to quinn's SendStream. Each WalRecord is
-//    already raw bytes (header + payload), so just write directly.
-// 4. Live tail notify: Same tokio::sync::Notify (unchanged).
-// 5. Error handling: Replace tonic::Status with custom error
-//    codes sent as leading u8 in response.
-//
-// Wire format (unchanged):
-// - Request: [u32 stream_id][u64 from_seq] (12 bytes fixed)
-// - Response: stream of [WalHeader(16B)][payload(N bytes)]
-//
-// No gRPC overhead, no HTTP/2 framing. Pure WAL bytes over QUIC.
-
-use crate::proto::dxs_replay_server::DxsReplay;
-use crate::proto::dxs_replay_server::DxsReplayServer;
-use crate::proto::ReplayRequest;
-use crate::proto::WalBytes;
+use crate::encode_utils::encode_record;
+use crate::header::WalHeader;
 use crate::records::CaughtUpRecord;
+use crate::records::PayloadPreamble;
+use crate::records::ReplayRequest;
 use crate::records::RECORD_CAUGHT_UP;
+use crate::records::RECORD_REPLAY_REQUEST;
 use crate::wal::WalReader;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpListener;
+use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
-use tonic::Request;
-use tonic::Response;
-use tonic::Status;
 use tracing::info;
+use tracing::warn;
 
 pub struct DxsReplayService {
     pub wal_dir: PathBuf,
@@ -56,11 +30,12 @@ impl DxsReplayService {
     pub fn new(wal_dir: PathBuf) -> Self {
         Self {
             wal_dir,
-            listeners: Arc::new(RwLock::new(HashMap::new())),
+            listeners: Arc::new(RwLock::new(
+                HashMap::new(),
+            )),
         }
     }
 
-    /// Register a flush listener for a stream_id.
     pub async fn add_listener(
         &self,
         stream_id: u32,
@@ -73,176 +48,175 @@ impl DxsReplayService {
         notify
     }
 
-    pub fn into_service(self) -> DxsReplayServer<Self> {
-        DxsReplayServer::new(self)
-    }
-
     pub async fn serve(
         self,
         addr: SocketAddr,
-    ) -> Result<(), tonic::transport::Error> {
+    ) -> std::io::Result<()> {
+        let listener = TcpListener::bind(addr).await?;
         info!("dxs replay server listening on {}", addr);
-        tonic::transport::Server::builder()
-            .add_service(self.into_service())
-            .serve(addr)
-            .await
+        let svc = Arc::new(self);
+        loop {
+            let (stream, peer) =
+                listener.accept().await?;
+            info!("dxs client connected from {}", peer);
+            let svc = svc.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    handle_client(svc, stream).await
+                {
+                    warn!(
+                        "dxs client {} error: {}",
+                        peer, e
+                    );
+                }
+            });
+        }
     }
 }
 
-#[tonic::async_trait]
-impl DxsReplay for DxsReplayService {
-    type StreamStream = tokio_stream::wrappers::ReceiverStream<
-        Result<WalBytes, Status>,
-    >;
+async fn handle_client(
+    svc: Arc<DxsReplayService>,
+    mut stream: TcpStream,
+) -> std::io::Result<()> {
+    // Read ReplayRequest: WalHeader(16) + payload(64)
+    let mut hdr_buf = [0u8; WalHeader::SIZE];
+    stream.read_exact(&mut hdr_buf).await?;
+    let preamble = WalHeader::from_bytes(&hdr_buf)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "bad header",
+            )
+        })?;
+    if preamble.record_type != RECORD_REPLAY_REQUEST {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "expected replay request",
+        ));
+    }
+    let payload_len = preamble.len as usize;
+    let mut payload_buf = vec![0u8; payload_len];
+    stream.read_exact(&mut payload_buf).await?;
 
-    async fn stream(
-        &self,
-        request: Request<ReplayRequest>,
-    ) -> Result<Response<Self::StreamStream>, Status> {
-        let req = request.into_inner();
-        let stream_id = req.stream_id;
-        let from_seq = req.from_seq;
+    if payload_buf.len()
+        < std::mem::size_of::<ReplayRequest>()
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "replay request too short",
+        ));
+    }
+    let req = unsafe {
+        std::ptr::read(
+            payload_buf.as_ptr()
+                as *const ReplayRequest,
+        )
+    };
+    let stream_id = req.stream_id;
+    let from_seq = req.from_seq;
 
-        info!(
-            "replay request stream_id={} from_seq={}",
-            stream_id, from_seq
-        );
+    info!(
+        "replay request stream_id={} from_seq={}",
+        stream_id, from_seq
+    );
 
-        let wal_dir = self.wal_dir.clone();
-        let notify = self.add_listener(stream_id).await;
+    let notify =
+        svc.add_listener(stream_id).await;
 
-        let (tx, rx) = tokio::sync::mpsc::channel(256);
+    // Phase 1: historical replay
+    let mut reader = WalReader::open_from_seq(
+        stream_id,
+        from_seq,
+        &svc.wal_dir,
+    )?;
 
-        tokio::spawn(async move {
-            // phase 1: historical replay
-            let mut reader = match WalReader::open_from_seq(
+    let mut last_seq = from_seq;
+    loop {
+        match reader.next() {
+            Ok(Some(record)) => {
+                let hdr_bytes =
+                    record.header.to_bytes();
+                stream
+                    .write_all(&hdr_bytes)
+                    .await?;
+                stream
+                    .write_all(&record.payload)
+                    .await?;
+                last_seq = last_seq.max(from_seq);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                warn!("wal read error: {}", e);
+                return Err(e);
+            }
+        }
+    }
+
+    // Send CaughtUp marker
+    let caught_up = CaughtUpRecord {
+        preamble: PayloadPreamble {
+            seq: 0,
+            ver: 1,
+            kind: 0,
+            _pad0: 0,
+            len: std::mem::size_of::<CaughtUpRecord>()
+                as u32,
+        },
+        ts_ns: std::time::SystemTime::now()
+            .duration_since(
+                std::time::UNIX_EPOCH,
+            )
+            .unwrap_or_default()
+            .as_nanos() as u64,
+        stream_id,
+        _pad0: 0,
+        live_seq: last_seq,
+        _pad1: [0; 40],
+    };
+    let payload = unsafe {
+        std::slice::from_raw_parts(
+            &caught_up as *const CaughtUpRecord
+                as *const u8,
+            std::mem::size_of::<CaughtUpRecord>(),
+        )
+    };
+    let encoded = encode_record(
+        RECORD_CAUGHT_UP,
+        stream_id,
+        payload,
+    );
+    stream.write_all(&encoded).await?;
+
+    // Phase 2: live tail
+    loop {
+        notify.notified().await;
+
+        let mut reader =
+            match WalReader::open_from_seq(
                 stream_id,
-                from_seq,
-                &wal_dir,
+                last_seq + 1,
+                &svc.wal_dir,
             ) {
                 Ok(r) => r,
-                Err(e) => {
-                    let _ = tx
-                        .send(Err(Status::internal(format!(
-                            "open wal: {}", e
-                        ))))
-                        .await;
-                    return;
-                }
+                Err(_) => continue,
             };
 
-            let mut last_seq = from_seq;
-            loop {
-                match reader.next() {
-                    Ok(Some(record)) => {
-                        let mut bytes = Vec::with_capacity(
-                            crate::header::WalHeader::SIZE
-                                + record.payload.len(),
-                        );
-                        bytes.extend_from_slice(
-                            &record.header.to_bytes(),
-                        );
-                        bytes.extend_from_slice(&record.payload);
-                        last_seq = last_seq.max(from_seq);
-                        if tx
-                            .send(Ok(WalBytes { record: bytes }))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        let _ = tx
-                            .send(Err(Status::internal(format!(
-                                "read wal: {}", e
-                            ))))
-                            .await;
-                        return;
-                    }
+        loop {
+            match reader.next() {
+                Ok(Some(record)) => {
+                    let hdr_bytes =
+                        record.header.to_bytes();
+                    stream
+                        .write_all(&hdr_bytes)
+                        .await?;
+                    stream
+                        .write_all(&record.payload)
+                        .await?;
+                    last_seq += 1;
                 }
+                Ok(None) => break,
+                Err(_) => break,
             }
-
-            // send CaughtUp marker
-            let caught_up = CaughtUpRecord {
-                seq: 0,
-                ts_ns: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64,
-                stream_id,
-                _pad0: 0,
-                live_seq: last_seq,
-                _pad1: [0; 40],
-            };
-            let payload = unsafe {
-                std::slice::from_raw_parts(
-                    &caught_up as *const CaughtUpRecord
-                        as *const u8,
-                    std::mem::size_of::<CaughtUpRecord>(),
-                )
-            };
-            let encoded = crate::encode_utils::encode_record(
-                RECORD_CAUGHT_UP,
-                stream_id,
-                payload,
-            );
-            if tx
-                .send(Ok(WalBytes { record: encoded }))
-                .await
-                .is_err()
-            {
-                return;
-            }
-
-            // phase 2: live tail
-            loop {
-                notify.notified().await;
-
-                // re-open reader from where we left off
-                let mut reader = match WalReader::open_from_seq(
-                    stream_id,
-                    last_seq + 1,
-                    &wal_dir,
-                ) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-
-                loop {
-                    match reader.next() {
-                        Ok(Some(record)) => {
-                            let mut bytes = Vec::with_capacity(
-                                crate::header::WalHeader::SIZE
-                                    + record.payload.len(),
-                            );
-                            bytes.extend_from_slice(
-                                &record.header.to_bytes(),
-                            );
-                            bytes.extend_from_slice(
-                                &record.payload,
-                            );
-                            last_seq += 1;
-                            if tx
-                                .send(Ok(WalBytes {
-                                    record: bytes,
-                                }))
-                                .await
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(_) => break,
-                    }
-                }
-            }
-        });
-
-        Ok(Response::new(
-            tokio_stream::wrappers::ReceiverStream::new(rx),
-        ))
+        }
     }
 }

@@ -12,16 +12,10 @@ Archive serves historical WAL records from flat files on disk. It is used when h
 - **Single authoritative archive per WAL stream.**
 - Other nodes may keep mirrors, but only one archive is authoritative.
 
-## API (tonic gRPC)
+## API (WAL/TCP)
 
-```proto
-service ArchiveReplay {
-  rpc Stream(ReplayRequest) returns (stream WalBytes);
-}
-```
-
-- `ReplayRequest` and `WalBytes` match `DXS.md`.
-- Records are fixed‑record bytes (header + payload).
+- TCP byte stream of WAL records (header + payload).
+- `ReplayRequest` semantics match DXS.md (from_seq).
 
 ## Recovery Lookup Order
 

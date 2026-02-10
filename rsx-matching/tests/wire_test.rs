@@ -1,11 +1,19 @@
 use rsx_matching::wire::EventMessage;
 use rsx_matching::wire::OrderMessage;
+use rsx_dxs::records::PayloadPreamble;
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 
 #[test]
 fn order_message_roundtrip_buy() {
     let msg = OrderMessage {
+        preamble: PayloadPreamble {
+            seq: 1,
+            ver: 1,
+            kind: 0,
+            _pad0: 0,
+            len: std::mem::size_of::<OrderMessage>() as u32,
+        },
         price: 50_000,
         qty: 100,
         side: Side::Buy as u8,
@@ -30,6 +38,13 @@ fn order_message_roundtrip_buy() {
 #[test]
 fn order_message_roundtrip_sell_ioc() {
     let msg = OrderMessage {
+        preamble: PayloadPreamble {
+            seq: 2,
+            ver: 1,
+            kind: 0,
+            _pad0: 0,
+            len: std::mem::size_of::<OrderMessage>() as u32,
+        },
         price: 49_000,
         qty: 200,
         side: Side::Sell as u8,
@@ -52,6 +67,7 @@ fn order_message_roundtrip_sell_ioc() {
 fn event_message_from_fill() {
     let event = rsx_book::event::Event::Fill {
         maker_handle: 1,
+        maker_user_id: 1,
         taker_user_id: 2,
         price: rsx_types::Price(50_000),
         qty: rsx_types::Qty(100),

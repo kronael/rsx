@@ -10,7 +10,7 @@ without blocking on individual order execution.
 **Key design points:**
 - UUIDv7 order IDs generated at Gateway entry (globally unique, timeline-sortable)
 - LIFO VecDeque for pending order tracking (optimized for typical response ordering)
-- Bidirectional QUIC streams (Gateway ↔ Risk ↔ Matching Engine), multiplexed
+- Bidirectional CMP/UDP links (Gateway ↔ Risk ↔ Matching Engine)
 - NO automatic retry (failed orders fail, user must manually retry)
 - Ingress backpressure: Gateway rejects new orders when its buffer exceeds 10k
 
@@ -213,7 +213,7 @@ pending.queue.push_back((order_id, OrderContext {
 }));
 ```
 
-**3. Gateway sends to risk engine (QUIC stream):**
+**3. Gateway sends to risk engine (CMP/UDP):**
 ```
 Gateway ──ORDER(order_id, user_id, symbol, side, price, qty)──→ Risk
 ```
@@ -340,7 +340,7 @@ loop {
 
 ### Network Errors
 
-**Stream disconnect (Gateway ↔ Risk):**
+**Link failure (Gateway ↔ Risk):**
 ```
 Gateway ──ORDER──→ Risk
                    ↓
@@ -350,7 +350,7 @@ Gateway ──ORDER──→ Risk
 ```
 
 **Handling:**
-- Gateway detects stream disconnect (QUIC error)
+- Gateway detects link failure (no heartbeats / NAK timeout)
 - All pending orders on that stream → ORDER_FAILED(NETWORK_ERROR)
 - NETWORK_ERROR (8), RATE_LIMIT (9), and TIMEOUT (10) are
   defined in MESSAGES.md FailureReason enum (message semantics).
@@ -443,11 +443,10 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 - Error response uses ORDER_FAILED(OVERLOADED).
 - Goal: fail fast rather than allow latency to explode.
 
-### QUIC Flow Control (Secondary)
+### CMP Flow Control (Secondary)
 
-- HTTP/2 flow control can still apply on long-lived streams.
-- It is not the primary backpressure mechanism in RSX.
-- Configure consistently across gateway, risk, and matcher to avoid stalls.
+- Receiver sends StatusMessage window every 10ms.
+- Sender stalls when `next_seq > consumption_seq + window`.
 
 ### Application-Level Rate Limiting
 
@@ -531,7 +530,7 @@ async fn handle_user_session(user_id: u32, stream: UserStream, risk: RiskStream)
 **Concurrency:**
 - Thousands of tasks (one per user session)
 - Tokio scheduler multiplexes tasks on thread pool
-- Single multiplexed QUIC stream to Risk (quinn)
+- Single CMP/UDP link to Risk
 
 ### Matching Engine: Single-Threaded Event Loop
 
@@ -627,7 +626,7 @@ fn main() {
 
 ## Cross-References
 
-- **MESSAGES.md**: Message semantics (transport is now QUIC)
+- **MESSAGES.md**: Message semantics (transport is CMP/UDP)
 - **ORDERBOOK.md**: Single-threaded matching model, O(1) operations
 - **NETWORK.md**: Component topology, stream lifecycle
 - **SMRB.md**: Low-latency IPC, SPSC queue design

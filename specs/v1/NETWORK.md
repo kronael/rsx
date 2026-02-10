@@ -51,7 +51,7 @@ Web Users (WS) ─────────────────────�
 - Monolithic process
 - Async runtime (Tokio) for concurrent client sessions
 - One WebSocket connection per client app
-- QUIC connection to Risk Engine (multiplexed streams)
+- CMP/UDP to Risk Engine (live orders/fills)
 - Horizontal scaling: shard by user ID hash (load balancer routes by user_id)
 - No cross-instance coordination (each instance owns its users)
 
@@ -65,8 +65,8 @@ Web Users (WS) ─────────────────────�
 
 **Architecture:**
 - Monolithic process
-- QUIC connection from Gateway (multiplexed streams)
-- QUIC connection to each Matching Engine (multiplexed streams)
+- CMP/UDP from Gateway (live orders)
+- CMP/UDP to each Matching Engine (live orders/fills)
 
 **Design Note:**
 Risk engine internals (margin models, position tracking, liquidation logic)
@@ -87,7 +87,7 @@ focuses on network topology and communication patterns.
 - Monolithic per symbol (NOT distributed across machines)
 - Single-threaded event loop (no locks, no mutexes)
 - Pre-allocated orderbook array (reference ORDERBOOK.md section 7)
-- Event emission to Risk via QUIC streams
+- Event emission to Risk via CMP/UDP
 
 **Scaling:**
 - Horizontal by symbol: one process per symbol or symbol group
@@ -107,7 +107,7 @@ focuses on network topology and communication patterns.
           users      users       users
           0-999      1000-1999   2000-2999
             ↓           ↓           ↓
-         [all matching engines accessible via QUIC from all gateways]
+         [all matching engines accessible via CMP/UDP from all gateways]
 ```
 
 **Why user sharding:**
@@ -161,17 +161,17 @@ Gateway3 ────┘
 ### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
-- QRPC/UDP for live order/fill path (lowest latency)
-- QRPC/QUIC for WAL replay and replication (reliable streaming)
+- CMP/UDP for live order/fill path (lowest latency)
+- WAL replication over TCP for replay (reliable streaming)
 - WAL stores fixed-record payloads (raw #[repr(C)] structs)
-- Same wire format on disk, UDP, and QUIC — no transformation
-- See QRPC.md for full transport specification
+- Same wire format on disk, UDP, and TCP — no transformation
+- See CMP.md for full transport specification
 
 **Connection lifecycle:**
 1. User opens WebSocket connection to Gateway
 2. User sends order for BTC-PERP
-3. Gateway forwards order over QUIC to Risk
-4. Risk validates and forwards order over QUIC to Matching Engine
+3. Gateway forwards order over CMP/UDP to Risk
+4. Risk validates and forwards over CMP/UDP to Matching Engine
 5. Matching engine processes, sends FILL messages back to Risk
 6. Risk updates user positions, forwards fills to Gateway
 7. Gateway forwards fills to user
@@ -194,14 +194,14 @@ Gateway3 ────┘
 - Closed only on process shutdown or reconnect
 
 **Transport:**
-- v1: QRPC/UDP for live path, QRPC/QUIC for replay/replication
-- See QRPC.md for full specification
+- v1: CMP/UDP for live path, TCP for replay/replication
+- See CMP.md for full specification
 
 **Replication transport:** ME and Risk replicas receive event
-streams via DXS QRPC streaming (same WAL records over QUIC,
-see QRPC.md and DXS.md section 5). No special replication
-protocol — replicas are DXS consumers with the same
-replay/live-tail mechanism used by all consumers.
+streams via DXS WAL replication over TCP (see CMP.md and
+DXS.md section 5). No special replication protocol —
+replicas are DXS consumers with the same replay/live-tail
+mechanism used by all consumers.
 
 ## Data Flow
 
@@ -237,7 +237,7 @@ User ──ORDER──→ Gateway
 ```
 
 See RPC.md for async request handling details.
-See MESSAGES.md for message semantics (transport is now QUIC).
+See MESSAGES.md for message semantics.
 
 ### Fill Notification Flow
 
@@ -280,7 +280,7 @@ Risk checks happen BOTH:
 
 **Protocols:**
 - WebSocket (compact JSON, WEBPROTO.md)
-- QUIC (native clients, raw fixed records)
+- CMP/UDP (native clients, raw fixed records)
 
 **Security:**
 - TLS 1.3 encryption
@@ -295,16 +295,16 @@ Risk checks happen BOTH:
 ### Internal (Same Data Center)
 
 **Same machine:**
-- QUIC over localhost (quinn)
-- TLS 1.3 built into QUIC
-- Lowest latency (~50-100us, reference UDS.md)
+- CMP/UDP over localhost (hot path)
+- TCP over localhost (cold path / replay)
+- Lowest latency (~10us UDP, ~100us TCP)
 
 **Cross-machine (same private VLAN):**
-- QUIC over UDP (quinn)
-- TLS 1.3 built into QUIC (no external IPsec)
+- CMP/UDP (hot path, no encryption)
+- TCP + optional TLS (cold path)
 
 **Cross-machine (untrusted network):**
-- QUIC with mutual TLS (certificate validation)
+- TCP + TLS with mutual certificate validation
 
 ## Performance Characteristics
 
@@ -313,7 +313,7 @@ Risk checks happen BOTH:
 **Latency:**
 - Internet → TLS handshake: ~50-200ms (initial)
 - JSON WebSocket message: ~1-10ms (after handshake)
-- QUIC message: ~1-5ms (lower serialization overhead)
+- CMP/UDP message: ~1-5ms (lower serialization overhead)
 
 **Bottleneck:**
 - Network latency (internet → data center)
@@ -321,11 +321,11 @@ Risk checks happen BOTH:
 
 ### Gateway → Risk → Matching Engine
 
-**Latency (same machine, QRPC/UDP):**
+**Latency (same machine, CMP/UDP):**
 - <10us per message
 - Includes: sendto, fixed record memcpy, recvfrom
 
-**Latency (same datacenter, QRPC/UDP):**
+**Latency (same datacenter, CMP/UDP):**
 - <50us per message
 - Includes: sendto, fixed record, network switch, recvfrom
 
@@ -340,14 +340,14 @@ Risk checks happen BOTH:
 ┌─────────────────────────────────────┐
 │         Machine 1                    │
 │                                      │
-│  Gateway ──QUIC──→ Risk ──QUIC──→ Matching BTC  │
+│  Gateway ──UDP───→ Risk ──UDP───→ Matching BTC  │
 │                      │                        │
-│                      └─────────QUIC──→ Matching ETH  │
+│                      └──────────UDP──→ Matching ETH  │
 └─────────────────────────────────────┘
 ```
 
 **Benefits:**
-- Lowest latency (QUIC localhost, no network)
+- Lowest latency (UDP localhost, no network)
 - Simplest deployment (single binary, single config)
 
 **Limits:**
@@ -360,11 +360,11 @@ Risk checks happen BOTH:
 ┌──────────────────┐       ┌──────────────────┐
 │   Machine 1       │       │   Machine 2       │
 │                   │       │                   │
-│  Gateway1 ────────┼──QUIC─┼──→ Risk ──QUIC─→ Matching BTC   │
-│  Gateway2 ────────┼──QUIC─┼──→ Risk ──QUIC─→ Matching ETH   │
+│  Gateway1 ────────┼──UDP──┼──→ Risk ──UDP──→ Matching BTC   │
+│  Gateway2 ────────┼──UDP──┼──→ Risk ──UDP──→ Matching ETH   │
 └──────────────────┘       └──────────────────┘
        │                            │
-       └──────────QUIC──────────────┘
+       └───────────UDP──────────────┘
           (all gateways talk to risk; risk talks to all matchers)
 ```
 
@@ -512,5 +512,5 @@ See [MARKETDATA.md](MARKETDATA.md) for full specification.
 - **SMRB.md**: Low-latency IPC options, SPSC ring buffer design
 - **UDS.md**: UDS vs shared memory comparison, latency numbers
 - **RPC.md**: Async request handling, pending order tracking
-- **MESSAGES.md**: Message semantics (transport is now QUIC)
+- **MESSAGES.md**: Message semantics
 - **WEBPROTO.md**: WebSocket overlay and compact wire protocol

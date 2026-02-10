@@ -8,6 +8,25 @@ pub const RECORD_CONFIG_APPLIED: u16 = 5;
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_ORDER_ACCEPTED: u16 = 7;
 pub const RECORD_MARK_PRICE: u16 = 8;
+pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
+pub const RECORD_NAK: u16 = 0x11;
+pub const RECORD_HEARTBEAT: u16 = 0x12;
+pub const RECORD_REPLAY_REQUEST: u16 = 0x13;
+
+/// Common prefix for all CMP data payloads.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PayloadPreamble {
+    pub seq: u64,
+    pub ver: u16,
+    pub kind: u8,
+    pub _pad0: u8,
+    pub len: u32,
+}
+
+impl PayloadPreamble {
+    pub const SIZE: usize = 16;
+}
 
 /// CancelReason enum (u8)
 pub const CANCEL_REASON_USER_CANCEL: u8 = 0;
@@ -22,7 +41,7 @@ pub const CANCEL_REASON_OTHER: u8 = 5;
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub taker_user_id: u32,
@@ -46,7 +65,7 @@ pub struct FillRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct BboRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
@@ -65,7 +84,7 @@ pub struct BboRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderInsertedRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub user_id: u32,
@@ -85,7 +104,7 @@ pub struct OrderInsertedRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderCancelledRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub user_id: u32,
@@ -104,7 +123,7 @@ pub struct OrderCancelledRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderDoneRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub user_id: u32,
@@ -124,7 +143,7 @@ pub struct OrderDoneRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigAppliedRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
@@ -138,7 +157,7 @@ pub struct ConfigAppliedRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct CaughtUpRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub stream_id: u32,
     pub _pad0: u32,
@@ -152,13 +171,72 @@ pub struct CaughtUpRecord {
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderAcceptedRecord {
-    pub seq: u64,
+    pub preamble: PayloadPreamble,
     pub ts_ns: u64,
     pub user_id: u32,
     pub _pad0: u32,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
     pub _pad1: [u8; 32],
+}
+
+/// MarkPriceRecord (64 bytes aligned)
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct MarkPriceRecord {
+    pub preamble: PayloadPreamble,
+    pub ts_ns: u64,
+    pub symbol_id: u32,
+    pub _pad0: u32,
+    pub mark_price: i64,
+    pub index_price: i64,
+    pub _pad1: [u8; 24],
+}
+
+/// CMP StatusMessage (64 bytes aligned)
+/// Receiver -> sender, every 10ms
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct StatusMessage {
+    pub stream_id: u32,
+    pub _pad0: u32,
+    pub consumption_seq: u64,
+    pub receiver_window: u64,
+    pub _pad1: [u8; 40],
+}
+
+/// CMP Nak (64 bytes aligned)
+/// Receiver -> sender, on gap detection
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct Nak {
+    pub stream_id: u32,
+    pub _pad0: u32,
+    pub from_seq: u64,
+    pub count: u64,
+    pub _pad1: [u8; 40],
+}
+
+/// CMP Heartbeat (64 bytes aligned)
+/// Sender -> receiver, every 10ms
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct CmpHeartbeat {
+    pub stream_id: u32,
+    pub _pad0: u32,
+    pub highest_seq: u64,
+    pub _pad1: [u8; 48],
+}
+
+/// ReplayRequest (64 bytes aligned)
+/// Client -> server for WAL/TCP replay
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct ReplayRequest {
+    pub stream_id: u32,
+    pub _pad0: u32,
+    pub from_seq: u64,
+    pub _pad1: [u8; 48],
 }
 
 /// Enum for all WAL record types
@@ -177,14 +255,14 @@ pub enum WalRecord {
 impl WalRecord {
     pub fn seq(&self) -> u64 {
         match self {
-            WalRecord::Fill(r) => r.seq,
-            WalRecord::Bbo(r) => r.seq,
-            WalRecord::OrderInserted(r) => r.seq,
-            WalRecord::OrderCancelled(r) => r.seq,
-            WalRecord::OrderDone(r) => r.seq,
-            WalRecord::ConfigApplied(r) => r.seq,
-            WalRecord::CaughtUp(r) => r.seq,
-            WalRecord::OrderAccepted(r) => r.seq,
+            WalRecord::Fill(r) => r.preamble.seq,
+            WalRecord::Bbo(r) => r.preamble.seq,
+            WalRecord::OrderInserted(r) => r.preamble.seq,
+            WalRecord::OrderCancelled(r) => r.preamble.seq,
+            WalRecord::OrderDone(r) => r.preamble.seq,
+            WalRecord::ConfigApplied(r) => r.preamble.seq,
+            WalRecord::CaughtUp(r) => r.preamble.seq,
+            WalRecord::OrderAccepted(r) => r.preamble.seq,
         }
     }
 

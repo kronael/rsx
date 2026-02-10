@@ -26,7 +26,22 @@ struct WalHeader {
 
 The payload immediately follows the header and is a fixed-record
 struct for that `record_type` (`#[repr(C, align(64))]`, little-endian).
-Readers validate `crc32` and truncate the WAL on the first invalid record.
+All data payloads begin with the CMP prefix:
+
+```
+struct PayloadPreamble {
+  u64 seq;
+  u16 ver;
+  u8  kind;
+  u8  _pad0;
+  u32 len;
+}
+```
+
+Header `len` must match prefix `len`. Header `version` is
+the WAL wire-format version; prefix `ver` is the record
+schema version. Readers validate `crc32` and truncate the
+WAL on the first invalid record.
 
 **Version handling:** if `version` is unknown, the reader must stop replay
 and fail fast (no skip).
@@ -54,6 +69,9 @@ and fail fast (no skip).
 - `RECORD_CONFIG_APPLIED`
 - `RECORD_CAUGHT_UP` (replay marker)
 - `RECORD_ORDER_ACCEPTED` (dedup record)
+- `RECORD_STATUS_MESSAGE` (CMP control: flow control)
+- `RECORD_NAK` (CMP control: gap detection)
+- `RECORD_HEARTBEAT` (CMP control: liveness)
 
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
@@ -89,7 +107,7 @@ than 5min from WAL tip are skipped.
 ```
 #[repr(C, align(64))]
 struct FillRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 symbol_id;
   u32 taker_user_id;
@@ -110,7 +128,7 @@ struct FillRecord {
 
 #[repr(C, align(64))]
 struct BboRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 symbol_id;
   u32 _pad0;
@@ -126,7 +144,7 @@ struct BboRecord {
 
 #[repr(C, align(64))]
 struct OrderInsertedRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
@@ -143,7 +161,7 @@ struct OrderInsertedRecord {
 
 #[repr(C, align(64))]
 struct OrderCancelledRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
@@ -159,7 +177,7 @@ struct OrderCancelledRecord {
 
 #[repr(C, align(64))]
 struct OrderDoneRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 symbol_id;
   u32 user_id;
@@ -176,7 +194,7 @@ struct OrderDoneRecord {
 
 #[repr(C, align(64))]
 struct ConfigAppliedRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 symbol_id;
   u32 _pad0;
@@ -187,7 +205,7 @@ struct ConfigAppliedRecord {
 
 #[repr(C, align(64))]
 struct CaughtUpRecord {
-  u64 seq;
+  PayloadPreamble p;
   u64 ts_ns;
   u32 stream_id;
   u32 _pad0;
@@ -200,8 +218,9 @@ All fields are encoded little-endian on disk/wire.
 
 On disk: `[header][payload][header][payload]...`
 
-Over QUIC (QRPC): the same fixed records are streamed as raw bytes.
-See [QRPC.md](QRPC.md) for the transport specification.
+Over CMP/UDP (hot path) and TCP (cold path): the same fixed
+records are streamed as raw bytes. See [CMP.md](CMP.md) for
+the transport specification.
 
 Maximum record size is 64KB.
 
@@ -302,8 +321,8 @@ file in sorted order. Returns `None` when all files exhausted
 
 ## 5. Replay Server
 
-QRPC server embedded in each producer. Serves WAL records
-to consumers over QUIC streams. See [QRPC.md](QRPC.md).
+Replay server embedded in each producer. Serves WAL records
+to consumers over TCP. See [CMP.md](CMP.md).
 
 **Request format (WAL record):**
 ```
@@ -318,14 +337,14 @@ struct ReplayRequest {
 
 **Response format:**
 Streams raw WAL bytes (header + payload, fixed-record format)
-over a QUIC stream.
+over a TCP stream.
 
 **Protocol:**
 
-1. Consumer opens QUIC connection to producer.
+1. Consumer opens TCP connection to producer (optional TLS).
 2. Consumer sends `ReplayRequest` as a WAL record.
 3. Server opens WalReader at `from_seq`.
-4. Server streams WalRecords over the QUIC stream.
+4. Server streams WalRecords over the TCP stream.
 5. When reader exhausts all files (caught up to live): server
    sends a WalRecord with a `CaughtUp` marker payload, then
    transitions to broadcasting new records as they are appended.
@@ -352,13 +371,14 @@ Use a fixed record type `RECORD_CAUGHT_UP` with payload:
   **all** subscribed streams (per RISK.md replication
   section).
 
-**Concurrency:** one QUIC stream per connected consumer. Each
-stream has its own WalReader. Live broadcast uses a notify
-mechanism (e.g., eventfd or channel).
+**Concurrency:** one TCP connection per connected consumer.
+Each connection has its own WalReader. Live broadcast uses a
+notify mechanism (e.g., eventfd or channel).
 
-**Transport:** QRPC over QUIC (quinn). Same WAL record format
-on wire as on disk. Zero serialization overhead. See
-[QRPC.md](QRPC.md) for full transport specification.
+**Transport:** WAL replication over TCP (optional TLS via
+rustls). Same WAL record format on wire as on disk. Zero
+serialization overhead. See [CMP.md](CMP.md) for full
+transport specification.
 
 ---
 
@@ -380,7 +400,7 @@ struct DxsConsumer {
 **Startup sequence:**
 
 1. Load tip from `tip_file` (0 if missing).
-2. Connect to producer's QRPC endpoint (quinn).
+2. Connect to producer's TCP endpoint (optional TLS).
 3. Send `ReplayRequest { stream_id, from_seq: tip + 1 }`.
 4. Process replayed records via callback, advancing tip.
 5. On `CaughtUp`: transition to live processing.
@@ -399,11 +419,12 @@ max 30s). Resume from `tip + 1`.
 
 Two transport modes, same WAL records:
 
-- **Live path** (Gateway <-> Risk <-> ME): QRPC/UDP. One
-  WAL record per UDP datagram. Seq-based gap detection,
-  retransmit from WAL. See [QRPC.md](QRPC.md) section 3.
-- **Replay/replication path**: QRPC/QUIC. Reliable streaming
-  over QUIC. See [QRPC.md](QRPC.md) section 4.
+- **Live path** (Gateway <-> Risk <-> ME): CMP/UDP. One
+  WAL record per UDP datagram. Aeron-style NACK + flow
+  control. See [CMP.md](CMP.md) section 3.
+- **Replay/replication path**: WAL replication over TCP.
+  Plain byte stream, optional TLS. See [CMP.md](CMP.md)
+  section 4.
 
 ---
 
@@ -492,7 +513,7 @@ The callback writes records to the daily archive file.
 crates/rsx-dxs/src/
     lib.rs        -- public API: WalWriter, WalReader, DxsConsumer
     wal.rs        -- WalWriter, WalReader, file layout, GC
-    server.rs     -- DxsReplay gRPC service (tonic)
+    server.rs     -- DxsReplay TCP server
     client.rs     -- DxsConsumer, tip tracking, reconnect
     recorder.rs   -- Recorder (daily archival callback)
     config.rs     -- env config parsing

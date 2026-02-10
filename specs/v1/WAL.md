@@ -9,10 +9,13 @@ This document describes the shared WAL architecture for the risk engine and the 
 
 ## Record Format (v1)
 
-- WAL uses **fixed-size records** (no protobuf, no gRPC envelope).
+- WAL uses **fixed-size records** (no protobuf, no extra envelope).
 - Records are `#[repr(C, align(64))]` with explicit little-endian fields.
-- Each record starts with a 16-byte header: `{version, record_type, len, reserved}`.
-- Versioning lives in the header (`version`), not in the payload.
+- Each record starts with a 16-byte header:
+  `{version, record_type, len, stream_id, crc32}`.
+- Payloads begin with the CMP prefix (seq/ver/kind/len).
+- Header `version` is the WAL wire-format version; payload
+  `ver` is the record schema version.
 - Concrete record layouts are defined in **DXS.md** and reused for storage + streaming.
 
 ### Version Policy

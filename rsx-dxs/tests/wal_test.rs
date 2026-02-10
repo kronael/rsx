@@ -4,7 +4,13 @@ use tempfile::TempDir;
 
 fn make_fill(seq: u64) -> FillRecord {
     FillRecord {
-        seq,
+        preamble: PayloadPreamble {
+            seq,
+            ver: 1,
+            kind: 0,
+            _pad0: 0,
+            len: mem::size_of::<FillRecord>() as u32,
+        },
         ts_ns: seq * 1000,
         symbol_id: 1,
         taker_user_id: seq as u32,
