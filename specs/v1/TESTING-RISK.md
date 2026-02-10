@@ -429,22 +429,22 @@ Targets from RISK.md §performance:
 
 ## Integration Points
 
-- Receives fills/BBO/OrderDone from matching engine SPSC rings
+- Receives fills/BBO/OrderDone from matching engine via CMP/UDP
   (CONSISTENCY.md §1, event routing table)
-- Receives orders from gateway SPSC ring (NETWORK.md §data flow)
-- Receives mark prices from DXS consumer (MARK.md §1)
-- Sends orders to matching engine SPSC ring (RISK.md §6)
-- Sends fills/done to gateway SPSC ring (CONSISTENCY.md §1)
+- Receives orders from gateway via CMP/UDP (NETWORK.md §data flow)
+- Mark prices from DXS are not wired into risk in v1
+- Sends orders to matching engine via CMP/UDP (RISK.md §6)
+- Sends fills/done to gateway via CMP/UDP (CONSISTENCY.md §1)
 - Forwards CONFIG_APPLIED to gateway (RISK.md §1)
 - Persists positions/accounts/fills/tips to Postgres via
   write-behind worker (RISK.md §persistence)
-- Replica sync via SPSC tip channel (RISK.md §replication)
+- Replica sync not implemented in v1
 - Advisory lock via Postgres pg_advisory_lock (RISK.md §replication)
-- Replay via DXS consumer from ME WAL (RISK.md §replication)
+- Replay via WAL exists but DXS consumer path not wired in v1
 - Liquidation via embedded liquidator (LIQUIDATOR.md)
 - Funding via embedded funding engine (RISK.md §5)
 - ME failover: dedup by (symbol_id, seq) (RISK.md §ME failover)
-- Backpressure: stalls on ring full (CONSISTENCY.md §3)
+- Backpressure: CMP flow control (CONSISTENCY.md §3)
 - System-level: full crash/recovery tests (TESTING.md §3)
 
 ## Implementation Status (2026-02-10)

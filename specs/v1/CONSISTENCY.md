@@ -1,9 +1,10 @@
 # Consistency — Event Fan-Out
 
 Matching engine produces events into a fixed array buffer. Events fan out
-directly to consumers via SPSC rings. Matching engine persists its state via
-WAL + online snapshot, so orderbook state is recoverable after crash. Positions
-are persisted at the risk engine (see [WAL.md](WAL.md)).
+directly to consumers via CMP/UDP between processes (SPSC optional in-process).
+Matching engine persists its state via WAL + online snapshot, so orderbook
+state is recoverable after crash. Positions are persisted at the risk engine
+(see [WAL.md](WAL.md)).
 
 **System guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for formal
 specification of consistency model, durability bounds, and recovery guarantees.
@@ -147,7 +148,7 @@ fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
 
 1. Events within a symbol are totally ordered (`seq` monotonic)
 2. No cross-symbol ordering
-3. All consumers see same event order (SPSC = FIFO)
+3. All consumers see same event order (CMP/UDP preserves order per stream)
 4. Matching engine never drops events (ring full = stall)
 5. ORDER_DONE is the commit boundary for multi-fill sequences
 6. Risk engine persists positions

@@ -6,7 +6,7 @@ events and exposes public marketdata over WebSocket (see WEBPROTO.md).
 ## Inputs
 
 - CMP/UDP from Matching (orderbook events and BBO).
-- WAL/TCP replay from Matching (bootstrap optional).
+- WAL/TCP replay from Matching (bootstrap optional; not implemented in v1).
 
 ## Outputs
 

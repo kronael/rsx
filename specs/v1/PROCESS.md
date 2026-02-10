@@ -45,15 +45,12 @@ process uses every tile, but the roles are standardized.
 - **CMP/UDP (hot path)**: one WAL record per datagram.
 - **WAL/TCP (cold path)**: replay/streaming of WAL records.
 
-All CMP **data** payloads begin with the CMP prefix (see
-CMP.md). Control messages do not carry the prefix.
+All CMP **data** payloads start with `seq: u64` at byte 0
+(CmpRecord). Control messages do not carry `seq`.
 
 ## Telemetry
 
-- Each process has a **Telemetry Tile** that accepts structured
-  events and heartbeats via SPSC.
-- Telemetry tile appends to an on-disk telemetry log.
-- A separate telemetry service may poll/ship those logs.
+- Telemetry tile is optional and not implemented in v1.
 
 ## Process Instantiations
 
@@ -62,7 +59,6 @@ CMP.md). Control messages do not carry the prefix.
 Tiles:
 - Network Tile (monoio): WS ingress/egress, auth, rate limit.
 - Core Tile (busy-spin): order validation, routing.
-- Telemetry Tile (tokio): logs + heartbeats.
 
 Links:
 - CMP/UDP to Risk (orders, responses).
@@ -73,7 +69,6 @@ Tiles:
 - Core Tile (busy-spin): margin checks, position updates.
 - Network Tile (monoio or raw UDP): CMP ingress/egress.
 - Persistence Tile (tokio): Postgres write-behind.
-- Telemetry Tile (tokio).
 
 Links:
 - CMP/UDP from Gateway (orders).
@@ -86,7 +81,6 @@ Tiles:
 - Core Tile (busy-spin): orderbook + matching.
 - WAL Writer Tile (busy-spin): append + 10ms fsync.
 - Replay/Streamer Tile (tokio): WAL/TCP DXS streaming.
-- Telemetry Tile (tokio).
 
 Links:
 - CMP/UDP from Risk (orders).
@@ -98,7 +92,6 @@ Links:
 Tiles:
 - Network Tile (monoio): WS pub/sub.
 - Core Tile (busy-spin): shadow book + fanout.
-- Telemetry Tile (tokio).
 
 Links:
 - CMP/UDP or WAL/TCP from Matching (events).
@@ -108,16 +101,14 @@ Links:
 Tiles:
 - Network Tile (monoio): external price feeds.
 - Core Tile (busy-spin): mark aggregation.
-- Telemetry Tile (tokio).
 
 Links:
-- CMP/UDP to Risk or Matching (mark updates).
+- DXS replay server (WAL/TCP). No CMP/UDP mark feed in v1.
 
 ### Recorder Process
 
 Tiles:
 - Replay/Consumer Tile (tokio): WAL/TCP replay.
-- Telemetry Tile (tokio).
 
 Links:
 - WAL/TCP from Matching (archive stream).

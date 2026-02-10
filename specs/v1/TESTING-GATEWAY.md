@@ -317,7 +317,7 @@ Targets from NETWORK.md:
 - Single CMP/UDP link to risk engine
   (NETWORK.md)
 - Receives fills/done/failed from risk via CMP/UDP
-- Receives liquidation events from risk SPSC
+- Receives liquidation events from risk via CMP/UDP
   (WEBPROTO.md §Q)
 - Forwards CONFIG_APPLIED to local config cache
   (MESSAGES.md §ConfigApplied)
