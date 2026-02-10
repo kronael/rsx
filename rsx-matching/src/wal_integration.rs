@@ -130,7 +130,7 @@ pub fn write_events_to_wal(
                 // OrderFailed is not persisted to WAL
             }
             Event::BBO { .. } => {
-                // BBO is not emitted by ME, only by mktdata
+                // BBO not persisted to WAL (derived on replay)
             }
         }
     }

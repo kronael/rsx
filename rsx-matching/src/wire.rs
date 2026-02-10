@@ -39,6 +39,7 @@ impl OrderMessage {
             },
             user_id: self.user_id,
             reduce_only: self.reduce_only != 0,
+            post_only: false,
             timestamp_ns: self.timestamp_ns,
             order_id_hi: self.order_id_hi,
             order_id_lo: self.order_id_lo,

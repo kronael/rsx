@@ -12,6 +12,7 @@ pub const FAIL_FOK: u8 = 2;
 pub const CANCEL_USER: u8 = 0;
 pub const CANCEL_REDUCE_ONLY: u8 = 1;
 pub const CANCEL_IOC: u8 = 2;
+pub const CANCEL_POST_ONLY: u8 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
