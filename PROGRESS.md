@@ -22,7 +22,7 @@ complete with insurance fund. ~580 tests passing.
 | rsx-types | 15 | 100 |
 | rsx-book | 97 | 100 |
 | rsx-matching | 30 | 100 |
-| rsx-dxs | 83 | 96 |
+| rsx-dxs | 83 | 100 |
 | rsx-risk | 198 | 95 |
 | rsx-gateway | 124 | 95 |
 | rsx-marketdata | 57 | 98 |
@@ -50,14 +50,13 @@ emission to WAL, Risk, and Marketdata. Order dedup with
 5min pruning (DedupTracker, OrderAcceptedRecord in WAL,
 OrderFailed on duplicate).
 
-### rsx-dxs (97%)
+### rsx-dxs (100%)
 WAL: write/read/rotate/GC (mtime-based), CRC32.
 CMP: sender/receiver, flow control, heartbeat, NACK,
 configurable via CmpConfig (env vars).
 DxsReplayService: TCP replay, live_seq from payload, TLS.
 DxsConsumer: tip tracking, reconnect backoff, TLS, unknown
-record skip. Archive fallback test fixed.
-**Missing:** WAL dump tool.
+record skip. WAL dump tool (rsx-wal-dump binary).
 
 ### rsx-risk (95%)
 **Done:** Position tracking, margin calc, fees, funding,
@@ -121,7 +120,6 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 
 **Post-MVP:**
 - Replication & failover (rsx-risk Phase 4)
-- WAL dump debug tool (rsx-dxs)
 
 ---
 
