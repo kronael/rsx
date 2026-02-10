@@ -8,11 +8,13 @@ pub mod risk_utils;
 pub mod config;
 pub mod rings;
 pub mod shard;
+pub mod liquidation;
 pub mod persist;
 pub mod replay;
 pub mod schema;
 
 pub use account::Account;
+pub use config::LiquidationConfig;
 pub use config::ShardConfig;
 pub use funding::FundingConfig;
 pub use margin::MarginState;

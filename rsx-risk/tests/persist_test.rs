@@ -1,5 +1,6 @@
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
+use rsx_risk::LiquidationConfig;
 use rsx_risk::Position;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
@@ -389,6 +390,8 @@ async fn replay_from_wal_rebuilds_positions() {
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
         funding_config: FundingConfig::default(),
+        liquidation_config:
+            LiquidationConfig::default(),
     };
     let mut shard = RiskShard::new(config);
     // Give user 0 collateral so account exists

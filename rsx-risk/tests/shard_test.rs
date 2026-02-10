@@ -2,6 +2,7 @@ use rsx_risk::Account;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
 use rsx_risk::FundingConfig;
+use rsx_risk::LiquidationConfig;
 use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
 use rsx_risk::RiskShard;
@@ -25,6 +26,8 @@ fn default_config() -> ShardConfig {
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
         funding_config: FundingConfig::default(),
+        liquidation_config:
+            LiquidationConfig::default(),
     }
 }
 

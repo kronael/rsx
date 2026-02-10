@@ -6,25 +6,8 @@ use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_tungstenite::connect_async;
 
-/// Exchange price feed connector.
-///
-/// Each implementation (Binance, Coinbase, etc.) connects
-/// to an exchange WebSocket, parses price updates, and
-/// pushes SourcePrice values to the aggregation loop via
-/// an SPSC producer ring.
-///
-/// Reconnect is handled internally with exponential
-/// backoff: 1s, 2s, 4s, 8s, capped at 30s. Reset on
-/// successful message.
 pub trait PriceSource {
-    /// Start the connector. Pushes SourcePrice updates
-    /// to the provided SPSC producer. Handles reconnects
-    /// internally. Runs as an async task on a tokio
-    /// runtime.
-    fn start(
-        &self,
-        tx: rtrb::Producer<SourcePrice>,
-    );
+    fn start(&self, tx: rtrb::Producer<SourcePrice>);
 }
 
 pub struct BinanceSource {
@@ -46,101 +29,94 @@ pub struct CoinbaseSource {
 }
 
 impl PriceSource for BinanceSource {
-    fn start(
-        &self,
-        tx: rtrb::Producer<SourcePrice>,
-    ) {
-        let ws_url = self.ws_url.clone();
-        let symbol_map = self.symbol_map.clone();
-        let base = self.reconnect_base_ms;
-        let max = self.reconnect_max_ms;
-        let source_id = self.source_id;
-        let price_scale = self.price_scale;
-
-        tokio::spawn(async move {
-            let mut tx = tx;
-            let mut backoff = base;
-            loop {
-                match connect_async(&ws_url).await {
-                    Ok((mut ws, _)) => {
-                        backoff = base;
-                        while let Some(msg) = ws.next().await {
-                            let msg = match msg {
-                                Ok(m) => m,
-                                Err(_) => break,
-                            };
-                            if !msg.is_text() {
-                                continue;
-                            }
-                            let text = msg.to_text().unwrap_or("");
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
-                                handle_binance_msg(
-                                    &val,
-                                    source_id,
-                                    price_scale,
-                                    &symbol_map,
-                                    &mut tx,
-                                );
-                            }
-                        }
-                    }
-                    Err(_) => {}
-                }
-
-                tokio::time::sleep(Duration::from_millis(backoff)).await;
-                backoff = (backoff * 2).min(max);
-            }
-        });
+    fn start(&self, tx: rtrb::Producer<SourcePrice>) {
+        run_ws_loop(
+            self.ws_url.clone(),
+            self.symbol_map.clone(),
+            self.source_id,
+            self.price_scale,
+            self.reconnect_base_ms,
+            self.reconnect_max_ms,
+            tx,
+            handle_binance_msg,
+        );
     }
 }
 
 impl PriceSource for CoinbaseSource {
-    fn start(
-        &self,
-        tx: rtrb::Producer<SourcePrice>,
-    ) {
-        let ws_url = self.ws_url.clone();
-        let symbol_map = self.symbol_map.clone();
-        let base = self.reconnect_base_ms;
-        let max = self.reconnect_max_ms;
-        let source_id = self.source_id;
-        let price_scale = self.price_scale;
+    fn start(&self, tx: rtrb::Producer<SourcePrice>) {
+        run_ws_loop(
+            self.ws_url.clone(),
+            self.symbol_map.clone(),
+            self.source_id,
+            self.price_scale,
+            self.reconnect_base_ms,
+            self.reconnect_max_ms,
+            tx,
+            handle_coinbase_msg,
+        );
+    }
+}
 
-        tokio::spawn(async move {
-            let mut tx = tx;
-            let mut backoff = base;
-            loop {
-                match connect_async(&ws_url).await {
-                    Ok((mut ws, _)) => {
-                        backoff = base;
-                        while let Some(msg) = ws.next().await {
-                            let msg = match msg {
-                                Ok(m) => m,
-                                Err(_) => break,
-                            };
-                            if !msg.is_text() {
-                                continue;
-                            }
-                            let text = msg.to_text().unwrap_or("");
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
-                                handle_coinbase_msg(
-                                    &val,
-                                    source_id,
-                                    price_scale,
-                                    &symbol_map,
-                                    &mut tx,
-                                );
-                            }
+fn run_ws_loop<F>(
+    ws_url: String,
+    symbol_map: Arc<SymbolMap>,
+    source_id: u8,
+    price_scale: i64,
+    base: u64,
+    max: u64,
+    mut tx: rtrb::Producer<SourcePrice>,
+    handler: F,
+) where
+    F: Fn(
+            &serde_json::Value,
+            u8,
+            i64,
+            &SymbolMap,
+            &mut rtrb::Producer<SourcePrice>,
+        ) + Send
+        + 'static,
+{
+    tokio::spawn(async move {
+        let mut backoff = base;
+        loop {
+            match connect_async(&ws_url).await {
+                Ok((mut ws, _)) => {
+                    backoff = base;
+                    while let Some(msg) = ws.next().await {
+                        let msg = match msg {
+                            Ok(m) => m,
+                            Err(_) => break,
+                        };
+                        if !msg.is_text() {
+                            continue;
+                        }
+                        let text = msg.to_text().unwrap_or("");
+                        if let Ok(val) =
+                            serde_json::from_str::<
+                                serde_json::Value,
+                            >(text)
+                        {
+                            handler(
+                                &val,
+                                source_id,
+                                price_scale,
+                                &symbol_map,
+                                &mut tx,
+                            );
                         }
                     }
-                    Err(_) => {}
                 }
-
-                tokio::time::sleep(Duration::from_millis(backoff)).await;
-                backoff = (backoff * 2).min(max);
+                Err(_) => {}
             }
-        });
-    }
+
+            tokio::time::sleep(
+                Duration::from_millis(backoff),
+            )
+            .await;
+            backoff = (backoff * 2).min(max);
+        }
+    });
 }
 
 fn handle_binance_msg(
