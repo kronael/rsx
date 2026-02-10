@@ -406,3 +406,35 @@ fn header_reserved_bytes_zeroed() {
     let header = WalHeader::new(RECORD_FILL, 64, 0x12345678);
     assert_eq!(header._reserved, [0u8; 8]);
 }
+
+#[test]
+fn cancel_request_layout() {
+    assert_eq!(
+        std::mem::size_of::<CancelRequest>(),
+        64,
+    );
+    assert_eq!(
+        std::mem::align_of::<CancelRequest>(),
+        64,
+    );
+    assert_eq!(
+        CancelRequest::record_type(),
+        RECORD_CANCEL_REQUEST,
+    );
+}
+
+#[test]
+fn cancel_request_seq() {
+    let mut cr = CancelRequest {
+        seq: 0,
+        ts_ns: 0,
+        user_id: 0,
+        symbol_id: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
+        _pad: [0; 24],
+    };
+    assert_eq!(cr.seq(), 0);
+    cr.set_seq(42);
+    assert_eq!(cr.seq(), 42);
+}

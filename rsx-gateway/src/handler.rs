@@ -29,12 +29,15 @@ pub async fn handle_connection(
     mut stream: TcpStream,
     state: Rc<RefCell<GatewayState>>,
     cmp_sender: Rc<RefCell<CmpSender>>,
-    user_id: u32,
 ) {
-    if let Err(e) = ws_handshake(&mut stream).await {
-        warn!("handshake failed: {e}");
-        return;
-    }
+    let user_id =
+        match ws_handshake(&mut stream).await {
+            Ok((_key, uid)) => uid,
+            Err(e) => {
+                warn!("handshake failed: {e}");
+                return;
+            }
+        };
 
     let conn_id =
         state.borrow_mut().add_connection(user_id);
@@ -261,6 +264,10 @@ pub async fn handle_connection(
                     RECORD_ORDER_REQUEST,
                     bytes,
                 );
+                state
+                    .borrow_mut()
+                    .circuit
+                    .record_success();
 
                 // Send ack with order_id
                 let ack = serialize(

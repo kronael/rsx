@@ -31,11 +31,10 @@ Risk → ME order forwarding now works. 486 tests passing across
     CMP send_raw
 
 **Remaining Critical Issues:**
-1. ❌ Gateway has no per-connection handler (protocol
-   parsing exists but is never called)
-2. ❌ Marketdata never receives events (ME doesn't fanout)
-3. ❌ Mark price aggregator (no source connectors)
-4. ❌ rsx-mark compile error (tokio ref in source.rs)
+1. ❌ Marketdata never receives events (ME doesn't fanout)
+2. ❌ Mark price aggregator (no source connectors)
+3. ❌ rsx-mark compile error (tokio ref in source.rs)
+4. ❌ rsx-marketdata compile error (ShadowBook Clone)
 
 ---
 
@@ -96,16 +95,22 @@ panic handler, macros.
 
 **Missing:** Liquidation processing, mark price DXS consumer.
 
-### 6. rsx-gateway — ❌ SKELETON (15%)
+### 6. rsx-gateway — ⚠️ PARTIAL (70%)
 
-1,764 impl lines, 1,169 test lines, 92 tests.
+~1,900 impl lines, ~1,250 test lines, 97 tests.
 
-- protocol.rs: complete JSON parsing (all frame types)
-- convert.rs, order_id.rs, pending.rs, circuit.rs, rate_limit.rs
-- Reason range expanded to 0-10
+- Per-connection handler: WS accept → handshake → frame loop
+- Order routing: NewOrder → CMP → Risk, response routing back
+- Cancel handler: by oid or cid, CancelRequest via CMP
+- Auth: user_id from Authorization/X-User-Id headers (401 on missing)
+- Rate limiting: per-user token bucket, wired in handler
+- Circuit breaker: wired in handler, blocks CMP on open
+- Heartbeat echo: server echoes H[ts] on client heartbeat
+- Pending tracking: LIFO VecDeque, find by oid or cid
 
-**Missing:** Per-connection handler, order routing, response
-routing, dedup, auth. All building blocks exist but are not wired.
+**Missing:** Server-initiated heartbeats + timeout, JWT
+validation (currently Bearer u32), market data subscription
+routing, dedup at ME.
 
 ### 7. rsx-marketdata — ❌ SKELETON (30%)
 
@@ -150,9 +155,9 @@ RecorderState, daily rotation, raw WAL append.
 | CONSISTENCY.md | All | ⚠️ Partial | 65 |
 | MARK.md | rsx-mark | ❌ Skeleton | 20 |
 | MARKETDATA.md | rsx-marketdata | ❌ Skeleton | 30 |
-| WEBPROTO.md | rsx-gateway | ❌ Skeleton | 15 |
-| RPC.md | rsx-gateway | ❌ Skeleton | 5 |
-| MESSAGES.md | rsx-gateway | ❌ None | 0 |
+| WEBPROTO.md | rsx-gateway | ⚠️ Partial | 70 |
+| RPC.md | rsx-gateway | ✅ Good | 80 |
+| MESSAGES.md | rsx-gateway | ⚠️ Partial | 70 |
 | LIQUIDATOR.md | rsx-risk | ❌ None | 0 |
 | METADATA.md | All | ❌ None | 0 |
 | DEPLOY.md | - | ❌ None | 0 |
@@ -182,12 +187,14 @@ rsx-mark has a compile error blocking test execution.
 
 ## Critical Path
 
-### Phase 2: Gateway Wiring (NEXT)
+### Phase 2: Gateway Wiring — DONE
 
-1. Gateway per-connection handler (parse WS frames)
-2. Gateway → Risk order routing via CMP
-3. Risk → Gateway response routing via CMP
-4. Gateway dedup + pending tracking
+1. ✅ Per-connection handler (WS frames → CMP)
+2. ✅ Gateway → Risk order routing via CMP
+3. ✅ Risk → Gateway response routing via CMP
+4. ✅ Cancel handler, rate limiting, circuit breaker, auth
+5. ❌ Server-initiated heartbeats + timeout (future)
+6. ❌ JWT validation (future)
 
 ### Phase 3: Marketdata Fan-Out
 

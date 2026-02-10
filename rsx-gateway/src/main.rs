@@ -3,24 +3,28 @@ use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
+use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
-use rsx_dxs::records::RECORD_ORDER_RESPONSE;
+use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::protocol::serialize;
 use rsx_gateway::protocol::WsFrame;
 use rsx_gateway::state::GatewayState;
-use rsx_risk::rings::OrderResponse;
 use rsx_types::install_panic_handler;
 use std::cell::RefCell;
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tracing::info;
+
+const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
 
 fn main() {
     install_panic_handler();
@@ -62,6 +66,7 @@ fn main() {
     );
 
     let max_pending = config.max_pending;
+    let order_timeout_ms = config.order_timeout_ms;
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
 
@@ -96,12 +101,9 @@ fn main() {
                         let st = state_accept.clone();
                         let snd =
                             sender_accept.clone();
-                        // TODO: authenticate user_id
-                        // from handshake headers.
-                        // For now use 0.
                         monoio::spawn(async move {
                             handle_connection(
-                                stream, st, snd, 0,
+                                stream, st, snd,
                             )
                             .await;
                         });
@@ -115,29 +117,14 @@ fn main() {
             }
         });
 
+        let mut last_pending_sweep = now_ns();
+
         // CMP polling loop (yields to monoio)
         loop {
             while let Some((hdr, payload)) =
                 cmp_receiver.try_recv()
             {
                 match hdr.record_type {
-                    RECORD_ORDER_RESPONSE
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                OrderResponse,
-                            >() =>
-                    {
-                        let resp = unsafe {
-                            std::ptr::read(
-                                payload.as_ptr()
-                                    as *const
-                                        OrderResponse,
-                            )
-                        };
-                        route_response(
-                            &state, &resp,
-                        );
-                    }
                     RECORD_FILL
                         if payload.len()
                             >= std::mem::size_of::<
@@ -187,6 +174,23 @@ fn main() {
                             &state, &rec,
                         );
                     }
+                    RECORD_ORDER_INSERTED
+                        if payload.len()
+                            >= std::mem::size_of::<
+                                OrderInsertedRecord,
+                            >() =>
+                    {
+                        let rec = unsafe {
+                            std::ptr::read_unaligned(
+                                payload.as_ptr()
+                                    as *const
+                                        OrderInsertedRecord,
+                            )
+                        };
+                        route_order_inserted(
+                            &state, &rec,
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -194,6 +198,18 @@ fn main() {
             let _ = sender.borrow_mut().tick();
             cmp_receiver.tick();
             sender.borrow_mut().recv_control();
+
+            let now = now_ns();
+            if now - last_pending_sweep
+                >= PENDING_SWEEP_INTERVAL_US * 1000
+            {
+                let cutoff = now.saturating_sub(
+                    order_timeout_ms * 1_000_000,
+                );
+                let _ =
+                    state.borrow_mut().pending.remove_stale(cutoff);
+                last_pending_sweep = now;
+            }
 
             // Yield to monoio scheduler
             monoio::time::sleep(
@@ -218,67 +234,6 @@ fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
     bytes
 }
 
-fn route_response(
-    state: &Rc<RefCell<GatewayState>>,
-    resp: &OrderResponse,
-) {
-    match resp {
-        OrderResponse::Accepted {
-            user_id,
-            margin_reserved: _,
-            order_id_hi,
-            order_id_lo,
-        } => {
-            let msg = serialize(
-                &WsFrame::OrderUpdate {
-                    order_id: oid_hex(
-                        *order_id_hi,
-                        *order_id_lo,
-                    ),
-                    status: 1, // accepted
-                    filled_qty: 0,
-                    remaining_qty: 0,
-                    reason: 0,
-                },
-            );
-            state
-                .borrow_mut()
-                .push_to_user(*user_id, msg);
-        }
-        OrderResponse::Rejected {
-            user_id,
-            reason,
-            order_id_hi,
-            order_id_lo,
-        } => {
-            let reason_code = match reason {
-                rsx_risk::RejectReason::InsufficientMargin => 1,
-                rsx_risk::RejectReason::UserInLiquidation => 2,
-                rsx_risk::RejectReason::NotInShard => 3,
-            };
-            let msg = serialize(
-                &WsFrame::OrderUpdate {
-                    order_id: oid_hex(
-                        *order_id_hi,
-                        *order_id_lo,
-                    ),
-                    status: 3, // rejected
-                    filled_qty: 0,
-                    remaining_qty: 0,
-                    reason: reason_code,
-                },
-            );
-            let oid = oid_bytes(
-                *order_id_hi,
-                *order_id_lo,
-            );
-            let mut st = state.borrow_mut();
-            st.push_to_user(*user_id, msg);
-            st.pending.remove(&oid);
-        }
-    }
-}
-
 fn route_fill(
     state: &Rc<RefCell<GatewayState>>,
     rec: &FillRecord,
@@ -298,6 +253,22 @@ fn route_fill(
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());
     st.push_to_user(rec.maker_user_id, msg);
+}
+
+fn route_order_inserted(
+    state: &Rc<RefCell<GatewayState>>,
+    rec: &OrderInsertedRecord,
+) {
+    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
+    let msg = serialize(&WsFrame::OrderUpdate {
+        order_id: oid,
+        status: 1, // resting/accepted from matching
+        filled_qty: 0,
+        remaining_qty: rec.qty,
+        reason: 0,
+    });
+    let mut st = state.borrow_mut();
+    st.push_to_user(rec.user_id, msg);
 }
 
 fn route_order_done(
@@ -336,4 +307,11 @@ fn route_order_cancelled(
     let mut st = state.borrow_mut();
     st.push_to_user(rec.user_id, msg);
     st.pending.remove(&oid_bytes_val);
+}
+
+fn now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
 }
