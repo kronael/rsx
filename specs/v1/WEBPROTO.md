@@ -210,7 +210,7 @@ Server sends `B` snapshot on subscribe before any `D` deltas.
 //         3=cancelled, 4=completed
 ```
 
-Risk engine pushes to gateway SPSC ring. Gateway routes to user
+Risk engine sends to gateway over CMP/UDP. Gateway routes to user
 by user_id. Fire-and-forget delivery.
 
 ## Notes

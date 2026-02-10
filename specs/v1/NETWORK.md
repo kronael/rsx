@@ -15,7 +15,7 @@ Web Users (WS)
 Native Clients     ──→  Gateway (WS overlay)  ──→  Risk Engine  ──→  Matching Engine
 (WebSocket)            (monolithic process)        (monolithic)     (one per symbol)
                   ↗                                                       |
-Mobile Apps (WS)                                                     [SPSC events]
+Mobile Apps (WS)                                                     [CMP/UDP events]
                                                                           |
                                                                      MARKETDATA
 Web Users (WS) ──────────────────────────────────────────────────→  (public WS)
@@ -180,9 +180,9 @@ Gateway3 ────┘
 - **Gateway ingress:** Gateway rejects new orders with
   `OVERLOADED` when its buffer exceeds capacity. This is
   the external-facing backpressure mechanism.
-- **ME internal rings:** ME stalls on SPSC ring full (bare
-  busy-spin). This is internal backpressure between
-  co-located components. Gateway never sees this directly.
+- **ME internal queues (optional):** if used, ME stalls on
+  queue full (bare busy-spin). This is internal backpressure
+  between co-located components. Gateway never sees this directly.
 - These two layers are independent. Gateway rejection
   protects against external flood; ME stall protects against
   internal consumer lag.
@@ -500,7 +500,7 @@ converges to ready state as components come online.
 **Architecture:**
 - Single-threaded, dedicated core, busy-spin
 - Non-blocking epoll for WS I/O (no Tokio)
-- One SPSC consumer ring per matching engine
+- One CMP/UDP input per matching engine
 - Separate process from gateway (public, no auth)
 
 See [MARKETDATA.md](MARKETDATA.md) for full specification.
@@ -509,7 +509,7 @@ See [MARKETDATA.md](MARKETDATA.md) for full specification.
 
 - **ORDERBOOK.md**: Matching engine internals, orderbook data structure
 - **MARKETDATA.md**: Market data dissemination, shadow orderbook, L2/BBO/trades
-- **SMRB.md**: Low-latency IPC options, SPSC ring buffer design
+- **SMRB.md**: Low-latency IPC options, SPSC ring buffer design (in-process only)
 - **UDS.md**: UDS vs shared memory comparison, latency numbers
 - **RPC.md**: Async request handling, pending order tracking
 - **MESSAGES.md**: Message semantics
