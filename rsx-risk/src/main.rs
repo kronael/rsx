@@ -1,7 +1,16 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::FillRecord;
+use rsx_dxs::records::OrderCancelledRecord;
+use rsx_dxs::records::OrderDoneRecord;
+use rsx_dxs::records::OrderInsertedRecord;
+use rsx_dxs::records::RECORD_FILL;
+use rsx_dxs::records::RECORD_ORDER_CANCELLED;
+use rsx_dxs::records::RECORD_ORDER_DONE;
+use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_dxs::records::RECORD_ORDER_REQUEST;
+use rsx_dxs::records::RECORD_ORDER_RESPONSE;
+use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::persist::run_persist_worker;
 use rsx_risk::replay::acquire_advisory_lock;
@@ -221,6 +230,8 @@ fn run(
         rtrb::RingBuffer::<BboUpdate>::new(256);
     let (resp_prod, mut resp_cons) =
         rtrb::RingBuffer::<OrderResponse>::new(2048);
+    let (accepted_prod, mut accepted_cons) =
+        rtrb::RingBuffer::<OrderRequest>::new(2048);
 
     let mut rings = ShardRings {
         fill_consumers: vec![fill_cons],
@@ -228,6 +239,7 @@ fn run(
         mark_consumer: mark_cons,
         bbo_consumers: vec![bbo_cons],
         response_producer: resp_prod,
+        accepted_producer: accepted_prod,
     };
 
     info!("risk shard {} running", shard_id);
@@ -240,11 +252,12 @@ fn run(
 
         // Pump CMP -> SPSC rings
         // Orders from Gateway
-        if let Some((_hdr, payload)) =
+        while let Some((hdr, payload)) =
             gw_receiver.try_recv()
         {
-            if payload.len()
-                >= std::mem::size_of::<OrderRequest>()
+            if hdr.record_type == RECORD_ORDER_REQUEST
+                && payload.len()
+                    >= std::mem::size_of::<OrderRequest>()
             {
                 let order = unsafe {
                     std::ptr::read(
@@ -256,30 +269,90 @@ fn run(
             }
         }
 
-        // Fills from ME
-        if let Some((preamble, payload)) =
+        // Events from ME
+        while let Some((preamble, payload)) =
             me_receiver.try_recv()
         {
-            if preamble.record_type == RECORD_FILL
-                && payload.len()
-                    >= std::mem::size_of::<FillRecord>()
-            {
-                let fill = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const FillRecord,
-                    )
-                };
-                let _ = fill_prod.push(FillEvent {
-                    seq: fill.seq,
-                    symbol_id: fill.symbol_id,
-                    taker_user_id: fill.taker_user_id,
-                    maker_user_id: fill.maker_user_id,
-                    price: fill.price,
-                    qty: fill.qty,
-                    taker_side: fill.taker_side,
-                    timestamp_ns: fill.ts_ns,
-                });
+            match preamble.record_type {
+                RECORD_FILL
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            FillRecord,
+                        >() =>
+                {
+                    let fill = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const FillRecord,
+                        )
+                    };
+                    let _ = fill_prod.push(FillEvent {
+                        seq: fill.seq,
+                        symbol_id: fill.symbol_id,
+                        taker_user_id: fill
+                            .taker_user_id,
+                        maker_user_id: fill
+                            .maker_user_id,
+                        price: fill.price,
+                        qty: fill.qty,
+                        taker_side: fill.taker_side,
+                        timestamp_ns: fill.ts_ns,
+                    });
+                    // Forward fill to GW
+                    let _ = gw_sender.send_raw(
+                        RECORD_FILL,
+                        &payload,
+                    );
+                }
+                RECORD_ORDER_DONE
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            OrderDoneRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const
+                                    OrderDoneRecord,
+                        )
+                    };
+                    shard.process_order_done(
+                        &rsx_risk::types::OrderDoneEvent {
+                            seq: rec.seq,
+                            user_id: rec.user_id,
+                            symbol_id: rec.symbol_id,
+                            frozen_amount: 0,
+                        },
+                    );
+                    let _ = gw_sender.send_raw(
+                        RECORD_ORDER_DONE,
+                        &payload,
+                    );
+                }
+                RECORD_ORDER_CANCELLED
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            OrderCancelledRecord,
+                        >() =>
+                {
+                    let _ = gw_sender.send_raw(
+                        RECORD_ORDER_CANCELLED,
+                        &payload,
+                    );
+                }
+                RECORD_ORDER_INSERTED
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            OrderInsertedRecord,
+                        >() =>
+                {
+                    let _ = gw_sender.send_raw(
+                        RECORD_ORDER_INSERTED,
+                        &payload,
+                    );
+                }
+                _ => {}
             }
         }
 
@@ -297,8 +370,43 @@ fn run(
                     >(),
                 )
             };
-            let _ =
-                gw_sender.send_raw(0x20, bytes);
+            let _ = gw_sender
+                .send_raw(RECORD_ORDER_RESPONSE, bytes);
+        }
+
+        // Drain accepted orders -> CMP to ME
+        while let Ok(order) = accepted_cons.pop() {
+            let msg = OrderMessage {
+                seq: order.seq,
+                price: order.price,
+                qty: order.qty,
+                side: order.side,
+                tif: order.tif,
+                reduce_only: if order.reduce_only {
+                    1
+                } else {
+                    0
+                },
+                _pad1: [0; 5],
+                user_id: order.user_id,
+                _pad2: 0,
+                timestamp_ns: order.timestamp_ns,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &msg as *const OrderMessage
+                        as *const u8,
+                    std::mem::size_of::<
+                        OrderMessage,
+                    >(),
+                )
+            };
+            let _ = me_sender.send_raw(
+                RECORD_ORDER_REQUEST,
+                bytes,
+            );
         }
 
         // CMP housekeeping
