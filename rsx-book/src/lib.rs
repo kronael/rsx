@@ -7,6 +7,7 @@ pub mod user;
 pub mod book;
 pub mod matching;
 pub mod migration;
+pub mod snapshot;
 
 pub use book::BookState;
 pub use book::Orderbook;
