@@ -78,6 +78,7 @@ pub fn parse_client_frame(
     if obj.len() != 1 {
         return Err(MdParseError::MultipleKeys);
     }
+    // SAFETY: obj.len()==1 checked above
     let (key, value) = obj.iter().next().unwrap();
     let arr = value
         .as_array()

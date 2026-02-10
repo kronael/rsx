@@ -2,7 +2,6 @@ use crate::convert::validate_lot_alignment;
 use crate::convert::validate_tick_alignment;
 use crate::order_id::generate_order_id;
 use crate::order_id::hex_to_order_id;
-use crate::order_id::order_id_to_hex;
 use crate::pending::PendingOrder;
 use crate::protocol::parse;
 use crate::protocol::serialize;
@@ -266,6 +265,7 @@ pub async fn handle_connection(
                 cid_bytes[..len]
                     .copy_from_slice(&src[..len]);
 
+                // SAFETY: oid is [u8; 16], slices are exact
                 let oid_hi = u64::from_be_bytes(
                     oid[0..8].try_into().unwrap(),
                 );
@@ -334,20 +334,7 @@ pub async fn handle_connection(
                     .circuit
                     .record_success();
 
-                let ack = serialize(
-                    &WsFrame::OrderUpdate {
-                        order_id: order_id_to_hex(&oid),
-                        status: 0, // pending
-                        filled_qty: 0,
-                        remaining_qty: qty,
-                        reason: 0,
-                    },
-                );
-                let _ = ws_write_text(
-                    &mut stream,
-                    ack.as_bytes(),
-                )
-                .await;
+                let _ = (oid, qty);
             }
             WsFrame::Cancel { key } => {
                 let st = state.borrow();
@@ -466,6 +453,7 @@ fn build_cancel(
     symbol_id: u32,
     order_id: &[u8; 16],
 ) -> CancelRequest {
+    // SAFETY: order_id is &[u8; 16], slices are exact
     let oid_hi =
         u64::from_be_bytes(order_id[0..8].try_into().unwrap());
     let oid_lo =

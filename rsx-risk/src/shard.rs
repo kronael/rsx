@@ -190,6 +190,7 @@ impl RiskShard {
                 fill.taker_user_id,
                 fill.symbol_id,
             );
+            // SAFETY: ensure_position() guarantees key exists
             let pos = self
                 .positions
                 .get_mut(&(
@@ -208,6 +209,7 @@ impl RiskShard {
                 fill.price,
                 self.taker_fee_bps[sid],
             );
+            // SAFETY: ensure_account() guarantees key exists
             self.accounts
                 .get_mut(&fill.taker_user_id)
                 .unwrap()
@@ -230,6 +232,7 @@ impl RiskShard {
             } else {
                 0u8
             };
+            // SAFETY: ensure_position() guarantees key exists
             let pos = self
                 .positions
                 .get_mut(&(
@@ -248,6 +251,7 @@ impl RiskShard {
                 fill.price,
                 self.maker_fee_bps[sid],
             );
+            // SAFETY: ensure_account() guarantees key exists
             self.accounts
                 .get_mut(&fill.maker_user_id)
                 .unwrap()
@@ -440,6 +444,7 @@ impl RiskShard {
             self.taker_fee_bps[sid],
         ) {
             Ok(margin_needed) => {
+                // SAFETY: ensure_account() guarantees key exists
                 self.accounts
                     .get_mut(&order.user_id)
                     .unwrap()

@@ -66,9 +66,16 @@ async fn run_replay_bootstrap(
 
     consumer
         .run(move |record: RawWalRecord| {
-            let mut evs = events_clone.lock().unwrap();
-            let mut cu = caught_up_clone.lock().unwrap();
-            let mut ls = last_seq_clone.lock().unwrap();
+            // SAFETY: recover from mutex poison (replay is best-effort)
+            let mut evs = events_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut cu = caught_up_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut ls = last_seq_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
 
             match record.header.record_type {
                 RECORD_ORDER_INSERTED => {
@@ -151,12 +158,18 @@ async fn run_replay_bootstrap(
         })
         .await?;
 
+    // SAFETY: Arc::try_unwrap succeeds because consumer.run()
+    // has returned and all clones are dropped
     let events = std::sync::Arc::try_unwrap(events)
         .unwrap()
         .into_inner()
-        .unwrap();
-    let caught_up = *caught_up.lock().unwrap();
-    let last_seq = *last_seq.lock().unwrap();
+        .unwrap_or_else(|e| e.into_inner());
+    let caught_up = *caught_up
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let last_seq = *last_seq
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     Ok(ReplayResult {
         events,

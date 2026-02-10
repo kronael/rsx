@@ -117,6 +117,7 @@ pub async fn ws_read_frame(
         let ext = vec![0u8; 8];
         let (res, ext) = stream.read_exact(ext).await;
         res?;
+        // SAFETY: ext is exactly 8 bytes from read_exact
         usize::from_be_bytes(
             ext[..8].try_into().unwrap(),
         )

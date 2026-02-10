@@ -180,6 +180,7 @@ pub fn parse(text: &str) -> Result<WsFrame, ParseError> {
     if obj.len() != 1 {
         return Err(ParseError::MultipleKeys);
     }
+    // SAFETY: obj.len()==1 checked above
     let (key, value) = obj.iter().next().unwrap();
 
     // Validate key is alphabetic
