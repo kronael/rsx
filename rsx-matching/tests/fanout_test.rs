@@ -45,6 +45,7 @@ fn fill_sent_to_risk_gateway_mktdata() {
         tif: TimeInForce::GTC,
         user_id: 2,
         reduce_only: false,
+        post_only: false,
         timestamp_ns: 0,
         order_id_hi: 0,
         order_id_lo: 0,
@@ -91,6 +92,7 @@ fn order_inserted_sent_to_mktdata_only() {
         tif: TimeInForce::GTC,
         user_id: 1,
         reduce_only: false,
+        post_only: false,
         timestamp_ns: 0,
         order_id_hi: 0,
         order_id_lo: 0,
@@ -110,7 +112,11 @@ fn order_inserted_sent_to_mktdata_only() {
     let gw = drain_ring(&mut gc);
     let mkt = drain_ring(&mut mc);
 
-    assert!(risk.is_empty());
+    // BBO also sent to risk when best changes
+    assert!(risk.iter().all(|e| matches!(
+        e,
+        EventMessage::BBO { .. }
+    )));
     assert!(gw.is_empty());
     assert!(mkt.iter().any(|e| matches!(
         e,
@@ -132,6 +138,7 @@ fn order_done_sent_to_risk_gateway() {
         tif: TimeInForce::GTC,
         user_id: 2,
         reduce_only: false,
+        post_only: false,
         timestamp_ns: 0,
         order_id_hi: 0,
         order_id_lo: 0,
@@ -221,6 +228,7 @@ fn drain_empties_buffer() {
         tif: TimeInForce::GTC,
         user_id: 1,
         reduce_only: false,
+        post_only: false,
         timestamp_ns: 0,
         order_id_hi: 0,
         order_id_lo: 0,

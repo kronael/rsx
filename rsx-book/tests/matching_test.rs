@@ -7,6 +7,7 @@ use rsx_book::event::REASON_CANCELLED;
 use rsx_book::event::REASON_FILLED;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
@@ -41,6 +42,7 @@ fn incoming(
         tif,
         user_id,
         reduce_only: false,
+        post_only: false,
         timestamp_ns: 0,
         order_id_hi: 0,
         order_id_lo: 0,
@@ -629,4 +631,98 @@ fn event_buffer_fills_before_done() {
             fill_pos, done_pos, handle,
         );
     }
+}
+
+// ── BBO emission tests ─────────────────────────
+
+#[test]
+fn bbo_emitted_after_new_best_bid() {
+    let mut book = test_book();
+    let mut order = incoming(
+        49_900, 100, Side::Buy, TimeInForce::GTC, 1,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let bbo: Vec<_> = book
+        .events()
+        .iter()
+        .filter(|e| matches!(e, Event::BBO { .. }))
+        .collect();
+    assert_eq!(bbo.len(), 1);
+    if let Event::BBO {
+        bid_px, bid_qty, ask_px, ask_qty,
+    } = bbo[0]
+    {
+        assert_eq!(*bid_px, Price(49_900));
+        assert_eq!(*bid_qty, Qty(100));
+        assert_eq!(*ask_px, Price(0));
+        assert_eq!(*ask_qty, Qty(0));
+    }
+}
+
+#[test]
+fn bbo_emitted_after_fill_removes_best() {
+    let mut book = test_book();
+    book.insert_resting(
+        50_100, 100, Side::Sell, 0, 1, false,
+        0, 0, 0,
+    );
+    // Buy sweeps the only ask level
+    let mut order = incoming(
+        50_100, 100, Side::Buy, TimeInForce::GTC, 2,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let bbo: Vec<_> = book
+        .events()
+        .iter()
+        .filter(|e| matches!(e, Event::BBO { .. }))
+        .collect();
+    assert_eq!(bbo.len(), 1);
+    // Ask should now be empty
+    if let Event::BBO { ask_px, ask_qty, .. } =
+        bbo[0]
+    {
+        assert_eq!(*ask_px, Price(0));
+        assert_eq!(*ask_qty, Qty(0));
+    }
+}
+
+#[test]
+fn bbo_not_emitted_when_best_unchanged() {
+    let mut book = test_book();
+    // Insert best bid at 49_900
+    book.insert_resting(
+        49_900, 100, Side::Buy, 0, 1, false,
+        0, 0, 0,
+    );
+    // Insert worse bid at 49_800 -- best unchanged
+    let mut order = incoming(
+        49_800, 50, Side::Buy, TimeInForce::GTC, 2,
+    );
+    process_new_order(&mut book, &mut order);
+
+    let bbo_count = book
+        .events()
+        .iter()
+        .filter(|e| matches!(e, Event::BBO { .. }))
+        .count();
+    assert_eq!(bbo_count, 0);
+}
+
+#[test]
+fn bbo_emitted_after_new_best_ask() {
+    let mut book = test_book();
+    let mut order = incoming(
+        50_100, 100, Side::Sell, TimeInForce::GTC, 1,
+    );
+    process_new_order(&mut book, &mut order);
+
+    assert!(book.events().iter().any(|e| matches!(
+        e,
+        Event::BBO {
+            ask_px, ask_qty, ..
+        } if *ask_px == Price(50_100)
+            && *ask_qty == Qty(100)
+    )));
 }

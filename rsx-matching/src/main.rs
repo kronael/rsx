@@ -2,6 +2,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::records::BboRecord;
 use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderCancelledRecord;
@@ -374,7 +375,29 @@ fn send_event_cmp(
             };
             let _ = sender.send(&mut record)?;
         }
-        _ => {}
+        rsx_book::event::Event::BBO {
+            bid_px,
+            bid_qty,
+            ask_px,
+            ask_qty,
+        } => {
+            let mut record = BboRecord {
+                seq: 0,
+                ts_ns,
+                symbol_id,
+                _pad0: 0,
+                bid_px: bid_px.0,
+                bid_qty: bid_qty.0,
+                bid_count: 0,
+                _pad1: 0,
+                ask_px: ask_px.0,
+                ask_qty: ask_qty.0,
+                ask_count: 0,
+                _pad2: 0,
+            };
+            let _ = sender.send(&mut record)?;
+        }
+        rsx_book::event::Event::OrderFailed { .. } => {}
     }
     Ok(())
 }

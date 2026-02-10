@@ -4,8 +4,8 @@ use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 use rsx_types::validate_order;
-
 use crate::book::Orderbook;
+use crate::event::CANCEL_POST_ONLY;
 use crate::event::Event;
 use crate::event::FAIL_FOK;
 use crate::event::FAIL_REDUCE_ONLY;
@@ -14,7 +14,6 @@ use crate::event::REASON_CANCELLED;
 use crate::event::REASON_FILLED;
 use crate::user::update_positions_on_fill;
 
-/// Incoming order descriptor (not yet in the book).
 pub struct IncomingOrder {
     pub price: i64,
     pub qty: i64,
@@ -23,6 +22,7 @@ pub struct IncomingOrder {
     pub tif: TimeInForce,
     pub user_id: u32,
     pub reduce_only: bool,
+    pub post_only: bool,
     pub timestamp_ns: u64,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
@@ -34,8 +34,9 @@ pub fn process_new_order(
 ) {
     book.event_len = 0;
     let saved_event_len = book.event_len;
+    let old_bid = book.best_bid_tick;
+    let old_ask = book.best_ask_tick;
 
-    // Validate
     if !validate_order(
         &book.config,
         Price(order.price),
@@ -48,7 +49,6 @@ pub fn process_new_order(
         return;
     }
 
-    // Reduce-only enforcement
     if order.reduce_only {
         let net = book
             .user_map
@@ -76,8 +76,7 @@ pub fn process_new_order(
                     });
                     return;
                 }
-                let abs_pos =
-                    nq.unsigned_abs() as i64;
+                let abs_pos = nq.unsigned_abs() as i64;
                 if order.remaining_qty > abs_pos {
                     order.remaining_qty = abs_pos;
                 }
@@ -85,7 +84,32 @@ pub fn process_new_order(
         }
     }
 
-    // Phase 1: Match against opposite side
+    if order.post_only {
+        let order_tick =
+            book.compression.price_to_index(order.price);
+        let would_cross = match order.side {
+            Side::Buy => {
+                book.best_ask_tick != NONE
+                    && order_tick >= book.best_ask_tick
+            }
+            Side::Sell => {
+                book.best_bid_tick != NONE
+                    && order_tick <= book.best_bid_tick
+            }
+        };
+        if would_cross {
+            book.emit(Event::OrderCancelled {
+                handle: NONE,
+                user_id: order.user_id,
+                remaining_qty: Qty(order.remaining_qty),
+                reason: CANCEL_POST_ONLY,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            });
+            return;
+        }
+    }
+
     match order.side {
         Side::Buy => {
             while order.remaining_qty > 0
@@ -93,16 +117,13 @@ pub fn process_new_order(
             {
                 let ask_tick = book.best_ask_tick;
                 let before = order.remaining_qty;
-                match_at_level(
-                    book, ask_tick, order,
-                );
+                match_at_level(book, ask_tick, order);
                 let level = &book.active_levels
                     [ask_tick as usize];
                 if level.order_count == 0 {
                     book.best_ask_tick =
                         book.scan_next_ask(ask_tick);
                 }
-                // No progress = no crossing orders
                 if order.remaining_qty == before {
                     break;
                 }
@@ -117,9 +138,7 @@ pub fn process_new_order(
             {
                 let bid_tick = book.best_bid_tick;
                 let before = order.remaining_qty;
-                match_at_level(
-                    book, bid_tick, order,
-                );
+                match_at_level(book, bid_tick, order);
                 let level = &book.active_levels
                     [bid_tick as usize];
                 if level.order_count == 0 {
@@ -136,11 +155,9 @@ pub fn process_new_order(
         }
     }
 
-    // Phase 1.5: TIF enforcement
     if order.tif == TimeInForce::FOK
         && order.remaining_qty > 0
     {
-        // Rollback events
         book.event_len = saved_event_len;
         book.emit(Event::OrderFailed {
             user_id: order.user_id,
@@ -149,19 +166,15 @@ pub fn process_new_order(
         return;
     }
 
-    // Phase 2: Insert remainder or cancel
     if order.remaining_qty > 0 {
         if order.tif == TimeInForce::IOC {
-            let filled = order.qty
-                - order.remaining_qty;
+            let filled = order.qty - order.remaining_qty;
             book.emit(Event::OrderDone {
                 handle: NONE,
                 user_id: order.user_id,
                 reason: REASON_CANCELLED,
                 filled_qty: Qty(filled),
-                remaining_qty: Qty(
-                    order.remaining_qty,
-                ),
+                remaining_qty: Qty(order.remaining_qty),
                 order_id_hi: order.order_id_hi,
                 order_id_lo: order.order_id_lo,
             });
@@ -188,7 +201,6 @@ pub fn process_new_order(
             });
         }
     } else {
-        // Fully filled
         book.emit(Event::OrderDone {
             handle: NONE,
             user_id: order.user_id,
@@ -199,6 +211,42 @@ pub fn process_new_order(
             order_id_lo: order.order_id_lo,
         });
     }
+
+    // Emit BBO if best bid or ask changed
+    if book.best_bid_tick != old_bid
+        || book.best_ask_tick != old_ask
+    {
+        emit_bbo(book);
+    }
+}
+
+fn emit_bbo(book: &mut Orderbook) {
+    let (bid_px, bid_qty) =
+        if book.best_bid_tick != NONE {
+            let lvl = &book.active_levels
+                [book.best_bid_tick as usize];
+            let px =
+                book.orders.get(lvl.head).price.0;
+            (px, lvl.total_qty)
+        } else {
+            (0, 0)
+        };
+    let (ask_px, ask_qty) =
+        if book.best_ask_tick != NONE {
+            let lvl = &book.active_levels
+                [book.best_ask_tick as usize];
+            let px =
+                book.orders.get(lvl.head).price.0;
+            (px, lvl.total_qty)
+        } else {
+            (0, 0)
+        };
+    book.emit(Event::BBO {
+        bid_px: Price(bid_px),
+        bid_qty: Qty(bid_qty),
+        ask_px: Price(ask_px),
+        ask_qty: Qty(ask_qty),
+    });
 }
 
 pub fn match_at_level(
@@ -206,8 +254,7 @@ pub fn match_at_level(
     tick: u32,
     aggressor: &mut IncomingOrder,
 ) {
-    let mut cursor =
-        book.active_levels[tick as usize].head;
+    let mut cursor = book.active_levels[tick as usize].head;
 
     while cursor != NONE
         && aggressor.remaining_qty > 0
@@ -220,7 +267,6 @@ pub fn match_at_level(
         let maker_oid_lo = maker.order_id_lo;
         let next_cursor = maker.next;
 
-        // Smooshed tick check: verify actual price
         match aggressor.side {
             Side::Buy => {
                 if maker_price > aggressor.price {
@@ -236,16 +282,13 @@ pub fn match_at_level(
             }
         }
 
-        let fill_qty = aggressor
-            .remaining_qty
-            .min(maker_qty);
+        let fill_qty =
+            aggressor.remaining_qty.min(maker_qty);
 
         aggressor.remaining_qty -= fill_qty;
-        let maker_slot =
-            book.orders.get_mut(cursor);
+        let maker_slot = book.orders.get_mut(cursor);
         maker_slot.remaining_qty.0 -= fill_qty;
-        let maker_remaining =
-            maker_slot.remaining_qty.0;
+        let maker_remaining = maker_slot.remaining_qty.0;
 
         book.active_levels[tick as usize]
             .total_qty -= fill_qty;
@@ -275,13 +318,10 @@ pub fn match_at_level(
         );
 
         if maker_remaining == 0 {
-            // Fully filled: unlink and free
-            let prev =
-                book.orders.get(cursor).prev;
-            let next =
-                book.orders.get(cursor).next;
-            let level = &mut book.active_levels
-                [tick as usize];
+            let prev = book.orders.get(cursor).prev;
+            let next = book.orders.get(cursor).next;
+            let level =
+                &mut book.active_levels[tick as usize];
 
             if prev != NONE {
                 book.orders.get_mut(prev).next =
@@ -297,10 +337,8 @@ pub fn match_at_level(
             }
             level.order_count -= 1;
 
-            // Emit OrderDone for maker
-            let orig_qty = book.orders
-                .get(cursor)
-                .original_qty;
+            let orig_qty =
+                book.orders.get(cursor).original_qty;
             book.emit(Event::OrderDone {
                 handle: cursor,
                 user_id: maker_user_id,
@@ -311,12 +349,9 @@ pub fn match_at_level(
                 order_id_lo: maker_oid_lo,
             });
 
-            book.orders
-                .get_mut(cursor)
-                .set_active(false);
+            book.orders.get_mut(cursor).set_active(false);
             book.orders.free(cursor);
 
-            // Decrement maker order count
             if let Some(&uidx) =
                 book.user_map.get(&maker_user_id)
             {
