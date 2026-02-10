@@ -24,7 +24,6 @@ use rsx_types::time::time_ns;
 use tracing::info;
 use tracing::warn;
 
-/// Handle a single WebSocket connection.
 pub async fn handle_connection(
     mut stream: TcpStream,
     state: Rc<RefCell<GatewayState>>,
@@ -41,10 +40,13 @@ pub async fn handle_connection(
 
     let conn_id =
         state.borrow_mut().add_connection(user_id);
+    state.borrow_mut().touch_connection(
+        conn_id,
+        time_ns(),
+    );
     info!("connection {} user {}", conn_id, user_id);
 
     loop {
-        // Drain outbound messages first
         let msgs =
             state.borrow_mut().drain_outbound(conn_id);
         for msg in msgs {
@@ -60,7 +62,6 @@ pub async fn handle_connection(
             }
         }
 
-        // Read next frame
         let (opcode, payload) =
             match ws_read_frame(&mut stream).await {
                 Ok(f) => f,
@@ -76,7 +77,11 @@ pub async fn handle_connection(
                 }
             };
 
-        // Close frame
+        state.borrow_mut().touch_connection(
+            conn_id,
+            time_ns(),
+        );
+
         if opcode == 8 {
             state
                 .borrow_mut()
@@ -84,7 +89,6 @@ pub async fn handle_connection(
             return;
         }
 
-        // Ping -> pong
         if opcode == 9 {
             let mut pong = vec![0x8A, 0x00];
             if !payload.is_empty() {
@@ -99,7 +103,6 @@ pub async fn handle_connection(
             continue;
         }
 
-        // Only handle text frames
         if opcode != 1 {
             continue;
         }
@@ -152,7 +155,6 @@ pub async fn handle_connection(
                 tif,
                 reduce_only,
             } => {
-                // Rate limit check
                 {
                     let mut st = state.borrow_mut();
                     let limiter = st
@@ -171,7 +173,6 @@ pub async fn handle_connection(
                     }
                 }
 
-                // Circuit breaker check
                 {
                     let mut st = state.borrow_mut();
                     if !st.circuit.allow() {
@@ -218,7 +219,6 @@ pub async fn handle_connection(
                     _pad: [0; 4],
                 };
 
-                // Track pending
                 let pending = PendingOrder {
                     order_id: oid,
                     user_id,
@@ -246,7 +246,6 @@ pub async fn handle_connection(
                     }
                 }
 
-                // Send to Risk via CMP
                 let bytes = unsafe {
                     std::slice::from_raw_parts(
                         &order as *const OrderRequest
@@ -265,7 +264,6 @@ pub async fn handle_connection(
                     .circuit
                     .record_success();
 
-                // Send ack with order_id
                 let ack = serialize(
                     &WsFrame::OrderUpdate {
                         order_id: order_id_to_hex(&oid),
@@ -362,7 +360,7 @@ pub async fn handle_connection(
                     }
                 }
             }
-            WsFrame::Heartbeat { .. } => {
+            WsFrame::Heartbeat {..} => {
                 let now_ms = time_ms();
                 let resp = serialize(
                     &WsFrame::Heartbeat {
@@ -376,7 +374,6 @@ pub async fn handle_connection(
                 .await;
             }
             _ => {
-                // Other frame types not yet handled
                 let err = serialize(
                     &WsFrame::Error {
                         code: 1004,
