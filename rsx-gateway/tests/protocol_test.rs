@@ -491,8 +491,8 @@ fn enum_order_status_valid_0_1_2_3() {
 }
 
 #[test]
-fn enum_failure_reason_valid_0_through_7() {
-    for r in 0..=7u8 {
+fn enum_failure_reason_valid_0_through_10() {
+    for r in 0..=10u8 {
         let json = format!(
             "{{\"U\":[\"{}\",3,0,100,{}]}}",
             oid32(),
@@ -501,7 +501,7 @@ fn enum_failure_reason_valid_0_through_7() {
         assert!(parse(&json).is_ok());
     }
     let json = format!(
-        "{{\"U\":[\"{}\",3,0,100,8]}}",
+        "{{\"U\":[\"{}\",3,0,100,11]}}",
         oid32(),
     );
     assert!(parse(&json).is_err());

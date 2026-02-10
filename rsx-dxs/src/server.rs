@@ -5,6 +5,7 @@ use crate::records::ReplayRequest;
 use crate::records::RECORD_CAUGHT_UP;
 use crate::records::RECORD_REPLAY_REQUEST;
 use crate::wal::WalReader;
+use crate::wal::extract_seq;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -106,7 +107,7 @@ async fn handle_client(
         ));
     }
     let req = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload_buf.as_ptr()
                 as *const ReplayRequest,
         )
@@ -141,12 +142,9 @@ async fn handle_client(
                 stream
                     .write_all(&record.payload)
                     .await?;
-                let seq = u64::from_le_bytes(
-                    record.payload[..8]
-                        .try_into()
-                        .unwrap(),
-                );
-                last_seq = seq;
+                if let Some(seq) = extract_seq(&record.payload) {
+                    last_seq = seq;
+                }
             }
             Ok(None) => break,
             Err(e) => {
@@ -208,12 +206,9 @@ async fn handle_client(
                     stream
                         .write_all(&record.payload)
                         .await?;
-                    let seq = u64::from_le_bytes(
-                        record.payload[..8]
-                            .try_into()
-                            .unwrap(),
-                    );
-                    last_seq = seq;
+                    if let Some(seq) = extract_seq(&record.payload) {
+                        last_seq = seq;
+                    }
                 }
                 Ok(None) => break,
                 Err(_) => break,

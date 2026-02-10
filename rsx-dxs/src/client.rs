@@ -112,13 +112,14 @@ impl DxsConsumer {
             from_seq: self.tip + 1,
             _pad1: [0u8; 48],
         };
+        let req_size = std::mem::size_of::<
+            ReplayRequest,
+        >();
         let payload = unsafe {
             std::slice::from_raw_parts(
                 &req as *const ReplayRequest
                     as *const u8,
-                std::mem::size_of::<
-                    ReplayRequest,
-                >(),
+                req_size,
             )
         };
         let crc = compute_crc32(payload);
@@ -164,6 +165,14 @@ impl DxsConsumer {
             stream
                 .read_exact(&mut payload)
                 .await?;
+
+            let computed = compute_crc32(&payload);
+            if computed != header.crc32 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "crc mismatch",
+                ));
+            }
 
             let record =
                 RawWalRecord { header, payload };

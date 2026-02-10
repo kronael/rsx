@@ -28,7 +28,9 @@ pub fn encode_record(
     buf
 }
 
-fn as_bytes<T>(val: &T) -> &[u8] {
+/// Convert repr(C) struct to byte slice. Used for
+/// serializing CMP records to wire format.
+pub fn as_bytes<T>(val: &T) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(
             val as *const T as *const u8,
@@ -104,7 +106,7 @@ pub fn decode_fill_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr() as *const FillRecord,
         )
     };
@@ -118,7 +120,7 @@ pub fn decode_bbo_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr() as *const BboRecord,
         )
     };
@@ -134,7 +136,7 @@ pub fn decode_order_inserted_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr()
                 as *const OrderInsertedRecord,
         )
@@ -151,7 +153,7 @@ pub fn decode_order_cancelled_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr()
                 as *const OrderCancelledRecord,
         )
@@ -168,7 +170,7 @@ pub fn decode_order_done_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr()
                 as *const OrderDoneRecord,
         )
@@ -185,7 +187,7 @@ pub fn decode_config_applied_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr()
                 as *const ConfigAppliedRecord,
         )
@@ -202,7 +204,7 @@ pub fn decode_caught_up_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr()
                 as *const CaughtUpRecord,
         )
@@ -219,7 +221,7 @@ pub fn decode_order_accepted_record(
         return None;
     }
     let record = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr()
                 as *const OrderAcceptedRecord,
         )
