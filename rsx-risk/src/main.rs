@@ -359,20 +359,8 @@ fn run(
         // Run risk engine
         shard.run_once(&mut rings, now_secs);
 
-        // Drain responses -> CMP to Gateway
-        while let Ok(resp) = resp_cons.pop() {
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    &resp as *const OrderResponse
-                        as *const u8,
-                    std::mem::size_of::<
-                        OrderResponse,
-                    >(),
-                )
-            };
-            let _ = gw_sender
-                .send_raw(RECORD_ORDER_RESPONSE, bytes);
-        }
+        // Drain responses (no WS ack path in v1)
+        while let Ok(_resp) = resp_cons.pop() {}
 
         // Drain accepted orders -> CMP to ME
         while let Ok(order) = accepted_cons.pop() {

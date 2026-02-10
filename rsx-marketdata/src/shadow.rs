@@ -8,12 +8,14 @@ use crate::types::L2Delta;
 use crate::types::L2Level;
 use crate::types::L2Snapshot;
 use crate::types::TradeEvent;
+use std::collections::HashMap;
 
 pub struct ShadowBook {
     book: Orderbook,
     symbol_id: u32,
     seq: u64,
     timestamp_ns: u64,
+    order_map: HashMap<u128, u32>,
 }
 
 impl ShadowBook {
@@ -30,6 +32,7 @@ impl ShadowBook {
             symbol_id,
             seq: 0,
             timestamp_ns: 0,
+            order_map: HashMap::new(),
         }
     }
 
@@ -87,6 +90,70 @@ impl ShadowBook {
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
         self.book.cancel_order(handle);
+    }
+
+    pub fn apply_insert_by_id(
+        &mut self,
+        price: i64,
+        qty: i64,
+        side: u8,
+        user_id: u32,
+        timestamp_ns: u64,
+        order_id_hi: u64,
+        order_id_lo: u64,
+    ) -> u32 {
+        let handle = self.apply_insert(
+            price,
+            qty,
+            side,
+            user_id,
+            timestamp_ns,
+        );
+        self.order_map
+            .insert(order_key(order_id_hi, order_id_lo), handle);
+        handle
+    }
+
+    pub fn apply_cancel_by_order_id(
+        &mut self,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        timestamp_ns: u64,
+    ) -> Option<(u8, i64)> {
+        let key = order_key(order_id_hi, order_id_lo);
+        let handle = self.order_map.remove(&key)?;
+        let slot = self.book.orders.get(handle);
+        let side = slot.side;
+        let price = slot.price.0;
+        self.seq += 1;
+        self.timestamp_ns = timestamp_ns;
+        self.book.cancel_order(handle);
+        Some((side, price))
+    }
+
+    pub fn apply_fill_by_order_id(
+        &mut self,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        qty: i64,
+        timestamp_ns: u64,
+    ) -> Option<(u8, i64)> {
+        let key = order_key(order_id_hi, order_id_lo);
+        let handle = *self.order_map.get(&key)?;
+        let slot = self.book.orders.get(handle);
+        let side = slot.side;
+        let price = slot.price.0;
+        self.seq += 1;
+        self.timestamp_ns = timestamp_ns;
+        let remaining = slot.remaining_qty.0;
+        let new_qty = remaining - qty;
+        if new_qty <= 0 {
+            self.book.cancel_order(handle);
+            self.order_map.remove(&key);
+        } else {
+            self.book.modify_order_qty_down(handle, new_qty);
+        }
+        Some((side, price))
     }
 
     /// Derive current BBO from the shadow book.
@@ -241,4 +308,8 @@ impl ShadowBook {
         }
         levels
     }
+}
+
+fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {
+    ((order_id_hi as u128) << 64) | order_id_lo as u128
 }
