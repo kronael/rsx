@@ -8,6 +8,8 @@ use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_dxs::records::OrderFailedRecord;
+use rsx_dxs::records::RECORD_ORDER_FAILED;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
@@ -354,8 +356,48 @@ fn run(
         // Run risk engine
         shard.run_once(&mut rings, now_secs);
 
-        // Drain responses (no WS ack path in v1)
-        while let Ok(_resp) = resp_cons.pop() {}
+        // Drain responses: send ORDER_FAILED to GW
+        while let Ok(resp) = resp_cons.pop() {
+            if let OrderResponse::Rejected {
+                user_id,
+                reason,
+                order_id_hi,
+                order_id_lo,
+            } = resp
+            {
+                let reason_u8 = match reason {
+                    rsx_risk::RejectReason
+                        ::InsufficientMargin => 1,
+                    rsx_risk::RejectReason
+                        ::UserInLiquidation => 2,
+                    rsx_risk::RejectReason
+                        ::NotInShard => 3,
+                };
+                let rec = OrderFailedRecord {
+                    seq: 0,
+                    ts_ns: now_secs * 1_000_000_000,
+                    user_id,
+                    _pad0: 0,
+                    order_id_hi,
+                    order_id_lo,
+                    reason: reason_u8,
+                    _pad: [0; 23],
+                };
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        &rec as *const OrderFailedRecord
+                            as *const u8,
+                        std::mem::size_of::<
+                            OrderFailedRecord,
+                        >(),
+                    )
+                };
+                let _ = gw_sender.send_raw(
+                    RECORD_ORDER_FAILED,
+                    bytes,
+                );
+            }
+        }
 
         // Drain accepted orders -> CMP to ME
         while let Ok(order) = accepted_cons.pop() {
