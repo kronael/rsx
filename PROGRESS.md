@@ -9,9 +9,11 @@
 **Status:** Phases 1-5 complete, Phase 6 not started.
 Full order pipeline wired: Gateway -> Risk -> ME ->
 Risk -> Gateway, ME -> Marketdata. Liquidation engine
-complete with insurance fund. ~580 tests passing.
+complete with insurance fund. Mark->Risk CMP feed live.
+Per-order frozen margin release on done/cancel. ~580
+tests passing.
 
-**Overall completion: ~97%** (weighted by criticality)
+**Overall completion: ~99%** (weighted by criticality)
 
 ---
 
@@ -23,8 +25,8 @@ complete with insurance fund. ~580 tests passing.
 | rsx-book | 97 | 100 |
 | rsx-matching | 30 | 100 |
 | rsx-dxs | 83 | 100 |
-| rsx-risk | 198 | 95 |
-| rsx-gateway | 124 | 95 |
+| rsx-risk | 201 | 100 |
+| rsx-gateway | 124 | 97 |
 | rsx-marketdata | 57 | 98 |
 | rsx-mark | 40 | 100 |
 | rsx-recorder | 0 | 100 |
@@ -56,9 +58,9 @@ CMP: sender/receiver, flow control, heartbeat, NACK,
 configurable via CmpConfig (env vars).
 DxsReplayService: TCP replay, live_seq from payload, TLS.
 DxsConsumer: tip tracking, reconnect backoff, TLS, unknown
-record skip. WAL dump tool (rsx-wal-dump binary).
+record skip. WAL dump via rsxcli (rsx-cli crate).
 
-### rsx-risk (95%)
+### rsx-risk (100%)
 **Done:** Position tracking, margin calc, fees, funding,
 price feeds, pre-trade checks, persistence, cold start,
 process_fill (dedup, fees), process_order (margin, freeze),
@@ -67,8 +69,9 @@ liquidation engine, per-tick margin recalc, liquidation
 order emission, insurance fund (accounting + persistence +
 socialized loss), CONFIG_APPLIED handling, DXS consumer for
 ME replay, lease renewal, backpressure enforcement, symbol
-halt/resume on ORDER_FAILED in liquidation engine.
-**Missing:** Replication & failover (Phase 4).
+halt/resume on ORDER_FAILED in liquidation engine,
+replication & failover (advisory lease, replica state,
+promotion, tip sync).
 
 ### rsx-gateway (97%)
 Per-connection handler: WS -> CMP. Order + cancel routing.
@@ -93,6 +96,7 @@ aggregation), sweep_stale, staleness filtering.
 BinanceSource + CoinbaseSource (tokio-tungstenite WS).
 SPSC rings, config loading, DxsReplay server, WAL writer.
 Main loop: drain rings, sweep 1s, flush 10ms, busy-spin.
+CMP sender to risk (RECORD_MARK_PRICE).
 
 ### rsx-recorder (100%)
 RecorderState, daily rotation, raw WAL append.
@@ -119,7 +123,7 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 ## Remaining Work
 
 **Post-MVP:**
-- Replication & failover (rsx-risk Phase 4)
+- E2E smoke test (Phase 6)
 
 ---
 
@@ -132,7 +136,7 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 | DXS.md | rsx-dxs | 95 |
 | WAL.md | rsx-dxs | 95 |
 | CMP.md | rsx-dxs | 95 |
-| RISK.md | rsx-risk | 95 |
+| RISK.md | rsx-risk | 100 |
 | LIQUIDATOR.md | rsx-risk | 95 |
 | DATABASE.md | rsx-risk | 95 |
 | ARCHIVE.md | rsx-recorder | 100 |
@@ -152,7 +156,7 @@ backpressure enforcement, 35+ liquidation/insurance tests.
 
 ## Final Completion Summary
 
-**Overall System: ~97%** (weighted by component criticality)
+**Overall System: ~99%** (weighted by component criticality)
 
 **By Component:**
 - Core Infrastructure (Types, Book, DXS): 98% avg

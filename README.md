@@ -19,97 +19,133 @@
 > *The thing impossible may work quite well.*
 
 Perpetuals exchange with fixed-point arithmetic,
-single-threaded matching per symbol, and WAL-based recovery.
+single-threaded matching per symbol, CMP/UDP between
+processes, and WAL-based recovery.
 
-An end-to-end demonstration of high-frequency, low-latency
-exchange design principles — from spec to working system.
 Built with [Claude](https://claude.ai) and
 [Codex](https://openai.com/codex), orchestrated by
 [kronael/demiurg](https://github.com/kronael/demiurg).
 
 ## Status
 
-Spec-first project. All specifications are in `specs/v1/`.
-Core crates exist (`rsx-types`, `rsx-book`, `rsx-dxs`,
-`rsx-recorder`). `rsx-matching` is a stub binary.
+~97% complete. 9 crates, ~580 tests passing, ~21k LOC.
+Full order pipeline wired end-to-end:
+Gateway -> Risk -> ME -> Risk -> Gateway.
+Liquidation engine with insurance fund. Mark price
+aggregator feeding risk via CMP. Market data shadow
+book with L2/BBO/trades broadcast.
+
+See [PROGRESS.md](PROGRESS.md) for per-crate status.
 
 ## Architecture
 
-Gateway accepts WS and QUIC connections, forwards orders
-through SPSC rings to the risk engine, which validates margin
-and routes to per-symbol matching engines. Fills flow back
-through SPSC rings to risk (position updates) and gateway
-(user notifications). WAL streaming (DXS) handles replay and
-archival.
+```
+                       External
+                    +------------+
+                    |  Web (WS)  |
+                    +-----+------+
+                          |
+                    +-----v------+
+                    |  Gateway   |  WS + CMP bridge
+                    | (monoio)   |  JWT auth, rate limit
+                    +-----+------+
+                          | CMP/UDP
+                    +-----v------+   CMP/UDP   +---------------+
+                    |   Risk     +------------>| Matching Eng  |
+                    |  Engine    |<------------+ (1 per symbol) |
+                    | (1 shard)  |  CMP fills  +-------+-------+
+                    +--+---+--+-+              |       |
+                       |   |  |          +-----+  +----+-----+
+              CMP/UDP  |   |  | CMP/UDP  |WAL     |CMP/UDP   |
+              +--------+   |  +------+   |        |          |
+              v            |         v   v        v          v
+         +--------+  +----+---+ +--------+  +---------+ +--------+
+         |Postgres|  | Mark   | |Recorder|  |MARKETDATA| |Gateway |
+         | (write |  | Price  | |(daily  |  |(shadow   | |(fills  |
+         | behind)|  | Agg    | | WAL)   |  | book)    | | to usr)|
+         +--------+  +--------+ +--------+  +---------+ +--------+
+```
 
-See [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md).
+**Transports:**
+- Between processes: CMP/UDP (hot), WAL/TCP (cold)
+- Within process: tile threads + SPSC rings (rtrb)
+- DXS: WAL streaming to consumers over TCP
+
+See [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md)
+for full architecture. Per-component docs in
+[architecture/](architecture/).
 
 ## Components
 
-- **Matching Engine** -- one per symbol, single-threaded,
-  pinned core, GTC limit orders
-- **Risk Engine** -- pre-trade margin, position tracking,
-  funding, liquidation triggers
-- **Gateway** -- WS overlay + QUIC passthrough, auth,
-  rate limiting
-- **Mark Price Aggregator** -- external exchange feeds,
-  median price, staleness detection
-- **Market Data** -- shadow book reconstruction, L2/BBO/trades
-  fan-out over public WS
-- **DXS** -- brokerless WAL streaming, each producer serves
-  its own replay stream
+| Component | Crate | Description |
+|-----------|-------|-------------|
+| Matching Engine | rsx-matching | 1 per symbol, pinned core, GTC/IOC/FOK, post-only, reduce-only |
+| Risk Engine | rsx-risk | Pre-trade margin, positions, funding, liquidation, insurance fund |
+| Gateway | rsx-gateway | WS overlay, JWT auth, rate limiting, circuit breaker |
+| Mark Price | rsx-mark | Binance/Coinbase feeds, median, staleness, CMP to risk |
+| Market Data | rsx-marketdata | Shadow book, L2/BBO/trades fan-out, seq gap detection |
+| DXS | rsx-dxs | WAL writer/reader, CMP sender/receiver, DXS replay server |
+| Recorder | rsx-recorder | Archival DXS consumer, daily WAL files |
+| Types | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig, time, macros |
+| Book | rsx-book | Orderbook: Slab arena, CompressionMap, PriceLevel, snapshot |
 
 ## Crate Layout
 
 ```
-rsx-book/       orderbook (PriceLevel, OrderSlot, Slab)
-rsx-matching/   matching engine binary (stub)
-rsx-risk/       risk engine binary (planned)
-rsx-dxs/        WAL writer/reader, DxsReplay server
-rsx-mark/       mark price aggregator (planned)
-rsx-gateway/    WS overlay + QUIC passthrough (planned)
-rsx-marketdata/ market data fan-out (planned)
-rsx-recorder/   archival consumer (daily WAL files)
-rsx-types/      Price, Qty, Side, SymbolConfig newtypes
+rsx-types/      shared newtypes, macros, time
+rsx-book/       orderbook (Slab, CompressionMap, PriceLevel)
+rsx-matching/   ME binary (per-symbol, single-threaded)
+rsx-risk/       risk binary (per-shard, margin + funding + liquidation)
+rsx-dxs/        WAL, CMP, DXS replay (transport library)
+rsx-gateway/    gateway binary (WS + CMP bridge)
+rsx-marketdata/ marketdata binary (shadow book, public WS)
+rsx-mark/       mark price binary (external feeds, CMP to risk)
+rsx-recorder/   recorder binary (archival DXS consumer)
 ```
 
 ## Build and Test
 
 ```
-cargo test
-cargo bench -p rsx-dxs
+cargo check              # fastest feedback
+cargo test               # unit tests (~580 passing)
+cargo bench -p rsx-dxs   # WAL/CMP benchmarks
 ```
 
-Planned targets (not implemented yet): `e2e`, `integration`,
-`wal`, `smoke`, `perf`.
+## Design Principles
+
+- **Fixed-point i64** -- deterministic, no float rounding
+- **Single-threaded per symbol** -- no locks, pinned cores
+- **SPSC rings** -- rtrb, 50-170ns, no broker
+- **WAL-based recovery** -- 0ms fill loss, idempotent replay
+- **Slab arena** -- pre-allocated, zero heap on hot path
+- **WAL = wire = stream** -- no format transformation
+- **CMP/UDP** -- direct inter-process, no Kafka/NATS
+- **SIGTERM = crash** -- one recovery path, always exercised
 
 ## Specs
 
-Entry point: [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md).
-
-All specifications live in `specs/v1/`. Key files:
+All specifications in `specs/v1/`. Entry point:
+[specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md).
 
 | Spec | Covers |
 |------|--------|
 | ORDERBOOK.md | Book structures, matching, compression |
 | RISK.md | Margin, positions, funding, liquidation |
+| LIQUIDATOR.md | Liquidation rounds, insurance fund |
 | DXS.md | WAL format, replay server, consumers |
+| CMP.md | C Message Protocol, flow control |
 | MARK.md | External feeds, median, staleness |
+| WEBPROTO.md | WS compact JSON protocol |
 | CONSISTENCY.md | Event fan-out, ordering guarantees |
-| DEPLOY.md | Topology, config, ring sizing |
-| TESTING.md | Test levels, invariants, benchmarks |
+| TILES.md | Tile architecture, SPSC rings |
 
-## Design Principles
+## Documentation
 
-- **Fixed-point i64** -- deterministic arithmetic, no float
-  rounding across architectures
-- **Single-threaded per symbol** -- no locks, no cache
-  invalidation, pinned cores
-- **SPSC rings for IPC** -- rtrb, 50-170ns latency, no
-  broker (Kafka/NATS)
-- **WAL-based recovery** -- 0ms fill loss, idempotent replay
-  from tip+1
-- **Slab arena allocation** -- pre-allocated slots, zero heap
-  on hot path
-- **WAL = wire = stream** -- no format transformation between
-  disk, network, and memory
+| Document | Purpose |
+|----------|---------|
+| [PROGRESS.md](PROGRESS.md) | Per-crate implementation status |
+| [GUARANTEES.md](GUARANTEES.md) | Consistency, durability, recovery |
+| [CRITIQUE.md](CRITIQUE.md) | Current spec-vs-impl gaps |
+| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | Failure scenarios |
+| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | Ops recovery procedures |
+| [architecture/](architecture/) | Per-component architecture |
