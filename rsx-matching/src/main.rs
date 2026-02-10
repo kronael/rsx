@@ -145,6 +145,19 @@ fn main() {
     )
     .expect("failed to create CMP sender");
 
+    // CMP/UDP: send events to Marketdata
+    let mkt_addr: SocketAddr =
+        env::var("RSX_MKT_CMP_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9103".into())
+            .parse()
+            .expect("invalid RSX_MKT_CMP_ADDR");
+    let mut mkt_sender = CmpSender::new(
+        mkt_addr,
+        symbol_id,
+        &PathBuf::from(&wal_dir),
+    )
+    .expect("failed to create MKT CMP sender");
+
     // DXS sidecar
     if let Ok(dxs_addr) = env::var("RSX_ME_DXS_ADDR") {
         let addr: std::net::SocketAddr = dxs_addr
@@ -206,10 +219,16 @@ fn main() {
                     ts_ns,
                 );
 
-                // Send events to Risk via CMP
+                // Send events to Risk + Marketdata
                 for event in book.events() {
                     let _ = send_event_cmp(
                         &mut cmp_sender,
+                        event,
+                        symbol_id,
+                        ts_ns,
+                    );
+                    let _ = send_event_cmp(
+                        &mut mkt_sender,
                         event,
                         symbol_id,
                         ts_ns,
@@ -224,8 +243,10 @@ fn main() {
             &mut wal_writer, &mut last_flush,
         );
         let _ = cmp_sender.tick();
+        let _ = mkt_sender.tick();
         cmp_receiver.tick();
         cmp_sender.recv_control();
+        mkt_sender.recv_control();
     }
 }
 
