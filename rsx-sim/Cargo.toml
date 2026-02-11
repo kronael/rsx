@@ -1,0 +1,15 @@
+[package]
+name = "rsx-sim"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rsx-sim"
+path = "src/main.rs"
+
+[dependencies]
+rsx-types = { path = "../rsx-types" }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+tracing = "0.1"
+tracing-subscriber = "0.3"

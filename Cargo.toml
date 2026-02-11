@@ -10,6 +10,8 @@ members = [
     "rsx-gateway",
     "rsx-marketdata",
     "rsx-cli",
+    "rsx-maker",
+    "rsx-sim",
 ]
 resolver = "2"
 
