@@ -9,13 +9,25 @@ goal is minimal parsing cost and small payloads.
 - [Frame Shape](#frame-shape)
 - [Types](#types)
 - [Enums](#enums)
+- [N: New Order](#n-new-order)
+- [C: Cancel](#c-cancel)
+- [U: Order Update / Ack](#u-order-update--ack)
+- [F: Fill](#f-fill)
+- [E: Error](#e-error)
+- [H: Heartbeat](#h-heartbeat)
+- [Market Data Messages](#market-data-messages-public-ws-see-marketdatamd)
+- [Q: Liquidation Event](#q-liquidation-event-private-ws-see-liquidatormd)
+- [T: Trade](#t-trade-public-ws)
+- [M: Metadata Query](#m-metadata-query-public-ws)
 - [Notes](#notes)
 
 ---
 
 ## Frame Shape
 
-Each message is a JSON object with a single key. The key is the 1-letter message type and the value is a positional array payload.
+Each message is a JSON object with a single key. The key
+is the 1-letter message type and the value is a positional
+array payload.
 
 Example:
 
@@ -81,6 +93,7 @@ OrderDone.final_status mapping (CMP -> WS):
 - 6 = INTERNAL_ERROR
 - 7 = REDUCE_ONLY_VIOLATION
 - 8 = POST_ONLY_REJECT
+- 9 = RATE_LIMIT
 
 Risk reject mapping (CMP -> WS):
 - InsufficientMargin -> INSUFFICIENT_MARGIN
@@ -193,7 +206,8 @@ Separate public WS endpoint (no auth required). Same frame shape.
 **Client -> Server:**
 
 ```
-{S:[sym, channels]}     // subscribe (channels: 1=bbo, 2=depth, 3=trades)
+{S:[sym, channels]}     // subscribe (channels bitmask:
+                        //   1=bbo, 2=depth, 4=trades)
 {X:[sym, channels]}     // unsubscribe
 {X:[0, 0]}              // unsubscribe all
 ```
@@ -261,10 +275,11 @@ Fields:
 - `qty`: trade quantity in lot units (int64)
 - `side`: taker side, enum `Side`
 - `ts`: nanosecond timestamp (uint64)
-- `u`: matching engine sequence (uint64, monotonic per symbol)
+- `u`: matching engine sequence (uint64, monotonic
+  per symbol)
 
-Sent to clients subscribed to channel 3 (trades) for that
-symbol. Each fill produces one trade message.
+Sent to clients subscribed to channel 4 (trades) for
+that symbol. Each fill produces one trade message.
 
 ### M: Metadata Query (Public WS)
 
