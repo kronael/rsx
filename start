@@ -337,7 +337,8 @@ def print_plan(plan):
 
 # ── async process management ────────────────────────────
 
-PROCS = []  # list of (name, asyncio.Process)
+PROCS = {}  # name -> asyncio.Process
+PLAN = {}   # name -> (binary, env)
 
 
 async def pipe_output(name, stream):
@@ -360,18 +361,50 @@ async def spawn(name, binary, env):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    PROCS.append((name, proc))
+    PROCS[name] = proc
+    PLAN[name] = (binary, env)
     asyncio.create_task(pipe_output(name, proc.stdout))
     return proc
+
+
+async def stop_proc(name):
+    """Stop a single process by name."""
+    proc = PROCS.get(name)
+    if not proc or proc.returncode is not None:
+        print(f"  {name} not running")
+        return
+    proc.terminate()
+    try:
+        await asyncio.wait_for(
+            proc.wait(), timeout=5.0,
+        )
+        print(f"  {name} stopped")
+    except asyncio.TimeoutError:
+        proc.kill()
+        print(f"  {name} killed")
+
+
+async def start_proc(name):
+    """Start (or restart) a process by name."""
+    if name not in PLAN:
+        print(f"  unknown: {name}")
+        return
+    proc = PROCS.get(name)
+    if proc and proc.returncode is None:
+        print(f"  {name} already running")
+        return
+    binary, env = PLAN[name]
+    await spawn(name, binary, env)
+    print(f"  {name} started")
 
 
 async def shutdown_all():
     """SIGTERM all children and wait."""
     print("\nshutting down...")
-    for name, proc in PROCS:
+    for name, proc in PROCS.items():
         if proc.returncode is None:
             proc.terminate()
-    for name, proc in PROCS:
+    for name, proc in PROCS.items():
         try:
             await asyncio.wait_for(
                 proc.wait(), timeout=5.0,
@@ -593,27 +626,114 @@ def main():
     asyncio.run(run_all(plan))
 
 
+REPL_HELP = """\
+commands:
+  status          show all processes
+  stop <name>     stop a process
+  start <name>    start/restart a process
+  kill <name>     SIGKILL a process
+  restart <name>  stop then start
+  quit            shutdown all and exit
+  help            show this message
+"""
+
+
+async def repl():
+    """Interactive control loop."""
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    await asyncio.get_event_loop().connect_read_pipe(
+        lambda: protocol, sys.stdin,
+    )
+    print(REPL_HELP)
+    sys.stdout.write("rsx> ")
+    sys.stdout.flush()
+    while True:
+        line = await reader.readline()
+        if not line:
+            break
+        cmd = line.decode().strip()
+        if not cmd:
+            pass
+        elif cmd == "help":
+            print(REPL_HELP)
+        elif cmd == "status":
+            print_status()
+        elif cmd.startswith("stop "):
+            await stop_proc(cmd.split(None, 1)[1])
+        elif cmd.startswith("start "):
+            await start_proc(cmd.split(None, 1)[1])
+        elif cmd.startswith("kill "):
+            name = cmd.split(None, 1)[1]
+            proc = PROCS.get(name)
+            if proc and proc.returncode is None:
+                proc.kill()
+                print(f"  {name} killed")
+            else:
+                print(f"  {name} not running")
+        elif cmd.startswith("restart "):
+            name = cmd.split(None, 1)[1]
+            await stop_proc(name)
+            await start_proc(name)
+        elif cmd in ("quit", "exit", "q"):
+            return
+        else:
+            print(f"  unknown: {cmd}")
+        sys.stdout.write("rsx> ")
+        sys.stdout.flush()
+
+
+def print_status():
+    """Print status of all processes."""
+    for name in PLAN:
+        proc = PROCS.get(name)
+        if not proc:
+            state = "not started"
+        elif proc.returncode is None:
+            state = f"running (pid {proc.pid})"
+        else:
+            state = f"exited ({proc.returncode})"
+        print(f"  {name:<24} {state}")
+
+
+async def watch_exits():
+    """Background task: report child exits."""
+    seen = set()
+    while True:
+        for name, proc in PROCS.items():
+            if proc.returncode is not None \
+                    and name not in seen:
+                seen.add(name)
+                print(
+                    f"\n  {name} exited "
+                    f"with {proc.returncode}"
+                )
+                sys.stdout.write("rsx> ")
+                sys.stdout.flush()
+        await asyncio.sleep(1)
+
+
 async def run_all(plan):
-    """Spawn all processes and wait for shutdown."""
+    """Spawn all processes, then enter REPL."""
     loop = asyncio.get_event_loop()
+    stopping = False
+
+    def handle_signal():
+        nonlocal stopping
+        if not stopping:
+            stopping = True
+            asyncio.create_task(graceful_exit())
+
     loop.add_signal_handler(
-        signal.SIGINT,
-        lambda: asyncio.create_task(
-            graceful_exit()
-        ),
+        signal.SIGINT, handle_signal,
     )
     loop.add_signal_handler(
-        signal.SIGTERM,
-        lambda: asyncio.create_task(
-            graceful_exit()
-        ),
+        signal.SIGTERM, handle_signal,
     )
 
     for name, binary, env in plan:
         if not os.path.exists(binary):
-            print(
-                f"error: not found: {binary}"
-            )
+            print(f"error: not found: {binary}")
             print("binary not found, build first")
             await shutdown_all()
             sys.exit(1)
@@ -623,36 +743,21 @@ async def run_all(plan):
 
     print(
         f"\n{len(PROCS)} processes running. "
-        f"ctrl-c to stop.\n"
+        f"type 'help' for commands.\n"
     )
 
-    # watch for exits — stop if any child dies
-    seen = set()
-    while True:
-        for name, proc in PROCS:
-            if proc.returncode is not None \
-                    and name not in seen:
-                seen.add(name)
-                print(
-                    f"  {name} exited "
-                    f"with {proc.returncode}"
-                )
-        alive = sum(
-            1 for _, p in PROCS
-            if p.returncode is None
-        )
-        if alive == 0:
-            break
-        await asyncio.sleep(1)
+    # background watcher + interactive repl
+    watcher = asyncio.create_task(watch_exits())
+    await repl()
+    watcher.cancel()
     await graceful_exit()
 
 
 async def graceful_exit():
     """Handle SIGINT/SIGTERM gracefully."""
     await shutdown_all()
-    # summary
     print("\nexit summary:")
-    for name, proc in PROCS:
+    for name, proc in PROCS.items():
         code = proc.returncode or 0
         status = "ok" if code == 0 else f"exit {code}"
         print(f"  {name}: {status}")
