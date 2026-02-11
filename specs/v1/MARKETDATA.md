@@ -19,10 +19,10 @@ events and exposes public marketdata over WebSocket (see WEBPROTO.md).
 |---------|------|---------|-------------|
 | 1 | bbo | `BBO` | Best bid/offer updates |
 | 2 | depth | `B` (snapshot) + `D` (deltas) | L2 orderbook |
-| 3 | trades | `T` | Individual trade executions |
+| 4 | trades | `T` | Individual trade executions |
 
 Clients subscribe via `{S:[sym, channels]}` where `channels`
-is a bitmask (e.g. 3 = bbo + depth, 7 = all). See WEBPROTO.md.
+is a bitmask (e.g. 3 = bbo + depth, 7 = all three). See WEBPROTO.md.
 
 ## Notes
 

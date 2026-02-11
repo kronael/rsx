@@ -9,8 +9,9 @@ pub struct RiskNewOrder {
     pub side: u8,
     pub tif: u8,
     pub reduce_only: u8,
+    pub post_only: u8,
     pub is_liquidation: u8,
-    pub _pad: [u8; 4],
+    pub _pad: [u8; 3],
     pub price: i64,
     pub qty: i64,
     pub timestamp_ns: u64,
@@ -46,7 +47,7 @@ pub struct RiskOrderUpdate {
 
 /// Risk -> Gateway: fill notification
 #[repr(C, align(64))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct OrderFill {
     pub taker_order_id: [u8; 16],
     pub maker_order_id: [u8; 16],
