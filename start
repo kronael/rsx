@@ -12,13 +12,15 @@ Scenarios:
     stress    M3S  multi-gw, 3 symbols, spare replicas
 
 Options:
-    --postgres docker|external  Postgres mode (default: external)
+    -c, --clean                 Wipe ./tmp (WAL, tips, snapshots)
+    --reset-db                  Drop + recreate rsx database
+    -p, --postgres docker|ext   Postgres mode (default: external)
     --pg-url URL                Postgres URL
-    --no-build                  Skip cargo build
-    --release                   Build in release mode
-    --dry-run                   Print spawn plan, don't run
-    --symbols SYM,SYM,...       Override symbol selection
-    --gateways N                Number of gateways
+    -n, --no-build              Skip cargo build
+    -r, --release               Build in release mode
+    -d, --dry-run               Print spawn plan, don't run
+    -s, --symbols SYM,SYM,...   Override symbol selection
+    -g, --gateways N            Number of gateways
     --risk-shards N             Number of risk shards
     --replication none|replica|spare  Replication mode
 """
@@ -380,6 +382,40 @@ async def shutdown_all():
     print("all processes stopped")
 
 
+import shutil
+
+
+def clean_tmp():
+    """Wipe ./tmp (WAL, snapshots, tips)."""
+    if os.path.exists("./tmp"):
+        shutil.rmtree("./tmp")
+        print("cleaned ./tmp")
+
+
+def reset_db(pg_url):
+    """Drop and recreate rsx database."""
+    # parse db name from URL
+    # postgres://user:pass@host:port/dbname
+    db_name = pg_url.rsplit("/", 1)[-1]
+    base_url = pg_url.rsplit("/", 1)[0] + "/postgres"
+    result = subprocess.run(
+        ["psql", base_url, "-c",
+         f"DROP DATABASE IF EXISTS {db_name}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"drop db warning: {result.stderr.strip()}")
+    result = subprocess.run(
+        ["psql", base_url, "-c",
+         f"CREATE DATABASE {db_name}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"create db error: {result.stderr.strip()}")
+    else:
+        print(f"reset database {db_name}")
+
+
 def ensure_dirs(symbols):
     """Create required directories."""
     dirs = [
@@ -507,6 +543,14 @@ def main():
         "--replication", default=None,
         choices=["none", "replica", "spare"],
     )
+    parser.add_argument(
+        "-c", "--clean", action="store_true",
+        help="wipe ./tmp before starting",
+    )
+    parser.add_argument(
+        "--reset-db", action="store_true",
+        help="drop and recreate rsx database",
+    )
 
     args = parser.parse_args()
     config = resolve_scenario(args)
@@ -515,6 +559,12 @@ def main():
     if args.dry_run:
         print_plan(plan)
         return
+
+    # cleanup
+    if args.clean:
+        clean_tmp()
+    if args.reset_db:
+        reset_db(args.pg_url)
 
     # build (default: yes, skip with --no-build)
     if not args.no_build:
