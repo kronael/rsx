@@ -20,7 +20,7 @@ Each message is a JSON object with a single key. The key is the 1-letter message
 Example:
 
 ```
-{N:[sym, side, px, qty, cid, tif]}
+{N:[sym, side, px, qty, cid, tif, ro, po]}
 ```
 
 Rules:
@@ -35,6 +35,19 @@ ACK semantics:
 - Orders may become stale; clients should cancel and forget if no update arrives within their timeout.
 
 ## Types
+
+| Name | Wire type | Description |
+|------|-----------|-------------|
+| symbol_id | uint32 | Symbol identifier |
+| price | int64 | Price in tick units (tick_size from metadata) |
+| qty | int64 | Quantity in lot units (lot_size from metadata) |
+| oid | string(32) | Server order id, UUIDv7 as 32-char hex |
+| cid | string(20) | Client order id, zero-padded 20 chars |
+| ts | uint64 | Nanosecond timestamp (Unix epoch) |
+| fee | int64 | Fee in tick units (negative = rebate) |
+| side | uint8 | Enum `Side` |
+| tif | uint8 | Enum `Time in Force` |
+| seq | uint64 | Monotonic event sequence per symbol |
 
 ## Enums
 
@@ -53,6 +66,11 @@ ACK semantics:
 - 2 = CANCELLED
 - 3 = FAILED
 
+OrderDone.final_status mapping (CMP -> WS):
+- 0 -> FILLED
+- 1 -> RESTING (unexpected for done, but forwarded)
+- 2 -> CANCELLED
+
 ### Failure Reason
 - 0 = INVALID_TICK_SIZE
 - 1 = INVALID_LOT_SIZE
@@ -62,6 +80,12 @@ ACK semantics:
 - 5 = OVERLOADED
 - 6 = INTERNAL_ERROR
 - 7 = REDUCE_ONLY_VIOLATION
+- 8 = POST_ONLY_REJECT
+
+Risk reject mapping (CMP -> WS):
+- InsufficientMargin -> INSUFFICIENT_MARGIN
+- UserInLiquidation -> INTERNAL_ERROR
+- NotInShard -> INTERNAL_ERROR
 
 ### Authentication
 
@@ -74,7 +98,7 @@ completes.
 ### N: New Order
 
 ```
-{N:[sym, side, px, qty, cid, tif, ro]}
+{N:[sym, side, px, qty, cid, tif, ro, po]}
 ```
 
 Fields:
@@ -85,6 +109,8 @@ Fields:
 - `cid`: client order id (fixed 20-char string, zero-padded)
 - `tif`: enum `Time in Force`
 - `ro`: reduce-only (0=normal, 1=reduce-only, optional,
+  default 0)
+- `po`: post-only (0=normal, 1=post-only, optional,
   default 0)
 
 ### C: Cancel
@@ -167,7 +193,7 @@ Separate public WS endpoint (no auth required). Same frame shape.
 **Client -> Server:**
 
 ```
-{S:[sym, channels]}     // subscribe (channels: 1=bbo, 2=depth)
+{S:[sym, channels]}     // subscribe (channels: 1=bbo, 2=depth, 3=trades)
 {X:[sym, channels]}     // unsubscribe
 {X:[0, 0]}              // unsubscribe all
 ```
@@ -178,6 +204,7 @@ Separate public WS endpoint (no auth required). Same frame shape.
 {BBO:[sym, bp, bq, bc, ap, aq, ac, ts, u]}      // BBO update
 {B:[sym, [[p,q,c], ...], [[p,q,c], ...], ts, u]} // L2 snapshot
 {D:[sym, side, p, q, c, ts, u]}                 // L2 delta
+{T:[sym, px, qty, side, ts, u]}                  // trade
 ```
 
 **B snapshot format:** In the `B` frame, the first array is
@@ -221,6 +248,44 @@ Server sends `B` snapshot on subscribe before any `D` deltas.
 
 Risk engine sends to gateway over CMP/UDP. Gateway routes to user
 by user_id. Fire-and-forget delivery.
+
+### T: Trade (Public WS)
+
+```
+{T:[sym, px, qty, side, ts, u]}
+```
+
+Fields:
+- `sym`: symbol id (uint32)
+- `px`: trade price in tick units (int64)
+- `qty`: trade quantity in lot units (int64)
+- `side`: taker side, enum `Side`
+- `ts`: nanosecond timestamp (uint64)
+- `u`: matching engine sequence (uint64, monotonic per symbol)
+
+Sent to clients subscribed to channel 3 (trades) for that
+symbol. Each fill produces one trade message.
+
+### M: Metadata Query (Public WS)
+
+Client request:
+```
+{M:[]}
+```
+
+Server response:
+```
+{M:[[sym, tick, lot, name], ...]}
+```
+
+Fields per symbol:
+- `sym`: symbol id (uint32)
+- `tick`: tick size as human-readable string (e.g. "0.01")
+- `lot`: lot size as human-readable string (e.g. "0.001")
+- `name`: symbol name (string, e.g. "BTC-USD")
+
+Returns all active symbols. Clients should query on connect
+to obtain tick/lot sizes for order formatting.
 
 ## Notes
 
