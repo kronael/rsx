@@ -14,7 +14,7 @@ Scenarios:
 Options:
     --postgres docker|external  Postgres mode (default: external)
     --pg-url URL                Postgres URL
-    --build                     Run cargo build first
+    --no-build                  Skip cargo build
     --release                   Build in release mode
     --dry-run                   Print spawn plan, don't run
     --symbols SYM,SYM,...       Override symbol selection
@@ -24,7 +24,7 @@ Options:
 """
 
 import argparse
-import json
+import asyncio
 import os
 import signal
 import subprocess
@@ -333,47 +333,48 @@ def print_plan(plan):
     print(f"\n  total: {len(plan)} processes")
 
 
-# ── process management ──────────────────────────────────
+# ── async process management ────────────────────────────
 
-CHILDREN = []
+PROCS = []  # list of (name, asyncio.Process)
 
 
-def spawn(name, binary, env):
-    """Spawn a process with prefixed output."""
+async def pipe_output(name, stream):
+    """Read process stdout and print with prefix."""
+    prefix = f"[{name}]"
+    while True:
+        line = await stream.readline()
+        if not line:
+            break
+        text = line.decode("utf-8", errors="replace")
+        print(f"{prefix} {text}", end="", flush=True)
+
+
+async def spawn(name, binary, env):
+    """Spawn a process as an asyncio task."""
     full_env = {**os.environ, **env}
-    proc = subprocess.Popen(
-        [binary],
+    proc = await asyncio.create_subprocess_exec(
+        binary,
         env=full_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
-    CHILDREN.append((name, proc))
-    # background reader thread for prefixed output
-    import threading
-
-    def reader():
-        prefix = f"[{name}]"
-        for line in iter(proc.stdout.readline, b""):
-            text = line.decode("utf-8", errors="replace")
-            print(f"{prefix} {text}", end="", flush=True)
-
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
+    PROCS.append((name, proc))
+    asyncio.create_task(pipe_output(name, proc.stdout))
     return proc
 
 
-def shutdown_all():
+async def shutdown_all():
     """SIGTERM all children and wait."""
     print("\nshutting down...")
-    for name, proc in CHILDREN:
-        if proc.poll() is None:
+    for name, proc in PROCS:
+        if proc.returncode is None:
             proc.terminate()
-    deadline = time.time() + 5.0
-    for name, proc in CHILDREN:
-        remaining = max(0, deadline - time.time())
+    for name, proc in PROCS:
         try:
-            proc.wait(timeout=remaining)
-        except subprocess.TimeoutExpired:
+            await asyncio.wait_for(
+                proc.wait(), timeout=5.0,
+            )
+        except asyncio.TimeoutError:
             print(f"  killing {name}")
             proc.kill()
     print("all processes stopped")
@@ -474,26 +475,30 @@ def main():
         help="scenario name or code (default: minimal)",
     )
     parser.add_argument(
-        "--postgres", default="external",
+        "-p", "--postgres", default="external",
         choices=["docker", "external"],
         help="postgres mode (default: external)",
     )
-    parser.add_argument("--pg-url", default=DEFAULT_PG_URL)
     parser.add_argument(
-        "--build", action="store_true",
-        help="run cargo build first",
+        "--pg-url", default=DEFAULT_PG_URL,
     )
     parser.add_argument(
-        "--release", action="store_true",
+        "-n", "--no-build", action="store_true",
+        help="skip cargo build",
+    )
+    parser.add_argument(
+        "-r", "--release", action="store_true",
         help="build in release mode",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "-d", "--dry-run", action="store_true",
         help="print spawn plan without running",
     )
-    parser.add_argument("--symbols", default=None)
     parser.add_argument(
-        "--gateways", type=int, default=None,
+        "-s", "--symbols", default=None,
+    )
+    parser.add_argument(
+        "-g", "--gateways", type=int, default=None,
     )
     parser.add_argument(
         "--risk-shards", type=int, default=None,
@@ -511,8 +516,8 @@ def main():
         print_plan(plan)
         return
 
-    # build
-    if args.build:
+    # build (default: yes, skip with --no-build)
+    if not args.no_build:
         cmd = ["cargo", "build"]
         if args.release:
             cmd.append("--release")
@@ -535,48 +540,73 @@ def main():
     # spawn
     print_plan(plan)
     print()
+    asyncio.run(run_all(plan))
 
-    signal.signal(
+
+async def run_all(plan):
+    """Spawn all processes and wait for shutdown."""
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(
         signal.SIGINT,
-        lambda *_: shutdown_all() or sys.exit(0),
+        lambda: asyncio.create_task(
+            graceful_exit()
+        ),
     )
-    signal.signal(
+    loop.add_signal_handler(
         signal.SIGTERM,
-        lambda *_: shutdown_all() or sys.exit(0),
+        lambda: asyncio.create_task(
+            graceful_exit()
+        ),
     )
 
     for name, binary, env in plan:
         if not os.path.exists(binary):
-            print(f"error: binary not found: {binary}")
-            print("run with --build to compile first")
-            shutdown_all()
+            print(
+                f"error: not found: {binary}"
+            )
+            print("binary not found, build first")
+            await shutdown_all()
             sys.exit(1)
         print(f"  starting {name}...")
-        spawn(name, binary, env)
-        time.sleep(0.1)  # stagger startup
+        await spawn(name, binary, env)
+        await asyncio.sleep(0.1)
 
-    print(f"\n{len(CHILDREN)} processes running. "
-          f"ctrl-c to stop.\n")
+    print(
+        f"\n{len(PROCS)} processes running. "
+        f"ctrl-c to stop.\n"
+    )
 
-    # wait for any child to exit
-    try:
-        while True:
-            for name, proc in CHILDREN:
-                ret = proc.poll()
-                if ret is not None:
-                    print(f"  {name} exited with {ret}")
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        shutdown_all()
+    # watch for exits — stop if any child dies
+    seen = set()
+    while True:
+        for name, proc in PROCS:
+            if proc.returncode is not None \
+                    and name not in seen:
+                seen.add(name)
+                print(
+                    f"  {name} exited "
+                    f"with {proc.returncode}"
+                )
+        alive = sum(
+            1 for _, p in PROCS
+            if p.returncode is None
+        )
+        if alive == 0:
+            break
+        await asyncio.sleep(1)
+    await graceful_exit()
 
+
+async def graceful_exit():
+    """Handle SIGINT/SIGTERM gracefully."""
+    await shutdown_all()
     # summary
     print("\nexit summary:")
-    for name, proc in CHILDREN:
+    for name, proc in PROCS:
         code = proc.returncode or 0
         status = "ok" if code == 0 else f"exit {code}"
         print(f"  {name}: {status}")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
