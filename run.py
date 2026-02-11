@@ -130,7 +130,7 @@ def select_symbols(count, override_list=None):
 
 
 def resolve_scenario(args):
-    """Resolve CLI args into a spawn config dict."""
+    """Resolve CLI args into spawn config dict (CLI overrides win)."""
     scenario = args.scenario or "minimal"
     preset = SCENARIOS.get(scenario)
     if not preset:
@@ -138,19 +138,17 @@ def resolve_scenario(args):
         print(f"known: {', '.join(SCENARIOS)}")
         sys.exit(1)
 
+    # CLI args override preset
     symbols = select_symbols(
         preset["symbols"],
-        getattr(args, "symbols", None),
+        args.symbols,
     )
-    gateways = getattr(args, "gateways", None)
-    if gateways is None:
-        gateways = preset["gateways"]
-    replication = getattr(args, "replication", None)
-    if replication is None:
-        replication = preset["replication"]
-    risk_shards = getattr(args, "risk_shards", None)
-    if risk_shards is None:
-        risk_shards = 1
+    gateways = (args.gateways if args.gateways is not None
+                else preset["gateways"])
+    replication = (args.replication if args.replication is not None
+                   else preset["replication"])
+    risk_shards = (args.risk_shards if args.risk_shards is not None
+                   else 1)
 
     return {
         "symbols": symbols,
@@ -160,13 +158,13 @@ def resolve_scenario(args):
     }
 
 
-def build_spawn_plan(config, pg_url):
+def build_spawn_plan(config, pg_url, release=False):
     """Build ordered list of (name, binary, env) tuples."""
     plan = []
     symbols = config["symbols"]
     replication = config["replication"]
 
-    target = "./target/release" if RELEASE else "./target/debug"
+    target = "./target/release" if release else "./target/debug"
 
     # symbol map for mark: "PENGU=10,SOL=3,..."
     mark_symbol_map = ",".join(
@@ -273,10 +271,12 @@ def build_spawn_plan(config, pg_url):
         sym_env = {}
         for sym in symbols:
             sid = sym["id"]
-            sym_env[f"RSX_SYMBOL_{sid}_TICK_SIZE"] = \
-                str(sym["tick"])
-            sym_env[f"RSX_SYMBOL_{sid}_LOT_SIZE"] = \
-                str(sym["lot"])
+            sym_env[f"RSX_SYMBOL_{sid}_TICK_SIZE"] = str(
+                sym["tick"]
+            )
+            sym_env[f"RSX_SYMBOL_{sid}_LOT_SIZE"] = str(
+                sym["lot"]
+            )
         plan.append((
             f"gw-{gw}",
             f"{target}/rsx-gateway",
@@ -404,16 +404,15 @@ def ensure_postgres_docker(pg_url):
     )
     if result.returncode == 0:
         if "true" in result.stdout:
-            print(f"reusing postgres container "
-                  f"{PG_CONTAINER}")
+            print(f"reusing postgres container {PG_CONTAINER}")
             return
         # exists but stopped, start it
         subprocess.run(
             ["docker", "start", PG_CONTAINER],
             check=True,
         )
-        print(f"started existing postgres container "
-              f"{PG_CONTAINER}")
+        print(f"started existing postgres "
+              f"container {PG_CONTAINER}")
         time.sleep(2)
         return
 
@@ -465,12 +464,8 @@ def run_migration(pg_url):
 
 # ── main ────────────────────────────────────────────────
 
-RELEASE = False
-
 
 def main():
-    global RELEASE
-
     parser = argparse.ArgumentParser(
         description="RSX local dev runner",
     )
@@ -509,23 +504,8 @@ def main():
     )
 
     args = parser.parse_args()
-    RELEASE = args.release
-
     config = resolve_scenario(args)
-
-    # override from explicit flags
-    if args.symbols:
-        config["symbols"] = select_symbols(
-            0, args.symbols,
-        )
-    if args.gateways is not None:
-        config["gateways"] = args.gateways
-    if args.risk_shards is not None:
-        config["risk_shards"] = args.risk_shards
-    if args.replication is not None:
-        config["replication"] = args.replication
-
-    plan = build_spawn_plan(config, args.pg_url)
+    plan = build_spawn_plan(config, args.pg_url, args.release)
 
     if args.dry_run:
         print_plan(plan)
@@ -556,10 +536,14 @@ def main():
     print_plan(plan)
     print()
 
-    signal.signal(signal.SIGINT,
-                  lambda *_: shutdown_all() or sys.exit(0))
-    signal.signal(signal.SIGTERM,
-                  lambda *_: shutdown_all() or sys.exit(0))
+    signal.signal(
+        signal.SIGINT,
+        lambda *_: shutdown_all() or sys.exit(0),
+    )
+    signal.signal(
+        signal.SIGTERM,
+        lambda *_: shutdown_all() or sys.exit(0),
+    )
 
     for name, binary, env in plan:
         if not os.path.exists(binary):
