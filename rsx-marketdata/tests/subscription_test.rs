@@ -101,3 +101,28 @@ fn subscribe_trades_channel() {
     assert!(!mgr.has_bbo(1, 100));
     assert!(!mgr.has_depth(1, 100));
 }
+
+#[test]
+fn subscribe_depth_boundaries() {
+    let mut mgr = SubscriptionManager::new();
+    for depth in [10u32, 25, 50] {
+        mgr.subscribe(1, 100, CHANNEL_DEPTH, depth);
+        assert_eq!(mgr.client_depth(1), depth);
+        assert!(mgr.has_depth(1, 100));
+    }
+}
+
+#[test]
+fn unsubscribe_removes_client() {
+    let mut mgr = SubscriptionManager::new();
+    mgr.subscribe(1, 100, CHANNEL_BBO, 10);
+    mgr.subscribe(1, 200, CHANNEL_DEPTH, 25);
+    assert_eq!(mgr.clients_for_symbol(100).len(), 1);
+    assert_eq!(mgr.clients_for_symbol(200).len(), 1);
+
+    mgr.unsubscribe(1, 100);
+    assert!(mgr.clients_for_symbol(100).is_empty());
+    assert!(!mgr.has_bbo(1, 100));
+    assert_eq!(mgr.clients_for_symbol(200).len(), 1);
+    assert!(mgr.has_depth(1, 200));
+}

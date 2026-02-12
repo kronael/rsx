@@ -991,3 +991,88 @@ fn reader_archive_fallback_empty_archive() {
     // should read from hot WAL only
     assert_eq!(count, 20);
 }
+
+#[test]
+fn wal_rotate_at_64mb() {
+    let tmp = TempDir::new().unwrap();
+    let threshold = 64 * 1024 * 1024;
+    let mut writer = WalWriter::new(
+        1, tmp.path(), None, threshold, 600_000_000_000,
+    )
+    .unwrap();
+
+    let record_size = 16 + std::mem::size_of::<FillRecord>();
+    let count = (threshold as usize / record_size) + 10;
+    for i in 0..count as u64 {
+        let mut fill = make_fill(i);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let dir = tmp.path().join("1");
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(
+        files.len() >= 2,
+        "expected rotation at 64MB, got {} files",
+        files.len()
+    );
+}
+
+#[test]
+fn wal_gc_removes_old_files() {
+    let tmp = TempDir::new().unwrap();
+    // high retention so rotate() GC doesn't delete immediately
+    let mut writer = WalWriter::new(
+        1, tmp.path(), None, 1024, u64::MAX,
+    )
+    .unwrap();
+
+    // flush in batches to trigger multiple rotations
+    for batch in 0..5u64 {
+        for j in 0..15u64 {
+            let mut fill = make_fill(batch * 15 + j);
+            let _ = writer.append(&mut fill);
+        }
+        writer.flush().unwrap();
+    }
+
+    let dir = tmp.path().join("1");
+    let before: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            !e.file_name()
+                .to_string_lossy()
+                .contains("active")
+        })
+        .collect();
+    assert!(
+        before.len() >= 2,
+        "expected rotated files, got {}",
+        before.len()
+    );
+
+    // now create a new writer with 1ns retention to gc
+    let writer2 =
+        WalWriter::new(1, tmp.path(), None, 1024, 1).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    writer2.gc().unwrap();
+
+    let after: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            !e.file_name()
+                .to_string_lossy()
+                .contains("active")
+        })
+        .collect();
+    assert_eq!(
+        after.len(),
+        0,
+        "gc should remove old rotated files"
+    );
+}

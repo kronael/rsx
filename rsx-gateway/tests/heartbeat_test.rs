@@ -29,3 +29,17 @@ fn heartbeat_client_response_resets_timer() {
     let stale = state.stale_connections(5_000);
     assert!(stale.is_empty());
 }
+
+#[test]
+fn connection_limit_rejects_sixth() {
+    let mut state =
+        GatewayState::new(100, 10, 30_000, vec![]);
+    for _ in 0..5 {
+        assert!(state.add_connection(1).is_ok());
+    }
+    let result = state.add_connection(1);
+    assert_eq!(
+        result,
+        Err("max connections per user")
+    );
+}

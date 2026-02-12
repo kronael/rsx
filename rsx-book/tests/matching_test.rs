@@ -726,3 +726,128 @@ fn bbo_emitted_after_new_best_ask() {
             && *ask_qty == Qty(100)
     )));
 }
+
+#[test]
+fn double_cancel() {
+    let mut book = test_book();
+    let h = book.insert_resting(
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
+    );
+    assert!(book.cancel_order(h));
+    assert!(!book.cancel_order(h));
+}
+
+#[test]
+fn ioc_on_empty_book() {
+    let mut book = test_book();
+    let mut order =
+        incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 1);
+    process_new_order(&mut book, &mut order);
+
+    let events = book.events();
+    let fills = events
+        .iter()
+        .filter(|e| matches!(e, Event::Fill { .. }))
+        .count();
+    assert_eq!(fills, 0);
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::OrderDone {
+            reason, ..
+        } if *reason == REASON_CANCELLED
+    )));
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        Event::OrderInserted { .. }
+    )));
+}
+
+#[test]
+fn fok_insufficient_liquidity() {
+    let mut book = test_book();
+    book.insert_resting(
+        50_100, 3, Side::Sell, 0, 1, false, 0, 0, 0,
+    );
+    let mut order =
+        incoming(50_100, 10, Side::Buy, TimeInForce::FOK, 2);
+    process_new_order(&mut book, &mut order);
+
+    let events = book.events();
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::OrderFailed {
+            reason, ..
+        } if *reason == FAIL_FOK
+    )));
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        Event::Fill { .. }
+    )));
+}
+
+#[test]
+fn modify_price_loses_time_priority_round_trip() {
+    let mut book = test_book();
+    let h1 = book.insert_resting(
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
+    );
+    let h2 = book.insert_resting(
+        49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0,
+    );
+    let h1b = book.modify_order_price(
+        h1, 49_800, Side::Buy, 0, 1, false, 1, 0, 0,
+    );
+    let h1c = book.modify_order_price(
+        h1b, 49_900, Side::Buy, 0, 1, false, 2, 0, 0,
+    );
+    let tick =
+        book.compression.price_to_index(49_900);
+    let level =
+        &book.active_levels[tick as usize];
+    assert_eq!(level.head, h2);
+    assert_eq!(level.tail, h1c);
+}
+
+#[test]
+fn modify_qty_down_to_zero_cancels() {
+    let mut book = test_book();
+    let h = book.insert_resting(
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
+    );
+    assert!(book.modify_order_qty_down(h, 0));
+    assert!(!book.orders.get(h).is_active());
+    assert_eq!(book.best_bid_tick, rsx_types::NONE);
+}
+
+#[test]
+fn reduce_only_clamped_to_position() {
+    let mut book = test_book();
+    book.insert_resting(
+        50_100, 5, Side::Buy, 0, 2, false, 0, 0, 0,
+    );
+    let mut sell =
+        incoming(50_100, 5, Side::Sell, TimeInForce::GTC, 1);
+    process_new_order(&mut book, &mut sell);
+
+    book.insert_resting(
+        50_050, 5, Side::Sell, 0, 3, false, 0, 0, 0,
+    );
+    let mut ro =
+        incoming(50_050, 10, Side::Buy, TimeInForce::GTC, 1);
+    ro.reduce_only = true;
+    process_new_order(&mut book, &mut ro);
+
+    let events = book.events();
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        Event::OrderFailed { .. }
+    )));
+    let fill_qty: i64 = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Fill { qty, .. } => Some(qty.0),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(fill_qty, 5);
+}

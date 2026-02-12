@@ -398,3 +398,36 @@ fn source_mask_max_8_bits() {
     let mask = compute_mask(&state, now, STALENESS_NS);
     assert_eq!(mask, 0xFF);
 }
+
+#[test]
+fn stale_source_excluded_from_median() {
+    let mut state = SymbolMarkState::new();
+    let now = 20_000_000_000u64;
+    let fresh_ts = now - 1_000_000_000;
+    aggregate(&mut state, sp(0, 100, fresh_ts), now, 0);
+    aggregate(&mut state, sp(1, 300, fresh_ts), now, 0);
+    aggregate(&mut state, sp(2, 200, 0), now, 0); // stale
+    assert_eq!(state.source_count, 2);
+    assert_eq!(state.mark_price, 200); // avg(100, 300)
+}
+
+#[test]
+fn large_price_spread_still_median() {
+    let mut state = SymbolMarkState::new();
+    let now = 1_000_000_000u64;
+    aggregate(&mut state, sp(0, 100, now), now, 0);
+    aggregate(&mut state, sp(1, 50000, now), now, 0);
+    aggregate(&mut state, sp(2, 200, now), now, 0);
+    // sorted: 100, 200, 50000 -> median = 200
+    assert_eq!(state.mark_price, 200);
+}
+
+#[test]
+fn single_source_uses_that_price() {
+    let mut state = SymbolMarkState::new();
+    let now = 20_000_000_000u64;
+    aggregate(&mut state, sp(0, 999, 0), now, 0); // stale
+    aggregate(&mut state, sp(1, 42000, now), now, 0); // fresh
+    assert_eq!(state.source_count, 1);
+    assert_eq!(state.mark_price, 42000);
+}

@@ -16,7 +16,7 @@
 | File | Description |
 |------|-------------|
 | [ORDERBOOK.md](ORDERBOOK.md) | Orderbook data structures, slab allocator, compression map |
-| [MATCHING.md](MATCHING.md) | Matching engine tile logic (stub, see ORDERBOOK.md) |
+| [MATCHING.md](MATCHING.md) | Matching engine tile logic |
 | [CONSISTENCY.md](CONSISTENCY.md) | Event fan-out, ordering guarantees, exactly-once delivery |
 
 ## Risk and Liquidation
@@ -41,7 +41,7 @@
 
 | File | Description |
 |------|-------------|
-| [GATEWAY.md](GATEWAY.md) | Gateway tile: WS ingress, CMP/UDP to risk (stub) |
+| [GATEWAY.md](GATEWAY.md) | Gateway tile: WS ingress, CMP/UDP to risk |
 | [MANAGEMENT-DASHBOARD.md](MANAGEMENT-DASHBOARD.md) | Parent spec for split management dashboards |
 | [DASHBOARD.md](DASHBOARD.md) | Support dashboard: user balances, positions, trading state, controlled user actions |
 | [RISK-DASHBOARD.md](RISK-DASHBOARD.md) | Risk/ops dashboard: exchange risk posture, symbol controls, risk parameter operations |
@@ -49,8 +49,10 @@
 | [PLAYGROUND-DASHBOARD.md](PLAYGROUND-DASHBOARD.md) | Dev/test dashboard: scenario launch, fault injection, observe/act/verify workflows |
 | [WEBPROTO.md](WEBPROTO.md) | WebSocket protocol: frames, auth, subscriptions |
 | [RPC.md](RPC.md) | RPC message definitions, request/response schemas |
-| [MARKETDATA.md](MARKETDATA.md) | Market data tile: shadow book, L2/BBO/trades (stub) |
+| [MARKETDATA.md](MARKETDATA.md) | Market data tile: shadow book, L2/BBO/trades |
 | [MARK.md](MARK.md) | Mark price aggregator: sources, EWMA, fallback chain |
+| [REST.md](REST.md) | REST API endpoints, request/response schemas |
+| [TELEMETRY.md](TELEMETRY.md) | Structured metrics, tracing, log shipping |
 | [DATABASE.md](DATABASE.md) | Postgres schema, write-behind, connection pooling |
 
 ## Validation

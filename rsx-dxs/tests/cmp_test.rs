@@ -270,3 +270,64 @@ fn nak_retransmit_from_wal() {
     };
     assert_eq!(decoded.seq, 1);
 }
+
+#[test]
+fn cmp_sender_window_exhausted_blocks() {
+    let (mut sender, _receiver) = loopback_pair();
+    let msg = StatusMessage {
+        consumption_seq: 0,
+        receiver_window: 3,
+        _pad1: [0u8; 48],
+    };
+    sender.handle_status(&msg);
+
+    for i in 1..=3u64 {
+        let mut fill = fill_payload(i);
+        let sent = sender.send(&mut fill).unwrap();
+        assert!(sent, "msg {} should send", i);
+    }
+
+    let mut fill4 = fill_payload(4);
+    let sent = sender.send(&mut fill4).unwrap();
+    assert!(
+        !sent,
+        "msg 4 should be blocked by window"
+    );
+
+    let mut fill5 = fill_payload(5);
+    let sent = sender.send(&mut fill5).unwrap();
+    assert!(!sent, "msg 5 should also block");
+}
+
+#[test]
+fn cmp_heartbeat_sent_on_idle() {
+    let wal_dir = PathBuf::from("./tmp/cmp_hb_test");
+    let _ = std::fs::create_dir_all(&wal_dir);
+
+    let tmp_recv = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv_addr = tmp_recv.local_addr().unwrap();
+    tmp_recv.set_nonblocking(true).unwrap();
+
+    let config = rsx_dxs::config::CmpConfig {
+        heartbeat_interval_ms: 5,
+        ..Default::default()
+    };
+    let mut sender = CmpSender::with_config(
+        recv_addr, 1, &wal_dir, &config,
+    )
+    .unwrap();
+
+    thread::sleep(Duration::from_millis(10));
+    sender.tick().unwrap();
+
+    let mut buf = [0u8; 256];
+    let result = tmp_recv.recv_from(&mut buf);
+    assert!(
+        result.is_ok(),
+        "should have received heartbeat"
+    );
+    let (n, _) = result.unwrap();
+    assert!(n >= WalHeader::SIZE);
+    let hdr = WalHeader::from_bytes(&buf[..16]).unwrap();
+    assert_eq!(hdr.record_type, rsx_dxs::records::RECORD_HEARTBEAT);
+}

@@ -588,6 +588,30 @@ fn config_applied_forwarded_to_gateway() {
     assert_eq!(s.config_versions[2], 7);
 }
 
+// --- Frozen margin release ---
+
+#[test]
+fn partial_fill_releases_remaining_frozen() {
+    let mut s = make_shard();
+    s.accounts
+        .insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+    let mut o = order(0, 0, 10_000, 10);
+    o.order_id_hi = 0;
+    o.order_id_lo = 42;
+    let resp = s.process_order(&o);
+    assert!(
+        matches!(resp, OrderResponse::Accepted { .. })
+    );
+    let frozen_before = s.accounts[&0].frozen_margin;
+    assert!(frozen_before > 0);
+    // Partial fill of 6 out of 10
+    s.process_fill(&fill(0, 1, 0, 10_000, 6, 1));
+    // Order done -> release remaining frozen
+    s.release_frozen_for_order(0, 0, 42);
+    assert_eq!(s.accounts[&0].frozen_margin, 0);
+}
+
 // --- Liquidation integration in shard ---
 
 #[test]
