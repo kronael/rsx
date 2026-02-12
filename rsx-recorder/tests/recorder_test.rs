@@ -1,3 +1,4 @@
+use rsx_dxs::encode_utils::compute_crc32;
 use rsx_dxs::header::WalHeader;
 use rsx_dxs::records::RECORD_BBO;
 use rsx_dxs::wal::WalReader;
@@ -7,8 +8,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-fn make_test_dir() -> PathBuf {
-    let dir = PathBuf::from("./tmp/recorder_test");
+fn make_test_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("rsx_recorder_test_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -22,7 +23,7 @@ fn test_wal_record_serialization() {
         0x12345678,
     );
     let payload = vec![0u8; 32];
-    let record = RawWalRecord { header, payload };
+    let _record = RawWalRecord { header, payload };
 
     let bytes = header.to_bytes();
     assert_eq!(bytes.len(), 16);
@@ -32,7 +33,7 @@ fn test_wal_record_serialization() {
 
 #[test]
 fn test_archive_file_creation() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("archive_file");
     let stream_dir = dir.join("42");
     fs::create_dir_all(&stream_dir).unwrap();
 
@@ -48,7 +49,7 @@ fn test_archive_file_creation() {
 
 #[test]
 fn test_daily_rotation_naming() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("daily_rotation");
     let stream_id = 5u32;
     let stream_dir = dir.join(stream_id.to_string());
     fs::create_dir_all(&stream_dir).unwrap();
@@ -65,7 +66,7 @@ fn test_daily_rotation_naming() {
 
 #[test]
 fn test_buffered_writes() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("buffered_writes");
     let file_path = dir.join("test.wal");
     let mut file = File::create(&file_path).unwrap();
 
@@ -86,19 +87,20 @@ fn test_buffered_writes() {
 
 #[test]
 fn test_wal_roundtrip() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("wal_roundtrip");
     let stream_dir = dir.join("99");
     fs::create_dir_all(&stream_dir).unwrap();
 
-    let file_path = stream_dir.join("test.wal");
+    let file_path = stream_dir.join("99_1_1.wal");
     let mut file = File::create(&file_path).unwrap();
 
+    let payload = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+    let crc = compute_crc32(&payload);
     let header = WalHeader::new(
         RECORD_BBO,
         8,
-        0xAABBCCDD,
+        crc,
     );
-    let payload = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
 
     file.write_all(&header.to_bytes()).unwrap();
     file.write_all(&payload).unwrap();
@@ -106,7 +108,7 @@ fn test_wal_roundtrip() {
     drop(file);
 
     let mut reader =
-        WalReader::open_from_seq(99, 0, &dir).unwrap();
+        WalReader::open_from_seq(99, 1, &dir).unwrap();
     let record = reader.next().unwrap().unwrap();
 
     assert_eq!(record.header.record_type, RECORD_BBO);

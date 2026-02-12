@@ -6,8 +6,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-fn make_test_dir() -> PathBuf {
-    let dir = PathBuf::from("./tmp/cli_test");
+fn make_test_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("rsx_cli_test_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -30,7 +30,7 @@ fn write_test_wal(path: &PathBuf, records: usize) {
 
 #[test]
 fn test_dump_file_parsing() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("dump_file_parsing");
     let file_path = dir.join("test.wal");
     write_test_wal(&file_path, 5);
 
@@ -65,7 +65,7 @@ fn test_wal_header_format() {
 
 #[test]
 fn test_multiple_records_in_file() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("multiple_records");
     let file_path = dir.join("multi.wal");
     let mut file = File::create(&file_path).unwrap();
 
@@ -99,7 +99,7 @@ fn test_json_output_format() {
 
 #[test]
 fn test_file_empty_handling() {
-    let dir = make_test_dir();
+    let dir = make_test_dir("empty_handling");
     let empty_file = dir.join("empty.wal");
     File::create(&empty_file).unwrap();
 

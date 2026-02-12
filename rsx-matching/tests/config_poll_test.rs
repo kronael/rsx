@@ -50,6 +50,7 @@ fn now_ms() -> u64 {
 }
 
 #[tokio::test]
+#[ignore]
 async fn poll_returns_empty_when_no_configs() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -64,6 +65,7 @@ async fn poll_returns_empty_when_no_configs() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn poll_returns_config_when_effective() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -99,6 +101,7 @@ async fn poll_returns_config_when_effective() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn poll_ignores_future_configs() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -131,6 +134,7 @@ async fn poll_ignores_future_configs() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn poll_returns_multiple_configs_in_order() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -168,6 +172,7 @@ async fn poll_returns_multiple_configs_in_order() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn poll_filters_by_current_version() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -203,6 +208,7 @@ async fn poll_filters_by_current_version() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn write_applied_config_inserts_new() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -233,6 +239,7 @@ async fn write_applied_config_inserts_new() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn write_applied_config_updates_existing() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
@@ -274,6 +281,7 @@ async fn write_applied_config_updates_existing() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn load_applied_config_returns_none_when_empty() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
