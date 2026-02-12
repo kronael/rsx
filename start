@@ -99,6 +99,15 @@ SCENARIOS = {
                  "gateways": 2},
     "M3S":      {"symbols": 3, "replication": "spare",
                  "gateways": 2},
+    "stress-low":  {"symbols": 3, "replication": "none",
+                    "gateways": 1,
+                    "load": {"rate": 10, "duration": 60, "type": "sustained"}},
+    "stress-high": {"symbols": 3, "replication": "replica",
+                    "gateways": 1,
+                    "load": {"rate": 100, "duration": 60, "type": "sustained"}},
+    "stress-ultra": {"symbols": 4, "replication": "replica",
+                     "gateways": 2,
+                     "load": {"rate": 500, "duration": 10, "type": "burst"}},
 }
 
 # ── port allocation ─────────────────────────────────────

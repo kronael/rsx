@@ -498,43 +498,180 @@ def wal_page():
 
 def logs_page():
     body = """
-<div class="flex flex-wrap items-center gap-2 mb-3">
-  <select id="log-process"
-    class="w-full sm:w-auto bg-slate-950 border border-slate-700
-      text-slate-300 px-2 py-1 rounded text-xs">
-    <option value="">all processes</option>
-    <option value="gateway">gateway</option>
-    <option value="risk">risk</option>
-    <option value="matching">matching</option>
-    <option value="marketdata">marketdata</option>
-    <option value="mark">mark</option>
-    <option value="recorder">recorder</option>
-  </select>
-  <select id="log-level"
-    class="w-full sm:w-auto bg-slate-950 border border-slate-700
-      text-slate-300 px-2 py-1 rounded text-xs">
-    <option value="">all levels</option>
-    <option value="error">error</option>
-    <option value="warn">warn</option>
-    <option value="info">info</option>
-    <option value="debug">debug</option>
-  </select>
-  <input type="text" id="log-search"
-    class="w-full sm:w-44 bg-slate-950 border border-slate-700
-      text-slate-300 px-2 py-1 rounded text-xs"
-    placeholder="search...">
-  <button class="w-full sm:w-auto bg-slate-800 text-slate-400
-    px-3 py-1 rounded text-xs border border-slate-700
-    hover:bg-slate-700 cursor-pointer"
-    onclick="document.getElementById('log-search').value='';
-      htmx.trigger('#log-view','load')">Clear</button>
+<div class="mb-3 space-y-2">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="text-xs text-slate-500">Quick filters:</span>
+    <button class="bg-slate-800 text-slate-400 px-2 py-1 rounded
+      text-xs border border-slate-700 hover:bg-slate-700"
+      onclick="quickFilter('gateway', '')">gateway</button>
+    <button class="bg-slate-800 text-slate-400 px-2 py-1 rounded
+      text-xs border border-slate-700 hover:bg-slate-700"
+      onclick="quickFilter('risk', '')">risk</button>
+    <button class="bg-slate-800 text-slate-400 px-2 py-1 rounded
+      text-xs border border-slate-700 hover:bg-slate-700"
+      onclick="quickFilter('matching', '')">matching</button>
+    <button class="bg-red-900/40 text-red-400 px-2 py-1 rounded
+      text-xs border border-red-900 hover:bg-red-900"
+      onclick="quickFilter('', 'error')">errors only</button>
+    <button class="bg-amber-900/40 text-amber-400 px-2 py-1 rounded
+      text-xs border border-amber-900 hover:bg-amber-900"
+      onclick="quickFilter('', 'warn')">warnings only</button>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    <input type="text" id="smart-search"
+      class="flex-1 min-w-[200px] bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1 rounded text-xs"
+      placeholder="Smart search: 'gateway error order' or just search text (press / to focus, Ctrl+L to clear)"
+      onkeydown="handleSmartSearch(event)">
+    <button class="bg-slate-800 text-slate-400 px-3 py-1 rounded
+      text-xs border border-slate-700 hover:bg-slate-700"
+      onclick="clearAllFilters()">Clear All</button>
+  </div>
+  <div class="hidden" id="filter-dropdowns">
+    <select id="log-process"
+      class="w-full sm:w-auto bg-slate-950 border border-slate-700
+        text-slate-300 px-2 py-1 rounded text-xs">
+      <option value="">all processes</option>
+      <option value="gateway">gateway</option>
+      <option value="risk">risk</option>
+      <option value="matching">matching</option>
+      <option value="marketdata">marketdata</option>
+      <option value="mark">mark</option>
+      <option value="recorder">recorder</option>
+    </select>
+    <select id="log-level"
+      class="w-full sm:w-auto bg-slate-950 border border-slate-700
+        text-slate-300 px-2 py-1 rounded text-xs">
+      <option value="">all levels</option>
+      <option value="error">error</option>
+      <option value="warn">warn</option>
+      <option value="info">info</option>
+      <option value="debug">debug</option>
+    </select>
+    <input type="text" id="log-search"
+      class="w-full sm:w-44 bg-slate-950 border border-slate-700
+        text-slate-300 px-2 py-1 rounded text-xs"
+      placeholder="search...">
+  </div>
 </div>
-<div id="log-view" class="max-h-[500px] overflow-y-auto"
+<div id="log-view" class="max-h-[500px] overflow-y-auto
+  overflow-x-auto"
      hx-get="./x/logs" hx-trigger="load, every 2s"
      hx-swap="innerHTML"
      hx-include="#log-process, #log-level, #log-search">
   <span class="text-slate-600">loading...</span>
-</div>"""
+</div>
+<div id="log-modal" class="hidden fixed inset-0 bg-black/80
+  flex items-center justify-center z-50" onclick="closeModal()">
+  <div class="bg-slate-900 border border-slate-700 rounded-lg
+    p-4 max-w-4xl max-h-[80vh] overflow-auto m-4"
+    onclick="event.stopPropagation()">
+    <div class="flex justify-between items-start mb-3">
+      <h3 class="text-sm font-semibold text-slate-400">
+        Full Log Line</h3>
+      <div class="flex gap-2">
+        <button class="bg-slate-800 text-slate-400 px-2 py-1
+          rounded text-xs hover:bg-slate-700"
+          onclick="copyLogLine()">Copy</button>
+        <button class="bg-slate-800 text-slate-400 px-2 py-1
+          rounded text-xs hover:bg-slate-700"
+          onclick="closeModal()">Close</button>
+      </div>
+    </div>
+    <pre id="modal-content"
+      class="text-xs text-slate-300 whitespace-pre-wrap
+        break-all font-mono bg-slate-950 p-3 rounded"></pre>
+  </div>
+</div>
+<script>
+let currentLogLines = [];
+
+function quickFilter(process, level) {
+  document.getElementById('log-process').value = process;
+  document.getElementById('log-level').value = level;
+  document.getElementById('log-search').value = '';
+  document.getElementById('smart-search').value = '';
+  htmx.trigger('#log-view', 'load');
+}
+
+function parseSmartSearch(text) {
+  const processes = ['gateway', 'risk', 'matching', 'marketdata',
+    'mark', 'recorder'];
+  const levels = ['error', 'warn', 'info', 'debug'];
+  const words = text.toLowerCase().trim().split(/\s+/);
+  let process = '', level = '', search = [];
+
+  for (const word of words) {
+    if (processes.includes(word)) {
+      process = word;
+    } else if (levels.includes(word)) {
+      level = word;
+    } else {
+      search.push(word);
+    }
+  }
+
+  return { process, level, search: search.join(' ') };
+}
+
+function handleSmartSearch(event) {
+  if (event.key === 'Enter') {
+    const text = event.target.value;
+    const parsed = parseSmartSearch(text);
+    document.getElementById('log-process').value = parsed.process;
+    document.getElementById('log-level').value = parsed.level;
+    document.getElementById('log-search').value = parsed.search;
+    htmx.trigger('#log-view', 'load');
+  }
+}
+
+function clearAllFilters() {
+  document.getElementById('log-process').value = '';
+  document.getElementById('log-level').value = '';
+  document.getElementById('log-search').value = '';
+  document.getElementById('smart-search').value = '';
+  htmx.trigger('#log-view', 'load');
+}
+
+function showFullLine(element, index) {
+  const modal = document.getElementById('log-modal');
+  const content = document.getElementById('modal-content');
+  content.textContent = element.textContent.replace('click to expand', '').trim();
+  modal.classList.remove('hidden');
+}
+
+function closeModal() {
+  document.getElementById('log-modal').classList.add('hidden');
+}
+
+function copyLogLine() {
+  const content = document.getElementById('modal-content').textContent;
+  navigator.clipboard.writeText(content).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.classList.add('bg-green-900', 'text-green-400');
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.classList.remove('bg-green-900', 'text-green-400');
+    }, 2000);
+  });
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && e.target.tagName !== 'INPUT') {
+    e.preventDefault();
+    document.getElementById('smart-search').focus();
+  }
+  if (e.ctrlKey && e.key === 'l') {
+    e.preventDefault();
+    clearAllFilters();
+  }
+  if (e.key === 'Escape') {
+    closeModal();
+  }
+});
+</script>"""
     errors = _card(
         "Error Aggregation",
         '<div hx-get="./x/error-agg" '
@@ -563,6 +700,40 @@ def logs_page():
 # ── Screen 7: Control ────────────────────────────────────
 
 def control_page():
+    scenario_selector = _card(
+        "Scenario Selector",
+        '''<div class="space-y-3">
+  <div class="flex flex-wrap gap-2 items-center">
+    <span class="text-xs text-slate-500">Select scenario:</span>
+    <select id="scenario-select"
+      class="bg-slate-950 border border-slate-700 text-slate-300
+        px-2 py-1 rounded text-xs">
+      <option value="minimal">minimal (1 symbol, no replication)</option>
+      <option value="duo">duo (2 symbols, no replication)</option>
+      <option value="full" selected>full (3 symbols, replication)</option>
+      <option value="stress-low">stress-low (10 ord/s × 60s)</option>
+      <option value="stress-high">stress-high (100 ord/s × 60s)</option>
+      <option value="stress-ultra">stress-ultra (500 ord/s × 10s)</option>
+    </select>
+    <button class="bg-blue-900/40 text-blue-400 px-3 py-1 rounded
+      text-xs border border-blue-900 hover:bg-blue-900"
+      hx-post="./api/scenario/switch" hx-target="#scenario-status"
+      hx-include="#scenario-select">
+      Switch Scenario
+    </button>
+  </div>
+  <div id="scenario-status" class="text-xs text-slate-500">
+    <span>Current: <code class="bg-slate-800 px-1 rounded"
+      hx-get="./x/current-scenario" hx-trigger="load, every 5s"
+      hx-swap="innerHTML">loading...</code></span>
+  </div>
+  <div class="text-[11px] text-slate-600 space-y-1">
+    <p><strong class="text-slate-500">Stress scenarios</strong>
+      launch load generators after starting processes.</p>
+    <p>Monitor latencies in the Orders tab during stress tests.</p>
+  </div>
+</div>''',
+    )
     grid = _card(
         "Process Control",
         '<div hx-get="./x/control-grid" '
@@ -589,7 +760,9 @@ def control_page():
         '</div>',
     )
     return layout(
-        "Control", grid + notes + resources, "./control")
+        "Control",
+        scenario_selector + grid + notes + resources,
+        "./control")
 
 
 # ── Screen 8: Faults ─────────────────────────────────────
@@ -1266,7 +1439,7 @@ def render_logs(lines):
         return ('<span class="text-slate-600">'
                 'no log lines</span>')
     html = ""
-    for line in lines:
+    for i, line in enumerate(lines):
         cls = "text-slate-400"
         low = line.lower()
         if " error " in low:
@@ -1275,8 +1448,17 @@ def render_logs(lines):
             cls = "text-amber-400"
         elif " debug " in low:
             cls = "text-slate-600"
-        html += (f'<div class="{cls} text-xs truncate '
-                 f'py-0.5 font-mono">{line}</div>\n')
+        escaped_line = line.replace('"', '&quot;').replace("'", "&#39;")
+        html += (
+            f'<div class="{cls} text-xs py-0.5 font-mono '
+            f'whitespace-pre-wrap break-all cursor-pointer '
+            f'hover:bg-slate-800 px-1 rounded group relative" '
+            f'onclick="showFullLine(this, {i})">'
+            f'<span class="group-hover:opacity-100 opacity-0 '
+            f'absolute right-1 top-1 text-[10px] text-slate-500">'
+            f'click to expand</span>'
+            f'{line}</div>\n'
+        )
     return html
 
 

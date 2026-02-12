@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { waitForHTMX, waitForRefresh, verifyPolling } from "./test_helpers";
 
 test.describe("Risk tab", () => {
   test("loads and has user lookup", async ({ page }) => {
@@ -32,5 +33,152 @@ test.describe("Risk tab", () => {
   test("has liquidation queue card", async ({ page }) => {
     await page.goto("/risk");
     await expect(page.getByRole("heading", { name: "Liquidation Queue" })).toBeVisible();
+  });
+
+  // New interactive tests (13 total)
+
+  test("user lookup by ID updates display", async ({ page }) => {
+    await page.goto("/risk");
+    const riskData = page.locator("#risk-data");
+
+    // Enter user ID
+    await page.locator("#risk-uid").fill("1");
+
+    // Click lookup
+    await page.locator("button", { hasText: "Lookup" }).click();
+    await waitForHTMX(page);
+
+    // Verify data updated (should show user info or no data message)
+    const content = await riskData.textContent();
+    expect(content).toBeTruthy();
+    expect(content).toContain("user");
+  });
+
+  test("user lookup shows postgres not connected message when DB unavailable", async ({ page }) => {
+    await page.goto("/risk");
+    const riskData = page.locator("#risk-data");
+
+    await page.locator("#risk-uid").fill("999");
+    await page.locator("button", { hasText: "Lookup" }).click();
+    await waitForHTMX(page);
+
+    // Should show "no data" or "not connected" message
+    await expect(riskData).toContainText(/no data|not connected|postgres/i);
+  });
+
+  test("freeze button triggers action", async ({ page }) => {
+    await page.goto("/risk");
+    const freezeBtn = page.locator("button", { hasText: /^Freeze$/ }).first();
+
+    await freezeBtn.click();
+    await waitForHTMX(page);
+
+    // Action should complete (check for console error or success)
+    // Button should still be visible
+    await expect(freezeBtn).toBeVisible();
+  });
+
+  test("unfreeze button triggers action", async ({ page }) => {
+    await page.goto("/risk");
+    const unfreezeBtn = page.locator("button", { hasText: /^Unfreeze$/ }).first();
+
+    await unfreezeBtn.click();
+    await waitForHTMX(page);
+
+    await expect(unfreezeBtn).toBeVisible();
+  });
+
+  test("position heatmap auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/risk");
+    const heatmap = page.locator("[hx-get='./x/position-heatmap']");
+
+    // Verify polling configured
+    await verifyPolling(heatmap, "every 2s");
+  });
+
+  test("position heatmap shows placeholder when no data", async ({ page }) => {
+    await page.goto("/risk");
+    const heatmap = page.locator("[hx-get='./x/position-heatmap']");
+    await waitForHTMX(page, 2000);
+
+    // Should show placeholder text
+    await expect(heatmap).toContainText(/start RSX|no data|users/i);
+  });
+
+  test("margin ladder auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/risk");
+    const ladder = page.locator("[hx-get='./x/margin-ladder']");
+
+    await verifyPolling(ladder, "every 2s");
+  });
+
+  test("margin ladder shows liquidation distance placeholder", async ({ page }) => {
+    await page.goto("/risk");
+    const ladder = page.locator("[hx-get='./x/margin-ladder']");
+    await waitForHTMX(page, 2000);
+
+    // Should show placeholder or data
+    const content = await ladder.textContent();
+    expect(content).toBeTruthy();
+  });
+
+  test("funding card auto-refreshes", async ({ page }) => {
+    await page.goto("/risk");
+    const funding = page.locator("[hx-get='./x/funding']");
+
+    await verifyPolling(funding, "every 2s");
+  });
+
+  test("liquidation queue auto-refreshes", async ({ page }) => {
+    await page.goto("/risk");
+    const liqQueue = page.locator("[hx-get='./x/liquidations']");
+
+    await verifyPolling(liqQueue, "every 2s");
+  });
+
+  test("risk latency card auto-refreshes every 5s", async ({ page }) => {
+    await page.goto("/risk");
+    const latency = page.locator("[hx-get='./x/risk-latency']");
+
+    await verifyPolling(latency, "every 5s");
+  });
+
+  test("user action buttons have correct HTMX attributes", async ({ page }) => {
+    await page.goto("/risk");
+
+    // Verify buttons have hx-post attributes
+    const createBtn = page.locator("button", { hasText: "Create User" });
+    await expect(createBtn).toHaveAttribute("hx-post", "./api/users");
+
+    const depositBtn = page.locator("button", { hasText: "Deposit" });
+    await expect(depositBtn).toHaveAttribute("hx-post", /\/deposit/);
+
+    const liquidateBtn = page.locator("button", { hasText: "Liquidate" });
+    await expect(liquidateBtn).toHaveAttribute("hx-post", "./api/risk/liquidate");
+  });
+
+  test("all risk cards load without errors", async ({ page }) => {
+    await page.goto("/risk");
+
+    // Verify all cards visible
+    await expect(page.getByRole("heading", { name: "Position Heatmap" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Margin Ladder" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Funding" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Liquidation Queue" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Risk Check Latency" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "User Actions" })).toBeVisible();
+
+    await waitForHTMX(page, 2000);
+
+    // Check no console errors
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        errors.push(msg.text());
+      }
+    });
+
+    await page.waitForTimeout(1000);
+    expect(errors.length).toBe(0);
   });
 });

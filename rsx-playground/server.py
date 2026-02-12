@@ -980,6 +980,28 @@ async def api_process_action(name: str, action: str):
     return {"status": "ok"}
 
 
+@app.post("/api/scenario/switch")
+async def api_scenario_switch(request: Request):
+    global current_scenario
+    form = await request.form()
+    scenario = form.get("scenario-select", "minimal")
+
+    if scenario not in start_mod.SCENARIOS:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'unknown scenario: {scenario}</span>')
+
+    current_scenario = scenario
+    return HTMLResponse(
+        f'<span class="text-emerald-400 text-xs">'
+        f'switched to {scenario}</span>')
+
+
+@app.get("/x/current-scenario", response_class=HTMLResponse)
+async def x_current_scenario():
+    return HTMLResponse(current_scenario)
+
+
 @app.get("/api/wal/{stream}/status")
 async def api_wal_status(stream: str):
     stream_dir = WAL_DIR / stream

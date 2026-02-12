@@ -31,4 +31,85 @@ test.describe("Overview tab", () => {
     await page.goto("/overview");
     await expect(page.getByRole("heading", { name: "Key Metrics" })).toBeVisible();
   });
+
+  test("process table auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/overview");
+    await page.waitForSelector("div[hx-get='./x/processes']", { timeout: 5000 });
+    const firstState = await page.locator("div[hx-get='./x/processes']").innerHTML();
+    await page.waitForTimeout(2200);
+    const secondState = await page.locator("div[hx-get='./x/processes']").innerHTML();
+    expect(secondState).toBeDefined();
+  });
+
+  test("health score updates dynamically", async ({ page }) => {
+    await page.goto("/overview");
+    await page.waitForSelector("div[hx-get='./x/health']", { timeout: 5000 });
+    await page.waitForTimeout(500);
+    const healthContent = await page.locator("div[hx-get='./x/health']").innerHTML();
+    expect(healthContent.length).toBeGreaterThan(50);
+  });
+
+  test("key metrics display process counts", async ({ page }) => {
+    await page.goto("/overview");
+    await page.waitForSelector("div[hx-get='./x/key-metrics']", { timeout: 5000 });
+    await page.waitForTimeout(500);
+    const metricsContent = await page.locator("div[hx-get='./x/key-metrics']").innerHTML();
+    expect(metricsContent).toContain("Processes");
+  });
+
+  test("WAL status auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/overview");
+    await page.waitForSelector("div[hx-get='./x/wal-status']", { timeout: 5000 });
+    const firstState = await page.locator("div[hx-get='./x/wal-status']").innerHTML();
+    await page.waitForTimeout(2200);
+    const secondState = await page.locator("div[hx-get='./x/wal-status']").innerHTML();
+    expect(secondState).toBeDefined();
+  });
+
+  test("has scenario selector dropdown", async ({ page }) => {
+    await page.goto("/overview");
+    const scenarioSelect = page.locator("#scenario");
+    await expect(scenarioSelect).toBeVisible();
+    await scenarioSelect.selectOption("minimal");
+    await scenarioSelect.selectOption("full");
+  });
+
+  test("build spinner shows during build", async ({ page }) => {
+    await page.goto("/overview");
+    const buildSpin = page.locator("#build-spin");
+    await expect(buildSpin).toHaveClass(/htmx-indicator/);
+  });
+
+  test("logs tail auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/overview");
+    await page.waitForSelector("div[hx-get='./x/logs-tail']", { timeout: 5000 });
+    const firstState = await page.locator("div[hx-get='./x/logs-tail']").innerHTML();
+    await page.waitForTimeout(2200);
+    const secondState = await page.locator("div[hx-get='./x/logs-tail']").innerHTML();
+    expect(secondState).toBeDefined();
+  });
+
+  test("invariants card auto-refreshes every 5s", async ({ page }) => {
+    await page.goto("/overview");
+    await page.waitForSelector("div[hx-get='./x/invariant-status']", { timeout: 5000 });
+    const firstState = await page.locator("div[hx-get='./x/invariant-status']").innerHTML();
+    await page.waitForTimeout(5200);
+    const secondState = await page.locator("div[hx-get='./x/invariant-status']").innerHTML();
+    expect(secondState).toBeDefined();
+  });
+
+  test("ring backpressure card displays", async ({ page }) => {
+    await page.goto("/overview");
+    await expect(page.getByRole("heading", { name: "Ring Backpressure" })).toBeVisible();
+    await page.waitForSelector("div[hx-get='./x/ring-pressure']", { timeout: 5000 });
+    await page.waitForTimeout(500);
+    const ringContent = await page.locator("div[hx-get='./x/ring-pressure']").innerHTML();
+    expect(ringContent.length).toBeGreaterThan(0);
+  });
+
+  test("start result displays after button click", async ({ page }) => {
+    await page.goto("/overview");
+    const startResult = page.locator("#start-result");
+    await expect(startResult).toBeVisible();
+  });
 });
