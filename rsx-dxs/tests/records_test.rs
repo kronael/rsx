@@ -1,4 +1,6 @@
 use rsx_dxs::*;
+use rsx_types::Price;
+use rsx_types::Qty;
 use std::mem;
 
 #[test]
@@ -54,8 +56,8 @@ fn fill_record_encode_decode_roundtrip() {
         taker_order_id_lo: 200,
         maker_order_id_hi: 0,
         maker_order_id_lo: 100,
-        price: 50000,
-        qty: 1000,
+        price: Price(50000),
+        qty: Qty(1000),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -68,8 +70,8 @@ fn fill_record_encode_decode_roundtrip() {
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_fill_record(payload).unwrap();
     assert_eq!(decoded.seq, 42);
-    assert_eq!(decoded.price, 50000);
-    assert_eq!(decoded.qty, 1000);
+    assert_eq!(decoded.price, Price(50000));
+    assert_eq!(decoded.qty, Qty(1000));
     assert_eq!(decoded.maker_order_id_lo, 100);
     assert_eq!(decoded.taker_order_id_lo, 200);
     assert_eq!(decoded.taker_user_id, 10);
@@ -83,20 +85,20 @@ fn bbo_record_encode_decode_roundtrip() {
         ts_ns: 2,
         symbol_id: 3,
         _pad0: 0,
-        bid_px: 100,
-        bid_qty: 50,
+        bid_px: Price(100),
+        bid_qty: Qty(50),
         bid_count: 5,
         _pad1: 0,
-        ask_px: 101,
-        ask_qty: 60,
+        ask_px: Price(101),
+        ask_qty: Qty(60),
         ask_count: 6,
         _pad2: 0,
     };
     let encoded = encode_bbo_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_bbo_record(payload).unwrap();
-    assert_eq!(decoded.bid_px, 100);
-    assert_eq!(decoded.ask_px, 101);
+    assert_eq!(decoded.bid_px, Price(100));
+    assert_eq!(decoded.ask_px, Price(101));
     assert_eq!(decoded.bid_count, 5);
     assert_eq!(decoded.ask_count, 6);
 }
@@ -110,8 +112,8 @@ fn order_inserted_encode_decode_roundtrip() {
         user_id: 42,
         order_id_hi: 0,
         order_id_lo: 999,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         side: 1,
         reduce_only: 0,
         tif: 0,
@@ -136,7 +138,7 @@ fn order_cancelled_encode_decode_roundtrip() {
         user_id: 42,
         order_id_hi: 0,
         order_id_lo: 888,
-        remaining_qty: 50,
+        remaining_qty: Qty(50),
         reason: 2,
         reduce_only: 0,
         tif: 0,
@@ -149,7 +151,7 @@ fn order_cancelled_encode_decode_roundtrip() {
         decode_order_cancelled_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 888);
     assert_eq!(decoded.reason, 2);
-    assert_eq!(decoded.remaining_qty, 50);
+    assert_eq!(decoded.remaining_qty, Qty(50));
 }
 
 #[test]
@@ -161,8 +163,8 @@ fn order_done_encode_decode_roundtrip() {
         user_id: 42,
         order_id_hi: 0,
         order_id_lo: 777,
-        filled_qty: 100,
-        remaining_qty: 0,
+        filled_qty: Qty(100),
+        remaining_qty: Qty(0),
         final_status: 1,
         reduce_only: 0,
         tif: 0,
@@ -173,8 +175,8 @@ fn order_done_encode_decode_roundtrip() {
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = decode_order_done_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 777);
-    assert_eq!(decoded.remaining_qty, 0);
-    assert_eq!(decoded.filled_qty, 100);
+    assert_eq!(decoded.remaining_qty, Qty(0));
+    assert_eq!(decoded.filled_qty, Qty(100));
     assert_eq!(decoded.final_status, 1);
 }
 
@@ -220,10 +222,16 @@ fn order_accepted_encode_decode_roundtrip() {
         seq: 10,
         ts_ns: 15,
         user_id: 42,
-        _pad0: 0,
+        symbol_id: 1,
         order_id_hi: 0,
         order_id_lo: 555,
-        _pad1: [0; 32],
+        price: 50000,
+        qty: 100,
+        side: 0,
+        tif: 0,
+        reduce_only: 0,
+        post_only: 0,
+        _pad1: [0; 12],
     };
     let encoded = encode_order_accepted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
@@ -231,6 +239,9 @@ fn order_accepted_encode_decode_roundtrip() {
         decode_order_accepted_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 555);
     assert_eq!(decoded.user_id, 42);
+    assert_eq!(decoded.symbol_id, 1);
+    assert_eq!(decoded.price, 50000);
+    assert_eq!(decoded.qty, 100);
 }
 
 #[test]
@@ -246,8 +257,8 @@ fn crc32_mismatch_detected() {
         taker_order_id_lo: 6,
         maker_order_id_hi: 0,
         maker_order_id_lo: 7,
-        price: 8,
-        qty: 9,
+        price: Price(8),
+        qty: Qty(9),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -276,8 +287,8 @@ fn wal_record_seq_accessor() {
         taker_order_id_lo: 0,
         maker_order_id_hi: 0,
         maker_order_id_lo: 0,
-        price: 0,
-        qty: 0,
+        price: Price(0),
+        qty: Qty(0),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -294,12 +305,12 @@ fn wal_record_type_accessor() {
         ts_ns: 0,
         symbol_id: 0,
         _pad0: 0,
-        bid_px: 0,
-        bid_qty: 0,
+        bid_px: Price(0),
+        bid_qty: Qty(0),
         bid_count: 0,
         _pad1: 0,
-        ask_px: 0,
-        ask_qty: 0,
+        ask_px: Price(0),
+        ask_qty: Qty(0),
         ask_count: 0,
         _pad2: 0,
     });
@@ -350,8 +361,8 @@ fn record_truncated_payload_detected() {
         taker_order_id_lo: 1,
         maker_order_id_hi: 0,
         maker_order_id_lo: 2,
-        price: 100,
-        qty: 10,
+        price: Price(100),
+        qty: Qty(10),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -388,8 +399,8 @@ fn cmp_record_trait_set_seq_roundtrip() {
         taker_order_id_lo: 100,
         maker_order_id_hi: 0,
         maker_order_id_lo: 200,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,

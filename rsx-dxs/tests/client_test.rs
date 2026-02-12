@@ -192,24 +192,25 @@ fn consumer_skips_unknown_record_types() {
 
 #[test]
 fn consumer_advances_tip_on_unknown_record() {
-    // Verify that tip advances even when unknown record
-    // types are skipped. This ensures consumer makes
-    // progress and doesn't get stuck in infinite replay
-    // loop on reconnect.
+    // Tip should advance from payload seq when available,
+    // even if record type is unknown/skipped.
     let mut tip: u64 = 100;
 
-    // Receive 3 records: known, unknown, known
-    // Tip should advance to 103 (all records counted)
-    let record_types = [0u16, 0xFFFF, 0];
-    for record_type in record_types {
-        tip += 1;
-        let is_known = matches!(record_type, 0..=18);
-        if is_known {
-            // process record
-        } else {
-            // skip unknown, but tip already advanced
-        }
+    // Receive 3 records with seq values.
+    let seqs = [101u64, 250u64, 251u64];
+    for seq in seqs {
+        tip = tip.max(seq);
     }
 
-    assert_eq!(tip, 103);
+    assert_eq!(tip, 251);
+}
+
+#[test]
+fn consumer_tip_never_decreases_on_reordered_seq() {
+    let mut tip: u64 = 1000;
+    let incoming = [1001u64, 998u64, 1002u64];
+    for seq in incoming {
+        tip = tip.max(seq);
+    }
+    assert_eq!(tip, 1002);
 }

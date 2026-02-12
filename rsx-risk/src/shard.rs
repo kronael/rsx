@@ -116,6 +116,7 @@ impl RiskShard {
         self.accounts = state.accounts;
         self.positions = state.positions;
         self.insurance_funds = state.insurance_funds;
+        // frozen_orders rebuilt from WAL replay
         let len = self.tips.len().min(state.tips.len());
         self.tips[..len]
             .copy_from_slice(&state.tips[..len]);
@@ -395,8 +396,9 @@ impl RiskShard {
             side: liq.side,
             tif: 1, // IOC
             reduce_only: true,
+            post_only: false,
             is_liquidation: true,
-            _pad: [0; 4],
+            _pad: [0; 3],
         }
     }
 
@@ -420,11 +422,33 @@ impl RiskShard {
         let positions =
             self.positions_for_user(order.user_id);
 
-        // Liquidation check
+        // Liquidation check (fallback to index when mark missing)
+        let mut fallback = None;
+        for (sid, mark) in self.mark_prices.iter().enumerate() {
+            if *mark == 0 {
+                let idx = &self.index_prices[sid];
+                if idx.valid && idx.price > 0 {
+                    let mut tmp = self.mark_prices.clone();
+                    for (i, v) in tmp.iter_mut().enumerate() {
+                        if *v == 0 {
+                            let idx = &self.index_prices[i];
+                            if idx.valid && idx.price > 0 {
+                                *v = idx.price;
+                            }
+                        }
+                    }
+                    fallback = Some(tmp);
+                    break;
+                }
+            }
+        }
+        let mark_prices = fallback
+            .as_deref()
+            .unwrap_or(&self.mark_prices);
         let state = self.margin.calculate(
             account,
             &positions,
-            &self.mark_prices,
+            mark_prices,
         );
         if self.margin.needs_liquidation(&state)
             && !order.is_liquidation
@@ -442,7 +466,7 @@ impl RiskShard {
             account,
             &positions,
             order,
-            &self.mark_prices,
+            mark_prices,
             self.taker_fee_bps[sid],
         ) {
             Ok(margin_needed) => {
@@ -505,6 +529,42 @@ impl RiskShard {
         }
     }
 
+    /// Reconstruct a frozen order from WAL replay.
+    /// Same margin logic as process_order but without
+    /// rejection (order was already accepted).
+    pub fn replay_freeze_order(
+        &mut self,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        price: i64,
+        qty: i64,
+        symbol_id: u32,
+    ) {
+        self.ensure_account(user_id);
+        let sid = symbol_id as usize;
+        let order_notional =
+            (price as i128 * qty as i128) as i64;
+        let params = &self.margin.symbol_params[sid];
+        let order_im = (order_notional as i128
+            * params.initial_margin_rate as i128
+            / 10_000) as i64;
+        let order_fee = crate::risk_utils::calculate_fee(
+            qty,
+            price,
+            self.taker_fee_bps[sid],
+        );
+        let margin_needed = order_im + order_fee;
+        self.accounts
+            .get_mut(&user_id)
+            .unwrap()
+            .freeze_margin(margin_needed);
+        self.frozen_orders.insert(
+            order_key(order_id_hi, order_id_lo),
+            (user_id, margin_needed),
+        );
+    }
+
     /// RISK.md §4. Update index price from BBO.
     pub fn process_bbo(&mut self, bbo: &BboUpdate) {
         let sid = bbo.symbol_id as usize;
@@ -527,8 +587,61 @@ impl RiskShard {
         config_version: u64,
     ) {
         let sid = symbol_id as usize;
-        if sid < self.config_versions.len() {
-            self.config_versions[sid] = config_version;
+        if sid >= self.config_versions.len() {
+            return;
+        }
+        if config_version < self.config_versions[sid] {
+            return;
+        }
+        self.config_versions[sid] = config_version;
+        self.reload_symbol_overrides(symbol_id);
+    }
+
+    fn reload_symbol_overrides(&mut self, symbol_id: u32) {
+        let sid = symbol_id as usize;
+        let taker_key =
+            format!("RSX_SYMBOL_{}_TAKER_FEE_BPS", symbol_id);
+        if let Ok(v) = std::env::var(&taker_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.taker_fee_bps[sid] = parsed;
+            }
+        }
+        let maker_key =
+            format!("RSX_SYMBOL_{}_MAKER_FEE_BPS", symbol_id);
+        if let Ok(v) = std::env::var(&maker_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.maker_fee_bps[sid] = parsed;
+            }
+        }
+        let im_key = format!(
+            "RSX_SYMBOL_{}_INITIAL_MARGIN_RATE",
+            symbol_id
+        );
+        if let Ok(v) = std::env::var(&im_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.margin.symbol_params[sid].initial_margin_rate =
+                    parsed;
+            }
+        }
+        let mm_key = format!(
+            "RSX_SYMBOL_{}_MAINTENANCE_MARGIN_RATE",
+            symbol_id
+        );
+        if let Ok(v) = std::env::var(&mm_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.margin.symbol_params[sid]
+                    .maintenance_margin_rate = parsed;
+            }
+        }
+        let lev_key = format!(
+            "RSX_SYMBOL_{}_MAX_LEVERAGE",
+            symbol_id
+        );
+        if let Ok(v) = std::env::var(&lev_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.margin.symbol_params[sid].max_leverage =
+                    parsed;
+            }
         }
     }
 

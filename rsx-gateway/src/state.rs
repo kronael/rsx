@@ -23,6 +23,7 @@ pub struct GatewayState {
     pub ip_limiters: FxHashMap<IpAddr, RateLimiter>,
     pub circuit: CircuitBreaker,
     pub symbol_configs: Vec<SymbolConfig>,
+    pub config_versions: Vec<u64>,
 }
 
 impl GatewayState {
@@ -42,14 +43,77 @@ impl GatewayState {
                 circuit_threshold,
                 Duration::from_millis(circuit_cooldown_ms),
             ),
+            config_versions: vec![0; symbol_configs.len()],
             symbol_configs,
+        }
+    }
+
+    pub fn apply_config_applied(
+        &mut self,
+        symbol_id: u32,
+        config_version: u64,
+    ) -> bool {
+        let sid = symbol_id as usize;
+        if sid >= self.config_versions.len() {
+            return false;
+        }
+        if config_version < self.config_versions[sid] {
+            return false;
+        }
+        self.config_versions[sid] = config_version;
+        self.reload_symbol_overrides(symbol_id);
+        true
+    }
+
+    fn reload_symbol_overrides(&mut self, symbol_id: u32) {
+        let sid = symbol_id as usize;
+        if sid >= self.symbol_configs.len() {
+            return;
+        }
+        let tick_key =
+            format!("RSX_SYMBOL_{}_TICK_SIZE", symbol_id);
+        if let Ok(v) = std::env::var(&tick_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.symbol_configs[sid].tick_size = parsed;
+            }
+        }
+        let lot_key =
+            format!("RSX_SYMBOL_{}_LOT_SIZE", symbol_id);
+        if let Ok(v) = std::env::var(&lot_key) {
+            if let Ok(parsed) = v.parse::<i64>() {
+                self.symbol_configs[sid].lot_size = parsed;
+            }
+        }
+        let pd_key = format!(
+            "RSX_SYMBOL_{}_PRICE_DECIMALS",
+            symbol_id
+        );
+        if let Ok(v) = std::env::var(&pd_key) {
+            if let Ok(parsed) = v.parse::<u8>() {
+                self.symbol_configs[sid].price_decimals = parsed;
+            }
+        }
+        let qd_key =
+            format!("RSX_SYMBOL_{}_QTY_DECIMALS", symbol_id);
+        if let Ok(v) = std::env::var(&qd_key) {
+            if let Ok(parsed) = v.parse::<u8>() {
+                self.symbol_configs[sid].qty_decimals = parsed;
+            }
         }
     }
 
     pub fn add_connection(
         &mut self,
         user_id: u32,
-    ) -> u64 {
+    ) -> Result<u64, &'static str> {
+        let count = self
+            .connections
+            .values()
+            .filter(|c| c.user_id == user_id)
+            .count();
+        if count >= 5 {
+            return Err("max connections per user");
+        }
         let id = self.next_conn_id;
         self.next_conn_id += 1;
         self.connections.insert(
@@ -60,7 +124,7 @@ impl GatewayState {
                 last_activity_ns: 0,
             },
         );
-        id
+        Ok(id)
     }
 
     pub fn remove_connection(&mut self, conn_id: u64) {

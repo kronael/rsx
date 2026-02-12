@@ -66,6 +66,8 @@ pub enum FailureReason {
     NetworkError = 8,
     RateLimit = 9,
     Timeout = 10,
+    UserInLiquidation = 11,
+    WrongShard = 12,
 }
 
 /// Sentinel for "no index" in slab/level linked lists.

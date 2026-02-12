@@ -218,16 +218,14 @@ Margin recalculated on every price tick for all exposed users.
 - If no BBO ever received: use mark price
 - O(1) per BBO update, stored in `Vec<IndexPrice>`
 
-**From Mark Price Aggregator** (DXS consumer, see [MARK.md](MARK.md)):
-- Risk engine connects as a DXS consumer to the mark price
-  aggregator ([DXS.md](DXS.md) section 6)
-- Receives `MarkPriceEvent` records via DXS streaming
-- DXS mark price feed not wired into risk in v1 (planned)
-  (same integration point as before)
-- Risk engine reads mark prices into `Vec<i64>`
-- Used for margin/risk calculations (unrealized PnL, liquidation)
-- Fallback: if mark price aggregator has zero sources (all stale),
-  no `MarkPriceEvent` is published. Risk uses index price from BBO.
+**From Mark Price Aggregator** (CMP/UDP, see [MARK.md](MARK.md)):
+- Risk engine receives `MarkPriceRecord` over CMP/UDP
+  from the mark process.
+- Risk engine stores mark prices in `Vec<i64>`.
+- Used for margin/risk calculations (unrealized PnL, liquidation).
+- Fallback: if mark price is missing (`mark==0`) and an index
+  price is available (`index.valid==true`), risk uses index
+  price as the mark for margin/liquidation checks.
 
 ### 5. Funding Engine
 
@@ -267,6 +265,12 @@ process_order(order):
         route order to matching engine
         return  // no frozen margin, no margin check
 
+    // Validate order size limits
+    if order.qty > symbol_config.max_order_qty:
+        reject ORDER_FAILED(INVALID_LOT_SIZE)
+    if order.price * order.qty < symbol_config.min_notional:
+        reject ORDER_FAILED(INSUFFICIENT_MARGIN)
+
     // Collect all positions for this user
     user_positions = get_user_positions(order.user_id)
     // Full portfolio margin recalc with latest mark prices
@@ -283,6 +287,11 @@ process_order(order):
 
 On fill: update position, margin recalculated on next price tick.
 On ORDER_DONE: release frozen margin for that order.
+
+Frozen margin is derived state: not persisted to Postgres.
+On restart, WAL replay reconstructs frozen_orders from
+ORDER_ACCEPTED records (which contain price, qty, symbol_id)
+and releases them on ORDER_DONE/CANCELLED/FAILED.
 
 ### 7. Per-Tick Margin Recalc
 

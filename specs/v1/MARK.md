@@ -1,8 +1,8 @@
 # Mark Price Aggregator
 
 Standalone network service. Aggregates mark prices from external
-exchange WebSocket feeds, publishes to risk engines via DXS
-streaming ([DXS.md](DXS.md)).
+exchange WebSocket feeds, publishes to risk engines via CMP/UDP,
+and also writes a WAL for DXS replay/recorder consumers.
 
 Single process. Replaces the per-shard Binance async task that was
 embedded in each risk engine (RISK.md section 4).
@@ -26,43 +26,41 @@ embedded in each risk engine (RISK.md section 4).
 
 ```
 Binance WS ──┐
-              ├──[SPSC]──> Aggregation Loop ──> WalWriter
+              ├──[SPSC]──> Aggregation Loop ──> WalWriter ──> DxsReplay
 Coinbase WS ──┘            (single thread)        |
-                                                   |
-                                            DxsReplay server
-                                           /       |
-                                    Risk-0    Risk-1   Recorder
-                                   (DXS consumer)
+                                                  └──> CMP/UDP -> Risk
 ```
 
 - Exchange WS connectors run as async tasks, push to aggregation
   loop via SPSC rings.
 - Aggregation loop is single-threaded, computes median mark price
   per symbol.
-- WalWriter appends `MarkPriceEvent` records.
-- DxsReplay server (from `rsx-dxs`) broadcasts to subscribers.
-- Risk engines connect as DXS consumers.
+- WalWriter appends `MarkPriceRecord` records.
+- CMP/UDP sends `MarkPriceRecord` to Risk.
+- DxsReplay server (from `rsx-dxs`) broadcasts to replay consumers.
 - Recorder archives mark price stream to daily files.
 
 ---
 
 ## 2. Data Structures
 
-### WAL wire format
+### WAL/CMP wire format
 
 ```rust
 #[repr(C, align(64))]
-struct MarkPriceEvent {
+struct MarkPriceRecord {
+  seq: u64,
+  ts_ns: u64,
   symbol_id: u32,
+  _pad0: u32,
   mark_price: i64,     // fixed-point, same scale as Price
-  timestamp_ns: u64,
   source_mask: u32,    // bitmask of contributing sources
   source_count: u32,   // number of non-stale sources
-  _pad: [u8; 12],      // align to 64 bytes
+  _pad1: [u8; 24],     // align to 64 bytes
 }
 ```
 
-This record is one of the WAL event types streamed by DXS.
+This record is emitted to both WAL and CMP/UDP.
 
 ### In-memory
 
@@ -146,12 +144,9 @@ fn aggregate(state: &mut SymbolMarkState, update: SourcePrice):
         }
     }
 
-    // Append MarkPriceEvent to WAL (broadcasts to live consumers)
-    wal.append(MarkPriceEvent {
-        symbol_id, mark_price: state.mark_price,
-        timestamp_ns: now, source_mask: state.source_mask,
-        source_count: state.source_count as u32,
-    })
+    // Append MarkPriceRecord to WAL and send over CMP/UDP
+    wal.append(MarkPriceRecord { ... })
+    cmp.send(MarkPriceRecord { ... })
 ```
 
 **Staleness sweep:** every 1s, iterate all symbols. If a source
@@ -176,10 +171,8 @@ stops publishing. Consumers handle the absence.
 The aggregator embeds a DxsReplay server from `rsx-dxs`.
 
 - Single `stream_id` for the mark price stream.
-- Risk engines connect as DXS consumers.
-- On startup, risk engines replay from their last tip to catch up,
-  then transition to live.
 - Recorder connects as a DXS consumer for archival.
+- Risk engines consume mark prices via CMP/UDP, not DXS.
 
 See [DXS.md](DXS.md) sections 5-6 for replay and consumer
 protocol.

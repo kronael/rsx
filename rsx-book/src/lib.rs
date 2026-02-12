@@ -17,3 +17,5 @@ pub use level::PriceLevel;
 pub use order::OrderSlot;
 pub use slab::Slab;
 pub use user::UserState;
+pub use user::try_reclaim;
+pub use user::RECLAIM_GRACE_NS;

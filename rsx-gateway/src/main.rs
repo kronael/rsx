@@ -1,6 +1,8 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::FillRecord;
+use rsx_dxs::records::LiquidationRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
 use rsx_dxs::records::OrderFailedRecord;
@@ -9,11 +11,13 @@ use rsx_dxs::records::RECORD_CONFIG_APPLIED;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
+use rsx_dxs::records::RECORD_LIQUIDATION;
 use rsx_dxs::records::RECORD_ORDER_FAILED;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::route::route_fill;
+use rsx_gateway::route::route_liquidation;
 use rsx_gateway::route::route_order_cancelled;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
@@ -31,22 +35,56 @@ use tracing::info;
 const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
 const NS_PER_MS: u64 = 1_000_000;
 
+fn log_effective_gateway_config(
+    config: &rsx_gateway::config::GatewayConfig,
+) {
+    info!(
+        "gateway effective config: listen={} risk_addr={} max_pending={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} rl_instance={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
+        config.listen_addr,
+        config.risk_addr,
+        config.max_pending,
+        config.order_timeout_ms,
+        config.heartbeat_interval_ms,
+        config.heartbeat_timeout_ms,
+        config.rate_limit_per_user,
+        config.rate_limit_per_ip,
+        config.rate_limit_per_instance,
+        config.circuit_threshold,
+        config.circuit_cooldown_ms,
+        !config.jwt_secret.is_empty(),
+        config.jwt_secret.len(),
+    );
+    for cfg in &config.symbol_configs {
+        info!(
+            "gateway symbol_config sid={} tick_size={} lot_size={} price_decimals={} qty_decimals={}",
+            cfg.symbol_id,
+            cfg.tick_size,
+            cfg.lot_size,
+            cfg.price_decimals,
+            cfg.qty_decimals,
+        );
+    }
+}
+
 fn main() {
     install_panic_handler();
 
     tracing_subscriber::fmt::init();
 
     let config = load_gateway_config();
+    log_effective_gateway_config(&config);
 
     let risk_addr: SocketAddr =
         env::var("RSX_RISK_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CMP_ADDR");
     let gw_addr: SocketAddr =
         env::var("RSX_GW_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9102".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_GW_CMP_ADDR");
     let wal_dir = env::var("RSX_GW_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".into());
@@ -57,12 +95,14 @@ fn main() {
         0,
         &PathBuf::from(&wal_dir),
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to create CMP sender");
 
     // CMP/UDP: receive responses from Risk
     let mut cmp_receiver = CmpReceiver::new(
         gw_addr, risk_addr, 0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind CMP receiver");
 
     info!(
@@ -83,6 +123,7 @@ fn main() {
     let mut rt =
         monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
             .build()
+            // SAFETY: fail-fast at startup
             .expect("failed to build monoio runtime");
 
     let listen_addr = config.listen_addr.clone();
@@ -222,7 +263,50 @@ fn main() {
                             &state, &rec,
                         );
                     }
-                    RECORD_CONFIG_APPLIED => {}
+                    RECORD_LIQUIDATION
+                        if payload.len()
+                            >= std::mem::size_of::<
+                                LiquidationRecord,
+                            >() =>
+                    {
+                        let rec = unsafe {
+                            std::ptr::read_unaligned(
+                                payload.as_ptr()
+                                    as *const
+                                        LiquidationRecord,
+                            )
+                        };
+                        route_liquidation(
+                            &state, &rec,
+                        );
+                    }
+                    RECORD_CONFIG_APPLIED
+                        if payload.len()
+                            >= std::mem::size_of::<
+                                ConfigAppliedRecord,
+                            >() =>
+                    {
+                        let rec = unsafe {
+                            std::ptr::read_unaligned(
+                                payload.as_ptr()
+                                    as *const
+                                        ConfigAppliedRecord,
+                            )
+                        };
+                        let applied = state
+                            .borrow_mut()
+                            .apply_config_applied(
+                                rec.symbol_id,
+                                rec.config_version,
+                            );
+                        if !applied {
+                            tracing::warn!(
+                                "ignored CONFIG_APPLIED symbol={} version={}",
+                                rec.symbol_id,
+                                rec.config_version
+                            );
+                        }
+                    }
                     _ => {}
                 }
             }

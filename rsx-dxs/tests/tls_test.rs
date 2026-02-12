@@ -1,3 +1,5 @@
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_dxs::config::TlsConfig;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::RECORD_CAUGHT_UP;
@@ -63,16 +65,9 @@ async fn tls_client_server_connection() {
     let addr: SocketAddr =
         "127.0.0.1:0".parse().unwrap();
     let listener =
-        match tokio::net::TcpListener::bind(addr).await {
-            Ok(l) => l,
-            Err(e)
-                if e.kind()
-                    == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(e) => panic!("bind failed: {e}"),
-        };
+        tokio::net::TcpListener::bind(addr)
+            .await
+            .unwrap();
     let bound_addr = listener.local_addr().unwrap();
     drop(listener);
 
@@ -105,8 +100,8 @@ async fn tls_client_server_connection() {
         taker_order_id_lo: 1,
         maker_order_id_hi: 0,
         maker_order_id_lo: 2,
-        price: 50000,
-        qty: 1000,
+        price: Price(50000),
+        qty: Qty(1000),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -187,16 +182,9 @@ async fn tls_disabled_falls_back_to_plain() {
     let addr: SocketAddr =
         "127.0.0.1:0".parse().unwrap();
     let listener =
-        match tokio::net::TcpListener::bind(addr).await {
-            Ok(l) => l,
-            Err(e)
-                if e.kind()
-                    == std::io::ErrorKind::PermissionDenied =>
-            {
-                return;
-            }
-            Err(e) => panic!("bind failed: {e}"),
-        };
+        tokio::net::TcpListener::bind(addr)
+            .await
+            .unwrap();
     let bound_addr = listener.local_addr().unwrap();
     drop(listener);
 
@@ -229,8 +217,8 @@ async fn tls_disabled_falls_back_to_plain() {
         taker_order_id_lo: 1,
         maker_order_id_hi: 0,
         maker_order_id_lo: 2,
-        price: 50000,
-        qty: 1000,
+        price: Price(50000),
+        qty: Qty(1000),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,

@@ -22,6 +22,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use std::net::UdpSocket;
 
 fn test_config(max_symbols: usize) -> ShardConfig {
     ShardConfig {
@@ -81,8 +82,8 @@ fn mark_cmp_updates_risk_mark_prices() {
     let mut shard = RiskShard::new(test_config(2));
     let (mut rings, mut mark_prod, _bbo_prod) = make_rings();
 
-    let recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let tmp = std::net::UdpSocket::bind(recv_addr).unwrap();
+    let _recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let tmp = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_local = tmp.local_addr().unwrap();
     drop(tmp);
 
@@ -96,7 +97,7 @@ fn mark_cmp_updates_risk_mark_prices() {
         ts_ns: 1,
         symbol_id: 1,
         _pad0: 0,
-        mark_price: 55_000,
+        mark_price: rsx_types::Price(55_000),
         source_mask: 0,
         source_count: 1,
         _pad1: [0; 24],
@@ -117,7 +118,7 @@ fn mark_cmp_updates_risk_mark_prices() {
             let _ = mark_prod.push(MarkPriceUpdate {
                 seq: decoded.seq,
                 symbol_id: decoded.symbol_id,
-                price: decoded.mark_price,
+                price: decoded.mark_price.0,
             });
         }
     }
@@ -131,8 +132,8 @@ fn bbo_cmp_updates_risk_index_price() {
     let mut shard = RiskShard::new(test_config(2));
     let (mut rings, _mark_prod, mut bbo_prod) = make_rings();
 
-    let recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let tmp = std::net::UdpSocket::bind(recv_addr).unwrap();
+    let _recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let tmp = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_local = tmp.local_addr().unwrap();
     drop(tmp);
 
@@ -146,12 +147,12 @@ fn bbo_cmp_updates_risk_index_price() {
         ts_ns: 1,
         symbol_id: 1,
         _pad0: 0,
-        bid_px: 99,
-        bid_qty: 2,
+        bid_px: rsx_types::Price(99),
+        bid_qty: rsx_types::Qty(2),
         bid_count: 1,
         _pad1: 0,
-        ask_px: 101,
-        ask_qty: 1,
+        ask_px: rsx_types::Price(101),
+        ask_qty: rsx_types::Qty(1),
         ask_count: 1,
         _pad2: 0,
     };
@@ -171,10 +172,10 @@ fn bbo_cmp_updates_risk_index_price() {
             let _ = bbo_prod.push(BboUpdate {
                 seq: decoded.seq,
                 symbol_id: decoded.symbol_id,
-                bid_px: decoded.bid_px,
-                bid_qty: decoded.bid_qty,
-                ask_px: decoded.ask_px,
-                ask_qty: decoded.ask_qty,
+                bid_px: decoded.bid_px.0,
+                bid_qty: decoded.bid_qty.0,
+                ask_px: decoded.ask_px.0,
+                ask_qty: decoded.ask_qty.0,
             });
         }
     }

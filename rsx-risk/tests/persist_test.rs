@@ -8,6 +8,7 @@ use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
 use rsx_risk::persist::FundingPaymentRecord;
 use rsx_risk::persist::PersistFill;
+use rsx_risk::persist::PersistEvent;
 use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::insert_fills;
 use rsx_risk::persist::insert_funding;
@@ -123,6 +124,45 @@ async fn persist_fills_batch_insert() {
         .await
         .unwrap();
     assert_eq!(rows[0].get::<_, i64>(0), 5);
+}
+
+#[tokio::test]
+#[ignore]
+async fn persist_fills_symbol_seq_is_unique() {
+    let (_c, mut client) = pg_client().await;
+    let first = PersistFill {
+        symbol_id: 7,
+        taker_user_id: 1,
+        maker_user_id: 2,
+        price: 1000,
+        qty: 10,
+        taker_fee: 1,
+        maker_fee: 0,
+        taker_side: 0,
+        seq: 42,
+        timestamp_ns: 1000,
+    };
+    let dup = PersistFill {
+        symbol_id: 7,
+        taker_user_id: 3,
+        maker_user_id: 4,
+        price: 1001,
+        qty: 11,
+        taker_fee: 1,
+        maker_fee: 0,
+        taker_side: 1,
+        seq: 42,
+        timestamp_ns: 1001,
+    };
+
+    let tx = client.transaction().await.unwrap();
+    insert_fills(&tx, &[first]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let tx = client.transaction().await.unwrap();
+    let result = insert_fills(&tx, &[dup]).await;
+    assert!(result.is_err());
+    let _ = tx.rollback().await;
 }
 
 #[tokio::test]
@@ -380,8 +420,8 @@ async fn replay_from_wal_rebuilds_positions() {
             taker_order_id_lo: 0,
             maker_order_id_hi: 0,
             maker_order_id_lo: 0,
-            price: 5000,
-            qty: 10,
+            price: rsx_types::Price(5000),
+            qty: rsx_types::Qty(10),
             taker_side: 0,
             reduce_only: 0,
             tif: 0,
@@ -440,6 +480,90 @@ async fn replay_from_wal_rebuilds_positions() {
 
 #[tokio::test]
 #[ignore]
+async fn replay_from_wal_releases_frozen_on_order_done() {
+    use rsx_dxs::OrderDoneRecord;
+    use rsx_dxs::WalWriter;
+    use rsx_risk::types::OrderRequest;
+
+    let wal_dir = tempfile::tempdir().unwrap();
+    let wal_path = wal_dir.path();
+
+    let mut writer = WalWriter::new(
+        0,
+        wal_path,
+        None,
+        64 * 1024 * 1024,
+        600_000_000_000,
+    )
+    .unwrap();
+
+    let config = ShardConfig {
+        shard_id: 0,
+        shard_count: 1,
+        max_symbols: 4,
+        symbol_params: vec![
+            SymbolRiskParams {
+                initial_margin_rate: 1000,
+                maintenance_margin_rate: 500,
+                max_leverage: 10,
+            };
+            4
+        ],
+        taker_fee_bps: vec![5; 4],
+        maker_fee_bps: vec![-1; 4],
+        funding_config: FundingConfig::default(),
+        liquidation_config:
+            LiquidationConfig::default(),
+        replication_config:
+            ReplicationConfig::default(),
+    };
+    let mut shard = RiskShard::new(config);
+    shard.accounts.insert(0, Account::new(0, 1_000_000));
+    shard.mark_prices[0] = 10_000;
+
+    let order = OrderRequest {
+        seq: 0,
+        user_id: 0,
+        symbol_id: 0,
+        price: 10_000,
+        qty: 10,
+        order_id_hi: 55,
+        order_id_lo: 77,
+        timestamp_ns: 1_000,
+        side: 0,
+        tif: 0,
+        reduce_only: false,
+        post_only: false,
+        is_liquidation: false,
+        _pad: [0; 3],
+    };
+    let _ = shard.process_order(&order);
+    assert!(shard.accounts[&0].frozen_margin > 0);
+
+    let mut done = OrderDoneRecord {
+        seq: 1,
+        ts_ns: 2_000,
+        symbol_id: 0,
+        user_id: 0,
+        order_id_hi: 55,
+        order_id_lo: 77,
+        filled_qty: rsx_types::Qty(0),
+        remaining_qty: rsx_types::Qty(10),
+        final_status: 2,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
+    };
+    writer.append(&mut done).unwrap();
+    writer.flush().unwrap();
+
+    let _ = replay_from_wal(&mut shard, wal_path, &[0]).unwrap();
+    assert_eq!(shard.accounts[&0].frozen_margin, 0);
+}
+
+#[tokio::test]
+#[ignore]
 async fn persist_fills_partitioning_by_symbol() {
     let (_c, mut client) = pg_client().await;
     let fills: Vec<PersistFill> = (0..3)
@@ -479,8 +603,6 @@ async fn persist_fills_partitioning_by_symbol() {
 #[tokio::test]
 #[ignore]
 async fn persist_backpressure_ring_full() {
-    use rsx_risk::persist::PersistEvent;
-
     // Create a tiny ring (capacity 2)
     let (mut producer, _consumer) =
         rtrb::RingBuffer::<PersistEvent>::new(2);
@@ -506,3 +628,4 @@ async fn persist_backpressure_ring_full() {
     });
     assert!(result.is_err());
 }
+

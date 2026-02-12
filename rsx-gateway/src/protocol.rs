@@ -11,6 +11,7 @@ pub enum WsFrame {
         client_order_id: String,
         tif: u8,
         reduce_only: bool,
+        post_only: bool,
     },
     Cancel {
         key: CancelKey,
@@ -245,6 +246,11 @@ fn parse_new_order(
     } else {
         false
     };
+    let post_only = if arr.len() > 7 {
+        as_u8(&arr[7], "po")? != 0
+    } else {
+        false
+    };
     Ok(WsFrame::NewOrder {
         symbol_id,
         side,
@@ -253,6 +259,7 @@ fn parse_new_order(
         client_order_id: cid,
         tif,
         reduce_only,
+        post_only,
     })
 }
 
@@ -297,9 +304,9 @@ fn parse_order_update(
     let filled_qty = as_i64(&arr[2], "filled")?;
     let remaining_qty = as_i64(&arr[3], "remaining")?;
     let reason = as_u8(&arr[4], "reason")?;
-    if reason > 10 {
+    if reason > 12 {
         return Err(ParseError::InvalidValue(
-            "reason must be 0-10".to_string(),
+            "reason must be 0-12".to_string(),
         ));
     }
     Ok(WsFrame::OrderUpdate {
@@ -527,12 +534,14 @@ pub fn serialize(frame: &WsFrame) -> String {
             client_order_id,
             tif,
             reduce_only,
+            post_only,
         } => {
             let ro = if *reduce_only { 1 } else { 0 };
+            let po = if *post_only { 1 } else { 0 };
             format!(
-                "{{\"N\":[{},{},{},{},\"{}\",{},{}]}}",
+                "{{\"N\":[{},{},{},{},\"{}\",{},{},{}]}}",
                 symbol_id, side, price, qty,
-                client_order_id, tif, ro,
+                client_order_id, tif, ro, po,
             )
         }
         WsFrame::Cancel { key } => {

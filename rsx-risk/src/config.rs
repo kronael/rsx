@@ -81,6 +81,27 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
     let shard_count = env_u32("RSX_RISK_SHARD_COUNT", 1);
     let max_symbols =
         env_usize("RSX_RISK_MAX_SYMBOLS", 64);
+    if shard_count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "RSX_RISK_SHARD_COUNT must be > 0",
+        ));
+    }
+    if shard_id >= shard_count {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "RSX_RISK_SHARD_ID ({}) must be < RSX_RISK_SHARD_COUNT ({})",
+                shard_id, shard_count
+            ),
+        ));
+    }
+    if max_symbols == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "RSX_RISK_MAX_SYMBOLS must be > 0",
+        ));
+    }
 
     let mut symbol_params = Vec::with_capacity(max_symbols);
     let mut taker_fee_bps = Vec::with_capacity(max_symbols);

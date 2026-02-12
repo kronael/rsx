@@ -145,4 +145,6 @@ fn failure_reason_repr_values() {
     assert_eq!(FailureReason::NetworkError as u8, 8);
     assert_eq!(FailureReason::RateLimit as u8, 9);
     assert_eq!(FailureReason::Timeout as u8, 10);
+    assert_eq!(FailureReason::UserInLiquidation as u8, 11);
+    assert_eq!(FailureReason::WrongShard as u8, 12);
 }

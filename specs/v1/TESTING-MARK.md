@@ -189,12 +189,10 @@ Targets from MARK.md §9:
 
 ## Integration Points
 
-- Risk engines connect as DXS consumers to receive
-  MarkPriceEvent (RISK.md §4, DXS.md §6)
-- Recorder connects as DXS consumer for archival
-  (DXS.md §8)
-- WalWriter from rsx-dxs crate (DXS.md §3)
-- DxsReplay server from rsx-dxs crate (DXS.md §5)
+- Risk engines receive MarkPriceRecord via CMP/UDP.
+- Recorder connects as DXS consumer for archival (DXS.md §8).
+- WalWriter from rsx-dxs crate (DXS.md §3).
+- DxsReplay server from rsx-dxs crate (DXS.md §5).
 - SPSC rings from source connectors to aggregation loop
 - System-level: mark price stale -> risk falls back to
   index price (RISK.md §4)

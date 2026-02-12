@@ -92,3 +92,12 @@ fn subscribe_bbo_and_depth_channels() {
     assert!(mgr.has_bbo(1, 100));
     assert!(mgr.has_depth(1, 100));
 }
+
+#[test]
+fn subscribe_trades_channel() {
+    let mut mgr = SubscriptionManager::new();
+    mgr.subscribe(1, 100, CHANNEL_TRADES, 10);
+    assert!(mgr.has_trades(1, 100));
+    assert!(!mgr.has_bbo(1, 100));
+    assert!(!mgr.has_depth(1, 100));
+}

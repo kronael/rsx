@@ -1,3 +1,17 @@
+## CMP Protocol TODOs
+
+- Don't send symbol_id in every CMP message. Instead,
+  establish symbol during handshake or use a setup frame.
+  symbol_id is per-stream, not per-message. Saves 4 bytes
+  per record and simplifies wire format.
+- Send events directly as WAL records (repr(C) structs)
+  through the entire pipeline. No parsing/converting
+  between 4 different type layers. Book Event → WAL record
+  once, then WAL record flows unchanged to CMP, WAL, and
+  downstream consumers.
+
+## References
+
 https://chessbr.medium.com/building-an-exchange-in-rust-part-1-78ab153864d7
 https://github.com/MellowYarker/RustX
 https://github.com/barter-rs/barter-rs

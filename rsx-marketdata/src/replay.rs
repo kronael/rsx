@@ -25,12 +25,16 @@ pub struct ReplayResult {
     pub last_seq: u64,
 }
 
+/// Blocking wrapper. Creates a single-threaded tokio
+/// runtime, runs replay, returns when caught up.
 pub fn run_replay_bootstrap_blocking(
     stream_id: u32,
     replay_addr: String,
     tip_file: PathBuf,
 ) -> std::io::Result<ReplayResult> {
-    let rt = tokio::runtime::Runtime::new()?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
     rt.block_on(run_replay_bootstrap(
         stream_id,
         replay_addr,
@@ -38,7 +42,9 @@ pub fn run_replay_bootstrap_blocking(
     ))
 }
 
-async fn run_replay_bootstrap(
+/// Async replay: connect once, consume records until
+/// CaughtUp, then return.
+pub async fn run_replay_bootstrap(
     stream_id: u32,
     replay_addr: String,
     tip_file: PathBuf,
@@ -50,37 +56,33 @@ async fn run_replay_bootstrap(
         None,
     )?;
 
-    let events = std::sync::Arc::new(
-        std::sync::Mutex::new(Vec::new()),
-    );
-    let caught_up = std::sync::Arc::new(
-        std::sync::Mutex::new(false),
-    );
-    let last_seq = std::sync::Arc::new(
-        std::sync::Mutex::new(0u64),
-    );
+    let mut events = Vec::new();
+    let mut caught_up = false;
+    let mut last_seq = 0u64;
 
-    let events_clone = events.clone();
-    let caught_up_clone = caught_up.clone();
-    let last_seq_clone = last_seq.clone();
+    // run_once callback borrows local state via raw
+    // pointers. Safe because run_once is synchronous
+    // w.r.t. the callback — it calls it inline on the
+    // same task, never across threads.
+    let ev_ptr = &mut events as *mut Vec<ReplayEvent>;
+    let cu_ptr = &mut caught_up as *mut bool;
+    let ls_ptr = &mut last_seq as *mut u64;
 
     consumer
-        .run(move |record: RawWalRecord| {
-            // SAFETY: recover from mutex poison (replay is best-effort)
-            let mut evs = events_clone
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut cu = caught_up_clone
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut ls = last_seq_clone
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+        .run_once(move |record: RawWalRecord| {
+            // SAFETY: callback runs inline on same
+            // thread/task as the caller. Pointers are
+            // valid for the duration of run_once.
+            let evs = unsafe { &mut *ev_ptr };
+            let cu = unsafe { &mut *cu_ptr };
+            let ls = unsafe { &mut *ls_ptr };
 
             match record.header.record_type {
                 RECORD_ORDER_INSERTED => {
                     if record.payload.len()
-                        >= std::mem::size_of::<OrderInsertedRecord>()
+                        >= std::mem::size_of::<
+                            OrderInsertedRecord,
+                        >()
                     {
                         let rec = unsafe {
                             std::ptr::read_unaligned(
@@ -89,7 +91,8 @@ async fn run_replay_bootstrap(
                             )
                         };
                         evs.push(ReplayEvent {
-                            record_type: RECORD_ORDER_INSERTED,
+                            record_type:
+                                RECORD_ORDER_INSERTED,
                             insert: Some(rec),
                             cancel: None,
                             fill: None,
@@ -99,7 +102,9 @@ async fn run_replay_bootstrap(
                 }
                 RECORD_ORDER_CANCELLED => {
                     if record.payload.len()
-                        >= std::mem::size_of::<OrderCancelledRecord>()
+                        >= std::mem::size_of::<
+                            OrderCancelledRecord,
+                        >()
                     {
                         let rec = unsafe {
                             std::ptr::read_unaligned(
@@ -108,7 +113,8 @@ async fn run_replay_bootstrap(
                             )
                         };
                         evs.push(ReplayEvent {
-                            record_type: RECORD_ORDER_CANCELLED,
+                            record_type:
+                                RECORD_ORDER_CANCELLED,
                             insert: None,
                             cancel: Some(rec),
                             fill: None,
@@ -118,7 +124,9 @@ async fn run_replay_bootstrap(
                 }
                 RECORD_FILL => {
                     if record.payload.len()
-                        >= std::mem::size_of::<FillRecord>()
+                        >= std::mem::size_of::<
+                            FillRecord,
+                        >()
                     {
                         let rec = unsafe {
                             std::ptr::read_unaligned(
@@ -137,7 +145,9 @@ async fn run_replay_bootstrap(
                 }
                 RECORD_CAUGHT_UP => {
                     if record.payload.len()
-                        >= std::mem::size_of::<CaughtUpRecord>()
+                        >= std::mem::size_of::<
+                            CaughtUpRecord,
+                        >()
                     {
                         let rec = unsafe {
                             std::ptr::read_unaligned(
@@ -148,28 +158,18 @@ async fn run_replay_bootstrap(
                         *cu = true;
                         *ls = rec.live_seq;
                         info!(
-                            "replay caught up at seq={}",
+                            "replay caught up at \
+                             seq={}",
                             rec.live_seq
                         );
                     }
+                    return false;
                 }
                 _ => {}
             }
+            true
         })
         .await?;
-
-    // SAFETY: Arc::try_unwrap succeeds because consumer.run()
-    // has returned and all clones are dropped
-    let events = std::sync::Arc::try_unwrap(events)
-        .unwrap()
-        .into_inner()
-        .unwrap_or_else(|e| e.into_inner());
-    let caught_up = *caught_up
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let last_seq = *last_seq
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
 
     Ok(ReplayResult {
         events,
@@ -177,4 +177,3 @@ async fn run_replay_bootstrap(
         last_seq,
     })
 }
-

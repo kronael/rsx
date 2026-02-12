@@ -9,16 +9,14 @@ fans out events. See `specs/v1/MATCHING.md`.
 | File | Purpose |
 |------|---------|
 | `main.rs` | Binary: CMP setup, WAL init, main loop, event routing |
-| `wire.rs` | `OrderMessage`, `EventMessage` -- CMP wire types |
+| `wire.rs` | `OrderMessage` -- CMP wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` -- sliding-window duplicate detection |
-| `fanout.rs` | `drain_and_fanout()` -- SPSC ring routing (future tile mode) |
 | `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` -- Postgres config polling |
 | `wal_integration.rs` | `write_events_to_wal()`, `flush_if_due()` |
 
 ## Key Types
 
 - `OrderMessage` -- `#[repr(C)]` inbound order from Risk
-- `EventMessage` -- outbound event enum for SPSC fanout
 - `DedupTracker` -- HashMap + VecDeque for 5-minute dedup
 - `ScheduledConfig` -- config version from database
 

@@ -28,7 +28,10 @@ Outputs:
 
 ## Config
 
-- Env-only: symbol_id, tick/lot, decimals
+- Env-only: symbol_id, tick/lot, decimals (base config).
+- Optional Postgres config polling (every 10 minutes) to
+  apply scheduled symbol config updates when DATABASE_URL
+  is set.
 
 ## Notes
 

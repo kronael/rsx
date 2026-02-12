@@ -51,7 +51,7 @@ Transports:
   (Gateway↔Risk↔ME). One record per datagram or TCP byte stream.
 - **Within each process:** tiles (pinned threads) + SPSC
   rings (rtrb, 50-170ns) for internal handoff only.
-- **DXS:** WAL streaming to consumers (recorder, mark).
+- **DXS:** WAL streaming to consumers (recorder, marketdata).
   Transport is WAL/TCP on the cold path.
 
 See `TILES.md` for tile pattern, `NETWORK.md` for process

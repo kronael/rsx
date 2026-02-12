@@ -24,7 +24,7 @@ fn aggregate_single_source_uses_price_directly() {
     let evt = aggregate(&mut state, sp(0, 50000, now), now, 1);
     assert!(evt.is_some());
     assert_eq!(state.mark_price, 50000);
-    assert_eq!(evt.unwrap().mark_price, 50000);
+    assert_eq!(evt.unwrap().mark_price, rsx_types::Price(50000));
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn sweep_reaggregates_and_publishes() {
     let evt = sweep_stale(&mut state, t1, 5);
     assert!(evt.is_some());
     let e = evt.unwrap();
-    assert_eq!(e.mark_price, 300);
+    assert_eq!(e.mark_price, rsx_types::Price(300));
     assert_eq!(e.symbol_id, 5);
     assert_eq!(state.source_count, 1);
 }

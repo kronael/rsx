@@ -184,6 +184,13 @@ pub async fn ws_read_frame(
         )
     };
 
+    if payload_len > 4096 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame exceeds 4096 bytes",
+        ));
+    }
+
     let mask_key = if masked {
         let mk = vec![0u8; 4];
         let (res, mk) = stream.read_exact(mk).await;
@@ -216,9 +223,18 @@ pub async fn ws_write_text(
     stream: &mut TcpStream,
     data: &[u8],
 ) -> io::Result<()> {
+    ws_write_frame(stream, 0x1, data).await
+}
+
+/// Write a WebSocket frame with provided opcode.
+pub async fn ws_write_frame(
+    stream: &mut TcpStream,
+    opcode: u8,
+    data: &[u8],
+) -> io::Result<()> {
     let mut frame =
         Vec::with_capacity(10 + data.len());
-    frame.push(0x81); // FIN + text opcode
+    frame.push(0x80 | (opcode & 0x0F)); // FIN + opcode
 
     if data.len() <= 125 {
         frame.push(data.len() as u8);

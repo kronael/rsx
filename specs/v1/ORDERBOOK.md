@@ -939,7 +939,7 @@ fn update_positions_on_fill(book: &mut Orderbook,
 Active user_id lifecycle:
 - Assign on first order for this symbol (risk supplies mapping).
 - Reclaim only when `net_qty == 0 && order_count == 0` for a grace
-  period (300s) to avoid churn. Grace period is disabled
+  period (60s) to avoid churn. Grace period is disabled
   during WAL replay (reclamation deferred until live).
 - Reuse reclaimed slots via free list.
 

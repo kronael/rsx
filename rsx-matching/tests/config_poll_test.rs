@@ -4,29 +4,42 @@ use rsx_matching::config::write_applied_config;
 use rsx_matching::config::ScheduledConfig;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+use testcontainers::runners::AsyncRunner;
+use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::NoTls;
 
-async fn setup_db() -> tokio_postgres::Client {
-    let url = std::env::var("RSX_TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://localhost/rsx_test".to_string());
-    let (client, conn) = tokio_postgres::connect(&url, NoTls)
-        .await
-        .expect("connect");
+async fn setup_db() -> (
+    testcontainers::ContainerAsync<Postgres>,
+    tokio_postgres::Client,
+) {
+    let container: testcontainers::ContainerAsync<Postgres> =
+        Postgres::default().start().await.unwrap();
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+    let connstr = format!(
+        "host=localhost port={port} user=postgres \
+         password=postgres dbname=postgres"
+    );
+    let (client, conn) =
+        tokio_postgres::connect(&connstr, NoTls)
+            .await
+            .unwrap();
     tokio::spawn(async move {
         let _ = conn.await;
     });
 
     let migration = include_str!("../migrations/001_symbol_config.sql");
-    client.batch_execute(migration).await.expect("migration");
-
-    client.execute("DELETE FROM symbol_config_schedule", &[])
-        .await
-        .expect("cleanup");
-    client.execute("DELETE FROM symbol_config_applied", &[])
-        .await
-        .expect("cleanup");
+    client.batch_execute(migration).await.unwrap();
 
     client
+        .execute("DELETE FROM symbol_config_schedule", &[])
+        .await
+        .unwrap();
+    client
+        .execute("DELETE FROM symbol_config_applied", &[])
+        .await
+        .unwrap();
+
+    (container, client)
 }
 
 fn now_ms() -> u64 {
@@ -38,7 +51,7 @@ fn now_ms() -> u64 {
 
 #[tokio::test]
 async fn poll_returns_empty_when_no_configs() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let current_version = 0u64;
     let now = now_ms();
@@ -52,7 +65,7 @@ async fn poll_returns_empty_when_no_configs() {
 
 #[tokio::test]
 async fn poll_returns_config_when_effective() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
     let past = now - 60_000;
@@ -87,7 +100,7 @@ async fn poll_returns_config_when_effective() {
 
 #[tokio::test]
 async fn poll_ignores_future_configs() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
     let future = now + 60_000;
@@ -119,7 +132,7 @@ async fn poll_ignores_future_configs() {
 
 #[tokio::test]
 async fn poll_returns_multiple_configs_in_order() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
     let past1 = now - 120_000;
@@ -156,7 +169,7 @@ async fn poll_returns_multiple_configs_in_order() {
 
 #[tokio::test]
 async fn poll_filters_by_current_version() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
     let past = now - 60_000;
@@ -191,7 +204,7 @@ async fn poll_filters_by_current_version() {
 
 #[tokio::test]
 async fn write_applied_config_inserts_new() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
     let ts_ns = (now * 1_000_000) as u64;
@@ -221,7 +234,7 @@ async fn write_applied_config_inserts_new() {
 
 #[tokio::test]
 async fn write_applied_config_updates_existing() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
     let ts_ns = (now * 1_000_000) as u64;
@@ -262,7 +275,7 @@ async fn write_applied_config_updates_existing() {
 
 #[tokio::test]
 async fn load_applied_config_returns_none_when_empty() {
-    let client = setup_db().await;
+    let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
 
     let loaded = load_applied_config(&client, symbol_id)

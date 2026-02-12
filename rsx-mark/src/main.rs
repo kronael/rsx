@@ -26,6 +26,31 @@ const FLUSH_INTERVAL: Duration =
 const SWEEP_INTERVAL: Duration =
     Duration::from_secs(1);
 
+fn log_effective_mark_config(config: &MarkConfig) {
+    info!(
+        "mark effective config: listen_addr={} wal_dir={} stream_id={} staleness_ns={} price_scale={} symbol_count={} source_count={}",
+        config.listen_addr,
+        config.wal_dir,
+        config.stream_id,
+        config.staleness_ns,
+        config.price_scale,
+        config.symbol_map.len(),
+        config.sources.len(),
+    );
+    for (sym, sid) in &config.symbol_map {
+        info!("mark symbol_map {}={}", sym, sid);
+    }
+    for src in &config.sources {
+        info!(
+            "mark source name={} ws_url={} reconnect_base_ms={} reconnect_max_ms={}",
+            src.name,
+            src.ws_url,
+            src.reconnect_base_ms,
+            src.reconnect_max_ms,
+        );
+    }
+}
+
 fn run(config: &MarkConfig) -> io::Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -226,6 +251,7 @@ fn main() {
         "mark aggregator starting, listen={}",
         config.listen_addr
     );
+    log_effective_mark_config(&config);
 
     loop {
         match run(&config) {

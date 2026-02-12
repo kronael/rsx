@@ -1,12 +1,15 @@
 use rsx_types::Side;
 use rustc_hash::FxHashMap;
 
+pub const RECLAIM_GRACE_NS: u64 = 60_000_000_000;
+
 #[derive(Clone, Debug, Default)]
 pub struct UserState {
     pub user_id: u32,
     pub net_qty: i64,
     pub order_count: u16,
     pub _pad: [u8; 2],
+    pub zero_since_ns: u64,
 }
 
 impl UserState {
@@ -16,7 +19,22 @@ impl UserState {
             net_qty: 0,
             order_count: 0,
             _pad: [0; 2],
+            zero_since_ns: 0,
         }
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.net_qty == 0 && self.order_count == 0
+    }
+
+    pub fn mark_zero_if_idle(&mut self, now_ns: u64) {
+        if self.is_idle() && self.zero_since_ns == 0 {
+            self.zero_since_ns = now_ns;
+        }
+    }
+
+    pub fn clear_zero_mark(&mut self) {
+        self.zero_since_ns = 0;
     }
 }
 
@@ -28,6 +46,7 @@ pub fn get_or_assign_user(
     user_id: u32,
 ) -> u16 {
     if let Some(&idx) = user_map.get(&user_id) {
+        user_states[idx as usize].clear_zero_mark();
         return idx;
     }
     let idx = if let Some(free) = user_free_list.pop() {
@@ -47,6 +66,39 @@ pub fn get_or_assign_user(
     };
     user_map.insert(user_id, idx);
     idx
+}
+
+pub fn try_reclaim(
+    user_states: &mut Vec<UserState>,
+    user_map: &mut FxHashMap<u32, u16>,
+    user_free_list: &mut Vec<u16>,
+    now_ns: u64,
+    replay_mode: bool,
+) -> Option<u32> {
+    if replay_mode {
+        return None;
+    }
+    for i in 0..user_states.len() {
+        let s = &user_states[i];
+        if s.user_id == 0 {
+            continue;
+        }
+        if !s.is_idle() {
+            continue;
+        }
+        let z = s.zero_since_ns;
+        if z == 0 {
+            continue;
+        }
+        if now_ns.saturating_sub(z) >= RECLAIM_GRACE_NS {
+            let uid = s.user_id;
+            user_map.remove(&uid);
+            user_states[i] = UserState::default();
+            user_free_list.push(i as u16);
+            return Some(uid);
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]

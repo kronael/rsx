@@ -25,12 +25,37 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::info;
 
+fn log_effective_marketdata_config(
+    config: &rsx_marketdata::config::MarketDataConfig,
+) {
+    info!(
+        "marketdata effective config: listen={} max_symbols={} snapshot_depth={} ring_size={} book_capacity={} mid_price={} tick_size={} lot_size={} price_decimals={} qty_decimals={} max_outbound={} replay_addr={} stream_id={} tip_file={} heartbeat_interval_ms={} heartbeat_timeout_ms={}",
+        config.listen_addr,
+        config.max_symbols,
+        config.snapshot_depth,
+        config.spsc_ring_size,
+        config.book_capacity,
+        config.mid_price,
+        config.tick_size,
+        config.lot_size,
+        config.price_decimals,
+        config.qty_decimals,
+        config.max_outbound,
+        config.replay_addr.as_deref().unwrap_or(""),
+        config.stream_id,
+        config.tip_file,
+        config.heartbeat_interval_ms,
+        config.heartbeat_timeout_ms,
+    );
+}
+
 fn main() {
     install_panic_handler();
 
     tracing_subscriber::fmt::init();
 
     let config = load_marketdata_config();
+    log_effective_marketdata_config(&config);
 
     let base_config = SymbolConfig {
         symbol_id: 0,
@@ -68,13 +93,13 @@ fn main() {
                 );
                 for event in result.events {
                     if let Some(rec) = event.insert {
-                        state.ensure_book(rec.symbol_id, rec.price);
+                        state.ensure_book(rec.symbol_id, rec.price.0);
                         if let Some(book) =
                             state.book_mut(rec.symbol_id)
                         {
                             book.apply_insert_by_id(
-                                rec.price,
-                                rec.qty,
+                                rec.price.0,
+                                rec.qty.0,
                                 rec.side,
                                 rec.user_id,
                                 rec.ts_ns,
@@ -99,7 +124,7 @@ fn main() {
                             book.apply_fill_by_order_id(
                                 rec.maker_order_id_hi,
                                 rec.maker_order_id_lo,
-                                rec.qty,
+                                rec.qty.0,
                                 rec.ts_ns,
                             );
                         }
@@ -118,17 +143,20 @@ fn main() {
         env::var("RSX_MKT_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9103".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_MKT_CMP_ADDR");
     let me_addr: SocketAddr =
         env::var("RSX_ME_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9100".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_ME_CMP_ADDR");
 
     // CMP/UDP: receive events from ME
     let mut cmp_receiver = CmpReceiver::new(
         mkt_addr, me_addr, 0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind marketdata CMP");
 
     info!(
@@ -141,6 +169,7 @@ fn main() {
         monoio::FusionDriver,
     >::new()
     .build()
+    // SAFETY: fail-fast at startup
     .expect("failed to build monoio runtime");
 
     rt.block_on(async move {
@@ -323,19 +352,19 @@ fn handle_insert(
     max_outbound: usize,
 ) {
     let mut st = state.borrow_mut();
-    st.ensure_book(rec.symbol_id, rec.price);
+    st.ensure_book(rec.symbol_id, rec.price.0);
     let (side, price) = match st.book_mut(rec.symbol_id) {
         Some(book) => {
             book.apply_insert_by_id(
-                rec.price,
-                rec.qty,
+                rec.price.0,
+                rec.qty.0,
                 rec.side,
                 rec.user_id,
                 rec.ts_ns,
                 rec.order_id_hi,
                 rec.order_id_lo,
             );
-            (rec.side, rec.price)
+            (rec.side, rec.price.0)
         }
         None => return,
     };
@@ -385,13 +414,13 @@ fn handle_fill(
             let update = book.apply_fill_by_order_id(
                 rec.maker_order_id_hi,
                 rec.maker_order_id_lo,
-                rec.qty,
+                rec.qty.0,
                 rec.ts_ns,
             );
             if update.is_some() {
                 let trade = book.make_trade(
-                    rec.price,
-                    rec.qty,
+                    rec.price.0,
+                    rec.qty.0,
                     rec.taker_side,
                     rec.ts_ns,
                 );
@@ -413,21 +442,21 @@ fn handle_fill(
     if let Some(msg) = trade_msg {
         let clients = st.clients_for_symbol(rec.symbol_id);
         for client_id in clients {
-                if st.has_depth(client_id, rec.symbol_id) {
-                    if !st.push_to_client(
+            if st.has_trades(client_id, rec.symbol_id) {
+                if !st.push_to_client(
+                    client_id,
+                    msg.clone(),
+                    max_outbound,
+                ) {
+                    let depth = st.client_depth(client_id);
+                    st.send_snapshot_to_client(
                         client_id,
-                        msg.clone(),
+                        rec.symbol_id,
+                        depth,
                         max_outbound,
-                    ) {
-                        let depth = st.client_depth(client_id);
-                        st.send_snapshot_to_client(
-                            client_id,
-                            rec.symbol_id,
-                            depth,
-                            max_outbound,
-                        );
-                    }
+                    );
                 }
+            }
         }
     }
 }

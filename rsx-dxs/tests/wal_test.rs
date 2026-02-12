@@ -1,4 +1,6 @@
 use rsx_dxs::*;
+use rsx_types::Price;
+use rsx_types::Qty;
 use tempfile::TempDir;
 
 fn make_fill(seq: u64) -> FillRecord {
@@ -13,8 +15,8 @@ fn make_fill(seq: u64) -> FillRecord {
         taker_order_id_lo: seq,
         maker_order_id_hi: 0,
         maker_order_id_lo: seq + 100,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,

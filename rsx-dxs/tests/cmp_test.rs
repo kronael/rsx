@@ -1,3 +1,5 @@
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::encode_utils::compute_crc32;
@@ -8,30 +10,18 @@ use rsx_dxs::records::RECORD_NAK;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::StatusMessage;
 use rsx_dxs::wal::WalWriter;
-use std::io;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-fn bind_udp(addr: &str) -> Option<UdpSocket> {
-    match UdpSocket::bind(addr) {
-        Ok(sock) => Some(sock),
-        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => None,
-        Err(_) => None,
-    }
-}
-
-fn loopback_pair() -> Option<(CmpSender, CmpReceiver)> {
+fn loopback_pair() -> (CmpSender, CmpReceiver) {
     let wal_dir = PathBuf::from("./tmp/cmp_test_wal");
     let _ = std::fs::create_dir_all(&wal_dir);
 
     // Bind receiver first to get its address
-    let tmp_sock = match bind_udp("127.0.0.1:0") {
-        Some(s) => s,
-        None => return None,
-    };
+    let tmp_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = tmp_sock.local_addr().unwrap();
     drop(tmp_sock);
 
@@ -40,12 +30,12 @@ fn loopback_pair() -> Option<(CmpSender, CmpReceiver)> {
         "127.0.0.1:1".parse().unwrap(),
         1,
     )
-    .ok()?;
+    .unwrap();
     let recv_addr = tmp_recv.local_addr().unwrap();
     drop(tmp_recv);
 
     // Create sender targeting receiver
-    let sender = CmpSender::new(recv_addr, 1, &wal_dir).ok()?;
+    let sender = CmpSender::new(recv_addr, 1, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
 
     // Recreate receiver with correct sender_addr
@@ -54,9 +44,9 @@ fn loopback_pair() -> Option<(CmpSender, CmpReceiver)> {
         sender_addr,
         1,
     )
-    .ok()?;
+    .unwrap();
 
-    Some((sender, receiver))
+    (sender, receiver)
 }
 
 fn fill_payload(seq: u64) -> FillRecord {
@@ -71,8 +61,8 @@ fn fill_payload(seq: u64) -> FillRecord {
         taker_order_id_lo: 0,
         maker_order_id_hi: 0,
         maker_order_id_lo: 0,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -92,9 +82,7 @@ fn as_bytes<T>(val: &T) -> &[u8] {
 
 #[test]
 fn send_recv_roundtrip() {
-    let Some((mut sender, mut receiver)) = loopback_pair() else {
-        return;
-    };
+    let (mut sender, mut receiver) = loopback_pair();
     let mut fill = fill_payload(1);
     sender.send(&mut fill).unwrap();
 
@@ -114,15 +102,13 @@ fn send_recv_roundtrip() {
         )
     };
     assert_eq!(decoded.seq, 1);
-    assert_eq!(decoded.price, 50000);
-    assert_eq!(decoded.qty, 100);
+    assert_eq!(decoded.price, Price(50000));
+    assert_eq!(decoded.qty, Qty(100));
 }
 
 #[test]
 fn sender_seq_increments() {
-    let Some((mut sender, _receiver)) = loopback_pair() else {
-        return;
-    };
+    let (mut sender, _receiver) = loopback_pair();
     assert_eq!(sender.next_seq(), 1);
     let mut fill = fill_payload(1);
     sender.send(&mut fill).unwrap();
@@ -134,9 +120,7 @@ fn sender_seq_increments() {
 
 #[test]
 fn status_message_updates_sender_window() {
-    let Some((mut sender, _receiver)) = loopback_pair() else {
-        return;
-    };
+    let (mut sender, _receiver) = loopback_pair();
     let msg = StatusMessage {
         consumption_seq: 42,
         receiver_window: 1024,
@@ -148,9 +132,7 @@ fn status_message_updates_sender_window() {
 
 #[test]
 fn flow_control_stalls_sender() {
-    let Some((mut sender, _receiver)) = loopback_pair() else {
-        return;
-    };
+    let (mut sender, _receiver) = loopback_pair();
     let msg = StatusMessage {
         consumption_seq: 0,
         receiver_window: 1,
@@ -169,9 +151,7 @@ fn flow_control_stalls_sender() {
 
 #[test]
 fn receiver_expected_seq_advances() {
-    let Some((mut sender, mut receiver)) = loopback_pair() else {
-        return;
-    };
+    let (mut sender, mut receiver) = loopback_pair();
     assert_eq!(receiver.expected_seq(), 1);
 
     let mut fill = fill_payload(1);
@@ -183,9 +163,7 @@ fn receiver_expected_seq_advances() {
 
 #[test]
 fn multiple_records_in_order() {
-    let Some((mut sender, mut receiver)) = loopback_pair() else {
-        return;
-    };
+    let (mut sender, mut receiver) = loopback_pair();
     for i in 1..=5u64 {
         let mut fill = fill_payload(i);
         sender.send(&mut fill).unwrap();
@@ -208,31 +186,24 @@ fn multiple_records_in_order() {
 fn crc_mismatch_rejected() {
     let recv_addr: SocketAddr =
         "127.0.0.1:0".parse().unwrap();
-    let sock = match bind_udp("127.0.0.1:0") {
-        Some(s) => s,
-        None => return,
-    };
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let sender_addr = sock.local_addr().unwrap();
 
-    let tmp = match CmpReceiver::new(
+    let tmp = CmpReceiver::new(
         recv_addr,
         sender_addr,
         1,
-    ) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    )
+    .unwrap();
     let recv_local = tmp.local_addr().unwrap();
     drop(tmp);
 
-    let mut receiver = match CmpReceiver::new(
+    let mut receiver = CmpReceiver::new(
         recv_local,
         sender_addr,
         1,
-    ) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    )
+    .unwrap();
 
     let fill = fill_payload(1);
     let payload = as_bytes(&fill);
@@ -264,22 +235,13 @@ fn nak_retransmit_from_wal() {
     let _ = writer.flush().unwrap();
 
     let _recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let tmp = match bind_udp("127.0.0.1:0") {
-        Some(s) => s,
-        None => return,
-    };
+    let tmp = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_local = tmp.local_addr().unwrap();
     drop(tmp);
 
-    let mut sender = match CmpSender::new(recv_local, 1, &wal_dir) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
+    let mut sender = CmpSender::new(recv_local, 1, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver = match CmpReceiver::new(recv_local, sender_addr, 1) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    let mut receiver = CmpReceiver::new(recv_local, sender_addr, 1).unwrap();
 
     // Send NAK to sender
     let nak = Nak { from_seq: 1, count: 1, _pad1: [0u8; 48] };
@@ -291,10 +253,7 @@ fn nak_retransmit_from_wal() {
     buf[..16].copy_from_slice(&hdr_bytes);
     buf[16..].copy_from_slice(payload);
 
-    let sock = match bind_udp("127.0.0.1:0") {
-        Some(s) => s,
-        None => return,
-    };
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     sock.send_to(&buf, sender_addr).unwrap();
 
     // Process control and expect retransmit at receiver

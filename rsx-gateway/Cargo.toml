@@ -26,4 +26,9 @@ rustc-hash = "2"
 jsonwebtoken = "9"
 serde = { version = "1", features = ["derive"] }
 
+[[bench]]
+name = "gateway_bench"
+harness = false
+
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }

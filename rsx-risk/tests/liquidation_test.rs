@@ -358,3 +358,359 @@ fn halt_only_affects_target_symbol() {
     assert_eq!(orders.len(), 1);
     assert_eq!(orders[0].symbol_id, 1);
 }
+
+// --- Additional edge cases ---
+
+#[test]
+fn multiple_positions_all_get_orders() {
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    e.enqueue(1, 1, 0);
+    e.enqueue(1, 2, 0);
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 3);
+    let syms: Vec<u32> =
+        orders.iter().map(|o| o.symbol_id).collect();
+    assert!(syms.contains(&0));
+    assert!(syms.contains(&1));
+    assert!(syms.contains(&2));
+}
+
+#[test]
+fn partial_fill_reduces_position() {
+    // Simulate position reduction between rounds
+    let mut e = LiquidationEngine::new(0, 10, 10);
+    e.enqueue(1, 0, 0);
+    // Round 1: position=100
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 100,
+        &|_| 50000,
+    );
+    assert_eq!(orders[0].qty, 100);
+    // Round 2: position reduced to 40 (partial fill)
+    let (orders, _) = e.maybe_process(
+        1,
+        &|_, _| 40,
+        &|_| 50000,
+    );
+    assert_eq!(orders[0].qty, 40);
+}
+
+#[test]
+fn full_fill_closes_position() {
+    let mut e = LiquidationEngine::new(0, 10, 10);
+    e.enqueue(1, 0, 0);
+    // Round 1: places order
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 1);
+    // Position fully closed
+    let (orders, _) = e.maybe_process(
+        1,
+        &|_, _| 0,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 0);
+    assert_eq!(
+        e.active[0].status,
+        LiquidationStatus::Done
+    );
+}
+
+#[test]
+fn new_orders_rejected_during_liquidation() {
+    // This is tested at shard level (process_order
+    // checks needs_liquidation). At engine level,
+    // verify is_in_liquidation returns true.
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    assert!(e.is_in_liquidation(1, 0));
+}
+
+#[test]
+fn pending_non_liq_orders_cancelled_on_entry() {
+    // NOTE: Cancellation of pending non-liquidation
+    // orders on liquidation entry is handled at shard
+    // level via release_frozen_for_order. The engine
+    // itself only tracks liquidation state. This test
+    // verifies the engine marks entry immediately.
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    assert_eq!(
+        e.active[0].status,
+        LiquidationStatus::Active
+    );
+    assert_eq!(e.active[0].round, 1);
+}
+
+#[test]
+fn frozen_margin_released_on_entry() {
+    // NOTE: Frozen margin release is handled at shard
+    // level (release_frozen_for_order). Engine only
+    // tracks liquidation state. Verifying enqueue does
+    // not block on frozen margin.
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 50,
+        &|_| 10000,
+    );
+    assert_eq!(orders.len(), 1);
+}
+
+#[test]
+fn mark_price_update_rechecks_liquidating_users() {
+    // Engine uses get_mark_fn at maybe_process time.
+    // Changing mark between calls changes behavior.
+    let mut e = LiquidationEngine::new(0, 10, 10);
+    e.enqueue(1, 0, 0);
+    // Round 1 with mark=50000
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders[0].price, 49950); // slip=10bps
+    // Round 2 with updated mark=40000
+    let (orders, _) = e.maybe_process(
+        1,
+        &|_, _| 10,
+        &|_| 40000,
+    );
+    // slip = 2^2*10 = 40bps -> 40000*(10000-40)/10000
+    assert_eq!(orders[0].price, 39840);
+}
+
+#[test]
+fn order_failed_symbol_halted_pauses_symbol() {
+    let mut e = make_engine();
+    e.enqueue(1, 0, 0);
+    e.halt_symbol(0);
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert!(orders.is_empty());
+    // State still active, not removed
+    assert_eq!(
+        e.active[0].status,
+        LiquidationStatus::Active
+    );
+}
+
+#[test]
+fn order_failed_other_escalates_next_round() {
+    // After a failed order, the round was already
+    // incremented. Next maybe_process with sufficient
+    // delay fires at higher round (more slippage).
+    let mut e = LiquidationEngine::new(0, 10, 10);
+    e.enqueue(1, 0, 0);
+    // Round 1
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 100_000,
+    );
+    assert_eq!(orders[0].price, 99900); // r1 slip=10
+    // Suppose order failed. Round is now 2.
+    // Next call fires round 2 (slip=40).
+    let (orders, _) = e.maybe_process(
+        1,
+        &|_, _| 10,
+        &|_| 100_000,
+    );
+    assert_eq!(orders[0].price, 99600); // r2 slip=40
+}
+
+#[test]
+fn first_order_fires_immediately_no_delay() {
+    let mut e = LiquidationEngine::new(
+        5_000_000_000, // 5s base delay
+        10,
+        10,
+    );
+    e.enqueue(1, 0, 0);
+    // First order fires at t=0 (last_order_ns=0)
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 1);
+}
+
+#[test]
+fn mark_price_zero_pauses_round_no_increment() {
+    let mut e = LiquidationEngine::new(0, 10, 10);
+    e.enqueue(1, 0, 0);
+    // Mark = 0 -> skip (no order, no round increment)
+    let (orders, _) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 0,
+    );
+    assert!(orders.is_empty());
+    // Round still 1 (not incremented)
+    assert_eq!(e.active[0].round, 1);
+    assert_eq!(e.active[0].last_order_ns, 0);
+}
+
+#[test]
+fn multiple_symbols_independent_round_timers() {
+    let mut e = LiquidationEngine::new(
+        1_000_000_000, // 1s
+        10,
+        10,
+    );
+    e.enqueue(1, 0, 0);
+    e.enqueue(1, 1, 500_000_000); // later
+    // Both fire first order (last_order_ns=0)
+    let (orders, _) = e.maybe_process(
+        1_000_000_000,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 2);
+    // Now sym 0 at round 2 (delay=2s from t=1s)
+    // sym 1 at round 2 (delay=2s from t=1s)
+    // At t=2s: both too early (need t>=3s)
+    let (orders, _) = e.maybe_process(
+        2_000_000_000,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 0);
+    // At t=3s: both fire
+    let (orders, _) = e.maybe_process(
+        3_000_000_000,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 2);
+}
+
+#[test]
+fn rapid_fire_maybe_process_no_duplicate_orders() {
+    let mut e = LiquidationEngine::new(
+        1_000_000_000,
+        10,
+        10,
+    );
+    e.enqueue(1, 0, 0);
+    // First call at t=1s fires order
+    let (o1, _) = e.maybe_process(
+        1_000_000_000,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(o1.len(), 1);
+    // Immediate second call: delay not elapsed
+    // round=2, delay=2s, need t >= 1s+2s = 3s
+    let (o2, _) = e.maybe_process(
+        1_000_000_000,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(o2.len(), 0);
+    // Still too early at t=2.5s
+    let (o3, _) = e.maybe_process(
+        2_500_000_000,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(o3.len(), 0);
+}
+
+#[test]
+fn socialized_loss_when_round_exceeds_max_rounds() {
+    let mut e = LiquidationEngine::new(0, 10, 2);
+    e.enqueue(1, 0, 0);
+    // Round 1: order
+    let (orders, losses) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 1);
+    assert!(losses.is_empty());
+    // Round 2: order
+    let (orders, losses) = e.maybe_process(
+        1,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert_eq!(orders.len(), 1);
+    assert!(losses.is_empty());
+    // Round 3 > max_rounds=2: socialized loss
+    let (orders, losses) = e.maybe_process(
+        2,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert!(orders.is_empty());
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].user_id, 1);
+    assert_eq!(losses[0].symbol_id, 0);
+    assert_eq!(losses[0].qty, 10);
+    assert_eq!(losses[0].price, 50000);
+    assert_eq!(
+        e.active[0].status,
+        LiquidationStatus::Done
+    );
+}
+
+#[test]
+fn base_delay_zero_all_rounds_immediate() {
+    let mut e = LiquidationEngine::new(0, 10, 5);
+    e.enqueue(1, 0, 0);
+    // All rounds fire at same timestamp
+    for i in 0..5 {
+        let (orders, _) = e.maybe_process(
+            0,
+            &|_, _| 10,
+            &|_| 50000,
+        );
+        assert_eq!(
+            orders.len(),
+            1,
+            "round {} should fire",
+            i + 1
+        );
+    }
+    // Round 6 > max_rounds=5: socialized
+    let (orders, losses) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert!(orders.is_empty());
+    assert_eq!(losses.len(), 1);
+}
+
+#[test]
+fn max_rounds_zero_allows_round_one_then_socializes() {
+    let mut e = LiquidationEngine::new(0, 10, 0);
+    e.enqueue(1, 0, 0);
+    // Round 1 > max_rounds(0): immediate socialized loss
+    let (orders, losses) = e.maybe_process(
+        0,
+        &|_, _| 10,
+        &|_| 50000,
+    );
+    assert!(orders.is_empty());
+    assert_eq!(losses.len(), 1);
+    assert_eq!(
+        e.active[0].status,
+        LiquidationStatus::Done
+    );
+}

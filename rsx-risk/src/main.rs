@@ -45,11 +45,55 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+fn log_effective_risk_config(
+    config: &rsx_risk::ShardConfig,
+) {
+    info!(
+        "risk effective config: shard_id={} shard_count={} max_symbols={} replica={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
+        config.shard_id,
+        config.shard_count,
+        config.max_symbols,
+        config.replication_config.is_replica,
+        config.replication_config.lease_poll_interval_ms,
+        config.replication_config.lease_renew_interval_ms,
+        config.liquidation_config.base_delay_ns,
+        config.liquidation_config.base_slip_bps,
+        config.liquidation_config.max_rounds,
+    );
+    for sid in 0..config.max_symbols {
+        let p = &config.symbol_params[sid];
+        info!(
+            "risk symbol_config sid={} im_rate={} mm_rate={} max_leverage={} taker_fee_bps={} maker_fee_bps={}",
+            sid,
+            p.initial_margin_rate,
+            p.maintenance_margin_rate,
+            p.max_leverage,
+            config.taker_fee_bps[sid],
+            config.maker_fee_bps[sid],
+        );
+    }
+
+    info!(
+        "risk shard_routing rule='user_id % shard_count == shard_id' shard_id={} shard_count={}",
+        config.shard_id,
+        config.shard_count,
+    );
+    for user_id in 0u32..8 {
+        let owner = user_id % config.shard_count;
+        let serves = owner == config.shard_id;
+        info!(
+            "risk shard_routing_example user_id={} owner_shard={} served_here={}",
+            user_id, owner, serves
+        );
+    }
+}
+
 fn main() {
     install_panic_handler();
 
     tracing_subscriber::fmt::init();
 
+    // SAFETY: fail-fast at startup
     let config = load_shard_config()
         .expect("failed to load shard config");
     let shard_id = config.shard_id;
@@ -61,6 +105,7 @@ fn main() {
         "risk shard {} starting ({} shards, {} symbols, replica={})",
         shard_id, shard_count, max_symbols, is_replica,
     );
+    log_effective_risk_config(&config);
 
     loop {
         let result = if is_replica {
@@ -87,6 +132,7 @@ fn run_main(
     max_symbols: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
+    let shard_count = config.shard_count;
     let lease_renew_interval_ms = config.replication_config.lease_renew_interval_ms;
     let mut shard = RiskShard::new(config);
 
@@ -121,7 +167,7 @@ fn run_main(
             let state = load_from_postgres(
                 &client,
                 shard_id,
-                shard_id,
+                shard_count,
                 max_symbols,
             )
             .await?;
@@ -164,6 +210,7 @@ fn run_main(
             0,
             Path::new(&wal_dir),
         )
+        // SAFETY: fail-fast at startup
         .expect("failed to create replica tip sender")
     });
 
@@ -175,6 +222,7 @@ fn run_main(
                 ::new_current_thread()
                 .enable_all()
                 .build()
+                // SAFETY: fail-fast at startup
                 .expect("tokio rt");
             rt.block_on(async move {
                 let (client, connection) =
@@ -183,6 +231,7 @@ fn run_main(
                         tokio_postgres::NoTls,
                     )
                     .await
+                    // SAFETY: fail-fast at startup
                     .expect("pg connect for persist");
                 tokio::spawn(async move {
                     if let Err(e) = connection.await {
@@ -218,27 +267,34 @@ fn run_main(
         env::var("RSX_RISK_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CMP_ADDR");
     let gw_addr: SocketAddr =
         env::var("RSX_GW_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9102".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_GW_CMP_ADDR");
     let me_addr: SocketAddr =
         env::var("RSX_ME_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9100".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_ME_CMP_ADDR");
 
     let mut gw_receiver = CmpReceiver::new(
         risk_addr, gw_addr, 0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind risk CMP receiver");
 
     // Receive fills from ME
     let mut me_receiver = CmpReceiver::new(
-        "127.0.0.1:0".parse().expect("valid addr"), me_addr, 0,
+        // SAFETY: literal addr is always valid
+        "127.0.0.1:0".parse().expect("valid addr"),
+        me_addr, 0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind ME fill receiver");
 
     // Receive mark prices from Mark process
@@ -248,6 +304,7 @@ fn run_main(
                 "127.0.0.1:9105".into()
             })
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_MARK_CMP_ADDR");
     let mark_sender_addr: SocketAddr =
         env::var("RSX_MARK_CMP_ADDR")
@@ -255,12 +312,14 @@ fn run_main(
                 "127.0.0.1:9106".into()
             })
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_MARK_CMP_ADDR");
     let mut mark_receiver = CmpReceiver::new(
         mark_addr,
         mark_sender_addr,
         0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind mark CMP receiver");
 
     // Send validated orders to ME
@@ -269,6 +328,7 @@ fn run_main(
         0,
         Path::new(&wal_dir),
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to create ME CMP sender");
 
     // Send responses to Gateway
@@ -277,6 +337,7 @@ fn run_main(
         0,
         Path::new(&wal_dir),
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to create GW CMP sender");
 
     // SPSC rings for run_once (internal)
@@ -349,10 +410,10 @@ fn run_main(
                     let _ = bbo_prod.push(BboUpdate {
                         seq: rec.seq,
                         symbol_id: rec.symbol_id,
-                        bid_px: rec.bid_px,
-                        bid_qty: rec.bid_qty,
-                        ask_px: rec.ask_px,
-                        ask_qty: rec.ask_qty,
+                        bid_px: rec.bid_px.0,
+                        bid_qty: rec.bid_qty.0,
+                        ask_px: rec.ask_px.0,
+                        ask_qty: rec.ask_qty.0,
                     });
                 }
                 RECORD_FILL
@@ -374,8 +435,8 @@ fn run_main(
                             .taker_user_id,
                         maker_user_id: fill
                             .maker_user_id,
-                        price: fill.price,
-                        qty: fill.qty,
+                        price: fill.price.0,
+                        qty: fill.qty.0,
                         taker_side: fill.taker_side,
                         timestamp_ns: fill.ts_ns,
                     });
@@ -442,6 +503,29 @@ fn run_main(
                         &payload,
                     );
                 }
+                RECORD_ORDER_FAILED
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            OrderFailedRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const
+                                    OrderFailedRecord,
+                        )
+                    };
+                    shard.release_frozen_for_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
+                    );
+                    let _ = gw_sender.send_raw(
+                        RECORD_ORDER_FAILED,
+                        &payload,
+                    );
+                }
                 RECORD_CONFIG_APPLIED
                     if payload.len()
                         >= std::mem::size_of::<
@@ -492,7 +576,7 @@ fn run_main(
                 let _ = mark_prod.push(MarkPriceUpdate {
                     seq: rec.seq,
                     symbol_id: rec.symbol_id,
-                    price: rec.mark_price,
+                    price: rec.mark_price.0,
                 });
             }
         }
@@ -515,10 +599,10 @@ fn run_main(
                             as u8
                     }
                     rsx_risk::RejectReason::UserInLiquidation => {
-                        FailureReason::InternalError as u8
+                        FailureReason::UserInLiquidation as u8
                     }
                     rsx_risk::RejectReason::NotInShard => {
-                        FailureReason::InternalError as u8
+                        FailureReason::WrongShard as u8
                     }
                 };
                 let rec = OrderFailedRecord {
@@ -560,7 +644,12 @@ fn run_main(
                 } else {
                     0
                 },
-                _pad1: [0; 5],
+                post_only: if order.post_only {
+                    1
+                } else {
+                    0
+                },
+                _pad1: [0; 4],
                 user_id: order.user_id,
                 _pad2: 0,
                 timestamp_ns: order.timestamp_ns,
@@ -650,8 +739,10 @@ fn run_replica(
     max_symbols: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
+    let shard_count = config.shard_count;
     let mut shard = RiskShard::new(config);
 
+    // SAFETY: fail-fast at startup
     let db_url = env::var("DATABASE_URL")
         .expect("DATABASE_URL required for replica");
 
@@ -696,7 +787,7 @@ fn run_replica(
         let state = load_from_postgres(
             &client,
             shard_id,
-            shard_id,
+            shard_count,
             max_symbols,
         )
         .await?;
@@ -710,12 +801,15 @@ fn run_replica(
         env::var("RSX_ME_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9100".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_ME_CMP_ADDR");
     let mut me_receiver = CmpReceiver::new(
+        // SAFETY: literal addr is always valid
         "127.0.0.1:0".parse().expect("valid addr"),
         me_addr,
         0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind replica ME receiver");
 
     // Replica receives tip sync from main
@@ -723,15 +817,18 @@ fn run_replica(
         env::var("RSX_RISK_REPLICA_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9111".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_REPLICA_ADDR");
     let main_addr: SocketAddr =
         env::var("RSX_RISK_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CMP_ADDR");
     let mut tip_receiver = CmpReceiver::new(
         replica_addr, main_addr, 0,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind replica tip receiver");
 
     let lease_poll_interval_ms = env::var(
@@ -772,8 +869,8 @@ fn run_replica(
                     symbol_id: fill.symbol_id,
                     taker_user_id: fill.taker_user_id,
                     maker_user_id: fill.maker_user_id,
-                    price: fill.price,
-                    qty: fill.qty,
+                    price: fill.price.0,
+                    qty: fill.qty.0,
                     taker_side: fill.taker_side,
                     timestamp_ns: fill.ts_ns,
                 };
