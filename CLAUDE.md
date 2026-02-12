@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # RSX Exchange
 
 Spec-first perpetuals exchange. All specs in `specs/v1/`.
@@ -96,6 +100,8 @@ linked into their respective process binaries.
 ## Build & Dev
 
 - `cargo check` first, always (fastest feedback, no codegen)
+- Single test: `cargo test -p rsx-book -- test_name`
+- Single test file: `cargo test -p rsx-dxs --test wal_test`
 - Debug builds default (~3x faster compile than release)
 - 80 char line width, max 120
 - `make test`: unit tests <5s, every commit

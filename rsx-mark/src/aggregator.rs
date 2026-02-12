@@ -112,7 +112,7 @@ fn make_event(
         ts_ns: now_ns,
         symbol_id,
         _pad0: 0,
-        mark_price: state.mark_price,
+        mark_price: rsx_types::Price(state.mark_price),
         source_mask: state.source_mask,
         source_count: state.source_count as u32,
         _pad1: [0; 24],

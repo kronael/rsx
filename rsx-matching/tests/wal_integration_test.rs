@@ -1,3 +1,5 @@
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
@@ -123,8 +125,8 @@ fn flush_timer_fires_at_10ms() {
         taker_order_id_lo: 0,
         maker_order_id_hi: 0,
         maker_order_id_lo: 0,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,

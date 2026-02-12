@@ -42,6 +42,11 @@
 | File | Description |
 |------|-------------|
 | [GATEWAY.md](GATEWAY.md) | Gateway tile: WS ingress, CMP/UDP to risk (stub) |
+| [MANAGEMENT-DASHBOARD.md](MANAGEMENT-DASHBOARD.md) | Parent spec for split management dashboards |
+| [DASHBOARD.md](DASHBOARD.md) | Support dashboard: user balances, positions, trading state, controlled user actions |
+| [RISK-DASHBOARD.md](RISK-DASHBOARD.md) | Risk/ops dashboard: exchange risk posture, symbol controls, risk parameter operations |
+| [HEALTH-DASHBOARD.md](HEALTH-DASHBOARD.md) | Systems ops dashboard: load, CPU/memory/disk/network, service health and alerts |
+| [PLAYGROUND-DASHBOARD.md](PLAYGROUND-DASHBOARD.md) | Dev/test dashboard: scenario launch, fault injection, observe/act/verify workflows |
 | [WEBPROTO.md](WEBPROTO.md) | WebSocket protocol: frames, auth, subscriptions |
 | [RPC.md](RPC.md) | RPC message definitions, request/response schemas |
 | [MARKETDATA.md](MARKETDATA.md) | Market data tile: shadow book, L2/BBO/trades (stub) |

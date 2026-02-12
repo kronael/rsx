@@ -3,6 +3,7 @@ use std::collections::HashSet;
 
 pub const CHANNEL_BBO: u32 = 1;
 pub const CHANNEL_DEPTH: u32 = 2;
+pub const CHANNEL_TRADES: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub struct ClientSubscription {
@@ -117,6 +118,19 @@ impl SubscriptionManager {
             .get(&client_id)
             .and_then(|s| s.symbols.get(&symbol_id))
             .map(|ch| ch & CHANNEL_DEPTH != 0)
+            .unwrap_or(false)
+    }
+
+    /// Check if client is subscribed to trades for a symbol.
+    pub fn has_trades(
+        &self,
+        client_id: u64,
+        symbol_id: u32,
+    ) -> bool {
+        self.clients
+            .get(&client_id)
+            .and_then(|s| s.symbols.get(&symbol_id))
+            .map(|ch| ch & CHANNEL_TRADES != 0)
             .unwrap_or(false)
     }
 

@@ -38,12 +38,9 @@ tracks implementation progress.
 |----|-------------|---------|--------|
 | C6 | One WAL record per UDP datagram | `sender_one_record_per_udp_datagram` | ☐ |
 | C7 | Monotonic next_seq, assigned per send | `sender_assigns_monotonic_seq` | ☐ |
-| C7a | Data payload begins with CMP prefix | `payload_has_cmp_prefix` | ☐ |
-| C7b | Header.len == prefix.len | `header_len_matches_prefix_len` | ☐ |
 | C8 | Heartbeat sent every 10ms | `sender_heartbeat_sent_every_10ms`, `sender_heartbeat_contains_highest_seq` | ☐ |
 | C9 | Flow control: won't send beyond consumption_seq + receiver_window | `sender_respects_flow_control_window`, `sender_stalls_when_window_exhausted` | ☐ |
 | C10 | On Nak: fetch from WAL, resend as normal data | `sender_handles_nak_fetches_from_wal`, `sender_retransmit_is_normal_data_record` | ☐ |
-| C11 | Nak suppression: coalesce duplicates within 1ms | `sender_nak_suppression_within_1ms`, `sender_nak_suppression_expires_after_1ms`, `sender_multiple_naks_coalesced` | ☐ |
 | C12 | Retransmits are normal data records (no special type) | `sender_retransmit_is_normal_data_record` | ☐ |
 | C13 | Sender stalls when flow control window exhausted | `sender_stalls_when_window_exhausted`, `zero_window_sender_fully_stalled` | ☐ |
 | C14 | Sender updates peer state on StatusMessage receipt | `sender_updates_peer_state_on_status_msg`, `sender_resumes_after_status_msg_opens_window` | ☐ |
@@ -184,14 +181,6 @@ sender_handles_nak_fetches_from_wal
     Send 5 records (written to WAL). Inject Nak for
     seq 2..4. Assert sender reads seq 2,3,4 from WAL
     and retransmits.
-
-sender_nak_suppression_within_1ms
-    Send two identical Naks 0.5ms apart. Assert only
-    one WAL fetch + retransmit.
-
-sender_nak_suppression_expires_after_1ms
-    Send Nak, wait 1.5ms, send same Nak. Assert two
-    WAL fetches (suppression expired).
 
 sender_retransmit_is_normal_data_record
     Trigger retransmit via Nak. Capture datagram.

@@ -253,7 +253,6 @@ pub async fn flush_batch(
     let mut funding = Vec::new();
     let mut insurance_funds = Vec::new();
     let mut liquidation_events = Vec::new();
-
     for e in events {
         match e {
             PersistEvent::Position(p) => {
@@ -297,26 +296,32 @@ pub async fn run_persist_worker(
     mut client: Client,
     shard_id: u32,
 ) {
-    let mut buf = Vec::with_capacity(1024);
+    let mut pending = Vec::with_capacity(1024);
     loop {
         tokio::time::sleep(
             std::time::Duration::from_millis(10),
         )
         .await;
 
-        buf.clear();
-        while let Ok(event) = consumer.pop() {
-            buf.push(event);
+        if pending.is_empty() {
+            while let Ok(event) = consumer.pop() {
+                pending.push(event);
+            }
         }
 
-        if buf.is_empty() {
+        if pending.is_empty() {
             continue;
         }
 
         if let Err(e) =
-            flush_batch(&mut client, shard_id, &buf).await
+            flush_batch(&mut client, shard_id, &pending)
+                .await
         {
-            warn!("persist flush error: {e}");
+            warn!(
+                "persist flush error: {e}; retrying same batch"
+            );
+            continue;
         }
+        pending.clear();
     }
 }

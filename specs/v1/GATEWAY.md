@@ -37,7 +37,8 @@ wire protocol is defined in WEBPROTO.md.
 6. Disconnect: client closes WS, or server closes on
    heartbeat timeout / fatal protocol violation.
 7. Reconnection: client re-opens with fresh JWT. No session
-   resumption -- client must re-query open orders.
+   resumption -- query open orders via `{O:[]}` on WS or
+   `GET /v1/orders` (see WEBPROTO.md, REST.md).
 
 ## Rate Limits
 
@@ -53,11 +54,27 @@ Exceeded -> `{E:[1006, "rate limited"]}` or
 
 - Max WebSocket frame: 4 KB (text frames only, no binary)
 - Max subscriptions per connection: 64 symbols
-- Max concurrent connections per user: 5
+- Max concurrent WebSocket connections per user: 5
 
 ## Config
 
 - Env-only. See rsx-gateway config module.
+
+## REST API
+
+Gateway serves a read-only REST API on the same port (8080)
+alongside WebSocket. See [REST.md](REST.md) for full endpoint
+reference.
+
+- REST: `/health`, `/v1/*` -- read-only queries
+- WebSocket: `/ws` -- orders, cancels, live updates
+
+Same JWT auth for both. REST is for simple reads (account,
+positions, open orders, fills, funding, symbol metadata).
+Order placement stays on WebSocket.
+
+REST rate limits (5/sec per user, 50/sec per IP) are
+tracked separately from WebSocket order rate limits.
 
 ## Notes
 
@@ -68,3 +85,15 @@ internal CMP links.
 - Cancel by `cid` requires gateway to keep a pending map
   of client_order_id -> order_id. Cancels by order_id are
   stateless.
+
+## Post-MVP
+
+The following are deferred beyond v1:
+
+- REST API endpoints (`/v1/*` read-only queries)
+- WS query messages: O, P, A, FL, FN, M
+  (open orders, positions, account, fill history,
+  funding history, metadata)
+- Market data routing through gateway (v1 uses
+  separate rsx-marketdata service directly)
+- Separate public WS endpoint (no-auth market data)

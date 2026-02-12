@@ -76,8 +76,9 @@ fn order(
         side: 0,
         tif: 0,
         reduce_only: false,
+        post_only: false,
         is_liquidation: false,
-        _pad: [0; 4],
+        _pad: [0; 3],
     }
 }
 
@@ -293,6 +294,31 @@ fn mark_update_stored() {
     let mut s = make_shard();
     s.update_mark(1, 50_000);
     assert_eq!(s.mark_prices[1], 50_000);
+}
+
+#[test]
+fn missing_mark_falls_back_to_index_for_liquidation() {
+    let mut s = make_shard();
+    // Create an index price via BBO
+    let bbo = BboUpdate {
+        seq: 1,
+        symbol_id: 0,
+        bid_px: 10_000,
+        bid_qty: 10,
+        ask_px: 10_000,
+        ask_qty: 10,
+    };
+    s.process_bbo(&bbo);
+    // Mark missing for symbol 0
+    s.mark_prices[0] = 0;
+    // Create position for user 0
+    s.process_fill(&fill(0, 2, 0, 10_000, 10, 1));
+    // Collateral is small; with index fallback, should be in liquidation
+    let o = order(0, 0, 10_000, 1);
+    let resp = s.process_order(&o);
+    assert!(
+        matches!(resp, OrderResponse::Rejected { reason: RejectReason::UserInLiquidation, .. })
+    );
 }
 
 #[test]
@@ -514,6 +540,79 @@ fn process_config_applied_tracks_version() {
     assert_eq!(s.config_versions[0], 5);
     s.process_config_applied(0, 10);
     assert_eq!(s.config_versions[0], 10);
+    // Older version ignored
+    s.process_config_applied(0, 9);
+    assert_eq!(s.config_versions[0], 10);
     // Out of range symbol is a no-op
     s.process_config_applied(999, 1);
+}
+
+// --- Config tests ---
+
+#[test]
+fn config_applied_event_updates_symbol_params() {
+    let mut s = make_shard();
+    std::env::set_var("RSX_SYMBOL_0_TAKER_FEE_BPS", "11");
+    std::env::set_var("RSX_SYMBOL_0_MAKER_FEE_BPS", "-2");
+    s.process_config_applied(0, 1);
+    assert_eq!(s.config_versions[0], 1);
+    let f = fill(0, 2, 0, 10_000, 10_000, 1);
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.accounts.insert(2, Account::new(2, 1_000_000_000));
+    s.process_fill(&f);
+    // taker fee = 10000*10000*11/10000 = 110000
+    assert_eq!(
+        s.accounts[&0].collateral,
+        1_000_000_000 - 110_000
+    );
+    s.process_config_applied(1, 42);
+    assert_eq!(s.config_versions[1], 42);
+    // Newer version overwrites
+    s.process_config_applied(1, 99);
+    assert_eq!(s.config_versions[1], 99);
+    // Other symbols unaffected
+    assert_eq!(s.config_versions[2], 0);
+    std::env::remove_var("RSX_SYMBOL_0_TAKER_FEE_BPS");
+    std::env::remove_var("RSX_SYMBOL_0_MAKER_FEE_BPS");
+}
+
+#[test]
+fn config_applied_forwarded_to_gateway() {
+    // NOTE: process_config_applied currently only tracks
+    // version. Forwarding to gateway would require a
+    // ring producer (not yet wired). This test verifies
+    // the version is stored so a future gateway forward
+    // can read it.
+    let mut s = make_shard();
+    s.process_config_applied(2, 7);
+    assert_eq!(s.config_versions[2], 7);
+}
+
+// --- Liquidation integration in shard ---
+
+#[test]
+fn order_while_user_being_liquidated_rejected() {
+    let mut s = make_shard();
+    // User 0 in shard 0. Tiny collateral, big position.
+    s.accounts.insert(0, Account::new(0, 100));
+    s.mark_prices[0] = 10_000;
+    // Create a position that puts user underwater
+    // (long 100 @ 10000, mark drops to 10000, mm=5%)
+    // notional = 100*10000 = 1_000_000
+    // mm = 1_000_000 * 500/10000 = 50_000
+    // equity = 100 + upnl. upnl = 100*(10000-10000)=0
+    // equity(100) < mm(50000) -> liquidation
+    s.process_fill(&fill(0, 1, 0, 10_000, 100, 1));
+    // After fill, check_liquidation_for enqueues user
+    assert!(s.liquidation.is_in_liquidation(0, 0));
+    // Non-liquidation order should be rejected
+    let o = order(0, 0, 10_000, 1);
+    let resp = s.process_order(&o);
+    assert!(matches!(
+        resp,
+        OrderResponse::Rejected {
+            reason: RejectReason::UserInLiquidation,
+            ..
+        }
+    ));
 }

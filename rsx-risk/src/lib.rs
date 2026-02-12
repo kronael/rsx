@@ -23,6 +23,7 @@ pub use config::ShardConfig;
 pub use funding::FundingConfig;
 pub use insurance::InsuranceFund;
 pub use lease::AdvisoryLease;
+pub use margin::ExposureIndex;
 pub use margin::MarginState;
 pub use margin::PortfolioMargin;
 pub use margin::SymbolRiskParams;

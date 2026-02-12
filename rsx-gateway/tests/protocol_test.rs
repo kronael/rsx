@@ -13,7 +13,7 @@ fn oid32() -> String {
 #[test]
 fn parse_n_frame_all_fields() {
     let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,1]}}",
+        "{{\"N\":[1,0,50000,100,\"{}\",0,1,1]}}",
         cid20()
     );
     let f = parse(&json).unwrap();
@@ -27,6 +27,7 @@ fn parse_n_frame_all_fields() {
             client_order_id: cid20(),
             tif: 0,
             reduce_only: true,
+            post_only: true,
         }
     );
 }
@@ -39,8 +40,9 @@ fn parse_n_frame_reduce_only_default_0() {
     );
     let f = parse(&json).unwrap();
     match f {
-        WsFrame::NewOrder { reduce_only, tif, side, .. } => {
+        WsFrame::NewOrder { reduce_only, post_only, tif, side, .. } => {
             assert!(!reduce_only);
+            assert!(!post_only);
             assert_eq!(tif, 2);
             assert_eq!(side, 1);
         }
@@ -51,12 +53,26 @@ fn parse_n_frame_reduce_only_default_0() {
 #[test]
 fn parse_n_frame_reduce_only_1() {
     let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,1]}}",
+        "{{\"N\":[1,0,50000,100,\"{}\",0,1,0]}}",
         cid20()
     );
     match parse(&json).unwrap() {
         WsFrame::NewOrder { reduce_only, .. } => {
             assert!(reduce_only);
+        }
+        _ => panic!("expected NewOrder"),
+    }
+}
+
+#[test]
+fn parse_n_frame_post_only_1() {
+    let json = format!(
+        "{{\"N\":[1,0,50000,100,\"{}\",0,0,1]}}",
+        cid20()
+    );
+    match parse(&json).unwrap() {
+        WsFrame::NewOrder { post_only, .. } => {
+            assert!(post_only);
         }
         _ => panic!("expected NewOrder"),
     }
@@ -491,8 +507,8 @@ fn enum_order_status_valid_0_1_2_3() {
 }
 
 #[test]
-fn enum_failure_reason_valid_0_through_10() {
-    for r in 0..=10u8 {
+fn enum_failure_reason_valid_0_through_12() {
+    for r in 0..=12u8 {
         let json = format!(
             "{{\"U\":[\"{}\",3,0,100,{}]}}",
             oid32(),
@@ -501,7 +517,7 @@ fn enum_failure_reason_valid_0_through_10() {
         assert!(parse(&json).is_ok());
     }
     let json = format!(
-        "{{\"U\":[\"{}\",3,0,100,11]}}",
+        "{{\"U\":[\"{}\",3,0,100,13]}}",
         oid32(),
     );
     assert!(parse(&json).is_err());

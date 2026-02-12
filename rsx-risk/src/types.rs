@@ -27,8 +27,9 @@ pub struct OrderRequest {
     pub side: u8,
     pub tif: u8,
     pub reduce_only: bool,
+    pub post_only: bool,
     pub is_liquidation: bool,
-    pub _pad: [u8; 4],
+    pub _pad: [u8; 3],
 }
 
 /// RISK.md §6: reject reasons.

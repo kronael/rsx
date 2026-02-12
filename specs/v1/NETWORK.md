@@ -80,11 +80,13 @@ Web Users (WS) ─────────────────────�
 - Margin calculation (initial margin, maintenance margin)
 - Risk checks BEFORE sending orders to matching engine
 - Fill ingestion and position update after matching
+ - Mark price ingestion via CMP/UDP from Mark process
 
 **Architecture:**
 - Monolithic process
 - CMP/UDP from Gateway (live orders)
 - CMP/UDP to each Matching Engine (live orders/fills)
+ - CMP/UDP from Mark (mark price updates)
 
 **Design Note:**
 Risk engine internals (margin models, position tracking, liquidation logic)

@@ -291,6 +291,8 @@ Targets from TESTING.md §6:
 
 ## Integration Points
 
+- Config polling tests use Postgres via testcontainers.
+
 - Imports `rsx-book` crate for orderbook data structures
   (ORDERBOOK.md §3)
 - Embeds `rsx-dxs` WalWriter + DxsReplay server

@@ -43,7 +43,7 @@ BEGIN
             timestamp_ns   BIGINT  NOT NULL
         );
 
-        CREATE INDEX idx_fills_symbol_seq
+        CREATE UNIQUE INDEX idx_fills_symbol_seq
             ON fills (symbol_id, seq);
 
         CREATE TABLE tips (

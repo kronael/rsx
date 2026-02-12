@@ -11,6 +11,8 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::Notify;
 use tracing::debug;
 use tracing::info;
@@ -32,6 +34,8 @@ pub struct WalWriter {
     max_file_size: u64,
     retention_ns: u64,
     listeners: Vec<Arc<Notify>>,
+    flush_stalled: bool,
+    records_since_flush: u32,
 }
 
 impl WalWriter {
@@ -73,6 +77,8 @@ impl WalWriter {
             max_file_size,
             retention_ns,
             listeners: Vec::new(),
+            flush_stalled: false,
+            records_since_flush: 0,
         })
     }
 
@@ -88,6 +94,13 @@ impl WalWriter {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "payload exceeds 64KB",
+            ));
+        }
+
+        if self.flush_stalled {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "flush stalled, backpressure",
             ));
         }
 
@@ -118,6 +131,7 @@ impl WalWriter {
 
         self.buf.extend_from_slice(&header.to_bytes());
         self.buf.extend_from_slice(payload);
+        self.records_since_flush += 1;
         Ok(seq)
     }
 
@@ -128,9 +142,19 @@ impl WalWriter {
         }
 
         self.file.write_all(&self.buf)?;
+        let t0 = Instant::now();
         self.file.sync_all()?;
+        let elapsed = t0.elapsed();
         self.file_size += self.buf.len() as u64;
         self.buf.clear();
+        self.records_since_flush = 0;
+
+        if elapsed > Duration::from_millis(10) {
+            warn!("flush took {}ms", elapsed.as_millis());
+            self.flush_stalled = true;
+        } else {
+            self.flush_stalled = false;
+        }
 
         // notify live consumers
         for listener in &self.listeners {
@@ -258,6 +282,14 @@ impl WalWriter {
         let notify = Arc::new(Notify::new());
         self.listeners.push(notify.clone());
         notify
+    }
+
+    pub fn should_flush(&self) -> bool {
+        self.records_since_flush >= 1000
+    }
+
+    pub fn flush_stalled(&self) -> bool {
+        self.flush_stalled
     }
 
     pub fn last_seq(&self) -> u64 {

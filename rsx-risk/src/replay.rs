@@ -123,7 +123,15 @@ pub fn replay_from_wal(
     symbol_ids: &[u32],
 ) -> std::io::Result<u64> {
     use rsx_dxs::decode_fill_record;
+    use rsx_dxs::records::OrderAcceptedRecord;
+    use rsx_dxs::records::OrderCancelledRecord;
+    use rsx_dxs::records::OrderDoneRecord;
+    use rsx_dxs::records::OrderFailedRecord;
     use rsx_dxs::WalReader;
+    use rsx_dxs::RECORD_ORDER_ACCEPTED;
+    use rsx_dxs::RECORD_ORDER_FAILED;
+    use rsx_dxs::RECORD_ORDER_CANCELLED;
+    use rsx_dxs::RECORD_ORDER_DONE;
     use rsx_dxs::RECORD_FILL;
 
     let mut replayed = 0u64;
@@ -134,26 +142,110 @@ pub fn replay_from_wal(
             sid, start_seq, wal_dir,
         )?;
         while let Some(raw) = reader.next()? {
-            if raw.header.record_type != RECORD_FILL {
-                continue;
+            match raw.header.record_type {
+                RECORD_FILL => {
+                    let fill = match decode_fill_record(
+                        &raw.payload,
+                    ) {
+                        Some(f) => f,
+                        None => continue,
+                    };
+                    shard.process_fill(&FillEvent {
+                        seq: fill.seq,
+                        symbol_id: fill.symbol_id,
+                        taker_user_id: fill.taker_user_id,
+                        maker_user_id: fill.maker_user_id,
+                        price: fill.price.0,
+                        qty: fill.qty.0,
+                        taker_side: fill.taker_side,
+                        timestamp_ns: fill.ts_ns,
+                    });
+                    replayed += 1;
+                }
+                RECORD_ORDER_DONE
+                    if raw.payload.len()
+                        >= std::mem::size_of::<
+                            OrderDoneRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            raw.payload.as_ptr()
+                                as *const OrderDoneRecord,
+                        )
+                    };
+                    shard.release_frozen_for_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
+                    );
+                }
+                RECORD_ORDER_CANCELLED
+                    if raw.payload.len()
+                        >= std::mem::size_of::<
+                            OrderCancelledRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            raw.payload.as_ptr()
+                                as *const
+                                    OrderCancelledRecord,
+                        )
+                    };
+                    shard.release_frozen_for_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
+                    );
+                }
+                RECORD_ORDER_FAILED
+                    if raw.payload.len()
+                        >= std::mem::size_of::<
+                            OrderFailedRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            raw.payload.as_ptr()
+                                as *const
+                                    OrderFailedRecord,
+                        )
+                    };
+                    shard.release_frozen_for_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
+                    );
+                }
+                RECORD_ORDER_ACCEPTED
+                    if raw.payload.len()
+                        >= std::mem::size_of::<
+                            OrderAcceptedRecord,
+                        >() =>
+                {
+                    let rec = unsafe {
+                        std::ptr::read_unaligned(
+                            raw.payload.as_ptr()
+                                as *const
+                                    OrderAcceptedRecord,
+                        )
+                    };
+                    if shard.user_in_shard(rec.user_id)
+                        && rec.reduce_only == 0
+                    {
+                        shard.replay_freeze_order(
+                            rec.user_id,
+                            rec.order_id_hi,
+                            rec.order_id_lo,
+                            rec.price,
+                            rec.qty,
+                            rec.symbol_id,
+                        );
+                    }
+                }
+                _ => {}
             }
-            let fill = match decode_fill_record(
-                &raw.payload,
-            ) {
-                Some(f) => f,
-                None => continue,
-            };
-            shard.process_fill(&FillEvent {
-                seq: fill.seq,
-                symbol_id: fill.symbol_id,
-                taker_user_id: fill.taker_user_id,
-                maker_user_id: fill.maker_user_id,
-                price: fill.price,
-                qty: fill.qty,
-                taker_side: fill.taker_side,
-                timestamp_ns: fill.ts_ns,
-            });
-            replayed += 1;
         }
     }
     Ok(replayed)

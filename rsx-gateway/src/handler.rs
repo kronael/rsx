@@ -12,6 +12,7 @@ use crate::rate_limit::per_user;
 use crate::state::GatewayState;
 use crate::ws::ws_handshake;
 use crate::ws::ws_read_frame;
+use crate::ws::ws_write_frame;
 use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
 use rsx_dxs::cmp::CmpSender;
@@ -47,8 +48,16 @@ pub async fn handle_connection(
         }
     };
 
-    let conn_id =
-        state.borrow_mut().add_connection(user_id);
+    let conn_id = match state
+        .borrow_mut()
+        .add_connection(user_id)
+    {
+        Ok(id) => id,
+        Err(e) => {
+            warn!("rejected connection: {e}");
+            return;
+        }
+    };
     state.borrow_mut().touch_connection(
         conn_id,
         time_ns(),
@@ -99,21 +108,24 @@ pub async fn handle_connection(
         }
 
         if opcode == 9 {
-            let mut pong = vec![0x8A, 0x00];
-            if !payload.is_empty() {
-                pong[1] = payload.len() as u8;
-                pong.extend_from_slice(&payload);
-            }
-            let _ = ws_write_text(
+            let _ = ws_write_frame(
                 &mut stream,
-                &pong,
+                0xA,
+                &payload,
             )
             .await;
             continue;
         }
 
         if opcode != 1 {
-            continue;
+            info!(
+                "conn {} binary frame rejected",
+                conn_id
+            );
+            state
+                .borrow_mut()
+                .remove_connection(conn_id);
+            return;
         }
 
         let text = match std::str::from_utf8(&payload)
@@ -163,6 +175,7 @@ pub async fn handle_connection(
                 client_order_id,
                 tif,
                 reduce_only,
+                post_only,
             } => {
                 {
                     let mut st = state.borrow_mut();
@@ -285,8 +298,9 @@ pub async fn handle_connection(
                     side,
                     tif,
                     reduce_only,
+                    post_only,
                     is_liquidation: false,
-                    _pad: [0; 4],
+                    _pad: [0; 3],
                 };
 
                 let pending = PendingOrder {

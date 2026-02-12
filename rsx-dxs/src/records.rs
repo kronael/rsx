@@ -1,3 +1,6 @@
+use rsx_types::Price;
+use rsx_types::Qty;
+
 /// Record type constants
 pub const RECORD_FILL: u16 = 0;
 pub const RECORD_BBO: u16 = 1;
@@ -12,6 +15,7 @@ pub const RECORD_ORDER_REQUEST: u16 = 9;
 pub const RECORD_ORDER_RESPONSE: u16 = 10;
 pub const RECORD_CANCEL_REQUEST: u16 = 11;
 pub const RECORD_ORDER_FAILED: u16 = 12;
+pub const RECORD_LIQUIDATION: u16 = 13;
 pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
@@ -48,8 +52,8 @@ pub struct FillRecord {
     pub taker_order_id_lo: u64,
     pub maker_order_id_hi: u64,
     pub maker_order_id_lo: u64,
-    pub price: i64,
-    pub qty: i64,
+    pub price: Price,
+    pub qty: Qty,
     pub taker_side: u8,
     pub reduce_only: u8,
     pub tif: u8,
@@ -71,12 +75,12 @@ pub struct BboRecord {
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
-    pub bid_px: i64,
-    pub bid_qty: i64,
+    pub bid_px: Price,
+    pub bid_qty: Qty,
     pub bid_count: u32,
     pub _pad1: u32,
-    pub ask_px: i64,
-    pub ask_qty: i64,
+    pub ask_px: Price,
+    pub ask_qty: Qty,
     pub ask_count: u32,
     pub _pad2: u32,
 }
@@ -97,8 +101,8 @@ pub struct OrderInsertedRecord {
     pub user_id: u32,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
-    pub price: i64,
-    pub qty: i64,
+    pub price: Price,
+    pub qty: Qty,
     pub side: u8,
     pub reduce_only: u8,
     pub tif: u8,
@@ -122,7 +126,7 @@ pub struct OrderCancelledRecord {
     pub user_id: u32,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
-    pub remaining_qty: i64,
+    pub remaining_qty: Qty,
     pub reason: u8,
     pub reduce_only: u8,
     pub tif: u8,
@@ -146,8 +150,8 @@ pub struct OrderDoneRecord {
     pub user_id: u32,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
-    pub filled_qty: i64,
-    pub remaining_qty: i64,
+    pub filled_qty: Qty,
+    pub remaining_qty: Qty,
     pub final_status: u8,
     pub reduce_only: u8,
     pub tif: u8,
@@ -200,17 +204,25 @@ impl CmpRecord for CaughtUpRecord {
 }
 
 /// OrderAcceptedRecord (64-byte aligned)
-/// Dedup key is (user_id, order_id)
+/// Dedup key is (user_id, order_id).
+/// Contains full order fields so WAL replay can
+/// reconstruct frozen margin without Postgres.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderAcceptedRecord {
     pub seq: u64,
     pub ts_ns: u64,
     pub user_id: u32,
-    pub _pad0: u32,
+    pub symbol_id: u32,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
-    pub _pad1: [u8; 32],
+    pub price: i64,
+    pub qty: i64,
+    pub side: u8,
+    pub tif: u8,
+    pub reduce_only: u8,
+    pub post_only: u8,
+    pub _pad1: [u8; 12],
 }
 
 impl CmpRecord for OrderAcceptedRecord {
@@ -227,7 +239,7 @@ pub struct MarkPriceRecord {
     pub ts_ns: u64,
     pub symbol_id: u32,
     pub _pad0: u32,
-    pub mark_price: i64,
+    pub mark_price: Price,
     pub source_mask: u32,
     pub source_count: u32,
     pub _pad1: [u8; 24],
@@ -281,6 +293,33 @@ impl CmpRecord for CancelRequest {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_CANCEL_REQUEST }
+}
+
+/// Liquidation notification from risk to gateway.
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct LiquidationRecord {
+    pub seq: u64,
+    pub ts_ns: u64,
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub status: u8,
+    pub side: u8,
+    pub _pad0: [u8; 2],
+    pub round: u32,
+    pub qty: i64,
+    pub price: i64,
+    pub slip_bps: i64,
+}
+
+impl CmpRecord for LiquidationRecord {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_LIQUIDATION
+    }
 }
 
 /// CMP StatusMessage (64-byte aligned)

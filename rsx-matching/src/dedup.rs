@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
@@ -11,7 +11,7 @@ const DEDUP_CLEANUP_INTERVAL: Duration =
 type Key = (u32, u64, u64);
 
 pub struct DedupTracker {
-    seen: HashMap<Key, ()>,
+    seen: FxHashMap<Key, ()>,
     pruning_queue: VecDeque<(Key, Instant)>,
     last_cleanup: Instant,
 }
@@ -19,7 +19,7 @@ pub struct DedupTracker {
 impl DedupTracker {
     pub fn new() -> Self {
         Self {
-            seen: HashMap::new(),
+            seen: FxHashMap::default(),
             pruning_queue: VecDeque::new(),
             last_cleanup: Instant::now(),
         }
@@ -67,8 +67,7 @@ impl DedupTracker {
         self.seen.len()
     }
 
-    /// For testing: force cleanup with custom cutoff.
-    #[cfg(test)]
+    /// Force cleanup with custom cutoff (bench/test).
     pub fn cleanup_with_cutoff(
         &mut self,
         cutoff: Instant,

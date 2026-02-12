@@ -39,8 +39,9 @@ fn make_order(
         side,
         tif: 0,
         reduce_only: false,
+        post_only: false,
         is_liquidation: false,
-        _pad: [0; 4],
+        _pad: [0; 3],
     }
 }
 

@@ -2,6 +2,8 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
 use rsx_dxs::*;
+use rsx_types::Price;
+use rsx_types::Qty;
 
 fn bench_fill_record_encode(c: &mut Criterion) {
     let record = FillRecord {
@@ -15,8 +17,8 @@ fn bench_fill_record_encode(c: &mut Criterion) {
         taker_order_id_lo: 200,
         maker_order_id_hi: 0,
         maker_order_id_lo: 100,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,
@@ -40,8 +42,8 @@ fn bench_fill_record_decode(c: &mut Criterion) {
         taker_order_id_lo: 200,
         maker_order_id_hi: 0,
         maker_order_id_lo: 100,
-        price: 50000,
-        qty: 100,
+        price: Price(50000),
+        qty: Qty(100),
         taker_side: 0,
         reduce_only: 0,
         tif: 0,

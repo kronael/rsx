@@ -179,7 +179,6 @@ struct CmpHeartbeat {
 - Gap detected: receiver sends Nak immediately
 - Sender reads Nak, fetches missing records from WAL,
   resends as normal data records
-- Sender suppresses duplicate Naks for 1ms (coalesce)
 - Retransmits are just normal data records re-read from
   WAL and re-sent. No special record type.
 
@@ -194,7 +193,7 @@ pub struct CmpSender {
     peer_consumption_seq: u64,
     peer_window: u64,
     last_heartbeat: Instant,
-    wal_reader: WalReader,
+    wal_dir: PathBuf,   // WalReader opened on-demand per NAK
 }
 
 impl CmpSender {

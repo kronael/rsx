@@ -1,3 +1,5 @@
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_dxs::FillRecord;
 use rsx_dxs::OrderCancelledRecord;
 use rsx_dxs::OrderInsertedRecord;
@@ -41,8 +43,8 @@ fn replay_events_apply_to_shadow_book() {
             user_id: 100,
             order_id_hi: 0,
             order_id_lo: 1,
-            price: 100,
-            qty: 10,
+            price: Price(100),
+            qty: Qty(10),
             side: 0,
             reduce_only: 0,
             tif: 0,
@@ -52,14 +54,14 @@ fn replay_events_apply_to_shadow_book() {
 
         state.ensure_book(
             insert_rec.symbol_id,
-            insert_rec.price,
+            insert_rec.price.0,
         );
         if let Some(book) =
             state.book_mut(insert_rec.symbol_id)
         {
             book.apply_insert_by_id(
-                insert_rec.price,
-                insert_rec.qty,
+                insert_rec.price.0,
+                insert_rec.qty.0,
                 insert_rec.side,
                 insert_rec.user_id,
                 insert_rec.ts_ns,
@@ -91,8 +93,8 @@ fn replay_events_fill_reduces_qty() {
             user_id: 100,
             order_id_hi: 0,
             order_id_lo: 1,
-            price: 100,
-            qty: 10,
+            price: Price(100),
+            qty: Qty(10),
             side: 0,
             reduce_only: 0,
             tif: 0,
@@ -102,14 +104,14 @@ fn replay_events_fill_reduces_qty() {
 
         state.ensure_book(
             insert_rec.symbol_id,
-            insert_rec.price,
+            insert_rec.price.0,
         );
         if let Some(book) =
             state.book_mut(insert_rec.symbol_id)
         {
             book.apply_insert_by_id(
-                insert_rec.price,
-                insert_rec.qty,
+                insert_rec.price.0,
+                insert_rec.qty.0,
                 insert_rec.side,
                 insert_rec.user_id,
                 insert_rec.ts_ns,
@@ -129,8 +131,8 @@ fn replay_events_fill_reduces_qty() {
             taker_order_id_lo: 2,
             maker_order_id_hi: 0,
             maker_order_id_lo: 1,
-            price: 100,
-            qty: 5,
+            price: Price(100),
+            qty: Qty(5),
             taker_side: 1,
             reduce_only: 0,
             tif: 0,
@@ -144,7 +146,7 @@ fn replay_events_fill_reduces_qty() {
             book.apply_fill_by_order_id(
                 fill_rec.maker_order_id_hi,
                 fill_rec.maker_order_id_lo,
-                fill_rec.qty,
+                fill_rec.qty.0,
                 fill_rec.ts_ns,
             );
         }
@@ -172,8 +174,8 @@ fn replay_events_cancel_removes_order() {
             user_id: 100,
             order_id_hi: 0,
             order_id_lo: 1,
-            price: 100,
-            qty: 10,
+            price: Price(100),
+            qty: Qty(10),
             side: 0,
             reduce_only: 0,
             tif: 0,
@@ -183,14 +185,14 @@ fn replay_events_cancel_removes_order() {
 
         state.ensure_book(
             insert_rec.symbol_id,
-            insert_rec.price,
+            insert_rec.price.0,
         );
         if let Some(book) =
             state.book_mut(insert_rec.symbol_id)
         {
             book.apply_insert_by_id(
-                insert_rec.price,
-                insert_rec.qty,
+                insert_rec.price.0,
+                insert_rec.qty.0,
                 insert_rec.side,
                 insert_rec.user_id,
                 insert_rec.ts_ns,
@@ -206,7 +208,7 @@ fn replay_events_cancel_removes_order() {
             user_id: 100,
             order_id_hi: 0,
             order_id_lo: 1,
-            remaining_qty: 10,
+            remaining_qty: Qty(10),
             reason: 0,
             reduce_only: 0,
             tif: 0,

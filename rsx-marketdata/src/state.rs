@@ -131,6 +131,14 @@ impl MarketDataState {
         self.subs.has_depth(conn_id, symbol_id)
     }
 
+    pub fn has_trades(
+        &self,
+        conn_id: u64,
+        symbol_id: u32,
+    ) -> bool {
+        self.subs.has_trades(conn_id, symbol_id)
+    }
+
     pub fn snapshot_msg(
         &self,
         symbol_id: u32,

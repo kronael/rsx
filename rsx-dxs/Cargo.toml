@@ -29,3 +29,7 @@ harness = false
 [[bench]]
 name = "encode_bench"
 harness = false
+
+[[bench]]
+name = "cmp_bench"
+harness = false

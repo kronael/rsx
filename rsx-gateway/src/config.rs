@@ -91,11 +91,11 @@ pub fn load_gateway_config() -> GatewayConfig {
         ),
         heartbeat_interval_ms: env_u64(
             "RSX_GW_HEARTBEAT_INTERVAL_S",
-            10,
+            5,
         ) * 1000,
         heartbeat_timeout_ms: env_u64(
             "RSX_GW_IDLE_TIMEOUT_S",
-            30,
+            10,
         ) * 1000,
         rate_limit_per_user: env_u32(
             "RSX_GW_RL_USER",

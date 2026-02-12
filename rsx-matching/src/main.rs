@@ -32,7 +32,30 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-const REASON_DUPLICATE: u8 = 10;
+const REASON_DUPLICATE: u8 = 3;
+
+fn log_effective_matching_config(
+    cfg: &SymbolConfig,
+    db_url: &Option<String>,
+    wal_dir: &str,
+    me_addr: &SocketAddr,
+    risk_addr: &SocketAddr,
+    md_addr: &SocketAddr,
+) {
+    info!(
+        "matching effective config: symbol_id={} tick_size={} lot_size={} price_decimals={} qty_decimals={} db_enabled={} wal_dir={} me_cmp_addr={} risk_cmp_addr={} md_cmp_addr={}",
+        cfg.symbol_id,
+        cfg.tick_size,
+        cfg.lot_size,
+        cfg.price_decimals,
+        cfg.qty_decimals,
+        db_url.is_some(),
+        wal_dir,
+        me_addr,
+        risk_addr,
+        md_addr,
+    );
+}
 
 fn get_env_u32(key: &str) -> io::Result<u32> {
     let raw = env::var(key).map_err(|_| {
@@ -128,6 +151,7 @@ fn main() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
+        // SAFETY: fail-fast at startup
         .expect("tokio runtime");
 
     let (pg_client, mut config_version) = if let Some(url) = &db_url {
@@ -191,6 +215,7 @@ fn main() {
         64 * 1024 * 1024,
         10 * 60 * 1_000_000_000,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to create wal writer");
     let mut last_flush = Instant::now();
     let mut last_config_poll = Instant::now();
@@ -199,21 +224,25 @@ fn main() {
     let me_addr: SocketAddr = env::var("RSX_ME_CMP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9100".into())
         .parse()
+        // SAFETY: fail-fast at startup
         .expect("invalid RSX_ME_CMP_ADDR");
     let risk_addr: SocketAddr =
         env::var("RSX_RISK_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CMP_ADDR");
 
     let mut cmp_receiver = CmpReceiver::new(
         me_addr, risk_addr, symbol_id,
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to bind CMP receiver");
 
     let mut cmp_sender = CmpSender::new(
         risk_addr, symbol_id, &PathBuf::from(&wal_dir),
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to create CMP sender");
 
     // CMP/UDP: send events to Marketdata
@@ -221,18 +250,29 @@ fn main() {
         env::var("RSX_MD_CMP_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9103".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_MD_CMP_ADDR");
     let mut mkt_sender = CmpSender::new(
         mkt_addr,
         symbol_id,
         &PathBuf::from(&wal_dir),
     )
+    // SAFETY: fail-fast at startup
     .expect("failed to create MD CMP sender");
+    log_effective_matching_config(
+        &book.config,
+        &db_url,
+        &wal_dir,
+        &me_addr,
+        &risk_addr,
+        &mkt_addr,
+    );
 
     // DXS sidecar
     if let Ok(dxs_addr) = env::var("RSX_ME_DXS_ADDR") {
         let addr: std::net::SocketAddr = dxs_addr
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_ME_DXS_ADDR");
         let wal_path = PathBuf::from(&wal_dir);
         std::thread::spawn(move || {
@@ -240,14 +280,17 @@ fn main() {
                 ::new_multi_thread()
                 .enable_all()
                 .build()
+                // SAFETY: fail-fast at startup
                 .expect("tokio runtime for dxs");
             let service =
                 rsx_dxs::DxsReplayService::new(wal_path, None)
+                    // SAFETY: fail-fast at startup
                     .expect("failed to create dxs service");
             rt.block_on(async {
                 service
                     .serve(addr)
                     .await
+                    // SAFETY: fail-fast at startup
                     .expect("dxs server failed");
             });
         });
@@ -321,12 +364,20 @@ fn main() {
                             seq: 0,
                             ts_ns: ts,
                             user_id: order_msg.user_id,
-                            _pad0: 0,
+                            symbol_id,
                             order_id_hi: order_msg
                                 .order_id_hi,
                             order_id_lo: order_msg
                                 .order_id_lo,
-                            _pad1: [0; 32],
+                            price: order_msg.price,
+                            qty: order_msg.qty,
+                            side: order_msg.side,
+                            tif: order_msg.tif,
+                            reduce_only: order_msg
+                                .reduce_only,
+                            post_only: order_msg
+                                .post_only,
+                            _pad1: [0; 12],
                         };
                     let _ = wal_writer
                         .append(&mut accepted);
@@ -455,8 +506,8 @@ fn send_event_cmp(
                 taker_order_id_lo,
                 maker_order_id_hi,
                 maker_order_id_lo,
-                price: price.0,
-                qty: qty.0,
+                price,
+                qty,
                 taker_side: side,
                 reduce_only: 0,
                 tif: 0,
@@ -481,8 +532,8 @@ fn send_event_cmp(
                 user_id,
                 order_id_hi,
                 order_id_lo,
-                price: price.0,
-                qty: qty.0,
+                price,
+                qty,
                 side,
                 reduce_only: 0,
                 tif: 0,
@@ -506,7 +557,7 @@ fn send_event_cmp(
                 user_id,
                 order_id_hi,
                 order_id_lo,
-                remaining_qty: remaining_qty.0,
+                remaining_qty,
                 reason,
                 reduce_only: 0,
                 tif: 0,
@@ -531,8 +582,8 @@ fn send_event_cmp(
                 user_id,
                 order_id_hi,
                 order_id_lo,
-                filled_qty: filled_qty.0,
-                remaining_qty: remaining_qty.0,
+                filled_qty,
+                remaining_qty,
                 final_status: reason,
                 reduce_only: 0,
                 tif: 0,
@@ -552,12 +603,12 @@ fn send_event_cmp(
                 ts_ns,
                 symbol_id,
                 _pad0: 0,
-                bid_px: bid_px.0,
-                bid_qty: bid_qty.0,
+                bid_px,
+                bid_qty,
                 bid_count: 0,
                 _pad1: 0,
-                ask_px: ask_px.0,
-                ask_qty: ask_qty.0,
+                ask_px,
+                ask_qty,
                 ask_count: 0,
                 _pad2: 0,
             };

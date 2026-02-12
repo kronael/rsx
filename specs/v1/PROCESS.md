@@ -108,6 +108,7 @@ Tiles:
 
 Links:
 - CMP/UDP or WAL/TCP from Matching (events).
+- WAL/TCP replay bootstrap (DXS).
 
 ### Mark Process
 
@@ -116,7 +117,8 @@ Tiles:
 - Core Tile (busy-spin): mark aggregation.
 
 Links:
-- DXS replay server (WAL/TCP). No CMP/UDP mark feed in v1.
+- DXS replay server (WAL/TCP) for archival/replay.
+- CMP/UDP mark feed to Risk.
 
 ### Recorder Process
 

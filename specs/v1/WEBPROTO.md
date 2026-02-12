@@ -19,6 +19,12 @@ goal is minimal parsing cost and small payloads.
 - [Q: Liquidation Event](#q-liquidation-event-private-ws-see-liquidatormd)
 - [T: Trade](#t-trade-public-ws)
 - [M: Metadata Query](#m-metadata-query-public-ws)
+- [Reconnection](#reconnection)
+- [O: Open Orders Query](#o-open-orders-query-private-ws)
+- [P: Positions Query](#p-positions-query-private-ws)
+- [A: Account Summary Query](#a-account-summary-query-private-ws)
+- [FL: Fill History Query](#fl-fill-history-query-private-ws)
+- [FN: Funding History Query](#fn-funding-history-query-private-ws)
 - [Notes](#notes)
 
 ---
@@ -94,11 +100,14 @@ OrderDone.final_status mapping (CMP -> WS):
 - 7 = REDUCE_ONLY_VIOLATION
 - 8 = POST_ONLY_REJECT
 - 9 = RATE_LIMIT
+- 10 = TIMEOUT
+- 11 = USER_IN_LIQUIDATION
+- 12 = WRONG_SHARD
 
 Risk reject mapping (CMP -> WS):
 - InsufficientMargin -> INSUFFICIENT_MARGIN
-- UserInLiquidation -> INTERNAL_ERROR
-- NotInShard -> INTERNAL_ERROR
+- UserInLiquidation -> USER_IN_LIQUIDATION
+- NotInShard -> WRONG_SHARD
 
 ### Authentication
 
@@ -107,6 +116,161 @@ Auth is via WebSocket upgrade headers only (JWT in
 use the WS API. Connections without valid auth in upgrade
 headers are rejected with HTTP 401 before WebSocket handshake
 completes.
+
+### Reconnection
+
+On reconnect, client opens a fresh WebSocket with a new JWT.
+There is no session resumption and no replay of missed
+messages. To restore state after reconnect:
+
+1. Query `{O:[]}`, `{P:[]}`, `{A:[]}` on the private WS,
+   or use the REST equivalents (`/v1/orders`, `/v1/positions`,
+   `/v1/account`).
+2. Re-subscribe to market data channels on the public WS
+   (separate MARKETDATA service, see MARKETDATA.md).
+
+### O: Open Orders Query (Private WS)
+
+> **Post-MVP: not implemented in v1.**
+
+Client request:
+```
+{O:[]}
+```
+
+Server response:
+```
+{O:[[oid, cid, sym, side, px, qty, filled,
+     status, tif, ro, po, ts], ...]}
+```
+
+Fields per order:
+- `oid`: server order id (string, 32-char hex)
+- `cid`: client order id (string, 20 chars)
+- `sym`: symbol id (uint32)
+- `side`: enum `Side`
+- `px`: price in tick units (int64)
+- `qty`: total quantity in lot units (int64)
+- `filled`: filled quantity in lot units (int64)
+- `status`: enum `Order Status`
+- `tif`: enum `Time in Force`
+- `ro`: reduce-only (0 or 1)
+- `po`: post-only (0 or 1)
+- `ts`: created timestamp, nanoseconds (uint64)
+
+Returns open orders only. Not on hot path -- gateway reads
+from cached state or Postgres.
+
+### P: Positions Query (Private WS)
+
+> **Post-MVP: not implemented in v1.**
+
+Client request:
+```
+{P:[]}
+```
+
+Server response:
+```
+{P:[[sym, side, qty, entry_px, mark_px,
+     unrealized_pnl, liq_px], ...]}
+```
+
+Fields per position:
+- `sym`: symbol id (uint32)
+- `side`: enum `Side`
+- `qty`: position size in lot units (int64)
+- `entry_px`: average entry price in tick units (int64,
+  computed as entry_cost / qty)
+- `mark_px`: current mark price in tick units (int64)
+- `unrealized_pnl`: unrealized PnL in tick units (int64)
+- `liq_px`: estimated liquidation price in tick units (int64)
+
+Returns non-zero positions only.
+
+### A: Account Summary Query (Private WS)
+
+> **Post-MVP: not implemented in v1.**
+
+Client request:
+```
+{A:[]}
+```
+
+Server response:
+```
+{A:[collateral, equity, unrealized_pnl,
+    initial_margin, maint_margin, available]}
+```
+
+Fields:
+- `collateral`: deposited collateral in tick units (int64)
+- `equity`: collateral + unrealized PnL (int64)
+- `unrealized_pnl`: total unrealized PnL (int64)
+- `initial_margin`: total initial margin (int64)
+- `maint_margin`: total maintenance margin (int64)
+- `available`: available balance for new orders (int64)
+
+All query responses use tick units (raw i64). Clients apply
+tick_size/lot_size for display.
+
+### FL: Fill History Query (Private WS)
+
+> **Post-MVP: not implemented in v1.**
+
+Client request:
+```
+{FL:[sym, limit, before]}
+```
+
+Fields:
+- `sym`: symbol id filter (uint32, 0 = all symbols)
+- `limit`: max results (uint32, default 50, max 500)
+- `before`: cursor timestamp in nanoseconds (uint64, 0 = latest)
+
+Server response:
+```
+{FL:[[oid, sym, px, qty, side, fee, is_maker, ts], ...]}
+```
+
+Fields per fill:
+- `oid`: server order id (string, 32-char hex)
+- `sym`: symbol id (uint32)
+- `px`: fill price in tick units (int64)
+- `qty`: fill quantity in lot units (int64)
+- `side`: enum `Side`
+- `fee`: fee in tick units (int64, negative = rebate)
+- `is_maker`: 1 = maker, 0 = taker
+- `ts`: nanosecond timestamp (uint64)
+
+Sorted descending by `ts`.
+
+### FN: Funding History Query (Private WS)
+
+> **Post-MVP: not implemented in v1.**
+
+Client request:
+```
+{FN:[sym, limit, before]}
+```
+
+Fields:
+- `sym`: symbol id filter (uint32, 0 = all symbols)
+- `limit`: max results (uint32, default 50, max 500)
+- `before`: cursor timestamp in nanoseconds (uint64, 0 = latest)
+
+Server response:
+```
+{FN:[[sym, amount, rate_bps, ts], ...]}
+```
+
+Fields per entry:
+- `sym`: symbol id (uint32)
+- `amount`: funding amount in tick units (int64)
+- `rate_bps`: funding rate in basis points (int32)
+- `ts`: nanosecond timestamp (uint64)
+
+Sorted descending by `ts`.
 
 ### N: New Order
 
@@ -265,6 +429,9 @@ by user_id. Fire-and-forget delivery.
 
 ### T: Trade (Public WS)
 
+> **Post-MVP: not implemented in v1.** Trades are
+> served by rsx-marketdata directly.
+
 ```
 {T:[sym, px, qty, side, ts, u]}
 ```
@@ -282,6 +449,8 @@ Sent to clients subscribed to channel 4 (trades) for
 that symbol. Each fill produces one trade message.
 
 ### M: Metadata Query (Public WS)
+
+> **Post-MVP: not implemented in v1.**
 
 Client request:
 ```
