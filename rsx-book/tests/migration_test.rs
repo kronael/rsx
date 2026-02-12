@@ -140,6 +140,9 @@ fn batch_migration() {
             break;
         }
     }
-    // Should eventually complete
-    // (may or may not depending on old_levels scan)
+    // Verify migration completed
+    assert!(
+        !book.is_migrating(),
+        "migration should complete within 1000 batches"
+    );
 }

@@ -25,6 +25,15 @@ fn make_fill(seq: u64) -> FillRecord {
     }
 }
 
+fn extract_seq(payload: &[u8]) -> Option<u64> {
+    if payload.len() >= 8 {
+        let bytes = payload[0..8].try_into().ok()?;
+        Some(u64::from_le_bytes(bytes))
+    } else {
+        None
+    }
+}
+
 #[test]
 fn writer_assigns_monotonic_seq() {
     let tmp = TempDir::new().unwrap();
