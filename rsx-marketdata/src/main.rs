@@ -168,6 +168,7 @@ fn main() {
     let mut rt = monoio::RuntimeBuilder::<
         monoio::FusionDriver,
     >::new()
+    .enable_timer()
     .build()
     // SAFETY: fail-fast at startup
     .expect("failed to build monoio runtime");

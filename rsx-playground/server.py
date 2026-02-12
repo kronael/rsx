@@ -227,6 +227,25 @@ async def start_all(scenario="minimal"):
         parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+    # kill stale processes on known ports
+    for port in [8080, 8180, 9110, 9200, 9400, 9510]:
+        try:
+            subprocess.run(
+                ["fuser", "-k", f"{port}/tcp"],
+                capture_output=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    for port in [9110, 9200, 9510]:
+        try:
+            subprocess.run(
+                ["fuser", "-k", f"{port}/udp"],
+                capture_output=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    await asyncio.sleep(0.5)
+
     # build
     ok = await do_build()
     if not ok:
