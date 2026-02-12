@@ -2,8 +2,8 @@
        lint clean play play-overview play-topology \
        play-book play-risk play-wal play-logs \
        play-control play-faults play-verify \
-       play-orders play-nav play-api play-api-unit \
-       play-api-all play-stress help
+       play-orders play-nav play-api \
+       api-unit api-integration api-stress help
 
 # Default target - show help
 help:
@@ -12,17 +12,17 @@ help:
 	@echo "Unit Tests (fast):"
 	@echo "  make test          - All unit tests (Rust + Python API, ~10s)"
 	@echo "  make check         - Type check only (fastest, no tests)"
-	@echo "  make play-api-unit - Python API unit tests only (~5s)"
+	@echo "  make api-unit      - API unit tests only (~5s, 230 tests)"
 	@echo ""
 	@echo "E2E Tests (comprehensive):"
-	@echo "  make e2e           - All E2E tests (Rust + API + Playwright, ~2min)"
-	@echo "  make play          - Playwright tests only (149 tests, ~30s)"
-	@echo "  make play-api-all  - All Python API tests (687 tests, ~30s)"
+	@echo "  make e2e           - All E2E (Rust + API + Playwright, ~2min)"
+	@echo "  make play          - Playwright E2E only (149 tests, ~30s)"
+	@echo "  make api-integration - API integration tests only"
 	@echo ""
 	@echo "Specialized Tests:"
 	@echo "  make wal           - WAL correctness tests"
-	@echo "  make integration   - Testcontainers integration tests (1-5min)"
-	@echo "  make play-stress   - Stress tests with latency measurement (3+ min)"
+	@echo "  make integration   - Testcontainers (1-5min)"
+	@echo "  make api-stress    - Stress tests with latency (3+ min)"
 	@echo "  make smoke         - Smoke tests (not implemented)"
 	@echo ""
 	@echo "Quality:"
@@ -124,17 +124,17 @@ play-nav:
 play-api:
 	cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
 
-# Python API unit tests only (fast, no stress tests)
-play-api-unit:
-	@echo "==> Running API unit tests (fast)..."
+# API unit tests only (fast, part of 'make test')
+api-unit:
+	@echo "==> Running API unit tests..."
 	cd rsx-playground && uv run pytest tests/api_processes_test.py tests/api_risk_test.py tests/api_wal_test.py tests/api_logs_metrics_test.py tests/api_verify_test.py -v --tb=short
 
-# All Python API tests (including stress and integration)
-play-api-all:
-	@echo "==> Running ALL API tests (687 tests)..."
-	cd rsx-playground && uv run pytest tests/api_*.py -v --tb=short
+# API integration tests (part of 'make e2e')
+api-integration:
+	@echo "==> Running API integration tests..."
+	cd rsx-playground && uv run pytest tests/api_orders_test.py tests/api_integration_test.py tests/api_edge_cases_test.py -v --tb=short
 
-# Stress tests only (orders with latency measurement)
-play-stress:
+# Stress tests with latency measurement (3+ minutes)
+api-stress:
 	@echo "==> Running stress tests (may take 3+ minutes)..."
 	cd rsx-playground && uv run pytest tests/api_orders_test.py -k stress -v -s
