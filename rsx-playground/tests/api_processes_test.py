@@ -139,12 +139,19 @@ def test_running_process_has_pid(client):
 def test_stopped_process_has_no_pid(client):
     """Stopped process shows PID as '-'."""
     resp = client.post("/api/processes/all/stop")
-    time.sleep(0.5)
-    resp = client.get("/api/processes")
-    procs = resp.json()
-    stopped = [p for p in procs if p.get("state") == "stopped"]
-    if stopped:
-        assert stopped[0].get("pid") == "-"
+
+    # Poll for stopped state
+    start = time.time()
+    while time.time() - start < 5.0:
+        resp = client.get("/api/processes")
+        procs = resp.json()
+        stopped = [p for p in procs if p.get("state") == "stopped"]
+        if stopped:
+            assert stopped[0].get("pid") == "-"
+            return
+        time.sleep(0.05)
+
+    # If no stopped processes found, test passes (no processes to check)
 
 
 def test_scenario_switch_to_duo(client):
@@ -269,7 +276,16 @@ def test_scenario_switch_unknown_scenario(client):
 def test_stop_already_stopped_process(client):
     """Stopping already stopped process returns status."""
     client.post("/api/processes/all/stop")
-    time.sleep(0.5)
+
+    # Poll for stopped state
+    start = time.time()
+    while time.time() - start < 5.0:
+        resp_status = client.get("/api/processes")
+        procs = resp_status.json()
+        if any(p.get("state") == "stopped" for p in procs):
+            break
+        time.sleep(0.05)
+
     resp = client.post("/api/processes/gw-1/stop")
     assert resp.status_code == 200
 
@@ -277,7 +293,16 @@ def test_stop_already_stopped_process(client):
 def test_restart_when_not_running(client):
     """Restart when process not running attempts to start."""
     client.post("/api/processes/all/stop")
-    time.sleep(0.5)
+
+    # Poll for stopped state
+    start = time.time()
+    while time.time() - start < 5.0:
+        resp_status = client.get("/api/processes")
+        procs = resp_status.json()
+        if any(p.get("state") == "stopped" for p in procs):
+            break
+        time.sleep(0.05)
+
     resp = client.post("/api/processes/gw-1/restart")
     assert resp.status_code == 200
 
@@ -285,7 +310,16 @@ def test_restart_when_not_running(client):
 def test_kill_already_killed_process(client):
     """Killing already dead process returns status."""
     client.post("/api/processes/all/stop")
-    time.sleep(0.5)
+
+    # Poll for stopped state
+    start = time.time()
+    while time.time() - start < 5.0:
+        resp_status = client.get("/api/processes")
+        procs = resp_status.json()
+        if any(p.get("state") == "stopped" for p in procs):
+            break
+        time.sleep(0.05)
+
     resp = client.post("/api/processes/gw-1/kill")
     assert resp.status_code == 200
 
@@ -753,12 +787,19 @@ def test_scenario_switch_updates_spawn_plan(client):
 def test_build_before_start_ensures_binaries(client):
     """Build before start ensures binaries exist."""
     client.post("/api/build")
-    time.sleep(5)  # Build may take time
 
-    # Check binaries exist
+    # Poll for binary existence
     debug_dir = ROOT / "target" / "debug"
+    start = time.time()
+    while time.time() - start < 30.0:
+        if debug_dir.exists():
+            binaries = list(debug_dir.glob("rsx-*"))
+            if binaries:
+                break
+        time.sleep(0.2)
+
+    # If binaries exist, test passes
     if debug_dir.exists():
-        # Should have some binaries
         binaries = list(debug_dir.glob("rsx-*"))
 
 
