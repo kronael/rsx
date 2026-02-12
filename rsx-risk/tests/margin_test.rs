@@ -413,3 +413,62 @@ fn check_order_liquidation_order_skips_margin_check() {
         pm.check_order(&a, &[], &order, &marks, 10);
     assert_eq!(result, Ok(0));
 }
+
+#[test]
+fn funding_uses_latest_mark_price() {
+    use rsx_risk::FundingConfig;
+    use rsx_risk::LiquidationConfig;
+    use rsx_risk::ReplicationConfig;
+    use rsx_risk::RiskShard;
+    use rsx_risk::ShardConfig;
+    let config = ShardConfig {
+        shard_id: 0,
+        shard_count: 2,
+        max_symbols: 1,
+        symbol_params: vec![SymbolRiskParams {
+            initial_margin_rate: 1000,
+            maintenance_margin_rate: 500,
+            max_leverage: 10,
+        }],
+        taker_fee_bps: vec![5],
+        maker_fee_bps: vec![-1],
+        funding_config: FundingConfig::default(),
+        liquidation_config:
+            LiquidationConfig::default(),
+        replication_config:
+            ReplicationConfig::default(),
+    };
+    let mut s = RiskShard::new(config);
+    s.accounts.insert(
+        0,
+        Account::new(0, 1_000_000_000),
+    );
+    s.update_mark(0, 10_000);
+    s.index_prices[0].price = 9_900;
+    s.index_prices[0].valid = true;
+    let f = rsx_risk::FillEvent {
+        seq: 1,
+        symbol_id: 0,
+        taker_user_id: 0,
+        maker_user_id: 1,
+        price: 10_000,
+        qty: 100,
+        taker_side: 0,
+        timestamp_ns: 0,
+    };
+    s.process_fill(&f);
+    let before = s.accounts[&0].collateral;
+    s.update_mark(0, 10_200);
+    s.maybe_settle_funding(28_800);
+    let after = s.accounts[&0].collateral;
+    assert_ne!(before, after);
+    s.update_mark(0, 10_500);
+    s.index_prices[0].price = 10_000;
+    let mid = s.accounts[&0].collateral;
+    s.maybe_settle_funding(57_600);
+    let after2 = s.accounts[&0].collateral;
+    assert_ne!(mid, after2);
+    let delta1 = (after - before).abs();
+    let delta2 = (after2 - mid).abs();
+    assert!(delta2 > delta1);
+}

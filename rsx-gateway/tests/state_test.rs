@@ -62,6 +62,17 @@ fn config_applied_tracks_monotonic_version() {
 }
 
 #[test]
+fn per_user_connection_limit_different_users() {
+    let mut state =
+        GatewayState::new(100, 10, 30_000, vec![]);
+    for _ in 0..5 {
+        assert!(state.add_connection(1).is_ok());
+    }
+    assert!(state.add_connection(1).is_err());
+    assert!(state.add_connection(2).is_ok());
+}
+
+#[test]
 fn config_applied_reloads_symbol_overrides() {
     std::env::set_var("RSX_SYMBOL_0_TICK_SIZE", "5");
     std::env::set_var("RSX_SYMBOL_0_LOT_SIZE", "7");

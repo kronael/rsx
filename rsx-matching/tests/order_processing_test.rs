@@ -145,3 +145,78 @@ fn new_order_after_dedup_window_accepted() {
     // Same ID now accepted again
     assert!(!dedup.check_and_insert(1, 0, 42));
 }
+
+#[test]
+fn dedup_exact_boundary() {
+    let mut dedup = DedupTracker::new();
+    assert!(!dedup.check_and_insert(1, 0, 99));
+
+    // Cutoff at exactly 300s: entry was inserted at ~now,
+    // so now+300s is the boundary. Entry timestamp < cutoff
+    // means it gets pruned. At exactly 300s the entry's
+    // insertion time + 300s == cutoff, so ts <= cutoff
+    // but the check is ts > cutoff to keep, meaning
+    // ts == cutoff is pruned.
+    let at_300s =
+        Instant::now() + Duration::from_secs(300);
+    dedup.cleanup_with_cutoff(at_300s);
+    // Entry inserted at ~now, cutoff is now+300s.
+    // Since ts < cutoff (now < now+300s), it's pruned.
+    assert_eq!(dedup.len(), 0);
+
+    // Re-insert, then cleanup with cutoff in the past.
+    // Entry was just inserted so it should survive.
+    assert!(!dedup.check_and_insert(1, 0, 100));
+    let past = Instant::now() - Duration::from_secs(1);
+    dedup.cleanup_with_cutoff(past);
+    assert_eq!(dedup.len(), 1);
+    assert!(dedup.check_and_insert(1, 0, 100));
+}
+
+#[test]
+fn fok_fail_exactly_one_completion() {
+    let mut book = test_book();
+    // Resting sell with insufficient qty
+    book.insert_resting(
+        50_000, 5, Side::Sell, 0, 1, false, 0, 0, 0,
+    );
+    let mut order = IncomingOrder {
+        price: 50_000,
+        qty: 10,
+        remaining_qty: 10,
+        side: Side::Buy,
+        tif: TimeInForce::FOK,
+        user_id: 2,
+        reduce_only: false,
+        post_only: false,
+        timestamp_ns: 1000,
+        order_id_hi: 0,
+        order_id_lo: 2,
+    };
+    process_new_order(&mut book, &mut order);
+
+    let events = book.events();
+    let fills = events
+        .iter()
+        .filter(|e| matches!(e, Event::Fill { .. }))
+        .count();
+    assert_eq!(fills, 0);
+
+    let failures = events
+        .iter()
+        .filter(|e| matches!(
+            e,
+            Event::OrderFailed { .. }
+        ))
+        .count();
+    assert_eq!(failures, 1);
+
+    let dones = events
+        .iter()
+        .filter(|e| matches!(
+            e,
+            Event::OrderDone { .. }
+        ))
+        .count();
+    assert_eq!(dones, 0);
+}

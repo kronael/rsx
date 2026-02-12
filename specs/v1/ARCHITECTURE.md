@@ -70,6 +70,9 @@ topology.
 | rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |
 | rsx-recorder | Archival DXS consumer (separate process), daily WAL files |
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
+| rsx-cli | WAL dump/inspect tool (clap CLI) |
+| rsx-maker | Market maker bot (separate process) |
+| rsx-sim | Trading simulator, WS load generator |
 
 Each process is a separate binary. Tile crates (rsx-book,
 rsx-matching, rsx-risk, etc.) are libraries linked into
@@ -220,4 +223,6 @@ Durability guarantees:
 | DATABASE.md | Postgres as system of record, write-behind pattern |
 | DEPLOY.md | Single-machine topology, env config, ring sizing |
 | ARCHIVE.md | WAL offload, infinite retention, gap handling |
+| REST.md | REST API endpoints, request/response schemas |
+| TELEMETRY.md | Structured metrics, tracing, log shipping |
 | TESTING.md | Test levels, make targets, invariants, benchmarks |
