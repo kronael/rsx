@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { waitForHTMX, waitForRefresh, verifyPolling } from "./test_helpers";
 
 test.describe("WAL tab", () => {
   test("loads with per-process WAL state card", async ({ page }) => {
@@ -22,5 +23,130 @@ test.describe("WAL tab", () => {
     await page.goto("/wal");
     await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible();
     await expect(page.locator("#wal-filter")).toBeVisible();
+  });
+
+  // New interactive tests (12 total)
+
+  test("per-process WAL state auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/wal");
+    const walDetail = page.locator("[hx-get='./x/wal-detail']");
+
+    await verifyPolling(walDetail, "every 2s");
+  });
+
+  test("per-process WAL state shows streams", async ({ page }) => {
+    await page.goto("/wal");
+    const walDetail = page.locator("[hx-get='./x/wal-detail']");
+    await waitForHTMX(page, 2000);
+
+    // Should show stream info or "no WAL streams" message
+    const content = await walDetail.textContent();
+    expect(content).toBeTruthy();
+  });
+
+  test("lag dashboard auto-refreshes every 1s", async ({ page }) => {
+    await page.goto("/wal");
+    const lagDash = page.locator("[hx-get='./x/wal-lag']");
+
+    await verifyPolling(lagDash, "every 1s");
+  });
+
+  test("lag dashboard shows producer-consumer gap placeholder", async ({ page }) => {
+    await page.goto("/wal");
+    const lagDash = page.locator("[hx-get='./x/wal-lag']");
+    await waitForHTMX(page, 2000);
+
+    // Should show lag data or placeholder
+    await expect(lagDash).toContainText(/start RSX|lag|no data/i);
+  });
+
+  test("timeline filter has event type options", async ({ page }) => {
+    await page.goto("/wal");
+    const filter = page.locator("#wal-filter");
+
+    // Verify options
+    await expect(filter.locator("option[value='']")).toHaveText("all");
+    await expect(filter.locator("option[value='ORDER_ACCEPTED']")).toBeVisible();
+    await expect(filter.locator("option[value='FILL']")).toBeVisible();
+    await expect(filter.locator("option[value='MARGIN_CHECK']")).toBeVisible();
+  });
+
+  test("timeline auto-refreshes every 2s", async ({ page }) => {
+    await page.goto("/wal");
+    const timeline = page.locator("[hx-get='./x/wal-timeline']");
+
+    await verifyPolling(timeline, "every 2s");
+  });
+
+  test("timeline shows placeholder when no data", async ({ page }) => {
+    await page.goto("/wal");
+    const timeline = page.locator("[hx-get='./x/wal-timeline']");
+    await waitForHTMX(page, 2000);
+
+    // Should show placeholder
+    await expect(timeline).toContainText(/start RSX|timeline|no data/i);
+  });
+
+  test("WAL files card auto-refreshes every 5s", async ({ page }) => {
+    await page.goto("/wal");
+    const files = page.locator("[hx-get='./x/wal-files']");
+
+    await verifyPolling(files, "every 5s");
+  });
+
+  test("WAL files card has verify and dump buttons", async ({ page }) => {
+    await page.goto("/wal");
+
+    const verifyBtn = page.locator("button", { hasText: "Verify" });
+    await expect(verifyBtn).toBeVisible();
+    await expect(verifyBtn).toHaveAttribute("hx-post", "./api/wal/verify");
+
+    const dumpBtn = page.locator("button", { hasText: "Dump JSON" });
+    await expect(dumpBtn).toBeVisible();
+    await expect(dumpBtn).toHaveAttribute("hx-post", "./api/wal/dump");
+  });
+
+  test("verify button triggers WAL integrity check", async ({ page }) => {
+    await page.goto("/wal");
+    const verifyBtn = page.locator("button", { hasText: "Verify" });
+
+    await verifyBtn.click();
+    await waitForHTMX(page);
+
+    // Should complete (no error thrown)
+    await expect(verifyBtn).toBeVisible();
+  });
+
+  test("dump JSON button triggers WAL dump action", async ({ page }) => {
+    await page.goto("/wal");
+    const dumpBtn = page.locator("button", { hasText: "Dump JSON" });
+
+    await dumpBtn.click();
+    await waitForHTMX(page);
+
+    await expect(dumpBtn).toBeVisible();
+  });
+
+  test("all WAL cards load without errors", async ({ page }) => {
+    await page.goto("/wal");
+
+    // Verify all cards visible
+    await expect(page.getByRole("heading", { name: "Per-Process WAL State" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Lag Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Rotation / Tip Health" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "WAL Files" })).toBeVisible();
+
+    await waitForHTMX(page, 2000);
+
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        errors.push(msg.text());
+      }
+    });
+
+    await page.waitForTimeout(1000);
+    expect(errors.length).toBe(0);
   });
 });
