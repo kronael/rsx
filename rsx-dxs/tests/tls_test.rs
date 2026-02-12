@@ -174,7 +174,7 @@ async fn tls_disabled_falls_back_to_plain() {
 
     // Use fixed test port to avoid bind-drop-rebind race
     let service_addr: SocketAddr =
-        "127.0.0.1:19300".parse().unwrap();
+        "127.0.0.1:19301".parse().unwrap();
     let service_clone = service.clone();
     let service_task = tokio::spawn(async move {
         service.serve(service_addr).await
