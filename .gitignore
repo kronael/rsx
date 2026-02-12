@@ -1,1 +1,11 @@
 target/
+tmp/
+log/
+__pycache__/
+*.pyc
+.claude/
+.demiurg/
+.venv/
+.pytest_cache/
+uv.lock
+node_modules/
