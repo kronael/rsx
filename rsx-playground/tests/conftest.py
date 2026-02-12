@@ -1,9 +1,12 @@
 """Pytest configuration for rsx-playground tests."""
 
+import os
+import signal
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,14 +23,88 @@ def client():
 
 @pytest.fixture(autouse=True)
 def cleanup_state():
-    """Clear in-memory state before each test."""
+    """Clear in-memory state before and after each test."""
+    # Before test: clear state
     server.recent_orders.clear()
     server.verify_results.clear()
     server.managed.clear()
+
     yield
+
+    # After test: cleanup everything
     server.recent_orders.clear()
     server.verify_results.clear()
+
+    # Kill any managed processes
+    for name, info in list(server.managed.items()):
+        proc = info.get("proc")
+        if proc and hasattr(proc, "pid"):
+            try:
+                os.kill(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
     server.managed.clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_session():
+    """Cleanup at session start and end."""
+    # Before session: kill any stray RSX processes
+    _kill_stray_processes()
+
+    yield
+
+    # After session: full cleanup
+    _kill_stray_processes()
+    _cleanup_test_files()
+
+
+def _kill_stray_processes():
+    """Kill any stray RSX processes from previous runs."""
+    rsx_binaries = [
+        "rsx-matching", "rsx-gateway", "rsx-risk",
+        "rsx-marketdata", "rsx-mark", "rsx-recorder"
+    ]
+
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = proc.info.get('cmdline') or []
+            cmdline_str = ' '.join(cmdline)
+
+            if any(binary in cmdline_str for binary in rsx_binaries):
+                print(f"Killing stray process: {proc.pid} {cmdline_str}")
+                proc.kill()
+                proc.wait(timeout=5)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+            pass
+
+
+def _cleanup_test_files():
+    """Clean up test-generated files."""
+    import shutil
+
+    root = Path(__file__).parent.parent.parent
+
+    # Clean WAL files in tmp/wal/
+    wal_dir = root / "tmp" / "wal"
+    if wal_dir.exists():
+        for item in wal_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+
+    # Clean PID files in tmp/pids/
+    pid_dir = root / "tmp" / "pids"
+    if pid_dir.exists():
+        for pid_file in pid_dir.glob("*.pid"):
+            pid_file.unlink(missing_ok=True)
+
+    # Clean test log files (keep production logs)
+    log_dir = root / "log"
+    if log_dir.exists():
+        for log_file in log_dir.glob("*.log"):
+            # Only clean if file is recent (test-generated)
+            if log_file.stat().st_mtime > (os.path.getmtime(log_dir) - 3600):
+                log_file.unlink(missing_ok=True)
 
 
 @pytest.fixture

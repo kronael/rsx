@@ -9,15 +9,15 @@
 help:
 	@echo "RSX Test Suite - Available Targets:"
 	@echo ""
-	@echo "Unit Tests (fast):"
-	@echo "  make test          - All unit tests (Rust + Python API, ~10s)"
+	@echo "Unit Tests (fast, isolated):"
+	@echo "  make test          - Rust unit tests ONLY (~5s)"
 	@echo "  make check         - Type check only (fastest, no tests)"
-	@echo "  make api-unit      - API unit tests only (~5s, 230 tests)"
 	@echo ""
-	@echo "E2E Tests (comprehensive):"
-	@echo "  make e2e           - All E2E (Rust + API + Playwright, ~2min)"
+	@echo "E2E Tests (comprehensive, uses real system):"
+	@echo "  make e2e           - ALL E2E tests (Rust + API + Playwright, ~3min)"
 	@echo "  make play          - Playwright E2E only (149 tests, ~30s)"
-	@echo "  make api-integration - API integration tests only"
+	@echo "  make api-unit      - API E2E fast subset (~20s, 230 tests)"
+	@echo "  make api-integration - API E2E comprehensive (~40s, 330 tests)"
 	@echo ""
 	@echo "Specialized Tests:"
 	@echo "  make wal           - WAL correctness tests"
@@ -39,21 +39,21 @@ help:
 check:
 	cargo check --workspace
 
-# Unit tests - ALL unit tests (Rust + Python API unit tests)
+# Unit tests - ONLY isolated unit tests (no real processes, no real DB)
 test:
 	@echo "==> Running Rust unit tests..."
 	cargo test --workspace --lib
 	@echo ""
-	@echo "==> Running Python API unit tests..."
-	cd rsx-playground && uv run pytest tests/api_processes_test.py tests/api_risk_test.py tests/api_wal_test.py tests/api_logs_metrics_test.py tests/api_verify_test.py -v --tb=short -x
+	@echo "==> Python API tests skipped from 'make test'"
+	@echo "    (Use 'make e2e' to run full integration tests)"
 
-# E2E tests - ALL E2E tests (Rust + Python API integration + Playwright)
+# E2E tests - ALL E2E tests (Rust + ALL API tests + Playwright)
 e2e:
 	@echo "==> Running Rust E2E tests..."
 	cargo test --workspace --test '*' --no-fail-fast
 	@echo ""
-	@echo "==> Running Python API integration tests..."
-	cd rsx-playground && uv run pytest tests/api_orders_test.py tests/api_integration_test.py tests/api_edge_cases_test.py -v --tb=short -x
+	@echo "==> Running API E2E tests (ALL 687 tests)..."
+	cd rsx-playground && uv run pytest tests/api_*.py -v --tb=short -x
 	@echo ""
 	@echo "==> Running Playwright E2E tests..."
 	$(MAKE) play
@@ -124,14 +124,14 @@ play-nav:
 play-api:
 	cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
 
-# API unit tests only (fast, part of 'make test')
+# API tests - fast subset (no stress tests)
 api-unit:
-	@echo "==> Running API unit tests..."
+	@echo "==> Running API E2E tests (fast subset, no stress)..."
 	cd rsx-playground && uv run pytest tests/api_processes_test.py tests/api_risk_test.py tests/api_wal_test.py tests/api_logs_metrics_test.py tests/api_verify_test.py -v --tb=short
 
-# API integration tests (part of 'make e2e')
+# API tests - comprehensive subset (includes orders, edge cases)
 api-integration:
-	@echo "==> Running API integration tests..."
+	@echo "==> Running API E2E tests (comprehensive)..."
 	cd rsx-playground && uv run pytest tests/api_orders_test.py tests/api_integration_test.py tests/api_edge_cases_test.py -v --tb=short
 
 # Stress tests with latency measurement (3+ minutes)
