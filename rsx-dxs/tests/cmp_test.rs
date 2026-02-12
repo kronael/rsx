@@ -12,33 +12,21 @@ use rsx_dxs::records::StatusMessage;
 use rsx_dxs::wal::WalWriter;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
-use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use tempfile::TempDir;
 
-fn loopback_pair() -> (CmpSender, CmpReceiver) {
-    let wal_dir = PathBuf::from("./tmp/cmp_test_wal");
-    let _ = std::fs::create_dir_all(&wal_dir);
+fn loopback_pair(wal_dir: &std::path::Path) -> (CmpSender, CmpReceiver) {
+    // Use ephemeral port (0) for parallel test execution
+    let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv_addr = recv_sock.local_addr().unwrap();
+    drop(recv_sock); // Release immediately for CmpReceiver to bind
 
-    // Bind receiver first to get its address
-    let tmp_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let recv_addr = tmp_sock.local_addr().unwrap();
-    drop(tmp_sock);
-
-    let tmp_recv = CmpReceiver::new(
-        recv_addr,
-        "127.0.0.1:1".parse().unwrap(),
-        1,
-    )
-    .unwrap();
-    let recv_addr = tmp_recv.local_addr().unwrap();
-    drop(tmp_recv);
-
-    // Create sender targeting receiver
-    let sender = CmpSender::new(recv_addr, 1, &wal_dir).unwrap();
+    // Create sender first (it will bind to an OS-assigned port)
+    let sender = CmpSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
 
-    // Recreate receiver with correct sender_addr
+    // Create receiver with sender's actual address
     let receiver = CmpReceiver::new(
         recv_addr,
         sender_addr,
@@ -82,7 +70,8 @@ fn as_bytes<T>(val: &T) -> &[u8] {
 
 #[test]
 fn send_recv_roundtrip() {
-    let (mut sender, mut receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, mut receiver) = loopback_pair(_tmp.path());
     let mut fill = fill_payload(1);
     sender.send(&mut fill).unwrap();
 
@@ -108,7 +97,8 @@ fn send_recv_roundtrip() {
 
 #[test]
 fn sender_seq_increments() {
-    let (mut sender, _receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, _receiver) = loopback_pair(_tmp.path());
     assert_eq!(sender.next_seq(), 1);
     let mut fill = fill_payload(1);
     sender.send(&mut fill).unwrap();
@@ -120,7 +110,8 @@ fn sender_seq_increments() {
 
 #[test]
 fn status_message_updates_sender_window() {
-    let (mut sender, _receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, _receiver) = loopback_pair(_tmp.path());
     let msg = StatusMessage {
         consumption_seq: 42,
         receiver_window: 1024,
@@ -132,7 +123,8 @@ fn status_message_updates_sender_window() {
 
 #[test]
 fn flow_control_stalls_sender() {
-    let (mut sender, _receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, _receiver) = loopback_pair(_tmp.path());
     let msg = StatusMessage {
         consumption_seq: 0,
         receiver_window: 1,
@@ -151,7 +143,8 @@ fn flow_control_stalls_sender() {
 
 #[test]
 fn receiver_expected_seq_advances() {
-    let (mut sender, mut receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, mut receiver) = loopback_pair(_tmp.path());
     assert_eq!(receiver.expected_seq(), 1);
 
     let mut fill = fill_payload(1);
@@ -163,7 +156,8 @@ fn receiver_expected_seq_advances() {
 
 #[test]
 fn multiple_records_in_order() {
-    let (mut sender, mut receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, mut receiver) = loopback_pair(_tmp.path());
     for i in 1..=5u64 {
         let mut fill = fill_payload(i);
         sender.send(&mut fill).unwrap();
@@ -226,18 +220,16 @@ fn crc_mismatch_rejected() {
 
 #[test]
 fn nak_retransmit_from_wal() {
-    let wal_dir = PathBuf::from("./tmp/cmp_nak_wal");
-    let _ = std::fs::create_dir_all(&wal_dir);
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path();
 
     let mut writer = WalWriter::new(1, &wal_dir, None, 1024 * 1024, 0).unwrap();
     let mut fill = fill_payload(0);
     let _ = writer.append(&mut fill).unwrap();
     let _ = writer.flush().unwrap();
 
-    let _recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let tmp = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let recv_local = tmp.local_addr().unwrap();
-    drop(tmp);
+    // Use fixed test port to avoid bind-drop-rebind race
+    let recv_local: SocketAddr = "127.0.0.1:19200".parse().unwrap();
 
     let mut sender = CmpSender::new(recv_local, 1, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
@@ -273,7 +265,8 @@ fn nak_retransmit_from_wal() {
 
 #[test]
 fn cmp_sender_window_exhausted_blocks() {
-    let (mut sender, _receiver) = loopback_pair();
+    let _tmp = TempDir::new().unwrap();
+    let (mut sender, _receiver) = loopback_pair(_tmp.path());
     let msg = StatusMessage {
         consumption_seq: 0,
         receiver_window: 3,
@@ -301,8 +294,8 @@ fn cmp_sender_window_exhausted_blocks() {
 
 #[test]
 fn cmp_heartbeat_sent_on_idle() {
-    let wal_dir = PathBuf::from("./tmp/cmp_hb_test");
-    let _ = std::fs::create_dir_all(&wal_dir);
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path();
 
     let tmp_recv = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = tmp_recv.local_addr().unwrap();

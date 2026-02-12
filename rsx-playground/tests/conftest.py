@@ -41,6 +41,16 @@ def cleanup_state():
         if proc and hasattr(proc, "pid"):
             try:
                 os.kill(proc.pid, signal.SIGTERM)
+                # Wait for process to terminate before continuing
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if graceful shutdown times out
+                    try:
+                        os.kill(proc.pid, signal.SIGKILL)
+                        proc.wait(timeout=1)
+                    except (ProcessLookupError, OSError):
+                        pass
             except (ProcessLookupError, OSError):
                 pass
     server.managed.clear()

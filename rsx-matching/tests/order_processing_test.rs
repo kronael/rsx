@@ -149,27 +149,21 @@ fn new_order_after_dedup_window_accepted() {
 #[test]
 fn dedup_exact_boundary() {
     let mut dedup = DedupTracker::new();
+    let t0 = Instant::now();
     assert!(!dedup.check_and_insert(1, 0, 99));
 
-    // Cutoff at exactly 300s: entry was inserted at ~now,
-    // so now+300s is the boundary. Entry timestamp < cutoff
-    // means it gets pruned. At exactly 300s the entry's
-    // insertion time + 300s == cutoff, so ts <= cutoff
-    // but the check is ts > cutoff to keep, meaning
-    // ts == cutoff is pruned.
-    let at_300s =
-        Instant::now() + Duration::from_secs(300);
-    dedup.cleanup_with_cutoff(at_300s);
-    // Entry inserted at ~now, cutoff is now+300s.
-    // Since ts < cutoff (now < now+300s), it's pruned.
-    assert_eq!(dedup.len(), 0);
+    // Test 1: Entry just inserted, cleanup with future cutoff
+    // should prune the entry (future cutoff means keep nothing)
+    let future = t0 + Duration::from_secs(300);
+    dedup.cleanup_with_cutoff(future);
+    assert_eq!(dedup.len(), 0, "future cutoff prunes all entries");
 
-    // Re-insert, then cleanup with cutoff in the past.
-    // Entry was just inserted so it should survive.
+    // Test 2: Entry just inserted, cleanup with past cutoff
+    // should keep the entry (past cutoff means keep recent entries)
     assert!(!dedup.check_and_insert(1, 0, 100));
     let past = Instant::now() - Duration::from_secs(1);
     dedup.cleanup_with_cutoff(past);
-    assert_eq!(dedup.len(), 1);
+    assert_eq!(dedup.len(), 1, "past cutoff keeps recent entries");
     assert!(dedup.check_and_insert(1, 0, 100));
 }
 

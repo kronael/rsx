@@ -125,3 +125,22 @@ fn zone_boundary_0_1() {
                     + m.zone_slots[1]
     );
 }
+
+#[test]
+fn zone_boundary_exact_edge() {
+    let m = btc_map();
+    // Test price exactly at zone boundary (5% of 5M = 250K ticks)
+    let exactly_at_boundary = 5_000_000 + 250_000;
+    let idx = m.price_to_index(exactly_at_boundary);
+
+    // Should map to either zone 0 or zone 1 consistently
+    let in_z0 = idx >= m.base_indices[0]
+        && idx < m.base_indices[0] + m.zone_slots[0];
+    let in_z1 = idx >= m.base_indices[1]
+        && idx < m.base_indices[1] + m.zone_slots[1];
+
+    assert!(
+        in_z0 || in_z1,
+        "boundary price should map to exactly one zone"
+    );
+}

@@ -62,16 +62,9 @@ async fn tls_client_server_connection() {
     )
     .unwrap();
 
-    let addr: SocketAddr =
-        "127.0.0.1:0".parse().unwrap();
-    let listener =
-        tokio::net::TcpListener::bind(addr)
-            .await
-            .unwrap();
-    let bound_addr = listener.local_addr().unwrap();
-    drop(listener);
-
-    let service_addr = bound_addr;
+    // Use fixed test port to avoid bind-drop-rebind race
+    let service_addr: SocketAddr =
+        "127.0.0.1:19300".parse().unwrap();
     let service_clone = service.clone();
     let service_task = tokio::spawn(async move {
         service.serve(service_addr).await
@@ -115,7 +108,7 @@ async fn tls_client_server_connection() {
 
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
-        format!("localhost:{}", bound_addr.port());
+        format!("localhost:{}", service_addr.port());
     let mut consumer = DxsConsumer::new(
         stream_id,
         consumer_addr,
@@ -179,16 +172,9 @@ async fn tls_disabled_falls_back_to_plain() {
         DxsReplayService::new(wal_dir.clone(), None)
             .unwrap();
 
-    let addr: SocketAddr =
-        "127.0.0.1:0".parse().unwrap();
-    let listener =
-        tokio::net::TcpListener::bind(addr)
-            .await
-            .unwrap();
-    let bound_addr = listener.local_addr().unwrap();
-    drop(listener);
-
-    let service_addr = bound_addr;
+    // Use fixed test port to avoid bind-drop-rebind race
+    let service_addr: SocketAddr =
+        "127.0.0.1:19300".parse().unwrap();
     let service_clone = service.clone();
     let service_task = tokio::spawn(async move {
         service.serve(service_addr).await
@@ -233,7 +219,7 @@ async fn tls_disabled_falls_back_to_plain() {
 
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
-        format!("127.0.0.1:{}", bound_addr.port());
+        format!("127.0.0.1:{}", service_addr.port());
     let mut consumer = DxsConsumer::new(
         stream_id,
         consumer_addr,
