@@ -36,8 +36,10 @@ cd rsx/rsx-playground
 uv run server.py
 
 # Visit http://localhost:3000
+# - Processes auto-start on first visit
 # - Submit orders, view fills, inspect WAL
 # - Inject faults, view logs, monitor resources
+# - Auto-shuts down after 5min idle
 ```
 
 **Build from source:**

@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -20,6 +21,7 @@ from fastapi import Query
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
+from fastapi.responses import PlainTextResponse
 
 import pages
 
@@ -83,6 +85,44 @@ async def pg_query(sql, *args):
 managed: dict[str, dict] = {}
 build_log: list[str] = []
 current_scenario = "minimal"
+
+# ── auto-start/shutdown state ───────────────────────────
+
+last_activity = time.time()
+processes_running = False
+inactivity_timeout = 300  # 5 minutes
+
+
+def record_activity():
+    """Record activity to prevent auto-shutdown."""
+    global last_activity
+    last_activity = time.time()
+
+
+async def ensure_processes_running():
+    """Auto-start processes if not running."""
+    global processes_running
+    if not processes_running:
+        result = await start_all(current_scenario)
+        if "started" in result:
+            processes_running = True
+            print(f"auto-start: started {result['count']} processes")
+    record_activity()
+
+
+def inactivity_monitor():
+    """Background thread: shutdown after 5min idle."""
+    global processes_running
+    while True:
+        if processes_running and (time.time() - last_activity > inactivity_timeout):
+            # trigger shutdown in async context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(stop_all())
+            loop.close()
+            processes_running = False
+            print("auto-shutdown: 5min inactivity")
+        time.sleep(30)  # check every 30s
 
 
 def get_spawn_plan(scenario="minimal"):
@@ -263,16 +303,22 @@ async def start_all(scenario="minimal"):
 
 async def stop_all():
     """Stop all managed processes."""
+    global processes_running
     stopped = []
     for name in list(managed.keys()):
         await stop_process(name)
         stopped.append(name)
+    processes_running = False
     return {"stopped": stopped}
 
 
 @asynccontextmanager
 async def lifespan(app):
     await pg_connect()
+    # start inactivity monitor thread
+    monitor = threading.Thread(target=inactivity_monitor, daemon=True)
+    monitor.start()
+    print("inactivity monitor started (5min timeout)")
     yield
     # cleanup all managed processes on shutdown
     for name in list(managed.keys()):
@@ -292,6 +338,17 @@ async def lifespan(app):
 
 
 app = FastAPI(title="RSX Playground", lifespan=lifespan)
+
+
+# ── activity middleware ─────────────────────────────────
+
+@app.middleware("http")
+async def activity_middleware(request: Request, call_next):
+    """Record activity on all requests."""
+    record_activity()
+    response = await call_next(request)
+    return response
+
 
 # ── in-memory state ─────────────────────────────────────
 
@@ -476,11 +533,13 @@ def read_logs(process=None, level=None, search=None,
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    await ensure_processes_running()
     return HTMLResponse(pages.overview_page())
 
 
 @app.get("/overview", response_class=HTMLResponse)
 async def overview():
+    await ensure_processes_running()
     return HTMLResponse(pages.overview_page())
 
 
@@ -527,6 +586,69 @@ async def verify():
 @app.get("/orders", response_class=HTMLResponse)
 async def orders():
     return HTMLResponse(pages.orders_page())
+
+
+@app.get("/docs/{filename:path}")
+async def docs(filename: str):
+    """Serve playground documentation files."""
+    docs_dir = Path(__file__).parent / "docs"
+    if not filename:
+        filename = "README.md"
+    if not filename.endswith(".md"):
+        filename += ".md"
+    file_path = docs_dir / filename
+    if not file_path.exists() or not file_path.is_file():
+        return HTMLResponse("<h1>404 Not Found</h1>", status_code=404)
+    content = file_path.read_text()
+    # Simple markdown to HTML (very basic)
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RSX Playground Docs - {filename}</title>
+<style>
+body {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Helvetica, Arial, sans-serif;
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 0 2rem;
+  line-height: 1.6;
+  background: #0f172a;
+  color: #cbd5e1;
+}}
+h1, h2, h3 {{ color: #60a5fa; }}
+a {{ color: #60a5fa; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+code {{
+  background: #1e293b;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+}}
+pre {{
+  background: #1e293b;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}}
+pre code {{
+  background: none;
+  padding: 0;
+}}
+</style>
+</head>
+<body>
+<nav style="margin-bottom: 2rem; padding-bottom: 1rem;
+  border-bottom: 1px solid #334155;">
+<a href="/docs">Playground Docs</a> |
+<a href="/">Playground UI</a> |
+<a href="http://localhost:8001" target="_blank">Full Docs</a>
+</nav>
+<pre>{content}</pre>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 
 # ── HTMX partial routes ────────────────────────────────
