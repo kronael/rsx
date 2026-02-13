@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Playground CLI - manage RSX playground server and processes.
+
+Server lifecycle:
+    start              Start server in background
+    stop               Stop server gracefully
+    restart            Restart server
+    status             Check server status
+
+Process management:
+    start-all [scenario]   Build and start all RSX processes
+    stop-all               Stop all RSX processes
+    ps                     List all processes
+    start <name>           Start individual process
+    stop <name>            Stop individual process
+    restart <name>         Restart individual process
+
+Orders:
+    submit-order [args]    Submit test order
+    batch-orders           Submit batch of orders
+    stress [rate] [dur]    Run stress test
+
+Info:
+    logs [--follow]        View logs
+    scenarios              List available scenarios
+    health                 Health check (server + processes)
+
+Utils:
+    reset                  Stop all and clean state
+"""
+
+import sys
+import subprocess
+import signal
+import time
+import os
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PID_FILE = ROOT / "tmp" / "pids" / "playground-server.pid"
+LOG_FILE = ROOT / "log" / "server.log"
+SERVER_PORT = 49171
+API_BASE = f"http://localhost:{SERVER_PORT}"
+
+# ── Server lifecycle ────────────────────────────────────
+
+
+def is_running():
+    """Check if server is running via PID file."""
+    if not PID_FILE.exists():
+        return False
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError, OSError):
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+        return False
+
+
+def start_server():
+    """Start server as detached daemon."""
+    if is_running():
+        print("server already running")
+        return 0
+
+    # ensure dirs
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # spawn detached daemon
+    server_script = ROOT / "rsx-playground" / "server.py"
+    with open(LOG_FILE, "a") as log:
+        proc = subprocess.Popen(
+            ["uv", "run", str(server_script)],
+            cwd=str(ROOT / "rsx-playground"),
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    PID_FILE.write_text(str(proc.pid))
+    print(f"server started (pid {proc.pid})")
+    print(f"visit http://localhost:{SERVER_PORT}")
+    return 0
+
+
+def stop_server():
+    """Stop server gracefully."""
+    if not is_running():
+        print("server not running")
+        return 0
+
+    pid = int(PID_FILE.read_text().strip())
+    print(f"stopping server (pid {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            time.sleep(0.1)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+        else:
+            print("timeout, killing...")
+            os.kill(pid, signal.SIGKILL)
+        PID_FILE.unlink()
+        print("server stopped")
+    except ProcessLookupError:
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+        print("server already stopped")
+    return 0
+
+
+def status_server():
+    """Check server status."""
+    if is_running():
+        pid = int(PID_FILE.read_text().strip())
+        print(f"server running (pid {pid})")
+        print(f"visit http://localhost:{SERVER_PORT}")
+        return 0
+    else:
+        print("server not running")
+        return 1
+
+
+# ── API helpers ─────────────────────────────────────────
+
+
+def ensure_server():
+    """Ensure server is running, start if needed."""
+    if not is_running():
+        print("server not running, starting...")
+        start_server()
+        time.sleep(2)
+
+
+def api_get(path):
+    """GET request to server API."""
+    import httpx
+    ensure_server()
+    try:
+        resp = httpx.get(f"{API_BASE}{path}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"api error: {e}")
+        return None
+
+
+def api_post(path, data=None):
+    """POST request to server API."""
+    import httpx
+    ensure_server()
+    try:
+        resp = httpx.post(
+            f"{API_BASE}{path}", json=data or {}, timeout=30
+        )
+        resp.raise_for_status()
+        return resp
+    except Exception as e:
+        print(f"api error: {e}")
+        return None
+
+
+# ── Process management ──────────────────────────────────
+
+
+def start_all(scenario="minimal"):
+    """Start all processes via API."""
+    print(f"starting all processes (scenario: {scenario})...")
+    resp = api_post(f"/api/processes/all/start?scenario={scenario}")
+    if resp:
+        print(f"✓ started {scenario} scenario")
+
+
+def stop_all():
+    """Stop all processes via API."""
+    print("stopping all processes...")
+    resp = api_post("/api/processes/all/stop")
+    if resp:
+        print("✓ stopped all processes")
+
+
+def ps():
+    """List all processes."""
+    procs = api_get("/api/processes")
+    if not procs:
+        return
+
+    print(
+        f"{'NAME':<20} {'PID':<10} {'STATE':<10} "
+        f"{'CPU':<8} {'MEM':<10}"
+    )
+    print("-" * 70)
+    for p in procs:
+        print(
+            f"{p['name']:<20} {str(p['pid']):<10} "
+            f"{p['state']:<10} {p.get('cpu', '-'):<8} "
+            f"{p.get('mem', '-'):<10}"
+        )
+
+
+def start_process(name):
+    """Start individual process."""
+    print(f"starting {name}...")
+    resp = api_post(f"/api/processes/{name}/start")
+    if resp:
+        print(f"✓ started {name}")
+
+
+def stop_process(name):
+    """Stop individual process."""
+    print(f"stopping {name}...")
+    resp = api_post(f"/api/processes/{name}/stop")
+    if resp:
+        print(f"✓ stopped {name}")
+
+
+def restart_process(name):
+    """Restart individual process."""
+    print(f"restarting {name}...")
+    resp = api_post(f"/api/processes/{name}/restart")
+    if resp:
+        print(f"✓ restarted {name}")
+
+
+# ── Orders ──────────────────────────────────────────────
+
+
+def submit_order(
+    symbol_id="10",
+    side="buy",
+    price="50000",
+    qty="1.0",
+    tif="GTC",
+):
+    """Submit test order."""
+    data = {
+        "symbol_id": symbol_id,
+        "side": side,
+        "price": price,
+        "qty": qty,
+        "tif": tif,
+    }
+    resp = api_post("/api/orders/test", data)
+    if resp:
+        print(f"✓ order submitted ({side} {qty} @ {price})")
+
+
+def batch_orders():
+    """Submit batch orders."""
+    resp = api_post("/api/orders/batch")
+    if resp:
+        print("✓ submitted 10 batch orders")
+
+
+def stress_test(rate=100, duration=60):
+    """Run stress test."""
+    resp = api_post(
+        f"/api/orders/stress?rate={rate}&duration={duration}"
+    )
+    if resp:
+        print(
+            f"✓ stress test started "
+            f"({rate} orders/sec for {duration}s)"
+        )
+
+
+# ── Info ────────────────────────────────────────────────
+
+
+def scenarios():
+    """List scenarios."""
+    data = api_get("/api/scenarios")
+    if data:
+        print("available scenarios:")
+        for s in data:
+            print(f"  - {s}")
+
+
+def health():
+    """Health check."""
+    import httpx
+
+    # server health
+    try:
+        resp = httpx.get(f"{API_BASE}/healthz", timeout=1)
+        print(f"✓ server: {resp.json()}")
+    except Exception:
+        print("✗ server: DOWN")
+        return 1
+
+    # process health
+    procs = api_get("/api/processes")
+    if procs:
+        running = [p for p in procs if p["state"] == "running"]
+        print(
+            f"✓ processes: {len(running)}/{len(procs)} running"
+        )
+
+    return 0
+
+
+def logs_cmd(follow=False):
+    """View logs."""
+    if not LOG_FILE.exists():
+        print("no logs yet")
+        return 1
+
+    if follow:
+        subprocess.run(["tail", "-f", str(LOG_FILE)])
+    else:
+        subprocess.run(["tail", "-n", "50", str(LOG_FILE)])
+
+
+# ── Utils ───────────────────────────────────────────────
+
+
+def reset():
+    """Stop all and clean state."""
+    print("resetting playground...")
+    stop_all()
+    time.sleep(1)
+
+    # clean state
+    import shutil
+
+    for d in [ROOT / "tmp", ROOT / "log"]:
+        if d.exists():
+            shutil.rmtree(d)
+            print(f"✓ cleaned {d.name}/")
+
+    print("✓ reset complete")
+
+
+# ── Main ────────────────────────────────────────────────
+
+
+def main():
+    """CLI dispatcher."""
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 0
+
+    cmd = sys.argv[1]
+
+    # server lifecycle
+    if cmd == "start":
+        return start_server()
+    elif cmd == "stop":
+        return stop_server()
+    elif cmd == "restart":
+        stop_server()
+        time.sleep(1)
+        return start_server()
+    elif cmd == "status":
+        return status_server()
+
+    # process management
+    elif cmd == "start-all":
+        scenario = (
+            sys.argv[2] if len(sys.argv) > 2 else "minimal"
+        )
+        start_all(scenario)
+    elif cmd == "stop-all":
+        stop_all()
+    elif cmd == "ps":
+        ps()
+    elif cmd == "start" and len(sys.argv) > 2:
+        start_process(sys.argv[2])
+    elif cmd == "stop" and len(sys.argv) > 2:
+        stop_process(sys.argv[2])
+    elif cmd == "restart" and len(sys.argv) > 2:
+        restart_process(sys.argv[2])
+
+    # orders
+    elif cmd == "submit-order":
+        submit_order()
+    elif cmd == "batch-orders":
+        batch_orders()
+    elif cmd == "stress":
+        rate = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+        dur = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+        stress_test(rate, dur)
+
+    # info
+    elif cmd == "logs":
+        follow = "--follow" in sys.argv or "-f" in sys.argv
+        logs_cmd(follow)
+    elif cmd == "scenarios":
+        scenarios()
+    elif cmd == "health":
+        return health()
+
+    # utils
+    elif cmd == "reset":
+        reset()
+
+    else:
+        print(f"unknown command: {cmd}")
+        print(__doc__)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

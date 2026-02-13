@@ -5,11 +5,21 @@ Web-based development dashboard for the RSX exchange. Real-time monitoring, proc
 ## Quick Start
 
 ```bash
+# Start playground server (runs in background)
+./playground start
+
+# Visit http://localhost:49171
+# Click "Start All" to launch RSX processes
+
+# Stop server when done
+./playground stop
+```
+
+Or manually start server:
+```bash
 cd rsx-playground
 uv run server.py
 ```
-
-Open http://localhost:49171, click "Start All". Processes auto-shutdown after 5min idle.
 
 ## What is the Playground?
 
@@ -37,9 +47,40 @@ Includes:
 
 Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX documentation.
 
+## CLI Commands
+
+```bash
+# Server lifecycle
+./playground start              # Start server in background
+./playground stop               # Stop server
+./playground restart            # Restart server
+./playground status             # Check server status
+
+# Process management (via API)
+./playground start-all [scenario]   # Build and start all RSX processes
+./playground stop-all               # Stop all processes
+./playground ps                     # List processes
+./playground start <name>           # Start individual process
+./playground stop <name>            # Stop individual process
+./playground restart <name>         # Restart individual process
+
+# Orders
+./playground submit-order       # Submit test order
+./playground batch-orders       # Submit batch of orders
+./playground stress [rate] [dur]    # Run stress test
+
+# Info
+./playground logs [--follow]    # View logs
+./playground scenarios          # List available scenarios
+./playground health             # Health check
+
+# Utils
+./playground reset              # Stop all and clean state
+```
+
 ## Typical Workflow
 
-1. Start playground: `uv run server.py`
+1. Start playground: `./playground start`
 2. Visit http://localhost:49171
 3. Click "Start All" (30-60s build time)
 4. Wait for processes to start (green dots in table)
@@ -48,8 +89,6 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 7. Logs tab: Monitor errors
 8. Faults tab: Kill a process, watch recovery
 9. Verify tab: Run invariant checks
-
-Note: Processes auto-shutdown after 5min idle to save resources.
 
 ## Requirements
 
@@ -190,6 +229,7 @@ For RSX system architecture, see [../specs/v1/ARCHITECTURE.md](../specs/v1/ARCHI
 
 ```
 rsx-playground/
+├── playground          # CLI tool (server lifecycle + API client)
 ├── server.py           # Main web server (ASGI/HTMX)
 ├── pages.py            # HTML generation (inline Tailwind)
 ├── stress_client.py    # Load generator for stress scenarios
