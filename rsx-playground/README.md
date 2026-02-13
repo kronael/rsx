@@ -60,9 +60,9 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 ./playground start-all [scenario]   # Build and start all RSX processes
 ./playground stop-all               # Stop all processes
 ./playground ps                     # List processes
-./playground start <name>           # Start individual process
-./playground stop <name>            # Stop individual process
-./playground restart <name>         # Restart individual process
+./playground start-proc <name>      # Start individual process
+./playground stop-proc <name>       # Stop individual process
+./playground restart-proc <name>    # Restart individual process
 
 # Orders
 ./playground submit-order       # Submit test order

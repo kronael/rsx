@@ -141,10 +141,15 @@ async def spawn_process(name, binary, env):
         "proc": proc, "binary": binary, "env": env,
     }
     asyncio.create_task(pipe_output(name, proc.stdout))
-    # write PID file
+    # write PID file after short delay to confirm spawn
     PID_DIR.mkdir(parents=True, exist_ok=True)
-    (PID_DIR / f"{name}.pid").write_text(str(proc.pid))
-    return {"pid": proc.pid}
+    await asyncio.sleep(0.05)
+    if proc.returncode is None:
+        (PID_DIR / f"{name}.pid").write_text(str(proc.pid))
+        return {"pid": proc.pid}
+    else:
+        return {"error": f"process exited immediately (code "
+                         f"{proc.returncode})"}
 
 
 async def stop_process(name):
@@ -154,12 +159,17 @@ async def stop_process(name):
         return {"error": f"{name} not managed"}
     proc = info["proc"]
     if proc.returncode is not None:
+        # already stopped, clean PID file
+        pid_file = PID_DIR / f"{name}.pid"
+        if pid_file.exists():
+            pid_file.unlink()
         return {"status": f"{name} already stopped"}
     proc.terminate()
     try:
         await asyncio.wait_for(proc.wait(), timeout=5.0)
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
     pid_file = PID_DIR / f"{name}.pid"
     if pid_file.exists():
         pid_file.unlink()
@@ -238,22 +248,41 @@ async def start_all(scenario="minimal"):
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     # kill stale processes on known ports
-    for port in [8080, 8180, 9110, 9200, 9400, 9510]:
-        try:
-            subprocess.run(
-                ["fuser", "-k", f"{port}/tcp"],
-                capture_output=True, timeout=2,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    for port in [9110, 9200, 9510]:
-        try:
-            subprocess.run(
-                ["fuser", "-k", f"{port}/udp"],
-                capture_output=True, timeout=2,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+    import shutil
+    if shutil.which("fuser"):
+        # fuser available, use it
+        for port in [8080, 8180, 9110, 9200, 9400, 9510]:
+            try:
+                subprocess.run(
+                    ["fuser", "-k", f"{port}/tcp"],
+                    capture_output=True, timeout=2,
+                )
+            except subprocess.TimeoutExpired:
+                pass
+        for port in [9110, 9200, 9510]:
+            try:
+                subprocess.run(
+                    ["fuser", "-k", f"{port}/udp"],
+                    capture_output=True, timeout=2,
+                )
+            except subprocess.TimeoutExpired:
+                pass
+    else:
+        # fallback: check with lsof and kill by PID
+        for port in [8080, 8180, 9110, 9200, 9400, 9510]:
+            try:
+                result = subprocess.run(
+                    ["lsof", "-ti", f":{port}"],
+                    capture_output=True, timeout=2, text=True,
+                )
+                for pid in result.stdout.strip().split():
+                    if pid:
+                        try:
+                            os.kill(int(pid), signal.SIGTERM)
+                        except (ProcessLookupError, ValueError):
+                            pass
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
     await asyncio.sleep(0.5)
 
     # build
@@ -297,6 +326,10 @@ async def lifespan(app):
                 info["proc"].wait(), timeout=3.0)
         except asyncio.TimeoutError:
             info["proc"].kill()
+    # cleanup server PID file
+    server_pid_file = PID_DIR.parent / "playground-server.pid"
+    if server_pid_file.exists():
+        server_pid_file.unlink()
     if pg_pool:
         await pg_pool.close()
 
