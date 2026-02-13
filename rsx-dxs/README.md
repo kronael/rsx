@@ -56,7 +56,8 @@ cargo build -p rsx-dxs
 cargo test -p rsx-dxs
 ```
 
-6 test files: client, CMP, header, records, TLS, WAL.
+7 test files: archive, client, CMP, header, records, TLS, WAL.
+All tests non-flaky (unique temp dirs, ephemeral ports).
 Benchmarks: `wal_bench`, `encode_bench`.
 See `specs/v1/TESTING-DXS.md`.
 

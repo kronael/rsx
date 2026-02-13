@@ -1,7 +1,7 @@
 # RSX Refinement Plan
 
 ## Context
-RSX is ~97% complete (810 tests, 9 crates, ~21k LOC). This refinement plan drives the final 3% to completion and hardens engineering quality.
+RSX is production-ready (960 tests, 9 crates, ~34k LOC). This refinement plan documents the hardening and quality improvements applied.
 
 ## Phase 1: Cross-Crate Safety Audit
 

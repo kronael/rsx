@@ -6,19 +6,20 @@
 
 ## Executive Summary
 
-**Status:** Production-ready. 810+ tests passing, zero
-failures. All hot-path unwraps eliminated (rsx-risk,
-rsx-gateway). Wire protocol 100% spec-compliant (verified
-WEBPROTO.md, MESSAGES.md, RPC.md). All 4 consistency
-invariants verified. CLI tools complete (JSON + Parquet
-output). Gateway hardened (heartbeat 5s/10s, frame size
-limit 4KB, binary frame rejection, per-user 5-conn limit,
-liquidation routing).
+**Status:** Production-ready. 960 tests passing (zero failures,
+all non-flaky). ~34k LOC Rust source + ~19k LOC tests. All
+hot-path unwraps eliminated (rsx-risk, rsx-gateway). Wire
+protocol 100% spec-compliant (verified WEBPROTO.md, MESSAGES.md,
+RPC.md). All 4 consistency invariants verified. CLI tools
+complete (JSON + Parquet output). Gateway hardened (heartbeat
+5s/10s, frame size limit 4KB, binary frame rejection, per-user
+5-conn limit, liquidation routing).
 
-**Test Quality:** All Rust tests non-flaky (unique temp
-dirs, proper port allocation, migration completeness checks,
-dedup boundary fixes). Playground tests hardened (process
-cleanup, polling replaces sleeps, trimming logic corrected).
+**Test Quality:** All Rust tests non-flaky (unique temp dirs,
+proper port allocation, migration completeness checks, dedup
+boundary fixes). Playground tests hardened (process cleanup,
+polling replaces sleeps, trimming logic corrected, 680 test
+functions).
 
 **Overall completion: 100%** (all v1 spec requirements met)
 
@@ -212,8 +213,8 @@ Post-MVP specs (not in v1 scope):
 ## Final Completion Summary
 
 **Overall System: 100%** (all v1 spec requirements met)
-**Total Tests: 810+** (zero failures, all non-flaky)
-**Playground Tests: 934** (104 Playwright + 830 API)
+**Total Tests: 960** (zero failures, all non-flaky)
+**Playground Tests: 680** test functions (Playwright + API)
 
 **Test Quality:**
 - All Rust tests: unique temp dirs, proper cleanup

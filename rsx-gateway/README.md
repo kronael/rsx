@@ -49,9 +49,10 @@ cargo run -p rsx-gateway
 cargo test -p rsx-gateway
 ```
 
-12 test files: circuit, config, convert, JWT, JWT+WS e2e,
-order ID, pending, protocol, rate limit, rate limit e2e,
-state, types. See `specs/v1/TESTING-GATEWAY.md`.
+16 test files: circuit, config, convert, handler, heartbeat,
+JWT, JWT+WS e2e, order ID, pending, protocol, rate limit,
+rate limit e2e, state, types, and more. All hot-path unwraps
+eliminated. See `specs/v1/TESTING-GATEWAY.md`.
 
 ## Dependencies
 

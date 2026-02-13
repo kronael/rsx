@@ -60,10 +60,10 @@ cargo test -p rsx-risk -- --test-threads=1
 
 Use `--test-threads=1` for tests with global state.
 
-16 test files covering: account, fees, funding, insurance,
-liquidation, margin, persist, position, price, replica,
-replication e2e, shard, shard e2e.
-See `specs/v1/TESTING-RISK.md`.
+17 test files covering: account, fees, funding, insurance,
+liquidation, main loop, margin, order processing, persist,
+position, price, replica, replication e2e, shard, shard e2e,
+and more. See `specs/v1/TESTING-RISK.md`.
 
 ## Dependencies
 

@@ -56,8 +56,9 @@ cargo run -p rsx-matching
 cargo test -p rsx-matching
 ```
 
-5 test files: config, config poll, fanout, WAL integration,
-wire. See `specs/v1/TESTING-MATCHING.md`.
+10 test files: config, config poll, dedup, fanout, main loop,
+order processing, WAL integration, wire, and more. Dedup
+boundary logic validated. See `specs/v1/TESTING-MATCHING.md`.
 
 ## Dependencies
 

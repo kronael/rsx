@@ -1,7 +1,7 @@
 # The Development Journey: Spec to System in Three Days
 
 RSX went from first commit to ~99% spec completion in three days.
-Nine crates, ~580 tests, roughly 21,000 lines of Rust. This post
+Nine crates, 960 tests, roughly 34,000 lines of Rust. This post
 is a chronological account of how it happened, what we learned,
 and what remains.
 
@@ -142,7 +142,7 @@ The evening push:
 2026-02-10 21:09 [feat] Orderbook snapshot save/load
 ```
 
-By midnight: 9 crates, ~580 tests, ~99% spec compliance.
+By midnight: 9 crates, 960 tests, 100% v1 spec compliance.
 
 ## What the Critique Process Revealed
 

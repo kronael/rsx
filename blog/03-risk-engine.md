@@ -281,7 +281,7 @@ recovery path -- load from Postgres, replay from WAL, go live.
 
 ## What the Numbers Look Like
 
-Risk processes ~580 tests across position tracking, margin
+Risk processes 234 tests across position tracking, margin
 calculation, fee deduction, funding settlement, liquidation
 rounds, insurance fund accounting, and replication failover.
 The position tracking tests alone cover 60+ edge cases: partial

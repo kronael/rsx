@@ -44,8 +44,10 @@ cargo build -p rsx-book
 cargo test -p rsx-book
 ```
 
-10 test files in `tests/`: book, compression, config update,
-level, matching, migration, order, post-only, slab, snapshot.
+15 test files in `tests/`: book, compression, config update,
+level, matching, migration, modify, order, post-only, reduce,
+slab, snapshot, and more. All tests non-flaky with migration
+completion assertions and zone boundary edge cases.
 See `specs/v1/TESTING-BOOK.md`.
 
 ## Dependencies
