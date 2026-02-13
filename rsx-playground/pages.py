@@ -15,13 +15,20 @@ TABS = [
     ("Faults", "./faults"),
     ("Verify", "./verify"),
     ("Orders", "./orders"),
+    ("Docs", "http://localhost:8001", True),
 ]
 
 
 def layout(title, content, active_tab="./overview"):
     """Wrap content in full page with nav tabs."""
     tabs = ""
-    for label, href in TABS:
+    for tab_item in TABS:
+        if len(tab_item) == 3:
+            label, href, external = tab_item
+        else:
+            label, href = tab_item
+            external = False
+
         if href == active_tab:
             cls = ("bg-slate-700 text-white "
                    "px-3 py-1.5 rounded text-xs font-mono")
@@ -29,7 +36,9 @@ def layout(title, content, active_tab="./overview"):
             cls = ("text-slate-400 hover:text-white "
                    "hover:bg-slate-700 px-3 py-1.5 "
                    "rounded text-xs font-mono")
-        tabs += f'<a href="{href}" class="{cls}">{label}</a>\n'
+
+        target = ' target="_blank" rel="noopener noreferrer"' if external else ''
+        tabs += f'<a href="{href}"{target} class="{cls}">{label}</a>\n'
 
     return f"""<!DOCTYPE html>
 <html lang="en" class="dark">

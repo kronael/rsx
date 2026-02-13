@@ -1174,21 +1174,16 @@ async def api_orders_random():
 async def api_orders_stress(
     rate: int = 100,
     duration: int = 60,
-    symbols: str = "BTCUSD"
 ):
-    """Launch real stress test via rsx-stress binary"""
-    proc = await asyncio.create_subprocess_exec(
-        "../target/release/rsx-stress",
-        "--gateway", "ws://localhost:8080",
-        "--rate", str(rate),
-        "--duration", str(duration),
-        "--symbols", symbols,
-        "--output", f"tmp/stress-{int(time.time())}.csv",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
+    """Launch real stress test via Python client"""
+    from stress_client import run_stress_test, StressConfig
 
-    # Return immediately, stress test runs in background
+    # Run stress test asynchronously
+    config = StressConfig(rate=rate, duration=duration)
+
+    # Launch in background
+    asyncio.create_task(run_stress_test(config))
+
     return HTMLResponse(
         f'<span class="text-amber-400 text-xs">'
         f'Stress test started: {rate} orders/sec for {duration}s</span>')
