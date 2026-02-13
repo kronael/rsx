@@ -1171,22 +1171,27 @@ async def api_orders_random():
 
 
 @app.post("/api/orders/stress")
-async def api_orders_stress():
-    import random
-    for i in range(100):
-        recent_orders.append({
-            "cid": f"str-{int(time.time()*1000)%100000+i:05d}",
-            "symbol": "10",
-            "side": "buy" if i % 2 == 0 else "sell",
-            "price": str(50000 + random.randint(-100, 100)),
-            "qty": "0.1", "status": "submitted",
-            "ts": datetime.now().strftime("%H:%M:%S"),
-        })
-    if len(recent_orders) > 200:
-        del recent_orders[:-200]
+async def api_orders_stress(
+    rate: int = 100,
+    duration: int = 60,
+    symbols: str = "BTCUSD"
+):
+    """Launch real stress test via rsx-stress binary"""
+    proc = await asyncio.create_subprocess_exec(
+        "../target/release/rsx-stress",
+        "--gateway", "ws://localhost:8080",
+        "--rate", str(rate),
+        "--duration", str(duration),
+        "--symbols", symbols,
+        "--output", f"tmp/stress-{int(time.time())}.csv",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    # Return immediately, stress test runs in background
     return HTMLResponse(
-        '<span class="text-amber-400 text-xs">'
-        '100 stress orders submitted</span>')
+        f'<span class="text-amber-400 text-xs">'
+        f'Stress test started: {rate} orders/sec for {duration}s</span>')
 
 
 @app.post("/api/orders/invalid")
