@@ -11,9 +11,9 @@ Process management:
     start-all [scenario]   Build and start all RSX processes
     stop-all               Stop all RSX processes
     ps                     List all processes
-    start <name>           Start individual process
-    stop <name>            Stop individual process
-    restart <name>         Restart individual process
+    start-proc <name>      Start individual process
+    stop-proc <name>       Stop individual process
+    restart-proc <name>    Restart individual process
 
 Orders:
     submit-order [args]    Submit test order
@@ -53,9 +53,20 @@ def is_running():
         pid = int(PID_FILE.read_text().strip())
         os.kill(pid, 0)
         return True
-    except (ValueError, ProcessLookupError, OSError):
-        if PID_FILE.exists():
-            PID_FILE.unlink()
+    except ValueError:
+        # invalid PID file
+        PID_FILE.unlink()
+        return False
+    except ProcessLookupError:
+        # process doesn't exist
+        PID_FILE.unlink()
+        return False
+    except PermissionError:
+        # process exists but we can't signal it
+        return True
+    except OSError:
+        # other OS error, assume stale
+        PID_FILE.unlink()
         return False
 
 
@@ -64,6 +75,23 @@ def start_server():
     if is_running():
         print("server already running")
         return 0
+
+    # check port not in use
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        result = sock.connect_ex(("localhost", SERVER_PORT))
+        if result == 0:
+            print(
+                f"error: port {SERVER_PORT} already in use")
+            print("check for conflicting process:")
+            print(f"  lsof -i:{SERVER_PORT}")
+            sock.close()
+            return 1
+    except Exception:
+        pass
+    finally:
+        sock.close()
 
     # ensure dirs
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -133,25 +161,61 @@ def ensure_server():
     if not is_running():
         print("server not running, starting...")
         start_server()
-        time.sleep(2)
+        # wait for server to be ready
+        try:
+            import httpx
+        except ImportError:
+            time.sleep(2)
+            return
+        for _ in range(20):
+            time.sleep(0.2)
+            try:
+                resp = httpx.get(
+                    f"{API_BASE}/healthz", timeout=1)
+                if resp.status_code == 200:
+                    return
+            except Exception:
+                continue
+        print("warning: server started but health check failed")
+        print(f"check logs: {LOG_FILE}")
 
 
 def api_get(path):
     """GET request to server API."""
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        print("error: httpx not installed")
+        print("run: uv pip install httpx")
+        return None
     ensure_server()
     try:
-        resp = httpx.get(f"{API_BASE}{path}", timeout=10)
+        resp = httpx.get(f"{API_BASE}{path}", timeout=15)
         resp.raise_for_status()
         return resp.json()
+    except httpx.ConnectError:
+        print(f"error: cannot connect to {API_BASE}")
+        print("is server running? check: ./playground status")
+        return None
+    except httpx.TimeoutException:
+        print(f"error: request to {path} timed out")
+        return None
+    except httpx.HTTPStatusError as e:
+        print(f"error: {e.response.status_code} from {path}")
+        return None
     except Exception as e:
-        print(f"api error: {e}")
+        print(f"error: unexpected failure: {e}")
         return None
 
 
 def api_post(path, data=None):
     """POST request to server API."""
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        print("error: httpx not installed")
+        print("run: uv pip install httpx")
+        return None
     ensure_server()
     try:
         resp = httpx.post(
@@ -159,8 +223,18 @@ def api_post(path, data=None):
         )
         resp.raise_for_status()
         return resp
+    except httpx.ConnectError:
+        print(f"error: cannot connect to {API_BASE}")
+        print("is server running? check: ./playground status")
+        return None
+    except httpx.TimeoutException:
+        print(f"error: request to {path} timed out")
+        return None
+    except httpx.HTTPStatusError as e:
+        print(f"error: {e.response.status_code} from {path}")
+        return None
     except Exception as e:
-        print(f"api error: {e}")
+        print(f"error: unexpected failure: {e}")
         return None
 
 
@@ -171,23 +245,33 @@ def start_all(scenario="minimal"):
     """Start all processes via API."""
     print(f"starting all processes (scenario: {scenario})...")
     resp = api_post(f"/api/processes/all/start?scenario={scenario}")
-    if resp:
-        print(f"✓ started {scenario} scenario")
+    if resp is None:
+        print("failed to start processes")
+        return 1
+    print(f"started {scenario} scenario")
+    return 0
 
 
 def stop_all():
     """Stop all processes via API."""
     print("stopping all processes...")
     resp = api_post("/api/processes/all/stop")
-    if resp:
-        print("✓ stopped all processes")
+    if resp is None:
+        print("failed to stop processes")
+        return 1
+    print("stopped all processes")
+    return 0
 
 
 def ps():
     """List all processes."""
     procs = api_get("/api/processes")
+    if procs is None:
+        print("failed to get process list")
+        return 1
     if not procs:
-        return
+        print("no processes running")
+        return 0
 
     print(
         f"{'NAME':<20} {'PID':<10} {'STATE':<10} "
@@ -200,30 +284,40 @@ def ps():
             f"{p['state']:<10} {p.get('cpu', '-'):<8} "
             f"{p.get('mem', '-'):<10}"
         )
+    return 0
 
 
 def start_process(name):
     """Start individual process."""
     print(f"starting {name}...")
     resp = api_post(f"/api/processes/{name}/start")
-    if resp:
-        print(f"✓ started {name}")
+    if resp is None:
+        print(f"failed to start {name}")
+        return 1
+    print(f"started {name}")
+    return 0
 
 
 def stop_process(name):
     """Stop individual process."""
     print(f"stopping {name}...")
     resp = api_post(f"/api/processes/{name}/stop")
-    if resp:
-        print(f"✓ stopped {name}")
+    if resp is None:
+        print(f"failed to stop {name}")
+        return 1
+    print(f"stopped {name}")
+    return 0
 
 
 def restart_process(name):
     """Restart individual process."""
     print(f"restarting {name}...")
     resp = api_post(f"/api/processes/{name}/restart")
-    if resp:
-        print(f"✓ restarted {name}")
+    if resp is None:
+        print(f"failed to restart {name}")
+        return 1
+    print(f"restarted {name}")
+    return 0
 
 
 # ── Orders ──────────────────────────────────────────────
@@ -245,15 +339,21 @@ def submit_order(
         "tif": tif,
     }
     resp = api_post("/api/orders/test", data)
-    if resp:
-        print(f"✓ order submitted ({side} {qty} @ {price})")
+    if resp is None:
+        print("failed to submit order")
+        return 1
+    print(f"order submitted ({side} {qty} @ {price})")
+    return 0
 
 
 def batch_orders():
     """Submit batch orders."""
     resp = api_post("/api/orders/batch")
-    if resp:
-        print("✓ submitted 10 batch orders")
+    if resp is None:
+        print("failed to submit batch orders")
+        return 1
+    print("submitted 10 batch orders")
+    return 0
 
 
 def stress_test(rate=100, duration=60):
@@ -261,11 +361,14 @@ def stress_test(rate=100, duration=60):
     resp = api_post(
         f"/api/orders/stress?rate={rate}&duration={duration}"
     )
-    if resp:
-        print(
-            f"✓ stress test started "
-            f"({rate} orders/sec for {duration}s)"
-        )
+    if resp is None:
+        print("failed to start stress test")
+        return 1
+    print(
+        f"stress test started "
+        f"({rate} orders/sec for {duration}s)"
+    )
+    return 0
 
 
 # ── Info ────────────────────────────────────────────────
@@ -274,30 +377,45 @@ def stress_test(rate=100, duration=60):
 def scenarios():
     """List scenarios."""
     data = api_get("/api/scenarios")
-    if data:
-        print("available scenarios:")
-        for s in data:
-            print(f"  - {s}")
+    if data is None:
+        print("failed to get scenarios")
+        return 1
+    if not data:
+        print("no scenarios available")
+        return 0
+    print("available scenarios:")
+    for s in data:
+        print(f"  - {s}")
+    return 0
 
 
 def health():
     """Health check."""
-    import httpx
-
     # server health
+    if not is_running():
+        print("server: DOWN")
+        return 1
+
     try:
-        resp = httpx.get(f"{API_BASE}/healthz", timeout=1)
-        print(f"✓ server: {resp.json()}")
-    except Exception:
-        print("✗ server: DOWN")
+        import httpx
+        resp = httpx.get(f"{API_BASE}/healthz", timeout=2)
+        if resp.status_code == 200:
+            print("server: ok")
+        else:
+            print(f"server: error {resp.status_code}")
+            return 1
+    except ImportError:
+        print("server: running (httpx not available)")
+    except Exception as e:
+        print(f"server: error ({e})")
         return 1
 
     # process health
     procs = api_get("/api/processes")
-    if procs:
+    if procs is not None:
         running = [p for p in procs if p["state"] == "running"]
         print(
-            f"✓ processes: {len(running)}/{len(procs)} running"
+            f"processes: {len(running)}/{len(procs)} running"
         )
 
     return 0
@@ -309,10 +427,17 @@ def logs_cmd(follow=False):
         print("no logs yet")
         return 1
 
-    if follow:
-        subprocess.run(["tail", "-f", str(LOG_FILE)])
-    else:
-        subprocess.run(["tail", "-n", "50", str(LOG_FILE)])
+    try:
+        if follow:
+            subprocess.run(["tail", "-f", str(LOG_FILE)])
+        else:
+            subprocess.run(["tail", "-n", "50", str(LOG_FILE)])
+        return 0
+    except FileNotFoundError:
+        print("error: tail command not found")
+        return 1
+    except KeyboardInterrupt:
+        return 0
 
 
 # ── Utils ───────────────────────────────────────────────
@@ -320,6 +445,14 @@ def logs_cmd(follow=False):
 
 def reset():
     """Stop all and clean state."""
+    print("warning: this will delete all logs and temp files")
+    print("press enter to continue or ctrl-c to cancel...")
+    try:
+        input()
+    except KeyboardInterrupt:
+        print("\ncancelled")
+        return 1
+
     print("resetting playground...")
     stop_all()
     time.sleep(1)
@@ -330,9 +463,10 @@ def reset():
     for d in [ROOT / "tmp", ROOT / "log"]:
         if d.exists():
             shutil.rmtree(d)
-            print(f"✓ cleaned {d.name}/")
+            print(f"cleaned {d.name}/")
 
-    print("✓ reset complete")
+    print("reset complete")
+    return 0
 
 
 # ── Main ────────────────────────────────────────────────
@@ -363,40 +497,52 @@ def main():
         scenario = (
             sys.argv[2] if len(sys.argv) > 2 else "minimal"
         )
-        start_all(scenario)
+        return start_all(scenario)
     elif cmd == "stop-all":
-        stop_all()
+        return stop_all()
     elif cmd == "ps":
-        ps()
-    elif cmd == "start" and len(sys.argv) > 2:
-        start_process(sys.argv[2])
-    elif cmd == "stop" and len(sys.argv) > 2:
-        stop_process(sys.argv[2])
-    elif cmd == "restart" and len(sys.argv) > 2:
-        restart_process(sys.argv[2])
+        return ps()
+    elif cmd == "start-proc":
+        if len(sys.argv) < 3:
+            print("error: missing process name")
+            print("usage: ./playground start-proc <name>")
+            return 1
+        return start_process(sys.argv[2])
+    elif cmd == "stop-proc":
+        if len(sys.argv) < 3:
+            print("error: missing process name")
+            print("usage: ./playground stop-proc <name>")
+            return 1
+        return stop_process(sys.argv[2])
+    elif cmd == "restart-proc":
+        if len(sys.argv) < 3:
+            print("error: missing process name")
+            print("usage: ./playground restart-proc <name>")
+            return 1
+        return restart_process(sys.argv[2])
 
     # orders
     elif cmd == "submit-order":
-        submit_order()
+        return submit_order()
     elif cmd == "batch-orders":
-        batch_orders()
+        return batch_orders()
     elif cmd == "stress":
         rate = int(sys.argv[2]) if len(sys.argv) > 2 else 100
         dur = int(sys.argv[3]) if len(sys.argv) > 3 else 60
-        stress_test(rate, dur)
+        return stress_test(rate, dur)
 
     # info
     elif cmd == "logs":
         follow = "--follow" in sys.argv or "-f" in sys.argv
-        logs_cmd(follow)
+        return logs_cmd(follow)
     elif cmd == "scenarios":
-        scenarios()
+        return scenarios()
     elif cmd == "health":
         return health()
 
     # utils
     elif cmd == "reset":
-        reset()
+        return reset()
 
     else:
         print(f"unknown command: {cmd}")
