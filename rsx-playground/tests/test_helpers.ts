@@ -114,11 +114,10 @@ export async function verifyRealData(
  * Verify HTMX polling works by checking hx-trigger attribute.
  */
 export async function verifyPolling(
-  page: Page,
-  selector: string,
+  locator: any,
   expectedInterval: string
 ) {
-  const trigger = await page.locator(selector).getAttribute("hx-trigger");
+  const trigger = await locator.getAttribute("hx-trigger");
   expect(trigger).toContain(expectedInterval);
 }
 

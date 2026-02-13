@@ -193,14 +193,20 @@ impl RiskShard {
                 fill.taker_user_id,
                 fill.symbol_id,
             );
-            // SAFETY: ensure_position() guarantees key exists
-            let pos = self
+            let Some(pos) = self
                 .positions
                 .get_mut(&(
                     fill.taker_user_id,
                     fill.symbol_id,
                 ))
-                .unwrap();
+            else {
+                warn!(
+                    "missing taker position after ensure: \
+                     user={} symbol={}",
+                    fill.taker_user_id, fill.symbol_id
+                );
+                return;
+            };
             pos.apply_fill(
                 fill.taker_side,
                 fill.price,
@@ -212,11 +218,17 @@ impl RiskShard {
                 fill.price,
                 self.taker_fee_bps[sid],
             );
-            // SAFETY: ensure_account() guarantees key exists
-            self.accounts
-                .get_mut(&fill.taker_user_id)
-                .unwrap()
-                .deduct_fee(taker_fee_val);
+            let Some(acct) =
+                self.accounts.get_mut(&fill.taker_user_id)
+            else {
+                warn!(
+                    "missing taker account after ensure: \
+                     user={}",
+                    fill.taker_user_id
+                );
+                return;
+            };
+            acct.deduct_fee(taker_fee_val);
             self.update_exposure(
                 fill.taker_user_id,
                 fill.symbol_id,
@@ -235,14 +247,20 @@ impl RiskShard {
             } else {
                 0u8
             };
-            // SAFETY: ensure_position() guarantees key exists
-            let pos = self
+            let Some(pos) = self
                 .positions
                 .get_mut(&(
                     fill.maker_user_id,
                     fill.symbol_id,
                 ))
-                .unwrap();
+            else {
+                warn!(
+                    "missing maker position after ensure: \
+                     user={} symbol={}",
+                    fill.maker_user_id, fill.symbol_id
+                );
+                return;
+            };
             pos.apply_fill(
                 maker_side,
                 fill.price,
@@ -254,11 +272,17 @@ impl RiskShard {
                 fill.price,
                 self.maker_fee_bps[sid],
             );
-            // SAFETY: ensure_account() guarantees key exists
-            self.accounts
-                .get_mut(&fill.maker_user_id)
-                .unwrap()
-                .deduct_fee(maker_fee_val);
+            let Some(acct) =
+                self.accounts.get_mut(&fill.maker_user_id)
+            else {
+                warn!(
+                    "missing maker account after ensure: \
+                     user={}",
+                    fill.maker_user_id
+                );
+                return;
+            };
+            acct.deduct_fee(maker_fee_val);
             self.update_exposure(
                 fill.maker_user_id,
                 fill.symbol_id,
@@ -470,11 +494,23 @@ impl RiskShard {
             self.taker_fee_bps[sid],
         ) {
             Ok(margin_needed) => {
-                // SAFETY: ensure_account() guarantees key exists
-                self.accounts
-                    .get_mut(&order.user_id)
-                    .unwrap()
-                    .freeze_margin(margin_needed);
+                let Some(acct) =
+                    self.accounts.get_mut(&order.user_id)
+                else {
+                    warn!(
+                        "missing account after ensure: \
+                         user={}",
+                        order.user_id
+                    );
+                    return OrderResponse::Rejected {
+                        user_id: order.user_id,
+                        reason:
+                            RejectReason::InsufficientMargin,
+                        order_id_hi: order.order_id_hi,
+                        order_id_lo: order.order_id_lo,
+                    };
+                };
+                acct.freeze_margin(margin_needed);
                 self.frozen_orders.insert(
                     order_key(
                         order.order_id_hi,
@@ -483,10 +519,9 @@ impl RiskShard {
                     (order.user_id, margin_needed),
                 );
                 self.orders_processed += 1;
-                let acct =
-                    self.accounts[&order.user_id].clone();
+                let acct_clone = acct.clone();
                 self.push_persist(
-                    PersistEvent::Account(acct),
+                    PersistEvent::Account(acct_clone),
                 );
                 OrderResponse::Accepted {
                     user_id: order.user_id,
@@ -555,10 +590,16 @@ impl RiskShard {
             self.taker_fee_bps[sid],
         );
         let margin_needed = order_im + order_fee;
-        self.accounts
-            .get_mut(&user_id)
-            .unwrap()
-            .freeze_margin(margin_needed);
+        let Some(acct) = self.accounts.get_mut(&user_id)
+        else {
+            warn!(
+                "missing account after ensure during \
+                 replay: user={}",
+                user_id
+            );
+            return;
+        };
+        acct.freeze_margin(margin_needed);
         self.frozen_orders.insert(
             order_key(order_id_hi, order_id_lo),
             (user_id, margin_needed),

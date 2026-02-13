@@ -1,3 +1,5 @@
+#![allow(clippy::await_holding_refcell_ref)]
+
 use crate::convert::validate_lot_alignment;
 use crate::convert::validate_tick_alignment;
 use crate::order_id::generate_order_id;
@@ -278,13 +280,14 @@ pub async fn handle_connection(
                 cid_bytes[..len]
                     .copy_from_slice(&src[..len]);
 
-                // SAFETY: oid is [u8; 16], slices are exact
-                let oid_hi = u64::from_be_bytes(
-                    oid[0..8].try_into().unwrap(),
-                );
-                let oid_lo = u64::from_be_bytes(
-                    oid[8..16].try_into().unwrap(),
-                );
+                let oid_hi = u64::from_be_bytes([
+                    oid[0], oid[1], oid[2], oid[3], oid[4],
+                    oid[5], oid[6], oid[7],
+                ]);
+                let oid_lo = u64::from_be_bytes([
+                    oid[8], oid[9], oid[10], oid[11],
+                    oid[12], oid[13], oid[14], oid[15],
+                ]);
 
                 let order = OrderRequest {
                     seq: 0,
@@ -467,11 +470,26 @@ fn build_cancel(
     symbol_id: u32,
     order_id: &[u8; 16],
 ) -> CancelRequest {
-    // SAFETY: order_id is &[u8; 16], slices are exact
-    let oid_hi =
-        u64::from_be_bytes(order_id[0..8].try_into().unwrap());
-    let oid_lo =
-        u64::from_be_bytes(order_id[8..16].try_into().unwrap());
+    let oid_hi = u64::from_be_bytes([
+        order_id[0],
+        order_id[1],
+        order_id[2],
+        order_id[3],
+        order_id[4],
+        order_id[5],
+        order_id[6],
+        order_id[7],
+    ]);
+    let oid_lo = u64::from_be_bytes([
+        order_id[8],
+        order_id[9],
+        order_id[10],
+        order_id[11],
+        order_id[12],
+        order_id[13],
+        order_id[14],
+        order_id[15],
+    ]);
     CancelRequest {
         seq: 0,
         ts_ns: time_ns(),

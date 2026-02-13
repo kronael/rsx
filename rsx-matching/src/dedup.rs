@@ -16,6 +16,12 @@ pub struct DedupTracker {
     last_cleanup: Instant,
 }
 
+impl Default for DedupTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DedupTracker {
     pub fn new() -> Self {
         Self {
@@ -65,6 +71,10 @@ impl DedupTracker {
 
     pub fn len(&self) -> usize {
         self.seen.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
     }
 
     /// Force cleanup with custom cutoff (bench/test).

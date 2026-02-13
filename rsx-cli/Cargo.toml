@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rsx-dxs = { path = "../rsx-dxs" }
+serde_json = "1"

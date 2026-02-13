@@ -64,11 +64,11 @@ test.describe("WAL tab", () => {
     await page.goto("/wal");
     const filter = page.locator("#wal-filter");
 
-    // Verify options
+    // Verify options exist (options are not "visible" in browsers, just present in DOM)
     await expect(filter.locator("option[value='']")).toHaveText("all");
-    await expect(filter.locator("option[value='ORDER_ACCEPTED']")).toBeVisible();
-    await expect(filter.locator("option[value='FILL']")).toBeVisible();
-    await expect(filter.locator("option[value='MARGIN_CHECK']")).toBeVisible();
+    await expect(filter.locator("option[value='ORDER_ACCEPTED']")).toHaveCount(1);
+    await expect(filter.locator("option[value='FILL']")).toHaveCount(1);
+    await expect(filter.locator("option[value='MARGIN_CHECK']")).toHaveCount(1);
   });
 
   test("timeline auto-refreshes every 2s", async ({ page }) => {
