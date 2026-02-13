@@ -26,6 +26,30 @@ Built with [Claude](https://claude.ai) and
 [Codex](https://openai.com/codex), orchestrated by
 [ship skill](https://github.com/anthropics/claude-code) workflow.
 
+## Quick Start
+
+**Try the playground** (easiest way to explore):
+
+```bash
+# Clone and run
+git clone <repo-url>
+cd rsx/rsx-playground
+uv run server.py
+
+# Visit http://localhost:3000
+# - Submit orders, view fills, inspect WAL
+# - Inject faults, view logs, monitor resources
+```
+
+**Build from source:**
+
+```bash
+cargo build --workspace
+cargo test --workspace
+```
+
+**Full documentation:** Run `./scripts/serve-docs.sh` → http://localhost:8001
+
 ## Status
 
 Production-ready. 9 crates, 960 tests passing (all non-flaky),
