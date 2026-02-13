@@ -4,11 +4,11 @@ Usage: cd rsx-playground && uv run server.py
 """
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
 import sys
-import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -25,11 +25,19 @@ from fastapi.responses import PlainTextResponse
 
 import pages
 
+try:
+    import websockets
+    WEBSOCKETS_AVAILABLE = True
+except ImportError:
+    WEBSOCKETS_AVAILABLE = False
+
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
 WAL_DIR = TMP / "wal"
 LOG_DIR = ROOT / "log"
 PID_DIR = TMP / "pids"
+STRESS_REPORTS_DIR = TMP / "stress-reports"
+STRESS_REPORTS_DIR.mkdir(exist_ok=True)
 
 PG_URL = os.environ.get(
     "DATABASE_URL",  # postgresql://rsx:folium@10.0.2.1:5432/rsx_dev
@@ -85,44 +93,6 @@ async def pg_query(sql, *args):
 managed: dict[str, dict] = {}
 build_log: list[str] = []
 current_scenario = "minimal"
-
-# ── auto-start/shutdown state ───────────────────────────
-
-last_activity = time.time()
-processes_running = False
-inactivity_timeout = 300  # 5 minutes
-
-
-def record_activity():
-    """Record activity to prevent auto-shutdown."""
-    global last_activity
-    last_activity = time.time()
-
-
-async def ensure_processes_running():
-    """Auto-start processes if not running."""
-    global processes_running
-    if not processes_running:
-        result = await start_all(current_scenario)
-        if "started" in result:
-            processes_running = True
-            print(f"auto-start: started {result['count']} processes")
-    record_activity()
-
-
-def inactivity_monitor():
-    """Background thread: shutdown after 5min idle."""
-    global processes_running
-    while True:
-        if processes_running and (time.time() - last_activity > inactivity_timeout):
-            # trigger shutdown in async context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(stop_all())
-            loop.close()
-            processes_running = False
-            print("auto-shutdown: 5min inactivity")
-        time.sleep(30)  # check every 30s
 
 
 def get_spawn_plan(scenario="minimal"):
@@ -292,36 +262,27 @@ async def start_all(scenario="minimal"):
         return {"error": "build failed", "log": build_log[-5:]}
 
     # spawn all
-    global processes_running
     started = []
     for name, binary, env in plan:
         result = await spawn_process(name, binary, env)
         if "pid" in result:
             started.append(name)
         await asyncio.sleep(0.1)
-    if started:
-        processes_running = True
     return {"started": started, "count": len(started)}
 
 
 async def stop_all():
     """Stop all managed processes."""
-    global processes_running
     stopped = []
     for name in list(managed.keys()):
         await stop_process(name)
         stopped.append(name)
-    processes_running = False
     return {"stopped": stopped}
 
 
 @asynccontextmanager
 async def lifespan(app):
     await pg_connect()
-    # start inactivity monitor thread
-    monitor = threading.Thread(target=inactivity_monitor, daemon=True)
-    monitor.start()
-    print("inactivity monitor started (5min timeout)")
     yield
     # cleanup all managed processes on shutdown
     for name in list(managed.keys()):
@@ -343,20 +304,18 @@ async def lifespan(app):
 app = FastAPI(title="RSX Playground", lifespan=lifespan)
 
 
-# ── activity middleware ─────────────────────────────────
 
-@app.middleware("http")
-async def activity_middleware(request: Request, call_next):
-    """Record activity on all requests."""
-    record_activity()
-    response = await call_next(request)
-    return response
-
+@app.get("/healthz")
+async def healthz():
+    """Health check for CLI."""
+    return {"status": "ok", "port": 49171}
 
 # ── in-memory state ─────────────────────────────────────
 
 recent_orders: list[dict] = []
 verify_results: list[dict] = []
+order_latencies: list[int] = []
+gateway_ws = None
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -486,16 +445,29 @@ def scan_wal_files():
     for entry in sorted(WAL_DIR.iterdir()):
         if not entry.is_dir():
             continue
-        for f in sorted(entry.iterdir()):
-            if f.is_file():
-                st = f.stat()
+        # Check both top-level files and subdirectories
+        for item in sorted(entry.iterdir()):
+            if item.is_file():
+                st = item.stat()
                 files.append({
                     "stream": entry.name,
-                    "name": f.name,
+                    "name": item.name,
                     "size": human_size(st.st_size),
                     "modified": datetime.fromtimestamp(
                         st.st_mtime).strftime("%H:%M:%S"),
                 })
+            elif item.is_dir():
+                # Scan subdirectory (e.g., tmp/wal/pengu/10/)
+                for f in sorted(item.iterdir()):
+                    if f.is_file():
+                        st = f.stat()
+                        files.append({
+                            "stream": f"{entry.name}/{item.name}",
+                            "name": f.name,
+                            "size": human_size(st.st_size),
+                            "modified": datetime.fromtimestamp(
+                                st.st_mtime).strftime("%H:%M:%S"),
+                        })
     return files
 
 
@@ -587,6 +559,24 @@ async def verify():
 @app.get("/orders", response_class=HTMLResponse)
 async def orders():
     return HTMLResponse(pages.orders_page())
+
+
+@app.get("/stress", response_class=HTMLResponse)
+async def stress():
+    return HTMLResponse(pages.stress_page())
+
+
+@app.get("/stress/{report_id}", response_class=HTMLResponse)
+async def stress_report_view(report_id: str):
+    """View individual stress test report as HTML"""
+    report_file = STRESS_REPORTS_DIR / f"stress-{report_id}.json"
+    if not report_file.exists():
+        return HTMLResponse("<h1>Report not found</h1>", status_code=404)
+
+    with open(report_file) as f:
+        data = json.load(f)
+
+    return HTMLResponse(pages.stress_report_page(data))
 
 
 @app.get("/docs/{filename:path}")
@@ -820,7 +810,7 @@ async def x_funding():
 
 @app.get("/x/risk-latency", response_class=HTMLResponse)
 async def x_risk_latency():
-    return HTMLResponse(pages.render_risk_latency())
+    return HTMLResponse(pages.render_risk_latency(order_latencies))
 
 
 @app.get("/x/reconciliation",
@@ -833,7 +823,7 @@ async def x_reconciliation():
          response_class=HTMLResponse)
 async def x_latency_regression():
     return HTMLResponse(
-        pages.render_latency_regression())
+        pages.render_latency_regression(order_latencies))
 
 
 @app.get("/x/order-trace", response_class=HTMLResponse)
@@ -1114,10 +1104,22 @@ async def api_scenario_switch(request: Request):
             f'<span class="text-red-400 text-xs">'
             f'unknown scenario: {scenario}</span>')
 
+    # Stop current processes if running
+
     current_scenario = scenario
-    return HTMLResponse(
-        f'<span class="text-emerald-400 text-xs">'
-        f'switched to {scenario}</span>')
+
+    # Auto-restart with new scenario
+    result = await start_all(scenario)
+    if "started" in result:
+        return HTMLResponse(
+            f'<span class="text-emerald-400 text-xs">'
+            f'switched to {scenario} and restarted '
+            f'{result["count"]} processes</span>')
+    else:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'switched to {scenario} (restart failed: '
+            f'{result.get("error", "unknown")})</span>')
 
 
 @app.get("/x/current-scenario", response_class=HTMLResponse)
@@ -1152,28 +1154,101 @@ async def api_logs(
     return {"lines": lines, "count": len(lines)}
 
 
+async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
+    """Send order to Gateway WebSocket if available."""
+    if not WEBSOCKETS_AVAILABLE:
+        return None, "websockets library not installed"
+
+    try:
+        headers = [("x-user-id", str(user_id))]
+        start_ns = time.perf_counter_ns()
+        async with websockets.connect(
+            "ws://localhost:8080",
+            additional_headers=headers,
+            close_timeout=1
+        ) as ws:
+            await ws.send(json.dumps(order_msg))
+            response = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            latency_us = (time.perf_counter_ns() - start_ns) // 1000
+            msg = json.loads(response)
+            return msg, None, latency_us
+    except (ConnectionRefusedError, OSError):
+        return None, "gateway not running"
+    except asyncio.TimeoutError:
+        return None, "timeout waiting for response"
+    except Exception as e:
+        return None, str(e)
+
+
 @app.post("/api/orders/test")
 async def api_orders_test(request: Request):
     form = await request.form()
-    order = {
-        "cid": f"pg{int(time.time()*1e6):018d}"[:20],
-        "symbol": form.get("symbol_id", "10"),
+    cid = f"pg{int(time.time()*1e6):018d}"[:20]
+    user_id = int(form.get("user_id", "1"))
+
+    order_msg = {
+        "type": "NewOrder",
+        "symbol_id": int(form.get("symbol_id", "10")),
         "side": form.get("side", "buy"),
         "price": form.get("price", "0"),
         "qty": form.get("qty", "0"),
+        "client_order_id": cid,
         "tif": form.get("tif", "GTC"),
         "reduce_only": form.get("reduce_only") == "on",
         "post_only": form.get("post_only") == "on",
-        "status": "submitted",
+    }
+
+    order = {
+        "cid": cid,
+        "symbol": str(order_msg["symbol_id"]),
+        "side": order_msg["side"],
+        "price": order_msg["price"],
+        "qty": order_msg["qty"],
+        "tif": order_msg["tif"],
+        "reduce_only": order_msg["reduce_only"],
+        "post_only": order_msg["post_only"],
+        "status": "pending",
         "ts": datetime.now().strftime("%H:%M:%S"),
     }
-    recent_orders.append(order)
+
+    result = await send_order_to_gateway(order_msg, user_id)
+    if result[1]:
+        order["status"] = "error"
+        order["error"] = result[1]
+        recent_orders.append(order)
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} queued ({result[1]})</span>')
+
+    msg, _, latency_us = result
+    if latency_us:
+        order_latencies.append(latency_us)
+        if len(order_latencies) > 1000:
+            del order_latencies[:500]
+
+    if msg and msg.get("type") == "OrderAccepted":
+        order["status"] = "accepted"
+        order["latency_us"] = latency_us
+        recent_orders.append(order)
+        return HTMLResponse(
+            f'<span class="text-emerald-400 text-xs">'
+            f'order {cid} accepted ({latency_us}us)</span>')
+    elif msg and msg.get("type") == "OrderFailed":
+        order["status"] = "rejected"
+        order["reason"] = msg.get("reason", "unknown")
+        recent_orders.append(order)
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'order {cid} rejected: {order["reason"]}</span>')
+    else:
+        order["status"] = "error"
+        recent_orders.append(order)
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} unexpected response</span>')
+
     if len(recent_orders) > 200:
         del recent_orders[:100]
-    return HTMLResponse(
-        '<span class="text-emerald-400 text-xs">'
-        f'order {order["cid"]} submitted '
-        '(gateway proxy not yet connected)</span>')
 
 
 @app.post("/api/verify/run")
@@ -1293,23 +1368,134 @@ async def api_orders_random():
         '5 random orders submitted</span>')
 
 
+@app.post("/api/stress/run")
+async def api_stress_run(
+    rate: int = 100,
+    duration: int = 60,
+):
+    """Launch stress test and save results"""
+    from stress_client import run_stress_test, StressConfig
+
+    config = StressConfig(rate=rate, duration=duration)
+
+    # Run stress test and wait for results
+    results = await run_stress_test(config)
+
+    # Save results with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    report_file = STRESS_REPORTS_DIR / f"stress-{timestamp}.json"
+
+    with open(report_file, "w") as f:
+        json.dump({
+            "timestamp": timestamp,
+            "config": results["config"],
+            "metrics": results["metrics"],
+            "latency_us": results["latency_us"],
+        }, f, indent=2)
+
+    return JSONResponse({
+        "status": "completed",
+        "report_id": timestamp,
+        "results": results
+    })
+
+
+# Keep backward compatibility
 @app.post("/api/orders/stress")
 async def api_orders_stress(
     rate: int = 100,
     duration: int = 60,
 ):
-    """Launch real stress test via Python client"""
-    from stress_client import run_stress_test, StressConfig
+    """Launch stress test (backward compat)"""
+    return await api_stress_run(rate, duration)
 
-    # Run stress test asynchronously
-    config = StressConfig(rate=rate, duration=duration)
 
-    # Launch in background
-    asyncio.create_task(run_stress_test(config))
+@app.get("/api/stress/reports")
+async def api_stress_reports():
+    """List all stress test reports"""
+    reports = []
+    if STRESS_REPORTS_DIR.exists():
+        for f in sorted(STRESS_REPORTS_DIR.glob("stress-*.json"), reverse=True):
+            try:
+                with open(f) as fp:
+                    data = json.load(fp)
+                reports.append({
+                    "id": f.stem.replace("stress-", ""),
+                    "timestamp": data.get("timestamp", "unknown"),
+                    "rate": data["config"]["target_rate"],
+                    "duration": data["config"]["duration"],
+                    "submitted": data["metrics"]["submitted"],
+                    "accepted": data["metrics"]["accepted"],
+                    "accept_rate": data["metrics"]["accept_rate"],
+                    "p99_latency": data["latency_us"]["p99"],
+                })
+            except Exception:
+                continue
+    return JSONResponse(reports)
 
-    return HTMLResponse(
-        f'<span class="text-amber-400 text-xs">'
-        f'Stress test started: {rate} orders/sec for {duration}s</span>')
+
+@app.get("/api/stress/reports/{report_id}")
+async def api_stress_report(report_id: str):
+    """Get specific stress test report"""
+    report_file = STRESS_REPORTS_DIR / f"stress-{report_id}.json"
+    if not report_file.exists():
+        return JSONResponse({"error": "Report not found"}, status_code=404)
+
+    with open(report_file) as f:
+        return JSONResponse(json.load(f))
+
+
+@app.get("/x/stress-reports-list", response_class=HTMLResponse)
+async def x_stress_reports_list():
+    """HTMX endpoint for stress reports table"""
+    reports = await api_stress_reports()
+    if not reports.body:
+        return HTMLResponse('<div class="text-slate-500 text-xs">No stress tests run yet</div>')
+
+    data = json.loads(reports.body)
+    if not data:
+        return HTMLResponse('<div class="text-slate-500 text-xs">No stress tests run yet</div>')
+
+    rows = []
+    for r in data:
+        timestamp_fmt = r["timestamp"]
+        # Format: 20260213-211030 -> 2026-02-13 21:10:30
+        if len(timestamp_fmt) == 15:
+            ts = f"{timestamp_fmt[0:4]}-{timestamp_fmt[4:6]}-{timestamp_fmt[6:8]} {timestamp_fmt[9:11]}:{timestamp_fmt[11:13]}:{timestamp_fmt[13:15]}"
+        else:
+            ts = timestamp_fmt
+
+        accept_color = "text-emerald-400" if r["accept_rate"] >= 95 else "text-amber-400"
+        latency_color = "text-emerald-400" if r["p99_latency"] < 1000 else "text-amber-400"
+
+        rows.append(
+            f'<tr class="hover:bg-slate-800/30">'
+            f'<td class="px-2 py-1 text-xs">'
+            f'<a href="/stress/{r["id"]}" class="text-blue-400 hover:underline">{ts}</a>'
+            f'</td>'
+            f'<td class="px-2 py-1 text-xs text-right">{r["rate"]}/s</td>'
+            f'<td class="px-2 py-1 text-xs text-right">{r["duration"]}s</td>'
+            f'<td class="px-2 py-1 text-xs text-right">{r["submitted"]:,}</td>'
+            f'<td class="px-2 py-1 text-xs text-right {accept_color}">{r["accept_rate"]}%</td>'
+            f'<td class="px-2 py-1 text-xs text-right {latency_color}">{r["p99_latency"]}µs</td>'
+            f'</tr>'
+        )
+
+    table = (
+        '<table class="w-full text-left">'
+        '<thead><tr class="border-b border-slate-700">'
+        '<th class="px-2 py-1 text-[10px] text-slate-400">Timestamp</th>'
+        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Rate</th>'
+        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Duration</th>'
+        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Submitted</th>'
+        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Accept %</th>'
+        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">p99</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody>'
+        '</table>'
+    )
+
+    return HTMLResponse(table)
 
 
 @app.post("/api/orders/invalid")
@@ -1325,7 +1511,7 @@ async def api_orders_invalid():
         'invalid order submitted (rejected)</span>')
 
 
-@app.post("/api/users")
+@app.post("/api/users/create")
 async def api_create_user():
     if pg_pool is None:
         return HTMLResponse(
@@ -1390,16 +1576,20 @@ async def api_wal_dump():
             'no WAL files to dump</span>')
 
     # Dump first 100 records from most recent WAL file
-    latest_file = max(files, key=lambda f: Path(f).stat().st_mtime)
+    latest_dict = max(files, key=lambda f: f.get("modified", ""))
+    stream_name = latest_dict["stream"]
+    file_name = latest_dict["name"]
+    latest_path = WAL_DIR / stream_name / file_name
+
     proc = await asyncio.create_subprocess_exec(
-        "../target/debug/rsx-cli", "dump", latest_file,
+        str(ROOT / "target" / "debug" / "rsx-cli"), "dump", str(latest_path),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.wait()
+    stdout, stderr = await proc.communicate()
     output = stdout.decode() if stdout else stderr.decode()
 
-    html = f'<div class="text-xs"><div class="text-slate-400 mb-2">Latest: {Path(latest_file).name}</div>'
+    html = f'<div class="text-xs"><div class="text-slate-400 mb-2">Latest: {file_name}</div>'
     html += f'<pre class="text-slate-300 whitespace-pre-wrap">{output[:2000]}</pre></div>'
     return HTMLResponse(html)
 
