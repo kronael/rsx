@@ -24,7 +24,7 @@ processes, and WAL-based recovery.
 
 Built with [Claude](https://claude.ai) and
 [Codex](https://openai.com/codex), orchestrated by
-[kronael/demiurg](https://github.com/kronael/demiurg).
+[ship skill](https://github.com/anthropics/claude-code) workflow.
 
 ## Status
 
