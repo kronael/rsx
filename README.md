@@ -1,5 +1,10 @@
 # RSX Exchange
 
+**High-performance perpetuals exchange:** Fixed-point arithmetic, single-threaded matching per symbol (<50μs latency), CMP/UDP between processes, WAL-based recovery. Built with [Claude](https://claude.ai) orchestrated by the [ship skill](https://github.com/anthropics/claude-code) workflow.
+
+<details>
+<summary><i>The Vibe™</i></summary>
+
 > *Shall I compare thee to a sane design?*
 > *Thou art more wondrous and more wild by far.*
 > *I fell for thee the night I saw thy spine--*
@@ -18,13 +23,7 @@
 > *If thou hast never built it, thou can'st never tell:*
 > *The thing impossible may work quite well.*
 
-Perpetuals exchange with fixed-point arithmetic,
-single-threaded matching per symbol, CMP/UDP between
-processes, and WAL-based recovery.
-
-Built with [Claude](https://claude.ai) and
-[Codex](https://openai.com/codex), orchestrated by
-[ship skill](https://github.com/anthropics/claude-code) workflow.
+</details>
 
 ## Quick Start
 
