@@ -1,0 +1,241 @@
+"""
+WebSocket stress test client for RSX Gateway
+Integrated with playground API for real load testing
+"""
+
+import asyncio
+import json
+import time
+from dataclasses import dataclass
+from typing import Optional
+import websockets
+from datetime import datetime
+
+
+@dataclass
+class StressConfig:
+    gateway_url: str = "ws://localhost:8080"
+    rate: int = 1000  # orders per second
+    duration: int = 60  # seconds
+    symbols: list[str] = None
+    users: int = 10
+    connections: int = 10
+
+    def __post_init__(self):
+        if self.symbols is None:
+            self.symbols = ["BTCUSD"]
+
+
+@dataclass
+class OrderMetrics:
+    submitted: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    errors: int = 0
+    latencies_us: list[int] = None
+
+    def __post_init__(self):
+        if self.latencies_us is None:
+            self.latencies_us = []
+
+
+class StressClient:
+    """Single WebSocket connection worker"""
+
+    def __init__(self, worker_id: int, config: StressConfig):
+        self.worker_id = worker_id
+        self.config = config
+        self.user_id = (worker_id % config.users) + 1
+        self.metrics = OrderMetrics()
+        self.order_counter = 0
+
+    async def connect(self):
+        """Connect to Gateway WebSocket"""
+        return await websockets.connect(self.config.gateway_url)
+
+    def generate_order(self) -> dict:
+        """Generate random order"""
+        import random
+
+        symbol_id = random.choice([0, 1, 2])  # BTC, ETH, SOL
+        side = random.choice(["buy", "sell"])
+
+        # Random price around market (50000 for BTC)
+        base_price = 50000
+        price = base_price + random.randint(-100, 100)
+
+        # Random quantity
+        qty = round(random.uniform(0.01, 1.0), 2)
+
+        self.order_counter += 1
+        cid = f"stress-{self.worker_id}-{self.order_counter}-{int(time.time()*1000)%10000}"
+
+        return {
+            "type": "NewOrder",
+            "symbol_id": symbol_id,
+            "side": side,
+            "price": str(price),
+            "qty": str(qty),
+            "client_order_id": cid,
+            "tif": "GTC",
+            "reduce_only": False,
+            "post_only": False
+        }
+
+    async def submit_order(self, ws) -> Optional[int]:
+        """Submit order and measure latency"""
+        order = self.generate_order()
+
+        start = time.perf_counter_ns()
+        await ws.send(json.dumps(order))
+
+        try:
+            # Wait for response with timeout
+            response = await asyncio.wait_for(ws.recv(), timeout=1.0)
+            latency_ns = time.perf_counter_ns() - start
+
+            msg = json.loads(response)
+
+            if msg.get("type") == "OrderAccepted":
+                self.metrics.accepted += 1
+                return latency_ns // 1000  # convert to microseconds
+            elif msg.get("type") == "OrderFailed":
+                self.metrics.rejected += 1
+            else:
+                self.metrics.errors += 1
+
+        except asyncio.TimeoutError:
+            self.metrics.errors += 1
+        except Exception as e:
+            self.metrics.errors += 1
+
+        return None
+
+    async def run_worker(self, rate_per_worker: float, duration: int):
+        """Run stress test for this worker"""
+        interval = 1.0 / rate_per_worker if rate_per_worker > 0 else 0.1
+
+        try:
+            async with await self.connect() as ws:
+                end_time = time.time() + duration
+
+                while time.time() < end_time:
+                    loop_start = time.time()
+
+                    self.metrics.submitted += 1
+                    latency = await self.submit_order(ws)
+
+                    if latency:
+                        self.metrics.latencies_us.append(latency)
+
+                    # Rate limiting
+                    elapsed = time.time() - loop_start
+                    sleep_time = max(0, interval - elapsed)
+                    if sleep_time > 0:
+                        await asyncio.sleep(sleep_time)
+
+        except Exception as e:
+            print(f"Worker {self.worker_id} error: {e}")
+
+
+async def run_stress_test(config: StressConfig) -> dict:
+    """Run multi-connection stress test"""
+
+    rate_per_worker = config.rate / config.connections
+
+    # Create workers
+    workers = [
+        StressClient(i, config)
+        for i in range(config.connections)
+    ]
+
+    # Run all workers concurrently
+    tasks = [
+        worker.run_worker(rate_per_worker, config.duration)
+        for worker in workers
+    ]
+
+    print(f"Starting {config.connections} workers at {rate_per_worker:.1f} orders/sec each")
+    print(f"Target: {config.rate} orders/sec for {config.duration} seconds")
+
+    start_time = time.time()
+    await asyncio.gather(*tasks)
+    elapsed = time.time() - start_time
+
+    # Aggregate metrics
+    total_metrics = OrderMetrics()
+    all_latencies = []
+
+    for worker in workers:
+        total_metrics.submitted += worker.metrics.submitted
+        total_metrics.accepted += worker.metrics.accepted
+        total_metrics.rejected += worker.metrics.rejected
+        total_metrics.errors += worker.metrics.errors
+        all_latencies.extend(worker.metrics.latencies_us)
+
+    # Calculate percentiles
+    all_latencies.sort()
+
+    def percentile(data, p):
+        if not data:
+            return 0
+        k = (len(data) - 1) * p / 100
+        f = int(k)
+        c = f + 1
+        if c >= len(data):
+            return data[-1]
+        return data[f] + (k - f) * (data[c] - data[f])
+
+    p50 = percentile(all_latencies, 50)
+    p95 = percentile(all_latencies, 95)
+    p99 = percentile(all_latencies, 99)
+
+    actual_rate = total_metrics.submitted / elapsed
+
+    results = {
+        "config": {
+            "target_rate": config.rate,
+            "duration": config.duration,
+            "connections": config.connections,
+        },
+        "metrics": {
+            "submitted": total_metrics.submitted,
+            "accepted": total_metrics.accepted,
+            "rejected": total_metrics.rejected,
+            "errors": total_metrics.errors,
+            "elapsed_sec": round(elapsed, 2),
+            "actual_rate": round(actual_rate, 2),
+            "accept_rate": round(100 * total_metrics.accepted / max(total_metrics.submitted, 1), 2),
+        },
+        "latency_us": {
+            "p50": round(p50),
+            "p95": round(p95),
+            "p99": round(p99),
+            "min": all_latencies[0] if all_latencies else 0,
+            "max": all_latencies[-1] if all_latencies else 0,
+        }
+    }
+
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    config = StressConfig(
+        rate=int(sys.argv[1]) if len(sys.argv) > 1 else 1000,
+        duration=int(sys.argv[2]) if len(sys.argv) > 2 else 60,
+    )
+
+    results = asyncio.run(run_stress_test(config))
+
+    print("\n=== Stress Test Results ===")
+    print(f"Submitted: {results['metrics']['submitted']}")
+    print(f"Accepted: {results['metrics']['accepted']} ({results['metrics']['accept_rate']}%)")
+    print(f"Rejected: {results['metrics']['rejected']}")
+    print(f"Errors: {results['metrics']['errors']}")
+    print(f"Actual rate: {results['metrics']['actual_rate']} orders/sec")
+    print(f"\nLatency (us):")
+    print(f"  p50: {results['latency_us']['p50']}")
+    print(f"  p95: {results['latency_us']['p95']}")
+    print(f"  p99: {results['latency_us']['p99']}")
