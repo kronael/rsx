@@ -292,12 +292,15 @@ async def start_all(scenario="minimal"):
         return {"error": "build failed", "log": build_log[-5:]}
 
     # spawn all
+    global processes_running
     started = []
     for name, binary, env in plan:
         result = await spawn_process(name, binary, env)
         if "pid" in result:
             started.append(name)
         await asyncio.sleep(0.1)
+    if started:
+        processes_running = True
     return {"started": started, "count": len(started)}
 
 
@@ -533,13 +536,11 @@ def read_logs(process=None, level=None, search=None,
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    await ensure_processes_running()
     return HTMLResponse(pages.overview_page())
 
 
 @app.get("/overview", response_class=HTMLResponse)
 async def overview():
-    await ensure_processes_running()
     return HTMLResponse(pages.overview_page())
 
 
