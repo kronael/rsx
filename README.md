@@ -32,14 +32,18 @@
 ```bash
 # Clone and run
 git clone <repo-url>
-cd rsx/rsx-playground
-uv run server.py
+cd rsx
 
-# Visit http://localhost:3000
-# - Click "Start All" to launch processes
+# Start playground server (runs in background)
+./rsx-playground/playground start
+
+# Visit http://localhost:49171
+# - Click "Start All" to launch RSX processes
 # - Submit orders, view fills, inspect WAL
 # - Inject faults, view logs, monitor resources
-# - Auto-shuts down after 5min idle
+
+# Stop when done
+./rsx-playground/playground stop
 ```
 
 **Build from source:**
