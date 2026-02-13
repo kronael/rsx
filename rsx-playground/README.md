@@ -9,7 +9,7 @@ cd rsx-playground
 uv run server.py
 ```
 
-Open http://localhost:49171 - processes auto-start on first visit and auto-shutdown after 5min idle.
+Open http://localhost:49171, click "Start All". Processes auto-shutdown after 5min idle.
 
 ## What is the Playground?
 
@@ -40,15 +40,16 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 ## Typical Workflow
 
 1. Start playground: `uv run server.py`
-2. Visit http://localhost:49171 (processes auto-start, 30-60s build time)
-3. Wait for processes to start (green dots in table)
-4. Orders tab: Submit test orders
-5. Book tab: Watch fills happen
-6. Logs tab: Monitor errors
-7. Faults tab: Kill a process, watch recovery
-8. Verify tab: Run invariant checks
+2. Visit http://localhost:49171
+3. Click "Start All" (30-60s build time)
+4. Wait for processes to start (green dots in table)
+5. Orders tab: Submit test orders
+6. Book tab: Watch fills happen
+7. Logs tab: Monitor errors
+8. Faults tab: Kill a process, watch recovery
+9. Verify tab: Run invariant checks
 
-Note: Processes auto-shutdown after 5min idle. Next visit re-starts them.
+Note: Processes auto-shutdown after 5min idle to save resources.
 
 ## Requirements
 
