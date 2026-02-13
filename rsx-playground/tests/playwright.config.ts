@@ -10,4 +10,10 @@ export default defineConfig({
     headless: true,
   },
   reporter: "list",
+  webServer: {
+    command: "source ../.venv/bin/activate && python ../server.py",
+    url: "http://localhost:49171",
+    reuseExistingServer: true,
+    timeout: 10000,
+  },
 });

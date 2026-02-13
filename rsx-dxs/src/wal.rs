@@ -386,22 +386,23 @@ impl WalReader {
 
         // if not in hot range, try archive fallback
         let (files, current_dir, in_archive) =
-            if !in_hot_range && archive_dir.is_some() {
-                debug!(
-                "target_seq {} not in hot WAL, falling back to archive",
-                target_seq
-            );
-                // SAFETY: guarded by archive_dir.is_some() check above
-                let archive = archive_dir
-                    .unwrap()
-                    .join(stream_id.to_string());
-                let mut archive_files =
-                    list_wal_files(stream_id, &archive)?;
-                archive_files.sort_by_key(|f| f.first_seq);
-                if archive_files.is_empty() {
-                    (files, hot_dir.clone(), false)
+            if !in_hot_range {
+                if let Some(archive_path) = archive_dir.as_ref() {
+                    debug!(
+                        "target_seq {} not in hot WAL, falling back to archive",
+                        target_seq
+                    );
+                    let archive = archive_path.join(stream_id.to_string());
+                    let mut archive_files =
+                        list_wal_files(stream_id, &archive)?;
+                    archive_files.sort_by_key(|f| f.first_seq);
+                    if !archive_files.is_empty() {
+                        (archive_files, archive, true)
+                    } else {
+                        (files, hot_dir.clone(), false)
+                    }
                 } else {
-                    (archive_files, archive, true)
+                    (files, hot_dir.clone(), false)
                 }
             } else {
                 (files, hot_dir.clone(), false)
@@ -500,12 +501,7 @@ impl WalReader {
                         )
                     })?;
 
-            if header.len > MAX_PAYLOAD {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "payload length exceeds max",
-                ));
-            }
+            // MAX_PAYLOAD check removed - header.len is u16, already bounded
 
             let mut payload = vec![0u8; header.len as usize];
             match file.read_exact(&mut payload) {

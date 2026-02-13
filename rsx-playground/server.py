@@ -1245,9 +1245,20 @@ async def api_wal_dump():
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
             'no WAL files to dump</span>')
-    return HTMLResponse(
-        f'<span class="text-blue-400 text-xs">'
-        f'{len(files)} WAL files across streams</span>')
+
+    # Dump first 100 records from most recent WAL file
+    latest_file = max(files, key=lambda f: Path(f).stat().st_mtime)
+    proc = await asyncio.create_subprocess_exec(
+        "../target/debug/rsx-cli", "dump", latest_file,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.wait()
+    output = stdout.decode() if stdout else stderr.decode()
+
+    html = f'<div class="text-xs"><div class="text-slate-400 mb-2">Latest: {Path(latest_file).name}</div>'
+    html += f'<pre class="text-slate-300 whitespace-pre-wrap">{output[:2000]}</pre></div>'
+    return HTMLResponse(html)
 
 
 @app.get("/api/risk/users/{user_id}")

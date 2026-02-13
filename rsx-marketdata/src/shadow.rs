@@ -92,6 +92,7 @@ impl ShadowBook {
         self.book.cancel_order(handle);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_insert_by_id(
         &mut self,
         price: i64,

@@ -69,7 +69,7 @@ pub fn get_or_assign_user(
 }
 
 pub fn try_reclaim(
-    user_states: &mut Vec<UserState>,
+    user_states: &mut [UserState],
     user_map: &mut FxHashMap<u32, u16>,
     user_free_list: &mut Vec<u16>,
     now_ns: u64,
@@ -78,8 +78,7 @@ pub fn try_reclaim(
     if replay_mode {
         return None;
     }
-    for i in 0..user_states.len() {
-        let s = &user_states[i];
+    for (i, s) in user_states.iter().enumerate() {
         if s.user_id == 0 {
             continue;
         }

@@ -1,0 +1,7 @@
+# RSX Clippy Configuration
+
+# Allow architectural choices that are intentional design decisions
+too-many-arguments-threshold = 8
+
+# RefCell across await is intentional for connection state management
+# (suppressed via #[allow] attributes where needed)

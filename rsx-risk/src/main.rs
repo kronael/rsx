@@ -934,7 +934,7 @@ fn run_replica(
     );
 
     // After promotion, restart as main
-    drop(lease);
+    // lease released at scope end
     drop(client);
     std::env::set_var("RSX_RISK_IS_REPLICA", "false");
     run_main(shard_id, max_symbols)

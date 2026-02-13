@@ -40,6 +40,12 @@ impl RateLimiter {
     pub fn tokens_remaining(&self) -> f64 {
         self.tokens
     }
+
+    pub fn advance_time_by(&mut self, duration: std::time::Duration) {
+        let elapsed = duration.as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate)
+            .min(self.capacity);
+    }
 }
 
 pub fn per_user() -> RateLimiter {

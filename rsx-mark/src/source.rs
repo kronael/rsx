@@ -58,6 +58,7 @@ impl PriceSource for CoinbaseSource {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_ws_loop<F>(
     ws_url: String,
     symbol_map: Arc<SymbolMap>,
@@ -80,34 +81,31 @@ fn run_ws_loop<F>(
     tokio::spawn(async move {
         let mut backoff = base;
         loop {
-            match connect_async(&ws_url).await {
-                Ok((mut ws, _)) => {
-                    backoff = base;
-                    while let Some(msg) = ws.next().await {
-                        let msg = match msg {
-                            Ok(m) => m,
-                            Err(_) => break,
-                        };
-                        if !msg.is_text() {
-                            continue;
-                        }
-                        let text = msg.to_text().unwrap_or("");
-                        if let Ok(val) =
-                            serde_json::from_str::<
-                                serde_json::Value,
-                            >(text)
-                        {
-                            handler(
-                                &val,
-                                source_id,
-                                price_scale,
-                                &symbol_map,
-                                &mut tx,
-                            );
-                        }
+            if let Ok((mut ws, _)) = connect_async(&ws_url).await {
+                backoff = base;
+                while let Some(msg) = ws.next().await {
+                    let msg = match msg {
+                        Ok(m) => m,
+                        Err(_) => break,
+                    };
+                    if !msg.is_text() {
+                        continue;
+                    }
+                    let text = msg.to_text().unwrap_or("");
+                    if let Ok(val) =
+                        serde_json::from_str::<
+                            serde_json::Value,
+                        >(text)
+                    {
+                        handler(
+                            &val,
+                            source_id,
+                            price_scale,
+                            &symbol_map,
+                            &mut tx,
+                        );
                     }
                 }
-                Err(_) => {}
             }
 
             tokio::time::sleep(
