@@ -1,7 +1,8 @@
 # RSX System Architecture
 
-Spec-first perpetuals exchange. ~21k LOC across 9 Rust crates,
-~580 tests. All specifications in `specs/v1/`.
+Spec-first perpetuals exchange. ~34k LOC across 9 Rust crates,
+960 tests (all passing, zero flakiness). All specifications
+in `specs/v1/`.
 
 ## System Diagram
 

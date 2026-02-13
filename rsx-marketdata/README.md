@@ -50,8 +50,9 @@ cargo run -p rsx-marketdata
 cargo test -p rsx-marketdata
 ```
 
-8 test files: config, heartbeat, protocol, replay, replay
-e2e, seq gap, shadow, subscription.
+11 test files: config, heartbeat, main loop, protocol, replay,
+replay e2e, seq gap, shadow book, shadow, subscription, and
+more. Seq gap detection with automatic L2 snapshot resend.
 See `specs/v1/TESTING-MARKETDATA.md`.
 
 ## Dependencies

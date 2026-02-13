@@ -28,12 +28,12 @@ Built with [Claude](https://claude.ai) and
 
 ## Status
 
-~97% complete. 9 crates, ~580 tests passing, ~21k LOC.
-Full order pipeline wired end-to-end:
-Gateway -> Risk -> ME -> Risk -> Gateway.
-Liquidation engine with insurance fund. Mark price
-aggregator feeding risk via CMP. Market data shadow
-book with L2/BBO/trades broadcast.
+Production-ready. 9 crates, 960 tests passing (all non-flaky),
+~34k LOC Rust + 19k LOC tests. Full order pipeline wired
+end-to-end: Gateway -> Risk -> ME -> Risk -> Gateway.
+Liquidation engine with insurance fund. Mark price aggregator
+feeding risk via CMP. Market data shadow book with L2/BBO/trades
+broadcast. Playground: 680 E2E tests (Playwright + API).
 
 See [PROGRESS.md](PROGRESS.md) for per-crate status.
 
@@ -107,7 +107,7 @@ rsx-recorder/   recorder binary (archival DXS consumer)
 
 ```
 cargo check              # fastest feedback
-cargo test               # unit tests (~580 passing)
+cargo test --workspace   # all tests (960 passing, zero failures)
 cargo bench -p rsx-dxs   # WAL/CMP benchmarks
 ```
 

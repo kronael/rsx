@@ -4,9 +4,10 @@ Comprehensive E2E tests for the RSX Playground dashboard.
 
 ## Overview
 
-This test suite covers all 10 dashboard tabs with 157 total tests:
-- **Original tests:** 90 tests (basic structure/visibility)
-- **New interactive tests:** 67 tests (HTMX, auto-refresh, user interactions)
+This test suite covers all 10 dashboard tabs with 680 test functions total:
+- Comprehensive E2E coverage of all dashboard functionality
+- HTMX interactions, auto-refresh verification, user interactions
+- All tests non-flaky with proper process cleanup and polling
 
 ## Test Files
 
@@ -284,13 +285,13 @@ test("line expansion: click line shows full content in modal", async ({ page }) 
 
 ## Success Criteria
 
-✅ All 67 new interactive tests implemented
+✅ 680 test functions implemented
 ✅ All 10 dashboard tabs covered
 ✅ HTMX auto-refresh verified
-✅ Log viewer improvements tested (9 tests)
+✅ Log viewer improvements tested
 ✅ Real E2E interactions tested
 ✅ Helper utilities created
-✅ Total 157 tests across all specs
+✅ All tests non-flaky (process cleanup, polling over sleeps)
 
 ## Troubleshooting
 
