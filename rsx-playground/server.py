@@ -32,7 +32,7 @@ LOG_DIR = ROOT / "log"
 PID_DIR = TMP / "pids"
 
 PG_URL = os.environ.get(
-    "DATABASE_URL",
+    "DATABASE_URL",  # postgresql://rsx:folium@10.0.2.1:5432/rsx_dev
     "postgres://rsx:rsx@127.0.0.1:5432/rsx",
 )
 
@@ -644,7 +644,7 @@ pre code {{
   border-bottom: 1px solid #334155;">
 <a href="/docs">Playground Docs</a> |
 <a href="/">Playground UI</a> |
-<a href="http://localhost:8001" target="_blank">Full Docs</a>
+<a href="https://krons.cx/rsx/docs" target="_blank">Full Docs</a>
 </nav>
 <pre>{content}</pre>
 </body>
@@ -1327,9 +1327,29 @@ async def api_orders_invalid():
 
 @app.post("/api/users")
 async def api_create_user():
-    return HTMLResponse(
-        '<span class="text-slate-500 text-xs">'
-        'user creation requires risk engine</span>')
+    if pg_pool is None:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'postgres not connected</span>')
+    try:
+        async with pg_pool.acquire() as conn:
+            result = await conn.fetchrow(
+                "INSERT INTO users (created_at) VALUES (NOW()) "
+                "RETURNING user_id"
+            )
+            user_id = result['user_id']
+            await conn.execute(
+                "INSERT INTO balances (user_id, symbol_id, balance) "
+                "VALUES ($1, 0, 1000000000000)",
+                user_id
+            )
+            return HTMLResponse(
+                f'<span class="text-emerald-400 text-xs">'
+                f'created user {user_id} with 10000 USDC</span>')
+    except Exception as e:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'error: {str(e)}</span>')
 
 
 @app.post("/api/users/{user_id}/deposit")
