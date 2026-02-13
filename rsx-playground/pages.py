@@ -15,7 +15,7 @@ TABS = [
     ("Faults", "./faults"),
     ("Verify", "./verify"),
     ("Orders", "./orders"),
-    ("Docs", "http://localhost:8001", True),
+    ("Stress", "./stress"),
 ]
 
 
@@ -90,6 +90,27 @@ document.addEventListener('htmx:afterSwap', function(e) {{
 <main class="p-2 sm:p-4 max-w-7xl mx-auto space-y-3">
 {content}
 </main>
+<footer class="mt-8 py-4 px-4 border-t border-slate-800
+  bg-slate-900 text-center">
+  <div class="max-w-7xl mx-auto flex flex-wrap justify-center
+    items-center gap-4 text-xs text-slate-500">
+    <span>RSX Playground</span>
+    <span class="text-slate-700">|</span>
+    <a href="./docs" target="_blank"
+      class="text-blue-400 hover:text-blue-300">
+      Playground Docs</a>
+    <span class="text-slate-700">|</span>
+    <a href="https://krons.cx/rsx/docs" target="_blank"
+      rel="noopener noreferrer"
+      class="text-blue-400 hover:text-blue-300">
+      Full Documentation</a>
+    <span class="text-slate-700">|</span>
+    <a href="https://github.com/anthropics/claude-code"
+      target="_blank" rel="noopener noreferrer"
+      class="text-blue-400 hover:text-blue-300">
+      Built with Claude</a>
+  </div>
+</footer>
 </body>
 </html>"""
 
@@ -114,6 +135,22 @@ def _card(title, body, header_right=""):
 # ── Screen 1: Overview ──────────────────────────────────
 
 def overview_page():
+    welcome = """<div class="bg-slate-900 border border-slate-800
+  rounded-lg p-3 flex items-center justify-between">
+  <div>
+    <span class="text-xs text-slate-400">
+      RSX Playground - Development Dashboard</span>
+  </div>
+  <div class="flex gap-3 text-xs">
+    <a href="./docs" target="_blank"
+      class="text-blue-400 hover:text-blue-300">
+      Playground Guide</a>
+    <a href="https://krons.cx/rsx/docs" target="_blank"
+      rel="noopener noreferrer"
+      class="text-blue-400 hover:text-blue-300">
+      Architecture Docs</a>
+  </div>
+</div>"""
     health = _card(
         "System Health",
         '<div hx-get="./x/health" '
@@ -207,6 +244,7 @@ def overview_page():
         '</div>',
     )
     content = f"""
+{welcome}
 {health}
 {procs}
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -390,7 +428,7 @@ def risk_page():
   <button class="bg-emerald-900/60 text-emerald-400
     px-3 py-1 rounded text-xs border border-emerald-800
     hover:bg-emerald-800 cursor-pointer"
-    hx-post="./api/users" hx-swap="none">Create User</button>
+    hx-post="./api/users/create" hx-swap="none">Create User</button>
   <button class="bg-blue-900/40 text-blue-400
     px-3 py-1 rounded text-xs border border-blue-900
     hover:bg-blue-900 cursor-pointer"
@@ -1568,20 +1606,60 @@ def render_reconciliation():
     return _table(["Status", "Check"], rows)
 
 
-def render_latency_regression():
-    """Placeholder latency regression."""
+def render_latency_regression(latencies=None):
+    """Show latency regression vs baseline targets."""
+    baseline_gw_p99 = 50  # us
+    baseline_me_p99 = 0.5  # us (500ns)
+
+    if not latencies or len(latencies) == 0:
+        return (
+            '<div class="space-y-2">'
+            '<div class="flex items-center gap-3">'
+            '<span class="text-xs w-40">GW->ME->GW p99</span>'
+            '<span class="text-slate-500 text-xs">--</span>'
+            '<span class="text-[10px] text-slate-600">'
+            f'(baseline {baseline_gw_p99}us)</span></div>'
+            '<div class="flex items-center gap-3">'
+            '<span class="text-xs w-40">ME match p99</span>'
+            '<span class="text-slate-500 text-xs">--</span>'
+            '<span class="text-[10px] text-slate-600">'
+            f'(baseline {int(baseline_me_p99*1000)}ns)</span></div>'
+            '</div>'
+        )
+
+    sorted_lat = sorted(latencies)
+    def percentile(data, p):
+        k = (len(data) - 1) * p / 100
+        f = int(k)
+        c = f + 1
+        if c >= len(data):
+            return data[-1]
+        return data[f] + (k - f) * (data[c] - data[f])
+
+    p99 = int(percentile(sorted_lat, 99))
+    delta = p99 - baseline_gw_p99
+    pct_change = (delta / baseline_gw_p99) * 100 if baseline_gw_p99 > 0 else 0
+
+    if delta < 0:
+        delta_str = f'<span class="text-emerald-400">{delta}us ({pct_change:.0f}%)</span>'
+    elif delta < baseline_gw_p99 * 0.1:
+        delta_str = f'<span class="text-amber-400">+{delta}us (+{pct_change:.0f}%)</span>'
+    else:
+        delta_str = f'<span class="text-red-400">+{delta}us (+{pct_change:.0f}%)</span>'
+
     return (
         '<div class="space-y-2">'
         '<div class="flex items-center gap-3">'
         '<span class="text-xs w-40">GW->ME->GW p99</span>'
-        '<span class="text-slate-500 text-xs">--</span>'
+        f'<span class="text-slate-300 text-xs">{p99}us</span>'
+        f'{delta_str}'
         '<span class="text-[10px] text-slate-600">'
-        '(baseline 50us)</span></div>'
+        f'(baseline {baseline_gw_p99}us)</span></div>'
         '<div class="flex items-center gap-3">'
         '<span class="text-xs w-40">ME match p99</span>'
         '<span class="text-slate-500 text-xs">--</span>'
         '<span class="text-[10px] text-slate-600">'
-        '(baseline 500ns)</span></div>'
+        f'(baseline {int(baseline_me_p99*1000)}ns)</span></div>'
         '</div>'
     )
 
@@ -1619,6 +1697,20 @@ def render_recent_orders(orders):
                 f'hx-target="#order-result" '
                 f'hx-swap="innerHTML">Cancel</button>'
             )
+
+        latency_str = ""
+        if o.get("latency_us"):
+            lat = o["latency_us"]
+            if lat < 100:
+                color = "text-emerald-400"
+            elif lat < 500:
+                color = "text-amber-400"
+            else:
+                color = "text-red-400"
+            latency_str = f'<span class="{color}">{lat}us</span>'
+        else:
+            latency_str = "-"
+
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{o.get("cid", "-")}</td>'
@@ -1629,12 +1721,13 @@ def render_recent_orders(orders):
             f'<td {_TD}>{tif}</td>'
             f'<td {_TD}>{flags.strip()}</td>'
             f'<td {_TD}>{o.get("status", "-")}</td>'
+            f'<td {_TD}>{latency_str}</td>'
             f'<td {_TD}>{o.get("ts", "-")}</td>'
             f'<td {_TD}>{cancel}</td></tr>'
         )
     return _table(
         ["CID", "Symbol", "Side", "Price", "Qty",
-         "TIF", "Flags", "Status", "Time", ""],
+         "TIF", "Flags", "Status", "Latency", "Time", ""],
         rows,
     )
 
@@ -1675,13 +1768,340 @@ def render_funding():
             'start RSX processes to see funding data</span>')
 
 
-def render_risk_latency():
-    """Placeholder risk check latency."""
+def render_risk_latency(latencies=None):
+    """Display order latency percentiles from recent submissions."""
+    if not latencies or len(latencies) == 0:
+        return (
+            '<div class="flex gap-6">'
+            + _metric("p50", "--", "slate-500")
+            + _metric("p95", "--", "slate-500")
+            + _metric("p99", "--", "slate-500")
+            + _metric("max", "--", "slate-500")
+            + '</div>'
+        )
+
+    sorted_lat = sorted(latencies)
+    def percentile(data, p):
+        k = (len(data) - 1) * p / 100
+        f = int(k)
+        c = f + 1
+        if c >= len(data):
+            return data[-1]
+        return data[f] + (k - f) * (data[c] - data[f])
+
+    p50 = int(percentile(sorted_lat, 50))
+    p95 = int(percentile(sorted_lat, 95))
+    p99 = int(percentile(sorted_lat, 99))
+    max_lat = sorted_lat[-1]
+
+    def color_for_lat(lat_us):
+        if lat_us < 100:
+            return "emerald-400"
+        elif lat_us < 500:
+            return "amber-400"
+        else:
+            return "red-400"
+
     return (
         '<div class="flex gap-6">'
-        + _metric("p50", "--", "slate-500")
-        + _metric("p95", "--", "slate-500")
-        + _metric("p99", "--", "slate-500")
-        + _metric("max", "--", "slate-500")
+        + _metric("p50", f"{p50}us", color_for_lat(p50))
+        + _metric("p95", f"{p95}us", color_for_lat(p95))
+        + _metric("p99", f"{p99}us", color_for_lat(p99))
+        + _metric("max", f"{max_lat}us", color_for_lat(max_lat))
+        + f'<div class="text-xs text-slate-500 self-center">n={len(latencies)}</div>'
         + '</div>'
     )
+
+
+def stress_page():
+    """Stress test page with launcher and reports list."""
+    launcher = _card(
+        "Run Stress Test",
+        """
+<form hx-post="./api/stress/run" hx-target="#stress-result" hx-swap="innerHTML">
+  <div class="space-y-3">
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Rate (orders/sec)</label>
+        <input type="number" name="rate" value="100" min="10" max="10000"
+          class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Duration (seconds)</label>
+        <input type="number" name="duration" value="60" min="1" max="600"
+          class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs" />
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <button type="submit"
+        class="bg-blue-900/60 text-blue-400 px-4 py-2 rounded text-xs
+          border border-blue-800 hover:bg-blue-800 cursor-pointer">
+        Run Stress Test
+      </button>
+      <span class="htmx-indicator text-amber-400 text-xs self-center">Running...</span>
+    </div>
+    <div id="stress-result" class="text-xs"></div>
+  </div>
+</form>
+        """,
+    )
+
+    reports_list = _card(
+        "Historical Reports",
+        """
+<div hx-get="./x/stress-reports-list"
+     hx-trigger="load, every 5s"
+     hx-swap="innerHTML">
+  Loading...
+</div>
+        """,
+    )
+
+    info = _card(
+        "About Stress Testing",
+        """
+<div class="space-y-2 text-xs text-slate-400">
+  <p>Stress tests submit orders to the Gateway WebSocket at a specified rate and measure:</p>
+  <ul class="list-disc list-inside space-y-1 ml-2">
+    <li><strong>Throughput:</strong> Actual orders/sec achieved vs target</li>
+    <li><strong>Latency:</strong> p50/p95/p99/max round-trip time (submit → ack)</li>
+    <li><strong>Acceptance Rate:</strong> % of orders accepted by risk engine</li>
+    <li><strong>Errors:</strong> Connection failures, timeouts, gateway overload</li>
+  </ul>
+  <p class="mt-3">Click on a report timestamp to view detailed results with charts.</p>
+</div>
+        """,
+    )
+
+    content = f"""
+{launcher}
+{reports_list}
+{info}
+    """
+
+    return layout("Stress Testing", content, active_tab="./stress")
+
+
+def stress_report_page(data):
+    """Individual stress test report with charts and details."""
+    config = data.get("config", {})
+    metrics = data.get("metrics", {})
+    latency = data.get("latency_us", {})
+    timestamp = data.get("timestamp", "unknown")
+
+    # Format timestamp
+    if len(timestamp) == 15:
+        ts_fmt = f"{timestamp[0:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}:{timestamp[13:15]}"
+    else:
+        ts_fmt = timestamp
+
+    # Summary card
+    summary = _card(
+        f"Stress Test Report: {ts_fmt}",
+        f"""
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+  <div>
+    <div class="text-[10px] text-slate-500 uppercase">Target Rate</div>
+    <div class="text-lg text-blue-400">{config.get("target_rate", 0):,}/s</div>
+  </div>
+  <div>
+    <div class="text-[10px] text-slate-500 uppercase">Duration</div>
+    <div class="text-lg text-blue-400">{config.get("duration", 0)}s</div>
+  </div>
+  <div>
+    <div class="text-[10px] text-slate-500 uppercase">Actual Rate</div>
+    <div class="text-lg text-emerald-400">{metrics.get("actual_rate", 0):,.1f}/s</div>
+  </div>
+  <div>
+    <div class="text-[10px] text-slate-500 uppercase">Elapsed</div>
+    <div class="text-lg text-slate-400">{metrics.get("elapsed_sec", 0):.2f}s</div>
+  </div>
+</div>
+        """,
+    )
+
+    # Results card
+    submitted = metrics.get("submitted", 0)
+    accepted = metrics.get("accepted", 0)
+    rejected = metrics.get("rejected", 0)
+    errors = metrics.get("errors", 0)
+    accept_rate = metrics.get("accept_rate", 0)
+
+    accept_color = "emerald-400" if accept_rate >= 95 else "amber-400" if accept_rate >= 90 else "red-400"
+
+    results = _card(
+        "Results",
+        f"""
+<div class="space-y-3">
+  <div class="grid grid-cols-4 gap-4">
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">Submitted</div>
+      <div class="text-xl text-slate-300">{submitted:,}</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">Accepted</div>
+      <div class="text-xl text-{accept_color}">{accepted:,}</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">Rejected</div>
+      <div class="text-xl text-amber-400">{rejected:,}</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">Errors</div>
+      <div class="text-xl text-red-400">{errors:,}</div>
+    </div>
+  </div>
+  <div class="flex gap-6 pt-3 border-t border-slate-800">
+    <div class="flex-1">
+      <div class="text-[10px] text-slate-500 uppercase mb-1">Accept Rate</div>
+      <div class="flex items-center gap-2">
+        <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
+          <div class="bg-{accept_color} h-full" style="width: {accept_rate}%"></div>
+        </div>
+        <span class="text-xs text-{accept_color} w-12 text-right">{accept_rate}%</span>
+      </div>
+    </div>
+  </div>
+</div>
+        """,
+    )
+
+    # Latency card
+    p50 = latency.get("p50", 0)
+    p95 = latency.get("p95", 0)
+    p99 = latency.get("p99", 0)
+    min_lat = latency.get("min", 0)
+    max_lat = latency.get("max", 0)
+
+    def latency_color(lat_us):
+        if lat_us < 1000:
+            return "emerald-400"
+        elif lat_us < 5000:
+            return "amber-400"
+        else:
+            return "red-400"
+
+    latency_card = _card(
+        "Latency Distribution (microseconds)",
+        f"""
+<div class="space-y-4">
+  <div class="grid grid-cols-5 gap-3">
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">Min</div>
+      <div class="text-lg text-{latency_color(min_lat)}">{min_lat:,}µs</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">p50</div>
+      <div class="text-lg text-{latency_color(p50)}">{p50:,}µs</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">p95</div>
+      <div class="text-lg text-{latency_color(p95)}">{p95:,}µs</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">p99</div>
+      <div class="text-lg text-{latency_color(p99)}">{p99:,}µs</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">Max</div>
+      <div class="text-lg text-{latency_color(max_lat)}">{max_lat:,}µs</div>
+    </div>
+  </div>
+  <div class="space-y-2">
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-slate-400 w-16">p50</span>
+      <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
+        <div class="bg-{latency_color(p50)} h-full"
+          style="width: {min(100, p50 * 100 / max(max_lat, 1)):.1f}%"></div>
+      </div>
+      <span class="text-xs text-{latency_color(p50)} w-20 text-right">{p50:,}µs</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-slate-400 w-16">p95</span>
+      <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
+        <div class="bg-{latency_color(p95)} h-full"
+          style="width: {min(100, p95 * 100 / max(max_lat, 1)):.1f}%"></div>
+      </div>
+      <span class="text-xs text-{latency_color(p95)} w-20 text-right">{p95:,}µs</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-slate-400 w-16">p99</span>
+      <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
+        <div class="bg-{latency_color(p99)} h-full"
+          style="width: {min(100, p99 * 100 / max(max_lat, 1)):.1f}%"></div>
+      </div>
+      <span class="text-xs text-{latency_color(p99)} w-20 text-right">{p99:,}µs</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-slate-400 w-16">max</span>
+      <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
+        <div class="bg-{latency_color(max_lat)} h-full" style="width: 100%"></div>
+      </div>
+      <span class="text-xs text-{latency_color(max_lat)} w-20 text-right">{max_lat:,}µs</span>
+    </div>
+  </div>
+</div>
+        """,
+    )
+
+    # Pass/Fail Assessment
+    passed_rate = accept_rate >= 95
+    passed_p99 = p99 < 10000  # 10ms
+    passed_errors = (errors / max(submitted, 1) * 100) < 1
+
+    status = "PASS" if (passed_rate and passed_p99 and passed_errors) else "FAIL"
+    status_color = "emerald" if status == "PASS" else "red"
+
+    assessment = _card(
+        "Assessment",
+        f"""
+<div class="space-y-3">
+  <div class="text-center">
+    <div class="inline-block bg-{status_color}-900/40 border border-{status_color}-800
+      text-{status_color}-400 px-6 py-3 rounded-lg text-2xl font-bold">
+      {status}
+    </div>
+  </div>
+  <div class="space-y-2 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="text-{'emerald' if passed_rate else 'red'}-400">
+        {'✓' if passed_rate else '✗'}
+      </span>
+      <span>Accept rate ≥95%: {accept_rate}%</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-{'emerald' if passed_p99 else 'red'}-400">
+        {'✓' if passed_p99 else '✗'}
+      </span>
+      <span>p99 latency <10ms: {p99/1000:.2f}ms</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-{'emerald' if passed_errors else 'red'}-400">
+        {'✓' if passed_errors else '✗'}
+      </span>
+      <span>Error rate <1%: {errors/max(submitted,1)*100:.2f}%</span>
+    </div>
+  </div>
+</div>
+        """,
+    )
+
+    nav = f"""
+<div class="mb-4">
+  <a href="./stress" class="text-blue-400 hover:underline text-xs">
+    ← Back to Stress Tests
+  </a>
+</div>
+    """
+
+    content = f"""
+{nav}
+{summary}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+  {results}
+  {assessment}
+</div>
+{latency_card}
+    """
+
+    return layout(f"Stress Report: {ts_fmt}", content, active_tab="./stress")
