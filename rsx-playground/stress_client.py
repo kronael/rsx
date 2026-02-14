@@ -7,9 +7,9 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Optional
-import websockets
+import aiohttp
 from datetime import datetime
+import jwt as pyjwt
 
 
 @dataclass
@@ -20,6 +20,7 @@ class StressConfig:
     symbols: list[str] = None
     users: int = 10
     connections: int = 10
+    jwt_secret: str = "dev-secret-change-in-production"
 
     def __post_init__(self):
         if self.symbols is None:
@@ -49,9 +50,17 @@ class StressClient:
         self.metrics = OrderMetrics()
         self.order_counter = 0
 
-    async def connect(self):
-        """Connect to Gateway WebSocket"""
-        return await websockets.connect(self.config.gateway_url)
+    def generate_jwt(self) -> str:
+        """Generate JWT token for authentication"""
+        payload = {
+            "sub": str(self.user_id),
+            "exp": int(time.time()) + 3600,
+        }
+        return pyjwt.encode(payload, self.config.jwt_secret, algorithm="HS256")
+
+    def _headers(self):
+        """Auth headers for dev/testing"""
+        return {"x-user-id": str(self.user_id)}
 
     def generate_order(self) -> dict:
         """Generate random order"""
@@ -82,31 +91,34 @@ class StressClient:
             "post_only": False
         }
 
-    async def submit_order(self, ws) -> Optional[int]:
+    async def submit_order(self, ws) -> int | None:
         """Submit order and measure latency"""
         order = self.generate_order()
 
         start = time.perf_counter_ns()
-        await ws.send(json.dumps(order))
+        await ws.send_str(json.dumps(order))
 
         try:
-            # Wait for response with timeout
-            response = await asyncio.wait_for(ws.recv(), timeout=1.0)
+            response = await asyncio.wait_for(
+                ws.receive(timeout=1.0), timeout=1.0,
+            )
             latency_ns = time.perf_counter_ns() - start
 
-            msg = json.loads(response)
-
-            if msg.get("type") == "OrderAccepted":
-                self.metrics.accepted += 1
-                return latency_ns // 1000  # convert to microseconds
-            elif msg.get("type") == "OrderFailed":
-                self.metrics.rejected += 1
+            if response.type == aiohttp.WSMsgType.TEXT:
+                msg = json.loads(response.data)
+                if msg.get("type") == "OrderAccepted":
+                    self.metrics.accepted += 1
+                    return latency_ns // 1000
+                elif msg.get("type") == "OrderFailed":
+                    self.metrics.rejected += 1
+                else:
+                    self.metrics.errors += 1
             else:
                 self.metrics.errors += 1
 
         except asyncio.TimeoutError:
             self.metrics.errors += 1
-        except Exception as e:
+        except Exception:
             self.metrics.errors += 1
 
         return None
@@ -116,23 +128,26 @@ class StressClient:
         interval = 1.0 / rate_per_worker if rate_per_worker > 0 else 0.1
 
         try:
-            async with await self.connect() as ws:
-                end_time = time.time() + duration
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(
+                    self.config.gateway_url,
+                    headers=self._headers(),
+                ) as ws:
+                    end_time = time.time() + duration
 
-                while time.time() < end_time:
-                    loop_start = time.time()
+                    while time.time() < end_time:
+                        loop_start = time.time()
 
-                    self.metrics.submitted += 1
-                    latency = await self.submit_order(ws)
+                        self.metrics.submitted += 1
+                        latency = await self.submit_order(ws)
 
-                    if latency:
-                        self.metrics.latencies_us.append(latency)
+                        if latency:
+                            self.metrics.latencies_us.append(latency)
 
-                    # Rate limiting
-                    elapsed = time.time() - loop_start
-                    sleep_time = max(0, interval - elapsed)
-                    if sleep_time > 0:
-                        await asyncio.sleep(sleep_time)
+                        elapsed = time.time() - loop_start
+                        sleep_time = max(0, interval - elapsed)
+                        if sleep_time > 0:
+                            await asyncio.sleep(sleep_time)
 
         except Exception as e:
             print(f"Worker {self.worker_id} error: {e}")
