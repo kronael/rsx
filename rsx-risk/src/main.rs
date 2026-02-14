@@ -381,7 +381,7 @@ fn run_main(
                     >= std::mem::size_of::<OrderRequest>()
             {
                 let order = unsafe {
-                    std::ptr::read(
+                    std::ptr::read_unaligned(
                         payload.as_ptr()
                             as *const OrderRequest,
                     )

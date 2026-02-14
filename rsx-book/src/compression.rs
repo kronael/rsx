@@ -89,10 +89,14 @@ impl CompressionMap {
         } else {
             self.thresholds[zone - 1]
         };
+        let half = self.zone_slots[zone] / 2;
+        if half == 0 {
+            return self.base_indices[zone];
+        }
         let local_offset = ((distance - zone_start)
             / self.compressions[zone] as i64)
             as u32;
-        let half = self.zone_slots[zone] / 2;
+        let local_offset = local_offset.min(half - 1);
 
         if side == 0 {
             // ask side: mid outward

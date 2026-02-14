@@ -300,13 +300,13 @@ fn main() {
             cmp_receiver.tick();
 
             let now = time_ns();
-            if now - last_heartbeat_ns >= heartbeat_interval_ns {
+            if now.saturating_sub(last_heartbeat_ns) >= heartbeat_interval_ns {
                 let ts_ms = time_ms();
                 state.borrow_mut().broadcast_heartbeat(ts_ms);
                 last_heartbeat_ns = now;
             }
 
-            if now - last_timeout_check_ns >= heartbeat_timeout_ns {
+            if now.saturating_sub(last_timeout_check_ns) >= heartbeat_timeout_ns {
                 let timed_out = state.borrow_mut().check_timeouts(heartbeat_timeout_ns);
                 for conn_id in timed_out {
                     info!("conn {} timed out (no heartbeat)", conn_id);
@@ -443,8 +443,8 @@ fn handle_fill(
     if let Some(msg) = trade_msg {
         let clients = st.clients_for_symbol(rec.symbol_id);
         for client_id in clients {
-            if st.has_trades(client_id, rec.symbol_id) {
-                if !st.push_to_client(
+            if st.has_trades(client_id, rec.symbol_id)
+                && !st.push_to_client(
                     client_id,
                     msg.clone(),
                     max_outbound,
@@ -457,7 +457,6 @@ fn handle_fill(
                         max_outbound,
                     );
                 }
-            }
         }
     }
 }
@@ -498,8 +497,8 @@ fn broadcast_updates(
 
     let clients = st.clients_for_symbol(symbol_id);
     for client_id in clients {
-        if st.has_depth(client_id, symbol_id) {
-            if !st.push_to_client(
+        if st.has_depth(client_id, symbol_id)
+            && !st.push_to_client(
                 client_id,
                 delta_msg.clone(),
                 max_outbound,
@@ -511,7 +510,6 @@ fn broadcast_updates(
                     max_outbound,
                 );
             }
-        }
         if let Some(ref msg) = bbo_msg {
             if st.has_bbo(client_id, symbol_id) {
                 let _ = st.push_to_client(

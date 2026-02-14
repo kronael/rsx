@@ -327,7 +327,7 @@ fn read_order(
     let prev = read_u32(r)?;
     let tick_index = read_u32(r)?;
     let user_id = read_u32(r)?;
-    let sequence = read_u16(r)?;
+    let sequence = read_u32(r)?;
     let original_qty = Qty(read_i64(r)?);
     let timestamp_ns = read_u64(r)?;
     let order_id_hi = read_u64(r)?;
@@ -345,7 +345,6 @@ fn read_order(
         _pad2: 0,
         user_id,
         sequence,
-        _pad3: [0; 2],
         original_qty,
         timestamp_ns,
         order_id_hi,

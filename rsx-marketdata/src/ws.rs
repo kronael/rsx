@@ -123,6 +123,14 @@ pub async fn ws_read_frame(
         )
     };
 
+    const MAX_PAYLOAD: usize = 1_048_576; // 1MB
+    if payload_len > MAX_PAYLOAD {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame exceeds max payload size",
+        ));
+    }
+
     let mask_key = if masked {
         let mk = vec![0u8; 4];
         let (res, mk) = stream.read_exact(mk).await;

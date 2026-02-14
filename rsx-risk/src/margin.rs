@@ -79,8 +79,10 @@ impl PortfolioMargin {
         }
         let state =
             self.calculate(account, positions, mark_prices);
-        let order_notional = (order.price as i128
-            * order.qty as i128) as i64;
+        let notional_128 = order.price as i128
+            * order.qty as i128;
+        let order_notional = i64::try_from(notional_128)
+            .unwrap_or(i64::MAX);
         let sid = order.symbol_id as usize;
         let params = &self.symbol_params[sid];
         let order_im = (order_notional as i128

@@ -86,7 +86,7 @@ fn send_recv_roundtrip() {
         std::mem::size_of::<FillRecord>(),
     );
     let decoded = unsafe {
-        std::ptr::read(
+        std::ptr::read_unaligned(
             payload.as_ptr() as *const FillRecord,
         )
     };
@@ -167,7 +167,7 @@ fn multiple_records_in_order() {
     let mut seqs = Vec::new();
     while let Some((_, payload)) = receiver.try_recv() {
         let decoded = unsafe {
-            std::ptr::read(
+            std::ptr::read_unaligned(
                 payload.as_ptr() as *const FillRecord,
             )
         };
