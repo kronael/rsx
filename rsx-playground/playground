@@ -57,13 +57,21 @@ def is_running():
         # invalid PID file
         PID_FILE.unlink()
         return False
+    except FileNotFoundError:
+        # PID file deleted between exists() and read()
+        return False
     except ProcessLookupError:
         # process doesn't exist
         PID_FILE.unlink()
         return False
     except PermissionError:
-        # process exists but we can't signal it
-        return True
+        # Could be our process but different user, or different process.
+        # Conservative: assume stale and clean up
+        try:
+            PID_FILE.unlink()
+        except OSError:
+            pass
+        return False
     except OSError:
         # other OS error, assume stale
         PID_FILE.unlink()
@@ -86,7 +94,6 @@ def start_server():
                 f"error: port {SERVER_PORT} already in use")
             print("check for conflicting process:")
             print(f"  lsof -i:{SERVER_PORT}")
-            sock.close()
             return 1
     except Exception:
         pass
@@ -160,24 +167,28 @@ def ensure_server():
     """Ensure server is running, start if needed."""
     if not is_running():
         print("server not running, starting...")
-        start_server()
+        result = start_server()
+        if result != 0:
+            return False
         # wait for server to be ready
         try:
             import httpx
         except ImportError:
             time.sleep(2)
-            return
+            return True
         for _ in range(20):
             time.sleep(0.2)
             try:
                 resp = httpx.get(
                     f"{API_BASE}/healthz", timeout=1)
                 if resp.status_code == 200:
-                    return
+                    return True
             except Exception:
                 continue
         print("warning: server started but health check failed")
         print(f"check logs: {LOG_FILE}")
+        return False
+    return True
 
 
 def api_get(path):
@@ -188,7 +199,8 @@ def api_get(path):
         print("error: httpx not installed")
         print("run: uv pip install httpx")
         return None
-    ensure_server()
+    if not ensure_server():
+        return None
     try:
         resp = httpx.get(f"{API_BASE}{path}", timeout=15)
         resp.raise_for_status()
@@ -216,13 +228,14 @@ def api_post(path, data=None):
         print("error: httpx not installed")
         print("run: uv pip install httpx")
         return None
-    ensure_server()
+    if not ensure_server():
+        return None
     try:
         resp = httpx.post(
             f"{API_BASE}{path}", json=data or {}, timeout=30
         )
         resp.raise_for_status()
-        return resp
+        return resp.status_code == 200
     except httpx.ConnectError:
         print(f"error: cannot connect to {API_BASE}")
         print("is server running? check: ./playground status")
@@ -245,7 +258,7 @@ def start_all(scenario="minimal"):
     """Start all processes via API."""
     print(f"starting all processes (scenario: {scenario})...")
     resp = api_post(f"/api/processes/all/start?scenario={scenario}")
-    if resp is None:
+    if not resp:
         print("failed to start processes")
         return 1
     print(f"started {scenario} scenario")
@@ -256,7 +269,7 @@ def stop_all():
     """Stop all processes via API."""
     print("stopping all processes...")
     resp = api_post("/api/processes/all/stop")
-    if resp is None:
+    if not resp:
         print("failed to stop processes")
         return 1
     print("stopped all processes")
@@ -291,7 +304,7 @@ def start_process(name):
     """Start individual process."""
     print(f"starting {name}...")
     resp = api_post(f"/api/processes/{name}/start")
-    if resp is None:
+    if not resp:
         print(f"failed to start {name}")
         return 1
     print(f"started {name}")
@@ -302,7 +315,7 @@ def stop_process(name):
     """Stop individual process."""
     print(f"stopping {name}...")
     resp = api_post(f"/api/processes/{name}/stop")
-    if resp is None:
+    if not resp:
         print(f"failed to stop {name}")
         return 1
     print(f"stopped {name}")
@@ -313,7 +326,7 @@ def restart_process(name):
     """Restart individual process."""
     print(f"restarting {name}...")
     resp = api_post(f"/api/processes/{name}/restart")
-    if resp is None:
+    if not resp:
         print(f"failed to restart {name}")
         return 1
     print(f"restarted {name}")
@@ -330,7 +343,7 @@ def submit_order(
     qty="1.0",
     tif="GTC",
 ):
-    """Submit test order."""
+    """Submit test order with hardcoded defaults."""
     data = {
         "symbol_id": symbol_id,
         "side": side,
@@ -339,7 +352,7 @@ def submit_order(
         "tif": tif,
     }
     resp = api_post("/api/orders/test", data)
-    if resp is None:
+    if not resp:
         print("failed to submit order")
         return 1
     print(f"order submitted ({side} {qty} @ {price})")
@@ -349,7 +362,7 @@ def submit_order(
 def batch_orders():
     """Submit batch orders."""
     resp = api_post("/api/orders/batch")
-    if resp is None:
+    if not resp:
         print("failed to submit batch orders")
         return 1
     print("submitted 10 batch orders")
@@ -361,7 +374,7 @@ def stress_test(rate=100, duration=60):
     resp = api_post(
         f"/api/orders/stress?rate={rate}&duration={duration}"
     )
-    if resp is None:
+    if not resp:
         print("failed to start stress test")
         return 1
     print(
@@ -429,15 +442,15 @@ def logs_cmd(follow=False):
 
     try:
         if follow:
-            subprocess.run(["tail", "-f", str(LOG_FILE)])
+            result = subprocess.run(["tail", "-f", str(LOG_FILE)])
         else:
-            subprocess.run(["tail", "-n", "50", str(LOG_FILE)])
-        return 0
+            result = subprocess.run(["tail", "-n", "50", str(LOG_FILE)])
+        return result.returncode
     except FileNotFoundError:
         print("error: tail command not found")
         return 1
     except KeyboardInterrupt:
-        return 0
+        return 130  # Standard Unix exit code for SIGINT
 
 
 # ── Utils ───────────────────────────────────────────────
@@ -486,7 +499,10 @@ def main():
     elif cmd == "stop":
         return stop_server()
     elif cmd == "restart":
-        stop_server()
+        result = stop_server()
+        if result != 0:
+            print("failed to stop server, aborting restart")
+            return 1
         time.sleep(1)
         return start_server()
     elif cmd == "status":
@@ -527,8 +543,13 @@ def main():
     elif cmd == "batch-orders":
         return batch_orders()
     elif cmd == "stress":
-        rate = int(sys.argv[2]) if len(sys.argv) > 2 else 100
-        dur = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+        try:
+            rate = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+            dur = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+        except ValueError:
+            print("error: rate and duration must be integers")
+            print("usage: ./playground stress [rate] [duration]")
+            return 1
         return stress_test(rate, dur)
 
     # info

@@ -48,8 +48,7 @@ pub async fn poll_scheduled_configs(
         )
         .await
         .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
+            io::Error::other(
                 format!("poll_scheduled_configs: {}", e),
             )
         })?;
@@ -105,8 +104,7 @@ pub async fn write_applied_config(
         )
         .await
         .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
+            io::Error::other(
                 format!("write_applied_config: {}", e),
             )
         })?;
@@ -132,8 +130,7 @@ pub async fn load_applied_config(
         )
         .await
         .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
+            io::Error::other(
                 format!("load_applied_config: {}", e),
             )
         })?;

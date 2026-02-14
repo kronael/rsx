@@ -12,7 +12,6 @@ members = [
     "rsx-cli",
     "rsx-maker",
     "rsx-sim",
-    "rsx-stress",
 ]
 resolver = "2"
 

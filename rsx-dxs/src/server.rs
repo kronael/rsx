@@ -101,8 +101,7 @@ impl DxsReplayService {
                             )
                             .await
                         }
-                        Err(e) => Err(io::Error::new(
-                            io::ErrorKind::Other,
+                        Err(e) => Err(io::Error::other(
                             format!("tls handshake failed: {}", e),
                         )),
                     }

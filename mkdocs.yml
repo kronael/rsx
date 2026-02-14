@@ -1,0 +1,157 @@
+site_name: RSX Exchange Documentation
+site_description: Spec-first perpetuals exchange with fixed-point arithmetic
+site_author: RSX Team
+repo_url: https://github.com/yourusername/rsx
+repo_name: rsx
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/git-alt
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search:
+      lang: en
+  - tags
+
+extra:
+  generator: false
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/README.md
+      - Architecture: getting-started/architecture.md
+      - Quick Start: getting-started/quickstart.md
+  - Specs:
+      - Overview: specs/v1/README.md
+      - Core Architecture:
+          - Architecture: specs/v1/ARCHITECTURE.md
+          - Tiles: specs/v1/NETWORK.md
+          - Consistency: specs/v1/CONSISTENCY.md
+      - Components:
+          - Orderbook: specs/v1/ORDERBOOK.md
+          - Matching Engine: specs/v1/MATCHING.md
+          - Risk Engine: specs/v1/RISK.md
+          - Liquidator: specs/v1/LIQUIDATOR.md
+          - Gateway: specs/v1/GATEWAY.md
+          - Market Data: specs/v1/MARKETDATA.md
+          - Mark Price: specs/v1/MARK.md
+      - Transport & Storage:
+          - DXS (WAL): specs/v1/DXS.md
+          - CMP Protocol: specs/v1/CMP.md
+          - Database: specs/v1/DATABASE.md
+      - Protocols:
+          - WebSocket: specs/v1/MESSAGES.md
+          - RPC: specs/v1/RPC.md
+          - REST: specs/v1/REST.md
+      - Testing:
+          - Orderbook Tests: specs/v1/TESTING-BOOK.md
+          - Matching Tests: specs/v1/TESTING-MATCHING.md
+          - Risk Tests: specs/v1/TESTING-RISK.md
+          - DXS Tests: specs/v1/TESTING-DXS.md
+          - CMP Tests: specs/v1/TESTING-CMP.md
+          - Gateway Tests: specs/v1/TESTING-GATEWAY.md
+          - Liquidator Tests: specs/v1/TESTING-LIQUIDATOR.md
+          - Mark Tests: specs/v1/TESTING-MARK.md
+          - Marketdata Tests: specs/v1/TESTING-MARKETDATA.md
+      - Edge Cases:
+          - Position Edge Cases: specs/v1/POSITION-EDGE-CASES.md
+      - Dashboards:
+          - Playground: specs/v1/PLAYGROUND-DASHBOARD.md
+          - Dashboard: specs/v1/DASHBOARD.md
+          - Health: specs/v1/HEALTH-DASHBOARD.md
+          - Risk: specs/v1/RISK-DASHBOARD.md
+          - Management: specs/v1/MANAGEMENT-DASHBOARD.md
+          - Telemetry: specs/v1/TELEMETRY.md
+      - Deployment:
+          - Deploy: specs/v1/DEPLOY.md
+          - Process: specs/v1/PROCESS.md
+  - Blog:
+      - Blog Home: blog/README.md
+      - Design:
+          - Design Philosophy: blog/01-design-philosophy.md
+          - Matching Engine: blog/02-matching-engine.md
+          - Risk Engine: blog/03-risk-engine.md
+          - WAL and Recovery: blog/04-wal-and-recovery.md
+      - Development:
+          - Development Journey: blog/05-development-journey.md
+          - Test Suite Archaeology: blog/06-test-suite-archaeology.md
+          - Port Binding TOCTOU: blog/07-port-binding-toctou.md
+          - Tempdir Over Tmp: blog/08-tempdir-over-tmp.md
+          - Poll Dont Sleep: blog/09-poll-dont-sleep.md
+          - Build System Limits: blog/10-build-system-limits.md
+          - Parallel Agent Audits: blog/11-parallel-agent-audits.md
+      - Technical Deep Dives:
+          - Deleted Serialization: blog/12-deleted-serialization.md
+          - 15MB Orderbook: blog/13-15mb-orderbook.md
+          - Testing Hostility: blog/14-testing-hostility.md
+          - Backpressure or Death: blog/15-backpressure-or-death.md
+          - DXS No Broker: blog/16-dxs-no-broker.md
+          - Asymmetric Durability: blog/17-asymmetric-durability.md
+          - 100ns Matching: blog/18-100ns-matching.md
+      - Wire Formats:
+          - CMP Protocol: blog/cmp.md
+          - Dont YOLO Structs: blog/dont-yolo-structs-over-the-wire.md
+          - Flatbuffers Isnt Free: blog/flatbuffers-isnt-free.md
+          - Picking a Wire Format: blog/picking-a-wire-format.md
+          - Your WAL is Lying: blog/your-wal-is-lying-to-you.md
+  - Guides:
+      - Operations: guides/operations.md
+      - Monitoring: guides/monitoring.md
+      - Deployment: guides/deployment.md
+  - Crate Documentation:
+      - Overview: crates/README.md
+      - rsx-matching: crates/rsx-matching.md
+      - rsx-cli: crates/rsx-cli.md
+  - References:
+      - Guarantees: references/GUARANTEES.md
+      - Crash Scenarios: references/CRASH-SCENARIOS.md
+      - Progress: references/PROGRESS.md
