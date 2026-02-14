@@ -51,11 +51,13 @@ pub async fn handle_connection(
         }
 
         if opcode == 9 {
-            let mut pong = vec![0x8A, 0x00];
-            if !payload.is_empty() {
-                pong[1] = payload.len() as u8;
-                pong.extend_from_slice(&payload);
-            }
+            let pong_payload = if payload.len() > 125 {
+                &payload[..125]
+            } else {
+                &payload
+            };
+            let mut pong = vec![0x8A, pong_payload.len() as u8];
+            pong.extend_from_slice(pong_payload);
             let _ = ws_write_raw(&mut stream, &pong).await;
             continue;
         }

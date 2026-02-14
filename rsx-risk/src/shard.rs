@@ -785,7 +785,8 @@ impl RiskShard {
         loss: &crate::liquidation::SocializedLoss,
         now_ns: u64,
     ) {
-        let loss_amount = loss.qty * loss.price;
+        let loss_amount = (loss.qty as i128
+            * loss.price as i128) as i64;
 
         // Ensure insurance fund exists for symbol
         let fund = self

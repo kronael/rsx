@@ -293,7 +293,7 @@ impl MarketDataState {
         let now = time_ns();
         let mut timed_out = Vec::new();
         for (conn_id, conn) in &self.connections {
-            if now - conn.last_heartbeat_ns >= timeout_ns {
+            if now.saturating_sub(conn.last_heartbeat_ns) >= timeout_ns {
                 timed_out.push(*conn_id);
             }
         }

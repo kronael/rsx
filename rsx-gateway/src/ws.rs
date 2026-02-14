@@ -119,13 +119,15 @@ fn extract_user_id(
             .ok();
         }
     }
-    for line in request.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("x-user-id:") {
-            let val = line
-                .split_once(':')
-                .map(|(_, v)| v.trim())?;
-            return val.parse::<u32>().ok();
+    if jwt_secret.is_empty() {
+        for line in request.lines() {
+            let lower = line.to_ascii_lowercase();
+            if lower.starts_with("x-user-id:") {
+                let val = line
+                    .split_once(':')
+                    .map(|(_, v)| v.trim())?;
+                return val.parse::<u32>().ok();
+            }
         }
     }
     None

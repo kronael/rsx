@@ -69,7 +69,7 @@ impl RecorderState {
         self.record_count += 1;
 
         // flush every 1000 records
-        if self.record_count.is_multiple_of(1000) {
+        if self.record_count % 1000 == 0 {
             self.flush()?;
         }
 

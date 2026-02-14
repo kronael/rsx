@@ -33,7 +33,6 @@ pub fn process_new_order(
     order: &mut IncomingOrder,
 ) {
     book.event_len = 0;
-    let saved_event_len = book.event_len;
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
 
@@ -110,6 +109,19 @@ pub fn process_new_order(
         }
     }
 
+    if order.tif == TimeInForce::FOK {
+        let avail = available_liquidity(
+            book, order.side, order.price,
+        );
+        if avail < order.remaining_qty {
+            book.emit(Event::OrderFailed {
+                user_id: order.user_id,
+                reason: FAIL_FOK,
+            });
+            return;
+        }
+    }
+
     match order.side {
         Side::Buy => {
             while order.remaining_qty > 0
@@ -153,17 +165,6 @@ pub fn process_new_order(
                 }
             }
         }
-    }
-
-    if order.tif == TimeInForce::FOK
-        && order.remaining_qty > 0
-    {
-        book.event_len = saved_event_len;
-        book.emit(Event::OrderFailed {
-            user_id: order.user_id,
-            reason: FAIL_FOK,
-        });
-        return;
     }
 
     if order.remaining_qty > 0 {
@@ -295,7 +296,7 @@ pub fn match_at_level(
 
         book.emit(Event::Fill {
             maker_handle: cursor,
-            maker_user_id: maker_user_id,
+            maker_user_id,
             taker_user_id: aggressor.user_id,
             price: Price(maker_price),
             qty: Qty(fill_qty),
@@ -362,4 +363,45 @@ pub fn match_at_level(
 
         cursor = next_cursor;
     }
+}
+
+fn available_liquidity(
+    book: &Orderbook,
+    side: Side,
+    limit_price: i64,
+) -> i64 {
+    let mut total: i64 = 0;
+    match side {
+        Side::Buy => {
+            let mut tick = book.best_ask_tick;
+            while tick != NONE {
+                let mut cursor =
+                    book.active_levels[tick as usize].head;
+                while cursor != NONE {
+                    let maker = book.orders.get(cursor);
+                    if maker.price.0 <= limit_price {
+                        total += maker.remaining_qty.0;
+                    }
+                    cursor = maker.next;
+                }
+                tick = book.scan_next_ask(tick);
+            }
+        }
+        Side::Sell => {
+            let mut tick = book.best_bid_tick;
+            while tick != NONE {
+                let mut cursor =
+                    book.active_levels[tick as usize].head;
+                while cursor != NONE {
+                    let maker = book.orders.get(cursor);
+                    if maker.price.0 >= limit_price {
+                        total += maker.remaining_qty.0;
+                    }
+                    cursor = maker.next;
+                }
+                tick = book.scan_next_bid(tick);
+            }
+        }
+    }
+    total
 }

@@ -235,5 +235,10 @@ fn parse_price(raw: &str, scale: i64) -> Option<i64> {
     } else {
         frac_scaled.parse().ok()?
     };
-    whole_val.checked_mul(scale)?.checked_add(frac_val)
+    let base = whole_val.checked_mul(scale)?;
+    if whole_val < 0 {
+        base.checked_sub(frac_val)
+    } else {
+        base.checked_add(frac_val)
+    }
 }

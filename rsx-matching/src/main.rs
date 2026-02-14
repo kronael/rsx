@@ -159,8 +159,7 @@ fn main() {
             let (client, conn) = tokio_postgres::connect(url, NoTls)
                 .await
                 .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
+                    io::Error::other(
                         format!("db connect: {}", e),
                     )
                 })?;
@@ -325,7 +324,7 @@ fn main() {
                 >= std::mem::size_of::<OrderMessage>()
             {
                 let order_msg = unsafe {
-                    std::ptr::read(
+                    std::ptr::read_unaligned(
                         payload.as_ptr()
                             as *const OrderMessage,
                     )

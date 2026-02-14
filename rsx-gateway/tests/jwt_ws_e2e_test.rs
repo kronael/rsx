@@ -216,7 +216,7 @@ Sec-WebSocket-Version: 13\r\n\
 
 #[test]
 fn test_ws_handshake_x_user_id_fallback() {
-    let secret = "test-secret";
+    let secret = "";
     let user_id = 67890u32;
 
     let mut runtime = monoio::RuntimeBuilder::<

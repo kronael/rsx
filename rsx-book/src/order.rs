@@ -18,8 +18,7 @@ pub struct OrderSlot {
     pub _pad2: u32,
     // Cache line 2: cold fields
     pub user_id: u32,
-    pub sequence: u16,
-    pub _pad3: [u8; 2],
+    pub sequence: u32,
     pub original_qty: Qty,
     pub timestamp_ns: u64,
     pub order_id_hi: u64,
@@ -67,7 +66,6 @@ impl Default for OrderSlot {
             _pad2: 0,
             user_id: 0,
             sequence: 0,
-            _pad3: [0; 2],
             original_qty: Qty(0),
             timestamp_ns: 0,
             order_id_hi: 0,

@@ -139,7 +139,7 @@ impl Orderbook {
         slot.next = NONE;
         slot.prev = NONE;
         self.sequence += 1;
-        slot.sequence = self.sequence as u16;
+        slot.sequence = self.sequence as u32;
 
         // Link into level
         let level =
