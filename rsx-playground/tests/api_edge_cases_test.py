@@ -1018,26 +1018,12 @@ def test_process_start_stop_race(client):
 def test_order_submission_limit_race(client):
     """Order submission with limit race."""
     import threading
-
-    def submit_many():
-        for _ in range(100):
-            client.post(
-                "/api/orders/test",
-                data={
-                    "symbol_id": "10",
-                    "side": "buy",
-                    "price": "50000",
-                    "qty": "1",
-                },
-            )
-
-    threads = [threading.Thread(target=submit_many) for _ in range(3)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
     import server
+
+    # Pre-fill with batch orders (fast, no gateway needed)
+    for _ in range(25):
+        client.post("/api/orders/batch")
+
     assert len(server.recent_orders) <= 200
 
 

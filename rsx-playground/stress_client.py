@@ -141,7 +141,7 @@ class StressClient:
                         latency = await self.submit_order(ws)
                         self.metrics.submitted += 1
 
-                        if latency:
+                        if latency is not None:
                             self.metrics.latencies_us.append(latency)
 
                         elapsed = time.time() - loop_start

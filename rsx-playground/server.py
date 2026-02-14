@@ -671,7 +671,9 @@ async def docs(filename: str):
         filename = "README.md"
     if not filename.endswith(".md"):
         filename += ".md"
-    file_path = docs_dir / filename
+    file_path = (docs_dir / filename).resolve()
+    if not str(file_path).startswith(str(docs_dir.resolve())):
+        return HTMLResponse("<h1>404 Not Found</h1>", status_code=404)
     if not file_path.exists() or not file_path.is_file():
         return HTMLResponse("<h1>404 Not Found</h1>", status_code=404)
     content = file_path.read_text()
@@ -680,7 +682,7 @@ async def docs(filename: str):
 <html>
 <head>
 <meta charset="utf-8">
-<title>RSX Playground Docs - {filename}</title>
+<title>RSX Playground Docs - {html.escape(filename)}</title>
 <style>
 body {{
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -720,7 +722,7 @@ pre code {{
 <a href="/">Playground UI</a> |
 <a href="https://krons.cx/rsx/docs" target="_blank">Full Docs</a>
 </nav>
-<pre>{content}</pre>
+<pre>{html.escape(content)}</pre>
 </body>
 </html>"""
     return HTMLResponse(html)
@@ -960,7 +962,8 @@ async def x_risk_user(
         for row in data:
             cells = "".join(
                 f'<td class="py-1.5 px-2 text-xs '
-                f'border-b border-slate-800/50">{v}</td>'
+                f'border-b border-slate-800/50">'
+                f'{html.escape(str(v))}</td>'
                 for v in row.values()
             )
             rows += f"<tr>{cells}</tr>"
@@ -987,7 +990,8 @@ async def x_liquidations():
         for row in data:
             cells = "".join(
                 f'<td class="py-1.5 px-2 text-xs '
-                f'border-b border-slate-800/50">{v}</td>'
+                f'border-b border-slate-800/50">'
+                f'{html.escape(str(v))}</td>'
                 for v in row.values()
             )
             rows += f"<tr>{cells}</tr>"
@@ -1306,7 +1310,7 @@ async def api_orders_test(request: Request):
         _idempotency_keys[idem_key] = now
     form = await request.form()
     audit_log("/api/orders/test", "submit order")
-    cid = f"pg{int(time.time()*1e6):018d}"[:20]
+    cid = f"pg{int(time.time()*1e6):x}"[:20]
 
     try:
         user_id = int(form.get("user_id", "1"))
@@ -1589,15 +1593,11 @@ async def api_stress_report(report_id: str):
 async def x_stress_reports_list():
     """HTMX endpoint for stress reports table"""
     reports = await api_stress_reports()
-    if not reports.body:
-        return HTMLResponse('<div class="text-slate-500 text-xs">No stress tests run yet</div>')
-
-    data = json.loads(reports.body)
-    if not data:
+    if not reports:
         return HTMLResponse('<div class="text-slate-500 text-xs">No stress tests run yet</div>')
 
     rows = []
-    for r in data:
+    for r in reports:
         timestamp_fmt = r["timestamp"]
         # Format: 20260213-211030 -> 2026-02-13 21:10:30
         if len(timestamp_fmt) == 15:
@@ -1733,9 +1733,9 @@ async def api_wal_dump():
     stdout, stderr = await proc.communicate()
     output = stdout.decode() if stdout else stderr.decode()
 
-    html = f'<div class="text-xs"><div class="text-slate-400 mb-2">Latest: {file_name}</div>'
-    html += f'<pre class="text-slate-300 whitespace-pre-wrap">{output[:2000]}</pre></div>'
-    return HTMLResponse(html)
+    dump_html = f'<div class="text-xs"><div class="text-slate-400 mb-2">Latest: {html.escape(file_name)}</div>'
+    dump_html += f'<pre class="text-slate-300 whitespace-pre-wrap">{html.escape(output[:2000])}</pre></div>'
+    return HTMLResponse(dump_html)
 
 
 @app.get("/api/risk/users/{user_id}")
