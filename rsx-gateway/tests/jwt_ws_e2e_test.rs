@@ -7,6 +7,7 @@ use rsx_gateway::jwt::Claims;
 use rsx_gateway::ws::ws_handshake;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+// tokio not needed in tests
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -70,12 +71,13 @@ fn test_ws_handshake_with_valid_jwt() {
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
-             Host: localhost\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-             Authorization: Bearer {}\r\n\
-             Sec-WebSocket-Version: 13\r\n\r\n",
+Host: localhost\r\n\
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+Authorization: Bearer {}\r\n\
+Sec-WebSocket-Version: 13\r\n\
+\r\n",
             token
         );
 
@@ -131,12 +133,13 @@ fn test_ws_handshake_with_expired_jwt() {
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
-             Host: localhost\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-             Authorization: Bearer {}\r\n\
-             Sec-WebSocket-Version: 13\r\n\r\n",
+Host: localhost\r\n\
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+Authorization: Bearer {}\r\n\
+Sec-WebSocket-Version: 13\r\n\
+\r\n",
             token
         );
 
@@ -189,11 +192,12 @@ fn test_ws_handshake_missing_auth() {
 
         let request =
             "GET / HTTP/1.1\r\n\
-             Host: localhost\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-             Sec-WebSocket-Version: 13\r\n\r\n";
+Host: localhost\r\n\
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+Sec-WebSocket-Version: 13\r\n\
+\r\n";
 
         use monoio::io::AsyncWriteRentExt;
         let (res, _) = client
@@ -248,12 +252,13 @@ fn test_ws_handshake_x_user_id_fallback() {
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
-             Host: localhost\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-             X-User-Id: {}\r\n\
-             Sec-WebSocket-Version: 13\r\n\r\n",
+Host: localhost\r\n\
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+X-User-Id: {}\r\n\
+Sec-WebSocket-Version: 13\r\n\
+\r\n",
             user_id
         );
 

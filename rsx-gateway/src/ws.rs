@@ -65,7 +65,8 @@ pub async fn ws_handshake(
             Some(id) => id,
             None => {
                 let resp = b"HTTP/1.1 401 Unauthorized\r\n\
-                Connection: close\r\n\r\n";
+Connection: close\r\n\
+\r\n";
                 let (res, _) =
                     stream.write_all(resp.to_vec()).await;
                 let _ = res;
@@ -82,9 +83,10 @@ pub async fn ws_handshake(
     // Send upgrade response
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\n\
-         Upgrade: websocket\r\n\
-         Connection: Upgrade\r\n\
-         Sec-WebSocket-Accept: {}\r\n\r\n",
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Accept: {}\r\n\
+\r\n",
         accept,
     );
     let resp_bytes = response.into_bytes();

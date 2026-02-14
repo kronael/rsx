@@ -10,6 +10,19 @@
   once, then WAL record flows unchanged to CMP, WAL, and
   downstream consumers.
 
+## Gateway Runtime
+
+- Move gateway away from monoio to a work-stealing
+  runtime with io_uring support (tokio-uring, glommio,
+  or nuclei). monoio is single-threaded per core with
+  no work stealing -- fine for ME/risk tiles but gateway
+  needs to handle many concurrent WS connections. A
+  work-stealing runtime with io_uring keeps the latency
+  benefits while distributing connection load across
+  cores. Evaluate tokio + io_uring (via tokio-uring crate)
+  first since the rest of the ecosystem (tracing, tower)
+  already integrates with tokio.
+
 ## References
 
 https://chessbr.medium.com/building-an-exchange-in-rust-part-1-78ab153864d7
