@@ -439,17 +439,21 @@ def reset_db(pg_url):
     # parse db name from URL
     # postgres://user:pass@host:port/dbname
     db_name = pg_url.rsplit("/", 1)[-1]
+    if not db_name.isidentifier():
+        print(f"error: invalid database name: {db_name}")
+        return
+    quoted_name = f'"{db_name}"'
     base_url = pg_url.rsplit("/", 1)[0] + "/postgres"
     result = subprocess.run(
         ["psql", base_url, "-c",
-         f"DROP DATABASE IF EXISTS {db_name}"],
+         f"DROP DATABASE IF EXISTS {quoted_name}"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         print(f"drop db warning: {result.stderr.strip()}")
     result = subprocess.run(
         ["psql", base_url, "-c",
-         f"CREATE DATABASE {db_name}"],
+         f"CREATE DATABASE {quoted_name}"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -669,19 +673,37 @@ async def repl():
         elif cmd == "status":
             print_status()
         elif cmd.startswith("stop "):
-            await stop_proc(cmd.split(None, 1)[1])
-        elif cmd.startswith("start "):
-            await start_proc(cmd.split(None, 1)[1])
-        elif cmd.startswith("kill "):
-            name = cmd.split(None, 1)[1]
-            proc = PROCS.get(name)
-            if proc and proc.returncode is None:
-                proc.kill()
-                print(f"  {name} killed")
+            parts = cmd.split(None, 1)
+            if len(parts) < 2:
+                print("  usage: stop <name>")
             else:
-                print(f"  {name} not running")
+                await stop_proc(parts[1])
+        elif cmd.startswith("start "):
+            parts = cmd.split(None, 1)
+            if len(parts) < 2:
+                print("  usage: start <name>")
+            else:
+                await start_proc(parts[1])
+        elif cmd.startswith("kill "):
+            parts = cmd.split(None, 1)
+            if len(parts) < 2:
+                print("  usage: kill <name>")
+            else:
+                name = parts[1]
+                proc = PROCS.get(name)
+                if proc and proc.returncode is None:
+                    proc.kill()
+                    print(f"  {name} killed")
+                else:
+                    print(f"  {name} not running")
         elif cmd.startswith("restart "):
-            name = cmd.split(None, 1)[1]
+            parts = cmd.split(None, 1)
+            if len(parts) < 2:
+                print("  usage: restart <name>")
+                sys.stdout.write("rsx> ")
+                sys.stdout.flush()
+                continue
+            name = parts[1]
             await stop_proc(name)
             await start_proc(name)
         elif cmd in ("quit", "exit", "q"):

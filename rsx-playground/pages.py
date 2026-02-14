@@ -4,6 +4,8 @@ Uses Tailwind Play CDN (script tag, JIT compiler in browser)
 + HTMX for interactivity. All URLs relative for proxy compat.
 """
 
+import html
+
 TABS = [
     ("Overview", "./overview"),
     ("Topology", "./topology"),
@@ -1417,9 +1419,9 @@ def render_wal_status(streams):
     for s in streams:
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{s["name"]}</td>'
-            f'<td {_TD}>{s["files"]}</td>'
-            f'<td {_TD}>{s["total_size"]}</td></tr>'
+            f'<td {_TD}>{s.get("name", "-")}</td>'
+            f'<td {_TD}>{s.get("files", "-")}</td>'
+            f'<td {_TD}>{s.get("total_size", "-")}</td></tr>'
         )
     return _table(["Stream", "Files", "Size"], rows)
 
@@ -1432,9 +1434,9 @@ def render_wal_detail(streams):
     for s in streams:
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{s["name"]}</td>'
-            f'<td {_TD}>{s["files"]}</td>'
-            f'<td {_TD}>{s["total_size"]}</td>'
+            f'<td {_TD}>{s.get("name", "-")}</td>'
+            f'<td {_TD}>{s.get("files", "-")}</td>'
+            f'<td {_TD}>{s.get("total_size", "-")}</td>'
             f'<td {_TD}>{s.get("newest", "-")}</td></tr>'
         )
     return _table(
@@ -1450,10 +1452,10 @@ def render_wal_files(files):
     for f in files:
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{f["stream"]}</td>'
-            f'<td {_TD}>{f["name"]}</td>'
-            f'<td {_TD}>{f["size"]}</td>'
-            f'<td {_TD}>{f["modified"]}</td></tr>'
+            f'<td {_TD}>{f.get("stream", "-")}</td>'
+            f'<td {_TD}>{f.get("name", "-")}</td>'
+            f'<td {_TD}>{f.get("size", "-")}</td>'
+            f'<td {_TD}>{f.get("modified", "-")}</td></tr>'
         )
     return _table(
         ["Stream", "File", "Size", "Modified"], rows,
@@ -1485,7 +1487,7 @@ def render_logs(lines):
     if not lines:
         return ('<span class="text-slate-600">'
                 'no log lines</span>')
-    html = ""
+    out = ""
     for i, line in enumerate(lines):
         cls = "text-slate-400"
         low = line.lower()
@@ -1495,8 +1497,8 @@ def render_logs(lines):
             cls = "text-amber-400"
         elif " debug " in low:
             cls = "text-slate-600"
-        escaped_line = line.replace('"', '&quot;').replace("'", "&#39;")
-        html += (
+        safe_line = html.escape(line)
+        out += (
             f'<div class="{cls} text-xs py-0.5 font-mono '
             f'whitespace-pre-wrap break-all cursor-pointer '
             f'hover:bg-slate-800 px-1 rounded group relative" '
@@ -1504,9 +1506,9 @@ def render_logs(lines):
             f'<span class="group-hover:opacity-100 opacity-0 '
             f'absolute right-1 top-1 text-[10px] text-slate-500">'
             f'click to expand</span>'
-            f'{line}</div>\n'
+            f'{safe_line}</div>\n'
         )
-    return html
+    return out
 
 
 def render_error_agg(lines):
@@ -1529,7 +1531,7 @@ def render_error_agg(lines):
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD} class="text-red-400 text-xs '
-            f'max-w-xs truncate">{pattern}</td>'
+            f'max-w-xs truncate">{html.escape(pattern)}</td>'
             f'<td {_TD}>{info["count"]}</td></tr>'
         )
     return _table(["Pattern", "Count"], rows)
@@ -1543,11 +1545,11 @@ def render_verify(checks):
                 'no checks run yet</span>')
     rows = ""
     for c in checks:
-        if c["status"] == "pass":
+        if c.get("status") == "pass":
             badge = ("bg-emerald-950 text-emerald-400 "
                      "border border-emerald-900")
             label = "PASS"
-        elif c["status"] == "fail":
+        elif c.get("status") == "fail":
             badge = ("bg-red-950 text-red-400 "
                      "border border-red-900")
             label = "FAIL"
@@ -1559,16 +1561,16 @@ def render_verify(checks):
         if c.get("detail"):
             detail = (
                 f'<div class="text-[10px] text-slate-500 '
-                f'mt-0.5">{c["detail"]}</div>'
+                f'mt-0.5">{html.escape(str(c["detail"]))}</div>'
             )
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}><span class="{badge} px-2 py-0.5 '
             f'rounded text-[10px] font-semibold">'
             f'{label}</span></td>'
-            f'<td {_TD}>{c["name"]}{detail}</td>'
+            f'<td {_TD}>{html.escape(str(c.get("name", "-")))}{detail}</td>'
             f'<td {_TD} class="text-slate-500 text-[10px]">'
-            f'{c.get("time", "-")}</td></tr>'
+            f'{html.escape(str(c.get("time", "-")))}</td></tr>'
         )
     return _table(["Status", "Check", "Last Run"], rows)
 
@@ -1713,16 +1715,16 @@ def render_recent_orders(orders):
 
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{o.get("cid", "-")}</td>'
-            f'<td {_TD}>{sym_name}</td>'
-            f'<td {_TD}>{o.get("side", "-")}</td>'
-            f'<td {_TD}>{o.get("price", "-")}</td>'
-            f'<td {_TD}>{o.get("qty", "-")}</td>'
-            f'<td {_TD}>{tif}</td>'
-            f'<td {_TD}>{flags.strip()}</td>'
-            f'<td {_TD}>{o.get("status", "-")}</td>'
+            f'<td {_TD}>{html.escape(str(o.get("cid", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(sym_name))}</td>'
+            f'<td {_TD}>{html.escape(str(o.get("side", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(o.get("price", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(o.get("qty", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(tif))}</td>'
+            f'<td {_TD}>{html.escape(flags.strip())}</td>'
+            f'<td {_TD}>{html.escape(str(o.get("status", "-")))}</td>'
             f'<td {_TD}>{latency_str}</td>'
-            f'<td {_TD}>{o.get("ts", "-")}</td>'
+            f'<td {_TD}>{html.escape(str(o.get("ts", "-")))}</td>'
             f'<td {_TD}>{cancel}</td></tr>'
         )
     return _table(
@@ -1743,8 +1745,9 @@ def render_risk_user(data):
     for key, val in data.items():
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD} class="text-slate-500">{key}</td>'
-            f'<td {_TD}>{val}</td></tr>'
+            f'<td {_TD} class="text-slate-500">'
+            f'{html.escape(str(key))}</td>'
+            f'<td {_TD}>{html.escape(str(val))}</td></tr>'
         )
     return _table(["Field", "Value"], rows)
 

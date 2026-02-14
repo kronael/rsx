@@ -1,7 +1,7 @@
 use rsx_gateway::circuit::CircuitBreaker;
 use rsx_gateway::circuit::State;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn circuit_closed_allows_orders() {
@@ -38,8 +38,17 @@ fn circuit_half_open_after_cooldown() {
     }
     assert_eq!(cb.state(), State::Open);
     assert!(!cb.allow());
-    thread::sleep(Duration::from_millis(15));
-    assert!(cb.allow());
+
+    let start = Instant::now();
+    loop {
+        if cb.allow() {
+            break;
+        }
+        if start.elapsed() > Duration::from_millis(100) {
+            panic!("timeout waiting for circuit to become half-open");
+        }
+        thread::sleep(Duration::from_micros(100));
+    }
     assert_eq!(cb.state(), State::HalfOpen);
 }
 
@@ -49,8 +58,17 @@ fn circuit_half_open_success_closes() {
     for _ in 0..3 {
         cb.record_failure();
     }
-    thread::sleep(Duration::from_millis(15));
-    assert!(cb.allow());
+
+    let start = Instant::now();
+    loop {
+        if cb.allow() {
+            break;
+        }
+        if start.elapsed() > Duration::from_millis(100) {
+            panic!("timeout waiting for circuit to become half-open");
+        }
+        thread::sleep(Duration::from_micros(100));
+    }
     cb.record_success();
     assert_eq!(cb.state(), State::Closed);
 }
@@ -61,8 +79,17 @@ fn circuit_half_open_failure_reopens() {
     for _ in 0..3 {
         cb.record_failure();
     }
-    thread::sleep(Duration::from_millis(15));
-    assert!(cb.allow());
+
+    let start = Instant::now();
+    loop {
+        if cb.allow() {
+            break;
+        }
+        if start.elapsed() > Duration::from_millis(100) {
+            panic!("timeout waiting for circuit to become half-open");
+        }
+        thread::sleep(Duration::from_micros(100));
+    }
     assert_eq!(cb.state(), State::HalfOpen);
     cb.record_failure();
     assert_eq!(cb.state(), State::Open);

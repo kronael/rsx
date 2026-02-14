@@ -42,7 +42,7 @@ impl CircuitBreaker {
                     false
                 }
             }
-            State::HalfOpen => false,
+            State::HalfOpen => true,
         }
     }
 

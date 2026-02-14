@@ -163,9 +163,11 @@ impl LiquidationEngine {
                 continue;
             }
 
-            let slip = state.round as i64
-                * state.round as i64
-                * self.base_slip_bps;
+            let slip = (state.round as i64)
+                .checked_mul(state.round as i64)
+                .and_then(|v| v.checked_mul(self.base_slip_bps))
+                .map(|v| v.min(9999))
+                .unwrap_or(9999);
             let (side, price) = if net_qty > 0 {
                 (1u8, mark * (10_000 - slip) / 10_000)
             } else {

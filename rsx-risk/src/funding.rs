@@ -23,8 +23,9 @@ pub fn calculate_rate(
     if index == 0 {
         return 0;
     }
-    let premium =
-        (mark - index) * 10_000 / index;
+    let premium = ((mark as i128 - index as i128)
+        * 10_000
+        / index as i128) as i64;
     premium.clamp(-config.rate_cap, config.rate_cap)
 }
 

@@ -9,6 +9,10 @@ use serde::Serialize;
 pub struct Claims {
     pub sub: String,
     pub exp: u64,
+    #[serde(default)]
+    pub aud: Option<String>,
+    #[serde(default)]
+    pub iss: Option<String>,
 }
 
 pub fn validate_jwt(
@@ -17,6 +21,8 @@ pub fn validate_jwt(
 ) -> Result<u32, String> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
+    validation.set_audience(&["rsx-gateway"]);
+    validation.set_issuer(&["rsx"]);
 
     let token_data = decode::<Claims>(
         token,

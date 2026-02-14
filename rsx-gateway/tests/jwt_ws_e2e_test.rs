@@ -20,6 +20,8 @@ fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
     let claims = Claims {
         sub: user_id.to_string(),
         exp,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx".to_string()),
     };
     encode(
         &Header::new(Algorithm::HS256),
