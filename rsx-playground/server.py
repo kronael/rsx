@@ -41,6 +41,10 @@ PG_URL = os.environ.get(
     "postgres://rsx:rsx@127.0.0.1:5432/rsx",
 )
 
+GATEWAY_URL = os.environ.get(
+    "GATEWAY_URL", "ws://localhost:8080"
+)
+
 # ── import start script's config ────────────────────────
 
 import importlib.machinery
@@ -235,7 +239,6 @@ async def do_build(release=False):
 async def start_all(scenario="minimal"):
     """Build + start all processes for a scenario."""
     global current_scenario
-    current_scenario = scenario
     plan = get_spawn_plan(scenario)
 
     # ensure dirs
@@ -301,6 +304,8 @@ async def start_all(scenario="minimal"):
         if "pid" in result:
             started.append(name)
         await asyncio.sleep(0.1)
+    if started:
+        current_scenario = scenario
     return {"started": started, "count": len(started)}
 
 
@@ -344,6 +349,35 @@ async def lifespan(app):
 app = FastAPI(title="RSX Playground", lifespan=lifespan)
 
 
+def audit_log(endpoint: str, action: str):
+    ts = datetime.now().strftime("%b %d %H:%M:%S")
+    print(f"{ts} audit: {endpoint} {action}")
+
+
+DESTRUCTIVE_ENDPOINTS = {
+    "/api/processes/all/stop",
+    "/api/processes/all/start",
+    "/api/scenario/switch",
+}
+
+
+def check_confirm(request: Request, endpoint: str):
+    if endpoint not in DESTRUCTIVE_ENDPOINTS:
+        return None
+    token = request.headers.get("x-confirm")
+    if token is None:
+        token = request.query_params.get("confirm")
+    if token != "yes":
+        return JSONResponse(
+            {"error": "destructive operation requires "
+                      "x-confirm: yes header or "
+                      "?confirm=yes query param"},
+            status_code=400,
+        )
+    return None
+
+
+
 
 @app.get("/healthz")
 async def healthz():
@@ -364,6 +398,8 @@ recent_orders: list[dict] = []
 verify_results: list[dict] = []
 order_latencies: list[int] = []
 gateway_ws = None
+_idempotency_keys: dict[str, float] = {}
+_IDEMPOTENCY_TTL = 300
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -1006,9 +1042,14 @@ async def api_build():
 
 @app.post("/api/processes/all/start")
 async def api_start_all(
+    request: Request,
     scenario: str = Query("minimal"),
 ):
     """Build + start all processes."""
+    denied = check_confirm(request, "/api/processes/all/start")
+    if denied:
+        return denied
+    audit_log("/api/processes/all/start", f"scenario={scenario}")
     result = await start_all(scenario)
     if "error" in result:
         return HTMLResponse(
@@ -1020,8 +1061,12 @@ async def api_start_all(
 
 
 @app.post("/api/processes/all/stop")
-async def api_stop_all():
+async def api_stop_all(request: Request):
     """Stop all managed processes."""
+    denied = check_confirm(request, "/api/processes/all/stop")
+    if denied:
+        return denied
+    audit_log("/api/processes/all/stop", "stop all")
     result = await stop_all()
     return HTMLResponse(
         f'<span class="text-amber-400 text-xs">'
@@ -1143,9 +1188,13 @@ async def api_process_action(name: str, action: str):
 
 @app.post("/api/scenario/switch")
 async def api_scenario_switch(request: Request):
+    denied = check_confirm(request, "/api/scenario/switch")
+    if denied:
+        return denied
     global current_scenario
     form = await request.form()
     scenario = form.get("scenario-select", "minimal")
+    audit_log("/api/scenario/switch", f"scenario={scenario}")
 
     if scenario not in start_mod.SCENARIOS:
         return HTMLResponse(
@@ -1179,7 +1228,9 @@ async def x_current_scenario():
 
 @app.get("/api/wal/{stream}/status")
 async def api_wal_status(stream: str):
-    stream_dir = WAL_DIR / stream
+    stream_dir = (WAL_DIR / stream).resolve()
+    if not str(stream_dir).startswith(str(WAL_DIR.resolve())):
+        return {"error": "invalid stream name"}
     if not stream_dir.exists():
         return {"error": "stream not found"}
     files = list(stream_dir.iterdir())
@@ -1211,7 +1262,7 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
         start_ns = time.perf_counter_ns()
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
-                "ws://localhost:8080",
+                GATEWAY_URL,
                 headers=headers,
             ) as ws:
                 await ws.send_str(json.dumps(order_msg))
@@ -1231,16 +1282,51 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
         return None, str(e), None
 
 
+def _trim_recent_orders():
+    if len(recent_orders) > 200:
+        del recent_orders[:100]
+
+
 @app.post("/api/orders/test")
 async def api_orders_test(request: Request):
+    idem_key = request.headers.get("x-idempotency-key")
+    if idem_key:
+        now = time.time()
+        expired = [
+            k for k, t in _idempotency_keys.items()
+            if now - t > _IDEMPOTENCY_TTL
+        ]
+        for k in expired:
+            del _idempotency_keys[k]
+        if idem_key in _idempotency_keys:
+            return HTMLResponse(
+                '<span class="text-amber-400 text-xs">'
+                'duplicate submission (idempotency key '
+                'already used)</span>')
+        _idempotency_keys[idem_key] = now
     form = await request.form()
+    audit_log("/api/orders/test", "submit order")
     cid = f"pg{int(time.time()*1e6):018d}"[:20]
-    user_id = int(form.get("user_id", "1"))
+
+    try:
+        user_id = int(form.get("user_id", "1"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid user_id</span>')
+
+    try:
+        symbol_id = int(form.get("symbol_id", "10"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid symbol_id</span>')
 
     order_msg = {
         "type": "NewOrder",
-        "symbol_id": int(form.get("symbol_id", "10")),
+        "symbol_id": symbol_id,
         "side": form.get("side", "buy"),
+        "order_type": form.get("order_type", "limit"),
         "price": form.get("price", "0"),
         "qty": form.get("qty", "0"),
         "client_order_id": cid,
@@ -1267,6 +1353,7 @@ async def api_orders_test(request: Request):
         order["status"] = "error"
         order["error"] = result[1]
         recent_orders.append(order)
+        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
             f'order {cid} queued ({result[1]})</span>')
@@ -1281,6 +1368,7 @@ async def api_orders_test(request: Request):
         order["status"] = "accepted"
         order["latency_us"] = latency_us
         recent_orders.append(order)
+        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-emerald-400 text-xs">'
             f'order {cid} accepted ({latency_us}us)</span>')
@@ -1288,18 +1376,17 @@ async def api_orders_test(request: Request):
         order["status"] = "rejected"
         order["reason"] = msg.get("reason", "unknown")
         recent_orders.append(order)
+        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
             f'order {cid} rejected: {order["reason"]}</span>')
     else:
         order["status"] = "error"
         recent_orders.append(order)
+        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
             f'order {cid} unexpected response</span>')
-
-    if len(recent_orders) > 200:
-        del recent_orders[:100]
 
 
 @app.post("/api/verify/run")
@@ -1396,6 +1483,7 @@ async def api_orders_batch():
             "qty": "1.0", "status": "submitted",
             "ts": datetime.now().strftime("%H:%M:%S"),
         })
+    _trim_recent_orders()
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
         '10 batch orders submitted</span>')
@@ -1414,6 +1502,7 @@ async def api_orders_random():
             "status": "submitted",
             "ts": datetime.now().strftime("%H:%M:%S"),
         })
+    _trim_recent_orders()
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
         '5 random orders submitted</span>')
@@ -1482,7 +1571,7 @@ async def api_stress_reports():
                 })
             except Exception:
                 continue
-    return JSONResponse(reports)
+    return reports
 
 
 @app.get("/api/stress/reports/{report_id}")
@@ -1691,6 +1780,9 @@ async def api_metrics():
 # ── main ────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    if not os.environ.get("PLAYGROUND_MODE"):
+        print("warning: PLAYGROUND_MODE not set. "
+              "set PLAYGROUND_MODE=1 to suppress this warning.")
     uvicorn.run(
         "server:app",
         host="0.0.0.0",

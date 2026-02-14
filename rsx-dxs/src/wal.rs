@@ -141,6 +141,14 @@ impl WalWriter {
             return Ok(());
         }
 
+        // rotate before writing if current file + buffer would exceed max
+        if self.file_size > 0
+            && self.file_size + self.buf.len() as u64
+                >= self.max_file_size
+        {
+            self.rotate()?;
+        }
+
         self.file.write_all(&self.buf)?;
         let t0 = Instant::now();
         self.file.sync_all()?;
@@ -161,7 +169,7 @@ impl WalWriter {
             listener.notify_one();
         }
 
-        // rotate if needed
+        // rotate after write if file reached max
         if self.file_size >= self.max_file_size {
             self.rotate()?;
         }
@@ -179,6 +187,7 @@ impl WalWriter {
             self.stream_id, self.first_seq, self.last_seq
         ));
 
+        self.file.sync_all()?;
         drop(std::mem::replace(
             &mut self.file,
             File::create("/dev/null")?,

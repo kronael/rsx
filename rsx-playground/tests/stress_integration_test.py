@@ -180,9 +180,9 @@ def test_percentile_calculation():
     p95 = percentile(data, 95)
     p99 = percentile(data, 99)
 
-    assert 400 <= p50 <= 600
-    assert 900 <= p95 <= 1000
-    assert 950 <= p99 <= 1000
+    assert 540 <= p50 <= 560
+    assert 950 <= p95 <= 960
+    assert 989 <= p99 <= 993
 
 
 def test_report_file_format():

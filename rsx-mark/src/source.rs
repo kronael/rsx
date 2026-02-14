@@ -199,7 +199,24 @@ fn handle_coinbase_msg(
     });
 }
 
+fn is_power_of_10(n: i64) -> bool {
+    if n <= 0 {
+        return false;
+    }
+    let mut v = n;
+    while v > 1 {
+        if v % 10 != 0 {
+            return false;
+        }
+        v /= 10;
+    }
+    true
+}
+
 fn parse_price(raw: &str, scale: i64) -> Option<i64> {
+    if !is_power_of_10(scale) {
+        return None;
+    }
     let mut parts = raw.split('.');
     let whole = parts.next().unwrap_or("0");
     let frac = parts.next().unwrap_or("");
@@ -218,5 +235,5 @@ fn parse_price(raw: &str, scale: i64) -> Option<i64> {
     } else {
         frac_scaled.parse().ok()?
     };
-    Some(whole_val * scale + frac_val)
+    whole_val.checked_mul(scale)?.checked_add(frac_val)
 }

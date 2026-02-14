@@ -3,16 +3,6 @@
 Run with: cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
 """
 
-import pytest
-from fastapi.testclient import TestClient
-from server import app
-
-
-@pytest.fixture
-def client():
-    """Create TestClient for server app."""
-    return TestClient(app)
-
 
 # ── HTML Page Routes ────────────────────────────────────────
 
@@ -148,7 +138,9 @@ def test_api_orders_test_with_form_data(client):
     )
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "submitted" in resp.text.lower()
+    text = resp.text.lower()
+    assert "order" in text
+    assert any(w in text for w in ["queued", "accepted", "rejected"])
 
 
 def test_api_orders_batch_post(client):
@@ -168,11 +160,12 @@ def test_api_orders_random_post(client):
 
 
 def test_api_orders_stress_post(client):
-    """POST /api/orders/stress returns HTML with stress orders."""
+    """POST /api/orders/stress returns JSON with stress results."""
     resp = client.post("/api/orders/stress")
     assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-    assert "100 stress orders" in resp.text
+    data = resp.json()
+    assert data.get("status") == "completed"
+    assert "results" in data
 
 
 def test_api_orders_invalid_post(client):
@@ -371,8 +364,8 @@ def test_x_logs_with_filters(client):
 
 
 def test_api_users_create_post(client):
-    """POST /api/users returns HTML."""
-    resp = client.post("/api/users")
+    """POST /api/users/create returns HTML."""
+    resp = client.post("/api/users/create")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
 

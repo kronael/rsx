@@ -2,7 +2,6 @@ use rsx_gateway::rate_limit::per_instance;
 use rsx_gateway::rate_limit::per_ip;
 use rsx_gateway::rate_limit::per_user;
 use rsx_gateway::rate_limit::RateLimiter;
-use std::thread;
 use std::time::Duration;
 
 #[test]
@@ -29,7 +28,7 @@ fn rate_limit_refills_over_time() {
         assert!(rl.try_consume());
     }
     assert!(!rl.try_consume());
-    thread::sleep(Duration::from_millis(250));
+    rl.advance_time_by(Duration::from_millis(250));
     assert!(rl.try_consume());
 }
 

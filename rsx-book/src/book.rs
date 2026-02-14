@@ -85,6 +85,9 @@ impl Orderbook {
 
     #[inline]
     pub fn emit(&mut self, event: Event) {
+        if (self.event_len as usize) >= MAX_EVENTS {
+            return;
+        }
         self.event_buf[self.event_len as usize] = event;
         self.event_len += 1;
     }

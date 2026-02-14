@@ -173,10 +173,15 @@ impl CmpSender {
                         .copy_from_slice(
                             &record.payload,
                         );
-                    let _ = self.socket.send_to(
+                    if let Err(e) = self.socket.send_to(
                         &self.buf[..total],
                         self.dest,
-                    );
+                    ) {
+                        warn!(
+                            "nak retransmit send failed: {}",
+                            e
+                        );
+                    }
                 }
                 _ => break,
             }
@@ -440,6 +445,14 @@ impl CmpReceiver {
                             );
                             self.reorder_buf
                                 .insert(seq, full);
+                        } else {
+                            warn!(
+                                "reorder buffer full \
+                                 (limit={}), dropping \
+                                 seq={}",
+                                self.reorder_buf_limit,
+                                seq
+                            );
                         }
                         self.send_nak(
                             self.expected_seq,

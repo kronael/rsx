@@ -26,6 +26,7 @@ use rustls::pki_types::ServerName;
 use rustls::ClientConfig;
 use rustls::RootCertStore;
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -191,8 +192,7 @@ impl DxsConsumer {
                 .connect(server_name.clone(), tcp_stream)
                 .await
                 .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
+                    io::Error::other(
                         format!(
                             "tls handshake failed: {}",
                             e
@@ -229,8 +229,7 @@ impl DxsConsumer {
                 .connect(server_name.clone(), tcp_stream)
                 .await
                 .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
+                    io::Error::other(
                         format!("tls handshake failed: {}", e),
                     )
                 })?;
@@ -306,11 +305,9 @@ impl DxsConsumer {
                 ));
             }
 
-            // Advance tip from record seq when available.
-            // Fallback to +1 for records without seq.
-            let next_tip = extract_seq(&payload)
-                .unwrap_or_else(|| self.tip.saturating_add(1));
-            self.tip = self.tip.max(next_tip);
+            if let Some(seq) = extract_seq(&payload) {
+                self.tip = self.tip.max(seq);
+            }
 
             if !is_known_record_type(
                 header.record_type,
@@ -406,11 +403,9 @@ impl DxsConsumer {
                 ));
             }
 
-            let next_tip = extract_seq(&payload)
-                .unwrap_or_else(|| {
-                    self.tip.saturating_add(1)
-                });
-            self.tip = self.tip.max(next_tip);
+            if let Some(seq) = extract_seq(&payload) {
+                self.tip = self.tip.max(seq);
+            }
 
             if !is_known_record_type(
                 header.record_type,
@@ -463,6 +458,10 @@ fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, tip.to_le_bytes())?;
     fs::rename(&tmp, path)?;
+    if let Some(parent) = path.parent() {
+        let dir = File::open(parent)?;
+        dir.sync_all()?;
+    }
     Ok(())
 }
 

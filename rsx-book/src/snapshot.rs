@@ -23,8 +23,7 @@ pub fn save(
     w: &mut dyn Write,
 ) -> io::Result<()> {
     if book.state == BookState::Migrating {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "cannot snapshot during migration",
         ));
     }
@@ -195,6 +194,12 @@ pub fn load(
 
     for _ in 0..active_count {
         let idx = read_u32(r)?;
+        if idx >= capacity {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "order index out of bounds",
+            ));
+        }
         let slot = read_order(r)?;
         *slab.get_mut(idx) = slot;
     }
@@ -221,6 +226,12 @@ pub fn load(
     let level_count = read_u32(r)?;
     for _ in 0..level_count {
         let idx = read_u32(r)?;
+        if idx as usize >= total {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "level index out of bounds",
+            ));
+        }
         let lvl = read_level(r)?;
         active_levels[idx as usize] = lvl;
     }
@@ -242,6 +253,12 @@ pub fn load(
         let idx = read_u16(r)?;
         let net_qty = read_i64(r)?;
         let order_count = read_u16(r)?;
+        if idx as usize >= user_bump as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "user index out of bounds",
+            ));
+        }
         user_map.insert(uid, idx);
         let us = &mut user_states[idx as usize];
         us.user_id = uid;

@@ -42,9 +42,11 @@ impl RateLimiter {
     }
 
     pub fn advance_time_by(&mut self, duration: std::time::Duration) {
+        let now = self.last_refill + duration;
         let elapsed = duration.as_secs_f64();
         self.tokens = (self.tokens + elapsed * self.refill_rate)
             .min(self.capacity);
+        self.last_refill = now;
     }
 }
 

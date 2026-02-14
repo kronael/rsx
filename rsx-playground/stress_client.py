@@ -66,7 +66,7 @@ class StressClient:
         """Generate random order"""
         import random
 
-        symbol_id = random.choice([0, 1, 2])  # BTC, ETH, SOL
+        symbol_id = random.choice([1, 2, 3, 10])  # BTC, ETH, SOL, ...
         side = random.choice(["buy", "sell"])
 
         # Random price around market (50000 for BTC)
@@ -138,8 +138,8 @@ class StressClient:
                     while time.time() < end_time:
                         loop_start = time.time()
 
-                        self.metrics.submitted += 1
                         latency = await self.submit_order(ws)
+                        self.metrics.submitted += 1
 
                         if latency:
                             self.metrics.latencies_us.append(latency)

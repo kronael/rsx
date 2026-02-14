@@ -131,6 +131,10 @@ fn dump_file(file: PathBuf) {
             header[12], header[13], header[14], header[15]
         ]);
 
+        if len > 1_000_000 {
+            eprintln!("corrupt: record len {} at offset {}", len, offset);
+            break;
+        }
         if offset + 16 + len > buf.len() {
             break;
         }

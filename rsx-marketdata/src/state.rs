@@ -206,12 +206,11 @@ impl MarketDataState {
         seq: u64,
     ) -> bool {
         let idx = symbol_id as usize;
-        if idx >= self.expected_seq.len() || seq == 0 {
+        if idx >= self.expected_seq.len() {
             return false;
         }
         let expected = self.expected_seq[idx];
         if expected == 0 {
-            // first seq seen for this symbol
             self.expected_seq[idx] = seq + 1;
             return false;
         }

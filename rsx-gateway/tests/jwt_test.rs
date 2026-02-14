@@ -23,6 +23,8 @@ fn test_validate_jwt_valid() {
     let claims = Claims {
         sub: user_id.to_string(),
         exp,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx".to_string()),
     };
 
     let token = encode(
@@ -46,6 +48,8 @@ fn test_validate_jwt_expired() {
     let claims = Claims {
         sub: user_id.to_string(),
         exp,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx".to_string()),
     };
 
     let token = encode(
@@ -72,6 +76,8 @@ fn test_validate_jwt_invalid_secret() {
     let claims = Claims {
         sub: user_id.to_string(),
         exp,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx".to_string()),
     };
 
     let token = encode(
@@ -93,6 +99,8 @@ fn test_validate_jwt_invalid_user_id() {
     let claims = Claims {
         sub: "not-a-number".to_string(),
         exp,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx".to_string()),
     };
 
     let token = encode(
