@@ -7,10 +7,11 @@ dependencies = [
     "uvicorn",
     "sse-starlette",
     "psutil",
-    "httpx",
     "jinja2",
     "asyncpg",
     "python-multipart",
     "pytest",
-    "websockets",
+    "aiohttp",
+    "httpx",
+    "pyjwt",
 ]

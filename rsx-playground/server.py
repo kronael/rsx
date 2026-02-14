@@ -4,6 +4,7 @@ Usage: cd rsx-playground && uv run server.py
 """
 
 import asyncio
+import html
 import json
 import os
 import signal
@@ -25,11 +26,7 @@ from fastapi.responses import PlainTextResponse
 
 import pages
 
-try:
-    import websockets
-    WEBSOCKETS_AVAILABLE = True
-except ImportError:
-    WEBSOCKETS_AVAILABLE = False
+import aiohttp
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -141,13 +138,17 @@ async def spawn_process(name, binary, env):
         "proc": proc, "binary": binary, "env": env,
     }
     asyncio.create_task(pipe_output(name, proc.stdout))
-    # write PID file after short delay to confirm spawn
+    # write PID file before stability check
     PID_DIR.mkdir(parents=True, exist_ok=True)
+    (PID_DIR / f"{name}.pid").write_text(str(proc.pid))
     await asyncio.sleep(0.05)
     if proc.returncode is None:
-        (PID_DIR / f"{name}.pid").write_text(str(proc.pid))
         return {"pid": proc.pid}
     else:
+        # Process exited immediately, clean up PID file
+        pid_file = PID_DIR / f"{name}.pid"
+        if pid_file.exists():
+            pid_file.unlink()
         return {"error": f"process exited immediately (code "
                          f"{proc.returncode})"}
 
@@ -173,6 +174,9 @@ async def stop_process(name):
     pid_file = PID_DIR / f"{name}.pid"
     if pid_file.exists():
         pid_file.unlink()
+    # Clean up managed dict
+    if name in managed:
+        del managed[name]
     return {"status": f"{name} stopped"}
 
 
@@ -283,7 +287,7 @@ async def start_all(scenario="minimal"):
                             pass
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(2.0)  # Give OS time to release ports
 
     # build
     ok = await do_build()
@@ -326,6 +330,9 @@ async def lifespan(app):
                 info["proc"].wait(), timeout=3.0)
         except asyncio.TimeoutError:
             info["proc"].kill()
+            await info["proc"].wait()
+    # Clear managed dict
+    managed.clear()
     # cleanup server PID file
     server_pid_file = PID_DIR.parent / "playground-server.pid"
     if server_pid_file.exists():
@@ -341,7 +348,15 @@ app = FastAPI(title="RSX Playground", lifespan=lifespan)
 @app.get("/healthz")
 async def healthz():
     """Health check for CLI."""
-    return {"status": "ok", "port": 49171}
+    procs = scan_processes()
+    running = [p for p in procs if p.get("state") == "running"]
+    return {
+        "status": "ok",
+        "port": 49171,
+        "processes_running": len(running),
+        "processes_total": len(procs),
+        "postgres": pg_pool is not None
+    }
 
 # ── in-memory state ─────────────────────────────────────
 
@@ -1138,12 +1153,14 @@ async def api_scenario_switch(request: Request):
             f'unknown scenario: {scenario}</span>')
 
     # Stop current processes if running
-
-    current_scenario = scenario
+    await stop_all()
+    await asyncio.sleep(0.5)
 
     # Auto-restart with new scenario
     result = await start_all(scenario)
     if "started" in result:
+        # Only update current_scenario after successful start
+        current_scenario = scenario
         return HTMLResponse(
             f'<span class="text-emerald-400 text-xs">'
             f'switched to {scenario} and restarted '
@@ -1189,28 +1206,29 @@ async def api_logs(
 
 async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     """Send order to Gateway WebSocket if available."""
-    if not WEBSOCKETS_AVAILABLE:
-        return None, "websockets library not installed"
-
     try:
-        headers = [("x-user-id", str(user_id))]
+        headers = {"x-user-id": str(user_id)}
         start_ns = time.perf_counter_ns()
-        async with websockets.connect(
-            "ws://localhost:8080",
-            additional_headers=headers,
-            close_timeout=1
-        ) as ws:
-            await ws.send(json.dumps(order_msg))
-            response = await asyncio.wait_for(ws.recv(), timeout=2.0)
-            latency_us = (time.perf_counter_ns() - start_ns) // 1000
-            msg = json.loads(response)
-            return msg, None, latency_us
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                "ws://localhost:8080",
+                headers=headers,
+            ) as ws:
+                await ws.send_str(json.dumps(order_msg))
+                response = await asyncio.wait_for(
+                    ws.receive(timeout=2.0), timeout=2.0,
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                if response.type == aiohttp.WSMsgType.TEXT:
+                    msg = json.loads(response.data)
+                    return msg, None, latency_us
+                return None, "unexpected ws message type", None
     except (ConnectionRefusedError, OSError):
-        return None, "gateway not running"
+        return None, "gateway not running", None
     except asyncio.TimeoutError:
-        return None, "timeout waiting for response"
+        return None, "timeout waiting for response", None
     except Exception as e:
-        return None, str(e)
+        return None, str(e), None
 
 
 @app.post("/api/orders/test")
@@ -1498,13 +1516,17 @@ async def x_stress_reports_list():
         else:
             ts = timestamp_fmt
 
+        # Escape HTML to prevent XSS
+        ts_escaped = html.escape(ts)
+        id_escaped = html.escape(str(r["id"]))
+
         accept_color = "text-emerald-400" if r["accept_rate"] >= 95 else "text-amber-400"
         latency_color = "text-emerald-400" if r["p99_latency"] < 1000 else "text-amber-400"
 
         rows.append(
             f'<tr class="hover:bg-slate-800/30">'
             f'<td class="px-2 py-1 text-xs">'
-            f'<a href="/stress/{r["id"]}" class="text-blue-400 hover:underline">{ts}</a>'
+            f'<a href="/stress/{id_escaped}" class="text-blue-400 hover:underline">{ts_escaped}</a>'
             f'</td>'
             f'<td class="px-2 py-1 text-xs text-right">{r["rate"]}/s</td>'
             f'<td class="px-2 py-1 text-xs text-right">{r["duration"]}s</td>'
