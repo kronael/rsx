@@ -2,6 +2,7 @@
 ///
 /// Layout: record_type(2) + len(2) + crc32(4)
 /// + _reserved(8) = 16 bytes.
+///
 /// Manual encode/decode, no repr(packed).
 #[derive(Debug, Clone, Copy)]
 pub struct WalHeader {

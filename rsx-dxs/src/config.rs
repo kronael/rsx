@@ -239,14 +239,13 @@ impl TlsConfig {
     }
 
     pub fn validate_client(&self) -> io::Result<()> {
-        if self.enabled {
-            if self.cert_path.is_none() {
+        if self.enabled
+            && self.cert_path.is_none() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "RSX_REPL_CERT_PATH required when TLS enabled",
                 ));
             }
-        }
         Ok(())
     }
 }

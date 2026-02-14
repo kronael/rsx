@@ -174,7 +174,7 @@ All specifications in `specs/v1/`. Entry point:
 |----------|---------|
 | [PROGRESS.md](PROGRESS.md) | Per-crate implementation status |
 | [GUARANTEES.md](GUARANTEES.md) | Consistency, durability, recovery |
-| [CRITIQUE.md](CRITIQUE.md) | Current spec-vs-impl gaps |
+| [LEFTOSPEC.md](todos/LEFTOSPEC.md) | Remaining/ambiguous spec items to track |
 | [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | Failure scenarios |
 | [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | Ops recovery procedures |
 | [architecture/](architecture/) | Per-component architecture |
