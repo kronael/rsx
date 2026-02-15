@@ -1,9 +1,12 @@
 # RSX Exchange
 
-**High-performance perpetuals exchange:** Fixed-point arithmetic, single-threaded matching per symbol (<50μs latency), CMP/UDP between processes, WAL-based recovery. Built with [Claude](https://claude.ai) orchestrated by the [ship skill](https://github.com/anthropics/claude-code) workflow.
+Spec-first perpetuals exchange. Fixed-point i64 arithmetic,
+single-threaded matching per symbol, CMP/UDP between
+processes, WAL-based recovery. Target: <50us GW-ME-GW
+round-trip, <500ns ME match.
 
 <details>
-<summary><i>The Vibe™</i></summary>
+<summary><i>The Vibe</i></summary>
 
 > *Shall I compare thee to a sane design?*
 > *Thou art more wondrous and more wild by far.*
@@ -27,20 +30,17 @@
 
 ## Quick Start
 
-**Try the playground** (easiest way to explore):
+**Playground** (web dashboard, fastest way to explore):
 
 ```bash
-# Clone and run
-git clone <repo-url>
-cd rsx
+git clone <repo-url> && cd rsx
 
-# Start playground server (runs in background)
+# Start playground server (background)
 ./rsx-playground/playground start
 
 # Visit http://localhost:49171
-# - Click "Start All" to launch RSX processes
-# - Submit orders, view fills, inspect WAL
-# - Inject faults, view logs, monitor resources
+# Click "Start All" to launch RSX processes
+# Submit orders, view fills, inspect WAL
 
 # Stop when done
 ./rsx-playground/playground stop
@@ -49,50 +49,36 @@ cd rsx
 **Build from source:**
 
 ```bash
-cargo build --workspace
-cargo test --workspace
+cargo check              # type check (fastest)
+cargo build --workspace  # debug build
+cargo test --workspace   # all tests
 ```
-
-**Full documentation:** Run `./scripts/serve-docs.sh` → http://localhost:8001
-
-## Status
-
-Production-ready. 9 crates, 960 tests passing (all non-flaky),
-~34k LOC Rust + 19k LOC tests. Full order pipeline wired
-end-to-end: Gateway -> Risk -> ME -> Risk -> Gateway.
-Liquidation engine with insurance fund. Mark price aggregator
-feeding risk via CMP. Market data shadow book with L2/BBO/trades
-broadcast. Playground: 680 E2E tests (Playwright + API).
-
-See [PROGRESS.md](PROGRESS.md) for per-crate status.
 
 ## Architecture
 
 ```
-                       External
                     +------------+
                     |  Web (WS)  |
                     +-----+------+
                           |
                     +-----v------+
                     |  Gateway   |  WS + CMP bridge
-                    | (monoio)   |  JWT auth, rate limit
+                    | (monoio)   |  JWT, rate limit
                     +-----+------+
                           | CMP/UDP
-                    +-----v------+   CMP/UDP   +---------------+
-                    |   Risk     +------------>| Matching Eng  |
-                    |  Engine    |<------------+ (1 per symbol) |
-                    | (1 shard)  |  CMP fills  +-------+-------+
-                    +--+---+--+-+              |       |
-                       |   |  |          +-----+  +----+-----+
-              CMP/UDP  |   |  | CMP/UDP  |WAL     |CMP/UDP   |
-              +--------+   |  +------+   |        |          |
-              v            |         v   v        v          v
-         +--------+  +----+---+ +--------+  +---------+ +--------+
-         |Postgres|  | Mark   | |Recorder|  |MARKETDATA| |Gateway |
-         | (write |  | Price  | |(daily  |  |(shadow   | |(fills  |
-         | behind)|  | Agg    | | WAL)   |  | book)    | | to usr)|
-         +--------+  +--------+ +--------+  +---------+ +--------+
+                    +-----v------+            +----------+
+                    |   Risk     |  CMP/UDP   | Matching |
+                    |  Engine    +----------->| Engine   |
+                    | (1 shard)  |<-----------+ (1/sym)  |
+                    +--+---+--+-+  CMP fills  +----+-----+
+                       |   |  |                    |
+              +--------+   |  +------+        +----+----+
+              v            v         v        v         v
+         +--------+ +--------+ +--------+ +-------+ +--+--+
+         |Postgres| | Mark   | |Recorder| |Mktdata| | GW  |
+         | (write | | Price  | |(daily  | |(shadow| |(fill|
+         | behind)| | Agg    | | WAL)   | | book) | | usr)|
+         +--------+ +--------+ +--------+ +-------+ +-----+
 ```
 
 **Transports:**
@@ -100,56 +86,67 @@ See [PROGRESS.md](PROGRESS.md) for per-crate status.
 - Within process: tile threads + SPSC rings (rtrb)
 - DXS: WAL streaming to consumers over TCP
 
-See [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md)
-for full architecture. Per-component docs in
-[architecture/](architecture/).
-
-## Components
-
-| Component | Crate | Description |
-|-----------|-------|-------------|
-| Matching Engine | rsx-matching | 1 per symbol, pinned core, GTC/IOC/FOK, post-only, reduce-only |
-| Risk Engine | rsx-risk | Pre-trade margin, positions, funding, liquidation, insurance fund |
-| Gateway | rsx-gateway | WS overlay, JWT auth, rate limiting, circuit breaker |
-| Mark Price | rsx-mark | Binance/Coinbase feeds, median, staleness, CMP to risk |
-| Market Data | rsx-marketdata | Shadow book, L2/BBO/trades fan-out, seq gap detection |
-| DXS | rsx-dxs | WAL writer/reader, CMP sender/receiver, DXS replay server |
-| Recorder | rsx-recorder | Archival DXS consumer, daily WAL files |
-| Types | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig, time, macros |
-| Book | rsx-book | Orderbook: Slab arena, CompressionMap, PriceLevel, snapshot |
+See [specs/v1/ARCHITECTURE.md](specs/v1/ARCHITECTURE.md).
 
 ## Crate Layout
 
 ```
-rsx-types/      shared newtypes, macros, time
-rsx-book/       orderbook (Slab, CompressionMap, PriceLevel)
-rsx-matching/   ME binary (per-symbol, single-threaded)
-rsx-risk/       risk binary (per-shard, margin + funding + liquidation)
+rsx-types/      Price, Qty, Side, SymbolConfig, macros
+rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
+rsx-matching/   ME (per-symbol, single-threaded)
+rsx-risk/       Risk (per-shard, margin + funding + liq)
 rsx-dxs/        WAL, CMP, DXS replay (transport library)
-rsx-gateway/    gateway binary (WS + CMP bridge)
-rsx-marketdata/ marketdata binary (shadow book, public WS)
-rsx-mark/       mark price binary (external feeds, CMP to risk)
-rsx-recorder/   recorder binary (archival DXS consumer)
+rsx-gateway/    Gateway (WS + CMP bridge, JWT, rate limit)
+rsx-marketdata/ Marketdata (shadow book, L2/BBO/trades)
+rsx-mark/       Mark price (external feeds, CMP to risk)
+rsx-recorder/   Recorder (archival DXS consumer)
+rsx-cli/        WAL dump/inspect tool (JSON + Parquet)
+rsx-maker/      Market maker bot
+rsx-sim/        Trading simulator, WS load generator
+```
+
+## Playground
+
+Web dashboard for development. Process control, order
+submission, WAL inspection, fault injection, invariant
+verification. See
+[rsx-playground/README.md](rsx-playground/README.md).
+
+```bash
+./rsx-playground/playground start     # start server
+./rsx-playground/playground stop      # stop server
+./rsx-playground/playground ps        # list processes
+./rsx-playground/playground start-all # build + launch
+./rsx-playground/playground stop-all  # stop processes
+./rsx-playground/playground reset     # stop + clean
 ```
 
 ## Build and Test
 
+```bash
+make check       # cargo check (fastest feedback)
+make test        # unit tests (~5s)
+make wal         # WAL correctness
+make e2e         # Rust + API + Playwright (~3min)
+make integration # testcontainers (1-5min)
+make lint        # clippy, warnings as errors
+make perf        # criterion benchmarks
+make clean       # cargo clean
 ```
-cargo check              # fastest feedback
-cargo test --workspace   # all tests (960 passing, zero failures)
-cargo bench -p rsx-dxs   # WAL/CMP benchmarks
-```
+
+Single crate: `cargo test -p rsx-book`
+Single test: `cargo test -p rsx-book -- test_name`
 
 ## Design Principles
 
-- **Fixed-point i64** -- deterministic, no float rounding
+- **Fixed-point i64** -- no float rounding
 - **Single-threaded per symbol** -- no locks, pinned cores
 - **SPSC rings** -- rtrb, 50-170ns, no broker
-- **WAL-based recovery** -- 0ms fill loss, idempotent replay
+- **WAL-based recovery** -- idempotent replay from tip
 - **Slab arena** -- pre-allocated, zero heap on hot path
 - **WAL = wire = stream** -- no format transformation
 - **CMP/UDP** -- direct inter-process, no Kafka/NATS
-- **SIGTERM = crash** -- one recovery path, always exercised
+- **SIGTERM = crash** -- one recovery path
 
 ## Specs
 
@@ -172,9 +169,8 @@ All specifications in `specs/v1/`. Entry point:
 
 | Document | Purpose |
 |----------|---------|
-| [PROGRESS.md](PROGRESS.md) | Per-crate implementation status |
-| [GUARANTEES.md](GUARANTEES.md) | Consistency, durability, recovery |
-| [LEFTOSPEC.md](todos/LEFTOSPEC.md) | Remaining/ambiguous spec items to track |
-| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | Failure scenarios |
-| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | Ops recovery procedures |
-| [architecture/](architecture/) | Per-component architecture |
+| [PROGRESS.md](PROGRESS.md) | Per-crate status |
+| [GUARANTEES.md](GUARANTEES.md) | Consistency, durability |
+| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | Failure modes |
+| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | Ops recovery |
+| [specs/v1/](specs/v1/) | All specifications |
