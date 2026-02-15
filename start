@@ -630,6 +630,21 @@ def main():
     if args.postgres == "docker":
         ensure_postgres_docker(args.pg_url)
 
+    # wait for postgres to be ready
+    pg_host = args.pg_url.split("@")[-1].split("/")[0] if "@" in args.pg_url else "localhost:5432"
+    for attempt in range(10):
+        r = subprocess.run(
+            ["pg_isready", "-d", args.pg_url],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            break
+        if attempt == 9:
+            print("error: postgres not ready after 10 retries")
+            sys.exit(1)
+        print(f"waiting for postgres... (attempt {attempt + 1}/10)")
+        time.sleep(1)
+
     # migration
     run_migration(args.pg_url)
 

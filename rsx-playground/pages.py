@@ -1528,10 +1528,12 @@ def render_error_agg(lines):
                 'no errors</span>')
     rows = ""
     for pattern, info in list(errors.items())[:20]:
+        truncated = pattern[:60]
+        safe = html.escape(truncated)
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD} class="text-red-400 text-xs '
-            f'max-w-xs truncate">{html.escape(pattern)}</td>'
+            f'max-w-xs truncate">{safe}</td>'
             f'<td {_TD}>{info["count"]}</td></tr>'
         )
     return _table(["Pattern", "Count"], rows)

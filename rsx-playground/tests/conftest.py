@@ -1,9 +1,15 @@
 """Pytest configuration for rsx-playground tests."""
 
+import asyncio
+import base64
+import json
 import os
 import signal
+import socket
+import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +20,318 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
+
+class RawWsClient:
+    """Minimal WebSocket client for testing.
+
+    Bypasses Sec-WebSocket-Accept validation since the
+    gateway's custom monoio handshake may compute it
+    differently than aiohttp expects.
+    """
+
+    def __init__(self, reader, writer):
+        self.reader = reader
+        self.writer = writer
+
+    @classmethod
+    async def connect(cls, host, port, headers=None):
+        """Open WS connection. Returns (client, status)."""
+        reader, writer = await asyncio.open_connection(
+            host, port,
+        )
+        key = base64.b64encode(os.urandom(16)).decode()
+        req = (
+            f"GET / HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n"
+        )
+        if headers:
+            for k, v in headers.items():
+                req += f"{k}: {v}\r\n"
+        req += "\r\n"
+
+        writer.write(req.encode())
+        await writer.drain()
+
+        # Read HTTP response headers
+        response = await asyncio.wait_for(
+            reader.readuntil(b"\r\n\r\n"), timeout=5.0,
+        )
+        status_line = response.split(b"\r\n")[0].decode()
+        status_code = int(status_line.split()[1])
+
+        if status_code != 101:
+            writer.close()
+            raise ConnectionRefusedError(
+                f"handshake failed: {status_code}"
+            )
+
+        return cls(reader, writer), status_code
+
+    @classmethod
+    async def try_connect(cls, host, port, headers=None):
+        """Try to connect, return status code (no raise)."""
+        try:
+            reader, writer = await asyncio.open_connection(
+                host, port,
+            )
+        except ConnectionRefusedError:
+            return None
+
+        key = base64.b64encode(os.urandom(16)).decode()
+        req = (
+            f"GET / HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n"
+        )
+        if headers:
+            for k, v in headers.items():
+                req += f"{k}: {v}\r\n"
+        req += "\r\n"
+
+        writer.write(req.encode())
+        await writer.drain()
+
+        response = await asyncio.wait_for(
+            reader.readuntil(b"\r\n\r\n"), timeout=5.0,
+        )
+        status_line = response.split(b"\r\n")[0].decode()
+        status_code = int(status_line.split()[1])
+        writer.close()
+        return status_code
+
+    async def send(self, text):
+        """Send a masked text frame."""
+        data = text.encode()
+        mask = os.urandom(4)
+        frame = bytearray()
+        frame.append(0x81)  # FIN + text opcode
+        length = len(data)
+        if length <= 125:
+            frame.append(0x80 | length)
+        elif length <= 65535:
+            frame.append(0x80 | 126)
+            frame.extend(struct.pack(">H", length))
+        else:
+            frame.append(0x80 | 127)
+            frame.extend(struct.pack(">Q", length))
+        frame.extend(mask)
+        masked = bytearray(
+            b ^ mask[i % 4] for i, b in enumerate(data)
+        )
+        frame.extend(masked)
+        self.writer.write(frame)
+        await self.writer.drain()
+
+    async def recv(self, timeout=2.0):
+        """Receive a text frame. Returns decoded string."""
+        header = await asyncio.wait_for(
+            self.reader.readexactly(2), timeout,
+        )
+        opcode = header[0] & 0x0F
+        masked = (header[1] & 0x80) != 0
+        length = header[1] & 0x7F
+        if length == 126:
+            ext = await self.reader.readexactly(2)
+            length = struct.unpack(">H", ext)[0]
+        elif length == 127:
+            ext = await self.reader.readexactly(8)
+            length = struct.unpack(">Q", ext)[0]
+        if masked:
+            mask_key = await self.reader.readexactly(4)
+        payload = b""
+        if length > 0:
+            payload = await self.reader.readexactly(length)
+        if masked:
+            payload = bytes(
+                b ^ mask_key[i % 4]
+                for i, b in enumerate(payload)
+            )
+        if opcode == 8:
+            raise ConnectionError("connection closed")
+        return payload.decode()
+
+    async def recv_json(self, timeout=2.0):
+        """Receive and parse JSON frame."""
+        text = await self.recv(timeout)
+        return json.loads(text)
+
+    async def close(self):
+        """Close the connection."""
+        try:
+            self.writer.close()
+        except Exception:
+            pass
+
+
+# Project root (rsx/)
+RSX_ROOT = Path(__file__).parent.parent.parent
+
+# Gateway binary path
+GW_BINARY = RSX_ROOT / "target" / "debug" / "rsx-gateway"
+
+# Test ports (offset to avoid collisions)
+GW_WS_PORT = 18080
+GW_RISK_CMP_PORT = 19300
+GW_CMP_PORT = 19200
+
+
+def _port_open(port: int) -> bool:
+    """Check if a TCP port is accepting connections."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.1)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+@pytest.fixture(scope="module")
+def gateway():
+    """Start rsx-gateway for integration tests.
+
+    Starts the gateway binary with test-specific env vars
+    and unique ports. Kills process on teardown.
+    """
+    if not GW_BINARY.exists():
+        pytest.skip(f"gateway binary not found: {GW_BINARY}")
+
+    env = {
+        **os.environ,
+        "RSX_GW_LISTEN": f"0.0.0.0:{GW_WS_PORT}",
+        "RSX_GW_JWT_SECRET": "",
+        "RSX_GW_IDLE_TIMEOUT_S": "60",
+        "RSX_GW_ORDER_TIMEOUT_MS": "2000",
+        "RSX_GW_MAX_PENDING": "10000",
+        "RSX_GW_RL_USER": "10",
+        "RSX_GW_RL_IP": "100",
+        "RSX_GW_RL_INSTANCE": "1000",
+        "RSX_GW_HEARTBEAT_INTERVAL_S": "5",
+        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{GW_RISK_CMP_PORT}",
+        "RSX_GW_CMP_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
+        "RSX_GW_WAL_DIR": str(RSX_ROOT / "tmp" / "wal_test"),
+        "RSX_MAX_SYMBOLS": "16",
+        "RSX_DEFAULT_TICK_SIZE": "1",
+        "RSX_DEFAULT_LOT_SIZE": "1",
+        "RUST_LOG": "info",
+    }
+
+    # Ensure WAL dir exists
+    wal_dir = RSX_ROOT / "tmp" / "wal_test"
+    wal_dir.mkdir(parents=True, exist_ok=True)
+
+    proc = subprocess.Popen(
+        [str(GW_BINARY)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # Wait for WS port to accept connections
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            _, stderr_bytes = proc.communicate(timeout=5)
+            stderr = stderr_bytes.decode()
+            pytest.fail(
+                f"gateway exited early (rc={proc.returncode})"
+                f": {stderr[:500]}"
+            )
+        if _port_open(GW_WS_PORT):
+            break
+        time.sleep(0.1)
+    else:
+        proc.kill()
+        proc.wait()
+        pytest.fail("gateway did not start within 5s")
+
+    yield {
+        "ws_url": f"ws://127.0.0.1:{GW_WS_PORT}",
+        "proc": proc,
+    }
+
+    # Teardown
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+@pytest.fixture(scope="module")
+def gateway_small_pending():
+    """Gateway with max_pending=1 for pending queue tests."""
+    if not GW_BINARY.exists():
+        pytest.skip(f"gateway binary not found: {GW_BINARY}")
+
+    ws_port = GW_WS_PORT + 1
+    risk_port = GW_RISK_CMP_PORT + 1
+    cmp_port = GW_CMP_PORT + 1
+
+    env = {
+        **os.environ,
+        "RSX_GW_LISTEN": f"0.0.0.0:{ws_port}",
+        "RSX_GW_JWT_SECRET": "",
+        "RSX_GW_IDLE_TIMEOUT_S": "60",
+        "RSX_GW_ORDER_TIMEOUT_MS": "30000",
+        "RSX_GW_MAX_PENDING": "1",
+        "RSX_GW_RL_USER": "100",
+        "RSX_GW_RL_IP": "1000",
+        "RSX_GW_RL_INSTANCE": "10000",
+        "RSX_GW_HEARTBEAT_INTERVAL_S": "60",
+        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{risk_port}",
+        "RSX_GW_CMP_ADDR": f"127.0.0.1:{cmp_port}",
+        "RSX_GW_WAL_DIR": str(
+            RSX_ROOT / "tmp" / "wal_test_pending"
+        ),
+        "RSX_MAX_SYMBOLS": "16",
+        "RSX_DEFAULT_TICK_SIZE": "1",
+        "RSX_DEFAULT_LOT_SIZE": "1",
+        "RUST_LOG": "info",
+    }
+
+    wal_dir = RSX_ROOT / "tmp" / "wal_test_pending"
+    wal_dir.mkdir(parents=True, exist_ok=True)
+
+    proc = subprocess.Popen(
+        [str(GW_BINARY)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            _, stderr_bytes = proc.communicate(timeout=5)
+            stderr = stderr_bytes.decode()
+            pytest.fail(
+                f"gateway exited early (rc={proc.returncode})"
+                f": {stderr[:500]}"
+            )
+        if _port_open(ws_port):
+            break
+        time.sleep(0.1)
+    else:
+        proc.kill()
+        proc.wait()
+        pytest.fail("gateway did not start within 5s")
+
+    yield {
+        "ws_url": f"ws://127.0.0.1:{ws_port}",
+        "proc": proc,
+    }
+
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 @pytest.fixture

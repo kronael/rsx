@@ -60,7 +60,7 @@ impl DedupTracker {
         while let Some(&(key, ts)) =
             self.pruning_queue.front()
         {
-            if ts > cutoff {
+            if ts >= cutoff {
                 break;
             }
             self.pruning_queue.pop_front();
@@ -85,7 +85,7 @@ impl DedupTracker {
         while let Some(&(key, ts)) =
             self.pruning_queue.front()
         {
-            if ts > cutoff {
+            if ts >= cutoff {
                 break;
             }
             self.pruning_queue.pop_front();

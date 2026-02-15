@@ -271,14 +271,23 @@ pub async fn handle_connection(
                     }
                 }
 
+                if client_order_id.len() > 20 {
+                    send_error(
+                        &mut stream,
+                        1010,
+                        "client_order_id too long",
+                    )
+                    .await;
+                    continue;
+                }
+
                 let oid = generate_order_id();
                 let now_ns = time_ns();
 
                 let mut cid_bytes = [0u8; 20];
                 let src = client_order_id.as_bytes();
-                let len = src.len().min(20);
-                cid_bytes[..len]
-                    .copy_from_slice(&src[..len]);
+                cid_bytes[..src.len()]
+                    .copy_from_slice(src);
 
                 let oid_hi = u64::from_be_bytes([
                     oid[0], oid[1], oid[2], oid[3], oid[4],

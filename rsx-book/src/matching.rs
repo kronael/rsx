@@ -292,7 +292,10 @@ pub fn match_at_level(
         let maker_remaining = maker_slot.remaining_qty.0;
 
         book.active_levels[tick as usize]
-            .total_qty -= fill_qty;
+            .total_qty = book.active_levels
+            [tick as usize]
+            .total_qty
+            .saturating_sub(fill_qty);
 
         book.emit(Event::Fill {
             maker_handle: cursor,
@@ -336,7 +339,8 @@ pub fn match_at_level(
             } else {
                 level.tail = prev;
             }
-            level.order_count -= 1;
+            level.order_count =
+                level.order_count.saturating_sub(1);
 
             let orig_qty =
                 book.orders.get(cursor).original_qty;
@@ -357,7 +361,10 @@ pub fn match_at_level(
                 book.user_map.get(&maker_user_id)
             {
                 book.user_states[uidx as usize]
-                    .order_count -= 1;
+                    .order_count =
+                    book.user_states[uidx as usize]
+                        .order_count
+                        .saturating_sub(1);
             }
         }
 

@@ -7,7 +7,13 @@ pub fn price_to_fixed(
     config: &SymbolConfig,
 ) -> Option<i64> {
     let scale = 10f64.powi(config.price_decimals as i32);
-    let raw = (price_f64 * scale).round() as i64;
+    let scaled = (price_f64 * scale).round();
+    if scaled > i64::MAX as f64
+        || scaled < i64::MIN as f64
+    {
+        return None;
+    }
+    let raw = scaled as i64;
     if raw <= 0 {
         return None;
     }
@@ -24,7 +30,13 @@ pub fn qty_to_fixed(
     config: &SymbolConfig,
 ) -> Option<i64> {
     let scale = 10f64.powi(config.qty_decimals as i32);
-    let raw = (qty_f64 * scale).round() as i64;
+    let scaled = (qty_f64 * scale).round();
+    if scaled > i64::MAX as f64
+        || scaled < i64::MIN as f64
+    {
+        return None;
+    }
+    let raw = scaled as i64;
     if raw <= 0 {
         return None;
     }

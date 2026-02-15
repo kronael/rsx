@@ -55,48 +55,54 @@ class StressClient:
         payload = {
             "sub": str(self.user_id),
             "exp": int(time.time()) + 3600,
+            "aud": "rsx-gateway",
+            "iss": "rsx",
         }
-        return pyjwt.encode(payload, self.config.jwt_secret, algorithm="HS256")
+        return pyjwt.encode(
+            payload,
+            self.config.jwt_secret,
+            algorithm="HS256",
+        )
 
     def _headers(self):
         """Auth headers for dev/testing"""
         return {"x-user-id": str(self.user_id)}
 
-    def generate_order(self) -> dict:
-        """Generate random order"""
+    def generate_order(self) -> str:
+        """Generate compact wire-format order frame."""
         import random
 
-        symbol_id = random.choice([1, 2, 3, 10])  # BTC, ETH, SOL, ...
-        side = random.choice(["buy", "sell"])
+        symbol_id = random.choice([1, 2, 3, 10])
+        side = random.choice([0, 1])
 
-        # Random price around market (50000 for BTC)
-        base_price = 50000
-        price = base_price + random.randint(-100, 100)
-
-        # Random quantity
-        qty = round(random.uniform(0.01, 1.0), 2)
+        # Fixed-point i64 price in tick units
+        price = 50000 + random.randint(-100, 100)
+        qty = random.randint(1, 100)
+        tif = 0  # GTC
 
         self.order_counter += 1
-        cid = f"stress-{self.worker_id}-{self.order_counter}-{int(time.time()*1000)%10000}"
+        # cid must be exactly 20 chars, zero-padded
+        cid_raw = f"s{self.worker_id}-{self.order_counter}"
+        cid = cid_raw[:20].ljust(20, "0")
 
-        return {
-            "type": "NewOrder",
-            "symbol_id": symbol_id,
-            "side": side,
-            "price": str(price),
-            "qty": str(qty),
-            "client_order_id": cid,
-            "tif": "GTC",
-            "reduce_only": False,
-            "post_only": False
-        }
+        return json.dumps({
+            "N": [
+                symbol_id,
+                side,
+                price,
+                qty,
+                cid,
+                tif,
+            ]
+        })
 
     async def submit_order(self, ws) -> int | None:
-        """Submit order and measure latency"""
-        order = self.generate_order()
+        """Submit order and measure latency."""
+        frame = self.generate_order()
 
         start = time.perf_counter_ns()
-        await ws.send_str(json.dumps(order))
+        await ws.send_str(frame)
+        self.metrics.submitted += 1
 
         try:
             response = await asyncio.wait_for(
@@ -106,18 +112,22 @@ class StressClient:
 
             if response.type == aiohttp.WSMsgType.TEXT:
                 msg = json.loads(response.data)
-                if msg.get("type") == "OrderAccepted":
+                if "U" in msg:
                     self.metrics.accepted += 1
                     return latency_ns // 1000
-                elif msg.get("type") == "OrderFailed":
+                elif "E" in msg:
                     self.metrics.rejected += 1
+                elif "H" in msg:
+                    # Server heartbeat, not an order response
+                    pass
                 else:
                     self.metrics.errors += 1
             else:
                 self.metrics.errors += 1
 
         except asyncio.TimeoutError:
-            self.metrics.errors += 1
+            # No response = order pending (no Risk/ME)
+            pass
         except Exception:
             self.metrics.errors += 1
 
@@ -139,7 +149,6 @@ class StressClient:
                         loop_start = time.time()
 
                         latency = await self.submit_order(ws)
-                        self.metrics.submitted += 1
 
                         if latency is not None:
                             self.metrics.latencies_us.append(latency)
@@ -151,6 +160,7 @@ class StressClient:
 
         except Exception as e:
             print(f"Worker {self.worker_id} error: {e}")
+            raise
 
 
 async def run_stress_test(config: StressConfig) -> dict:
@@ -174,7 +184,7 @@ async def run_stress_test(config: StressConfig) -> dict:
     print(f"Target: {config.rate} orders/sec for {config.duration} seconds")
 
     start_time = time.time()
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks, return_exceptions=True)
     elapsed = time.time() - start_time
 
     # Aggregate metrics

@@ -45,6 +45,9 @@ pub fn interval_id(
     unix_secs: u64,
     interval_secs: u64,
 ) -> u64 {
+    if interval_secs == 0 {
+        return 0;
+    }
     unix_secs / interval_secs
 }
 

@@ -136,6 +136,12 @@ pub fn replay_from_wal(
 
     let mut replayed = 0u64;
     for &sid in symbol_ids {
+        assert!(
+            (sid as usize) < shard.tips.len(),
+            "symbol_id {} exceeds tips len {}",
+            sid,
+            shard.tips.len(),
+        );
         let tip = shard.tips[sid as usize];
         let start_seq = tip + 1;
         let mut reader = WalReader::open_from_seq(
