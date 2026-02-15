@@ -21,10 +21,23 @@ impl CompressionMap {
         // Zone 2: 15-30%
         // Zone 3: 30-50%
         // Zone 4: 50%+ (catch-all, 2 slots)
-        let pct_5 = mid_price * 5 / (100 * tick_size);
-        let pct_15 = mid_price * 15 / (100 * tick_size);
-        let pct_30 = mid_price * 30 / (100 * tick_size);
-        let pct_50 = mid_price * 50 / (100 * tick_size);
+        let denom = 100 * tick_size;
+        let pct_5 = mid_price
+            .checked_mul(5)
+            .unwrap_or(i64::MAX)
+            / denom;
+        let pct_15 = mid_price
+            .checked_mul(15)
+            .unwrap_or(i64::MAX)
+            / denom;
+        let pct_30 = mid_price
+            .checked_mul(30)
+            .unwrap_or(i64::MAX)
+            / denom;
+        let pct_50 = mid_price
+            .checked_mul(50)
+            .unwrap_or(i64::MAX)
+            / denom;
 
         let thresholds = [pct_5, pct_15, pct_30, pct_50];
         let compressions: [u32; 5] = [1, 10, 100, 1000, 1];

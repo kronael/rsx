@@ -214,8 +214,10 @@ impl Orderbook {
         } else {
             level.tail = prev;
         }
-        level.total_qty -= qty;
-        level.order_count -= 1;
+        level.total_qty =
+            level.total_qty.saturating_sub(qty);
+        level.order_count =
+            level.order_count.saturating_sub(1);
 
         // Update BBA if needed
         if level.order_count == 0 {
@@ -240,7 +242,10 @@ impl Orderbook {
             self.user_map.get(&user_id)
         {
             self.user_states[uidx as usize]
-                .order_count -= 1;
+                .order_count =
+                self.user_states[uidx as usize]
+                    .order_count
+                    .saturating_sub(1);
         }
 
         true
@@ -294,13 +299,15 @@ impl Orderbook {
         let diff = old_qty - new_qty;
         self.orders.get_mut(handle).remaining_qty =
             Qty(new_qty);
-        self.active_levels[tick as usize].total_qty -=
-            diff;
+        self.active_levels[tick as usize].total_qty =
+            self.active_levels[tick as usize]
+                .total_qty
+                .saturating_sub(diff);
         true
     }
 
     pub fn scan_next_bid(&self, from: u32) -> u32 {
-        if from == 0 || from == NONE {
+        if from < 2 || from == NONE {
             return NONE;
         }
         let mut i = from - 1;
@@ -319,6 +326,9 @@ impl Orderbook {
     }
 
     pub fn scan_next_ask(&self, from: u32) -> u32 {
+        if self.active_levels.is_empty() {
+            return NONE;
+        }
         let max =
             self.active_levels.len() as u32 - 1;
         if from >= max || from == NONE {

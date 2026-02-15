@@ -122,8 +122,10 @@ pub fn update_positions_on_fill(
         user_bump,
         taker_user_id,
     );
-    user_states[taker_idx as usize].net_qty +=
-        sign * qty;
+    user_states[taker_idx as usize].net_qty =
+        user_states[taker_idx as usize]
+            .net_qty
+            .saturating_add(sign * qty);
     let maker_idx = get_or_assign_user(
         user_states,
         user_map,
@@ -131,6 +133,8 @@ pub fn update_positions_on_fill(
         user_bump,
         maker_user_id,
     );
-    user_states[maker_idx as usize].net_qty -=
-        sign * qty;
+    user_states[maker_idx as usize].net_qty =
+        user_states[maker_idx as usize]
+            .net_qty
+            .saturating_add(-(sign * qty));
 }

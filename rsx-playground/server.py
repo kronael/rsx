@@ -283,7 +283,7 @@ async def start_all(scenario="minimal"):
                     capture_output=True, timeout=2, text=True,
                 )
                 for pid in result.stdout.strip().split():
-                    if pid:
+                    if pid and pid.strip().isdigit():
                         try:
                             os.kill(int(pid), signal.SIGTERM)
                         except (ProcessLookupError, ValueError):
@@ -678,11 +678,13 @@ async def docs(filename: str):
         return HTMLResponse("<h1>404 Not Found</h1>", status_code=404)
     content = file_path.read_text()
     # Simple markdown to HTML (very basic)
-    html = f"""<!DOCTYPE html>
+    safe_filename = html.escape(filename)
+    safe_content = html.escape(content)
+    doc_html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>RSX Playground Docs - {html.escape(filename)}</title>
+<title>RSX Playground Docs - {safe_filename}</title>
 <style>
 body {{
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -722,10 +724,10 @@ pre code {{
 <a href="/">Playground UI</a> |
 <a href="https://krons.cx/rsx/docs" target="_blank">Full Docs</a>
 </nav>
-<pre>{html.escape(content)}</pre>
+<pre>{safe_content}</pre>
 </body>
 </html>"""
-    return HTMLResponse(html)
+    return HTMLResponse(doc_html)
 
 
 # ── HTMX partial routes ────────────────────────────────

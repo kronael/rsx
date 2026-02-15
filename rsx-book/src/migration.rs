@@ -104,8 +104,9 @@ impl Orderbook {
         if price < self.bid_frontier {
             // Expand bid frontier down
             while self.bid_frontier > price {
-                self.bid_frontier -=
-                    self.config.tick_size;
+                self.bid_frontier = self
+                    .bid_frontier
+                    .saturating_sub(self.config.tick_size);
                 self.migrate_price(
                     self.bid_frontier,
                 );
@@ -226,7 +227,8 @@ impl Orderbook {
         while migrated < batch_size {
             // Expand bid frontier down
             if self.bid_frontier > 0 {
-                self.bid_frontier -= tick;
+                self.bid_frontier =
+                    self.bid_frontier.saturating_sub(tick);
                 self.migrate_price(
                     self.bid_frontier,
                 );

@@ -39,6 +39,11 @@ impl PortfolioMargin {
         let mut mm = 0i64;
         for pos in positions {
             let sid = pos.symbol_id as usize;
+            if sid >= self.symbol_params.len()
+                || sid >= mark_prices.len()
+            {
+                continue;
+            }
             let mark = mark_prices[sid];
             upnl += pos.unrealized_pnl(mark);
             let notional = pos.notional(mark);
@@ -84,6 +89,9 @@ impl PortfolioMargin {
         let order_notional = i64::try_from(notional_128)
             .unwrap_or(i64::MAX);
         let sid = order.symbol_id as usize;
+        if sid >= self.symbol_params.len() {
+            return Err(RejectReason::InsufficientMargin);
+        }
         let params = &self.symbol_params[sid];
         let order_im = (order_notional as i128
             * params.initial_margin_rate as i128
@@ -93,7 +101,7 @@ impl PortfolioMargin {
             order.price,
             taker_fee_bps,
         );
-        let margin_needed = order_im + order_fee;
+        let margin_needed = order_im.saturating_add(order_fee);
         if state.available_margin < margin_needed {
             return Err(RejectReason::InsufficientMargin);
         }

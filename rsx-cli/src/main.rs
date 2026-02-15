@@ -123,12 +123,14 @@ fn dump_file(file: PathBuf) {
 
     while offset + 16 <= buf.len() {
         let header = &buf[offset..offset+16];
-        let len = u32::from_le_bytes([
-            header[4], header[5], header[6], header[7]
-        ]) as usize;
-        let rt = u16::from_le_bytes([header[8], header[9]]);
+        let rt = u16::from_le_bytes(
+            [header[0], header[1]],
+        );
+        let len = u16::from_le_bytes(
+            [header[2], header[3]],
+        ) as usize;
         let crc32 = u32::from_le_bytes([
-            header[12], header[13], header[14], header[15]
+            header[4], header[5], header[6], header[7],
         ]);
 
         if len > 1_000_000 {

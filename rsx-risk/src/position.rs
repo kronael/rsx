@@ -109,9 +109,11 @@ impl Position {
 
     pub fn avg_entry(&self) -> i64 {
         let nq = self.net_qty();
-        if nq > 0 && self.long_qty != 0 {
+        if nq > 0 {
+            if self.long_qty == 0 { return 0; }
             self.long_entry_cost / self.long_qty
-        } else if nq < 0 && self.short_qty != 0 {
+        } else if nq < 0 {
+            if self.short_qty == 0 { return 0; }
             self.short_entry_cost / self.short_qty
         } else {
             0

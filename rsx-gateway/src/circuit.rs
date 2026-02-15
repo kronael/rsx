@@ -14,6 +14,7 @@ pub struct CircuitBreaker {
     threshold: u32,
     cooldown: Duration,
     last_failure: Option<Instant>,
+    half_open_used: bool,
 }
 
 impl CircuitBreaker {
@@ -24,6 +25,7 @@ impl CircuitBreaker {
             threshold,
             cooldown,
             last_failure: None,
+            half_open_used: false,
         }
     }
 
@@ -34,7 +36,8 @@ impl CircuitBreaker {
                 if let Some(last) = self.last_failure {
                     if last.elapsed() >= self.cooldown {
                         self.state = State::HalfOpen;
-                        true
+                        self.half_open_used = false;
+                        self.allow()
                     } else {
                         false
                     }
@@ -42,7 +45,14 @@ impl CircuitBreaker {
                     false
                 }
             }
-            State::HalfOpen => true,
+            State::HalfOpen => {
+                if !self.half_open_used {
+                    self.half_open_used = true;
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -51,6 +61,7 @@ impl CircuitBreaker {
             State::HalfOpen => {
                 self.state = State::Closed;
                 self.failure_count = 0;
+                self.half_open_used = false;
             }
             State::Closed => {
                 self.failure_count = 0;
@@ -70,6 +81,7 @@ impl CircuitBreaker {
             }
             State::HalfOpen => {
                 self.state = State::Open;
+                self.half_open_used = false;
             }
             _ => {}
         }

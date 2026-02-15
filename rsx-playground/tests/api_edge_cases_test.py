@@ -379,12 +379,7 @@ def test_sql_injection_in_user_id(client, mock_postgres_connected):
 def test_path_traversal_in_wal_stream(client):
     """Path traversal in WAL stream blocked by router or handler."""
     resp = client.get("/api/wal/..%2F..%2Fetc%2Fpasswd/status")
-    if resp.status_code == 200:
-        data = resp.json()
-        assert data.get("error") in [
-            "invalid stream name", "stream not found"]
-    else:
-        assert resp.status_code in [400, 404, 422]
+    assert resp.status_code in [400, 404]
 
 
 def test_xss_in_cid(client):
@@ -814,6 +809,8 @@ def test_concurrent_order_cancels(client):
     import server
 
     client.post("/api/orders/batch")
+    if not server.recent_orders:
+        return
     cids = [o.get("cid") for o in server.recent_orders[:5] if o.get("cid")]
     if not cids:
         return

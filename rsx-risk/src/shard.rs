@@ -455,6 +455,9 @@ impl RiskShard {
                     let mut tmp = self.mark_prices.clone();
                     for (i, v) in tmp.iter_mut().enumerate() {
                         if *v == 0 {
+                            if i >= self.index_prices.len() {
+                                break;
+                            }
                             let idx = &self.index_prices[i];
                             if idx.valid && idx.price > 0 {
                                 *v = idx.price;
@@ -486,6 +489,14 @@ impl RiskShard {
         }
 
         let sid = order.symbol_id as usize;
+        if sid >= self.taker_fee_bps.len() {
+            return OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason: RejectReason::InsufficientMargin,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+        }
         match self.margin.check_order(
             account,
             &positions,
@@ -578,8 +589,18 @@ impl RiskShard {
     ) {
         self.ensure_account(user_id);
         let sid = symbol_id as usize;
+        if sid >= self.taker_fee_bps.len()
+            || sid >= self.margin.symbol_params.len()
+        {
+            warn!(
+                "replay_freeze_order: sid {} out of bounds",
+                sid
+            );
+            return;
+        }
         let order_notional =
-            (price as i128 * qty as i128) as i64;
+            i64::try_from(price as i128 * qty as i128)
+                .unwrap_or(i64::MAX);
         let params = &self.margin.symbol_params[sid];
         let order_im = (order_notional as i128
             * params.initial_margin_rate as i128
@@ -609,6 +630,9 @@ impl RiskShard {
     /// RISK.md §4. Update index price from BBO.
     pub fn process_bbo(&mut self, bbo: &BboUpdate) {
         let sid = bbo.symbol_id as usize;
+        if sid >= self.index_prices.len() {
+            return;
+        }
         self.index_prices[sid].update_from_bbo(bbo);
     }
 
@@ -617,6 +641,9 @@ impl RiskShard {
         symbol_id: u32,
         price: i64,
     ) {
+        if (symbol_id as usize) >= self.mark_prices.len() {
+            return;
+        }
         self.mark_prices[symbol_id as usize] = price;
     }
 
@@ -688,6 +715,9 @@ impl RiskShard {
 
     pub fn stash_bbo(&mut self, bbo: BboUpdate) {
         let sid = bbo.symbol_id as usize;
+        if sid >= self.stashed_bbo.len() {
+            return;
+        }
         self.stashed_bbo[sid] = Some(bbo);
     }
 
