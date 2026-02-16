@@ -1557,3 +1557,61 @@ def test_order_symbol_numeric_string(client, clean_orders):
 
     assert recent_orders[0]["symbol"] == "10"
     assert isinstance(recent_orders[0]["symbol"], str)
+
+
+# ── Idempotency Tests ─────────────────────────────────────
+
+
+def test_idempotency_key_prevents_duplicate(client, clean_orders):
+    """Duplicate x-idempotency-key rejects second submission."""
+    idem_key = "test-idem-key-001"
+    resp1 = client.post(
+        "/api/orders/test",
+        data={"symbol_id": "10", "side": "buy",
+              "price": "50000", "qty": "1"},
+        headers={"x-idempotency-key": idem_key},
+    )
+    assert resp1.status_code == 200
+    assert len(recent_orders) == 1
+
+    resp2 = client.post(
+        "/api/orders/test",
+        data={"symbol_id": "10", "side": "buy",
+              "price": "50000", "qty": "1"},
+        headers={"x-idempotency-key": idem_key},
+    )
+    assert resp2.status_code == 200
+    assert "duplicate" in resp2.text.lower()
+    assert len(recent_orders) == 1
+
+
+def test_different_idempotency_keys_both_succeed(
+    client, clean_orders
+):
+    """Different idempotency keys allow both submissions."""
+    client.post(
+        "/api/orders/test",
+        data={"symbol_id": "10", "side": "buy",
+              "price": "50000", "qty": "1"},
+        headers={"x-idempotency-key": "key-a"},
+    )
+    client.post(
+        "/api/orders/test",
+        data={"symbol_id": "10", "side": "buy",
+              "price": "50000", "qty": "1"},
+        headers={"x-idempotency-key": "key-b"},
+    )
+    assert len(recent_orders) == 2
+
+
+def test_no_idempotency_key_allows_duplicates(
+    client, clean_orders
+):
+    """Without idempotency key, duplicate orders are allowed."""
+    for _ in range(3):
+        client.post(
+            "/api/orders/test",
+            data={"symbol_id": "10", "side": "buy",
+                  "price": "50000", "qty": "1"},
+        )
+    assert len(recent_orders) == 3
