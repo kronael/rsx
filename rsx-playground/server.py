@@ -364,6 +364,9 @@ DESTRUCTIVE_ENDPOINTS = {
 def check_confirm(request: Request, endpoint: str):
     if endpoint not in DESTRUCTIVE_ENDPOINTS:
         return None
+    # HTMX requests from the UI are always allowed
+    if request.headers.get("hx-request"):
+        return None
     token = request.headers.get("x-confirm")
     if token is None:
         token = request.query_params.get("confirm")

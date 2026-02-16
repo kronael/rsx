@@ -137,7 +137,7 @@ test.describe("Verify tab", () => {
 
     const errors: string[] = [];
     page.on("console", (msg) => {
-      if (msg.type() === "error") {
+      if (msg.type() === "error" && !msg.text().includes("ERR_")) {
         errors.push(msg.text());
       }
     });

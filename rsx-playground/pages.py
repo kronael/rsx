@@ -1012,7 +1012,8 @@ def orders_page():
     lifecycle = _card(
         "Order Lifecycle Trace",
         """<div class="flex flex-wrap items-center gap-2 mb-3">
-  <input type="text" id="trace-oid" placeholder="oid..."
+  <input type="text" id="trace-oid" name="trace-oid"
+    placeholder="oid..."
     class="w-full sm:w-48 bg-slate-950 border border-slate-700
       text-slate-300 px-2 py-1 rounded text-xs">
   <button class="w-full sm:w-auto bg-blue-900/40 text-blue-400

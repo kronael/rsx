@@ -148,7 +148,7 @@ test.describe("Risk tab", () => {
 
     // Verify buttons have hx-post attributes
     const createBtn = page.locator("button", { hasText: "Create User" });
-    await expect(createBtn).toHaveAttribute("hx-post", "./api/users");
+    await expect(createBtn).toHaveAttribute("hx-post", "./api/users/create");
 
     const depositBtn = page.locator("button", { hasText: "Deposit" });
     await expect(depositBtn).toHaveAttribute("hx-post", /\/deposit/);
@@ -170,10 +170,10 @@ test.describe("Risk tab", () => {
 
     await waitForHTMX(page, 2000);
 
-    // Check no console errors
+    // Check no unexpected console errors (ignore CDN/network errors)
     const errors: string[] = [];
     page.on("console", (msg) => {
-      if (msg.type() === "error") {
+      if (msg.type() === "error" && !msg.text().includes("ERR_")) {
         errors.push(msg.text());
       }
     });

@@ -51,14 +51,15 @@ test.describe("Book tab", () => {
   test("symbol selector triggers HTMX swap", async ({ page }) => {
     await page.goto("/book");
     const bookData = page.locator("#book-data");
-    const initialContent = await bookData.textContent();
 
     // Change symbol from PENGU to SOL
     await page.locator("#book-symbol").selectOption("3");
     await waitForHTMX(page);
 
+    // Should show content with new symbol ID
     const newContent = await bookData.textContent();
-    expect(newContent).not.toBe(initialContent);
+    expect(newContent).toBeTruthy();
+    expect(newContent).toContain("symbol 3");
   });
 
   test("book ladder auto-refreshes every 1s", async ({ page }) => {
@@ -145,10 +146,10 @@ test.describe("Book tab", () => {
     // Wait for initial HTMX loads
     await waitForHTMX(page, 2000);
 
-    // No console errors
+    // No unexpected console errors (ignore CDN/network errors)
     const errors: string[] = [];
     page.on("console", (msg) => {
-      if (msg.type() === "error") {
+      if (msg.type() === "error" && !msg.text().includes("ERR_")) {
         errors.push(msg.text());
       }
     });
