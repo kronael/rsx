@@ -404,10 +404,10 @@ test.describe("Trade UI", () => {
 
     test("Market + Sell shows Sell Market button",
       async ({ page }) => {
-        page.locator("button", {
+        await page.locator("button", {
           hasText: /^Market$/,
         }).click();
-        page.locator("button", {
+        await page.locator("button", {
           hasText: /^Sell$/,
         }).click();
         const submitBtn = page.locator(
