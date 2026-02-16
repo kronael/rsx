@@ -142,6 +142,7 @@ class StressClient:
                 async with session.ws_connect(
                     self.config.gateway_url,
                     headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=5),
                 ) as ws:
                     end_time = time.time() + duration
 
@@ -158,6 +159,12 @@ class StressClient:
                         if sleep_time > 0:
                             await asyncio.sleep(sleep_time)
 
+        except (aiohttp.ClientConnectorError, OSError) as e:
+            self.metrics.errors += 1
+            raise ConnectionError(
+                f"cannot connect to gateway at "
+                f"{self.config.gateway_url}: {e}"
+            )
         except Exception as e:
             print(f"Worker {self.worker_id} error: {e}")
             raise
@@ -180,12 +187,41 @@ async def run_stress_test(config: StressConfig) -> dict:
         for worker in workers
     ]
 
-    print(f"Starting {config.connections} workers at {rate_per_worker:.1f} orders/sec each")
-    print(f"Target: {config.rate} orders/sec for {config.duration} seconds")
+    print(f"Starting {config.connections} workers at "
+          f"{rate_per_worker:.1f} orders/sec each")
+    print(f"Target: {config.rate} orders/sec for "
+          f"{config.duration} seconds")
 
     start_time = time.time()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    results_raw = await asyncio.gather(
+        *tasks, return_exceptions=True,
+    )
     elapsed = time.time() - start_time
+
+    # Check if all workers failed to connect
+    conn_errors = [
+        r for r in results_raw
+        if isinstance(r, (ConnectionError, OSError))
+    ]
+    if conn_errors and len(conn_errors) == len(results_raw):
+        return {
+            "error": str(conn_errors[0]),
+            "config": {
+                "target_rate": config.rate,
+                "duration": config.duration,
+                "connections": config.connections,
+            },
+            "metrics": {
+                "submitted": 0, "accepted": 0,
+                "rejected": 0, "errors": len(conn_errors),
+                "elapsed_sec": round(elapsed, 2),
+                "actual_rate": 0.0, "accept_rate": 0.0,
+            },
+            "latency_us": {
+                "p50": 0, "p95": 0, "p99": 0,
+                "min": 0, "max": 0,
+            },
+        }
 
     # Aggregate metrics
     total_metrics = OrderMetrics()
