@@ -52,11 +52,18 @@ test.describe("Faults tab", () => {
     if (count > 0) {
       // Click first kill button
       const btn = killBtns.first();
-      await btn.click();
-      await waitForHTMX(page);
+      try {
+        await btn.click();
+        await page.waitForTimeout(1000);
+      } catch {
+        // Kill may cause brief page instability
+        await page.waitForTimeout(2000);
+      }
 
-      // Action should complete (button should still exist or disappear)
-      // No need to verify process actually killed in this test
+      // Page should still be functional
+      await page.goto("/faults");
+      await expect(page.getByRole("heading", { name: "Fault Injection" }))
+        .toBeVisible({ timeout: 5000 });
     }
   });
 

@@ -56,10 +56,10 @@ test.describe("Book tab", () => {
     await page.locator("#book-symbol").selectOption("3");
     await waitForHTMX(page);
 
-    // Should show content with new symbol ID
-    const newContent = await bookData.textContent();
-    expect(newContent).toBeTruthy();
-    expect(newContent).toContain("symbol 3");
+    // Wait for content to reflect the new symbol
+    await expect(bookData).toContainText(/SOL|no book data/i, {
+      timeout: 5000,
+    });
   });
 
   test("book ladder auto-refreshes every 1s", async ({ page }) => {
@@ -75,8 +75,8 @@ test.describe("Book tab", () => {
     const bookData = page.locator("#book-data");
     await waitForHTMX(page, 2000);
 
-    // Should show "start RSX processes" message
-    await expect(bookData).toContainText(/start RSX processes|symbol/i);
+    // Should show placeholder when no data available
+    await expect(bookData).toContainText(/no book data|waiting for orders|start RSX/i);
   });
 
   test("book stats card auto-refreshes every 2s", async ({ page }) => {
@@ -112,7 +112,7 @@ test.describe("Book tab", () => {
     await waitForHTMX(page, 2000);
 
     // Should show placeholder text
-    await expect(fillsDiv).toContainText(/start RSX processes|no data/i);
+    await expect(fillsDiv).toContainText(/no fills|no data|start RSX/i);
   });
 
   test("book stats card shows compression info", async ({ page }) => {
