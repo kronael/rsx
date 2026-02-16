@@ -74,7 +74,8 @@ test.describe("Faults tab", () => {
 
   test("recovery notes show iptables and tc commands", async ({ page }) => {
     await page.goto("/faults");
-    const notes = page.getByRole("heading", { name: "Recovery Notes" }).locator("..");
+    // Go up to the card div (heading is inside flex wrapper)
+    const notes = page.getByRole("heading", { name: "Recovery Notes" }).locator("../..");
 
     // Should mention network fault tools
     await expect(notes).toContainText(/iptables|tc/);
