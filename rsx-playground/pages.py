@@ -18,6 +18,8 @@ TABS = [
     ("Verify", "./verify"),
     ("Orders", "./orders"),
     ("Stress", "./stress"),
+    ("Docs", "/docs"),
+    ("Trade", "/trade/"),
 ]
 
 
@@ -577,7 +579,7 @@ def logs_page():
       onclick="clearAllFilters()">Clear All</button>
   </div>
   <div class="hidden" id="filter-dropdowns">
-    <select id="log-process"
+    <select id="log-process" name="log-process"
       class="w-full sm:w-auto bg-slate-950 border border-slate-700
         text-slate-300 px-2 py-1 rounded text-xs">
       <option value="">all processes</option>
@@ -588,7 +590,7 @@ def logs_page():
       <option value="mark">mark</option>
       <option value="recorder">recorder</option>
     </select>
-    <select id="log-level"
+    <select id="log-level" name="log-level"
       class="w-full sm:w-auto bg-slate-950 border border-slate-700
         text-slate-300 px-2 py-1 rounded text-xs">
       <option value="">all levels</option>
@@ -597,7 +599,7 @@ def logs_page():
       <option value="info">info</option>
       <option value="debug">debug</option>
     </select>
-    <input type="text" id="log-search"
+    <input type="text" id="log-search" name="log-search"
       class="w-full sm:w-44 bg-slate-950 border border-slate-700
         text-slate-300 px-2 py-1 rounded text-xs"
       placeholder="search...">
@@ -1817,6 +1819,159 @@ def render_risk_latency(latencies=None):
         + f'<div class="text-xs text-slate-500 self-center">n={len(latencies)}</div>'
         + '</div>'
     )
+
+
+SYMBOL_NAMES = {
+    1: "BTC", 2: "ETH", 3: "SOL", 10: "PENGU",
+}
+
+
+def render_book_ladder(symbol_id, bbo):
+    """Render orderbook ladder from BBO data."""
+    sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
+    if bbo is None:
+        return (
+            f'<div class="text-slate-500 text-xs">'
+            f'{sym}: no book data yet (waiting for orders)'
+            f'</div>')
+    bid_px = bbo["bid_px"]
+    ask_px = bbo["ask_px"]
+    spread = ask_px - bid_px if ask_px > 0 and bid_px > 0 else 0
+    return f"""
+<table class="w-full text-xs">
+<tr class="text-slate-500">
+  <th class="text-left">Side</th>
+  <th class="text-right">Price</th>
+  <th class="text-right">Qty</th>
+  <th class="text-right">Orders</th>
+</tr>
+<tr class="text-red-400">
+  <td>Ask</td>
+  <td class="text-right font-mono">{ask_px}</td>
+  <td class="text-right font-mono">{bbo['ask_qty']}</td>
+  <td class="text-right">{bbo['ask_count']}</td>
+</tr>
+<tr class="text-slate-600 text-center">
+  <td colspan="4">spread: {spread}</td>
+</tr>
+<tr class="text-emerald-400">
+  <td>Bid</td>
+  <td class="text-right font-mono">{bid_px}</td>
+  <td class="text-right font-mono">{bbo['bid_qty']}</td>
+  <td class="text-right">{bbo['bid_count']}</td>
+</tr>
+</table>
+<div class="text-slate-600 text-xs mt-1">
+  seq={bbo['seq']}
+</div>"""
+
+
+def render_book_stats(symbols):
+    """Render book stats from BBO records per symbol."""
+    if not symbols:
+        return (
+            '<span class="text-slate-500 text-xs">'
+            'no book data yet (waiting for orders)</span>')
+    rows = []
+    for sid, bbo in sorted(symbols.items()):
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        spread = bbo["ask_px"] - bbo["bid_px"] if (
+            bbo["ask_px"] > 0 and bbo["bid_px"] > 0
+        ) else 0
+        rows.append(
+            f'<tr><td>{sym}</td>'
+            f'<td class="text-right font-mono">'
+            f'{bbo["bid_px"]}</td>'
+            f'<td class="text-right font-mono">'
+            f'{bbo["ask_px"]}</td>'
+            f'<td class="text-right">{spread}</td>'
+            f'<td class="text-right">'
+            f'{bbo["bid_count"]+bbo["ask_count"]}</td>'
+            f'</tr>')
+    return f"""
+<table class="w-full text-xs">
+<tr class="text-slate-500">
+  <th class="text-left">Symbol</th>
+  <th class="text-right">Bid</th>
+  <th class="text-right">Ask</th>
+  <th class="text-right">Spread</th>
+  <th class="text-right">Orders</th>
+</tr>
+{''.join(rows)}
+</table>"""
+
+
+def render_live_fills(fills):
+    """Render recent fills list."""
+    if not fills:
+        return (
+            '<span class="text-slate-500 text-xs">'
+            'no fills yet</span>')
+    rows = []
+    for f in fills[:20]:
+        sym = SYMBOL_NAMES.get(
+            f["symbol_id"], f"sym-{f['symbol_id']}")
+        side = "buy" if f["taker_side"] == 0 else "sell"
+        color = "emerald" if side == "buy" else "red"
+        rows.append(
+            f'<tr class="text-{color}-400">'
+            f'<td>{sym}</td>'
+            f'<td>{side}</td>'
+            f'<td class="text-right font-mono">'
+            f'{f["price"]}</td>'
+            f'<td class="text-right font-mono">'
+            f'{f["qty"]}</td>'
+            f'<td class="text-slate-500">'
+            f'{f["seq"]}</td></tr>')
+    return f"""
+<table class="w-full text-xs">
+<tr class="text-slate-500">
+  <th class="text-left">Symbol</th>
+  <th>Side</th>
+  <th class="text-right">Price</th>
+  <th class="text-right">Qty</th>
+  <th>Seq</th>
+</tr>
+{''.join(rows)}
+</table>"""
+
+
+def render_trade_agg(fills):
+    """Render trade aggregation from fills."""
+    if not fills:
+        return (
+            '<span class="text-slate-500 text-xs">'
+            'no trade data yet</span>')
+    by_sym = {}
+    for f in fills:
+        sid = f["symbol_id"]
+        if sid not in by_sym:
+            by_sym[sid] = {
+                "count": 0, "volume": 0,
+                "last_px": 0}
+        by_sym[sid]["count"] += 1
+        by_sym[sid]["volume"] += abs(f["qty"])
+        by_sym[sid]["last_px"] = f["price"]
+    rows = []
+    for sid, agg in sorted(by_sym.items()):
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        rows.append(
+            f'<tr><td>{sym}</td>'
+            f'<td class="text-right">{agg["count"]}</td>'
+            f'<td class="text-right font-mono">'
+            f'{agg["volume"]}</td>'
+            f'<td class="text-right font-mono">'
+            f'{agg["last_px"]}</td></tr>')
+    return f"""
+<table class="w-full text-xs">
+<tr class="text-slate-500">
+  <th class="text-left">Symbol</th>
+  <th class="text-right">Fills</th>
+  <th class="text-right">Volume</th>
+  <th class="text-right">Last Px</th>
+</tr>
+{''.join(rows)}
+</table>"""
 
 
 def stress_page():

@@ -20,9 +20,12 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi import Query
 from fastapi import Request
+from fastapi import WebSocket
+from fastapi import WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 import pages
 
@@ -37,13 +40,20 @@ STRESS_REPORTS_DIR = TMP / "stress-reports"
 STRESS_REPORTS_DIR.mkdir(exist_ok=True)
 
 PG_URL = os.environ.get(
-    "DATABASE_URL",  # postgresql://rsx:folium@10.0.2.1:5432/rsx_dev
-    "postgres://rsx:rsx@127.0.0.1:5432/rsx",
+    "DATABASE_URL",
+    "postgres://rsx:folium@10.0.2.1:5432/rsx_dev",
 )
 
 GATEWAY_URL = os.environ.get(
     "GATEWAY_URL", "ws://localhost:8080"
 )
+GATEWAY_HTTP = os.environ.get(
+    "GATEWAY_HTTP", "http://localhost:8080"
+)
+MARKETDATA_WS = os.environ.get(
+    "MARKETDATA_WS", "ws://localhost:8081"
+)
+WEBUI_DIST = ROOT / "rsx-webui" / "dist"
 
 # ── import start script's config ────────────────────────
 
@@ -131,6 +141,9 @@ async def spawn_process(name, binary, env):
     if not binary_path.exists():
         return {"error": f"binary not found: {binary}"}
     full_env = {**os.environ, **env}
+    # Only pass DATABASE_URL if postgres is reachable
+    if pg_pool is None:
+        full_env.pop("DATABASE_URL", None)
     proc = await asyncio.create_subprocess_exec(
         str(binary_path),
         env=full_env,
@@ -558,6 +571,121 @@ def scan_wal_files():
     return files
 
 
+import struct
+
+# WAL header: 16 bytes (type:u16, len:u16, crc32:u32, reserved:8)
+WAL_HDR = struct.Struct('<HHI8s')
+# BboRecord: 64 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
+#   bid_px:i64, bid_qty:i64, bid_count:u32, pad:u32,
+#   ask_px:i64, ask_qty:i64, ask_count:u32, pad:u32)
+BBO_FMT = struct.Struct('<QQIIqqIIqqII')
+# FillRecord: 64 bytes
+FILL_FMT = struct.Struct(
+    '<QQIIQQQQqqBBBB4s')
+RECORD_FILL = 0
+RECORD_BBO = 1
+
+
+def parse_wal_records(stream_dir, record_types=None):
+    """Parse WAL records from a stream directory."""
+    records = []
+    if not stream_dir.exists():
+        return records
+    for wal_file in sorted(stream_dir.glob("**/*.wal")):
+        try:
+            data = wal_file.read_bytes()
+        except OSError:
+            continue
+        pos = 0
+        while pos + WAL_HDR.size <= len(data):
+            rtype, rlen, crc, _ = WAL_HDR.unpack_from(
+                data, pos)
+            pos += WAL_HDR.size
+            if rlen == 0 or pos + rlen > len(data):
+                break
+            if record_types and rtype not in record_types:
+                pos += rlen
+                continue
+            payload = data[pos:pos + rlen]
+            pos += rlen
+            if rtype == RECORD_BBO and len(payload) >= BBO_FMT.size:
+                fields = BBO_FMT.unpack_from(payload)
+                records.append({
+                    "type": "bbo",
+                    "seq": fields[0],
+                    "ts_ns": fields[1],
+                    "symbol_id": fields[2],
+                    "bid_px": fields[4],
+                    "bid_qty": fields[5],
+                    "bid_count": fields[6],
+                    "ask_px": fields[8],
+                    "ask_qty": fields[9],
+                    "ask_count": fields[10],
+                })
+            elif rtype == RECORD_FILL and len(payload) >= FILL_FMT.size:
+                fields = FILL_FMT.unpack_from(payload)
+                records.append({
+                    "type": "fill",
+                    "seq": fields[0],
+                    "ts_ns": fields[1],
+                    "symbol_id": fields[2],
+                    "taker_uid": fields[3],
+                    "maker_uid": fields[4],
+                    "price": fields[9],
+                    "qty": fields[10],
+                    "taker_side": fields[11],
+                })
+    return records
+
+
+def parse_wal_bbo(symbol_id):
+    """Get latest BBO for a symbol from WAL."""
+    latest = None
+    for stream_dir in WAL_DIR.iterdir() if WAL_DIR.exists() else []:
+        if not stream_dir.is_dir():
+            continue
+        for rec in parse_wal_records(
+            stream_dir, {RECORD_BBO}
+        ):
+            if rec["symbol_id"] == symbol_id:
+                if latest is None or rec["seq"] > latest["seq"]:
+                    latest = rec
+    return latest
+
+
+def parse_wal_fills(max_fills=50):
+    """Get recent fills from all WAL streams."""
+    all_fills = []
+    for stream_dir in (
+        WAL_DIR.iterdir() if WAL_DIR.exists() else []
+    ):
+        if not stream_dir.is_dir():
+            continue
+        for rec in parse_wal_records(
+            stream_dir, {RECORD_FILL}
+        ):
+            all_fills.append(rec)
+    all_fills.sort(key=lambda r: r["seq"], reverse=True)
+    return all_fills[:max_fills]
+
+
+def parse_wal_book_stats():
+    """Get book stats from WAL BBO records."""
+    symbols = {}
+    for stream_dir in (
+        WAL_DIR.iterdir() if WAL_DIR.exists() else []
+    ):
+        if not stream_dir.is_dir():
+            continue
+        for rec in parse_wal_records(
+            stream_dir, {RECORD_BBO}
+        ):
+            sid = rec["symbol_id"]
+            if sid not in symbols or rec["seq"] > symbols[sid]["seq"]:
+                symbols[sid] = rec
+    return symbols
+
+
 import re
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
@@ -666,6 +794,167 @@ async def stress_report_view(report_id: str):
     return HTMLResponse(pages.stress_report_page(data))
 
 
+def _md_to_html(md: str) -> str:
+    """Convert markdown to HTML (no external deps)."""
+    import re
+    lines = md.split("\n")
+    out = []
+    in_code = False
+    in_list = False
+    in_table = False
+    table_align = []
+
+    for line in lines:
+        # fenced code blocks
+        if line.startswith("```"):
+            if in_code:
+                out.append("</code></pre>")
+                in_code = False
+            else:
+                lang = html.escape(line[3:].strip())
+                cls = f' class="lang-{lang}"' if lang else ""
+                out.append(f"<pre><code{cls}>")
+                in_code = True
+            continue
+        if in_code:
+            out.append(html.escape(line))
+            continue
+
+        # close list if not a list line
+        if in_list and not re.match(
+            r"^(\d+\.|[-*])\s", line
+        ) and line.strip():
+            out.append("</ul>")
+            in_list = False
+
+        # close table if not a table line
+        if in_table and not line.startswith("|"):
+            out.append("</tbody></table>")
+            in_table = False
+            table_align = []
+
+        # blank line
+        if not line.strip():
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append("")
+            continue
+
+        # headings
+        m = re.match(r"^(#{1,6})\s+(.*)", line)
+        if m:
+            lvl = len(m.group(1))
+            txt = _md_inline(html.escape(m.group(2)))
+            out.append(f"<h{lvl}>{txt}</h{lvl}>")
+            continue
+
+        # tables
+        if line.startswith("|"):
+            cells = [
+                c.strip() for c in line.split("|")[1:-1]
+            ]
+            # separator row
+            if all(
+                re.match(r"^:?-+:?$", c) for c in cells
+            ):
+                table_align = []
+                for c in cells:
+                    if c.startswith(":") and c.endswith(":"):
+                        table_align.append("center")
+                    elif c.endswith(":"):
+                        table_align.append("right")
+                    else:
+                        table_align.append("left")
+                continue
+            if not in_table:
+                out.append(
+                    '<table class="md-table">'
+                    "<thead><tr>")
+                for i, c in enumerate(cells):
+                    a = table_align[i] if i < len(
+                        table_align) else "left"
+                    out.append(
+                        f'<th style="text-align:{a}">'
+                        f"{_md_inline(html.escape(c))}"
+                        "</th>")
+                out.append("</tr></thead><tbody>")
+                in_table = True
+            else:
+                out.append("<tr>")
+                for i, c in enumerate(cells):
+                    a = table_align[i] if i < len(
+                        table_align) else "left"
+                    out.append(
+                        f'<td style="text-align:{a}">'
+                        f"{_md_inline(html.escape(c))}"
+                        "</td>")
+                out.append("</tr>")
+            continue
+
+        # unordered list
+        m = re.match(r"^[-*]\s+(.*)", line)
+        if m:
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(
+                f"<li>{_md_inline(html.escape(m.group(1)))}"
+                "</li>")
+            continue
+
+        # ordered list
+        m = re.match(r"^\d+\.\s+(.*)", line)
+        if m:
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(
+                f"<li>{_md_inline(html.escape(m.group(1)))}"
+                "</li>")
+            continue
+
+        # paragraph
+        out.append(
+            f"<p>{_md_inline(html.escape(line))}</p>")
+
+    if in_code:
+        out.append("</code></pre>")
+    if in_list:
+        out.append("</ul>")
+    if in_table:
+        out.append("</tbody></table>")
+    return "\n".join(out)
+
+
+def _md_inline(text: str) -> str:
+    """Convert inline markdown (bold, code, links)."""
+    import re
+    # inline code
+    text = re.sub(
+        r"`([^`]+)`",
+        r"<code>\1</code>",
+        text)
+    # bold
+    text = re.sub(
+        r"\*\*([^*]+)\*\*",
+        r"<strong>\1</strong>",
+        text)
+    # links [text](url)
+    text = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        r'<a href="\2">\1</a>',
+        text)
+    return text
+
+
+@app.get("/docs")
+async def docs_index():
+    """Redirect /docs to /docs/README."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/docs/README")
+
+
 @app.get("/docs/{filename:path}")
 async def docs(filename: str):
     """Serve playground documentation files."""
@@ -675,59 +964,118 @@ async def docs(filename: str):
     if not filename.endswith(".md"):
         filename += ".md"
     file_path = (docs_dir / filename).resolve()
-    if not str(file_path).startswith(str(docs_dir.resolve())):
-        return HTMLResponse("<h1>404 Not Found</h1>", status_code=404)
+    if not str(file_path).startswith(
+        str(docs_dir.resolve())
+    ):
+        return HTMLResponse(
+            "<h1>404 Not Found</h1>",
+            status_code=404)
     if not file_path.exists() or not file_path.is_file():
-        return HTMLResponse("<h1>404 Not Found</h1>", status_code=404)
+        return HTMLResponse(
+            "<h1>404 Not Found</h1>",
+            status_code=404)
     content = file_path.read_text()
-    # Simple markdown to HTML (very basic)
+    rendered = _md_to_html(content)
     safe_filename = html.escape(filename)
-    safe_content = html.escape(content)
+
+    # sidebar: list all docs
+    doc_files = sorted(docs_dir.glob("*.md"))
+    sidebar = ""
+    for f in doc_files:
+        name = f.stem
+        label = name.replace("-", " ").replace(
+            "_", " ").title()
+        active = "font-bold text-white" if (
+            f.name == filename) else "text-slate-400"
+        sidebar += (
+            f'<a href="/docs/{f.name}" '
+            f'class="{active} block py-1 '
+            f'hover:text-white text-sm">'
+            f'{html.escape(label)}</a>\n')
+
     doc_html = f"""<!DOCTYPE html>
-<html>
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
-<title>RSX Playground Docs - {safe_filename}</title>
+<meta name="viewport"
+  content="width=device-width, initial-scale=1">
+<title>RSX Docs -- {safe_filename}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {{
+  darkMode: 'class',
+  theme: {{
+    extend: {{
+      colors: {{
+        'bg-primary': '#0b0e11',
+        'bg-surface': '#1e2329',
+      }}
+    }}
+  }}
+}}
+</script>
 <style>
-body {{
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Helvetica, Arial, sans-serif;
-  max-width: 800px;
-  margin: 2rem auto;
-  padding: 0 2rem;
-  line-height: 1.6;
-  background: #0f172a;
-  color: #cbd5e1;
-}}
-h1, h2, h3 {{ color: #60a5fa; }}
-a {{ color: #60a5fa; text-decoration: none; }}
-a:hover {{ text-decoration: underline; }}
-code {{
-  background: #1e293b;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: monospace;
-}}
 pre {{
   background: #1e293b;
   padding: 1rem;
   border-radius: 6px;
   overflow-x: auto;
+  margin: 0.75rem 0;
 }}
-pre code {{
-  background: none;
-  padding: 0;
+code {{
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
 }}
+p code, li code, td code, th code {{
+  background: #1e293b;
+  padding: 2px 6px;
+  border-radius: 3px;
+}}
+.md-table {{
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0;
+  font-size: 0.875rem;
+}}
+.md-table th, .md-table td {{
+  border: 1px solid #334155;
+  padding: 0.5rem 0.75rem;
+}}
+.md-table th {{
+  background: #1e293b;
+}}
+h1 {{ font-size: 1.75rem; margin: 1.5rem 0 0.75rem; }}
+h2 {{ font-size: 1.35rem; margin: 1.25rem 0 0.5rem; }}
+h3 {{ font-size: 1.1rem; margin: 1rem 0 0.5rem; }}
+h1, h2, h3 {{ color: #60a5fa; }}
+a {{ color: #60a5fa; }}
+a:hover {{ text-decoration: underline; }}
+ul {{ padding-left: 1.5rem; margin: 0.5rem 0; }}
+li {{ margin: 0.25rem 0; list-style: disc; }}
+p {{ margin: 0.5rem 0; }}
+strong {{ color: #e2e8f0; }}
 </style>
 </head>
-<body>
-<nav style="margin-bottom: 2rem; padding-bottom: 1rem;
-  border-bottom: 1px solid #334155;">
-<a href="/docs">Playground Docs</a> |
-<a href="/">Playground UI</a> |
-<a href="https://krons.cx/rsx/docs" target="_blank">Full Docs</a>
-</nav>
-<pre>{safe_content}</pre>
+<body class="bg-[#0f172a] text-slate-300">
+<div class="flex min-h-screen">
+  <aside class="w-52 bg-[#0b1120] border-r
+    border-slate-700 p-4 shrink-0">
+    <a href="/" class="text-white font-bold text-sm
+      block mb-4">RSX Playground</a>
+    <div class="mb-3 text-xs text-slate-500
+      uppercase tracking-wider">Docs</div>
+    {sidebar}
+    <div class="mt-6 pt-4 border-t border-slate-700">
+      <a href="/" class="text-slate-400 text-xs
+        hover:text-white block py-1">Dashboard</a>
+      <a href="/trade/" class="text-slate-400 text-xs
+        hover:text-white block py-1">Trade UI</a>
+    </div>
+  </aside>
+  <main class="flex-1 max-w-3xl p-8">
+    {rendered}
+  </main>
+</div>
 </body>
 </html>"""
     return HTMLResponse(doc_html)
@@ -864,23 +1212,44 @@ async def x_auth_failures():
 
 @app.get("/x/book-stats", response_class=HTMLResponse)
 async def x_book_stats():
+    procs = scan_processes()
+    running = [p for p in procs
+               if p["state"] == "running"]
+    if not running:
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'no processes running</span>')
+    stats = parse_wal_book_stats()
     return HTMLResponse(
-        '<span class="text-slate-500 text-xs">'
-        'start RSX processes to see book stats</span>')
+        pages.render_book_stats(stats))
 
 
 @app.get("/x/live-fills", response_class=HTMLResponse)
 async def x_live_fills():
+    procs = scan_processes()
+    running = [p for p in procs
+               if p["state"] == "running"]
+    if not running:
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'no processes running</span>')
+    fills = parse_wal_fills()
     return HTMLResponse(
-        '<span class="text-slate-500 text-xs">'
-        'start RSX processes to see fills</span>')
+        pages.render_live_fills(fills))
 
 
 @app.get("/x/trade-agg", response_class=HTMLResponse)
 async def x_trade_agg():
+    procs = scan_processes()
+    running = [p for p in procs
+               if p["state"] == "running"]
+    if not running:
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'no processes running</span>')
+    fills = parse_wal_fills()
     return HTMLResponse(
-        '<span class="text-slate-500 text-xs">'
-        'start RSX processes to see trade data</span>')
+        pages.render_trade_agg(fills))
 
 
 @app.get("/x/position-heatmap",
@@ -939,10 +1308,16 @@ async def x_stale_orders():
 
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
+    procs = scan_processes()
+    running = [p for p in procs
+               if p["state"] == "running"]
+    if not running:
+        return HTMLResponse(
+            '<span class="text-slate-600">'
+            'no processes running</span>')
+    bbo = parse_wal_bbo(symbol_id)
     return HTMLResponse(
-        '<span class="text-slate-600">'
-        f'book for symbol {symbol_id} — '
-        'start RSX processes to see live data</span>')
+        pages.render_book_ladder(symbol_id, bbo))
 
 
 @app.get("/x/risk-user", response_class=HTMLResponse)
@@ -1780,6 +2155,137 @@ async def api_metrics():
             [p for p in procs if p["state"] == "running"]),
         "postgres": pg_pool is not None,
     }
+
+
+# ── trading UI: WS proxy + REST proxy + static ─────────
+
+
+@app.websocket("/ws/private")
+async def ws_private_proxy(ws: WebSocket):
+    """Proxy private WS to Gateway."""
+    await ws.accept()
+    headers = {"x-user-id": ws.headers.get(
+        "x-user-id", "1")}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                GATEWAY_URL, headers=headers,
+            ) as upstream:
+                async def fwd_up():
+                    try:
+                        async for msg in upstream:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await ws.send_text(msg.data)
+                            elif msg.type in (
+                                aiohttp.WSMsgType.CLOSED,
+                                aiohttp.WSMsgType.ERROR,
+                            ):
+                                break
+                    except Exception:
+                        pass
+
+                async def fwd_down():
+                    try:
+                        while True:
+                            data = await ws.receive_text()
+                            await upstream.send_str(data)
+                    except WebSocketDisconnect:
+                        pass
+
+                await asyncio.gather(
+                    fwd_up(), fwd_down(),
+                    return_exceptions=True)
+    except (ConnectionRefusedError, OSError):
+        await ws.close(code=1013,
+                       reason="gateway not running")
+
+
+@app.websocket("/ws/public")
+async def ws_public_proxy(ws: WebSocket):
+    """Proxy public WS to Marketdata."""
+    await ws.accept()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                MARKETDATA_WS,
+            ) as upstream:
+                async def fwd_up():
+                    try:
+                        async for msg in upstream:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await ws.send_text(msg.data)
+                            elif msg.type in (
+                                aiohttp.WSMsgType.CLOSED,
+                                aiohttp.WSMsgType.ERROR,
+                            ):
+                                break
+                    except Exception:
+                        pass
+
+                async def fwd_down():
+                    try:
+                        while True:
+                            data = await ws.receive_text()
+                            await upstream.send_str(data)
+                    except WebSocketDisconnect:
+                        pass
+
+                await asyncio.gather(
+                    fwd_up(), fwd_down(),
+                    return_exceptions=True)
+    except (ConnectionRefusedError, OSError):
+        await ws.close(code=1013,
+                       reason="marketdata not running")
+
+
+@app.api_route(
+    "/v1/{path:path}",
+    methods=["GET", "POST"],
+)
+async def v1_proxy(path: str, request: Request):
+    """Proxy /v1/* REST to Gateway."""
+    url = f"{GATEWAY_HTTP}/v1/{path}"
+    qs = str(request.query_params)
+    if qs:
+        url += f"?{qs}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            method = request.method.lower()
+            body = await request.body()
+            async with session.request(
+                method, url,
+                data=body if body else None,
+                headers={
+                    "content-type": request.headers.get(
+                        "content-type", "application/json"),
+                },
+            ) as resp:
+                data = await resp.read()
+                return JSONResponse(
+                    content=json.loads(data),
+                    status_code=resp.status,
+                )
+    except (ConnectionRefusedError, OSError):
+        return JSONResponse(
+            {"error": "gateway not running"},
+            status_code=502)
+
+
+# Serve trading UI SPA (must be last — catches /trade/*)
+if WEBUI_DIST.exists():
+    @app.get("/trade")
+    async def trade_redirect():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/trade/")
+
+    app.mount(
+        "/trade",
+        StaticFiles(
+            directory=str(WEBUI_DIST),
+            html=True,
+        ),
+        name="webui",
+    )
 
 
 # ── main ────────────────────────────────────────────────
