@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: #2b3139 #0b0e11;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0b0e11;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #2b3139;
+    border-radius: 3px;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  .btn-buy {
+    @apply bg-buy hover:bg-buy/90
+      text-bg-primary font-semibold
+      rounded px-4 py-2
+      transition-colors;
+  }
+
+  .btn-sell {
+    @apply bg-sell hover:bg-sell/90
+      text-white font-semibold
+      rounded px-4 py-2
+      transition-colors;
+  }
+
+  .input-field {
+    @apply bg-bg-primary border border-border
+      rounded px-3 py-1.5
+      text-text-primary text-sm
+      outline-none
+      focus:border-accent/50
+      transition-colors;
+  }
+
+  .tab-active {
+    @apply text-text-primary
+      border-b-2 border-accent;
+  }
+
+  .tab-inactive {
+    @apply text-text-secondary
+      border-b-2 border-transparent
+      hover:text-text-primary;
+  }
+}
