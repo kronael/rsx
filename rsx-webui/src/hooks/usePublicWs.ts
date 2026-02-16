@@ -7,6 +7,7 @@ import { MdChannel } from "../lib/protocol";
 import { WsStatus } from "../lib/types";
 import { useConnectionStore } from "../store/connection";
 import { useMarketStore } from "../store/market";
+import { useToastStore } from "../lib/toast";
 
 const ALL_CHANNELS =
   MdChannel.BBO | MdChannel.DEPTH | MdChannel.TRADES;
@@ -48,20 +49,25 @@ export function usePublicWs() {
         const msg = parseMessage(ev.data as string);
         if (!msg) return;
         const store = useMarketStore.getState();
+        const sym = store.selectedSymbol;
 
         if ("BBO" in msg) {
+          if (msg.BBO[0] !== sym) return;
           const [, bidPx, bidQty, , askPx, askQty, , ts, seq]
             = msg.BBO;
           store.updateBbo(
             bidPx, bidQty, askPx, askQty, ts, seq,
           );
         } else if ("B" in msg) {
+          if (msg.B[0] !== sym) return;
           const [, bids, asks, , seq] = msg.B;
           store.applyL2Snapshot(bids, asks, seq);
         } else if ("D" in msg) {
+          if (msg.D[0] !== sym) return;
           const [, side, px, qty, count, , seq] = msg.D;
           store.applyL2Delta(side, px, qty, count, seq);
         } else if ("T" in msg) {
+          if (msg.T[0] !== sym) return;
           const [, price, qty, side, ts, seq] = msg.T;
           store.addTrade({ price, qty, side, ts, seq });
         }
@@ -70,6 +76,9 @@ export function usePublicWs() {
       ws.onclose = () => {
         if (!mounted) return;
         setStatus(WsStatus.DISCONNECTED);
+        useToastStore.getState().add(
+          "Market data WS disconnected", "error",
+        );
         const delay = retryRef.current;
         retryRef.current = Math.min(delay * 2, 30000);
         timerRef.current = setTimeout(connect, delay);

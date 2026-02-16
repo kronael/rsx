@@ -14,8 +14,10 @@ All hot-path unwraps eliminated. Wire protocol spec-compliant
 (WEBPROTO.md, MESSAGES.md, RPC.md). CLI tools complete
 (JSON + Parquet output). Gateway hardened (heartbeat 5s/10s,
 frame size 4KB, binary frame rejection, per-user 5-conn
-limit, liquidation routing). Playground: 149 Playwright +
-API integration tests.
+limit, liquidation routing). Playground: 223 Playwright
+tests passing, real data endpoints (/x/book-stats, /x/live-fills,
+/x/trade-agg, /x/book), WAL binary parser, fixed process env
+inheritance.
 
 **Test Quality:** All Rust tests non-flaky (unique temp dirs,
 ephemeral ports, migration completeness checks, dedup
@@ -174,6 +176,6 @@ Post-MVP specs (not in v1 scope):
 
 **Overall System: 100%** (all v1 spec requirements met)
 **Rust Tests: 813** (zero failures, all non-flaky)
-**Playground Tests: 149** Playwright + API integration
+**Playground Tests: 223** Playwright (all passing)
 
 **Last Updated:** 2026-02-16

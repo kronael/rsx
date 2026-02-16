@@ -54,7 +54,7 @@ export const useTradingStore = create<TradingStore>(
     setOrders: (o) => set({ orders: o }),
     setAccount: (a) => set({ account: a }),
 
-    updateOrder: (oid, status, filled, remaining) =>
+    updateOrder: (oid, status, filled, _remaining) =>
       set((state) => {
         const done =
           status === OrderStatus.FILLED ||
@@ -70,12 +70,7 @@ export const useTradingStore = create<TradingStore>(
         return {
           orders: state.orders.map((o) =>
             o.oid === oid
-              ? {
-                  ...o,
-                  status,
-                  filled,
-                  qty: filled + remaining,
-                }
+              ? { ...o, status, filled }
               : o,
           ),
         };

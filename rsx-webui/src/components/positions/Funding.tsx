@@ -30,6 +30,7 @@ export function Funding() {
 
   // Load funding history
   useEffect(() => {
+    setEntries([]);
     fetchFunding(selectedSymbol, 50)
       .then(setEntries)
       .catch(() => {});

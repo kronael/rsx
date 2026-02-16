@@ -215,7 +215,7 @@ export function newOrder(
   const msg: NewOrderMsg = {
     N: [
       sym, side, px, qty,
-      cid.padEnd(20, "0"),
+      cid.slice(0, 20).padEnd(20, "0"),
       tif,
       reduceOnly ? 1 : 0,
       postOnly ? 1 : 0,

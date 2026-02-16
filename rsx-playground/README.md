@@ -156,6 +156,18 @@ curl -X POST http://localhost:49171/api/orders/test \
     "user_id": 1
   }'
 
+# Get orderbook stats
+curl http://localhost:49171/x/book-stats
+
+# Get live fills
+curl http://localhost:49171/x/live-fills
+
+# Get trade aggregates
+curl http://localhost:49171/x/trade-agg
+
+# Get full orderbook
+curl http://localhost:49171/x/book
+
 # Get recent orders
 curl http://localhost:49171/x/recent-orders
 

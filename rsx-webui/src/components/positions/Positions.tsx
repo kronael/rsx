@@ -98,11 +98,14 @@ export function Positions({ send }: Props) {
                     const closeSide = isBuy
                       ? Side.SELL
                       : Side.BUY;
-                    const bbo =
-                      useMarketStore.getState().bbo;
+                    const mkt =
+                      useMarketStore.getState();
+                    if (
+                      mkt.selectedSymbol !== p.symbolId
+                    ) return;
                     const px = isBuy
-                      ? bbo.bidPx
-                      : bbo.askPx;
+                      ? mkt.bbo.bidPx
+                      : mkt.bbo.askPx;
                     if (px <= 0) return;
                     const msg = newOrder(
                       p.symbolId,

@@ -76,7 +76,9 @@ test.describe("Book tab", () => {
     await waitForHTMX(page, 2000);
 
     // Should show placeholder when no data available
-    await expect(bookData).toContainText(/no book data|waiting for orders|start RSX/i);
+    await expect(bookData).toContainText(
+      /no book data|waiting for orders|no processes running/i,
+    );
   });
 
   test("book stats card auto-refreshes every 2s", async ({ page }) => {
@@ -112,7 +114,9 @@ test.describe("Book tab", () => {
     await waitForHTMX(page, 2000);
 
     // Should show placeholder text
-    await expect(fillsDiv).toContainText(/no fills|no data|start RSX/i);
+    await expect(fillsDiv).toContainText(
+      /no fills|no data|no processes running/i,
+    );
   });
 
   test("book stats card shows compression info", async ({ page }) => {

@@ -15,6 +15,9 @@ export function OpenOrders({ send }: Props) {
   const symbols = useMarketStore((s) => s.symbols);
 
   function cancelAll() {
+    if (!window.confirm("Cancel all open orders?")) {
+      return;
+    }
     for (const o of orders) {
       send(cancelOrder(o.oid));
     }

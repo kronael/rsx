@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useEffect } from "react";
 import { useCallback } from "react";
 import { useMemo } from "react";
 import { useRef } from "react";
@@ -18,6 +19,10 @@ export function OrderHistory() {
   );
   const [loading, setLoading] = useState(false);
   const [older, setOlder] = useState<UserFill[]>([]);
+
+  useEffect(() => {
+    setOlder([]);
+  }, [selectedSymbol]);
 
   const meta = symbols.get(selectedSymbol);
   const tickSize = meta?.tickSize ?? 0.01;

@@ -148,7 +148,7 @@ export const useMarketStore = create<MarketStore>(
     applyL2Delta: (side, px, qty, count, seq) =>
       set((state) => {
         const ob = state.orderbook;
-        if (seq <= ob.seq) return {};
+        if (seq <= ob.seq) return state;
         const bids =
           side === Side.BUY
             ? applyDelta(ob.bids, px, qty, count, false)
