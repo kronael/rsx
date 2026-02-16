@@ -1,26 +1,29 @@
 use std::time::Instant;
 
+const MICROS_PER_SEC: i64 = 1_000_000;
+
 pub struct RateLimiter {
-    tokens: f64,
-    capacity: f64,
-    refill_rate: f64,
+    tokens: i64,
+    capacity: i64,
+    refill_rate: i64,
     last_refill: Instant,
 }
 
 impl RateLimiter {
     pub fn new(capacity: u32, refill_rate: u32) -> Self {
+        let cap_micros = capacity as i64 * MICROS_PER_SEC;
         Self {
-            tokens: capacity as f64,
-            capacity: capacity as f64,
-            refill_rate: refill_rate as f64,
+            tokens: cap_micros,
+            capacity: cap_micros,
+            refill_rate: refill_rate as i64,
             last_refill: Instant::now(),
         }
     }
 
     pub fn try_consume(&mut self) -> bool {
         self.refill();
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
+        if self.tokens >= MICROS_PER_SEC {
+            self.tokens -= MICROS_PER_SEC;
             true
         } else {
             false
@@ -29,23 +32,32 @@ impl RateLimiter {
 
     fn refill(&mut self) {
         let now = Instant::now();
-        let elapsed = now
+        let elapsed_micros = now
             .duration_since(self.last_refill)
-            .as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.refill_rate)
-            .min(self.capacity);
+            .as_micros() as i64;
+        let refill_amount = elapsed_micros
+            .saturating_mul(self.refill_rate);
+        self.tokens =
+            self.tokens.saturating_add(refill_amount)
+                .min(self.capacity);
         self.last_refill = now;
     }
 
     pub fn tokens_remaining(&self) -> f64 {
-        self.tokens
+        self.tokens as f64 / MICROS_PER_SEC as f64
     }
 
-    pub fn advance_time_by(&mut self, duration: std::time::Duration) {
+    pub fn advance_time_by(
+        &mut self,
+        duration: std::time::Duration,
+    ) {
         let now = self.last_refill + duration;
-        let elapsed = duration.as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.refill_rate)
-            .min(self.capacity);
+        let elapsed_micros = duration.as_micros() as i64;
+        let refill_amount = elapsed_micros
+            .saturating_mul(self.refill_rate);
+        self.tokens =
+            self.tokens.saturating_add(refill_amount)
+                .min(self.capacity);
         self.last_refill = now;
     }
 }

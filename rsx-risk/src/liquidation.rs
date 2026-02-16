@@ -169,9 +169,17 @@ impl LiquidationEngine {
                 .map(|v| v.min(9999))
                 .unwrap_or(9999);
             let (side, price) = if net_qty > 0 {
-                (1u8, mark * (10_000 - slip) / 10_000)
+                let slip_price = mark
+                    .checked_mul(10_000 - slip)
+                    .map(|v| v / 10_000)
+                    .unwrap_or(0);
+                (1u8, slip_price)
             } else {
-                (0u8, mark * (10_000 + slip) / 10_000)
+                let slip_price = mark
+                    .checked_mul(10_000 + slip)
+                    .map(|v| v / 10_000)
+                    .unwrap_or(i64::MAX);
+                (0u8, slip_price)
             };
             let qty = net_qty.abs();
             orders.push(LiquidationOrder {

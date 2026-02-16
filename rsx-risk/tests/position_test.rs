@@ -168,7 +168,7 @@ fn position_version_increments_per_fill() {
 #[test]
 fn empty_position_zero_notional_zero_upnl() {
     let p = Position::new(1, 0);
-    assert_eq!(p.notional(100), 0);
-    assert_eq!(p.unrealized_pnl(100), 0);
+    assert_eq!(p.notional(100).unwrap(), 0);
+    assert_eq!(p.unrealized_pnl(100).unwrap(), 0);
     assert!(p.is_empty());
 }

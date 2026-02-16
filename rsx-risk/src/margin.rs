@@ -45,15 +45,24 @@ impl PortfolioMargin {
                 continue;
             }
             let mark = mark_prices[sid];
-            upnl += pos.unrealized_pnl(mark);
-            let notional = pos.notional(mark);
+            upnl += pos
+                .unrealized_pnl(mark)
+                .unwrap_or(i64::MAX);
+            let notional =
+                pos.notional(mark).unwrap_or(i64::MAX);
             let params = &self.symbol_params[sid];
-            im += (notional as i128
+            let im_calc = notional as i128
                 * params.initial_margin_rate as i128
-                / 10_000) as i64;
-            mm += (notional as i128
+                / 10_000;
+            im = im.saturating_add(
+                i64::try_from(im_calc).unwrap_or(i64::MAX)
+            );
+            let mm_calc = notional as i128
                 * params.maintenance_margin_rate as i128
-                / 10_000) as i64;
+                / 10_000;
+            mm = mm.saturating_add(
+                i64::try_from(mm_calc).unwrap_or(i64::MAX)
+            );
         }
         let equity = account.collateral + upnl;
         let available =
@@ -93,9 +102,11 @@ impl PortfolioMargin {
             return Err(RejectReason::InsufficientMargin);
         }
         let params = &self.symbol_params[sid];
-        let order_im = (order_notional as i128
+        let order_im_128 = order_notional as i128
             * params.initial_margin_rate as i128
-            / 10_000) as i64;
+            / 10_000;
+        let order_im = i64::try_from(order_im_128)
+            .unwrap_or(i64::MAX);
         let order_fee = calculate_fee(
             order.qty,
             order.price,

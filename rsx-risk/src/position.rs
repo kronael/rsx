@@ -97,14 +97,14 @@ impl Position {
     }
 
     /// RISK.md §3.
-    pub fn notional(&self, mark_price: i64) -> i64 {
+    pub fn notional(
+        &self,
+        mark_price: i64,
+    ) -> Result<i64, &'static str> {
         let v = self.net_qty().abs() as i128
             * mark_price as i128;
-        i64::try_from(v).unwrap_or(if v > 0 {
-            i64::MAX
-        } else {
-            i64::MIN
-        })
+        i64::try_from(v)
+            .map_err(|_| "notional overflow")
     }
 
     pub fn avg_entry(&self) -> i64 {
@@ -124,18 +124,15 @@ impl Position {
     pub fn unrealized_pnl(
         &self,
         mark_price: i64,
-    ) -> i64 {
+    ) -> Result<i64, &'static str> {
         let nq = self.net_qty();
         if nq == 0 {
-            return 0;
+            return Ok(0);
         }
         let v = nq as i128
             * (mark_price - self.avg_entry()) as i128;
-        i64::try_from(v).unwrap_or(if v > 0 {
-            i64::MAX
-        } else {
-            i64::MIN
-        })
+        i64::try_from(v)
+            .map_err(|_| "unrealized_pnl overflow")
     }
 
     pub fn is_empty(&self) -> bool {
