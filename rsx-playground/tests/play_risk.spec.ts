@@ -101,8 +101,8 @@ test.describe("Risk tab", () => {
     const heatmap = page.locator("[hx-get='./x/position-heatmap']");
     await waitForHTMX(page, 2000);
 
-    // Should show placeholder text
-    await expect(heatmap).toContainText(/start RSX|no data|users/i);
+    // Should show placeholder or fill data
+    await expect(heatmap).toContainText(/no fill data|no data|users|Symbol/i);
   });
 
   test("margin ladder auto-refreshes every 2s", async ({ page }) => {

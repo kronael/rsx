@@ -56,8 +56,8 @@ test.describe("WAL tab", () => {
     const lagDash = page.locator("[hx-get='./x/wal-lag']");
     await waitForHTMX(page, 2000);
 
-    // Should show lag data or placeholder
-    await expect(lagDash).toContainText(/start RSX|lag|no data/i);
+    // Should show lag data or stream table
+    await expect(lagDash).toContainText(/start RSX|lag|no data|Stream|active|idle/i);
   });
 
   test("timeline filter has event type options", async ({ page }) => {
@@ -83,8 +83,8 @@ test.describe("WAL tab", () => {
     const timeline = page.locator("[hx-get='./x/wal-timeline']");
     await waitForHTMX(page, 2000);
 
-    // Should show placeholder
-    await expect(timeline).toContainText(/start RSX|timeline|no data/i);
+    // Should show placeholder or event data
+    await expect(timeline).toContainText(/no WAL events|no data|timeline|Seq/i);
   });
 
   test("WAL files card auto-refreshes every 5s", async ({ page }) => {

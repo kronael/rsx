@@ -518,8 +518,8 @@ def scan_wal_streams():
     for entry in sorted(WAL_DIR.iterdir()):
         if not entry.is_dir():
             continue
-        files = list(entry.glob("*.dxs"))
-        files += list(entry.glob("*.wal"))
+        files = list(entry.rglob("*.dxs"))
+        files += list(entry.rglob("*.wal"))
         total = sum(
             f.stat().st_size for f in files if f.exists()
         )
@@ -1157,17 +1157,30 @@ async def x_wal_files():
 
 @app.get("/x/wal-lag", response_class=HTMLResponse)
 async def x_wal_lag():
-    return HTMLResponse(pages.render_wal_lag())
+    streams = scan_wal_streams()
+    return HTMLResponse(pages.render_wal_lag(streams))
 
 
 @app.get("/x/wal-rotation", response_class=HTMLResponse)
 async def x_wal_rotation():
-    return HTMLResponse(pages.render_wal_rotation())
+    streams = scan_wal_streams()
+    return HTMLResponse(pages.render_wal_rotation(streams))
 
 
 @app.get("/x/wal-timeline", response_class=HTMLResponse)
 async def x_wal_timeline():
-    return HTMLResponse(pages.render_wal_timeline())
+    # Collect all WAL records for timeline view
+    all_records = []
+    if WAL_DIR.exists():
+        for stream_dir in WAL_DIR.iterdir():
+            if not stream_dir.is_dir():
+                continue
+            all_records.extend(
+                parse_wal_records(stream_dir))
+    all_records.sort(
+        key=lambda r: r.get("seq", 0), reverse=True)
+    return HTMLResponse(
+        pages.render_wal_timeline(all_records))
 
 
 @app.get("/x/logs", response_class=HTMLResponse)
@@ -1248,17 +1261,23 @@ async def x_trade_agg():
 @app.get("/x/position-heatmap",
          response_class=HTMLResponse)
 async def x_position_heatmap():
-    return HTMLResponse(pages.render_position_heatmap())
+    fills = parse_wal_fills(max_fills=500)
+    return HTMLResponse(
+        pages.render_position_heatmap(fills or None))
 
 
 @app.get("/x/margin-ladder", response_class=HTMLResponse)
 async def x_margin_ladder():
-    return HTMLResponse(pages.render_margin_ladder())
+    fills = parse_wal_fills()
+    return HTMLResponse(
+        pages.render_margin_ladder(fills or None))
 
 
 @app.get("/x/funding", response_class=HTMLResponse)
 async def x_funding():
-    return HTMLResponse(pages.render_funding())
+    stats = parse_wal_book_stats()
+    return HTMLResponse(
+        pages.render_funding(stats or None))
 
 
 @app.get("/x/risk-latency", response_class=HTMLResponse)
@@ -1886,16 +1905,40 @@ async def api_orders_random():
 
 @app.post("/api/stress/run")
 async def api_stress_run(
+    request: Request,
     rate: int = 100,
     duration: int = 60,
 ):
     """Launch stress test and save results"""
-    from stress_client import run_stress_test, StressConfig
+    from stress_client import run_stress_test
+    from stress_client import StressConfig
 
+    is_htmx = request.headers.get("hx-request") == "true"
     config = StressConfig(rate=rate, duration=duration)
 
     # Run stress test and wait for results
-    results = await run_stress_test(config)
+    try:
+        results = await run_stress_test(config)
+    except Exception as e:
+        err = html.escape(str(e))
+        if is_htmx:
+            return HTMLResponse(
+                f'<span class="text-red-400 text-xs">'
+                f'error: {err}</span>')
+        return JSONResponse(
+            {"status": "error", "error": str(e)},
+            status_code=502)
+
+    # Check if gateway was unreachable
+    if "error" in results:
+        err = html.escape(results["error"])
+        if is_htmx:
+            return HTMLResponse(
+                f'<span class="text-red-400 text-xs">'
+                f'gateway unreachable: {err}</span>')
+        return JSONResponse(
+            {"status": "error", "error": results["error"]},
+            status_code=502)
 
     # Save results with timestamp
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1908,6 +1951,24 @@ async def api_stress_run(
             "metrics": results["metrics"],
             "latency_us": results["latency_us"],
         }, f, indent=2)
+
+    m = results["metrics"]
+    lat = results["latency_us"]
+    if is_htmx:
+        return HTMLResponse(
+            f'<div class="space-y-1 text-xs">'
+            f'<span class="text-emerald-400">completed</span>'
+            f' in {m["elapsed_sec"]}s'
+            f'<div class="text-slate-400">'
+            f'submitted={m["submitted"]} '
+            f'accepted={m["accepted"]} '
+            f'rate={m["actual_rate"]}/s</div>'
+            f'<div class="text-slate-400">'
+            f'p50={lat["p50"]}us p95={lat["p95"]}us '
+            f'p99={lat["p99"]}us</div>'
+            f'<a href="/stress/{timestamp}" '
+            f'class="text-blue-400 hover:underline">'
+            f'view full report</a></div>')
 
     return JSONResponse({
         "status": "completed",

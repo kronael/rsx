@@ -1476,23 +1476,103 @@ def render_wal_files(files):
     )
 
 
-def render_wal_lag():
-    """Placeholder until live lag data available."""
-    return ('<span class="text-slate-500 text-xs">'
-            'start RSX processes to see lag data</span>')
+def render_wal_lag(streams=None):
+    """Show WAL producer-consumer lag per stream."""
+    if not streams:
+        return ('<span class="text-slate-500 text-xs">'
+                'no WAL streams found</span>')
+    rows = ""
+    for s in streams:
+        name = s.get("name", "-")
+        size = s.get("total_size", "0 B")
+        newest = s.get("newest", "--")
+        files = s.get("files", 0)
+        # lag indicator based on file count
+        if files == 0:
+            lag = '<span class="text-slate-500">idle</span>'
+        elif newest == "--":
+            lag = '<span class="text-amber-400">stale</span>'
+        else:
+            lag = ('<span class="text-emerald-400">'
+                   'active</span>')
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{name}</td>'
+            f'<td {_TD}>{size}</td>'
+            f'<td {_TD}>{newest}</td>'
+            f'<td {_TD}>{lag}</td></tr>'
+        )
+    return _table(
+        ["Stream", "Size", "Last Write", "Status"], rows,
+    )
 
 
-def render_wal_rotation():
-    """Placeholder until live rotation data available."""
-    return ('<span class="text-slate-500 text-xs">'
-            'start RSX processes to see rotation status'
-            '</span>')
+def render_wal_rotation(streams=None):
+    """Show WAL rotation and tip health per stream."""
+    if not streams:
+        return ('<span class="text-slate-500 text-xs">'
+                'no WAL streams found</span>')
+    rows = ""
+    for s in streams:
+        name = s.get("name", "-")
+        files = s.get("files", 0)
+        size = s.get("total_size", "0 B")
+        # rotation status based on file count
+        if files == 0:
+            status = ('<span class="text-slate-500">'
+                      'empty</span>')
+        elif files == 1:
+            status = ('<span class="text-emerald-400">'
+                      '1 active</span>')
+        else:
+            status = (f'<span class="text-amber-400">'
+                      f'{files} files (pending rotation)'
+                      f'</span>')
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{name}</td>'
+            f'<td {_TD}>{files}</td>'
+            f'<td {_TD}>{size}</td>'
+            f'<td {_TD}>{status}</td></tr>'
+        )
+    return _table(
+        ["Stream", "Files", "Size", "Rotation"], rows,
+    )
 
 
-def render_wal_timeline():
-    """Placeholder until live event stream available."""
-    return ('<span class="text-slate-500 text-xs">'
-            'start RSX processes to see timeline</span>')
+def render_wal_timeline(records=None):
+    """Show recent WAL events as timeline."""
+    if not records:
+        return ('<span class="text-slate-500 text-xs">'
+                'no WAL events recorded</span>')
+    rows = ""
+    for rec in records[:50]:
+        rtype = rec.get("type", "?")
+        seq = rec.get("seq", 0)
+        sid = rec.get("symbol_id", 0)
+        sym = {1: "BTC", 2: "ETH", 3: "SOL",
+               10: "PENGU"}.get(sid, f"sym-{sid}")
+        if rtype == "bbo":
+            color = "text-blue-400"
+            detail = (f'bid={rec.get("bid_px", 0)} '
+                      f'ask={rec.get("ask_px", 0)}')
+        elif rtype == "fill":
+            color = "text-emerald-400"
+            detail = (f'px={rec.get("price", 0)} '
+                      f'qty={rec.get("qty", 0)}')
+        else:
+            color = "text-slate-400"
+            detail = "-"
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{seq}</td>'
+            f'<td {_TD}><span class="{color}">'
+            f'{rtype.upper()}</span></td>'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD} class="text-slate-400 text-xs">'
+            f'{html.escape(detail)}</td></tr>'
+        )
+    return _table(["Seq", "Type", "Symbol", "Detail"], rows)
 
 
 # ── Logs ─────────────────────────────────────────────────
@@ -1760,23 +1840,106 @@ def render_risk_user(data):
     return _table(["Field", "Value"], rows)
 
 
-def render_position_heatmap():
-    """Placeholder position heatmap."""
-    return ('<span class="text-slate-500 text-xs">'
-            'start RSX processes and create users to see '
-            'position data</span>')
+def render_position_heatmap(fills=None):
+    """Position heatmap from WAL fill data."""
+    if not fills:
+        return ('<span class="text-slate-500 text-xs">'
+                'no fill data available</span>')
+    # Aggregate net position per symbol from fills
+    positions = {}
+    for f in fills:
+        sid = f.get("symbol_id", 0)
+        sym = {1: "BTC", 2: "ETH", 3: "SOL",
+               10: "PENGU"}.get(sid, f"sym-{sid}")
+        qty = f.get("qty", 0)
+        side = f.get("taker_side", 0)
+        signed = qty if side == 0 else -qty
+        positions[sym] = positions.get(sym, 0) + signed
+    rows = ""
+    for sym, net in sorted(positions.items()):
+        if net > 0:
+            color = "text-emerald-400"
+            label = f"+{net}"
+        elif net < 0:
+            color = "text-red-400"
+            label = str(net)
+        else:
+            color = "text-slate-500"
+            label = "0"
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD}><span class="{color}">'
+            f'{label}</span></td>'
+            f'<td {_TD}>{abs(net)}</td></tr>'
+        )
+    return _table(
+        ["Symbol", "Net Position", "Abs Size"], rows,
+    )
 
 
-def render_margin_ladder():
-    """Placeholder margin ladder."""
-    return ('<span class="text-slate-500 text-xs">'
-            'start RSX processes to see margin data</span>')
+def render_margin_ladder(fills=None):
+    """Margin ladder from WAL fill data."""
+    if not fills:
+        return ('<span class="text-slate-500 text-xs">'
+                'no fill data available</span>')
+    # Show recent fills as proxy for margin impact
+    rows = ""
+    for f in fills[:20]:
+        sid = f.get("symbol_id", 0)
+        sym = {1: "BTC", 2: "ETH", 3: "SOL",
+               10: "PENGU"}.get(sid, f"sym-{sid}")
+        px = f.get("price", 0)
+        qty = f.get("qty", 0)
+        side = f.get("taker_side", 0)
+        notional = abs(px * qty)
+        side_str = ('<span class="text-emerald-400">'
+                    'buy</span>' if side == 0
+                    else '<span class="text-red-400">'
+                    'sell</span>')
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD}>{side_str}</td>'
+            f'<td {_TD}>{px}</td>'
+            f'<td {_TD}>{qty}</td>'
+            f'<td {_TD}>{notional}</td></tr>'
+        )
+    return _table(
+        ["Symbol", "Side", "Price", "Qty", "Notional"],
+        rows,
+    )
 
 
-def render_funding():
-    """Placeholder funding tracking."""
-    return ('<span class="text-slate-500 text-xs">'
-            'start RSX processes to see funding data</span>')
+def render_funding(book_stats=None):
+    """Funding tracking from WAL BBO data."""
+    if not book_stats:
+        return ('<span class="text-slate-500 text-xs">'
+                'no BBO data available</span>')
+    rows = ""
+    for sid, bbo in sorted(book_stats.items()):
+        sym = {1: "BTC", 2: "ETH", 3: "SOL",
+               10: "PENGU"}.get(sid, f"sym-{sid}")
+        bid = bbo.get("bid_px", 0)
+        ask = bbo.get("ask_px", 0)
+        mid = (bid + ask) // 2 if bid and ask else 0
+        spread = ask - bid if bid and ask else 0
+        # Simplified funding = spread / mid basis points
+        rate = (
+            f"{spread * 10000 // mid} bps"
+            if mid > 0 else "--"
+        )
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD}>{bid}</td>'
+            f'<td {_TD}>{ask}</td>'
+            f'<td {_TD}>{spread}</td>'
+            f'<td {_TD}>{rate}</td></tr>'
+        )
+    return _table(
+        ["Symbol", "Bid", "Ask", "Spread", "Rate"], rows,
+    )
 
 
 def render_risk_latency(latencies=None):
