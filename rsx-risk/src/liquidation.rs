@@ -125,10 +125,12 @@ impl LiquidationEngine {
             {
                 continue;
             }
-            let delay =
-                state.round as u64 * self.base_delay_ns;
+            let delay = (state.round as u64)
+                .saturating_mul(self.base_delay_ns);
             if state.last_order_ns != 0
-                && now_ns < state.last_order_ns + delay
+                && now_ns
+                    < state.last_order_ns
+                        .saturating_add(delay)
             {
                 continue;
             }

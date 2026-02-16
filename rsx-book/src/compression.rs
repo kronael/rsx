@@ -21,7 +21,7 @@ impl CompressionMap {
         // Zone 2: 15-30%
         // Zone 3: 30-50%
         // Zone 4: 50%+ (catch-all, 2 slots)
-        let denom = 100 * tick_size;
+        let denom = 100i64.saturating_mul(tick_size);
         let pct_5 = mid_price
             .checked_mul(5)
             .and_then(|v| v.checked_div(denom))
@@ -43,10 +43,13 @@ impl CompressionMap {
         let compressions: [u32; 5] = [1, 10, 100, 1000, 1];
 
         // Slots per zone (both sides)
-        let z0 = (pct_5 * 2) as u32;
-        let z1 = (((pct_15 - pct_5) * 2) / 10) as u32;
-        let z2 = (((pct_30 - pct_15) * 2) / 100) as u32;
-        let z3 = (((pct_50 - pct_30) * 2) / 1000) as u32;
+        let z0 = (pct_5 * 2).max(0) as u32;
+        let z1 =
+            (((pct_15 - pct_5) * 2) / 10).max(0) as u32;
+        let z2 =
+            (((pct_30 - pct_15) * 2) / 100).max(0) as u32;
+        let z3 =
+            (((pct_50 - pct_30) * 2) / 1000).max(0) as u32;
         let z4 = 2u32; // one per side
 
         let zone_slots = [z0, z1, z2, z3, z4];
@@ -74,7 +77,8 @@ impl CompressionMap {
         price: i64,
     ) -> u32 {
         let tick_dist = price - self.mid_price;
-        let distance = tick_dist.unsigned_abs() as i64;
+        let distance = tick_dist.unsigned_abs()
+            .min(i64::MAX as u64) as i64;
         // ask=0 (price >= mid), bid=1 (price < mid)
         let side: u32 =
             if tick_dist >= 0 { 0 } else { 1 };

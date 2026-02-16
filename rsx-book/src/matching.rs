@@ -75,7 +75,8 @@ pub fn process_new_order(
                     });
                     return;
                 }
-                let abs_pos = nq.unsigned_abs() as i64;
+                let abs_pos = nq.unsigned_abs()
+                    .min(i64::MAX as u64) as i64;
                 if order.remaining_qty > abs_pos {
                     order.remaining_qty = abs_pos;
                 }
