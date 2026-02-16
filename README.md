@@ -103,6 +103,8 @@ rsx-recorder/   Recorder (archival DXS consumer)
 rsx-cli/        WAL dump/inspect tool (JSON + Parquet)
 rsx-maker/      Market maker bot
 rsx-sim/        Trading simulator, WS load generator
+rsx-playground/ Dev dashboard (Python/FastAPI + Playwright)
+rsx-webui/      Frontend (Vite + Tailwind)
 ```
 
 ## Playground

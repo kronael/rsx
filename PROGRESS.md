@@ -1,18 +1,26 @@
 # RSX Implementation Progress
 
-**Last audit: 2026-02-16. Numeric safety refinement: overflow guards on hot paths, saturating arithmetic, bounds checks.**
+**Last audit: 2026-02-16. Numeric safety refinement:
+overflow guards on hot paths, saturating arithmetic,
+bounds checks.**
 
 ---
 
 ## Executive Summary
 
-**Status:** Production-ready. 1138 tests passing (960 Rust + 50 API + 128 Playwright E2E, zero system failures). ~34k LOC Rust source + ~19k LOC tests. All hot-path unwraps eliminated (rsx-risk, rsx-gateway). Wire protocol 100% spec-compliant (verified WEBPROTO.md, MESSAGES.md, RPC.md). All 4 consistency invariants verified. CLI tools complete (JSON + Parquet output). Gateway hardened (heartbeat 5s/10s, frame size limit 4KB, binary frame rejection, per-user 5-conn limit, liquidation routing). **Full E2E verified:** frontend→gateway→risk→ME→marketdata flow confirmed via 178 E2E tests.
+**Status:** All v1 spec requirements met. 813 Rust tests
+passing (zero failures). ~17k LOC source + ~18k LOC tests.
+All hot-path unwraps eliminated. Wire protocol spec-compliant
+(WEBPROTO.md, MESSAGES.md, RPC.md). CLI tools complete
+(JSON + Parquet output). Gateway hardened (heartbeat 5s/10s,
+frame size 4KB, binary frame rejection, per-user 5-conn
+limit, liquidation routing). Playground: 149 Playwright +
+API integration tests.
 
 **Test Quality:** All Rust tests non-flaky (unique temp dirs,
-proper port allocation, migration completeness checks, dedup
+ephemeral ports, migration completeness checks, dedup
 boundary fixes). Playground tests hardened (process cleanup,
-polling replaces sleeps, trimming logic corrected, 680 test
-functions).
+polling replaces sleeps).
 
 **Overall completion: 100%** (all v1 spec requirements met)
 
@@ -23,15 +31,15 @@ functions).
 | Crate | Tests | % |
 |-------|-------|---|
 | rsx-types | 15 | 100 |
-| rsx-book | 97 | 100 |
-| rsx-matching | 39 | 100 |
-| rsx-dxs | 83 | 100 |
-| rsx-risk | 201 | 100 |
-| rsx-gateway | 134 | 100 |
-| rsx-marketdata | 57 | 100 |
-| rsx-mark | 40 | 100 |
-| rsx-recorder | 6 | 100 |
-| rsx-cli | 6 | 100 |
+| rsx-book | 135 | 100 |
+| rsx-matching | 56 | 100 |
+| rsx-dxs | 116 | 100 |
+| rsx-risk | 224 | 100 |
+| rsx-gateway | 124 | 100 |
+| rsx-marketdata | 90 | 100 |
+| rsx-mark | 43 | 100 |
+| rsx-recorder | 5 | 100 |
+| rsx-cli | 5 | 100 |
 
 ### rsx-types (100%)
 Price, Qty, Side, TimeInForce, SymbolConfig, validate_order,
@@ -110,91 +118,13 @@ CMP sender to risk (RECORD_MARK_PRICE).
 ### rsx-recorder (100%)
 WAL archival consumer. Daily file rotation. Buffered
 writes (flush every 1000 records). DxsConsumer integration.
-6 tests covering serialization, rotation, roundtrip.
+5 tests covering serialization, rotation, roundtrip.
 
 ### rsx-cli (100%)
 WAL dump tool with JSON and Parquet output. Two commands:
 `dump <file>` (single file) and `wal-dump <stream>` (WAL
-directory). Parquet via Arrow (optional feature). 6 tests
+directory). Parquet via Arrow (optional feature). 5 tests
 covering format parsing and output generation.
-
-### rsx-recorder (100%)
-RecorderState, daily rotation, raw WAL append.
-
----
-
-## Numeric Safety Refinement (2026-02-16)
-
-**Overflow/underflow guards on hot-path calculations:**
-
-1. **rsx-book (compression.rs)**
-   - `saturating_mul(tick_size)` on zone boundary calc
-   - `.max(0)` before u32 cast (non-negative guarantee)
-   - `unsigned_abs()` overflow guard on distance calc
-
-2. **rsx-book (matching.rs)**
-   - `unsigned_abs()` overflow guard for reduce-only qty
-
-3. **rsx-gateway (rate_limit.rs)**
-   - `tokens_remaining()` returns i64 instead of f64
-   - `saturating_mul()` on refill amount (refill_rate * elapsed)
-   - `saturating_add()` with `min(capacity)` capping
-
-4. **rsx-risk (risk_utils.rs)**
-   - `i64::try_from()` instead of silent truncation on fee calc
-
-5. **rsx-risk (margin.rs)**
-   - `saturating_add()` / `saturating_sub()` on equity calcs
-   - Prevents silent wraparound on large position changes
-
-6. **rsx-risk (liquidation.rs)**
-   - `saturating_mul()` / `saturating_add()` on delay calcs
-
-7. **rsx-risk (shard.rs)**
-   - `try_from()` overflow guards on position/margin ops
-   - `saturating_add()` on per-user margin accum
-   - Bounds check on mark_prices array indexing
-
-**Impact:** All non-zero-sum operations now guard against silent overflow.
-Preserves i64 fixed-point convention (no floats per CLAUDE.md).
-
----
-
-## Test Reliability Improvements (2026-02-12)
-
-### Rust Test Hardening
-**Fixed test flakiness across core crates:**
-
-1. **rsx-dxs (83 tests)**
-   - Unique temp dirs per test (TempDir eliminates races)
-   - Port allocation: ephemeral ports in cmp/tls tests
-   - Archive tests: extract_seq helper for cleaner assertions
-
-2. **rsx-book (97 tests)**
-   - Migration completion assertions added
-   - Zone boundary edge cases (compression map)
-   - All snapshot tests validated
-
-3. **rsx-matching (39 tests)**
-   - Dedup boundary logic fixed (submission after expiry)
-   - Order processing edge cases validated
-
-### Playground Test Hardening
-**Fixed reliability issues in Python/Playwright tests:**
-
-1. **conftest.py**
-   - Process cleanup: added proc.wait() to prevent stale PIDs
-   - Proper teardown prevents resource leaks
-
-2. **api_processes_test.py**
-   - Polling replaces sleeps (5 locations)
-   - Faster, more reliable process state checks
-
-3. **api_orders_test.py**
-   - Stress test documentation improved
-   - Trimming logic corrected (recent_orders list)
-
-**Result:** All tests non-flaky, reproducible, CI-ready.
 
 ---
 
@@ -240,17 +170,10 @@ Post-MVP specs (not in v1 scope):
 
 ---
 
-## Final Completion Summary
+## Summary
 
 **Overall System: 100%** (all v1 spec requirements met)
-**Total Tests: 960** (zero failures, all non-flaky)
-**Playground Tests: 680** test functions (Playwright + API)
-
-**Test Quality:**
-- All Rust tests: unique temp dirs, proper cleanup
-- All CMP/TLS tests: ephemeral port allocation
-- All Playground tests: polling over sleeps, proper teardown
-- Test suite CI-ready (reproducible, no flakiness)
+**Rust Tests: 813** (zero failures, all non-flaky)
+**Playground Tests: 149** Playwright + API integration
 
 **Last Updated:** 2026-02-16
-**Latest phase:** Numeric safety refinement (overflow guards, saturating arithmetic, bounds checks)
