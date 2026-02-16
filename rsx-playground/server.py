@@ -1977,15 +1977,6 @@ async def api_stress_run(
     })
 
 
-# Keep backward compatibility
-@app.post("/api/orders/stress")
-async def api_orders_stress(
-    rate: int = 100,
-    duration: int = 60,
-):
-    """Launch stress test (backward compat)"""
-    return await api_stress_run(rate, duration)
-
 
 @app.get("/api/stress/reports")
 async def api_stress_reports():

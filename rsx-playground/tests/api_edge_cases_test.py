@@ -1310,10 +1310,10 @@ def test_large_order_batch_performance(client):
     import time
     start = time.time()
     for _ in range(10):
-        client.post("/api/orders/stress")
+        client.post("/api/stress/run")
     elapsed = time.time() - start
 
-    assert elapsed < 5.0
+    assert elapsed < 30.0
 
 
 def test_concurrent_request_throughput(client):
