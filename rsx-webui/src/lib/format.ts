@@ -1,7 +1,5 @@
 // Price/qty formatting utilities for fixed-point i64
 
-let cidCounter = 0;
-
 export function formatPrice(
   raw: number,
   tickSize: number,
@@ -73,14 +71,15 @@ export function formatTs(ns: number): string {
 }
 
 export function generateCid(): string {
-  const now = Date.now();
-  cidCounter = (cidCounter + 1) % 10000;
-  const raw = `${now}${cidCounter.toString().padStart(4, "0")}`;
-  return raw.slice(0, 20).padEnd(20, "0");
+  const raw = crypto.randomUUID().replace(/-/g, "");
+  return raw.slice(0, 20);
 }
 
 function countDecimals(val: number): number {
   const str = val.toString();
+  if (str.includes("e-")) {
+    return parseInt(str.split("e-")[1] ?? "0", 10);
+  }
   const dot = str.indexOf(".");
   if (dot < 0) return 0;
   return str.length - dot - 1;

@@ -27,6 +27,7 @@ export function OrderEntry({ send, externalPrice }: Props) {
   const [tif, setTif] = useState<TIF>(TIF.GTC);
   const [reduceOnly, setReduceOnly] = useState(false);
   const [postOnly, setPostOnly] = useState(false);
+  const [error, setError] = useState("");
 
   const symbols = useMarketStore((s) => s.symbols);
   const selectedSymbol = useMarketStore(
@@ -51,16 +52,31 @@ export function OrderEntry({ send, externalPrice }: Props) {
   const sliderPcts = [25, 50, 75, 100];
 
   const handleSubmit = useCallback(() => {
+    setError("");
     const qty = parseQty(qtyStr, lotSize);
-    if (qty <= 0) return;
+    if (qty <= 0) {
+      setError("Enter a valid quantity");
+      return;
+    }
 
     let px: number;
     if (orderType === "market") {
       px = side === Side.BUY ? bbo.askPx : bbo.bidPx;
-      if (px <= 0) return;
+      if (px <= 0) {
+        setError("No market price available");
+        return;
+      }
+      const age = Date.now() - bbo.ts / 1_000_000;
+      if (age > 5000) {
+        setError("Market data stale");
+        return;
+      }
     } else {
       px = parsePrice(priceStr, tickSize);
-      if (px <= 0) return;
+      if (px <= 0) {
+        setError("Enter a valid price");
+        return;
+      }
     }
 
     const cid = generateCid();
@@ -281,6 +297,10 @@ export function OrderEntry({ send, externalPrice }: Props) {
           />
           Reduce-only
         </label>
+      )}
+
+      {error && (
+        <p className="text-xs text-sell">{error}</p>
       )}
 
       {/* Submit */}

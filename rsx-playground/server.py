@@ -7,14 +7,18 @@ import asyncio
 import html
 import json
 import os
+import random
+import re
+import shutil
 import signal
+import struct
 import subprocess
-import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
+import aiohttp
 import psutil
 import uvicorn
 from fastapi import FastAPI
@@ -24,12 +28,10 @@ from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import pages
-
-import aiohttp
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -268,7 +270,6 @@ async def start_all(scenario="minimal"):
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     # kill stale processes on known ports
-    import shutil
     if shutil.which("fuser"):
         # fuser available, use it
         for port in [8080, 8180, 9110, 9200, 9400, 9510]:
@@ -391,8 +392,6 @@ def check_confirm(request: Request, endpoint: str):
             status_code=400,
         )
     return None
-
-
 
 
 @app.get("/healthz")
@@ -571,8 +570,6 @@ def scan_wal_files():
     return files
 
 
-import struct
-
 # WAL header: 16 bytes (type:u16, len:u16, crc32:u32, reserved:8)
 WAL_HDR = struct.Struct('<HHI8s')
 # BboRecord: 64 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
@@ -686,7 +683,6 @@ def parse_wal_book_stats():
     return symbols
 
 
-import re
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 
@@ -796,7 +792,6 @@ async def stress_report_view(report_id: str):
 
 def _md_to_html(md: str) -> str:
     """Convert markdown to HTML (no external deps)."""
-    import re
     lines = md.split("\n")
     out = []
     in_code = False
@@ -929,7 +924,6 @@ def _md_to_html(md: str) -> str:
 
 def _md_inline(text: str) -> str:
     """Convert inline markdown (bold, code, links)."""
-    import re
     # inline code
     text = re.sub(
         r"`([^`]+)`",
@@ -951,7 +945,6 @@ def _md_inline(text: str) -> str:
 @app.get("/docs")
 async def docs_index():
     """Redirect /docs to /docs/README."""
-    from fastapi.responses import RedirectResponse
     return RedirectResponse("/docs/README")
 
 
@@ -1875,7 +1868,6 @@ async def api_orders_batch():
 
 @app.post("/api/orders/random")
 async def api_orders_random():
-    import random
     for _ in range(5):
         recent_orders.append({
             "cid": f"rnd-{random.randint(10000,99999)}",
@@ -1974,14 +1966,18 @@ async def x_stress_reports_list():
     """HTMX endpoint for stress reports table"""
     reports = await api_stress_reports()
     if not reports:
-        return HTMLResponse('<div class="text-slate-500 text-xs">No stress tests run yet</div>')
+        return HTMLResponse(
+            '<div class="text-slate-500 text-xs">'
+            'No stress tests run yet</div>')
 
     rows = []
     for r in reports:
         timestamp_fmt = r["timestamp"]
         # Format: 20260213-211030 -> 2026-02-13 21:10:30
         if len(timestamp_fmt) == 15:
-            ts = f"{timestamp_fmt[0:4]}-{timestamp_fmt[4:6]}-{timestamp_fmt[6:8]} {timestamp_fmt[9:11]}:{timestamp_fmt[11:13]}:{timestamp_fmt[13:15]}"
+            t = timestamp_fmt
+            ts = (f"{t[0:4]}-{t[4:6]}-{t[6:8]}"
+                  f" {t[9:11]}:{t[11:13]}:{t[13:15]}")
         else:
             ts = timestamp_fmt
 
@@ -1989,19 +1985,27 @@ async def x_stress_reports_list():
         ts_escaped = html.escape(ts)
         id_escaped = html.escape(str(r["id"]))
 
-        accept_color = "text-emerald-400" if r["accept_rate"] >= 95 else "text-amber-400"
-        latency_color = "text-emerald-400" if r["p99_latency"] < 1000 else "text-amber-400"
+        accept_color = ("text-emerald-400"
+                        if r["accept_rate"] >= 95
+                        else "text-amber-400")
+        latency_color = ("text-emerald-400"
+                         if r["p99_latency"] < 1000
+                         else "text-amber-400")
 
         rows.append(
             f'<tr class="hover:bg-slate-800/30">'
             f'<td class="px-2 py-1 text-xs">'
-            f'<a href="/stress/{id_escaped}" class="text-blue-400 hover:underline">{ts_escaped}</a>'
+            f'<a href="/stress/{id_escaped}"'
+            f' class="text-blue-400 hover:underline">'
+            f'{ts_escaped}</a>'
             f'</td>'
             f'<td class="px-2 py-1 text-xs text-right">{r["rate"]}/s</td>'
             f'<td class="px-2 py-1 text-xs text-right">{r["duration"]}s</td>'
             f'<td class="px-2 py-1 text-xs text-right">{r["submitted"]:,}</td>'
-            f'<td class="px-2 py-1 text-xs text-right {accept_color}">{r["accept_rate"]}%</td>'
-            f'<td class="px-2 py-1 text-xs text-right {latency_color}">{r["p99_latency"]}µs</td>'
+            f'<td class="px-2 py-1 text-xs text-right'
+            f' {accept_color}">{r["accept_rate"]}%</td>'
+            f'<td class="px-2 py-1 text-xs text-right'
+            f' {latency_color}">{r["p99_latency"]}us</td>'
             f'</tr>'
         )
 
@@ -2010,10 +2014,14 @@ async def x_stress_reports_list():
         '<thead><tr class="border-b border-slate-700">'
         '<th class="px-2 py-1 text-[10px] text-slate-400">Timestamp</th>'
         '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Rate</th>'
-        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Duration</th>'
-        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Submitted</th>'
-        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Accept %</th>'
-        '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">p99</th>'
+        '<th class="px-2 py-1 text-[10px]'
+        ' text-slate-400 text-right">Duration</th>'
+        '<th class="px-2 py-1 text-[10px]'
+        ' text-slate-400 text-right">Submitted</th>'
+        '<th class="px-2 py-1 text-[10px]'
+        ' text-slate-400 text-right">Accept %</th>'
+        '<th class="px-2 py-1 text-[10px]'
+        ' text-slate-400 text-right">p99</th>'
         '</tr></thead>'
         f'<tbody>{"".join(rows)}</tbody>'
         '</table>'
@@ -2113,8 +2121,15 @@ async def api_wal_dump():
     stdout, stderr = await proc.communicate()
     output = stdout.decode() if stdout else stderr.decode()
 
-    dump_html = f'<div class="text-xs"><div class="text-slate-400 mb-2">Latest: {html.escape(file_name)}</div>'
-    dump_html += f'<pre class="text-slate-300 whitespace-pre-wrap">{html.escape(output[:2000])}</pre></div>'
+    safe_name = html.escape(file_name)
+    safe_out = html.escape(output[:2000])
+    dump_html = (
+        f'<div class="text-xs">'
+        f'<div class="text-slate-400 mb-2">'
+        f'Latest: {safe_name}</div>'
+        f'<pre class="text-slate-300 whitespace-pre-wrap">'
+        f'{safe_out}</pre></div>')
+
     return HTMLResponse(dump_html)
 
 
@@ -2275,7 +2290,6 @@ async def v1_proxy(path: str, request: Request):
 if WEBUI_DIST.exists():
     @app.get("/trade")
     async def trade_redirect():
-        from fastapi.responses import RedirectResponse
         return RedirectResponse("/trade/")
 
     app.mount(

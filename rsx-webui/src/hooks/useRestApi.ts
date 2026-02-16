@@ -4,7 +4,9 @@ import type { UserOrder } from "../lib/types";
 import type { UserFill } from "../lib/types";
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+  const res = await fetch(path, {
+    signal: AbortSignal.timeout(10000),
+  });
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}`);
   }

@@ -6,6 +6,7 @@ import { heartbeat } from "../lib/protocol";
 import { WsStatus } from "../lib/types";
 import { useConnectionStore } from "../store/connection";
 import { useTradingStore } from "../store/trading";
+import { useToastStore } from "../lib/toast";
 
 export function usePrivateWs() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -40,7 +41,12 @@ export function usePrivateWs() {
         setStatus(WsStatus.CONNECTED);
         retryRef.current = 1000;
         hbRef.current = setInterval(() => {
-          send(heartbeat());
+          if (
+            wsRef.current &&
+            wsRef.current.readyState === WebSocket.OPEN
+          ) {
+            wsRef.current.send(heartbeat());
+          }
         }, 5000);
       };
 
@@ -62,6 +68,9 @@ export function usePrivateWs() {
           console.error(
             `ws private error: ${msg.E[0]} ${msg.E[1]}`,
           );
+          useToastStore.getState().add(
+            msg.E[1] || `Error ${msg.E[0]}`, "error",
+          );
         } else if ("H" in msg) {
           const rtt = Date.now() - msg.H[0];
           useConnectionStore.getState().setLatency(rtt);
@@ -72,6 +81,9 @@ export function usePrivateWs() {
         if (!mounted) return;
         cleanup();
         setStatus(WsStatus.DISCONNECTED);
+        useToastStore.getState().add(
+          "Private WS disconnected", "error",
+        );
         const delay = retryRef.current;
         retryRef.current = Math.min(delay * 2, 30000);
         timerRef.current = setTimeout(connect, delay);
@@ -83,7 +95,10 @@ export function usePrivateWs() {
     }
 
     function cleanup() {
-      if (hbRef.current) clearInterval(hbRef.current);
+      if (hbRef.current) {
+        clearInterval(hbRef.current);
+        hbRef.current = undefined;
+      }
     }
 
     connect();
@@ -94,7 +109,7 @@ export function usePrivateWs() {
       if (timerRef.current) clearTimeout(timerRef.current);
       wsRef.current?.close();
     };
-  }, [send]);
+  }, []);
 
   return { send };
 }

@@ -1056,6 +1056,17 @@ def orders_page():
 
 # ── HTMX partial renderers ─────────────────────────────
 
+
+def _percentile(data, p):
+    """Linear interpolation percentile on sorted data."""
+    k = (len(data) - 1) * p / 100
+    f = int(k)
+    c = f + 1
+    if c >= len(data):
+        return data[-1]
+    return data[f] + (k - f) * (data[c] - data[f])
+
+
 _TH = ('class="text-left py-1.5 px-2 text-[10px] '
        'text-slate-500 uppercase tracking-wider '
        'border-b border-slate-800 font-semibold"')
@@ -1635,15 +1646,7 @@ def render_latency_regression(latencies=None):
         )
 
     sorted_lat = sorted(latencies)
-    def percentile(data, p):
-        k = (len(data) - 1) * p / 100
-        f = int(k)
-        c = f + 1
-        if c >= len(data):
-            return data[-1]
-        return data[f] + (k - f) * (data[c] - data[f])
-
-    p99 = int(percentile(sorted_lat, 99))
+    p99 = int(_percentile(sorted_lat, 99))
     delta = p99 - baseline_gw_p99
     pct_change = (delta / baseline_gw_p99) * 100 if baseline_gw_p99 > 0 else 0
 
@@ -1673,7 +1676,7 @@ def render_latency_regression(latencies=None):
 
 # ── Orders ───────────────────────────────────────────────
 
-SYMBOL_NAMES = {
+SYMBOL_NAMES_STR = {
     "1": "BTC", "2": "ETH", "3": "SOL", "10": "PENGU",
 }
 
@@ -1685,7 +1688,7 @@ def render_recent_orders(orders):
     rows = ""
     for o in orders:
         sym = o.get("symbol", "-")
-        sym_name = SYMBOL_NAMES.get(sym, sym)
+        sym_name = SYMBOL_NAMES_STR.get(sym, sym)
         tif = o.get("tif", "GTC")
         flags = ""
         if o.get("reduce_only"):
@@ -1789,17 +1792,9 @@ def render_risk_latency(latencies=None):
         )
 
     sorted_lat = sorted(latencies)
-    def percentile(data, p):
-        k = (len(data) - 1) * p / 100
-        f = int(k)
-        c = f + 1
-        if c >= len(data):
-            return data[-1]
-        return data[f] + (k - f) * (data[c] - data[f])
-
-    p50 = int(percentile(sorted_lat, 50))
-    p95 = int(percentile(sorted_lat, 95))
-    p99 = int(percentile(sorted_lat, 99))
+    p50 = int(_percentile(sorted_lat, 50))
+    p95 = int(_percentile(sorted_lat, 95))
+    p99 = int(_percentile(sorted_lat, 99))
     max_lat = sorted_lat[-1]
 
     def color_for_lat(lat_us):
@@ -2052,7 +2047,9 @@ def stress_report_page(data):
 
     # Format timestamp
     if len(timestamp) == 15:
-        ts_fmt = f"{timestamp[0:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}:{timestamp[13:15]}"
+        t = timestamp
+        ts_fmt = (f"{t[0:4]}-{t[4:6]}-{t[6:8]}"
+                  f" {t[9:11]}:{t[11:13]}:{t[13:15]}")
     else:
         ts_fmt = timestamp
 

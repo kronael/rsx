@@ -110,7 +110,7 @@ export function TopBar() {
           aria-haspopup="listbox"
           aria-label="Select trading pair"
         >
-          {meta?.name ?? "BTCUSDT"} &#9662;
+          {meta?.name ?? "Loading..."} &#9662;
         </button>
         {dropdownOpen && (
           <div

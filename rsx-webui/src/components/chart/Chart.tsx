@@ -141,6 +141,10 @@ export function Chart() {
         time: bucket,
       };
       candles.set(bucket, c);
+      if (candles.size > 500) {
+        const oldest = candles.keys().next().value;
+        if (oldest !== undefined) candles.delete(oldest);
+      }
     } else {
       c.high = Math.max(c.high, humanPx);
       c.low = Math.min(c.low, humanPx);
@@ -168,11 +172,13 @@ export function Chart() {
 
   // Subscribe to trades
   useEffect(() => {
-    let prevLen =
-      useMarketStore.getState().trades.length;
+    let prevLen = 0;
     const unsub = useMarketStore.subscribe((state) => {
       const trades = state.trades;
-      if (trades.length === 0) return;
+      if (trades.length === 0) {
+        prevLen = 0;
+        return;
+      }
       const newCount = trades.length - prevLen;
       prevLen = trades.length;
       if (newCount <= 0) return;
