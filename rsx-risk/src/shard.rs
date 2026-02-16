@@ -177,6 +177,10 @@ impl RiskShard {
     /// RISK.md §1. Process a fill from ME ring.
     pub fn process_fill(&mut self, fill: &FillEvent) {
         let sid = fill.symbol_id as usize;
+        if sid >= self.tips.len() {
+            warn!("process_fill: symbol_id {} out of bounds", fill.symbol_id);
+            return;
+        }
 
         // Dedup: skip if seq <= tip for this symbol
         if fill.seq <= self.tips[sid] {

@@ -24,20 +24,20 @@ impl CompressionMap {
         let denom = 100 * tick_size;
         let pct_5 = mid_price
             .checked_mul(5)
-            .unwrap_or(i64::MAX)
-            / denom;
+            .and_then(|v| v.checked_div(denom))
+            .unwrap_or(i64::MAX / 100);
         let pct_15 = mid_price
             .checked_mul(15)
-            .unwrap_or(i64::MAX)
-            / denom;
+            .and_then(|v| v.checked_div(denom))
+            .unwrap_or(i64::MAX / 100);
         let pct_30 = mid_price
             .checked_mul(30)
-            .unwrap_or(i64::MAX)
-            / denom;
+            .and_then(|v| v.checked_div(denom))
+            .unwrap_or(i64::MAX / 100);
         let pct_50 = mid_price
             .checked_mul(50)
-            .unwrap_or(i64::MAX)
-            / denom;
+            .and_then(|v| v.checked_div(denom))
+            .unwrap_or(i64::MAX / 100);
 
         let thresholds = [pct_5, pct_15, pct_30, pct_50];
         let compressions: [u32; 5] = [1, 10, 100, 1000, 1];

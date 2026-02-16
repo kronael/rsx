@@ -39,6 +39,11 @@ impl<T: SlabItem + Default> Slab<T> {
     }
 
     pub fn free(&mut self, idx: u32) {
+        assert!(
+            (idx as usize) < self.slots.len(),
+            "slab free: idx {} out of bounds",
+            idx
+        );
         self.slots[idx as usize].set_next(self.free_head);
         self.free_head = idx;
     }

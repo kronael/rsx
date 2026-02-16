@@ -286,6 +286,13 @@ pub fn match_at_level(
         let fill_qty =
             aggressor.remaining_qty.min(maker_qty);
 
+        debug_assert!(
+            maker_price
+                .checked_mul(fill_qty)
+                .is_some(),
+            "fill notional overflow"
+        );
+
         aggressor.remaining_qty -= fill_qty;
         let maker_slot = book.orders.get_mut(cursor);
         maker_slot.remaining_qty.0 -= fill_qty;

@@ -25,8 +25,9 @@ pub fn median(sorted: &[i64]) -> i64 {
         // Two sources: "median is avg" per test name
         // Even count > 2: "picks lower median"
         if n == 2 {
-            // avg rounded down (integer division)
-            (sorted[0] + sorted[1]) / 2
+            let a = sorted[0];
+            let b = sorted[1];
+            a / 2 + b / 2 + (a % 2 + b % 2) / 2
         } else {
             sorted[n / 2 - 1]
         }
