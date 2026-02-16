@@ -1000,7 +1000,7 @@ def orders_page():
   <button class="bg-amber-900/40 text-amber-400
     px-3 py-1 rounded text-xs border border-amber-900
     hover:bg-amber-900 cursor-pointer"
-    hx-post="./api/orders/stress"
+    hx-post="./api/stress/run"
     hx-target="#order-result"
     hx-swap="innerHTML">Stress (100)</button>
   <button class="bg-slate-800 text-slate-400
@@ -1983,6 +1983,49 @@ SYMBOL_NAMES = {
     1: "BTC", 2: "ETH", 3: "SOL", 10: "PENGU",
 }
 
+# Symbol display config (for formatting WAL data)
+# tick_size=1, lot_size=1 in test env, but values may be large
+SYMBOL_CONFIG = {
+    1: {"price_decimals": 2, "qty_decimals": 8},    # BTC
+    2: {"price_decimals": 2, "qty_decimals": 6},    # ETH
+    3: {"price_decimals": 4, "qty_decimals": 4},    # SOL
+    10: {"price_decimals": 6, "qty_decimals": 2},   # PENGU
+}
+
+
+def format_price(raw_price, symbol_id):
+    """Format raw i64 price for display."""
+    if raw_price == 0:
+        return "0"
+    cfg = SYMBOL_CONFIG.get(symbol_id, {"price_decimals": 2})
+    decimals = cfg["price_decimals"]
+    # For tick_size=1, display as-is with decimal separator
+    if decimals == 0:
+        return str(raw_price)
+    # Add decimal point
+    sign = "-" if raw_price < 0 else ""
+    abs_val = abs(raw_price)
+    scale = 10 ** decimals
+    whole = abs_val // scale
+    frac = abs_val % scale
+    return f"{sign}{whole}.{frac:0{decimals}d}".rstrip('0').rstrip('.')
+
+
+def format_qty(raw_qty, symbol_id):
+    """Format raw i64 qty for display."""
+    if raw_qty == 0:
+        return "0"
+    cfg = SYMBOL_CONFIG.get(symbol_id, {"qty_decimals": 2})
+    decimals = cfg["qty_decimals"]
+    if decimals == 0:
+        return str(raw_qty)
+    sign = "-" if raw_qty < 0 else ""
+    abs_val = abs(raw_qty)
+    scale = 10 ** decimals
+    whole = abs_val // scale
+    frac = abs_val % scale
+    return f"{sign}{whole}.{frac:0{decimals}d}".rstrip('0').rstrip('.')
+
 
 def render_book_ladder(symbol_id, bbo):
     """Render orderbook ladder from BBO data."""
@@ -2033,16 +2076,21 @@ def render_book_stats(symbols):
     rows = []
     for sid, bbo in sorted(symbols.items()):
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
-        spread = bbo["ask_px"] - bbo["bid_px"] if (
-            bbo["ask_px"] > 0 and bbo["bid_px"] > 0
+        bid_raw = bbo["bid_px"]
+        ask_raw = bbo["ask_px"]
+        spread_raw = ask_raw - bid_raw if (
+            ask_raw > 0 and bid_raw > 0
         ) else 0
+        bid_fmt = format_price(bid_raw, sid)
+        ask_fmt = format_price(ask_raw, sid)
+        spread_fmt = format_price(spread_raw, sid) if spread_raw > 0 else "0"
         rows.append(
             f'<tr><td>{sym}</td>'
             f'<td class="text-right font-mono">'
-            f'{bbo["bid_px"]}</td>'
+            f'{bid_fmt}</td>'
             f'<td class="text-right font-mono">'
-            f'{bbo["ask_px"]}</td>'
-            f'<td class="text-right">{spread}</td>'
+            f'{ask_fmt}</td>'
+            f'<td class="text-right">{spread_fmt}</td>'
             f'<td class="text-right">'
             f'{bbo["bid_count"]+bbo["ask_count"]}</td>'
             f'</tr>')
@@ -2067,18 +2115,20 @@ def render_live_fills(fills):
             'no fills yet</span>')
     rows = []
     for f in fills[:20]:
-        sym = SYMBOL_NAMES.get(
-            f["symbol_id"], f"sym-{f['symbol_id']}")
+        sid = f["symbol_id"]
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
         side = "buy" if f["taker_side"] == 0 else "sell"
         color = "emerald" if side == "buy" else "red"
+        price_fmt = format_price(f["price"], sid)
+        qty_fmt = format_qty(f["qty"], sid)
         rows.append(
             f'<tr class="text-{color}-400">'
             f'<td>{sym}</td>'
             f'<td>{side}</td>'
             f'<td class="text-right font-mono">'
-            f'{f["price"]}</td>'
+            f'{price_fmt}</td>'
             f'<td class="text-right font-mono">'
-            f'{f["qty"]}</td>'
+            f'{qty_fmt}</td>'
             f'<td class="text-slate-500">'
             f'{f["seq"]}</td></tr>')
     return f"""

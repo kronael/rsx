@@ -163,7 +163,7 @@ Submits 5 random orders (random symbol/side/price/qty).
 ### Submit Stress Orders
 
 ```
-POST /api/orders/stress
+POST /api/stress/run
 ```
 
 Submits 100 orders rapidly (no delay). Use to test backpressure.

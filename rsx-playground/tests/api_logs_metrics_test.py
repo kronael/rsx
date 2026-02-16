@@ -390,7 +390,8 @@ def test_metrics_update_with_process_changes(client):
     data1 = resp1.json()
 
     import server
-    proc = server.AsyncMock()
+    from unittest.mock import AsyncMock
+    proc = AsyncMock()
     proc.pid = 99999
     proc.returncode = None
     server.managed["new-proc"] = {
