@@ -5,8 +5,8 @@ Technical posts from building a perpetual futures exchange in Rust.
 ## Overview
 
 RSX is a spec-first exchange: matching engine, risk engine, gateway,
-market data, and WAL-based recovery. 960 tests, 34k LOC, <50us
-end-to-end latency target.
+market data, and WAL-based recovery. 813 Rust tests + 156 Playwright
+tests, ~35k LOC, <50us end-to-end latency target.
 
 These posts document the engineering decisions, bugs, and lessons
 learned.
@@ -148,6 +148,14 @@ Single-threaded, pinned core, bare busy-spin. Pre-allocated everything.
 Cache-line aligned structs. Fixed-point math. No heap on hot path.
 180ns insert, 120ns per fill, 90ns cancel.
 
+## Dev Tooling
+
+**[The Dev Dashboard That Replaced Six Terminals](19-playground-dashboard.md)**
+
+HTMX + FastAPI dev dashboard. Two Python files, zero JavaScript,
+10 screens, 156 Playwright tests. Observe, act, verify -- all from
+one browser tab.
+
 ## Topics Covered
 
 - Ultra-low-latency design (<50us end-to-end, 100ns matching)
@@ -164,6 +172,7 @@ Cache-line aligned structs. Fixed-point math. No heap on hot path.
 - Wire protocols (raw structs, no serialization layer)
 - Backpressure strategies (stall > drop)
 - AI-assisted code review (parallel agent audits)
+- Dev dashboards (HTMX, zero build step, Playwright testing)
 
 ## Reading Order
 
