@@ -1,0 +1,6 @@
+- verified playground server starts on port 49171 and healthz endpoint returns ok
+- tested all 12 page routes (/, /overview, /topology, /book, /risk, /wal, /logs, /control, /faults, /verify, /orders, /stress) return HTTP 200
+- tested all 37 HTMX partials and 7 API endpoints return HTTP 200
+- started/stopped all 5 RSX processes (me-pengu, risk-0, mark, gw-0, marketdata) via API, WAL dirs created
+- tested batch orders, random orders, test order submission, verify endpoint, WAL verify
+- trade UI loads with JS/CSS assets (200), docs page works
