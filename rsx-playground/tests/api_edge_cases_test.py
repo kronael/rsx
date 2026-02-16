@@ -1368,3 +1368,69 @@ def test_json_serialization_performance(client):
 
     assert resp.status_code == 200
     assert elapsed < 0.5
+
+
+# ── Destructive Endpoint Guards ───────────────────────────
+
+
+def test_all_start_without_confirm_returns_400(client):
+    """POST /api/processes/all/start without x-confirm returns 400."""
+    resp = client.post("/api/processes/all/start")
+    assert resp.status_code == 400
+    data = resp.json()
+    assert "error" in data
+    assert "destructive" in data["error"].lower()
+
+
+def test_all_stop_without_confirm_returns_400(client):
+    """POST /api/processes/all/stop without x-confirm returns 400."""
+    resp = client.post("/api/processes/all/stop")
+    assert resp.status_code == 400
+    data = resp.json()
+    assert "error" in data
+
+
+def test_scenario_switch_without_confirm_returns_400(client):
+    """POST /api/scenario/switch without x-confirm returns 400."""
+    resp = client.post(
+        "/api/scenario/switch",
+        data={"scenario-select": "minimal"},
+    )
+    assert resp.status_code == 400
+    data = resp.json()
+    assert "error" in data
+
+
+def test_confirm_yes_header_allows_destructive(client):
+    """x-confirm: yes header allows destructive endpoints."""
+    resp = client.post(
+        "/api/processes/all/stop",
+        headers={"x-confirm": "yes"},
+    )
+    assert resp.status_code == 200
+
+
+def test_confirm_query_param_allows_destructive(client):
+    """?confirm=yes query param allows destructive endpoints."""
+    resp = client.post(
+        "/api/processes/all/stop?confirm=yes",
+    )
+    assert resp.status_code == 200
+
+
+def test_hx_request_header_bypasses_confirm(client):
+    """hx-request header bypasses confirm guard (HTMX)."""
+    resp = client.post(
+        "/api/processes/all/stop",
+        headers={"hx-request": "true"},
+    )
+    assert resp.status_code == 200
+
+
+def test_confirm_no_value_returns_400(client):
+    """x-confirm with wrong value returns 400."""
+    resp = client.post(
+        "/api/processes/all/stop",
+        headers={"x-confirm": "no"},
+    )
+    assert resp.status_code == 400

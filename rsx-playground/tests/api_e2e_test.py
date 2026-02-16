@@ -461,3 +461,134 @@ def test_processes_endpoint_consistency(client):
 
     # Both should succeed and JSON should be list
     assert isinstance(json_procs, list)
+
+
+# ── Healthz Endpoint ───────────────────────────────────────
+
+
+def test_healthz_returns_json(client):
+    """GET /healthz returns JSON with status fields."""
+    resp = client.get("/healthz")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "port" in data
+    assert "processes_running" in data
+    assert "processes_total" in data
+    assert "postgres" in data
+
+
+def test_healthz_port_is_49171(client):
+    """GET /healthz reports port 49171."""
+    resp = client.get("/healthz")
+    data = resp.json()
+    assert data["port"] == 49171
+
+
+def test_healthz_process_counts_are_ints(client):
+    """GET /healthz process counts are integers."""
+    resp = client.get("/healthz")
+    data = resp.json()
+    assert isinstance(data["processes_running"], int)
+    assert isinstance(data["processes_total"], int)
+
+
+# ── Stress Page Route ──────────────────────────────────────
+
+
+def test_stress_page(client):
+    """GET /stress returns 200 HTML."""
+    resp = client.get("/stress")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+# ── Trade UI Page ──────────────────────────────────────────
+
+
+def test_trade_page_redirect(client):
+    """GET /trade redirects to /trade/."""
+    resp = client.get("/trade", follow_redirects=False)
+    assert resp.status_code in (301, 307)
+
+
+def test_trade_page_loads(client):
+    """GET /trade/ returns 200 HTML."""
+    resp = client.get("/trade/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_trade_page_has_script_tags(client):
+    """Trade page includes JS script tags."""
+    resp = client.get("/trade/")
+    assert resp.status_code == 200
+    text = resp.text
+    assert "<script" in text or ".js" in text
+
+
+# ── Docs Pages ─────────────────────────────────────────────
+
+
+def test_docs_redirect_to_readme(client):
+    """GET /docs serves /docs/README content."""
+    resp = client.get("/docs")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_readme_page(client):
+    """GET /docs/README returns 200 HTML."""
+    resp = client.get("/docs/README")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_api_page(client):
+    """GET /docs/api returns 200 HTML."""
+    resp = client.get("/docs/api")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_scenarios_page(client):
+    """GET /docs/scenarios returns 200 HTML."""
+    resp = client.get("/docs/scenarios")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_tabs_page(client):
+    """GET /docs/tabs returns 200 HTML."""
+    resp = client.get("/docs/tabs")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_troubleshooting_page(client):
+    """GET /docs/troubleshooting returns 200 HTML."""
+    resp = client.get("/docs/troubleshooting")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_index_page(client):
+    """GET /docs/index returns 200 HTML."""
+    resp = client.get("/docs/index")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_404_nonexistent(client):
+    """GET /docs/nonexistent returns 404."""
+    resp = client.get("/docs/nonexistent")
+    assert resp.status_code == 404
+
+
+def test_docs_has_sidebar(client):
+    """Docs pages include sidebar with navigation links."""
+    resp = client.get("/docs/README")
+    assert resp.status_code == 200
+    text = resp.text
+    assert '/docs/' in text
+    assert 'sidebar' in text.lower() or 'href="/docs/' in text
