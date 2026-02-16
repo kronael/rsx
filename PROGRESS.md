@@ -1,6 +1,6 @@
 # RSX Implementation Progress
 
-**Last audit: 2026-02-13. Refinement phase complete. E2E verification passed.**
+**Last audit: 2026-02-16. Numeric safety refinement: overflow guards on hot paths, saturating arithmetic, bounds checks.**
 
 ---
 
@@ -123,6 +123,43 @@ RecorderState, daily rotation, raw WAL append.
 
 ---
 
+## Numeric Safety Refinement (2026-02-16)
+
+**Overflow/underflow guards on hot-path calculations:**
+
+1. **rsx-book (compression.rs)**
+   - `saturating_mul(tick_size)` on zone boundary calc
+   - `.max(0)` before u32 cast (non-negative guarantee)
+   - `unsigned_abs()` overflow guard on distance calc
+
+2. **rsx-book (matching.rs)**
+   - `unsigned_abs()` overflow guard for reduce-only qty
+
+3. **rsx-gateway (rate_limit.rs)**
+   - `tokens_remaining()` returns i64 instead of f64
+   - `saturating_mul()` on refill amount (refill_rate * elapsed)
+   - `saturating_add()` with `min(capacity)` capping
+
+4. **rsx-risk (risk_utils.rs)**
+   - `i64::try_from()` instead of silent truncation on fee calc
+
+5. **rsx-risk (margin.rs)**
+   - `saturating_add()` / `saturating_sub()` on equity calcs
+   - Prevents silent wraparound on large position changes
+
+6. **rsx-risk (liquidation.rs)**
+   - `saturating_mul()` / `saturating_add()` on delay calcs
+
+7. **rsx-risk (shard.rs)**
+   - `try_from()` overflow guards on position/margin ops
+   - `saturating_add()` on per-user margin accum
+   - Bounds check on mark_prices array indexing
+
+**Impact:** All non-zero-sum operations now guard against silent overflow.
+Preserves i64 fixed-point convention (no floats per CLAUDE.md).
+
+---
+
 ## Test Reliability Improvements (2026-02-12)
 
 ### Rust Test Hardening
@@ -215,4 +252,5 @@ Post-MVP specs (not in v1 scope):
 - All Playground tests: polling over sleeps, proper teardown
 - Test suite CI-ready (reproducible, no flakiness)
 
-**Last Updated:** 2026-02-12
+**Last Updated:** 2026-02-16
+**Latest phase:** Numeric safety refinement (overflow guards, saturating arithmetic, bounds checks)

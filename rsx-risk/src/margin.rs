@@ -64,9 +64,11 @@ impl PortfolioMargin {
                 i64::try_from(mm_calc).unwrap_or(i64::MAX)
             );
         }
-        let equity = account.collateral + upnl;
-        let available =
-            equity - im - account.frozen_margin;
+        let equity =
+            account.collateral.saturating_add(upnl);
+        let available = equity
+            .saturating_sub(im)
+            .saturating_sub(account.frozen_margin);
         MarginState {
             equity,
             unrealized_pnl: upnl,

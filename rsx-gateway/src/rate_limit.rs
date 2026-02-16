@@ -43,8 +43,8 @@ impl RateLimiter {
         self.last_refill = now;
     }
 
-    pub fn tokens_remaining(&self) -> f64 {
-        self.tokens as f64 / MICROS_PER_SEC as f64
+    pub fn tokens_remaining(&self) -> i64 {
+        self.tokens / MICROS_PER_SEC
     }
 
     pub fn advance_time_by(

@@ -7,5 +7,6 @@ pub fn calculate_fee(
 ) -> i64 {
     let notional = qty as i128 * price as i128;
     let fee_128 = notional * fee_bps as i128;
-    (fee_128.div_euclid(10_000)) as i64
+    let result = fee_128.div_euclid(10_000);
+    i64::try_from(result).unwrap_or(i64::MAX)
 }

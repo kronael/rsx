@@ -606,15 +606,18 @@ impl RiskShard {
             i64::try_from(price as i128 * qty as i128)
                 .unwrap_or(i64::MAX);
         let params = &self.margin.symbol_params[sid];
-        let order_im = (order_notional as i128
+        let im_128 = order_notional as i128
             * params.initial_margin_rate as i128
-            / 10_000) as i64;
+            / 10_000;
+        let order_im = i64::try_from(im_128)
+            .unwrap_or(i64::MAX);
         let order_fee = crate::risk_utils::calculate_fee(
             qty,
             price,
             self.taker_fee_bps[sid],
         );
-        let margin_needed = order_im + order_fee;
+        let margin_needed =
+            order_im.saturating_add(order_fee);
         let Some(acct) = self.accounts.get_mut(&user_id)
         else {
             warn!(
@@ -819,8 +822,9 @@ impl RiskShard {
         loss: &crate::liquidation::SocializedLoss,
         now_ns: u64,
     ) {
-        let loss_amount = (loss.qty as i128
-            * loss.price as i128) as i64;
+        let loss_amount =
+            i64::try_from(loss.qty as i128 * loss.price as i128)
+                .unwrap_or(i64::MAX);
 
         // Ensure insurance fund exists for symbol
         let fund = self
@@ -910,7 +914,14 @@ impl RiskShard {
                         .map(|p| p.net_qty())
                         .unwrap_or(0)
                 },
-                &|sid| mark_prices[sid as usize],
+                &|sid| {
+                    let idx = sid as usize;
+                    if idx < mark_prices.len() {
+                        mark_prices[idx]
+                    } else {
+                        0
+                    }
+                },
             )
         };
         for liq in &liq_orders {
