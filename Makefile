@@ -5,7 +5,8 @@
        play-orders play-nav play-api \
        api-unit api-integration api-stress \
        bench-webui help \
-       gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright
+       gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
+       shard-routing shard-htmx shard-control shard-trade shards
 
 # Default target - show help
 help:
@@ -106,6 +107,34 @@ gate-4-playwright: gate-3-api
 		play_orders.spec.ts \
 		play_trade.spec.ts
 	@echo "    PASS: Playwright suite green"
+
+# ── Playwright Domain Shards ────────────────────────────────────────
+# Each shard runs deterministically. play-shard.sh hashes failure
+# signatures and blocks re-runs when signature is unchanged and no
+# domain files changed (exit 2 = blocked, exit 1 = new failures).
+#
+# Usage: make shard-routing   (navigation+overview+topology, 29 tests)
+#        make shard-htmx      (book+risk+wal+logs+faults+verify, 83 tests)
+#        make shard-control   (control+orders, 35 tests)
+#        make shard-trade     (trade UI SPA, 67 tests)
+#        make shards          (all 4 shards in order)
+
+SHARD := rsx-playground/tests/play-shard.sh
+
+shard-routing:
+	@bash $(SHARD) routing
+
+shard-htmx:
+	@bash $(SHARD) htmx-partials
+
+shard-control:
+	@bash $(SHARD) process-control
+
+shard-trade:
+	@bash $(SHARD) trade-ui
+
+shards: shard-routing shard-htmx shard-control shard-trade
+	@echo "==> All shards passed."
 
 # Type check only (fastest feedback, no codegen)
 check:
