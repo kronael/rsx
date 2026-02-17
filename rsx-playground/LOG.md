@@ -21,3 +21,5 @@
 - Add no-retry-storm policy to play-shard.sh: cap retries at MAX_RETRIES=3 per sig via .count file; domain change required AND cap not exceeded to requeue; new sig resets counter
 - Add shard contradiction linter to acceptance-bundle.py: check_shard_contradictions() rejects snapshots where spec title appears in both DONE (ok=true) and FAIL sets; exits 3 on contradiction
 - E2E matrix PASS: 6/6 steps green (startup/routing/htmx-partials/proxy/spa-assets/order-path), 806 tests; fixed proxy 502 tests with allow_5xx marker + WS mock, fixed stress tests with allow_5xx
+- Add supersession logic: acceptance-bundle.py auto-closes prior .sig/.count on shard pass (supersede_shard); report_diff.py emits superseded[] = recovered tests with closed-entry log lines
+- Publish acceptance proof block in PROGRESS.md: commit 27f63c1, gates 1-3 PASS (806/806 API), gate-4 PEND (Playwright shards require Rust processes)
