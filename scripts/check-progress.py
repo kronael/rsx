@@ -22,6 +22,11 @@ REPORT_FILE = (
     Path(__file__).parent.parent / "rsx-playground" / "tmp"
     / "gate-3-report.json"
 )
+PLAY_ARTIFACT_DIR = (
+    Path(__file__).parent.parent / "rsx-playground" / "tmp"
+    / "play-artifacts"
+)
+PLAY_SHARDS = ["routing", "htmx-partials", "process-control", "trade-ui"]
 
 # Canonical Playwright test count — denominator must equal this.
 # Change only when the Playwright suite itself changes.
@@ -105,6 +110,59 @@ def lint_report(path: Path) -> None:
     )
 
 
+def lint_playwright_artifacts(completed: int) -> None:
+    """Cross-validate Playwright shard artifacts vs PROGRESS.md completed.
+
+    When shard artifacts exist, the total passing count across all shards
+    must equal the PROGRESS.md completed count.  Skips silently when no
+    artifacts are present (shards not yet run).
+    """
+    total_passed = 0
+    total_failed = 0
+    shards_present: list[str] = []
+
+    for shard in PLAY_SHARDS:
+        report_file = PLAY_ARTIFACT_DIR / shard / "report.json"
+        if not report_file.exists():
+            continue
+        try:
+            data = json.loads(report_file.read_text())
+        except Exception as e:
+            fail(f"play-artifacts/{shard}/report.json parse error: {e}")
+        stats = data.get("stats", {})
+        total_passed += stats.get("expected", 0)
+        total_failed += stats.get("unexpected", 0)
+        shards_present.append(shard)
+
+    if not shards_present:
+        print("playwright artifacts: not yet run (skip cross-validate)")
+        return
+
+    total_tests = total_passed + total_failed
+
+    # Ensure total from artifacts == CANONICAL_TOTAL
+    if total_tests != CANONICAL_TOTAL:
+        fail(
+            f"playwright artifacts total ({total_tests}) "
+            f"!= canonical total ({CANONICAL_TOTAL}); "
+            f"shards present: {shards_present}"
+        )
+
+    # Ensure passed count matches PROGRESS.md completed
+    if total_passed != completed:
+        fail(
+            f"playwright artifacts passed ({total_passed}) "
+            f"!= PROGRESS.md completed ({completed}); "
+            f"update PROGRESS.md to match artifact counts"
+        )
+
+    print(
+        f"playwright artifacts ok: {total_passed}/{total_tests} passed "
+        f"({total_failed} failed), "
+        f"shards: {', '.join(shards_present)}"
+    )
+
+
 def main() -> None:
     text = PROGRESS_FILE.read_text()
 
@@ -173,6 +231,9 @@ def main() -> None:
 
     # Check 5: gate-3-report contradiction linter
     lint_report(REPORT_FILE)
+
+    # Check 6: playwright artifact cross-validation (when artifacts exist)
+    lint_playwright_artifacts(completed)
 
 
 if __name__ == "__main__":

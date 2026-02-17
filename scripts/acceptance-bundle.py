@@ -15,6 +15,7 @@ Exit codes:
   0  bundle written, all gates green
   1  bundle written, gates failing (failing IDs listed)
   2  gate-3-report.json missing or stale (>24h old) — bundle blocked
+  3  shard snapshot contradiction (DONE-FAIL split) — bundle rejected
 
 Usage:
   python3 scripts/acceptance-bundle.py
@@ -111,6 +112,55 @@ def gate3_status(report: dict | None) -> dict:
     }
 
 
+def check_shard_contradictions(shard: str, data: dict) -> list[str]:
+    """Return contradiction messages for a Playwright shard snapshot.
+
+    A contradiction is any test key (spec title) that appears in both
+    the DONE set (test.ok == True, counted as passed) and the FAIL set
+    (has at least one result with status == "failed") in the same
+    shard report snapshot.  Also flags cross-spec duplicate titles.
+
+    Exit-code meaning when called from main: causes sys.exit(3).
+    """
+    issues: list[str] = []
+    done_set: set[str] = set()   # spec titles counted as passed
+    fail_set: set[str] = set()   # spec titles with any failure result
+    seen_titles: dict[str, int] = {}  # title -> count (dup detection)
+
+    def walk(suites: list) -> None:
+        for suite in suites:
+            for spec in suite.get("specs", []):
+                title = spec.get("title", "<unknown>")
+                seen_titles[title] = seen_titles.get(title, 0) + 1
+                for test in spec.get("tests", []):
+                    if test.get("ok", False):
+                        done_set.add(title)
+                    if any(
+                        r.get("status") == "failed"
+                        for r in test.get("results", [])
+                    ):
+                        fail_set.add(title)
+            walk(suite.get("suites", []))
+
+    walk(data.get("suites", []))
+
+    # DONE-FAIL contradiction: in both sets simultaneously
+    for title in sorted(done_set & fail_set):
+        issues.append(
+            f"DONE-FAIL [{shard}]: '{title}' is ok=true "
+            f"but has a failed result in same snapshot"
+        )
+
+    # Duplicate titles: same spec appears more than once
+    for title, count in sorted(seen_titles.items()):
+        if count > 1:
+            issues.append(
+                f"DUPE [{shard}]: '{title}' appears {count}x in snapshot"
+            )
+
+    return issues
+
+
 def gate4_status() -> dict:
     """Collect Playwright shard results from play-artifacts/<shard>/report.json."""
     shards = ["routing", "htmx-partials", "process-control", "trade-ui"]
@@ -118,6 +168,7 @@ def gate4_status() -> dict:
     total_fail = 0
     shard_results = {}
     failing_ids: list[str] = []
+    contradictions: list[str] = []
 
     for shard in shards:
         report_file = PLAY_ARTIFACT_DIR / shard / "report.json"
@@ -131,6 +182,11 @@ def gate4_status() -> dict:
         except Exception:
             shard_results[shard] = {"status": "parse-error", "passed": 0, "failed": 0}
             continue
+
+        # Contradiction linter: reject split-outcome snapshots
+        issues = check_shard_contradictions(shard, data)
+        if issues:
+            contradictions.extend(issues)
 
         stats = data.get("stats", {})
         unexpected = stats.get("unexpected", 0)
@@ -159,6 +215,16 @@ def gate4_status() -> dict:
         }
         total_pass += expected
         total_fail += unexpected
+
+    if contradictions:
+        print(
+            f"[acceptance-bundle] CONTRADICTION: shard snapshot rejected "
+            f"({len(contradictions)} issue(s))",
+            file=sys.stderr,
+        )
+        for msg in contradictions:
+            print(f"  {msg}", file=sys.stderr)
+        sys.exit(3)
 
     # Hard release gate: must have exactly PLAYWRIGHT_CANONICAL passing tests
     canonical_ok = total_pass == PLAYWRIGHT_CANONICAL and total_fail == 0

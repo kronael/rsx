@@ -227,6 +227,7 @@ def test_random_orders_have_variety(client, clean_orders):
     assert len(prices) >= 2
 
 
+@pytest.mark.allow_5xx
 def test_stress_orders_submit_100(client, clean_orders):
     """POST /api/stress/run submits 100 orders (or 502 when gateway unavailable)."""
     resp = client.post("/api/stress/run")
@@ -590,6 +591,7 @@ def test_stress_with_cancellations(client, clean_orders):
     assert len(cancelled) > 0
 
 
+@pytest.mark.allow_5xx
 def test_stress_api_orders_stress_endpoint(client, clean_orders):
     """POST /api/stress/run endpoint (502 when gateway unavailable)."""
     resp = client.post("/api/stress/run")
@@ -1143,6 +1145,7 @@ def test_random_orders_have_unique_cids(client, clean_orders):
     assert len(cids) == len(set(cids))
 
 
+@pytest.mark.allow_5xx
 def test_stress_orders_have_unique_cids(client, clean_orders):
     """Stress orders have unique CIDs."""
     client.post("/api/stress/run")
@@ -1361,6 +1364,7 @@ def test_batch_submission_latency(client, clean_orders):
     assert elapsed < 2.0
 
 
+@pytest.mark.allow_5xx
 def test_stress_submission_latency(client, clean_orders):
     """Stress submission completes within timeout."""
     start = time.time()

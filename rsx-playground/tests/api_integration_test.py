@@ -231,6 +231,7 @@ def test_submit_random_orders(client):
     assert "5 random orders" in resp.text
 
 
+@pytest.mark.allow_5xx
 def test_submit_stress_orders(client):
     """Submit stress test orders."""
     resp = client.post("/api/stress/run")
@@ -804,6 +805,7 @@ def test_verify_complete_integration(
 # ── Multi-Component Stress (15) ───────────────────────────
 
 
+@pytest.mark.allow_5xx
 def test_high_order_throughput(client):
     """High order throughput."""
     for _ in range(10):

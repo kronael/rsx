@@ -1,240 +1,468 @@
 # PROGRESS
 
-updated: Feb 16 18:48:24  
+updated: Feb 17 15:02:21  
 phase: executing
 
 ```
-[███░░░░░░░░░░░░░░░░░░░░░░░░░░░] 12%  3/24
+[██████░░░░░░░░░░░░░░░░░░░░░░░░] 23%  52/228
 ```
 
 | | count |
 |---|---|
-| completed | 3 |
-| running | 0 |
+| completed | 52 |
+| running | 1 |
 | pending | 0 |
-| failed | 21 |
+| failed | 175 |
+
+## workers
+
+- w1: Run one clean live E2E matrix across all 13 pages with Rust processes up; emit failures by flow step (startup, routing, HTMX partials, proxy, SPA assets, order path) with reproducible test IDs.
 
 ## log
 
-- `18:45:06` done: Test all 30+ HTMX partials return HTTP 200
-- `18:45:14` done: Verify server starts and healthz endpoint works
-- `18:46:02` retry: Test all 11 page routes return HTTP 200
-- `18:46:02` retry: Fix WAL data visibility in UI endpoints
-- `18:46:02` retry: Build RSX binaries and verify existence
-- `18:46:02` retry: Start all 5 RSX processes via API
-- `18:46:02` retry: Verify process logs and status table
-- `18:46:02` retry: Test gateway health and REST API endpoints
-- `18:46:02` retry: Verify orders appear in recent-orders endpoint
-- `18:46:02` retry: Verify WAL timeline shows events after orders
-- `18:46:02` retry: Test book endpoints
-- `18:46:02` retry: Test public WebSocket connection
-- `18:46:02` retry: Test private WebSocket connection
-- `18:46:02` retry: Test trade UI page loads with assets
-- `18:46:02` retry: Test trade UI with gateway running
-- `18:46:02` retry: Test trade UI graceful degradation without gateway
-- `18:46:02` retry: Test risk page endpoints
-- `18:46:02` retry: Fix stress test error handling when gateway down
-- `18:46:02` retry: Test stress test with gateway running
-- `18:46:02` retry: Test verify and invariants endpoint
-- `18:46:02` retry: Test fault injection endpoints
-- `18:46:02` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:07` retry: Test all 11 page routes return HTTP 200
-- `18:46:07` retry: Fix WAL data visibility in UI endpoints
-- `18:46:07` retry: Build RSX binaries and verify existence
-- `18:46:07` retry: Start all 5 RSX processes via API
-- `18:46:07` retry: Verify process logs and status table
-- `18:46:07` retry: Test gateway health and REST API endpoints
-- `18:46:07` retry: Verify orders appear in recent-orders endpoint
-- `18:46:07` retry: Verify WAL timeline shows events after orders
-- `18:46:07` retry: Test book endpoints
-- `18:46:07` retry: Test public WebSocket connection
-- `18:46:07` retry: Test private WebSocket connection
-- `18:46:07` retry: Test trade UI page loads with assets
-- `18:46:07` retry: Test trade UI with gateway running
-- `18:46:07` retry: Test trade UI graceful degradation without gateway
-- `18:46:07` retry: Test risk page endpoints
-- `18:46:07` retry: Fix stress test error handling when gateway down
-- `18:46:07` retry: Test stress test with gateway running
-- `18:46:07` retry: Test verify and invariants endpoint
-- `18:46:12` retry: Test all 11 page routes return HTTP 200
-- `18:46:12` retry: Fix WAL data visibility in UI endpoints
-- `18:46:12` retry: Build RSX binaries and verify existence
-- `18:46:12` retry: Start all 5 RSX processes via API
-- `18:46:12` retry: Verify process logs and status table
-- `18:46:12` retry: Test gateway health and REST API endpoints
-- `18:46:12` retry: Verify orders appear in recent-orders endpoint
-- `18:46:12` retry: Verify WAL timeline shows events after orders
-- `18:46:12` retry: Test book endpoints
-- `18:46:12` retry: Test public WebSocket connection
-- `18:46:12` retry: Test private WebSocket connection
-- `18:46:12` retry: Test trade UI page loads with assets
-- `18:46:12` retry: Test trade UI with gateway running
-- `18:46:12` retry: Test trade UI graceful degradation without gateway
-- `18:46:12` retry: Test risk page endpoints
-- `18:46:12` retry: Fix stress test error handling when gateway down
-- `18:46:12` retry: Test stress test with gateway running
-- `18:46:12` retry: Test fault injection endpoints
-- `18:46:12` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:17` retry: Test all 11 page routes return HTTP 200
-- `18:46:17` retry: Fix WAL data visibility in UI endpoints
-- `18:46:17` retry: Build RSX binaries and verify existence
-- `18:46:17` retry: Start all 5 RSX processes via API
-- `18:46:17` retry: Verify process logs and status table
-- `18:46:17` retry: Test gateway health and REST API endpoints
-- `18:46:17` retry: Test order submission via playground API
-- `18:46:17` retry: Test batch order submission
-- `18:46:17` retry: Verify orders appear in recent-orders endpoint
-- `18:46:17` retry: Verify WAL timeline shows events after orders
-- `18:46:17` retry: Test book endpoints
-- `18:46:17` retry: Test private WebSocket connection
-- `18:46:17` retry: Test trade UI with gateway running
-- `18:46:17` retry: Test trade UI graceful degradation without gateway
-- `18:46:17` retry: Test risk page endpoints
-- `18:46:17` retry: Fix stress test error handling when gateway down
-- `18:46:17` retry: Test stress test with gateway running
-- `18:46:17` retry: Test verify and invariants endpoint
-- `18:46:17` retry: Test fault injection endpoints
-- `18:46:17` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:22` retry: Test all 11 page routes return HTTP 200
-- `18:46:22` retry: Fix WAL data visibility in UI endpoints
-- `18:46:22` retry: Build RSX binaries and verify existence
-- `18:46:22` retry: Start all 5 RSX processes via API
-- `18:46:22` retry: Verify process logs and status table
-- `18:46:22` retry: Test gateway health and REST API endpoints
-- `18:46:22` retry: Test order submission via playground API
-- `18:46:22` retry: Test batch order submission
-- `18:46:22` retry: Verify orders appear in recent-orders endpoint
-- `18:46:22` retry: Verify WAL timeline shows events after orders
-- `18:46:22` retry: Test book endpoints
-- `18:46:22` retry: Test private WebSocket connection
-- `18:46:22` retry: Test trade UI with gateway running
-- `18:46:22` retry: Test trade UI graceful degradation without gateway
-- `18:46:22` retry: Test risk page endpoints
-- `18:46:22` retry: Fix stress test error handling when gateway down
-- `18:46:22` retry: Test stress test with gateway running
-- `18:46:22` retry: Test verify and invariants endpoint
-- `18:46:22` retry: Test fault injection endpoints
-- `18:46:22` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:27` retry: Test all 11 page routes return HTTP 200
-- `18:46:27` retry: Fix WAL data visibility in UI endpoints
-- `18:46:27` retry: Build RSX binaries and verify existence
-- `18:46:27` retry: Start all 5 RSX processes via API
-- `18:46:27` retry: Verify process logs and status table
-- `18:46:27` retry: Test gateway health and REST API endpoints
-- `18:46:27` retry: Test order submission via playground API
-- `18:46:27` retry: Test batch order submission
-- `18:46:27` retry: Verify orders appear in recent-orders endpoint
-- `18:46:27` retry: Verify WAL timeline shows events after orders
-- `18:46:27` retry: Test book endpoints
-- `18:46:27` retry: Test public WebSocket connection
-- `18:46:27` retry: Test private WebSocket connection
-- `18:46:27` retry: Test trade UI page loads with assets
-- `18:46:27` retry: Test trade UI with gateway running
-- `18:46:27` retry: Test trade UI graceful degradation without gateway
-- `18:46:27` retry: Test risk page endpoints
-- `18:46:27` retry: Fix stress test error handling when gateway down
-- `18:46:27` retry: Test stress test with gateway running
-- `18:46:27` retry: Test verify and invariants endpoint
-- `18:46:27` retry: Test fault injection endpoints
-- `18:46:27` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:32` retry: Test all 11 page routes return HTTP 200
-- `18:46:32` retry: Fix WAL data visibility in UI endpoints
-- `18:46:32` retry: Verify process logs and status table
-- `18:46:32` retry: Test gateway health and REST API endpoints
-- `18:46:32` retry: Test order submission via playground API
-- `18:46:32` retry: Test batch order submission
-- `18:46:32` retry: Verify orders appear in recent-orders endpoint
-- `18:46:32` retry: Verify WAL timeline shows events after orders
-- `18:46:32` retry: Test book endpoints
-- `18:46:32` retry: Test public WebSocket connection
-- `18:46:32` retry: Test private WebSocket connection
-- `18:46:32` retry: Test trade UI page loads with assets
-- `18:46:32` retry: Test trade UI with gateway running
-- `18:46:32` retry: Test trade UI graceful degradation without gateway
-- `18:46:32` retry: Test risk page endpoints
-- `18:46:32` retry: Fix stress test error handling when gateway down
-- `18:46:32` retry: Test stress test with gateway running
-- `18:46:32` retry: Test verify and invariants endpoint
-- `18:46:32` retry: Test fault injection endpoints
-- `18:46:32` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:37` retry: Test all 11 page routes return HTTP 200
-- `18:46:37` retry: Fix WAL data visibility in UI endpoints
-- `18:46:37` retry: Verify process logs and status table
-- `18:46:37` retry: Test gateway health and REST API endpoints
-- `18:46:37` retry: Test order submission via playground API
-- `18:46:37` retry: Test batch order submission
-- `18:46:37` retry: Verify orders appear in recent-orders endpoint
-- `18:46:37` retry: Verify WAL timeline shows events after orders
-- `18:46:37` retry: Test book endpoints
-- `18:46:37` retry: Test public WebSocket connection
-- `18:46:37` retry: Test private WebSocket connection
-- `18:46:37` retry: Test trade UI page loads with assets
-- `18:46:37` retry: Test trade UI with gateway running
-- `18:46:37` retry: Test trade UI graceful degradation without gateway
-- `18:46:37` retry: Test risk page endpoints
-- `18:46:37` retry: Fix stress test error handling when gateway down
-- `18:46:37` retry: Test stress test with gateway running
-- `18:46:37` retry: Test verify and invariants endpoint
-- `18:46:37` retry: Test fault injection endpoints
-- `18:46:37` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:42` retry: Test all 11 page routes return HTTP 200
-- `18:46:42` retry: Fix WAL data visibility in UI endpoints
-- `18:46:42` retry: Build RSX binaries and verify existence
-- `18:46:42` retry: Start all 5 RSX processes via API
-- `18:46:42` retry: Verify process logs and status table
-- `18:46:42` retry: Test gateway health and REST API endpoints
-- `18:46:42` retry: Test order submission via playground API
-- `18:46:42` retry: Test batch order submission
-- `18:46:42` retry: Verify orders appear in recent-orders endpoint
-- `18:46:42` retry: Verify WAL timeline shows events after orders
-- `18:46:42` retry: Test book endpoints
-- `18:46:42` retry: Test public WebSocket connection
-- `18:46:42` retry: Test private WebSocket connection
-- `18:46:42` retry: Test trade UI page loads with assets
-- `18:46:42` retry: Test trade UI with gateway running
-- `18:46:42` retry: Test trade UI graceful degradation without gateway
-- `18:46:42` retry: Test risk page endpoints
-- `18:46:42` retry: Fix stress test error handling when gateway down
-- `18:46:42` retry: Test stress test with gateway running
-- `18:46:42` retry: Test verify and invariants endpoint
-- `18:46:42` retry: Test fault injection endpoints
-- `18:46:42` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:47` retry: Build RSX binaries and verify existence
-- `18:46:47` retry: Start all 5 RSX processes via API
-- `18:46:47` retry: Verify process logs and status table
-- `18:46:47` retry: Test gateway health and REST API endpoints
-- `18:46:47` retry: Test order submission via playground API
-- `18:46:47` retry: Test batch order submission
-- `18:46:47` retry: Verify orders appear in recent-orders endpoint
-- `18:46:47` retry: Verify WAL timeline shows events after orders
-- `18:46:47` retry: Test book endpoints
-- `18:46:47` retry: Test public WebSocket connection
-- `18:46:47` retry: Test private WebSocket connection
-- `18:46:47` retry: Test trade UI page loads with assets
-- `18:46:47` retry: Test trade UI with gateway running
-- `18:46:47` retry: Test trade UI graceful degradation without gateway
-- `18:46:47` retry: Test risk page endpoints
-- `18:46:47` retry: Fix stress test error handling when gateway down
-- `18:46:52` retry: Build RSX binaries and verify existence
-- `18:46:52` retry: Start all 5 RSX processes via API
-- `18:46:52` retry: Test order submission via playground API
-- `18:46:52` retry: Test batch order submission
-- `18:46:52` retry: Test public WebSocket connection
-- `18:46:52` retry: Test trade UI page loads with assets
-- `18:46:52` retry: Test stress test with gateway running
-- `18:46:52` retry: Test verify and invariants endpoint
-- `18:46:52` retry: Test fault injection endpoints
-- `18:46:52` retry: Run Playwright tests and fix failures to 223/223
-- `18:46:57` retry: Build RSX binaries and verify existence
-- `18:46:57` retry: Start all 5 RSX processes via API
-- `18:46:57` retry: Test order submission via playground API
-- `18:46:57` retry: Test batch order submission
-- `18:46:57` retry: Test public WebSocket connection
-- `18:46:57` retry: Test trade UI page loads with assets
-- `18:46:57` retry: Test verify and invariants endpoint
-- `18:46:57` retry: Test fault injection endpoints
-- `18:46:57` retry: Run Playwright tests and fix failures to 223/223
-- `18:47:02` retry: Test order submission via playground API
-- `18:47:02` retry: Test batch order submission
-- `18:47:09` done: Test all 11 page routes return HTTP 200
-- `18:48:19` retry: Fix WAL data visibility in UI endpoints
+- `13:46:54` retry: Audit server.py and pages.py: map all routes and /
+- `13:46:54` retry: Fix server startup issues: resolve import errors, 
+- `13:46:54` retry: Fix all page routes (/, /overview, /topology, /boo
+- `13:46:54` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `13:46:54` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `13:46:54` retry: Fix process management API: correct binary paths, 
+- `13:46:54` retry: Fix order submission endpoints (/api/orders/test, 
+- `13:46:54` retry: Fix stress test endpoint (/api/stress/run) to retu
+- `13:49:24` fail (max turns): Fix market maker API (/api/maker/start, /api/maker/stop, /ap
+- `13:49:24` retry: Fix market maker API (/api/maker/start, /api/maker
+- `13:49:29` retry: Fix risk page partials (position-heatmap, margin-l
+- `13:49:29` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `13:49:29` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `13:49:29` retry: Audit and remove all absolute href="/" and src="/"
+- `13:49:39` retry: Build rsx-webui dist: run vite build with base="./
+- `13:49:39` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `13:49:39` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `13:49:39` retry: Run full Playwright test suite (npx playwright tes
+- `13:50:04` retry: Audit server.py and pages.py: map all routes and /
+- `13:50:04` retry: Fix server startup issues: resolve import errors, 
+- `13:50:04` retry: Fix all page routes (/, /overview, /topology, /boo
+- `13:50:04` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `13:50:39` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `13:50:39` retry: Fix process management API: correct binary paths, 
+- `13:50:39` retry: Fix order submission endpoints (/api/orders/test, 
+- `13:50:39` retry: Fix stress test endpoint (/api/stress/run) to retu
+- `13:50:39` retry: Fix risk page partials (position-heatmap, margin-l
+- `13:50:39` retry: Fix market maker API (/api/maker/start, /api/maker
+- `13:50:39` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `13:50:39` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `13:50:44` retry: Audit and remove all absolute href="/" and src="/"
+- `13:50:44` retry: Build rsx-webui dist: run vite build with base="./
+- `13:50:44` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `13:50:44` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `13:51:24` retry: Audit server.py and pages.py: map all routes and /
+- `13:51:24` retry: Fix server startup issues: resolve import errors, 
+- `13:51:24` retry: Fix all page routes (/, /overview, /topology, /boo
+- `13:51:24` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `13:51:24` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `13:51:24` retry: Fix process management API: correct binary paths, 
+- `13:51:24` retry: Fix order submission endpoints (/api/orders/test, 
+- `13:51:24` retry: Run full Playwright test suite (npx playwright tes
+- `13:52:19` retry: Fix stress test endpoint (/api/stress/run) to retu
+- `13:52:19` retry: Fix risk page partials (position-heatmap, margin-l
+- `13:52:19` retry: Fix market maker API (/api/maker/start, /api/maker
+- `13:52:19` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `13:52:19` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `13:52:19` retry: Audit and remove all absolute href="/" and src="/"
+- `13:52:19` retry: Build rsx-webui dist: run vite build with base="./
+- `13:52:19` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `13:52:55` retry: Audit server.py and pages.py: map all routes and /
+- `13:52:55` retry: Fix server startup issues: resolve import errors, 
+- `13:52:55` retry: Fix all page routes (/, /overview, /topology, /boo
+- `13:52:55` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `13:53:30` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `13:53:30` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `13:53:30` retry: Fix process management API: correct binary paths, 
+- `13:53:30` retry: Fix order submission endpoints (/api/orders/test, 
+- `13:54:20` retry: Fix stress test endpoint (/api/stress/run) to retu
+- `13:54:20` retry: Fix risk page partials (position-heatmap, margin-l
+- `13:54:20` retry: Fix market maker API (/api/maker/start, /api/maker
+- `13:54:20` retry: Run full Playwright test suite (npx playwright tes
+- `13:54:50` retry: Audit server.py and pages.py: map all routes and /
+- `13:54:50` retry: Fix server startup issues: resolve import errors, 
+- `13:54:50` retry: Fix all page routes (/, /overview, /topology, /boo
+- `13:54:50` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `13:54:50` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `13:54:50` retry: Audit and remove all absolute href="/" and src="/"
+- `13:54:50` retry: Build rsx-webui dist: run vite build with base="./
+- `13:54:50` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `13:55:05` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `13:55:05` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `13:55:05` retry: Fix process management API: correct binary paths, 
+- `13:55:05` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `13:56:09` done: Fix stress test endpoint (/api/stress/run) to return HTTP 50
+- `13:56:32` done: Fix market maker API (/api/maker/start, /api/maker/stop, /ap
+- `13:58:44` fail (max turns): Fix risk page partials (position-heatmap, margin-ladder, fun
+- `13:58:46` retry: Fix risk page partials (position-heatmap, margin-l
+- `13:58:51` done: Audit server.py and pages.py: map all routes and /x/* HTMX p
+- `14:00:04` done: Fix all page routes (/, /overview, /topology, /book, /risk, 
+- `14:00:09` fail (max turns): Fix order submission endpoints (/api/orders/test, /api/order
+- `14:00:28` retry: Fix order submission endpoints (/api/orders/test, 
+- `14:01:18` retry: Fix server startup issues: resolve import errors, 
+- `14:01:18` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `14:01:18` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `14:01:18` retry: Audit and remove all absolute href="/" and src="/"
+- `14:01:18` retry: Build rsx-webui dist: run vite build with base="./
+- `14:01:18` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `14:01:18` retry: Run full Playwright test suite (npx playwright tes
+- `14:01:23` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `14:01:23` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `14:01:23` retry: Fix process management API: correct binary paths, 
+- `14:01:23` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `14:01:33` retry: Fix server startup issues: resolve import errors, 
+- `14:01:33` retry: Fix order submission endpoints (/api/orders/test, 
+- `14:01:33` retry: Fix risk page partials (position-heatmap, margin-l
+- `14:01:33` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `14:01:33` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `14:01:33` retry: Audit and remove all absolute href="/" and src="/"
+- `14:01:33` retry: Build rsx-webui dist: run vite build with base="./
+- `14:01:33` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `14:01:53` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `14:01:53` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `14:01:53` retry: Fix process management API: correct binary paths, 
+- `14:01:53` retry: Run full Playwright test suite (npx playwright tes
+- `14:02:08` retry: Fix server startup issues: resolve import errors, 
+- `14:02:08` retry: Fix order submission endpoints (/api/orders/test, 
+- `14:02:08` retry: Fix risk page partials (position-heatmap, margin-l
+- `14:02:08` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `14:02:13` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `14:02:13` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `14:02:13` retry: Audit and remove all absolute href="/" and src="/"
+- `14:02:13` retry: Build rsx-webui dist: run vite build with base="./
+- `14:02:43` retry: Fix server startup issues: resolve import errors, 
+- `14:02:43` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `14:02:43` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `14:02:44` retry: Fix process management API: correct binary paths, 
+- `14:02:44` retry: Fix order submission endpoints (/api/orders/test, 
+- `14:02:44` retry: Fix risk page partials (position-heatmap, margin-l
+- `14:02:44` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `14:02:44` retry: Run full Playwright test suite (npx playwright tes
+- `14:02:54` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `14:02:54` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `14:02:54` retry: Audit and remove all absolute href="/" and src="/"
+- `14:02:54` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `14:03:09` retry: Fix server startup issues: resolve import errors, 
+- `14:03:09` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `14:03:09` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `14:03:09` retry: Build rsx-webui dist: run vite build with base="./
+- `14:04:04` retry: Fix process management API: correct binary paths, 
+- `14:04:04` retry: Fix order submission endpoints (/api/orders/test, 
+- `14:04:04` retry: Fix risk page partials (position-heatmap, margin-l
+- `14:04:04` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `14:04:04` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `14:04:04` retry: Audit and remove all absolute href="/" and src="/"
+- `14:04:04` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `14:04:04` retry: Run full Playwright test suite (npx playwright tes
+- `14:04:19` cascade: 7ef92696 -> 1 tasks
+- `14:04:19` retry: Fix all /x/* HTMX partial endpoints to return HTTP
+- `14:04:19` retry: Fix WAL partials (wal-status, wal-detail, wal-file
+- `14:04:19` retry: Fix process management API: correct binary paths, 
+- `14:04:19` retry: Fix order submission endpoints (/api/orders/test, 
+- `14:04:19` retry: Build rsx-webui dist: run vite build with base="./
+- `14:04:19` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `14:04:24` cascade: 7ef92696 -> 2 tasks
+- `14:04:29` cascade: 3dd7f796 -> 6 tasks
+- `14:04:29` cascade: db839678 -> 1 tasks
+- `14:04:39` cascade: 7ef92696 -> 1 tasks
+- `14:04:39` cascade: 3dd7f796 -> 1 tasks
+- `14:04:39` retry: Fix risk page partials (position-heatmap, margin-l
+- `14:04:39` retry: Fix verify endpoints (/api/verify/run, /x/verify, 
+- `14:04:39` retry: Fix fault injection endpoints (/x/faults-grid, /x/
+- `14:04:39` retry: Audit and remove all absolute href="/" and src="/"
+- `14:04:39` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `14:04:39` retry: Run full Playwright test suite (npx playwright tes
+- `14:04:44` cascade: 7ef92696 -> 1 tasks
+- `14:04:44` cascade: 3dd7f796 -> 4 tasks
+- `14:04:44` cascade: db839678 -> 1 tasks
+- `14:04:54` cascade: 7ef92696 -> 1 tasks
+- `14:04:54` retry: Build rsx-webui dist: run vite build with base="./
+- `14:04:54` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `14:04:59` cascade: 3dd7f796 -> 1 tasks
+- `14:04:59` retry: Fix REST proxy (/v1/* → http://localhost:8080/v1/*
+- `14:04:59` retry: Run full Playwright test suite (npx playwright tes
+- `14:05:04` cascade: 7ef92696 -> 1 tasks
+- `14:05:09` retry: Run Python API tests (rsx-playground/tests/api_*_t
+- `14:05:09` retry: Run full Playwright test suite (npx playwright tes
+- `14:05:14` cascade: 3dd7f796 -> 1 tasks
+- `14:05:52` +8 from refiner
+- `14:06:12` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:06:12` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:06:12` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:06:12` retry: Run Python API tests only after proxy/base-path fi
+- `14:06:27` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:06:27` retry: Repair orchestration logic: prevent duplicate retr
+- `14:06:27` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:06:27` retry: Define hard release gates in order: startup/import
+- `14:07:07` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:07:07` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:07:07` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:07:07` retry: Run Python API tests only after proxy/base-path fi
+- `14:07:17` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:07:17` retry: Repair orchestration logic: prevent duplicate retr
+- `14:07:17` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:07:17` retry: Define hard release gates in order: startup/import
+- `14:07:48` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:07:48` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:07:48` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:07:48` retry: Run Python API tests only after proxy/base-path fi
+- `14:08:01` done: Repair orchestration logic: prevent duplicate retry storms/c
+- `14:08:19` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:08:19` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:08:19` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:08:19` retry: Run Python API tests only after proxy/base-path fi
+- `14:08:19` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:08:19` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:08:19` retry: Define hard release gates in order: startup/import
+- `14:08:34` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:08:34` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:08:34` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:08:34` retry: Run Python API tests only after proxy/base-path fi
+- `14:08:44` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:08:44` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:08:44` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:08:44` retry: Define hard release gates in order: startup/import
+- `14:08:54` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:08:54` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:08:59` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:08:59` retry: Run Python API tests only after proxy/base-path fi
+- `14:10:04` retry: Fix rsx-webui build/base-path deterministically (V
+- `14:10:04` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:10:04` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:10:04` retry: Define hard release gates in order: startup/import
+- `14:10:25` done: Fix rsx-webui build/base-path deterministically (Vite base "
+- `14:10:49` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:10:49` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:10:49` retry: Run Python API tests only after proxy/base-path fi
+- `14:10:49` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:11:14` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:11:14` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:11:14` retry: Run Python API tests only after proxy/base-path fi
+- `14:11:14` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:11:14` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:11:14` retry: Define hard release gates in order: startup/import
+- `14:11:54` retry: Rework REST/WS proxy handlers with contract tests 
+- `14:11:54` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:11:54` retry: Run Python API tests only after proxy/base-path fi
+- `14:11:54` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:13:00` retry: Eliminate absolute href/src in server.py/pages.py 
+- `14:13:00` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:13:00` retry: Define hard release gates in order: startup/import
+- `14:13:15` retry: Run Python API tests only after proxy/base-path fi
+- `14:13:15` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:13:15` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:14:10` retry: Run Playwright in shards by domain (routing, HTMX 
+- `14:14:10` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:14:10` retry: Define hard release gates in order: startup/import
+- `14:14:25` retry: Fix PROGRESS accounting: align denominator to the 
+- `14:14:25` retry: Define hard release gates in order: startup/import
+- `14:14:40` retry: Define hard release gates in order: startup/import
+- `14:15:07` done: Define hard release gates in order: startup/imports -> routi
+- `14:16:18` +8 from refiner
+- `14:16:38` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:16:38` retry: Replace absolute URL generation with helper-based 
+- `14:16:38` retry: Run Python API suite only after proxy/base-path ga
+- `14:16:38` retry: Shard Playwright by domain with deterministic orde
+- `14:16:38` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:16:38` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:16:38` retry: Create a coverage matrix mapping each of the 223 P
+- `14:16:38` retry: Define strict DoD for each task: required tests, r
+- `14:16:53` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:16:53` retry: Replace absolute URL generation with helper-based 
+- `14:16:53` retry: Run Python API suite only after proxy/base-path ga
+- `14:16:53` retry: Shard Playwright by domain with deterministic orde
+- `14:16:53` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:16:53` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:16:53` retry: Create a coverage matrix mapping each of the 223 P
+- `14:16:53` retry: Define strict DoD for each task: required tests, r
+- `14:17:03` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:17:03` retry: Replace absolute URL generation with helper-based 
+- `14:17:03` retry: Run Python API suite only after proxy/base-path ga
+- `14:17:03` retry: Shard Playwright by domain with deterministic orde
+- `14:17:08` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:17:08` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:17:08` retry: Create a coverage matrix mapping each of the 223 P
+- `14:17:08` retry: Define strict DoD for each task: required tests, r
+- `14:17:18` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:17:18` retry: Replace absolute URL generation with helper-based 
+- `14:17:18` retry: Run Python API suite only after proxy/base-path ga
+- `14:17:18` retry: Shard Playwright by domain with deterministic orde
+- `14:17:18` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:17:18` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:17:18` retry: Create a coverage matrix mapping each of the 223 P
+- `14:17:18` retry: Define strict DoD for each task: required tests, r
+- `14:17:28` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:17:28` retry: Replace absolute URL generation with helper-based 
+- `14:17:28` retry: Run Python API suite only after proxy/base-path ga
+- `14:17:28` retry: Shard Playwright by domain with deterministic orde
+- `14:17:33` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:17:33` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:17:33` retry: Create a coverage matrix mapping each of the 223 P
+- `14:17:33` retry: Define strict DoD for each task: required tests, r
+- `14:17:38` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:17:38` retry: Replace absolute URL generation with helper-based 
+- `14:17:38` retry: Run Python API suite only after proxy/base-path ga
+- `14:17:38` retry: Shard Playwright by domain with deterministic orde
+- `14:17:43` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:17:43` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:17:43` retry: Create a coverage matrix mapping each of the 223 P
+- `14:17:43` retry: Define strict DoD for each task: required tests, r
+- `14:17:48` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:17:48` retry: Replace absolute URL generation with helper-based 
+- `14:17:53` retry: Run Python API suite only after proxy/base-path ga
+- `14:17:53` retry: Shard Playwright by domain with deterministic orde
+- `14:17:53` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:17:53` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:17:53` retry: Create a coverage matrix mapping each of the 223 P
+- `14:17:53` retry: Define strict DoD for each task: required tests, r
+- `14:18:00` done: Run Python API suite only after proxy/base-path gates pass; 
+- `14:18:21` retry: Rebuild REST/WS proxy using contract-first tests: 
+- `14:18:21` retry: Replace absolute URL generation with helper-based 
+- `14:18:21` retry: Shard Playwright by domain with deterministic orde
+- `14:18:21` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:18:21` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:18:21` retry: Create a coverage matrix mapping each of the 223 P
+- `14:18:21` retry: Define strict DoD for each task: required tests, r
+- `14:19:08` done: Rebuild REST/WS proxy using contract-first tests: freeze exp
+- `14:19:48` retry: Replace absolute URL generation with helper-based 
+- `14:19:48` retry: Shard Playwright by domain with deterministic orde
+- `14:19:48` retry: Fix PROGRESS accounting to acceptance truth: denom
+- `14:19:48` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:19:48` retry: Create a coverage matrix mapping each of the 223 P
+- `14:19:48` retry: Define strict DoD for each task: required tests, r
+- `14:21:42` done: Fix PROGRESS accounting to acceptance truth: denominator 223
+- `14:21:57` retry: Replace absolute URL generation with helper-based 
+- `14:21:57` retry: Shard Playwright by domain with deterministic orde
+- `14:21:57` retry: Add a machine-enforced gate runner (`startup/impor
+- `14:21:57` retry: Create a coverage matrix mapping each of the 223 P
+- `14:21:57` retry: Define strict DoD for each task: required tests, r
+- `14:22:26` done: Add a machine-enforced gate runner (`startup/imports -> rout
+- `14:22:34` done: Shard Playwright by domain with deterministic ordering and f
+- `14:23:18` done: Replace absolute URL generation with helper-based relative p
+- `14:24:26` done: Define strict DoD for each task: required tests, required lo
+- `14:25:23` done: Create a coverage matrix mapping each of the 223 Playwright 
+- `14:26:33` +8 from refiner
+- `14:27:28` retry: Split and complete REST proxy and WS upgrade as se
+- `14:27:28` retry: Replace absolute href/src via single URL helper, t
+- `14:27:28` retry: Run API tests only through gate runner; emit machi
+- `14:27:28` retry: Execute Playwright by deterministic domain shards 
+- `14:27:28` retry: Repair PROGRESS single-source accounting so header
+- `14:27:28` retry: Add a final acceptance artifact bundle: gate resul
+- `14:27:28` retry: Create a contradiction check that rejects reports 
+- `14:27:28` retry: Run one clean end-to-end flow test matrix across a
+- `14:27:48` retry: Split and complete REST proxy and WS upgrade as se
+- `14:27:48` retry: Replace absolute href/src via single URL helper, t
+- `14:27:48` retry: Run API tests only through gate runner; emit machi
+- `14:27:48` retry: Execute Playwright by deterministic domain shards 
+- `14:27:48` retry: Repair PROGRESS single-source accounting so header
+- `14:27:48` retry: Add a final acceptance artifact bundle: gate resul
+- `14:27:48` retry: Create a contradiction check that rejects reports 
+- `14:27:48` retry: Run one clean end-to-end flow test matrix across a
+- `14:27:58` retry: Split and complete REST proxy and WS upgrade as se
+- `14:27:58` retry: Replace absolute href/src via single URL helper, t
+- `14:27:58` retry: Run API tests only through gate runner; emit machi
+- `14:27:58` retry: Execute Playwright by deterministic domain shards 
+- `14:27:58` retry: Repair PROGRESS single-source accounting so header
+- `14:27:58` retry: Add a final acceptance artifact bundle: gate resul
+- `14:27:58` retry: Create a contradiction check that rejects reports 
+- `14:27:58` retry: Run one clean end-to-end flow test matrix across a
+- `14:28:08` retry: Split and complete REST proxy and WS upgrade as se
+- `14:28:08` retry: Replace absolute href/src via single URL helper, t
+- `14:28:08` retry: Run API tests only through gate runner; emit machi
+- `14:28:08` retry: Execute Playwright by deterministic domain shards 
+- `14:28:08` retry: Repair PROGRESS single-source accounting so header
+- `14:28:08` retry: Add a final acceptance artifact bundle: gate resul
+- `14:28:08` retry: Create a contradiction check that rejects reports 
+- `14:28:08` retry: Run one clean end-to-end flow test matrix across a
+- `14:28:23` retry: Split and complete REST proxy and WS upgrade as se
+- `14:28:23` retry: Replace absolute href/src via single URL helper, t
+- `14:28:23` retry: Run API tests only through gate runner; emit machi
+- `14:28:23` retry: Execute Playwright by deterministic domain shards 
+- `14:28:23` retry: Repair PROGRESS single-source accounting so header
+- `14:28:23` retry: Add a final acceptance artifact bundle: gate resul
+- `14:28:23` retry: Create a contradiction check that rejects reports 
+- `14:28:23` retry: Run one clean end-to-end flow test matrix across a
+- `14:28:34` retry: Split and complete REST proxy and WS upgrade as se
+- `14:28:34` retry: Replace absolute href/src via single URL helper, t
+- `14:28:34` retry: Run API tests only through gate runner; emit machi
+- `14:28:34` retry: Execute Playwright by deterministic domain shards 
+- `14:28:39` retry: Repair PROGRESS single-source accounting so header
+- `14:28:39` retry: Add a final acceptance artifact bundle: gate resul
+- `14:28:39` retry: Create a contradiction check that rejects reports 
+- `14:28:39` retry: Run one clean end-to-end flow test matrix across a
+- `14:28:42` done: Replace absolute href/src via single URL helper, then add re
+- `14:28:59` retry: Split and complete REST proxy and WS upgrade as se
+- `14:28:59` retry: Run API tests only through gate runner; emit machi
+- `14:28:59` retry: Execute Playwright by deterministic domain shards 
+- `14:28:59` retry: Repair PROGRESS single-source accounting so header
+- `14:28:59` retry: Add a final acceptance artifact bundle: gate resul
+- `14:28:59` retry: Create a contradiction check that rejects reports 
+- `14:28:59` retry: Run one clean end-to-end flow test matrix across a
+- `14:29:09` retry: Split and complete REST proxy and WS upgrade as se
+- `14:29:09` retry: Run API tests only through gate runner; emit machi
+- `14:29:09` retry: Execute Playwright by deterministic domain shards 
+- `14:29:09` retry: Repair PROGRESS single-source accounting so header
+- `14:29:09` retry: Add a final acceptance artifact bundle: gate resul
+- `14:29:09` retry: Create a contradiction check that rejects reports 
+- `14:29:09` retry: Run one clean end-to-end flow test matrix across a
+- `14:29:14` retry: Split and complete REST proxy and WS upgrade as se
+- `14:29:14` retry: Run API tests only through gate runner; emit machi
+- `14:29:14` retry: Execute Playwright by deterministic domain shards 
+- `14:29:14` retry: Repair PROGRESS single-source accounting so header
+- `14:29:34` retry: Split and complete REST proxy and WS upgrade as se
+- `14:29:34` retry: Add a final acceptance artifact bundle: gate resul
+- `14:29:34` retry: Create a contradiction check that rejects reports 
+- `14:29:34` retry: Run one clean end-to-end flow test matrix across a
+- `14:30:49` retry: Run API tests only through gate runner; emit machi
+- `14:30:49` retry: Execute Playwright by deterministic domain shards 
+- `14:30:49` retry: Repair PROGRESS single-source accounting so header
+- `14:30:49` retry: Add a final acceptance artifact bundle: gate resul
+- `14:30:49` retry: Create a contradiction check that rejects reports 
+- `14:30:49` retry: Run one clean end-to-end flow test matrix across a
+- `14:31:37` +8 from refiner
+- `14:31:47` retry: Retry Playwright sharding with a static shard mani
+- `14:31:47` retry: Rebuild PROGRESS from one machine-readable source 
+- `14:31:47` retry: Generate a mandatory acceptance bundle (gate statu
+- `14:31:47` retry: Add a contradiction linter that rejects snapshots 
+- `14:31:52` retry: Retry Playwright sharding with a static shard mani
+- `14:31:52` retry: Rebuild PROGRESS from one machine-readable source 
+- `14:31:52` retry: Generate a mandatory acceptance bundle (gate statu
+- `14:31:52` retry: Add a contradiction linter that rejects snapshots 
+- `14:31:52` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:31:52` retry: Add a release gate: only allow “phase: complete” w
+- `14:31:52` retry: Add a drift check that compares current Playwright
+- `14:31:52` retry: Add a “no retry storm” policy: cap retries per tas
+- `14:33:27` retry: Retry Playwright sharding with a static shard mani
+- `14:33:27` retry: Rebuild PROGRESS from one machine-readable source 
+- `14:33:27` retry: Generate a mandatory acceptance bundle (gate statu
+- `14:33:27` retry: Add a contradiction linter that rejects snapshots 
+- `14:33:58` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:33:58` retry: Add a release gate: only allow “phase: complete” w
+- `14:33:58` retry: Add a drift check that compares current Playwright
+- `14:33:58` retry: Add a “no retry storm” policy: cap retries per tas
+- `14:35:44` done: Retry Playwright sharding with a static shard manifest, per-
+- `14:36:13` retry: Rebuild PROGRESS from one machine-readable source 
+- `14:36:13` retry: Generate a mandatory acceptance bundle (gate statu
+- `14:36:13` retry: Add a contradiction linter that rejects snapshots 
+- `14:36:13` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:37:03` done: Add a drift check that compares current Playwright test coun
+- `14:37:17` done: Add a release gate: only allow “phase: complete” when Playwr
+- `14:37:35` done: Add a “no retry storm” policy: cap retries per task/signatur
+- `14:38:54` done: Generate a mandatory acceptance bundle (gate statuses, API s
+- `14:39:15` done: Rebuild PROGRESS from one machine-readable source of truth (
+- `14:39:40` fail (max turns): Add a contradiction linter that rejects snapshots where any 
+- `14:40:04` retry: Add a contradiction linter that rejects snapshots 
+- `14:40:29` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:40:34` retry: Add a contradiction linter that rejects snapshots 
+- `14:40:34` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:40:54` retry: Add a contradiction linter that rejects snapshots 
+- `14:40:54` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:42:09` done: Add a contradiction linter that rejects snapshots where any 
+- `14:51:07` fail (max turns): Run one clean live E2E matrix across all 13 pages with Rust 
+- `14:51:10` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:52:15` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:52:30` retry: Run one clean live E2E matrix across all 13 pages 
+- `14:53:00` retry: Run one clean live E2E matrix across all 13 pages 

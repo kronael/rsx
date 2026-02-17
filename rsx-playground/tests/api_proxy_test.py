@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # ── REST proxy (/v1/*) ────────────────────────────────────
 
 
+@pytest.mark.allow_5xx
 def test_v1_proxy_path_rewriting(client):
     """GET /v1/foo rewrites to GATEWAY_HTTP/v1/foo (502 = gateway down)."""
     resp = client.get("/v1/ping")
@@ -33,6 +34,7 @@ def test_v1_proxy_path_rewriting(client):
     assert "gateway" in body["error"].lower()
 
 
+@pytest.mark.allow_5xx
 def test_v1_proxy_502_not_500_on_connection_refused(client):
     """ConnectionRefusedError must return 502, never 500."""
     resp = client.get("/v1/orders")
@@ -40,6 +42,7 @@ def test_v1_proxy_502_not_500_on_connection_refused(client):
     assert resp.json()["error"] == "gateway not running"
 
 
+@pytest.mark.allow_5xx
 def test_v1_proxy_post_502_when_gateway_down(client):
     """POST /v1/* also returns 502 when gateway down."""
     resp = client.post("/v1/orders", json={"symbol_id": 10})
@@ -204,16 +207,24 @@ def test_ws_private_upgrades_and_forwards_user_id(client):
     forwarded_headers = {}
     connected = False
 
-    async def fake_ws_connect(url, headers=None, **kwargs):
-        nonlocal connected, forwarded_headers
-        connected = True
-        forwarded_headers = headers or {}
-        # Raise immediately to simulate gateway closing
-        raise ConnectionRefusedError("not running")
+    class FakeWsCtx:
+        """Async context manager that raises on enter to simulate gateway down."""
+        async def __aenter__(self):
+            nonlocal connected, forwarded_headers
+            connected = True
+            raise ConnectionRefusedError("not running")
+        async def __aexit__(self, *a):
+            pass
 
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
+
+    def fake_ws_connect(url, headers=None, **kwargs):
+        nonlocal forwarded_headers
+        forwarded_headers = headers or {}
+        return FakeWsCtx()
+
     mock_session.ws_connect = fake_ws_connect
 
     with patch("aiohttp.ClientSession", return_value=mock_session):
@@ -234,14 +245,22 @@ def test_ws_private_default_user_id_when_header_missing(client):
     """/ws/private defaults x-user-id to '1' when not provided."""
     forwarded_headers = {}
 
-    async def fake_ws_connect(url, headers=None, **kwargs):
-        nonlocal forwarded_headers
-        forwarded_headers = headers or {}
-        raise ConnectionRefusedError("not running")
+    class FakeWsCtx:
+        """Async context manager that raises on enter to simulate gateway down."""
+        async def __aenter__(self):
+            raise ConnectionRefusedError("not running")
+        async def __aexit__(self, *a):
+            pass
 
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
+
+    def fake_ws_connect(url, headers=None, **kwargs):
+        nonlocal forwarded_headers
+        forwarded_headers = headers or {}
+        return FakeWsCtx()
+
     mock_session.ws_connect = fake_ws_connect
 
     with patch("aiohttp.ClientSession", return_value=mock_session):
