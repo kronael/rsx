@@ -15,3 +15,6 @@
 - Verified machine-enforced gate runner fully implemented: Makefile gate-1..gate-4 chain + play-shard.sh failure-signature blocking
 - Verified no root-absolute href/src in server.py or pages.py; test_no_absolute_links.py regression covers 51 routes (13 pages + 38 partials), all passing
 - Define strict DoD per gate: DOD.md created with required tests, artifacts, and rollback conditions for each of gates 1-4 and 4 domain shards
+- Playwright shard runner upgraded: per-shard JSON+JUnit artifacts in tmp/play-artifacts/<shard>/, summary.txt with pass/fail counts and failing test IDs, signature-based single retry blocking via tmp/play-sig/<shard>.sig; playwright.config.ts uses PW_SHARD env to route reporters
+- Add drift check to acceptance-bundle.py: counts play_*.spec.ts test() declarations (anchored regex, 214 canonical); blocks bundle with exit 2 if count drifts; full 223 validated at runtime by gate-4 canonical_ok
+- Release gate added: acceptance-bundle.py reads play-artifacts/<shard>/report.json, enforces playwright==223/223 via canonical_ok; make release-gate blocks unless all gates green

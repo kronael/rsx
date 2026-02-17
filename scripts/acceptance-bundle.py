@@ -4,7 +4,7 @@
 Collects:
   - Gate statuses (gate-1 through gate-4)
   - API test summary from tmp/gate-3-report.json
-  - Playwright totals from tmp/play-sig/*.out
+  - Playwright totals from tmp/play-artifacts/<shard>/report.json
   - Failing test IDs
   - Commit SHA
   - Timestamp
@@ -34,6 +34,10 @@ TMP = PLAYGROUND / "tmp"
 BUNDLE_PATH = TMP / "acceptance-bundle.json"
 GATE3_REPORT = TMP / "gate-3-report.json"
 PLAY_SIG_DIR = TMP / "play-sig"
+PLAY_ARTIFACT_DIR = TMP / "play-artifacts"
+
+# Playwright canonical total — must equal this for release gate to pass
+PLAYWRIGHT_CANONICAL = 223
 
 # Bundle is stale after 24 hours
 STALE_SECONDS = 86400
@@ -108,7 +112,7 @@ def gate3_status(report: dict | None) -> dict:
 
 
 def gate4_status() -> dict:
-    """Collect Playwright shard results from play-sig/*.out files."""
+    """Collect Playwright shard results from play-artifacts/<shard>/report.json."""
     shards = ["routing", "htmx-partials", "process-control", "trade-ui"]
     total_pass = 0
     total_fail = 0
@@ -116,15 +120,14 @@ def gate4_status() -> dict:
     failing_ids: list[str] = []
 
     for shard in shards:
-        out_file = PLAY_SIG_DIR / f"{shard}.out"
-        sig_file = PLAY_SIG_DIR / f"{shard}.sig"
+        report_file = PLAY_ARTIFACT_DIR / shard / "report.json"
 
-        if not out_file.exists():
+        if not report_file.exists():
             shard_results[shard] = {"status": "not-run", "passed": 0, "failed": 0}
             continue
 
         try:
-            data = json.loads(out_file.read_text())
+            data = json.loads(report_file.read_text())
         except Exception:
             shard_results[shard] = {"status": "parse-error", "passed": 0, "failed": 0}
             continue
@@ -133,22 +136,21 @@ def gate4_status() -> dict:
         unexpected = stats.get("unexpected", 0)
         expected = stats.get("expected", 0)
 
-        if unexpected == 0:
-            status = "pass"
-        elif sig_file.exists():
-            status = "blocked"  # same sig, no new code
-        else:
-            status = "fail"
+        status = "pass" if unexpected == 0 else "fail"
 
         # Collect failing test IDs
-        for suite in data.get("suites", []):
-            for spec in suite.get("specs", []):
-                for test in spec.get("tests", []):
-                    results = test.get("results", [])
-                    if any(r.get("status") == "failed" for r in results):
-                        failing_ids.append(
-                            f"{shard}::{spec.get('title', '')}::{test.get('title', '')}"
-                        )
+        def walk(suites: list) -> None:
+            for suite in suites:
+                for spec in suite.get("specs", []):
+                    for test in spec.get("tests", []):
+                        results = test.get("results", [])
+                        if any(r.get("status") == "failed" for r in results):
+                            failing_ids.append(
+                                f"{shard}::{spec.get('title', '')}"
+                            )
+                walk(suite.get("suites", []))
+
+        walk(data.get("suites", []))
 
         shard_results[shard] = {
             "status": status,
@@ -158,11 +160,14 @@ def gate4_status() -> dict:
         total_pass += expected
         total_fail += unexpected
 
-    overall = "pass" if total_fail == 0 and total_pass > 0 else "fail"
+    # Hard release gate: must have exactly PLAYWRIGHT_CANONICAL passing tests
+    canonical_ok = total_pass == PLAYWRIGHT_CANONICAL and total_fail == 0
+    overall = "pass" if canonical_ok else "fail"
     return {
         "status": overall,
         "total_passed": total_pass,
         "total_failed": total_fail,
+        "canonical_ok": canonical_ok,
         "shards": shard_results,
         "failing_ids": failing_ids,
     }
@@ -185,6 +190,50 @@ def all_failing_ids(report: dict | None, play: dict) -> list[str]:
                 ids.append(f"[api/{ec}] {f['test']}")
     ids.extend(f"[playwright] {t}" for t in play.get("failing_ids", []))
     return ids
+
+
+def drift_check() -> dict:
+    """Count test() declarations in playground specs vs manifest.
+
+    Counts bare `test(` lines in rsx-playground/tests/play_*.spec.ts.
+    The 9 webui order-entry tests are validated at runtime by gate-4
+    artifact total (total_passed must equal PLAYWRIGHT_CANONICAL=223).
+
+    Playground source canonical: 214 tests across 12 spec files.
+    Full release canonical: PLAYWRIGHT_CANONICAL = 223 (includes 9 webui).
+
+    Returns dict with:
+      ok: bool — True if playground count matches PLAYGROUND_SPEC_COUNT
+      actual: int — counted playground tests
+      canonical: int — PLAYGROUND_SPEC_COUNT (214)
+      total_canonical: int — PLAYWRIGHT_CANONICAL (223)
+      drift: int — actual - canonical (0 = no drift)
+      detail: dict[spec_name, int] — per-spec counts
+    """
+    import re
+
+    PLAYGROUND_SPEC_COUNT = 214
+
+    spec_dir = ROOT / "rsx-playground" / "tests"
+    detail: dict[str, int] = {}
+    total = 0
+
+    for spec in sorted(spec_dir.glob("play_*.spec.ts")):
+        text = spec.read_text(errors="replace")
+        # Anchored to line start: counts bare `test(` not `test.describe(`
+        count = len(re.findall(r'^\s*test\s*\(', text, re.MULTILINE))
+        detail[spec.name] = count
+        total += count
+
+    drift = total - PLAYGROUND_SPEC_COUNT
+    return {
+        "ok": drift == 0,
+        "actual": total,
+        "canonical": PLAYGROUND_SPEC_COUNT,
+        "total_canonical": PLAYWRIGHT_CANONICAL,
+        "drift": drift,
+        "detail": detail,
+    }
 
 
 def main():
@@ -216,18 +265,32 @@ def main():
     g3 = gate3_status(report)
     g4 = gate4_status()
     failing = all_failing_ids(report, g4)
+    drift = drift_check()
 
+    if not drift["ok"]:
+        print(
+            f"[acceptance-bundle] DRIFT: test count {drift['actual']} "
+            f"!= canonical {drift['canonical']} (drift={drift['drift']:+d})\n"
+            f"  Update PLAYWRIGHT_CANONICAL in scripts/acceptance-bundle.py "
+            f"or fix the spec files.",
+            file=sys.stderr,
+        )
+        # Drift is a hard blocker — exit 2 so CI treats it as config error
+        sys.exit(2)
+
+    # Release gate: all gates green AND playwright == 223/223
     all_green = (
         g1 == "pass"
         and g2 in ("pass", "assumed-pass")
         and g3["status"] == "pass"
-        and g4["status"] == "pass"
+        and g4["canonical_ok"]
     )
 
     bundle = {
         "generated_at": int(time.time()),
         "commit_sha": git_sha(),
         "all_green": all_green,
+        "drift_check": drift,
         "gates": {
             "gate1_startup": g1,
             "gate2_partials": g2,
