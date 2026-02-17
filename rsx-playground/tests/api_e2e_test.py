@@ -590,5 +590,5 @@ def test_docs_has_sidebar(client):
     resp = client.get("/docs/README")
     assert resp.status_code == 200
     text = resp.text
-    assert '/docs/' in text
-    assert 'sidebar' in text.lower() or 'href="/docs/' in text
+    assert 'href="./' in text or '/docs/' in text
+    assert 'sidebar' in text.lower() or 'href="./' in text

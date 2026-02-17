@@ -3,8 +3,12 @@ import type { UserPosition } from "../lib/types";
 import type { UserOrder } from "../lib/types";
 import type { UserFill } from "../lib/types";
 
+const API_BASE = typeof location !== "undefined"
+  ? location.pathname.replace(/\/trade\/.*$/, "")
+  : "";
+
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_BASE}${path}`, {
     signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) {

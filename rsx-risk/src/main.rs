@@ -22,6 +22,7 @@ use rsx_risk::config::load_shard_config;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker;
 use rsx_risk::replay::load_from_postgres;
+use rsx_risk::schema::run_migrations;
 use rsx_risk::replay::replay_from_wal;
 use rsx_risk::rings::MarkPriceUpdate;
 use rsx_risk::rings::ShardRings;
@@ -136,51 +137,40 @@ fn run_main(
     let lease_renew_interval_ms = config.replication_config.lease_renew_interval_ms;
     let mut shard = RiskShard::new(config);
 
-    let db_url = env::var("DATABASE_URL").ok();
-    let rt = if db_url.is_some() {
-        Some(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
-        )
-    } else {
-        None
-    };
+    // SAFETY: fail-fast at startup -- risk requires
+    // postgres for state persistence and advisory locks
+    let db_url = env::var("DATABASE_URL")
+        .expect("DATABASE_URL required for risk");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
 
     let mut lease = AdvisoryLease::new(shard_id);
-    let pg_client = if let Some(ref url) = db_url {
-        // SAFETY: rt is Some when db_url is Some
-        let rt = rt.as_ref().unwrap();
-        let client = rt.block_on(async {
-            let (client, connection) =
-                tokio_postgres::connect(
-                    url,
-                    tokio_postgres::NoTls,
-                )
-                .await?;
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    error!("pg connection error: {e}");
-                }
-            });
-            lease.acquire(&client).await?;
-            let state = load_from_postgres(
-                &client,
-                shard_id,
-                shard_count,
-                max_symbols,
+    let pg_client = rt.block_on(async {
+        let (client, connection) =
+            tokio_postgres::connect(
+                &db_url,
+                tokio_postgres::NoTls,
             )
             .await?;
-            shard.load_state(state);
-            info!("cold start loaded from postgres");
-            Ok::<_, Box<dyn std::error::Error>>(
-                client,
-            )
-        })?;
-        Some(client)
-    } else {
-        None
-    };
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                error!("pg connection error: {e}");
+            }
+        });
+        run_migrations(&client).await?;
+        lease.acquire(&client).await?;
+        let state = load_from_postgres(
+            &client,
+            shard_id,
+            shard_count,
+            max_symbols,
+        )
+        .await?;
+        shard.load_state(state);
+        info!("cold start loaded from postgres");
+        Ok::<_, Box<dyn std::error::Error>>(client)
+    })?;
 
     let wal_dir = env::var("RSX_RISK_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".into());
@@ -214,8 +204,8 @@ fn run_main(
         .expect("failed to create replica tip sender")
     });
 
-    if let Some(ref url) = db_url {
-        let url = url.clone();
+    {
+        let url = db_url.clone();
         let sid = shard_id;
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder
@@ -710,11 +700,9 @@ fn run_main(
             >= lease_renew_interval_secs
         {
             last_lease_renew_secs = now_secs;
-            if let (Some(ref client), Some(ref rt)) =
-                (&pg_client, &rt)
             {
                 let held = rt.block_on(async {
-                    lease.renew(client).await
+                    lease.renew(&pg_client).await
                 })?;
                 if !held {
                     error!(

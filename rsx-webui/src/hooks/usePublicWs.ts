@@ -32,7 +32,10 @@ export function usePublicWs() {
 
       const proto = location.protocol === "https:"
         ? "wss:" : "ws:";
-      const url = `${proto}//${location.host}/ws/public`;
+      const base = location.pathname.replace(
+        /\/trade\/.*$/, "",
+      );
+      const url = `${proto}//${location.host}${base}/ws/public`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 

@@ -32,6 +32,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import pages
+from market_maker import DummyMarketMaker
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -143,9 +144,7 @@ async def spawn_process(name, binary, env):
     if not binary_path.exists():
         return {"error": f"binary not found: {binary}"}
     full_env = {**os.environ, **env}
-    # Only pass DATABASE_URL if postgres is reachable
-    if pg_pool is None:
-        full_env.pop("DATABASE_URL", None)
+    full_env.setdefault("DATABASE_URL", PG_URL)
     proc = await asyncio.create_subprocess_exec(
         str(binary_path),
         env=full_env,
@@ -360,7 +359,12 @@ async def lifespan(app):
         await pg_pool.close()
 
 
-app = FastAPI(title="RSX Playground", lifespan=lifespan)
+app = FastAPI(
+    title="RSX Playground",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+)
 
 
 def audit_log(endpoint: str, action: str):
@@ -945,7 +949,7 @@ def _md_inline(text: str) -> str:
 @app.get("/docs")
 async def docs_index():
     """Redirect /docs to /docs/README."""
-    return RedirectResponse("/docs/README")
+    return RedirectResponse("./docs/README")
 
 
 @app.get("/docs/{filename:path}")
@@ -968,8 +972,8 @@ async def docs(filename: str):
             "<h1>404 Not Found</h1>",
             status_code=404)
     content = file_path.read_text()
-    rendered = _md_to_html(content)
     safe_filename = html.escape(filename)
+    md_json = json.dumps(content)
 
     # sidebar: list all docs
     doc_files = sorted(docs_dir.glob("*.md"))
@@ -981,7 +985,7 @@ async def docs(filename: str):
         active = "font-bold text-white" if (
             f.name == filename) else "text-slate-400"
         sidebar += (
-            f'<a href="/docs/{f.name}" '
+            f'<a href="./{f.name}" '
             f'class="{active} block py-1 '
             f'hover:text-white text-sm">'
             f'{html.escape(label)}</a>\n')
@@ -1007,68 +1011,137 @@ tailwind.config = {{
   }}
 }}
 </script>
+<link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github-dark.min.css">
 <style>
-pre {{
-  background: #1e293b;
-  padding: 1rem;
+#content h1 {{
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0.75rem;
+  color: #60a5fa;
+}}
+#content h2 {{
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+  color: #60a5fa;
+}}
+#content h3 {{
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+  color: #60a5fa;
+}}
+#content h4, #content h5, #content h6 {{
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.5rem;
+  color: #60a5fa;
+}}
+#content a {{ color: #60a5fa; }}
+#content a:hover {{ text-decoration: underline; }}
+#content p {{ margin: 0.5rem 0; line-height: 1.6; }}
+#content ul {{
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}}
+#content ol {{
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}}
+#content li {{
+  margin: 0.25rem 0;
+  list-style: disc;
+}}
+#content ol li {{ list-style: decimal; }}
+#content strong {{ color: #e2e8f0; }}
+#content blockquote {{
+  border-left: 3px solid #334155;
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: #94a3b8;
+}}
+#content pre {{
   border-radius: 6px;
   overflow-x: auto;
   margin: 0.75rem 0;
+  padding: 0;
 }}
-code {{
+#content pre code {{
+  display: block;
+  padding: 1rem;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85em;
 }}
-p code, li code, td code, th code {{
+#content :not(pre) > code {{
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
   background: #1e293b;
   padding: 2px 6px;
   border-radius: 3px;
 }}
-.md-table {{
+#content table {{
   border-collapse: collapse;
   width: 100%;
   margin: 0.75rem 0;
   font-size: 0.875rem;
 }}
-.md-table th, .md-table td {{
+#content th, #content td {{
   border: 1px solid #334155;
   padding: 0.5rem 0.75rem;
+  text-align: left;
 }}
-.md-table th {{
+#content th {{
   background: #1e293b;
+  font-weight: 600;
 }}
-h1 {{ font-size: 1.75rem; margin: 1.5rem 0 0.75rem; }}
-h2 {{ font-size: 1.35rem; margin: 1.25rem 0 0.5rem; }}
-h3 {{ font-size: 1.1rem; margin: 1rem 0 0.5rem; }}
-h1, h2, h3 {{ color: #60a5fa; }}
-a {{ color: #60a5fa; }}
-a:hover {{ text-decoration: underline; }}
-ul {{ padding-left: 1.5rem; margin: 0.5rem 0; }}
-li {{ margin: 0.25rem 0; list-style: disc; }}
-p {{ margin: 0.5rem 0; }}
-strong {{ color: #e2e8f0; }}
+#content hr {{
+  border: none;
+  border-top: 1px solid #334155;
+  margin: 1.5rem 0;
+}}
+#content img {{ max-width: 100%; }}
 </style>
 </head>
 <body class="bg-[#0f172a] text-slate-300">
 <div class="flex min-h-screen">
   <aside class="w-52 bg-[#0b1120] border-r
     border-slate-700 p-4 shrink-0">
-    <a href="/" class="text-white font-bold text-sm
+    <a href="../" class="text-white font-bold text-sm
       block mb-4">RSX Playground</a>
     <div class="mb-3 text-xs text-slate-500
       uppercase tracking-wider">Docs</div>
     {sidebar}
     <div class="mt-6 pt-4 border-t border-slate-700">
-      <a href="/" class="text-slate-400 text-xs
+      <a href="../" class="text-slate-400 text-xs
         hover:text-white block py-1">Dashboard</a>
-      <a href="/trade/" class="text-slate-400 text-xs
+      <a href="../trade/" class="text-slate-400 text-xs
         hover:text-white block py-1">Trade UI</a>
     </div>
   </aside>
   <main class="flex-1 max-w-3xl p-8">
-    {rendered}
+    <div id="content"></div>
   </main>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js">
+</script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js">
+</script>
+<script>
+(function() {{
+  var raw = {md_json};
+  marked.setOptions({{
+    highlight: function(code, lang) {{
+      if (lang && hljs.getLanguage(lang)) {{
+        return hljs.highlight(code, {{language: lang}}).value;
+      }}
+      return hljs.highlightAuto(code).value;
+    }}
+  }});
+  document.getElementById('content').innerHTML =
+    marked.parse(raw);
+}})();
+</script>
 </body>
 </html>"""
     return HTMLResponse(doc_html)
@@ -1966,7 +2039,7 @@ async def api_stress_run(
             f'<div class="text-slate-400">'
             f'p50={lat["p50"]}us p95={lat["p95"]}us '
             f'p99={lat["p99"]}us</div>'
-            f'<a href="/stress/{timestamp}" '
+            f'<a href="./stress/{timestamp}" '
             f'class="text-blue-400 hover:underline">'
             f'view full report</a></div>')
 
@@ -2047,7 +2120,7 @@ async def x_stress_reports_list():
         rows.append(
             f'<tr class="hover:bg-slate-800/30">'
             f'<td class="px-2 py-1 text-xs">'
-            f'<a href="/stress/{id_escaped}"'
+            f'<a href="./stress/{id_escaped}"'
             f' class="text-blue-400 hover:underline">'
             f'{ts_escaped}</a>'
             f'</td>'
@@ -2224,6 +2297,67 @@ async def api_metrics():
     }
 
 
+# ── market maker ────────────────────────────────────────
+
+_maker = DummyMarketMaker(
+    gateway_url=GATEWAY_URL,
+    marketdata_ws=MARKETDATA_WS,
+)
+
+
+@app.post("/api/maker/start")
+async def api_maker_start(request: Request):
+    if _maker.running:
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'maker already running</span>')
+    _maker.start()
+    audit_log("/api/maker/start", "start maker")
+    return HTMLResponse(
+        '<span class="text-emerald-400 text-xs">'
+        'maker started</span>')
+
+
+@app.post("/api/maker/stop")
+async def api_maker_stop(request: Request):
+    if not _maker.running:
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'maker not running</span>')
+    await _maker.stop()
+    audit_log("/api/maker/stop", "stop maker")
+    return HTMLResponse(
+        '<span class="text-amber-400 text-xs">'
+        'maker stopped</span>')
+
+
+@app.get("/api/maker/status")
+async def api_maker_status():
+    return _maker.status()
+
+
+@app.get("/x/maker-status", response_class=HTMLResponse)
+async def x_maker_status():
+    s = _maker.status()
+    if not s["running"]:
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'maker stopped</span>')
+    mids = ", ".join(
+        f"{k}={v}" for k, v in s["mid_prices"].items()
+    )
+    errs = (f' | errors: {len(s["errors"])}'
+            if s["errors"] else "")
+    return HTMLResponse(
+        f'<div class="text-xs space-y-1">'
+        f'<span class="text-emerald-400">running</span>'
+        f' | orders: {s["orders_placed"]}'
+        f' | active: {s["active_orders"]}'
+        f' | cancels: {s["cancels_sent"]}{errs}'
+        f'<div class="text-slate-400">mids: {mids}</div>'
+        f'</div>')
+
+
 # ── trading UI: WS proxy + REST proxy + static ─────────
 
 
@@ -2342,7 +2476,7 @@ async def v1_proxy(path: str, request: Request):
 if WEBUI_DIST.exists():
     @app.get("/trade")
     async def trade_redirect():
-        return RedirectResponse("/trade/")
+        return RedirectResponse("./trade/")
 
     app.mount(
         "/trade",

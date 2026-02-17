@@ -101,9 +101,10 @@ rsx-marketdata/ Marketdata (shadow book, L2/BBO/trades)
 rsx-mark/       Mark price (external feeds, CMP to risk)
 rsx-recorder/   Recorder (archival DXS consumer)
 rsx-cli/        WAL dump/inspect tool (JSON + Parquet)
-rsx-maker/      Market maker bot
+rsx-maker/      Market maker bot (stub, production CMP maker)
 rsx-sim/        Trading simulator, WS load generator
 rsx-playground/ Dev dashboard (Python/FastAPI + Playwright)
+  market_maker.py  Python market maker (functional, WS)
 rsx-webui/      Frontend (Vite + Tailwind)
 ```
 
@@ -121,6 +122,52 @@ verification. See
 ./rsx-playground/playground start-all # build + launch
 ./rsx-playground/playground stop-all  # stop processes
 ./rsx-playground/playground reset     # stop + clean
+```
+
+**Market maker:** Python market maker places two-sided
+quotes through gateway WS. Control via the Control tab
+or API:
+
+```bash
+curl -X POST http://localhost:49171/api/maker/start
+curl -X POST http://localhost:49171/api/maker/stop
+```
+
+**Trade UI:** React SPA at `/trade/`, connects via
+relative WS and API paths. Works behind reverse proxy.
+
+**Proxy prefix:** all URLs are relative -- works at any
+path prefix (e.g. `krons.cx/rsx-play/`).
+
+## Deployment
+
+**Local:**
+
+```bash
+cd rsx-playground && uv run server.py
+# listening on http://localhost:49171
+```
+
+**Behind reverse proxy:** all URLs are relative. Set env
+vars to point at the gateway and marketdata processes:
+
+```bash
+GATEWAY_URL=ws://localhost:8080 \
+MARKETDATA_WS=ws://localhost:8081 \
+GATEWAY_HTTP=http://localhost:8080 \
+uv run server.py
+```
+
+Example nginx config:
+
+```nginx
+location /rsx-play/ {
+    proxy_pass http://127.0.0.1:49171/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+}
 ```
 
 ## Build and Test
