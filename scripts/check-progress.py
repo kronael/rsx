@@ -8,6 +8,11 @@ Checks:
 4. denominator == CANONICAL_TOTAL (223 Playwright tests)
 5. gate-3-report.json: no test key in both DONE and FAIL sets
    (contradiction linter — rejects snapshots with split outcome)
+6. playwright artifact cross-validation (when artifacts exist)
+7. phase semantics: reject zombie/stuck states and invalid transitions
+   - executing with zero runnable backlog but nonterminal failures
+   - complete before completed == CANONICAL_TOTAL
+   - executing after completed == CANONICAL_TOTAL (should be complete)
 
 Exit 0 if consistent, 1 if inconsistent (with clear error output).
 """
@@ -163,8 +168,86 @@ def lint_playwright_artifacts(completed: int) -> None:
     )
 
 
+def check_phase_semantics(
+    phase: str,
+    completed: int,
+    running: int,
+    pending: int,
+    failed: int,
+) -> None:
+    """Check 7: phase field must be semantically consistent with counts.
+
+    Rules:
+    - phase=complete requires completed==CANONICAL_TOTAL and
+      running==0 and pending==0 and failed==0.
+    - phase=executing with running==0 and pending==0 and failed>0
+      and completed<CANONICAL_TOTAL is a zombie/stuck state: there
+      is no work that can make progress.  Reject it so the
+      orchestrator is forced to requeue or mark failed tasks.
+    - phase=executing after completed==CANONICAL_TOTAL is stale;
+      should be marked complete.
+    """
+    runnable = running + pending
+
+    if phase == "complete":
+        if completed != CANONICAL_TOTAL:
+            fail(
+                f"phase=complete but completed ({completed}) != "
+                f"CANONICAL_TOTAL ({CANONICAL_TOTAL}); "
+                f"cannot be complete until all tests pass"
+            )
+        if running != 0 or pending != 0:
+            fail(
+                f"phase=complete but running={running} pending={pending}; "
+                f"complete phase requires zero runnable work"
+            )
+        if failed != 0:
+            fail(
+                f"phase=complete but failed={failed}; "
+                f"complete phase requires zero failed tasks"
+            )
+
+    elif phase == "executing":
+        # Zombie: executing but no runnable backlog and not done
+        if runnable == 0 and failed > 0 and completed < CANONICAL_TOTAL:
+            fail(
+                f"phase=executing but runnable backlog is zero "
+                f"(running={running}, pending={pending}) with "
+                f"failed={failed} and completed={completed}/"
+                f"{CANONICAL_TOTAL} — stuck/zombie state; "
+                f"requeue failed tasks or mark phase blocked"
+            )
+        # Stale: executing but already complete
+        if completed == CANONICAL_TOTAL and runnable == 0 and failed == 0:
+            fail(
+                f"phase=executing but completed={completed}/"
+                f"{CANONICAL_TOTAL} with no remaining work; "
+                f"update phase to 'complete'"
+            )
+
+    else:
+        # Unknown phase — warn but don't fail (future phases allowed)
+        print(
+            f"phase semantics: unknown phase '{phase}' "
+            f"(expected 'executing' or 'complete') — skipping checks",
+            file=sys.stderr,
+        )
+        return
+
+    runnable_label = f"running={running}, pending={pending}"
+    print(
+        f"phase semantics ok: phase={phase}, "
+        f"completed={completed}/{CANONICAL_TOTAL}, "
+        f"{runnable_label}, failed={failed}"
+    )
+
+
 def main() -> None:
     text = PROGRESS_FILE.read_text()
+
+    # Parse phase line: "phase: executing" or "phase: complete"
+    phase_match = re.search(r'^phase:\s*(\S+)', text, re.MULTILINE)
+    phase = phase_match.group(1) if phase_match else "unknown"
 
     # Parse progress bar line: [████░░░] 20%  45/220
     bar_match = re.search(
@@ -234,6 +317,9 @@ def main() -> None:
 
     # Check 6: playwright artifact cross-validation (when artifacts exist)
     lint_playwright_artifacts(completed)
+
+    # Check 7: phase semantics
+    check_phase_semantics(phase, completed, running, pending, failed)
 
 
 if __name__ == "__main__":
