@@ -1666,9 +1666,13 @@ def render_verify(checks):
             badge = ("bg-red-950 text-red-400 "
                      "border border-red-900")
             label = "FAIL"
+        elif c.get("status") == "warn":
+            badge = ("bg-yellow-950 text-yellow-400 "
+                     "border border-yellow-900")
+            label = "WARN"
         else:
-            badge = ("bg-amber-950 text-amber-400 "
-                     "border border-amber-900")
+            badge = ("bg-slate-800 text-slate-400 "
+                     "border border-slate-700")
             label = "SKIP"
         detail = ""
         if c.get("detail"):
@@ -1862,24 +1866,28 @@ def render_position_heatmap(fills=None):
     if not fills:
         return ('<span class="text-slate-500 text-xs">'
                 'no fill data available</span>')
-    # Aggregate net position per symbol from fills
-    positions = {}
+    # Aggregate net position per symbol_id from fills
+    positions: dict[int, int] = {}
     for f in fills:
         sid = f.get("symbol_id", 0)
-        sym = {1: "BTC", 2: "ETH", 3: "SOL",
-               10: "PENGU"}.get(sid, f"sym-{sid}")
         qty = f.get("qty", 0)
         side = f.get("taker_side", 0)
         signed = qty if side == 0 else -qty
-        positions[sym] = positions.get(sym, 0) + signed
+        positions[sid] = positions.get(sid, 0) + signed
     rows = ""
-    for sym, net in sorted(positions.items()):
+    for sid, net in sorted(
+        positions.items(),
+        key=lambda kv: SYMBOL_NAMES.get(kv[0], f"sym-{kv[0]}"),
+    ):
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        net_str = format_qty(abs(net), sid)
+        abs_str = format_qty(abs(net), sid)
         if net > 0:
             color = "text-emerald-400"
-            label = f"+{net}"
+            label = f"+{net_str}"
         elif net < 0:
             color = "text-red-400"
-            label = str(net)
+            label = f"-{net_str}"
         else:
             color = "text-slate-500"
             label = "0"
@@ -1888,7 +1896,7 @@ def render_position_heatmap(fills=None):
             f'<td {_TD}>{sym}</td>'
             f'<td {_TD}><span class="{color}">'
             f'{label}</span></td>'
-            f'<td {_TD}>{abs(net)}</td></tr>'
+            f'<td {_TD}>{abs_str}</td></tr>'
         )
     return _table(
         ["Symbol", "Net Position", "Abs Size"], rows,
@@ -1910,6 +1918,9 @@ def render_margin_ladder(fills=None):
         qty = f.get("qty", 0)
         side = f.get("taker_side", 0)
         notional = abs(px * qty)
+        px_str = format_price(px, sid)
+        qty_str = format_qty(qty, sid)
+        notional_str = format_price(notional, sid)
         side_str = ('<span class="text-emerald-400">'
                     'buy</span>' if side == 0
                     else '<span class="text-red-400">'
@@ -1918,9 +1929,9 @@ def render_margin_ladder(fills=None):
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{sym}</td>'
             f'<td {_TD}>{side_str}</td>'
-            f'<td {_TD}>{px}</td>'
-            f'<td {_TD}>{qty}</td>'
-            f'<td {_TD}>{notional}</td></tr>'
+            f'<td {_TD}>{px_str}</td>'
+            f'<td {_TD}>{qty_str}</td>'
+            f'<td {_TD}>{notional_str}</td></tr>'
         )
     return _table(
         ["Symbol", "Side", "Price", "Qty", "Notional"],
@@ -1946,12 +1957,15 @@ def render_funding(book_stats=None):
             f"{spread * 10000 // mid} bps"
             if mid > 0 else "--"
         )
+        bid_str = format_price(bid, sid) if bid else "--"
+        ask_str = format_price(ask, sid) if ask else "--"
+        spread_str = format_price(spread, sid) if spread else "--"
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{sym}</td>'
-            f'<td {_TD}>{bid}</td>'
-            f'<td {_TD}>{ask}</td>'
-            f'<td {_TD}>{spread}</td>'
+            f'<td {_TD}>{bid_str}</td>'
+            f'<td {_TD}>{ask_str}</td>'
+            f'<td {_TD}>{spread_str}</td>'
             f'<td {_TD}>{rate}</td></tr>'
         )
     return _table(

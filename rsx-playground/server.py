@@ -13,6 +13,7 @@ import shutil
 import signal
 import struct
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -32,7 +33,6 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import pages
-from market_maker import DummyMarketMaker
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -576,13 +576,17 @@ def scan_wal_files():
 
 # WAL header: 16 bytes (type:u16, len:u16, crc32:u32, reserved:8)
 WAL_HDR = struct.Struct('<HHI8s')
-# BboRecord: 64 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
+# BboRecord: 72 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
 #   bid_px:i64, bid_qty:i64, bid_count:u32, pad:u32,
 #   ask_px:i64, ask_qty:i64, ask_count:u32, pad:u32)
 BBO_FMT = struct.Struct('<QQIIqqIIqqII')
-# FillRecord: 64 bytes
+# FillRecord: 88 bytes
+# seq:u64, ts:u64, sym:u32, taker_uid:u32, maker_uid:u32, pad:u32,
+# taker_oid_hi:u64, taker_oid_lo:u64, maker_oid_hi:u64, maker_oid_lo:u64,
+# price:i64, qty:i64, taker_side:u8, reduce_only:u8, tif:u8, post_only:u8,
+# pad1:4s
 FILL_FMT = struct.Struct(
-    '<QQIIQQQQqqBBBB4s')
+    '<QQIIIIQQQQqqBBBB4s')
 RECORD_FILL = 0
 RECORD_BBO = 1
 
@@ -625,6 +629,10 @@ def parse_wal_records(stream_dir, record_types=None):
                 })
             elif rtype == RECORD_FILL and len(payload) >= FILL_FMT.size:
                 fields = FILL_FMT.unpack_from(payload)
+                # [0]=seq [1]=ts [2]=sym [3]=taker_uid [4]=maker_uid
+                # [5]=pad [6]=taker_oid_hi [7]=taker_oid_lo
+                # [8]=maker_oid_hi [9]=maker_oid_lo
+                # [10]=price [11]=qty [12]=taker_side
                 records.append({
                     "type": "fill",
                     "seq": fields[0],
@@ -632,9 +640,9 @@ def parse_wal_records(stream_dir, record_types=None):
                     "symbol_id": fields[2],
                     "taker_uid": fields[3],
                     "maker_uid": fields[4],
-                    "price": fields[9],
-                    "qty": fields[10],
-                    "taker_side": fields[11],
+                    "price": fields[10],
+                    "qty": fields[11],
+                    "taker_side": fields[12],
                 })
     return records
 
@@ -1901,12 +1909,16 @@ async def api_verify_run():
     })
 
     for inv in [
-        "No crossed book (bid < ask)",
-        "Tips monotonic",
-        "Slab no-leak",
-        "Position = sum of fills",
-        "FIFO within price level",
+        "Fills precede ORDER_DONE (per order)",
         "Exactly-one completion per order",
+        "FIFO within price level (time priority)",
+        "Position = sum of fills (risk engine)",
+        "Tips monotonic, never decrease",
+        "No crossed book (bid < ask)",
+        "SPSC preserves event FIFO order",
+        "Slab no-leak: allocated = free + active",
+        "Funding zero-sum across users per symbol",
+        "Advisory lock exclusive: one main per shard",
     ]:
         if running:
             checks.append({
@@ -2299,32 +2311,73 @@ async def api_metrics():
 
 # ── market maker ────────────────────────────────────────
 
-_maker = DummyMarketMaker(
-    gateway_url=GATEWAY_URL,
-    marketdata_ws=MARKETDATA_WS,
-)
+MAKER_SCRIPT = ROOT / "rsx-playground" / "market_maker.py"
+MAKER_NAME = "maker"
+
+
+def _maker_running() -> bool:
+    info = managed.get(MAKER_NAME)
+    if not info:
+        return False
+    return info["proc"].returncode is None
 
 
 @app.post("/api/maker/start")
 async def api_maker_start(request: Request):
-    if _maker.running:
+    if _maker_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'maker already running</span>')
-    _maker.start()
+    # clean up stale entry if process exited
+    if MAKER_NAME in managed:
+        del managed[MAKER_NAME]
+    if not MAKER_SCRIPT.exists():
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'market_maker.py not found</span>')
+    env = {
+        "GATEWAY_URL": GATEWAY_URL,
+        "MARKETDATA_WS": MARKETDATA_WS,
+    }
+    full_env = {**os.environ, **env}
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(MAKER_SCRIPT),
+        env=full_env,
+        cwd=str(ROOT / "rsx-playground"),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    managed[MAKER_NAME] = {
+        "proc": proc,
+        "binary": str(MAKER_SCRIPT),
+        "env": env,
+    }
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    (PID_DIR / f"{MAKER_NAME}.pid").write_text(str(proc.pid))
+    asyncio.create_task(pipe_output(MAKER_NAME, proc.stdout))
+    await asyncio.sleep(0.1)
+    if proc.returncode is not None:
+        del managed[MAKER_NAME]
+        pid_file = PID_DIR / f"{MAKER_NAME}.pid"
+        if pid_file.exists():
+            pid_file.unlink()
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'maker failed to start</span>')
     audit_log("/api/maker/start", "start maker")
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
-        'maker started</span>')
+        f'maker started (pid {proc.pid})</span>')
 
 
 @app.post("/api/maker/stop")
 async def api_maker_stop(request: Request):
-    if not _maker.running:
+    if not _maker_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'maker not running</span>')
-    await _maker.stop()
+    await stop_process(MAKER_NAME)
     audit_log("/api/maker/stop", "stop maker")
     return HTMLResponse(
         '<span class="text-amber-400 text-xs">'
@@ -2333,29 +2386,28 @@ async def api_maker_stop(request: Request):
 
 @app.get("/api/maker/status")
 async def api_maker_status():
-    return _maker.status()
+    running = _maker_running()
+    info = managed.get(MAKER_NAME)
+    pid = info["proc"].pid if running and info else None
+    return {
+        "running": running,
+        "pid": pid,
+        "name": MAKER_NAME,
+    }
 
 
 @app.get("/x/maker-status", response_class=HTMLResponse)
 async def x_maker_status():
-    s = _maker.status()
-    if not s["running"]:
+    info = managed.get(MAKER_NAME)
+    running = _maker_running()
+    if not running:
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
             'maker stopped</span>')
-    mids = ", ".join(
-        f"{k}={v}" for k, v in s["mid_prices"].items()
-    )
-    errs = (f' | errors: {len(s["errors"])}'
-            if s["errors"] else "")
+    pid = info["proc"].pid if info else "?"
     return HTMLResponse(
-        f'<div class="text-xs space-y-1">'
-        f'<span class="text-emerald-400">running</span>'
-        f' | orders: {s["orders_placed"]}'
-        f' | active: {s["active_orders"]}'
-        f' | cancels: {s["cancels_sent"]}{errs}'
-        f'<div class="text-slate-400">mids: {mids}</div>'
-        f'</div>')
+        f'<span class="text-emerald-400 text-xs">'
+        f'maker running (pid {pid})</span>')
 
 
 # ── trading UI: WS proxy + REST proxy + static ─────────

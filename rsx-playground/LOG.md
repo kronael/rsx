@@ -23,3 +23,5 @@
 - E2E matrix PASS: 6/6 steps green (startup/routing/htmx-partials/proxy/spa-assets/order-path), 806 tests; fixed proxy 502 tests with allow_5xx marker + WS mock, fixed stress tests with allow_5xx
 - Add supersession logic: acceptance-bundle.py auto-closes prior .sig/.count on shard pass (supersede_shard); report_diff.py emits superseded[] = recovered tests with closed-entry log lines
 - Publish acceptance proof block in PROGRESS.md: commit 27f63c1, gates 1-3 PASS (806/806 API), gate-4 PEND (Playwright shards require Rust processes)
+- publish-progress.py: regenerates PROGRESS.md header from artifacts only; fails on divergence between sections; make publish-progress target wired in
+- Add phase semantics CI check to check-progress.py: rejects zombie state (executing+no-runnable-backlog+nonterminal-failures), stale-executing (done but not marked complete), and invalid complete (wrong counts); all 7 checks pass
