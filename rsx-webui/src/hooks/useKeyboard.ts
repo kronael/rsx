@@ -1,6 +1,5 @@
 import { useEffect, useCallback } from "react";
 import { Side } from "../lib/protocol";
-import { formatPrice } from "../lib/format";
 
 interface KeyboardOptions {
   priceInputRef: React.RefObject<HTMLInputElement | null>;

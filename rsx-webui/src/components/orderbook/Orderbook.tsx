@@ -2,6 +2,8 @@ import {
   memo,
   useMemo,
   useCallback,
+  useRef,
+  useEffect,
   useState,
 } from "react";
 import clsx from "clsx";
@@ -77,6 +79,20 @@ const Row = memo(function Row({
       ? (level.total / maxTotal) * 100
       : 0;
 
+  // Flash row background when qty changes
+  const prevQty = useRef(level.qty);
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (prevQty.current !== level.qty && rowRef.current) {
+      const el = rowRef.current;
+      const cls = isBid ? "animate-flash-buy" : "animate-flash-sell";
+      el.classList.remove("animate-flash-buy", "animate-flash-sell");
+      void el.offsetWidth; // force reflow to restart animation
+      el.classList.add(cls);
+    }
+    prevQty.current = level.qty;
+  }, [level.qty, isBid]);
+
   const handleClick = useCallback(() => {
     onClick?.(level.price);
   }, [onClick, level.price]);
@@ -93,6 +109,7 @@ const Row = memo(function Row({
 
   return (
     <div
+      ref={rowRef}
       className="relative flex items-center px-2
         py-[1px] text-xs font-mono cursor-pointer
         hover:bg-bg-hover"
@@ -101,7 +118,7 @@ const Row = memo(function Row({
       onClick={handleClick}
       onKeyDown={handleKeyDown}
     >
-      {/* Depth bar background */}
+      {/* Depth bar background (full-width, scaleX from right) */}
       <div
         className={clsx(
           "absolute inset-y-0 right-0 w-full origin-right",
@@ -112,6 +129,15 @@ const Row = memo(function Row({
           willChange: "transform",
         }}
       />
+      {/* Edge accent bar — right edge for bids, left edge for asks */}
+      {pct > 0 && (
+        <div
+          className={clsx(
+            "absolute inset-y-0 w-[2px]",
+            isBid ? "right-0 bg-buy/70" : "left-0 bg-sell/70",
+          )}
+        />
+      )}
       <span
         className={clsx(
           "w-[80px] text-right z-10",
@@ -160,7 +186,6 @@ export function Orderbook({ onPriceClick }: OrderbookProps) {
   const [showCount, setShowCount] = useState(false);
 
   const {
-    asks,
     bids,
     asksReversed,
     maxAskTotal,
@@ -174,7 +199,6 @@ export function Orderbook({ onPriceClick }: OrderbookProps) {
     const b = groupLevels(rawBids, tickMult, false)
       .slice(0, limit);
     return {
-      asks: a,
       bids: b,
       asksReversed: [...a].reverse(),
       maxAskTotal: a.length > 0
