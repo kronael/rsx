@@ -161,14 +161,37 @@ def check_shard_contradictions(shard: str, data: dict) -> list[str]:
     return issues
 
 
+def supersede_shard(shard: str) -> str | None:
+    """If shard now passes, remove prior .sig/.count files.
+
+    Returns the old signature string that was superseded, or None if
+    there was no prior failed entry.  Called when a shard's current
+    artifact shows unexpected==0 (all tests passed).
+    """
+    sig_file = PLAY_SIG_DIR / f"{shard}.sig"
+    count_file = PLAY_SIG_DIR / f"{shard}.count"
+    old_sig: str | None = None
+    if sig_file.exists():
+        old_sig = sig_file.read_text().strip()
+        sig_file.unlink(missing_ok=True)
+    count_file.unlink(missing_ok=True)
+    return old_sig
+
+
 def gate4_status() -> dict:
-    """Collect Playwright shard results from play-artifacts/<shard>/report.json."""
+    """Collect Playwright shard results from play-artifacts/<shard>/report.json.
+
+    Supersession: when a shard now passes and a prior .sig file exists,
+    the failed entry is auto-closed (sig + count files removed) and the
+    superseded signature is recorded in the returned dict.
+    """
     shards = ["routing", "htmx-partials", "process-control", "trade-ui"]
     total_pass = 0
     total_fail = 0
     shard_results = {}
     failing_ids: list[str] = []
     contradictions: list[str] = []
+    superseded: list[dict] = []  # [{shard, old_sig}] auto-closed entries
 
     for shard in shards:
         report_file = PLAY_ARTIFACT_DIR / shard / "report.json"
@@ -193,6 +216,17 @@ def gate4_status() -> dict:
         expected = stats.get("expected", 0)
 
         status = "pass" if unexpected == 0 else "fail"
+
+        # Supersession: shard now passes — auto-close prior failed entry
+        if unexpected == 0:
+            old_sig = supersede_shard(shard)
+            if old_sig and old_sig != "pass":
+                superseded.append({"shard": shard, "old_sig": old_sig})
+                print(
+                    f"[acceptance-bundle] SUPERSEDED: {shard} "
+                    f"(old_sig={old_sig} closed — shard now passing)",
+                    file=sys.stderr,
+                )
 
         # Collect failing test IDs
         def walk(suites: list) -> None:
@@ -236,6 +270,7 @@ def gate4_status() -> dict:
         "canonical_ok": canonical_ok,
         "shards": shard_results,
         "failing_ids": failing_ids,
+        "superseded": superseded,
     }
 
 
@@ -371,6 +406,7 @@ def main():
             "playwright_failed": g4.get("total_failed", 0),
         },
         "failing_ids": failing,
+        "superseded": g4.get("superseded", []),
     }
 
     BUNDLE_PATH.write_text(json.dumps(bundle, indent=2))

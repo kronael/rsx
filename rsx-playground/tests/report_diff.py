@@ -127,12 +127,16 @@ def main():
         if t not in prev_fails
     ]
 
-    # Recovery: was failing before, now passing
+    # Recovery / supersession: was failing before, now passing.
+    # These entries are auto-closed from the prior failed snapshot.
     recovery = [
         {"test": t, "class": c}
         for t, c in prev_fails.items()
         if t not in cur_fails
     ]
+    # Superseded = recovered tests whose prior failure entry is now stale.
+    # Alias for bundle/reporting consumers; same set as recovery.
+    superseded = recovery
 
     # Delta by endpoint class
     all_classes = set(cur.get("by_class", {})) | set(
@@ -173,10 +177,20 @@ def main():
         ),
         "regression": regression,
         "recovery": recovery,
+        "superseded": superseded,
         "delta_by_class": delta,
     }
 
     print(json.dumps(result, indent=2))
+
+    if superseded:
+        print(
+            f"[report_diff] SUPERSEDED: {len(superseded)} prior failed "
+            f"entry/entries auto-closed by fresh passing run",
+            file=sys.stderr,
+        )
+        for s in superseded:
+            print(f"  closed: [{s['class']}] {s['test']}", file=sys.stderr)
 
     if regression:
         print(
