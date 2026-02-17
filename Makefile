@@ -3,7 +3,9 @@
        play-book play-risk play-wal play-logs \
        play-control play-faults play-verify \
        play-orders play-nav play-api \
-       api-unit api-integration api-stress help
+       api-unit api-integration api-stress \
+       bench-webui help \
+       gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright
 
 # Default target - show help
 help:
@@ -25,15 +27,85 @@ help:
 	@echo "  make api-stress    - Stress tests with latency (3+ min)"
 	@echo "  make smoke         - Smoke tests (not implemented)"
 	@echo ""
+	@echo "Release Gates (ordered, each requires previous to pass):"
+	@echo "  make gate              - Run all 4 gates in order (startup->partials->api->playwright)"
+	@echo "  make gate-1-startup    - Gate 1: server imports cleanly"
+	@echo "  make gate-2-partials   - Gate 2: all routes + HTMX partials HTTP 200"
+	@echo "  make gate-3-api        - Gate 3: full API test suite"
+	@echo "  make gate-4-playwright - Gate 4: Playwright 223/223 (requires gate-3 first)"
+	@echo ""
 	@echo "Quality:"
 	@echo "  make lint          - Run clippy with warnings as errors"
-	@echo "  make perf          - Run performance benchmarks"
+	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
+	@echo "  make bench-webui   - React render benchmark: p95 latency per orderbook update"
 	@echo "  make clean         - Clean build artifacts"
 	@echo ""
 	@echo "Individual Playwright Tests:"
 	@echo "  make play-orders, play-control, play-overview, play-book,"
 	@echo "  play-risk, play-wal, play-logs, play-verify, play-topology,"
 	@echo "  play-faults, play-nav, play-api"
+
+# ── Release Gates ───────────────────────────────────────────────────
+# Hard-ordered gates: each must be green before the next runs.
+# Usage: make gate        (runs all gates in order, stops on first fail)
+#        make gate-1-startup   (imports only, ~1s)
+#        make gate-2-partials  (routing + HTMX partials, ~5s)
+#        make gate-3-api       (API unit tests, ~30s)
+#        make gate-4-playwright (full Playwright suite, 223 tests, ~2min)
+#
+# NEVER run gate-4-playwright directly — use 'make gate' to enforce order.
+
+PYTEST := rsx-playground/.venv/bin/pytest
+PY     := rsx-playground/.venv/bin/python3
+
+gate: gate-1-startup gate-2-partials gate-3-api gate-4-playwright
+	@echo "==> All release gates passed."
+
+# Gate 1: server imports cleanly (no startup crash)
+gate-1-startup:
+	@echo "==> [Gate 1] startup/imports"
+	cd rsx-playground && $(abspath $(PY)) -c "import server; print('ok')"
+	@echo "    PASS: server imports cleanly"
+
+# Gate 2: all page routes + HTMX partials return HTTP 200
+gate-2-partials: gate-1-startup
+	@echo "==> [Gate 2] routing/partials"
+	cd rsx-playground && $(abspath $(PYTEST)) tests/test_htmx_partials.py \
+		--tb=short -q
+	@echo "    PASS: all HTMX partials HTTP 200"
+
+# Gate 3: API test suite (processes, risk, WAL, orders, edge cases)
+# Excludes stress tests and integration tests requiring live Rust processes.
+gate-3-api: gate-2-partials
+	@echo "==> [Gate 3] API tests"
+	cd rsx-playground && $(abspath $(PYTEST)) \
+		tests/api_processes_test.py \
+		tests/api_risk_test.py \
+		tests/api_wal_test.py \
+		tests/api_logs_metrics_test.py \
+		tests/api_verify_test.py \
+		tests/api_orders_test.py \
+		tests/api_edge_cases_test.py \
+		--tb=short -q
+	@echo "    PASS: API tests green"
+
+# Gate 4: full Playwright suite (223 tests). Only runs after gate-3 passes.
+gate-4-playwright: gate-3-api
+	@echo "==> [Gate 4] Playwright (223 tests)"
+	cd rsx-playground/tests && npx playwright test \
+		play_navigation.spec.ts \
+		play_overview.spec.ts \
+		play_topology.spec.ts \
+		play_book.spec.ts \
+		play_risk.spec.ts \
+		play_wal.spec.ts \
+		play_logs.spec.ts \
+		play_control.spec.ts \
+		play_faults.spec.ts \
+		play_verify.spec.ts \
+		play_orders.spec.ts \
+		play_trade.spec.ts
+	@echo "    PASS: Playwright suite green"
 
 # Type check only (fastest feedback, no codegen)
 check:
@@ -71,9 +143,16 @@ wal:
 smoke:
 	@echo "smoke tests not yet implemented"
 
-# Performance benchmarks
+# Performance benchmarks (Rust)
 perf:
 	cargo bench
+
+# WebUI render benchmark: measures p50/p95/p99 React render latency
+# per orderbook delta update. Asserts p95 < 16ms (one rAF frame).
+# Requires: cd rsx-webui && npm run build (builds dist/ first)
+bench-webui:
+	cd rsx-webui && npm run build && \
+	npx playwright test orderbook.bench.spec.ts --reporter=list
 
 # Lint
 lint:

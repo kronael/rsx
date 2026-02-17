@@ -21,6 +21,88 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
 
+
+# ── 5xx fail-fast plugin ──────────────────────────────────────────────
+# Intercepts TestClient calls and records any unexpected 5xx response.
+# A test that receives a 5xx fails immediately; the session stops after
+# the current file (--exitfirst / -x behaviour) when combined with -x.
+#
+# Endpoint classes for triage output:
+#   processes  → /api/processes/*
+#   risk       → /api/risk/*
+#   wal        → /api/wal/*
+#   orders     → /api/orders/*
+#   verify     → /api/verify/*
+#   logs       → /api/logs/*  /x/logs*
+#   stress     → /api/stress/*
+#   other      → everything else
+
+_ENDPOINT_CLASSES = [
+    ("processes", "/api/processes"),
+    ("risk",      "/api/risk"),
+    ("wal",       "/api/wal"),
+    ("orders",    "/api/orders"),
+    ("verify",    "/api/verify"),
+    ("logs",      "/api/logs"),
+    ("stress",    "/api/stress"),
+]
+
+
+def _endpoint_class(url: str) -> str:
+    for name, prefix in _ENDPOINT_CLASSES:
+        if url.startswith(prefix):
+            return name
+    return "other"
+
+
+# Shared session state for 5xx tracking
+_5xx_hits: list[tuple[str, str, int]] = []  # (test, url, status)
+
+
+@pytest.fixture(autouse=True)
+def track_5xx(request, monkeypatch):
+    """Patch TestClient to detect unexpected 5xx responses."""
+    import httpx
+
+    original_send = httpx.Client.send
+
+    def patched_send(self, req, *args, **kwargs):
+        resp = original_send(self, req, *args, **kwargs)
+        if resp.status_code >= 500:
+            entry = (
+                request.node.nodeid,
+                str(req.url.path),
+                resp.status_code,
+            )
+            _5xx_hits.append(entry)
+            ec = _endpoint_class(str(req.url.path))
+            pytest.fail(
+                f"[5xx/{ec}] {req.method} {req.url.path}"
+                f" → {resp.status_code}",
+                pytrace=False,
+            )
+        return resp
+
+    monkeypatch.setattr(httpx.Client, "send", patched_send)
+    yield
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print 5xx triage table at end of session."""
+    if not _5xx_hits:
+        return
+    terminalreporter.write_sep("=", "5xx regressions by endpoint class")
+    by_class: dict[str, list] = {}
+    for test, url, status in _5xx_hits:
+        ec = _endpoint_class(url)
+        by_class.setdefault(ec, []).append((test, url, status))
+    for ec, hits in sorted(by_class.items()):
+        terminalreporter.write_line(f"\n  [{ec}] {len(hits)} hit(s):")
+        for test, url, status in hits:
+            terminalreporter.write_line(
+                f"    {status} {url}  ({test})"
+            )
+
 class RawWsClient:
     """Minimal WebSocket client for testing.
 
