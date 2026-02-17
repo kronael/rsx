@@ -170,24 +170,15 @@ export function Chart() {
     });
   }
 
-  // Subscribe to trades
+  // Subscribe to trades via ring buffer.
   useEffect(() => {
-    let prevLen = 0;
+    let prevTs = 0;
     const unsub = useMarketStore.subscribe((state) => {
-      const trades = state.trades;
-      if (trades.length === 0) {
-        prevLen = 0;
-        return;
-      }
-      const newCount = trades.length - prevLen;
-      prevLen = trades.length;
-      if (newCount <= 0) return;
-      for (let i = newCount - 1; i >= 0; i--) {
-        const t = trades[i];
-        if (t) {
-          updateCandle(t.price, t.qty, t.ts);
-        }
-      }
+      const ring = state.tradeRing;
+      const newest = ring.newest();
+      if (!newest || newest.ts === prevTs) return;
+      prevTs = newest.ts;
+      updateCandle(newest.price, newest.qty, newest.ts);
     });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps

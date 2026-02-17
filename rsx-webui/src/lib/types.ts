@@ -82,6 +82,16 @@ export interface UserFill {
   fee: number;
 }
 
+// 24h rolling statistics
+export interface Stats24h {
+  open: number;      // raw tick units
+  high: number;      // raw tick units
+  low: number;       // raw tick units
+  close: number;     // raw tick units (last price)
+  volume: number;    // raw lot units
+  turnover: number;  // raw tick units (quote volume)
+}
+
 // Connection state
 export const enum WsStatus {
   DISCONNECTED = "disconnected",

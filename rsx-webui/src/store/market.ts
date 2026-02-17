@@ -1,22 +1,81 @@
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import type {
   SymbolMeta,
   OrderbookState,
   BboState,
   RecentTrade,
   PriceLevel,
+  Stats24h,
 } from "../lib/types";
 import { Side } from "../lib/protocol";
+
+// Fixed-capacity ring buffer: O(1) push, no array copies.
+const RING_CAP = 100;
+
+export class TradeRing {
+  private buf: (RecentTrade | undefined)[];
+  private head: number; // next write slot
+  private size: number;
+
+  constructor() {
+    this.buf = new Array(RING_CAP);
+    this.head = 0;
+    this.size = 0;
+  }
+
+  push(t: RecentTrade): TradeRing {
+    const next = new TradeRing();
+    next.buf = this.buf.slice(); // shallow copy of fixed array
+    next.head = this.head;
+    next.size = this.size;
+    next.buf[next.head] = t;
+    next.head = (next.head + 1) % RING_CAP;
+    if (next.size < RING_CAP) next.size++;
+    return next;
+  }
+
+  // Returns trades newest-first.
+  snapshot(): RecentTrade[] {
+    const out: RecentTrade[] = [];
+    for (let i = 0; i < this.size; i++) {
+      const idx = (this.head - 1 - i + RING_CAP) % RING_CAP;
+      const t = this.buf[idx];
+      if (t !== undefined) out.push(t);
+    }
+    return out;
+  }
+
+  newest(): RecentTrade | undefined {
+    if (this.size === 0) return undefined;
+    return this.buf[(this.head - 1 + RING_CAP) % RING_CAP];
+  }
+
+  get length(): number {
+    return this.size;
+  }
+
+  clear(): TradeRing {
+    return new TradeRing();
+  }
+}
 
 interface MarketStore {
   symbols: Map<number, SymbolMeta>;
   selectedSymbol: number;
   orderbook: OrderbookState;
   bbo: BboState;
-  trades: RecentTrade[];
+  tradeRing: TradeRing;
+  stats: Stats24h | null;
+  markPx: number;
+  indexPx: number;
+  fundingRate: number | null; // fractional, e.g. 0.0001
 
   setSymbols: (list: SymbolMeta[]) => void;
   setSymbol: (id: number) => void;
+  setStats: (s: Stats24h) => void;
+  updateMark: (markPx: number, indexPx: number) => void;
+  setFundingRate: (rate: number) => void;
   updateBbo: (
     bidPx: number,
     bidQty: number,
@@ -109,63 +168,154 @@ function applyDelta(
   return next.slice(0, 20);
 }
 
+// ---------------------------------------------------------------------------
+// rAF coalescing: buffer L2 deltas and flush once per animation frame.
+// Many deltas arriving in the same 16ms window produce one React re-render.
+// ---------------------------------------------------------------------------
+interface DeltaEntry {
+  side: Side;
+  px: number;
+  qty: number;
+  count: number;
+  seq: number;
+}
+
+let rafPending = false;
+let deltaQueue: DeltaEntry[] = [];
+
+function scheduleFlush(flush: () => void): void {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    flush();
+  });
+}
+
 export const useMarketStore = create<MarketStore>(
-  (set) => ({
-    symbols: new Map(),
-    selectedSymbol: 1,
-    orderbook: emptyBook,
-    bbo: emptyBbo,
-    trades: [],
-
-    setSymbols: (list) =>
-      set(() => {
-        const m = new Map<number, SymbolMeta>();
-        for (const s of list) m.set(s.id, s);
-        return { symbols: m };
-      }),
-
-    setSymbol: (id) =>
-      set({
-        selectedSymbol: id,
-        orderbook: emptyBook,
-        bbo: emptyBbo,
-        trades: [],
-      }),
-
-    updateBbo: (bidPx, bidQty, askPx, askQty, ts, seq) =>
-      set({ bbo: { bidPx, bidQty, askPx, askQty, ts, seq } }),
-
-    applyL2Snapshot: (rawBids, rawAsks, seq) =>
-      set(() => {
-        const bids = toLevels(rawBids);
-        const asks = toLevels(rawAsks);
-        const s = calcSpread(bids, asks);
-        return {
-          orderbook: { bids, asks, ...s, seq },
-        };
-      }),
-
-    applyL2Delta: (side, px, qty, count, seq) =>
+  (set) => {
+    const flushDeltas = () => {
+      const batch = deltaQueue;
+      deltaQueue = [];
+      if (batch.length === 0) return;
       set((state) => {
-        const ob = state.orderbook;
-        if (seq <= ob.seq) return state;
-        const bids =
-          side === Side.BUY
-            ? applyDelta(ob.bids, px, qty, count, false)
-            : ob.bids;
-        const asks =
-          side === Side.SELL
-            ? applyDelta(ob.asks, px, qty, count, true)
-            : ob.asks;
-        const s = calcSpread(bids, asks);
-        return {
-          orderbook: { bids, asks, ...s, seq },
-        };
-      }),
+        let ob = state.orderbook;
+        for (const d of batch) {
+          if (d.seq <= ob.seq) continue;
+          const bids =
+            d.side === Side.BUY
+              ? applyDelta(ob.bids, d.px, d.qty, d.count, false)
+              : ob.bids;
+          const asks =
+            d.side === Side.SELL
+              ? applyDelta(ob.asks, d.px, d.qty, d.count, true)
+              : ob.asks;
+          const s = calcSpread(bids, asks);
+          ob = { bids, asks, ...s, seq: d.seq };
+        }
+        return { orderbook: ob };
+      });
+    };
 
-    addTrade: (t) =>
-      set((state) => ({
-        trades: [t, ...state.trades].slice(0, 100),
-      })),
-  }),
+    return {
+      symbols: new Map(),
+      selectedSymbol: 1,
+      orderbook: emptyBook,
+      bbo: emptyBbo,
+      tradeRing: new TradeRing(),
+      stats: null,
+      markPx: 0,
+      indexPx: 0,
+      fundingRate: null,
+
+      setSymbols: (list) =>
+        set(() => {
+          const m = new Map<number, SymbolMeta>();
+          for (const s of list) m.set(s.id, s);
+          return { symbols: m };
+        }),
+
+      setSymbol: (id) => {
+        deltaQueue = [];
+        set({
+          selectedSymbol: id,
+          orderbook: emptyBook,
+          bbo: emptyBbo,
+          tradeRing: new TradeRing(),
+          stats: null,
+          markPx: 0,
+          indexPx: 0,
+          fundingRate: null,
+        });
+      },
+
+      setStats: (s) => set({ stats: s }),
+
+      updateMark: (markPx, indexPx) =>
+        set({ markPx, indexPx }),
+
+      setFundingRate: (rate) =>
+        set({ fundingRate: rate }),
+
+      updateBbo: (bidPx, bidQty, askPx, askQty, ts, seq) =>
+        set({ bbo: { bidPx, bidQty, askPx, askQty, ts, seq } }),
+
+      applyL2Snapshot: (rawBids, rawAsks, seq) => {
+        deltaQueue = []; // snapshot supersedes any buffered deltas
+        set(() => {
+          const bids = toLevels(rawBids);
+          const asks = toLevels(rawAsks);
+          const s = calcSpread(bids, asks);
+          return {
+            orderbook: { bids, asks, ...s, seq },
+          };
+        });
+      },
+
+      applyL2Delta: (side, px, qty, count, seq) => {
+        deltaQueue.push({ side, px, qty, count, seq });
+        scheduleFlush(flushDeltas);
+      },
+
+      addTrade: (t) =>
+        set((state) => ({
+          tradeRing: state.tradeRing.push(t),
+        })),
+    };
+  },
 );
+
+// --------------- Split selectors with shallow equality ---------------
+
+// Orderbook: re-renders only when orderbook reference changes.
+export function useOrderbook(): OrderbookState {
+  return useMarketStore(
+    useShallow((s) => s.orderbook),
+  );
+}
+
+// BBO: re-renders only when any BBO field changes.
+export function useBbo(): BboState {
+  return useMarketStore(
+    useShallow((s) => s.bbo),
+  );
+}
+
+// Trades snapshot (newest-first) from ring buffer.
+// Re-renders only when tradeRing reference changes (new push).
+export function useTrades(): RecentTrade[] {
+  const ring = useMarketStore((s) => s.tradeRing);
+  return ring.snapshot();
+}
+
+// Symbol metadata for the currently selected symbol.
+export function useSymbolMeta(): SymbolMeta | undefined {
+  return useMarketStore(
+    useShallow((s) => s.symbols.get(s.selectedSymbol)),
+  );
+}
+
+// 24h stats for the selected symbol (null until received).
+export function useStats(): Stats24h | null {
+  return useMarketStore((s) => s.stats);
+}

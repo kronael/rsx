@@ -1,8 +1,9 @@
-import { useEffect } from "react";
-import { useState } from "react";
-import { useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import clsx from "clsx";
 import { useMarketStore } from "../../store/market";
+import { useBbo } from "../../store/market";
+import { useSymbolMeta } from "../../store/market";
+import { useStats } from "../../store/market";
 import { useConnectionStore } from "../../store/connection";
 import { useTradingStore } from "../../store/trading";
 import { formatPrice } from "../../lib/format";
@@ -13,16 +14,66 @@ import { fetchAccount } from "../../hooks/useRestApi";
 import { fetchPositions } from "../../hooks/useRestApi";
 import { fetchOrders } from "../../hooks/useRestApi";
 
+// ▲ up, ▼ down, — flat
+type TickDir = "up" | "down" | "flat";
+
+function TickArrow({ dir }: { dir: TickDir }) {
+  if (dir === "up") {
+    return (
+      <span className="text-buy text-[10px] leading-none">
+        ▲
+      </span>
+    );
+  }
+  if (dir === "down") {
+    return (
+      <span className="text-sell text-[10px] leading-none">
+        ▼
+      </span>
+    );
+  }
+  return null;
+}
+
+interface StatCellProps {
+  label: string;
+  value: string;
+  valueClass?: string;
+}
+
+function StatCell({ label, value, valueClass }: StatCellProps) {
+  return (
+    <div className="flex flex-col min-w-[70px]">
+      <span className="text-text-secondary text-2xs">
+        {label}
+      </span>
+      <span
+        className={clsx(
+          "font-mono text-xs text-text-primary",
+          valueClass,
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
 export function TopBar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
+  const prevBidRef = useRef<number>(0);
+  const [tickDir, setTickDir] = useState<TickDir>("flat");
+
   const symbols = useMarketStore((s) => s.symbols);
   const selectedSymbol = useMarketStore(
     (s) => s.selectedSymbol,
   );
   const setSymbol = useMarketStore((s) => s.setSymbol);
   const setSymbols = useMarketStore((s) => s.setSymbols);
-  const bbo = useMarketStore((s) => s.bbo);
+  const bbo = useBbo();
+  const meta = useSymbolMeta();
+  const stats = useStats();
   const privStatus = useConnectionStore(
     (s) => s.privateStatus,
   );
@@ -31,9 +82,18 @@ export function TopBar() {
   );
   const latency = useConnectionStore((s) => s.latency);
 
-  const meta = symbols.get(selectedSymbol);
   const tickSize = meta?.tickSize ?? 0.01;
   const lotSize = meta?.lotSize ?? 0.001;
+
+  // Track tick direction from BBO bid price changes
+  useEffect(() => {
+    const cur = bbo.bidPx;
+    const prev = prevBidRef.current;
+    if (prev !== 0 && cur !== prev) {
+      setTickDir(cur > prev ? "up" : "down");
+    }
+    prevBidRef.current = cur;
+  }, [bbo.bidPx]);
 
   // Load symbols + initial data on mount
   useEffect(() => {
@@ -95,13 +155,51 @@ export function TopBar() {
     ? formatPrice(bbo.bidPx, tickSize)
     : "--";
 
+  const lastPxColor =
+    tickDir === "up"
+      ? "text-buy"
+      : tickDir === "down"
+        ? "text-sell"
+        : "text-text-primary";
+
+  // 24h derived stats
+  const { changePct, changePctStr, high24h, low24h, vol24h } =
+    useMemo(() => {
+      if (!stats || stats.open === 0) {
+        return {
+          changePct: 0,
+          changePctStr: "--",
+          high24h: "--",
+          low24h: "--",
+          vol24h: "--",
+        };
+      }
+      const pct =
+        ((stats.close - stats.open) / stats.open) * 100;
+      return {
+        changePct: pct,
+        changePctStr:
+          (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%",
+        high24h: formatPrice(stats.high, tickSize),
+        low24h: formatPrice(stats.low, tickSize),
+        vol24h: formatQty(stats.volume, lotSize),
+      };
+    }, [stats, tickSize, lotSize]);
+
+  const changeColor =
+    changePct > 0
+      ? "text-buy"
+      : changePct < 0
+        ? "text-sell"
+        : "text-text-secondary";
+
   return (
     <div
       className="h-12 bg-bg-surface border-b border-border
-        flex items-center px-4 gap-4 shrink-0"
+        flex items-center px-4 gap-4 shrink-0 overflow-x-auto"
     >
       {/* Symbol selector */}
-      <div className="relative" ref={dropRef}>
+      <div className="relative shrink-0" ref={dropRef}>
         <button
           className="text-text-primary font-semibold
             text-sm hover:text-accent transition-colors"
@@ -143,24 +241,41 @@ export function TopBar() {
         )}
       </div>
 
-      {/* Price stats */}
-      <div className="flex items-center gap-3 text-xs">
-        <span className="font-mono text-sm text-buy">
+      {/* Last price + tick arrow */}
+      <div className="flex items-center gap-1 shrink-0">
+        <span
+          className={clsx(
+            "font-mono text-sm font-semibold",
+            lastPxColor,
+          )}
+        >
           {lastPx}
         </span>
+        <TickArrow dir={tickDir} />
+      </div>
+
+      {/* 24h change */}
+      <StatCell
+        label="24h Change"
+        value={changePctStr}
+        valueClass={changeColor}
+      />
+
+      {/* 24h High */}
+      <StatCell label="24h High" value={high24h} />
+
+      {/* 24h Low */}
+      <StatCell label="24h Low" value={low24h} />
+
+      {/* 24h Volume */}
+      <StatCell label="24h Vol" value={vol24h} />
+
+      {/* BBO */}
+      <div className="flex items-center gap-3 text-xs shrink-0">
         <div className="flex flex-col">
-          <span className="text-text-secondary">Mark</span>
-          <span className="font-mono text-text-primary">
-            {bbo.askPx > 0
-              ? formatPrice(
-                  Math.round((bbo.bidPx + bbo.askPx) / 2),
-                  tickSize,
-                )
-              : "--"}
+          <span className="text-text-secondary text-2xs">
+            Bid
           </span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-text-secondary">Bid</span>
           <span className="font-mono text-buy">
             {bbo.bidPx > 0
               ? formatPrice(bbo.bidPx, tickSize)
@@ -168,30 +283,12 @@ export function TopBar() {
           </span>
         </div>
         <div className="flex flex-col">
-          <span className="text-text-secondary">Ask</span>
+          <span className="text-text-secondary text-2xs">
+            Ask
+          </span>
           <span className="font-mono text-sell">
             {bbo.askPx > 0
               ? formatPrice(bbo.askPx, tickSize)
-              : "--"}
-          </span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-text-secondary">
-            Bid Size
-          </span>
-          <span className="font-mono text-text-primary">
-            {bbo.bidQty > 0
-              ? formatQty(bbo.bidQty, lotSize)
-              : "--"}
-          </span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-text-secondary">
-            Ask Size
-          </span>
-          <span className="font-mono text-text-primary">
-            {bbo.askQty > 0
-              ? formatQty(bbo.askQty, lotSize)
               : "--"}
           </span>
         </div>
@@ -202,7 +299,7 @@ export function TopBar() {
 
       {/* Connection status */}
       <div
-        className="flex items-center gap-2 text-xs"
+        className="flex items-center gap-2 text-xs shrink-0"
         aria-label="Connection status"
       >
         <div

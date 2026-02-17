@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useState } from "react";
 import { useEffect } from "react";
 import { useCallback } from "react";
@@ -10,6 +11,38 @@ import { formatQty } from "../../lib/format";
 import { formatTs } from "../../lib/format";
 import { fetchFills } from "../../hooks/useRestApi";
 import type { UserFill } from "../../lib/types";
+
+const FillRow = memo(function FillRow({
+  f,
+  tickSize,
+  lotSize,
+}: {
+  f: UserFill;
+  tickSize: number;
+  lotSize: number;
+}) {
+  return (
+    <tr
+      className="border-t border-border
+        hover:bg-bg-hover"
+    >
+      <td className="px-4 py-2 text-text-secondary">
+        {formatTs(f.ts)}
+      </td>
+      <td className="px-2 py-2 text-right">
+        {formatPrice(f.price, tickSize)}
+      </td>
+      <td className="px-2 py-2 text-right">
+        {formatQty(f.qty, lotSize)}
+      </td>
+      <td className="px-2 py-2 text-right
+        text-text-secondary"
+      >
+        {formatPrice(f.fee, tickSize)}
+      </td>
+    </tr>
+  );
+});
 
 export function OrderHistory() {
   const fills = useTradingStore((s) => s.fills);
@@ -77,26 +110,12 @@ export function OrderHistory() {
         </thead>
         <tbody>
           {allFills.map((f, i) => (
-            <tr
+            <FillRow
               key={`${f.ts}-${i}`}
-              className="border-t border-border
-                hover:bg-bg-hover"
-            >
-              <td className="px-4 py-2 text-text-secondary">
-                {formatTs(f.ts)}
-              </td>
-              <td className="px-2 py-2 text-right">
-                {formatPrice(f.price, tickSize)}
-              </td>
-              <td className="px-2 py-2 text-right">
-                {formatQty(f.qty, lotSize)}
-              </td>
-              <td className="px-2 py-2 text-right
-                text-text-secondary"
-              >
-                {formatPrice(f.fee, tickSize)}
-              </td>
-            </tr>
+              f={f}
+              tickSize={tickSize}
+              lotSize={lotSize}
+            />
           ))}
         </tbody>
       </table>

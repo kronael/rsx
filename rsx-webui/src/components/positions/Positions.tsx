@@ -1,3 +1,4 @@
+import { memo } from "react";
 import clsx from "clsx";
 import { useTradingStore } from "../../store/trading";
 import { useMarketStore } from "../../store/market";
@@ -8,6 +9,99 @@ import { formatPrice } from "../../lib/format";
 import { formatQty } from "../../lib/format";
 import { formatPnl } from "../../lib/format";
 import { generateCid } from "../../lib/format";
+import type { UserPosition } from "../../lib/types";
+import type { SymbolMeta } from "../../lib/types";
+
+const PositionRow = memo(function PositionRow({
+  p,
+  meta,
+  send,
+}: {
+  p: UserPosition;
+  meta: SymbolMeta | undefined;
+  send: (msg: string) => void;
+}) {
+  const tick = meta?.tickSize ?? 0.01;
+  const lot = meta?.lotSize ?? 0.001;
+  const pnl = formatPnl(p.unrealizedPnl, tick);
+  const isBuy = p.side === Side.BUY;
+
+  return (
+    <tr
+      className="border-t border-border
+        hover:bg-bg-hover"
+    >
+      <td className="px-4 py-2">
+        {meta?.name ?? p.symbolId}
+      </td>
+      <td
+        className={clsx(
+          "px-2 py-2",
+          isBuy ? "text-buy" : "text-sell",
+        )}
+      >
+        {isBuy ? "Long" : "Short"}
+      </td>
+      <td className="px-2 py-2 text-right">
+        {formatQty(p.qty, lot)}
+      </td>
+      <td className="px-2 py-2 text-right">
+        {formatPrice(p.entryPx, tick)}
+      </td>
+      <td className="px-2 py-2 text-right">
+        {formatPrice(p.markPx, tick)}
+      </td>
+      <td
+        className={clsx(
+          "px-2 py-2 text-right",
+          pnl.positive
+            ? "text-buy"
+            : "text-sell",
+        )}
+      >
+        {pnl.text}
+      </td>
+      <td className="px-2 py-2 text-right">
+        {p.liqPx > 0
+          ? formatPrice(p.liqPx, tick)
+          : "--"}
+      </td>
+      <td className="px-2 py-2 text-right">
+        <button
+          className="text-text-secondary
+            hover:text-sell text-xs"
+          onClick={() => {
+            const closeSide = isBuy
+              ? Side.SELL
+              : Side.BUY;
+            const mkt =
+              useMarketStore.getState();
+            if (
+              mkt.selectedSymbol !== p.symbolId
+            ) return;
+            const px = isBuy
+              ? mkt.bbo.bidPx
+              : mkt.bbo.askPx;
+            if (px <= 0) return;
+            const msg = newOrder(
+              p.symbolId,
+              closeSide,
+              px,
+              p.qty,
+              generateCid(),
+              TIF.IOC,
+              true,
+              false,
+            );
+            send(msg);
+          }}
+        >
+          Close
+        </button>
+      </td>
+    </tr>
+  );
+});
 
 interface Props {
   send: (msg: string) => void;
@@ -42,90 +136,14 @@ export function Positions({ send }: Props) {
         </tr>
       </thead>
       <tbody>
-        {positions.map((p) => {
-          const meta = symbols.get(p.symbolId);
-          const tick = meta?.tickSize ?? 0.01;
-          const lot = meta?.lotSize ?? 0.001;
-          const pnl = formatPnl(p.unrealizedPnl, tick);
-          const isBuy = p.side === Side.BUY;
-
-          return (
-            <tr
-              key={p.symbolId}
-              className="border-t border-border
-                hover:bg-bg-hover"
-            >
-              <td className="px-4 py-2">
-                {meta?.name ?? p.symbolId}
-              </td>
-              <td
-                className={clsx(
-                  "px-2 py-2",
-                  isBuy ? "text-buy" : "text-sell",
-                )}
-              >
-                {isBuy ? "Long" : "Short"}
-              </td>
-              <td className="px-2 py-2 text-right">
-                {formatQty(p.qty, lot)}
-              </td>
-              <td className="px-2 py-2 text-right">
-                {formatPrice(p.entryPx, tick)}
-              </td>
-              <td className="px-2 py-2 text-right">
-                {formatPrice(p.markPx, tick)}
-              </td>
-              <td
-                className={clsx(
-                  "px-2 py-2 text-right",
-                  pnl.positive
-                    ? "text-buy"
-                    : "text-sell",
-                )}
-              >
-                {pnl.text}
-              </td>
-              <td className="px-2 py-2 text-right">
-                {p.liqPx > 0
-                  ? formatPrice(p.liqPx, tick)
-                  : "--"}
-              </td>
-              <td className="px-2 py-2 text-right">
-                <button
-                  className="text-text-secondary
-                    hover:text-sell text-xs"
-                  onClick={() => {
-                    const closeSide = isBuy
-                      ? Side.SELL
-                      : Side.BUY;
-                    const mkt =
-                      useMarketStore.getState();
-                    if (
-                      mkt.selectedSymbol !== p.symbolId
-                    ) return;
-                    const px = isBuy
-                      ? mkt.bbo.bidPx
-                      : mkt.bbo.askPx;
-                    if (px <= 0) return;
-                    const msg = newOrder(
-                      p.symbolId,
-                      closeSide,
-                      px,
-                      p.qty,
-                      generateCid(),
-                      TIF.IOC,
-                      true,
-                      false,
-                    );
-                    send(msg);
-                  }}
-                >
-                  Close
-                </button>
-              </td>
-            </tr>
-          );
-        })}
+        {positions.map((p) => (
+          <PositionRow
+            key={p.symbolId}
+            p={p}
+            meta={symbols.get(p.symbolId)}
+            send={send}
+          />
+        ))}
       </tbody>
     </table>
   );

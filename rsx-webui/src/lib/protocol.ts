@@ -155,6 +155,15 @@ export type TradeMsg = {
   ];
 };
 
+export type MarkMsg = {
+  MK: [
+    number, // sym
+    number, // mark_px (tick units)
+    number, // index_px (tick units)
+    number, // ts (ns)
+  ];
+};
+
 export type MetadataMsg = {
   M: [
     number, // sym
@@ -173,7 +182,8 @@ export type ServerMsg =
   | BboMsg
   | L2SnapshotMsg
   | L2DeltaMsg
-  | TradeMsg;
+  | TradeMsg
+  | MarkMsg;
 
 // Parse a raw JSON string into typed message.
 // Returns null on unknown message type.
@@ -191,7 +201,7 @@ export function parseMessage(
     // Validate known message types
     const known = [
       "U", "F", "E", "H",
-      "BBO", "B", "D", "T", "M",
+      "BBO", "B", "D", "T", "M", "MK",
     ];
     if (!known.includes(key)) return null;
 
