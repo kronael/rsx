@@ -1,7 +1,15 @@
 import { defineConfig } from "@playwright/test";
+import path from "path";
 
 // Domain shards — deterministic order: routing → htmx → process-control → trade-ui
 // retries: 0 globally; play-shard.sh blocks re-runs when failure signature unchanged.
+// Reporter is set per-run via CLI --reporter flag (json + junit from play-shard.sh).
+// PLAYWRIGHT_JUNIT_OUTPUT_NAME env var controls junit artifact path.
+const shard = process.env.PW_SHARD ?? "unknown";
+const artifactDir = path.join(
+  __dirname, "..", "tmp", "play-artifacts", shard
+);
+
 export default defineConfig({
   testDir: ".",
   timeout: 15_000,
@@ -10,7 +18,15 @@ export default defineConfig({
     baseURL: "http://localhost:49171",
     headless: true,
   },
-  reporter: "list",
+  // Reporter resolved from CLI --reporter when invoked via play-shard.sh.
+  // Default "list" for direct npx playwright test invocations.
+  reporter: process.env.PW_SHARD
+    ? [
+        ["json", { outputFile: path.join(artifactDir, "report.json") }],
+        ["junit", { outputFile: path.join(artifactDir, "report.xml") }],
+        ["list"],
+      ]
+    : [["list"]],
   webServer: {
     command: "bash -c 'source ../.venv/bin/activate && python ../server.py'",
     url: "http://localhost:49171",

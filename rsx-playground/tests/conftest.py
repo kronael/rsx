@@ -58,6 +58,91 @@ def _endpoint_class(url: str) -> str:
 # Shared session state for 5xx tracking
 _5xx_hits: list[tuple[str, str, int]] = []  # (test, url, status)
 
+# Session-level test result accumulator for JSON report
+_test_results: list[dict] = []
+
+# JSON report path (relative to playground root)
+_REPORT_DIR = Path(__file__).parent.parent / "tmp"
+_REPORT_PATH = _REPORT_DIR / "gate-3-report.json"
+_REPORT_PREV = _REPORT_DIR / "gate-3-report.prev.json"
+
+
+def pytest_runtest_logreport(report):
+    """Accumulate test outcomes for JSON report."""
+    if report.when != "call":
+        return
+    node = report.nodeid
+    # Derive endpoint class from test node path (file → class)
+    file_part = node.split("::")[0]
+    if "processes" in file_part:
+        ec = "processes"
+    elif "risk" in file_part:
+        ec = "risk"
+    elif "wal" in file_part:
+        ec = "wal"
+    elif "orders" in file_part:
+        ec = "orders"
+    elif "verify" in file_part:
+        ec = "verify"
+    elif "logs" in file_part:
+        ec = "logs"
+    elif "stress" in file_part:
+        ec = "stress"
+    elif "proxy" in file_part:
+        ec = "proxy"
+    else:
+        ec = "other"
+
+    outcome = "passed" if report.passed else (
+        "failed" if report.failed else "skipped"
+    )
+    entry: dict = {
+        "test": node,
+        "outcome": outcome,
+        "endpoint_class": ec,
+    }
+    if report.failed:
+        entry["longrepr"] = str(report.longrepr)
+    _test_results.append(entry)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Write JSON report and rotate prev on session end."""
+    _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Rotate: current → prev
+    if _REPORT_PATH.exists():
+        import shutil
+        shutil.copy2(_REPORT_PATH, _REPORT_PREV)
+
+    # Build summary by endpoint class
+    by_class: dict[str, dict] = {}
+    for r in _test_results:
+        ec = r["endpoint_class"]
+        if ec not in by_class:
+            by_class[ec] = {"passed": 0, "failed": 0, "skipped": 0,
+                            "failures": []}
+        by_class[ec][r["outcome"]] += 1
+        if r["outcome"] == "failed":
+            by_class[ec]["failures"].append({
+                "test": r["test"],
+                "reason": r.get("longrepr", ""),
+            })
+
+    import time as _time
+    report = {
+        "run_ts": int(_time.time()),
+        "exit_status": int(exitstatus),
+        "total": len(_test_results),
+        "passed": sum(1 for r in _test_results if r["outcome"] == "passed"),
+        "failed": sum(1 for r in _test_results if r["outcome"] == "failed"),
+        "skipped": sum(
+            1 for r in _test_results if r["outcome"] == "skipped"
+        ),
+        "by_class": by_class,
+    }
+    _REPORT_PATH.write_text(json.dumps(report, indent=2))
+
 
 @pytest.fixture(autouse=True)
 def track_5xx(request, monkeypatch):
