@@ -11,7 +11,7 @@ export default defineConfig({
   },
   reporter: "list",
   webServer: {
-    command: "source ../.venv/bin/activate && python ../server.py",
+    command: "bash -c 'source ../.venv/bin/activate && python ../server.py'",
     url: "http://localhost:49171",
     reuseExistingServer: true,
     timeout: 10000,

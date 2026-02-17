@@ -1,0 +1,9 @@
+- Test coverage for 38 HTMX partials, all return HTTP 200
+- Add React.memo to Row, TradeRow, PositionRow, OrderRow, FillRow leaf components
+- Audit server.py+pages.py: mapped all routes, identified 6 potential 500 sources
+- Fix stress_client.py: replace undefined `conn_errors` with `all_errors` so /api/stress/run returns HTTP 502 with error message when gateway is unreachable
+- Fix market maker API: clean up stale managed entry on restart, check script exists, clean PID file on failure, return null pid when stopped
+- Audit server.py+pages.py: mapped 39 API routes + 38 HTMX partials + 72 pages.py functions; identified 30+ potential 500 sources (unsafe dict access, empty-list max(), missing rsx-cli check, BBO KeyErrors in render_book_ladder/render_live_fills)
+- Verified all 13 page routes (/, /overview, /topology, /book, /risk, /wal, /logs, /control, /faults, /verify, /orders, /stress, /docs, /trade) + 39 HTMX partials return HTTP 200 with no server exceptions
+- Verified rsx-webui Vite base="./" and dist/index.html uses relative asset URLs (./assets/); /trade/ serves correctly behind /rsx-play/ proxy
+- Add hard-ordered release gates to Makefile (gate-1-startup→gate-2-partials→gate-3-api→gate-4-playwright); add 5xx fail-fast conftest hook with endpoint-class triage output
