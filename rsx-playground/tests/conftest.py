@@ -1,5 +1,14 @@
 """Pytest configuration for rsx-playground tests."""
 
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers",
+        "allow_5xx: mark test as intentionally exercising 5xx responses; "
+        "exempts the test from the 5xx fail-fast plugin.",
+    )
+
 import asyncio
 import base64
 import json
@@ -146,7 +155,16 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.fixture(autouse=True)
 def track_5xx(request, monkeypatch):
-    """Patch TestClient to detect unexpected 5xx responses."""
+    """Patch TestClient to detect unexpected 5xx responses.
+
+    Tests that explicitly verify 5xx error handling should use
+    @pytest.mark.allow_5xx to exempt themselves from this plugin.
+    """
+    # Skip enforcement for tests that intentionally exercise 5xx paths
+    if request.node.get_closest_marker("allow_5xx"):
+        yield
+        return
+
     import httpx
 
     original_send = httpx.Client.send

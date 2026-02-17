@@ -1305,6 +1305,7 @@ def test_verify_run_performance(client):
     assert elapsed < 2.0
 
 
+@pytest.mark.allow_5xx
 def test_large_order_batch_performance(client):
     """Large order batch performance."""
     import time

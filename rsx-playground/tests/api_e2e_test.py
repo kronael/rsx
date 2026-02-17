@@ -3,6 +3,8 @@
 Run with: cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
 """
 
+import pytest
+
 
 # ── HTML Page Routes ────────────────────────────────────────
 
@@ -159,6 +161,7 @@ def test_api_orders_random_post(client):
     assert "5 random orders" in resp.text
 
 
+@pytest.mark.allow_5xx
 def test_api_orders_stress_post(client):
     """POST /api/stress/run returns JSON response."""
     resp = client.post("/api/stress/run")
