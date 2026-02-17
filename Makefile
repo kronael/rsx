@@ -5,7 +5,7 @@
        play-orders play-nav play-api \
        api-unit api-integration api-stress \
        bench-webui help check-progress acceptance-bundle release-gate \
-       lint-snapshot \
+       lint-snapshot publish-progress \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-routing shard-htmx shard-control shard-trade shards
 
@@ -38,8 +38,9 @@ help:
 	@echo ""
 	@echo "Quality:"
 	@echo "  make lint          - Run clippy with warnings as errors"
-	@echo "  make check-progress - Validate PROGRESS.md accounting consistency (fail CI if broken)"
-	@echo "  make release-gate  - BLOCK release unless Playwright==223/223 and all gates green"
+	@echo "  make check-progress    - Validate PROGRESS.md accounting (fail CI if broken)"
+	@echo "  make publish-progress  - Regenerate PROGRESS.md header from artifacts; fail on divergence"
+	@echo "  make release-gate      - BLOCK release unless Playwright==223/223 and all gates green"
 	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
 	@echo "  make bench-webui   - React render benchmark: p95 latency per orderbook update"
 	@echo "  make clean         - Clean build artifacts"
@@ -192,6 +193,12 @@ bench-webui:
 # Validate PROGRESS.md accounting (fail CI if inconsistent)
 check-progress:
 	python3 scripts/check-progress.py
+
+# Regenerate PROGRESS.md header from acceptance artifacts (tasks.json,
+# gate-3-report.json, play-artifacts/). Fails if header would diverge.
+# Use --force to overwrite when you want to reset from artifacts.
+publish-progress:
+	python3 scripts/publish-progress.py
 
 # Generate acceptance bundle (gate statuses, API summary, Playwright totals,
 # failing IDs, commit SHA, timestamp). Blocks if gate-3-report.json is stale.
