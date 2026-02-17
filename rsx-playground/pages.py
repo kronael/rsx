@@ -140,9 +140,6 @@ def overview_page():
       RSX Playground - Development Dashboard</span>
   </div>
   <div class="flex gap-3 text-xs">
-    <a href="./docs" target="_blank"
-      class="text-blue-400 hover:text-blue-300">
-      Playground Guide</a>
     <a href="./docs/api"
       class="text-blue-400 hover:text-blue-300">
       API Reference</a>
