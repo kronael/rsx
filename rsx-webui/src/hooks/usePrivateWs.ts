@@ -32,7 +32,10 @@ export function usePrivateWs() {
 
       const proto = location.protocol === "https:"
         ? "wss:" : "ws:";
-      const url = `${proto}//${location.host}/ws/private`;
+      const base = location.pathname.replace(
+        /\/trade\/.*$/, "",
+      );
+      const url = `${proto}//${location.host}${base}/ws/private`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 

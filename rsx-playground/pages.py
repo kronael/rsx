@@ -18,8 +18,8 @@ TABS = [
     ("Verify", "./verify"),
     ("Orders", "./orders"),
     ("Stress", "./stress"),
-    ("Docs", "/docs"),
-    ("Trade", "/trade/"),
+    ("Docs", "./docs"),
+    ("Trade", "./trade/"),
 ]
 
 
@@ -104,15 +104,9 @@ document.addEventListener('htmx:afterSwap', function(e) {{
       class="text-blue-400 hover:text-blue-300">
       Playground Docs</a>
     <span class="text-slate-700">|</span>
-    <a href="https://krons.cx/rsx/docs" target="_blank"
-      rel="noopener noreferrer"
+    <a href="./trade/"
       class="text-blue-400 hover:text-blue-300">
-      Full Documentation</a>
-    <span class="text-slate-700">|</span>
-    <a href="https://github.com/anthropics/claude-code"
-      target="_blank" rel="noopener noreferrer"
-      class="text-blue-400 hover:text-blue-300">
-      Built with Claude</a>
+      Trade UI</a>
   </div>
 </footer>
 </body>
@@ -149,10 +143,9 @@ def overview_page():
     <a href="./docs" target="_blank"
       class="text-blue-400 hover:text-blue-300">
       Playground Guide</a>
-    <a href="https://krons.cx/rsx/docs" target="_blank"
-      rel="noopener noreferrer"
+    <a href="./docs/api"
       class="text-blue-400 hover:text-blue-300">
-      Architecture Docs</a>
+      API Reference</a>
   </div>
 </div>"""
     health = _card(
@@ -810,9 +803,36 @@ def control_page():
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
+    maker = _card(
+        "Market Maker",
+        '''<div class="space-y-3">
+  <div class="flex gap-2">
+    <button class="bg-emerald-900/40 text-emerald-400
+      px-3 py-1 rounded text-xs border border-emerald-900
+      hover:bg-emerald-900"
+      hx-post="./api/maker/start" hx-target="#maker-status"
+      hx-swap="innerHTML">Start Maker</button>
+    <button class="bg-red-900/40 text-red-400
+      px-3 py-1 rounded text-xs border border-red-900
+      hover:bg-red-900"
+      hx-post="./api/maker/stop" hx-target="#maker-status"
+      hx-swap="innerHTML">Stop Maker</button>
+  </div>
+  <div id="maker-status"
+    hx-get="./x/maker-status"
+    hx-trigger="load, every 3s"
+    hx-swap="innerHTML">
+    <span class="text-slate-600">loading...</span>
+  </div>
+  <div class="text-[11px] text-slate-600">
+    Places two-sided quotes around mid price via gateway WS.
+    Reads BBO from marketdata when available.
+  </div>
+</div>''',
+    )
     return layout(
         "Control",
-        scenario_selector + grid + notes + resources,
+        scenario_selector + grid + maker + notes + resources,
         "./control")
 
 

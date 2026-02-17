@@ -628,4 +628,3 @@ async fn persist_backpressure_ring_full() {
     });
     assert!(result.is_err());
 }
-
