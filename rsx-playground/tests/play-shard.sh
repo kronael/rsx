@@ -10,15 +10,21 @@
 #   summary.txt   Human-readable pass/fail counts + failing test IDs
 #   sig.txt       SHA-256[:16] of sorted failing test IDs (signature)
 #
-# Signature-based single retry policy:
-#   - On failure, signature is stored in tmp/play-sig/<shard>.sig
-#   - Re-run is BLOCKED (exit 2) if same signature AND no domain code change
-#   - Re-run proceeds if signature changed OR domain files changed
+# No-retry-storm policy (per signature):
+#   - Retry counter stored in tmp/play-sig/<shard>.count
+#   - Counter resets to 0 when signature changes (new failures)
+#   - Retry allowed only if: signature changed OR domain files changed
+#   - Retry BLOCKED (exit 2) if same sig AND no domain change
+#   - Retry BLOCKED (exit 2) if retry count >= MAX_RETRIES (cap)
+#     even if domain files changed — requires a new sig to unlock
 #
 # Exit codes:
 #   0  all tests passed
 #   1  tests failed (new or changed failures)
-#   2  blocked: same failure signature, no domain code changes
+#   2  blocked: same failure signature, no domain code changes,
+#              or retry cap exceeded for this signature
+
+MAX_RETRIES=3
 
 set -euo pipefail
 
@@ -37,6 +43,7 @@ JSON_OUT="$ARTIFACT_DIR/report.json"
 JUNIT_OUT="$ARTIFACT_DIR/report.xml"
 SUMMARY_OUT="$ARTIFACT_DIR/summary.txt"
 SIG_FILE="$SIG_DIR/${SHARD}.sig"
+COUNT_FILE="$SIG_DIR/${SHARD}.count"
 
 # Static shard manifest — must match playwright.config.ts projects
 declare -A SHARD_SPECS
@@ -166,20 +173,36 @@ echo "$CURRENT_SIG" > "$ARTIFACT_DIR/sig.txt"
 
 if [[ "$CURRENT_SIG" == "pass" ]]; then
     echo "    PASS: $SHARD (artifacts: $ARTIFACT_DIR)"
-    rm -f "$SIG_FILE"
+    rm -f "$SIG_FILE" "$COUNT_FILE"
     exit 0
 fi
 
 echo "    FAIL: $SHARD  sig=$CURRENT_SIG"
 echo "    artifacts: $ARTIFACT_DIR"
 
-# Signature-based single retry policy
+# No-retry-storm policy
 if [[ -f "$SIG_FILE" ]]; then
     PREV_SIG="$(cat "$SIG_FILE")"
     if [[ "$CURRENT_SIG" == "$PREV_SIG" ]]; then
+        # Same signature: require domain change AND retry cap not exceeded
+        RETRY_COUNT=0
+        if [[ -f "$COUNT_FILE" ]]; then
+            RETRY_COUNT="$(cat "$COUNT_FILE")"
+        fi
+
+        if (( RETRY_COUNT >= MAX_RETRIES )); then
+            echo "    BLOCKED: retry cap reached ($RETRY_COUNT/$MAX_RETRIES)" \
+                 "for sig=$CURRENT_SIG"
+            echo "    Fix the failing tests (new sig required to unlock)."
+            echo "    See: $SUMMARY_OUT"
+            exit 2
+        fi
+
         if domain_changed; then
-            echo "    domain files changed — retry allowed (same sig, new code)"
-            echo "$CURRENT_SIG" > "$SIG_FILE"
+            NEW_COUNT=$(( RETRY_COUNT + 1 ))
+            echo "    domain files changed — retry $NEW_COUNT/$MAX_RETRIES" \
+                 "(same sig=$CURRENT_SIG)"
+            echo "$NEW_COUNT" > "$COUNT_FILE"
             exit 1
         else
             echo "    BLOCKED: same failure signature, no domain changes"
@@ -190,6 +213,7 @@ if [[ -f "$SIG_FILE" ]]; then
     fi
 fi
 
-# New or changed signature — record and fail
+# New or changed signature — reset retry counter and record
 echo "$CURRENT_SIG" > "$SIG_FILE"
+echo "0" > "$COUNT_FILE"
 exit 1

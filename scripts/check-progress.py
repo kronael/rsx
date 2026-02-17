@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Validate PROGRESS.md accounting consistency.
+"""Validate PROGRESS.md accounting and gate-3 report consistency.
 
-Checks that:
+Checks:
 1. completed + running + pending + failed == denominator
 2. completed / denominator == displayed percentage (within 1%)
 3. progress bar numerator == completed count
 4. denominator == CANONICAL_TOTAL (223 Playwright tests)
+5. gate-3-report.json: no test key in both DONE and FAIL sets
+   (contradiction linter — rejects snapshots with split outcome)
 
 Exit 0 if consistent, 1 if inconsistent (with clear error output).
 """
 
+import json
 import re
 import sys
 from pathlib import Path
 
 PROGRESS_FILE = Path(__file__).parent.parent / "PROGRESS.md"
+REPORT_FILE = (
+    Path(__file__).parent.parent / "rsx-playground" / "tmp"
+    / "gate-3-report.json"
+)
 
 # Canonical Playwright test count — denominator must equal this.
 # Change only when the Playwright suite itself changes.
@@ -24,6 +31,78 @@ CANONICAL_TOTAL = 223
 def fail(msg: str) -> None:
     print(f"PROGRESS inconsistency: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def lint_report(path: Path) -> None:
+    """Contradiction linter for gate-3-report.json snapshots.
+
+    Rejects any snapshot where a test key appears in both the DONE
+    set (outcome=passed) and the FAIL/retry set (listed in failures[])
+    in the same update.  Also catches duplicate test entries with
+    conflicting outcomes across endpoint classes.
+    """
+    if not path.exists():
+        return  # no report yet — skip silently
+
+    try:
+        data = json.loads(path.read_text())
+    except Exception as e:
+        fail(f"gate-3-report.json parse error: {e}")
+
+    by_class = data.get("by_class", {})
+
+    # Build: failed_tests = {test_id: endpoint_class}
+    failed_tests: dict[str, str] = {}
+    for ec, info in by_class.items():
+        for entry in info.get("failures", []):
+            tid = entry.get("test", "")
+            if tid in failed_tests:
+                fail(
+                    f"contradiction: test appears in FAIL set of two "
+                    f"endpoint classes: '{tid}' "
+                    f"('{failed_tests[tid]}' and '{ec}')"
+                )
+            failed_tests[tid] = ec
+
+    # Build: passed_tests = {test_id: endpoint_class}
+    # The report stores pass/fail counts per class but not individual
+    # passed test IDs.  We infer from the raw test list embedded in
+    # the "failures" entries vs the total counts.
+    #
+    # For contradiction detection we use the full_results list if
+    # present (written by extended conftest), otherwise we can only
+    # check for tests that appear in failures of multiple classes.
+    full_results = data.get("results", [])
+    if full_results:
+        # Check each test's last outcome against the failures set
+        # A test is DONE if its final outcome == "passed"
+        # A test is FAIL if it appears in any failures list
+        seen: dict[str, str] = {}  # test_id -> last outcome
+        for entry in full_results:
+            tid = entry.get("test", "")
+            outcome = entry.get("outcome", "")
+            if tid in seen and seen[tid] != outcome:
+                # Same test recorded with two different outcomes
+                if tid in failed_tests:
+                    fail(
+                        f"contradiction: '{tid}' is in DONE set "
+                        f"(outcome=passed) AND FAIL set "
+                        f"(endpoint_class='{failed_tests[tid]}')"
+                    )
+            seen[tid] = outcome
+
+        # Any test in failures that is also seen as passed = contradiction
+        for tid, ec in failed_tests.items():
+            if seen.get(tid) == "passed":
+                fail(
+                    f"contradiction: '{tid}' appears as passed in "
+                    f"results[] AND as failed in by_class['{ec}']"
+                )
+
+    print(
+        f"gate-3-report ok: {len(failed_tests)} failed, "
+        f"no contradictions"
+    )
 
 
 def main() -> None:
@@ -68,7 +147,7 @@ def main() -> None:
             f"!= denominator({bar_denominator})"
         )
 
-    # Check 3: displayed percentage matches computed percentage (within 1%)
+    # Check 3: displayed percentage matches computed (within 1%)
     if bar_denominator > 0:
         computed_pct = round(100 * completed / bar_denominator)
         if abs(computed_pct - pct_displayed) > 1:
@@ -91,6 +170,9 @@ def main() -> None:
         f"({pct_displayed}%), "
         f"running={running}, pending={pending}, failed={failed}"
     )
+
+    # Check 5: gate-3-report contradiction linter
+    lint_report(REPORT_FILE)
 
 
 if __name__ == "__main__":
