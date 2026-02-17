@@ -1,3 +1,4 @@
+- Shard Playwright by domain (routing/htmx-partials/process-control/trade-ui) with failure-signature hashing in play-shard.sh; blocks retries unless signature changes or domain files diff
 - Test coverage for 38 HTMX partials, all return HTTP 200
 - Add React.memo to Row, TradeRow, PositionRow, OrderRow, FillRow leaf components
 - Audit server.py+pages.py: mapped all routes, identified 6 potential 500 sources
@@ -7,3 +8,10 @@
 - Verified all 13 page routes (/, /overview, /topology, /book, /risk, /wal, /logs, /control, /faults, /verify, /orders, /stress, /docs, /trade) + 39 HTMX partials return HTTP 200 with no server exceptions
 - Verified rsx-webui Vite base="./" and dist/index.html uses relative asset URLs (./assets/); /trade/ serves correctly behind /rsx-play/ proxy
 - Add hard-ordered release gates to Makefile (gate-1-startup→gate-2-partials→gate-3-api→gate-4-playwright); add 5xx fail-fast conftest hook with endpoint-class triage output
+- Shard Playwright by domain: 4 named projects (routing/htmx-partials/process-control/trade-ui) in playwright.config.ts; play-shard.sh with failure-signature hashing (SHA-256, exit 2 = blocked); Makefile shard-* targets
+- Add test_no_absolute_links.py: rendered-HTML regression for root-absolute href/src/hx-get (all 13 pages + 38 partials)
+- Add COVERAGE_MATRIX.md: maps all 223 Playwright tests to page/endpoint/user-flow with P0-P3 blast-radius labels and endpoint index
+- Fix PROGRESS.md: denominator 223 (release-critical Playwright target), separate feature tasks from release blockers, add gate status table
+- Verified machine-enforced gate runner fully implemented: Makefile gate-1..gate-4 chain + play-shard.sh failure-signature blocking
+- Verified no root-absolute href/src in server.py or pages.py; test_no_absolute_links.py regression covers 51 routes (13 pages + 38 partials), all passing
+- Define strict DoD per gate: DOD.md created with required tests, artifacts, and rollback conditions for each of gates 1-4 and 4 domain shards
