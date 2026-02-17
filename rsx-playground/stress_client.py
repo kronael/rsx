@@ -198,14 +198,13 @@ async def run_stress_test(config: StressConfig) -> dict:
     )
     elapsed = time.time() - start_time
 
-    # Check if all workers failed to connect
-    conn_errors = [
-        r for r in results_raw
-        if isinstance(r, (ConnectionError, OSError))
+    # Check if all workers failed (any exception type)
+    all_errors = [
+        r for r in results_raw if isinstance(r, BaseException)
     ]
-    if conn_errors and len(conn_errors) == len(results_raw):
+    if all_errors and len(all_errors) == len(results_raw):
         return {
-            "error": str(conn_errors[0]),
+            "error": str(all_errors[0]),
             "config": {
                 "target_rate": config.rate,
                 "duration": config.duration,
@@ -213,7 +212,7 @@ async def run_stress_test(config: StressConfig) -> dict:
             },
             "metrics": {
                 "submitted": 0, "accepted": 0,
-                "rejected": 0, "errors": len(conn_errors),
+                "rejected": 0, "errors": len(all_errors),
                 "elapsed_sec": round(elapsed, 2),
                 "actual_rate": 0.0, "accept_rate": 0.0,
             },
