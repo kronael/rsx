@@ -18,3 +18,4 @@
 - Playwright shard runner upgraded: per-shard JSON+JUnit artifacts in tmp/play-artifacts/<shard>/, summary.txt with pass/fail counts and failing test IDs, signature-based single retry blocking via tmp/play-sig/<shard>.sig; playwright.config.ts uses PW_SHARD env to route reporters
 - Add drift check to acceptance-bundle.py: counts play_*.spec.ts test() declarations (anchored regex, 214 canonical); blocks bundle with exit 2 if count drifts; full 223 validated at runtime by gate-4 canonical_ok
 - Release gate added: acceptance-bundle.py reads play-artifacts/<shard>/report.json, enforces playwright==223/223 via canonical_ok; make release-gate blocks unless all gates green
+- Add no-retry-storm policy to play-shard.sh: cap retries at MAX_RETRIES=3 per sig via .count file; domain change required AND cap not exceeded to requeue; new sig resets counter

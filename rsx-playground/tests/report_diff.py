@@ -18,6 +18,7 @@ Exit codes:
   0  no regressions
   1  regressions found (newly failing tests)
   2  report file missing
+  3  contradiction: test key in both DONE and FAIL sets in same snapshot
 """
 
 import json
@@ -48,6 +49,51 @@ def failed_tests(report: dict) -> dict[str, str]:
     return out
 
 
+def check_contradictions(report: dict) -> list[str]:
+    """Return contradiction messages for this snapshot.
+
+    A contradiction is any test key that appears in both the DONE
+    set (outcome=passed in results[]) and the FAIL set (listed in
+    by_class[*]["failures"]) within the same snapshot update.
+    Also flags duplicates across endpoint-class failure lists.
+    """
+    issues: list[str] = []
+    by_class = report.get("by_class", {})
+
+    # Build fail set, detect cross-class duplicates
+    fail_set: dict[str, str] = {}  # test_id -> first ec seen
+    for ec, info in by_class.items():
+        for entry in info.get("failures", []):
+            tid = entry.get("test", "")
+            if not tid:
+                continue
+            if tid in fail_set:
+                issues.append(
+                    f"FAIL-FAIL: '{tid}' appears in both "
+                    f"'{fail_set[tid]}' and '{ec}' failure lists"
+                )
+            else:
+                fail_set[tid] = ec
+
+    # Cross-check against full results list if present
+    full_results = report.get("results", [])
+    if full_results:
+        # last recorded outcome wins per test
+        outcomes: dict[str, str] = {}
+        for entry in full_results:
+            tid = entry.get("test", "")
+            if tid:
+                outcomes[tid] = entry.get("outcome", "")
+        for tid, ec in fail_set.items():
+            if outcomes.get(tid) == "passed":
+                issues.append(
+                    f"DONE-FAIL: '{tid}' is passed in results[] "
+                    f"but failed in by_class['{ec}']"
+                )
+
+    return issues
+
+
 def main():
     cur = load(CURRENT)
     if cur is None:
@@ -56,6 +102,18 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
+
+    # Contradiction linter: reject snapshots with split outcomes
+    contradictions = check_contradictions(cur)
+    if contradictions:
+        print(
+            f"[report_diff] CONTRADICTION: snapshot rejected "
+            f"({len(contradictions)} issue(s))",
+            file=sys.stderr,
+        )
+        for msg in contradictions:
+            print(f"  {msg}", file=sys.stderr)
+        sys.exit(3)
 
     prev = load(PREV)
 
