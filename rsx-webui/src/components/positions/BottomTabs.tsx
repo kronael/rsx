@@ -5,12 +5,18 @@ import { Positions } from "./Positions";
 import { OpenOrders } from "./OpenOrders";
 import { OrderHistory } from "./OrderHistory";
 import { Funding } from "./Funding";
+import { Assets } from "./Assets";
 
 interface Props {
   send: (msg: string) => void;
 }
 
-type Tab = "positions" | "orders" | "history" | "funding";
+type Tab =
+  | "positions"
+  | "orders"
+  | "history"
+  | "funding"
+  | "assets";
 
 export function BottomTabs({ send }: Props) {
   const [active, setActive] = useState<Tab>("positions");
@@ -35,6 +41,7 @@ export function BottomTabs({ send }: Props) {
       },
       { key: "history", label: "History" },
       { key: "funding", label: "Funding" },
+      { key: "assets", label: "Assets" },
     ];
 
   return (
@@ -72,6 +79,7 @@ export function BottomTabs({ send }: Props) {
         {active === "orders" && <OpenOrders send={send} />}
         {active === "history" && <OrderHistory />}
         {active === "funding" && <Funding />}
+        {active === "assets" && <Assets />}
       </div>
     </div>
   );

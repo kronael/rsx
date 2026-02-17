@@ -12,36 +12,118 @@ import { formatTs } from "../../lib/format";
 import { Side } from "../../lib/protocol";
 import type { RecentTrade } from "../../lib/types";
 
+// Aggregated trade row (may represent multiple fills at same price)
+interface AggTrade {
+  price: number;
+  qty: number;       // sum of qty in bucket
+  side: Side;
+  ts: number;        // timestamp of latest fill
+  seq: number;
+  count: number;     // number of fills aggregated
+  key: string;       // stable react key
+}
+
+// Bucket consecutive trades at the same price+side together.
+function aggregate(trades: RecentTrade[]): AggTrade[] {
+  const out: AggTrade[] = [];
+  for (const t of trades) {
+    const last = out[out.length - 1];
+    if (
+      last &&
+      last.price === t.price &&
+      last.side === t.side
+    ) {
+      last.qty += t.qty;
+      last.ts = t.ts;
+      last.count++;
+    } else {
+      out.push({
+        price: t.price,
+        qty: t.qty,
+        side: t.side,
+        ts: t.ts,
+        seq: t.seq,
+        count: 1,
+        key: `${t.price}-${t.ts}-${t.seq}`,
+      });
+    }
+  }
+  return out;
+}
+
+// Large-trade threshold: top 5% by qty in current view.
+function largeThreshold(trades: AggTrade[]): number {
+  if (trades.length === 0) return Infinity;
+  const sorted = trades.map((t) => t.qty).sort((a, b) => b - a);
+  const idx = Math.max(
+    0,
+    Math.floor(sorted.length * 0.05) - 1,
+  );
+  return sorted[idx] ?? Infinity;
+}
+
 const TradeRow = memo(function TradeRow({
   t,
   tickSize,
   lotSize,
+  maxQty,
+  isLarge,
+  flash,
 }: {
-  t: RecentTrade;
+  t: AggTrade;
   tickSize: number;
   lotSize: number;
+  maxQty: number;
+  isLarge: boolean;
+  flash: boolean;
 }) {
+  const isBuy = t.side === Side.BUY;
+  const barPct = maxQty > 0 ? (t.qty / maxQty) * 100 : 0;
+
   return (
     <div
-      className="flex items-center px-2 py-[1px]
-        text-xs font-mono"
+      className={clsx(
+        "relative flex items-center px-2 py-[1px]",
+        "text-xs font-mono",
+        flash && (isBuy
+          ? "animate-flash-buy"
+          : "animate-flash-sell"),
+        isLarge && "font-semibold",
+      )}
     >
+      {/* Size bar */}
+      <div
+        className={clsx(
+          "absolute inset-y-0 left-0",
+          isBuy ? "bg-buy/8" : "bg-sell/8",
+        )}
+        style={{ width: `${barPct}%` }}
+      />
       <span
         className={clsx(
-          "w-[80px] text-right",
-          t.side === Side.BUY
-            ? "text-buy"
-            : "text-sell",
+          "w-[80px] text-right z-10",
+          isBuy ? "text-buy" : "text-sell",
+          isLarge && "brightness-125",
         )}
       >
         {formatPrice(t.price, tickSize)}
       </span>
-      <span className="w-[60px] text-right
-        text-text-primary"
+      <span
+        className={clsx(
+          "w-[60px] text-right z-10",
+          isLarge
+            ? (isBuy ? "text-buy" : "text-sell")
+            : "text-text-primary",
+        )}
       >
         {formatQty(t.qty, lotSize)}
+        {t.count > 1 && (
+          <span className="text-text-secondary text-2xs ml-0.5">
+            ×{t.count}
+          </span>
+        )}
       </span>
-      <span className="flex-1 text-right
+      <span className="flex-1 text-right z-10
         text-text-secondary"
       >
         {formatTs(t.ts)}
@@ -85,28 +167,73 @@ function useThrottledTrades(): RecentTrade[] {
 }
 
 export function TradesTape() {
-  const trades = useThrottledTrades();
+  const rawTrades = useThrottledTrades();
   const meta = useSymbolMeta();
   const scrollRef = useRef<HTMLDivElement>(null);
   const tickSize = meta?.tickSize ?? 0.01;
   const lotSize = meta?.lotSize ?? 0.001;
 
+  const [aggMode, setAggMode] = useState(false);
+  // Track the newest seq we have seen to determine flash rows
+  const prevNewestSeq = useRef<number>(-1);
+
+  const trades = aggMode
+    ? aggregate(rawTrades)
+    : rawTrades.map((t, i): AggTrade => ({
+        ...t,
+        count: 1,
+        key: `${t.ts}-${i}`,
+      }));
+
+  const maxQty = trades.reduce(
+    (m, t) => (t.qty > m ? t.qty : m),
+    0,
+  );
+  const largeThr = largeThreshold(trades);
+
+  // Determine how many rows at the top are new this frame
+  const newestSeq = rawTrades[0]?.seq ?? -1;
+  let newCount = 0;
+  if (newestSeq !== prevNewestSeq.current) {
+    // Count raw trades newer than previous newest
+    for (const t of rawTrades) {
+      if (t.seq > prevNewestSeq.current) newCount++;
+      else break;
+    }
+  }
+  // Update ref after computing newCount
+  useEffect(() => {
+    prevNewestSeq.current = newestSeq;
+  }, [newestSeq]);
+
   // Auto-scroll to top (newest first).
-  const newestTs = trades[0]?.ts ?? 0;
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
-  }, [newestTs]);
+  }, [newestSeq]);
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex px-2 py-1 text-2xs
-        text-text-secondary border-b border-border"
+      <div className="flex items-center px-2 py-1
+        text-2xs text-text-secondary border-b border-border"
       >
         <span className="w-[80px] text-right">Price</span>
         <span className="w-[60px] text-right">Size</span>
         <span className="flex-1 text-right">Time</span>
+        <button
+          className={clsx(
+            "ml-2 px-1.5 py-0.5 rounded text-2xs",
+            aggMode
+              ? "bg-bg-hover text-text-primary"
+              : "text-text-secondary hover:text-text-primary",
+          )}
+          onClick={() => setAggMode((v) => !v)}
+          title="Aggregate consecutive fills at same price"
+          aria-pressed={aggMode}
+        >
+          Agg
+        </button>
       </div>
       <div
         ref={scrollRef}
@@ -121,10 +248,13 @@ export function TradesTape() {
         )}
         {trades.map((t, i) => (
           <TradeRow
-            key={`${t.ts}-${i}`}
+            key={t.key}
             t={t}
             tickSize={tickSize}
             lotSize={lotSize}
+            maxQty={maxQty}
+            isLarge={t.qty >= largeThr}
+            flash={i < newCount}
           />
         ))}
       </div>
