@@ -4,7 +4,7 @@
        play-control play-faults play-verify \
        play-orders play-nav play-api \
        api-unit api-integration api-stress \
-       bench-webui help check-progress acceptance-bundle \
+       bench-webui help check-progress acceptance-bundle release-gate \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-routing shard-htmx shard-control shard-trade shards
 
@@ -38,6 +38,7 @@ help:
 	@echo "Quality:"
 	@echo "  make lint          - Run clippy with warnings as errors"
 	@echo "  make check-progress - Validate PROGRESS.md accounting consistency (fail CI if broken)"
+	@echo "  make release-gate  - BLOCK release unless Playwright==223/223 and all gates green"
 	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
 	@echo "  make bench-webui   - React render benchmark: p95 latency per orderbook update"
 	@echo "  make clean         - Clean build artifacts"
@@ -198,6 +199,19 @@ acceptance-bundle:
 	@echo "==> [acceptance-bundle] generating..."
 	python3 scripts/acceptance-bundle.py
 	@echo "    written: rsx-playground/tmp/acceptance-bundle.json"
+
+# Release gate: blocks unless Playwright==223/223 AND all upstream gates green.
+# Runs acceptance-bundle; exits non-zero on any failure (see bundle exit codes).
+# Use this as the final CI gate before tagging a release.
+release-gate: acceptance-bundle
+	@python3 -c "\
+import json, sys; \
+b = json.load(open('rsx-playground/tmp/acceptance-bundle.json')); \
+pw = b['summary']['playwright_passed']; \
+ok = b['all_green']; \
+canon = b['gates']['gate4_playwright']['canonical_ok']; \
+print(f'[release-gate] playwright={pw}/223 all_green={ok} canonical_ok={canon}'); \
+sys.exit(0 if ok and canon else 1)"
 
 # Lint
 lint:
