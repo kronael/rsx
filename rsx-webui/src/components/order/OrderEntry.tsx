@@ -7,8 +7,6 @@ import { useMarketStore } from "../../store/market";
 import { useBbo } from "../../store/market";
 import { useSymbolMeta } from "../../store/market";
 import { useTradingStore } from "../../store/trading";
-// formatPrice not used after leverage/cost refactor
-// import { formatPrice } from "../../lib/format";
 import { parsePrice } from "../../lib/format";
 import { parseQty } from "../../lib/format";
 import { generateCid } from "../../lib/format";
@@ -31,6 +29,9 @@ export function OrderEntry({ send, externalPrice }: Props) {
   const [activePct, setActivePct] = useState<number | null>(
     null,
   );
+  const [leverage, setLeverage] = useState(10);
+  const [tpStr, setTpStr] = useState("");
+  const [slStr, setSlStr] = useState("");
 
   const selectedSymbol = useMarketStore(
     (s) => s.selectedSymbol,
@@ -43,6 +44,33 @@ export function OrderEntry({ send, externalPrice }: Props) {
 
   const tickSize = meta?.tickSize ?? 0.01;
   const lotSize = meta?.lotSize ?? 0.001;
+
+  // Available balance in human USDT
+  const availableHuman =
+    available > 0
+      ? (available * tickSize).toFixed(2)
+      : "0.00";
+
+  // Effective raw price for cost preview
+  const effectivePxRaw = useMemo(() => {
+    const mid = Math.round((bbo.bidPx + bbo.askPx) / 2);
+    if (orderType === "market") return mid;
+    const parsed = parsePrice(priceStr, tickSize);
+    return parsed > 0 ? parsed : mid;
+  }, [
+    orderType, bbo.bidPx, bbo.askPx, priceStr, tickSize,
+  ]);
+
+  // Order cost: notional / leverage in USDT
+  const orderCost = useMemo(() => {
+    const qty = parseQty(qtyStr, lotSize);
+    if (qty <= 0 || effectivePxRaw <= 0 || leverage <= 0) {
+      return null;
+    }
+    const notional =
+      effectivePxRaw * tickSize * qty * lotSize;
+    return notional / leverage;
+  }, [qtyStr, lotSize, effectivePxRaw, tickSize, leverage]);
 
   // Sync price from external source (orderbook click)
   useEffect(() => {
@@ -110,16 +138,19 @@ export function OrderEntry({ send, externalPrice }: Props) {
       ? Math.round((bbo.bidPx + bbo.askPx) / 2)
       : parsePrice(priceStr, tickSize);
     if (px <= 0) return;
-    const notional = available * (pct / 100);
+    // With leverage, max notional = available * tickSize * lev
+    const maxNotional =
+      available * tickSize * leverage;
     const humanPx = px * tickSize;
     if (humanPx <= 0) return;
-    const humanQty = notional / humanPx;
+    const humanQty = (maxNotional * (pct / 100)) / humanPx;
     const decimals =
       lotSize.toString().split(".")[1]?.length ?? 0;
     setQtyStr(humanQty.toFixed(decimals));
     setActivePct(pct);
   }, [
-    available, orderType, bbo, priceStr, tickSize, lotSize,
+    available, orderType, bbo, priceStr,
+    tickSize, lotSize, leverage,
   ]);
 
   return (
@@ -152,10 +183,35 @@ export function OrderEntry({ send, externalPrice }: Props) {
       >
         <span>Available</span>
         <span className="font-mono text-text-primary">
-          {available > 0
-            ? formatPrice(available, tickSize)
-            : "0.00"}
+          {availableHuman} USDT
         </span>
+      </div>
+
+      {/* Leverage selector */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-secondary shrink-0">
+          Leverage
+        </span>
+        <div className="flex gap-1 flex-wrap flex-1
+          justify-end"
+        >
+          {[1, 2, 5, 10, 20, 50, 100].map((lv) => (
+            <button
+              key={lv}
+              className={clsx(
+                "text-2xs px-1.5 py-0.5 rounded",
+                leverage === lv
+                  ? "bg-accent text-bg-primary"
+                    + " font-semibold"
+                  : "bg-bg-hover text-text-secondary"
+                    + " hover:text-text-primary",
+              )}
+              onClick={() => setLeverage(lv)}
+            >
+              {lv}x
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Price input (limit only) */}
@@ -288,6 +344,54 @@ export function OrderEntry({ send, externalPrice }: Props) {
           Reduce-only
         </label>
       )}
+
+      {/* Order cost preview */}
+      <div className="flex justify-between text-xs
+        text-text-secondary"
+      >
+        <span>Order Cost</span>
+        <span className="font-mono text-text-primary">
+          {orderCost !== null
+            ? `${orderCost.toFixed(2)} USDT`
+            : "--"}
+        </span>
+      </div>
+
+      {/* TP / SL (placeholder — not wired to protocol yet) */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-text-secondary
+            mb-1 block"
+          >
+            Take Profit
+          </label>
+          <input
+            type="text"
+            className="input-field w-full font-mono
+              focus:border-buy"
+            placeholder="TP Price"
+            value={tpStr}
+            onChange={(e) => setTpStr(e.target.value)}
+            aria-label="Take profit price"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-text-secondary
+            mb-1 block"
+          >
+            Stop Loss
+          </label>
+          <input
+            type="text"
+            className="input-field w-full font-mono
+              focus:border-sell"
+            placeholder="SL Price"
+            value={slStr}
+            onChange={(e) => setSlStr(e.target.value)}
+            aria-label="Stop loss price"
+          />
+        </div>
+      </div>
 
       {error && (
         <p className="text-xs text-sell">{error}</p>
