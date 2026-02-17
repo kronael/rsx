@@ -85,7 +85,7 @@ impl AdvisoryLease {
         if !self.lease_acquired {
             return Ok(false);
         }
-        let key = self.shard_id as i64;
+        let key = self.shard_id as i32;
         let row = client
             .query_one(
                 "SELECT count(*) > 0 AS held \
