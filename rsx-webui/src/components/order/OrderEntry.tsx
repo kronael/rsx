@@ -1,13 +1,14 @@
-import { useState } from "react";
-import { useEffect } from "react";
-import { useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import clsx from "clsx";
 import { Side } from "../../lib/protocol";
 import { TIF } from "../../lib/protocol";
 import { newOrder } from "../../lib/protocol";
 import { useMarketStore } from "../../store/market";
+import { useBbo } from "../../store/market";
+import { useSymbolMeta } from "../../store/market";
 import { useTradingStore } from "../../store/trading";
-import { formatPrice } from "../../lib/format";
+// formatPrice not used after leverage/cost refactor
+// import { formatPrice } from "../../lib/format";
 import { parsePrice } from "../../lib/format";
 import { parseQty } from "../../lib/format";
 import { generateCid } from "../../lib/format";
@@ -18,7 +19,6 @@ interface Props {
 }
 
 export function OrderEntry({ send, externalPrice }: Props) {
-  const [side, setSide] = useState<Side>(Side.BUY);
   const [orderType, setOrderType] = useState<
     "limit" | "market"
   >("limit");
@@ -28,17 +28,19 @@ export function OrderEntry({ send, externalPrice }: Props) {
   const [reduceOnly, setReduceOnly] = useState(false);
   const [postOnly, setPostOnly] = useState(false);
   const [error, setError] = useState("");
+  const [activePct, setActivePct] = useState<number | null>(
+    null,
+  );
 
-  const symbols = useMarketStore((s) => s.symbols);
   const selectedSymbol = useMarketStore(
     (s) => s.selectedSymbol,
   );
-  const bbo = useMarketStore((s) => s.bbo);
+  const bbo = useBbo();
+  const meta = useSymbolMeta();
   const available = useTradingStore(
     (s) => s.account.available,
   );
 
-  const meta = symbols.get(selectedSymbol);
   const tickSize = meta?.tickSize ?? 0.01;
   const lotSize = meta?.lotSize ?? 0.001;
 
@@ -51,7 +53,7 @@ export function OrderEntry({ send, externalPrice }: Props) {
 
   const sliderPcts = [25, 50, 75, 100];
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback((side: Side) => {
     setError("");
     const qty = parseQty(qtyStr, lotSize);
     if (qty <= 0) {
@@ -92,14 +94,33 @@ export function OrderEntry({ send, externalPrice }: Props) {
     );
     send(msg);
     setQtyStr("");
+    setActivePct(null);
   }, [
-    side, orderType, priceStr, qtyStr,
+    orderType, priceStr, qtyStr,
     tif, reduceOnly, postOnly,
     selectedSymbol, bbo, tickSize, lotSize, send,
   ]);
 
   const isLimit = orderType === "limit";
-  const isBuy = side === Side.BUY;
+
+  const applyPct = useCallback((pct: number) => {
+    if (available <= 0) return;
+    // Use mid price for pct calculation when no price entered
+    const px = orderType === "market"
+      ? Math.round((bbo.bidPx + bbo.askPx) / 2)
+      : parsePrice(priceStr, tickSize);
+    if (px <= 0) return;
+    const notional = available * (pct / 100);
+    const humanPx = px * tickSize;
+    if (humanPx <= 0) return;
+    const humanQty = notional / humanPx;
+    const decimals =
+      lotSize.toString().split(".")[1]?.length ?? 0;
+    setQtyStr(humanQty.toFixed(decimals));
+    setActivePct(pct);
+  }, [
+    available, orderType, bbo, priceStr, tickSize, lotSize,
+  ]);
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -122,32 +143,6 @@ export function OrderEntry({ send, externalPrice }: Props) {
           onClick={() => setOrderType("market")}
         >
           Market
-        </button>
-      </div>
-
-      {/* Side toggle */}
-      <div className="grid grid-cols-2 gap-1">
-        <button
-          className={clsx(
-            "py-1.5 rounded text-sm font-semibold",
-            isBuy
-              ? "bg-buy text-bg-primary"
-              : "bg-bg-hover text-text-secondary",
-          )}
-          onClick={() => setSide(Side.BUY)}
-        >
-          Buy
-        </button>
-        <button
-          className={clsx(
-            "py-1.5 rounded text-sm font-semibold",
-            !isBuy
-              ? "bg-sell text-white"
-              : "bg-bg-hover text-text-secondary",
-          )}
-          onClick={() => setSide(Side.SELL)}
-        >
-          Sell
         </button>
       </div>
 
@@ -176,7 +171,10 @@ export function OrderEntry({ send, externalPrice }: Props) {
             className="input-field w-full font-mono"
             placeholder="Price"
             value={priceStr}
-            onChange={(e) => setPriceStr(e.target.value)}
+            onChange={(e) => {
+              setPriceStr(e.target.value);
+              setActivePct(null);
+            }}
           />
         </div>
       )}
@@ -193,34 +191,26 @@ export function OrderEntry({ send, externalPrice }: Props) {
           className="input-field w-full font-mono"
           placeholder="Qty"
           value={qtyStr}
-          onChange={(e) => setQtyStr(e.target.value)}
+          onChange={(e) => {
+            setQtyStr(e.target.value);
+            setActivePct(null);
+          }}
         />
       </div>
 
-      {/* Qty slider */}
+      {/* % slider buttons */}
       <div className="flex gap-1">
         {sliderPcts.map((pct) => (
           <button
             key={pct}
-            className="flex-1 text-2xs py-1 rounded
-              bg-bg-hover text-text-secondary
-              hover:text-text-primary"
-            onClick={() => {
-              if (available <= 0) return;
-              const px = orderType === "market"
-                ? (side === Side.BUY
-                  ? bbo.askPx : bbo.bidPx)
-                : parsePrice(priceStr, tickSize);
-              if (px <= 0) return;
-              const notional = available * (pct / 100);
-              const humanPx = px * tickSize;
-              if (humanPx <= 0) return;
-              const humanQty = notional / humanPx;
-              const decimals =
-                lotSize.toString().split(".")[1]
-                  ?.length ?? 0;
-              setQtyStr(humanQty.toFixed(decimals));
-            }}
+            className={clsx(
+              "flex-1 text-2xs py-1 rounded font-mono",
+              "border transition-colors",
+              activePct === pct
+                ? "border-accent text-accent bg-accent/10"
+                : "border-border bg-bg-hover text-text-secondary hover:text-text-primary hover:border-text-secondary",
+            )}
+            onClick={() => applyPct(pct)}
           >
             {pct}%
           </button>
@@ -303,17 +293,23 @@ export function OrderEntry({ send, externalPrice }: Props) {
         <p className="text-xs text-sell">{error}</p>
       )}
 
-      {/* Submit */}
-      <button
-        className={clsx(
-          "w-full py-2 rounded font-semibold text-sm",
-          isBuy ? "btn-buy" : "btn-sell",
-        )}
-        onClick={handleSubmit}
-      >
-        {isBuy ? "Buy" : "Sell"}{" "}
-        {orderType === "limit" ? "Limit" : "Market"}
-      </button>
+      {/* Stacked buy / sell submit buttons */}
+      <div className="flex flex-col gap-1">
+        <button
+          className="w-full py-2.5 rounded font-semibold
+            text-sm btn-buy"
+          onClick={() => handleSubmit(Side.BUY)}
+        >
+          Buy {isLimit ? "Limit" : "Market"}
+        </button>
+        <button
+          className="w-full py-2.5 rounded font-semibold
+            text-sm btn-sell"
+          onClick={() => handleSubmit(Side.SELL)}
+        >
+          Sell {isLimit ? "Limit" : "Market"}
+        </button>
+      </div>
     </div>
   );
 }

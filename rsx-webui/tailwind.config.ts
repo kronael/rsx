@@ -40,6 +40,20 @@ export default {
       fontSize: {
         "2xs": "0.625rem",
       },
+      keyframes: {
+        "flash-buy": {
+          "0%": { backgroundColor: "rgba(14,203,129,0.35)" },
+          "100%": { backgroundColor: "transparent" },
+        },
+        "flash-sell": {
+          "0%": { backgroundColor: "rgba(246,70,93,0.35)" },
+          "100%": { backgroundColor: "transparent" },
+        },
+      },
+      animation: {
+        "flash-buy": "flash-buy 400ms ease-out forwards",
+        "flash-sell": "flash-sell 400ms ease-out forwards",
+      },
     },
   },
   plugins: [],

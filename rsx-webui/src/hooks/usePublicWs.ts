@@ -73,6 +73,10 @@ export function usePublicWs() {
           if (msg.T[0] !== sym) return;
           const [, price, qty, side, ts, seq] = msg.T;
           store.addTrade({ price, qty, side, ts, seq });
+        } else if ("MK" in msg) {
+          if (msg.MK[0] !== sym) return;
+          const [, markPx, indexPx] = msg.MK;
+          store.updateMark(markPx, indexPx);
         }
       };
 
