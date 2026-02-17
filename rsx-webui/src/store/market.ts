@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
+import { useMemo } from "react";
 import type {
   SymbolMeta,
   OrderbookState,
@@ -70,12 +71,14 @@ interface MarketStore {
   markPx: number;
   indexPx: number;
   fundingRate: number | null; // fractional, e.g. 0.0001
+  nextFundingTs: number; // unix ms of next funding settlement
 
   setSymbols: (list: SymbolMeta[]) => void;
   setSymbol: (id: number) => void;
   setStats: (s: Stats24h) => void;
   updateMark: (markPx: number, indexPx: number) => void;
   setFundingRate: (rate: number) => void;
+  setNextFundingTs: (ts: number) => void;
   updateBbo: (
     bidPx: number,
     bidQty: number,
@@ -227,6 +230,7 @@ export const useMarketStore = create<MarketStore>(
       markPx: 0,
       indexPx: 0,
       fundingRate: null,
+      nextFundingTs: 0,
 
       setSymbols: (list) =>
         set(() => {
@@ -246,6 +250,7 @@ export const useMarketStore = create<MarketStore>(
           markPx: 0,
           indexPx: 0,
           fundingRate: null,
+          nextFundingTs: 0,
         });
       },
 
@@ -256,6 +261,9 @@ export const useMarketStore = create<MarketStore>(
 
       setFundingRate: (rate) =>
         set({ fundingRate: rate }),
+
+      setNextFundingTs: (ts) =>
+        set({ nextFundingTs: ts }),
 
       updateBbo: (bidPx, bidQty, askPx, askQty, ts, seq) =>
         set({ bbo: { bidPx, bidQty, askPx, askQty, ts, seq } }),
@@ -302,10 +310,10 @@ export function useBbo(): BboState {
 }
 
 // Trades snapshot (newest-first) from ring buffer.
-// Re-renders only when tradeRing reference changes (new push).
+// Memoized: snapshot() only called when tradeRing reference changes.
 export function useTrades(): RecentTrade[] {
   const ring = useMarketStore((s) => s.tradeRing);
-  return ring.snapshot();
+  return useMemo(() => ring.snapshot(), [ring]);
 }
 
 // Symbol metadata for the currently selected symbol.
@@ -316,6 +324,26 @@ export function useSymbolMeta(): SymbolMeta | undefined {
 }
 
 // 24h stats for the selected symbol (null until received).
+// Shallow-compared: no re-render if stats fields are identical.
 export function useStats(): Stats24h | null {
-  return useMarketStore((s) => s.stats);
+  return useMarketStore(useShallow((s) => s.stats));
+}
+
+export interface FundingData {
+  markPx: number;
+  indexPx: number;
+  fundingRate: number | null;
+  nextFundingTs: number;
+}
+
+// Mark/index/funding data (shallow-compared).
+export function useFundingData(): FundingData {
+  return useMarketStore(
+    useShallow((s) => ({
+      markPx: s.markPx,
+      indexPx: s.indexPx,
+      fundingRate: s.fundingRate,
+      nextFundingTs: s.nextFundingTs,
+    })),
+  );
 }

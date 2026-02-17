@@ -1,0 +1,22 @@
+- Add src/lib/ring.ts fixed-size ring buffer utility (push, last, first, toArray, forEach, clear)
+- Orderbook depth bar: CSS will-change:transform + scaleX() instead of width for GPU-composited 60fps updates
+- market.ts: rAF coalescing for applyL2Delta — batches all deltas within one animation frame into a single Zustand set()
+- Orderbook: useMemo for asks/bids slice+reverse+maxTotals+spreadStr; useCallback for Row click/keydown handlers
+- Orderbook: centered last-price bar with directional arrow (▲/▼) between asks and bids, spread shown on right
+- TopBar: last price with tick-direction arrow (▲/▼/color), 24h change%/high/low/vol stats via Stats24h type + useStats selector
+- Orderbook: right/left 2px edge accent bars (bids=right-green, asks=left-red) + 400ms flash animation on qty update
+- OrderEntry: leverage preset buttons (1x-100x), order cost preview (notional/leverage USDT), available balance as USDT
+- Assets tab: balances/margin summary (equity, available, collateral, PnL, IM/MM/margin-ratio) + per-position liq/PnL table
+- OrderEntry: TP/SL placeholder inputs (side-by-side Take Profit / Stop Loss price fields, state tracked, not yet wired to protocol)
+- Positions: PnL cell flash animation on change, ADL 5-bar indicator (green→amber→red), close confirmation modal with Escape
+- DepthChart: SVG cumulative bid/ask step curves with fill, price axis ticks, crosshair + hover tooltip (price, cumVol)
+- settings.ts: Zustand store for UI prefs (soundEnabled, confirmMarketOrder, confirmCancelAll) with localStorage persistence
+- TradesTape: aggregate mode (bucket same-price fills), size bars, flash animation on new rows, large-trade highlight (top 5%)
+- Playwright e2e tests: orderbook.spec.ts (11 tests: structure, side-toggle, tick-group, snapshot) + order-entry.spec.ts (20 tests: tabs, inputs, leverage, TP/SL, submit, snapshots)
+- Sound alerts: fill beep (buy/sell pitch) + liquidation 3-pulse warning, settings toggle via soundEnabled
+- Chart: EMA9/EMA21/BB/RSI indicators with toggle buttons + H-Line and Trend drawing tools via chart click
+- useKeyboard.ts: global B/S shortcuts focus price input + set side, Up/Down nudge price by one tick, Enter submits from price/qty inputs
+- TradesTape: O(1) ring buffer (TradeRing class) replaces array.unshift()+slice, useThrottledTrades() coalesces renders via requestAnimationFrame
+- market.ts: split selectors with consistent shallow equality — useShallow on useOrderbook/useBbo/useStats/useSymbolMeta/useFundingData; useTrades useMemo-memoizes ring.snapshot() so it only runs on ring reference change
+- TopBar: mark price, index price, funding rate (color-coded +/-), and 8h countdown timer (hh:mm:ss to next funding settlement)
+- OrderEntry: 25/50/75/100% slider buttons (leverage-aware qty fill, active highlight) + full-width stacked Buy/Sell submit buttons

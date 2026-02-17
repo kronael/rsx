@@ -4,6 +4,7 @@ import { useMarketStore } from "../../store/market";
 import { useBbo } from "../../store/market";
 import { useSymbolMeta } from "../../store/market";
 import { useStats } from "../../store/market";
+import { useFundingData } from "../../store/market";
 import { useConnectionStore } from "../../store/connection";
 import { useTradingStore } from "../../store/trading";
 import { formatPrice } from "../../lib/format";
@@ -64,6 +65,7 @@ export function TopBar() {
   const dropRef = useRef<HTMLDivElement>(null);
   const prevBidRef = useRef<number>(0);
   const [tickDir, setTickDir] = useState<TickDir>("flat");
+  const [countdown, setCountdown] = useState("");
 
   const symbols = useMarketStore((s) => s.symbols);
   const selectedSymbol = useMarketStore(
@@ -74,6 +76,7 @@ export function TopBar() {
   const bbo = useBbo();
   const meta = useSymbolMeta();
   const stats = useStats();
+  const funding = useFundingData();
   const privStatus = useConnectionStore(
     (s) => s.privateStatus,
   );
@@ -94,6 +97,35 @@ export function TopBar() {
     }
     prevBidRef.current = cur;
   }, [bbo.bidPx]);
+
+  // Funding countdown timer: ticks every second.
+  // If nextFundingTs is not set, compute next 8h UTC boundary.
+  useEffect(() => {
+    function calc(): string {
+      const target =
+        funding.nextFundingTs > 0
+          ? funding.nextFundingTs
+          : (() => {
+              const now = Date.now();
+              const interval = 8 * 60 * 60 * 1000;
+              return (
+                Math.ceil(now / interval) * interval
+              );
+            })();
+      const diff = Math.max(0, target - Date.now());
+      const h = Math.floor(diff / 3_600_000);
+      const m = Math.floor((diff % 3_600_000) / 60_000);
+      const s = Math.floor((diff % 60_000) / 1_000);
+      return [
+        h.toString().padStart(2, "0"),
+        m.toString().padStart(2, "0"),
+        s.toString().padStart(2, "0"),
+      ].join(":");
+    }
+    setCountdown(calc());
+    const id = setInterval(() => setCountdown(calc()), 1000);
+    return () => clearInterval(id);
+  }, [funding.nextFundingTs]);
 
   // Load symbols + initial data on mount
   useEffect(() => {
@@ -193,6 +225,29 @@ export function TopBar() {
         ? "text-sell"
         : "text-text-secondary";
 
+  const markPxStr =
+    funding.markPx > 0
+      ? formatPrice(funding.markPx, tickSize)
+      : "--";
+  const indexPxStr =
+    funding.indexPx > 0
+      ? formatPrice(funding.indexPx, tickSize)
+      : "--";
+  const fundingRateStr =
+    funding.fundingRate !== null
+      ? (funding.fundingRate >= 0 ? "+" : "") +
+        (funding.fundingRate * 100).toFixed(4) +
+        "%"
+      : "--";
+  const fundingRateColor =
+    funding.fundingRate === null
+      ? "text-text-secondary"
+      : funding.fundingRate > 0
+        ? "text-buy"
+        : funding.fundingRate < 0
+          ? "text-sell"
+          : "text-text-secondary";
+
   return (
     <div
       className="h-12 bg-bg-surface border-b border-border
@@ -290,6 +345,32 @@ export function TopBar() {
             {bbo.askPx > 0
               ? formatPrice(bbo.askPx, tickSize)
               : "--"}
+          </span>
+        </div>
+      </div>
+
+      {/* Mark price */}
+      <StatCell label="Mark" value={markPxStr} />
+
+      {/* Index price */}
+      <StatCell label="Index" value={indexPxStr} />
+
+      {/* Funding rate + countdown */}
+      <div className="flex flex-col min-w-[90px] shrink-0">
+        <span className="text-text-secondary text-2xs">
+          Funding / Countdown
+        </span>
+        <div className="flex items-center gap-1">
+          <span
+            className={clsx(
+              "font-mono text-xs",
+              fundingRateColor,
+            )}
+          >
+            {fundingRateStr}
+          </span>
+          <span className="text-text-secondary text-2xs">
+            {countdown}
           </span>
         </div>
       </div>
