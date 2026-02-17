@@ -54,10 +54,10 @@ cd ..
 
 Then visit http://localhost:8001 for full RSX documentation.
 
-Or browse:
-- [../README.md](../README.md) - Project overview
-- [../specs/v1/ARCHITECTURE.md](../specs/v1/ARCHITECTURE.md) - System architecture
-- [../PROGRESS.md](../PROGRESS.md) - Per-crate implementation status
+Or browse locally:
+- `README.md` - Project overview
+- `specs/v1/ARCHITECTURE.md` - System architecture
+- `PROGRESS.md` - Per-crate implementation status
 
 ## Tabs Overview
 
@@ -92,6 +92,6 @@ Or browse:
 
 ## See Also
 
-- [Full RSX Documentation](http://localhost:8001) (run `../scripts/serve-docs.sh`)
-- [Project README](../README.md)
-- [CLAUDE.md](../CLAUDE.md) - Development conventions
+- `scripts/serve-docs.sh` - Serve full RSX docs on localhost:8001
+- `README.md` - Project overview
+- `CLAUDE.md` - Development conventions
