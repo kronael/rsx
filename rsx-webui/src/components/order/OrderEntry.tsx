@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import clsx from "clsx";
 import { Side } from "../../lib/protocol";
 import { TIF } from "../../lib/protocol";
@@ -10,6 +10,7 @@ import { useTradingStore } from "../../store/trading";
 import { parsePrice } from "../../lib/format";
 import { parseQty } from "../../lib/format";
 import { generateCid } from "../../lib/format";
+import { useKeyboard } from "../../hooks/useKeyboard";
 
 interface Props {
   send: (msg: string) => void;
@@ -32,6 +33,10 @@ export function OrderEntry({ send, externalPrice }: Props) {
   const [leverage, setLeverage] = useState(10);
   const [tpStr, setTpStr] = useState("");
   const [slStr, setSlStr] = useState("");
+  const [side, setSide] = useState<Side>(Side.BUY);
+
+  const priceInputRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
 
   const selectedSymbol = useMarketStore(
     (s) => s.selectedSymbol,
@@ -153,8 +158,24 @@ export function OrderEntry({ send, externalPrice }: Props) {
     tickSize, lotSize, leverage,
   ]);
 
+  useKeyboard({
+    priceInputRef,
+    qtyInputRef,
+    onSetSide: setSide,
+    onSubmitBuy: () => handleSubmit(Side.BUY),
+    onSubmitSell: () => handleSubmit(Side.SELL),
+    priceStr,
+    onSetPrice: setPriceStr,
+    tickSize,
+  });
+
   return (
-    <div className="flex flex-col gap-3 p-3">
+    <div
+      className="flex flex-col gap-3 p-3"
+      data-order-side={
+        side === Side.BUY ? "buy" : "sell"
+      }
+    >
       {/* Order type tabs */}
       <div className="flex gap-2 text-sm">
         <button
@@ -223,6 +244,7 @@ export function OrderEntry({ send, externalPrice }: Props) {
             Price
           </label>
           <input
+            ref={priceInputRef}
             type="text"
             className="input-field w-full font-mono"
             placeholder="Price"
@@ -243,6 +265,7 @@ export function OrderEntry({ send, externalPrice }: Props) {
           Quantity
         </label>
         <input
+          ref={qtyInputRef}
           type="text"
           className="input-field w-full font-mono"
           placeholder="Qty"
