@@ -5,6 +5,7 @@
        play-orders play-nav play-api \
        api-unit api-integration api-stress \
        bench-webui help check-progress acceptance-bundle release-gate \
+       lint-snapshot \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-routing shard-htmx shard-control shard-trade shards
 
@@ -212,6 +213,11 @@ ok = b['all_green']; \
 canon = b['gates']['gate4_playwright']['canonical_ok']; \
 print(f'[release-gate] playwright={pw}/223 all_green={ok} canonical_ok={canon}'); \
 sys.exit(0 if ok and canon else 1)"
+
+# Contradiction linter: rejects .ship/tasks.json snapshots where any task id
+# appears in both DONE and FAIL/retry sets. Run before applying any update.
+lint-snapshot:
+	python3 scripts/lint-snapshot.py
 
 # Lint
 lint:
