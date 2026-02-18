@@ -52,9 +52,7 @@ def layout(title, content, active_tab="./overview"):
   content="width=device-width, initial-scale=1">
 <title>RSX -- {title}</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/htmx.org@2.0.4"></script>
-<script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js">
-</script>
+<script src="./static/htmx.min.js"></script>
 <script>
 tailwind.config = {{
   darkMode: 'class',
@@ -341,7 +339,7 @@ def book_page():
     fills = _card(
         "Live Fills",
         '<div class="max-h-48 overflow-y-auto" '
-        'hx-get="./x/live-fills" '
+        'hx-get="./x/fills" '
         'hx-trigger="load, every 1s" '
         'hx-swap="innerHTML">'
         '<span class="text-slate-600">loading...</span>'

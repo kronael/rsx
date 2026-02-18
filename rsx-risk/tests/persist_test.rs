@@ -6,8 +6,8 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::persist::FundingPaymentRecord;
-use rsx_risk::persist::PersistFill;
+use rsx_risk::persist::FundingRecord;
+use rsx_risk::persist::FillRecord;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::insert_fills;
@@ -101,8 +101,8 @@ async fn persist_accounts_roundtrip() {
 #[ignore]
 async fn persist_fills_batch_insert() {
     let (_c, mut client) = pg_client().await;
-    let fills: Vec<PersistFill> = (0..5)
-        .map(|i| PersistFill {
+    let fills: Vec<FillRecord> = (0..5)
+        .map(|i| FillRecord {
             symbol_id: 0,
             taker_user_id: 1,
             maker_user_id: 2,
@@ -130,7 +130,7 @@ async fn persist_fills_batch_insert() {
 #[ignore]
 async fn persist_fills_symbol_seq_is_unique() {
     let (_c, mut client) = pg_client().await;
-    let first = PersistFill {
+    let first = FillRecord {
         symbol_id: 7,
         taker_user_id: 1,
         maker_user_id: 2,
@@ -142,7 +142,7 @@ async fn persist_fills_symbol_seq_is_unique() {
         seq: 42,
         timestamp_ns: 1000,
     };
-    let dup = PersistFill {
+    let dup = FillRecord {
         symbol_id: 7,
         taker_user_id: 3,
         maker_user_id: 4,
@@ -193,14 +193,14 @@ async fn persist_tips_roundtrip() {
 async fn persist_funding_payments_append() {
     let (_c, mut client) = pg_client().await;
     let payments = vec![
-        FundingPaymentRecord {
+        FundingRecord {
             user_id: 1,
             symbol_id: 0,
             amount: 50,
             rate: 10,
             settlement_ts: 28800,
         },
-        FundingPaymentRecord {
+        FundingRecord {
             user_id: 1,
             symbol_id: 0,
             amount: -30,
@@ -566,9 +566,9 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
 #[ignore]
 async fn persist_fills_partitioning_by_symbol() {
     let (_c, mut client) = pg_client().await;
-    let fills: Vec<PersistFill> = (0..3)
+    let fills: Vec<FillRecord> = (0..3)
         .flat_map(|sym| {
-            (0..4).map(move |i| PersistFill {
+            (0..4).map(move |i| FillRecord {
                 symbol_id: sym,
                 taker_user_id: 1,
                 maker_user_id: 2,

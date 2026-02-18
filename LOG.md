@@ -4,3 +4,9 @@
 - started/stopped all 5 RSX processes (me-pengu, risk-0, mark, gw-0, marketdata) via API, WAL dirs created
 - tested batch orders, random orders, test order submission, verify endpoint, WAL verify
 - trade UI loads with JS/CSS assets (200), docs page works
+- started all 5 RSX processes (me-pengu pid=227461, risk-0 pid=227545, mark pid=227472, gw-0 pid=227599, marketdata pid=227647) via POST /api/processes/all/start
+- fixed /ws/public (and /ws/private) WebSocket connections: installed missing `websockets` package so uvicorn can handle WS upgrades (previously returned 404)
+- trade UI page loads with assets: 67/67 play_trade.spec.ts tests pass (React SPA at /trade/ via playground server)
+- tested trade UI with playground server running: 67/67 play_trade.spec.ts pass, WS connects to /ws/private+/ws/public, disconnected state renders correctly
+- verified trade UI graceful degradation without gateway: 67/67 play_trade.spec.ts pass; UI shows red dot, "--" prices, "Loading..." symbol, 0.00 balance when gateway is down
+- verified stress test error handling: 19/19 test_stress_api.py pass; /api/stress/run returns 502+JSON on gateway down, 200+HTML for HTMX path

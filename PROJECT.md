@@ -1,63 +1,78 @@
 # RSX Playground — Full System Debug & Verification
 
 ## Goal
-Make every page, API endpoint, and user flow in the RSX playground work end-to-end. Fix all 500s, blank pages, broken buttons, and incorrect responses. All 223 Playwright tests must pass.
+
+Make every page, API endpoint, and user flow in the RSX playground work end-to-end. Fix all 500s, blank pages, missing data, and broken buttons. All 223 Playwright tests must pass.
 
 ## Stack
-- **Server**: Python (uv), `rsx-playground/server.py` + `pages.py`
-- **Frontend**: HTMX partials + React SPA (`rsx-webui/`, Vite)
-- **RSX processes**: Rust binaries (`rsx-matching`, `rsx-risk`, `rsx-gateway`, `rsx-marketdata`, `rsx-mark`)
-- **Database**: Postgres at `postgres://rsx:folium@10.0.2.1:5432/rsx_dev` (optional)
-- **WAL files**: `tmp/wal/pengu/10/` and `tmp/wal/mark/100/`
+
+- **Server**: Python (uv), `rsx-playground/server.py` + `pages.py` + `stress_client.py`
+- **UI**: HTMX partials + React SPA (`rsx-webui/dist/`) at `/trade/`
+- **Exchange**: Rust binaries (`target/debug/rsx-{matching,mark,risk,gateway,marketdata}`)
+- **Transport**: CMP/UDP (hot path), WAL/TCP (cold path), WebSocket (client-facing)
+- **DB**: Postgres at `postgres://rsx:folium@10.0.2.1:5432/rsx_dev` (optional)
+- **Tests**: Playwright (`rsx-playground/tests/`)
 
 ## IO Surfaces
+
 | Surface | Address |
-|---|---|
+|---------|---------|
 | Playground server | `http://localhost:49171` |
-| Gateway WS/HTTP | `ws://localhost:8080`, `http://localhost:8080` |
+| Gateway WS + REST | `ws://localhost:8080`, `http://localhost:8080` |
 | Marketdata WS | `ws://localhost:8081` |
 | REST proxy | `/v1/*` → `http://localhost:8080/v1/*` |
 | WS proxy (private) | `/ws/private` → `ws://localhost:8080` |
 | WS proxy (public) | `/ws/public` → `ws://localhost:8081` |
-| Trade UI SPA | `http://localhost:49171/trade/` |
-| Reverse proxy | `https://krons.cx/rsx-play/` |
+| Trade SPA | `http://localhost:49171/trade/` |
+| Reverse proxy | `https://krons.cx/rsx-play/` (nginx prefix strip) |
+
+## Pages & Endpoints
+
+**Pages (must return 200):** `/`, `/overview`, `/topology`, `/book`, `/risk`, `/wal`, `/logs`, `/control`, `/faults`, `/verify`, `/orders`, `/stress`, `/trade/`
+
+**HTMX partials (`/x/*`):** `processes`, `health`, `key-metrics`, `ring-pressure`, `core-affinity`, `cmp-flows`, `control-grid`, `resource-usage`, `faults-grid`, `wal-status`, `wal-detail`, `wal-files`, `wal-lag`, `wal-rotation`, `wal-timeline`, `logs`, `logs-tail`, `error-agg`, `auth-failures`, `book-stats`, `live-fills`, `trade-agg`, `position-heatmap`, `margin-ladder`, `funding`, `risk-latency`, `reconciliation`, `latency-regression`, `order-trace`, `stale-orders`, `recent-orders`, `current-scenario`, `invariant-status`, `verify`, `stress-reports-list`
+
+**REST APIs:** `/api/processes`, `/api/processes/all/start`, `/api/processes/all/stop`, `/api/processes/{name}/restart`, `/api/processes/{name}/kill`, `/api/build`, `/api/orders/test`, `/api/orders/batch`, `/api/stress/run`, `/api/verify/run`, `/api/maker/start`, `/api/maker/stop`, `/api/maker/status`, `/api/users/create`, `/healthz`
 
 ## Phases
-1. **Server startup** — all 11+ pages return 200, all `/x/*` HTMX partials return 200
-2. **Build & start RSX processes** — 5 processes running with PIDs via API
-3. **Gateway + REST** — `/v1/symbols` returns metadata, account/positions work
-4. **Order submission** — orders submit, appear in recent-orders, WAL grows
-5. **WebSocket** — public+private WS proxy connects and streams data
-6. **Trade UI** — React SPA loads, shows correct state with/without gateway
-7. **Risk page** — position heatmap, margin ladder, funding show data from WAL
-8. **Stress testing** — returns metrics with gateway, error without
-9. **Verify & invariants** — 10 checks run and report pass/fail/skip
-10. **Fault injection** — kill/restart/stop processes via API
-11. **Playwright** — 223/223 tests pass
-12. **Proxy prefix** — all URLs relative, works behind `/rsx-play/`
+
+1. Server startup + all pages/partials return 200
+2. Build Rust binaries + start 5 RSX processes
+3. Gateway REST proxy works (`/v1/symbols`, `/v1/account`)
+4. Order submission → appears in recent orders → WAL grows
+5. WebSocket proxy (public + private) functional
+6. Trade SPA loads, connects WS, shows BBO/book
+7. Risk page shows fill-derived data (heatmap, margin, funding)
+8. Stress test returns error when gateway down (not silent 0)
+9. Verify/invariant checks return 10 results
+10. Fault injection: kill/restart process, stop all
+11. Playwright 223/223 green
+12. No absolute hrefs in server.py/pages.py; Trade SPA assets use `./`; works at `/rsx-play/` prefix
 
 ## Constraints
-- Python server: `uv run server.py` from `rsx-playground/`
-- Rust: debug builds only (`cargo build`, not `--release`)
-- No absolute hrefs in server.py/pages.py/dist HTML
-- Trade UI assets must use `./` relative paths
-- Postgres is optional; features degrade gracefully without it
-- Stress test must return 502 + error message when gateway is down (not silent zeros)
+
+- Fix bugs in `server.py`, `pages.py`, `stress_client.py` only — do not rewrite
+- Postgres is optional; features must degrade gracefully without it
+- WAL files at `tmp/wal/pengu/10/` and `tmp/wal/mark/100/`
+- Log files in `log/*.log`
+- PID files in `tmp/pids/`
+- All URLs must be relative (proxy-safe)
+- Debug builds only (`cargo build`, not `--release`)
 
 ## Success Criteria
-- [ ] Server starts, all 11+ page routes return HTTP 200
-- [ ] All `/x/*` HTMX partial endpoints return HTTP 200
-- [ ] WAL status shows streams: mark, pengu
-- [ ] Processes start/stop/restart via `/api/processes/*`
-- [ ] Orders submit and appear in `/x/recent-orders`
-- [ ] WAL timeline shows events after order submission
-- [ ] Risk page shows fill-derived data from WAL
-- [ ] Stress test returns 502 when gateway unreachable
-- [ ] Trade UI loads with correct empty state (no gateway)
-- [ ] Trade UI populates BBO/orderbook when gateway running
-- [ ] `npx playwright test`: 223/223 green
-- [ ] Zero 500 errors in server console during full flow
-- [ ] `grep -n 'href="/'` returns no matches in server.py/pages.py
-- [ ] Trade UI dist assets use `./` prefix
-- [ ] Market maker starts, places orders, populates book
-- [ ] All flows work behind `/rsx-play/` reverse proxy prefix
+
+- [ ] All 13 pages return HTTP 200
+- [ ] All HTMX partials return HTTP 200 (no 500s)
+- [ ] WAL status shows `mark` and `pengu` streams
+- [ ] 5 RSX processes start/stop/restart via API
+- [ ] Test order submits → appears in `/x/recent-orders`
+- [ ] `/x/wal-timeline` shows events after order submission
+- [ ] `/api/stress/run` returns 502 + error message when gateway down
+- [ ] Trade SPA loads and shows correct empty state without gateway
+- [ ] Trade SPA shows BBO/book with gateway running
+- [ ] Market maker starts, places orders, book shows bid/ask levels
+- [ ] Playwright 223/223 pass
+- [ ] Zero 500 errors in server console during full run
+- [ ] `grep 'href="/'` returns 0 matches in server.py and pages.py
+- [ ] Trade SPA asset paths start with `./` not `/`
+- [ ] `curl https://krons.cx/rsx-play/healthz` returns 200

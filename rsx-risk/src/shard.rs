@@ -7,10 +7,10 @@ use crate::liquidation::LiquidationEngine;
 use crate::liquidation::LiquidationOrder;
 use crate::margin::ExposureIndex;
 use crate::margin::PortfolioMargin;
-use crate::persist::FundingPaymentRecord;
-use crate::persist::LiquidationEventRecord;
+use crate::persist::FundingRecord;
+use crate::persist::LiquidationRecord;
 use crate::persist::PersistEvent;
-use crate::persist::PersistFill;
+use crate::persist::FillRecord;
 use crate::position::Position;
 use crate::price::IndexPrice;
 use crate::replica::ReplicaState;
@@ -307,7 +307,7 @@ impl RiskShard {
         );
 
         // Persist fill + updated positions + tip
-        self.push_persist(PersistEvent::Fill(PersistFill {
+        self.push_persist(PersistEvent::Fill(FillRecord {
             symbol_id: fill.symbol_id,
             taker_user_id: fill.taker_user_id,
             maker_user_id: fill.maker_user_id,
@@ -793,8 +793,8 @@ impl RiskShard {
                         .get(&user_id)
                         .cloned();
                     self.push_persist(
-                        PersistEvent::FundingPayment(
-                            FundingPaymentRecord {
+                        PersistEvent::Funding(
+                            FundingRecord {
                                 user_id,
                                 symbol_id: sid as u32,
                                 amount: payment,
@@ -853,8 +853,8 @@ impl RiskShard {
 
         // Persist liquidation event with status=3 (socialized)
         self.push_persist(
-            PersistEvent::LiquidationEvent(
-                LiquidationEventRecord {
+            PersistEvent::Liquidation(
+                LiquidationRecord {
                     user_id: loss.user_id,
                     symbol_id: loss.symbol_id,
                     round: loss.round,
