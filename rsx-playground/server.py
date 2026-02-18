@@ -33,6 +33,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import pages
+from stress_client import run_stress_test
+from stress_client import StressConfig
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -163,10 +165,12 @@ async def spawn_process(name, binary, env):
     if proc.returncode is None:
         return {"pid": proc.pid}
     else:
-        # Process exited immediately, clean up PID file
+        # Process exited immediately, clean up
         pid_file = PID_DIR / f"{name}.pid"
         if pid_file.exists():
             pid_file.unlink()
+        if name in managed:
+            del managed[name]
         return {"error": f"process exited immediately (code "
                          f"{proc.returncode})"}
 
@@ -205,12 +209,14 @@ async def kill_process(name):
         return {"error": f"{name} not managed"}
     proc = info["proc"]
     if proc.returncode is not None:
+        del managed[name]
         return {"status": f"{name} already stopped"}
     proc.kill()
     await proc.wait()
     pid_file = PID_DIR / f"{name}.pid"
     if pid_file.exists():
         pid_file.unlink()
+    del managed[name]
     return {"status": f"{name} killed"}
 
 
@@ -366,6 +372,29 @@ app = FastAPI(
     redoc_url=None,
 )
 
+# Serve local static assets (htmx.min.js, etc.)
+_STATIC_DIR = Path(__file__).resolve().parent
+_STATIC_FILES = {
+    "htmx.min.js": "application/javascript",
+}
+
+
+@app.get("/static/{filename}")
+async def static_file(filename: str):
+    """Serve local static files (JS bundles)."""
+    if filename not in _STATIC_FILES:
+        from fastapi.responses import Response
+        return Response(status_code=404)
+    path = _STATIC_DIR / filename
+    if not path.exists():
+        from fastapi.responses import Response
+        return Response(status_code=404)
+    from fastapi.responses import Response
+    return Response(
+        content=path.read_bytes(),
+        media_type=_STATIC_FILES[filename],
+    )
+
 
 def audit_log(endpoint: str, action: str):
     ts = datetime.now().strftime("%b %d %H:%M:%S")
@@ -497,8 +526,10 @@ def scan_processes():
                     })
                     seen.add(name)
                     continue
-            except (psutil.NoSuchProcess,
-                    psutil.AccessDenied,
+            except psutil.NoSuchProcess:
+                # stale PID file — process no longer exists
+                pid_file.unlink(missing_ok=True)
+            except (psutil.AccessDenied,
                     ValueError, OSError):
                 pass
 
@@ -519,19 +550,32 @@ def scan_wal_streams():
     streams = []
     if not WAL_DIR.exists():
         return streams
-    for entry in sorted(WAL_DIR.iterdir()):
+    try:
+        entries = sorted(WAL_DIR.iterdir())
+    except OSError:
+        return streams
+    for entry in entries:
         if not entry.is_dir():
             continue
         files = list(entry.rglob("*.dxs"))
         files += list(entry.rglob("*.wal"))
-        total = sum(
-            f.stat().st_size for f in files if f.exists()
-        )
+        total = 0
+        for f in files:
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
         newest = ""
         if files:
-            mt = max(f.stat().st_mtime for f in files)
-            newest = datetime.fromtimestamp(mt).strftime(
-                "%H:%M:%S")
+            mtimes = []
+            for f in files:
+                try:
+                    mtimes.append(f.stat().st_mtime)
+                except OSError:
+                    pass
+            if mtimes:
+                newest = datetime.fromtimestamp(
+                    max(mtimes)).strftime("%H:%M:%S")
         streams.append({
             "name": entry.name,
             "files": len(files),
@@ -545,13 +589,23 @@ def scan_wal_files():
     files = []
     if not WAL_DIR.exists():
         return files
-    for entry in sorted(WAL_DIR.iterdir()):
+    try:
+        entries = sorted(WAL_DIR.iterdir())
+    except OSError:
+        return files
+    for entry in entries:
         if not entry.is_dir():
             continue
-        # Check both top-level files and subdirectories
-        for item in sorted(entry.iterdir()):
+        try:
+            items = sorted(entry.iterdir())
+        except OSError:
+            continue
+        for item in items:
             if item.is_file():
-                st = item.stat()
+                try:
+                    st = item.stat()
+                except OSError:
+                    continue
                 files.append({
                     "stream": entry.name,
                     "name": item.name,
@@ -560,17 +614,24 @@ def scan_wal_files():
                         st.st_mtime).strftime("%H:%M:%S"),
                 })
             elif item.is_dir():
-                # Scan subdirectory (e.g., tmp/wal/pengu/10/)
-                for f in sorted(item.iterdir()):
-                    if f.is_file():
+                try:
+                    subitems = sorted(item.iterdir())
+                except OSError:
+                    continue
+                for f in subitems:
+                    if not f.is_file():
+                        continue
+                    try:
                         st = f.stat()
-                        files.append({
-                            "stream": f"{entry.name}/{item.name}",
-                            "name": f.name,
-                            "size": human_size(st.st_size),
-                            "modified": datetime.fromtimestamp(
-                                st.st_mtime).strftime("%H:%M:%S"),
-                        })
+                    except OSError:
+                        continue
+                    files.append({
+                        "stream": f"{entry.name}/{item.name}",
+                        "name": f.name,
+                        "size": human_size(st.st_size),
+                        "modified": datetime.fromtimestamp(
+                            st.st_mtime).strftime("%H:%M:%S"),
+                    })
     return files
 
 
@@ -647,12 +708,23 @@ def parse_wal_records(stream_dir, record_types=None):
     return records
 
 
+def _wal_stream_dirs():
+    """Yield top-level stream dirs under WAL_DIR."""
+    if not WAL_DIR.exists():
+        return
+    try:
+        entries = list(WAL_DIR.iterdir())
+    except OSError:
+        return
+    for d in entries:
+        if d.is_dir():
+            yield d
+
+
 def parse_wal_bbo(symbol_id):
     """Get latest BBO for a symbol from WAL."""
     latest = None
-    for stream_dir in WAL_DIR.iterdir() if WAL_DIR.exists() else []:
-        if not stream_dir.is_dir():
-            continue
+    for stream_dir in _wal_stream_dirs():
         for rec in parse_wal_records(
             stream_dir, {RECORD_BBO}
         ):
@@ -665,11 +737,7 @@ def parse_wal_bbo(symbol_id):
 def parse_wal_fills(max_fills=50):
     """Get recent fills from all WAL streams."""
     all_fills = []
-    for stream_dir in (
-        WAL_DIR.iterdir() if WAL_DIR.exists() else []
-    ):
-        if not stream_dir.is_dir():
-            continue
+    for stream_dir in _wal_stream_dirs():
         for rec in parse_wal_records(
             stream_dir, {RECORD_FILL}
         ):
@@ -681,11 +749,7 @@ def parse_wal_fills(max_fills=50):
 def parse_wal_book_stats():
     """Get book stats from WAL BBO records."""
     symbols = {}
-    for stream_dir in (
-        WAL_DIR.iterdir() if WAL_DIR.exists() else []
-    ):
-        if not stream_dir.is_dir():
-            continue
+    for stream_dir in _wal_stream_dirs():
         for rec in parse_wal_records(
             stream_dir, {RECORD_BBO}
         ):
@@ -1250,14 +1314,9 @@ async def x_wal_rotation():
 
 @app.get("/x/wal-timeline", response_class=HTMLResponse)
 async def x_wal_timeline():
-    # Collect all WAL records for timeline view
     all_records = []
-    if WAL_DIR.exists():
-        for stream_dir in WAL_DIR.iterdir():
-            if not stream_dir.is_dir():
-                continue
-            all_records.extend(
-                parse_wal_records(stream_dir))
+    for stream_dir in _wal_stream_dirs():
+        all_records.extend(parse_wal_records(stream_dir))
     all_records.sort(
         key=lambda r: r.get("seq", 0), reverse=True)
     return HTMLResponse(
@@ -1311,8 +1370,8 @@ async def x_book_stats():
         pages.render_book_stats(stats))
 
 
-@app.get("/x/live-fills", response_class=HTMLResponse)
-async def x_live_fills():
+@app.get("/x/fills", response_class=HTMLResponse)
+async def x_fills():
     procs = scan_processes()
     running = [p for p in procs
                if p["state"] == "running"]
@@ -1402,13 +1461,8 @@ async def x_stale_orders():
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
     procs = scan_processes()
-    running = [p for p in procs
-               if p["state"] == "running"]
-    if not running:
-        return HTMLResponse(
-            '<span class="text-slate-600">'
-            'no processes running</span>')
-    bbo = parse_wal_bbo(symbol_id)
+    running = [p for p in procs if p["state"] == "running"]
+    bbo = parse_wal_bbo(symbol_id) if running else None
     return HTMLResponse(
         pages.render_book_ladder(symbol_id, bbo))
 
@@ -1419,14 +1473,13 @@ async def x_risk_user(
 ):
     # try postgres first
     data = await pg_query(
-        "SELECT * FROM risk_positions "
+        "SELECT * FROM positions "
         "WHERE user_id = $1 LIMIT 20",
         risk_uid,
     )
     if data is None:
-        # no postgres, try balances table
         data = await pg_query(
-            "SELECT * FROM balances "
+            "SELECT * FROM accounts "
             "WHERE user_id = $1 LIMIT 20",
             risk_uid,
         )
@@ -1456,7 +1509,7 @@ async def x_risk_user(
 async def x_liquidations():
     data = await pg_query(
         "SELECT * FROM liquidations "
-        "ORDER BY created_at DESC LIMIT 20",
+        "ORDER BY timestamp_ns DESC LIMIT 20",
     )
     if data and isinstance(data, list) and data:
         rows = ""
@@ -1569,6 +1622,9 @@ async def api_process_action(name: str, action: str):
             if proc and proc["pid"] != "-":
                 try:
                     os.kill(int(proc["pid"]), signal.SIGTERM)
+                    pid_file = PID_DIR / f"{name}.pid"
+                    if pid_file.exists():
+                        pid_file.unlink()
                     result = {"status": f"stopped {name}"}
                 except ProcessLookupError:
                     result = {"status": f"{name} not running"}
@@ -1589,6 +1645,9 @@ async def api_process_action(name: str, action: str):
             if proc and proc["pid"] != "-":
                 try:
                     os.kill(int(proc["pid"]), signal.SIGKILL)
+                    pid_file = PID_DIR / f"{name}.pid"
+                    if pid_file.exists():
+                        pid_file.unlink()
                     result = {"status": f"killed {name}"}
                 except ProcessLookupError:
                     result = {"status": f"{name} not running"}
@@ -1995,9 +2054,6 @@ async def api_stress_run(
     duration: int = 60,
 ):
     """Launch stress test and save results"""
-    from stress_client import run_stress_test
-    from stress_client import StressConfig
-
     is_htmx = request.headers.get("hx-request") == "true"
     config = StressConfig(rate=rate, duration=duration)
 
@@ -2273,7 +2329,7 @@ async def api_wal_dump():
 @app.get("/api/risk/users/{user_id}")
 async def api_risk_user(user_id: int):
     data = await pg_query(
-        "SELECT * FROM risk_positions "
+        "SELECT * FROM positions "
         "WHERE user_id = $1",
         user_id,
     )
@@ -2518,7 +2574,13 @@ async def v1_proxy(path: str, request: Request):
                     content=json.loads(data),
                     status_code=resp.status,
                 )
-    except (ConnectionRefusedError, OSError):
+    except (
+        ConnectionRefusedError,
+        OSError,
+        aiohttp.ClientConnectorError,
+        aiohttp.ServerDisconnectedError,
+        aiohttp.ClientConnectionError,
+    ):
         return JSONResponse(
             {"error": "gateway not running"},
             status_code=502)
@@ -2527,8 +2589,11 @@ async def v1_proxy(path: str, request: Request):
 # Serve trading UI SPA (must be last — catches /trade/*)
 if WEBUI_DIST.exists():
     @app.get("/trade")
-    async def trade_redirect():
-        return RedirectResponse("./trade/")
+    async def trade_redirect(request: Request):
+        # Relative redirect preserves proxy prefix (e.g. /rsx-play/)
+        prefix = request.headers.get(
+            "x-forwarded-prefix", "").rstrip("/")
+        return RedirectResponse(f"{prefix}/trade/")
 
     app.mount(
         "/trade",
@@ -2538,6 +2603,17 @@ if WEBUI_DIST.exists():
         ),
         name="webui",
     )
+else:
+    @app.get("/trade")
+    @app.get("/trade/")
+    async def trade_not_built():
+        return HTMLResponse(
+            '<html><body style="font-family:monospace;background:#0b0e11;'
+            'color:#888;padding:2rem">'
+            '<h2>trading UI not built</h2>'
+            '<p>run <code>make webui</code> to build rsx-webui</p>'
+            '</body></html>'
+        )
 
 
 # ── main ────────────────────────────────────────────────

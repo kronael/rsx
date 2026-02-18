@@ -10,15 +10,15 @@ use tracing::warn;
 pub enum PersistEvent {
     Position(Position),
     Account(Account),
-    Fill(PersistFill),
+    Fill(FillRecord),
     Tip { symbol_id: u32, seq: u64 },
-    FundingPayment(FundingPaymentRecord),
+    Funding(FundingRecord),
     InsuranceFund(InsuranceFund),
-    LiquidationEvent(LiquidationEventRecord),
+    Liquidation(LiquidationRecord),
 }
 
 #[derive(Clone, Debug)]
-pub struct PersistFill {
+pub struct FillRecord {
     pub symbol_id: u32,
     pub taker_user_id: u32,
     pub maker_user_id: u32,
@@ -32,7 +32,7 @@ pub struct PersistFill {
 }
 
 #[derive(Clone, Debug)]
-pub struct FundingPaymentRecord {
+pub struct FundingRecord {
     pub user_id: u32,
     pub symbol_id: u32,
     pub amount: i64,
@@ -41,7 +41,7 @@ pub struct FundingPaymentRecord {
 }
 
 #[derive(Clone, Debug)]
-pub struct LiquidationEventRecord {
+pub struct LiquidationRecord {
     pub user_id: u32,
     pub symbol_id: u32,
     pub round: u32,
@@ -115,7 +115,7 @@ pub async fn upsert_accounts(
 
 pub async fn insert_fills(
     tx: &tokio_postgres::Transaction<'_>,
-    fills: &[PersistFill],
+    fills: &[FillRecord],
 ) -> Result<(), Error> {
     for f in fills {
         tx.execute(
@@ -167,11 +167,11 @@ pub async fn upsert_tips(
 
 pub async fn insert_funding(
     tx: &tokio_postgres::Transaction<'_>,
-    payments: &[FundingPaymentRecord],
+    payments: &[FundingRecord],
 ) -> Result<(), Error> {
     for p in payments {
         tx.execute(
-            "INSERT INTO funding_payments \
+            "INSERT INTO funding \
              (user_id, symbol_id, amount, rate, \
               settlement_ts) \
              VALUES ($1,$2,$3,$4,$5)",
@@ -210,13 +210,13 @@ pub async fn upsert_insurance_funds(
     Ok(())
 }
 
-pub async fn insert_liquidation_events(
+pub async fn insert_liquidations(
     tx: &tokio_postgres::Transaction<'_>,
-    events: &[LiquidationEventRecord],
+    events: &[LiquidationRecord],
 ) -> Result<(), Error> {
     for e in events {
         tx.execute(
-            "INSERT INTO liquidation_events \
+            "INSERT INTO liquidations \
              (user_id, symbol_id, round, side, price, \
               qty, slippage_bps, status, timestamp_ns) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -252,7 +252,7 @@ pub async fn flush_batch(
     let mut tips = Vec::new();
     let mut funding = Vec::new();
     let mut insurance_funds = Vec::new();
-    let mut liquidation_events = Vec::new();
+    let mut liquidations = Vec::new();
     for e in events {
         match e {
             PersistEvent::Position(p) => {
@@ -267,14 +267,14 @@ pub async fn flush_batch(
             PersistEvent::Tip { symbol_id, seq } => {
                 tips.push((*symbol_id, *seq))
             }
-            PersistEvent::FundingPayment(fp) => {
+            PersistEvent::Funding(fp) => {
                 funding.push(fp.clone())
             }
             PersistEvent::InsuranceFund(fund) => {
                 insurance_funds.push(fund.clone())
             }
-            PersistEvent::LiquidationEvent(liq) => {
-                liquidation_events.push(liq.clone())
+            PersistEvent::Liquidation(liq) => {
+                liquidations.push(liq.clone())
             }
         }
     }
@@ -286,7 +286,7 @@ pub async fn flush_batch(
     upsert_tips(&tx, shard_id, &tips).await?;
     insert_funding(&tx, &funding).await?;
     upsert_insurance_funds(&tx, &insurance_funds).await?;
-    insert_liquidation_events(&tx, &liquidation_events).await?;
+    insert_liquidations(&tx, &liquidations).await?;
     tx.commit().await?;
     Ok(())
 }

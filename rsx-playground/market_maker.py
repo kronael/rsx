@@ -182,7 +182,7 @@ class DummyMarketMaker:
                 # cancel existing orders
                 for cid in list(self.active_cids):
                     await ws.send_str(json.dumps({
-                        "X": [cid],
+                        "C": [cid],
                     }))
                     self.cancels_sent += 1
                     # drain response

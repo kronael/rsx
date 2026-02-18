@@ -24,6 +24,7 @@ HTMX_PARTIALS = [
     "/x/liquidations",
     "/x/live-fills",
     "/x/logs",
+    "/x/maker-status",
     "/x/logs-tail",
     "/x/margin-ladder",
     "/x/order-trace",

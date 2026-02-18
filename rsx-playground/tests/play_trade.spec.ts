@@ -114,8 +114,8 @@ test.describe("Trade UI", () => {
       const topBar = page.locator(
         ".h-12.bg-bg-surface",
       );
-      await expect(topBar).toContainText("Bid Size");
-      await expect(topBar).toContainText("Ask Size");
+      await expect(topBar).toContainText("Bid");
+      await expect(topBar).toContainText("Ask");
     });
 
     test("latency shows default dash", async ({
@@ -127,7 +127,7 @@ test.describe("Trade UI", () => {
       );
       const latencyText = topBar.locator(
         ".font-mono.text-text-secondary",
-      );
+      ).first();
       await expect(latencyText).toContainText("--");
     });
   });
@@ -147,16 +147,21 @@ test.describe("Trade UI", () => {
     });
 
     test("spread bar visible", async ({ page }) => {
-      const spread = page.locator("text=Spread:");
-      await expect(spread).toBeVisible();
+      // Orderbook mid-bar: last price + spread value inline
+      const midBar = page.locator(
+        ".border-y.border-border.bg-bg-surface",
+      ).first();
+      await expect(midBar).toBeVisible();
     });
 
     test("spread shows default dash when no data", async ({
       page,
     }) => {
-      const spread = page.locator("text=Spread:");
-      const parent = spread.locator("..");
-      await expect(parent).toContainText("--");
+      // Spread value shows inline in the mid-bar (no "Spread:" label)
+      const midBar = page.locator(
+        ".border-y.border-border.bg-bg-surface",
+      ).first();
+      await expect(midBar).toContainText("--");
     });
   });
 
@@ -274,18 +279,16 @@ test.describe("Trade UI", () => {
 
     test("Buy button visible and active by default",
       async ({ page }) => {
-        const buyBtn = page.locator("button", {
-          hasText: /^Buy$/,
-        });
+        // Submit button: always visible as "Buy Limit"
+        const buyBtn = page.locator("button.btn-buy");
         await expect(buyBtn).toBeVisible();
-        await expect(buyBtn).toHaveClass(/bg-buy/);
+        await expect(buyBtn).toHaveClass(/btn-buy/);
       },
     );
 
     test("Sell button visible", async ({ page }) => {
-      const sellBtn = page.locator("button", {
-        hasText: /^Sell$/,
-      });
+      // Submit button: always visible as "Sell Limit"
+      const sellBtn = page.locator("button.btn-sell");
       await expect(sellBtn).toBeVisible();
     });
 
@@ -361,10 +364,7 @@ test.describe("Trade UI", () => {
     test("switching to Sell changes button", async ({
       page,
     }) => {
-      const sellBtn = page.locator("button", {
-        hasText: /^Sell$/,
-      });
-      await sellBtn.click();
+      // Both Buy and Sell submit buttons are always visible (stacked layout)
       const submitBtn = page.locator("button.btn-sell");
       await expect(submitBtn).toBeVisible();
       await expect(submitBtn).toHaveText("Sell Limit");
@@ -410,9 +410,7 @@ test.describe("Trade UI", () => {
         await page.locator("button", {
           hasText: /^Market$/,
         }).click();
-        await page.locator("button", {
-          hasText: /^Sell$/,
-        }).click();
+        // Both sell submit button updates text to "Sell Market"
         const submitBtn = page.locator(
           "button.btn-sell",
         );
@@ -714,25 +712,24 @@ test.describe("Trade UI", () => {
   test.describe("Cross-Component Interactions", () => {
     test("switching Buy/Sell toggles submit color",
       async ({ page }) => {
-        // Start as Buy
-        let submit = page.locator("button.btn-buy");
-        await expect(submit).toBeVisible();
+        // UI has stacked Buy/Sell submit buttons (always both visible)
+        const buySubmit = page.locator("button.btn-buy");
+        const sellSubmit = page.locator("button.btn-sell");
+        await expect(buySubmit).toBeVisible();
+        await expect(sellSubmit).toBeVisible();
 
-        // Switch to Sell
-        const sellBtn = page.locator("button", {
-          hasText: /^Sell$/,
-        });
-        await sellBtn.click();
-        submit = page.locator("button.btn-sell");
-        await expect(submit).toBeVisible();
+        // Switch to Market: both buttons update text
+        await page.locator("button", {
+          hasText: /^Market$/,
+        }).click();
+        await expect(buySubmit).toHaveText("Buy Market");
+        await expect(sellSubmit).toHaveText("Sell Market");
 
-        // Switch back to Buy
-        const buyBtn = page.locator("button", {
-          hasText: /^Buy$/,
-        });
-        await buyBtn.click();
-        submit = page.locator("button.btn-buy");
-        await expect(submit).toBeVisible();
+        // Switch back to Limit
+        await page.locator("button", {
+          hasText: /^Limit$/,
+        }).click();
+        await expect(buySubmit).toHaveText("Buy Limit");
       },
     );
 

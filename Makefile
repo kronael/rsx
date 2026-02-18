@@ -5,7 +5,7 @@
        play-orders play-nav play-api \
        api-unit api-integration api-stress \
        bench-webui help check-progress acceptance-bundle release-gate \
-       lint-snapshot publish-progress \
+       lint-snapshot publish-progress exit-criteria \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-routing shard-htmx shard-control shard-trade shards
 
@@ -40,6 +40,7 @@ help:
 	@echo "  make lint          - Run clippy with warnings as errors"
 	@echo "  make check-progress    - Validate PROGRESS.md accounting (fail CI if broken)"
 	@echo "  make publish-progress  - Regenerate PROGRESS.md header from artifacts; fail on divergence"
+	@echo "  make exit-criteria     - Auto-reopen completed tasks whose linked tests aren't green on HEAD"
 	@echo "  make release-gate      - BLOCK release unless Playwright==223/223 and all gates green"
 	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
 	@echo "  make bench-webui   - React render benchmark: p95 latency per orderbook update"
@@ -220,6 +221,12 @@ ok = b['all_green']; \
 canon = b['gates']['gate4_playwright']['canonical_ok']; \
 print(f'[release-gate] playwright={pw}/223 all_green={ok} canonical_ok={canon}'); \
 sys.exit(0 if ok and canon else 1)"
+
+# Deterministic exit criteria: auto-reopens completed tasks whose linked
+# failing_test_ids are not yet green on the current HEAD acceptance bundle.
+# Exit 0 = all completed tasks satisfy criteria; 1 = tasks reopened; 2 = bundle missing.
+exit-criteria:
+	python3 scripts/exit-criteria.py
 
 # Contradiction linter: rejects .ship/tasks.json snapshots where any task id
 # appears in both DONE and FAIL/retry sets. Run before applying any update.

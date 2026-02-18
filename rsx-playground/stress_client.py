@@ -159,10 +159,15 @@ class StressClient:
                         if sleep_time > 0:
                             await asyncio.sleep(sleep_time)
 
-        except (aiohttp.ClientConnectorError, OSError) as e:
+        except (
+            aiohttp.ClientConnectorError,
+            aiohttp.ServerDisconnectedError,
+            aiohttp.ClientConnectionError,
+            OSError,
+        ) as e:
             self.metrics.errors += 1
             raise ConnectionError(
-                f"cannot connect to gateway at "
+                f"gateway unreachable at "
                 f"{self.config.gateway_url}: {e}"
             )
         except Exception as e:
@@ -170,8 +175,52 @@ class StressClient:
             raise
 
 
+async def _probe_gateway(url: str) -> str | None:
+    """Return error string if gateway unreachable, else None."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                url,
+                headers={"x-user-id": "0"},
+                timeout=aiohttp.ClientTimeout(total=3),
+            ):
+                pass
+        return None
+    except (
+        aiohttp.ClientConnectorError,
+        aiohttp.ServerDisconnectedError,
+        aiohttp.ClientConnectionError,
+        OSError,
+    ) as e:
+        return f"gateway unreachable at {url}: {e}"
+    except Exception:
+        return None  # connected but other error — gateway is up
+
+
 async def run_stress_test(config: StressConfig) -> dict:
     """Run multi-connection stress test"""
+
+    # Fail fast: probe gateway before spinning up workers
+    err = await _probe_gateway(config.gateway_url)
+    if err:
+        return {
+            "error": err,
+            "config": {
+                "target_rate": config.rate,
+                "duration": config.duration,
+                "connections": config.connections,
+            },
+            "metrics": {
+                "submitted": 0, "accepted": 0,
+                "rejected": 0, "errors": 1,
+                "elapsed_sec": 0.0,
+                "actual_rate": 0.0, "accept_rate": 0.0,
+            },
+            "latency_us": {
+                "p50": 0, "p95": 0, "p99": 0,
+                "min": 0, "max": 0,
+            },
+        }
 
     rate_per_worker = config.rate / config.connections
 
