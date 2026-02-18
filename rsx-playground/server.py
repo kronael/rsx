@@ -256,6 +256,67 @@ async def do_build(release=False):
     return ok
 
 
+# collateral for playground test users: 1 trillion raw units
+# (tick=1 for all symbols, so this = 1T ticks of buying power)
+_SEED_USERS = [1, 2, 3, 4, 5, 99]
+_SEED_COLLATERAL = 1_000_000_000_000
+
+
+async def seed_accounts():
+    """Upsert playground test accounts into Postgres."""
+    if pg_pool is None:
+        return
+    try:
+        async with pg_pool.acquire() as conn:
+            for uid in _SEED_USERS:
+                await conn.execute(
+                    "INSERT INTO accounts "
+                    "(user_id, collateral, frozen_margin, version) "
+                    "VALUES ($1, $2, 0, 0) "
+                    "ON CONFLICT (user_id) DO NOTHING",
+                    uid, _SEED_COLLATERAL,
+                )
+    except Exception as e:
+        print(f"seed_accounts failed: {e}")
+
+
+async def do_maker_start() -> bool:
+    """Start market maker subprocess. Returns True if started."""
+    if _maker_running():
+        return True
+    if MAKER_NAME in managed:
+        del managed[MAKER_NAME]
+    if not MAKER_SCRIPT.exists():
+        return False
+    env = {
+        "GATEWAY_URL": GATEWAY_URL,
+        "MARKETDATA_WS": MARKETDATA_WS,
+    }
+    full_env = {**os.environ, **env}
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(MAKER_SCRIPT),
+        env=full_env,
+        cwd=str(ROOT / "rsx-playground"),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    managed[MAKER_NAME] = {
+        "proc": proc,
+        "binary": str(MAKER_SCRIPT),
+        "env": env,
+    }
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    (PID_DIR / f"{MAKER_NAME}.pid").write_text(str(proc.pid))
+    asyncio.create_task(pipe_output(MAKER_NAME, proc.stdout))
+    await asyncio.sleep(0.2)
+    if proc.returncode is not None:
+        del managed[MAKER_NAME]
+        (PID_DIR / f"{MAKER_NAME}.pid").unlink(missing_ok=True)
+        return False
+    return True
+
+
 async def start_all(scenario="minimal"):
     """Build + start all processes for a scenario."""
     global current_scenario
@@ -316,6 +377,9 @@ async def start_all(scenario="minimal"):
     if not ok:
         return {"error": "build failed", "log": build_log[-5:]}
 
+    # seed test accounts so risk engine loads them at startup
+    await seed_accounts()
+
     # spawn all
     started = []
     for name, binary, env in plan:
@@ -325,6 +389,12 @@ async def start_all(scenario="minimal"):
         await asyncio.sleep(0.1)
     if started:
         current_scenario = scenario
+
+    # wait for processes to stabilize, then auto-start maker
+    if started:
+        await asyncio.sleep(3.0)
+        await do_maker_start()
+
     return {"started": started, "count": len(started)}
 
 
@@ -1370,6 +1440,7 @@ async def x_book_stats():
         pages.render_book_stats(stats))
 
 
+@app.get("/x/live-fills", response_class=HTMLResponse)
 @app.get("/x/fills", response_class=HTMLResponse)
 async def x_fills():
     procs = scan_processes()
@@ -2384,47 +2455,20 @@ async def api_maker_start(request: Request):
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'maker already running</span>')
-    # clean up stale entry if process exited
-    if MAKER_NAME in managed:
-        del managed[MAKER_NAME]
     if not MAKER_SCRIPT.exists():
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
             'market_maker.py not found</span>')
-    env = {
-        "GATEWAY_URL": GATEWAY_URL,
-        "MARKETDATA_WS": MARKETDATA_WS,
-    }
-    full_env = {**os.environ, **env}
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(MAKER_SCRIPT),
-        env=full_env,
-        cwd=str(ROOT / "rsx-playground"),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    managed[MAKER_NAME] = {
-        "proc": proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": env,
-    }
-    PID_DIR.mkdir(parents=True, exist_ok=True)
-    (PID_DIR / f"{MAKER_NAME}.pid").write_text(str(proc.pid))
-    asyncio.create_task(pipe_output(MAKER_NAME, proc.stdout))
-    await asyncio.sleep(0.1)
-    if proc.returncode is not None:
-        del managed[MAKER_NAME]
-        pid_file = PID_DIR / f"{MAKER_NAME}.pid"
-        if pid_file.exists():
-            pid_file.unlink()
+    ok = await do_maker_start()
+    if not ok:
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
             'maker failed to start</span>')
+    pid = managed[MAKER_NAME]["proc"].pid
     audit_log("/api/maker/start", "start maker")
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
-        f'maker started (pid {proc.pid})</span>')
+        f'maker started (pid {pid})</span>')
 
 
 @app.post("/api/maker/stop")
