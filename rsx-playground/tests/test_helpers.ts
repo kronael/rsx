@@ -10,15 +10,20 @@ import { Page, expect } from "@playwright/test";
  */
 export async function waitForHTMX(page: Page, timeout = 3000) {
   await page.waitForTimeout(100);
-  await page.evaluate(() => {
-    return new Promise((resolve) => {
-      let timeoutId = setTimeout(() => resolve(true), 1000);
-      document.body.addEventListener("htmx:afterSwap", () => {
-        clearTimeout(timeoutId);
-        resolve(true);
-      }, { once: true });
+  try {
+    await page.evaluate(() => {
+      return new Promise((resolve) => {
+        let timeoutId = setTimeout(() => resolve(true), 1000);
+        document.body.addEventListener("htmx:afterSwap", () => {
+          clearTimeout(timeoutId);
+          resolve(true);
+        }, { once: true });
+      });
     });
-  });
+  } catch {
+    // Context destroyed by navigation — HTMX swap already completed
+    await page.waitForTimeout(200);
+  }
 }
 
 /**

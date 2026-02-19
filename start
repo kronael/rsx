@@ -299,8 +299,7 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_RISK_CMP_ADDR":
                     f"127.0.0.1:{BASE_RISK_CMP}",
                 "RSX_GW_WAL_DIR": "./tmp/wal",
-                "RSX_GW_JWT_SECRET":
-                    "dev-secret-change-in-production",
+                "RSX_GW_JWT_SECRET": "",
                 "RSX_MAX_SYMBOLS": "16",
                 **sym_env,
                 "RUST_LOG": "info",

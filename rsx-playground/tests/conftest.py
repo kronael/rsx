@@ -526,8 +526,15 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def cleanup_state():
+def cleanup_state(tmp_path):
     """Clear in-memory state before and after each test."""
+    import tempfile
+    # Redirect PID_DIR to an empty temp dir so tests see no system procs
+    original_pid_dir = server.PID_DIR
+    tmp_pid_dir = tmp_path / "pids"
+    tmp_pid_dir.mkdir()
+    server.PID_DIR = tmp_pid_dir
+
     # Before test: clear state
     server.recent_orders.clear()
     server.verify_results.clear()
@@ -552,6 +559,7 @@ def cleanup_state():
             except (ProcessLookupError, OSError):
                 pass
     server.managed.clear()
+    server.PID_DIR = original_pid_dir
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -42,7 +42,7 @@ WAL_DIR = TMP / "wal"
 LOG_DIR = ROOT / "log"
 PID_DIR = TMP / "pids"
 STRESS_REPORTS_DIR = TMP / "stress-reports"
-STRESS_REPORTS_DIR.mkdir(exist_ok=True)
+STRESS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PG_URL = os.environ.get(
     "DATABASE_URL",
@@ -335,7 +335,22 @@ async def start_all(scenario="minimal"):
         parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # kill stale processes on known ports
+    # kill stale RSX binaries by name first (handles UDP CMP ports too)
+    _rsx_bins = [
+        "rsx-gateway", "rsx-risk", "rsx-matching",
+        "rsx-marketdata", "rsx-mark",
+    ]
+    for bin_name in _rsx_bins:
+        try:
+            subprocess.run(
+                ["pkill", "-9", "-f", bin_name],
+                capture_output=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    await asyncio.sleep(1.0)  # let OS release sockets
+
+    # kill stale processes on known ports (belt + suspenders)
     if shutil.which("fuser"):
         # fuser available, use it
         for port in [8080, 8180, 9110, 9200, 9400, 9510]:
@@ -502,12 +517,14 @@ async def healthz():
     """Health check for CLI."""
     procs = scan_processes()
     running = [p for p in procs if p.get("state") == "running"]
+    gateway_up = await _probe_gateway_tcp()
     return {
         "status": "ok",
         "port": 49171,
         "processes_running": len(running),
         "processes_total": len(procs),
-        "postgres": pg_pool is not None
+        "postgres": pg_pool is not None,
+        "gateway": gateway_up,
     }
 
 # ── in-memory state ─────────────────────────────────────
@@ -2126,7 +2143,7 @@ async def api_stress_run(
 ):
     """Launch stress test and save results"""
     is_htmx = request.headers.get("hx-request") == "true"
-    config = StressConfig(rate=rate, duration=duration)
+    config = StressConfig(rate=rate, duration=duration, gateway_url=GATEWAY_URL)
 
     # Run stress test and wait for results
     try:
@@ -2589,6 +2606,44 @@ async def ws_public_proxy(ws: WebSocket):
     except (ConnectionRefusedError, OSError):
         await ws.close(code=1013,
                        reason="marketdata not running")
+
+
+async def _probe_gateway_tcp() -> bool:
+    """Return True if gateway TCP port is reachable."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(GATEWAY_HTTP)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8080
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=1.0,
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/v1/symbols")
+async def v1_symbols():
+    """Return configured symbol catalog (local fallback)."""
+    symbols = []
+    for name, cfg in start_mod.SYMBOLS.items():
+        symbols.append({
+            "symbol": name,
+            "id": cfg["id"],
+            "tick_size": cfg["tick"],
+            "lot_size": cfg["lot"],
+            "price_decimals": cfg["price_dec"],
+            "qty_decimals": cfg["qty_dec"],
+        })
+    symbols.sort(key=lambda s: s["id"])
+    return JSONResponse({"symbols": symbols})
 
 
 @app.api_route(
