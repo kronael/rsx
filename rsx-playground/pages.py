@@ -339,7 +339,7 @@ def book_page():
     fills = _card(
         "Live Fills",
         '<div class="max-h-48 overflow-y-auto" '
-        'hx-get="./x/fills" '
+        'hx-get="./x/live-fills" '
         'hx-trigger="load, every 1s" '
         'hx-swap="innerHTML">'
         '<span class="text-slate-600">loading...</span>'

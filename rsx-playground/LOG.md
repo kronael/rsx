@@ -1,3 +1,4 @@
+- Verified /api/stress/run returns HTTP 502 with JSON error body when gateway unreachable; all 19 unit tests pass; curl confirmed live
 - Verified server.py: no import/startup errors, /healthz returns HTTP 200 (server running on port 49171)
 - Refocused backlog: 214 failed tasks paused (session-conflict); new tasks must declare failing_playwright_ids + expected_delta; next action is `make gate-4` to get fresh failing IDs
 - Regenerated FAILURE-BOARD.md: 214 ship-CLI failures (150 session-conflict, 38 rate-limit, 26 other) grouped by 10 flows; 0 product code bugs; 806 API tests pass; gate-4 Playwright not-run (needs manual trigger)
@@ -8,6 +9,7 @@
 - Audited all href/src/hx-*/fetch paths: all already use ./ relative prefix; no absolute /api/ or /assets/ paths found in server.py, pages.py, or dist/index.html
 - Verified fault injection: kill/restart me-pengu works; /api/verify/run returns 14 checks (4 infra + 10 invariants), all correct
 - Verified maker API: start/status/stop all return 200 with correct state; /x/book returns 200 (empty WAL expected without live exchange)
+- Created tmp/wal/pengu/10/ and tmp/wal/mark/100/ WAL files; /x/wal-status, /x/wal-detail, /x/wal-files show both streams; 70/70 WAL tests pass
 - Verified /trade/ SPA: vite base="./" already set, dist/index.html uses ./assets/ paths, /trade/ + assets all return 200
 - Fixed /api/stress/run: catch ServerDisconnectedError in _probe_gateway so gateway-down returns 502 + "gateway unreachable" instead of empty 200
 - Fixed v1_proxy 500→502: catch ServerDisconnectedError when gateway is WS-only (REST not yet implemented in gateway)
@@ -17,6 +19,7 @@
 - Curled all 39 /x/* HTMX partial endpoints: all return 200 OK, no 500 errors found, no fixes needed
 - Curled all 13 page routes (/, /overview, /topology, /book, /risk, /wal, /logs, /control, /faults, /verify, /orders, /stress, /trade/): all return 200 OK, no fixes needed
 - Verified server.py imports cleanly via uv run; /healthz returns 200 with valid JSON {"status":"ok","port":49171,...}; no startup/import errors found
+- Verified all 39 /x/* HTMX partials return 200 (224 Python tests pass); prior 404 on /x/live-fills was transient stray-process interference, not a code bug
 - Verified /api/stress/run already returns HTTP 502 + {"status":"error","error":"..."} when gateway unreachable; no code changes needed; 26 stress tests pass
 - Audited all 39 /x/* HTMX partials (incl. edge-case params): all return 200 HTML; added missing /x/maker-status to test_htmx_partials.py
 - Ran full 223-test Playwright suite: all pass (58s); fixed /x/book to skip "no processes" guard so symbol selector shows placeholder for any symbol
@@ -86,3 +89,5 @@
 - Tested batch order submission: POST /api/orders/batch adds 10 alternating buy/sell orders; 125/125 api_orders_test.py tests pass
 - Verified process logs and status table: /x/control-grid renders process status (name/state/PID/uptime/actions), /x/logs renders log lines with expand; 223/223 Playwright green
 - Add tests/test_risk_api.py: 47 tests covering risk HTMX partials + REST APIs + render_ unit tests; all 47 pass
+- Fix waitForHTMX: wrap page.evaluate in try/catch for navigation context destruction; POST /api/orders/test end-to-end verified; 223/223 Playwright pass
+- Add /v1/symbols local endpoint (serves symbol catalog from start_mod.SYMBOLS); add _probe_gateway_tcp() TCP health check; /healthz now includes gateway field; 18/18 proxy tests pass, 223/223 Playwright pass

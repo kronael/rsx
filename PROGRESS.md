@@ -1,42 +1,30 @@
 # PROGRESS
 
-updated: Feb 18 21:39:39  
+updated: Feb 19 06:26:40  
 phase: executing
 
 ```
-[██████████░░░░░░░░░░░░░░░░░░░░] 36%  119/335
+[██████████████████████████████] 100%  12/12
 ```
 
 | | count |
 |---|---|
-| completed | 119 |
-| running | 6 |
-| pending | 210 |
+| completed | 12 |
+| running | 0 |
+| pending | 0 |
 | failed | 0 |
-
-## workers
-
-- w0: Test fault injection endpoints
-- w1: Test private WebSocket connection
-- w2: Verify WAL timeline shows events after orders
-- w3: Test stress test with gateway running
-- w4: Test verify and invariants endpoint
-- w5: Test book endpoints
 
 ## log
 
-- `20:57:40` done: Build RSX binaries and verify existence (16 files, +2537/-2343)
-- `20:59:12` done: Test order submission via playground API (17 files, +2543/-2346)
-- `20:59:55` done: Start all 5 RSX processes via API (18 files, +2549/-2348)
-- `21:00:16` done: Verify orders appear in recent-orders endpoint (18 files, +2554/-2349)
-- `21:06:05` done: Test batch order submission (18 files, +2558/-2349)
-- `21:17:42` done: Test public WebSocket connection (19 files, +2571/-2359)
-- `21:19:35` done: Verify process logs and status table (18 files, +2577/-2357)
-- `21:21:34` done: Test trade UI page loads with assets (18 files, +2581/-2357)
-- `21:23:39` done: Test trade UI with gateway running (18 files, +2585/-2357)
-- `21:25:38` done: Test trade UI graceful degradation without gateway (18 files, +2591/-2359)
-- `21:26:26` judge skip: Test trade UI graceful degradation witho
-- `21:27:33` done: Test risk page endpoints (18 files, +2596/-2359)
-- `21:28:21` done: Fix stress test error handling when gateway down (18 files, +2601/-2360)
-- `21:37:14` retry: Fix WAL data visibility in UI endpoints
-- `21:37:14` retry: Test gateway health and REST API endpoints
+- `06:03:02` done: Verify rsx-webui/dist/index.html exists and all asset src/hr (18 files, +356/-5274)
+- `06:05:22` done: Fix play_overview.spec.ts and play_topology.spec.ts Playwrig (18 files, +363/-5274)
+- `06:05:44` done: Audit all 12 Playwright spec files in rsx-playground/tests/  (18 files, +366/-5274)
+- `06:05:51` done: Audit server.py and pages.py for any remaining absolute URL  (18 files, +371/-5275)
+- `06:08:46` done: Fix play_orders.spec.ts and play_risk.spec.ts Playwright fai (18 files, +378/-5277)
+- `06:08:53` done: Fix play_trade.spec.ts Playwright failures — SPA routing at  (19 files, +383/-5283)
+- `06:10:38` done: Fix play_control.spec.ts and play_faults.spec.ts Playwright  (18 files, +391/-5281)
+- `06:10:40` done: Verify /api/stress/run returns HTTP 502 with error body when (18 files, +395/-5283)
+- `06:12:13` done: Smoke curl all 12 design-doc phases against running server ( (19 files, +402/-5289)
+- `06:14:10` done: Run full Playwright suite: cd rsx-playground/tests && npx pl (18 files, +403/-5284)
+- `06:16:33` done: Fix play_wal.spec.ts, play_verify.spec.ts, and play_logs.spe (18 files, +404/-5283)
+- `06:20:08` done: Run the full Python test suite: cd rsx-playground && uv run  (18 files, +406/-5283)

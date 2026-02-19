@@ -20,7 +20,7 @@ class StressConfig:
     symbols: list[str] = None
     users: int = 10
     connections: int = 10
-    jwt_secret: str = "dev-secret-change-in-production"
+    jwt_secret: str = ""
 
     def __post_init__(self):
         if self.symbols is None:
@@ -66,6 +66,10 @@ class StressClient:
 
     def _headers(self):
         """Auth headers for dev/testing"""
+        if self.config.jwt_secret:
+            return {
+                "Authorization": f"Bearer {self.generate_jwt()}"
+            }
         return {"x-user-id": str(self.user_id)}
 
     def generate_order(self) -> str:
@@ -175,13 +179,30 @@ class StressClient:
             raise
 
 
-async def _probe_gateway(url: str) -> str | None:
+async def _probe_gateway(
+    url: str,
+    jwt_secret: str = "dev-secret-change-in-production",
+) -> str | None:
     """Return error string if gateway unreachable, else None."""
+    if jwt_secret:
+        token = pyjwt.encode(
+            {
+                "sub": "1",
+                "exp": int(time.time()) + 3600,
+                "aud": "rsx-gateway",
+                "iss": "rsx",
+            },
+            jwt_secret,
+            algorithm="HS256",
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+    else:
+        headers = {"x-user-id": "1"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
                 url,
-                headers={"x-user-id": "0"},
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=3),
             ):
                 pass
@@ -201,7 +222,9 @@ async def run_stress_test(config: StressConfig) -> dict:
     """Run multi-connection stress test"""
 
     # Fail fast: probe gateway before spinning up workers
-    err = await _probe_gateway(config.gateway_url)
+    err = await _probe_gateway(
+        config.gateway_url, config.jwt_secret
+    )
     if err:
         return {
             "error": err,
