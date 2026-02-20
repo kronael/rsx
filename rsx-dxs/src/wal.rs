@@ -140,6 +140,9 @@ impl WalWriter {
         if self.buf.is_empty() {
             return Ok(());
         }
+        // Reset stall at start of each flush cycle so a
+        // previous slow flush doesn't block the next batch.
+        self.flush_stalled = false;
 
         // rotate before writing if current file + buffer would exceed max
         if self.file_size > 0

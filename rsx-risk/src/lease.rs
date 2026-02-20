@@ -85,12 +85,13 @@ impl AdvisoryLease {
         if !self.lease_acquired {
             return Ok(false);
         }
-        let key = self.shard_id as i32;
+        let key = self.shard_id as i64;
         let row = client
             .query_one(
                 "SELECT count(*) > 0 AS held \
                  FROM pg_locks WHERE locktype = 'advisory' \
-                 AND objid = $1 AND pid = pg_backend_pid()",
+                 AND objid::bigint = $1 \
+                 AND pid = pg_backend_pid()",
                 &[&key],
             )
             .await?;

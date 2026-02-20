@@ -340,7 +340,7 @@ fn stash_bbo_keeps_latest() {
         ask_px: 400,
         ask_qty: 10,
     });
-    s.drain_stashed_bbos();
+    s.drain_stashed_bbos(0);
     // Second BBO wins: mid = (300*10 + 400*10) / 20 = 350
     assert_eq!(s.index_prices[0].price, 350);
 }

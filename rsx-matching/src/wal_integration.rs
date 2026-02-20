@@ -1,12 +1,17 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::snapshot;
 use rsx_dxs::wal::WalWriter;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderInsertedRecord;
 use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
+use std::fs;
 use std::io;
+use std::path::PathBuf;
 use std::time::Instant;
+use tracing::info;
+use tracing::warn;
 
 /// Write all events from the book's event buffer to WAL.
 pub fn write_events_to_wal(
@@ -149,5 +154,57 @@ pub fn flush_if_due(
         writer.flush()?;
         *last_flush = now;
     }
+    Ok(())
+}
+
+/// Load book snapshot from
+/// `{wal_dir}/{symbol_id}/snapshot.bin`.
+/// Returns None if not found or corrupted.
+pub fn load_snapshot(
+    wal_dir: &str,
+    symbol_id: u32,
+) -> Option<Box<Orderbook>> {
+    let path = PathBuf::from(wal_dir)
+        .join(symbol_id.to_string())
+        .join("snapshot.bin");
+    let mut file = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    match snapshot::load(&mut file) {
+        Ok(book) => {
+            info!(
+                "loaded snapshot from {}",
+                path.display(),
+            );
+            Some(book)
+        }
+        Err(e) => {
+            warn!(
+                "snapshot load failed: {}, \
+                starting empty",
+                e,
+            );
+            None
+        }
+    }
+}
+
+/// Save book snapshot to
+/// `{wal_dir}/{symbol_id}/snapshot.bin`.
+/// Uses atomic rename to avoid partial writes.
+pub fn save_snapshot(
+    book: &Orderbook,
+    wal_dir: &str,
+    symbol_id: u32,
+) -> io::Result<()> {
+    let dir = PathBuf::from(wal_dir)
+        .join(symbol_id.to_string());
+    let tmp = dir.join("snapshot.bin.tmp");
+    let dest = dir.join("snapshot.bin");
+    let mut file = fs::File::create(&tmp)?;
+    snapshot::save(book, &mut file)?;
+    file.sync_all()?;
+    fs::rename(&tmp, &dest)?;
     Ok(())
 }

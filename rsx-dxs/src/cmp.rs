@@ -277,6 +277,12 @@ impl CmpSender {
         self.next_seq
     }
 
+    /// Advance seq after send_raw (for callers that
+    /// set seq manually in the payload).
+    pub fn advance_seq(&mut self) {
+        self.next_seq += 1;
+    }
+
     pub fn peer_consumption_seq(&self) -> u64 {
         self.peer_consumption_seq
     }
