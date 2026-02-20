@@ -3,6 +3,7 @@ use rsx_book::matching::process_new_order;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::records::BboRecord;
+use rsx_dxs::records::CancelRequest;
 use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::OrderAcceptedRecord;
@@ -10,13 +11,22 @@ use rsx_dxs::records::OrderCancelledRecord;
 use rsx_dxs::records::OrderDoneRecord;
 use rsx_dxs::records::OrderFailedRecord;
 use rsx_dxs::records::OrderInsertedRecord;
+use rsx_dxs::records::RECORD_CANCEL_REQUEST;
+use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_dxs::wal::WalWriter;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::wal_integration::flush_if_due;
+use rsx_matching::wal_integration::load_snapshot;
+use rsx_matching::wal_integration::save_snapshot;
 use rsx_matching::wal_integration::write_events_to_wal;
+use rsx_book::event::CANCEL_USER;
+use rsx_book::event::REASON_CANCELLED;
 use rsx_matching::wire::OrderMessage;
+use rsx_types::NONE;
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_types::install_panic_handler;
 use rsx_types::SymbolConfig;
 use rsx_types::time::time_ms;
@@ -216,7 +226,20 @@ fn main() {
     )
     // SAFETY: fail-fast at startup
     .expect("failed to create wal writer");
+
+    // Restore book state from snapshot if available
+    if let Some(loaded) = load_snapshot(&wal_dir, symbol_id) {
+        book = *loaded;
+        info!(
+            "book restored from snapshot: seq={}",
+            book.sequence,
+        );
+    } else {
+        info!("no snapshot found, starting with empty book");
+    }
+
     let mut last_flush = Instant::now();
+    let mut last_snapshot = Instant::now();
     let mut last_config_poll = Instant::now();
 
     // CMP/UDP: receive orders from Risk
@@ -231,6 +254,12 @@ fn main() {
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CMP_ADDR");
+    // Risk's dedicated port for ME events (fills, BBO, etc.)
+    let risk_me_recv_addr: SocketAddr =
+        env::var("RSX_RISK_ME_RECV_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:28301".into())
+            .parse()
+            .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
     let mut cmp_receiver = CmpReceiver::new(
         me_addr, risk_addr, symbol_id,
@@ -239,7 +268,9 @@ fn main() {
     .expect("failed to bind CMP receiver");
 
     let mut cmp_sender = CmpSender::new(
-        risk_addr, symbol_id, &PathBuf::from(&wal_dir),
+        risk_me_recv_addr,
+        symbol_id,
+        &PathBuf::from(&wal_dir),
     )
     // SAFETY: fail-fast at startup
     .expect("failed to create CMP sender");
@@ -315,13 +346,15 @@ fn main() {
     info!("matching engine started");
 
     loop {
-        // Receive orders via CMP/UDP from Risk
-        if let Some((_hdr, payload)) =
+        // Receive orders/cancels via CMP/UDP from Risk
+        if let Some((hdr, payload)) =
             cmp_receiver.try_recv()
         {
-            // Decode OrderMessage from payload
-            if payload.len()
-                >= std::mem::size_of::<OrderMessage>()
+            if hdr.record_type == RECORD_ORDER_REQUEST
+                && payload.len()
+                    >= std::mem::size_of::<
+                        OrderMessage,
+                    >()
             {
                 let order_msg = unsafe {
                     std::ptr::read_unaligned(
@@ -329,7 +362,6 @@ fn main() {
                             as *const OrderMessage,
                     )
                 };
-
                 // Dedup check
                 let is_dup = dedup.check_and_insert(
                     order_msg.user_id,
@@ -417,6 +449,29 @@ fn main() {
                             );
                     }
                 }
+            } else if hdr.record_type
+                == RECORD_CANCEL_REQUEST
+                && payload.len()
+                    >= std::mem::size_of::<
+                        CancelRequest,
+                    >()
+            {
+                let req = unsafe {
+                    std::ptr::read_unaligned(
+                        payload.as_ptr()
+                            as *const CancelRequest,
+                    )
+                };
+                process_cancel(
+                    &mut book,
+                    &mut wal_writer,
+                    &mut cmp_sender,
+                    &mut mkt_sender,
+                    symbol_id,
+                    req.user_id,
+                    req.order_id_hi,
+                    req.order_id_lo,
+                );
             }
         } else if book.is_migrating() {
             book.migrate_batch(100);
@@ -467,6 +522,17 @@ fn main() {
         let _ = flush_if_due(
             &mut wal_writer, &mut last_flush,
         );
+
+        // Save snapshot every 10s
+        if last_snapshot.elapsed().as_secs() >= 10 {
+            if let Err(e) = save_snapshot(
+                &book, &wal_dir, symbol_id,
+            ) {
+                warn!("snapshot save: {}", e);
+            }
+            last_snapshot = Instant::now();
+        }
+
         let _ = cmp_sender.tick();
         let _ = mkt_sender.tick();
         cmp_receiver.tick();
@@ -643,6 +709,118 @@ fn emit_config_applied(
         "emitted config_applied v{} for symbol {}",
         config_version, symbol_id,
     );
+}
+
+/// Cancel a resting order by order_id, emit events,
+/// write WAL, and send CMP to risk + marketdata.
+fn process_cancel(
+    book: &mut Orderbook,
+    wal_writer: &mut WalWriter,
+    cmp_sender: &mut CmpSender,
+    mkt_sender: &mut CmpSender,
+    symbol_id: u32,
+    user_id: u32,
+    order_id_hi: u64,
+    order_id_lo: u64,
+) {
+    // Find the slab handle by scanning active orders.
+    // Slab is bounded (capacity=1024), so linear scan
+    // is acceptable on the hot path for cancels.
+    let cap = book.orders.len();
+    let mut found = NONE;
+    for i in 0..cap {
+        let slot = book.orders.get(i);
+        if slot.is_active()
+            && slot.user_id == user_id
+            && slot.order_id_hi == order_id_hi
+            && slot.order_id_lo == order_id_lo
+        {
+            found = i;
+            break;
+        }
+    }
+    if found == NONE {
+        warn!(
+            "cancel: order not found \
+             user={} id={:#x}/{:#x}",
+            user_id, order_id_hi, order_id_lo,
+        );
+        return;
+    }
+
+    let slot = book.orders.get(found);
+    let remaining_qty = slot.remaining_qty;
+    let old_bid = book.best_bid_tick;
+    let old_ask = book.best_ask_tick;
+
+    book.event_len = 0;
+
+    book.cancel_order(found);
+
+    book.emit(rsx_book::event::Event::OrderCancelled {
+        handle: found,
+        user_id,
+        remaining_qty,
+        reason: CANCEL_USER,
+        order_id_hi,
+        order_id_lo,
+    });
+    book.emit(rsx_book::event::Event::OrderDone {
+        handle: found,
+        user_id,
+        reason: REASON_CANCELLED,
+        filled_qty: Qty(0),
+        remaining_qty,
+        order_id_hi,
+        order_id_lo,
+    });
+
+    // Emit BBO if best bid or ask changed
+    if book.best_bid_tick != old_bid
+        || book.best_ask_tick != old_ask
+    {
+        let (bid_px, bid_qty) =
+            if book.best_bid_tick != NONE {
+                let lvl = &book.active_levels
+                    [book.best_bid_tick as usize];
+                let px =
+                    book.orders.get(lvl.head).price.0;
+                (px, lvl.total_qty)
+            } else {
+                (0, 0)
+            };
+        let (ask_px, ask_qty) =
+            if book.best_ask_tick != NONE {
+                let lvl = &book.active_levels
+                    [book.best_ask_tick as usize];
+                let px =
+                    book.orders.get(lvl.head).price.0;
+                (px, lvl.total_qty)
+            } else {
+                (0, 0)
+            };
+        book.emit(rsx_book::event::Event::BBO {
+            bid_px: Price(bid_px),
+            bid_qty: Qty(bid_qty),
+            ask_px: Price(ask_px),
+            ask_qty: Qty(ask_qty),
+        });
+    }
+
+    let ts_ns = time_ns();
+    let _ = write_events_to_wal(
+        wal_writer, book, symbol_id, ts_ns,
+    );
+    for event in book.events() {
+        let _ = send_event_cmp(
+            cmp_sender, event, symbol_id, ts_ns,
+        );
+    }
+    for event in book.events() {
+        let _ = send_event_marketdata(
+            mkt_sender, event, symbol_id, ts_ns,
+        );
+    }
 }
 
 /// Send events to Marketdata -- Fill, OrderInserted,

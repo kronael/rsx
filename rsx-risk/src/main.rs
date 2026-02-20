@@ -16,6 +16,8 @@ use rsx_dxs::records::RECORD_ORDER_CANCELLED;
 use rsx_dxs::records::RECORD_ORDER_DONE;
 use rsx_dxs::records::RECORD_ORDER_FAILED;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_dxs::records::CancelRequest;
+use rsx_dxs::records::RECORD_CANCEL_REQUEST;
 use rsx_dxs::records::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
@@ -278,11 +280,16 @@ fn run_main(
     // SAFETY: fail-fast at startup
     .expect("failed to bind risk CMP receiver");
 
-    // Receive fills from ME
+    // Receive fills/events from ME (separate port)
+    let risk_me_recv_addr: SocketAddr =
+        env::var("RSX_RISK_ME_RECV_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:28301".into())
+            .parse()
+            .expect("invalid RSX_RISK_ME_RECV_ADDR");
     let mut me_receiver = CmpReceiver::new(
-        // SAFETY: literal addr is always valid
-        "127.0.0.1:0".parse().expect("valid addr"),
-        me_addr, 0,
+        risk_me_recv_addr,
+        me_addr,
+        0,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind ME fill receiver");
@@ -361,30 +368,46 @@ fn run_main(
     loop {
         let now_secs = time();
 
-        // Pump CMP -> SPSC rings
-        // Orders from Gateway
+        // Orders/cancels from Gateway.
         while let Some((hdr, payload)) =
             gw_receiver.try_recv()
         {
-            if hdr.record_type == RECORD_ORDER_REQUEST
-                && payload.len()
-                    >= std::mem::size_of::<OrderRequest>()
-            {
-                let order = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const OrderRequest,
-                    )
-                };
-                let _ = order_prod.push(order);
+            match hdr.record_type {
+                RECORD_ORDER_REQUEST
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            OrderRequest,
+                        >() =>
+                {
+                    let order = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const OrderRequest,
+                        )
+                    };
+                    let _ = order_prod.push(order);
+                }
+                RECORD_CANCEL_REQUEST
+                    if payload.len()
+                        >= std::mem::size_of::<
+                            CancelRequest,
+                        >() =>
+                {
+                    // Forward cancel directly to ME.
+                    let _ = me_sender.send_raw(
+                        RECORD_CANCEL_REQUEST,
+                        &payload,
+                    );
+                }
+                _ => {}
             }
         }
 
-        // Events from ME
-        while let Some((preamble, payload)) =
+        // Events from ME (fills, BBO, order lifecycle).
+        while let Some((hdr, payload)) =
             me_receiver.try_recv()
         {
-            match preamble.record_type {
+            match hdr.record_type {
                 RECORD_BBO
                     if payload.len()
                         >= std::mem::size_of::<
@@ -405,6 +428,12 @@ fn run_main(
                         ask_px: rec.ask_px.0,
                         ask_qty: rec.ask_qty.0,
                     });
+                    // Forward to GW to maintain CMP seq
+                    // continuity (GW ignores BBO content).
+                    let _ = gw_sender.send_raw(
+                        RECORD_BBO,
+                        &payload,
+                    );
                 }
                 RECORD_FILL
                     if payload.len()

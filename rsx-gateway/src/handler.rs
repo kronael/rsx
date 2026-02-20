@@ -82,20 +82,31 @@ pub async fn handle_connection(
             }
         }
 
-        let (opcode, payload) =
-            match ws_read_frame(&mut stream).await {
-                Ok(f) => f,
-                Err(e) => {
-                    info!(
-                        "conn {} closed: {e}",
-                        conn_id
-                    );
-                    state
-                        .borrow_mut()
-                        .remove_connection(conn_id);
-                    return;
-                }
-            };
+        // Timeout lets the loop drain outbound even when
+        // the client sends nothing (e.g. waiting for fills).
+        let read = monoio::time::timeout(
+            std::time::Duration::from_millis(10),
+            ws_read_frame(&mut stream),
+        )
+        .await;
+
+        let (opcode, payload) = match read {
+            Err(_elapsed) => {
+                // No frame yet; loop back to drain outbound.
+                continue;
+            }
+            Ok(Ok(f)) => f,
+            Ok(Err(e)) => {
+                info!(
+                    "conn {} closed: {e}",
+                    conn_id
+                );
+                state
+                    .borrow_mut()
+                    .remove_connection(conn_id);
+                return;
+            }
+        };
 
         state.borrow_mut().touch_connection(
             conn_id,
@@ -298,8 +309,10 @@ pub async fn handle_connection(
                     oid[12], oid[13], oid[14], oid[15],
                 ]);
 
+                let seq =
+                    cmp_sender.borrow().next_seq();
                 let order = OrderRequest {
-                    seq: 0,
+                    seq,
                     user_id,
                     symbol_id,
                     price,
@@ -351,10 +364,15 @@ pub async fn handle_connection(
                         >(),
                     )
                 };
-                let _ = cmp_sender.borrow_mut().send_raw(
-                    RECORD_ORDER_REQUEST,
-                    bytes,
-                );
+                {
+                    let mut sender =
+                        cmp_sender.borrow_mut();
+                    let _ = sender.send_raw(
+                        RECORD_ORDER_REQUEST,
+                        bytes,
+                    );
+                    sender.advance_seq();
+                }
                 state
                     .borrow_mut()
                     .circuit
@@ -391,14 +409,14 @@ pub async fn handle_connection(
                             .pending
                             .find_by_order_id(&oid_bytes);
                         if let Some(p) = found {
-                            let cancel = build_cancel(
+                            let mut cancel = build_cancel(
                                 user_id,
                                 p.symbol_id,
                                 &p.order_id,
                             );
                             drop(st);
                             send_cancel(
-                                &cmp_sender, &cancel,
+                                &cmp_sender, &mut cancel,
                             );
                         } else {
                             drop(st);
@@ -422,14 +440,14 @@ pub async fn handle_connection(
                             .pending
                             .find_by_client_order_id(&cid);
                         if let Some(p) = found {
-                            let cancel = build_cancel(
+                            let mut cancel = build_cancel(
                                 user_id,
                                 p.symbol_id,
                                 &p.order_id,
                             );
                             drop(st);
                             send_cancel(
-                                &cmp_sender, &cancel,
+                                &cmp_sender, &mut cancel,
                             );
                         } else {
                             drop(st);
@@ -512,17 +530,18 @@ fn build_cancel(
 
 fn send_cancel(
     cmp_sender: &Rc<RefCell<CmpSender>>,
-    cancel: &CancelRequest,
+    cancel: &mut CancelRequest,
 ) {
+    let mut sender = cmp_sender.borrow_mut();
+    cancel.seq = sender.next_seq();
     let bytes = unsafe {
         std::slice::from_raw_parts(
             cancel as *const CancelRequest as *const u8,
             std::mem::size_of::<CancelRequest>(),
         )
     };
-    let _ = cmp_sender
-        .borrow_mut()
-        .send_raw(RECORD_CANCEL_REQUEST, bytes);
+    let _ = sender.send_raw(RECORD_CANCEL_REQUEST, bytes);
+    sender.advance_seq();
 }
 
 async fn send_error(

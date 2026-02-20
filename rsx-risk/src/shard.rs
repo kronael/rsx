@@ -728,11 +728,21 @@ impl RiskShard {
         self.stashed_bbo[sid] = Some(bbo);
     }
 
-    pub fn drain_stashed_bbos(&mut self) {
+    pub fn drain_stashed_bbos(&mut self, now_ns: u64) {
         for sid in 0..self.max_symbols {
             if let Some(bbo) = self.stashed_bbo[sid].take()
             {
                 self.process_bbo(&bbo);
+                // RISK.md §7: margin scan on every BBO
+                let users: Vec<u32> = self
+                    .exposure
+                    .users_for_symbol(sid)
+                    .to_vec();
+                for user_id in users {
+                    self.check_liquidation_for(
+                        user_id, now_ns,
+                    );
+                }
             }
         }
     }
@@ -977,7 +987,7 @@ impl RiskShard {
                 self.stash_bbo(bbo);
             }
         }
-        self.drain_stashed_bbos();
+        self.drain_stashed_bbos(now_ns);
 
         // 5. Funding settlement
         self.maybe_settle_funding(now_secs);

@@ -9,7 +9,7 @@ use std::io;
 use tracing::info;
 
 const WS_MAGIC: &str =
-    "258EAFA5-E914-47DA-95CA-5B9B65D3A3D2";
+    "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Accept WebSocket connections on the given address.
 /// Calls `handler` for each accepted connection.
