@@ -70,15 +70,16 @@ test.describe("Book tab", () => {
     await verifyPolling(bookData, "every 1s");
   });
 
-  test("book ladder shows placeholder when no processes running", async ({ page }) => {
+  test("book ladder shows real bid/ask when maker running", async ({ page }) => {
     await page.goto("/book");
+    // PENGU (symbol_id=10) is the maker's symbol — quotes appear ~3s after startup
+    await page.locator("#book-symbol").selectOption("10");
+    await waitForHTMX(page);
     const bookData = page.locator("#book-data");
-    await waitForHTMX(page, 2000);
-
-    // Should show placeholder when no data available
-    await expect(bookData).toContainText(
-      /no book data|waiting for orders|no processes running/i,
-    );
+    // Poll until real Ask/Bid rows appear (HTMX refreshes every 1s)
+    await expect(bookData).toContainText(/Ask|Bid/, { timeout: 10000 });
+    const content = await bookData.textContent();
+    expect(content).not.toMatch(/no book data|waiting for orders/i);
   });
 
   test("book stats card auto-refreshes every 2s", async ({ page }) => {
@@ -108,15 +109,25 @@ test.describe("Book tab", () => {
     await verifyPolling(fillsDiv, "every 1s");
   });
 
-  test("live fills shows placeholder initially", async ({ page }) => {
+  test("live fills shows actual fills after orders", async ({ page }) => {
+    // Submit an aggressive buy that crosses the maker's ask on symbol_id=10
+    // Maker default mid=50000, ask starts at ~50050; price 51000 crosses it
+    await page.request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "buy",
+        order_type: "limit",
+        price: "51000",
+        qty: "1",
+        user_id: "1",
+      },
+    });
     await page.goto("/book");
     const fillsDiv = page.locator("[hx-get='./x/live-fills']");
-    await waitForHTMX(page, 2000);
-
-    // Should show placeholder text
-    await expect(fillsDiv).toContainText(
-      /no fills|no data|no processes running/i,
-    );
+    // HTMX refreshes every 1s; wait for WAL fill records to propagate
+    await expect(fillsDiv).toContainText(/buy|sell/i, { timeout: 10000 });
+    const content = await fillsDiv.textContent();
+    expect(content).not.toMatch(/no fills|no processes running/i);
   });
 
   test("book stats card shows compression info", async ({ page }) => {

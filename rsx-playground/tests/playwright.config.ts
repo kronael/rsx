@@ -11,6 +11,7 @@ const artifactDir = path.join(
 );
 
 export default defineConfig({
+  globalSetup: "./global-setup.ts",
   testDir: ".",
   timeout: 15_000,
   retries: 0,
@@ -55,12 +56,13 @@ export default defineConfig({
         "play_verify.spec.ts",
       ],
     },
-    // Shard 3: process-control — control + orders (35 tests)
+    // Shard 3: process-control — control + orders + stress (55 tests)
     {
       name: "process-control",
       testMatch: [
         "play_control.spec.ts",
         "play_orders.spec.ts",
+        "play_stress.spec.ts",
       ],
     },
     // Shard 4: trade-ui — React SPA (67 tests)
