@@ -43,8 +43,7 @@ test.describe("Orders tab", () => {
     await page.locator("input[name='qty']").fill("1.0");
     await page.locator("button[type='submit']").click();
     await page.waitForTimeout(2000);
-    // Without gateway running, order is queued; with gateway, accepted
-    await expect(page.locator("#order-result")).toContainText(/accepted|queued|order/);
+    await expect(page.locator("#order-result")).toContainText("accepted");
   });
 
   test("handles invalid order via invalid button", async ({ page }) => {
@@ -68,6 +67,11 @@ test.describe("Orders tab", () => {
     await page.locator("button", { hasText: "Batch (10)" }).click();
     await page.waitForTimeout(2000);
     await expect(page.locator("#order-result")).toContainText("10 batch orders");
+    // Wait for HTMX auto-refresh (2s interval) then assert recent-orders populated
+    await page.waitForTimeout(2500);
+    const recentOrders = page.locator("div[hx-get='./x/recent-orders']");
+    await expect(recentOrders).not.toContainText("no orders yet");
+    await expect(recentOrders.locator("tr").first()).toBeVisible();
   });
 
   test("random order submission creates 5 orders", async ({ page }) => {

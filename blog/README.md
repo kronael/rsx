@@ -156,6 +156,12 @@ HTMX + FastAPI dev dashboard. Two Python files, zero JavaScript,
 10 screens, 156 Playwright tests. Observe, act, verify -- all from
 one browser tab.
 
+**[Trade UI Notes: RSX WebUI](25-trade-ui-notes.md)**
+
+React 19 + Vite 6 trading interface. RSX color palette, Bybit-style
+grid layout, 60fps rendering targets, ring-buffer trade tape, and
+flat component structure.
+
 ## Topics Covered
 
 - Ultra-low-latency design (<50us end-to-end, 100ns matching)
@@ -199,6 +205,24 @@ agent-assisted audits.
 [Don't YOLO Structs](dont-yolo-structs-over-the-wire.md),
 [FlatBuffers](flatbuffers-isnt-free.md),
 [We Deleted the Serialization Layer](12-deleted-serialization.md).
+
+## Spec Quality Checklist
+
+A spec is executable when it has all of the following. Missing any
+one of these caused past plan rejections:
+
+1. **Deploy target** — runtime environment, delivery format (binary,
+   container, systemd unit)
+2. **Scope boundary** — which crates/components are in scope; which
+   are already complete
+3. **Success criteria** — specific test suite + coverage threshold,
+   not just "tests pass"
+4. **Interface spec** — entry points, API surface, protocols, I/O
+   surfaces to implement
+5. **Edge case format** — where edge cases are documented, what
+   completeness means
+6. **Current state baseline** — link to PROGRESS.md percentages or
+   explicit list of missing features
 
 ## Contributing
 

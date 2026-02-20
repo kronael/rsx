@@ -2173,6 +2173,68 @@ def render_live_fills(fills):
 </table>"""
 
 
+def render_order_trace(order, fills):
+    """Render lifecycle trace for a single order."""
+    cid = html.escape(order.get("cid", ""))
+    sym_id = order.get("symbol", "10")
+    sym = SYMBOL_NAMES_STR.get(sym_id, f"sym-{sym_id}")
+    side = html.escape(order.get("side", "buy"))
+    price = html.escape(str(order.get("price", "-")))
+    qty = html.escape(str(order.get("qty", "-")))
+    status = order.get("status", "pending")
+    ts = html.escape(order.get("ts", "-"))
+
+    def step(color, label, detail=""):
+        detail_html = (
+            f' <span class="text-slate-500">{detail}</span>'
+            if detail else ""
+        )
+        return (
+            f'<div class="flex items-start gap-2 py-1">'
+            f'<div class="mt-0.5 w-2 h-2 rounded-full '
+            f'bg-{color}-400 shrink-0"></div>'
+            f'<span class="text-{color}-400 text-xs">'
+            f'{label}</span>'
+            f'{detail_html}</div>'
+        )
+
+    steps = [
+        step("blue", "submitted",
+             f"{sym} {side} {qty}@{price} at {ts}"),
+    ]
+
+    if status == "accepted":
+        steps.append(
+            step("emerald", "routed",
+                 f"gateway accepted ({order.get('latency_us', '-')}us)")
+        )
+        if fills:
+            fill_count = len(fills)
+            fill_qty = sum(f["qty"] for f in fills)
+            steps.append(
+                step("emerald", "filled",
+                     f"{fill_count} fill(s), total qty {fill_qty}")
+            )
+        else:
+            steps.append(step("amber", "open", "resting in book"))
+    elif status == "rejected":
+        reason = html.escape(order.get("reason", "unknown"))
+        steps.append(step("red", "rejected", reason))
+    elif status == "error":
+        err = html.escape(order.get("error", "unknown"))
+        steps.append(step("red", "error", err))
+    else:
+        steps.append(step("slate", "pending", "awaiting gateway"))
+
+    inner = "".join(steps)
+    return (
+        f'<div class="font-mono text-xs text-slate-400 mb-1">'
+        f'oid: {cid}</div>'
+        f'<div class="border-l-2 border-slate-700 pl-3">'
+        f'{inner}</div>'
+    )
+
+
 def render_trade_agg(fills):
     """Render trade aggregation from fills."""
     if not fills:
@@ -2505,3 +2567,22 @@ def stress_report_page(data):
     """
 
     return layout(f"Stress Report: {ts_fmt}", content, active_tab="./stress")
+
+
+def maker_status_html(stats: dict, pid) -> str:
+    """Render maker-status HTMX partial with live fields."""
+    orders_placed = stats.get("orders_placed", "--")
+    active_orders = stats.get("active_orders", "--")
+    mid_prices = stats.get("mid_prices", {})
+    mid_price = (
+        next(iter(mid_prices.values()), "--")
+        if mid_prices else "--"
+    )
+    return (
+        f'<span class="text-emerald-400 text-xs">'
+        f'running (pid {pid}) &mdash; '
+        f'orders_placed: {orders_placed}, '
+        f'active_orders: {active_orders}, '
+        f'mid_price: {mid_price}'
+        f'</span>'
+    )

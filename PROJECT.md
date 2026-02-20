@@ -1,78 +1,58 @@
-# RSX Playground — Full System Debug & Verification
+# RSX Exchange E2E Integration
 
 ## Goal
 
-Make every page, API endpoint, and user flow in the RSX playground work end-to-end. Fix all 500s, blank pages, missing data, and broken buttons. All 223 Playwright tests must pass.
+Prove the exchange works end-to-end: maker provides liquidity, takers cross
+orders, fills are delivered via WS, positions are accurate, and liquidation
+fires on BBO updates without waiting for the next fill.
 
 ## Stack
 
-- **Server**: Python (uv), `rsx-playground/server.py` + `pages.py` + `stress_client.py`
-- **UI**: HTMX partials + React SPA (`rsx-webui/dist/`) at `/trade/`
-- **Exchange**: Rust binaries (`target/debug/rsx-{matching,mark,risk,gateway,marketdata}`)
-- **Transport**: CMP/UDP (hot path), WAL/TCP (cold path), WebSocket (client-facing)
-- **DB**: Postgres at `postgres://rsx:folium@10.0.2.1:5432/rsx_dev` (optional)
-- **Tests**: Playwright (`rsx-playground/tests/`)
+- **Binaries (Rust):** `rsx-gateway`, `rsx-risk`, `rsx-matching`,
+  `rsx-marketdata`, `rsx-mark`
+- **Maker (Python):** `rsx-playground/market_maker.py`
+- **Wire:** CMP/UDP (hot path), WAL replication over TCP (cold path)
+- **Client API:** WEBPROTO WebSocket + REST (`specs/v1/WEBPROTO.md`,
+  `RPC.md`, `MESSAGES.md`)
+
+## Bugs to Fix (5 concrete)
+
+| # | File | Fix |
+|---|------|-----|
+| 1 | `rsx-gateway/src/handler.rs:69-98` | Interleave WS read + outbound drain via monoio select or join |
+| 2 | `rsx-matching/src/main.rs` CMP recv loop | Dispatch `RECORD_CANCEL_REQUEST` alongside `RECORD_ORDER_REQUEST` |
+| 3 | `rsx-matching/src/main.rs` startup | Call WAL snapshot restore before accepting CMP messages |
+| 4 | `rsx-risk/src/shard.rs:drain_stashed_bbos` | Scan exposed users for margin breach on every BBO/mark update |
+| 5 | `rsx-playground/market_maker.py` | Evict filled cids via WS fills, align prices to tick size |
+
+## Acceptance Criteria (8, all runnable)
+
+| # | Name | Observable pass condition |
+|---|------|--------------------------|
+| 1 | Build | `cargo build` exits 0, zero unused warnings |
+| 2 | Unit tests | `cargo test --workspace` all pass |
+| 3 | WS fill round-trip | `ws_new_order_fill_update_complete`: both sides receive `WsFrame::Fill` ≤1 s |
+| 4 | Cancel round-trip | `WsFrame::OrderUpdate{CANCELLED}` ≤1 s; order absent from `GET /x/book` |
+| 5 | Restart safety | 3 resting orders survive ME kill+restart; new orders match against them |
+| 6 | BBO liquidation | Risk shard emits liquidation CMP within one BBO cycle after margin breach |
+| 7 | Maker integration | ≥5 bid + ask levels after 3 s; `orders_placed > 0`; crossing fill in WAL ≤2 s |
+| 8 | Stress test | `accept_rate > 0.8` at 50 rps/10 s; no crash; WAL tip monotonic |
 
 ## IO Surfaces
 
-| Surface | Address |
-|---------|---------|
-| Playground server | `http://localhost:49171` |
-| Gateway WS + REST | `ws://localhost:8080`, `http://localhost:8080` |
-| Marketdata WS | `ws://localhost:8081` |
-| REST proxy | `/v1/*` → `http://localhost:8080/v1/*` |
-| WS proxy (private) | `/ws/private` → `ws://localhost:8080` |
-| WS proxy (public) | `/ws/public` → `ws://localhost:8081` |
-| Trade SPA | `http://localhost:49171/trade/` |
-| Reverse proxy | `https://krons.cx/rsx-play/` (nginx prefix strip) |
-
-## Pages & Endpoints
-
-**Pages (must return 200):** `/`, `/overview`, `/topology`, `/book`, `/risk`, `/wal`, `/logs`, `/control`, `/faults`, `/verify`, `/orders`, `/stress`, `/trade/`
-
-**HTMX partials (`/x/*`):** `processes`, `health`, `key-metrics`, `ring-pressure`, `core-affinity`, `cmp-flows`, `control-grid`, `resource-usage`, `faults-grid`, `wal-status`, `wal-detail`, `wal-files`, `wal-lag`, `wal-rotation`, `wal-timeline`, `logs`, `logs-tail`, `error-agg`, `auth-failures`, `book-stats`, `live-fills`, `trade-agg`, `position-heatmap`, `margin-ladder`, `funding`, `risk-latency`, `reconciliation`, `latency-regression`, `order-trace`, `stale-orders`, `recent-orders`, `current-scenario`, `invariant-status`, `verify`, `stress-reports-list`
-
-**REST APIs:** `/api/processes`, `/api/processes/all/start`, `/api/processes/all/stop`, `/api/processes/{name}/restart`, `/api/processes/{name}/kill`, `/api/build`, `/api/orders/test`, `/api/orders/batch`, `/api/stress/run`, `/api/verify/run`, `/api/maker/start`, `/api/maker/stop`, `/api/maker/status`, `/api/users/create`, `/healthz`
-
-## Phases
-
-1. Server startup + all pages/partials return 200
-2. Build Rust binaries + start 5 RSX processes
-3. Gateway REST proxy works (`/v1/symbols`, `/v1/account`)
-4. Order submission → appears in recent orders → WAL grows
-5. WebSocket proxy (public + private) functional
-6. Trade SPA loads, connects WS, shows BBO/book
-7. Risk page shows fill-derived data (heatmap, margin, funding)
-8. Stress test returns error when gateway down (not silent 0)
-9. Verify/invariant checks return 10 results
-10. Fault injection: kill/restart process, stop all
-11. Playwright 223/223 green
-12. No absolute hrefs in server.py/pages.py; Trade SPA assets use `./`; works at `/rsx-play/` prefix
+- **Inbound:** WS frames (client orders, cancels), CMP UDP datagrams (ME↔risk)
+- **Outbound:** WS push frames (fills, order updates), WAL records, REST responses
+- **Startup:** WAL snapshot read → book state (criterion 5 depends on this)
 
 ## Constraints
 
-- Fix bugs in `server.py`, `pages.py`, `stress_client.py` only — do not rewrite
-- Postgres is optional; features must degrade gracefully without it
-- WAL files at `tmp/wal/pengu/10/` and `tmp/wal/mark/100/`
-- Log files in `log/*.log`
-- PID files in `tmp/pids/`
-- All URLs must be relative (proxy-safe)
-- Debug builds only (`cargo build`, not `--release`)
+- Debug builds only (`cargo build`, no `--release`)
+- All timing assertions: wall-clock timeouts (1 s fills, 2 s WAL)
+- Fixed-point i64 prices throughout; maker quotes must be tick-aligned
+- No new crate dependencies without explicit justification
+- `stress_client.py` must be created if absent (criterion 8 depends on it)
 
-## Success Criteria
+## Out of Scope
 
-- [ ] All 13 pages return HTTP 200
-- [ ] All HTMX partials return HTTP 200 (no 500s)
-- [ ] WAL status shows `mark` and `pengu` streams
-- [ ] 5 RSX processes start/stop/restart via API
-- [ ] Test order submits → appears in `/x/recent-orders`
-- [ ] `/x/wal-timeline` shows events after order submission
-- [ ] `/api/stress/run` returns 502 + error message when gateway down
-- [ ] Trade SPA loads and shows correct empty state without gateway
-- [ ] Trade SPA shows BBO/book with gateway running
-- [ ] Market maker starts, places orders, book shows bid/ask levels
-- [ ] Playwright 223/223 pass
-- [ ] Zero 500 errors in server console during full run
-- [ ] `grep 'href="/'` returns 0 matches in server.py and pages.py
-- [ ] Trade SPA asset paths start with `./` not `/`
-- [ ] `curl https://krons.cx/rsx-play/healthz` returns 200
+- Performance tuning, new features, or refactoring beyond the 5 listed bugs
+- Release builds, benchmarking, or deployment changes

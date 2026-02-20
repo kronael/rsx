@@ -23,6 +23,7 @@ import aiohttp
 import psutil
 import uvicorn
 from fastapi import FastAPI
+from fastapi import Form
 from fastapi import Query
 from fastapi import Request
 from fastapi import WebSocket
@@ -833,6 +834,22 @@ def parse_wal_fills(max_fills=50):
     return all_fills[:max_fills]
 
 
+def parse_wal_fills_for_user(user_id, symbol_id):
+    """Get fills for a specific user+symbol from WAL."""
+    result = []
+    for stream_dir in _wal_stream_dirs():
+        for rec in parse_wal_records(
+            stream_dir, {RECORD_FILL}
+        ):
+            if rec["symbol_id"] != symbol_id:
+                continue
+            if (rec["taker_uid"] == user_id
+                    or rec["maker_uid"] == user_id):
+                result.append(rec)
+    result.sort(key=lambda r: r["seq"])
+    return result
+
+
 def parse_wal_book_stats():
     """Get book stats from WAL BBO records."""
     symbols = {}
@@ -1534,9 +1551,20 @@ async def x_order_trace(
         return HTMLResponse(
             '<span class="text-slate-600">'
             'enter an oid</span>')
+    order = next(
+        (o for o in recent_orders if o.get("cid") == oid),
+        None,
+    )
+    if order is None:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {html.escape(oid)} not found in session'
+            f'</span>')
+    user_id = order.get("user_id", 0)
+    symbol_id = int(order.get("symbol", "10"))
+    fills = parse_wal_fills_for_user(user_id, symbol_id)
     return HTMLResponse(
-        f'<span class="text-slate-500 text-xs">'
-        f'trace for {oid}: requires live system</span>')
+        pages.render_order_trace(order, fills))
 
 
 @app.get("/x/stale-orders", response_class=HTMLResponse)
@@ -1961,6 +1989,7 @@ async def api_orders_test(request: Request):
 
     order = {
         "cid": cid,
+        "user_id": user_id,
         "symbol": str(order_msg["symbol_id"]),
         "side": order_msg["side"],
         "price": order_msg["price"],
@@ -2138,8 +2167,8 @@ async def api_orders_random():
 @app.post("/api/stress/run")
 async def api_stress_run(
     request: Request,
-    rate: int = 100,
-    duration: int = 60,
+    rate: int = Form(100),
+    duration: int = Form(60),
 ):
     """Launch stress test and save results"""
     is_htmx = request.headers.get("hx-request") == "true"
@@ -2457,6 +2486,15 @@ async def api_metrics():
 
 MAKER_SCRIPT = ROOT / "rsx-playground" / "market_maker.py"
 MAKER_NAME = "maker"
+MAKER_STATUS_FILE = TMP / "maker-status.json"
+
+
+def _read_maker_stats() -> dict:
+    """Read maker status file written by maker subprocess."""
+    try:
+        return json.loads(MAKER_STATUS_FILE.read_text())
+    except Exception:
+        return {}
 
 
 def _maker_running() -> bool:
@@ -2522,9 +2560,8 @@ async def x_maker_status():
             '<span class="text-slate-500 text-xs">'
             'maker stopped</span>')
     pid = info["proc"].pid if info else "?"
-    return HTMLResponse(
-        f'<span class="text-emerald-400 text-xs">'
-        f'maker running (pid {pid})</span>')
+    stats = _read_maker_stats()
+    return HTMLResponse(pages.maker_status_html(stats, pid))
 
 
 # ── trading UI: WS proxy + REST proxy + static ─────────

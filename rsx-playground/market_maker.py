@@ -7,10 +7,16 @@ available, otherwise uses a default mid.
 
 import asyncio
 import json
+import os
 import time
 import random
+from pathlib import Path
 
 import aiohttp
+
+_STATUS_FILE = (
+    Path(__file__).resolve().parent.parent / "tmp" / "maker-status.json"
+)
 
 
 class DummyMarketMaker:
@@ -26,10 +32,13 @@ class DummyMarketMaker:
         num_levels=5,
         refresh_sec=2.0,
         user_id=99,
+        tick_sizes=None,
     ):
         self.gateway_url = gateway_url
         self.marketdata_ws = marketdata_ws
         self.symbol_ids = symbol_ids or [10]
+        # tick_sizes: {symbol_id: tick_size}; defaults to 1
+        self.tick_sizes = tick_sizes or {}
         self.spread_bps = spread_bps
         self.qty_per_level = qty_per_level
         self.num_levels = num_levels
@@ -145,8 +154,48 @@ class DummyMarketMaker:
             if self._running:
                 await asyncio.sleep(2.0)
 
+    def _write_status(self):
+        """Write status dict to tmp/maker-status.json."""
+        try:
+            _STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            data = self.status()
+            data["pid"] = os.getpid()
+            tmp = _STATUS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data))
+            tmp.replace(_STATUS_FILE)
+        except Exception:
+            pass
+
+    async def _fetch_tick_sizes(self, base_url: str):
+        """Fetch tick sizes from /v1/symbols REST endpoint."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = base_url.replace(
+                    "ws://", "http://").replace(
+                    "wss://", "https://")
+                # strip path to get server root
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                rest = f"{parsed.scheme}://{parsed.netloc}"
+                async with session.get(
+                    f"{rest}/v1/symbols",
+                    timeout=aiohttp.ClientTimeout(total=3),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for sym in data.get("symbols", []):
+                            sid = sym.get("id")
+                            tick = sym.get("tick_size", 1)
+                            if sid is not None and tick:
+                                self.tick_sizes[sid] = tick
+        except Exception as e:
+            self.errors.append(f"tick fetch: {e}")
+
     async def _run(self):
         """Main quoting loop."""
+        # fetch tick sizes from server before quoting
+        await self._fetch_tick_sizes(self.gateway_url)
+
         # default mid prices for symbols without live data
         defaults = {10: 50000, 1: 30000, 2: 2000, 3: 100}
         for sid in self.symbol_ids:
@@ -167,6 +216,7 @@ class DummyMarketMaker:
                 self.errors.append(f"run: {e}")
                 if len(self.errors) > 20:
                     del self.errors[:10]
+            self._write_status()
             if self._running:
                 await asyncio.sleep(self.refresh_sec)
 
@@ -202,36 +252,45 @@ class DummyMarketMaker:
                     )
                     level_step = max(1, half_spread // 2)
 
+                    tick = self.tick_sizes.get(sid, 1) or 1
                     for i in range(self.num_levels):
                         offset = half_spread + i * level_step
                         qty = self.qty_per_level + random.randint(
                             0, self.qty_per_level // 2)
 
-                        # bid
+                        # bid — round down to tick boundary
                         bid_cid = self._next_cid()
-                        bid_px = mid - offset
+                        bid_px = (mid - offset) // tick * tick
                         await ws.send_str(json.dumps({
                             "N": [sid, 0, bid_px, qty, bid_cid, 0],
                         }))
                         self.active_cids.add(bid_cid)
                         self.orders_placed += 1
 
-                        # ask
+                        # ask — round up to tick boundary
                         ask_cid = self._next_cid()
-                        ask_px = mid + offset
+                        raw_ask = mid + offset
+                        ask_px = (
+                            (raw_ask + tick - 1) // tick * tick
+                        )
                         await ws.send_str(json.dumps({
                             "N": [sid, 1, ask_px, qty, ask_cid, 0],
                         }))
                         self.active_cids.add(ask_cid)
                         self.orders_placed += 1
 
-                        # drain responses
+                        # drain responses; evict filled cids
                         for _ in range(2):
                             try:
                                 resp = await asyncio.wait_for(
                                     ws.receive(), timeout=0.2)
                                 if resp.type == aiohttp.WSMsgType.TEXT:
                                     data = json.loads(resp.data)
+                                    # evict filled/done orders
+                                    if "F" in data or "D" in data:
+                                        cid = (data.get("F") or
+                                               data.get("D", [None]))[0]
+                                        self.active_cids.discard(cid)
                                     if "E" in data:
                                         self.errors.append(
                                             f"order: {data['E']}")

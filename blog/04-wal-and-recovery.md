@@ -260,3 +260,59 @@ The tradeoff: multi-datacenter deployments would require either
 synchronous WAL replication (adding cross-DC latency) or accepting
 a wider loss window (the time for a fill to replicate across DCs).
 That is a v2 problem.
+
+## The fsync you forgot
+
+While writing about durability guarantees, we shipped a bug that
+violated them. The rotate function in `rsx-dxs/src/wal.rs` had
+this sequence:
+
+```rust
+// BEFORE: drop, then rename
+drop(self.file);
+fs::rename(&active_path, &rotated_path)?;
+```
+
+The race: `drop(file)` closes the file descriptor. The OS may
+flush dirty pages at this point, or it may not -- depends on the
+kernel version, filesystem, and mount options. Between the close
+and the rename, a crash leaves the data written but the file still
+named `*_active.wal`. On restart, the recovery logic sees an
+active file, assumes it is the current segment, and overwrites it.
+Silent data loss.
+
+The fix is two steps, not one:
+
+```rust
+// AFTER: sync before close, fsync parent after rename
+self.file.sync_all()?;          // flush + fsync data
+drop(std::mem::replace(         // close the fd
+    &mut self.file,
+    File::create("/dev/null")?,
+));
+fs::rename(&active_path, &rotated_path)?;
+// optionally: fsync(parent_dir) to make rename durable
+```
+
+`sync_all()` calls `fsync(2)` before the file is closed. This
+ensures the data bytes reach durable storage while we still hold
+the file descriptor. The rename that follows is now safe: if it
+crashes after rename but before the parent directory fsync, the
+file is at least recoverable with the correct name on most
+filesystems (ext4 with `data=ordered`). For full POSIX durability
+you also fsync the parent directory after rename -- otherwise a
+crash can leave the directory entry update in a limbo state.
+
+The rule: **dropping a file descriptor is not an fsync**. The
+kernel may buffer the close. `close(2)` does not guarantee data is
+on disk. Filesystem close semantics vary:
+
+- `ext4 data=ordered`: data before metadata, but no fsync
+- `ext4 data=writeback`: metadata can precede data
+- `tmpfs`: in-memory, survives nothing
+- NFS: network adds another layer of buffering
+
+Every durable state transition needs an explicit sync point. Close
+is cleanup, not commitment. If you are rotating a WAL segment and
+care about the records inside it, call `fsync` before you rename,
+and consider fsyncing the directory after.

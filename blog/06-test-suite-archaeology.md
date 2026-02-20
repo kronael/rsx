@@ -225,3 +225,34 @@ quality.
 
 Related: [Your WAL Is Lying To You](your-wal-is-lying-to-you.md) on
 production invariant testing.
+
+## Readiness scores
+
+After the bug audit we ran a second pass: four agents in parallel,
+each doing a deep critique of one crate. The question was not "do
+tests pass?" but "what is the gap between current state and
+production-ready?"
+
+The results:
+
+- **rsx-book: 99%** -- 134 tests, zero unsafe code, all hot paths
+  O(1), 100% spec coverage across 33 requirements. No blockers.
+  The one missing item: module-level doc comments. Non-critical.
+
+- **rsx-matching: 95%** -- snapshot save/load is fully implemented
+  and tested. But there is no periodic trigger. Without a snapshot
+  scheduler, recovery time after a long-running process is
+  proportional to WAL length -- potentially unbounded. Fix: a
+  tokio task that saves a snapshot every 10 minutes. Approximately
+  50 lines. The second gap: no monotonicity guard on config version
+  updates. A corrupt Postgres write could roll a symbol config
+  backward, changing tick size mid-session. Five-line fix.
+
+- **rsx-dxs: 95%** -- `WalWriter` has a `should_flush()` method
+  that returns true at 1000 records. Neither the matching engine
+  nor the risk engine calls it. The 1000-record flush threshold
+  exists in the writer but is dead at the call sites. Ten lines
+  each to wire it up.
+
+- **rsx-risk: 95%** -- 234 tests passing, all hot paths
+  unwrap-free, all margin/liq

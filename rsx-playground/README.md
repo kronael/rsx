@@ -90,6 +90,27 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 8. Faults tab: Kill a process, watch recovery
 9. Verify tab: Run invariant checks
 
+## Building RSX Binaries
+
+Build all 5 core RSX binaries (debug profile):
+
+```bash
+cargo build -p rsx-gateway -p rsx-risk -p rsx-matching -p rsx-marketdata -p rsx-mark
+```
+
+Or build the entire workspace:
+
+```bash
+cargo build --workspace
+```
+
+Binaries are written to `target/debug/`:
+- `target/debug/rsx-gateway`
+- `target/debug/rsx-risk`
+- `target/debug/rsx-matching`
+- `target/debug/rsx-marketdata`
+- `target/debug/rsx-mark`
+
 ## Requirements
 
 - Python 3.14+
