@@ -3,6 +3,13 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 
+fn env_var<T: std::str::FromStr>(key: &str, default: T) -> T {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct DxsConfig {
     #[serde(default = "default_wal_dir")]
@@ -65,31 +72,21 @@ impl DxsConfig {
             archive_dir: env::var("RSX_WAL_ARCHIVE_DIR")
                 .ok()
                 .map(PathBuf::from),
-            max_file_size: env::var(
+            max_file_size: env_var(
                 "RSX_WAL_MAX_FILE_SIZE",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or_else(default_max_file_size),
-            retention_ns: env::var(
+                default_max_file_size(),
+            ),
+            retention_ns: env_var(
                 "RSX_WAL_RETENTION_NS",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or_else(default_retention_ns),
-            flush_interval_ms: env::var(
+                default_retention_ns(),
+            ),
+            flush_interval_ms: env_var(
                 "RSX_WAL_FLUSH_INTERVAL_MS",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or_else(default_flush_interval_ms),
-            flush_size_threshold: env::var(
+                default_flush_interval_ms(),
+            ),
+            flush_size_threshold: env_var(
                 "RSX_WAL_FLUSH_SIZE_THRESHOLD",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or_else(
-                default_flush_size_threshold,
+                default_flush_size_threshold(),
             ),
         })
     }
@@ -167,30 +164,14 @@ impl Default for CmpConfig {
 impl CmpConfig {
     pub fn from_env() -> Self {
         Self {
-            reorder_buf_limit: env::var(
-                "RSX_CMP_REORDER_BUF_LIMIT",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(512),
-            heartbeat_interval_ms: env::var(
-                "RSX_CMP_HEARTBEAT_INTERVAL_MS",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10),
-            status_interval_ms: env::var(
-                "RSX_CMP_STATUS_INTERVAL_MS",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10),
-            default_window: env::var(
-                "RSX_CMP_DEFAULT_WINDOW",
-            )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(64 * 1024),
+            reorder_buf_limit: env_var(
+                "RSX_CMP_REORDER_BUF_LIMIT", 512),
+            heartbeat_interval_ms: env_var(
+                "RSX_CMP_HEARTBEAT_INTERVAL_MS", 10),
+            status_interval_ms: env_var(
+                "RSX_CMP_STATUS_INTERVAL_MS", 10),
+            default_window: env_var(
+                "RSX_CMP_DEFAULT_WINDOW", 64 * 1024),
         }
     }
 }

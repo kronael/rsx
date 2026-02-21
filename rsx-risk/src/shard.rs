@@ -56,6 +56,12 @@ pub struct RiskShard {
     replica_tip_producer: Option<Producer<(u32, u64)>>,
     pub replica_state: Option<ReplicaState>,
     pub liquidation: LiquidationEngine,
+
+    // Cached mark prices with index-price fallback for
+    // symbols where mark=0. Recomputed only when prices
+    // change (mark_dirty flag), not per order.
+    fallback_mark_prices: Vec<i64>,
+    mark_dirty: bool,
 }
 
 impl RiskShard {
@@ -97,6 +103,8 @@ impl RiskShard {
             persist_producer: None,
             replica_tip_producer: None,
             replica_state,
+            fallback_mark_prices: vec![0i64; max],
+            mark_dirty: true,
             liquidation: LiquidationEngine::new(
                 config.liquidation_config.base_delay_ns,
                 config.liquidation_config.base_slip_bps
@@ -452,36 +460,17 @@ impl RiskShard {
 
         self.ensure_account(order.user_id);
 
+        // Rebuild fallback before borrowing account/positions.
+        if self.mark_dirty {
+            self.rebuild_fallback();
+        }
+
         let account = &self.accounts[&order.user_id];
         let positions =
             self.positions_for_user(order.user_id);
 
-        // Liquidation check (fallback to index when mark missing)
-        let mut fallback = None;
-        for (sid, mark) in self.mark_prices.iter().enumerate() {
-            if *mark == 0 {
-                let idx = &self.index_prices[sid];
-                if idx.valid && idx.price > 0 {
-                    let mut tmp = self.mark_prices.clone();
-                    for (i, v) in tmp.iter_mut().enumerate() {
-                        if *v == 0 {
-                            if i >= self.index_prices.len() {
-                                break;
-                            }
-                            let idx = &self.index_prices[i];
-                            if idx.valid && idx.price > 0 {
-                                *v = idx.price;
-                            }
-                        }
-                    }
-                    fallback = Some(tmp);
-                    break;
-                }
-            }
-        }
-        let mark_prices = fallback
-            .as_deref()
-            .unwrap_or(&self.mark_prices);
+        // Use cached fallback (index fills mark=0 gaps).
+        let mark_prices = &self.fallback_mark_prices;
         let state = self.margin.calculate(
             account,
             &positions,
@@ -640,6 +629,26 @@ impl RiskShard {
         );
     }
 
+    /// Rebuild fallback_mark_prices from mark_prices,
+    /// filling zeros with valid index prices. Called once
+    /// per price update, not per order.
+    fn rebuild_fallback(&mut self) {
+        self.fallback_mark_prices
+            .copy_from_slice(&self.mark_prices);
+        for (i, v) in
+            self.fallback_mark_prices.iter_mut().enumerate()
+        {
+            if *v == 0 {
+                if let Some(idx) = self.index_prices.get(i) {
+                    if idx.valid && idx.price > 0 {
+                        *v = idx.price;
+                    }
+                }
+            }
+        }
+        self.mark_dirty = false;
+    }
+
     /// RISK.md §4. Update index price from BBO.
     pub fn process_bbo(&mut self, bbo: &BboUpdate) {
         let sid = bbo.symbol_id as usize;
@@ -647,6 +656,7 @@ impl RiskShard {
             return;
         }
         self.index_prices[sid].update_from_bbo(bbo);
+        self.mark_dirty = true;
     }
 
     pub fn update_mark(
@@ -658,6 +668,7 @@ impl RiskShard {
             return;
         }
         self.mark_prices[symbol_id as usize] = price;
+        self.mark_dirty = true;
     }
 
     /// Track config version per symbol. Future:

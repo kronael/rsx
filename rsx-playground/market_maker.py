@@ -13,10 +13,13 @@ Mid override precedence (highest to lowest):
 
 import asyncio
 import json
+import logging
 import os
 import time
 import random
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import aiohttp
 
@@ -313,8 +316,14 @@ class DummyMarketMaker:
                     base_qty = max(lot, self.qty_per_level * lot)
                     for i in range(self.num_levels):
                         offset = half_spread + i * level_step
-                        qty = base_qty + random.randint(
-                            0, base_qty // 2) // lot * lot
+                        raw_qty = base_qty + random.randint(
+                            0, base_qty // 2)
+                        qty = raw_qty // lot * lot
+                        if qty != raw_qty:
+                            logger.debug(
+                                "qty rounded %d -> %d for sym=%d",
+                                raw_qty, qty, sid,
+                            )
 
                         # bid — round down to tick boundary
                         bid_cid = self._next_cid()

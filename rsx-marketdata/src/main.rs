@@ -208,6 +208,8 @@ fn main() {
             config.heartbeat_timeout_ms * NS_PER_MS;
         let mut last_heartbeat_ns = time_ns();
         let mut last_timeout_check_ns = time_ns();
+        let mut last_evict_ns = time_ns();
+        const BOOK_TTL_NS: u64 = 60_000_000_000;
 
         loop {
             while let Some((hdr, payload)) = cmp_receiver.try_recv()
@@ -314,6 +316,11 @@ fn main() {
                     info!("conn {} timed out (no heartbeat)", conn_id);
                 }
                 last_timeout_check_ns = now;
+            }
+
+            if now.saturating_sub(last_evict_ns) >= BOOK_TTL_NS {
+                state.borrow_mut().evict_stale_books(BOOK_TTL_NS);
+                last_evict_ns = now;
             }
 
             monoio::time::sleep(

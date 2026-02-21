@@ -193,20 +193,15 @@ impl Orderbook {
         handle
     }
 
-    /// Cancel an order by slab handle.
-    pub fn cancel_order(&mut self, handle: u32) -> bool {
+    /// Unlink an order from its level's doubly-linked
+    /// list. Adjusts head/tail, total_qty, order_count.
+    /// Does not free the slab slot.
+    pub fn unlink_order(&mut self, handle: u32) {
         let slot = self.orders.get(handle);
-        if !slot.is_active() {
-            return false;
-        }
         let tick = slot.tick_index;
-        let side = slot.side;
         let qty = slot.remaining_qty.0;
         let prev = slot.prev;
         let next = slot.next;
-        let user_id = slot.user_id;
-
-        // Unlink
         let level =
             &mut self.active_levels[tick as usize];
         if prev != NONE {
@@ -223,9 +218,22 @@ impl Orderbook {
             level.total_qty.saturating_sub(qty);
         level.order_count =
             level.order_count.saturating_sub(1);
+    }
+
+    /// Cancel an order by slab handle.
+    pub fn cancel_order(&mut self, handle: u32) -> bool {
+        let slot = self.orders.get(handle);
+        if !slot.is_active() {
+            return false;
+        }
+        let tick = slot.tick_index;
+        let side = slot.side;
+        let user_id = slot.user_id;
+
+        self.unlink_order(handle);
 
         // Update BBA if needed
-        if level.order_count == 0 {
+        if self.active_levels[tick as usize].order_count == 0 {
             if side == Side::Buy as u8
                 && tick == self.best_bid_tick
             {
