@@ -338,7 +338,8 @@ class DummyMarketMaker:
                         self.orders_placed += 1
 
                         # drain responses; evict filled cids
-                        for _ in range(2):
+                        _sent = [bid_cid, ask_cid]
+                        for _idx in range(2):
                             try:
                                 resp = await asyncio.wait_for(
                                     ws.receive(), timeout=0.2)
@@ -354,13 +355,8 @@ class DummyMarketMaker:
                                             f"order: {data['E']}")
                                         if len(self.errors) > 20:
                                             del self.errors[:10]
-                                        # evict both cids for
-                                        # this level; we can't
-                                        # tell which was rejected
                                         self.active_cids.discard(
-                                            bid_cid)
-                                        self.active_cids.discard(
-                                            ask_cid)
+                                            _sent[_idx])
                             except asyncio.TimeoutError:
                                 pass
 

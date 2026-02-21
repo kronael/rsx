@@ -198,34 +198,34 @@ impl MarketDataState {
         self.last_bbo.get_mut(symbol_id as usize)
     }
 
-    /// Track sequence for a symbol. Returns true if a gap
-    /// was detected (caller should trigger snapshot resend).
+    /// Track sequence for a symbol. Returns Some((expected,
+    /// got)) on gap, None otherwise.
     pub fn check_seq(
         &mut self,
         symbol_id: u32,
         seq: u64,
-    ) -> bool {
+    ) -> Option<(u64, u64)> {
         let idx = symbol_id as usize;
         if idx >= self.expected_seq.len() {
-            return false;
+            return None;
         }
         let expected = self.expected_seq[idx];
         if expected == 0 {
             self.expected_seq[idx] = seq + 1;
-            return false;
+            return None;
         }
         if seq == expected {
             self.expected_seq[idx] = seq + 1;
-            return false;
+            return None;
         }
         if seq > expected {
             // gap detected
             self.gap_count += 1;
             self.expected_seq[idx] = seq + 1;
-            return true;
+            return Some((expected, seq));
         }
         // seq < expected: duplicate, ignore
-        false
+        None
     }
 
     pub fn gap_count(&self) -> u64 {
