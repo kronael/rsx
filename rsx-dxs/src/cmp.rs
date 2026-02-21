@@ -9,13 +9,11 @@ use crate::records::RECORD_HEARTBEAT;
 use crate::records::RECORD_NAK;
 use crate::records::RECORD_STATUS_MESSAGE;
 use crate::records::StatusMessage;
-use crate::wal::WalReader;
 use crate::wal::extract_seq;
 use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
-use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::warn;
@@ -26,13 +24,13 @@ const PACKET_BUF_SIZE: usize = 65536;
 pub struct CmpSender {
     socket: UdpSocket,
     dest: SocketAddr,
-    stream_id: u32,
     next_seq: u64,
     peer_consumption_seq: u64,
     peer_window: u64,
     last_heartbeat: Instant,
     heartbeat_interval: Duration,
-    wal_dir: PathBuf,
+    send_ring: BTreeMap<u64, Vec<u8>>,
+    send_ring_limit: usize,
     buf: [u8; PACKET_BUF_SIZE],
 }
 
@@ -52,8 +50,8 @@ impl CmpSender {
 
     pub fn with_config(
         dest: SocketAddr,
-        stream_id: u32,
-        wal_dir: &std::path::Path,
+        _stream_id: u32,
+        _wal_dir: &std::path::Path,
         config: &CmpConfig,
     ) -> io::Result<Self> {
         let socket =
@@ -62,7 +60,6 @@ impl CmpSender {
         Ok(Self {
             socket,
             dest,
-            stream_id,
             next_seq: 1,
             peer_consumption_seq: 0,
             peer_window: config.default_window,
@@ -70,7 +67,8 @@ impl CmpSender {
             heartbeat_interval: Duration::from_millis(
                 config.heartbeat_interval_ms,
             ),
-            wal_dir: wal_dir.to_path_buf(),
+            send_ring: BTreeMap::new(),
+            send_ring_limit: 4096,
             buf: [0u8; PACKET_BUF_SIZE],
         })
     }
@@ -106,6 +104,22 @@ impl CmpSender {
             .copy_from_slice(payload);
         self.socket
             .send_to(&self.buf[..total], self.dest)?;
+        self.send_ring
+            .insert(seq, self.buf[..total].to_vec());
+        while let Some(entry) =
+            self.send_ring.first_entry()
+        {
+            if *entry.key() < self.peer_consumption_seq {
+                entry.remove();
+            } else {
+                break;
+            }
+        }
+        while self.send_ring.len()
+            > self.send_ring_limit
+        {
+            self.send_ring.pop_first();
+        }
         self.next_seq += 1;
         Ok(true)
     }
@@ -149,41 +163,26 @@ impl CmpSender {
     }
 
     pub fn handle_nak(&mut self, nak: &Nak) {
-        let mut reader = match WalReader::open_from_seq(
-            self.stream_id,
-            nak.from_seq,
-            &self.wal_dir,
-        ) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("nak retransmit open: {e}");
-                return;
-            }
-        };
-        for _ in 0..nak.count {
-            match reader.next() {
-                Ok(Some(record)) => {
-                    let hdr_bytes =
-                        record.header.to_bytes();
-                    let total = WalHeader::SIZE
-                        + record.payload.len();
-                    self.buf[..WalHeader::SIZE]
-                        .copy_from_slice(&hdr_bytes);
-                    self.buf[WalHeader::SIZE..total]
-                        .copy_from_slice(
-                            &record.payload,
-                        );
-                    if let Err(e) = self.socket.send_to(
-                        &self.buf[..total],
-                        self.dest,
-                    ) {
-                        warn!(
-                            "nak retransmit send failed: {}",
-                            e
-                        );
-                    }
+        for i in 0..nak.count {
+            let seq = nak.from_seq + i as u64;
+            if let Some(frame) =
+                self.send_ring.get(&seq)
+            {
+                let frame = frame.clone();
+                if let Err(e) = self
+                    .socket
+                    .send_to(&frame, self.dest)
+                {
+                    warn!(
+                        "nak retransmit send \
+                         failed seq={seq}: {e}"
+                    );
                 }
-                _ => break,
+            } else {
+                warn!(
+                    "nak retransmit: seq={seq} \
+                     not in ring"
+                );
             }
         }
     }

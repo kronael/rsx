@@ -3,6 +3,12 @@
 Places limit orders on both sides at configurable spread
 around a mid price. Reads BBO from marketdata WS when
 available, otherwise uses a default mid.
+
+Mid override precedence (highest to lowest):
+  1. tmp/maker-config.json `mid_override` key (polled each cycle)
+  2. RSX_MAKER_MID_OVERRIDE env var (integer raw price units)
+  3. Live BBO from marketdata WS
+  4. Built-in defaults per symbol
 """
 
 import asyncio
@@ -16,6 +22,9 @@ import aiohttp
 
 _STATUS_FILE = (
     Path(__file__).resolve().parent.parent / "tmp" / "maker-status.json"
+)
+_CONFIG_FILE = (
+    Path(__file__).resolve().parent.parent / "tmp" / "maker-config.json"
 )
 
 
@@ -37,8 +46,9 @@ class DummyMarketMaker:
         self.gateway_url = gateway_url
         self.marketdata_ws = marketdata_ws
         self.symbol_ids = symbol_ids or [10]
-        # tick_sizes: {symbol_id: tick_size}; defaults to 1
+        # tick_sizes / lot_sizes: {symbol_id: size}; defaults to 1
         self.tick_sizes = tick_sizes or {}
+        self.lot_sizes: dict[int, int] = {}
         self.spread_bps = spread_bps
         self.qty_per_level = qty_per_level
         self.num_levels = num_levels
@@ -49,6 +59,12 @@ class DummyMarketMaker:
         self._md_task = None
         self._running = False
         self._order_counter = 0
+
+        # env-var mid override (set once at construction)
+        _env = os.environ.get("RSX_MAKER_MID_OVERRIDE", "").strip()
+        self._env_mid_override: int | None = (
+            int(_env) if _env else None
+        )
 
         # state
         self.mid_prices: dict[int, int] = {}
@@ -77,14 +93,37 @@ class DummyMarketMaker:
             "refresh_sec": self.refresh_sec,
         }
 
+    def _read_config_mid(self) -> int | None:
+        """Poll tmp/maker-config.json for mid_override."""
+        try:
+            text = _CONFIG_FILE.read_text()
+            data = json.loads(text)
+            val = data.get("mid_override")
+            if val is not None:
+                return int(val)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    def _effective_mid_override(self) -> int | None:
+        """Return active mid override or None."""
+        cfg = self._read_config_mid()
+        if cfg is not None:
+            return cfg
+        return self._env_mid_override
+
     def start(self):
         if self._running:
             return
         self._running = True
         self._task = asyncio.create_task(self._run())
-        self._md_task = asyncio.create_task(
-            self._read_marketdata()
-        )
+        # skip MD subscription when env override is set;
+        # config-file override is checked per cycle so still
+        # need to know if env disables MD entirely.
+        if self._env_mid_override is None:
+            self._md_task = asyncio.create_task(
+                self._read_marketdata()
+            )
 
     async def stop(self):
         self._running = False
@@ -167,27 +206,38 @@ class DummyMarketMaker:
             pass
 
     async def _fetch_tick_sizes(self, base_url: str):
-        """Fetch tick sizes from /v1/symbols REST endpoint."""
+        """Fetch tick+lot sizes from RSX_SYMBOLS_URL or /v1/symbols."""
+        import os
+        symbols_url = os.environ.get("RSX_SYMBOLS_URL")
+        if not symbols_url:
+            from urllib.parse import urlparse
+            url = base_url.replace(
+                "ws://", "http://").replace(
+                "wss://", "https://")
+            parsed = urlparse(url)
+            symbols_url = (
+                f"{parsed.scheme}://{parsed.netloc}/v1/symbols"
+            )
         try:
             async with aiohttp.ClientSession() as session:
-                url = base_url.replace(
-                    "ws://", "http://").replace(
-                    "wss://", "https://")
-                # strip path to get server root
-                from urllib.parse import urlparse
-                parsed = urlparse(url)
-                rest = f"{parsed.scheme}://{parsed.netloc}"
                 async with session.get(
-                    f"{rest}/v1/symbols",
+                    symbols_url,
                     timeout=aiohttp.ClientTimeout(total=3),
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        for sym in data.get("symbols", []):
-                            sid = sym.get("id")
-                            tick = sym.get("tick_size", 1)
-                            if sid is not None and tick:
-                                self.tick_sizes[sid] = tick
+                        # M format: [[id, tick, lot, name], ...]
+                        rows = data.get("M") or []
+                        for row in rows:
+                            if len(row) >= 3:
+                                sid, tick, lot = (
+                                    int(row[0]), int(row[1]),
+                                    int(row[2]),
+                                )
+                                if tick:
+                                    self.tick_sizes[sid] = tick
+                                if lot:
+                                    self.lot_sizes[sid] = lot
         except Exception as e:
             self.errors.append(f"tick fetch: {e}")
 
@@ -244,8 +294,13 @@ class DummyMarketMaker:
                 self.active_cids.clear()
 
                 # place new orders
+                mid_override = self._effective_mid_override()
                 for sid in self.symbol_ids:
-                    mid = self.mid_prices.get(sid, 50000)
+                    mid = (
+                        mid_override
+                        if mid_override is not None
+                        else self.mid_prices.get(sid, 50000)
+                    )
                     half_spread = max(
                         1,
                         mid * self.spread_bps // 10000,
@@ -253,10 +308,13 @@ class DummyMarketMaker:
                     level_step = max(1, half_spread // 2)
 
                     tick = self.tick_sizes.get(sid, 1) or 1
+                    lot = self.lot_sizes.get(sid, 1) or 1
+                    # base qty: at least 1 lot, scaled by qty_per_level
+                    base_qty = max(lot, self.qty_per_level * lot)
                     for i in range(self.num_levels):
                         offset = half_spread + i * level_step
-                        qty = self.qty_per_level + random.randint(
-                            0, self.qty_per_level // 2)
+                        qty = base_qty + random.randint(
+                            0, base_qty // 2) // lot * lot
 
                         # bid — round down to tick boundary
                         bid_cid = self._next_cid()
@@ -296,6 +354,13 @@ class DummyMarketMaker:
                                             f"order: {data['E']}")
                                         if len(self.errors) > 20:
                                             del self.errors[:10]
+                                        # evict both cids for
+                                        # this level; we can't
+                                        # tell which was rejected
+                                        self.active_cids.discard(
+                                            bid_cid)
+                                        self.active_cids.discard(
+                                            ask_cid)
                             except asyncio.TimeoutError:
                                 pass
 
@@ -308,7 +373,7 @@ if __name__ == "__main__":
         gateway_url=os.environ.get(
             "GATEWAY_URL", "ws://localhost:8080"),
         marketdata_ws=os.environ.get(
-            "MARKETDATA_WS", "ws://localhost:8081"),
+            "MARKETDATA_WS", "ws://localhost:8180"),
     )
 
     async def main():

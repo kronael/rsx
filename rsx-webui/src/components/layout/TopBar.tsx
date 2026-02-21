@@ -14,6 +14,7 @@ import { fetchSymbols } from "../../hooks/useRestApi";
 import { fetchAccount } from "../../hooks/useRestApi";
 import { fetchPositions } from "../../hooks/useRestApi";
 import { fetchOrders } from "../../hooks/useRestApi";
+import { fetchFunding } from "../../hooks/useRestApi";
 
 // ▲ up, ▼ down, — flat
 type TickDir = "up" | "down" | "flat";
@@ -146,6 +147,22 @@ export function TopBar() {
       .then((o) => useTradingStore.getState().setOrders(o))
       .catch(() => {});
   }, [setSymbols]);
+
+  // Fetch latest funding rate on symbol change
+  useEffect(() => {
+    const store = useMarketStore.getState();
+    fetchFunding(selectedSymbol, 1)
+      .then((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        store.setFundingRate(entry.rate);
+        // next funding 8 hours after last settlement
+        store.setNextFundingTs(
+          entry.ts + 8 * 60 * 60 * 1000,
+        );
+      })
+      .catch(() => {});
+  }, [selectedSymbol]);
 
   // Close dropdown on outside click or Escape
   useEffect(() => {
@@ -331,7 +348,7 @@ export function TopBar() {
           <span className="text-text-secondary text-2xs">
             Bid
           </span>
-          <span className="font-mono text-buy">
+          <span className="font-mono text-buy" data-testid="bbo-bid">
             {bbo.bidPx > 0
               ? formatPrice(bbo.bidPx, tickSize)
               : "--"}
@@ -341,7 +358,7 @@ export function TopBar() {
           <span className="text-text-secondary text-2xs">
             Ask
           </span>
-          <span className="font-mono text-sell">
+          <span className="font-mono text-sell" data-testid="bbo-ask">
             {bbo.askPx > 0
               ? formatPrice(bbo.askPx, tickSize)
               : "--"}

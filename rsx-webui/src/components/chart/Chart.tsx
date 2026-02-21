@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { useRef } from "react";
 import { useState } from "react";
 import { useCallback } from "react";
@@ -15,6 +16,7 @@ import {
 } from "lightweight-charts";
 import clsx from "clsx";
 import { useMarketStore } from "../../store/market";
+import { fetchCandles } from "../../hooks/useRestApi";
 
 const TIMEFRAMES: Record<string, number> = {
   "1m": 60,
@@ -176,6 +178,7 @@ export function Chart() {
   const candlesRef = useRef<Map<number, Candle>>(new Map());
   const [tf, setTf] = useState("1m");
   const tfRef = useRef(60);
+  const selectedSymbol = useMarketStore((s) => s.selectedSymbol);
   const meta = useMarketStore((s) => {
     const sel = s.selectedSymbol;
     return s.symbols.get(sel);
@@ -201,6 +204,8 @@ export function Chart() {
   const pendingTrendRef = useRef<{
     t1: number; p1: number;
   } | null>(null);
+
+  const rsiVisible = indicators.rsi;
 
   // ── Create main chart ──────────────────────────────────
   useEffect(() => {
@@ -401,7 +406,7 @@ export function Chart() {
   }, []);
 
   // ── Create RSI sub-chart ───────────────────────────────
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = rsiContainerRef.current;
     if (!el) return;
 
@@ -471,7 +476,7 @@ export function Chart() {
       rsiChartRef.current = null;
       rsiSeriesRef.current = null;
     };
-  }, []);
+  }, [rsiVisible]);
 
   // ── Recompute and push indicator data ─────────────────
   const recomputeIndicators = useCallback(() => {
@@ -646,6 +651,43 @@ export function Chart() {
     pendingTrendRef.current = null;
   }, [tf]);
 
+  // ── Seed candles from REST on symbol/timeframe change ─
+  useEffect(() => {
+    const sym = meta?.name ?? String(selectedSymbol);
+    let cancelled = false;
+    fetchCandles(sym, tf, 200).then((bars) => {
+      if (cancelled) return;
+      if (!candleRef.current || !volumeRef.current) return;
+      candlesRef.current.clear();
+      const tick = tickRef.current;
+      const cdData: CandlestickData<Time>[] = [];
+      const volData: { time: Time; value: number; color: string }[] = [];
+      for (const b of bars) {
+        const o = b.o * tick;
+        const h = b.h * tick;
+        const l = b.l * tick;
+        const c = b.c * tick;
+        const candle: Candle = {
+          open: o, high: h, low: l, close: c,
+          volume: b.v, time: b.t,
+        };
+        candlesRef.current.set(b.t, candle);
+        cdData.push({ time: b.t as Time, open: o, high: h, low: l, close: c });
+        volData.push({
+          time: b.t as Time,
+          value: b.v,
+          color: c >= o
+            ? "rgba(14,203,129,0.3)"
+            : "rgba(246,70,93,0.3)",
+        });
+      }
+      candleRef.current.setData(cdData);
+      volumeRef.current.setData(volData);
+      recomputeIndicators();
+    }).catch(() => { /* server down – live trades will fill */ });
+    return () => { cancelled = true; };
+  }, [selectedSymbol, tf, meta?.name, recomputeIndicators]);
+
   // Toggle indicator visibility
   const toggleIndicator = useCallback(
     (key: IndicatorKey) => {
@@ -696,8 +738,6 @@ export function Chart() {
     // Recreate candle series to clear price lines
     // (lightweight-charts has no removePriceLine API in v4)
   }, []);
-
-  const rsiVisible = indicators.rsi;
 
   return (
     <div className="flex flex-col h-full">

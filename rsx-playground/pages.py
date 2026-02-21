@@ -2075,7 +2075,7 @@ def render_book_ladder(symbol_id, bbo):
   <th class="text-right">Qty</th>
   <th class="text-right">Orders</th>
 </tr>
-<tr class="text-red-400">
+<tr class="text-red-400" data-testid="ask-row" data-px="{ask_px}">
   <td>Ask</td>
   <td class="text-right font-mono">{ask_px}</td>
   <td class="text-right font-mono">{bbo['ask_qty']}</td>
@@ -2084,7 +2084,7 @@ def render_book_ladder(symbol_id, bbo):
 <tr class="text-slate-600 text-center">
   <td colspan="4">spread: {spread}</td>
 </tr>
-<tr class="text-emerald-400">
+<tr class="text-emerald-400" data-testid="bid-row" data-px="{bid_px}">
   <td>Bid</td>
   <td class="text-right font-mono">{bid_px}</td>
   <td class="text-right font-mono">{bbo['bid_qty']}</td>

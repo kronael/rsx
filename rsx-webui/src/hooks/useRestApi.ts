@@ -32,7 +32,7 @@ function qs(
 }
 
 interface MetadataResponse {
-  M: [number, string, string, string][];
+  M: [number, number, number, string][];
 }
 
 export async function fetchSymbols(): Promise<SymbolMeta[]> {
@@ -42,8 +42,8 @@ export async function fetchSymbols(): Promise<SymbolMeta[]> {
   return data.M.map(([id, tick, lot, name]) => ({
     id,
     name,
-    tickSize: parseFloat(tick),
-    lotSize: parseFloat(lot),
+    tickSize: tick,
+    lotSize: lot,
   }));
 }
 
@@ -80,6 +80,30 @@ export async function fetchFills(
   return apiFetch<UserFill[]>(
     `/v1/fills${qs({ sym, limit, before })}`,
   );
+}
+
+export interface CandleBar {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+interface CandlesResponse {
+  bars: CandleBar[];
+}
+
+export async function fetchCandles(
+  sym: string,
+  tf: string,
+  limit?: number,
+): Promise<CandleBar[]> {
+  const data = await apiFetch<CandlesResponse>(
+    `/v1/candles${qs({ sym, tf, limit })}`,
+  );
+  return data.bars;
 }
 
 interface FundingEntry {
