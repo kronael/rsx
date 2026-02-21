@@ -2994,6 +2994,112 @@ async def v1_funding(
     return JSONResponse(entries[:limit])
 
 
+@app.get("/v1/account")
+async def v1_account(user_id: int = Query(default=0)):
+    """Return account balance/margin from WAL fills."""
+    fills = parse_wal_fills(max_fills=1000)
+    pnl = 0
+    for f in fills:
+        if user_id and (
+            f["taker_uid"] != user_id
+            and f["maker_uid"] != user_id
+        ):
+            continue
+        pnl += f["price"] * f["qty"]
+    return JSONResponse({
+        "collateral": 100000,
+        "equity": 100000 + pnl,
+        "pnl": pnl,
+        "im": 0,
+        "mm": 0,
+        "available": 100000,
+    })
+
+
+@app.get("/v1/positions")
+async def v1_positions(user_id: int = Query(default=0)):
+    """Return open positions derived from WAL fills."""
+    fills = parse_wal_fills(max_fills=1000)
+    # net qty per symbol for this user
+    net: dict[int, int] = {}
+    entry: dict[int, int] = {}
+    for f in fills:
+        if user_id and (
+            f["taker_uid"] != user_id
+            and f["maker_uid"] != user_id
+        ):
+            continue
+        sid = f["symbol_id"]
+        side = f["taker_side"]  # 0=buy, 1=sell for taker
+        delta = f["qty"] if side == 0 else -f["qty"]
+        net[sid] = net.get(sid, 0) + delta
+        if sid not in entry:
+            entry[sid] = f["price"]
+    bbo_cache: dict[int, dict] = {}
+    result = []
+    for sid, qty in net.items():
+        if qty == 0:
+            continue
+        if sid not in bbo_cache:
+            bbo_cache[sid] = parse_wal_bbo(sid) or {}
+        bbo = bbo_cache[sid]
+        mid = (
+            (bbo.get("bid_px", 0) + bbo.get("ask_px", 0))
+            // 2
+        )
+        ep = entry.get(sid, mid)
+        result.append({
+            "symbolId": sid,
+            "side": 0 if qty > 0 else 1,
+            "qty": abs(qty),
+            "entryPx": ep,
+            "markPx": mid,
+            "unrealizedPnl": (mid - ep) * abs(qty),
+            "liqPx": 0,
+        })
+    return JSONResponse(result)
+
+
+@app.get("/v1/orders")
+async def v1_orders(user_id: int = Query(default=0)):
+    """Return open orders — empty until gateway state available."""
+    return JSONResponse([])
+
+
+@app.get("/v1/fills")
+async def v1_fills(
+    user_id: int = Query(default=0),
+    sym: int = Query(default=0),
+    limit: int = Query(default=50),
+):
+    """Return recent fills from WAL."""
+    fills = parse_wal_fills(max_fills=limit * 4)
+    result = []
+    for f in fills:
+        if user_id and (
+            f["taker_uid"] != user_id
+            and f["maker_uid"] != user_id
+        ):
+            continue
+        if sym and f["symbol_id"] != sym:
+            continue
+        taker_hi = 0
+        taker_lo = 0
+        maker_hi = 0
+        maker_lo = 0
+        result.append({
+            "takerOid": f"{taker_hi:016x}{taker_lo:016x}",
+            "makerOid": f"{maker_hi:016x}{maker_lo:016x}",
+            "price": f["price"],
+            "qty": f["qty"],
+            "ts": f["ts_ns"],
+            "fee": 0,
+        })
+        if len(result) >= limit:
+            break
+    return JSONResponse(result)
+
+
 @app.api_route(
     "/v1/{path:path}",
     methods=["GET", "POST"],
@@ -3017,8 +3123,16 @@ async def v1_proxy(path: str, request: Request):
                 },
             ) as resp:
                 data = await resp.read()
+                try:
+                    body = json.loads(data)
+                except json.JSONDecodeError:
+                    return JSONResponse(
+                        {"error": "gateway returned "
+                         "invalid JSON"},
+                        status_code=502,
+                    )
                 return JSONResponse(
-                    content=json.loads(data),
+                    content=body,
                     status_code=resp.status,
                 )
     except (

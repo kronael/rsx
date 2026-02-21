@@ -186,6 +186,15 @@ pub fn load(
     let bump = read_u32(r)?;
     let active_count = read_u32(r)?;
 
+    if bump > capacity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "slab bump {} exceeds capacity {}",
+                bump, capacity,
+            ),
+        ));
+    }
     let mut slab: Slab<OrderSlot> =
         Slab::new(capacity);
     // We need to set bump_next to match the
@@ -270,7 +279,16 @@ pub fn load(
     let mut user_free_list =
         Vec::with_capacity(free_count as usize);
     for _ in 0..free_count {
-        user_free_list.push(read_u16(r)?);
+        let fidx = read_u16(r)?;
+        if (fidx as usize) >= user_bump as usize {
+            eprintln!(
+                "warn: snapshot user free-list \
+                 index {} out of range {}, skipping",
+                fidx, user_bump,
+            );
+            continue;
+        }
+        user_free_list.push(fidx);
     }
 
     // Box::new to heap-allocate immediately,
