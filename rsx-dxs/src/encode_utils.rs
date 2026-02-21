@@ -39,6 +39,21 @@ pub fn as_bytes<T>(val: &T) -> &[u8] {
     }
 }
 
+macro_rules! decode_record {
+    ($name:ident, $ty:ty) => {
+        pub fn $name(payload: &[u8]) -> Option<$ty> {
+            if payload.len() < mem::size_of::<$ty>() {
+                return None;
+            }
+            Some(unsafe {
+                std::ptr::read_unaligned(
+                    payload.as_ptr() as *const $ty,
+                )
+            })
+        }
+    };
+}
+
 pub fn encode_fill_record(
     record: &FillRecord,
 ) -> Vec<u8> {
@@ -99,119 +114,6 @@ pub fn encode_order_accepted_record(
     )
 }
 
-pub fn decode_fill_record(
-    payload: &[u8],
-) -> Option<FillRecord> {
-    if payload.len() < mem::size_of::<FillRecord>() {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr() as *const FillRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_bbo_record(
-    payload: &[u8],
-) -> Option<BboRecord> {
-    if payload.len() < mem::size_of::<BboRecord>() {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr() as *const BboRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_order_inserted_record(
-    payload: &[u8],
-) -> Option<OrderInsertedRecord> {
-    if payload.len()
-        < mem::size_of::<OrderInsertedRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const OrderInsertedRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_order_cancelled_record(
-    payload: &[u8],
-) -> Option<OrderCancelledRecord> {
-    if payload.len()
-        < mem::size_of::<OrderCancelledRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const OrderCancelledRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_order_done_record(
-    payload: &[u8],
-) -> Option<OrderDoneRecord> {
-    if payload.len()
-        < mem::size_of::<OrderDoneRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const OrderDoneRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_config_applied_record(
-    payload: &[u8],
-) -> Option<ConfigAppliedRecord> {
-    if payload.len()
-        < mem::size_of::<ConfigAppliedRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const ConfigAppliedRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_caught_up_record(
-    payload: &[u8],
-) -> Option<CaughtUpRecord> {
-    if payload.len()
-        < mem::size_of::<CaughtUpRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const CaughtUpRecord,
-        )
-    };
-    Some(record)
-}
-
 pub fn encode_order_failed_record(
     record: &OrderFailedRecord,
 ) -> Vec<u8> {
@@ -220,36 +122,33 @@ pub fn encode_order_failed_record(
     )
 }
 
-pub fn decode_order_failed_record(
-    payload: &[u8],
-) -> Option<OrderFailedRecord> {
-    if payload.len()
-        < mem::size_of::<OrderFailedRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const OrderFailedRecord,
-        )
-    };
-    Some(record)
-}
-
-pub fn decode_order_accepted_record(
-    payload: &[u8],
-) -> Option<OrderAcceptedRecord> {
-    if payload.len()
-        < mem::size_of::<OrderAcceptedRecord>()
-    {
-        return None;
-    }
-    let record = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr()
-                as *const OrderAcceptedRecord,
-        )
-    };
-    Some(record)
-}
+decode_record!(decode_fill_record, FillRecord);
+decode_record!(decode_bbo_record, BboRecord);
+decode_record!(
+    decode_order_inserted_record,
+    OrderInsertedRecord
+);
+decode_record!(
+    decode_order_cancelled_record,
+    OrderCancelledRecord
+);
+decode_record!(
+    decode_order_done_record,
+    OrderDoneRecord
+);
+decode_record!(
+    decode_config_applied_record,
+    ConfigAppliedRecord
+);
+decode_record!(
+    decode_caught_up_record,
+    CaughtUpRecord
+);
+decode_record!(
+    decode_order_failed_record,
+    OrderFailedRecord
+);
+decode_record!(
+    decode_order_accepted_record,
+    OrderAcceptedRecord
+);

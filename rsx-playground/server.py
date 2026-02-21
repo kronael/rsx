@@ -2915,17 +2915,27 @@ def _synthetic_candles(
     tick = _tick_for(sym)
     now_s = int(time.time())
     bucket = (now_s // tf_secs) * tf_secs
-    # Base price: BTC ~95000, ETH ~3000, else 100
+    # Base price from SYMBOLS config when available
     name = sym.upper()
-    if "BTC" in name:
-        base = 95_000_000  # tick units (tick=0.1 → 9500000)
-        base_raw = int(95_000 / tick)
-    elif "ETH" in name:
-        base_raw = int(3_000 / tick)
-    else:
-        base_raw = int(100 / tick)
+    base_raw = None
+    for sname, cfg in start_mod.SYMBOLS.items():
+        if sname.upper() == name or str(cfg["id"]) == sym:
+            mid = cfg.get("mid")
+            if mid:
+                base_raw = int(mid / tick)
+            break
+    if base_raw is None:
+        if "BTC" in name:
+            base_raw = int(95_000 / tick)
+        elif "ETH" in name:
+            base_raw = int(3_000 / tick)
+        else:
+            base_raw = int(100 / tick)
     bars = []
-    rng = random.Random(42)
+    # Seed with symbol name hash + timeframe so each
+    # symbol/timeframe pair produces a distinct series
+    seed = hash(name) ^ tf_secs
+    rng = random.Random(seed)
     px = base_raw
     for i in range(limit):
         t = bucket - (limit - 1 - i) * tf_secs

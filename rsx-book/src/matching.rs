@@ -330,25 +330,7 @@ pub fn match_at_level(
         );
 
         if maker_remaining == 0 {
-            let prev = book.orders.get(cursor).prev;
-            let next = book.orders.get(cursor).next;
-            let level =
-                &mut book.active_levels[tick as usize];
-
-            if prev != NONE {
-                book.orders.get_mut(prev).next =
-                    next;
-            } else {
-                level.head = next;
-            }
-            if next != NONE {
-                book.orders.get_mut(next).prev =
-                    prev;
-            } else {
-                level.tail = prev;
-            }
-            level.order_count =
-                level.order_count.saturating_sub(1);
+            book.unlink_order(cursor);
 
             let orig_qty =
                 book.orders.get(cursor).original_qty;

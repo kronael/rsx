@@ -230,9 +230,9 @@ fn parse_new_order(
     let price = as_i64(&arr[2], "px")?;
     let qty = as_i64(&arr[3], "qty")?;
     let cid = as_str(&arr[4], "cid")?.to_string();
-    if cid.len() != 20 {
+    if cid.is_empty() || cid.len() > 20 {
         return Err(ParseError::InvalidValue(
-            "cid must be 20 chars".to_string(),
+            "cid must be 1-20 chars".to_string(),
         ));
     }
     let tif = as_u8(&arr[5], "tif")?;

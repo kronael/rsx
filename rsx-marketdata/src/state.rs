@@ -23,6 +23,8 @@ pub struct MarketDataState {
     base_config: SymbolConfig,
     book_capacity: u32,
     mid_price_default: i64,
+    // Last access time per symbol book (ns). Zero = never.
+    last_book_access: Vec<u64>,
 }
 
 impl MarketDataState {
@@ -43,6 +45,7 @@ impl MarketDataState {
             base_config,
             book_capacity,
             mid_price_default,
+            last_book_access: vec![0u64; max_symbols],
         }
     }
 
@@ -171,27 +174,55 @@ impl MarketDataState {
         if idx >= self.books.len() {
             return;
         }
-        if self.books[idx].is_some() {
-            return;
+        if self.books[idx].is_none() {
+            let mut cfg = self.base_config.clone();
+            cfg.symbol_id = symbol_id;
+            let mid = if mid_price_hint > 0 {
+                mid_price_hint
+            } else {
+                self.mid_price_default
+            };
+            self.books[idx] = Some(ShadowBook::new(
+                cfg,
+                self.book_capacity,
+                mid,
+            ));
         }
-        let mut cfg = self.base_config.clone();
-        cfg.symbol_id = symbol_id;
-        let mid = if mid_price_hint > 0 {
-            mid_price_hint
-        } else {
-            self.mid_price_default
-        };
-        self.books[idx] = Some(ShadowBook::new(
-            cfg,
-            self.book_capacity,
-            mid,
-        ));
+        if idx < self.last_book_access.len() {
+            self.last_book_access[idx] = time_ns();
+        }
     }
 
     pub fn book_mut(&mut self, symbol_id: u32) -> Option<&mut ShadowBook> {
-        self.books
-            .get_mut(symbol_id as usize)?
-            .as_mut()
+        let idx = symbol_id as usize;
+        if idx < self.last_book_access.len() {
+            self.last_book_access[idx] = time_ns();
+        }
+        self.books.get_mut(idx)?.as_mut()
+    }
+
+    /// Evict books for symbols with no subscribers and
+    /// last_access older than ttl_ns nanoseconds.
+    pub fn evict_stale_books(&mut self, ttl_ns: u64) {
+        let now = time_ns();
+        for idx in 0..self.books.len() {
+            if self.books[idx].is_none() {
+                continue;
+            }
+            let last = self.last_book_access[idx];
+            if last == 0 {
+                continue;
+            }
+            if now.saturating_sub(last) < ttl_ns {
+                continue;
+            }
+            let subs = self.subs
+                .subscriber_count(idx as u32);
+            if subs == 0 {
+                self.books[idx] = None;
+                self.last_book_access[idx] = 0;
+            }
+        }
     }
 
     pub fn last_bbo_mut(&mut self, symbol_id: u32) -> Option<&mut Option<BboUpdate>> {
