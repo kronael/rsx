@@ -1,5 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_types::NONE;
 use rsx_book::snapshot;
 use rsx_dxs::wal::WalWriter;
 use rsx_dxs::records::FillRecord;
@@ -23,7 +24,7 @@ pub fn write_events_to_wal(
     for event in book.events() {
         match *event {
             Event::Fill {
-                maker_handle: _,
+                maker_handle,
                 maker_user_id,
                 taker_user_id,
                 price,
@@ -34,6 +35,15 @@ pub fn write_events_to_wal(
                 taker_order_id_hi,
                 taker_order_id_lo,
             } => {
+                let (reduce_only, tif) =
+                    if maker_handle != NONE {
+                        let slot =
+                            book.orders.get(maker_handle);
+                        (slot.is_reduce_only() as u8,
+                         slot.tif)
+                    } else {
+                        (0, 0)
+                    };
                 let mut record = FillRecord {
                     seq: 0,
                     ts_ns,
@@ -48,15 +58,15 @@ pub fn write_events_to_wal(
                     price,
                     qty,
                     taker_side: side,
-                    reduce_only: 0,
-                    tif: 0,
+                    reduce_only,
+                    tif,
                     post_only: 0,
                     _pad1: [0; 4],
                 };
                 writer.append(&mut record)?;
             }
             Event::OrderInserted {
-                handle: _,
+                handle,
                 user_id,
                 side,
                 price,
@@ -64,6 +74,14 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
+                let (reduce_only, tif) =
+                    if handle != NONE {
+                        let slot = book.orders.get(handle);
+                        (slot.is_reduce_only() as u8,
+                         slot.tif)
+                    } else {
+                        (0, 0)
+                    };
                 let mut record = OrderInsertedRecord {
                     seq: 0,
                     ts_ns,
@@ -74,21 +92,29 @@ pub fn write_events_to_wal(
                     price,
                     qty,
                     side,
-                    reduce_only: 0,
-                    tif: 0,
+                    reduce_only,
+                    tif,
                     post_only: 0,
                     _pad1: [0; 4],
                 };
                 writer.append(&mut record)?;
             }
             Event::OrderCancelled {
-                handle: _,
+                handle,
                 user_id,
                 remaining_qty,
                 reason,
                 order_id_hi,
                 order_id_lo,
             } => {
+                let (reduce_only, tif, post_only) =
+                    if handle != NONE {
+                        let slot = book.orders.get(handle);
+                        (slot.is_reduce_only() as u8,
+                         slot.tif, 0u8)
+                    } else {
+                        (0, 0, 0)
+                    };
                 let mut record = OrderCancelledRecord {
                     seq: 0,
                     ts_ns,
@@ -98,15 +124,15 @@ pub fn write_events_to_wal(
                     order_id_lo,
                     remaining_qty,
                     reason,
-                    reduce_only: 0,
-                    tif: 0,
-                    post_only: 0,
+                    reduce_only,
+                    tif,
+                    post_only,
                     _pad1: [0; 4],
                 };
                 writer.append(&mut record)?;
             }
             Event::OrderDone {
-                handle: _,
+                handle,
                 user_id,
                 reason,
                 filled_qty,
@@ -114,6 +140,14 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
+                let (reduce_only, tif) =
+                    if handle != NONE {
+                        let slot = book.orders.get(handle);
+                        (slot.is_reduce_only() as u8,
+                         slot.tif)
+                    } else {
+                        (0, 0)
+                    };
                 let mut record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
@@ -124,8 +158,8 @@ pub fn write_events_to_wal(
                     filled_qty,
                     remaining_qty,
                     final_status: reason,
-                    reduce_only: 0,
-                    tif: 0,
+                    reduce_only,
+                    tif,
                     post_only: 0,
                     _pad1: [0; 4],
                 };

@@ -15,6 +15,7 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::Notify;
 use tracing::debug;
+use tracing::error;
 use tracing::info;
 use tracing::warn;
 
@@ -190,7 +191,13 @@ impl WalWriter {
             self.stream_id, self.first_seq, self.last_seq
         ));
 
-        self.file.sync_all()?;
+        if let Err(e) = self.file.sync_all() {
+            error!(
+                "sync_all failed before wal rotate: {}",
+                e
+            );
+            return Err(e);
+        }
         drop(std::mem::replace(
             &mut self.file,
             File::create("/dev/null")?,

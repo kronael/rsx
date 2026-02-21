@@ -173,8 +173,14 @@ fn main() {
         RUNNING.store(false, Ordering::SeqCst);
     }
     unsafe {
-        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            on_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            on_signal as *const () as libc::sighandler_t,
+        );
     }
 
     while RUNNING.load(Ordering::SeqCst) {
