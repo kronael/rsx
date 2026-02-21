@@ -217,8 +217,8 @@ impl MarketDataState {
                 continue;
             }
             let subs = self.subs
-                .subscriber_count(idx as u32);
-            if subs == 0 {
+                .clients_for_symbol(idx as u32);
+            if subs.is_empty() {
                 self.books[idx] = None;
                 self.last_book_access[idx] = 0;
             }
