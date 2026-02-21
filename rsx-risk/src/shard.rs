@@ -24,6 +24,7 @@ use crate::types::OrderRequest;
 use crate::types::RejectReason;
 use rtrb::Producer;
 use rustc_hash::FxHashMap;
+use tracing::error;
 use tracing::info;
 use tracing::warn;
 
@@ -204,7 +205,7 @@ impl RiskShard {
                     fill.symbol_id,
                 ))
             else {
-                warn!(
+                error!(
                     "missing taker position after ensure: \
                      user={} symbol={}",
                     fill.taker_user_id, fill.symbol_id
@@ -225,7 +226,7 @@ impl RiskShard {
             let Some(acct) =
                 self.accounts.get_mut(&fill.taker_user_id)
             else {
-                warn!(
+                error!(
                     "missing taker account after ensure: \
                      user={}",
                     fill.taker_user_id
@@ -258,7 +259,7 @@ impl RiskShard {
                     fill.symbol_id,
                 ))
             else {
-                warn!(
+                error!(
                     "missing maker position after ensure: \
                      user={} symbol={}",
                     fill.maker_user_id, fill.symbol_id
@@ -279,7 +280,7 @@ impl RiskShard {
             let Some(acct) =
                 self.accounts.get_mut(&fill.maker_user_id)
             else {
-                warn!(
+                error!(
                     "missing maker account after ensure: \
                      user={}",
                     fill.maker_user_id
@@ -392,16 +393,21 @@ impl RiskShard {
             &positions,
             &self.mark_prices,
         );
+        let syms: Vec<u32> = positions
+            .iter()
+            .filter(|p| !p.is_empty())
+            .map(|p| p.symbol_id)
+            .collect();
         if self.margin.needs_liquidation(&state) {
-            let syms: Vec<u32> = positions
-                .iter()
-                .filter(|p| !p.is_empty())
-                .map(|p| p.symbol_id)
-                .collect();
             for sid in syms {
                 self.liquidation.enqueue(
                     user_id, sid, now_ns,
                 );
+            }
+        } else {
+            for sid in syms {
+                self.liquidation
+                    .cancel_if_recovered(user_id, sid);
             }
         }
     }
@@ -512,7 +518,7 @@ impl RiskShard {
                 let Some(acct) =
                     self.accounts.get_mut(&order.user_id)
                 else {
-                    warn!(
+                    error!(
                         "missing account after ensure: \
                          user={}",
                         order.user_id
@@ -620,7 +626,7 @@ impl RiskShard {
             order_im.saturating_add(order_fee);
         let Some(acct) = self.accounts.get_mut(&user_id)
         else {
-            warn!(
+            error!(
                 "missing account after ensure during \
                  replay: user={}",
                 user_id

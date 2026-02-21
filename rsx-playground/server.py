@@ -2143,12 +2143,14 @@ async def api_orders_test(request: Request):
 
     if msg and msg.get("type") == "OrderAccepted":
         order["status"] = "accepted"
-        order["latency_us"] = latency_us
+        if latency_us is not None:
+            order["latency_us"] = latency_us
         recent_orders.append(order)
         _trim_recent_orders()
+        lat_str = f"{latency_us}us" if latency_us is not None else "?"
         return HTMLResponse(
             f'<span class="text-emerald-400 text-xs">'
-            f'order {cid} accepted ({latency_us}us)</span>')
+            f'order {cid} accepted ({lat_str})</span>')
     elif msg and msg.get("type") == "OrderFailed":
         order["status"] = "rejected"
         order["reason"] = msg.get("reason", "unknown")

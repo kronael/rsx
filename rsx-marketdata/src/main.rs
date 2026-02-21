@@ -223,11 +223,13 @@ fn main() {
                         let gap = state
                             .borrow_mut()
                             .check_seq(sid, seq);
-                        if gap {
+                        if let Some((expected, got)) = gap {
                             tracing::warn!(
-                                "seq gap symbol={} seq={}",
+                                "marketdata seq gap sym={} \
+                                 expected={} got={}",
                                 sid,
-                                seq,
+                                expected,
+                                got,
                             );
                             state.borrow_mut().resend_snapshot(
                                 sid,

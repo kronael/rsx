@@ -3,6 +3,7 @@ use crate::position::Position;
 use crate::risk_utils::calculate_fee;
 use crate::types::OrderRequest;
 use crate::types::RejectReason;
+use tracing::error;
 
 /// RISK.md §3. Rates in fixed-point bps.
 #[derive(Clone, Debug)]
@@ -45,11 +46,23 @@ impl PortfolioMargin {
                 continue;
             }
             let mark = mark_prices[sid];
-            upnl += pos
-                .unrealized_pnl(mark)
-                .unwrap_or(i64::MAX);
+            upnl += pos.unrealized_pnl(mark).unwrap_or_else(|_| {
+                error!(
+                    "unrealized_pnl overflow: \
+                     user={} symbol={} mark={}",
+                    pos.user_id, pos.symbol_id, mark
+                );
+                i64::MIN
+            });
             let notional =
-                pos.notional(mark).unwrap_or(i64::MAX);
+                pos.notional(mark).unwrap_or_else(|_| {
+                    error!(
+                        "notional overflow: \
+                         user={} symbol={} mark={}",
+                        pos.user_id, pos.symbol_id, mark
+                    );
+                    i64::MAX
+                });
             let params = &self.symbol_params[sid];
             let im_calc = notional as i128
                 * params.initial_margin_rate as i128
@@ -98,7 +111,14 @@ impl PortfolioMargin {
         let notional_128 = order.price as i128
             * order.qty as i128;
         let order_notional = i64::try_from(notional_128)
-            .unwrap_or(i64::MAX);
+            .unwrap_or_else(|_| {
+                error!(
+                    "order notional overflow: \
+                     user={} price={} qty={}",
+                    order.user_id, order.price, order.qty
+                );
+                i64::MAX
+            });
         let sid = order.symbol_id as usize;
         if sid >= self.symbol_params.len() {
             return Err(RejectReason::InsufficientMargin);
@@ -108,7 +128,16 @@ impl PortfolioMargin {
             * params.initial_margin_rate as i128
             / 10_000;
         let order_im = i64::try_from(order_im_128)
-            .unwrap_or(i64::MAX);
+            .unwrap_or_else(|_| {
+                error!(
+                    "order_im overflow: \
+                     user={} symbol={} notional={}",
+                    order.user_id,
+                    order.symbol_id,
+                    order_notional
+                );
+                i64::MAX
+            });
         let order_fee = calculate_fee(
             order.qty,
             order.price,

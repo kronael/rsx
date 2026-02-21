@@ -121,12 +121,18 @@ pub async fn handle_connection(
         }
 
         if opcode == 9 {
-            let _ = ws_write_frame(
+            if let Err(e) = ws_write_frame(
                 &mut stream,
                 0xA,
                 &payload,
             )
-            .await;
+            .await
+            {
+                warn!(
+                    "ws write failed conn {}: {e}",
+                    conn_id
+                );
+            }
             continue;
         }
 
@@ -152,11 +158,17 @@ pub async fn handle_connection(
                             .to_string(),
                     },
                 );
-                let _ = ws_write_text(
+                if let Err(e) = ws_write_text(
                     &mut stream,
                     err.as_bytes(),
                 )
-                .await;
+                .await
+                {
+                    warn!(
+                        "ws write failed conn {}: {e}",
+                        conn_id
+                    );
+                }
                 continue;
             }
         };
@@ -170,11 +182,17 @@ pub async fn handle_connection(
                         message: e.to_string(),
                     },
                 );
-                let _ = ws_write_text(
+                if let Err(e) = ws_write_text(
                     &mut stream,
                     err.as_bytes(),
                 )
-                .await;
+                .await
+                {
+                    warn!(
+                        "ws write failed conn {}: {e}",
+                        conn_id
+                    );
+                }
                 continue;
             }
         };
@@ -346,11 +364,18 @@ pub async fn handle_connection(
                                         .to_string(),
                             },
                         );
-                        let _ = ws_write_text(
+                        if let Err(e) = ws_write_text(
                             &mut stream,
                             err.as_bytes(),
                         )
-                        .await;
+                        .await
+                        {
+                            warn!(
+                                "ws write failed conn \
+                                 {}: {e}",
+                                conn_id
+                            );
+                        }
                         continue;
                     }
                 }
@@ -397,11 +422,19 @@ pub async fn handle_connection(
                                                     .to_string(),
                                         },
                                     );
-                                    let _ = ws_write_text(
-                                        &mut stream,
-                                        err.as_bytes(),
-                                    )
-                                    .await;
+                                    if let Err(e) =
+                                        ws_write_text(
+                                            &mut stream,
+                                            err.as_bytes(),
+                                        )
+                                        .await
+                                    {
+                                        warn!(
+                                            "ws write failed \
+                                             conn {}: {e}",
+                                            conn_id
+                                        );
+                                    }
                                     continue;
                                 }
                             };
@@ -468,11 +501,17 @@ pub async fn handle_connection(
                         timestamp_ms: now_ms,
                     },
                 );
-                let _ = ws_write_text(
+                if let Err(e) = ws_write_text(
                     &mut stream,
                     resp.as_bytes(),
                 )
-                .await;
+                .await
+                {
+                    warn!(
+                        "ws write failed conn {}: {e}",
+                        conn_id
+                    );
+                }
             }
             _ => {
                 let err = serialize(
@@ -482,11 +521,17 @@ pub async fn handle_connection(
                             .to_string(),
                     },
                 );
-                let _ = ws_write_text(
+                if let Err(e) = ws_write_text(
                     &mut stream,
                     err.as_bytes(),
                 )
-                .await;
+                .await
+                {
+                    warn!(
+                        "ws write failed conn {}: {e}",
+                        conn_id
+                    );
+                }
             }
         }
     }
@@ -553,6 +598,9 @@ async fn send_error(
         code,
         message: message.to_string(),
     });
-    let _ =
-        ws_write_text(stream, err.as_bytes()).await;
+    if let Err(e) =
+        ws_write_text(stream, err.as_bytes()).await
+    {
+        warn!("ws write failed: {e}");
+    }
 }

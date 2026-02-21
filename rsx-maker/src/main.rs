@@ -183,6 +183,8 @@ fn main() {
         );
     }
 
+    let mut backoff_s: u64 = 1;
+
     while RUNNING.load(Ordering::SeqCst) {
         match quote_cycle(
             &addr,
@@ -196,10 +198,24 @@ fn main() {
             &mut active_cids,
             &mut counter,
         ) {
-            Ok(()) => {}
-            Err(e) => warn!("quote cycle: {}", e),
+            Ok(()) => {
+                backoff_s = 1;
+                thread::sleep(Duration::from_millis(
+                    refresh_ms,
+                ));
+            }
+            Err(e) => {
+                warn!(
+                    "quote cycle error, reconnect in {}s: {}",
+                    backoff_s, e
+                );
+                active_cids.clear();
+                thread::sleep(Duration::from_secs(
+                    backoff_s,
+                ));
+                backoff_s = (backoff_s * 2).min(30);
+            }
         }
-        thread::sleep(Duration::from_millis(refresh_ms));
     }
 
     info!("rsx-maker stopped");
