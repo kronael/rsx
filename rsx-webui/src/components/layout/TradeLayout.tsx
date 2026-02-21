@@ -8,6 +8,7 @@ import { formatPrice } from "../../lib/format";
 import { Orderbook } from "../orderbook/Orderbook";
 import { TradesTape } from "../trades/TradesTape";
 import { Chart } from "../chart/Chart";
+import { DepthChart } from "../chart/DepthChart";
 import { OrderEntry } from "../order/OrderEntry";
 import { BottomTabs } from "../positions/BottomTabs";
 
@@ -19,6 +20,7 @@ export function TradeLayout() {
   const { send } = usePrivateWs();
   usePublicWs();
 
+  const [showDepth, setShowDepth] = useState(false);
   const [clickedPrice, setClickedPrice] = useState<
     { value: string; ts: number } | undefined
   >(undefined);
@@ -92,8 +94,24 @@ export function TradeLayout() {
         </div>
 
         {/* Center: Chart */}
-        <div className="min-h-[300px] md:min-h-0">
-          <Chart />
+        <div className="min-h-[300px] md:min-h-0 flex flex-col">
+          <div className="flex items-center gap-1 px-2 pt-1 shrink-0">
+            <button
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${!showDepth ? "bg-accent text-bg-base" : "text-text-secondary hover:text-text-primary"}`}
+              onClick={() => setShowDepth(false)}
+            >
+              Candles
+            </button>
+            <button
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${showDepth ? "bg-accent text-bg-base" : "text-text-secondary hover:text-text-primary"}`}
+              onClick={() => setShowDepth(true)}
+            >
+              Depth
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            {showDepth ? <DepthChart /> : <Chart />}
+          </div>
         </div>
 
         {/* Right: OrderEntry */}

@@ -39,6 +39,15 @@ from stress_client import StressConfig
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
+
+# Load .env from playground dir (does not override existing env vars)
+_env_file = Path(__file__).resolve().parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
 WAL_DIR = TMP / "wal"
 LOG_DIR = ROOT / "log"
 PID_DIR = TMP / "pids"
@@ -57,7 +66,7 @@ GATEWAY_HTTP = os.environ.get(
     "GATEWAY_HTTP", "http://localhost:8080"
 )
 MARKETDATA_WS = os.environ.get(
-    "MARKETDATA_WS", "ws://localhost:8081"
+    "MARKETDATA_WS", "ws://localhost:8180"
 )
 WEBUI_DIST = ROOT / "rsx-webui" / "dist"
 
@@ -101,6 +110,112 @@ async def pg_query(sql, *args):
             return [dict(r) for r in rows]
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── in-memory book snapshot (updated from marketdata WS) ─
+
+# symbol_id -> {"bids": [{px, qty}, ...], "asks": [...]}
+_book_snap: dict[int, dict] = {}
+_md_ws_task: asyncio.Task | None = None
+
+
+async def _md_ws_subscriber():
+    """Subscribe to marketdata WS; maintain _book_snap from L2/BBO."""
+    # CHANNEL_BBO=1, CHANNEL_DEPTH=2
+    CHANNELS = 3
+    DEFAULT_SYMBOLS = [10]
+
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(
+                    f"{MARKETDATA_WS}/ws",
+                    heartbeat=10,
+                ) as ws:
+                    # Subscribe to depth+BBO for known symbols
+                    for sid in DEFAULT_SYMBOLS:
+                        await ws.send_str(
+                            json.dumps({"S": [sid, CHANNELS]}))
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        try:
+                            frame = json.loads(msg.data)
+                        except Exception:
+                            continue
+                        # L2 snapshot: {"B":[sym,[[px,qty,cnt],...],
+                        #               [[px,qty,cnt],...],ts,seq]}
+                        if "B" in frame:
+                            arr = frame["B"]
+                            sid = int(arr[0])
+                            bids_raw = arr[1]
+                            asks_raw = arr[2]
+                            _book_snap[sid] = {
+                                "bids": [
+                                    {"px": b[0], "qty": b[1]}
+                                    for b in bids_raw
+                                ],
+                                "asks": [
+                                    {"px": a[0], "qty": a[1]}
+                                    for a in asks_raw
+                                ],
+                            }
+                        # L2 delta: {"D":[sym,side,px,qty,cnt,ts,seq]}
+                        elif "D" in frame:
+                            arr = frame["D"]
+                            sid = int(arr[0])
+                            side = int(arr[1])  # 0=bid,1=ask
+                            px = int(arr[2])
+                            qty = int(arr[3])
+                            snap = _book_snap.setdefault(
+                                sid, {"bids": [], "asks": []})
+                            key = "bids" if side == 0 else "asks"
+                            levels = snap[key]
+                            if qty == 0:
+                                snap[key] = [
+                                    l for l in levels
+                                    if l["px"] != px
+                                ]
+                            else:
+                                existing = next(
+                                    (l for l in levels
+                                     if l["px"] == px), None)
+                                if existing:
+                                    existing["qty"] = qty
+                                else:
+                                    levels.append(
+                                        {"px": px, "qty": qty})
+                                # re-sort: bids desc, asks asc
+                                if side == 0:
+                                    snap[key].sort(
+                                        key=lambda l: -l["px"])
+                                else:
+                                    snap[key].sort(
+                                        key=lambda l: l["px"])
+                        # BBO: {"BBO":[sym,bid_px,bid_qty,bid_cnt,
+                        #              ask_px,ask_qty,...]}
+                        elif "BBO" in frame:
+                            arr = frame["BBO"]
+                            sid = int(arr[0])
+                            bid_px = int(arr[1])
+                            bid_qty = int(arr[2])
+                            ask_px = int(arr[4])
+                            ask_qty = int(arr[5])
+                            # Only update BBO if no depth snap yet
+                            if sid not in _book_snap:
+                                snap: dict = {"bids": [], "asks": []}
+                                if bid_px:
+                                    snap["bids"] = [
+                                        {"px": bid_px, "qty": bid_qty}
+                                    ]
+                                if ask_px:
+                                    snap["asks"] = [
+                                        {"px": ask_px, "qty": ask_qty}
+                                    ]
+                                _book_snap[sid] = snap
+        except Exception:
+            pass
+        await asyncio.sleep(2)
 
 
 # ── process manager ─────────────────────────────────────
@@ -292,6 +407,7 @@ async def do_maker_start() -> bool:
     env = {
         "GATEWAY_URL": GATEWAY_URL,
         "MARKETDATA_WS": MARKETDATA_WS,
+        "RSX_SYMBOLS_URL": f"http://localhost:{49171}/v1/symbols",
     }
     full_env = {**os.environ, **env}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -425,8 +541,16 @@ async def stop_all():
 
 @asynccontextmanager
 async def lifespan(app):
+    global _md_ws_task
     await pg_connect()
+    _md_ws_task = asyncio.create_task(_md_ws_subscriber())
     yield
+    if _md_ws_task:
+        _md_ws_task.cancel()
+        try:
+            await _md_ws_task
+        except asyncio.CancelledError:
+            pass
     # cleanup all managed processes on shutdown
     for name in list(managed.keys()):
         info = managed[name]
@@ -2551,6 +2675,56 @@ async def api_maker_status():
     }
 
 
+MAKER_CONFIG = TMP / "maker-config.json"
+
+
+@app.patch("/api/maker/config")
+async def api_maker_config(request: Request):
+    body = await request.json()
+    mid_override = body.get("mid_override")
+    if not isinstance(mid_override, (int, float)):
+        return JSONResponse(
+            {"error": "mid_override must be int"}, status_code=400)
+    MAKER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MAKER_CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"mid_override": mid_override}))
+    tmp.replace(MAKER_CONFIG)
+    return {"ok": True}
+
+
+@app.get("/api/book/{symbol_id}")
+async def api_book(symbol_id: int):
+    # Prefer live snapshot from marketdata WS
+    snap = _book_snap.get(symbol_id)
+    if snap:
+        return snap
+    # Fallback: WAL BBO (at most 1 bid + 1 ask)
+    bbo = parse_wal_bbo(symbol_id)
+    if bbo is None:
+        return {"bids": [], "asks": []}
+    bids = []
+    asks = []
+    if bbo["bid_px"] != 0:
+        bids.append({"px": bbo["bid_px"], "qty": bbo["bid_qty"]})
+    if bbo["ask_px"] != 0:
+        asks.append({"px": bbo["ask_px"], "qty": bbo["ask_qty"]})
+    return {"bids": bids, "asks": asks}
+
+
+@app.get("/api/bbo/{symbol_id}")
+async def api_bbo(symbol_id: int):
+    bbo = parse_wal_bbo(symbol_id)
+    if bbo is None:
+        return JSONResponse(status_code=404, content={
+            "error": "no bbo for symbol"})
+    return {
+        "bid_px": bbo["bid_px"],
+        "ask_px": bbo["ask_px"],
+        "bid_qty": bbo["bid_qty"],
+        "ask_qty": bbo["ask_qty"],
+    }
+
+
 @app.get("/x/maker-status", response_class=HTMLResponse)
 async def x_maker_status():
     info = managed.get(MAKER_NAME)
@@ -2669,18 +2843,155 @@ async def _probe_gateway_tcp() -> bool:
 @app.get("/v1/symbols")
 async def v1_symbols():
     """Return configured symbol catalog (local fallback)."""
-    symbols = []
+    rows = []
     for name, cfg in start_mod.SYMBOLS.items():
-        symbols.append({
-            "symbol": name,
-            "id": cfg["id"],
-            "tick_size": cfg["tick"],
-            "lot_size": cfg["lot"],
-            "price_decimals": cfg["price_dec"],
-            "qty_decimals": cfg["qty_dec"],
+        rows.append([cfg["id"], cfg["tick"], cfg["lot"], name])
+    rows.sort(key=lambda r: r[0])
+    return JSONResponse({"M": rows})
+
+
+TF_SECONDS = {
+    "1m": 60, "5m": 300, "15m": 900,
+    "1h": 3600, "4h": 14400, "1d": 86400,
+}
+
+
+def _symbol_id_for(sym: str) -> int | None:
+    for name, cfg in start_mod.SYMBOLS.items():
+        if name == sym or str(cfg["id"]) == sym:
+            return cfg["id"]
+    return None
+
+
+def _tick_for(sym: str) -> float:
+    for name, cfg in start_mod.SYMBOLS.items():
+        if name == sym or str(cfg["id"]) == sym:
+            return cfg.get("tick", 1)
+    return 1
+
+
+def _build_candles_from_wal(
+    symbol_id: int, tf_secs: int, limit: int
+) -> list:
+    """Aggregate WAL fill records into OHLCV bars."""
+    fills = []
+    for stream_dir in _wal_stream_dirs():
+        for rec in parse_wal_records(
+            stream_dir, record_types={RECORD_FILL}
+        ):
+            if rec["symbol_id"] == symbol_id:
+                fills.append(rec)
+    if not fills:
+        return []
+    fills.sort(key=lambda r: r["ts_ns"])
+    bars: dict[int, dict] = {}
+    for f in fills:
+        ts_s = f["ts_ns"] // 1_000_000_000
+        bucket = (ts_s // tf_secs) * tf_secs
+        px = f["price"]
+        qty = f["qty"]
+        if bucket not in bars:
+            bars[bucket] = {
+                "t": bucket,
+                "o": px, "h": px, "l": px, "c": px,
+                "v": qty,
+            }
+        else:
+            b = bars[bucket]
+            b["h"] = max(b["h"], px)
+            b["l"] = min(b["l"], px)
+            b["c"] = px
+            b["v"] += qty
+    sorted_bars = sorted(bars.values(), key=lambda b: b["t"])
+    return sorted_bars[-limit:]
+
+
+def _synthetic_candles(
+    sym: str, tf_secs: int, limit: int
+) -> list:
+    """Generate plausible synthetic OHLCV bars."""
+    tick = _tick_for(sym)
+    now_s = int(time.time())
+    bucket = (now_s // tf_secs) * tf_secs
+    # Base price: BTC ~95000, ETH ~3000, else 100
+    name = sym.upper()
+    if "BTC" in name:
+        base = 95_000_000  # tick units (tick=0.1 → 9500000)
+        base_raw = int(95_000 / tick)
+    elif "ETH" in name:
+        base_raw = int(3_000 / tick)
+    else:
+        base_raw = int(100 / tick)
+    bars = []
+    rng = random.Random(42)
+    px = base_raw
+    for i in range(limit):
+        t = bucket - (limit - 1 - i) * tf_secs
+        o = px
+        move = int(px * 0.002 * (rng.random() - 0.5))
+        c = px + move
+        h = max(o, c) + abs(int(px * 0.001 * rng.random()))
+        l = min(o, c) - abs(int(px * 0.001 * rng.random()))
+        v = int(10 + rng.random() * 90)
+        bars.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": v})
+        px = c
+    return bars
+
+
+@app.get("/v1/candles")
+async def v1_candles(
+    sym: str = Query(...),
+    tf: str = Query("1m"),
+    limit: int = Query(200),
+):
+    """OHLCV bars from WAL fills, falling back to synthetic stubs."""
+    tf_secs = TF_SECONDS.get(tf, 60)
+    limit = max(1, min(limit, 1000))
+    sym_id = _symbol_id_for(sym)
+    bars = []
+    if sym_id is not None:
+        bars = _build_candles_from_wal(sym_id, tf_secs, limit)
+    if not bars:
+        bars = _synthetic_candles(sym, tf_secs, limit)
+    return JSONResponse({"bars": bars})
+
+
+@app.get("/v1/funding")
+async def v1_funding(
+    sym: int = Query(None),
+    limit: int = Query(50),
+    before: str = Query(None),
+):
+    """Return funding entries derived from WAL BBO data."""
+    book_stats = parse_wal_book_stats()
+    now_ms = int(time.time() * 1000)
+    entries = []
+    for sid, rec in sorted(book_stats.items()):
+        if sym is not None and sid != sym:
+            continue
+        bid = rec.get("bid_px", 0)
+        ask = rec.get("ask_px", 0)
+        mid = (bid + ask) // 2 if bid and ask else 0
+        rate = (ask - bid) / mid / 100.0 if mid > 0 else 0.0
+        entries.append({
+            "ts": now_ms,
+            "symbolId": sid,
+            "amount": 0,
+            "rate": rate,
         })
-    symbols.sort(key=lambda s: s["id"])
-    return JSONResponse({"symbols": symbols})
+    if not entries:
+        # synthetic fallback: 0.01% rate per configured symbol
+        for name, cfg in start_mod.SYMBOLS.items():
+            sid = cfg["id"]
+            if sym is not None and sid != sym:
+                continue
+            entries.append({
+                "ts": now_ms,
+                "symbolId": sid,
+                "amount": 0,
+                "rate": 0.0001,
+            })
+    return JSONResponse(entries[:limit])
 
 
 @app.api_route(

@@ -7,7 +7,15 @@
        bench-webui help check-progress acceptance-bundle release-gate \
        lint-snapshot publish-progress exit-criteria \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
-       shard-routing shard-htmx shard-control shard-trade shards
+       shard-routing shard-htmx shard-control shard-trade shards \
+       prepare
+
+# Prepare dev environment: local uv cache, venv, playwright browsers
+prepare:
+	UV_CACHE_DIR=$(CURDIR)/tmp/uv-cache \
+		uv sync --project rsx-playground
+	UV_CACHE_DIR=$(CURDIR)/tmp/uv-cache \
+		cd rsx-playground && .venv/bin/playwright install --with-deps chromium
 
 # Default target - show help
 help:

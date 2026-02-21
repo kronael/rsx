@@ -9,7 +9,6 @@ use rsx_dxs::records::FillRecord;
 use rsx_dxs::records::RECORD_NAK;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::StatusMessage;
-use rsx_dxs::wal::WalWriter;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::thread;
@@ -221,30 +220,28 @@ fn crc_mismatch_rejected() {
 #[test]
 fn nak_retransmit_from_wal() {
     let tmp = TempDir::new().unwrap();
-    let wal_dir = tmp.path();
-
-    let mut writer = WalWriter::new(1, &wal_dir, None, 1024 * 1024, 0).unwrap();
-    let mut fill = fill_payload(0);
-    let _ = writer.append(&mut fill).unwrap();
-    let _ = writer.flush().unwrap();
-
-    // Use fixed test port to avoid bind-drop-rebind race
-    let recv_local: SocketAddr = "127.0.0.1:19200".parse().unwrap();
-
-    let mut sender = CmpSender::new(recv_local, 1, &wal_dir).unwrap();
+    let (mut sender, mut receiver) =
+        loopback_pair(tmp.path());
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver = CmpReceiver::new(recv_local, sender_addr, 1).unwrap();
 
-    // Send NAK to sender
+    // Send seq=1 so it lands in the send ring;
+    // do not drain receiver so expected_seq stays 1
+    let mut fill = fill_payload(0);
+    sender.send(&mut fill).unwrap();
+
+    // Send NAK for seq=1 to trigger ring retransmit
     let nak = Nak { from_seq: 1, count: 1, _pad1: [0u8; 48] };
     let payload = as_bytes(&nak);
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(RECORD_NAK, payload.len() as u16, crc);
+    let hdr = WalHeader::new(
+        RECORD_NAK,
+        payload.len() as u16,
+        crc,
+    );
     let hdr_bytes = hdr.to_bytes();
     let mut buf = vec![0u8; 16 + payload.len()];
     buf[..16].copy_from_slice(&hdr_bytes);
     buf[16..].copy_from_slice(payload);
-
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     sock.send_to(&buf, sender_addr).unwrap();
 
