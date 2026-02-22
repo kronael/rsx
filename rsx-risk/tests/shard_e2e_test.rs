@@ -390,3 +390,86 @@ fn shard_idle_no_resource_leak() {
         pos_before.long_qty,
     );
 }
+
+// ----------------------------------------------------------------
+// Full lifecycle: order accepted -> fill -> position ->
+// funding settlement
+//
+// Steps:
+//  1. Insert account with 10_000_000 collateral.
+//  2. process_order: margin frozen (Accepted).
+//  3. process_fill: position opened, taker fee deducted.
+//  4. Set mark > index so long pays funding.
+//  5. maybe_settle_funding: funding payment applied.
+//  6. Assert: position exists, collateral changed.
+// ----------------------------------------------------------------
+
+#[test]
+fn full_lifecycle_order_to_settlement() {
+    let mut s = RiskShard::new(config_single_shard());
+    s.accounts.insert(0, Account::new(0, 10_000_000));
+    s.accounts.insert(1, Account::new(1, 10_000_000));
+
+    // mark > 0 required for margin calculation
+    s.mark_prices[0] = 10_000;
+
+    // Step 2: place order -> margin frozen
+    let resp = s.process_order(&order(0, 0, 10_000, 100));
+    let margin_reserved = match resp {
+        OrderResponse::Accepted {
+            margin_reserved, ..
+        } => margin_reserved,
+        other => panic!(
+            "expected Accepted, got {:?}",
+            other
+        ),
+    };
+    assert!(
+        margin_reserved > 0,
+        "margin must be frozen on accepted order"
+    );
+    assert_eq!(
+        s.accounts[&0].frozen_margin,
+        margin_reserved
+    );
+
+    // Step 3: fill -> position opened, frozen margin released
+    // taker side=0 (buy), maker side=1 (sell)
+    s.process_fill(&fill(0, 1, 0, 10_000, 100, 0, 1));
+
+    let pos = s
+        .positions
+        .get(&(0, 0))
+        .expect("position must exist after fill");
+    assert_eq!(
+        pos.long_qty, 100,
+        "long position must reflect fill qty"
+    );
+
+    // Step 4: mark > index -> long pays funding
+    s.mark_prices[0] = 10_200;
+    s.index_prices[0].price = 10_000;
+    s.index_prices[0].valid = true;
+
+    let collateral_before = s.accounts[&0].collateral;
+
+    // Step 5: settle funding (interval_id=28_800 triggers first)
+    s.maybe_settle_funding(28_800);
+
+    // Step 6: long user paid funding (collateral decreased)
+    let collateral_after = s.accounts[&0].collateral;
+    assert!(
+        collateral_after < collateral_before,
+        "long user must pay funding when mark > index: \
+         before={} after={}",
+        collateral_before,
+        collateral_after,
+    );
+
+    // Position still exists after settlement
+    assert_eq!(
+        s.positions[&(0, 0)].long_qty,
+        100,
+        "position must survive funding settlement"
+    );
+}

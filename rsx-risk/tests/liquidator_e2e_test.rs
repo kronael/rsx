@@ -1,6 +1,9 @@
 /// E2E liquidator tests for the 6 required behaviors.
 /// Complements liquidation_test.rs (unit) and
 /// shard_e2e_test.rs (shard integration).
+///
+/// Also covers recovery: underwater positions loaded via
+/// cold-start state trigger liquidation on first order.
 
 use rsx_risk::liquidation::LiquidationEngine;
 use rsx_risk::liquidation::LiquidationStatus;
@@ -619,4 +622,67 @@ fn multiple_symbols_halt_only_failed_symbol() {
     );
     assert_eq!(orders.len(), 1);
     assert_eq!(orders[0].symbol_id, 1);
+}
+
+// ----------------------------------------------------------------
+// 7. Recovery resumes pending liquidations
+//
+// After a crash, positions loaded via ColdStartState that are
+// underwater (equity < maintenance margin) must trigger
+// liquidation on the next process_order call. The shard
+// recalculates margin on every order, so no separate scan is
+// needed — the rejection proves the liquidation path is active.
+// ----------------------------------------------------------------
+
+#[test]
+fn recovery_resumes_pending_liquidations() {
+    use rsx_risk::ColdStartState;
+    use rsx_risk::Position;
+    use rustc_hash::FxHashMap;
+
+    let mut s = shard();
+
+    // Build cold-start state: user 0 holds a large long
+    // position with very little collateral.
+    //
+    // position: long 1000 at mark=10_000
+    //   notional = 1000 * 10_000 = 10_000_000
+    //   maintenance margin = 10_000_000 * 500/10000 = 500_000
+    //   collateral = 100 (far below MM)
+    //   => equity = 100 + upnl(0) = 100 << 500_000
+    //
+    let mut accounts = FxHashMap::default();
+    accounts.insert(0, Account::new(0, 100));
+
+    let mut positions = FxHashMap::default();
+    let mut pos = Position::new(0, 0);
+    pos.long_qty = 1000;
+    pos.long_entry_cost = 10_000 * 1000; // qty * price
+    positions.insert((0u32, 0u32), pos);
+
+    let state = ColdStartState {
+        accounts,
+        positions,
+        tips: vec![0u64; 4],
+        insurance_funds: FxHashMap::default(),
+    };
+
+    s.load_state(state);
+    s.update_mark(0, 10_000);
+
+    // Any non-liquidation order must be rejected because
+    // equity (100) is far below maintenance margin (500_000).
+    let resp = s.process_order(&order(0, 0, 10_000, 1));
+    assert!(
+        matches!(
+            resp,
+            OrderResponse::Rejected {
+                reason: RejectReason::UserInLiquidation,
+                ..
+            }
+        ),
+        "expected UserInLiquidation after cold-start \
+         with underwater position, got {:?}",
+        resp
+    );
 }
