@@ -198,12 +198,10 @@ class DummyMarketMaker:
                             total=5),
                     ) as ws:
                         for sid in self.symbol_ids:
-                            await ws.send_str(json.dumps({
-                                "sub": {
-                                    "sym": sid,
-                                    "ch": ["BBO"],
-                                },
-                            }))
+                            # CHANNEL_BBO = 1 (server bitmask)
+                            await ws.send_str(
+                                json.dumps({"S": [sid, 1]})
+                            )
                         consec_errors = 0  # connected; reset
                         delay = 1.0
                         async for msg in ws:
@@ -485,11 +483,30 @@ if __name__ == "__main__":
     import os
     import signal
 
+    def _env_int(key: str, default: int) -> int:
+        try:
+            return int(os.environ.get(key, ""))
+        except (ValueError, TypeError):
+            return default
+
+    def _env_float(key: str, default: float) -> float:
+        try:
+            return float(os.environ.get(key, ""))
+        except (ValueError, TypeError):
+            return default
+
     maker = DummyMarketMaker(
         gateway_url=os.environ.get(
             "GATEWAY_URL", "ws://localhost:8080"),
         marketdata_ws=os.environ.get(
             "MARKETDATA_WS", "ws://localhost:8180"),
+        spread_bps=_env_int("RSX_MAKER_SPREAD_BPS", 10),
+        qty_per_level=_env_int("RSX_MAKER_QTY", 10),
+        num_levels=_env_int("RSX_MAKER_LEVELS", 5),
+        refresh_sec=_env_float("RSX_MAKER_REFRESH_MS", 2000) / 1000.0,
+        symbol_ids=(
+            [_env_int("RSX_MAKER_SYMBOL", 10)]
+        ),
     )
 
     async def main():

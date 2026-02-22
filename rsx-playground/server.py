@@ -134,7 +134,7 @@ async def _md_ws_subscriber():
     """
     # CHANNEL_BBO=1, CHANNEL_DEPTH=2, CHANNEL_TRADES=4
     CHANNELS = 7
-    DEFAULT_SYMBOLS = [10]
+    DEFAULT_SYMBOLS = [1, 2, 3, 10]
 
     MAX_RETRIES = 20       # hard cap on total attempts
     CIRCUIT_AT = 8         # consecutive infra failures → open
@@ -148,7 +148,7 @@ async def _md_ws_subscriber():
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(
-                    f"{MARKETDATA_WS}/ws",
+                    MARKETDATA_WS,
                     heartbeat=10,
                 ) as ws:
                     # connected — reset backoff counters
@@ -553,6 +553,7 @@ async def _process_watcher():
       attempt 1→2  attempt 2→4  attempt 3→8  attempt 4→16  attempt 5→32
       (capped at _RESTART_MAX_DELAY=60s)
     """
+    global _md_ws_task
     import logging as _log
     _wlog = _log.getLogger(__name__)
 
@@ -625,6 +626,15 @@ async def _process_watcher():
                     name=f"restart-{name}",
                 )
 
+            # Restart md WS subscriber if it exited (circuit
+            # tripped or exhausted retries while marketdata
+            # was not yet running).
+            if _md_ws_task is None or _md_ws_task.done():
+                _md_ws_task = asyncio.create_task(
+                    _md_ws_subscriber(),
+                    name="md-ws-subscriber",
+                )
+
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -690,10 +700,26 @@ async def do_maker_start() -> bool:
         del managed[MAKER_NAME]
     if not MAKER_SCRIPT.exists():
         return False
+    # Load saved maker config if present
+    _mcfg: dict = {}
+    try:
+        _mcfg = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        pass
     env = {
         "GATEWAY_URL": GATEWAY_URL,
         "MARKETDATA_WS": MARKETDATA_WS,
         "RSX_SYMBOLS_URL": f"http://localhost:{49171}/v1/symbols",
+        "RSX_MAKER_SPREAD_BPS": str(
+            _mcfg.get("spread_bps", 20)),
+        "RSX_MAKER_QTY": str(
+            _mcfg.get("qty", 10)),
+        "RSX_MAKER_SYMBOL": str(
+            _mcfg.get("symbol_id", 10)),
+        "RSX_MAKER_REFRESH_MS": str(
+            _mcfg.get("refresh_ms", 500)),
+        "RSX_MAKER_LEVELS": str(
+            _mcfg.get("levels", 5)),
     }
     full_env = {**os.environ, **env}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -976,6 +1002,7 @@ order_latencies: list[int] = []
 gateway_ws = None
 _idempotency_keys: dict[str, float] = {}
 _IDEMPOTENCY_TTL = 300
+SERVER_START: float = time.time()
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -997,6 +1024,21 @@ def human_uptime(start_time):
     return f"{elapsed / 3600:.0f}h{(elapsed % 3600) / 60:.0f}m"
 
 
+# Cache psutil.Process objects by PID so cpu_percent() has a
+# reference point from the previous call (first call always 0.0).
+_ps_cache: dict[int, psutil.Process] = {}
+
+
+def _get_ps(pid: int) -> psutil.Process:
+    if pid not in _ps_cache:
+        _ps_cache[pid] = psutil.Process(pid)
+    return _ps_cache[pid]
+
+
+def _evict_ps(pid: int) -> None:
+    _ps_cache.pop(pid, None)
+
+
 def scan_processes():
     """Scan managed processes + PID dir fallback."""
     result = []
@@ -1008,7 +1050,7 @@ def scan_processes():
         proc = info["proc"]
         if proc.returncode is None:
             try:
-                ps = psutil.Process(proc.pid)
+                ps = _get_ps(proc.pid)
                 mem = ps.memory_info()
                 result.append({
                     "name": name,
@@ -1021,6 +1063,7 @@ def scan_processes():
                 })
             except (psutil.NoSuchProcess,
                     psutil.AccessDenied):
+                _evict_ps(proc.pid)
                 result.append({
                     "name": name, "pid": proc.pid,
                     "state": "running", "cpu": "-",
@@ -1044,7 +1087,7 @@ def scan_processes():
                 continue
             try:
                 pid = int(pid_file.read_text().strip())
-                ps = psutil.Process(pid)
+                ps = _get_ps(pid)
                 if ps.is_running():
                     mem = ps.memory_info()
                     result.append({
@@ -1060,6 +1103,7 @@ def scan_processes():
             except psutil.NoSuchProcess:
                 # stale PID file — process no longer exists
                 pid_file.unlink(missing_ok=True)
+                _evict_ps(pid)
             except (psutil.AccessDenied,
                     ValueError, OSError):
                 pass
@@ -1171,6 +1215,7 @@ WAL_HDR = struct.Struct('<HHI8s')
 # BboRecord: 72 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
 #   bid_px:i64, bid_qty:i64, bid_count:u32, pad:u32,
 #   ask_px:i64, ask_qty:i64, ask_count:u32, pad:u32)
+# repr(C,align(64)) = 64-byte alignment, not 64-byte size
 BBO_FMT = struct.Struct('<QQIIqqIIqqII')
 # FillRecord: 88 bytes
 # seq:u64, ts:u64, sym:u32, taker_uid:u32, maker_uid:u32, pad:u32,
@@ -1603,6 +1648,263 @@ async def topology():
     return HTMLResponse(pages.topology_page())
 
 
+# ── Topology partials ────────────────────────────────────
+
+
+def _topo_proc(hints: list[str]) -> dict:
+    procs = scan_processes()
+    for hint in hints:
+        for p in procs:
+            if hint in p["name"]:
+                return p
+    return {}
+
+
+def _topo_gateway() -> dict:
+    p = _topo_proc(["gateway"])
+    book_stats = parse_wal_book_stats()
+    wal_tips = (
+        " ".join(
+            f"sym{s}={b.get('seq', 0)}"
+            for s, b in sorted(book_stats.items())
+        )
+        or "none"
+    )
+    return {
+        "name": "Gateway",
+        "status": p.get("state", "stopped"),
+        "pid": p.get("pid", "-"),
+        "uptime": p.get("uptime", "-"),
+        "rows": [
+            ("orders (session)", len(recent_orders)),
+            ("fills (session)", len(recent_fills)),
+            ("WAL tips", wal_tips),
+            ("circuit breaker", "closed"),
+        ],
+    }
+
+
+def _topo_risk() -> dict:
+    p = _topo_proc(["risk"])
+    now_s = int(time.time())
+    next_s = 28800 - (now_s % 28800)
+    h, rem = divmod(next_s, 3600)
+    m = rem // 60
+    return {
+        "name": "Risk",
+        "status": p.get("state", "stopped"),
+        "pid": p.get("pid", "-"),
+        "uptime": p.get("uptime", "-"),
+        "rows": [
+            (
+                "funding next settlement",
+                f"{h}h {m}m" if h else f"{m}m",
+            ),
+            ("seed accounts", len(_SEED_USERS)),
+        ],
+    }
+
+
+def _topo_matching() -> dict:
+    p = _topo_proc(["matching", "me-"])
+    book_stats = parse_wal_book_stats()
+    rows = []
+    for sid, bbo in sorted(book_stats.items()):
+        bid = bbo.get("bid_px", 0)
+        ask = bbo.get("ask_px", 0)
+        spd = ask - bid if bid and ask else 0
+        rows.append((
+            f"sym{sid} bbo",
+            f"bid={bid} ask={ask} spd={spd}",
+        ))
+    for sid, s in sorted(_book_snap.items()):
+        rows.append((
+            f"sym{sid} depth",
+            f"{len(s.get('bids', []))}b"
+            f" / {len(s.get('asks', []))}a",
+        ))
+    if not rows:
+        rows = [("book data", "no WAL/MD data")]
+    return {
+        "name": "Matching Engine",
+        "status": p.get("state", "stopped"),
+        "pid": p.get("pid", "-"),
+        "uptime": p.get("uptime", "-"),
+        "rows": rows,
+    }
+
+
+def _topo_marketdata() -> dict:
+    p = _topo_proc(["marketdata", "mktdata"])
+    syms = sorted(_book_snap.keys())
+    return {
+        "name": "Marketdata",
+        "status": p.get("state", "stopped"),
+        "pid": p.get("pid", "-"),
+        "uptime": p.get("uptime", "-"),
+        "rows": [
+            ("symbols with data", len(syms)),
+            ("symbol ids",
+             " ".join(str(s) for s in syms) or "none"),
+            ("fills buffered", len(recent_fills)),
+        ],
+    }
+
+
+def _topo_mark() -> dict:
+    p = _topo_proc(["mark"])
+    return {
+        "name": "Mark",
+        "status": p.get("state", "stopped"),
+        "pid": p.get("pid", "-"),
+        "uptime": p.get("uptime", "-"),
+        "rows": [("mark data", "requires mark process")],
+    }
+
+
+def _topo_recorder() -> dict:
+    p = _topo_proc(["recorder"])
+    wal_files = 0
+    for d in _wal_stream_dirs():
+        try:
+            for sub in d.iterdir():
+                if sub.is_dir():
+                    wal_files += sum(
+                        1 for _ in sub.glob("*.wal"))
+        except OSError:
+            pass
+    return {
+        "name": "Recorder",
+        "status": p.get("state", "stopped"),
+        "pid": p.get("pid", "-"),
+        "uptime": p.get("uptime", "-"),
+        "rows": [("WAL files found", wal_files)],
+    }
+
+
+def _topo_maker() -> dict:
+    running = _maker_running()
+    info = managed.get(MAKER_NAME)
+    pid = info["proc"].pid if running and info else "-"
+    stats = _read_maker_stats() if running else {}
+    mid_prices = stats.get("mid_prices", {})
+    mid_str = (
+        " ".join(
+            f"sym{k}={v}"
+            for k, v in sorted(mid_prices.items())
+        )
+        or "none"
+    )
+    p = _topo_proc(["maker"])
+    return {
+        "name": "Maker",
+        "status": "running" if running else "stopped",
+        "pid": pid,
+        "uptime": p.get("uptime", "-"),
+        "rows": [
+            ("orders placed", stats.get("orders_placed", 0)),
+            ("active orders", stats.get("active_orders", 0)),
+            ("spread bps", stats.get("spread_bps", "none")),
+            ("mid prices", mid_str),
+        ],
+    }
+
+
+def _topo_client() -> dict:
+    return {
+        "name": "Clients",
+        "status": "unknown",
+        "pid": "-",
+        "uptime": "-",
+        "rows": [
+            ("orders (session)", len(recent_orders)),
+            ("fills (session)", len(recent_fills)),
+        ],
+    }
+
+
+_TOPO_HANDLERS: dict = {
+    "client": _topo_client,
+    "gateway": _topo_gateway,
+    "risk": _topo_risk,
+    "matching": _topo_matching,
+    "marketdata": _topo_marketdata,
+    "mark": _topo_mark,
+    "recorder": _topo_recorder,
+    "maker": _topo_maker,
+}
+
+
+@app.get("/x/topology/{component}",
+         response_class=HTMLResponse)
+async def x_topology_component(component: str):
+    handler = _TOPO_HANDLERS.get(component)
+    if not handler:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            f"unknown component: {component}</span>"
+        )
+    return HTMLResponse(
+        pages.render_component_detail(component, handler()))
+
+
+@app.get("/x/topology/flow")
+async def x_topology_flow():
+    """JSON: per-node status dots and rate labels for live update."""
+    procs = scan_processes()
+
+    def _status(hints: list[str]) -> str:
+        for hint in hints:
+            for p in procs:
+                if hint in p["name"]:
+                    return p.get("state", "stopped")
+        return "stopped"
+
+    def _dot(s: str) -> str:
+        return (
+            "bg-emerald-400" if s == "running"
+            else "bg-red-500" if s == "stopped"
+            else "bg-zinc-600"
+        )
+
+    gw = _status(["gateway"])
+    risk_s = _status(["risk"])
+    me_s = _status(["matching", "me-"])
+    md_s = _status(["marketdata", "mktdata"])
+    mk_s = _status(["mark"])
+    rec_s = _status(["recorder"])
+    maker_s = "running" if _maker_running() else "stopped"
+
+    book_stats = parse_wal_book_stats()
+    spd_label = "none"
+    for sid, bbo in sorted(book_stats.items()):
+        bid = bbo.get("bid_px", 0)
+        ask = bbo.get("ask_px", 0)
+        if bid and ask:
+            spd_label = f"spd={ask - bid}"
+            break
+
+    nodes = [
+        {"key": "client", "dot": "bg-zinc-600",
+         "rate": f"{len(recent_orders)} ord"},
+        {"key": "gateway", "dot": _dot(gw),
+         "rate": f"{len(recent_fills)} fills"},
+        {"key": "risk", "dot": _dot(risk_s),
+         "rate": risk_s},
+        {"key": "matching", "dot": _dot(me_s),
+         "rate": spd_label},
+        {"key": "marketdata", "dot": _dot(md_s),
+         "rate": f"{len(_book_snap)} sym"},
+        {"key": "mark", "dot": _dot(mk_s),
+         "rate": mk_s},
+        {"key": "recorder", "dot": _dot(rec_s),
+         "rate": rec_s},
+        {"key": "maker", "dot": _dot(maker_s),
+         "rate": maker_s},
+    ]
+    return JSONResponse({"nodes": nodes})
+
+
 @app.get("/book", response_class=HTMLResponse)
 async def book():
     return HTMLResponse(pages.book_page())
@@ -1646,6 +1948,28 @@ async def orders():
 @app.get("/stress", response_class=HTMLResponse)
 async def stress():
     return HTMLResponse(pages.stress_page())
+
+
+@app.get("/maker", response_class=HTMLResponse)
+async def maker_page():
+    cfg: dict = {}
+    try:
+        cfg = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        pass
+    running = _maker_running()
+    info = managed.get(MAKER_NAME)
+    pid = info["proc"].pid if running and info else None
+    rs = _restart_state.get(MAKER_NAME, {})
+    restarts = rs.get("restarts", 0)
+    return HTMLResponse(
+        pages.maker_page(
+            running=running,
+            pid=pid,
+            restarts=restarts,
+            cfg=cfg,
+        )
+    )
 
 
 @app.get("/stress/{report_id}", response_class=HTMLResponse)
@@ -2307,11 +2631,22 @@ async def x_stale_orders():
 async def x_book(symbol_id: int = Query(10)):
     snap = _book_snap.get(symbol_id)
     if snap:
-        bbo = _snap_to_bbo(symbol_id, snap)
-    else:
-        bbo = parse_wal_bbo(symbol_id)
+        return HTMLResponse(
+            pages.render_book_ladder(symbol_id, snap))
+    # Fallback: WAL BBO gives at most 1 bid + 1 ask
+    bbo = parse_wal_bbo(symbol_id)
+    if bbo is None:
+        return HTMLResponse(
+            pages.render_book_ladder(symbol_id, None))
+    snap_from_bbo: dict = {"bids": [], "asks": []}
+    if bbo.get("bid_px"):
+        snap_from_bbo["bids"] = [
+            {"px": bbo["bid_px"], "qty": bbo["bid_qty"]}]
+    if bbo.get("ask_px"):
+        snap_from_bbo["asks"] = [
+            {"px": bbo["ask_px"], "qty": bbo["ask_qty"]}]
     return HTMLResponse(
-        pages.render_book_ladder(symbol_id, bbo))
+        pages.render_book_ladder(symbol_id, snap_from_bbo))
 
 
 @app.get("/x/risk-user", response_class=HTMLResponse)
@@ -2712,6 +3047,88 @@ async def api_logs(
     return {"lines": lines, "count": len(lines)}
 
 
+@app.post("/api/logs/clear")
+async def api_logs_clear():
+    """Truncate all log files in ./log/ directory."""
+    cleared = []
+    if LOG_DIR.exists():
+        for p in LOG_DIR.glob("*.log"):
+            open(p, "w").close()
+            cleared.append(p.name)
+    return HTMLResponse(
+        '<span class="text-emerald-400 text-xs">'
+        f'cleared {len(cleared)} log file(s)</span>'
+    )
+
+
+@app.get("/api/stats")
+async def api_stats():
+    uptime_s = int(time.time() - SERVER_START)
+    running = sum(
+        1 for info in managed.values()
+        if info["proc"].returncode is None
+    )
+    active_stress = sum(
+        1 for t in stress_tasks.values() if not t.done()
+    )
+    maker_running = _maker_running()
+    try:
+        mcfg = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        mcfg = {}
+    spread_bps = mcfg.get("spread_bps", 20)
+    return {
+        "orders_submitted": len(recent_orders),
+        "uptime_s": uptime_s,
+        "active_connections": running,
+        "active_stress": active_stress,
+        "maker_running": maker_running,
+        "maker_spread_bps": spread_bps,
+    }
+
+
+@app.get("/x/stats", response_class=HTMLResponse)
+async def x_stats():
+    uptime_s = int(time.time() - SERVER_START)
+    h, rem = divmod(uptime_s, 3600)
+    m, s = divmod(rem, 60)
+    uptime_str = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
+    running = sum(
+        1 for info in managed.values()
+        if info["proc"].returncode is None
+    )
+    active_stress = sum(
+        1 for t in stress_tasks.values() if not t.done()
+    )
+    maker_running = _maker_running()
+    try:
+        mcfg = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        mcfg = {}
+    spread_bps = mcfg.get("spread_bps", 20)
+    maker_label = (
+        f'<span class="text-emerald-400">running</span>'
+        f' {spread_bps}bps'
+        if maker_running
+        else '<span class="text-slate-500">stopped</span>'
+    )
+    rows = [
+        ("orders submitted", len(recent_orders)),
+        ("uptime", uptime_str),
+        ("active processes", running),
+        ("active stress", active_stress),
+        ("maker", maker_label),
+    ]
+    inner = "".join(
+        f'<div class="flex justify-between text-xs py-0.5">'
+        f'<span class="text-slate-500">{k}</span>'
+        f'<span class="text-slate-300">{v}</span>'
+        f'</div>'
+        for k, v in rows
+    )
+    return HTMLResponse(inner)
+
+
 async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     """Send order to Gateway WebSocket if available."""
     try:
@@ -2807,35 +3224,69 @@ async def api_orders_test(request: Request):
     tif_str = form.get("tif", "GTC")
     tif_int = tif_map.get(tif_str.upper(), 0)
 
-    # Look up lot/tick for symbol to convert human units to raw
+    # Look up symbol config for unit conversion.
+    # Gateway expects raw fixed-point integers:
+    #   price_raw = round(human_price * 10^price_decimals)
+    #   qty_raw   = round(human_qty   * 10^qty_decimals)
+    # Gateway validates price_raw % tick_size == 0 and
+    # qty_raw % lot_size == 0.
     _sym_cfg = next(
         (v for v in start_mod.SYMBOLS.values()
          if v["id"] == symbol_id),
-        {"tick": 1, "lot": 1},
+        {"tick": 1, "lot": 1,
+         "price_dec": 8, "qty_dec": 8},
     )
     lot_size = _sym_cfg.get("lot", 1) or 1
     tick_size = _sym_cfg.get("tick", 1) or 1
+    price_dec = _sym_cfg.get("price_dec", 8)
+    qty_dec = _sym_cfg.get("qty_dec", 8)
+    price_scale = 10 ** price_dec
+    qty_scale = 10 ** qty_dec
+
+    order_type = form.get("order_type", "limit")
 
     try:
-        price_int = int(
-            float(form.get("price", "0") or "0")
-            / tick_size)
+        human_price = float(
+            form.get("price", "0") or "0")
+        if order_type == "market":
+            price_int = 0
+        else:
+            price_int = round(human_price * price_scale)
+            if price_int % tick_size != 0:
+                return HTMLResponse(
+                    '<span class="text-red-400 text-xs">'
+                    f'price not aligned to tick '
+                    f'({tick_size})</span>')
     except (ValueError, TypeError, OverflowError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
             'invalid price</span>')
 
     try:
-        qty_int = int(
+        qty_int = round(
             float(form.get("qty", "0") or "0")
-            * lot_size)
+            * qty_scale)
+        if qty_int % lot_size != 0:
+            return HTMLResponse(
+                '<span class="text-red-400 text-xs">'
+                f'qty not aligned to lot '
+                f'({lot_size})</span>')
     except (ValueError, TypeError, OverflowError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
             'invalid qty</span>')
 
     reduce_only = 1 if form.get("reduce_only") == "on" else 0
-    post_only = 1 if form.get("post_only") == "on" else 0
+    # post_only can come from checkbox or order_type dropdown
+    post_only = (
+        1 if (
+            form.get("post_only") == "on"
+            or order_type == "post_only"
+        ) else 0
+    )
+    # market orders use IOC if tif is GTC (GTC market invalid)
+    if order_type == "market" and tif_int == 0:
+        tif_int = 1
 
     # Gateway wire format: {"N": [sym, side, px, qty, cid, tif, ro, po]}
     order_msg = {
@@ -2874,9 +3325,14 @@ async def api_orders_test(request: Request):
         order["error"] = err
         recent_orders.append(order)
         _trim_recent_orders()
+        color = (
+            "text-red-400"
+            if err == "gateway not running"
+            else "text-amber-400"
+        )
         return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'order {cid} queued ({err})</span>')
+            f'<span class="{color} text-xs">'
+            f'order {cid} error: {err}</span>')
 
     msg, _, latency_us = result
     if latency_us:
@@ -3379,6 +3835,360 @@ async def api_orders_random():
         '5 random orders submitted</span>')
 
 
+@app.post("/api/orders/quick")
+async def api_orders_quick(request: Request):
+    """Quick order endpoint for the matrix buttons.
+
+    Form params:
+      side             buy|sell (ignored if randomize=true)
+      qty              int (ignored if randomize=true)
+      price_offset_pct float  0 = market, positive = above mid,
+                              negative = below mid
+      symbol_id        int    default 10
+      randomize        true|false
+      rand_side        true|false  random side only, use qty param
+    """
+    form = await request.form()
+
+    try:
+        symbol_id = int(form.get("symbol_id", "10"))
+    except (ValueError, TypeError):
+        symbol_id = 10
+
+    randomize = form.get("randomize", "false").lower() == "true"
+    rand_side = form.get("rand_side", "false").lower() == "true"
+
+    qty_choices = [1, 5, 10, 25]
+
+    if randomize:
+        side_str = random.choice(["buy", "sell"])
+        human_qty = float(random.choice(qty_choices))
+        offset_pct = random.uniform(-2.0, 2.0)
+    elif rand_side:
+        side_str = random.choice(["buy", "sell"])
+        try:
+            human_qty = float(form.get("qty", "1"))
+        except (ValueError, TypeError):
+            human_qty = 1.0
+        try:
+            offset_pct = float(form.get("price_offset_pct", "0"))
+        except (ValueError, TypeError):
+            offset_pct = 0.0
+    else:
+        side_str = form.get("side", "buy")
+        try:
+            human_qty = float(form.get("qty", "1"))
+        except (ValueError, TypeError):
+            human_qty = 1.0
+        try:
+            offset_pct = float(form.get("price_offset_pct", "0"))
+        except (ValueError, TypeError):
+            offset_pct = 0.0
+
+    side_int = 0 if side_str == "buy" else 1
+
+    # Resolve symbol config for fixed-point conversion
+    _sym_cfg = next(
+        (v for v in start_mod.SYMBOLS.values()
+         if v["id"] == symbol_id),
+        {"tick": 1, "lot": 1,
+         "price_dec": 8, "qty_dec": 8},
+    )
+    lot_size = _sym_cfg.get("lot", 1) or 1
+    tick_size = _sym_cfg.get("tick", 1) or 1
+    price_dec = _sym_cfg.get("price_dec", 8)
+    qty_dec = _sym_cfg.get("qty_dec", 8)
+    price_scale = 10 ** price_dec
+    qty_scale = 10 ** qty_dec
+
+    # Determine price: 0 = market; otherwise compute from mid
+    if offset_pct == 0.0 and not randomize:
+        price_int = 0
+        tif_int = 1  # IOC for market
+    else:
+        # Get mid price from book snapshot or WAL BBO
+        snap = _book_snap.get(symbol_id)
+        mid_raw = None
+        if snap:
+            bids = snap.get("bids", [])
+            asks = snap.get("asks", [])
+            if bids and asks:
+                mid_raw = (bids[0]["px"] + asks[0]["px"]) // 2
+            elif bids:
+                mid_raw = bids[0]["px"]
+            elif asks:
+                mid_raw = asks[0]["px"]
+        if mid_raw is None:
+            bbo = parse_wal_bbo(symbol_id)
+            if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
+                mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
+            elif bbo and bbo.get("bid_px"):
+                mid_raw = bbo["bid_px"]
+            elif bbo and bbo.get("ask_px"):
+                mid_raw = bbo["ask_px"]
+
+        if mid_raw is None:
+            # No price data: fall back to market order
+            price_int = 0
+            tif_int = 1
+        else:
+            raw = mid_raw * (1.0 + offset_pct / 100.0)
+            # Snap to tick grid
+            price_int = int(round(raw / tick_size)) * tick_size
+            if price_int <= 0:
+                price_int = tick_size
+            tif_int = 0  # GTC limit
+
+    qty_int = int(round(human_qty * qty_scale))
+    if qty_int % lot_size != 0:
+        qty_int = max(lot_size, round(qty_int / lot_size) * lot_size)
+
+    cid = f"qk{int(time.time()*1e6):x}"[:20]
+    order_msg = {
+        "N": [
+            symbol_id, side_int, price_int, qty_int,
+            cid, tif_int, 0, 0,
+        ],
+    }
+
+    order = {
+        "cid": cid,
+        "user_id": 1,
+        "symbol": str(symbol_id),
+        "side": side_str,
+        "price": str(price_int),
+        "qty": str(qty_int),
+        "tif": "IOC" if tif_int == 1 else "GTC",
+        "reduce_only": False,
+        "post_only": False,
+        "status": "pending",
+        "ts": datetime.now().strftime("%H:%M:%S"),
+    }
+
+    result = await send_order_to_gateway(order_msg, 1)
+    err = result[1]
+    label = f"{side_str.upper()} {human_qty:.0f}"
+    if err:
+        if err == "timeout waiting for response":
+            order["status"] = "accepted"
+            recent_orders.append(order)
+            _trim_recent_orders()
+            return HTMLResponse(
+                f'<span class="text-emerald-400 text-xs font-medium">'
+                f'queued {label} ({cid})</span>'
+            )
+        order["status"] = "error"
+        order["error"] = err
+        recent_orders.append(order)
+        _trim_recent_orders()
+        color = (
+            "text-red-400"
+            if err == "gateway not running"
+            else "text-amber-400"
+        )
+        return HTMLResponse(
+            f'<span class="{color} text-xs font-medium">'
+            f'error: {err}</span>'
+        )
+
+    msg, _, latency_us = result
+    if latency_us:
+        order_latencies.append(latency_us)
+        if len(order_latencies) > 1000:
+            del order_latencies[:500]
+
+    if msg and "U" in msg:
+        u = msg["U"]
+        status_map = {
+            0: "filled", 1: "resting", 2: "cancelled", 3: "failed",
+        }
+        status_label = status_map.get(u[1], "unknown")
+        order["status"] = status_label
+        recent_orders.append(order)
+        _trim_recent_orders()
+        color = (
+            "text-emerald-400" if u[1] in (0, 1)
+            else "text-red-400"
+        )
+        return HTMLResponse(
+            f'<span class="{color} text-xs font-medium">'
+            f'{label} {status_label}</span>'
+        )
+
+    order["status"] = "sent"
+    recent_orders.append(order)
+    _trim_recent_orders()
+    return HTMLResponse(
+        f'<span class="text-emerald-400 text-xs font-medium">'
+        f'sent {label}</span>'
+    )
+
+
+# ── stress scenarios ────────────────────────────────────
+
+STRESS_SCENARIOS = {
+    "baseline": {
+        "users": 1, "conns": 1, "rate": 10,
+        "duration": 999999,
+        "desc": "1 user, 10 ord/s, always on",
+    },
+    "burst": {
+        "users": 10, "conns": 10, "rate": 200,
+        "duration": 10,
+        "desc": "10 users, burst 200/s for 10s",
+    },
+    "maker_vs_taker": {
+        "users": 5, "conns": 5, "rate": 50,
+        "duration": 60,
+        "desc": "5 users competing with market maker",
+    },
+    "cancel_storm": {
+        "users": 3, "conns": 3, "rate": 100,
+        "duration": 30,
+        "desc": "rapid place+cancel cycles",
+    },
+    "multi_symbol": {
+        "users": 4, "conns": 4, "rate": 40,
+        "duration": 60,
+        "desc": "spread load across symbols 1-4",
+    },
+    "liquidation": {
+        "users": 2, "conns": 2, "rate": 20,
+        "duration": 30,
+        "desc": "push accounts toward liquidation",
+    },
+}
+
+# name -> asyncio.Task
+stress_tasks: dict[str, asyncio.Task] = {}
+# name -> list of recent latency samples (us)
+stress_scenario_metrics: dict[str, list] = {}
+
+
+async def _run_scenario_loop(name: str, cfg: dict):
+    """Run a named scenario, auto-restart on crash."""
+    while True:
+        try:
+            sc = StressConfig(
+                gateway_url=GATEWAY_URL,
+                rate=cfg["rate"],
+                duration=cfg["duration"],
+                users=cfg["users"],
+                connections=cfg["connections"]
+                if "connections" in cfg
+                else cfg.get("conns", 1),
+            )
+            results = await run_stress_test(sc)
+            if "latency_us" in results:
+                samples = stress_scenario_metrics.setdefault(
+                    name, [])
+                samples.extend(
+                    results["latency_us"].get("raw", [])
+                )
+                if len(samples) > 500:
+                    del samples[:250]
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            print(f"stress scenario {name} error: {exc}")
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
+        else:
+            # finite duration scenarios pause briefly then repeat
+            if cfg.get("duration", 999999) < 999999:
+                try:
+                    await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    break
+
+
+@app.post(
+    "/api/stress/scenario/{name}/start",
+    response_class=JSONResponse,
+)
+async def api_stress_scenario_start(name: str):
+    if name not in STRESS_SCENARIOS:
+        return JSONResponse(
+            {"error": f"unknown scenario: {name}"},
+            status_code=404,
+        )
+    existing = stress_tasks.get(name)
+    if existing and not existing.done():
+        return JSONResponse(
+            {"error": f"{name} already running"},
+            status_code=409,
+        )
+    cfg = STRESS_SCENARIOS[name]
+    task = asyncio.create_task(
+        _run_scenario_loop(name, cfg),
+        name=f"stress-{name}",
+    )
+    stress_tasks[name] = task
+    return {"started": name}
+
+
+@app.post(
+    "/api/stress/scenario/{name}/stop",
+    response_class=JSONResponse,
+)
+async def api_stress_scenario_stop(name: str):
+    task = stress_tasks.get(name)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    stress_tasks.pop(name, None)
+    return {"stopped": name}
+
+
+@app.get(
+    "/api/stress/scenario/{name}/status",
+    response_class=JSONResponse,
+)
+async def api_stress_scenario_status(name: str):
+    if name not in STRESS_SCENARIOS:
+        return JSONResponse(
+            {"error": f"unknown scenario: {name}"},
+            status_code=404,
+        )
+    task = stress_tasks.get(name)
+    running = bool(task and not task.done())
+    return {
+        "running": running,
+        "desc": STRESS_SCENARIOS[name]["desc"],
+    }
+
+
+@app.get("/x/stress-scenarios", response_class=HTMLResponse)
+async def x_stress_scenarios():
+    states = {
+        name: {
+            "running": (
+                name in stress_tasks
+                and not stress_tasks[name].done()
+            ),
+            "desc": cfg["desc"],
+        }
+        for name, cfg in STRESS_SCENARIOS.items()
+    }
+    from pages import render_stress_scenarios
+    return render_stress_scenarios(states)
+
+
+@app.on_event("startup")
+async def _start_baseline():
+    cfg = STRESS_SCENARIOS["baseline"]
+    task = asyncio.create_task(
+        _run_scenario_loop("baseline", cfg),
+        name="stress-baseline",
+    )
+    stress_tasks["baseline"] = task
+
+
 @app.post("/api/stress/run")
 async def api_stress_run(
     request: Request,
@@ -3549,7 +4359,8 @@ async def x_stress_reports_list():
         )
 
     table = (
-        '<table class="w-full text-left">'
+        '<div class="overflow-x-auto">'
+        '<table class="w-full text-left whitespace-nowrap">'
         '<thead><tr class="border-b border-slate-700">'
         '<th class="px-2 py-1 text-[10px] text-slate-400">Timestamp</th>'
         '<th class="px-2 py-1 text-[10px] text-slate-400 text-right">Rate</th>'
@@ -3564,6 +4375,7 @@ async def x_stress_reports_list():
         '</tr></thead>'
         f'<tbody>{"".join(rows)}</tbody>'
         '</table>'
+        '</div>'
     )
 
     return HTMLResponse(table)
@@ -3693,6 +4505,270 @@ async def api_risk_action(user_id: int, action: str):
             status_code=400)
     return {"user_id": user_id, "action": action,
             "status": "requires risk engine"}
+
+
+# ── Risk dashboard API endpoints ──────────────────────────
+
+@app.get("/api/risk/overview")
+async def api_risk_overview():
+    """Account overview: collateral, margin, positions."""
+    fills = parse_wal_fills(max_fills=2000)
+    book_stats = parse_wal_book_stats()
+
+    # Build per-user, per-symbol net positions from fills
+    # positions[uid][sid] = {net, entry_px_sum, fill_count}
+    positions: dict[int, dict[int, dict]] = {}
+    for f in fills:
+        t_uid = f.get("taker_uid", 0)
+        m_uid = f.get("maker_uid", 0)
+        sid = f.get("symbol_id", 0)
+        qty = f.get("qty", 0)
+        px = f.get("price", 0)
+        taker_side = f.get("taker_side", 0)
+        for uid, is_taker in ((t_uid, True), (m_uid, False)):
+            if uid == 0:
+                continue
+            signed = (qty if taker_side == 0 else -qty
+                      ) if is_taker else (
+                -qty if taker_side == 0 else qty)
+            ud = positions.setdefault(uid, {})
+            pos = ud.setdefault(sid, {
+                "net": 0, "entry_px_sum": 0,
+                "fill_count": 0,
+            })
+            pos["net"] += signed
+            pos["entry_px_sum"] += px * abs(signed)
+            pos["fill_count"] += 1
+
+    # Fetch account balances from postgres if available
+    accounts: dict[int, dict] = {}
+    if pg_pool is not None:
+        rows = await pg_query(
+            "SELECT user_id, collateral, frozen_margin "
+            "FROM accounts ORDER BY user_id"
+        )
+        if rows and isinstance(rows, list):
+            for r in rows:
+                accounts[r["user_id"]] = {
+                    "collateral": r["collateral"],
+                    "frozen": r["frozen_margin"],
+                }
+
+    # Fallback: use seed users with seed collateral
+    if not accounts:
+        for uid in _SEED_USERS:
+            accounts[uid] = {
+                "collateral": _SEED_COLLATERAL,
+                "frozen": 0,
+            }
+
+    # IM = 10% of notional, MM = 5% of notional (simulated)
+    IM_RATE = 0.10
+    MM_RATE = 0.05
+
+    users_out = []
+    all_long_notional = 0
+    all_short_notional = 0
+    accounts_with_positions = 0
+    accounts_near_liq = 0
+
+    all_uids = sorted(
+        set(list(accounts.keys()) + list(positions.keys()))
+    )
+    for uid in all_uids:
+        acct = accounts.get(uid, {
+            "collateral": _SEED_COLLATERAL,
+            "frozen": 0,
+        })
+        collateral = acct["collateral"]
+        frozen = acct["frozen"]
+        user_positions = positions.get(uid, {})
+
+        pos_list = []
+        total_upnl = 0
+        total_im = 0
+        total_mm = 0
+
+        for sid, pos in user_positions.items():
+            net = pos["net"]
+            if net == 0:
+                continue
+            fill_count = pos["fill_count"]
+            # average entry price
+            entry_px = (
+                pos["entry_px_sum"] // abs(net)
+                if net != 0 else 0
+            )
+            # mark price from BBO mid
+            bbo = book_stats.get(sid, {})
+            bid = bbo.get("bid_px", 0)
+            ask = bbo.get("ask_px", 0)
+            mark_px = (
+                (bid + ask) // 2 if bid and ask
+                else entry_px
+            )
+            notional = abs(net) * mark_px
+            upnl = (
+                (mark_px - entry_px) * net
+                if net != 0 else 0
+            )
+            im = int(notional * IM_RATE)
+            mm = int(notional * MM_RATE)
+            total_upnl += upnl
+            total_im += im
+            total_mm += mm
+            if net > 0:
+                all_long_notional += notional
+            else:
+                all_short_notional += abs(notional)
+            pos_list.append({
+                "symbol_id": sid,
+                "net": net,
+                "entry_px": entry_px,
+                "mark_px": mark_px,
+                "upnl": upnl,
+                "notional": notional,
+                "im": im,
+                "mm": mm,
+                "fills": fill_count,
+                "simulated": bid == 0 and ask == 0,
+            })
+
+        if pos_list:
+            accounts_with_positions += 1
+
+        equity = collateral + total_upnl
+        margin_ratio = (
+            equity / total_mm if total_mm > 0 else 999.0
+        )
+        if margin_ratio < 1.5 and total_mm > 0:
+            accounts_near_liq += 1
+
+        users_out.append({
+            "user_id": uid,
+            "collateral": collateral,
+            "frozen": frozen,
+            "available": max(0, collateral - frozen),
+            "equity": equity,
+            "upnl": total_upnl,
+            "im_required": total_im,
+            "mm_required": total_mm,
+            "margin_ratio": round(margin_ratio, 3),
+            "positions": pos_list,
+        })
+
+    total_oi = all_long_notional + all_short_notional
+    return {
+        "users": users_out,
+        "system": {
+            "total_oi": total_oi,
+            "long_notional": all_long_notional,
+            "short_notional": all_short_notional,
+            "accounts_with_positions": accounts_with_positions,
+            "accounts_near_liq": accounts_near_liq,
+        },
+        "simulated": pg_pool is None,
+    }
+
+
+@app.get("/api/risk/funding")
+async def api_risk_funding():
+    """Funding rates per symbol from BBO data."""
+    book_stats = parse_wal_book_stats()
+    now_ns = int(time.time() * 1e9)
+    # funding settles every 8 hours = 28800s
+    settlement_interval_s = 28800
+    elapsed = int(time.time()) % settlement_interval_s
+    next_s = settlement_interval_s - elapsed
+
+    entries = []
+    for sid in sorted(book_stats.keys()):
+        bbo = book_stats[sid]
+        bid = bbo.get("bid_px", 0)
+        ask = bbo.get("ask_px", 0)
+        mid = (bid + ask) // 2 if bid and ask else 0
+        spread = ask - bid if bid and ask else 0
+        # Funding rate proxy: spread/mid in bps
+        rate_bps = (
+            spread * 10000 // mid if mid > 0 else 0
+        )
+        # Index = mark * (1 + small offset) simulated
+        index_px = int(mid * 1.0001) if mid else 0
+        premium_bps = (
+            (mid - index_px) * 10000 // index_px
+            if index_px else 0
+        )
+        entries.append({
+            "symbol_id": sid,
+            "mark_px": mid,
+            "index_px": index_px,
+            "bid_px": bid,
+            "ask_px": ask,
+            "rate_bps": rate_bps,
+            "premium_bps": premium_bps,
+            "next_settlement_s": next_s,
+            "simulated": True,
+        })
+    return {"funding": entries, "ts_ns": now_ns}
+
+
+@app.get("/api/risk/liquidations")
+async def api_risk_liquidations():
+    """Active liquidation queue from WAL or postgres."""
+    # Try postgres first
+    if pg_pool is not None:
+        rows = await pg_query(
+            "SELECT * FROM liquidations "
+            "ORDER BY timestamp_ns DESC LIMIT 50"
+        )
+        if rows and isinstance(rows, list):
+            return {"liquidations": rows, "source": "postgres"}
+    # Fallback to WAL
+    liqns = parse_wal_liquidations()
+    return {
+        "liquidations": liqns[:50],
+        "source": "wal" if liqns else "none",
+    }
+
+
+@app.get("/api/risk/insurance")
+async def api_risk_insurance():
+    """Insurance fund balances per symbol."""
+    # Try postgres
+    if pg_pool is not None:
+        rows = await pg_query(
+            "SELECT symbol_id, balance, version "
+            "FROM insurance_fund ORDER BY symbol_id"
+        )
+        if rows and isinstance(rows, list):
+            total = sum(r.get("balance", 0) for r in rows)
+            return {
+                "funds": rows, "total": total,
+                "source": "postgres",
+            }
+    # Simulated: fixed seed per symbol
+    sim = []
+    for sid in [1, 2, 3, 10]:
+        sim.append({
+            "symbol_id": sid,
+            "balance": 5_000_000_000_000,
+            "version": 0,
+        })
+    total = sum(s["balance"] for s in sim)
+    return {"funds": sim, "total": total, "source": "simulated"}
+
+
+@app.get("/x/risk-overview", response_class=HTMLResponse)
+async def x_risk_overview():
+    data = await api_risk_overview()
+    funding_data = await api_risk_funding()
+    liq_data = await api_risk_liquidations()
+    insurance_data = await api_risk_insurance()
+    return HTMLResponse(
+        pages.render_risk_overview(
+            data, funding_data, liq_data, insurance_data,
+        )
+    )
 
 
 @app.get("/api/mark/prices")
@@ -3826,10 +4902,108 @@ async def api_maker_config(request: Request):
         return JSONResponse(
             {"error": "mid_override must be int"}, status_code=400)
     MAKER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    # Merge with existing config
+    try:
+        existing = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        existing = {}
+    existing["mid_override"] = mid_override
     tmp = MAKER_CONFIG.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"mid_override": mid_override}))
+    tmp.write_text(json.dumps(existing))
     tmp.replace(MAKER_CONFIG)
     return {"ok": True}
+
+
+@app.post("/api/maker/config")
+async def api_maker_config_save(
+    request: Request,
+    spread_bps: int = Form(20),
+    qty: int = Form(10),
+    symbol_id: int = Form(10),
+    refresh_ms: int = Form(500),
+    levels: int = Form(5),
+):
+    """Save maker config and restart if running."""
+    MAKER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    # Preserve existing mid_override if present
+    try:
+        existing = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        existing = {}
+    existing.update({
+        "spread_bps": spread_bps,
+        "qty": qty,
+        "symbol_id": symbol_id,
+        "refresh_ms": refresh_ms,
+        "levels": levels,
+    })
+    tmp = MAKER_CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(existing))
+    tmp.replace(MAKER_CONFIG)
+    was_running = _maker_running()
+    if was_running:
+        await stop_process(MAKER_NAME)
+        await asyncio.sleep(0.3)
+        ok = await do_maker_start()
+        if not ok:
+            return HTMLResponse(
+                '<span class="text-red-400 text-xs">'
+                'config saved; maker failed to restart</span>')
+        pid = managed[MAKER_NAME]["proc"].pid
+        audit_log(
+            "/api/maker/config",
+            f"saved config and restarted maker (pid {pid})",
+        )
+        return HTMLResponse(
+            '<span class="text-emerald-400 text-xs">'
+            f'config saved; maker restarted (pid {pid})</span>')
+    audit_log("/api/maker/config", "saved maker config")
+    return HTMLResponse(
+        '<span class="text-amber-400 text-xs">'
+        'config saved (maker not running)</span>')
+
+
+@app.post("/api/maker/restart")
+async def api_maker_restart(request: Request):
+    """Restart the market maker."""
+    if _maker_running():
+        await stop_process(MAKER_NAME)
+        await asyncio.sleep(0.3)
+    ok = await do_maker_start()
+    if not ok:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'maker failed to start</span>')
+    pid = managed[MAKER_NAME]["proc"].pid
+    audit_log("/api/maker/restart", f"restarted maker (pid {pid})")
+    return HTMLResponse(
+        '<span class="text-emerald-400 text-xs">'
+        f'maker restarted (pid {pid})</span>')
+
+
+@app.get("/api/maker/stats")
+async def api_maker_stats():
+    """Return maker live stats from status file."""
+    running = _maker_running()
+    stats = _read_maker_stats() if running else {}
+    cfg: dict = {}
+    try:
+        cfg = json.loads(MAKER_CONFIG.read_text())
+    except Exception:
+        pass
+    return {
+        "running": running,
+        "orders_placed": stats.get("orders_placed", 0),
+        "active_orders": stats.get("active_orders", 0),
+        "mid_prices": stats.get("mid_prices", {}),
+        "errors": stats.get("errors", []),
+        "spread_bps": cfg.get(
+            "spread_bps", stats.get("spread_bps", 20)),
+        "qty": cfg.get("qty", 10),
+        "symbol_id": cfg.get("symbol_id", 10),
+        "refresh_ms": cfg.get("refresh_ms", 500),
+        "levels": cfg.get("levels", 5),
+    }
 
 
 def _maker_book(symbol_id: int) -> dict | None:
@@ -4104,6 +5278,25 @@ async def x_maker_status():
     pid = info["proc"].pid if info else "?"
     stats = _read_maker_stats()
     return HTMLResponse(pages.maker_status_html(stats, pid))
+
+
+@app.get("/x/maker-live", response_class=HTMLResponse)
+async def x_maker_live():
+    """HTMX partial: live maker status for maker page."""
+    running = _maker_running()
+    info = managed.get(MAKER_NAME)
+    pid = info["proc"].pid if running and info else None
+    rs = _restart_state.get(MAKER_NAME, {})
+    restarts = rs.get("restarts", 0)
+    stats = _read_maker_stats() if running else {}
+    return HTMLResponse(
+        pages.maker_live_html(
+            running=running,
+            pid=pid,
+            restarts=restarts,
+            stats=stats,
+        )
+    )
 
 
 # ── trading UI: WS proxy + REST proxy + static ─────────
