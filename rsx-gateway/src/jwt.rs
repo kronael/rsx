@@ -22,7 +22,7 @@ pub fn validate_jwt(
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
     validation.set_audience(&["rsx-gateway"]);
-    validation.set_issuer(&["rsx"]);
+    validation.set_issuer(&["rsx-auth"]);
 
     let token_data = decode::<Claims>(
         token,
