@@ -23,9 +23,11 @@ pub fn calculate_rate(
     if index == 0 {
         return 0;
     }
-    let premium = ((mark as i128 - index as i128)
+    let premium_raw = (mark as i128 - index as i128)
         * 10_000
-        / index as i128) as i64;
+        / index as i128;
+    let premium = premium_raw
+        .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
     premium.clamp(-config.rate_cap, config.rate_cap)
 }
 
@@ -36,9 +38,10 @@ pub fn calculate_payment(
     mark: i64,
     rate: i64,
 ) -> i64 {
-    // Use i128 to prevent overflow
-    (net_qty as i128 * mark as i128 * rate as i128
-        / 10_000) as i64
+    // Use i128 to prevent overflow; clamp before narrowing
+    let v = net_qty as i128 * mark as i128 * rate as i128
+        / 10_000;
+    v.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 pub fn interval_id(
