@@ -160,11 +160,18 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                 if sid >= states.len() {
                     continue;
                 }
+                let now_ns = time_ns();
+                // Skip stale updates before aggregate phase
+                if now_ns.saturating_sub(update.timestamp_ns)
+                    >= config.staleness_ns
+                {
+                    continue;
+                }
                 if let Some(mut evt) =
                     aggregate_with_staleness(
                         &mut states[sid],
                         update,
-                        time_ns(),
+                        now_ns,
                         update.symbol_id,
                         config.staleness_ns,
                     )

@@ -145,7 +145,8 @@ impl WalWriter {
         // previous slow flush doesn't block the next batch.
         self.flush_stalled = false;
 
-        // rotate before writing if current file + buffer would exceed max
+        // rotate before writing if file has data and adding
+        // the buffer would exceed the size limit
         if self.file_size > 0
             && self.file_size + self.buf.len() as u64
                 >= self.max_file_size
@@ -173,7 +174,7 @@ impl WalWriter {
             listener.notify_one();
         }
 
-        // rotate after write if file reached max
+        // rotate after write if file has now reached the limit
         if self.file_size >= self.max_file_size {
             self.rotate()?;
         }

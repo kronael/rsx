@@ -21,7 +21,7 @@ fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
         sub: user_id.to_string(),
         exp,
         aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx".to_string()),
+        iss: Some("rsx-auth".to_string()),
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -58,7 +58,7 @@ fn test_ws_handshake_with_valid_jwt() {
             let result =
                 ws_handshake(&mut stream, secret).await;
             assert!(result.is_ok());
-            let (_key, uid) = result.unwrap();
+            let (_key, uid, _leftover) = result.unwrap();
             assert_eq!(uid, user_id);
         });
 
@@ -239,7 +239,7 @@ fn test_ws_handshake_x_user_id_fallback() {
             let result =
                 ws_handshake(&mut stream, secret).await;
             assert!(result.is_ok());
-            let (_key, uid) = result.unwrap();
+            let (_key, uid, _leftover) = result.unwrap();
             assert_eq!(uid, user_id);
         });
 
