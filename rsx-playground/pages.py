@@ -1126,6 +1126,13 @@ def _btn(label, cls, extra=""):
             f'{extra}>{label}</button>')
 
 
+_BAR_BG = {
+    "emerald": "bg-emerald-500",
+    "amber": "bg-amber-500",
+    "red": "bg-red-500",
+}
+
+
 def _bar(pct, color="emerald"):
     """Progress bar for backpressure / resource usage."""
     if pct > 80:
@@ -1133,23 +1140,35 @@ def _bar(pct, color="emerald"):
     elif pct > 50:
         color = "amber"
     w = max(1, min(100, pct))
+    bg = _BAR_BG.get(color, "bg-emerald-500")
     return (
         f'<div class="flex items-center gap-2">'
         f'<div class="flex-1 bg-slate-800 rounded h-2">'
-        f'<div class="bg-{color}-500 h-2 rounded" '
+        f'<div class="{bg} h-2 rounded" '
         f'style="width:{w}%"></div></div>'
         f'<span class="text-[10px] text-slate-500 w-8 '
         f'text-right">{pct}%</span></div>'
     )
 
 
+_METRIC_TEXT = {
+    "slate-300": "text-slate-300",
+    "slate-500": "text-slate-500",
+    "blue-400": "text-blue-400",
+    "emerald-400": "text-emerald-400",
+    "amber-400": "text-amber-400",
+    "red-400": "text-red-400",
+}
+
+
 def _metric(label, value, color="slate-300"):
     """Single metric in a strip."""
+    cls = _METRIC_TEXT.get(color, "text-slate-300")
     return (
         f'<div class="text-center">'
         f'<div class="text-[10px] text-slate-500 '
         f'uppercase tracking-wider">{label}</div>'
-        f'<div class="text-sm text-{color} '
+        f'<div class="text-sm {cls} '
         f'font-semibold">{value}</div></div>'
     )
 
@@ -1163,6 +1182,16 @@ def render_health(procs, pg_ok):
     score = int((running / total) * 100) if procs else 0
     if pg_ok:
         score = min(100, score + 5)
+    _HEALTH_BG = {
+        "emerald": "bg-emerald-500",
+        "amber": "bg-amber-500",
+        "red": "bg-red-500",
+    }
+    _HEALTH_TEXT = {
+        "emerald": "text-emerald-400",
+        "amber": "text-amber-400",
+        "red": "text-red-400",
+    }
     if score >= 80:
         color = "emerald"
     elif score >= 50:
@@ -1170,16 +1199,19 @@ def render_health(procs, pg_ok):
     else:
         color = "red"
     bar_w = max(1, score)
+    bg = _HEALTH_BG[color]
+    text = _HEALTH_TEXT[color]
+    label = "green" if score >= 80 else "yellow" if score >= 50 else "red"
     return (
         f'<div class="flex items-center gap-4">'
         f'<div class="flex-1 bg-slate-800 rounded h-4">'
-        f'<div class="bg-{color}-500 h-4 rounded flex '
+        f'<div class="{bg} h-4 rounded flex '
         f'items-center justify-center text-[10px] '
         f'font-bold text-white" '
         f'style="width:{bar_w}%">{score}</div></div>'
         f'<span class="text-xs font-semibold '
-        f'text-{color}-400 uppercase">'
-        f'{"green" if score >= 80 else "yellow" if score >= 50 else "red"}'
+        f'{text} uppercase">'
+        f'{label}'
         f'</span></div>'
     )
 
@@ -2237,11 +2269,11 @@ def render_live_fills(fills):
         sid = f.get("symbol_id", 0)
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
         side = "buy" if f.get("taker_side", 0) == 0 else "sell"
-        color = "emerald" if side == "buy" else "red"
+        row_cls = "text-emerald-400" if side == "buy" else "text-red-400"
         price_fmt = format_price(f.get("price", 0), sid)
         qty_fmt = format_qty(f.get("qty", 0), sid)
         rows.append(
-            f'<tr class="text-{color}-400">'
+            f'<tr class="{row_cls}">'
             f'<td>{sym}</td>'
             f'<td>{side}</td>'
             f'<td class="text-right font-mono">'
@@ -2274,16 +2306,33 @@ def render_order_trace(order, fills):
     status = order.get("status", "pending")
     ts = html.escape(order.get("ts", "-"))
 
+    _STEP_BG = {
+        "blue": "bg-blue-400",
+        "emerald": "bg-emerald-400",
+        "amber": "bg-amber-400",
+        "red": "bg-red-400",
+        "slate": "bg-slate-400",
+    }
+    _STEP_TEXT = {
+        "blue": "text-blue-400",
+        "emerald": "text-emerald-400",
+        "amber": "text-amber-400",
+        "red": "text-red-400",
+        "slate": "text-slate-400",
+    }
+
     def step(color, label, detail=""):
         detail_html = (
             f' <span class="text-slate-500">{detail}</span>'
             if detail else ""
         )
+        bg = _STEP_BG.get(color, "bg-slate-400")
+        txt = _STEP_TEXT.get(color, "text-slate-400")
         return (
             f'<div class="flex items-start gap-2 py-1">'
             f'<div class="mt-0.5 w-2 h-2 rounded-full '
-            f'bg-{color}-400 shrink-0"></div>'
-            f'<span class="text-{color}-400 text-xs">'
+            f'{bg} shrink-0"></div>'
+            f'<span class="{txt} text-xs">'
             f'{label}</span>'
             f'{detail_html}</div>'
         )
@@ -2479,7 +2528,15 @@ def stress_report_page(data):
     errors = metrics.get("errors", 0)
     accept_rate = metrics.get("accept_rate", 0)
 
-    accept_color = "emerald-400" if accept_rate >= 95 else "amber-400" if accept_rate >= 90 else "red-400"
+    if accept_rate >= 95:
+        accept_color = "text-emerald-400"
+        accept_bg = "bg-emerald-400"
+    elif accept_rate >= 90:
+        accept_color = "text-amber-400"
+        accept_bg = "bg-amber-400"
+    else:
+        accept_color = "text-red-400"
+        accept_bg = "bg-red-400"
 
     results = _card(
         "Results",
@@ -2492,7 +2549,7 @@ def stress_report_page(data):
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">Accepted</div>
-      <div class="text-xl text-{accept_color}">{accepted:,}</div>
+      <div class="text-xl {accept_color}">{accepted:,}</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">Rejected</div>
@@ -2508,9 +2565,9 @@ def stress_report_page(data):
       <div class="text-[10px] text-slate-500 uppercase mb-1">Accept Rate</div>
       <div class="flex items-center gap-2">
         <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
-          <div class="bg-{accept_color} h-full" style="width: {accept_rate}%"></div>
+          <div class="{accept_bg} h-full" style="width: {accept_rate}%"></div>
         </div>
-        <span class="text-xs text-{accept_color} w-12 text-right">{accept_rate}%</span>
+        <span class="text-xs {accept_color} w-12 text-right">{accept_rate}%</span>
       </div>
     </div>
   </div>
@@ -2527,11 +2584,17 @@ def stress_report_page(data):
 
     def latency_color(lat_us):
         if lat_us < 1000:
-            return "emerald-400"
+            return ("text-emerald-400", "bg-emerald-400")
         elif lat_us < 5000:
-            return "amber-400"
+            return ("text-amber-400", "bg-amber-400")
         else:
-            return "red-400"
+            return ("text-red-400", "bg-red-400")
+
+    lc_min = latency_color(min_lat)
+    lc_p50 = latency_color(p50)
+    lc_p95 = latency_color(p95)
+    lc_p99 = latency_color(p99)
+    lc_max = latency_color(max_lat)
 
     latency_card = _card(
         "Latency Distribution (microseconds)",
@@ -2540,56 +2603,56 @@ def stress_report_page(data):
   <div class="grid grid-cols-5 gap-3">
     <div>
       <div class="text-[10px] text-slate-500 uppercase">Min</div>
-      <div class="text-lg text-{latency_color(min_lat)}">{min_lat:,}µs</div>
+      <div class="text-lg {lc_min[0]}">{min_lat:,}µs</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">p50</div>
-      <div class="text-lg text-{latency_color(p50)}">{p50:,}µs</div>
+      <div class="text-lg {lc_p50[0]}">{p50:,}µs</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">p95</div>
-      <div class="text-lg text-{latency_color(p95)}">{p95:,}µs</div>
+      <div class="text-lg {lc_p95[0]}">{p95:,}µs</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">p99</div>
-      <div class="text-lg text-{latency_color(p99)}">{p99:,}µs</div>
+      <div class="text-lg {lc_p99[0]}">{p99:,}µs</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">Max</div>
-      <div class="text-lg text-{latency_color(max_lat)}">{max_lat:,}µs</div>
+      <div class="text-lg {lc_max[0]}">{max_lat:,}µs</div>
     </div>
   </div>
   <div class="space-y-2">
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">p50</span>
       <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
-        <div class="bg-{latency_color(p50)} h-full"
+        <div class="{lc_p50[1]} h-full"
           style="width: {min(100, p50 * 100 / max(max_lat, 1)):.1f}%"></div>
       </div>
-      <span class="text-xs text-{latency_color(p50)} w-20 text-right">{p50:,}µs</span>
+      <span class="text-xs {lc_p50[0]} w-20 text-right">{p50:,}µs</span>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">p95</span>
       <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
-        <div class="bg-{latency_color(p95)} h-full"
+        <div class="{lc_p95[1]} h-full"
           style="width: {min(100, p95 * 100 / max(max_lat, 1)):.1f}%"></div>
       </div>
-      <span class="text-xs text-{latency_color(p95)} w-20 text-right">{p95:,}µs</span>
+      <span class="text-xs {lc_p95[0]} w-20 text-right">{p95:,}µs</span>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">p99</span>
       <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
-        <div class="bg-{latency_color(p99)} h-full"
+        <div class="{lc_p99[1]} h-full"
           style="width: {min(100, p99 * 100 / max(max_lat, 1)):.1f}%"></div>
       </div>
-      <span class="text-xs text-{latency_color(p99)} w-20 text-right">{p99:,}µs</span>
+      <span class="text-xs {lc_p99[0]} w-20 text-right">{p99:,}µs</span>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">max</span>
       <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
-        <div class="bg-{latency_color(max_lat)} h-full" style="width: 100%"></div>
+        <div class="{lc_max[1]} h-full" style="width: 100%"></div>
       </div>
-      <span class="text-xs text-{latency_color(max_lat)} w-20 text-right">{max_lat:,}µs</span>
+      <span class="text-xs {lc_max[0]} w-20 text-right">{max_lat:,}µs</span>
     </div>
   </div>
 </div>
@@ -2602,34 +2665,47 @@ def stress_report_page(data):
     passed_errors = (errors / max(submitted, 1) * 100) < 1
 
     status = "PASS" if (passed_rate and passed_p99 and passed_errors) else "FAIL"
-    status_color = "emerald" if status == "PASS" else "red"
+    if status == "PASS":
+        status_bg = "bg-emerald-900/40"
+        status_border = "border-emerald-800"
+        status_text = "text-emerald-400"
+    else:
+        status_bg = "bg-red-900/40"
+        status_border = "border-red-800"
+        status_text = "text-red-400"
+    rate_cls = "text-emerald-400" if passed_rate else "text-red-400"
+    rate_mark = "✓" if passed_rate else "✗"
+    p99_cls = "text-emerald-400" if passed_p99 else "text-red-400"
+    p99_mark = "✓" if passed_p99 else "✗"
+    err_cls = "text-emerald-400" if passed_errors else "text-red-400"
+    err_mark = "✓" if passed_errors else "✗"
 
     assessment = _card(
         "Assessment",
         f"""
 <div class="space-y-3">
   <div class="text-center">
-    <div class="inline-block bg-{status_color}-900/40 border border-{status_color}-800
-      text-{status_color}-400 px-6 py-3 rounded-lg text-2xl font-bold">
+    <div class="inline-block {status_bg} border {status_border}
+      {status_text} px-6 py-3 rounded-lg text-2xl font-bold">
       {status}
     </div>
   </div>
   <div class="space-y-2 text-xs">
     <div class="flex items-center gap-2">
-      <span class="text-{'emerald' if passed_rate else 'red'}-400">
-        {'✓' if passed_rate else '✗'}
+      <span class="{rate_cls}">
+        {rate_mark}
       </span>
       <span>Accept rate ≥95%: {accept_rate}%</span>
     </div>
     <div class="flex items-center gap-2">
-      <span class="text-{'emerald' if passed_p99 else 'red'}-400">
-        {'✓' if passed_p99 else '✗'}
+      <span class="{p99_cls}">
+        {p99_mark}
       </span>
       <span>p99 latency <10ms: {p99/1000:.2f}ms</span>
     </div>
     <div class="flex items-center gap-2">
-      <span class="text-{'emerald' if passed_errors else 'red'}-400">
-        {'✓' if passed_errors else '✗'}
+      <span class="{err_cls}">
+        {err_mark}
       </span>
       <span>Error rate <1%: {errors/max(submitted,1)*100:.2f}%</span>
     </div>

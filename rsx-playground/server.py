@@ -49,6 +49,8 @@ if _env_file.exists():
         if _line and not _line.startswith("#") and "=" in _line:
             _k, _v = _line.split("=", 1)
             os.environ.setdefault(_k.strip(), _v.strip())
+if os.environ.get("PLAYGROUND_MODE") == "production":
+    raise SystemExit("refusing to start: PLAYGROUND_MODE=production")
 WAL_DIR = TMP / "wal"
 LOG_DIR = ROOT / "log"
 PID_DIR = TMP / "pids"

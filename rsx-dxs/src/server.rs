@@ -24,6 +24,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
+use tracing::error;
 use tracing::info;
 use tracing::warn;
 
@@ -251,7 +252,16 @@ where
                 &svc.wal_dir,
             ) {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(e) => {
+                    error!(
+                        "wal open_from_seq failed \
+                         stream_id={} seq={}: {}",
+                        stream_id,
+                        last_seq + 1,
+                        e
+                    );
+                    continue;
+                }
             };
 
         loop {
