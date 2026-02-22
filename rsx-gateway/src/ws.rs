@@ -29,14 +29,10 @@ where
     }
 }
 
-/// Perform WebSocket upgrade handshake on a raw
-/// TcpStream. Returns Ok((key, user_id)) if upgrade
-/// succeeded and auth was present.
-pub async fn ws_handshake(
+/// Read the initial HTTP request from a TcpStream.
+pub async fn read_http_request(
     stream: &mut TcpStream,
-    jwt_secret: &str,
-) -> io::Result<(String, u32)> {
-    // Read HTTP upgrade request
+) -> io::Result<(String, Vec<u8>)> {
     let buf = vec![0u8; 4096];
     let (res, buf) = stream.read(buf).await;
     let n = res?;
@@ -46,11 +42,60 @@ pub async fn ws_handshake(
             "connection closed during handshake",
         ));
     }
+    let data = &buf[..n];
+    // Find end of HTTP headers (\r\n\r\n boundary)
+    let header_end = data
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(n);
+    let request =
+        String::from_utf8_lossy(&data[..header_end])
+            .into_owned();
+    let leftover = data[header_end..].to_vec();
+    Ok((request, leftover))
+}
 
-    let request = String::from_utf8_lossy(&buf[..n]);
+/// Returns true if the request is a WS upgrade.
+pub fn is_ws_upgrade(request: &str) -> bool {
+    request.lines().any(|line| {
+        line.to_ascii_lowercase()
+            .starts_with("sec-websocket-key:")
+    })
+}
+
+/// Perform WS handshake on an already-read request.
+pub async fn ws_handshake_from_request(
+    stream: &mut TcpStream,
+    request: &str,
+    jwt_secret: &str,
+) -> io::Result<(String, u32)> {
+    ws_handshake_inner(stream, request, jwt_secret).await
+}
+
+/// Perform WebSocket upgrade handshake on a raw
+/// TcpStream. Returns Ok((key, user_id)) if upgrade
+/// succeeded and auth was present.
+pub async fn ws_handshake(
+    stream: &mut TcpStream,
+    jwt_secret: &str,
+) -> io::Result<(String, u32, Vec<u8>)> {
+    let (request, leftover) =
+        read_http_request(stream).await?;
+    let (key, uid) =
+        ws_handshake_inner(stream, &request, jwt_secret)
+            .await?;
+    Ok((key, uid, leftover))
+}
+
+async fn ws_handshake_inner(
+    stream: &mut TcpStream,
+    request: &str,
+    jwt_secret: &str,
+) -> io::Result<(String, u32)> {
 
     // Extract Sec-WebSocket-Key
-    let key = extract_ws_key(&request).ok_or_else(
+    let key = extract_ws_key(request).ok_or_else(
         || {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -61,7 +106,7 @@ pub async fn ws_handshake(
 
     // Extract user_id from auth headers
     let user_id =
-        match extract_user_id(&request, jwt_secret) {
+        match extract_user_id(request, jwt_secret) {
             Some(id) => id,
             None => {
                 let resp = b"HTTP/1.1 401 Unauthorized\r\n\
@@ -211,6 +256,106 @@ pub async fn ws_read_frame(
         res?;
         payload = p;
     }
+
+    if let Some(mask) = mask_key {
+        for (i, byte) in payload.iter_mut().enumerate()
+        {
+            *byte ^= mask[i % 4];
+        }
+    }
+
+    Ok((opcode, payload))
+}
+
+/// Read a WebSocket frame, consuming from `buf` first.
+/// The first byte is read with an outer timeout; once started,
+/// the rest of the frame is read atomically (no cancellation).
+/// This avoids io_uring partial-read corruption on timeout.
+pub async fn ws_read_frame_buf(
+    stream: &mut TcpStream,
+    buf: &mut Vec<u8>,
+) -> io::Result<(u8, Vec<u8>)> {
+    // Read first preamble byte from leftover or stream
+    let b0 = if !buf.is_empty() {
+        let b = buf[0];
+        buf.drain(..1);
+        b
+    } else {
+        let tmp = vec![0u8; 1];
+        let (res, tmp) = stream.read_exact(tmp).await;
+        res?;
+        tmp[0]
+    };
+
+    // Read second preamble byte
+    let b1 = if !buf.is_empty() {
+        let b = buf[0];
+        buf.drain(..1);
+        b
+    } else {
+        let tmp = vec![0u8; 1];
+        let (res, tmp) = stream.read_exact(tmp).await;
+        res?;
+        tmp[0]
+    };
+
+    let opcode = b0 & 0x0F;
+    let masked = (b1 & 0x80) != 0;
+    let len1 = (b1 & 0x7F) as usize;
+
+    // Helper: read n bytes from buf then stream
+    macro_rules! read_n {
+        ($n:expr) => {{
+            let n = $n;
+            let mut out = Vec::with_capacity(n);
+            if !buf.is_empty() {
+                let take = n.min(buf.len());
+                out.extend_from_slice(&buf[..take]);
+                buf.drain(..take);
+            }
+            if out.len() < n {
+                let needed = n - out.len();
+                let tmp = vec![0u8; needed];
+                let (res, tmp) =
+                    stream.read_exact(tmp).await;
+                res?;
+                out.extend_from_slice(&tmp);
+            }
+            out
+        }};
+    }
+
+    let payload_len = if len1 <= 125 {
+        len1
+    } else if len1 == 126 {
+        let ext = read_n!(2);
+        ((ext[0] as usize) << 8) | (ext[1] as usize)
+    } else {
+        let ext = read_n!(8);
+        usize::from_be_bytes(
+            ext[..8].try_into().unwrap(),
+        )
+    };
+
+    if payload_len > 4096 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame exceeds 4096 bytes",
+        ));
+    }
+
+    let mask_key = if masked {
+        let mk = read_n!(4);
+        Some([mk[0], mk[1], mk[2], mk[3]])
+    } else {
+        None
+    };
+
+    let mut payload = if payload_len > 0 {
+        read_n!(payload_len)
+    } else {
+        vec![]
+    };
 
     if let Some(mask) = mask_key {
         for (i, byte) in payload.iter_mut().enumerate()

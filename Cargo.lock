@@ -1882,10 +1882,12 @@ dependencies = [
 name = "rsx-maker"
 version = "0.1.0"
 dependencies = [
- "rsx-dxs",
+ "libc",
  "rsx-types",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
+ "tungstenite",
 ]
 
 [[package]]

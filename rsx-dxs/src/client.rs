@@ -33,6 +33,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -119,8 +121,13 @@ impl DxsConsumer {
     where
         F: FnMut(RawWalRecord),
     {
-        let backoff_schedule = [1, 2, 4, 8, 30];
-        let mut backoff_idx = 0;
+        // Backoff schedule in seconds; capped at last entry.
+        const BACKOFF_SECS: [u64; 5] = [1, 2, 4, 8, 30];
+        // Hard retry budget per task; reset on successful stream.
+        const MAX_RETRIES: u32 = 20;
+
+        let mut backoff_idx = 0usize;
+        let mut consec_errors: u32 = 0;
 
         loop {
             match self
@@ -129,24 +136,45 @@ impl DxsConsumer {
             {
                 Ok(()) => {
                     info!("stream ended, reconnecting");
+                    // Clean reconnect resets error budget.
                     backoff_idx = 0;
+                    consec_errors = 0;
                 }
                 Err(e) => {
-                    let secs = backoff_schedule
-                        [backoff_idx.min(
-                            backoff_schedule.len() - 1,
-                        )];
+                    consec_errors += 1;
+                    if consec_errors > MAX_RETRIES {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!(
+                                "BLOCKED: {} consecutive \
+                                 stream errors exhausted \
+                                 retry budget ({}): {}",
+                                consec_errors,
+                                MAX_RETRIES,
+                                e,
+                            ),
+                        ));
+                    }
+                    let base_secs = BACKOFF_SECS[backoff_idx
+                        .min(BACKOFF_SECS.len() - 1)];
+                    // ±20% jitter
+                    let jitter = jitter_factor();
+                    let sleep_ms = (base_secs as f64
+                        * 1000.0
+                        * jitter) as u64;
                     warn!(
-                        "stream error: {}, retrying in {}s",
-                        e, secs
+                        "stream error ({}/{}): {}, \
+                         retry in {}ms",
+                        consec_errors,
+                        MAX_RETRIES,
+                        e,
+                        sleep_ms,
                     );
                     tokio::time::sleep(
-                        Duration::from_secs(secs),
+                        Duration::from_millis(sleep_ms),
                     )
                     .await;
-                    if backoff_idx
-                        < backoff_schedule.len() - 1
-                    {
+                    if backoff_idx < BACKOFF_SECS.len() - 1 {
                         backoff_idx += 1;
                     }
                 }
@@ -437,6 +465,15 @@ impl DxsConsumer {
         persist_tip(&self.tip_file, self.tip)?;
         Ok(())
     }
+}
+
+/// ±20% jitter multiplier — avoids adding a rand dep.
+fn jitter_factor() -> f64 {
+    let ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(12345);
+    0.8 + 0.4 * ((ns % 1000) as f64 / 1000.0)
 }
 
 fn load_tip(path: &Path) -> io::Result<u64> {

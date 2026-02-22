@@ -2,7 +2,7 @@
 # play-shard.sh - Run a Playwright domain shard with artifact-based reporting.
 #
 # Usage: ./play-shard.sh <shard-name>
-#   shard-name: routing | htmx-partials | process-control | trade-ui
+#   shard-name: routing | htmx-partials | process-control | market-maker | trade-ui
 #
 # Artifacts written to tmp/play-artifacts/<shard>/:
 #   report.json   Playwright JSON reporter output
@@ -30,7 +30,7 @@ set -euo pipefail
 
 SHARD="${1:-}"
 if [[ -z "$SHARD" ]]; then
-    echo "usage: $0 <routing|htmx-partials|process-control|trade-ui>" >&2
+    echo "usage: $0 <routing|htmx-partials|process-control|market-maker|trade-ui>" >&2
     exit 1
 fi
 
@@ -44,19 +44,24 @@ JUNIT_OUT="$ARTIFACT_DIR/report.xml"
 SUMMARY_OUT="$ARTIFACT_DIR/summary.txt"
 SIG_FILE="$SIG_DIR/${SHARD}.sig"
 COUNT_FILE="$SIG_DIR/${SHARD}.count"
+STREAK_FILE="$SIG_DIR/${SHARD}.streak"
 
 # Static shard manifest — must match playwright.config.ts projects
 declare -A SHARD_SPECS
+SHARD_SPECS[infra-smoke]="play_infra.spec.ts"
 SHARD_SPECS[routing]="play_navigation.spec.ts play_overview.spec.ts play_topology.spec.ts"
 SHARD_SPECS[htmx-partials]="play_book.spec.ts play_risk.spec.ts play_wal.spec.ts play_logs.spec.ts play_faults.spec.ts play_verify.spec.ts"
 SHARD_SPECS[process-control]="play_control.spec.ts play_orders.spec.ts"
+SHARD_SPECS[market-maker]="play_maker.spec.ts"
 SHARD_SPECS[trade-ui]="play_trade.spec.ts"
 
 # Domain → source files that, if changed, force a re-run
 declare -A DOMAIN_FILES
+DOMAIN_FILES[infra-smoke]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[routing]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[htmx-partials]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[process-control]="rsx-playground/server.py rsx-playground/pages.py"
+DOMAIN_FILES[market-maker]="rsx-playground/server.py rsx-playground/market_maker.py"
 DOMAIN_FILES[trade-ui]="rsx-webui/src"
 
 domain_changed() {
@@ -172,10 +177,20 @@ fi
 echo "$CURRENT_SIG" > "$ARTIFACT_DIR/sig.txt"
 
 if [[ "$CURRENT_SIG" == "pass" ]]; then
-    echo "    PASS: $SHARD (artifacts: $ARTIFACT_DIR)"
+    # Increment green streak
+    STREAK=0
+    if [[ -f "$STREAK_FILE" ]]; then
+        STREAK="$(cat "$STREAK_FILE")"
+    fi
+    NEW_STREAK=$(( STREAK + 1 ))
+    echo "$NEW_STREAK" > "$STREAK_FILE"
+    echo "    PASS: $SHARD streak=$NEW_STREAK (artifacts: $ARTIFACT_DIR)"
     rm -f "$SIG_FILE" "$COUNT_FILE"
     exit 0
 fi
+
+# On failure: reset green streak
+echo "0" > "$STREAK_FILE"
 
 echo "    FAIL: $SHARD  sig=$CURRENT_SIG"
 echo "    artifacts: $ARTIFACT_DIR"

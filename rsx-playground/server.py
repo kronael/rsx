@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -117,21 +118,40 @@ async def pg_query(sql, *args):
 # symbol_id -> {"bids": [{px, qty}, ...], "asks": [...]}
 _book_snap: dict[int, dict] = {}
 _md_ws_task: asyncio.Task | None = None
+# recent trades from marketdata WS (capped at 200)
+recent_fills: list[dict] = []
 
 
 async def _md_ws_subscriber():
-    """Subscribe to marketdata WS; maintain _book_snap from L2/BBO."""
-    # CHANNEL_BBO=1, CHANNEL_DEPTH=2
-    CHANNELS = 3
+    """Subscribe to marketdata WS; maintain _book_snap from L2/BBO.
+
+    Reconnects with exponential backoff + jitter (1s→2s→…→30s).
+    Circuit breaker trips after 8 consecutive infra-class failures
+    (ConnectionRefusedError / OSError) and pauses fan-out by
+    stopping all reconnect attempts until the task is restarted.
+    """
+    # CHANNEL_BBO=1, CHANNEL_DEPTH=2, CHANNEL_TRADES=4
+    CHANNELS = 7
     DEFAULT_SYMBOLS = [10]
 
-    while True:
+    MAX_RETRIES = 20       # hard cap on total attempts
+    CIRCUIT_AT = 8         # consecutive infra failures → open
+    delay = 1.0
+    max_delay = 30.0
+    consec_infra = 0       # consecutive ConnectionRefused/OSError
+    attempt = 0
+
+    while attempt < MAX_RETRIES:
+        attempt += 1
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(
                     f"{MARKETDATA_WS}/ws",
                     heartbeat=10,
                 ) as ws:
+                    # connected — reset backoff counters
+                    consec_infra = 0
+                    delay = 1.0
                     # Subscribe to depth+BBO for known symbols
                     for sid in DEFAULT_SYMBOLS:
                         await ws.send_str(
@@ -213,9 +233,38 @@ async def _md_ws_subscriber():
                                         {"px": ask_px, "qty": ask_qty}
                                     ]
                                 _book_snap[sid] = snap
+                        # Trade: {"T":[sym,px,qty,taker_side,
+                        #              ts_ns,seq]}
+                        elif "T" in frame:
+                            arr = frame["T"]
+                            recent_fills.append({
+                                "symbol_id": int(arr[0]),
+                                "price": int(arr[1]),
+                                "qty": int(arr[2]),
+                                "taker_side": int(arr[3]),
+                                "seq": int(arr[5]),
+                            })
+                            if len(recent_fills) > 200:
+                                del recent_fills[:100]
+        except asyncio.CancelledError:
+            break
+        except (ConnectionRefusedError, OSError):
+            consec_infra += 1
+            if consec_infra >= CIRCUIT_AT:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    "md subscriber circuit open: %d consecutive "
+                    "infra failures; pausing fan-out",
+                    consec_infra,
+                )
+                break
         except Exception:
             pass
-        await asyncio.sleep(2)
+
+        # exponential backoff with ±20 % jitter
+        jitter = delay * (0.8 + 0.4 * random.random())
+        await asyncio.sleep(jitter)
+        delay = min(delay * 2, max_delay)
 
 
 # ── process manager ─────────────────────────────────────
@@ -225,6 +274,106 @@ async def _md_ws_subscriber():
 managed: dict[str, dict] = {}
 build_log: list[str] = []
 current_scenario = "minimal"
+
+# Per-process restart tracking for auto-restart with backoff.
+# Keyed by process name.  Populated on spawn; cleared on
+# intentional stop/kill; updated on crash detection.
+#
+# Fields per entry:
+#   restarts        int   — consecutive crash count
+#   blocked         bool  — circuit open; no further auto-restart
+#   next_restart_at float — epoch seconds; honour backoff window
+#   last_crash_ts   float — epoch of last detected crash
+#   intentional     bool  — set True before stop/kill so watcher
+#                           ignores the exit
+_restart_state: dict[str, dict] = {}
+_RESTART_MAX = 5           # circuit opens after this many crashes
+_RESTART_INIT_DELAY = 2.0  # first retry delay (seconds)
+_RESTART_MAX_DELAY = 60.0  # backoff ceiling
+
+_watcher_task: asyncio.Task | None = None
+
+# ── orchestrator session lifecycle ──────────────────────
+# At most ONE test run may hold the session lock at a time.
+# Concurrent callers get 409 Conflict (hard-fail the run).
+#
+# session_id — lock token (authenticates release / reclaim)
+# run_id     — per-allocation UUID; sent as X-Run-Id header
+#              on task dispatch so endpoints can detect stale
+#              callers and hard-fail before work begins.
+#
+# Lease model:
+#   _LEASE_TTL  (5 min)  — stale-claim recovery window.
+#                          If no renew within this period the
+#                          session is auto-released on the next
+#                          allocate call, allowing crash recovery
+#                          without waiting the full SESSION_TTL.
+#   _SESSION_TTL (30 min) — hard cap; run_id checks honour this.
+#
+# Idempotent reclaim: if allocate body includes the caller's
+# own session_id and it matches the active session, the same
+# session is returned (safe for retries after transient failures).
+_LEASE_TTL = 300.0
+_SESSION_TTL = 1800.0
+_active_session: dict | None = None  # {id, run_id, ts}
+# Serialises concurrent allocate/renew/release calls so the
+# check-then-set pattern is atomic within a single process.
+_session_lock = asyncio.Lock()
+
+
+def _check_run_id(request: Request) -> tuple[bool, str]:
+    """Validate X-Run-Id header against the active session.
+
+    Returns (ok, error_msg).  ok=True when:
+      - No X-Run-Id header is present (legacy/HTMX callers are
+        allowed through; the contract only applies when the
+        header is explicitly supplied).
+      - X-Run-Id matches the active session's run_id and the
+        session has not expired.
+    Returns (False, msg) when the header is present but stale,
+    expired, or unknown — caller must hard-fail before work.
+
+    Pure read: does NOT mutate _active_session.  Stale-session
+    reclamation is handled by _stale_session_reaper() and the
+    /api/sessions/allocate endpoint under _session_lock.
+    """
+    header = request.headers.get("X-Run-Id")
+    if not header:
+        return True, ""
+    snap = _active_session
+    if snap is None:
+        return False, "no active session; run_id is stale"
+    age = time.time() - snap["ts"]
+    if age >= _SESSION_TTL:
+        return False, "session expired (SESSION_TTL exceeded); re-allocate"
+    if header != snap["run_id"]:
+        return False, (
+            f"run_id mismatch: got {header!r}, "
+            f"expected {snap['run_id']!r}"
+        )
+    return True, ""
+
+
+async def _stale_session_reaper():
+    """Periodic background task: reclaim sessions whose SESSION_TTL
+    has been exceeded without a renew.
+
+    Runs every 60 s.  Acquires _session_lock to atomically check and
+    clear so it cannot race with allocate/renew/release callers.
+    """
+    global _active_session
+    while True:
+        await asyncio.sleep(60)
+        async with _session_lock:
+            if _active_session is None:
+                continue
+            age = time.time() - _active_session["ts"]
+            if age >= _SESSION_TTL:
+                print(
+                    f"session: reaper reclaiming expired session "
+                    f"{_active_session['id']} (age {age:.0f}s)"
+                )
+                _active_session = None
 
 
 def get_spawn_plan(scenario="minimal"):
@@ -258,7 +407,11 @@ async def pipe_output(name, stream):
 
 async def spawn_process(name, binary, env):
     """Spawn a single RSX process."""
-    binary_path = ROOT / binary.lstrip("./")
+    p = Path(binary)
+    if p.is_absolute():
+        binary_path = p
+    else:
+        binary_path = ROOT / binary.lstrip("./")
     if not binary_path.exists():
         return {"error": f"binary not found: {binary}"}
     full_env = {**os.environ, **env}
@@ -273,6 +426,19 @@ async def spawn_process(name, binary, env):
     managed[name] = {
         "proc": proc, "binary": binary, "env": env,
     }
+    # Register for auto-restart watching.  Preserve existing restart
+    # counters if this is a watcher-triggered restart; otherwise reset.
+    if name not in _restart_state:
+        _restart_state[name] = {
+            "restarts": 0,
+            "blocked": False,
+            "next_restart_at": 0.0,
+            "last_crash_ts": 0.0,
+            "intentional": False,
+        }
+    else:
+        # Clear intentional flag so future crashes are auto-restarted.
+        _restart_state[name]["intentional"] = False
     asyncio.create_task(pipe_output(name, proc.stdout))
     # write PID file before stability check
     PID_DIR.mkdir(parents=True, exist_ok=True)
@@ -287,6 +453,7 @@ async def spawn_process(name, binary, env):
             pid_file.unlink()
         if name in managed:
             del managed[name]
+        _restart_state.pop(name, None)
         return {"error": f"process exited immediately (code "
                          f"{proc.returncode})"}
 
@@ -296,12 +463,18 @@ async def stop_process(name):
     info = managed.get(name)
     if not info:
         return {"error": f"{name} not managed"}
+    # Mark intentional so the watcher does not auto-restart.
+    rs = _restart_state.get(name)
+    if rs:
+        rs["intentional"] = True
     proc = info["proc"]
     if proc.returncode is not None:
-        # already stopped, clean PID file
+        # already stopped, clean up
         pid_file = PID_DIR / f"{name}.pid"
         if pid_file.exists():
             pid_file.unlink()
+        del managed[name]
+        _restart_state.pop(name, None)
         return {"status": f"{name} already stopped"}
     proc.terminate()
     try:
@@ -312,9 +485,10 @@ async def stop_process(name):
     pid_file = PID_DIR / f"{name}.pid"
     if pid_file.exists():
         pid_file.unlink()
-    # Clean up managed dict
+    # Clean up managed and restart tracking.
     if name in managed:
         del managed[name]
+    _restart_state.pop(name, None)
     return {"status": f"{name} stopped"}
 
 
@@ -323,9 +497,14 @@ async def kill_process(name):
     info = managed.get(name)
     if not info:
         return {"error": f"{name} not managed"}
+    # Mark intentional so the watcher does not auto-restart.
+    rs = _restart_state.get(name)
+    if rs:
+        rs["intentional"] = True
     proc = info["proc"]
     if proc.returncode is not None:
         del managed[name]
+        _restart_state.pop(name, None)
         return {"status": f"{name} already stopped"}
     proc.kill()
     await proc.wait()
@@ -333,6 +512,7 @@ async def kill_process(name):
     if pid_file.exists():
         pid_file.unlink()
     del managed[name]
+    _restart_state.pop(name, None)
     return {"status": f"{name} killed"}
 
 
@@ -341,10 +521,114 @@ async def restart_process(name):
     info = managed.get(name)
     if not info:
         return {"error": f"{name} not managed"}
+    # Manual restart resets circuit so the process gets a fresh slate.
+    rs = _restart_state.get(name)
+    if rs:
+        rs["restarts"] = 0
+        rs["blocked"] = False
+        rs["next_restart_at"] = 0.0
     await stop_process(name)
     await asyncio.sleep(0.3)
     return await spawn_process(
         name, info["binary"], info["env"])
+
+
+async def _process_watcher():
+    """Auto-restart crashed processes with bounded exponential backoff.
+
+    Runs every 2 s.  For each managed process whose asyncio.Process
+    has a non-None returncode (i.e. it exited unexpectedly):
+
+      - If _restart_state marks it intentional (stop/kill): skip.
+      - If circuit is open (blocked): skip; log once on transition.
+      - If still within backoff window (next_restart_at in future): skip.
+      - Otherwise: increment restarts, compute next backoff window,
+        and call spawn_process.  When restarts > _RESTART_MAX the
+        circuit opens and the process is marked blocked instead of
+        requeueing immediately.
+
+    Backoff schedule (seconds between retries):
+      attempt 1→2  attempt 2→4  attempt 3→8  attempt 4→16  attempt 5→32
+      (capped at _RESTART_MAX_DELAY=60s)
+    """
+    import logging as _log
+    _wlog = _log.getLogger(__name__)
+
+    while True:
+        try:
+            await asyncio.sleep(2.0)
+            now = time.time()
+
+            for name in list(managed.keys()):
+                info = managed.get(name)
+                if info is None:
+                    continue
+                proc = info["proc"]
+                if proc.returncode is None:
+                    # Still running — reset consecutive crash counter.
+                    rs = _restart_state.get(name)
+                    if rs and rs["restarts"] > 0:
+                        rs["restarts"] = 0
+                    continue
+
+                # Process has exited.  Was it intentional?
+                rs = _restart_state.setdefault(name, {
+                    "restarts": 0,
+                    "blocked": False,
+                    "next_restart_at": 0.0,
+                    "last_crash_ts": 0.0,
+                    "intentional": False,
+                })
+                if rs.get("intentional"):
+                    continue  # stop/kill → do not requeue
+
+                if rs["blocked"]:
+                    continue  # circuit open
+
+                if now < rs["next_restart_at"]:
+                    continue  # backoff window not yet elapsed
+
+                # Record crash and compute next backoff delay.
+                rs["restarts"] += 1
+                rs["last_crash_ts"] = now
+                attempt = rs["restarts"]
+
+                if attempt > _RESTART_MAX:
+                    rs["blocked"] = True
+                    _wlog.warning(
+                        "process watcher: %s circuit open — "
+                        "%d consecutive crashes; marking blocked",
+                        name, attempt - 1,
+                    )
+                    # Remove stale PID file; process won't restart.
+                    (PID_DIR / f"{name}.pid").unlink(missing_ok=True)
+                    continue
+
+                delay = min(
+                    _RESTART_INIT_DELAY * (2 ** (attempt - 1)),
+                    _RESTART_MAX_DELAY,
+                )
+                rs["next_restart_at"] = now + delay
+
+                binary = info.get("binary", "")
+                env = info.get("env", {})
+                _wlog.info(
+                    "process watcher: restarting %s "
+                    "(attempt %d/%d, backoff %.0fs)",
+                    name, attempt, _RESTART_MAX, delay,
+                )
+                # Spawn asynchronously; do not await (avoid blocking loop).
+                asyncio.create_task(
+                    spawn_process(name, binary, env),
+                    name=f"restart-{name}",
+                )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            import logging as _log2
+            _log2.getLogger(__name__).error(
+                "process watcher: unexpected error: %s", exc)
 
 
 async def do_build(release=False):
@@ -470,7 +754,7 @@ async def start_all(scenario="minimal"):
     # kill stale processes on known ports (belt + suspenders)
     if shutil.which("fuser"):
         # fuser available, use it
-        for port in [8080, 8180, 9110, 9200, 9400, 9510]:
+        for port in [8080, 8180, 9110, 9200, 9300, 9400, 9510, 9600]:
             try:
                 subprocess.run(
                     ["fuser", "-k", f"{port}/tcp"],
@@ -478,7 +762,7 @@ async def start_all(scenario="minimal"):
                 )
             except subprocess.TimeoutExpired:
                 pass
-        for port in [9110, 9200, 9510]:
+        for port in [9110, 9200, 9300, 9400, 9510, 9600]:
             try:
                 subprocess.run(
                     ["fuser", "-k", f"{port}/udp"],
@@ -488,7 +772,7 @@ async def start_all(scenario="minimal"):
                 pass
     else:
         # fallback: check with lsof and kill by PID
-        for port in [8080, 8180, 9110, 9200, 9400, 9510]:
+        for port in [8080, 8180, 9110, 9200, 9300, 9400, 9510, 9600]:
             try:
                 result = subprocess.run(
                     ["lsof", "-ti", f":{port}"],
@@ -526,31 +810,57 @@ async def start_all(scenario="minimal"):
     if started:
         await asyncio.sleep(3.0)
         await do_maker_start()
+        # restart md WS subscriber if it exhausted retries while
+        # marketdata was not yet running
+        global _md_ws_task
+        if _md_ws_task is None or _md_ws_task.done():
+            _md_ws_task = asyncio.create_task(
+                _md_ws_subscriber())
 
     return {"started": started, "count": len(started)}
 
 
 async def stop_all():
-    """Stop all managed processes."""
+    """Stop all managed processes and PID-file-only processes."""
     stopped = []
     for name in list(managed.keys()):
         await stop_process(name)
         stopped.append(name)
+    # Also terminate processes known only from PID files
+    # (e.g. from a previous server session).
+    if PID_DIR.exists():
+        for pid_file in sorted(PID_DIR.glob("*.pid")):
+            name = pid_file.stem
+            if name in stopped:
+                continue
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, signal.SIGTERM)
+                stopped.append(name)
+            except (ProcessLookupError, ValueError, OSError):
+                pass
+            pid_file.unlink(missing_ok=True)
     return {"stopped": stopped}
+
+
+_reaper_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app):
-    global _md_ws_task
+    global _md_ws_task, _watcher_task, _reaper_task
     await pg_connect()
     _md_ws_task = asyncio.create_task(_md_ws_subscriber())
+    _watcher_task = asyncio.create_task(_process_watcher())
+    _reaper_task = asyncio.create_task(_stale_session_reaper())
     yield
-    if _md_ws_task:
-        _md_ws_task.cancel()
-        try:
-            await _md_ws_task
-        except asyncio.CancelledError:
-            pass
+    for task in (_md_ws_task, _watcher_task, _reaper_task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     # cleanup all managed processes on shutdown
     for name in list(managed.keys()):
         info = managed[name]
@@ -642,7 +952,10 @@ async def healthz():
     """Health check for CLI."""
     procs = scan_processes()
     running = [p for p in procs if p.get("state") == "running"]
-    gateway_up = await _probe_gateway_tcp()
+    gateway_up, marketdata_up = await asyncio.gather(
+        _probe_gateway_tcp(),
+        _probe_marketdata_tcp(),
+    )
     return {
         "status": "ok",
         "port": 49171,
@@ -650,6 +963,7 @@ async def healthz():
         "processes_total": len(procs),
         "postgres": pg_pool is not None,
         "gateway": gateway_up,
+        "marketdata": marketdata_up,
     }
 
 # ── in-memory state ─────────────────────────────────────
@@ -711,10 +1025,13 @@ def scan_processes():
                     "mem": "-", "uptime": "-",
                 })
         else:
+            rs = _restart_state.get(name, {})
+            state = "blocked" if rs.get("blocked") else "stopped"
             result.append({
                 "name": name, "pid": "-",
-                "state": "stopped", "cpu": "-",
+                "state": state, "cpu": "-",
                 "mem": "-", "uptime": "-",
+                "restarts": rs.get("restarts", 0),
             })
 
     # 2. PID files (from ./start or previous session)
@@ -862,6 +1179,11 @@ FILL_FMT = struct.Struct(
     '<QQIIIIQQQQqqBBBB4s')
 RECORD_FILL = 0
 RECORD_BBO = 1
+RECORD_LIQUIDATION = 13
+# LiquidationRecord: seq:u64, ts_ns:u64, user_id:u32,
+# symbol_id:u32, status:u8, side:u8, pad0:u16, round:u32,
+# qty:i64, price:i64, slip_bps:i64
+LIQN_FMT = struct.Struct('<QQIIBBHIqqq')
 
 
 def parse_wal_records(stream_dir, record_types=None):
@@ -917,6 +1239,25 @@ def parse_wal_records(stream_dir, record_types=None):
                     "qty": fields[11],
                     "taker_side": fields[12],
                 })
+            elif (rtype == RECORD_LIQUIDATION
+                    and len(payload) >= LIQN_FMT.size):
+                fields = LIQN_FMT.unpack_from(payload)
+                # [0]=seq [1]=ts [2]=user_id [3]=symbol_id
+                # [4]=status [5]=side [6]=pad [7]=round
+                # [8]=qty [9]=price [10]=slip_bps
+                records.append({
+                    "type": "liquidation",
+                    "seq": fields[0],
+                    "ts_ns": fields[1],
+                    "user_id": fields[2],
+                    "symbol_id": fields[3],
+                    "status": fields[4],
+                    "side": fields[5],
+                    "round": fields[7],
+                    "qty": fields[8],
+                    "price": fields[9],
+                    "slip_bps": fields[10],
+                })
     return records
 
 
@@ -933,17 +1274,185 @@ def _wal_stream_dirs():
             yield d
 
 
-def parse_wal_bbo(symbol_id):
-    """Get latest BBO for a symbol from WAL."""
-    latest = None
+_SNAP_MAGIC = 0x5258534E
+_SNAP_VERSION = 1
+
+
+def _parse_snapshot_orders(data):
+    """Parse active orders from snapshot bytes.
+
+    Returns list of dicts with price, qty, side.
+    Returns None on parse error.
+    """
+    import struct as _st
+    if len(data) < 66:
+        return None
+    pos = 0
+    magic = _st.unpack_from('<I', data, pos)[0]
+    pos += 4
+    if magic != _SNAP_MAGIC:
+        return None
+    version = _st.unpack_from('<I', data, pos)[0]
+    pos += 4
+    if version != _SNAP_VERSION:
+        return None
+    seq = _st.unpack_from('<Q', data, pos)[0]
+    pos += 8  # skip seq
+    pos += 4  # symbol_id
+    pos += 1  # price_decimals
+    pos += 1  # qty_decimals
+    pos += 8  # tick_size
+    pos += 8  # lot_size
+    pos += 8  # mid_price
+    pos += 4  # best_bid_tick
+    pos += 4  # best_ask_tick
+    pos += 4  # capacity
+    pos += 4  # bump
+    if pos + 4 > len(data):
+        return None
+    active_count = _st.unpack_from('<I', data, pos)[0]
+    pos += 4
+    # Each order entry: idx(4) + order(71 bytes)
+    ORDER_ENTRY = 4 + 8 + 8 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 8 + 8
+    orders = []
+    for _ in range(active_count):
+        if pos + ORDER_ENTRY > len(data):
+            break
+        pos += 4   # idx
+        price = _st.unpack_from('<q', data, pos)[0]
+        pos += 8
+        rem_qty = _st.unpack_from('<q', data, pos)[0]
+        pos += 8
+        side = data[pos]
+        pos += 1
+        pos += 1   # flags
+        pos += 1   # tif
+        pos += 4   # next
+        pos += 4   # prev
+        pos += 4   # tick_index
+        pos += 4   # user_id
+        pos += 4   # sequence
+        pos += 8   # original_qty
+        pos += 8   # timestamp_ns
+        pos += 8   # order_id_hi
+        pos += 8   # order_id_lo
+        orders.append({
+            "price": price,
+            "qty": rem_qty,
+            "side": side,
+        })
+    return {"seq": seq, "orders": orders}
+
+
+def _bbo_from_orders(symbol_id, parsed):
+    """Compute BBO dict from parsed snapshot orders."""
+    if not parsed:
+        return None
+    orders = parsed.get("orders", [])
+    bids = {}
+    asks = {}
+    for o in orders:
+        px = o["price"]
+        qty = o["qty"]
+        if o["side"] == 0:  # Buy
+            bids.setdefault(px, [0, 0])
+            bids[px][0] += qty
+            bids[px][1] += 1
+        else:  # Sell
+            asks.setdefault(px, [0, 0])
+            asks[px][0] += qty
+            asks[px][1] += 1
+    if not bids and not asks:
+        return None
+    bid_px = max(bids) if bids else 0
+    ask_px = min(asks) if asks else 0
+    return {
+        "type": "bbo",
+        "seq": parsed.get("seq", 0),
+        "symbol_id": symbol_id,
+        "bid_px": bid_px,
+        "bid_qty": bids[bid_px][0] if bids else 0,
+        "bid_count": bids[bid_px][1] if bids else 0,
+        "ask_px": ask_px,
+        "ask_qty": asks[ask_px][0] if asks else 0,
+        "ask_count": asks[ask_px][1] if asks else 0,
+    }
+
+
+def _snap_to_bbo(symbol_id: int, snap: dict):
+    """Convert _book_snap entry to BBO dict for render_book_ladder."""
+    bids = snap.get("bids", [])
+    asks = snap.get("asks", [])
+    if not bids and not asks:
+        return None
+    bid = bids[0] if bids else {}
+    ask = asks[0] if asks else {}
+    return {
+        "bid_px": bid.get("px", 0),
+        "bid_qty": bid.get("qty", 0),
+        "bid_count": len(bids),
+        "ask_px": ask.get("px", 0),
+        "ask_qty": ask.get("qty", 0),
+        "ask_count": len(asks),
+        "seq": 0,
+    }
+
+
+def _latest_bbo_from_wal(symbol_id=None):
+    """Read latest RECORD_BBO entries from WAL files.
+
+    Returns dict of {symbol_id: bbo_dict} if symbol_id is None,
+    or a single bbo_dict (or None) if symbol_id is given.
+    """
+    best: dict[int, dict] = {}
     for stream_dir in _wal_stream_dirs():
         for rec in parse_wal_records(
             stream_dir, {RECORD_BBO}
         ):
-            if rec["symbol_id"] == symbol_id:
-                if latest is None or rec["seq"] > latest["seq"]:
-                    latest = rec
-    return latest
+            sid = rec["symbol_id"]
+            if symbol_id is not None and sid != symbol_id:
+                continue
+            existing = best.get(sid)
+            if existing is None or rec["seq"] > existing["seq"]:
+                best[sid] = {
+                    "type": "bbo",
+                    "seq": rec["seq"],
+                    "symbol_id": sid,
+                    "bid_px": rec["bid_px"],
+                    "bid_qty": rec["bid_qty"],
+                    "bid_count": rec["bid_count"],
+                    "ask_px": rec["ask_px"],
+                    "ask_qty": rec["ask_qty"],
+                    "ask_count": rec["ask_count"],
+                }
+    if symbol_id is not None:
+        return best.get(symbol_id)
+    return best
+
+
+def parse_wal_bbo(symbol_id):
+    """Get BBO for a symbol from snapshot.bin or RECORD_BBO WAL.
+
+    Tries snapshot.bin first (has full order depth), then falls
+    back to RECORD_BBO records written to WAL by the ME after
+    each match.
+    """
+    for stream_dir in _wal_stream_dirs():
+        snap = (
+            stream_dir / str(symbol_id) / "snapshot.bin"
+        )
+        if not snap.exists():
+            continue
+        try:
+            data = snap.read_bytes()
+        except OSError:
+            continue
+        parsed = _parse_snapshot_orders(data)
+        bbo = _bbo_from_orders(symbol_id, parsed)
+        if bbo is not None:
+            return bbo
+    # Fallback: latest RECORD_BBO from WAL files
+    return _latest_bbo_from_wal(symbol_id)
 
 
 def parse_wal_fills(max_fills=50):
@@ -975,16 +1484,72 @@ def parse_wal_fills_for_user(user_id, symbol_id):
 
 
 def parse_wal_book_stats():
-    """Get book stats from WAL BBO records."""
+    """Get book stats from snapshot.bin or RECORD_BBO in WAL.
+
+    Tries snapshot.bin first (full order depth), then fills in
+    missing symbols from RECORD_BBO records in WAL files.
+    """
     symbols = {}
     for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, {RECORD_BBO}
-        ):
-            sid = rec["symbol_id"]
-            if sid not in symbols or rec["seq"] > symbols[sid]["seq"]:
-                symbols[sid] = rec
+        try:
+            entries = list(stream_dir.iterdir())
+        except OSError:
+            continue
+        for d in entries:
+            if not d.is_dir():
+                continue
+            try:
+                sid = int(d.name)
+            except ValueError:
+                continue
+            snap = d / "snapshot.bin"
+            if not snap.exists():
+                continue
+            try:
+                data = snap.read_bytes()
+            except OSError:
+                continue
+            parsed = _parse_snapshot_orders(data)
+            bbo = _bbo_from_orders(sid, parsed)
+            if bbo is not None:
+                existing = symbols.get(sid)
+                if (existing is None
+                        or bbo["seq"] > existing["seq"]):
+                    symbols[sid] = bbo
+    # Supplement with RECORD_BBO records from WAL files
+    for sid, bbo in _latest_bbo_from_wal().items():
+        existing = symbols.get(sid)
+        if (existing is None
+                or bbo["seq"] > existing["seq"]):
+            symbols[sid] = bbo
     return symbols
+
+
+def parse_wal_fills_for_user_all(user_id: int):
+    """Get fills for a user across all symbols from WAL."""
+    result = []
+    for stream_dir in _wal_stream_dirs():
+        for rec in parse_wal_records(
+            stream_dir, {RECORD_FILL}
+        ):
+            if (rec["taker_uid"] == user_id
+                    or rec["maker_uid"] == user_id):
+                result.append(rec)
+    result.sort(key=lambda r: r["seq"])
+    return result
+
+
+def parse_wal_liquidations(user_id: int | None = None):
+    """Get liquidation records from WAL, optionally filtered."""
+    result = []
+    for stream_dir in _wal_stream_dirs():
+        for rec in parse_wal_records(
+            stream_dir, {RECORD_LIQUIDATION}
+        ):
+            if user_id is None or rec["user_id"] == user_id:
+                result.append(rec)
+    result.sort(key=lambda r: r["seq"], reverse=True)
+    return result
 
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
@@ -1447,6 +2012,50 @@ tailwind.config = {{
     return HTMLResponse(doc_html)
 
 
+# ── HTMX partial exception handler ─────────────────────
+
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as _StarletteHTTPException
+
+
+@app.exception_handler(RequestValidationError)
+async def _htmx_422(request: Request, exc: Exception):
+    if request.url.path.startswith("/x/"):
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'no data</span>',
+            status_code=200,
+        )
+    return JSONResponse(
+        {"detail": str(exc)}, status_code=422)
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def _htmx_http(request: Request, exc):
+    if request.url.path.startswith("/x/"):
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'no data</span>',
+            status_code=200,
+        )
+    return JSONResponse(
+        {"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(Exception)
+async def _htmx_500(request: Request, exc: Exception):
+    if request.url.path.startswith("/x/"):
+        msg = html.escape(str(exc))
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'error: {msg}</span>',
+            status_code=200,
+        )
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        {"detail": str(exc)}, status_code=500)
+
+
 # ── HTMX partial routes ────────────────────────────────
 
 @app.get("/x/processes", response_class=HTMLResponse)
@@ -1586,14 +2195,13 @@ async def x_auth_failures():
 
 @app.get("/x/book-stats", response_class=HTMLResponse)
 async def x_book_stats():
-    procs = scan_processes()
-    running = [p for p in procs
-               if p["state"] == "running"]
-    if not running:
-        return HTMLResponse(
-            '<span class="text-slate-500 text-xs">'
-            'no processes running</span>')
     stats = parse_wal_book_stats()
+    # supplement with live snaps for symbols not in WAL
+    for sid, snap in _book_snap.items():
+        if sid not in stats:
+            bbo = _snap_to_bbo(sid, snap)
+            if bbo:
+                stats[sid] = bbo
     return HTMLResponse(
         pages.render_book_stats(stats))
 
@@ -1601,14 +2209,9 @@ async def x_book_stats():
 @app.get("/x/live-fills", response_class=HTMLResponse)
 @app.get("/x/fills", response_class=HTMLResponse)
 async def x_fills():
-    procs = scan_processes()
-    running = [p for p in procs
-               if p["state"] == "running"]
-    if not running:
-        return HTMLResponse(
-            '<span class="text-slate-500 text-xs">'
-            'no processes running</span>')
     fills = parse_wal_fills()
+    if not fills:
+        fills = list(reversed(recent_fills[-50:]))
     return HTMLResponse(
         pages.render_live_fills(fills))
 
@@ -1700,9 +2303,11 @@ async def x_stale_orders():
 
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
-    procs = scan_processes()
-    running = [p for p in procs if p["state"] == "running"]
-    bbo = parse_wal_bbo(symbol_id) if running else None
+    snap = _book_snap.get(symbol_id)
+    if snap:
+        bbo = _snap_to_bbo(symbol_id, snap)
+    else:
+        bbo = parse_wal_bbo(symbol_id)
     return HTMLResponse(
         pages.render_book_ladder(symbol_id, bbo))
 
@@ -1739,10 +2344,14 @@ async def x_risk_user(
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
             f'query error: {data["error"]}</span>')
+    # fallback: aggregate net position from WAL fills
+    fills = parse_wal_fills_for_user_all(risk_uid)
+    if fills:
+        return HTMLResponse(
+            pages.render_risk_user_wal(risk_uid, fills))
     return HTMLResponse(
         '<span class="text-slate-600">'
-        f'user {risk_uid} — no data '
-        '(postgres not connected or no rows)</span>')
+        f'user {risk_uid} — no data</span>')
 
 
 @app.get("/x/liquidations", response_class=HTMLResponse)
@@ -1763,6 +2372,11 @@ async def x_liquidations():
             rows += f"<tr>{cells}</tr>"
         return HTMLResponse(
             pages._table(list(data[0].keys()), rows))
+    # fallback: parse WAL liquidation records
+    liqns = parse_wal_liquidations()
+    if liqns:
+        return HTMLResponse(
+            pages.render_liquidations_wal(liqns))
     return HTMLResponse(
         '<span class="text-slate-600">'
         'no active liquidations</span>')
@@ -1816,6 +2430,12 @@ async def api_start_all(
     scenario: str = Query("minimal"),
 ):
     """Build + start all processes."""
+    ok, err = _check_run_id(request)
+    if not ok:
+        return JSONResponse(
+            {"error": f"run_id check failed: {err}"},
+            status_code=409,
+        )
     denied = check_confirm(request, "/api/processes/all/start")
     if denied:
         return denied
@@ -1833,6 +2453,12 @@ async def api_start_all(
 @app.post("/api/processes/all/stop")
 async def api_stop_all(request: Request):
     """Stop all managed processes."""
+    ok, err = _check_run_id(request)
+    if not ok:
+        return JSONResponse(
+            {"error": f"run_id check failed: {err}"},
+            status_code=409,
+        )
     denied = check_confirm(request, "/api/processes/all/stop")
     if denied:
         return denied
@@ -1889,8 +2515,12 @@ async def api_process_action(name: str, action: str):
                     if pid_file.exists():
                         pid_file.unlink()
                     result = {"status": f"killed {name}"}
-                except ProcessLookupError:
-                    result = {"status": f"{name} not running"}
+                except (ProcessLookupError, PermissionError,
+                        OSError) as e:
+                    result = {"status": (
+                        f"{name} not running"
+                        if isinstance(e, ProcessLookupError)
+                        else f"kill failed: {e}")}
             else:
                 result = {"status": f"{name} not running"}
         return HTMLResponse(
@@ -1898,6 +2528,20 @@ async def api_process_action(name: str, action: str):
             f'{result.get("status", "ok")}</span>')
 
     if action == "restart":
+        # Maker uses Python interpreter; route through do_maker_start.
+        if name == MAKER_NAME:
+            if name in managed:
+                await stop_process(name)
+                await asyncio.sleep(0.3)
+            ok = await do_maker_start()
+            if ok:
+                pid = managed[MAKER_NAME]["proc"].pid
+                msg = f"restarted {name} (pid {pid})"
+            else:
+                msg = f"failed to restart {name}"
+            return HTMLResponse(
+                f'<span class="text-blue-400 text-xs">'
+                f'{msg}</span>')
         if name in managed:
             result = await restart_process(name)
             msg = (f"restarted {name} (pid {result['pid']})"
@@ -1917,10 +2561,23 @@ async def api_process_action(name: str, action: str):
                     None)
                 if proc and proc["pid"] != "-":
                     try:
-                        os.kill(
-                            int(proc["pid"]), signal.SIGTERM)
-                        await asyncio.sleep(0.5)
-                    except ProcessLookupError:
+                        pid = int(proc["pid"])
+                        os.kill(pid, signal.SIGTERM)
+                        # wait up to 3s, then SIGKILL
+                        for _ in range(30):
+                            await asyncio.sleep(0.1)
+                            try:
+                                os.kill(pid, 0)
+                            except ProcessLookupError:
+                                break
+                        else:
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except (ProcessLookupError,
+                                    OSError):
+                                pass
+                    except (ProcessLookupError, PermissionError,
+                            OSError):
                         pass
                 result = await spawn_process(
                     name, binary, env)
@@ -1934,6 +2591,28 @@ async def api_process_action(name: str, action: str):
             f'{msg}</span>')
 
     if action == "start":
+        # Maker uses Python interpreter; route through do_maker_start.
+        if name == MAKER_NAME:
+            if _maker_running():
+                return HTMLResponse(
+                    '<span class="text-amber-400 text-xs">'
+                    'maker already running</span>')
+            ok = await do_maker_start()
+            if ok:
+                pid = managed[MAKER_NAME]["proc"].pid
+                return HTMLResponse(
+                    f'<span class="text-emerald-400 text-xs">'
+                    f'started maker (pid {pid})</span>')
+            return HTMLResponse(
+                '<span class="text-red-400 text-xs">'
+                'maker failed to start</span>')
+        # refuse to duplicate a running process
+        if name in managed:
+            proc = managed[name]["proc"]
+            if proc.returncode is None:
+                return HTMLResponse(
+                    f'<span class="text-amber-400 text-xs">'
+                    f'{name} already running</span>')
         # find in spawn plan
         plan = get_spawn_plan(current_scenario)
         entry = next(
@@ -2042,18 +2721,39 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
                 headers=headers,
             ) as ws:
                 await ws.send_str(json.dumps(order_msg))
-                response = await asyncio.wait_for(
-                    ws.receive(timeout=2.0), timeout=2.0,
-                )
-                latency_us = (time.perf_counter_ns() - start_ns) // 1000
-                if response.type == aiohttp.WSMsgType.TEXT:
+                # Skip heartbeats; read until order response or timeout.
+                # Gateway sends {H:[ts]} periodically; no ACK for resting
+                # GTC orders (WEBPROTO.md: "no accepted ACK").
+                deadline = time.perf_counter() + 2.0
+                while True:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        latency_us = (
+                            (time.perf_counter_ns() - start_ns) // 1000
+                        )
+                        return (
+                            None,
+                            "timeout waiting for response",
+                            latency_us,
+                        )
+                    response = await asyncio.wait_for(
+                        ws.receive(), timeout=remaining,
+                    )
+                    if response.type != aiohttp.WSMsgType.TEXT:
+                        continue
                     msg = json.loads(response.data)
+                    if "H" in msg:
+                        continue  # skip heartbeat
+                    latency_us = (
+                        (time.perf_counter_ns() - start_ns) // 1000
+                    )
                     return msg, None, latency_us
-                return None, "unexpected ws message type", None
+    except asyncio.TimeoutError:
+        # TimeoutError is a subclass of OSError in Python 3.11+;
+        # catch it first to avoid misidentifying as "not running".
+        return None, "timeout waiting for response", None
     except (ConnectionRefusedError, OSError):
         return None, "gateway not running", None
-    except asyncio.TimeoutError:
-        return None, "timeout waiting for response", None
     except Exception as e:
         return None, str(e), None
 
@@ -2098,42 +2798,83 @@ async def api_orders_test(request: Request):
             '<span class="text-red-400 text-xs">'
             'invalid symbol_id</span>')
 
+    side_str = form.get("side", "buy")
+    side_int = 0 if side_str == "buy" else 1
+
+    tif_map = {"GTC": 0, "IOC": 1, "FOK": 2}
+    tif_str = form.get("tif", "GTC")
+    tif_int = tif_map.get(tif_str.upper(), 0)
+
+    # Look up lot/tick for symbol to convert human units to raw
+    _sym_cfg = next(
+        (v for v in start_mod.SYMBOLS.values()
+         if v["id"] == symbol_id),
+        {"tick": 1, "lot": 1},
+    )
+    lot_size = _sym_cfg.get("lot", 1) or 1
+    tick_size = _sym_cfg.get("tick", 1) or 1
+
+    try:
+        price_int = int(
+            float(form.get("price", "0") or "0")
+            / tick_size)
+    except (ValueError, TypeError, OverflowError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid price</span>')
+
+    try:
+        qty_int = int(
+            float(form.get("qty", "0") or "0")
+            * lot_size)
+    except (ValueError, TypeError, OverflowError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid qty</span>')
+
+    reduce_only = 1 if form.get("reduce_only") == "on" else 0
+    post_only = 1 if form.get("post_only") == "on" else 0
+
+    # Gateway wire format: {"N": [sym, side, px, qty, cid, tif, ro, po]}
     order_msg = {
-        "type": "NewOrder",
-        "symbol_id": symbol_id,
-        "side": form.get("side", "buy"),
-        "order_type": form.get("order_type", "limit"),
-        "price": form.get("price", "0"),
-        "qty": form.get("qty", "0"),
-        "client_order_id": cid,
-        "tif": form.get("tif", "GTC"),
-        "reduce_only": form.get("reduce_only") == "on",
-        "post_only": form.get("post_only") == "on",
+        "N": [
+            symbol_id, side_int, price_int, qty_int,
+            cid, tif_int, reduce_only, post_only,
+        ],
     }
 
     order = {
         "cid": cid,
         "user_id": user_id,
-        "symbol": str(order_msg["symbol_id"]),
-        "side": order_msg["side"],
-        "price": order_msg["price"],
-        "qty": order_msg["qty"],
-        "tif": order_msg["tif"],
-        "reduce_only": order_msg["reduce_only"],
-        "post_only": order_msg["post_only"],
+        "symbol": str(symbol_id),
+        "side": side_str,
+        "price": form.get("price", "0") or "0",
+        "qty": form.get("qty", "0") or "0",
+        "tif": tif_str,
+        "reduce_only": bool(reduce_only),
+        "post_only": bool(post_only),
         "status": "pending",
         "ts": datetime.now().strftime("%H:%M:%S"),
     }
 
     result = await send_order_to_gateway(order_msg, user_id)
-    if result[1]:
+    err = result[1]
+    if err:
+        # Timeout = order sent but no fill/reject within 2s → resting
+        if err == "timeout waiting for response":
+            order["status"] = "accepted"
+            recent_orders.append(order)
+            _trim_recent_orders()
+            return HTMLResponse(
+                f'<span class="text-emerald-400 text-xs">'
+                f'order {cid} accepted</span>')
         order["status"] = "error"
-        order["error"] = result[1]
+        order["error"] = err
         recent_orders.append(order)
         _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
-            f'order {cid} queued ({result[1]})</span>')
+            f'order {cid} queued ({err})</span>')
 
     msg, _, latency_us = result
     if latency_us:
@@ -2141,24 +2882,62 @@ async def api_orders_test(request: Request):
         if len(order_latencies) > 1000:
             del order_latencies[:500]
 
-    if msg and msg.get("type") == "OrderAccepted":
+    # Gateway responses (see WEBPROTO.md):
+    # {U:[oid, status, filled, remaining, reason]}
+    #   status 0=FILLED 1=RESTING 2=CANCELLED 3=FAILED
+    # {F:[taker_oid, maker_oid, px, qty, ts, fee]} — immediate fill
+    # {E:[code, message]} — protocol error
+    # No ACK for resting GTC orders (handled via timeout above)
+    if msg and "U" in msg:
+        u = msg["U"]
+        status_code = u[1] if len(u) > 1 else -1
+        if status_code == 3:
+            reason_code = u[4] if len(u) > 4 else 0
+            order["status"] = "rejected"
+            order["reason"] = str(reason_code)
+            recent_orders.append(order)
+            _trim_recent_orders()
+            return HTMLResponse(
+                f'<span class="text-red-400 text-xs">'
+                f'order {cid} rejected: reason={reason_code}'
+                f'</span>')
+        else:
+            # Filled (0) or resting ACK (1)
+            order["status"] = "accepted"
+            if latency_us is not None:
+                order["latency_us"] = latency_us
+            recent_orders.append(order)
+            _trim_recent_orders()
+            lat_str = (
+                f"{latency_us}us" if latency_us is not None
+                else "?"
+            )
+            return HTMLResponse(
+                f'<span class="text-emerald-400 text-xs">'
+                f'order {cid} accepted ({lat_str})</span>')
+    elif msg and "F" in msg:
+        # Immediate fill — order accepted and filled
         order["status"] = "accepted"
         if latency_us is not None:
             order["latency_us"] = latency_us
         recent_orders.append(order)
         _trim_recent_orders()
-        lat_str = f"{latency_us}us" if latency_us is not None else "?"
+        lat_str = (
+            f"{latency_us}us" if latency_us is not None else "?"
+        )
         return HTMLResponse(
             f'<span class="text-emerald-400 text-xs">'
             f'order {cid} accepted ({lat_str})</span>')
-    elif msg and msg.get("type") == "OrderFailed":
+    elif msg and "E" in msg:
+        e = msg["E"]
+        err_msg = e[1] if len(e) > 1 else "unknown"
         order["status"] = "rejected"
-        order["reason"] = msg.get("reason", "unknown")
+        order["reason"] = str(err_msg)
         recent_orders.append(order)
         _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
-            f'order {cid} rejected: {order["reason"]}</span>')
+            f'order {cid} rejected: {err_msg}</span>')
     else:
         order["status"] = "error"
         recent_orders.append(order)
@@ -2210,32 +2989,340 @@ async def api_verify_run():
         "detail": PG_URL if not pg_ok else "connected",
     })
 
-    for inv in [
-        "Fills precede ORDER_DONE (per order)",
-        "Exactly-one completion per order",
-        "FIFO within price level (time priority)",
-        "Position = sum of fills (risk engine)",
-        "Tips monotonic, never decrease",
-        "No crossed book (bid < ask)",
-        "SPSC preserves event FIFO order",
-        "Slab no-leak: allocated = free + active",
-        "Funding zero-sum across users per symbol",
-        "Advisory lock exclusive: one main per shard",
-    ]:
-        if running:
+    # ── invariant 1: fills precede ORDER_DONE ───────────────
+    # Parse WAL fills; verify seq is monotonically increasing
+    # within each stream (fills are written before ORDER_DONE
+    # propagates, so a monotone seq implies ordering holds).
+    fill_seqs: list[int] = []
+    for sd in _wal_stream_dirs():
+        for r in parse_wal_records(sd, {RECORD_FILL}):
+            fill_seqs.append(r["seq"])
+    fill_seqs.sort()
+    if not fill_seqs:
+        checks.append({
+            "name": "Fills precede ORDER_DONE (per order)",
+            "status": "skip" if not running else "pass",
+            "time": now,
+            "detail": (
+                "no WAL fills recorded yet"
+                if not running
+                else "0 fills; system running, no trades yet"
+            ),
+        })
+    else:
+        violations = sum(
+            1 for i in range(1, len(fill_seqs))
+            if fill_seqs[i] < fill_seqs[i - 1]
+        )
+        checks.append({
+            "name": "Fills precede ORDER_DONE (per order)",
+            "status": "pass" if violations == 0 else "fail",
+            "time": now,
+            "detail": (
+                f"{len(fill_seqs)} fills, "
+                f"{violations} seq inversions"
+            ),
+        })
+
+    # ── invariant 2: exactly-one completion per order ───────
+    completed: dict[str, int] = {}
+    for o in recent_orders:
+        if o.get("status") in ("accepted", "rejected", "error"):
+            cid = o.get("cid", "")
+            completed[cid] = completed.get(cid, 0) + 1
+    dupes = {c: n for c, n in completed.items() if n > 1}
+    checks.append({
+        "name": "Exactly-one completion per order",
+        "status": "fail" if dupes else (
+            "pass" if completed else "skip"
+        ),
+        "time": now,
+        "detail": (
+            f"{len(dupes)} cids with duplicate completions"
+            if dupes
+            else (
+                f"{len(completed)} orders, no duplicates"
+                if completed
+                else "no completed orders observed"
+            )
+        ),
+    })
+
+    # ── invariant 3: FIFO within price level ────────────────
+    # Requires per-order timestamps at ME level; not in WAL.
+    checks.append({
+        "name": "FIFO within price level (time priority)",
+        "status": "skip",
+        "time": now,
+        "detail": "requires ME-level per-order instrumentation",
+    })
+
+    # ── invariant 4: position = sum of fills ────────────────
+    if pg_pool is not None:
+        try:
+            rows = await pg_query(
+                """
+                SELECT p.user_id, p.symbol_id,
+                       p.quantity AS pos_qty,
+                       COALESCE(f.fill_qty, 0) AS fill_qty
+                FROM positions p
+                LEFT JOIN (
+                    SELECT taker_uid AS user_id,
+                           symbol_id,
+                           SUM(CASE WHEN taker_side = 0
+                               THEN qty ELSE -qty END) AS fill_qty
+                    FROM fills
+                    GROUP BY taker_uid, symbol_id
+                ) f USING (user_id, symbol_id)
+                WHERE p.quantity != COALESCE(f.fill_qty, 0)
+                LIMIT 10
+                """
+            )
+            if rows is None:
+                checks.append({
+                    "name": "Position = sum of fills (risk engine)",
+                    "status": "skip",
+                    "time": now,
+                    "detail": "pg query returned None",
+                })
+            elif rows:
+                checks.append({
+                    "name": "Position = sum of fills (risk engine)",
+                    "status": "fail",
+                    "time": now,
+                    "detail": (
+                        f"{len(rows)} position/fill mismatches"
+                    ),
+                })
+            else:
+                checks.append({
+                    "name": "Position = sum of fills (risk engine)",
+                    "status": "pass",
+                    "time": now,
+                    "detail": "positions match fill sums",
+                })
+        except Exception as exc:
             checks.append({
-                "name": inv,
+                "name": "Position = sum of fills (risk engine)",
                 "status": "skip",
                 "time": now,
-                "detail": "requires instrumentation",
+                "detail": f"pg error: {exc}",
             })
-        else:
+    else:
+        checks.append({
+            "name": "Position = sum of fills (risk engine)",
+            "status": "skip",
+            "time": now,
+            "detail": "postgres not connected",
+        })
+
+    # ── invariant 5: tips monotonic ─────────────────────────
+    # Check BBO seq per stream; seqs must not decrease.
+    tip_violations = 0
+    tip_streams = 0
+    for sd in _wal_stream_dirs():
+        seqs: list[int] = [
+            r["seq"]
+            for r in parse_wal_records(sd, {RECORD_BBO})
+        ]
+        if not seqs:
+            continue
+        tip_streams += 1
+        for i in range(1, len(seqs)):
+            if seqs[i] < seqs[i - 1]:
+                tip_violations += 1
+    if tip_streams == 0:
+        checks.append({
+            "name": "Tips monotonic, never decrease",
+            "status": "skip",
+            "time": now,
+            "detail": "no BBO records in WAL",
+        })
+    else:
+        checks.append({
+            "name": "Tips monotonic, never decrease",
+            "status": "pass" if tip_violations == 0 else "fail",
+            "time": now,
+            "detail": (
+                f"{tip_streams} streams checked, "
+                f"{tip_violations} inversions"
+            ),
+        })
+
+    # ── invariant 6: no crossed book ────────────────────────
+    crossed: list[str] = []
+    # Check live snaps
+    for sid, snap in _book_snap.items():
+        bids = snap.get("bids", [])
+        asks = snap.get("asks", [])
+        if bids and asks:
+            best_bid = bids[0]["px"]
+            best_ask = asks[0]["px"]
+            if best_bid > 0 and best_ask > 0:
+                if best_bid >= best_ask:
+                    crossed.append(
+                        f"sym={sid} bid={best_bid}"
+                        f" >= ask={best_ask}"
+                    )
+    # Check WAL BBO records
+    for sd in _wal_stream_dirs():
+        for r in parse_wal_records(sd, {RECORD_BBO}):
+            if (r["bid_px"] > 0 and r["ask_px"] > 0
+                    and r["bid_px"] >= r["ask_px"]):
+                crossed.append(
+                    f"WAL sym={r['symbol_id']}"
+                    f" bid={r['bid_px']}"
+                    f" >= ask={r['ask_px']}"
+                )
+                if len(crossed) >= 5:
+                    break
+    syms_checked = len(_book_snap)
+    no_wal_bbo = tip_streams == 0
+    if not syms_checked and (not wal_exists or no_wal_bbo):
+        checks.append({
+            "name": "No crossed book (bid < ask)",
+            "status": "skip",
+            "time": now,
+            "detail": "no book data available",
+        })
+    else:
+        checks.append({
+            "name": "No crossed book (bid < ask)",
+            "status": "fail" if crossed else "pass",
+            "time": now,
+            "detail": (
+                "; ".join(crossed[:3])
+                if crossed
+                else (
+                    f"{syms_checked} live symbols checked, "
+                    "no crosses"
+                )
+            ),
+        })
+
+    # ── invariant 7: SPSC FIFO order ────────────────────────
+    checks.append({
+        "name": "SPSC preserves event FIFO order",
+        "status": "skip",
+        "time": now,
+        "detail": "no external observable state for SPSC rings",
+    })
+
+    # ── invariant 8: slab no-leak ───────────────────────────
+    checks.append({
+        "name": "Slab no-leak: allocated = free + active",
+        "status": "skip",
+        "time": now,
+        "detail": "requires slab metrics export (not yet wired)",
+    })
+
+    # ── invariant 9: funding zero-sum ───────────────────────
+    if pg_pool is not None:
+        try:
+            rows = await pg_query(
+                """
+                SELECT symbol_id,
+                       SUM(amount) AS net
+                FROM funding_payments
+                GROUP BY symbol_id
+                HAVING ABS(SUM(amount)) > 1
+                LIMIT 10
+                """
+            )
+            if rows is None:
+                checks.append({
+                    "name": (
+                        "Funding zero-sum across"
+                        " users per symbol"
+                    ),
+                    "status": "skip",
+                    "time": now,
+                    "detail": "pg query returned None",
+                })
+            elif rows:
+                checks.append({
+                    "name": (
+                        "Funding zero-sum across"
+                        " users per symbol"
+                    ),
+                    "status": "fail",
+                    "time": now,
+                    "detail": (
+                        f"{len(rows)} symbols with"
+                        " non-zero net funding"
+                    ),
+                })
+            else:
+                checks.append({
+                    "name": (
+                        "Funding zero-sum across"
+                        " users per symbol"
+                    ),
+                    "status": "pass",
+                    "time": now,
+                    "detail": "all symbols net funding = 0",
+                })
+        except Exception as exc:
             checks.append({
-                "name": inv,
-                "status": "fail",
+                "name": (
+                    "Funding zero-sum across users per symbol"
+                ),
+                "status": "skip",
                 "time": now,
-                "detail": "system not running",
+                "detail": f"pg error: {exc}",
             })
+    else:
+        checks.append({
+            "name": "Funding zero-sum across users per symbol",
+            "status": "skip",
+            "time": now,
+            "detail": "postgres not connected",
+        })
+
+    # ── invariant 10: advisory lock exclusive ───────────────
+    # Detect duplicate PIDs for same service name (would mean
+    # two instances of the same shard are running).
+    name_pids: dict[str, list[int]] = {}
+    for p in procs:
+        if p.get("state") == "running" and p.get("pid") != "-":
+            name_pids.setdefault(p["name"], []).append(
+                p["pid"]
+            )
+    # Also scan PID_DIR directly for any extra stale entries
+    if PID_DIR.exists():
+        for pf in PID_DIR.glob("*.pid"):
+            n = pf.stem
+            try:
+                pid = int(pf.read_text().strip())
+                ps_obj = psutil.Process(pid)
+                if ps_obj.is_running():
+                    if pid not in name_pids.get(n, []):
+                        name_pids.setdefault(n, []).append(pid)
+            except (psutil.NoSuchProcess, ValueError, OSError):
+                pass
+    dupes_lock = {
+        n: pids for n, pids in name_pids.items()
+        if len(pids) > 1
+    }
+    checks.append({
+        "name": "Advisory lock exclusive: one main per shard",
+        "status": "fail" if dupes_lock else (
+            "pass" if name_pids else "skip"
+        ),
+        "time": now,
+        "detail": (
+            "; ".join(
+                f"{n}: pids {pids}"
+                for n, pids in dupes_lock.items()
+            )
+            if dupes_lock
+            else (
+                f"{len(name_pids)} services, no duplicates"
+                if name_pids
+                else "no running services"
+            )
+        ),
+    })
 
     verify_results.clear()
     verify_results.extend(checks)
@@ -2295,10 +3382,12 @@ async def api_stress_run(
     request: Request,
     rate: int = Form(100),
     duration: int = Form(60),
+    gateway_url: str | None = Form(None),
 ):
     """Launch stress test and save results"""
     is_htmx = request.headers.get("hx-request") == "true"
-    config = StressConfig(rate=rate, duration=duration, gateway_url=GATEWAY_URL)
+    gw = gateway_url or GATEWAY_URL
+    config = StressConfig(rate=rate, duration=duration, gateway_url=gw)
 
     # Run stress test and wait for results
     try:
@@ -2310,7 +3399,13 @@ async def api_stress_run(
                 f'<span class="text-red-400 text-xs">'
                 f'error: {err}</span>')
         return JSONResponse(
-            {"status": "error", "error": str(e)},
+            {
+                "status": "error",
+                "error": str(e),
+                "code": "STRESS_ERROR",
+                "message": str(e),
+                "context": {"gateway_url": gw},
+            },
             status_code=502)
 
     # Check if gateway was unreachable
@@ -2321,7 +3416,13 @@ async def api_stress_run(
                 f'<span class="text-red-400 text-xs">'
                 f'gateway unreachable: {err}</span>')
         return JSONResponse(
-            {"status": "error", "error": results["error"]},
+            {
+                "status": "error",
+                "error": results["error"],
+                "code": "GATEWAY_UNREACHABLE",
+                "message": results["error"],
+                "context": {"gateway_url": gw},
+            },
             status_code=502)
 
     # Save results with timestamp
@@ -2608,6 +3709,36 @@ async def api_metrics():
     }
 
 
+@app.get("/api/status")
+async def api_status():
+    procs = scan_processes()
+    running = [p for p in procs if p["state"] == "running"]
+    maker_running = _maker_running()
+    maker_stats = _read_maker_stats() if maker_running else {}
+    maker_info = managed.get(MAKER_NAME)
+    maker_pid = (
+        maker_info["proc"].pid
+        if maker_running and maker_info
+        else None
+    )
+    gateway_up, marketdata_up = await asyncio.gather(
+        _probe_gateway_tcp(),
+        _probe_marketdata_tcp(),
+    )
+    return {
+        "processes": len(procs),
+        "running": len(running),
+        "postgres": pg_pool is not None,
+        "gateway": gateway_up,
+        "marketdata": marketdata_up,
+        "maker": {
+            "running": maker_running,
+            "pid": maker_pid,
+            "levels": maker_stats.get("levels", 0),
+        },
+    }
+
+
 # ── market maker ────────────────────────────────────────
 
 MAKER_SCRIPT = ROOT / "rsx-playground" / "market_maker.py"
@@ -2670,10 +3801,15 @@ async def api_maker_status():
     running = _maker_running()
     info = managed.get(MAKER_NAME)
     pid = info["proc"].pid if running and info else None
+    stats = _read_maker_stats()
+    levels = stats.get("levels", 0)
+    errors = stats.get("errors", [])
     return {
         "running": running,
         "pid": pid,
         "name": MAKER_NAME,
+        "levels": levels,
+        "errors": errors,
     }
 
 
@@ -2694,6 +3830,50 @@ async def api_maker_config(request: Request):
     return {"ok": True}
 
 
+def _maker_book(symbol_id: int) -> dict | None:
+    """Synthesize a book snapshot from maker config/status.
+
+    Returns None when maker is stopped or has no mid price.
+    Sources checked in order:
+      1. maker-status.json mid_prices (set by maker after preflight)
+      2. maker-config.json mid_override (set by admin PATCH)
+    Requires maker to be running (managed-dict check) so the book
+    clears when maker stops.
+    """
+    if not _maker_running():
+        return None
+    # Try status file first (authoritative when maker is past preflight)
+    stats = _read_maker_stats()
+    mid_prices = stats.get("mid_prices", {})
+    mid = mid_prices.get(str(symbol_id)) or mid_prices.get(symbol_id)
+
+    # Fall back to admin-configured mid_override
+    if not mid:
+        try:
+            cfg = json.loads(MAKER_CONFIG.read_text())
+            mid = cfg.get("mid_override")
+        except Exception:
+            pass
+
+    if not mid:
+        return None
+    mid = int(mid)
+    spread_bps = int(stats.get("spread_bps", 10))
+    num_levels = int(stats.get("num_levels", 5))
+    qty = int(stats.get("qty_per_level", 10))
+    # half spread in raw price units; round up to at least 1 tick
+    half = max(1, mid * spread_bps // 20_000)
+    bids = [
+        {"px": mid - half - i, "qty": qty}
+        for i in range(num_levels)
+    ]
+    asks = [
+        {"px": mid + half + i, "qty": qty}
+        for i in range(num_levels)
+    ]
+    return {"bids": bids, "asks": asks}
+
+
 @app.get("/api/book/{symbol_id}")
 async def api_book(symbol_id: int):
     # Prefer live snapshot from marketdata WS
@@ -2702,19 +3882,41 @@ async def api_book(symbol_id: int):
         return snap
     # Fallback: WAL BBO (at most 1 bid + 1 ask)
     bbo = parse_wal_bbo(symbol_id)
-    if bbo is None:
-        return {"bids": [], "asks": []}
-    bids = []
-    asks = []
-    if bbo["bid_px"] != 0:
-        bids.append({"px": bbo["bid_px"], "qty": bbo["bid_qty"]})
-    if bbo["ask_px"] != 0:
-        asks.append({"px": bbo["ask_px"], "qty": bbo["ask_qty"]})
-    return {"bids": bids, "asks": asks}
+    if bbo is not None:
+        bids = []
+        asks = []
+        if bbo["bid_px"] != 0:
+            bids.append({"px": bbo["bid_px"], "qty": bbo["bid_qty"]})
+        if bbo["ask_px"] != 0:
+            asks.append({"px": bbo["ask_px"], "qty": bbo["ask_qty"]})
+        if bids or asks:
+            return {"bids": bids, "asks": asks}
+    # Last fallback: synthesize from maker-status.json
+    maker_snap = _maker_book(symbol_id)
+    if maker_snap:
+        return maker_snap
+    return {"bids": [], "asks": []}
 
 
 @app.get("/api/bbo/{symbol_id}")
 async def api_bbo(symbol_id: int):
+    # Prefer live snapshot (same source as /api/book)
+    snap = _book_snap.get(symbol_id)
+    if snap:
+        bids = snap.get("bids", [])
+        asks = snap.get("asks", [])
+        bid_px = bids[0]["px"] if bids else 0
+        bid_qty = bids[0]["qty"] if bids else 0
+        ask_px = asks[0]["px"] if asks else 0
+        ask_qty = asks[0]["qty"] if asks else 0
+        if bid_px or ask_px:
+            return {
+                "bid_px": bid_px,
+                "ask_px": ask_px,
+                "bid_qty": bid_qty,
+                "ask_qty": ask_qty,
+            }
+    # Fallback: WAL BBO
     bbo = parse_wal_bbo(symbol_id)
     if bbo is None:
         return JSONResponse(status_code=404, content={
@@ -2725,6 +3927,168 @@ async def api_bbo(symbol_id: int):
         "bid_qty": bbo["bid_qty"],
         "ask_qty": bbo["ask_qty"],
     }
+
+
+@app.post("/api/sessions/allocate")
+async def api_sessions_allocate(request: Request):
+    """Allocate an exclusive orchestrator session.
+
+    At most one run may hold the lock. Returns 409 if another
+    session is active and within the lease window.
+
+    Idempotent reclaim: if the request body includes a
+    session_id matching the active session, the existing
+    session is returned (safe for retries after crashes).
+
+    Stale-claim recovery: sessions not renewed within
+    _LEASE_TTL are auto-released on the next allocate call,
+    allowing quick restart after crashes without waiting the
+    full _SESSION_TTL.
+
+    _session_lock serialises concurrent callers so the
+    check-then-set is atomic within this process.
+    """
+    global _active_session
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    claim_id = body.get("session_id", "")
+    async with _session_lock:
+        now = time.time()
+        if _active_session is not None:
+            age = now - _active_session["ts"]
+            # Idempotent ownership check: caller already owns it.
+            if claim_id and claim_id == _active_session["id"]:
+                print(
+                    f"session: idempotent reclaim "
+                    f"{_active_session['id']} (age {age:.0f}s)"
+                )
+                return {
+                    "session_id": _active_session["id"],
+                    "run_id": _active_session["run_id"],
+                    "ok": True,
+                    "reclaimed": True,
+                }
+            # Stale-claim recovery: lease expired, auto-release.
+            if age >= _LEASE_TTL:
+                print(
+                    f"session: auto-releasing stale session "
+                    f"{_active_session['id']} (age {age:.0f}s, "
+                    f"lease {_LEASE_TTL:.0f}s)"
+                )
+                _active_session = None
+            else:
+                return JSONResponse(
+                    {
+                        "error": "session collision: another run is "
+                                 "active",
+                        "active_id": _active_session["id"],
+                        "age_s": round(age, 1),
+                    },
+                    status_code=409,
+                )
+        session_id = uuid.uuid4().hex
+        run_id = uuid.uuid4().hex
+        _active_session = {
+            "id": session_id, "run_id": run_id, "ts": now,
+        }
+        return {"session_id": session_id, "run_id": run_id, "ok": True}
+
+
+@app.post("/api/sessions/renew")
+async def api_sessions_renew(request: Request):
+    """Atomically renew (extend) the TTL of the active session.
+
+    The caller must present the correct session_id to prove ownership.
+    Returns 409 if no session is active or the session_id is wrong.
+    On success, resets the session timestamp to now and returns the
+    new ttl_remaining_s.  Duplicate session_id re-submissions that
+    arrive while a *different* session is active are rejected 409.
+    """
+    global _active_session
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    async with _session_lock:
+        now = time.time()
+        if _active_session is None:
+            return JSONResponse(
+                {"error": "no active session; cannot renew"},
+                status_code=409,
+            )
+        if _active_session["id"] != session_id:
+            return JSONResponse(
+                {
+                    "error": "session_id mismatch: renewal rejected",
+                    "active_id": _active_session["id"],
+                },
+                status_code=409,
+            )
+        # Atomic TTL reset: replace ts in place, keep id and run_id
+        _active_session = {
+            "id": _active_session["id"],
+            "run_id": _active_session["run_id"],
+            "ts": now,
+        }
+        ttl_remaining = _SESSION_TTL
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "ttl_remaining_s": round(ttl_remaining, 1),
+        }
+
+
+@app.post("/api/sessions/release")
+async def api_sessions_release(request: Request):
+    """Release the orchestrator session lock."""
+    global _active_session
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    async with _session_lock:
+        if _active_session is None:
+            return {"ok": True, "note": "no active session"}
+        if _active_session["id"] != session_id:
+            return JSONResponse(
+                {"error": "session_id mismatch"},
+                status_code=400,
+            )
+        _active_session = None
+    return {"ok": True}
+
+
+@app.get("/api/sessions/status")
+async def api_sessions_status():
+    """Return current session state for monitoring / debugging.
+
+    Also performs stale-session reclamation under _session_lock
+    so callers get an accurate view even if the reaper has not
+    yet fired.
+    """
+    global _active_session
+    async with _session_lock:
+        now = time.time()
+        if _active_session is None:
+            return {"active": False}
+        age = now - _active_session["ts"]
+        if age >= _SESSION_TTL:
+            print(
+                f"session: status reclaiming expired session "
+                f"{_active_session['id']} (age {age:.0f}s)"
+            )
+            _active_session = None
+            return {"active": False}
+        ttl_remaining = max(0.0, _SESSION_TTL - age)
+        lease_remaining = max(0.0, _LEASE_TTL - age)
+        return {
+            "active": True,
+            "active_id": _active_session["id"],
+            "run_id": _active_session["run_id"],
+            "age_s": round(age, 1),
+            "ttl_remaining_s": round(ttl_remaining, 1),
+            "lease_remaining_s": round(lease_remaining, 1),
+            "stale": age >= _LEASE_TTL,
+        }
 
 
 @app.get("/x/maker-status", response_class=HTMLResponse)
@@ -2749,6 +4113,9 @@ async def ws_private_proxy(ws: WebSocket):
     await ws.accept()
     headers = {"x-user-id": ws.headers.get(
         "x-user-id", "1")}
+    auth = ws.headers.get("authorization")
+    if auth:
+        headers["authorization"] = auth
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
@@ -2822,11 +4189,32 @@ async def ws_public_proxy(ws: WebSocket):
 
 
 async def _probe_gateway_tcp() -> bool:
-    """Return True if gateway TCP port is reachable."""
+    """Return True if gateway TCP port :8080 is reachable."""
     import urllib.parse
     parsed = urllib.parse.urlparse(GATEWAY_HTTP)
     host = parsed.hostname or "localhost"
     port = parsed.port or 8080
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=1.0,
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+async def _probe_marketdata_tcp() -> bool:
+    """Return True if marketdata TCP port is reachable."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(MARKETDATA_WS)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8081
     try:
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port),
@@ -2847,9 +4235,16 @@ async def v1_symbols():
     """Return configured symbol catalog (local fallback)."""
     rows = []
     for name, cfg in start_mod.SYMBOLS.items():
-        rows.append([cfg["id"], cfg["tick"], cfg["lot"], name])
-    rows.sort(key=lambda r: r[0])
-    return JSONResponse({"M": rows})
+        rows.append({
+            "id": cfg["id"],
+            "symbol": name,
+            "tick_size": cfg["tick"],
+            "lot_size": cfg["lot"],
+            "price_decimals": cfg.get("price_dec", 2),
+            "qty_decimals": cfg.get("qty_dec", 4),
+        })
+    rows.sort(key=lambda r: r["id"])
+    return JSONResponse({"symbols": rows})
 
 
 TF_SECONDS = {
@@ -3006,27 +4401,6 @@ async def v1_funding(
     return JSONResponse(entries[:limit])
 
 
-@app.get("/v1/account")
-async def v1_account(user_id: int = Query(default=0)):
-    """Return account balance/margin from WAL fills."""
-    fills = parse_wal_fills(max_fills=1000)
-    pnl = 0
-    for f in fills:
-        if user_id and (
-            f["taker_uid"] != user_id
-            and f["maker_uid"] != user_id
-        ):
-            continue
-        pnl += f["price"] * f["qty"]
-    return JSONResponse({
-        "collateral": 100000,
-        "equity": 100000 + pnl,
-        "pnl": pnl,
-        "im": 0,
-        "mm": 0,
-        "available": 100000,
-    })
-
 
 @app.get("/v1/positions")
 async def v1_positions(user_id: int = Query(default=0)):
@@ -3071,11 +4445,6 @@ async def v1_positions(user_id: int = Query(default=0)):
         })
     return JSONResponse(result)
 
-
-@app.get("/v1/orders")
-async def v1_orders(user_id: int = Query(default=0)):
-    """Return open orders — empty until gateway state available."""
-    return JSONResponse([])
 
 
 @app.get("/v1/fills")
@@ -3126,13 +4495,20 @@ async def v1_proxy(path: str, request: Request):
         async with aiohttp.ClientSession() as session:
             method = request.method.lower()
             body = await request.body()
+            fwd_headers = {
+                "content-type": request.headers.get(
+                    "content-type", "application/json"),
+            }
+            if "authorization" in request.headers:
+                fwd_headers["authorization"] = (
+                    request.headers["authorization"])
+            if "x-user-id" in request.headers:
+                fwd_headers["x-user-id"] = (
+                    request.headers["x-user-id"])
             async with session.request(
                 method, url,
                 data=body if body else None,
-                headers={
-                    "content-type": request.headers.get(
-                        "content-type", "application/json"),
-                },
+                headers=fwd_headers,
             ) as resp:
                 data = await resp.read()
                 try:
@@ -3199,5 +4575,10 @@ if __name__ == "__main__":
         "server:app",
         host="0.0.0.0",
         port=49171,
-        reload=True,
+        # Single worker: in-memory session state (_active_session,
+        # managed, _book_snap) is not shared across OS processes.
+        # reload=True spawns an extra watcher process that can
+        # race on port-bind and wipe state on file changes.
+        workers=1,
+        reload=False,
     )

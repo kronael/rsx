@@ -1,4 +1,73 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
+
+const SYMBOL_ID = 10;
+const MAKER_MID = 50000;
+
+/**
+ * Poll fn with exponential backoff until it returns true or
+ * timeout/circuit breaker fires. fn throws on infra error,
+ * returns false when not-yet-ready.
+ * After circuitAt consecutive throws the circuit breaker re-throws.
+ */
+async function poll(
+  label: string,
+  fn: () => Promise<boolean>,
+  timeoutMs: number,
+  opts: { initMs?: number; maxMs?: number; circuitAt?: number } = {},
+): Promise<boolean> {
+  const { initMs = 500, maxMs = 2000, circuitAt = 5 } = opts;
+  const deadline = Date.now() + timeoutMs;
+  let delay = initMs;
+  let infraErrors = 0;
+
+  while (Date.now() < deadline) {
+    try {
+      if (await fn()) return true;
+      infraErrors = 0;
+    } catch (e) {
+      infraErrors++;
+      if (infraErrors >= circuitAt) {
+        throw new Error(`circuit breaker [${label}]: ${e}`);
+      }
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(delay, remaining)));
+    delay = Math.min(delay * 2, maxMs);
+  }
+
+  return false;
+}
+
+async function setupMaker(request: APIRequestContext) {
+  const patch = await request.fetch("/api/maker/config", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify({ mid_override: MAKER_MID }),
+  });
+  expect(patch.ok()).toBeTruthy();
+
+  await request.post("/api/maker/start");
+
+  const ok = await poll(
+    "setupMaker",
+    async () => {
+      const sr = await request.get("/api/maker/status");
+      const status = await sr.json();
+      if (!status.running) return false;
+      const br = await request.get(`/api/book/${SYMBOL_ID}`);
+      const book = await br.json();
+      return book.bids?.length >= 1 && book.asks?.length >= 1;
+    },
+    15_000,
+  );
+
+  if (!ok) {
+    throw new Error(
+      "maker setup timed out: running + >=1 book level each side not reached",
+    );
+  }
+}
 
 test.describe("Trade UI", () => {
   test.beforeEach(async ({ page }) => {
@@ -785,7 +854,90 @@ test.describe("Trade UI", () => {
     );
   });
 
-  // ── 13. Responsive ─────────────────────────────
+  // ── 13. Live Orderbook (with maker) ────────────
+
+  test.describe("Live Orderbook (with maker)", () => {
+    test.beforeEach(async ({ request }) => {
+      await setupMaker(request);
+    });
+
+    test(
+      "orderbook panel shows ≥1 bid row with numeric price > 0",
+      async ({ page }) => {
+        await page.goto("/trade/");
+        // Wait for at least one bid price cell to appear
+        const bidPrice = page.locator(
+          "span.text-buy",
+        ).first();
+        await expect(bidPrice).toBeVisible({ timeout: 15000 });
+        const text = (await bidPrice.textContent()) ?? "";
+        const val = parseFloat(text.replace(/,/g, ""));
+        expect(val).toBeGreaterThan(0);
+      },
+    );
+
+    test(
+      "orderbook panel shows ≥1 ask row with numeric price > 0",
+      async ({ page }) => {
+        await page.goto("/trade/");
+        // Wait for at least one ask price cell to appear
+        const askPrice = page.locator(
+          "span.text-sell",
+        ).first();
+        await expect(askPrice).toBeVisible({ timeout: 15000 });
+        const text = (await askPrice.textContent()) ?? "";
+        const val = parseFloat(text.replace(/,/g, ""));
+        expect(val).toBeGreaterThan(0);
+      },
+    );
+
+    test(
+      "spread bar shows a non-dash numeric value",
+      async ({ page }) => {
+        await page.goto("/trade/");
+        // Spread span: text-text-secondary text-2xs inside the
+        // last-price/spread row. Poll until it is not "--".
+        const spreadSpan = page.locator(
+          "span.text-text-secondary.text-2xs",
+        ).filter({ hasNotText: "--" }).first();
+        await expect(spreadSpan).toBeVisible({
+          timeout: 15000,
+        });
+        const text = (await spreadSpan.textContent()) ?? "";
+        // spread text is like "1.00 (0.00%)" — first token
+        // must be numeric
+        const first = text.trim().split(" ")[0];
+        expect(parseFloat(first.replace(/,/g, ""))).toBeGreaterThan(
+          0,
+        );
+      },
+    );
+
+    test(
+      "TopBar BBO bid and ask prices are visible and numeric",
+      async ({ page }) => {
+        await page.goto("/trade/");
+        const bboBid = page.locator("[data-testid='bbo-bid']");
+        const bboAsk = page.locator("[data-testid='bbo-ask']");
+        await expect(bboBid).not.toHaveText("--", {
+          timeout: 15000,
+        });
+        await expect(bboAsk).not.toHaveText("--", {
+          timeout: 15000,
+        });
+        const bidText = (await bboBid.textContent()) ?? "";
+        const askText = (await bboAsk.textContent()) ?? "";
+        expect(
+          parseFloat(bidText.replace(/,/g, "")),
+        ).toBeGreaterThan(0);
+        expect(
+          parseFloat(askText.replace(/,/g, "")),
+        ).toBeGreaterThan(0);
+      },
+    );
+  });
+
+  // ── 14. Responsive ─────────────────────────────
 
   test.describe("Responsive", () => {
     test("mobile viewport shows chart", async ({

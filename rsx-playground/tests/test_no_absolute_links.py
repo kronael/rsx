@@ -13,7 +13,7 @@ from server import app
 
 client = TestClient(app)
 
-# All page routes
+# All page routes (14 total)
 PAGE_ROUTES = [
     "/",
     "/overview",
@@ -28,6 +28,7 @@ PAGE_ROUTES = [
     "/orders",
     "/stress",
     "/docs",
+    "/trade/",
 ]
 
 # All HTMX partial routes
@@ -100,6 +101,15 @@ def _find_absolute_links(html: str) -> list[str]:
         if not _EXTERNAL.match(val) and not val.startswith("//"):
             hits.append(val)
     return hits
+
+
+@pytest.mark.parametrize("route", PAGE_ROUTES)
+def test_page_returns_200(route):
+    """Page routes must return HTTP 200."""
+    resp = client.get(route, follow_redirects=True)
+    assert resp.status_code == 200, (
+        f"{route} returned {resp.status_code}"
+    )
 
 
 @pytest.mark.parametrize("route", PAGE_ROUTES)

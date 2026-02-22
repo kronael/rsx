@@ -4,6 +4,7 @@ use crate::position::Position;
 use rtrb::Consumer;
 use tokio_postgres::Client;
 use tokio_postgres::Error;
+use tracing::error;
 use tracing::warn;
 
 #[derive(Clone, Debug)]
@@ -291,15 +292,29 @@ pub async fn flush_batch(
     Ok(())
 }
 
+/// Flush interval (normal path).
+const FLUSH_INTERVAL_MS: u64 = 10;
+/// Initial backoff on flush error (ms).
+const BACKOFF_INIT_MS: u64 = 100;
+/// Maximum backoff between retries (ms).
+const BACKOFF_MAX_MS: u64 = 30_000;
+/// Consecutive flush failures before circuit opens.
+const CIRCUIT_AT: u32 = 8;
+
 pub async fn run_persist_worker(
     mut consumer: Consumer<PersistEvent>,
     mut client: Client,
     shard_id: u32,
 ) {
     let mut pending = Vec::with_capacity(1024);
+    let mut consec_errors: u32 = 0;
+    let mut backoff_ms: u64 = BACKOFF_INIT_MS;
+
     loop {
         tokio::time::sleep(
-            std::time::Duration::from_millis(10),
+            std::time::Duration::from_millis(
+                FLUSH_INTERVAL_MS,
+            ),
         )
         .await;
 
@@ -313,15 +328,55 @@ pub async fn run_persist_worker(
             continue;
         }
 
-        if let Err(e) =
-            flush_batch(&mut client, shard_id, &pending)
-                .await
+        match flush_batch(
+            &mut client, shard_id, &pending,
+        )
+        .await
         {
-            warn!(
-                "persist flush error: {e}; retrying same batch"
-            );
-            continue;
+            Ok(()) => {
+                consec_errors = 0;
+                backoff_ms = BACKOFF_INIT_MS;
+                pending.clear();
+            }
+            Err(e) => {
+                consec_errors += 1;
+                if consec_errors >= CIRCUIT_AT {
+                    error!(
+                        "persist circuit open: {} consecutive \
+                         flush failures; stopping worker: {e}",
+                        consec_errors,
+                    );
+                    break;
+                }
+                // ±20% jitter on exponential backoff
+                let jitter = backoff_ms as f64
+                    * (0.8 + 0.4 * rand_jitter());
+                warn!(
+                    "persist flush error ({}/{CIRCUIT_AT}), \
+                     retry in {:.0}ms: {e}",
+                    consec_errors,
+                    jitter,
+                );
+                tokio::time::sleep(
+                    std::time::Duration::from_millis(
+                        jitter as u64,
+                    ),
+                )
+                .await;
+                backoff_ms =
+                    (backoff_ms * 2).min(BACKOFF_MAX_MS);
+            }
         }
-        pending.clear();
     }
+}
+
+/// Cheap pseudo-random float in [0, 1) using thread
+/// timestamp bits — avoids a rand dep on hot path.
+#[inline]
+fn rand_jitter() -> f64 {
+    let ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(12345);
+    (ns % 1000) as f64 / 1000.0
 }

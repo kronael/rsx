@@ -12,8 +12,11 @@ use crate::protocol::WsFrame;
 use crate::rate_limit::per_ip;
 use crate::rate_limit::per_user;
 use crate::state::GatewayState;
-use crate::ws::ws_handshake;
-use crate::ws::ws_read_frame;
+use crate::rest::handle_rest;
+use crate::ws::is_ws_upgrade;
+use crate::ws::read_http_request;
+use crate::ws::ws_handshake_from_request;
+use crate::ws::ws_read_frame_buf;
 use crate::ws::ws_write_frame;
 use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
@@ -37,8 +40,26 @@ pub async fn handle_connection(
     cmp_sender: Rc<RefCell<CmpSender>>,
     jwt_secret: &str,
 ) {
-    let user_id = match ws_handshake(
+    let (request, mut leftover) =
+        match read_http_request(&mut stream).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("read request failed: {e}");
+                return;
+            }
+        };
+    if !leftover.is_empty() {
+        info!("conn leftover {} bytes", leftover.len());
+    }
+
+    if !is_ws_upgrade(&request) {
+        handle_rest(&mut stream, &request, &state).await;
+        return;
+    }
+
+    let user_id = match ws_handshake_from_request(
         &mut stream,
+        &request,
         jwt_secret,
     )
     .await
@@ -82,21 +103,33 @@ pub async fn handle_connection(
             }
         }
 
-        // Timeout lets the loop drain outbound even when
-        // the client sends nothing (e.g. waiting for fills).
-        let read = monoio::time::timeout(
+        // Wait up to 10ms for data to be ready before
+        // reading. This avoids io_uring cancel-safety
+        // issues that corrupt the stream byte offset.
+        let ready = monoio::time::timeout(
             std::time::Duration::from_millis(10),
-            ws_read_frame(&mut stream),
+            stream.readable(false),
         )
         .await;
+        if ready.is_err() {
+            // No data ready yet; loop back to drain outbound.
+            continue;
+        }
+        if let Ok(Err(e)) = ready {
+            info!("conn {} readable error: {e}", conn_id);
+            state.borrow_mut().remove_connection(conn_id);
+            return;
+        }
 
-        let (opcode, payload) = match read {
-            Err(_elapsed) => {
-                // No frame yet; loop back to drain outbound.
-                continue;
-            }
-            Ok(Ok(f)) => f,
-            Ok(Err(e)) => {
+        // Data is available; read the frame without timeout.
+        let (opcode, payload) = match ws_read_frame_buf(
+            &mut stream,
+            &mut leftover,
+        )
+        .await
+        {
+            Ok(f) => f,
+            Err(e) => {
                 info!(
                     "conn {} closed: {e}",
                     conn_id
@@ -136,10 +169,15 @@ pub async fn handle_connection(
             continue;
         }
 
+        // Pong frames are silently ignored per RFC 6455
+        if opcode == 0xA {
+            continue;
+        }
+
         if opcode != 1 {
             info!(
-                "conn {} binary frame rejected",
-                conn_id
+                "conn {} frame rejected opcode={}",
+                conn_id, opcode
             );
             state
                 .borrow_mut()

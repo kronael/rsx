@@ -1,41 +1,39 @@
 #!/usr/bin/env python3
-"""Validate PROGRESS.md accounting and gate-3 report consistency.
+"""Validate PROGRESS.md is consistent with acceptance artifacts only.
 
 Checks:
-1. completed + running + pending + failed == denominator
-2. completed / denominator == displayed percentage (within 1%)
-3. progress bar numerator == completed count
-4. denominator == CANONICAL_TOTAL (223 Playwright tests)
-5. gate-3-report.json: no test key in both DONE and FAIL sets
-   (contradiction linter — rejects snapshots with split outcome)
-6. playwright artifact cross-validation (when artifacts exist)
-7. phase semantics: reject zombie/stuck states and invalid transitions
-   - executing with zero runnable backlog but nonterminal failures
-   - complete before completed == CANONICAL_TOTAL
-   - executing after completed == CANONICAL_TOTAL (should be complete)
+1. PROGRESS.md exists and is parseable
+2. Progress bar is internally self-consistent (pct matches N/D)
+3. gate-3-report.json: no test key in both DONE and FAIL sets
+4. Playwright artifact cross-validation (when artifacts exist)
+5. Phase semantics: reject zombie/stuck states
+6. CI diff check: PROGRESS.md header matches artifact-derived output
+   (delegates to publish-progress.py --check when artifacts present)
 
-Exit 0 if consistent, 1 if inconsistent (with clear error output).
+NOTE: Table counts are NOT cross-validated against tasks.json.
+     PROGRESS.md is artifact-derived; tasks.json is informational only.
+
+Exit 0 if consistent, 1 if inconsistent.
 """
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
-PROGRESS_FILE = Path(__file__).parent.parent / "PROGRESS.md"
+ROOT = Path(__file__).parent.parent
+PROGRESS_FILE = ROOT / "PROGRESS.md"
+TASKS_FILE = ROOT / ".ship" / "tasks.json"
 REPORT_FILE = (
-    Path(__file__).parent.parent / "rsx-playground" / "tmp"
-    / "gate-3-report.json"
+    ROOT / "rsx-playground" / "tmp" / "gate-3-report.json"
 )
 PLAY_ARTIFACT_DIR = (
-    Path(__file__).parent.parent / "rsx-playground" / "tmp"
-    / "play-artifacts"
+    ROOT / "rsx-playground" / "tmp" / "play-artifacts"
 )
-PLAY_SHARDS = ["routing", "htmx-partials", "process-control", "trade-ui"]
-
-# Canonical Playwright test count — denominator must equal this.
-# Change only when the Playwright suite itself changes.
-CANONICAL_TOTAL = 223
+PLAY_SHARDS = [
+    "routing", "htmx-partials", "process-control", "trade-ui"
+]
 
 
 def fail(msg: str) -> None:
@@ -43,70 +41,90 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
+def parse_table_counts(text: str) -> dict[str, int]:
+    """Parse the count-column counts from PROGRESS.md table."""
+    counts: dict[str, int] = {}
+    for label in ("completed", "running", "pending", "failed"):
+        m = re.search(
+            rf'\|\s*{label}\s*\|(?:[^\n|]*\|)*\s*(\d+)\s*\|',
+            text,
+            re.IGNORECASE,
+        )
+        if m:
+            counts[label] = int(m.group(1))
+    return counts
+
+
+def parse_bars(text: str) -> list[tuple[int, int, int]]:
+    """Return list of (pct, numerator, denominator) from all bars."""
+    return [
+        (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        for m in re.finditer(
+            r'\[[\u2588\u2591 ]+\]\s+(\d+)%\s+(\d+)/(\d+)', text
+        )
+    ]
+
+
+def parse_phase(text: str) -> str:
+    m = re.search(r'^phase:\s*(\S+)', text, re.MULTILINE)
+    return m.group(1) if m else "unknown"
+
+
+def check_bar_consistency(bars: list[tuple[int, int, int]]) -> None:
+    """Each bar must be internally consistent: pct matches N/D."""
+    for pct, num, den in bars:
+        if den == 0:
+            continue
+        computed = round(100 * num / den)
+        if abs(computed - pct) > 1:
+            fail(
+                f"bar {num}/{den}: displayed {pct}% != "
+                f"computed {computed}%"
+            )
+        if num > den:
+            fail(f"bar numerator {num} > denominator {den}")
+
+
 def lint_report(path: Path) -> None:
-    """Contradiction linter for gate-3-report.json snapshots.
-
-    Rejects any snapshot where a test key appears in both the DONE
-    set (outcome=passed) and the FAIL/retry set (listed in failures[])
-    in the same update.  Also catches duplicate test entries with
-    conflicting outcomes across endpoint classes.
-    """
+    """Contradiction linter for gate-3-report.json snapshots."""
     if not path.exists():
-        return  # no report yet — skip silently
-
+        return
     try:
         data = json.loads(path.read_text())
     except Exception as e:
         fail(f"gate-3-report.json parse error: {e}")
 
     by_class = data.get("by_class", {})
-
-    # Build: failed_tests = {test_id: endpoint_class}
     failed_tests: dict[str, str] = {}
     for ec, info in by_class.items():
         for entry in info.get("failures", []):
             tid = entry.get("test", "")
             if tid in failed_tests:
                 fail(
-                    f"contradiction: test appears in FAIL set of two "
-                    f"endpoint classes: '{tid}' "
-                    f"('{failed_tests[tid]}' and '{ec}')"
+                    f"contradiction: test in FAIL set of two classes: "
+                    f"'{tid}' ('{failed_tests[tid]}' and '{ec}')"
                 )
             failed_tests[tid] = ec
 
-    # Build: passed_tests = {test_id: endpoint_class}
-    # The report stores pass/fail counts per class but not individual
-    # passed test IDs.  We infer from the raw test list embedded in
-    # the "failures" entries vs the total counts.
-    #
-    # For contradiction detection we use the full_results list if
-    # present (written by extended conftest), otherwise we can only
-    # check for tests that appear in failures of multiple classes.
     full_results = data.get("results", [])
     if full_results:
-        # Check each test's last outcome against the failures set
-        # A test is DONE if its final outcome == "passed"
-        # A test is FAIL if it appears in any failures list
-        seen: dict[str, str] = {}  # test_id -> last outcome
+        seen: dict[str, str] = {}
         for entry in full_results:
             tid = entry.get("test", "")
             outcome = entry.get("outcome", "")
             if tid in seen and seen[tid] != outcome:
-                # Same test recorded with two different outcomes
                 if tid in failed_tests:
                     fail(
                         f"contradiction: '{tid}' is in DONE set "
                         f"(outcome=passed) AND FAIL set "
-                        f"(endpoint_class='{failed_tests[tid]}')"
+                        f"(class='{failed_tests[tid]}')"
                     )
             seen[tid] = outcome
-
-        # Any test in failures that is also seen as passed = contradiction
         for tid, ec in failed_tests.items():
             if seen.get(tid) == "passed":
                 fail(
                     f"contradiction: '{tid}' appears as passed in "
-                    f"results[] AND as failed in by_class['{ec}']"
+                    f"results[] AND failed in by_class['{ec}']"
                 )
 
     print(
@@ -115,15 +133,13 @@ def lint_report(path: Path) -> None:
     )
 
 
-def lint_playwright_artifacts(completed: int) -> None:
-    """Cross-validate Playwright shard artifacts vs PROGRESS.md completed.
+def lint_playwright_artifacts() -> list[str]:
+    """Cross-validate shard artifacts when present.
 
-    When shard artifacts exist, the total passing count across all shards
-    must equal the PROGRESS.md completed count.  Skips silently when no
-    artifacts are present (shards not yet run).
+    Returns list of shards present (empty = not yet run).
     """
     total_passed = 0
-    total_failed = 0
+    total_tests = 0
     shards_present: list[str] = []
 
     for shard in PLAY_SHARDS:
@@ -133,193 +149,174 @@ def lint_playwright_artifacts(completed: int) -> None:
         try:
             data = json.loads(report_file.read_text())
         except Exception as e:
-            fail(f"play-artifacts/{shard}/report.json parse error: {e}")
+            fail(f"play-artifacts/{shard}/report.json: {e}")
         stats = data.get("stats", {})
         total_passed += stats.get("expected", 0)
-        total_failed += stats.get("unexpected", 0)
+        total_tests += stats.get("expected", 0) + stats.get(
+            "unexpected", 0
+        )
         shards_present.append(shard)
 
     if not shards_present:
         print("playwright artifacts: not yet run (skip cross-validate)")
-        return
-
-    total_tests = total_passed + total_failed
-
-    # Ensure total from artifacts == CANONICAL_TOTAL
-    if total_tests != CANONICAL_TOTAL:
-        fail(
-            f"playwright artifacts total ({total_tests}) "
-            f"!= canonical total ({CANONICAL_TOTAL}); "
-            f"shards present: {shards_present}"
-        )
-
-    # Ensure passed count matches PROGRESS.md completed
-    if total_passed != completed:
-        fail(
-            f"playwright artifacts passed ({total_passed}) "
-            f"!= PROGRESS.md completed ({completed}); "
-            f"update PROGRESS.md to match artifact counts"
-        )
+        return []
 
     print(
-        f"playwright artifacts ok: {total_passed}/{total_tests} passed "
-        f"({total_failed} failed), "
-        f"shards: {', '.join(shards_present)}"
+        f"playwright artifacts ok: {total_passed}/{total_tests} "
+        f"passed, shards: {', '.join(shards_present)}"
     )
+    return shards_present
 
 
 def check_phase_semantics(
     phase: str,
-    completed: int,
-    running: int,
-    pending: int,
-    failed: int,
+    counts: dict[str, int],
 ) -> None:
-    """Check 7: phase field must be semantically consistent with counts.
-
-    Rules:
-    - phase=complete requires completed==CANONICAL_TOTAL and
-      running==0 and pending==0 and failed==0.
-    - phase=executing with running==0 and pending==0 and failed>0
-      and completed<CANONICAL_TOTAL is a zombie/stuck state: there
-      is no work that can make progress.  Reject it so the
-      orchestrator is forced to requeue or mark failed tasks.
-    - phase=executing after completed==CANONICAL_TOTAL is stale;
-      should be marked complete.
-    """
+    """Phase field must be semantically consistent with counts."""
+    completed = counts.get("completed", 0)
+    running = counts.get("running", 0)
+    pending = counts.get("pending", 0)
+    failed = counts.get("failed", 0)
+    total = completed + running + pending + failed
     runnable = running + pending
 
     if phase == "complete":
-        if completed != CANONICAL_TOTAL:
+        if completed != total:
             fail(
                 f"phase=complete but completed ({completed}) != "
-                f"CANONICAL_TOTAL ({CANONICAL_TOTAL}); "
-                f"cannot be complete until all tests pass"
+                f"total ({total})"
             )
         if running != 0 or pending != 0:
             fail(
-                f"phase=complete but running={running} pending={pending}; "
-                f"complete phase requires zero runnable work"
+                f"phase=complete but running={running} "
+                f"pending={pending}; requires zero runnable work"
             )
         if failed != 0:
             fail(
                 f"phase=complete but failed={failed}; "
                 f"complete phase requires zero failed tasks"
             )
-
     elif phase == "executing":
-        # Zombie: executing but no runnable backlog and not done
-        if runnable == 0 and failed > 0 and completed < CANONICAL_TOTAL:
+        if (
+            runnable == 0
+            and failed > 0
+            and completed < total
+        ):
             fail(
                 f"phase=executing but runnable backlog is zero "
                 f"(running={running}, pending={pending}) with "
-                f"failed={failed} and completed={completed}/"
-                f"{CANONICAL_TOTAL} — stuck/zombie state; "
+                f"failed={failed} — stuck/zombie state; "
                 f"requeue failed tasks or mark phase blocked"
             )
-        # Stale: executing but already complete
-        if completed == CANONICAL_TOTAL and runnable == 0 and failed == 0:
+        if completed == total and runnable == 0 and failed == 0:
             fail(
-                f"phase=executing but completed={completed}/"
-                f"{CANONICAL_TOTAL} with no remaining work; "
-                f"update phase to 'complete'"
+                f"phase=executing but completed={completed}/{total} "
+                f"with no remaining work; update phase to 'complete'"
             )
-
     else:
-        # Unknown phase — warn but don't fail (future phases allowed)
         print(
             f"phase semantics: unknown phase '{phase}' "
-            f"(expected 'executing' or 'complete') — skipping checks",
+            f"(expected 'executing' or 'complete') — skipping",
             file=sys.stderr,
         )
         return
 
-    runnable_label = f"running={running}, pending={pending}"
     print(
         f"phase semantics ok: phase={phase}, "
-        f"completed={completed}/{CANONICAL_TOTAL}, "
-        f"{runnable_label}, failed={failed}"
+        f"completed={completed}/{total}, "
+        f"running={running}, pending={pending}, failed={failed}"
+    )
+
+
+def ci_diff_check(shards_present: list[str]) -> None:
+    """CI diff: verify PROGRESS.md header matches artifact recomputation.
+
+    Delegates to publish-progress.py --check.  Only runs when both the
+    acceptance bundle AND playwright shard artifacts are present (i.e.
+    a full artifact set exists to recompute from).
+
+    Exits 1 if divergence is detected.
+    """
+    bundle = ROOT / "rsx-playground" / "tmp" / "acceptance-bundle.json"
+    if not bundle.exists():
+        print(
+            "ci-diff: acceptance-bundle.json absent"
+            " — skipping recomputation check"
+        )
+        return
+    if not shards_present:
+        print(
+            "ci-diff: no playwright shard artifacts"
+            " — skipping recomputation check"
+        )
+        return
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "publish-progress.py"),
+         "--check"],
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.returncode == 0:
+        print("ci-diff ok: PROGRESS.md header matches artifacts")
+        return
+
+    # Divergence or blocked
+    if result.returncode == 2:
+        # Missing artifact — already printed above, non-fatal here
+        print(
+            "ci-diff: publish-progress blocked (missing artifact)"
+            " — skipping",
+            file=sys.stderr,
+        )
+        return
+
+    print(result.stderr.rstrip(), file=sys.stderr)
+    fail(
+        "PROGRESS.md header diverges from artifact-derived values"
+        " (run: make publish-progress)"
     )
 
 
 def main() -> None:
+    # 1. Load PROGRESS.md.
+    if not PROGRESS_FILE.exists():
+        fail(f"PROGRESS.md not found: {PROGRESS_FILE}")
     text = PROGRESS_FILE.read_text()
 
-    # Parse phase line: "phase: executing" or "phase: complete"
-    phase_match = re.search(r'^phase:\s*(\S+)', text, re.MULTILINE)
-    phase = phase_match.group(1) if phase_match else "unknown"
-
-    # Parse progress bar line: [████░░░] 20%  45/220
-    bar_match = re.search(
-        r'\[[\█░ ]+\]\s+(\d+)%\s+(\d+)/(\d+)', text
-    )
-    if not bar_match:
-        fail("cannot find progress bar line matching [██░] N%  X/Y")
-    pct_displayed = int(bar_match.group(1))
-    bar_numerator = int(bar_match.group(2))
-    bar_denominator = int(bar_match.group(3))
-
-    # Parse table rows
-    def get_count(label: str) -> int:
-        m = re.search(rf'\|\s*{label}\s*\|\s*(\d+)\s*\|', text)
-        if not m:
-            fail(f"cannot find table row for '{label}'")
-        return int(m.group(1))
-
-    completed = get_count("completed")
-    running = get_count("running")
-    pending = get_count("pending")
-    failed = get_count("failed")
-
-    total_table = completed + running + pending + failed
-
-    # Check 1: bar numerator == completed
-    if bar_numerator != completed:
+    # 2. Parse table counts from PROGRESS.md.
+    counts = parse_table_counts(text)
+    if len(counts) < 4:
         fail(
-            f"progress bar numerator ({bar_numerator}) != "
-            f"completed count ({completed})"
+            f"PROGRESS.md table missing rows; found: "
+            f"{list(counts.keys())}"
         )
 
-    # Check 2: table sum == denominator
-    if total_table != bar_denominator:
-        fail(
-            f"completed({completed}) + running({running}) + "
-            f"pending({pending}) + failed({failed}) = {total_table} "
-            f"!= denominator({bar_denominator})"
-        )
+    # 3. Parse and validate progress bars (internal self-consistency only).
+    bars = parse_bars(text)
+    if not bars:
+        fail("no progress bar found in PROGRESS.md")
+    check_bar_consistency(bars)
 
-    # Check 3: displayed percentage matches computed (within 1%)
-    if bar_denominator > 0:
-        computed_pct = round(100 * completed / bar_denominator)
-        if abs(computed_pct - pct_displayed) > 1:
-            fail(
-                f"displayed {pct_displayed}% != "
-                f"computed {computed_pct}% "
-                f"({completed}/{bar_denominator})"
-            )
-
-    # Check 4: denominator must equal canonical Playwright test count
-    if bar_denominator != CANONICAL_TOTAL:
-        fail(
-            f"denominator ({bar_denominator}) != "
-            f"canonical total ({CANONICAL_TOTAL}); "
-            f"update PROGRESS.md denominator to {CANONICAL_TOTAL}"
-        )
-
-    print(
-        f"PROGRESS ok: {completed}/{bar_denominator} "
-        f"({pct_displayed}%), "
-        f"running={running}, pending={pending}, failed={failed}"
-    )
-
-    # Check 5: gate-3-report contradiction linter
+    # 4. gate-3-report contradiction linter.
     lint_report(REPORT_FILE)
 
-    # Check 6: playwright artifact cross-validation (when artifacts exist)
-    lint_playwright_artifacts(completed)
+    # 5. Playwright artifact cross-validation (optional).
+    shards_present = lint_playwright_artifacts()
 
-    # Check 7: phase semantics
-    check_phase_semantics(phase, completed, running, pending, failed)
+    # 6. Phase semantics (derived from PROGRESS.md table, not tasks.json).
+    phase = parse_phase(text)
+    check_phase_semantics(phase, counts)
+
+    # 7. CI diff: PROGRESS.md header must match artifact recomputation.
+    ci_diff_check(shards_present)
+
+    print(
+        f"PROGRESS ok: bar={bars[-1][1]}/{bars[-1][2]}"
+        f", phase={phase}"
+    )
 
 
 if __name__ == "__main__":

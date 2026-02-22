@@ -17,6 +17,7 @@ import logging
 import os
 import time
 import random
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,9 @@ class DummyMarketMaker:
         self._md_task = None
         self._running = False
         self._order_counter = 0
+        # unique 4-hex prefix per instance; prevents cid collisions
+        # across restarts and concurrent workers.
+        self._session_id = uuid.uuid4().hex[:4]
 
         # env-var mid override (set once at construction)
         _env = os.environ.get("RSX_MAKER_MID_OVERRIDE", "").strip()
@@ -90,6 +94,8 @@ class DummyMarketMaker:
             "orders_placed": self.orders_placed,
             "cancels_sent": self.cancels_sent,
             "active_orders": len(self.active_cids),
+            # levels: approx per-side depth (bid + ask cids / 2)
+            "levels": len(self.active_cids) // 2,
             "errors": self.errors[-5:],
             "spread_bps": self.spread_bps,
             "num_levels": self.num_levels,
@@ -128,6 +134,26 @@ class DummyMarketMaker:
                 self._read_marketdata()
             )
 
+    async def _cancel_all(self):
+        """Cancel all resting orders in the gateway before stopping."""
+        if not self.active_cids:
+            return
+        headers = {"x-user-id": str(self.user_id)}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(
+                    self.gateway_url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=3),
+                ) as ws:
+                    for cid in list(self.active_cids):
+                        await ws.send_str(
+                            json.dumps({"C": [cid]}))
+                        self.cancels_sent += 1
+        except Exception as e:
+            self.errors.append(f"cancel_all: {e}")
+        self.active_cids.clear()
+
     async def stop(self):
         self._running = False
         if self._md_task:
@@ -144,15 +170,25 @@ class DummyMarketMaker:
             except (asyncio.CancelledError, Exception):
                 pass
             self._task = None
-        self.active_cids.clear()
+        await self._cancel_all()
 
     def _next_cid(self):
         self._order_counter += 1
-        raw = f"mm{self._order_counter}"
+        # embed session_id so cids are unique across restarts
+        raw = f"m{self._session_id}{self._order_counter}"
         return raw[:20].ljust(20, "0")
 
     async def _read_marketdata(self):
-        """Subscribe to BBO and track mid prices."""
+        """Subscribe to BBO and track mid prices.
+
+        Reconnects with exponential backoff (1s→2s→…→16s).
+        Circuit breaker trips after 8 consecutive infra failures.
+        """
+        delay = 1.0
+        max_delay = 16.0
+        circuit_at = 8
+        consec_errors = 0
+
         while self._running:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -168,6 +204,8 @@ class DummyMarketMaker:
                                     "ch": ["BBO"],
                                 },
                             }))
+                        consec_errors = 0  # connected; reset
+                        delay = 1.0
                         async for msg in ws:
                             if not self._running:
                                 break
@@ -183,18 +221,27 @@ class DummyMarketMaker:
                                     self.mid_prices[sym] = (
                                         (bid_px + ask_px) // 2
                                     )
-            except (
-                ConnectionRefusedError,
-                OSError,
-                asyncio.CancelledError,
-            ):
-                pass
+            except asyncio.CancelledError:
+                break
+            except (ConnectionRefusedError, OSError):
+                consec_errors += 1
             except Exception as e:
+                consec_errors += 1
                 self.errors.append(f"md: {e}")
                 if len(self.errors) > 20:
                     del self.errors[:10]
+
+            if consec_errors >= circuit_at:
+                logger.warning(
+                    "marketdata circuit breaker: %d consecutive "
+                    "failures; stopping md subscription",
+                    consec_errors,
+                )
+                break
+
             if self._running:
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, max_delay)
 
     def _write_status(self):
         """Write status dict to tmp/maker-status.json."""
@@ -229,23 +276,70 @@ class DummyMarketMaker:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        # M format: [[id, tick, lot, name], ...]
-                        rows = data.get("M") or []
+                        # symbols format: [{"id", "tick_size", "lot_size"}]
+                        rows = data.get("symbols") or []
                         for row in rows:
-                            if len(row) >= 3:
-                                sid, tick, lot = (
-                                    int(row[0]), int(row[1]),
-                                    int(row[2]),
-                                )
-                                if tick:
-                                    self.tick_sizes[sid] = tick
-                                if lot:
-                                    self.lot_sizes[sid] = lot
+                            sid = int(row["id"])
+                            tick = int(row.get("tick_size", 0))
+                            lot = int(row.get("lot_size", 0))
+                            if tick:
+                                self.tick_sizes[sid] = tick
+                            if lot:
+                                self.lot_sizes[sid] = lot
         except Exception as e:
             self.errors.append(f"tick fetch: {e}")
 
+    async def _preflight(self) -> bool:
+        """Check gateway connectivity before quoting."""
+        headers = {"x-user-id": str(self.user_id)}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(
+                    self.gateway_url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=3),
+                ) as ws:
+                    # send a no-op heartbeat-ping to confirm the
+                    # connection is live, not just TCP-accepted
+                    await ws.ping()
+                    return True
+        except Exception as e:
+            self.errors.append(f"preflight: {e}")
+            if len(self.errors) > 20:
+                del self.errors[:10]
+            return False
+
     async def _run(self):
         """Main quoting loop."""
+        # preflight: wait for gateway before placing any orders.
+        # Exponential backoff 1s→2s→…→16s; circuit trips at 8
+        # consecutive failures.
+        delay = 1.0
+        preflight_errors = 0
+        preflight_circuit = 8
+        while self._running:
+            if await self._preflight():
+                break
+            preflight_errors += 1
+            if preflight_errors >= preflight_circuit:
+                logger.error(
+                    "preflight circuit breaker: %d consecutive "
+                    "failures; aborting maker",
+                    preflight_errors,
+                )
+                self._running = False
+                return
+            logger.debug(
+                "preflight failed (%d/%d); retrying in %.0fs",
+                preflight_errors,
+                preflight_circuit,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 16.0)
+        if not self._running:
+            return
+
         # fetch tick sizes from server before quoting
         await self._fetch_tick_sizes(self.gateway_url)
 
@@ -256,19 +350,36 @@ class DummyMarketMaker:
                 self.mid_prices[sid] = defaults.get(
                     sid, 50000)
 
+        # Main quoting loop: circuit trips after 10 consecutive
+        # infra errors to avoid thrashing on a broken gateway.
+        quote_errors = 0
+        quote_circuit = 10
         while self._running:
             try:
                 await self._quote_cycle()
+                quote_errors = 0  # success resets counter
             except asyncio.CancelledError:
                 break
             except (ConnectionRefusedError, OSError) as e:
+                quote_errors += 1
                 self.errors.append(f"gw: {e}")
                 if len(self.errors) > 20:
                     del self.errors[:10]
             except Exception as e:
+                quote_errors += 1
                 self.errors.append(f"run: {e}")
                 if len(self.errors) > 20:
                     del self.errors[:10]
+
+            if quote_errors >= quote_circuit:
+                logger.error(
+                    "quote circuit breaker: %d consecutive "
+                    "errors; aborting maker",
+                    quote_errors,
+                )
+                self._running = False
+                break
+
             self._write_status()
             if self._running:
                 await asyncio.sleep(self.refresh_sec)

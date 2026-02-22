@@ -402,7 +402,7 @@ def test_x_liquidations_returns_html(client):
 
 
 def test_order_flow_test_then_recent(client):
-    """Test order submission then check recent orders."""
+    """Test order submission then check recent orders table."""
     # Submit test order
     resp = client.post(
         "/api/orders/test",
@@ -414,10 +414,18 @@ def test_order_flow_test_then_recent(client):
         },
     )
     assert resp.status_code == 200
+    # CID is embedded in the response HTML
+    body = resp.text
+    assert "pg" in body or "accepted" in body or "queued" in body
 
-    # Check recent orders includes it
+    # Check recent orders table renders with data
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
+    html = resp.text
+    # Table should render (not empty state)
+    assert "<table" in html or "<tr" in html
+    # Row content should include order fields
+    assert "buy" in html or "sell" in html
 
 
 def test_verify_run_then_check_results(client):
@@ -434,21 +442,19 @@ def test_verify_run_then_check_results(client):
 
 
 def test_batch_order_flow(client):
-    """Submit batch orders and verify count increases."""
-    # Initial recent orders
-    resp = client.get("/x/recent-orders")
-    assert resp.status_code == 200
-    initial = resp.text
-
+    """Submit batch orders and verify they appear in table."""
     # Submit batch
     resp = client.post("/api/orders/batch")
     assert resp.status_code == 200
+    assert "10 batch orders" in resp.text
 
-    # Check recent orders changed
+    # Verify recent orders table shows the batch
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
-    # Content should have changed (batch added orders)
-    # We can't easily assert more here without parsing HTML
+    html = resp.text
+    assert "<table" in html or "<tr" in html
+    # Batch CIDs start with "bat-"
+    assert "bat-" in html
 
 
 def test_processes_endpoint_consistency(client):
@@ -595,3 +601,63 @@ def test_docs_has_sidebar(client):
     text = resp.text
     assert 'href="./' in text or '/docs/' in text
     assert 'sidebar' in text.lower() or 'href="./' in text
+
+
+# ── Order → WAL Timeline Flow ───────────────────────────────
+
+
+def test_wal_timeline_returns_html(client):
+    """GET /x/wal-timeline returns 200 HTML."""
+    resp = client.get("/x/wal-timeline")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_test_order_appears_in_recent_orders(client):
+    """POST /api/orders/test then verify in /x/recent-orders."""
+    resp = client.post(
+        "/api/orders/test",
+        data={
+            "symbol_id": "10",
+            "side": "buy",
+            "price": "50000",
+            "qty": "1",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.text
+    assert (
+        "accepted" in body
+        or "queued" in body
+        or "pg" in body
+    )
+
+    resp = client.get("/x/recent-orders")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "<table" in html or "<tr" in html
+    assert "buy" in html
+
+
+def test_batch_orders_appear_in_recent_orders(client):
+    """POST /api/orders/batch then verify in /x/recent-orders."""
+    resp = client.post("/api/orders/batch")
+    assert resp.status_code == 200
+    assert "10 batch orders submitted" in resp.text
+
+    resp = client.get("/x/recent-orders")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "<table" in html or "<tr" in html
+    assert "bat-" in html
+
+
+def test_wal_timeline_renders_after_orders(client):
+    """Submit orders then verify /x/wal-timeline renders HTML."""
+    client.post("/api/orders/batch")
+    resp = client.get("/x/wal-timeline")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    # Timeline page should render a table or empty-state message
+    html = resp.text
+    assert "<table" in html or "No WAL" in html or "seq" in html or html.strip()

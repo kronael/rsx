@@ -22,3 +22,6 @@
 - OrderEntry: 25/50/75/100% slider buttons (leverage-aware qty fill, active highlight) + full-width stacked Buy/Sell submit buttons
 - CI perf benchmark: Playwright bench measuring p50/p95/p99 React render latency per orderbook delta (threshold p95 < 16ms); make bench-webui
 - Orderbook side toggle (both/bids/asks), tick grouping (1x-50x), and count column already implemented; resizable bottom panel via drag handle in TradeLayout (120-600px)
+- built rsx-webui dist/index.html + assets (tsc + vite build, 71 modules, 428KB JS)
+- vite config already has base:"./" — dist/index.html asset paths are relative (./assets/*)
+- cargo build --workspace: all crates built successfully (dev profile)

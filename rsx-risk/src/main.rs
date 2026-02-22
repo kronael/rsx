@@ -1,5 +1,6 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::config::CmpConfig;
 use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::BboRecord;
 use rsx_dxs::records::FillRecord;
@@ -47,6 +48,13 @@ use std::time::Duration;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+
+/// Backoff schedule (seconds) for shard crash-restarts.
+const RESTART_BACKOFF_SECS: &[u64] = &[
+    5, 10, 20, 40, 60, 60,
+];
+/// Max consecutive crashes before the shard gives up.
+const MAX_RESTARTS: usize = 8;
 
 fn log_effective_risk_config(
     config: &rsx_risk::ShardConfig,
@@ -110,6 +118,7 @@ fn main() {
     );
     log_effective_risk_config(&config);
 
+    let mut attempts: usize = 0;
     loop {
         let result = if is_replica {
             run_replica(shard_id, max_symbols)
@@ -119,15 +128,52 @@ fn main() {
         match result {
             Ok(()) => break,
             Err(e) => {
+                attempts += 1;
+                if attempts > MAX_RESTARTS {
+                    error!(
+                        "FATAL: shard {} restart \
+                         budget exhausted ({} \
+                         attempts); last error: {e}",
+                        shard_id, attempts,
+                    );
+                    std::process::exit(1);
+                }
+                let backoff_secs = RESTART_BACKOFF_SECS
+                    [attempts
+                        .saturating_sub(1)
+                        .min(RESTART_BACKOFF_SECS.len()
+                            - 1)];
+                // ±20% jitter
+                let jitter_ms = (backoff_secs as f64
+                    * 200.0
+                    * (rand_jitter() - 0.5))
+                    as i64;
+                let sleep_ms = (backoff_secs * 1000)
+                    as i64
+                    + jitter_ms;
                 error!(
-                    "crashed: {e}, restarting in 5s"
+                    "crashed ({}/{} attempts): {e}; \
+                     restart in {sleep_ms}ms",
+                    attempts, MAX_RESTARTS,
                 );
                 std::thread::sleep(
-                    Duration::from_secs(5),
+                    Duration::from_millis(
+                        sleep_ms.max(100) as u64,
+                    ),
                 );
             }
         }
     }
+}
+
+/// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
+fn rand_jitter() -> f64 {
+    use std::time::SystemTime;
+    let ns = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(12345);
+    (ns % 1_000_003) as f64 / 1_000_003.0
 }
 
 fn run_main(
@@ -319,11 +365,18 @@ fn run_main(
     // SAFETY: fail-fast at startup
     .expect("failed to bind mark CMP receiver");
 
-    // Send validated orders to ME
-    let mut me_sender = CmpSender::new(
+    // Send validated orders to ME.
+    // Bind to a known port so ME can send NAKs back
+    // to us for reliable retransmission.
+    let me_send_bind: Option<String> =
+        env::var("RSX_RISK_ME_SEND_ADDR").ok();
+    let mut me_sender_cfg = CmpConfig::default();
+    me_sender_cfg.sender_bind_addr = me_send_bind;
+    let mut me_sender = CmpSender::with_config(
         me_addr,
         0,
         Path::new(&wal_dir),
+        &me_sender_cfg,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to create ME CMP sender");

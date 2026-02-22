@@ -54,8 +54,11 @@ impl CmpSender {
         _wal_dir: &std::path::Path,
         config: &CmpConfig,
     ) -> io::Result<Self> {
-        let socket =
-            UdpSocket::bind("0.0.0.0:0")?;
+        let bind = config
+            .sender_bind_addr
+            .as_deref()
+            .unwrap_or("0.0.0.0:0");
+        let socket = UdpSocket::bind(bind)?;
         socket.set_nonblocking(true)?;
         Ok(Self {
             socket,

@@ -248,12 +248,16 @@ fn main() {
         .parse()
         // SAFETY: fail-fast at startup
         .expect("invalid RSX_ME_CMP_ADDR");
-    let risk_addr: SocketAddr =
-        env::var("RSX_RISK_CMP_ADDR")
+    // NAK destination: risk's ME sender bind addr
+    // (RSX_RISK_ME_SEND_ADDR). Falls back to
+    // RSX_RISK_CMP_ADDR if not set (old behaviour).
+    let risk_nak_addr: SocketAddr =
+        env::var("RSX_RISK_ME_SEND_ADDR")
+            .or_else(|_| env::var("RSX_RISK_CMP_ADDR"))
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CMP_ADDR");
+            .expect("invalid NAK sender addr");
     // Risk's dedicated port for ME events (fills, BBO, etc.)
     let risk_me_recv_addr: SocketAddr =
         env::var("RSX_RISK_ME_RECV_ADDR")
@@ -262,7 +266,7 @@ fn main() {
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
     let mut cmp_receiver = CmpReceiver::new(
-        me_addr, risk_addr, symbol_id,
+        me_addr, risk_nak_addr, symbol_id,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind CMP receiver");
@@ -294,7 +298,7 @@ fn main() {
         &db_url,
         &wal_dir,
         &me_addr,
-        &risk_addr,
+        &risk_nak_addr,
         &mkt_addr,
     );
 
