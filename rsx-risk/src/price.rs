@@ -27,7 +27,7 @@ pub fn calculate_index(
     }
     ((bid_px as i128 * ask_qty as i128
         + ask_px as i128 * bid_qty as i128)
-        / total as i128) as i64
+        / total as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 impl IndexPrice {
