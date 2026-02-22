@@ -39,9 +39,11 @@ impl Position {
                     as i128
                     * close_qty as i128
                     / self.short_qty as i128)
+                    .clamp(i64::MIN as i128, i64::MAX as i128)
                     as i64;
                 self.realized_pnl += (close_cost as i128
                     - price as i128 * close_qty as i128)
+                    .clamp(i64::MIN as i128, i64::MAX as i128)
                     as i64;
                 self.short_qty -= close_qty;
                 self.short_entry_cost -= close_cost;
@@ -50,13 +52,16 @@ impl Position {
                     self.long_qty += remaining;
                     self.long_entry_cost +=
                         (price as i128 * remaining as i128)
+                            .clamp(i64::MIN as i128, i64::MAX as i128)
                             as i64;
                 }
             } else {
                 // Accumulate long
                 self.long_qty += qty;
                 self.long_entry_cost +=
-                    (price as i128 * qty as i128) as i64;
+                    (price as i128 * qty as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128)
+                        as i64;
             }
         } else {
             // Sell fill
@@ -67,10 +72,12 @@ impl Position {
                     as i128
                     * close_qty as i128
                     / self.long_qty as i128)
+                    .clamp(i64::MIN as i128, i64::MAX as i128)
                     as i64;
                 self.realized_pnl +=
                     (price as i128 * close_qty as i128
                         - close_cost as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128)
                         as i64;
                 self.long_qty -= close_qty;
                 self.long_entry_cost -= close_cost;
@@ -79,13 +86,16 @@ impl Position {
                     self.short_qty += remaining;
                     self.short_entry_cost +=
                         (price as i128 * remaining as i128)
+                            .clamp(i64::MIN as i128, i64::MAX as i128)
                             as i64;
                 }
             } else {
                 // Accumulate short
                 self.short_qty += qty;
                 self.short_entry_cost +=
-                    (price as i128 * qty as i128) as i64;
+                    (price as i128 * qty as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128)
+                        as i64;
             }
         }
         self.version += 1;
