@@ -14,6 +14,7 @@ TABS = [
     ("WAL", "./wal"),
     ("Logs", "./logs"),
     ("Control", "./control"),
+    ("Maker", "./maker"),
     ("Faults", "./faults"),
     ("Verify", "./verify"),
     ("Orders", "./orders"),
@@ -160,14 +161,53 @@ def overview_page():
         '</div>',
         header_right=(
             '<div class="flex flex-wrap gap-2 items-center">'
-            '<select id="scenario" class="bg-slate-950 '
-            'border border-slate-700 text-slate-300 '
-            'px-2 py-1 rounded text-xs">'
-            '<option value="minimal">minimal (1Z)</option>'
-            '<option value="duo">duo (2Z)</option>'
-            '<option value="full">full (3)</option>'
-            '<option value="stress">stress (M3S)</option>'
-            '</select>'
+            '<div class="flex flex-wrap gap-1" role="group">'
+            '<label class="cursor-pointer">'
+            '<input type="radio" name="scenario-ov" '
+            'id="scenario" value="minimal" '
+            'class="sr-only peer" checked>'
+            '<span class="peer-checked:bg-zinc-500 '
+            'peer-checked:text-white bg-zinc-700 '
+            'text-zinc-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-zinc-600 '
+            'transition-colors block">minimal</span>'
+            '</label>'
+            '<label class="cursor-pointer">'
+            '<input type="radio" name="scenario-ov" '
+            'value="duo" class="sr-only peer">'
+            '<span class="peer-checked:bg-zinc-500 '
+            'peer-checked:text-white bg-zinc-700 '
+            'text-zinc-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-zinc-600 '
+            'transition-colors block">duo</span>'
+            '</label>'
+            '<label class="cursor-pointer">'
+            '<input type="radio" name="scenario-ov" '
+            'value="full" class="sr-only peer">'
+            '<span class="peer-checked:bg-zinc-500 '
+            'peer-checked:text-white bg-zinc-700 '
+            'text-zinc-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-zinc-600 '
+            'transition-colors block">full</span>'
+            '</label>'
+            '<label class="cursor-pointer">'
+            '<input type="radio" name="scenario-ov" '
+            'value="stress" class="sr-only peer">'
+            '<span class="peer-checked:bg-amber-600 '
+            'peer-checked:text-white bg-zinc-700 '
+            'text-zinc-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-zinc-600 '
+            'transition-colors block">stress</span>'
+            '</label>'
+            '</div>'
+            '<script>'
+            'document.querySelectorAll('
+            '\'input[name="scenario-ov"]\')'
+            '.forEach(function(r) {'
+            'r.addEventListener(\'change\', function() {'
+            'document.getElementById(\'scenario\')'
+            '.value = this.value; });});'
+            '</script>'
             '<button class="bg-emerald-900/60 text-emerald-400 '
             'px-3 py-1 rounded text-xs border '
             'border-emerald-800 hover:bg-emerald-800 '
@@ -235,16 +275,27 @@ def overview_page():
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
+    stats = _card(
+        "Stats",
+        '<div hx-get="./x/stats" '
+        'hx-trigger="load, every 5s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
     content = f"""
 {welcome}
 {health}
 {procs}
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {metrics}
-{rings}
+{stats}
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{rings}
 {wal_status}
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {logs_tail}
 </div>
 {invariants}"""
@@ -253,53 +304,170 @@ def overview_page():
 
 # ── Screen 2: Topology ──────────────────────────────────
 
-def topology_page():
-    graph = _card(
-        "Process Graph",
-        """<pre class="text-slate-400 text-xs leading-relaxed
-  whitespace-pre">
-  [Gateway] ---CMP/UDP---> [Risk] ---CMP/UDP---> [ME-BTCUSD]
-      |                       |                         |
-      +-------UDP/CMP---------+                         |
-                                                        v
-                                               [Marketdata]
-                                                        |
-  [Recorder] <-----------------WAL/TCP-----------------+
 
-  [Mark] <-------CMP/UDP------- [ME]
-</pre>""",
+def render_topology_node(name, key, status, rate_label):
+    """Single component box with status dot and rate label."""
+    dot = (
+        "bg-emerald-400" if status == "running"
+        else "bg-red-500" if status == "stopped"
+        else "bg-zinc-600"
     )
-    affinity = _card(
-        "Core Affinity Map",
-        '<div hx-get="./x/core-affinity" '
-        'hx-trigger="load, every 5s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
+    return (
+        f'<button hx-get="./x/topology/{key}" '
+        f'hx-target="#component-detail" hx-swap="innerHTML" '
+        f'id="topo-node-{key}" '
+        f'class="component-node bg-zinc-800 border-2 '
+        f'border-zinc-600 rounded-lg p-3 '
+        f'hover:border-emerald-500 cursor-pointer text-left '
+        f'min-w-[110px] transition-colors">'
+        f'<div class="flex items-center gap-2 mb-1">'
+        f'<span id="topo-dot-{key}" '
+        f'class="w-2 h-2 rounded-full {dot} shrink-0"></span>'
+        f'<span class="text-xs font-mono font-bold '
+        f'text-slate-200">{html.escape(name)}</span>'
+        f"</div>"
+        f'<div id="topo-rate-{key}" '
+        f'class="text-xs text-zinc-400 font-mono">'
+        f"{html.escape(rate_label)}</div>"
+        f"</button>"
     )
-    cmp = _card(
-        "CMP Connections",
-        '<div hx-get="./x/cmp-flows" '
-        'hx-trigger="load, every 2s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
+
+
+def render_component_detail(component, data):
+    """Detail card for a topology component."""
+    name = data.get("name", component)
+    status = data.get("status", "unknown")
+    pid = data.get("pid", "-")
+    uptime = data.get("uptime", "-")
+    rows = data.get("rows", [])
+
+    dot = (
+        "bg-emerald-400" if status == "running"
+        else "bg-red-500" if status == "stopped"
+        else "bg-zinc-600"
     )
-    procs = _card(
-        "Process List",
-        '<div hx-get="./x/processes" '
-        'hx-trigger="load, every 2s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
+
+    rows_html = "".join(
+        f'<div class="flex justify-between gap-4 py-0.5 '
+        f'border-b border-zinc-800 last:border-0">'
+        f'<span class="text-zinc-500">'
+        f"{html.escape(str(k))}</span>"
+        f'<span class="text-zinc-200 font-mono">'
+        f"{html.escape(str(v))}</span>"
+        f"</div>"
+        for k, v in rows
     )
-    content = f"""
-{graph}
-<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-{affinity}
-{cmp}
+
+    return (
+        f'<div class="bg-zinc-900 border border-zinc-700 '
+        f'rounded-lg p-4">'
+        f'<div class="flex items-center gap-3 mb-3">'
+        f'<span class="w-2.5 h-2.5 rounded-full {dot}"></span>'
+        f'<span class="text-sm font-mono font-bold '
+        f'text-slate-200">{html.escape(name)}</span>'
+        f'<span class="text-xs text-zinc-500 ml-1">'
+        f"{html.escape(status)}</span>"
+        f'<span class="ml-auto text-xs text-zinc-500 font-mono">'
+        f"pid: {html.escape(str(pid))}"
+        f"&nbsp;&nbsp;uptime: {html.escape(str(uptime))}"
+        f"</span>"
+        f"</div>"
+        f'<div class="text-xs">{rows_html}</div>'
+        f"</div>"
+    )
+
+
+def topology_page():
+    client = render_topology_node(
+        "Clients", "client", "unknown", "WS"
+    )
+    gateway = render_topology_node(
+        "Gateway", "gateway", "unknown", "\u2014"
+    )
+    risk = render_topology_node(
+        "Risk", "risk", "unknown", "\u2014"
+    )
+    matching = render_topology_node(
+        "Matching", "matching", "unknown", "\u2014"
+    )
+    marketdata = render_topology_node(
+        "Marketdata", "marketdata", "unknown", "\u2014"
+    )
+    mark = render_topology_node(
+        "Mark", "mark", "unknown", "\u2014"
+    )
+    recorder = render_topology_node(
+        "Recorder", "recorder", "unknown", "\u2014"
+    )
+    maker = render_topology_node(
+        "Maker", "maker", "unknown", "\u2014"
+    )
+
+    diagram = f"""
+<div class="bg-zinc-950 border border-zinc-800 rounded-lg
+  p-4 overflow-x-auto"
+  hx-get="./x/topology/flow"
+  hx-trigger="load, every 2s"
+  hx-swap="none"
+  hx-on::after-request="applyTopoFlow(event)">
+
+  <div class="text-xs text-zinc-600 mb-3 uppercase
+    tracking-wider">RSX System Topology \u2014 click a node</div>
+
+  <div class="flex flex-wrap items-center gap-1 mb-3">
+    {client}
+    <span class="text-zinc-600 text-xs self-center
+      select-none px-1">&#x21C4; WS</span>
+    {gateway}
+    <span class="text-zinc-600 text-xs self-center
+      select-none px-1">&#x2192; CMP</span>
+    {risk}
+    <span class="text-zinc-600 text-xs self-center
+      select-none px-1">&#x2192; CMP</span>
+    {matching}
+    <span class="text-zinc-600 text-xs self-center
+      select-none px-1">&#x2192; WAL</span>
+    {marketdata}
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3">
+    {mark}
+    {recorder}
+    {maker}
+  </div>
 </div>
-{procs}"""
+
+<script>
+function applyTopoFlow(evt) {{
+  try {{
+    var resp = JSON.parse(evt.detail.xhr.responseText);
+    resp.nodes.forEach(function(n) {{
+      var dot = document.getElementById(
+        "topo-dot-" + n.key);
+      var rate = document.getElementById(
+        "topo-rate-" + n.key);
+      if (dot) {{
+        dot.className =
+          "w-2 h-2 rounded-full " + n.dot + " shrink-0";
+      }}
+      if (rate) rate.textContent = n.rate;
+    }});
+  }} catch (e) {{}}
+}}
+</script>"""
+
+    detail = (
+        '<div id="component-detail" '
+        'class="text-xs text-zinc-500 italic">'
+        "Click a component above to see details."
+        "</div>"
+    )
+
+    content = f"""
+<div class="space-y-3">
+  {_card("System Topology", diagram)}
+  {_card("Selected Component", detail)}
+</div>"""
     return layout("Topology", content, "./topology")
 
 
@@ -307,16 +475,48 @@ def topology_page():
 
 def book_page():
     selector = """
-<div class="flex flex-wrap items-center gap-3 mb-3">
-  <select id="book-symbol"
-    onchange="htmx.trigger('#book-data','load')"
-    class="w-full sm:w-auto bg-slate-950 border border-slate-700
-      text-slate-300 px-2 py-1 rounded text-xs">
-    <option value="10">PENGU</option>
-    <option value="3">SOL</option>
-    <option value="1">BTC</option>
-    <option value="2">ETH</option>
-  </select>
+<div class="flex flex-wrap items-center gap-1 mb-3"
+  role="group">
+  <label class="cursor-pointer">
+    <input type="radio" name="book-symbol" value="10"
+      class="sr-only peer" checked
+      onchange="htmx.trigger('#book-data','load')">
+    <span class="peer-checked:bg-blue-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-3 py-1.5 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      PENGU</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="book-symbol" value="3"
+      class="sr-only peer"
+      onchange="htmx.trigger('#book-data','load')">
+    <span class="peer-checked:bg-blue-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-3 py-1.5 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      SOL</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="book-symbol" value="1"
+      class="sr-only peer"
+      onchange="htmx.trigger('#book-data','load')">
+    <span class="peer-checked:bg-blue-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-3 py-1.5 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      BTC</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="book-symbol" value="2"
+      class="sr-only peer"
+      onchange="htmx.trigger('#book-data','load')">
+    <span class="peer-checked:bg-blue-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-3 py-1.5 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      ETH</span>
+  </label>
 </div>"""
     ladder = _card(
         "Orderbook Ladder",
@@ -324,7 +524,8 @@ def book_page():
 <div id="book-data" hx-get="./x/book"
      hx-trigger="load, every 1s" hx-swap="innerHTML"
      hx-vals="js:{{symbol_id:
-       document.getElementById('book-symbol').value}}">
+       document.querySelector(
+         'input[name=book-symbol]:checked').value}}">
   <span class="text-slate-600">loading...</span>
 </div>""",
     )
@@ -366,34 +567,12 @@ def book_page():
 # ── Screen 4: Risk ───────────────────────────────────────
 
 def risk_page():
-    heatmap = _card(
-        "Position Heatmap (users x symbols)",
-        '<div hx-get="./x/position-heatmap" '
-        'hx-trigger="load, every 2s" '
+    overview = _card(
+        "Risk Dashboard",
+        '<div id="risk-overview-wrap" '
+        'hx-get="./x/risk-overview" '
+        'hx-trigger="load, every 3s" '
         'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
-    )
-    margin = _card(
-        "Margin Ladder",
-        '<div hx-get="./x/margin-ladder" '
-        'hx-trigger="load, every 2s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
-    )
-    funding = _card(
-        "Funding",
-        '<div hx-get="./x/funding" '
-        'hx-trigger="load, every 2s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
-    )
-    liq = _card(
-        "Liquidation Queue",
-        '<div hx-get="./x/liquidations" '
-        'hx-trigger="load, every 2s" hx-swap="innerHTML">'
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
@@ -448,12 +627,7 @@ def risk_page():
 </div>"""
     actions = _card("User Actions", lookup)
     content = f"""
-{heatmap}
-{margin}
-<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-{funding}
-{liq}
-</div>
+{overview}
 {latency}
 {actions}"""
     return layout("Risk", content, "./risk")
@@ -485,16 +659,54 @@ def wal_page():
     )
     timeline = _card(
         "Timeline (last 100 events)",
-        """<div class="flex flex-wrap items-center gap-2 mb-3">
-  <select id="wal-filter"
-    class="w-full sm:w-auto bg-slate-950 border border-slate-700
-      text-slate-300 px-2 py-1 rounded text-xs">
-    <option value="">all</option>
-    <option value="ORDER_ACCEPTED">ORDER_ACCEPTED</option>
-    <option value="FILL">FILL</option>
-    <option value="MARGIN_CHECK">MARGIN_CHECK</option>
-  </select>
+        """<div class="flex flex-wrap items-center gap-1 mb-3"
+  role="group">
+  <label class="cursor-pointer">
+    <input type="radio" name="wal-filter-r" value=""
+      id="wal-filter" class="sr-only peer" checked>
+    <span class="peer-checked:bg-zinc-500
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-2 py-1 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      all</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="wal-filter-r"
+      value="ORDER_ACCEPTED" class="sr-only peer">
+    <span class="peer-checked:bg-emerald-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-2 py-1 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      ORDER_ACCEPTED</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="wal-filter-r"
+      value="FILL" class="sr-only peer">
+    <span class="peer-checked:bg-blue-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-2 py-1 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      FILL</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="wal-filter-r"
+      value="MARGIN_CHECK" class="sr-only peer">
+    <span class="peer-checked:bg-amber-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-2 py-1 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      MARGIN_CHECK</span>
+  </label>
 </div>
+<script>
+document.querySelectorAll('input[name="wal-filter-r"]')
+  .forEach(function(r) {
+    r.addEventListener('change', function() {
+      document.getElementById('wal-filter').value
+        = this.value;
+    });
+  });
+</script>
 <div class="max-h-64 overflow-y-auto"
   hx-get="./x/wal-timeline" hx-trigger="load, every 2s"
   hx-swap="innerHTML">
@@ -565,6 +777,12 @@ def logs_page():
     <button class="bg-slate-800 text-slate-400 px-3 py-1 rounded
       text-xs border border-slate-700 hover:bg-slate-700"
       onclick="clearAllFilters()">Clear All</button>
+    <button class="bg-red-900/40 text-red-400 px-3 py-1 rounded
+      text-xs border border-red-900 hover:bg-red-900"
+      hx-post="./api/logs/clear"
+      hx-target="#clear-logs-result"
+      hx-swap="innerHTML">Clear All Logs</button>
+    <span id="clear-logs-result" class="text-xs"></span>
   </div>
   <div class="hidden" id="filter-dropdowns">
     <select id="log-process" name="log-process"
@@ -915,16 +1133,105 @@ def verify_page():
 # ── Screen 10: Orders ────────────────────────────────────
 
 def orders_page():
-    form = """
-<form hx-post="./api/orders/test" hx-target="#order-result"
+    # ── quick-order matrix ─────────────────────────────
+    _buy_cls = (
+        "bg-emerald-600 hover:bg-emerald-500 "
+        "text-white border-emerald-700"
+    )
+    _sell_cls = (
+        "bg-red-600 hover:bg-red-500 "
+        "text-white border-red-700"
+    )
+    _rand_cls = (
+        "bg-violet-600 hover:bg-violet-500 "
+        "text-white border-violet-700"
+    )
+    _btn_base = (
+        "text-xs font-medium py-2 px-1 rounded border "
+        "cursor-pointer w-full min-h-[44px]"
+    )
+
+    def _qbtn(label, vals_json, color_cls):
+        return (
+            f'<button class="{color_cls} {_btn_base}" '
+            f'hx-post="./api/orders/quick" '
+            f'hx-target="#quick-result" '
+            f'hx-swap="innerHTML" '
+            f"hx-vals='{vals_json}'>"
+            f"{label}</button>"
+        )
+
+    def _mkt(label, side, qty):
+        cls = _buy_cls if side == "buy" else _sell_cls
+        return _qbtn(
+            label,
+            (
+                f'{{"side":"{side}","qty":"{qty}",'
+                f'"price_offset_pct":"0"}}'
+            ),
+            cls,
+        )
+
+    def _lmt(label, side, qty, pct):
+        cls = _buy_cls if side == "buy" else _sell_cls
+        return _qbtn(
+            label,
+            (
+                f'{{"side":"{side}","qty":"{qty}",'
+                f'"price_offset_pct":"{pct}"}}'
+            ),
+            cls,
+        )
+
+    matrix_btns = [
+        _mkt("Buy 1 @ Mkt", "buy", "1"),
+        _mkt("Buy 5 @ Mkt", "buy", "5"),
+        _mkt("Buy 10 @ Mkt", "buy", "10"),
+        _mkt("Sell 1 @ Mkt", "sell", "1"),
+        _mkt("Sell 5 @ Mkt", "sell", "5"),
+        _mkt("Sell 10 @ Mkt", "sell", "10"),
+        _lmt("Buy 1 @ +1%", "buy", "1", "1"),
+        _lmt("Buy 5 @ +1%", "buy", "5", "1"),
+        _lmt("Sell 1 @ -1%", "sell", "1", "-1"),
+        _lmt("Sell 5 @ -1%", "sell", "5", "-1"),
+        _qbtn(
+            "\U0001f3b2 Random",
+            '{"randomize":"true"}',
+            _rand_cls,
+        ),
+        _qbtn(
+            "\U0001f3b2 Rand Side",
+            '{"rand_side":"true","qty":"5"}',
+            _rand_cls,
+        ),
+    ]
+    matrix_html = (
+        '<div class="grid grid-cols-3 gap-2 mb-2">'
+        + "".join(matrix_btns)
+        + "</div>"
+        + '<div id="quick-result" '
+        + 'class="text-xs min-h-[20px] mb-3"></div>'
+    )
+
+    custom_form = """<details class="group">
+  <summary class="cursor-pointer text-xs text-slate-400
+    hover:text-slate-200 select-none py-1 mb-2
+    list-none flex items-center gap-1">
+    <span class="group-open:hidden">&#9654; Custom Order</span>
+    <span class="hidden group-open:inline"
+      >&#9660; Custom Order</span>
+  </summary>
+<form hx-post="./api/orders/test"
+      hx-target="#order-result"
       hx-swap="innerHTML"
       class="flex flex-wrap gap-3 items-end mb-3">
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">Symbol</label>
     <select name="symbol_id"
-      class="w-full sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
+      class="w-full sm:w-auto bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
       <option value="10">PENGU</option>
       <option value="3">SOL</option>
       <option value="1">BTC</option>
@@ -934,98 +1241,127 @@ def orders_page():
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">Side</label>
-    <select name="side"
-      class="w-full sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
-      <option value="buy">BUY</option>
-      <option value="sell">SELL</option>
-    </select>
-  </div>
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Type</label>
-    <select name="order_type"
-      class="w-full sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
-      <option value="limit">LIMIT</option>
-      <option value="market">MARKET</option>
-      <option value="post_only">POST_ONLY</option>
-    </select>
+    <div class="flex gap-1 flex-wrap" role="group">
+      <label class="cursor-pointer">
+        <input type="radio" name="side" value="buy"
+          class="sr-only peer" checked>
+        <span class="peer-checked:bg-emerald-600
+          peer-checked:text-white bg-zinc-700
+          text-zinc-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-zinc-600
+          transition-colors block">Buy</span>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="side" value="sell"
+          class="sr-only peer">
+        <span class="peer-checked:bg-red-600
+          peer-checked:text-white bg-zinc-700
+          text-zinc-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-zinc-600
+          transition-colors block">Sell</span>
+      </label>
+    </div>
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">Price</label>
-    <input type="text" name="price" value="50000"
-      class="w-full sm:w-24 bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
+    <input type="text" name="price" value="0"
+      placeholder="0 = market"
+      class="w-full sm:w-28 bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">Qty</label>
     <input type="text" name="qty" value="1.0"
-      class="w-full sm:w-20 bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
+      class="w-full sm:w-20 bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">TIF</label>
-    <select name="tif"
-      class="w-full sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
-      <option value="GTC">GTC</option>
-      <option value="IOC">IOC</option>
-      <option value="FOK">FOK</option>
-    </select>
+    <div class="flex gap-1 flex-wrap" role="group">
+      <label class="cursor-pointer">
+        <input type="radio" name="tif" value="GTC"
+          class="sr-only peer" checked>
+        <span class="peer-checked:bg-blue-600
+          peer-checked:text-white bg-zinc-700
+          text-zinc-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-zinc-600
+          transition-colors block">GTC</span>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="tif" value="IOC"
+          class="sr-only peer">
+        <span class="peer-checked:bg-amber-600
+          peer-checked:text-white bg-zinc-700
+          text-zinc-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-zinc-600
+          transition-colors block">IOC</span>
+      </label>
+    </div>
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">User ID</label>
     <input type="number" name="user_id" value="1"
-      class="w-full sm:w-20 bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
+      class="w-full sm:w-20 bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
   </div>
-  <div class="flex items-end gap-3">
-    <label class="text-[10px] text-slate-500 flex items-center
-      gap-1 cursor-pointer">
+  <div class="flex items-center gap-3">
+    <label class="cursor-pointer flex items-center gap-2
+      min-h-[44px]">
       <input type="checkbox" name="reduce_only"
-        class="accent-blue-500"> RO</label>
-    <label class="text-[10px] text-slate-500 flex items-center
-      gap-1 cursor-pointer">
-      <input type="checkbox" name="post_only"
-        class="accent-blue-500"> PO</label>
+        class="sr-only peer">
+      <div class="w-8 h-4 bg-zinc-600 rounded-full
+        peer-checked:bg-emerald-500 relative
+        after:absolute after:top-0.5 after:left-0.5
+        after:w-3 after:h-3 after:bg-white
+        after:rounded-full after:transition-all
+        peer-checked:after:translate-x-4"></div>
+      <span class="text-xs text-zinc-300">Reduce Only</span>
+    </label>
   </div>
   <button type="submit"
-    class="w-full sm:w-auto bg-emerald-900/60 text-emerald-400
-      px-3 py-1 rounded text-xs border border-emerald-800
-      hover:bg-emerald-800 cursor-pointer">Submit</button>
+    class="w-full sm:w-auto bg-emerald-900/60
+      text-emerald-400 px-4 py-2 rounded text-xs
+      border border-emerald-800 hover:bg-emerald-800
+      cursor-pointer min-h-[44px]">Submit</button>
 </form>
 <div class="flex flex-wrap gap-2 mb-3">
   <button class="bg-slate-800 text-slate-400
-    px-3 py-1 rounded text-xs border border-slate-700
+    px-3 py-1.5 rounded text-xs border border-slate-700
     hover:bg-slate-700 cursor-pointer"
     hx-post="./api/orders/batch"
     hx-target="#order-result"
     hx-swap="innerHTML">Batch (10)</button>
   <button class="bg-slate-800 text-slate-400
-    px-3 py-1 rounded text-xs border border-slate-700
+    px-3 py-1.5 rounded text-xs border border-slate-700
     hover:bg-slate-700 cursor-pointer"
     hx-post="./api/orders/random"
     hx-target="#order-result"
     hx-swap="innerHTML">Random (5)</button>
   <button class="bg-amber-900/40 text-amber-400
-    px-3 py-1 rounded text-xs border border-amber-900
+    px-3 py-1.5 rounded text-xs border border-amber-900
     hover:bg-amber-900 cursor-pointer"
     hx-post="./api/stress/run"
     hx-target="#order-result"
     hx-swap="innerHTML">Stress (100)</button>
   <button class="bg-slate-800 text-slate-400
-    px-3 py-1 rounded text-xs border border-slate-700
+    px-3 py-1.5 rounded text-xs border border-slate-700
     hover:bg-slate-700 cursor-pointer"
     hx-post="./api/orders/invalid"
     hx-target="#order-result"
     hx-swap="innerHTML">Invalid</button>
 </div>
-<div id="order-result"></div>"""
+<div id="order-result"></div>
+</details>"""
+
+    form = matrix_html + custom_form
+
     lifecycle = _card(
         "Order Lifecycle Trace",
         """<div class="flex flex-wrap items-center gap-2 mb-3">
@@ -1278,6 +1614,7 @@ def render_process_table(processes):
                 'no processes found — click '
                 '"Build &amp; Start All" above</span>')
     rows = ""
+    cards = ""
     for p in processes:
         name = p["name"]
         state = p.get("state", "unknown")
@@ -1307,10 +1644,28 @@ def render_process_table(processes):
             f'<td {_TD}>{state}</td>'
             f'<td {_TD}>{actions}</td></tr>'
         )
-    return _table(
+        cards += (
+            f'<div class="border border-slate-800 rounded'
+            f' px-3 py-2 flex items-center'
+            f' justify-between gap-2">'
+            f'<div class="flex items-center gap-2 min-w-0">'
+            f'{_dot(state)}'
+            f'<span class="text-xs font-mono">{name}</span>'
+            f'<span class="text-[10px] text-slate-500'
+            f'">{state}</span>'
+            f'</div>'
+            f'<div class="flex gap-1 flex-shrink-0">'
+            f'{actions}</div>'
+            f'</div>'
+        )
+    table_html = _table(
         ["", "Name", "PID", "CPU%", "Mem",
          "Uptime", "State", "Actions"],
         rows,
+    )
+    return (
+        f'<div class="hidden sm:block">{table_html}</div>'
+        f'<div class="sm:hidden space-y-1">{cards}</div>'
     )
 
 
@@ -1368,6 +1723,7 @@ def render_control_grid(processes):
         return ('<span class="text-slate-600">'
                 'no processes found</span>')
     rows = ""
+    cards = ""
     for p in processes:
         name = p["name"]
         state = p.get("state", "unknown")
@@ -1398,9 +1754,27 @@ def render_control_grid(processes):
             f'<td {_TD}>{p.get("uptime", "-")}</td>'
             f'<td {_TD}>{actions}</td></tr>'
         )
-    return _table(
+        cards += (
+            f'<div class="border border-slate-800 rounded'
+            f' px-3 py-2 flex items-center'
+            f' justify-between gap-2">'
+            f'<div class="flex items-center gap-2 min-w-0">'
+            f'{_dot(state)}'
+            f'<span class="text-xs font-mono">{name}</span>'
+            f'<span class="text-[10px] text-slate-500">'
+            f'{p.get("pid", "-")}</span>'
+            f'</div>'
+            f'<div class="flex flex-wrap gap-1 flex-shrink-0">'
+            f'{actions}</div>'
+            f'</div>'
+        )
+    table_html = _table(
         ["", "Name", "State", "PID", "Uptime", "Actions"],
         rows,
+    )
+    return (
+        f'<div class="hidden sm:block">{table_html}</div>'
+        f'<div class="sm:hidden space-y-1">{cards}</div>'
     )
 
 
@@ -1408,7 +1782,7 @@ def render_resource_usage(processes):
     if not processes:
         return ('<span class="text-slate-600">'
                 'no processes found</span>')
-    html = '<div class="space-y-3">'
+    rows = ""
     for p in processes:
         if p.get("state") != "running":
             continue
@@ -1418,7 +1792,7 @@ def render_resource_usage(processes):
         except ValueError:
             cpu = 0
         mem = p.get("mem", "-")
-        html += (
+        rows += (
             f'<div>'
             f'<div class="flex items-center gap-3 mb-1">'
             f'<span class="text-xs w-24">{p["name"]}</span>'
@@ -1429,8 +1803,10 @@ def render_resource_usage(processes):
             f'w-16">Mem {mem}</span>'
             f'</div></div>'
         )
-    html += '</div>'
-    return html
+    if not rows:
+        return ('<span class="text-slate-600">'
+                'no running processes</span>')
+    return f'<div class="space-y-3">{rows}</div>'
 
 
 # ── Faults grid ──────────────────────────────────────────
@@ -1440,6 +1816,7 @@ def render_faults_grid(processes):
         return ('<span class="text-slate-600">'
                 'no processes found</span>')
     rows = ""
+    cards = ""
     for p in processes:
         name = p["name"]
         state = p.get("state", "unknown")
@@ -1465,8 +1842,26 @@ def render_faults_grid(processes):
             f'<td {_TD}>{p.get("pid", "-")}</td>'
             f'<td {_TD}>{actions}</td></tr>'
         )
-    return _table(
+        cards += (
+            f'<div class="border border-slate-800 rounded'
+            f' px-3 py-2 flex items-center'
+            f' justify-between gap-2">'
+            f'<div class="flex items-center gap-2 min-w-0">'
+            f'{_dot(state)}'
+            f'<span class="text-xs font-mono">{name}</span>'
+            f'<span class="text-[10px] text-slate-500">'
+            f'{state}</span>'
+            f'</div>'
+            f'<div class="flex flex-wrap gap-1 flex-shrink-0">'
+            f'{actions}</div>'
+            f'</div>'
+        )
+    table_html = _table(
         ["", "Name", "State", "PID", "Actions"], rows,
+    )
+    return (
+        f'<div class="hidden sm:block">{table_html}</div>'
+        f'<div class="sm:hidden space-y-1">{cards}</div>'
     )
 
 
@@ -1978,6 +2373,408 @@ def render_liquidations_wal(records: list):
     )
 
 
+# ── Risk dashboard panels ─────────────────────────────────
+
+def _pct_bar(pct, color="blue"):
+    """Horizontal percentage bar, 0-100."""
+    clamped = max(0, min(100, pct))
+    bar_cls = {
+        "blue": "bg-blue-600",
+        "amber": "bg-amber-500",
+        "red": "bg-red-600",
+        "emerald": "bg-emerald-600",
+    }.get(color, "bg-blue-600")
+    return (
+        f'<div class="w-full bg-slate-800 rounded h-1.5">'
+        f'<div class="{bar_cls} h-1.5 rounded"'
+        f' style="width:{clamped:.1f}%"></div></div>'
+        f'<span class="text-[10px] text-slate-500">'
+        f'{clamped:.0f}%</span>'
+    )
+
+
+def _margin_gauge(ratio):
+    """Colored margin ratio label + mini bar."""
+    if ratio >= 999:
+        return (
+            '<span class="text-slate-500 font-mono">n/a</span>'
+        )
+    color = (
+        "text-emerald-400" if ratio >= 2.0
+        else "text-amber-400" if ratio >= 1.2
+        else "text-red-400"
+    )
+    bar_color = (
+        "emerald" if ratio >= 2.0
+        else "amber" if ratio >= 1.2
+        else "red"
+    )
+    bar_pct = min(100, ratio * 20)
+    return (
+        f'<span class="{color} font-mono">{ratio:.2f}x</span>'
+        + _pct_bar(bar_pct, bar_color)
+    )
+
+
+def render_risk_overview(data, funding_data,
+                         liq_data, insurance_data):
+    """Render all 7 risk dashboard panels."""
+    sim = data.get("simulated", True)
+    sim_tag = (
+        '<span class="text-[10px] text-slate-600 ml-1">'
+        '(simulated)</span>'
+        if sim else ''
+    )
+    system = data.get("system", {})
+    users = data.get("users", [])
+
+    # Panel 7: system-wide metrics
+    oi = system.get("total_oi", 0)
+    long_n = system.get("long_notional", 0)
+    short_n = system.get("short_notional", 0)
+    accts_pos = system.get("accounts_with_positions", 0)
+    accts_liq = system.get("accounts_near_liq", 0)
+    sys_panel = (
+        '<div class="grid grid-cols-2 sm:grid-cols-5 gap-3">'
+        + _metric("Total OI",
+                  f"{oi // 10**8:,}" if oi else "--",
+                  "blue-400")
+        + _metric("Long Notional",
+                  f"{long_n // 10**8:,}" if long_n else "--",
+                  "emerald-400")
+        + _metric("Short Notional",
+                  f"{short_n // 10**8:,}"
+                  if short_n else "--", "red-400")
+        + _metric("Accounts w/ Positions",
+                  str(accts_pos), "slate-300")
+        + _metric("Near Liquidation", str(accts_liq),
+                  "red-400" if accts_liq > 0 else "slate-500")
+        + '</div>' + sim_tag
+    )
+
+    # Panels 1+2+3: per-user account, positions, margin
+    user_cards = ""
+    for u in users:
+        uid = u["user_id"]
+        collateral = u["collateral"]
+        frozen = u["frozen"]
+        available = u["available"]
+        equity = u["equity"]
+        upnl = u["upnl"]
+        im_req = u["im_required"]
+        mm_req = u["mm_required"]
+        ratio = u["margin_ratio"]
+        positions = u["positions"]
+
+        util_pct = (
+            frozen * 100 / collateral
+            if collateral > 0 else 0.0
+        )
+        util_color = (
+            "red" if util_pct > 80
+            else "amber" if util_pct > 50
+            else "blue"
+        )
+        upnl_color = (
+            "text-emerald-400" if upnl >= 0
+            else "text-red-400"
+        )
+        upnl_sign = "+" if upnl >= 0 else "-"
+        upnl_str = format_price(abs(upnl), 1)
+
+        acct_strip = (
+            '<div class="grid grid-cols-2 sm:grid-cols-4'
+            ' gap-2 mb-2">'
+            + _metric("Collateral",
+                      format_price(collateral, 1),
+                      "slate-300")
+            + _metric("Available",
+                      format_price(available, 1),
+                      "emerald-400"
+                      if available > 0 else "red-400")
+            + _metric("Equity",
+                      format_price(abs(equity), 1),
+                      "slate-300")
+            + _metric("uPnL",
+                      f"{upnl_sign}{upnl_str}",
+                      upnl_color.replace("text-", ""))
+            + '</div>'
+        )
+        margin_strip = (
+            '<div class="flex flex-wrap items-center'
+            ' gap-3 mb-2">'
+            '<span class="text-[10px] text-slate-500">'
+            'Margin util</span>'
+            + _pct_bar(util_pct, util_color)
+            + '<span class="text-[10px] text-slate-500'
+            ' ml-2">Ratio&nbsp;'
+            + _margin_gauge(ratio)
+            + '</span></div>'
+        )
+
+        if positions:
+            pos_rows = ""
+            for pos in positions:
+                sid = pos["symbol_id"]
+                sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+                net = pos["net"]
+                entry_px = pos["entry_px"]
+                mark_px = pos["mark_px"]
+                pnl = pos["upnl"]
+                notional = pos["notional"]
+                im = pos["im"]
+                mm = pos["mm"]
+                pos_sim = pos.get("simulated", False)
+                side_str = (
+                    '<span class="text-emerald-400">'
+                    'long</span>'
+                    if net > 0
+                    else '<span class="text-red-400">'
+                    'short</span>'
+                )
+                pnl_color = (
+                    "text-emerald-400" if pnl >= 0
+                    else "text-red-400"
+                )
+                pnl_sign = "+" if pnl >= 0 else "-"
+                pnl_str = format_price(abs(pnl), sid)
+                row_cls = (
+                    "bg-red-900/20 hover:bg-red-900/30"
+                    if ratio < 1.2
+                    else (
+                        "bg-amber-900/20"
+                        " hover:bg-amber-900/30"
+                        if ratio < 1.5
+                        else "hover:bg-slate-800/50"
+                    )
+                )
+                sim_dot = (
+                    '<span class="text-[9px]'
+                    ' text-slate-600 ml-1">~</span>'
+                    if pos_sim else ''
+                )
+                pos_rows += (
+                    f'<tr class="{row_cls}">'
+                    f'<td {_TD}>{sym}{sim_dot}</td>'
+                    f'<td {_TD}>{side_str}</td>'
+                    f'<td {_TD}>'
+                    f'{format_qty(abs(net), sid)}</td>'
+                    f'<td {_TD}>'
+                    f'{format_price(entry_px, sid)}</td>'
+                    f'<td {_TD}>'
+                    f'{format_price(mark_px, sid)}</td>'
+                    f'<td {_TD}>'
+                    f'<span class="{pnl_color}">'
+                    f'{pnl_sign}{pnl_str}</span></td>'
+                    f'<td {_TD}>'
+                    f'{format_price(notional, sid)}</td>'
+                    f'<td {_TD} class="text-slate-500">'
+                    f'{format_price(im, sid)}</td>'
+                    f'<td {_TD} class="text-slate-500">'
+                    f'{format_price(mm, sid)}</td>'
+                    f'</tr>'
+                )
+            pos_table = _table(
+                ["Symbol", "Side", "Qty", "Entry",
+                 "Mark", "uPnL", "Notional", "IM", "MM"],
+                pos_rows,
+            )
+        else:
+            pos_table = (
+                '<span class="text-slate-600 text-xs">'
+                'no open positions</span>'
+            )
+
+        margin_summary = (
+            '<div class="grid grid-cols-3 gap-2 mt-2">'
+            + _metric("IM Required",
+                      format_price(im_req, 1), "slate-400")
+            + _metric("MM Required",
+                      format_price(mm_req, 1), "slate-400")
+            + _metric("Margin Ratio",
+                      f"{ratio:.2f}x" if ratio < 999 else "n/a",
+                      "emerald-400" if ratio >= 2.0
+                      else "amber-400" if ratio >= 1.2
+                      else "red-400")
+            + '</div>'
+        )
+
+        user_cards += (
+            f'<div class="bg-slate-800/40 border'
+            f' border-slate-700/50 rounded p-3 mb-2">'
+            f'<div class="text-xs font-semibold'
+            f' text-slate-400 mb-2">user {uid}</div>'
+            f'{acct_strip}'
+            f'{margin_strip}'
+            f'{pos_table}'
+            f'{margin_summary}'
+            f'</div>'
+        )
+
+    if not user_cards:
+        user_cards = (
+            '<span class="text-slate-600 text-xs">'
+            'no account data — start RSX or run '
+            'a load test</span>'
+        )
+
+    # Panel 4: funding rates
+    fund_rows = ""
+    for fe in funding_data.get("funding", []):
+        sid = fe["symbol_id"]
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        rate = fe["rate_bps"]
+        mark = fe["mark_px"]
+        idx = fe["index_px"]
+        prem = fe["premium_bps"]
+        nxt = fe["next_settlement_s"]
+        h = nxt // 3600
+        m = (nxt % 3600) // 60
+        countdown = f"{h}h{m:02d}m"
+        rate_color = (
+            "text-red-400" if rate > 5
+            else "text-emerald-400" if rate < 0
+            else "text-slate-300"
+        )
+        fund_rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD}><span class="{rate_color}">'
+            f'{rate:+d} bps</span></td>'
+            f'<td {_TD}>{countdown}</td>'
+            f'<td {_TD}>'
+            f'{format_price(mark, sid)}</td>'
+            f'<td {_TD}>'
+            f'{format_price(idx, sid)}</td>'
+            f'<td {_TD} class="text-slate-500">'
+            f'{prem:+d} bps</td>'
+            f'</tr>'
+        )
+    fund_panel = (
+        _table(
+            ["Symbol", "Rate", "Next", "Mark",
+             "Index", "Premium"],
+            fund_rows,
+        )
+        if fund_rows
+        else (
+            '<span class="text-slate-500 text-xs">'
+            'no BBO data</span>'
+        )
+    )
+
+    # Panel 5: liquidation queue
+    liq_records = liq_data.get("liquidations", [])
+    if liq_records:
+        liq_rows = ""
+        for r in liq_records[:15]:
+            sid = r.get("symbol_id", 0)
+            uid2 = r.get("user_id", 0)
+            sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+            slip = r.get("slip_bps", 0)
+            rnd = r.get("round", 0)
+            status = r.get("status", 0)
+            status_str = (
+                '<span class="text-red-400">active</span>'
+                if status == 0
+                else '<span class="text-slate-500">'
+                'halted</span>'
+            )
+            liq_rows += (
+                f'<tr class="hover:bg-slate-800/50">'
+                f'<td {_TD}>{uid2}</td>'
+                f'<td {_TD}>{sym}</td>'
+                f'<td {_TD}>{status_str}</td>'
+                f'<td {_TD} class="text-slate-500">'
+                f'{rnd}</td>'
+                f'<td {_TD} class="text-slate-500">'
+                f'{slip} bps</td>'
+                f'</tr>'
+            )
+        liq_panel = _table(
+            ["User", "Symbol", "Status", "Round", "Slip"],
+            liq_rows,
+        )
+    else:
+        liq_panel = (
+            '<span class="text-slate-500 text-xs">'
+            'no active liquidations</span>'
+        )
+
+    # Panel 6: insurance fund
+    funds = insurance_data.get("funds", [])
+    ins_source = insurance_data.get("source", "simulated")
+    ins_sim = ins_source == "simulated"
+    total_ins = insurance_data.get("total", 0)
+    if funds:
+        ins_rows = ""
+        for fi in funds:
+            sid = fi.get("symbol_id", 0)
+            sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+            bal = fi.get("balance", 0)
+            ver = fi.get("version", 0)
+            ins_rows += (
+                f'<tr class="hover:bg-slate-800/50">'
+                f'<td {_TD}>{sym}</td>'
+                f'<td {_TD} class="text-emerald-400">'
+                f'{format_price(bal, sid)}</td>'
+                f'<td {_TD} class="text-slate-500">'
+                f'{ver}</td>'
+                f'</tr>'
+            )
+        ins_sim_note = (
+            '<span class="text-[10px] text-slate-600 ml-1">'
+            '(simulated)</span>'
+            if ins_sim else ''
+        )
+        ins_panel = (
+            _table(["Symbol", "Balance", "Version"], ins_rows)
+            + f'<div class="mt-2 text-xs text-slate-400">'
+            f'total: <span class="text-emerald-400">'
+            f'{format_price(total_ins, 1)}</span>'
+            + ins_sim_note
+            + '</div>'
+        )
+    else:
+        ins_panel = (
+            '<span class="text-slate-500 text-xs">'
+            'no insurance fund data</span>'
+        )
+
+    return f"""
+<div class="space-y-4">
+<div>
+  <h3 class="text-[10px] font-semibold text-slate-500
+    uppercase tracking-wider mb-2">
+    System-wide Risk Metrics</h3>
+  {sys_panel}
+</div>
+<div>
+  <h3 class="text-[10px] font-semibold text-slate-500
+    uppercase tracking-wider mb-2">
+    Account Overview &amp; Open Positions</h3>
+  {user_cards}
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+  <div>
+    <h3 class="text-[10px] font-semibold text-slate-500
+      uppercase tracking-wider mb-2">Funding Rates</h3>
+    {fund_panel}
+  </div>
+  <div>
+    <h3 class="text-[10px] font-semibold text-slate-500
+      uppercase tracking-wider mb-2">Insurance Fund</h3>
+    {ins_panel}
+  </div>
+</div>
+<div>
+  <h3 class="text-[10px] font-semibold text-slate-500
+    uppercase tracking-wider mb-2">Liquidation Queue</h3>
+  {liq_panel}
+</div>
+</div>"""
+
+
 def render_position_heatmap(fills=None):
     """Position heatmap from WAL fill data."""
     if not fills:
@@ -2175,44 +2972,67 @@ def format_qty(raw_qty, symbol_id):
     return f"{sign}{whole}.{frac:0{decimals}d}".rstrip('0').rstrip('.')
 
 
-def render_book_ladder(symbol_id, bbo):
-    """Render orderbook ladder from BBO data."""
+def render_book_ladder(symbol_id, snap):
+    """Render orderbook ladder from depth snap.
+
+    snap: {"bids": [{"px": int, "qty": int}, ...],
+           "asks": [{"px": int, "qty": int}, ...]}
+    Asks shown top (worst→best price), bids below.
+    """
     sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
-    if bbo is None:
+    if snap is None:
         return (
             f'<div class="text-slate-500 text-xs">'
             f'{sym}: no book data yet (waiting for orders)'
             f'</div>')
-    bid_px = bbo.get("bid_px", 0)
-    ask_px = bbo.get("ask_px", 0)
-    spread = ask_px - bid_px if ask_px > 0 and bid_px > 0 else 0
-    return f"""
-<table class="w-full text-xs">
+    bids = snap.get("bids", [])
+    asks = snap.get("asks", [])
+    if not bids and not asks:
+        return (
+            f'<div class="text-slate-500 text-xs">'
+            f'{sym}: no book data yet (waiting for orders)'
+            f'</div>')
+    best_bid = bids[0].get("px", 0) if bids else 0
+    best_ask = asks[0].get("px", 0) if asks else 0
+    spread = (
+        best_ask - best_bid
+        if best_ask > 0 and best_bid > 0
+        else 0
+    )
+    ask_rows = ""
+    for lvl in reversed(asks[:10]):
+        px = lvl.get("px", 0)
+        qty = lvl.get("qty", 0)
+        ask_rows += (
+            f'<tr class="text-red-400"'
+            f' data-testid="ask-row" data-px="{px}">'
+            f'<td>Ask</td>'
+            f'<td class="text-right font-mono">{px}</td>'
+            f'<td class="text-right font-mono">{qty}</td>'
+            f'</tr>\n'
+        )
+    bid_rows = ""
+    for lvl in bids[:10]:
+        px = lvl.get("px", 0)
+        qty = lvl.get("qty", 0)
+        bid_rows += (
+            f'<tr class="text-emerald-400"'
+            f' data-testid="bid-row" data-px="{px}">'
+            f'<td>Bid</td>'
+            f'<td class="text-right font-mono">{px}</td>'
+            f'<td class="text-right font-mono">{qty}</td>'
+            f'</tr>\n'
+        )
+    return f"""<table class="w-full text-xs">
 <tr class="text-slate-500">
   <th class="text-left">Side</th>
   <th class="text-right">Price</th>
   <th class="text-right">Qty</th>
-  <th class="text-right">Orders</th>
 </tr>
-<tr class="text-red-400" data-testid="ask-row" data-px="{ask_px}">
-  <td>Ask</td>
-  <td class="text-right font-mono">{ask_px}</td>
-  <td class="text-right font-mono">{bbo.get('ask_qty', 0)}</td>
-  <td class="text-right">{bbo.get('ask_count', 0)}</td>
+{ask_rows}<tr class="text-slate-600 text-center">
+  <td colspan="3">spread: {spread}</td>
 </tr>
-<tr class="text-slate-600 text-center">
-  <td colspan="4">spread: {spread}</td>
-</tr>
-<tr class="text-emerald-400" data-testid="bid-row" data-px="{bid_px}">
-  <td>Bid</td>
-  <td class="text-right font-mono">{bid_px}</td>
-  <td class="text-right font-mono">{bbo.get('bid_qty', 0)}</td>
-  <td class="text-right">{bbo.get('bid_count', 0)}</td>
-</tr>
-</table>
-<div class="text-slate-600 text-xs mt-1">
-  seq={bbo.get('seq', 0)}
-</div>"""
+{bid_rows}</table>"""
 
 
 def render_book_stats(symbols):
@@ -2412,6 +3232,69 @@ def render_trade_agg(fills):
 </table>"""
 
 
+def render_stress_scenarios(scenario_states: dict) -> str:
+    """HTMX partial: scenario toggle panel."""
+    rows = ""
+    for name, state in scenario_states.items():
+        running = state["running"]
+        desc = html.escape(state["desc"])
+        esc_name = html.escape(name)
+        dot = (
+            '<span class="text-emerald-400">&#9679;</span>'
+            if running
+            else '<span class="text-zinc-600">&#9675;</span>'
+        )
+        if running:
+            btn = (
+                f'<button'
+                f' hx-post="./api/stress/scenario/{esc_name}/stop"'
+                f' hx-target="#stress-scenarios"'
+                f' hx-swap="outerHTML"'
+                f' class="px-2 py-0.5 rounded text-[10px]'
+                f' bg-amber-900/40 text-amber-400'
+                f' border border-amber-800'
+                f' hover:bg-amber-800 cursor-pointer">'
+                f'&#9632; stop</button>'
+            )
+        else:
+            btn = (
+                f'<button'
+                f' hx-post="./api/stress/scenario/{esc_name}/start"'
+                f' hx-target="#stress-scenarios"'
+                f' hx-swap="outerHTML"'
+                f' class="px-2 py-0.5 rounded text-[10px]'
+                f' bg-blue-900/40 text-blue-400'
+                f' border border-blue-800'
+                f' hover:bg-blue-800 cursor-pointer">'
+                f'&#9654; start</button>'
+            )
+        rows += (
+            f'<div class="flex items-center gap-3 py-1'
+            f' border-b border-slate-800/50 last:border-0">'
+            f'<span class="w-4 text-center">{dot}</span>'
+            f'<span class="w-32 text-xs font-mono'
+            f' text-slate-300">{esc_name}</span>'
+            f'<span class="flex-1 text-xs text-slate-500'
+            f' truncate">{desc}</span>'
+            f'{btn}'
+            f'</div>'
+        )
+    return (
+        f'<div id="stress-scenarios"'
+        f' class="bg-slate-900 border border-slate-800'
+        f' rounded-lg p-4"'
+        f' hx-get="./x/stress-scenarios"'
+        f' hx-trigger="every 3s"'
+        f' hx-swap="outerHTML">'
+        f'<div class="flex items-center justify-between mb-3">'
+        f'<h2 class="text-xs font-semibold text-slate-500'
+        f' uppercase tracking-wider">Stress Scenarios</h2>'
+        f'</div>'
+        f'{rows}'
+        f'</div>'
+    )
+
+
 def stress_page():
     """Stress test page with launcher and reports list."""
     launcher = _card(
@@ -2472,7 +3355,19 @@ def stress_page():
         """,
     )
 
+    scenarios_panel = (
+        '<div id="stress-scenarios"'
+        ' class="bg-slate-900 border border-slate-800'
+        ' rounded-lg p-4"'
+        ' hx-get="./x/stress-scenarios"'
+        ' hx-trigger="load, every 3s"'
+        ' hx-swap="outerHTML">'
+        '<span class="text-slate-500 text-xs">Loading scenarios...</span>'
+        '</div>'
+    )
+
     content = f"""
+{scenarios_panel}
 {launcher}
 {reports_list}
 {info}
@@ -2716,7 +3611,7 @@ def stress_report_page(data):
 
     nav = f"""
 <div class="mb-4">
-  <a href="./stress" class="text-blue-400 hover:underline text-xs">
+  <a href="../stress" class="text-blue-400 hover:underline text-xs">
     ← Back to Stress Tests
   </a>
 </div>
@@ -2752,3 +3647,186 @@ def maker_status_html(stats: dict, pid) -> str:
         f'mid_price: {mid_price}'
         f'</span>'
     )
+
+
+# ── Screen: Market Maker ─────────────────────────────────
+
+def maker_live_html(
+    running: bool,
+    pid,
+    restarts: int,
+    stats: dict,
+) -> str:
+    """HTMX partial: live status + stats rows for maker page."""
+    if running:
+        badge = (
+            '<span class="inline-flex items-center gap-1">'
+            '<span class="w-2 h-2 rounded-full bg-emerald-400'
+            ' animate-pulse"></span>'
+            '<span class="text-emerald-400">running</span>'
+            '</span>'
+        )
+        pid_txt = html.escape(str(pid or "?"))
+    else:
+        badge = (
+            '<span class="inline-flex items-center gap-1">'
+            '<span class="w-2 h-2 rounded-full bg-red-500">'
+            '</span>'
+            '<span class="text-red-400">stopped</span>'
+            '</span>'
+        )
+        pid_txt = "--"
+
+    orders_placed = stats.get("orders_placed", "--")
+    active_orders = stats.get("active_orders", "--")
+    mid_prices = stats.get("mid_prices", {})
+    mid_txt = (
+        html.escape(str(next(iter(mid_prices.values()), "--")))
+        if mid_prices else "--"
+    )
+    errors = stats.get("errors", [])
+    last_err = (
+        f'<span class="text-red-400">'
+        f'{html.escape(errors[-1])}</span>'
+        if errors else
+        '<span class="text-slate-600">none</span>'
+    )
+    spread_bps = stats.get("spread_bps", "--")
+
+    rows = [
+        ("Status", badge),
+        ("PID", pid_txt),
+        ("Restarts", str(restarts)),
+        ("Orders placed", str(orders_placed)),
+        ("Active orders", str(active_orders)),
+        ("Mid price", mid_txt),
+        ("Spread (bps)", str(spread_bps)),
+        ("Last error", last_err),
+    ]
+    cells = "".join(
+        f'<tr>'
+        f'<td class="text-slate-500 pr-6 py-0.5 w-40">{k}</td>'
+        f'<td class="font-mono">{v}</td>'
+        f'</tr>'
+        for k, v in rows
+    )
+    return f'<table class="text-xs">{cells}</table>'
+
+
+def maker_page(
+    running: bool,
+    pid,
+    restarts: int,
+    cfg: dict,
+) -> str:
+    """Full Market Maker management page."""
+    # Status section with live polling
+    status_card = _card(
+        "Status",
+        '<div id="maker-live" '
+        'hx-get="./x/maker-live" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600 text-xs">loading...</span>'
+        '</div>',
+    )
+
+    # Controls
+    controls_card = _card(
+        "Controls",
+        '''<div class="flex flex-wrap gap-2">
+  <button class="bg-emerald-900/60 text-emerald-400
+    px-3 py-1.5 rounded text-xs border border-emerald-800
+    hover:bg-emerald-800 cursor-pointer"
+    hx-post="./api/maker/start"
+    hx-target="#maker-ctrl-result"
+    hx-swap="innerHTML">Start</button>
+  <button class="bg-red-900/40 text-red-400
+    px-3 py-1.5 rounded text-xs border border-red-900
+    hover:bg-red-900 cursor-pointer"
+    hx-post="./api/maker/stop"
+    hx-target="#maker-ctrl-result"
+    hx-swap="innerHTML">Stop</button>
+  <button class="bg-amber-900/40 text-amber-400
+    px-3 py-1.5 rounded text-xs border border-amber-900
+    hover:bg-amber-900 cursor-pointer"
+    hx-post="./api/maker/restart"
+    hx-target="#maker-ctrl-result"
+    hx-swap="innerHTML">Restart</button>
+  <span id="maker-ctrl-result" class="text-xs self-center">
+  </span>
+</div>''',
+    )
+
+    # Config form
+    spread_bps = cfg.get("spread_bps", 20)
+    qty = cfg.get("qty", 10)
+    symbol_id = cfg.get("symbol_id", 10)
+    refresh_ms = cfg.get("refresh_ms", 500)
+    levels = cfg.get("levels", 5)
+
+    def _field(label, name, value, hint=""):
+        h = (
+            f'<span class="text-slate-600 text-[11px]">'
+            f'{html.escape(hint)}</span>'
+            if hint else ""
+        )
+        return (
+            f'<div>'
+            f'<label class="block text-xs text-slate-400 mb-1">'
+            f'{html.escape(label)}</label>'
+            f'<input type="number" name="{name}" '
+            f'value="{value}" '
+            f'class="w-full bg-slate-950 border border-slate-700 '
+            f'rounded px-2 py-1 text-xs text-slate-200 '
+            f'focus:border-slate-500 focus:outline-none" />'
+            f'{h}'
+            f'</div>'
+        )
+
+    config_card = _card(
+        "Config",
+        f'''<form
+  hx-post="./api/maker/config"
+  hx-target="#maker-cfg-result"
+  hx-swap="innerHTML">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+    {_field("Spread (bps)", "spread_bps", spread_bps,
+            "bid/ask spread")}
+    {_field("Qty per level", "qty", qty,
+            "order size multiplier")}
+    {_field("Symbol ID", "symbol_id", symbol_id,
+            "which symbol to make")}
+    {_field("Refresh (ms)", "refresh_ms", refresh_ms,
+            "quote refresh interval")}
+    {_field("Levels", "levels", levels,
+            "depth levels per side")}
+  </div>
+  <div class="flex items-center gap-3">
+    <button type="submit"
+      class="bg-blue-900/60 text-blue-400 px-4 py-1.5
+        rounded text-xs border border-blue-800
+        hover:bg-blue-800 cursor-pointer">
+      Save &amp; Restart
+    </button>
+    <span id="maker-cfg-result" class="text-xs"></span>
+  </div>
+</form>''',
+    )
+
+    # Live stats card
+    stats_card = _card(
+        "Live Stats",
+        '<div hx-get="./x/maker-status" '
+        'hx-trigger="load, every 3s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600 text-xs">loading...</span>'
+        '</div>',
+    )
+
+    content = f"""
+{status_card}
+{controls_card}
+{config_card}
+{stats_card}"""
+    return layout("Market Maker", content, "./maker")

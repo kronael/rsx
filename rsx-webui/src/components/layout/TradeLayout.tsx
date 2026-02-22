@@ -11,16 +11,38 @@ import { Chart } from "../chart/Chart";
 import { DepthChart } from "../chart/DepthChart";
 import { OrderEntry } from "../order/OrderEntry";
 import { BottomTabs } from "../positions/BottomTabs";
+import { useConnectionStore } from "../../store/connection";
+import { WsStatus } from "../../lib/types";
+import { useToastStore } from "../../lib/toast";
 
-const BOTTOM_MIN = 120;
+const BOTTOM_MIN = 80;
 const BOTTOM_MAX = 600;
-const BOTTOM_DEFAULT = 256;
+const BOTTOM_DEFAULT = 180;
 
 export function TradeLayout() {
-  const { send } = usePrivateWs();
+  const { send: rawSend } = usePrivateWs();
   usePublicWs();
 
+  const privStatus = useConnectionStore(
+    (s) => s.privateStatus,
+  );
+
+  // Wrap send to show toast when gateway is offline
+  const send = useCallback((msg: string) => {
+    if (privStatus !== WsStatus.CONNECTED) {
+      useToastStore.getState().add(
+        "Gateway offline — order not sent", "error",
+      );
+      return;
+    }
+    rawSend(msg);
+  }, [rawSend, privStatus]);
+
   const [showDepth, setShowDepth] = useState(false);
+  // Mobile panel toggle: "chart" | "order"
+  const [mobilePanel, setMobilePanel] = useState<
+    "chart" | "order"
+  >("chart");
   const [clickedPrice, setClickedPrice] = useState<
     { value: string; ts: number } | undefined
   >(undefined);
@@ -71,11 +93,36 @@ export function TradeLayout() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
+      {/* Mobile panel toggle bar */}
+      <div
+        className="flex md:hidden border-b border-border
+          shrink-0 bg-bg-surface"
+      >
+        <button
+          className={`flex-1 py-2 text-sm font-medium
+            transition-colors ${mobilePanel === "chart"
+            ? "text-accent border-b-2 border-accent"
+            : "text-text-secondary"}`}
+          onClick={() => setMobilePanel("chart")}
+        >
+          Chart
+        </button>
+        <button
+          className={`flex-1 py-2 text-sm font-medium
+            transition-colors ${mobilePanel === "order"
+            ? "text-accent border-b-2 border-accent"
+            : "text-text-secondary"}`}
+          onClick={() => setMobilePanel("order")}
+        >
+          Trade
+        </button>
+      </div>
+
       {/* Main grid */}
       <div
         className="flex-1 min-h-0
-          grid grid-cols-1 md:grid-cols-[288px_1fr_320px]
-          grid-rows-1"
+          grid md:grid-cols-[288px_1fr_320px]"
+        style={{ gridTemplateRows: "1fr" }}
       >
         {/* Left: Orderbook + Trades (hidden on mobile) */}
         <div
@@ -93,17 +140,29 @@ export function TradeLayout() {
           </div>
         </div>
 
-        {/* Center: Chart */}
-        <div className="min-h-[300px] md:min-h-0 flex flex-col">
-          <div className="flex items-center gap-1 px-2 pt-1 shrink-0">
+        {/* Center: Chart — hidden on mobile when order panel active */}
+        <div
+          className={`flex-col min-h-0
+            ${mobilePanel === "chart" ? "flex" : "hidden md:flex"}`}
+        >
+          <div
+            className="flex items-center gap-1 px-2 pt-1
+              shrink-0"
+          >
             <button
-              className={`text-xs px-2 py-0.5 rounded transition-colors ${!showDepth ? "bg-accent text-bg-base" : "text-text-secondary hover:text-text-primary"}`}
+              className={`text-xs px-2 py-0.5 rounded
+                transition-colors ${!showDepth
+                ? "bg-accent text-bg-base"
+                : "text-text-secondary hover:text-text-primary"}`}
               onClick={() => setShowDepth(false)}
             >
               Candles
             </button>
             <button
-              className={`text-xs px-2 py-0.5 rounded transition-colors ${showDepth ? "bg-accent text-bg-base" : "text-text-secondary hover:text-text-primary"}`}
+              className={`text-xs px-2 py-0.5 rounded
+                transition-colors ${showDepth
+                ? "bg-accent text-bg-base"
+                : "text-text-secondary hover:text-text-primary"}`}
               onClick={() => setShowDepth(true)}
             >
               Depth
@@ -114,9 +173,13 @@ export function TradeLayout() {
           </div>
         </div>
 
-        {/* Right: OrderEntry */}
+        {/* Right: OrderEntry — hidden on mobile when chart active */}
         <div
-          className="border-l border-border overflow-y-auto"
+          className={`border-border overflow-y-auto min-h-0
+            md:border-l
+            ${mobilePanel === "order"
+              ? "block"
+              : "hidden md:block"}`}
         >
           <OrderEntry
             send={send}
@@ -125,9 +188,10 @@ export function TradeLayout() {
         </div>
       </div>
 
-      {/* Bottom: Tabs (resizable) */}
+      {/* Bottom: Tabs (resizable, hidden on mobile when order panel) */}
       <div
-        className="border-t border-border flex flex-col"
+        className={`border-t border-border flex flex-col
+          ${mobilePanel === "order" ? "hidden md:flex" : "flex"}`}
         style={{ height: bottomH }}
       >
         {/* Drag handle */}
