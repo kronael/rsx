@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
 import { waitForHTMX, verifyPolling } from "./test_helpers";
 
 test.describe("Faults tab", () => {
@@ -88,4 +88,84 @@ test.describe("Faults tab", () => {
     await expect(notes).toContainText(/iptables|tc/);
     await expect(notes).toContainText(/WAL corruption/);
   });
+});
+
+// The 10 system invariant names checked by /api/verify/run
+const INVARIANT_NAMES = [
+  "Fills precede ORDER_DONE",
+  "Exactly-one completion",
+  "FIFO within price level",
+  "Position = sum of fills",
+  "Tips monotonic",
+  "No crossed book",
+  "SPSC preserves event FIFO",
+  "Slab no-leak",
+  "Funding zero-sum",
+  "Advisory lock exclusive",
+] as const;
+
+async function allocateSession(
+  request: APIRequestContext,
+): Promise<string> {
+  const res = await request.post("/api/sessions/allocate");
+  if (!res.ok()) return "";
+  const body = await res.json();
+  return body.run_id ?? "";
+}
+
+test.describe("Fault injection API", () => {
+  test(
+    "kill+restart me-pengu then verify 10 invariants",
+    async ({ request }) => {
+      // Kill me-pengu
+      const killRes = await request.post(
+        "/api/processes/me-pengu/kill",
+      );
+      expect(killRes.status()).toBeLessThan(500);
+
+      // Brief settle
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Restart me-pengu
+      const restartRes = await request.post(
+        "/api/processes/me-pengu/restart",
+      );
+      expect(restartRes.status()).toBeLessThan(500);
+
+      // Run invariant checks
+      const verifyRes = await request.post("/api/verify/run");
+      expect(verifyRes.ok()).toBeTruthy();
+      const html = await verifyRes.text();
+
+      // All 10 system invariants must appear in the response
+      for (const name of INVARIANT_NAMES) {
+        expect(html).toContain(name);
+      }
+    },
+  );
+
+  test(
+    "stop all processes then verify 10 invariants",
+    async ({ request }) => {
+      // Allocate session to obtain run_id for destructive call
+      const runId = await allocateSession(request);
+
+      // Stop all processes (best-effort; may 409 without live session)
+      await request.post("/api/processes/all/stop", {
+        headers: {
+          "x-run-id": runId,
+          "x-confirm": "yes",
+        },
+      });
+
+      // Run invariant checks — must return all 10 named invariants
+      const verifyRes = await request.post("/api/verify/run");
+      expect(verifyRes.ok()).toBeTruthy();
+      const html = await verifyRes.text();
+
+      for (const name of INVARIANT_NAMES) {
+        expect(html).toContain(name);
+      }
+    },
+  );
 });

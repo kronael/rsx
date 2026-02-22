@@ -407,7 +407,7 @@ def risk_page():
     )
     lookup = """
 <div class="flex flex-wrap items-center gap-2">
-  <input type="number" id="risk-uid" value="1"
+  <input type="number" id="risk-uid" name="risk-uid" value="1"
     class="bg-slate-950 border border-slate-700
       text-slate-300 px-2 py-1 rounded text-xs sm:w-20 w-full"
     placeholder="user_id">
@@ -1859,6 +1859,93 @@ def render_risk_user(data):
     return _table(["Field", "Value"], rows)
 
 
+def render_risk_user_wal(user_id: int, fills: list):
+    """Render net positions for a user from WAL fill records."""
+    positions: dict[int, dict] = {}
+    for f in fills:
+        sid = f.get("symbol_id", 0)
+        qty = f.get("qty", 0)
+        side = f.get("taker_side", 0)
+        is_taker = f.get("taker_uid") == user_id
+        # taker buys: side=0 → long; taker sells: side=1 → short
+        # maker is opposite side
+        if is_taker:
+            signed = qty if side == 0 else -qty
+        else:
+            signed = -qty if side == 0 else qty
+        entry = positions.setdefault(
+            sid, {"net": 0, "fills": 0}
+        )
+        entry["net"] += signed
+        entry["fills"] += 1
+    if not positions:
+        return ('<span class="text-slate-500 text-xs">'
+                f'user {user_id} — no fills in WAL</span>')
+    rows = ""
+    for sid, info in sorted(positions.items()):
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        net = info["net"]
+        n = info["fills"]
+        net_str = format_qty(abs(net), sid)
+        if net > 0:
+            color = "text-emerald-400"
+            label = f"+{net_str}"
+        elif net < 0:
+            color = "text-red-400"
+            label = f"-{net_str}"
+        else:
+            color = "text-slate-500"
+            label = "0"
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD}>'
+            f'<span class="{color}">{label}</span></td>'
+            f'<td {_TD} class="text-slate-500">{n}</td>'
+            f'</tr>'
+        )
+    return _table(
+        ["Symbol", "Net (WAL)", "Fills"], rows,
+    )
+
+
+def render_liquidations_wal(records: list):
+    """Render liquidation records from WAL."""
+    if not records:
+        return ('<span class="text-slate-600">'
+                'no active liquidations</span>')
+    rows = ""
+    for r in records[:20]:
+        sid = r.get("symbol_id", 0)
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        uid = r.get("user_id", 0)
+        side = r.get("side", 0)
+        qty = r.get("qty", 0)
+        px = r.get("price", 0)
+        slip = r.get("slip_bps", 0)
+        side_str = (
+            '<span class="text-emerald-400">buy</span>'
+            if side == 0
+            else '<span class="text-red-400">sell</span>'
+        )
+        qty_str = format_qty(abs(qty), sid)
+        px_str = format_price(px, sid) if px else "--"
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{uid}</td>'
+            f'<td {_TD}>{sym}</td>'
+            f'<td {_TD}>{side_str}</td>'
+            f'<td {_TD}>{qty_str}</td>'
+            f'<td {_TD}>{px_str}</td>'
+            f'<td {_TD} class="text-slate-500">'
+            f'{slip} bps</td></tr>'
+        )
+    return _table(
+        ["User", "Symbol", "Side", "Qty", "Price",
+         "Slip"], rows,
+    )
+
+
 def render_position_heatmap(fills=None):
     """Position heatmap from WAL fill data."""
     if not fills:
@@ -2064,8 +2151,8 @@ def render_book_ladder(symbol_id, bbo):
             f'<div class="text-slate-500 text-xs">'
             f'{sym}: no book data yet (waiting for orders)'
             f'</div>')
-    bid_px = bbo["bid_px"]
-    ask_px = bbo["ask_px"]
+    bid_px = bbo.get("bid_px", 0)
+    ask_px = bbo.get("ask_px", 0)
     spread = ask_px - bid_px if ask_px > 0 and bid_px > 0 else 0
     return f"""
 <table class="w-full text-xs">
@@ -2078,8 +2165,8 @@ def render_book_ladder(symbol_id, bbo):
 <tr class="text-red-400" data-testid="ask-row" data-px="{ask_px}">
   <td>Ask</td>
   <td class="text-right font-mono">{ask_px}</td>
-  <td class="text-right font-mono">{bbo['ask_qty']}</td>
-  <td class="text-right">{bbo['ask_count']}</td>
+  <td class="text-right font-mono">{bbo.get('ask_qty', 0)}</td>
+  <td class="text-right">{bbo.get('ask_count', 0)}</td>
 </tr>
 <tr class="text-slate-600 text-center">
   <td colspan="4">spread: {spread}</td>
@@ -2087,12 +2174,12 @@ def render_book_ladder(symbol_id, bbo):
 <tr class="text-emerald-400" data-testid="bid-row" data-px="{bid_px}">
   <td>Bid</td>
   <td class="text-right font-mono">{bid_px}</td>
-  <td class="text-right font-mono">{bbo['bid_qty']}</td>
-  <td class="text-right">{bbo['bid_count']}</td>
+  <td class="text-right font-mono">{bbo.get('bid_qty', 0)}</td>
+  <td class="text-right">{bbo.get('bid_count', 0)}</td>
 </tr>
 </table>
 <div class="text-slate-600 text-xs mt-1">
-  seq={bbo['seq']}
+  seq={bbo.get('seq', 0)}
 </div>"""
 
 
@@ -2105,14 +2192,17 @@ def render_book_stats(symbols):
     rows = []
     for sid, bbo in sorted(symbols.items()):
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
-        bid_raw = bbo["bid_px"]
-        ask_raw = bbo["ask_px"]
+        bid_raw = bbo.get("bid_px", 0)
+        ask_raw = bbo.get("ask_px", 0)
         spread_raw = ask_raw - bid_raw if (
             ask_raw > 0 and bid_raw > 0
         ) else 0
         bid_fmt = format_price(bid_raw, sid)
         ask_fmt = format_price(ask_raw, sid)
         spread_fmt = format_price(spread_raw, sid) if spread_raw > 0 else "0"
+        orders = (
+            bbo.get("bid_count", 0) + bbo.get("ask_count", 0)
+        )
         rows.append(
             f'<tr><td>{sym}</td>'
             f'<td class="text-right font-mono">'
@@ -2121,7 +2211,7 @@ def render_book_stats(symbols):
             f'{ask_fmt}</td>'
             f'<td class="text-right">{spread_fmt}</td>'
             f'<td class="text-right">'
-            f'{bbo["bid_count"]+bbo["ask_count"]}</td>'
+            f'{orders}</td>'
             f'</tr>')
     return f"""
 <table class="w-full text-xs">
@@ -2144,12 +2234,12 @@ def render_live_fills(fills):
             'no fills yet</span>')
     rows = []
     for f in fills[:20]:
-        sid = f["symbol_id"]
+        sid = f.get("symbol_id", 0)
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
-        side = "buy" if f["taker_side"] == 0 else "sell"
+        side = "buy" if f.get("taker_side", 0) == 0 else "sell"
         color = "emerald" if side == "buy" else "red"
-        price_fmt = format_price(f["price"], sid)
-        qty_fmt = format_qty(f["qty"], sid)
+        price_fmt = format_price(f.get("price", 0), sid)
+        qty_fmt = format_qty(f.get("qty", 0), sid)
         rows.append(
             f'<tr class="text-{color}-400">'
             f'<td>{sym}</td>'
@@ -2159,7 +2249,7 @@ def render_live_fills(fills):
             f'<td class="text-right font-mono">'
             f'{qty_fmt}</td>'
             f'<td class="text-slate-500">'
-            f'{f["seq"]}</td></tr>')
+            f'{f.get("seq", 0)}</td></tr>')
     return f"""
 <table class="w-full text-xs">
 <tr class="text-slate-500">
@@ -2210,7 +2300,7 @@ def render_order_trace(order, fills):
         )
         if fills:
             fill_count = len(fills)
-            fill_qty = sum(f["qty"] for f in fills)
+            fill_qty = sum(f.get("qty", 0) for f in fills)
             steps.append(
                 step("emerald", "filled",
                      f"{fill_count} fill(s), total qty {fill_qty}")
@@ -2243,14 +2333,14 @@ def render_trade_agg(fills):
             'no trade data yet</span>')
     by_sym = {}
     for f in fills:
-        sid = f["symbol_id"]
+        sid = f.get("symbol_id", 0)
         if sid not in by_sym:
             by_sym[sid] = {
                 "count": 0, "volume": 0,
                 "last_px": 0}
         by_sym[sid]["count"] += 1
-        by_sym[sid]["volume"] += abs(f["qty"])
-        by_sym[sid]["last_px"] = f["price"]
+        by_sym[sid]["volume"] += abs(f.get("qty", 0))
+        by_sym[sid]["last_px"] = f.get("price", 0)
     rows = []
     for sid, agg in sorted(by_sym.items()):
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")

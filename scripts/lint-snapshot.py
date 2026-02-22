@@ -9,6 +9,9 @@ Usage:
   # Lint the current snapshot for internal contradictions
   python3 scripts/lint-snapshot.py
 
+  # Also cross-check PROGRESS.md rendered counts against tasks.json
+  python3 scripts/lint-snapshot.py --progress-file PROGRESS.md
+
   # Lint a proposed update before applying it
   python3 scripts/lint-snapshot.py --update '{"done":["id1"],"fail":["id1"]}'
 
@@ -22,6 +25,7 @@ Exit codes:
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -72,10 +76,124 @@ def lint_snapshot(tasks: list[dict]) -> list[str]:
         else:
             seen[tid] = status
 
-    # Check for tasks marked completed that also have retries pending
-    # (retries > 0 AND completed = suspicious but not necessarily contradictory)
-    # Real contradiction: a task in DONE_STATUSES that's also in FAIL_STATUSES
-    # — impossible within a single snapshot unless duplicated (caught above).
+    # Intra-record contradiction in the final rendered snapshot:
+    # a task marked completed but retaining a non-empty error field is
+    # stale done+fail duality — the record was completed over a failed
+    # state without clearing the error field.
+    for task in tasks:
+        tid = task.get("id", "")
+        if not tid:
+            continue
+        status = task.get("status", "")
+        error = task.get("error", "")
+        if status in DONE_STATUSES and error:
+            errors.append(
+                f"stale contradiction: task {tid!r} is completed "
+                f"but has non-empty error field: {error!r}"
+            )
+
+    # Supersession edge cases: a task with a superseded_by reference
+    # must not be active (running/pending). If it is, the snapshot
+    # still shows it as live even though another task replaced it.
+    for task in tasks:
+        tid = task.get("id", "")
+        if not tid:
+            continue
+        superseded_by = task.get("superseded_by", "")
+        if not superseded_by:
+            continue
+        status = task.get("status", "")
+        if status in {"running", "pending"}:
+            errors.append(
+                f"supersession conflict: task {tid!r} is {status!r} "
+                f"but superseded_by={superseded_by!r}"
+            )
+
+    # Final rendered duality: a failed task whose retries field is
+    # exhausted (retries == 0) but also has no error message is
+    # an incomplete failure record — the rendered snapshot is missing
+    # the reason for failure.
+    for task in tasks:
+        tid = task.get("id", "")
+        if not tid:
+            continue
+        status = task.get("status", "")
+        if status not in FAIL_STATUSES:
+            continue
+        retries = task.get("retries", None)
+        error = task.get("error", "")
+        if retries == 0 and not error:
+            errors.append(
+                f"incomplete failure: task {tid!r} is failed with "
+                f"retries=0 but has no error message"
+            )
+
+    return errors
+
+
+def parse_progress_counts(text: str) -> dict[str, int] | None:
+    """Extract the status count table from a PROGRESS.md string.
+
+    Looks for a markdown table block with rows like:
+      | completed | 269 |
+      | running   |   7 |
+      | pending   |  64 |
+      | failed    |   0 |
+
+    Returns a dict mapping status -> count, or None if not found.
+    """
+    counts: dict[str, int] = {}
+    for line in text.splitlines():
+        m = re.match(
+            r"^\|\s*(completed|running|pending|failed)\s*\|\s*(\d+)\s*\|",
+            line.strip(),
+        )
+        if m:
+            counts[m.group(1)] = int(m.group(2))
+    if not counts:
+        return None
+    return counts
+
+
+def lint_progress_md(
+    tasks: list[dict], progress_text: str, progress_path: str = "PROGRESS.md"
+) -> list[str]:
+    """Cross-check the rendered PROGRESS.md counts against tasks.json.
+
+    The PROGRESS.md table is the *final rendered snapshot* — it must
+    match the actual task counts from tasks.json exactly. Any drift
+    is a contradiction between the rendered artifact and the truth
+    source.
+    """
+    errors: list[str] = []
+
+    rendered = parse_progress_counts(progress_text)
+    if rendered is None:
+        errors.append(
+            f"progress file {progress_path!r} contains no status count table"
+        )
+        return errors
+
+    actual: dict[str, int] = {
+        "completed": 0,
+        "running": 0,
+        "pending": 0,
+        "failed": 0,
+    }
+    for task in tasks:
+        status = task.get("status", "")
+        if status in actual:
+            actual[status] += 1
+
+    for status in ("completed", "running", "pending", "failed"):
+        rendered_count = rendered.get(status, 0)
+        actual_count = actual[status]
+        if rendered_count != actual_count:
+            errors.append(
+                f"progress drift: {status} count in {progress_path!r} is "
+                f"{rendered_count} but tasks.json has {actual_count}"
+            )
+
     return errors
 
 
@@ -132,6 +250,7 @@ def main() -> None:
     args = sys.argv[1:]
     update_json: str | None = None
     update_file: str | None = None
+    progress_file: str | None = None
 
     i = 0
     while i < len(args):
@@ -140,6 +259,9 @@ def main() -> None:
             i += 2
         elif args[i] == "--update-file" and i + 1 < len(args):
             update_file = args[i + 1]
+            i += 2
+        elif args[i] == "--progress-file" and i + 1 < len(args):
+            progress_file = args[i + 1]
             i += 2
         else:
             i += 1
@@ -167,6 +289,17 @@ def main() -> None:
             print(f"[lint-snapshot] ERROR: update file error: {e}", file=sys.stderr)
             sys.exit(2)
         errors.extend(lint_update(tasks, update))
+
+    if progress_file is not None:
+        try:
+            progress_text = Path(progress_file).read_text()
+        except OSError as e:
+            print(
+                f"[lint-snapshot] ERROR: progress file error: {e}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        errors.extend(lint_progress_md(tasks, progress_text, progress_file))
 
     if errors:
         print(f"[lint-snapshot] FAIL: {len(errors)} contradiction(s):", file=sys.stderr)

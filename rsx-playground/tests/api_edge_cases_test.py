@@ -407,9 +407,9 @@ def test_very_long_url(client):
 
 
 def test_invalid_query_param_type(client):
-    """Invalid query param type."""
+    """Invalid query param type returns 200 with empty state."""
     resp = client.get("/x/risk-user?risk-uid=invalid")
-    assert resp.status_code in [200, 422]
+    assert resp.status_code == 200
 
 
 def test_negative_log_limit(client):
@@ -1313,7 +1313,7 @@ def test_large_order_batch_performance(client):
     for _ in range(10):
         client.post(
             "/api/stress/run",
-            params={"rate": 1, "duration": 1},
+            data={"rate": 1, "duration": 1},
         )
     elapsed = time.time() - start
 

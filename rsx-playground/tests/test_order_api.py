@@ -40,40 +40,48 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture
+def gw_down(monkeypatch):
+    """Simulate gateway unreachable for send_order_to_gateway."""
+    async def _down(*_a, **_kw):
+        return None, "gateway not running", None
+    monkeypatch.setattr(server, "send_order_to_gateway", _down)
+
+
 # ── POST /api/orders/test: gateway down ───────────────────────────────────
 
 
-def test_orders_test_gateway_down_returns_200(client):
+def test_orders_test_gateway_down_returns_200(client, gw_down):
     """POST /api/orders/test returns 200 HTML when gateway is down."""
     resp = client.post("/api/orders/test", data={})
     assert resp.status_code == 200
 
 
-def test_orders_test_gateway_down_is_html(client):
+def test_orders_test_gateway_down_is_html(client, gw_down):
     """POST /api/orders/test returns text/html content-type."""
     resp = client.post("/api/orders/test", data={})
     assert "text/html" in resp.headers["content-type"]
 
 
-def test_orders_test_gateway_down_queues_order(client):
+def test_orders_test_gateway_down_queues_order(client, gw_down):
     """POST /api/orders/test appends order to recent_orders when gateway down."""
     client.post("/api/orders/test", data={})
     assert len(recent_orders) == 1
 
 
-def test_orders_test_gateway_down_order_has_error_status(client):
+def test_orders_test_gateway_down_order_has_error_status(client, gw_down):
     """Order stored with status=error when gateway is unreachable."""
     client.post("/api/orders/test", data={})
     assert recent_orders[0]["status"] == "error"
 
 
-def test_orders_test_gateway_down_response_contains_cid(client):
+def test_orders_test_gateway_down_response_contains_cid(client, gw_down):
     """Response span contains the cid (pg prefix)."""
     resp = client.post("/api/orders/test", data={})
     assert "pg" in resp.text
 
 
-def test_orders_test_gateway_down_response_contains_error_hint(client):
+def test_orders_test_gateway_down_response_contains_error_hint(client, gw_down):
     """Response mentions 'gateway' or 'queued' when gateway not running."""
     resp = client.post("/api/orders/test", data={})
     text = resp.text.lower()
@@ -210,8 +218,10 @@ def test_orders_test_different_idempotency_keys_both_stored(client):
 
 
 def test_orders_test_accepted_response_stored(client):
-    """OrderAccepted response stores order with accepted status."""
-    accepted_msg = ({"type": "OrderAccepted"}, None, 250)
+    """OrderAccepted (U status=1) stores order with accepted status."""
+    # Wire format: {U: [oid, status, filled, remaining, reason]}
+    # status=1 → RESTING (accepted, not rejected)
+    accepted_msg = ({"U": [0, 1, 0, 0, 0]}, None, 250)
     with patch(
         "server.send_order_to_gateway",
         new=AsyncMock(return_value=accepted_msg),
@@ -224,7 +234,7 @@ def test_orders_test_accepted_response_stored(client):
 
 def test_orders_test_accepted_response_contains_latency(client):
     """OrderAccepted response span includes latency_us value."""
-    accepted_msg = ({"type": "OrderAccepted"}, None, 500)
+    accepted_msg = ({"U": [0, 1, 0, 0, 0]}, None, 500)
     with patch(
         "server.send_order_to_gateway",
         new=AsyncMock(return_value=accepted_msg),
@@ -234,8 +244,10 @@ def test_orders_test_accepted_response_contains_latency(client):
 
 
 def test_orders_test_rejected_response_stored(client):
-    """OrderFailed response stores order with rejected status."""
-    failed_msg = ({"type": "OrderFailed", "reason": "price_band"}, None, 100)
+    """OrderFailed (U status=3) stores order with rejected status."""
+    # Wire format: {U: [oid, status, filled, remaining, reason]}
+    # status=3 → FAILED; reason is stored as str(reason_code)
+    failed_msg = ({"U": [0, 3, 0, 0, "price_band"]}, None, 100)
     with patch(
         "server.send_order_to_gateway",
         new=AsyncMock(return_value=failed_msg),

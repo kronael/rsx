@@ -127,6 +127,35 @@ test.describe("WAL tab", () => {
     await expect(dumpBtn).toBeVisible();
   });
 
+  test("timeline shows events after order submission", async ({
+    page,
+    request,
+  }) => {
+    // Submit an aggressive buy that crosses the maker's ask
+    await request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "buy",
+        order_type: "limit",
+        price: "51000",
+        qty: "1",
+        user_id: "1",
+      },
+    });
+
+    await page.goto("/wal");
+    const timeline = page.locator("[hx-get='./x/wal-timeline']");
+
+    // Wait up to 8s for WAL records to propagate and HTMX to refresh
+    await expect(timeline).not.toContainText(
+      /no WAL events recorded/i,
+      { timeout: 8000 },
+    );
+
+    // Should show a table row with a known event type
+    await expect(timeline).toContainText(/BBO|FILL/i, { timeout: 8000 });
+  });
+
   test("all WAL cards load without errors", async ({ page }) => {
     await page.goto("/wal");
 

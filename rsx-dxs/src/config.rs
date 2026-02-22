@@ -148,6 +148,10 @@ pub struct CmpConfig {
     pub heartbeat_interval_ms: u64,
     pub status_interval_ms: u64,
     pub default_window: u64,
+    /// If set, CmpSender binds to this address
+    /// instead of a random ephemeral port. Allows
+    /// receivers to send NAKs to a known port.
+    pub sender_bind_addr: Option<String>,
 }
 
 impl Default for CmpConfig {
@@ -157,6 +161,7 @@ impl Default for CmpConfig {
             heartbeat_interval_ms: 10,
             status_interval_ms: 10,
             default_window: 64 * 1024,
+            sender_bind_addr: None,
         }
     }
 }
@@ -172,6 +177,8 @@ impl CmpConfig {
                 "RSX_CMP_STATUS_INTERVAL_MS", 10),
             default_window: env_var(
                 "RSX_CMP_DEFAULT_WINDOW", 64 * 1024),
+            sender_bind_addr: env::var(
+                "RSX_CMP_SENDER_BIND_ADDR").ok(),
         }
     }
 }

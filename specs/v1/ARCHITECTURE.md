@@ -2,7 +2,7 @@
 
 Perpetuals exchange. Fixed-point arithmetic, single-threaded
 matching per symbol, CMP/UDP between processes, WAL-based
-recovery. 960 tests, 100% v1 spec coverage.
+recovery.
 
 ## Table of Contents
 

@@ -105,6 +105,47 @@ test.describe("Risk tab", () => {
     await expect(heatmap).toContainText(/no fill data|no data|users|Symbol/i);
   });
 
+  test("position heatmap renders after order submission", async ({
+    page,
+  }) => {
+    // Submit a sell then a crossing buy to generate a fill when
+    // the exchange is running; heatmap shows Symbol table with
+    // fills, or "no fill data" when exchange is offline — both
+    // are valid rendered states from /x/position-heatmap.
+    await page.request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "sell",
+        order_type: "limit",
+        price: "50000",
+        qty: "1",
+        user_id: "2",
+      },
+    });
+    await page.request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "buy",
+        order_type: "limit",
+        price: "51000",
+        qty: "1",
+        user_id: "1",
+      },
+    });
+    await page.goto("/risk");
+    const heatmap = page.locator("[hx-get='./x/position-heatmap']");
+    // Heatmap must render something meaningful — either fills or
+    // the empty-state placeholder; "loading..." must be gone.
+    await expect(heatmap).not.toContainText(
+      /loading\.\.\./i,
+      { timeout: 10000 },
+    );
+    await expect(heatmap).toContainText(
+      /no fill data|Symbol/i,
+      { timeout: 10000 },
+    );
+  });
+
   test("margin ladder auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/risk");
     const ladder = page.locator("[hx-get='./x/margin-ladder']");
@@ -120,6 +161,47 @@ test.describe("Risk tab", () => {
     // Should show placeholder or data
     const content = await ladder.textContent();
     expect(content).toBeTruthy();
+  });
+
+  test("margin ladder renders after order submission", async ({
+    page,
+  }) => {
+    // Submit a sell then a crossing buy to generate a fill when
+    // the exchange is running; ladder shows Symbol/Side/Price
+    // table with fills, or "no fill data" offline — both are
+    // valid rendered states from /x/margin-ladder.
+    await page.request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "sell",
+        order_type: "limit",
+        price: "50000",
+        qty: "1",
+        user_id: "1",
+      },
+    });
+    await page.request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "buy",
+        order_type: "limit",
+        price: "51000",
+        qty: "1",
+        user_id: "2",
+      },
+    });
+    await page.goto("/risk");
+    const ladder = page.locator("[hx-get='./x/margin-ladder']");
+    // Ladder must render something meaningful — fills or
+    // the empty-state placeholder; "loading..." must be gone.
+    await expect(ladder).not.toContainText(
+      /loading\.\.\./i,
+      { timeout: 10000 },
+    );
+    await expect(ladder).toContainText(
+      /no fill data|Symbol/i,
+      { timeout: 10000 },
+    );
   });
 
   test("funding card auto-refreshes", async ({ page }) => {

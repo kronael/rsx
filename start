@@ -233,7 +233,7 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_RISK_SHARD_ID": str(shard),
                 "RSX_RISK_SHARD_COUNT":
                     str(config["risk_shards"]),
-                "RSX_RISK_MAX_SYMBOLS": str(len(symbols)),
+                "RSX_RISK_MAX_SYMBOLS": str(max(s["id"] for s in symbols) + 1),
                 "RSX_RISK_CMP_ADDR":
                     f"127.0.0.1:{BASE_RISK_CMP + shard}",
                 "RSX_GW_CMP_ADDR":

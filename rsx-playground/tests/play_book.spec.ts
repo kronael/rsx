@@ -141,6 +141,32 @@ test.describe("Book tab", () => {
     expect(content).toBeTruthy();
   });
 
+  test("book stats shows BBO data after orders submitted", async ({
+    page,
+  }) => {
+    // Submit a passive buy order to seed book data (maker
+    // already running with ask ~50050 on symbol_id=10)
+    await page.request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10",
+        side: "buy",
+        order_type: "limit",
+        price: "49000",
+        qty: "1",
+        user_id: "1",
+      },
+    });
+    await page.goto("/book");
+    const statsDiv = page.locator("[hx-get='./x/book-stats']");
+    // Wait for HTMX to populate: book-stats refreshes every 2s
+    await expect(statsDiv).not.toContainText(
+      /waiting for orders/i,
+      { timeout: 8000 },
+    );
+    // Should show a table with Symbol header
+    await expect(statsDiv).toContainText(/Symbol/i, { timeout: 8000 });
+  });
+
   test("trade aggregation card auto-refreshes", async ({ page }) => {
     await page.goto("/book");
     const tradeAgg = page.locator("[hx-get='./x/trade-agg']");

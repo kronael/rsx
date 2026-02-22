@@ -3,6 +3,8 @@ use crate::types::SymbolMap;
 use futures_util::StreamExt;
 use rsx_types::time::time_ns;
 use std::sync::Arc;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tokio::time::Duration;
 use tokio_tungstenite::connect_async;
 
@@ -59,6 +61,16 @@ impl PriceSource for CoinbaseSource {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// ±20% jitter multiplier — avoids adding a rand dep.
+fn jitter_factor() -> f64 {
+    let ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(12345);
+    0.8 + 0.4 * ((ns % 1000) as f64 / 1000.0)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_ws_loop<F>(
     ws_url: String,
     symbol_map: Arc<SymbolMap>,
@@ -78,38 +90,61 @@ fn run_ws_loop<F>(
         ) + Send
         + 'static,
 {
+    // Hard retry budget; reset on each successful connection.
+    const MAX_RETRIES: u32 = 20;
+
     tokio::spawn(async move {
         let mut backoff = base;
+        let mut consec_errors: u32 = 0;
         loop {
-            if let Ok((mut ws, _)) = connect_async(&ws_url).await {
-                backoff = base;
-                while let Some(msg) = ws.next().await {
-                    let msg = match msg {
-                        Ok(m) => m,
-                        Err(_) => break,
-                    };
-                    if !msg.is_text() {
-                        continue;
+            match connect_async(&ws_url).await {
+                Ok((mut ws, _)) => {
+                    // Connected — reset budget and backoff.
+                    backoff = base;
+                    consec_errors = 0;
+                    while let Some(msg) = ws.next().await {
+                        let msg = match msg {
+                            Ok(m) => m,
+                            Err(_) => break,
+                        };
+                        if !msg.is_text() {
+                            continue;
+                        }
+                        let text = msg.to_text().unwrap_or("");
+                        if let Ok(val) =
+                            serde_json::from_str::<
+                                serde_json::Value,
+                            >(text)
+                        {
+                            handler(
+                                &val,
+                                source_id,
+                                price_scale,
+                                &symbol_map,
+                                &mut tx,
+                            );
+                        }
                     }
-                    let text = msg.to_text().unwrap_or("");
-                    if let Ok(val) =
-                        serde_json::from_str::<
-                            serde_json::Value,
-                        >(text)
-                    {
-                        handler(
-                            &val,
-                            source_id,
-                            price_scale,
-                            &symbol_map,
-                            &mut tx,
-                        );
-                    }
+                }
+                Err(_) => {
+                    consec_errors += 1;
                 }
             }
 
+            if consec_errors > MAX_RETRIES {
+                tracing::error!(
+                    "BLOCKED: source_id={} exhausted {} \
+                     reconnect attempts; stopping",
+                    source_id,
+                    MAX_RETRIES,
+                );
+                return;
+            }
+
+            let sleep_ms = (backoff as f64
+                * jitter_factor()) as u64;
             tokio::time::sleep(
-                Duration::from_millis(backoff),
+                Duration::from_millis(sleep_ms),
             )
             .await;
             backoff = (backoff * 2).min(max);

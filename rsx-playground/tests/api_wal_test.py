@@ -701,3 +701,25 @@ def test_wal_end_to_end_workflow(client, wal_dir_with_files):
     assert all(r.status_code == 200 for r in [
         resp1, resp2, resp3, resp4, resp5
     ])
+
+
+def test_wal_status_shows_mark_stream(client, wal_dir_with_files):
+    """WAL status partial renders mark stream by name."""
+    mark_dir = wal_dir_with_files / "mark"
+    mark_dir.mkdir(exist_ok=True)
+    (mark_dir / "000001.dxs").write_bytes(b"mark data" * 10)
+
+    resp = client.get("/x/wal-status")
+    assert resp.status_code == 200
+    assert "mark" in resp.text
+
+
+def test_wal_status_shows_pengu_stream(client, wal_dir_with_files):
+    """WAL status partial renders me-pengu stream by name."""
+    pengu_dir = wal_dir_with_files / "me-pengu"
+    pengu_dir.mkdir(exist_ok=True)
+    (pengu_dir / "000001.dxs").write_bytes(b"pengu data" * 10)
+
+    resp = client.get("/x/wal-status")
+    assert resp.status_code == 200
+    assert "me-pengu" in resp.text

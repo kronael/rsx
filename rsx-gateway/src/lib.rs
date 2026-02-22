@@ -11,3 +11,4 @@ pub mod handler;
 pub mod state;
 pub mod jwt;
 pub mod route;
+pub mod rest;

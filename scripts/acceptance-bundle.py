@@ -33,9 +33,11 @@ ROOT = Path(__file__).parent.parent
 PLAYGROUND = ROOT / "rsx-playground"
 TMP = PLAYGROUND / "tmp"
 BUNDLE_PATH = TMP / "acceptance-bundle.json"
+FRESHNESS_PATH = TMP / "freshness-report.json"
 GATE3_REPORT = TMP / "gate-3-report.json"
 PLAY_SIG_DIR = TMP / "play-sig"
 PLAY_ARTIFACT_DIR = TMP / "play-artifacts"
+FULL_RUN_REPORT = PLAY_ARTIFACT_DIR / "full-run" / "report.json"
 
 # Playwright canonical total — must equal this for release gate to pass
 PLAYWRIGHT_CANONICAL = 223
@@ -44,6 +46,8 @@ PLAYWRIGHT_CANONICAL = 223
 STALE_SECONDS = 86400
 # gate-3-report is stale after 1 hour
 REPORT_STALE_SECONDS = 3600
+# full-run artifact is stale after 24 hours
+FULL_RUN_STALE_SECONDS = 86400
 
 
 def git_sha() -> str:
@@ -110,6 +114,79 @@ def gate3_status(report: dict | None) -> dict:
             for ec, v in report.get("by_class", {}).items()
         },
     }
+
+
+def check_snapshot_denominator(
+    stats: dict, canonical: int
+) -> list[str]:
+    """Reject snapshots where the denominator != canonical expected total.
+
+    The denominator is expected + unexpected (tests actually run).
+    Skipped tests are excluded: a snapshot with skipped tests may
+    have denominator < canonical, indicating incomplete coverage.
+
+    Returns a list of error messages (empty = ok).
+    """
+    issues: list[str] = []
+    expected = stats.get("expected", 0)
+    unexpected = stats.get("unexpected", 0)
+    denominator = expected + unexpected
+    if denominator != canonical:
+        issues.append(
+            f"denominator mismatch: snapshot ran {denominator} tests "
+            f"but release manifest requires {canonical} "
+            f"(expected={expected}, unexpected={unexpected})"
+        )
+    return issues
+
+
+def check_phase_semantics_playwright(
+    shard: str, data: dict
+) -> list[str]:
+    """Reject snapshots with phase-semantic conflicts.
+
+    A phase-semantic conflict is when the snapshot shows tests in an
+    'interrupted' state (test runner was killed mid-run) while there
+    are nonterminal failures present — a zombie/stuck execution state
+    that cannot self-resolve.
+
+    Specifically: if runnable_count == 0 (no test is 'running') but
+    interrupted_count > 0 and fail_count > 0, the snapshot is stuck.
+    """
+    issues: list[str] = []
+    interrupted: list[str] = []
+    failed: list[str] = []
+    running: list[str] = []
+
+    ZOMBIE_STATUSES = {"interrupted", "timedOut"}
+
+    def walk(suites: list) -> None:
+        for suite in suites:
+            for spec in suite.get("specs", []):
+                title = spec.get("title", "<unknown>")
+                for test in spec.get("tests", []):
+                    for result in test.get("results", []):
+                        st = result.get("status", "")
+                        if st in ZOMBIE_STATUSES:
+                            interrupted.append(title)
+                        elif st == "failed":
+                            failed.append(title)
+                        elif st == "running":
+                            running.append(title)
+            walk(suite.get("suites", []))
+
+    walk(data.get("suites", []))
+
+    # Zombie: interrupted tests + nonterminal failures + nothing running
+    if interrupted and failed and not running:
+        issues.append(
+            f"phase-semantics [{shard}]: "
+            f"executing with zero runnable backlog "
+            f"({len(running)} running) but {len(interrupted)} "
+            f"interrupted and {len(failed)} nonterminal failure(s) "
+            f"— stuck/zombie state; re-run the full suite"
+        )
+    return issues
 
 
 def check_shard_contradictions(shard: str, data: dict) -> list[str]:
@@ -179,80 +256,96 @@ def supersede_shard(shard: str) -> str | None:
 
 
 def gate4_status() -> dict:
-    """Collect Playwright shard results from play-artifacts/<shard>/report.json.
+    """Collect Playwright results from full-run/report.json.
 
-    Supersession: when a shard now passes and a prior .sig file exists,
-    the failed entry is auto-closed (sig + count files removed) and the
-    superseded signature is recorded in the returned dict.
+    play-full.sh produces a single timestamped JSON artifact covering all
+    projects.  It copies the result to full-run/report.json (the canonical
+    location).  Per-shard artifacts are no longer accepted as proof — only
+    a fresh full-run artifact counts.
+
+    Returns a dict with status, total_passed, total_failed, canonical_ok,
+    failing_ids, stale (bool), and source_path.
     """
-    shards = ["routing", "htmx-partials", "process-control", "trade-ui"]
-    total_pass = 0
-    total_fail = 0
-    shard_results = {}
     failing_ids: list[str] = []
     contradictions: list[str] = []
-    superseded: list[dict] = []  # [{shard, old_sig}] auto-closed entries
 
-    for shard in shards:
-        report_file = PLAY_ARTIFACT_DIR / shard / "report.json"
-
-        if not report_file.exists():
-            shard_results[shard] = {"status": "not-run", "passed": 0, "failed": 0}
-            continue
-
-        try:
-            data = json.loads(report_file.read_text())
-        except Exception:
-            shard_results[shard] = {"status": "parse-error", "passed": 0, "failed": 0}
-            continue
-
-        # Contradiction linter: reject split-outcome snapshots
-        issues = check_shard_contradictions(shard, data)
-        if issues:
-            contradictions.extend(issues)
-
-        stats = data.get("stats", {})
-        unexpected = stats.get("unexpected", 0)
-        expected = stats.get("expected", 0)
-
-        status = "pass" if unexpected == 0 else "fail"
-
-        # Supersession: shard now passes — auto-close prior failed entry
-        if unexpected == 0:
-            old_sig = supersede_shard(shard)
-            if old_sig and old_sig != "pass":
-                superseded.append({"shard": shard, "old_sig": old_sig})
-                print(
-                    f"[acceptance-bundle] SUPERSEDED: {shard} "
-                    f"(old_sig={old_sig} closed — shard now passing)",
-                    file=sys.stderr,
-                )
-
-        # Collect failing test IDs
-        def walk(suites: list) -> None:
-            for suite in suites:
-                for spec in suite.get("specs", []):
-                    for test in spec.get("tests", []):
-                        results = test.get("results", [])
-                        if any(r.get("status") == "failed" for r in results):
-                            failing_ids.append(
-                                f"{shard}::{spec.get('title', '')}"
-                            )
-                walk(suite.get("suites", []))
-
-        walk(data.get("suites", []))
-
-        shard_results[shard] = {
-            "status": status,
-            "passed": expected,
-            "failed": unexpected,
+    if not FULL_RUN_REPORT.exists():
+        print(
+            "[acceptance-bundle] gate4: full-run artifact missing.\n"
+            "  Run: cd rsx-playground/tests && bash play-full.sh",
+            file=sys.stderr,
+        )
+        return {
+            "status": "not-run",
+            "total_passed": 0,
+            "total_failed": 0,
+            "canonical_ok": False,
+            "stale": True,
+            "failing_ids": [],
+            "source_path": str(FULL_RUN_REPORT),
         }
-        total_pass += expected
-        total_fail += unexpected
+
+    stale = check_stale(FULL_RUN_REPORT, FULL_RUN_STALE_SECONDS)
+    if stale:
+        age_h = (time.time() - FULL_RUN_REPORT.stat().st_mtime) / 3600
+        print(
+            f"[acceptance-bundle] gate4: full-run artifact is stale "
+            f"({age_h:.1f}h old, limit={FULL_RUN_STALE_SECONDS//3600}h).\n"
+            "  Run: cd rsx-playground/tests && bash play-full.sh",
+            file=sys.stderr,
+        )
+
+    try:
+        data = json.loads(FULL_RUN_REPORT.read_text())
+    except Exception as exc:
+        print(
+            f"[acceptance-bundle] gate4: cannot parse full-run artifact: {exc}",
+            file=sys.stderr,
+        )
+        return {
+            "status": "parse-error",
+            "total_passed": 0,
+            "total_failed": 0,
+            "canonical_ok": False,
+            "stale": stale,
+            "failing_ids": [],
+            "source_path": str(FULL_RUN_REPORT),
+        }
+
+    # Contradiction linter on the full-run report
+    issues = check_shard_contradictions("full-run", data)
+    if issues:
+        contradictions.extend(issues)
+
+    stats = data.get("stats", {})
+    total_pass = stats.get("expected", 0)
+    total_fail = stats.get("unexpected", 0)
+
+    # Denominator check: total tests run must equal release manifest
+    contradictions.extend(
+        check_snapshot_denominator(stats, PLAYWRIGHT_CANONICAL)
+    )
+
+    # Phase semantics: reject zombie/stuck execution states
+    contradictions.extend(
+        check_phase_semantics_playwright("full-run", data)
+    )
+
+    # Collect failing test titles
+    def walk(suites: list) -> None:
+        for suite in suites:
+            for spec in suite.get("specs", []):
+                for test in spec.get("tests", []):
+                    results = test.get("results", [])
+                    if any(r.get("status") == "failed" for r in results):
+                        failing_ids.append(spec.get("title", ""))
+            walk(suite.get("suites", []))
+
+    walk(data.get("suites", []))
 
     if contradictions:
         print(
-            f"[acceptance-bundle] CONTRADICTION: shard snapshot rejected "
+            f"[acceptance-bundle] CONTRADICTION: full-run snapshot rejected "
             f"({len(contradictions)} issue(s))",
             file=sys.stderr,
         )
@@ -260,17 +353,24 @@ def gate4_status() -> dict:
             print(f"  {msg}", file=sys.stderr)
         sys.exit(3)
 
-    # Hard release gate: must have exactly PLAYWRIGHT_CANONICAL passing tests
-    canonical_ok = total_pass == PLAYWRIGHT_CANONICAL and total_fail == 0
+    # Hard release gate: must have exactly PLAYWRIGHT_CANONICAL passing
+    canonical_ok = (
+        total_pass == PLAYWRIGHT_CANONICAL
+        and total_fail == 0
+        and not stale
+    )
     overall = "pass" if canonical_ok else "fail"
     return {
         "status": overall,
         "total_passed": total_pass,
         "total_failed": total_fail,
         "canonical_ok": canonical_ok,
-        "shards": shard_results,
+        "stale": stale,
         "failing_ids": failing_ids,
-        "superseded": superseded,
+        "source_path": str(FULL_RUN_REPORT),
+        # kept for backward compat — always empty now
+        "shards": {},
+        "superseded": [],
     }
 
 
@@ -411,6 +511,32 @@ def main():
 
     BUNDLE_PATH.write_text(json.dumps(bundle, indent=2))
     print(json.dumps(bundle, indent=2))
+
+    # Write machine-readable freshness report for publish-progress.py
+    full_run_age_s = (
+        int(time.time() - FULL_RUN_REPORT.stat().st_mtime)
+        if FULL_RUN_REPORT.exists()
+        else -1
+    )
+    freshness = {
+        "generated_at": bundle["generated_at"],
+        "commit_sha": bundle["commit_sha"],
+        "sha_match": True,  # always true: bundle records current HEAD
+        "bundle_age_s": 0,
+        "full_run_age_s": full_run_age_s,
+        "full_run_stale": g4.get("stale", True),
+        "canonical_ok": g4.get("canonical_ok", False),
+        "all_green": all_green,
+        "fresh": all_green and not g4.get("stale", True),
+    }
+    FRESHNESS_PATH.write_text(json.dumps(freshness, indent=2))
+    print(
+        f"[acceptance-bundle] freshness-report: "
+        f"sha={freshness['commit_sha']}, "
+        f"fresh={freshness['fresh']}, "
+        f"full_run_age={full_run_age_s}s",
+        file=sys.stderr,
+    )
 
     print(
         f"\n[acceptance-bundle] {'GREEN' if all_green else 'RED'}"
