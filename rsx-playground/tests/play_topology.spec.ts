@@ -7,9 +7,10 @@ test.describe("Topology tab", () => {
     await expect(page.locator("nav a", { hasText: "Topology" }))
       .toHaveClass(/bg-slate-700/);
     await expect(page.getByRole("heading", { name: "Process Graph" })).toBeVisible();
-    await expect(page.locator("pre")).toContainText("Gateway");
-    await expect(page.locator("pre")).toContainText("Risk");
-    await expect(page.locator("pre")).toContainText("Marketdata");
+    // Verify key process nodes exist in the interactive diagram
+    await expect(page.locator(".component-node", { hasText: "Gateway" })).toBeVisible();
+    await expect(page.locator(".component-node", { hasText: "Risk" })).toBeVisible();
+    await expect(page.locator(".component-node", { hasText: "Marketdata" })).toBeVisible();
   });
 
   test("has core affinity card", async ({ page }) => {
@@ -27,29 +28,24 @@ test.describe("Topology tab", () => {
     await expect(page.getByRole("heading", { name: "Process List" })).toBeVisible();
   });
 
-  // New interactive tests (7 total)
-
   test("process graph shows nodes for running processes", async ({ page }) => {
     await page.goto("/topology");
-    const graph = page.locator("pre");
 
-    // Should show key process names
-    await expect(graph).toContainText("Gateway");
-    await expect(graph).toContainText("Risk");
-    await expect(graph).toContainText("ME");
-    await expect(graph).toContainText("Marketdata");
-    await expect(graph).toContainText("Recorder");
-    await expect(graph).toContainText("Mark");
+    // Should show key process names in topology nodes
+    await expect(page.locator(".component-node", { hasText: "Gateway" })).toBeVisible();
+    await expect(page.locator(".component-node", { hasText: "Risk" })).toBeVisible();
+    await expect(page.locator(".component-node", { hasText: "Matching" })).toBeVisible();
+    await expect(page.locator(".component-node", { hasText: "Marketdata" })).toBeVisible();
+    await expect(page.locator(".component-node", { hasText: "Recorder" })).toBeVisible();
+    await expect(page.locator("#topo-node-mark")).toBeVisible();
   });
 
   test("process graph shows edges for CMP connections", async ({ page }) => {
     await page.goto("/topology");
-    const graph = page.locator("pre");
 
-    // Should show connection arrows
-    await expect(graph).toContainText("---");
-    await expect(graph).toContainText("CMP/UDP");
-    await expect(graph).toContainText("WAL/TCP");
+    // Should show connection labels between nodes
+    await expect(page.locator("text=CMP").first()).toBeVisible();
+    await expect(page.locator("text=WAL").first()).toBeVisible();
   });
 
   test("core affinity map auto-refreshes every 5s", async ({ page }) => {

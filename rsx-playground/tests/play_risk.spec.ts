@@ -32,7 +32,7 @@ test.describe("Risk tab", () => {
 
   test("has liquidation queue card", async ({ page }) => {
     await page.goto("/risk");
-    await expect(page.getByRole("heading", { name: "Liquidation Queue" })).toBeVisible();
+    await expect(page.locator("h2", { hasText: "Liquidation Queue" })).toBeVisible();
   });
 
   // New interactive tests (13 total)
@@ -245,8 +245,8 @@ test.describe("Risk tab", () => {
     // Verify all cards visible
     await expect(page.getByRole("heading", { name: "Position Heatmap" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Margin Ladder" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Funding" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Liquidation Queue" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Funding", exact: true })).toBeVisible();
+    await expect(page.locator("h2", { hasText: "Liquidation Queue" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Risk Check Latency" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "User Actions" })).toBeVisible();
 
