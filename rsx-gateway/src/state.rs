@@ -12,6 +12,8 @@ pub struct ConnectionState {
     pub user_id: u32,
     pub outbound: VecDeque<String>,
     pub last_activity_ns: u64,
+    pub last_heartbeat_sent_ns: u64,
+    pub last_heartbeat_recv_ns: u64,
 }
 
 /// Shared gateway state (single-threaded, Rc<RefCell>).
@@ -122,6 +124,8 @@ impl GatewayState {
                 user_id,
                 outbound: VecDeque::new(),
                 last_activity_ns: 0,
+                last_heartbeat_sent_ns: 0,
+                last_heartbeat_recv_ns: 0,
             },
         );
         Ok(id)
@@ -177,6 +181,81 @@ impl GatewayState {
             self.connections.get_mut(&conn_id)
         {
             conn.last_activity_ns = now_ns;
+        }
+    }
+
+    pub fn heartbeat_recv(
+        &mut self,
+        conn_id: u64,
+        now_ns: u64,
+    ) {
+        if let Some(conn) =
+            self.connections.get_mut(&conn_id)
+        {
+            conn.last_heartbeat_recv_ns = now_ns;
+            conn.last_activity_ns = now_ns;
+        }
+    }
+
+    /// Returns true if a heartbeat should be sent now.
+    pub fn should_send_heartbeat(
+        &self,
+        conn_id: u64,
+        now_ns: u64,
+        interval_ms: u64,
+    ) -> bool {
+        if let Some(conn) = self.connections.get(&conn_id)
+        {
+            if conn.last_heartbeat_sent_ns == 0 {
+                return true;
+            }
+            let interval_ns = interval_ms * 1_000_000;
+            let since = now_ns
+                .saturating_sub(conn.last_heartbeat_sent_ns);
+            since >= interval_ns
+        } else {
+            false
+        }
+    }
+
+    pub fn mark_heartbeat_sent(
+        &mut self,
+        conn_id: u64,
+        now_ns: u64,
+    ) {
+        if let Some(conn) =
+            self.connections.get_mut(&conn_id)
+        {
+            conn.last_heartbeat_sent_ns = now_ns;
+        }
+    }
+
+    /// Returns true if heartbeat timed out.
+    pub fn is_heartbeat_timeout(
+        &self,
+        conn_id: u64,
+        now_ns: u64,
+        timeout_ms: u64,
+    ) -> bool {
+        if let Some(conn) = self.connections.get(&conn_id)
+        {
+            // Only check timeout after first heartbeat sent
+            if conn.last_heartbeat_sent_ns == 0 {
+                return false;
+            }
+            let timeout_ns = timeout_ms * 1_000_000;
+            // Timeout if no recv since last send, and
+            // elapsed since last send exceeds timeout
+            let last_recv = conn.last_heartbeat_recv_ns;
+            let last_sent = conn.last_heartbeat_sent_ns;
+            if last_recv >= last_sent {
+                return false;
+            }
+            let elapsed =
+                now_ns.saturating_sub(last_sent);
+            elapsed >= timeout_ns
+        } else {
+            false
         }
     }
 

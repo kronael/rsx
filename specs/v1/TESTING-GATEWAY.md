@@ -473,8 +473,8 @@ Targets from NETWORK.md:
 |-----------|--------|------|
 | tick_size_validation_rejects_early | DONE | convert_test.rs |
 | lot_size_validation_rejects_early | DONE | convert_test.rs |
-| symbol_not_found_rejects_early | TODO | Need config cache |
-| config_cache_updated_on_config_applied | TODO | Need CONFIG_APPLIED |
+| symbol_not_found_rejects_early | DONE | prevalidation_test.rs |
+| config_cache_updated_on_config_applied | DONE | prevalidation_test.rs |
 
 ### E2E Tests
 
