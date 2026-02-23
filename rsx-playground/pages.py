@@ -283,10 +283,23 @@ def overview_page():
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
+    pulse = (
+        '<div class="bg-slate-900 border border-slate-800 '
+        'rounded-lg px-4 py-2 flex flex-wrap items-center '
+        'gap-4 sm:gap-6 text-xs font-mono" '
+        'hx-get="./x/pulse" '
+        'hx-trigger="load, every 1s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>'
+    )
     content = f"""
 {welcome}
+{pulse}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {health}
 {procs}
+</div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {metrics}
 {stats}
@@ -297,8 +310,8 @@ def overview_page():
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {logs_tail}
-</div>
-{invariants}"""
+{invariants}
+</div>"""
     return layout("Overview", content, "./overview")
 
 
@@ -463,9 +476,19 @@ function applyTopoFlow(evt) {{
         "</div>"
     )
 
+    status_bar = (
+        '<div class="bg-zinc-900 border border-zinc-800 '
+        'rounded px-3 py-2 text-xs font-mono '
+        'flex flex-wrap gap-4" '
+        'hx-get="./x/topology/summary" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-zinc-600">loading...</span>'
+        '</div>'
+    )
     content = f"""
 <div class="space-y-3">
-  {_card("System Topology", diagram)}
+  {_card("System Topology", diagram + status_bar)}
   {_card("Selected Component", detail)}
 </div>"""
     return layout("Topology", content, "./topology")
@@ -770,8 +793,9 @@ def logs_page():
   </div>
   <div class="flex flex-wrap items-center gap-2">
     <input type="text" id="smart-search"
-      class="flex-1 min-w-[200px] bg-slate-950 border
-        border-slate-700 text-slate-300 px-2 py-1 rounded text-xs"
+      class="flex-1 min-w-0 w-full sm:min-w-[200px]
+        sm:w-auto bg-slate-950 border border-slate-700
+        text-slate-300 px-2 py-1 rounded text-xs"
       placeholder="Smart search: 'gateway error order' or just search text (press / to focus, Ctrl+L to clear)"
       onkeydown="handleSmartSearch(event)">
     <button class="bg-slate-800 text-slate-400 px-3 py-1 rounded
@@ -811,8 +835,8 @@ def logs_page():
       placeholder="search...">
   </div>
 </div>
-<div id="log-view" class="max-h-[500px] overflow-y-auto
-  overflow-x-auto"
+<div id="log-view" class="max-h-[60vh] sm:max-h-[500px]
+  overflow-y-auto overflow-x-auto"
      hx-get="./x/logs" hx-trigger="load, every 2s"
      hx-swap="innerHTML"
      hx-include="#log-process, #log-level, #log-search">
@@ -821,7 +845,8 @@ def logs_page():
 <div id="log-modal" class="hidden fixed inset-0 bg-black/80
   flex items-center justify-center z-50" onclick="closeModal()">
   <div class="bg-slate-900 border border-slate-700 rounded-lg
-    p-4 max-w-4xl max-h-[80vh] overflow-auto m-4"
+    p-4 max-w-[95vw] sm:max-w-4xl max-h-[85vh]
+    overflow-auto m-2 sm:m-4"
     onclick="event.stopPropagation()">
     <div class="flex justify-between items-start mb-3">
       <h3 class="text-sm font-semibold text-slate-400">
@@ -1147,8 +1172,8 @@ def orders_page():
         "text-white border-violet-700"
     )
     _btn_base = (
-        "text-xs font-medium py-2 px-1 rounded border "
-        "cursor-pointer w-full min-h-[44px]"
+        "text-sm font-bold py-3 px-2 rounded border "
+        "cursor-pointer w-full min-h-[48px]"
     )
 
     def _qbtn(label, vals_json, color_cls):
@@ -1183,34 +1208,42 @@ def orders_page():
             cls,
         )
 
-    matrix_btns = [
-        _mkt("Buy 1 @ Mkt", "buy", "1"),
-        _mkt("Buy 5 @ Mkt", "buy", "5"),
-        _mkt("Buy 10 @ Mkt", "buy", "10"),
-        _mkt("Sell 1 @ Mkt", "sell", "1"),
-        _mkt("Sell 5 @ Mkt", "sell", "5"),
-        _mkt("Sell 10 @ Mkt", "sell", "10"),
-        _lmt("Buy 1 @ +1%", "buy", "1", "1"),
-        _lmt("Buy 5 @ +1%", "buy", "5", "1"),
-        _lmt("Sell 1 @ -1%", "sell", "1", "-1"),
-        _lmt("Sell 5 @ -1%", "sell", "5", "-1"),
+    multipliers = ["1", "5", "20", "100"]
+
+    buy_row = "".join(
+        _mkt(f"{q}x", "buy", q) for q in multipliers
+    )
+    sell_row = "".join(
+        _mkt(f"{q}x", "sell", q) for q in multipliers
+    )
+    rand_row = (
         _qbtn(
             "\U0001f3b2 Random",
             '{"randomize":"true"}',
             _rand_cls,
-        ),
-        _qbtn(
+        )
+        + _qbtn(
             "\U0001f3b2 Rand Side",
             '{"rand_side":"true","qty":"5"}',
             _rand_cls,
-        ),
-    ]
+        )
+    )
+
     matrix_html = (
-        '<div class="grid grid-cols-3 gap-2 mb-2">'
-        + "".join(matrix_btns)
-        + "</div>"
-        + '<div id="quick-result" '
-        + 'class="text-xs min-h-[20px] mb-3"></div>'
+        '<div class="space-y-2 mb-2">'
+        '<div class="text-[10px] text-slate-500 uppercase'
+        ' tracking-wider">Buy (up)</div>'
+        f'<div class="grid grid-cols-4 gap-2">'
+        f'{buy_row}</div>'
+        '<div class="text-[10px] text-slate-500 uppercase'
+        ' tracking-wider mt-1">Sell (down)</div>'
+        f'<div class="grid grid-cols-4 gap-2">'
+        f'{sell_row}</div>'
+        f'<div class="grid grid-cols-2 gap-2 mt-1">'
+        f'{rand_row}</div>'
+        '</div>'
+        '<div id="quick-result" '
+        'class="text-xs min-h-[20px] mb-3"></div>'
     )
 
     custom_form = """<details class="group">

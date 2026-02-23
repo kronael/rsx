@@ -1908,6 +1908,42 @@ async def x_topology_flow():
     return JSONResponse({"nodes": nodes})
 
 
+@app.get("/x/topology/summary",
+         response_class=HTMLResponse)
+async def x_topology_summary():
+    procs = scan_processes()
+    running = [p for p in procs
+               if p.get("state") == "running"]
+    names = ", ".join(p["name"] for p in running)
+    gw_up = any(
+        "gateway" in p["name"] for p in running)
+    me_up = any(
+        "me-" in p["name"] or "matching" in p["name"]
+        for p in running)
+    md_up = any(
+        "marketdata" in p["name"] for p in running)
+
+    def _dot(ok):
+        c = "bg-emerald-400" if ok else "bg-red-500"
+        return (
+            f'<span class="w-1.5 h-1.5 rounded-full '
+            f'{c} inline-block"></span>'
+        )
+
+    return HTMLResponse(
+        f'{_dot(gw_up)} '
+        f'<span class="text-zinc-400">GW</span> '
+        f'{_dot(me_up)} '
+        f'<span class="text-zinc-400">ME</span> '
+        f'{_dot(md_up)} '
+        f'<span class="text-zinc-400">MD</span> '
+        f'<span class="text-zinc-500 ml-2">'
+        f'{len(running)}/{len(procs)} running</span>'
+        f'<span class="text-zinc-600 ml-auto truncate '
+        f'max-w-[300px]">{names}</span>'
+    )
+
+
 @app.get("/book", response_class=HTMLResponse)
 async def book():
     return HTMLResponse(pages.book_page())
@@ -2427,6 +2463,38 @@ async def x_key_metrics():
             scan_processes(), scan_wal_streams(),
             active_orders=ao, positions=pos_count,
             msgs_sec=mps))
+
+
+@app.get("/x/pulse", response_class=HTMLResponse)
+async def x_pulse():
+    procs = scan_processes()
+    running = sum(
+        1 for p in procs if p.get("state") == "running")
+    streams = scan_wal_streams()
+    wal_files = sum(s.get("files", 0) for s in streams)
+    elapsed = max(1, time.time() - SERVER_START)
+    ops = int(len(recent_orders) / elapsed)
+    errs = sum(
+        1 for o in recent_orders
+        if o.get("status") in {"rejected", "failed"})
+
+    def _pill(label, value, color):
+        return (
+            f'<span class="text-slate-500">{label}</span>'
+            f'<span class="text-{color} font-bold">'
+            f'{value}</span>'
+        )
+
+    return HTMLResponse(
+        _pill("proc", f"{running}/{len(procs)}",
+              "emerald-400" if running > 0
+              else "red-400")
+        + _pill("ord/s", str(ops), "blue-400")
+        + _pill("wal", str(wal_files), "cyan-400")
+        + _pill("errs", str(errs),
+                "emerald-400" if errs == 0
+                else "red-400")
+    )
 
 
 @app.get("/x/ring-pressure", response_class=HTMLResponse)
