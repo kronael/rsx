@@ -77,12 +77,35 @@ WEBUI_DIST = ROOT / "rsx-webui" / "dist"
 
 import importlib.machinery
 import importlib.util
-_loader = importlib.machinery.SourceFileLoader(
-    "start_mod", str(ROOT / "start"))
-_spec = importlib.util.spec_from_loader(
-    "start_mod", _loader)
-start_mod = importlib.util.module_from_spec(_spec)
-_loader.exec_module(start_mod)
+import types
+try:
+    _loader = importlib.machinery.SourceFileLoader(
+        "start_mod", str(ROOT / "start"))
+    _spec = importlib.util.spec_from_loader(
+        "start_mod", _loader)
+    start_mod = importlib.util.module_from_spec(_spec)
+    _loader.exec_module(start_mod)
+except Exception:
+    # start file missing — provide default SYMBOLS
+    start_mod = types.ModuleType("start_mod")
+    start_mod.SYMBOLS = {
+        "BTC": {
+            "id": 1, "tick": 50, "lot": 100,
+            "price_dec": 2, "qty_dec": 8,
+        },
+        "ETH": {
+            "id": 2, "tick": 10, "lot": 1000,
+            "price_dec": 2, "qty_dec": 8,
+        },
+        "SOL": {
+            "id": 3, "tick": 1, "lot": 10000,
+            "price_dec": 4, "qty_dec": 6,
+        },
+        "PENGU": {
+            "id": 10, "tick": 1, "lot": 100000,
+            "price_dec": 6, "qty_dec": 4,
+        },
+    }
 
 # ── postgres ────────────────────────────────────────────
 
@@ -236,7 +259,11 @@ def _sim_submit(symbol_id, side, price, qty, cid, user_id):
     if len(recent_fills) > 200:
         del recent_fills[:100]
 
-    # update _book_snap from sim book
+    # auto-reseed if book got too thin from fills
+    if len(book["bids"]) < 2 or len(book["asks"]) < 2:
+        _seed_sim_book()
+
+    # update _book_snap from sim book (after reseed)
     bids = [{"px": px, "qty": q}
             for px, q, _ in book["bids"][:20]]
     asks = [{"px": px, "qty": q}
@@ -255,10 +282,6 @@ def _sim_submit(symbol_id, side, price, qty, cid, user_id):
         })
     if len(_sim_wal_events) > 500:
         del _sim_wal_events[:250]
-
-    # auto-reseed if book got too thin from fills
-    if len(book["bids"]) < 2 or len(book["asks"]) < 2:
-        _seed_sim_book()
 
     return fills_out
 
@@ -2930,7 +2953,11 @@ async def x_stale_orders():
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
     snap = _book_snap.get(symbol_id)
-    if snap:
+    if not snap or not (snap.get("bids") or snap.get("asks")):
+        # Re-seed sim book if empty (e.g. after all-stop)
+        _seed_sim_book()
+        snap = _book_snap.get(symbol_id)
+    if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, snap))
     # Fallback: WAL BBO gives at most 1 bid + 1 ask
@@ -5418,7 +5445,7 @@ def _maker_book(symbol_id: int) -> dict | None:
 async def api_book(symbol_id: int):
     # Prefer live snapshot from marketdata WS
     snap = _book_snap.get(symbol_id)
-    if snap:
+    if snap and (snap.get("bids") or snap.get("asks")):
         return snap
     # Fallback: WAL BBO (at most 1 bid + 1 ask)
     bbo = parse_wal_bbo(symbol_id)
@@ -5435,6 +5462,12 @@ async def api_book(symbol_id: int):
     maker_snap = _maker_book(symbol_id)
     if maker_snap:
         return maker_snap
+    # Final fallback: re-seed sim book if empty
+    if not _book_snap.get(symbol_id):
+        _seed_sim_book()
+    snap = _book_snap.get(symbol_id)
+    if snap:
+        return snap
     return {"bids": [], "asks": []}
 
 
