@@ -486,10 +486,42 @@ function applyTopoFlow(evt) {{
         '<span class="text-zinc-600">loading...</span>'
         '</div>'
     )
+    affinity = _card(
+        "Core Affinity Map",
+        '<div hx-get="./x/core-affinity" '
+        'hx-trigger="load, every 5s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">'
+        'loading...</span>'
+        '</div>',
+    )
+    cmp = _card(
+        "CMP Connections",
+        '<div hx-get="./x/cmp-flows" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">'
+        'loading...</span>'
+        '</div>',
+    )
+    proc_list = _card(
+        "Process List",
+        '<div hx-get="./x/processes" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">'
+        'loading...</span>'
+        '</div>',
+    )
     content = f"""
 <div class="space-y-3">
-  {_card("System Topology", diagram + status_bar)}
+  {_card("Process Graph", diagram + status_bar)}
   {_card("Selected Component", detail)}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+    {affinity}
+    {cmp}
+  </div>
+  {proc_list}
 </div>"""
     return layout("Topology", content, "./topology")
 
@@ -498,57 +530,24 @@ function applyTopoFlow(evt) {{
 
 def book_page():
     selector = """
-<div class="flex flex-wrap items-center gap-1 mb-3"
-  role="group">
-  <label class="cursor-pointer">
-    <input type="radio" name="book-symbol" value="10"
-      class="sr-only peer" checked
-      onchange="htmx.trigger('#book-data','load')">
-    <span class="peer-checked:bg-blue-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
-      px-3 py-1.5 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
-      PENGU</span>
-  </label>
-  <label class="cursor-pointer">
-    <input type="radio" name="book-symbol" value="3"
-      class="sr-only peer"
-      onchange="htmx.trigger('#book-data','load')">
-    <span class="peer-checked:bg-blue-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
-      px-3 py-1.5 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
-      SOL</span>
-  </label>
-  <label class="cursor-pointer">
-    <input type="radio" name="book-symbol" value="1"
-      class="sr-only peer"
-      onchange="htmx.trigger('#book-data','load')">
-    <span class="peer-checked:bg-blue-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
-      px-3 py-1.5 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
-      BTC</span>
-  </label>
-  <label class="cursor-pointer">
-    <input type="radio" name="book-symbol" value="2"
-      class="sr-only peer"
-      onchange="htmx.trigger('#book-data','load')">
-    <span class="peer-checked:bg-blue-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
-      px-3 py-1.5 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
-      ETH</span>
-  </label>
+<div class="flex flex-wrap items-center gap-2 mb-3">
+  <select id="book-symbol" name="book-symbol"
+    class="bg-slate-950 border border-slate-700
+      text-slate-300 px-3 py-1.5 rounded text-xs"
+    onchange="htmx.trigger('#book-data','load')">
+    <option value="10">PENGU</option>
+    <option value="3">SOL</option>
+    <option value="1">BTC</option>
+    <option value="2">ETH</option>
+  </select>
 </div>"""
     ladder = _card(
         "Orderbook Ladder",
         f"""{selector}
 <div id="book-data" hx-get="./x/book"
      hx-trigger="load, every 1s" hx-swap="innerHTML"
-     hx-vals="js:{{symbol_id:
-       document.querySelector(
-         'input[name=book-symbol]:checked').value}}">
+     hx-vals="js:{symbol_id:
+       document.getElementById('book-symbol').value}">
   <span class="text-slate-600">loading...</span>
 </div>""",
     )
@@ -570,7 +569,7 @@ def book_page():
         '</div>',
     )
     agg = _card(
-        "Trade Aggregation (1min)",
+        "Trade Aggregation",
         '<div hx-get="./x/trade-agg" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
@@ -649,8 +648,48 @@ def risk_page():
     enter user_id and click lookup</span>
 </div>"""
     actions = _card("User Actions", lookup)
+    heatmap = _card(
+        "Position Heatmap",
+        '<div hx-get="./x/position-heatmap" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    ladder = _card(
+        "Margin Ladder",
+        '<div hx-get="./x/margin-ladder" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    funding = _card(
+        "Funding",
+        '<div hx-get="./x/funding" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    liq_queue = _card(
+        "Liquidation Queue",
+        '<div hx-get="./x/liquidations" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
     content = f"""
 {overview}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{heatmap}
+{ladder}
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{funding}
+{liq_queue}
+</div>
 {latency}
 {actions}"""
     return layout("Risk", content, "./risk")
