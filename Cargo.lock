@@ -1834,6 +1834,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "rsx-dxs",
+ "rsx-types",
  "serde_json",
 ]
 
