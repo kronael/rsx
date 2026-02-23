@@ -71,12 +71,10 @@ test.describe("Faults tab", () => {
     await page.goto("/faults");
     await waitForHTMX(page, 2000);
 
-    // Look for restart buttons (may or may not exist depending on state)
-    const restartBtns = page.locator("button", { hasText: "Restart" });
-    const count = await restartBtns.count();
-
-    // Count >= 0 is fine (processes may be running or stopped)
-    expect(count).toBeGreaterThanOrEqual(0);
+    // The grid should contain at least one action button (Stop, Kill, or Restart)
+    const actionBtns = page.locator("button", { hasText: /Stop|Kill|Restart/ });
+    const actionCount = await actionBtns.count();
+    expect(actionCount).toBeGreaterThan(0);
   });
 
   test("recovery notes show iptables and tc commands", async ({ page }) => {

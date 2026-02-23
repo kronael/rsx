@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 
+// Tabs that render playground layout (have active nav)
 const TABS = [
   { label: "Overview", path: "/overview" },
   { label: "Topology", path: "/topology" },
@@ -8,15 +9,23 @@ const TABS = [
   { label: "WAL", path: "/wal" },
   { label: "Logs", path: "/logs" },
   { label: "Control", path: "/control" },
+  { label: "Maker", path: "/maker" },
   { label: "Faults", path: "/faults" },
   { label: "Verify", path: "/verify" },
   { label: "Orders", path: "/orders" },
+  { label: "Stress", path: "/stress" },
+];
+
+// Tabs that leave the playground layout
+const EXTERNAL_TABS = [
+  { label: "Docs", path: "/docs" },
+  { label: "Trade", path: "/trade/" },
 ];
 
 test.describe("Navigation", () => {
-  test("all 10 tab links are present", async ({ page }) => {
+  test("all 14 tab links are present", async ({ page }) => {
     await page.goto("/");
-    for (const tab of TABS) {
+    for (const tab of [...TABS, ...EXTERNAL_TABS]) {
       await expect(
         page.locator("nav a", { hasText: tab.label })
       ).toBeVisible();

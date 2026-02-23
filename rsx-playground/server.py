@@ -1003,6 +1003,9 @@ gateway_ws = None
 _idempotency_keys: dict[str, float] = {}
 _IDEMPOTENCY_TTL = 300
 SERVER_START: float = time.time()
+_user_balances: dict[int, int] = {}
+_user_frozen: set[int] = set()
+_liquidation_log: list[dict] = []
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -2399,14 +2402,37 @@ async def x_health():
 
 @app.get("/x/key-metrics", response_class=HTMLResponse)
 async def x_key_metrics():
+    terminal = {
+        "filled", "cancelled", "rejected",
+        "failed", "expired",
+    }
+    ao = sum(
+        1 for o in recent_orders
+        if o.get("status", "") not in terminal)
+    fills = parse_wal_fills(max_fills=2000)
+    pairs = set()
+    for f in fills:
+        taker = f.get("taker_uid", 0)
+        maker = f.get("maker_uid", 0)
+        sid = f.get("symbol_id", 0)
+        if taker:
+            pairs.add((taker, sid))
+        if maker:
+            pairs.add((maker, sid))
+    pos_count = len(pairs)
+    elapsed = max(1, time.time() - SERVER_START)
+    mps = int(len(recent_orders) / elapsed)
     return HTMLResponse(
-        pages.render_key_metrics(scan_processes(),
-                                 scan_wal_streams()))
+        pages.render_key_metrics(
+            scan_processes(), scan_wal_streams(),
+            active_orders=ao, positions=pos_count,
+            msgs_sec=mps))
 
 
 @app.get("/x/ring-pressure", response_class=HTMLResponse)
 async def x_ring_pressure():
-    return HTMLResponse(pages.render_ring_pressure())
+    return HTMLResponse(
+        pages.render_ring_pressure(scan_wal_streams()))
 
 
 @app.get("/x/invariant-status",
@@ -2424,7 +2450,15 @@ async def x_core_affinity():
 
 @app.get("/x/cmp-flows", response_class=HTMLResponse)
 async def x_cmp_flows():
-    return HTMLResponse(pages.render_cmp_flows())
+    fills = 0
+    bbos = 0
+    for sd in _wal_stream_dirs():
+        for r in parse_wal_records(sd, {RECORD_FILL}):
+            fills += 1
+        for r in parse_wal_records(sd, {RECORD_BBO}):
+            bbos += 1
+    return HTMLResponse(pages.render_cmp_flows(
+        {"fills": fills, "bbos": bbos}))
 
 
 @app.get("/x/control-grid", response_class=HTMLResponse)
@@ -2586,7 +2620,50 @@ async def x_risk_latency():
 @app.get("/x/reconciliation",
          response_class=HTMLResponse)
 async def x_reconciliation():
-    return HTMLResponse(pages.render_reconciliation())
+    shadow_check = None
+    if _book_snap:
+        mismatches = 0
+        checked = 0
+        for sid, snap in _book_snap.items():
+            wal_bbo = parse_wal_bbo(sid)
+            if wal_bbo is None:
+                continue
+            checked += 1
+            snap_bid = snap.get(
+                "best_bid", snap.get("bid_px", 0))
+            snap_ask = snap.get(
+                "best_ask", snap.get("ask_px", 0))
+            if (snap_bid != wal_bbo.get("bid_px", 0)
+                    or snap_ask
+                    != wal_bbo.get("ask_px", 0)):
+                mismatches += 1
+        if checked > 0:
+            if mismatches == 0:
+                shadow_check = (
+                    "pass", f"{checked} symbols match")
+            else:
+                shadow_check = (
+                    "fail",
+                    f"{mismatches}/{checked} mismatch")
+
+    mark_check = None
+    if _book_snap:
+        checked = 0
+        for sid, snap in _book_snap.items():
+            bid = snap.get(
+                "best_bid", snap.get("bid_px", 0))
+            ask = snap.get(
+                "best_ask", snap.get("ask_px", 0))
+            if bid > 0 and ask > 0:
+                checked += 1
+        if checked > 0:
+            mark_check = (
+                "pass",
+                f"{checked} symbols have valid BBO mid")
+
+    return HTMLResponse(pages.render_reconciliation(
+        shadow_vs_me=shadow_check,
+        mark_vs_index=mark_check))
 
 
 @app.get("/x/latency-regression",
@@ -2622,9 +2699,22 @@ async def x_order_trace(
 
 @app.get("/x/stale-orders", response_class=HTMLResponse)
 async def x_stale_orders():
+    now = time.time()
+    terminal = {
+        "filled", "cancelled", "rejected",
+        "failed", "expired",
+    }
+    stale = [
+        o for o in recent_orders
+        if o.get("status", "") not in terminal
+        and now - o.get("ts", now) > 60]
+    if not stale:
+        return HTMLResponse(
+            '<span class="text-emerald-400 text-xs">'
+            '0 stale orders</span>')
     return HTMLResponse(
-        '<span class="text-emerald-400 text-xs">'
-        '0 stale orders</span>')
+        f'<span class="text-amber-400 text-xs">'
+        f'{len(stale)} stale order(s)</span>')
 
 
 @app.get("/x/book", response_class=HTMLResponse)
@@ -4422,18 +4512,37 @@ async def api_create_user():
 
 
 @app.post("/api/users/{user_id}/deposit")
-async def api_deposit(user_id: int):
+async def api_deposit(
+    user_id: int,
+    amount: int = Form(100_000),
+):
+    _user_balances[user_id] = (
+        _user_balances.get(user_id, 0) + amount)
+    bal = _user_balances[user_id]
     return HTMLResponse(
-        f'<span class="text-slate-500 text-xs">'
-        f'deposit for user {user_id} requires '
-        f'risk engine</span>')
+        f'<span class="text-emerald-400 text-xs">'
+        f'deposited {amount} for user {user_id} '
+        f'(balance: {bal})</span>')
 
 
 @app.post("/api/risk/liquidate")
-async def api_liquidate():
+async def api_liquidate(
+    user_id: int = Form(0),
+    symbol_id: int = Form(10),
+):
+    entry = {
+        "user_id": user_id,
+        "symbol_id": symbol_id,
+        "ts": time.time(),
+        "status": "triggered",
+    }
+    _liquidation_log.append(entry)
+    import logging
+    logging.info("liquidation triggered: %s", entry)
     return HTMLResponse(
-        '<span class="text-slate-500 text-xs">'
-        'liquidation requires risk engine</span>')
+        f'<span class="text-amber-400 text-xs">'
+        f'liquidation triggered for user {user_id} '
+        f'symbol {symbol_id}</span>')
 
 
 @app.post("/api/wal/verify")
@@ -4503,8 +4612,15 @@ async def api_risk_action(user_id: int, action: str):
         return JSONResponse(
             {"error": f"unknown action: {action}"},
             status_code=400)
-    return {"user_id": user_id, "action": action,
-            "status": "requires risk engine"}
+    if action == "freeze":
+        _user_frozen.add(user_id)
+        return {"user_id": user_id, "action": "freeze",
+                "status": "frozen"}
+    else:
+        _user_frozen.discard(user_id)
+        return {"user_id": user_id,
+                "action": "unfreeze",
+                "status": "unfrozen"}
 
 
 # ── Risk dashboard API endpoints ──────────────────────────
@@ -4773,7 +4889,21 @@ async def x_risk_overview():
 
 @app.get("/api/mark/prices")
 async def api_mark_prices():
-    return {"status": "requires mark process"}
+    prices = {}
+    bbo_map = _latest_bbo_from_wal()
+    for sid, bbo in bbo_map.items():
+        bid = bbo.get("bid_px", 0)
+        ask = bbo.get("ask_px", 0)
+        if bid > 0 and ask > 0:
+            prices[str(sid)] = {
+                "mark": (bid + ask) // 2,
+                "bid": bid,
+                "ask": ask,
+            }
+    if not prices:
+        return {"status": "no mark data available",
+                "prices": {}}
+    return {"prices": prices}
 
 
 @app.get("/api/metrics")
