@@ -546,8 +546,8 @@ def book_page():
         f"""{selector}
 <div id="book-data" hx-get="./x/book"
      hx-trigger="load, every 1s" hx-swap="innerHTML"
-     hx-vals="js:{symbol_id:
-       document.getElementById('book-symbol').value}">
+     hx-vals="js:{{symbol_id:
+       document.getElementById('book-symbol').value}}">
   <span class="text-slate-600">loading...</span>
 </div>""",
     )
