@@ -5119,10 +5119,24 @@ async def api_mark_prices():
                 "mark": (bid + ask) // 2,
                 "bid": bid,
                 "ask": ask,
+                "source": "wal",
             }
-    if not prices:
-        return {"status": "no mark data available",
-                "prices": {}}
+    # fall back to sim book for symbols without WAL data
+    for sid, snap in _book_snap.items():
+        if str(sid) in prices:
+            continue
+        bids = snap.get("bids", [])
+        asks = snap.get("asks", [])
+        if bids and asks:
+            best_bid = bids[0].get("px", 0)
+            best_ask = asks[0].get("px", 0)
+            if best_bid > 0 and best_ask > 0:
+                prices[str(sid)] = {
+                    "mark": (best_bid + best_ask) // 2,
+                    "bid": best_bid,
+                    "ask": best_ask,
+                    "source": "sim",
+                }
     return {"prices": prices}
 
 

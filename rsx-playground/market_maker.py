@@ -121,6 +121,35 @@ class DummyMarketMaker:
             return cfg
         return self._env_mid_override
 
+    async def _fetch_mark_prices(self) -> dict[int, int]:
+        """Poll /api/mark/prices for index prices.
+
+        Best-effort: returns empty dict on any failure.
+        """
+        port = os.environ.get(
+            "RSX_PLAYGROUND_PORT", "49171"
+        )
+        url = f"http://localhost:{port}/api/mark/prices"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=1),
+                ) as resp:
+                    if resp.status != 200:
+                        return {}
+                    data = await resp.json()
+                    result: dict[int, int] = {}
+                    for sid_str, entry in (
+                        data.get("prices") or {}
+                    ).items():
+                        mark = entry.get("mark", 0)
+                        if mark > 0:
+                            result[int(sid_str)] = mark
+                    return result
+        except Exception:
+            return {}
+
     def start(self):
         if self._running:
             return
@@ -341,18 +370,35 @@ class DummyMarketMaker:
         # fetch tick sizes from server before quoting
         await self._fetch_tick_sizes(self.gateway_url)
 
-        # default mid prices for symbols without live data
+        # default mid prices for symbols without live data;
+        # prefer mark API prices over hardcoded defaults.
         defaults = {10: 50000, 1: 30000, 2: 2000, 3: 100}
+        mark_prices = await self._fetch_mark_prices()
         for sid in self.symbol_ids:
             if sid not in self.mid_prices:
-                self.mid_prices[sid] = defaults.get(
-                    sid, 50000)
+                if sid in mark_prices:
+                    self.mid_prices[sid] = mark_prices[sid]
+                else:
+                    self.mid_prices[sid] = defaults.get(
+                        sid, 50000)
 
         # Main quoting loop: circuit trips after 10 consecutive
         # infra errors to avoid thrashing on a broken gateway.
         quote_errors = 0
         quote_circuit = 10
         while self._running:
+            # refresh mid from mark API for symbols
+            # without live BBO
+            try:
+                mp = await self._fetch_mark_prices()
+                for sid, px in mp.items():
+                    if sid not in self.mid_prices or (
+                        self.mid_prices[sid]
+                        == defaults.get(sid, 50000)
+                    ):
+                        self.mid_prices[sid] = px
+            except Exception:
+                pass
             try:
                 await self._quote_cycle()
                 quote_errors = 0  # success resets counter

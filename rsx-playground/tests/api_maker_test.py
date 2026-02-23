@@ -24,6 +24,8 @@ import server
 from server import MAKER_NAME
 from server import MAKER_SCRIPT
 from server import PID_DIR
+from server import _book_snap
+from server import _seed_sim_book
 from server import app
 from server import managed
 
@@ -341,6 +343,37 @@ def test_scan_processes_includes_maker_when_running(client):
     procs = resp.json()
     names = [p.get("name") or p.get("id", "") for p in procs]
     assert any(MAKER_NAME in n for n in names)
+
+
+# ── Mark prices endpoint ──────────────────────────────────
+
+
+def test_mark_prices_returns_sim_when_offline(client):
+    """GET /api/mark/prices returns sim book prices
+    when WAL has no BBO data."""
+    _seed_sim_book()
+    resp = client.get("/api/mark/prices")
+    assert resp.status_code == 200
+    data = resp.json()
+    prices = data.get("prices", {})
+    # sim book is seeded at startup; should have entries
+    assert len(prices) > 0
+    for sid, entry in prices.items():
+        assert entry["mark"] > 0
+        assert entry["bid"] > 0
+        assert entry["ask"] > 0
+
+
+def test_mark_prices_includes_source_field(client):
+    """GET /api/mark/prices entries include source field."""
+    _seed_sim_book()
+    resp = client.get("/api/mark/prices")
+    assert resp.status_code == 200
+    data = resp.json()
+    prices = data.get("prices", {})
+    for sid, entry in prices.items():
+        assert "source" in entry
+        assert entry["source"] in ("wal", "sim", "live")
 
 
 def test_scan_processes_maker_not_present_when_stopped(client):

@@ -85,6 +85,12 @@ export default defineConfig({
       ],
       dependencies: ["infra-smoke"],
     },
+    // Shard 2a-safety: safety, crash & handover (25 tests)
+    {
+      name: "safety",
+      testMatch: ["play_safety.spec.ts"],
+      dependencies: ["infra-smoke"],
+    },
     // Shard 2b: verify — phase verification, single-worker lane (13 tests)
     // Separated from htmx-partials so orchestration invariants run after
     // all HTMX data pages are stable; workers: 1 is inherited globally but
@@ -132,6 +138,13 @@ export default defineConfig({
         "play_trade.spec.ts",
       ],
       dependencies: ["market-maker"],
+    },
+    // Shard 6: latency — performance and memory bounds (15 tests)
+    {
+      name: "latency",
+      testMatch: ["play_latency.spec.ts"],
+      timeout: 120_000,
+      dependencies: ["infra-smoke"],
     },
   ],
 });
