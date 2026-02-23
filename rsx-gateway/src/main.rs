@@ -119,6 +119,8 @@ fn main() {
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
     let jwt_secret = config.jwt_secret.clone();
+    let hb_interval = config.heartbeat_interval_ms;
+    let hb_timeout = config.heartbeat_timeout_ms;
 
     let mut rt =
         monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
@@ -159,6 +161,8 @@ fn main() {
                             handle_connection(
                                 stream, peer, st, snd,
                                 &secret,
+                                hb_interval,
+                                hb_timeout,
                             )
                             .await;
                         });

@@ -39,6 +39,8 @@ pub async fn handle_connection(
     state: Rc<RefCell<GatewayState>>,
     cmp_sender: Rc<RefCell<CmpSender>>,
     jwt_secret: &str,
+    heartbeat_interval_ms: u64,
+    heartbeat_timeout_ms: u64,
 ) {
     let (request, mut leftover) =
         match read_http_request(&mut stream).await {
@@ -100,6 +102,63 @@ pub async fn handle_connection(
                     .borrow_mut()
                     .remove_connection(conn_id);
                 return;
+            }
+        }
+
+        // Heartbeat: send if interval elapsed
+        {
+            let now = time_ns();
+            let st = state.borrow();
+            let should_send = st.should_send_heartbeat(
+                conn_id,
+                now,
+                heartbeat_interval_ms,
+            );
+            let timed_out = st.is_heartbeat_timeout(
+                conn_id,
+                now,
+                heartbeat_timeout_ms,
+            );
+            drop(st);
+
+            if timed_out {
+                info!(
+                    "conn {} heartbeat timeout",
+                    conn_id
+                );
+                state
+                    .borrow_mut()
+                    .remove_connection(conn_id);
+                return;
+            }
+
+            if should_send {
+                let ts = time_ms();
+                let msg = serialize(
+                    &WsFrame::Heartbeat {
+                        timestamp_ms: ts,
+                    },
+                );
+                if let Err(e) = ws_write_text(
+                    &mut stream,
+                    msg.as_bytes(),
+                )
+                .await
+                {
+                    warn!(
+                        "heartbeat write failed conn \
+                         {}: {e}",
+                        conn_id
+                    );
+                    state
+                        .borrow_mut()
+                        .remove_connection(conn_id);
+                    return;
+                }
+                state.borrow_mut().mark_heartbeat_sent(
+                    conn_id,
+                    time_ns(),
+                );
             }
         }
 
@@ -533,6 +592,10 @@ pub async fn handle_connection(
                 }
             }
             WsFrame::Heartbeat {..} => {
+                state.borrow_mut().heartbeat_recv(
+                    conn_id,
+                    time_ns(),
+                );
                 let now_ms = time_ms();
                 let resp = serialize(
                     &WsFrame::Heartbeat {
