@@ -51,10 +51,8 @@ test.describe("Control tab", () => {
   test("control grid auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/control");
     await page.waitForSelector("div[hx-get='./x/control-grid']", { timeout: 5000 });
-    const firstState = await page.locator("div[hx-get='./x/control-grid']").innerHTML();
-    await page.waitForTimeout(2200);
-    const secondState = await page.locator("div[hx-get='./x/control-grid']").innerHTML();
-    expect(secondState).toBeDefined();
+    const trigger = await page.locator("div[hx-get='./x/control-grid']").getAttribute("hx-trigger");
+    expect(trigger).toContain("every 2s");
   });
 
   test("resource usage has auto-refresh configured", async ({ page }) => {
@@ -114,7 +112,7 @@ test.describe("Control tab", () => {
     await page.waitForSelector("div[hx-get='./x/control-grid']", { timeout: 5000 });
     await page.waitForTimeout(500);
     const gridContent = await page.locator("div[hx-get='./x/control-grid']").innerHTML();
-    expect(gridContent).toBeDefined();
+    expect(gridContent).toMatch(/Start|Stop|Restart/);
   });
 
   test("scenario status shows current scenario", async ({ page }) => {

@@ -1552,32 +1552,56 @@ def render_health(procs, pg_ok):
     )
 
 
-def render_key_metrics(procs, wal_streams):
+def render_key_metrics(
+    procs, wal_streams,
+    active_orders=0, positions=0, msgs_sec=0,
+):
     running = sum(
         1 for p in procs if p.get("state") == "running")
     wal_files = sum(s.get("files", 0) for s in wal_streams)
+    ao_color = "blue-400" if active_orders else "slate-500"
+    pos_color = "amber-400" if positions else "slate-500"
+    ms_color = "cyan-400" if msgs_sec else "slate-500"
     return (
-        '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 '
-        'gap-4">'
+        '<div class="grid grid-cols-2 sm:grid-cols-3 '
+        'md:grid-cols-6 gap-4">'
         + _metric("Processes", f"{running}/{len(procs)}",
                   "emerald-400")
-        + _metric("Active Orders", "--", "slate-500")
-        + _metric("Positions", "--", "slate-500")
-        + _metric("Msgs/sec", "--", "slate-500")
+        + _metric("Active Orders",
+                  str(active_orders), ao_color)
+        + _metric("Positions",
+                  str(positions), pos_color)
+        + _metric("Msgs/sec",
+                  str(msgs_sec), ms_color)
         + _metric("WAL Files", str(wal_files), "blue-400")
         + _metric("Errors", "0", "emerald-400")
         + '</div>'
     )
 
 
-def render_ring_pressure():
-    """Static placeholder until CMP stats are available."""
-    rings = [
-        ("GW -> Risk", 0),
-        ("Risk -> ME", 0),
-        ("ME -> Mktdata", 0),
-        ("ME -> Recorder", 0),
-    ]
+def render_ring_pressure(streams=None):
+    """Derive ring fill % from WAL stream lag."""
+    ring_map = {
+        "GW -> Risk": "gateway",
+        "Risk -> ME": "risk",
+        "ME -> Mktdata": "me",
+        "ME -> Recorder": "recorder",
+    }
+    ring_pcts = {k: 0 for k in ring_map}
+    if streams:
+        for s in streams:
+            sname = s.get("name", "").lower()
+            for label, pattern in ring_map.items():
+                if pattern in sname:
+                    lag = s.get("lag_mb")
+                    if lag is not None:
+                        pct = min(100, int(lag * 10))
+                    else:
+                        pct = min(100,
+                                  s.get("files", 0) * 5)
+                    ring_pcts[label] = max(
+                        ring_pcts[label], pct)
+    rings = [(k, ring_pcts[k]) for k in ring_map]
     html = '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">'
     for name, pct in rings:
         html += (
@@ -1693,13 +1717,25 @@ def render_core_affinity(processes):
     return html
 
 
-def render_cmp_flows():
-    """Static placeholder until CMP stats available."""
-    flows = [
-        ("Gateway -> Risk", "--", "--", "0", "0"),
-        ("Risk -> ME", "--", "--", "0", "0"),
-        ("ME -> Mktdata", "--", "--", "0", "0"),
-    ]
+def render_cmp_flows(record_counts=None):
+    """CMP flow stats from WAL record counts."""
+    if record_counts:
+        f = record_counts.get("fills", 0)
+        b = record_counts.get("bbos", 0)
+        flows = [
+            ("Gateway -> Risk",
+             str(f + b), str(f + b), "0", "0"),
+            ("Risk -> ME",
+             str(f), str(f), "0", "0"),
+            ("ME -> Mktdata",
+             str(b), str(b), "0", "0"),
+        ]
+    else:
+        flows = [
+            ("Gateway -> Risk", "--", "--", "0", "0"),
+            ("Risk -> ME", "--", "--", "0", "0"),
+            ("ME -> Mktdata", "--", "--", "0", "0"),
+        ]
     rows = ""
     for name, sent, recv, nak, drop in flows:
         rows += (
@@ -2117,15 +2153,25 @@ def render_verify(checks):
     return _table(["Status", "Check", "Last Run"], rows)
 
 
-def render_reconciliation():
-    """Placeholder reconciliation checks."""
+def render_reconciliation(
+    shadow_vs_me=None, mark_vs_index=None,
+):
+    """Reconciliation checks with optional live data."""
+    shadow_item = ("Shadow book vs ME book",
+                   shadow_vs_me[0], shadow_vs_me[1]) \
+        if shadow_vs_me else \
+        ("Shadow book vs ME book", "skip",
+         "requires live system")
+    mark_item = ("Mark price vs index",
+                 mark_vs_index[0], mark_vs_index[1]) \
+        if mark_vs_index else \
+        ("Mark price vs index", "skip",
+         "requires live system")
     items = [
         ("Frozen margin vs computed", "skip",
          "requires live system"),
-        ("Shadow book vs ME book", "skip",
-         "requires live system"),
-        ("Mark price vs index", "skip",
-         "requires live system"),
+        shadow_item,
+        mark_item,
     ]
     rows = ""
     for name, status, detail in items:

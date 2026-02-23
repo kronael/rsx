@@ -71,6 +71,26 @@ test.describe("WAL tab", () => {
     await expect(filter.locator("option[value='MARGIN_CHECK']")).toHaveCount(1);
   });
 
+  test("timeline filter selection updates timeline", async ({ page }) => {
+    await page.goto("/wal");
+    const timeline = page.locator("[hx-get='./x/wal-timeline']");
+
+    // Click FILL radio filter
+    const fillRadio = page.locator(
+      "input[name='wal-filter-r'][value='FILL']"
+    );
+    await fillRadio.check({ force: true });
+    await waitForHTMX(page, 2000);
+
+    // Timeline should still be visible after filter change
+    await expect(timeline).toBeVisible();
+
+    // Click back to "all" (the default radio with id=wal-filter)
+    await page.locator("#wal-filter").check({ force: true });
+    await waitForHTMX(page, 2000);
+    await expect(timeline).toBeVisible();
+  });
+
   test("timeline auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/wal");
     const timeline = page.locator("[hx-get='./x/wal-timeline']");

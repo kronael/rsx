@@ -100,12 +100,8 @@ test.describe("Orders tab", () => {
 
   test("recent orders auto-refresh every 2s", async ({ page }) => {
     await page.goto("/orders");
-    const recentOrders = page.locator("div[hx-get='./x/recent-orders']");
-    await page.waitForTimeout(500);
-    const firstState = await recentOrders.innerHTML();
-    await page.waitForTimeout(2500);
-    const secondState = await recentOrders.innerHTML();
-    expect(secondState).toBeDefined();
+    const trigger = await page.locator("div[hx-get='./x/recent-orders']").getAttribute("hx-trigger");
+    expect(trigger).toContain("every 2s");
   });
 
   test("order form has all TIF options", async ({ page }) => {
@@ -135,15 +131,12 @@ test.describe("Orders tab", () => {
 
   test("cancel button appears for submitted orders", async ({ page }) => {
     await page.goto("/orders");
-    // Submit batch orders (which get "submitted" status, not gateway-dependent)
     await page.locator("button", { hasText: "Batch (10)" }).click();
     await page.waitForTimeout(2000);
-    // Recent orders table should refresh and show submitted orders
     await page.waitForTimeout(2500);
-    const cancelButton = page.locator("button", { hasText: "Cancel" }).first();
-    if (await cancelButton.isVisible()) {
-      await expect(cancelButton).toBeVisible();
-    }
+    // After batch submission, recent orders table should have rows
+    const recentOrders = page.locator("div[hx-get='./x/recent-orders']");
+    await expect(recentOrders).not.toContainText("no orders yet");
   });
 
   test("order form supports all symbol options", async ({ page }) => {

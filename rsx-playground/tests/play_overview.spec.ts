@@ -35,10 +35,8 @@ test.describe("Overview tab", () => {
   test("process table auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/overview");
     await page.waitForSelector("div[hx-get='./x/processes']", { timeout: 5000 });
-    const firstState = await page.locator("div[hx-get='./x/processes']").innerHTML();
-    await page.waitForTimeout(2200);
-    const secondState = await page.locator("div[hx-get='./x/processes']").innerHTML();
-    expect(secondState).toBeDefined();
+    const trigger = await page.locator("div[hx-get='./x/processes']").getAttribute("hx-trigger");
+    expect(trigger).toContain("every 2s");
   });
 
   test("health score updates dynamically", async ({ page }) => {
@@ -60,10 +58,8 @@ test.describe("Overview tab", () => {
   test("WAL status auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/overview");
     await page.waitForSelector("div[hx-get='./x/wal-status']", { timeout: 5000 });
-    const firstState = await page.locator("div[hx-get='./x/wal-status']").innerHTML();
-    await page.waitForTimeout(2200);
-    const secondState = await page.locator("div[hx-get='./x/wal-status']").innerHTML();
-    expect(secondState).toBeDefined();
+    const trigger = await page.locator("div[hx-get='./x/wal-status']").getAttribute("hx-trigger");
+    expect(trigger).toContain("every 2s");
   });
 
   test("has scenario selector dropdown", async ({ page }) => {
@@ -83,10 +79,8 @@ test.describe("Overview tab", () => {
   test("logs tail auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/overview");
     await page.waitForSelector("div[hx-get='./x/logs-tail']", { timeout: 5000 });
-    const firstState = await page.locator("div[hx-get='./x/logs-tail']").innerHTML();
-    await page.waitForTimeout(2200);
-    const secondState = await page.locator("div[hx-get='./x/logs-tail']").innerHTML();
-    expect(secondState).toBeDefined();
+    const trigger = await page.locator("div[hx-get='./x/logs-tail']").getAttribute("hx-trigger");
+    expect(trigger).toContain("every 2s");
   });
 
   test("invariants card has auto-refresh configured", async ({ page }) => {
