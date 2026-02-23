@@ -64,10 +64,18 @@ test.describe("Overview tab", () => {
 
   test("has scenario selector dropdown", async ({ page }) => {
     await page.goto("/overview");
-    const scenarioSelect = page.locator("#scenario");
-    await expect(scenarioSelect).toBeVisible();
-    await scenarioSelect.selectOption("minimal");
-    await scenarioSelect.selectOption("full");
+    // Scenario uses radio buttons, not a select
+    const radios = page.locator(
+      "input[name='scenario-ov']");
+    const count = await radios.count();
+    expect(count).toBeGreaterThanOrEqual(3);
+    // Verify specific values exist
+    await expect(page.locator(
+      "input[name='scenario-ov'][value='minimal']"
+    )).toBeAttached();
+    await expect(page.locator(
+      "input[name='scenario-ov'][value='full']"
+    )).toBeAttached();
   });
 
   test("build spinner shows during build", async ({ page }) => {
