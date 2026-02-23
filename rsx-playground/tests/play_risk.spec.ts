@@ -118,7 +118,7 @@ test.describe("Risk tab", () => {
         side: "sell",
         order_type: "limit",
         price: "50000",
-        qty: "1",
+        qty: "10",
         user_id: "2",
       },
     });
@@ -128,7 +128,7 @@ test.describe("Risk tab", () => {
         side: "buy",
         order_type: "limit",
         price: "51000",
-        qty: "1",
+        qty: "10",
         user_id: "1",
       },
     });
@@ -176,7 +176,7 @@ test.describe("Risk tab", () => {
         side: "sell",
         order_type: "limit",
         price: "50000",
-        qty: "1",
+        qty: "10",
         user_id: "1",
       },
     });
@@ -186,7 +186,7 @@ test.describe("Risk tab", () => {
         side: "buy",
         order_type: "limit",
         price: "51000",
-        qty: "1",
+        qty: "10",
         user_id: "2",
       },
     });

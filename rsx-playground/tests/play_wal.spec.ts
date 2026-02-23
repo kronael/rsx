@@ -165,7 +165,7 @@ test.describe("WAL tab", () => {
         side: "buy",
         order_type: "limit",
         price: "51000",
-        qty: "1",
+        qty: "10",
         user_id: "1",
       },
     });
