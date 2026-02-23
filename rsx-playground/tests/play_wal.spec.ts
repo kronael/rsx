@@ -62,13 +62,20 @@ test.describe("WAL tab", () => {
 
   test("timeline filter has event type options", async ({ page }) => {
     await page.goto("/wal");
-    const filter = page.locator("#wal-filter");
 
-    // Verify options exist (options are not "visible" in browsers, just present in DOM)
-    await expect(filter.locator("option[value='']")).toHaveText("all");
-    await expect(filter.locator("option[value='ORDER_ACCEPTED']")).toHaveCount(1);
-    await expect(filter.locator("option[value='FILL']")).toHaveCount(1);
-    await expect(filter.locator("option[value='MARGIN_CHECK']")).toHaveCount(1);
+    // Verify radio filter options exist
+    await expect(page.locator(
+      "input[name='wal-filter-r'][value='']"
+    )).toBeAttached();
+    await expect(page.locator(
+      "input[name='wal-filter-r'][value='ORDER_ACCEPTED']"
+    )).toBeAttached();
+    await expect(page.locator(
+      "input[name='wal-filter-r'][value='FILL']"
+    )).toBeAttached();
+    await expect(page.locator(
+      "input[name='wal-filter-r'][value='MARGIN_CHECK']"
+    )).toBeAttached();
   });
 
   test("timeline filter selection updates timeline", async ({ page }) => {
