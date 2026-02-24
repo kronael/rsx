@@ -146,5 +146,12 @@ export default defineConfig({
       timeout: 120_000,
       dependencies: ["infra-smoke"],
     },
+    // Shard 7: guarantees — GUARANTEES.md invariant verification (~30 tests)
+    {
+      name: "guarantees",
+      testMatch: ["play_guarantees.spec.ts"],
+      timeout: 30_000,
+      dependencies: ["readiness"],
+    },
   ],
 });

@@ -3742,8 +3742,8 @@ async def api_orders_test(request: Request):
             f'order {cid} unexpected response</span>')
 
 
-@app.post("/api/verify/run")
-async def api_verify_run():
+async def _run_invariant_checks() -> list[dict]:
+    """Run all invariant checks, return list of dicts."""
     now = datetime.now().strftime("%H:%M:%S")
     checks = []
 
@@ -4121,7 +4121,19 @@ async def api_verify_run():
 
     verify_results.clear()
     verify_results.extend(checks)
+    return checks
+
+
+@app.post("/api/verify/run")
+async def api_verify_run():
+    checks = await _run_invariant_checks()
     return HTMLResponse(pages.render_verify(checks))
+
+
+@app.post("/api/verify/run-json")
+async def api_verify_run_json():
+    checks = await _run_invariant_checks()
+    return JSONResponse({"checks": checks})
 
 
 @app.post("/api/orders/{cid}/cancel")
