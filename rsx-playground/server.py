@@ -830,10 +830,11 @@ async def do_build(release=False):
     return ok
 
 
-# collateral for playground test users: 1 trillion raw units
-# (tick=1 for all symbols, so this = 1T ticks of buying power)
+# collateral for playground test users: 100 quadrillion raw
+# units — must exceed notional*im_rate for maker orders
+# (price~50000 * qty~1M * im_rate~1000/10000 = ~5T per order)
 _SEED_USERS = [1, 2, 3, 4, 5, 99]
-_SEED_COLLATERAL = 1_000_000_000_000
+_SEED_COLLATERAL = 100_000_000_000_000_000
 
 
 async def seed_accounts():

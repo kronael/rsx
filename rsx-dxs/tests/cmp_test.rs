@@ -144,7 +144,8 @@ fn flow_control_stalls_sender() {
 fn receiver_expected_seq_advances() {
     let _tmp = TempDir::new().unwrap();
     let (mut sender, mut receiver) = loopback_pair(_tmp.path());
-    assert_eq!(receiver.expected_seq(), 1);
+    // Starts at 0 (unsynced); first packet syncs it
+    assert_eq!(receiver.expected_seq(), 0);
 
     let mut fill = fill_payload(1);
     sender.send(&mut fill).unwrap();

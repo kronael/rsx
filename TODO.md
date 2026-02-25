@@ -1,19 +1,7 @@
 # TODO
 
-## Critical — data not flowing
+## Critical
 
-- [x] Maker circuit-breaker crash: startup race — maker
-      starts before gateway. Now works after gateway is up.
-      maker-status.json shows 702 orders placed.
-- [x] CMP reorder buffer stall: ME's CmpReceiver starts
-      at expected_seq=1 after restart, but sender's seq is
-      in the 1000s. Reorder buffer fills (512 limit) and
-      drops ALL subsequent packets. Fixed: gap-skip recovery
-      clears buffer and resumes from current seq.
-      **Requires process restart to take effect.**
-- [x] WAL files 0.0B: consequence of CMP stall above.
-      ME receives orders but CmpReceiver drops them all.
-      Fix: rebuild + restart processes.
 - [ ] Trade UI: "Market data WS disconnected" / "Private
       WS disconnected" — trade SPA can't reach gateway
       or marketdata WS through nginx proxy. Check CORS,
@@ -21,10 +9,8 @@
 
 ## Latency pipeline (from perf-verification.md)
 
-- [x] Add `/api/latency` JSON endpoint (p50/p95/p99)
-- [ ] Fix play_latency tests: "order latency endpoint"
-      skips on 404 — now endpoint exists, needs test update
-      to remove skip-on-404 and assert p50 > 0
+- [ ] Fix play_latency tests: remove skip-on-404, assert
+      p50 > 0
 - [ ] Latency values always "-" in sim mode — need real
       gateway orders for measurement
 - [ ] Stress reports show 0% accept rate, 0us p99 —
