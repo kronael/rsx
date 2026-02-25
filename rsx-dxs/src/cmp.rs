@@ -454,13 +454,25 @@ impl CmpReceiver {
                             self.reorder_buf
                                 .insert(seq, full);
                         } else {
+                            // Buffer full: skip gap and
+                            // resume from current seq to
+                            // avoid permanent stall after
+                            // process restart.
                             warn!(
                                 "reorder buffer full \
-                                 (limit={}), dropping \
-                                 seq={}",
+                                 (limit={}), skipping \
+                                 gap {}..{}, resuming \
+                                 at seq={}",
                                 self.reorder_buf_limit,
-                                seq
+                                self.expected_seq,
+                                seq,
+                                seq,
                             );
+                            self.reorder_buf.clear();
+                            self.expected_seq = seq + 1;
+                            let data =
+                                payload.to_vec();
+                            return Some((hdr, data));
                         }
                         self.send_nak(
                             self.expected_seq,
