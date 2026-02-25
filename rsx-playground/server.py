@@ -2940,7 +2940,8 @@ async def x_stale_orders():
     stale = [
         o for o in recent_orders
         if o.get("status", "") not in terminal
-        and now - o.get("ts", now) > 60]
+        and isinstance(o.get("ts"), (int, float))
+        and now - o["ts"] > 60]
     if not stale:
         return HTMLResponse(
             '<span class="text-emerald-400 text-xs">'
@@ -3858,18 +3859,32 @@ async def _run_invariant_checks() -> list[dict]:
             rows = await pg_query(
                 """
                 SELECT p.user_id, p.symbol_id,
-                       p.quantity AS pos_qty,
-                       COALESCE(f.fill_qty, 0) AS fill_qty
+                       (p.long_qty - p.short_qty) AS pos,
+                       COALESCE(f.net, 0) AS fills
                 FROM positions p
                 LEFT JOIN (
-                    SELECT taker_uid AS user_id,
-                           symbol_id,
-                           SUM(CASE WHEN taker_side = 0
-                               THEN qty ELSE -qty END) AS fill_qty
-                    FROM fills
-                    GROUP BY taker_uid, symbol_id
+                    SELECT user_id, symbol_id,
+                           SUM(net) AS net
+                    FROM (
+                        SELECT taker_user_id AS user_id,
+                               symbol_id,
+                               SUM(CASE WHEN taker_side=0
+                                   THEN qty ELSE -qty END)
+                                   AS net
+                        FROM fills
+                        GROUP BY taker_user_id, symbol_id
+                        UNION ALL
+                        SELECT maker_user_id,
+                               symbol_id,
+                               SUM(CASE WHEN taker_side=0
+                                   THEN -qty ELSE qty END)
+                        FROM fills
+                        GROUP BY maker_user_id, symbol_id
+                    ) t
+                    GROUP BY user_id, symbol_id
                 ) f USING (user_id, symbol_id)
-                WHERE p.quantity != COALESCE(f.fill_qty, 0)
+                WHERE (p.long_qty - p.short_qty)
+                    != COALESCE(f.net, 0)
                 LIMIT 10
                 """
             )
@@ -4018,7 +4033,7 @@ async def _run_invariant_checks() -> list[dict]:
                 """
                 SELECT symbol_id,
                        SUM(amount) AS net
-                FROM funding_payments
+                FROM funding
                 GROUP BY symbol_id
                 HAVING ABS(SUM(amount)) > 1
                 LIMIT 10
