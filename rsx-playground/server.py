@@ -5161,6 +5161,22 @@ async def x_risk_overview():
     )
 
 
+@app.get("/api/latency")
+async def api_latency():
+    if not order_latencies:
+        return JSONResponse({"count": 0})
+    s = sorted(order_latencies)
+    n = len(s)
+    return JSONResponse({
+        "count": n,
+        "p50": s[n // 2],
+        "p95": s[int(n * 0.95)],
+        "p99": s[int(n * 0.99)],
+        "min": s[0],
+        "max": s[-1],
+    })
+
+
 @app.get("/api/mark/prices")
 async def api_mark_prices():
     prices = {}
