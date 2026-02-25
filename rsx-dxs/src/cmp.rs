@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::time::Duration;
 use std::time::Instant;
+use tracing::info;
 use tracing::warn;
 
 /// UDP send/recv buffer = header(16) + max payload(65535)
@@ -332,7 +333,7 @@ impl CmpReceiver {
         Ok(Self {
             socket,
             sender_addr,
-            expected_seq: 1,
+            expected_seq: 0,
             highest_seen: 0,
             reorder_buf: BTreeMap::new(),
             reorder_buf_limit: config
@@ -393,8 +394,9 @@ impl CmpReceiver {
                                     self.highest_seen =
                                         hb.highest_seq;
                                 }
-                                if self.highest_seen
-                                    > self.expected_seq
+                                if self.expected_seq > 0
+                                    && self.highest_seen
+                                        > self.expected_seq
                                 {
                                     self.send_nak(
                                         self.expected_seq,
@@ -422,6 +424,31 @@ impl CmpReceiver {
                     if seq == 0 {
                         continue;
                     }
+
+                    // First packet: sync to sender's seq
+                    if self.expected_seq == 0 {
+                        info!(
+                            "cmp sync: first packet \
+                             seq={}",
+                            seq
+                        );
+                        self.expected_seq = seq;
+                    }
+
+                    // Sender restart: seq dropped below
+                    // expected by large margin — re-sync
+                    if seq < self.expected_seq
+                        && self.expected_seq - seq > 100
+                    {
+                        warn!(
+                            "cmp sender reset detected: \
+                             seq={} expected={}, re-sync",
+                            seq, self.expected_seq
+                        );
+                        self.reorder_buf.clear();
+                        self.expected_seq = seq;
+                    }
+
                     if seq < self.expected_seq {
                         continue;
                     }
@@ -435,50 +462,34 @@ impl CmpReceiver {
                             payload.to_vec();
                         self.drain_reorder();
                         return Some((hdr, data));
-                    } else {
-                        if self.reorder_buf.len()
-                            < self.reorder_buf_limit
-                        {
-                            let mut full =
-                                Vec::with_capacity(
-                                    WalHeader::SIZE
-                                        + payload_len,
-                                );
-                            full.extend_from_slice(
-                                &self.buf
-                                    [..WalHeader::SIZE],
-                            );
-                            full.extend_from_slice(
-                                payload,
-                            );
-                            self.reorder_buf
-                                .insert(seq, full);
-                        } else {
-                            // Buffer full: skip gap and
-                            // resume from current seq to
-                            // avoid permanent stall after
-                            // process restart.
-                            warn!(
-                                "reorder buffer full \
-                                 (limit={}), skipping \
-                                 gap {}..{}, resuming \
-                                 at seq={}",
-                                self.reorder_buf_limit,
-                                self.expected_seq,
-                                seq,
-                                seq,
-                            );
-                            self.reorder_buf.clear();
-                            self.expected_seq = seq + 1;
-                            let data =
-                                payload.to_vec();
-                            return Some((hdr, data));
-                        }
+                    } else if self.reorder_buf.len()
+                        < self.reorder_buf_limit
+                    {
+                        let full = [
+                            &self.buf[..WalHeader::SIZE],
+                            payload,
+                        ]
+                        .concat();
+                        self.reorder_buf.insert(seq, full);
                         self.send_nak(
                             self.expected_seq,
                             seq - self.expected_seq,
                         );
                         continue;
+                    } else {
+                        warn!(
+                            "reorder buf full ({}), \
+                             skip gap {}..{}",
+                            self.reorder_buf_limit,
+                            self.expected_seq,
+                            seq,
+                        );
+                        self.reorder_buf.clear();
+                        self.expected_seq = seq + 1;
+                        return Some((
+                            hdr,
+                            payload.to_vec(),
+                        ));
                     }
                 }
                 Err(ref e)
