@@ -3652,9 +3652,14 @@ async def api_orders_test(request: Request):
                 f'order {cid} accepted</span>')
         # simulate matching when gateway offline
         if err == "gateway not running":
+            t0 = time.monotonic_ns()
             sim_fills = _sim_submit(
                 symbol_id, side_str, price_int,
                 qty_int, cid, user_id)
+            sim_us = (time.monotonic_ns() - t0) // 1000
+            order_latencies.append(sim_us)
+            if len(order_latencies) > 1000:
+                del order_latencies[:500]
             order["status"] = (
                 "filled" if sim_fills else "accepted")
             recent_orders.append(order)
@@ -6114,6 +6119,108 @@ async def v1_fills(
         })
         if len(result) >= limit:
             break
+    return JSONResponse(result)
+
+
+@app.get("/v1/account")
+async def v1_account(user_id: int = Query(default=0)):
+    """Account summary: collateral, pnl, equity, margins."""
+    collateral = _SEED_COLLATERAL
+    # try postgres first
+    if pg_pool:
+        rows = await pg_query(
+            "SELECT collateral, frozen_margin"
+            " FROM accounts WHERE user_id = $1",
+            user_id,
+        )
+        if rows and isinstance(rows, list) and rows:
+            collateral = rows[0]["collateral"]
+
+    # compute position pnl + margins
+    fills = parse_wal_fills(max_fills=1000)
+    net: dict[int, int] = {}
+    entry_px: dict[int, int] = {}
+    for f in fills:
+        if user_id and (
+            f["taker_uid"] != user_id
+            and f["maker_uid"] != user_id
+        ):
+            continue
+        sid = f["symbol_id"]
+        side = f["taker_side"]
+        delta = f["qty"] if side == 0 else -f["qty"]
+        net[sid] = net.get(sid, 0) + delta
+        if sid not in entry_px:
+            entry_px[sid] = f["price"]
+
+    total_pnl = 0
+    total_im = 0
+    total_mm = 0
+    bbo_cache: dict[int, dict] = {}
+    for sid, qty in net.items():
+        if qty == 0:
+            continue
+        if sid not in bbo_cache:
+            bbo_cache[sid] = parse_wal_bbo(sid) or {}
+        bbo = bbo_cache[sid]
+        mid = (
+            (bbo.get("bid_px", 0) + bbo.get("ask_px", 0))
+            // 2
+        )
+        ep = entry_px.get(sid, mid)
+        notional = mid * abs(qty)
+        total_pnl += (mid - ep) * qty
+        total_im += int(notional * 0.10)
+        total_mm += int(notional * 0.05)
+
+    equity = collateral + total_pnl
+    available = equity - total_im
+    return JSONResponse({
+        "userId": user_id,
+        "collateral": collateral,
+        "pnl": total_pnl,
+        "equity": equity,
+        "im": total_im,
+        "mm": total_mm,
+        "available": available,
+    })
+
+
+@app.get("/v1/orders")
+async def v1_orders(user_id: int = Query(default=0)):
+    """Return open orders from sim book + recent orders."""
+    result = []
+    # open resting orders from sim book
+    for sid, book in _sim_book.items():
+        for px, qty, cid in book.get("bids", []):
+            result.append({
+                "cid": cid,
+                "symbolId": sid,
+                "side": "buy",
+                "price": px,
+                "qty": qty,
+                "status": "open",
+            })
+        for px, qty, cid in book.get("asks", []):
+            result.append({
+                "cid": cid,
+                "symbolId": sid,
+                "side": "sell",
+                "price": px,
+                "qty": qty,
+                "status": "open",
+            })
+    # recent submitted orders (may include filled/rejected)
+    for o in recent_orders[-100:]:
+        result.append({
+            "cid": o.get("cid", ""),
+            "symbolId": o.get("symbol_id", 0),
+            "side": o.get("side", ""),
+            "price": o.get("price", 0),
+            "qty": o.get("qty", 0),
+            "status": o.get("status", "submitted"),
+            "ts": o.get("ts", 0),
+        })
     return JSONResponse(result)
 
 
