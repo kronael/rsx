@@ -219,6 +219,12 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MARK_SYMBOL_MAP": mark_symbol_map,
             "RSX_RISK_MARK_CMP_ADDR":
                 f"127.0.0.1:{BASE_RISK_MARK_CMP}",
+            "RSX_MARK_SOURCE_BINANCE_ENABLED": "1",
+            "RSX_MARK_SOURCE_BINANCE_WS_URL":
+                "wss://stream.binance.com:9443/ws",
+            "RSX_MARK_SOURCE_COINBASE_ENABLED": "1",
+            "RSX_MARK_SOURCE_COINBASE_WS_URL":
+                "wss://ws-feed.exchange.coinbase.com",
             "RUST_LOG": "info",
         },
     ))
