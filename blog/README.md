@@ -162,6 +162,13 @@ React 19 + Vite 6 trading interface. RSX color palette, Bybit-style
 grid layout, 60fps rendering targets, ring-buffer trade tape, and
 flat component structure.
 
+**[Zero Bytes: Three Layers of Silent Failure](26-zero-bytes-silent-failure.md)**
+
+Mark price WAL was 0 bytes with zero errors in the logs. Three
+stacked bugs — missing env vars, TLS not compiled in, symbol name
+mismatch — each masked by the previous. Why silent error handling
+is the real bug.
+
 ## Topics Covered
 
 - Ultra-low-latency design (<50us end-to-end, 100ns matching)
