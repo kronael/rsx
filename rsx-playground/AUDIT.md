@@ -41,8 +41,8 @@
 ## Trade UI (/v1 Endpoints)
 - [ ] 29. /v1/symbols returns all configured symbols — test: `api_proxy_test.py::test_v1_symbols_returns_200`
 - [ ] 30. /v1/account returns user balance/equity — test: `api_proxy_test.py::test_v1_proxy_502_not_500_on_connection_refused`
-- [ ] 31. /v1/orders returns user open orders — NEEDS TEST (only proxy 502 tested, no sim-mode response test)
-- [ ] 32. /v1/candles returns OHLCV data — NEEDS TEST
+- [ ] 31. /v1/orders returns user open orders — `api_e2e_test.py::test_v1_orders_returns_list`
+- [ ] 32. /v1/candles returns OHLCV data — `api_e2e_test.py::test_v1_candles_returns_bars`
 
 ## WAL Inspection
 - [ ] 33. WAL status shows file count and size — test: `api_wal_test.py::test_wal_status_shows_file_count`
@@ -58,4 +58,4 @@
 - [ ] 39. Stress test 100 orders with latency tracking — test: `stress_integration_test.py::test_stress_high_100_orders_per_sec_60s`
 
 ## Security
-- [ ] 40. Production mode refuses to start — NEEDS TEST (checked in code line 53, no dedicated test)
+- [ ] 40. Production mode refuses to start — `api_e2e_test.py::test_production_mode_guard`

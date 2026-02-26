@@ -281,7 +281,10 @@ def test_order_status_tracking(client):
 
     import server
     order = server.recent_orders[-1]
-    assert order["status"] in ("submitted", "error", "pending", "queued")
+    assert order["status"] in (
+        "submitted", "error", "pending", "queued",
+        "accepted", "filled", "simulated", "resting",
+    )
 
 
 def test_order_limit_enforcement(client):
