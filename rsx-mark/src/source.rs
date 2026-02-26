@@ -97,15 +97,26 @@ fn run_ws_loop<F>(
         let mut backoff = base;
         let mut consec_errors: u32 = 0;
         loop {
+            tracing::info!(
+                "ws connecting to {}", ws_url,
+            );
             match connect_async(&ws_url).await {
                 Ok((mut ws, _)) => {
                     // Connected — reset budget and backoff.
+                    tracing::info!(
+                        "ws connected to {}", ws_url,
+                    );
                     backoff = base;
                     consec_errors = 0;
                     while let Some(msg) = ws.next().await {
                         let msg = match msg {
                             Ok(m) => m,
-                            Err(_) => break,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "ws read error: {e}",
+                                );
+                                break;
+                            }
                         };
                         if !msg.is_text() {
                             continue;
@@ -126,7 +137,10 @@ fn run_ws_loop<F>(
                         }
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!(
+                        "ws connect error: {e}",
+                    );
                     consec_errors += 1;
                 }
             }
@@ -188,6 +202,10 @@ fn handle_binance_msg(
                 Some(p) => p,
                 None => return,
             };
+            tracing::debug!(
+                "binance price: sym={} px={}",
+                symbol, price,
+            );
             let _ = tx.push(SourcePrice {
                 source_id,
                 price,
