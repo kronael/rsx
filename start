@@ -177,9 +177,22 @@ def build_spawn_plan(config, pg_url, release=False):
 
     target = "./target/release" if release else "./target/debug"
 
-    # symbol map for mark: "PENGU=10,SOL=3,..."
-    mark_symbol_map = ",".join(
-        f"{s['name']}={s['id']}" for s in symbols
+    # symbol map for mark: include exchange-specific names
+    # binance uses PENGUUSDT, coinbase uses PENGU-USD
+    mark_pairs = []
+    for s in symbols:
+        sid = s['id']
+        name = s['name']
+        mark_pairs.append(f"{name}={sid}")
+        mark_pairs.append(f"{name}USDT={sid}")
+        mark_pairs.append(f"{name}-USD={sid}")
+    mark_symbol_map = ",".join(mark_pairs)
+
+    # binance single-stream URL (first symbol @trade)
+    # for multi-symbol, handler needs combined stream fix
+    binance_ws_url = (
+        f"wss://stream.binance.com:9443/ws/"
+        f"{symbols[0]['name'].lower()}usdt@trade"
     )
 
     # ── ME instances ────────────────────────────────
@@ -221,10 +234,8 @@ def build_spawn_plan(config, pg_url, release=False):
                 f"127.0.0.1:{BASE_RISK_MARK_CMP}",
             "RSX_MARK_SOURCE_BINANCE_ENABLED": "1",
             "RSX_MARK_SOURCE_BINANCE_WS_URL":
-                "wss://stream.binance.com:9443/ws",
-            "RSX_MARK_SOURCE_COINBASE_ENABLED": "1",
-            "RSX_MARK_SOURCE_COINBASE_WS_URL":
-                "wss://ws-feed.exchange.coinbase.com",
+                binance_ws_url,
+            "RSX_MARK_SOURCE_COINBASE_ENABLED": "0",
             "RUST_LOG": "info",
         },
     ))
