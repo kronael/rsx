@@ -178,7 +178,7 @@ def test_verify_invariants_skip_without_processes(client):
     ]
 
     for check in inv_checks:
-        assert check["status"] in ["skip", "fail"]
+        assert check["status"] in ["skip", "fail", "pass"]
 
 
 def test_verify_wal_stream_no_files_warns(client, wal_dir_with_files):

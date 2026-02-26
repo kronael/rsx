@@ -195,9 +195,16 @@ def test_wal_verify_no_streams(client):
     assert "no wal streams" in text or "verified" in text
 
 
-def test_wal_dump_no_files(client):
+def test_wal_dump_no_files(client, tmp_path):
     """WAL dump with no files returns message."""
+    import server
+    original = server.WAL_DIR
+    server.WAL_DIR = tmp_path / "empty_wal"
+    (tmp_path / "empty_wal").mkdir()
+
     resp = client.post("/api/wal/dump")
+
+    server.WAL_DIR = original
     assert resp.status_code == 200
     text = resp.text.lower()
     assert "no wal files" in text or "records" in text

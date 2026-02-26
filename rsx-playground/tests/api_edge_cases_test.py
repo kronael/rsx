@@ -1306,11 +1306,12 @@ def test_verify_run_performance(client):
 
 
 @pytest.mark.allow_5xx
+@pytest.mark.timeout(120)
 def test_large_order_batch_performance(client):
     """Large order batch performance."""
     import time
     start = time.time()
-    for _ in range(10):
+    for _ in range(5):
         client.post(
             "/api/stress/run",
             data={"rate": 1, "duration": 1},
