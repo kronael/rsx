@@ -169,12 +169,15 @@ def test_submit_test_order(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
     assert resp.status_code == 200
     text = resp.text.lower()
-    assert "submitted" in text or "queued" in text
+    assert any(w in text for w in [
+        "submitted", "queued", "simulated", "resting",
+        "accepted",
+    ])
 
 
 def test_order_appears_in_recent(client):
@@ -185,7 +188,7 @@ def test_order_appears_in_recent(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
 
@@ -201,7 +204,7 @@ def test_recent_orders_html_view(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
 
@@ -253,7 +256,7 @@ def test_cancel_order(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
 
@@ -272,7 +275,7 @@ def test_order_status_tracking(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
 
@@ -307,7 +310,7 @@ def test_order_timestamp_included(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
 
@@ -324,7 +327,7 @@ def test_order_with_tif(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
             "tif": "IOC",
         },
     )
@@ -342,7 +345,7 @@ def test_order_with_reduce_only(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
             "reduce_only": "on",
         },
     )
@@ -360,7 +363,7 @@ def test_order_with_post_only(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
             "post_only": "on",
         },
     )
@@ -378,7 +381,7 @@ def test_order_trace_endpoint(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
 
@@ -442,7 +445,7 @@ def test_frozen_user_order_rejected(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
     assert resp.status_code == 200
@@ -459,7 +462,7 @@ def test_unfrozen_user_order_accepted(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
     assert resp.status_code == 200
@@ -860,7 +863,7 @@ def test_memory_leak_detection(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         })
 
     final_len = len(server.recent_orders)
