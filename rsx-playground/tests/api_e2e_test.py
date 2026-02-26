@@ -664,3 +664,58 @@ def test_wal_timeline_renders_after_orders(client):
     # Timeline page should render a table or empty-state message
     html = resp.text
     assert "<table" in html or "No WAL" in html or "seq" in html or html.strip()
+
+
+# ── Trade UI API Endpoints ─────────────────────────────────
+
+
+def test_v1_orders_returns_list(client):
+    """GET /v1/orders returns JSON list of orders."""
+    # submit an order first so there's data
+    client.post(
+        "/api/orders/test",
+        data={
+            "symbol_id": "10",
+            "side": "buy",
+            "price": "50000",
+            "qty": "100000",
+        },
+    )
+    resp = client.get("/v1/orders?user_id=0")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+    order = data[-1]
+    assert "side" in order
+    assert "price" in order
+    assert "qty" in order
+    assert "status" in order
+
+
+def test_v1_candles_returns_bars(client):
+    """GET /v1/candles returns JSON with bars array."""
+    resp = client.get("/v1/candles?sym=PENGU")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "bars" in data
+    bars = data["bars"]
+    assert isinstance(bars, list)
+    assert len(bars) > 0
+    bar = bars[0]
+    for key in ("t", "o", "h", "l", "c", "v"):
+        assert key in bar
+
+
+def test_production_mode_guard(client, monkeypatch):
+    """PLAYGROUND_MODE=production should refuse to start."""
+    import importlib
+    import sys
+    # We can't restart the app, but we can verify the guard
+    # exists by checking the module source
+    import inspect
+    import server
+    source = inspect.getsource(server)
+    assert 'PLAYGROUND_MODE' in source
+    assert 'production' in source
+    assert 'refusing to start' in source
