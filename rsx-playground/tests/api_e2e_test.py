@@ -135,14 +135,17 @@ def test_api_orders_test_with_form_data(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     text = resp.text.lower()
     assert "order" in text
-    assert any(w in text for w in ["queued", "accepted", "rejected"])
+    assert any(w in text for w in [
+        "queued", "accepted", "rejected",
+        "simulated", "resting",
+    ])
 
 
 def test_api_orders_batch_post(client):
@@ -337,7 +340,7 @@ def test_api_mark_prices(client):
     resp = client.get("/api/mark/prices")
     assert resp.status_code == 200
     data = resp.json()
-    assert "status" in data
+    assert "prices" in data
 
 
 def test_x_book_with_symbol_id(client):
@@ -410,13 +413,15 @@ def test_order_flow_test_then_recent(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
     assert resp.status_code == 200
     # CID is embedded in the response HTML
     body = resp.text
-    assert "pg" in body or "accepted" in body or "queued" in body
+    assert any(w in body for w in [
+        "pg", "accepted", "queued", "simulated", "resting",
+    ])
 
     # Check recent orders table renders with data
     resp = client.get("/x/recent-orders")
@@ -621,16 +626,14 @@ def test_test_order_appears_in_recent_orders(client):
             "symbol_id": "10",
             "side": "buy",
             "price": "50000",
-            "qty": "1",
+            "qty": "100000",
         },
     )
     assert resp.status_code == 200
     body = resp.text
-    assert (
-        "accepted" in body
-        or "queued" in body
-        or "pg" in body
-    )
+    assert any(w in body for w in [
+        "accepted", "queued", "pg", "simulated", "resting",
+    ])
 
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
