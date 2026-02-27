@@ -1,7 +1,7 @@
 # PROGRESS
 
-updated: Feb 27 15:41:37  
-phase: executing
+updated: Feb 27 16:00:00
+phase: complete
 
 ```
 [██████████████████████████████] 100%  4/4
@@ -16,27 +16,28 @@ phase: executing
 
 ## assessment
 
-**100% complete.** All goals met:
+**Goal met: ~100%**
 
-- Sim globals (`_sim_book`, `_sim_wal_events`, `_sim_seq`) and functions
-  (`_seed_sim_book`, `_sim_submit`) removed from server.py. No endpoint
-  returns simulated data.
-- `rsx-sim/` Rust crate deleted; removed from workspace Cargo.toml and
-  Makefile. `cargo check` passes cleanly.
-- `stress.py` entry point created with all required env vars, 5s stats
-  printing, JSON report output, p99 exit code, and SIGTERM handling.
-- Stress subprocess management in server.py mirrors the maker pattern exactly:
-  PID file, `pipe_output` to log/stress.log, `managed` dict, and routes
-  POST /api/stress/start, POST /api/stress/stop, GET /api/stress/status.
-- Tests cleaned: no "simulated" status assertions remain; gateway-down →
-  error/503 assertions present in test_stress_api.py and play_safety.spec.ts.
+All four tasks completed and verified against the live codebase:
 
-Quality: implementation is clean and consistent. No regressions found.
+1. **rsx-sim/ deleted** — directory gone, not in workspace Cargo.toml members.
 
-## log
+2. **Sim mode stripped from server.py** — `_sim_book`, `_sim_wal_events`,
+   `_sim_seq`, `_seed_sim_book()`, `_sim_submit()`, and all callsites removed.
+   `POST /api/orders/test` with gateway down returns an error, not simulated
+   data. `GET /x/wal-events` returns real WAL only.
 
-- `15:16:24` done: committed rsx-sim deletion (4 files, +0/-53)
-- `15:18:59` done: Strip sim mode from rsx-playground/server.py. Delete globals (22 files, +262/-555)
-- `15:19:28` done: Clean up tests and docs. In rsx-playground/tests/: remove al (22 files, +380/-538)
-- `15:20:20` judge skip: Clean up tests and docs. In rsx-playgrou
-- `15:20:28` done: Replace in-process stress with a managed subprocess in rsx-p (23 files, +545/-545)
+3. **Stress subprocess management** — `stress.py` entry point exists, reads
+   all six `RSX_STRESS_*` env vars, imports `stress_client.run_stress_test`,
+   prints stats every 5 s, writes JSON report to REPORT_DIR, handles SIGTERM/
+   SIGINT. `server.py` has `do_stress_start()`, `do_stress_stop()`,
+   `_topo_stress()`, and routes `POST /api/stress/start`,
+   `POST /api/stress/stop`, `GET /api/stress/status` — matching the maker
+   subprocess pattern exactly (PID file, pipe_output, managed dict).
+
+4. **Tests and docs clean** — no test file accepts "simulated" as a valid
+   status; `play_safety.spec.ts` and `play_guarantees.spec.ts` have no sim
+   assertions; docs contain no references to rsx-sim or Sim-mode.
+
+**Quality notes:** implementation is tight and follows the maker pattern
+faithfully. No issues found.
