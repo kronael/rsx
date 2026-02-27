@@ -231,7 +231,7 @@ fn order_accepted_encode_decode_roundtrip() {
         tif: 0,
         reduce_only: 0,
         post_only: 0,
-        _pad1: [0; 12],
+        cid: [0; 20],
     };
     let encoded = encode_order_accepted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];

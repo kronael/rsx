@@ -412,7 +412,7 @@ fn main() {
                                 .reduce_only,
                             post_only: order_msg
                                 .post_only,
-                            _pad1: [0; 12],
+                            cid: [0; 20],
                         };
                     let _ = wal_writer
                         .append(&mut accepted);
