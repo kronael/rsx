@@ -1,0 +1,72 @@
+[
+  {
+    "id": "93249a7d-5bb2-44e8-a0fd-117df07d50f5",
+    "description": "Delete rsx-sim/ Rust crate. Remove the rsx-sim/ directory, its workspace member entry in the root Cargo.toml, and any Makefile targets that reference rsx-sim. Verify with `cargo check` that the workspace compiles cleanly. Acceptance: `cargo check` exits 0 with no mention of rsx-sim.",
+    "files": [],
+    "status": "completed",
+    "created_at": "2026-02-27T15:15:34.830780",
+    "retries": 0,
+    "error": "",
+    "result": "Committed as `[chore] Delete rsx-sim dead stub crate`.",
+    "summary": "committed rsx-sim deletion",
+    "session_id": "81698c72-3204-4f42-9fc0-0b3527a2ccd0",
+    "depends_on": [],
+    "followups": [],
+    "worker": "w0",
+    "started_at": "2026-02-27T15:15:34.832903",
+    "completed_at": "2026-02-27T15:16:24.921547"
+  },
+  {
+    "id": "e20b4c4f-d16e-4dec-8337-80ed18b8cadf",
+    "description": "Strip sim mode from rsx-playground/server.py. Delete globals _sim_book, _sim_wal_events, _sim_seq; functions _seed_sim_book() and _sim_submit(); and every callsite: _seed_sim_book() in lifespan startup, sim fallback in POST /api/orders/test (return error \"gateway not running\" instead), _sim_wal_events merge in GET /x/wal-events, _seed_sim_book fallbacks in x_book/x_book_stats/api_book, _sim_book read in GET /v1/orders, insurance fund \"simulated\" hardcoded fallback, and mark prices \"sim\" source fallback. No endpoint may return simulated data \u2014 all return real WAL/maker data or empty. Acceptance: grep -r \"sim\" server.py returns no sim-data references; POST /api/orders/test with gateway offline returns an error response.",
+    "files": [],
+    "status": "running",
+    "created_at": "2026-02-27T15:15:34.830805",
+    "retries": 0,
+    "error": "",
+    "result": "",
+    "summary": "",
+    "session_id": "",
+    "depends_on": [],
+    "followups": [],
+    "worker": "w1",
+    "started_at": "2026-02-27T15:15:34.834042"
+  },
+  {
+    "id": "097903ad-4bcd-493e-9597-5b2cc068e396",
+    "description": "Replace in-process stress with a managed subprocess in rsx-playground/server.py. Delete STRESS_SCENARIOS dict, _run_scenario_loop(), stress_tasks, stress_scenario_metrics globals, in-process scenario start/stop/status endpoints, and baseline auto-start from lifespan. Create rsx-playground/stress.py: reads env vars RSX_STRESS_GW_URL (default ws://localhost:8080), RSX_STRESS_USERS (10), RSX_STRESS_RATE (1000), RSX_STRESS_DURATION (60), RSX_STRESS_TARGET_P99 (50000), RSX_STRESS_REPORT_DIR (./tmp/stress); imports stress_client.run_stress_test; prints stats every 5s; writes final JSON report to REPORT_DIR/; exits 0 if p99 &lt; target else 1; handles SIGTERM by cancelling workers and writing partial report. Add to server.py: do_stress_start(cfg), do_stress_stop(), _topo_stress(), and routes POST /api/stress/start, POST /api/stress/stop, GET /api/stress/status \u2014 mirror the existing maker subprocess pattern exactly (PID file, pipe_output to log/stress.log, managed dict registration). Keep /stress page and report storage/list/view endpoints. Acceptance: POST /api/stress/start spawns a subprocess visible in topology; GET /api/stress/status reflects running state; POST /api/stress/stop terminates it cleanly; JSON report written to tmp/stress/ after run.",
+    "files": [],
+    "status": "running",
+    "created_at": "2026-02-27T15:15:34.830829",
+    "retries": 0,
+    "error": "",
+    "result": "",
+    "summary": "",
+    "session_id": "",
+    "depends_on": [
+      "e20b4c4f-d16e-4dec-8337-80ed18b8cadf"
+    ],
+    "followups": [],
+    "worker": "w1",
+    "started_at": "2026-02-27T15:15:34.834993"
+  },
+  {
+    "id": "e0013950-9f3e-4b25-bdc0-a979588f36d6",
+    "description": "Clean up tests and docs. In rsx-playground/tests/: remove all assertions that accept \"simulated\" as a valid status; remove sim-only test cases from api_e2e_test.py, api_integration_test.py, api_orders_test.py, test_order_api.py, api_maker_test.py; remove sim assertions from play_safety.spec.ts and play_guarantees.spec.ts; add gateway-down \u2192 error/503 assertions to api_orders_test.py where the old sim fallback was tested. Update docs: remove rsx-sim from TODO.md and Makefile references, update FEATURES.md (rsx-sim \u2192 stress.py), update PROGRESS.md (rsx-sim deleted), remove \"Sim-mode\" from TESTING.md. Acceptance: `pytest tests/api_e2e_test.py` passes; no test file contains \"simulated\" as an accepted status string; docs reflect current state.",
+    "files": [],
+    "status": "running",
+    "created_at": "2026-02-27T15:15:34.830844",
+    "retries": 0,
+    "error": "",
+    "result": "",
+    "summary": "",
+    "session_id": "",
+    "depends_on": [
+      "e20b4c4f-d16e-4dec-8337-80ed18b8cadf",
+      "097903ad-4bcd-493e-9597-5b2cc068e396"
+    ],
+    "followups": [],
+    "worker": "auto",
+    "started_at": "2026-02-27T15:15:34.836188"
+  }
+]

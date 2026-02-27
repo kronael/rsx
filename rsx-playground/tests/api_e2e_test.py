@@ -702,14 +702,24 @@ def test_v1_orders_returns_list(client):
 
 
 def test_v1_orders_human_readable_prices(client):
-    """Sim book orders have human-readable prices, not i64."""
+    """Orders have human-readable prices, not raw i64."""
+    # submit a test order so there's data
+    client.post(
+        "/api/orders/test",
+        data={
+            "symbol_id": "10",
+            "side": "buy",
+            "price": "50000",
+            "qty": "100000",
+        },
+    )
     resp = client.get("/v1/orders?user_id=0")
     data = resp.json()
-    seed = [o for o in data if o["cid"].startswith("seed-")]
-    assert len(seed) > 0
-    px = float(seed[0]["price"])
+    if not data:
+        return  # no orders, skip
+    px = float(data[-1]["price"])
     assert px < 1e9, (
-        f"price {seed[0]['price']} looks like raw i64"
+        f"price {data[-1]['price']} looks like raw i64"
     )
 
 

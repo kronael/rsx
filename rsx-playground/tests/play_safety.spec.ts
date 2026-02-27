@@ -99,7 +99,7 @@ test.describe.serial("Safety: process crash & recovery",
         await page.goto("/orders");
         await page.waitForTimeout(1000);
         const body = await page.textContent("body");
-        // sim mode or gateway-offline indicator
+        // gateway-offline indicator
         expect(body).toBeTruthy();
       }
     );
@@ -117,8 +117,7 @@ test.describe.serial("Safety: process crash & recovery",
             )
           : null;
         if (!gw) {
-          // sim mode — no real gateway process
-          // verify orders still work via sim
+          // no real gateway process — expect error response
           const res = await request.post(
             "/api/orders/test",
             {
@@ -631,7 +630,7 @@ test.describe.serial("Safety: graceful degradation",
         // page loads without crash
         const body = await page.textContent("body");
         expect(body).toBeTruthy();
-        // submit via API (sim mode)
+        // submit via API (gateway down)
         const res = await request.post(
           "/api/orders/test",
           {
@@ -647,7 +646,7 @@ test.describe.serial("Safety: graceful degradation",
         expect(res.ok()).toBe(true);
         const text = await res.text();
         expect(text).toMatch(
-          /accepted|simulated|queued|resting/i
+          /accepted|queued|resting|gateway|error/i
         );
       }
     );

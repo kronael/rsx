@@ -1,0 +1,2 @@
+- deleted rsx-sim/ crate and removed from workspace Cargo.toml; cargo check clean
+- Stripped sim mode from server.py: removed _sim_book/_sim_wal_events/_sim_seq globals, _seed_sim_book/_sim_submit functions, all callsites; POST /api/orders/test returns error when gateway offline
