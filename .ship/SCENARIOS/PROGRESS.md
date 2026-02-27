@@ -14,6 +14,9 @@ phase: executing
 | pending | 0 |
 | failed | 0 |
 
+## log
+- 18:30 fix rsx-risk multi-symbol routing: completed — RSX_ME_CMP_ADDRS parsed, HashMap<u32,CmpSender> built, orders routed by symbol_id
+
 ## workers
 
 - w0: Fix rsx-risk multi-symbol routing. Read `RSX_ME_CMP_ADDRS` (comma-separated SocketAddrs) from env at startup, falling back to `RSX_ME_CMP_ADDR` if the multi-addr var is absent. Build a `HashMap&lt;u32, SocketAddr&gt;` keyed by symbol_id parsed from the address port (port - 9100 = symbol_id). Route all outbound CMP order messages to the correct ME socket by looking up the order's symbol_id. Apply the same fix to Risk replica startup. Verify with `cargo check -p rsx-risk` and existing tests passing.
