@@ -189,7 +189,7 @@ useSoundAlerts.
 |------------|-------|--------|---------|
 | Rust unit  | 84    | ~570   | <5s     |
 | Playwright | 19    | ~228   | ~60s    |
-| Python     | -     | -      | -       |
+| Python e2e | 1     | 85     | ~10s    |
 | WAL        | -     | -      | <10s    |
 | E2E        | -     | -      | ~30s    |
 | Integration| -     | -      | 1-5min  |
