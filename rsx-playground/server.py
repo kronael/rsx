@@ -6175,14 +6175,21 @@ async def v1_account(user_id: int = Query(default=0)):
 
     equity = collateral + total_pnl
     available = equity - total_im
+    # convert raw i64 to human-readable (8 decimal places
+    # for USDT-denominated values)
+    d = 10**8
+
+    def h(v):
+        return str(round(v / d, 8))
+
     return JSONResponse({
         "userId": user_id,
-        "collateral": collateral,
-        "pnl": total_pnl,
-        "equity": equity,
-        "im": total_im,
-        "mm": total_mm,
-        "available": available,
+        "collateral": h(collateral),
+        "pnl": h(total_pnl),
+        "equity": h(equity),
+        "im": h(total_im),
+        "mm": h(total_mm),
+        "available": h(available),
     })
 
 
