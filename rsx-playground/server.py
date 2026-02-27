@@ -1393,11 +1393,41 @@ FILL_FMT = struct.Struct(
     '<QQIIIIQQQQqqBBBB4s')
 RECORD_FILL = 0
 RECORD_BBO = 1
+RECORD_ORDER_INSERTED = 2
+RECORD_ORDER_CANCELLED = 3
+RECORD_ORDER_DONE = 4
+RECORD_CONFIG_APPLIED = 5
+RECORD_CAUGHT_UP = 6
+RECORD_ORDER_ACCEPTED = 7
+RECORD_MARK_PRICE = 8
+RECORD_ORDER_FAILED = 12
 RECORD_LIQUIDATION = 13
-# LiquidationRecord: seq:u64, ts_ns:u64, user_id:u32,
-# symbol_id:u32, status:u8, side:u8, pad0:u16, round:u32,
-# qty:i64, price:i64, slip_bps:i64
+# LiquidationRecord
 LIQN_FMT = struct.Struct('<QQIIBBHIqqq')
+# OrderAcceptedRecord: seq:u64 ts:u64 uid:u32 sym:u32
+#   oid_hi:u64 oid_lo:u64 price:i64 qty:i64
+#   side:u8 tif:u8 ro:u8 po:u8 pad:12s
+OACC_FMT = struct.Struct('<QQIIQQqqBBBB12s')
+# OrderInsertedRecord: seq:u64 ts:u64 sym:u32 uid:u32
+#   oid_hi:u64 oid_lo:u64 price:i64 qty:i64
+#   side:u8 tif:u8 ro:u8 po:u8 pad:4s
+OINS_FMT = struct.Struct('<QQIIQQqqBBBB4s')
+# OrderDoneRecord: seq:u64 ts:u64 sym:u32 uid:u32
+#   oid_hi:u64 oid_lo:u64 filled:i64 remaining:i64
+#   status:u8 ro:u8 tif:u8 po:u8 pad:4s
+ODONE_FMT = struct.Struct('<QQIIQQqqBBBB4s')
+# OrderCancelledRecord: same layout as OrderDone
+OCANC_FMT = ODONE_FMT
+# MarkPriceRecord: seq:u64 ts:u64 sym:u32 pad:u32
+#   mark:i64 src_mask:u32 src_count:u32 pad:24s
+MARK_FMT = struct.Struct('<QQIIqII24s')
+RECORD_TYPE_NAMES = {
+    0: "fill", 1: "bbo", 2: "order_inserted",
+    3: "order_cancelled", 4: "order_done",
+    5: "config_applied", 6: "caught_up",
+    7: "order_accepted", 8: "mark_price",
+    12: "order_failed", 13: "liquidation",
+}
 
 
 def parse_wal_records(stream_dir, record_types=None):
@@ -1456,9 +1486,6 @@ def parse_wal_records(stream_dir, record_types=None):
             elif (rtype == RECORD_LIQUIDATION
                     and len(payload) >= LIQN_FMT.size):
                 fields = LIQN_FMT.unpack_from(payload)
-                # [0]=seq [1]=ts [2]=user_id [3]=symbol_id
-                # [4]=status [5]=side [6]=pad [7]=round
-                # [8]=qty [9]=price [10]=slip_bps
                 records.append({
                     "type": "liquidation",
                     "seq": fields[0],
@@ -1472,6 +1499,72 @@ def parse_wal_records(stream_dir, record_types=None):
                     "price": fields[9],
                     "slip_bps": fields[10],
                 })
+            elif (rtype == RECORD_ORDER_ACCEPTED
+                    and len(payload) >= OACC_FMT.size):
+                f = OACC_FMT.unpack_from(payload)
+                records.append({
+                    "type": "order_accepted",
+                    "seq": f[0], "ts_ns": f[1],
+                    "user_id": f[2],
+                    "symbol_id": f[3],
+                    "price": f[6], "qty": f[7],
+                    "side": f[8],
+                })
+            elif (rtype == RECORD_ORDER_INSERTED
+                    and len(payload) >= OINS_FMT.size):
+                f = OINS_FMT.unpack_from(payload)
+                records.append({
+                    "type": "order_inserted",
+                    "seq": f[0], "ts_ns": f[1],
+                    "symbol_id": f[2],
+                    "user_id": f[3],
+                    "price": f[6], "qty": f[7],
+                    "side": f[8],
+                })
+            elif (rtype == RECORD_ORDER_CANCELLED
+                    and len(payload) >= OCANC_FMT.size):
+                f = OCANC_FMT.unpack_from(payload)
+                records.append({
+                    "type": "order_cancelled",
+                    "seq": f[0], "ts_ns": f[1],
+                    "symbol_id": f[2],
+                    "user_id": f[3],
+                    "remaining_qty": f[6],
+                })
+            elif (rtype == RECORD_ORDER_DONE
+                    and len(payload) >= ODONE_FMT.size):
+                f = ODONE_FMT.unpack_from(payload)
+                records.append({
+                    "type": "order_done",
+                    "seq": f[0], "ts_ns": f[1],
+                    "symbol_id": f[2],
+                    "user_id": f[3],
+                    "filled_qty": f[6],
+                    "remaining_qty": f[7],
+                    "status": f[8],
+                })
+            elif (rtype == RECORD_MARK_PRICE
+                    and len(payload) >= MARK_FMT.size):
+                f = MARK_FMT.unpack_from(payload)
+                records.append({
+                    "type": "mark_price",
+                    "seq": f[0], "ts_ns": f[1],
+                    "symbol_id": f[2],
+                    "mark_price": f[4],
+                    "source_count": f[6],
+                })
+            else:
+                # unknown type — still show in timeline
+                name = RECORD_TYPE_NAMES.get(
+                    rtype, f"type_{rtype}")
+                rec = {"type": name, "seq": 0,
+                       "ts_ns": 0}
+                if len(payload) >= 20:
+                    seq, ts = struct.unpack_from(
+                        '<QQ', payload)
+                    rec["seq"] = seq
+                    rec["ts_ns"] = ts
+                records.append(rec)
     return records
 
 

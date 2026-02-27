@@ -2110,6 +2110,35 @@ def render_wal_timeline(records=None):
             color = "text-emerald-400"
             detail = (f'px={rec.get("price", 0)} '
                       f'qty={rec.get("qty", 0)}')
+        elif rtype == "order_accepted":
+            color = "text-cyan-400"
+            s = "buy" if rec.get("side") == 0 else "sell"
+            detail = (f'{s} px={rec.get("price", 0)} '
+                      f'qty={rec.get("qty", 0)}')
+        elif rtype == "order_inserted":
+            color = "text-teal-400"
+            s = "buy" if rec.get("side") == 0 else "sell"
+            detail = (f'{s} px={rec.get("price", 0)} '
+                      f'qty={rec.get("qty", 0)}')
+        elif rtype == "order_done":
+            color = "text-amber-400"
+            detail = (
+                f'filled={rec.get("filled_qty", 0)} '
+                f'rem={rec.get("remaining_qty", 0)}')
+        elif rtype == "order_cancelled":
+            color = "text-orange-400"
+            detail = (
+                f'rem={rec.get("remaining_qty", 0)}')
+        elif rtype == "mark_price":
+            color = "text-purple-400"
+            detail = (
+                f'mark={rec.get("mark_price", 0)} '
+                f'srcs={rec.get("source_count", 0)}')
+        elif rtype == "liquidation":
+            color = "text-red-400"
+            detail = (
+                f'px={rec.get("price", 0)} '
+                f'qty={rec.get("qty", 0)}')
         else:
             color = "text-slate-400"
             detail = "-"
