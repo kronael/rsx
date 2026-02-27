@@ -1,6 +1,6 @@
 # PROGRESS
 
-updated: Feb 27 18:35:01  
+updated: Feb 27 18:35:06  
 phase: executing
 
 ```
@@ -27,3 +27,4 @@ phase: executing
 - `18:30:30` done: Fix rsx-marketdata multi-symbol subscriptions. Read `RSX_ME_ (7 files, +290/-70)
 - `18:34:36` adv challenge: Verify that `build_spawn_plan()` in `start` actual
 - `18:34:36` adv challenge: Verify that the single-addr backward-compatibility
+- 18:35 Verify RSX_ME_CMP_ADDRS in build_spawn_plan: confirmed — `start` passes `RSX_ME_CMP_ADDRS` (plural) to Risk (line 264) and Marketdata (lines 293, 337); singular `RSX_ME_CMP_ADDR` only appears in individual ME process envs as their own listen address, which is correct.
