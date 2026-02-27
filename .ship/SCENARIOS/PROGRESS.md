@@ -1,22 +1,18 @@
 # PROGRESS
 
-updated: Feb 27 18:44:47  
+updated: Feb 27 18:45:19  
 phase: executing
 
 ```
-[█████████████████████████░░░░░] 86%  6/7
+[██████████████████████████████] 100%  7/7
 ```
 
 | | count |
 |---|---|
-| completed | 6 |
-| running | 1 |
+| completed | 7 |
+| running | 0 |
 | pending | 0 |
 | failed | 0 |
-
-## workers
-
-- w2: Verify that `rsx-risk/tests/me_cmp_addrs_test.rs` runs with `--test-threads=1`. The tests use `std::env::set_var` / `remove_var` which mutate global process state. Without serial execution, concurrent tests will race on the same env vars, producing non-deterministic results that silently pass or fail.
 
 ## log
 
@@ -33,4 +29,4 @@ phase: executing
 - `18:43:09` adv challenge: Verify that `rsx-risk/tests/me_cmp_addrs_test.rs` 
 - `18:43:09` adv challenge: Verify that `build_spawn_plan()` in `start` passes
 - `18:43:32` done: Verify that `build_spawn_plan()` in `start` passes `RSX_ME_C (2 files, +11/-50)
-- 18:46 Verify me_cmp_addrs_test serial execution: completed — Makefile correctly adds `--test-threads=1` to the rsx-risk test target.
+- `18:44:48` done: Verify that `rsx-risk/tests/me_cmp_addrs_test.rs` runs with  (3 files, +18/-52)
