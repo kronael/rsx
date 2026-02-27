@@ -41,13 +41,4 @@ skipped Playwright tests in this file, zero vacuous assertions, pytest passes.
 - 22:05 w1 fix play_latency.spec.ts: partial — three required tests added and `test_api_latency` added to pytest, but old tests were NOT removed; file still has 10 tests including multiple that skip on 404 (recent-orders, live-fills, wal-timeline), violating the "exactly three tests" and "zero skipped" acceptance criteria.
 - 21:57 w0 bench-gate.sh: complete — `scripts/bench-gate.sh` created with all six required behaviors (run benchmarks, walk criterion results, compare baseline, print table, exit 1 on >10% regression, save on --save-baseline or missing baseline) and both Makefile targets added.
 
-- w2: Add `GET /api/gateway-mode` to `rsx-playground/server.py`
-using the existing `_probe_gateway_tcp()` coroutine — return
-`{"mode": "live" if reachable else "offline", "url": GATEWAY_URL}`. Then
-add an HTMX badge to the overview partial in `rsx-playground/pages.py`:
-`&lt;span hx-get="/api/gateway-mode" hx-trigger="load" hx-target="this"&gt;GW:
-checking...&lt;/span&gt;` that renders green for live, amber for offline. Add
-`test_api_gateway_mode` to `rsx-playground/tests/api_e2e_test.py`: GET
-`/api/gateway-mode`, assert 200, `data["mode"] in ("live", "offline")`,
-`"url" in data`. Acceptance: curl returns valid JSON, pytest test passes,
-overview page renders badge without error.
+- 21:58 w2 gateway-mode: complete — `GET /api/gateway-mode` added to server.py returning `{"mode", "url"}`, HTMX badge in pages.py overview partial (uses `/x/gateway-mode` HTMX partial as designed), and `test_api_gateway_mode` in api_e2e_test.py with all three required assertions.
