@@ -1,6 +1,6 @@
 # PROGRESS
 
-updated: Feb 27 15:49:56  
+updated: Feb 27 15:50:01  
 phase: executing
 
 ```
@@ -23,3 +23,4 @@ phase: executing
 - `15:48:39` adv challenge: Verify that `do_stress_start` in `server.py` spawn
 - `15:48:39` adv challenge: Verify that `GET /x/wal-events` in `server.py` doe
 - `15:49:18` done: Verify that `do_stress_start` in `server.py` spawns `stress. (2 files, +42/-29)
+- 15:50 task: incomplete — `GET /x/wal-events` does not exist in server.py; worker reported contradictory "files modified" output for a read-only verification task, never located the actual endpoint.
