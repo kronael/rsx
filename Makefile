@@ -266,7 +266,11 @@ test:
 # E2E tests - ALL E2E tests (Rust + ALL API tests + Playwright)
 e2e:
 	@echo "==> Running Rust E2E tests..."
-	cargo test --workspace --test '*' --no-fail-fast
+	cargo test --workspace --test '*' --no-fail-fast \
+		--exclude rsx-risk
+	@echo "==> Running rsx-risk E2E tests (serial: env-var tests)..."
+	cargo test -p rsx-risk --test '*' --no-fail-fast \
+		-- --test-threads=1
 	@echo ""
 	@echo "==> Running API E2E tests (ALL 687 tests)..."
 	cd rsx-playground && uv run pytest tests/api_*.py -v --tb=short -x
