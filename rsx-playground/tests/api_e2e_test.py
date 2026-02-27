@@ -719,3 +719,77 @@ def test_production_mode_guard(client, monkeypatch):
     assert 'PLAYGROUND_MODE' in source
     assert 'production' in source
     assert 'refusing to start' in source
+
+
+# ── Investor Demo Verification ─────────────────────────────
+
+
+def test_v1_account_returns_human_readable(client):
+    """Account values are human-readable, not raw i64."""
+    resp = client.get("/v1/account?user_id=0")
+    assert resp.status_code == 200
+    data = resp.json()
+    for key in (
+        "collateral", "pnl", "equity", "im", "mm",
+        "available",
+    ):
+        assert key in data
+        val = float(data[key])
+        # collateral should be reasonable (not 10^17)
+        if key == "collateral":
+            assert val < 1e12, (
+                f"collateral {val} looks like raw i64"
+            )
+
+
+def test_v1_candles_nonexistent_symbol(client):
+    """Candles for unknown symbol returns synthetic bars."""
+    resp = client.get("/v1/candles?sym=NONEXISTENT")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "bars" in data
+    # synthetic fallback should still produce bars
+    assert isinstance(data["bars"], list)
+
+
+def test_v1_account_bad_user_id_returns_422(client):
+    """Non-integer user_id returns 422, not 500."""
+    resp = client.get("/v1/account?user_id=abc")
+    assert resp.status_code == 422
+    assert "Traceback" not in resp.text
+
+
+def test_v1_funding_returns_json(client):
+    """GET /v1/funding returns JSON list."""
+    resp = client.get("/v1/funding")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, (list, dict))
+
+
+def test_no_stack_trace_on_404(client):
+    """404 pages never show Python tracebacks."""
+    for path in ["/nonexistent", "/docs/nonexistent"]:
+        resp = client.get(path)
+        assert resp.status_code == 404
+        assert "Traceback" not in resp.text
+
+
+def test_all_pages_no_blank_no_error(client):
+    """Every page returns >100B, no Internal Server Error."""
+    pages = [
+        "/", "/overview", "/topology", "/book",
+        "/risk", "/wal", "/orders", "/stress",
+        "/docs", "/docs/README",
+    ]
+    for path in pages:
+        resp = client.get(path)
+        assert resp.status_code == 200, (
+            f"{path} returned {resp.status_code}"
+        )
+        assert len(resp.text) > 100, (
+            f"{path} too small ({len(resp.text)}B)"
+        )
+        assert "Internal Server Error" not in resp.text, (
+            f"{path} has server error"
+        )
