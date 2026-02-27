@@ -14,6 +14,10 @@ phase: executing
 | pending | 0 |
 | failed | 0 |
 
+## log
+
+- 18:43 verify replica RSX_ME_CMP_ADDRS: confirmed — `start` line 293 passes the same `me_cmp_addrs` variable (all symbols) to replica entries, not a hardcoded address.
+
 ## workers
 
 - w0: Verify that `build_spawn_plan()` in `start` passes `RSX_ME_CMP_ADDRS` (plural) to risk replica entries, not only to the primary risk shard. Read the replica-spawning block and confirm it uses the same `me_cmp_addrs` variable, not a hardcoded single address or a leftover reference to `symbols[0]`.
