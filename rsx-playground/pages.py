@@ -138,7 +138,13 @@ def overview_page():
     <span class="text-xs text-slate-400">
       RSX Playground - Development Dashboard</span>
   </div>
-  <div class="flex gap-3 text-xs">
+  <div class="flex gap-3 text-xs items-center">
+    <span id="gw-mode-badge"
+      hx-get="/x/gateway-mode"
+      hx-trigger="load"
+      hx-target="#gw-mode-badge"
+      hx-swap="outerHTML"
+      class="text-slate-400">GW: checking...</span>
     <a href="./docs/api"
       class="text-blue-400 hover:text-blue-300">
       API Reference</a>

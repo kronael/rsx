@@ -5009,6 +5009,15 @@ async def api_latency():
     })
 
 
+@app.get("/api/gateway-mode")
+async def api_gateway_mode():
+    reachable = await _probe_gateway_tcp()
+    return {
+        "mode": "live" if reachable else "offline",
+        "url": GATEWAY_URL,
+    }
+
+
 @app.get("/api/mark/prices")
 async def api_mark_prices():
     prices = {}

@@ -270,6 +270,15 @@ def test_x_risk_user_with_query_param(client):
 # ── Additional Coverage ─────────────────────────────────────
 
 
+def test_api_latency(client):
+    """GET /api/latency returns JSON with count field."""
+    resp = client.get("/api/latency")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "count" in data
+    assert data["count"] >= 0
+
+
 def test_api_metrics_returns_json(client):
     """GET /api/metrics returns JSON."""
     resp = client.get("/api/metrics")
