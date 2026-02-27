@@ -3022,8 +3022,9 @@ def render_funding(book_stats=None):
                 'no BBO data available</span>')
     rows = ""
     for sid, bbo in sorted(book_stats.items()):
-        sym = {1: "BTC", 2: "ETH", 3: "SOL",
-               10: "PENGU"}.get(sid, f"sym-{sid}")
+        if sid not in SYMBOL_CONFIG:
+            continue
+        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
         bid = bbo.get("bid_px", 0)
         ask = bbo.get("ask_px", 0)
         mid = (bid + ask) // 2 if bid and ask else 0
@@ -3088,6 +3089,7 @@ def render_risk_latency(latencies=None):
 
 SYMBOL_NAMES = {
     1: "BTC", 2: "ETH", 3: "SOL", 10: "PENGU",
+    11: "DOGE", 12: "SHIB",
 }
 
 # Symbol display config (for formatting WAL data)
@@ -3161,6 +3163,8 @@ def render_book_ladder(symbol_id, snap):
         if best_ask > 0 and best_bid > 0
         else 0
     )
+    fp = lambda v: format_price(v, symbol_id)
+    fq = lambda v: format_qty(v, symbol_id)
     ask_rows = ""
     for lvl in reversed(asks[:10]):
         px = lvl.get("px", 0)
@@ -3169,8 +3173,8 @@ def render_book_ladder(symbol_id, snap):
             f'<tr class="text-red-400"'
             f' data-testid="ask-row" data-px="{px}">'
             f'<td>Ask</td>'
-            f'<td class="text-right font-mono">{px}</td>'
-            f'<td class="text-right font-mono">{qty}</td>'
+            f'<td class="text-right font-mono">{fp(px)}</td>'
+            f'<td class="text-right font-mono">{fq(qty)}</td>'
             f'</tr>\n'
         )
     bid_rows = ""
@@ -3181,8 +3185,8 @@ def render_book_ladder(symbol_id, snap):
             f'<tr class="text-emerald-400"'
             f' data-testid="bid-row" data-px="{px}">'
             f'<td>Bid</td>'
-            f'<td class="text-right font-mono">{px}</td>'
-            f'<td class="text-right font-mono">{qty}</td>'
+            f'<td class="text-right font-mono">{fp(px)}</td>'
+            f'<td class="text-right font-mono">{fq(qty)}</td>'
             f'</tr>\n'
         )
     return f"""<table class="w-full text-xs">
@@ -3192,7 +3196,7 @@ def render_book_ladder(symbol_id, snap):
   <th class="text-right">Qty</th>
 </tr>
 {ask_rows}<tr class="text-slate-600 text-center">
-  <td colspan="3">spread: {spread}</td>
+  <td colspan="3">spread: {fp(spread)}</td>
 </tr>
 {bid_rows}</table>"""
 
