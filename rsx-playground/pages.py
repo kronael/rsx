@@ -3096,9 +3096,9 @@ SYMBOL_NAMES = {
 # tick_size=1, lot_size=1 in test env, but values may be large
 SYMBOL_CONFIG = {
     1: {"price_decimals": 2, "qty_decimals": 8},    # BTC
-    2: {"price_decimals": 2, "qty_decimals": 6},    # ETH
-    3: {"price_decimals": 4, "qty_decimals": 4},    # SOL
-    10: {"price_decimals": 6, "qty_decimals": 2},   # PENGU
+    2: {"price_decimals": 2, "qty_decimals": 8},    # ETH
+    3: {"price_decimals": 4, "qty_decimals": 6},    # SOL
+    10: {"price_decimals": 6, "qty_decimals": 4},   # PENGU
 }
 
 
