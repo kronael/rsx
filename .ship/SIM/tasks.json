@@ -76,23 +76,24 @@
     "id": "b1766e6e-2c11-4267-a19e-9a771775fd00",
     "description": "Verify that `do_stress_start` in `server.py` spawns `stress.py` as an external subprocess (not an in-process thread or asyncio task) using the same `managed[STRESS_NAME]` pattern as `do_maker_start`, including PID file write and `pipe_output()` call \u2014 read both functions side by side and confirm structural parity. A stress loop running in-process would violate the \"managed subprocess\" requirement.",
     "files": [],
-    "status": "running",
+    "status": "completed",
     "created_at": "2026-02-27T15:48:39.546712",
     "retries": 0,
     "error": "",
-    "result": "",
+    "result": "Done.",
     "summary": "",
-    "session_id": "",
+    "session_id": "0adf6cea-d41a-4960-9a73-7b6a7deb18c9",
     "depends_on": [],
     "followups": [],
     "worker": "auto",
-    "started_at": "2026-02-27T15:48:39.547482"
+    "started_at": "2026-02-27T15:48:39.547482",
+    "completed_at": "2026-02-27T15:49:18.638656"
   },
   {
     "id": "fc673119-41de-4187-b131-8a37f8324c4a",
     "description": "Verify that `GET /x/wal-events` in `server.py` does NOT merge any fallback list \u2014 inspect the handler implementation and confirm there is no conditional that appends synthetic events when WAL is empty or gateway is down. A leftover `events = real_events or fallback` pattern would silently violate the objective.",
     "files": [],
-    "status": "pending",
+    "status": "running",
     "created_at": "2026-02-27T15:48:39.547016",
     "retries": 0,
     "error": "",
@@ -101,6 +102,7 @@
     "session_id": "",
     "depends_on": [],
     "followups": [],
-    "worker": "auto"
+    "worker": "auto",
+    "started_at": "2026-02-27T15:49:18.662698"
   }
 ]
