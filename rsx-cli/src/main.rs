@@ -5,6 +5,7 @@ use rsx_dxs::wal::extract_seq;
 use rsx_dxs::wal::WalReader;
 use serde_json::json;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -43,6 +44,12 @@ enum Commands {
         /// Stop after ts_ns > value
         #[arg(long)]
         to_ts: Option<u64>,
+        /// Print per-type counts instead of records
+        #[arg(long, conflicts_with = "follow")]
+        stats: bool,
+        /// Follow WAL for new records (not yet implemented)
+        #[arg(long, conflicts_with = "stats")]
+        follow: bool,
     },
     /// Dump a single WAL file as JSON lines
     Dump {
@@ -569,6 +576,7 @@ fn wal_dump(
     wal_dir: PathBuf,
     from_seq: u64,
     json: bool,
+    stats: bool,
     filters: Filters,
 ) {
     let mut reader = WalReader::open_from_seq(
@@ -576,11 +584,32 @@ fn wal_dump(
     )
     .expect("failed to open wal");
 
-    if json {
+    if stats {
+        dump_stats(&mut reader, &filters);
+    } else if json {
         dump_json(&mut reader, &filters);
     } else {
         dump_text(&mut reader, &filters);
     }
+}
+
+fn dump_stats(reader: &mut WalReader, filters: &Filters) {
+    let mut counts: HashMap<&'static str, u64> = HashMap::new();
+    while let Ok(Some(raw)) = reader.next() {
+        let rt = raw.header.record_type;
+        if !filters.matches(rt, &raw.payload) {
+            continue;
+        }
+        *counts.entry(record_name(rt)).or_insert(0) += 1;
+    }
+    let mut pairs: Vec<(&str, u64)> =
+        counts.into_iter().collect();
+    pairs.sort_by_key(|(name, _)| *name);
+    let total: u64 = pairs.iter().map(|(_, c)| c).sum();
+    for (name, count) in &pairs {
+        println!("{:<20} {}", name, count);
+    }
+    println!("{:<20} {}", "total", total);
 }
 
 fn dump_text(reader: &mut WalReader, filters: &Filters) {
@@ -706,6 +735,8 @@ fn main() {
             user,
             from_ts,
             to_ts,
+            stats,
+            follow: _follow,
         } => {
             let filters = Filters::from_args(
                 record_types,
@@ -714,7 +745,10 @@ fn main() {
                 from_ts,
                 to_ts,
             );
-            wal_dump(stream_id, wal_dir, from_seq, json, filters);
+            wal_dump(
+                stream_id, wal_dir, from_seq, json, stats,
+                filters,
+            );
         }
         Commands::Dump { file } => dump_file(file),
     }
