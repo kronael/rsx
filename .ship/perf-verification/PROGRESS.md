@@ -1,18 +1,23 @@
 # PROGRESS
 
-updated: Feb 27 21:58:27  
+updated: Feb 27 22:02:42  
 phase: executing
 
 ```
-[██████████████████████████████] 100%  3/3
+[██████████████████░░░░░░░░░░░░] 60%  3/5
 ```
 
 | | count |
 |---|---|
 | completed | 3 |
-| running | 0 |
+| running | 2 |
 | pending | 0 |
 | failed | 0 |
+
+## workers
+
+- w0: Verify that `make bench-gate` with no pre-existing `target/criterion/` directory exits with a non-zero status code and an actionable error message rather than silently saving an empty baseline. The script runs `cargo bench --workspace` and then checks `${#CURRENT[@]} -eq 0` — but if the workspace has no `[[bench]]` sections in any `Cargo.toml` or if `cargo bench` exits 0 with no output, the script exits 1 with "no criterion results found". Confirm the workspace bench targets are correctly declared so this path is unreachable during normal use.
+- w1: Verify that `bench-gate.sh` is protected against floating-point division producing `inf` or `nan` in awk when `baseline_ns` is `0`. If a previous run saved a benchmark with `point_estimate: 0.0` (theoretically impossible but defensively important), `awk "BEGIN { printf \"%.4f\", $current_ns / 0 }"` produces `inf` and `fail_flag=$(awk "BEGIN { print (inf > 1.10) ? 1 : 0 }")` — verify this edge case is handled or that Criterion never emits zero estimates.
 
 ## log
 
@@ -22,35 +27,5 @@ the fi (14 files, +389/-105)
 that (1 (14 files, +390/-105)
 - `21:57:18` done: Add `GET /api/gateway-mode` to `rsx-playground/server.py`
 us (14 files, +414/-105)
-
-## assessment
-
-**100% of goal met.**
-
-All three deliverables fully implemented and correct:
-
-**Deliverable 1 — Criterion CI gate (`scripts/bench-gate.sh`):**
-- Pure bash + jq, no Python/npm
-- Runs `cargo bench --workspace`, walks `target/criterion/*/new/estimates.json`
-- Extracts `mean.point_estimate`, compares 1.10x threshold
-- Prints name/baseline/current/ratio/PASS/FAIL table
-- `--save-baseline` flag works; first run with no baseline saves and passes
-- Makefile `bench-gate` and `bench-save` targets present
-
-**Deliverable 2 — Playground latency tests:**
-- `play_latency.spec.ts`: 3 concrete tests, zero skips, zero vacuous assertions
-  - submits 5 orders, checks count/p50/p99 conditionally
-  - `/x/risk-latency` returns HTML with "latency"
-  - `/x/latency-regression` returns HTML with "p50"
-- `api_e2e_test.py`: `test_api_latency` added, asserts status 200 and count >= 0
-
-**Deliverable 3 — Gateway mode endpoint + badge:**
-- `/api/gateway-mode` returns `{mode: "live"|"offline", url}` using `_probe_gateway_tcp()`
-- `/x/gateway-mode` HTMX partial returns HTML badge (correct: HTML endpoint for HTMX)
-- `render_gateway_mode_badge()` renders green/amber badge
-- Overview page has `hx-get="/x/gateway-mode" hx-trigger="load"` spinner
-- `test_api_gateway_mode` in pytest validates endpoint shape
-
-**Quality notes:** Implementation is clean and minimal. HTMX partial correctly
-uses `/x/gateway-mode` (HTML) rather than `/api/gateway-mode` (JSON) — correct
-architectural split despite spec wording. No regressions to existing behavior.
+- `22:01:57` adv challenge: Verify that `bench-gate.sh` is protected against f
+- `22:01:57` adv challenge: Verify that `make bench-gate` with no pre-existing

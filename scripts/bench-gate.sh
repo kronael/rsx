@@ -79,7 +79,14 @@ for name in $(echo "${!CURRENT[@]}" | tr ' ' '\n' | sort); do
         continue
     fi
 
-    # Use awk for float division (bash can't do floats)
+    # Use awk for float division (bash can't do floats).
+    # Guard: if baseline is 0 (should never happen; Criterion min is
+    # sub-ns but > 0), treat as NEW rather than dividing by zero.
+    if awk "BEGIN { exit ($baseline_ns == 0) ? 0 : 1 }"; then
+        printf "%-60s %14s %14.0f %8s  NEW(zero-baseline)\n" \
+            "$name" "0" "$current_ns" "-"
+        continue
+    fi
     ratio=$(awk "BEGIN { printf \"%.4f\", $current_ns / $baseline_ns }")
     pct=$(awk "BEGIN { printf \"%.1f%%\", ($current_ns / $baseline_ns) * 100 }")
     result="PASS"

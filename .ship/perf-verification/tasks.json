@@ -49,5 +49,37 @@
     "worker": "auto",
     "started_at": "2026-02-27T21:55:46.291437",
     "completed_at": "2026-02-27T21:57:18.031803"
+  },
+  {
+    "id": "ab9177cb-c100-42f0-8c87-e83ba9e02832",
+    "description": "Verify that `bench-gate.sh` is protected against floating-point division producing `inf` or `nan` in awk when `baseline_ns` is `0`. If a previous run saved a benchmark with `point_estimate: 0.0` (theoretically impossible but defensively important), `awk \"BEGIN { printf \\\"%.4f\\\", $current_ns / 0 }\"` produces `inf` and `fail_flag=$(awk \"BEGIN { print (inf > 1.10) ? 1 : 0 }\")` \u2014 verify this edge case is handled or that Criterion never emits zero estimates.",
+    "files": [],
+    "status": "running",
+    "created_at": "2026-02-27T22:01:57.674869",
+    "retries": 0,
+    "error": "",
+    "result": "",
+    "summary": "",
+    "session_id": "",
+    "depends_on": [],
+    "followups": [],
+    "worker": "auto",
+    "started_at": "2026-02-27T22:01:57.675593"
+  },
+  {
+    "id": "89c21b94-8b4f-4449-8220-61afcb06b810",
+    "description": "Verify that `make bench-gate` with no pre-existing `target/criterion/` directory exits with a non-zero status code and an actionable error message rather than silently saving an empty baseline. The script runs `cargo bench --workspace` and then checks `${#CURRENT[@]} -eq 0` \u2014 but if the workspace has no `[[bench]]` sections in any `Cargo.toml` or if `cargo bench` exits 0 with no output, the script exits 1 with \"no criterion results found\". Confirm the workspace bench targets are correctly declared so this path is unreachable during normal use.",
+    "files": [],
+    "status": "running",
+    "created_at": "2026-02-27T22:01:57.675109",
+    "retries": 0,
+    "error": "",
+    "result": "",
+    "summary": "",
+    "session_id": "",
+    "depends_on": [],
+    "followups": [],
+    "worker": "auto",
+    "started_at": "2026-02-27T22:01:57.681980"
   }
 ]
