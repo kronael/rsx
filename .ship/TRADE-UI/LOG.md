@@ -2,3 +2,4 @@
 - private WS: subscribe positions channel on connect, reset backoff on first message received (both hooks)
 - Positions: positionsLoaded flag (blank→empty state), 150ms fill delay for WAL timing
 - fixed positions: removed bogus gateway subscribe, set positionsLoaded=true on REST error
+- send {N:[positions,orders,fills]} subscribe frame on private WS connect
