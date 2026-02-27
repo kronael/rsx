@@ -174,8 +174,10 @@ fn main() {
         .collect();
 
     info!(
-        "marketdata started on {}",
+        "marketdata started on {} subscribing to {} ME(s): {}",
         config.listen_addr,
+        cmp_receivers.len(),
+        me_addrs_str,
     );
 
     // Run monoio event loop

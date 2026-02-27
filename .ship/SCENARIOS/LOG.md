@@ -1,1 +1,3 @@
 - fixed RSX_ME_CMP_ADDRS multi-symbol routing, combined Binance URL, added recorder to build_spawn_plan
+- fixed rsx-marketdata multi-symbol: RSX_ME_CMP_ADDRS parsed into Vec<CmpReceiver>, one per ME, local port = me_port+400
+- rsx-risk: RSX_ME_CMP_ADDRS multi-symbol routing, HashMap<u32,CmpSender>, cancel+order routed by symbol_id, replicas fixed

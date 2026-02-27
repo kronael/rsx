@@ -938,17 +938,20 @@ fn run_replica(
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;
 
-    // Set up CMP receivers from MEs (same as main)
-    let me_addr: SocketAddr =
-        env::var("RSX_ME_CMP_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9100".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_ME_CMP_ADDR");
+    // Set up CMP receiver from MEs (same as main).
+    // Use first ME addr as CMP peer for the receiver.
+    let me_addrs = parse_me_cmp_addrs();
+    if me_addrs.is_empty() {
+        return Err(
+            "no ME CMP addresses configured".into()
+        );
+    }
+    let first_me_addr =
+        *me_addrs.values().next().expect("non-empty");
     let mut me_receiver = CmpReceiver::new(
         // SAFETY: literal addr is always valid
         "127.0.0.1:0".parse().expect("valid addr"),
-        me_addr,
+        first_me_addr,
         0,
     )
     // SAFETY: fail-fast at startup
