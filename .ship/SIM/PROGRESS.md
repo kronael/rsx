@@ -23,3 +23,4 @@ phase: executing
 ## log
 
 - `15:16:24` done: committed rsx-sim deletion (4 files, +0/-53)
+- `15:35` task: INCOMPLETE — mark prices endpoint still has a `"sim"` source fallback at line ~4914 (`# fall back to sim book for symbols without WAL data`, `"source": "sim"`); grep still returns sim-data references.
