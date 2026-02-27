@@ -764,7 +764,7 @@ fn run_main(
             }
         }
 
-        // Drain accepted orders -> CMP to ME
+        // Drain accepted orders -> CMP to correct ME
         while let Ok(order) = accepted_cons.pop() {
             let msg = OrderMessage {
                 seq: order.seq,
@@ -798,19 +798,30 @@ fn run_main(
                     >(),
                 )
             };
-            let _ = me_sender.send_raw(
-                RECORD_ORDER_REQUEST,
-                bytes,
-            );
+            if let Some(s) = me_senders
+                .get_mut(&order.symbol_id)
+            {
+                let _ = s.send_raw(
+                    RECORD_ORDER_REQUEST,
+                    bytes,
+                );
+            } else {
+                warn!(
+                    "order for unknown symbol_id={}",
+                    order.symbol_id
+                );
+            }
         }
 
         // CMP housekeeping
-        let _ = me_sender.tick();
+        for s in me_senders.values_mut() {
+            let _ = s.tick();
+            s.recv_control();
+        }
         let _ = gw_sender.tick();
         gw_receiver.tick();
         me_receiver.tick();
         mark_receiver.tick();
-        me_sender.recv_control();
         gw_sender.recv_control();
 
         // Send tips to replica if configured
