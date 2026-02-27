@@ -85,10 +85,16 @@ impl Filters {
         from_ts: Option<u64>,
         to_ts: Option<u64>,
     ) -> Self {
-        let rts = record_types
-            .iter()
-            .filter_map(|s| name_to_record_type(s.as_str()))
-            .collect();
+        let mut rts = Vec::with_capacity(record_types.len());
+        for s in &record_types {
+            match name_to_record_type(s.as_str()) {
+                Some(rt) => rts.push(rt),
+                None => {
+                    eprintln!("error: unknown record type: {}", s);
+                    std::process::exit(1);
+                }
+            }
+        }
         Filters { record_types: rts, symbol, user, from_ts, to_ts }
     }
 
@@ -165,10 +171,7 @@ fn name_to_record_type(name: &str) -> Option<u16> {
         "CANCEL_REQUEST" => Some(RECORD_CANCEL_REQUEST),
         "ORDER_FAILED" => Some(RECORD_ORDER_FAILED),
         "LIQUIDATION" => Some(RECORD_LIQUIDATION),
-        _ => {
-            eprintln!("unknown record type: {}", name);
-            None
-        }
+        _ => None,
     }
 }
 
