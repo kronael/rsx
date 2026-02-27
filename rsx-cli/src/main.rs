@@ -7,6 +7,11 @@ use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "rsxcli", about = "RSX CLI tools")]
@@ -571,12 +576,23 @@ fn decode_payload(
     }
 }
 
+fn install_ctrlc_handler() -> Arc<AtomicBool> {
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("failed to set ctrl-c handler");
+    running
+}
+
 fn wal_dump(
     stream_id: u32,
     wal_dir: PathBuf,
     from_seq: u64,
     json: bool,
     stats: bool,
+    follow: bool,
     filters: Filters,
 ) {
     let mut reader = WalReader::open_from_seq(
@@ -586,10 +602,163 @@ fn wal_dump(
 
     if stats {
         dump_stats(&mut reader, &filters);
+    } else if follow {
+        let running = install_ctrlc_handler();
+        if json {
+            dump_follow_json(
+                stream_id, &wal_dir, from_seq, &filters,
+                &running,
+            );
+        } else {
+            dump_follow_text(
+                stream_id, &wal_dir, from_seq, &filters,
+                &running,
+            );
+        }
     } else if json {
         dump_json(&mut reader, &filters);
     } else {
         dump_text(&mut reader, &filters);
+    }
+}
+
+/// Poll loop for --follow text mode.
+/// Re-opens WalReader from last_seq+1 when None is returned.
+fn dump_follow_text(
+    stream_id: u32,
+    wal_dir: &PathBuf,
+    from_seq: u64,
+    filters: &Filters,
+    running: &Arc<AtomicBool>,
+) {
+    let mut next_seq = from_seq;
+    let mut reader = WalReader::open_from_seq(
+        stream_id, next_seq, wal_dir,
+    )
+    .expect("failed to open wal");
+
+    loop {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+        match reader.next() {
+            Ok(Some(raw)) => {
+                let rt = raw.header.record_type;
+                if filters.matches(rt, &raw.payload) {
+                    let len = raw.header.len;
+                    let seq =
+                        extract_seq(&raw.payload).unwrap_or(0);
+                    let (fields, _) =
+                        decode_payload(rt, &raw.payload);
+                    println!(
+                        "seq={:<8} type={:<18} len={:<4} \
+                         crc=0x{:08x}{}",
+                        seq,
+                        record_name(rt),
+                        len,
+                        raw.header.crc32,
+                        fields,
+                    );
+                    next_seq = seq + 1;
+                }
+            }
+            Ok(None) => {
+                // EOF: sleep then re-open from next_seq
+                thread::sleep(Duration::from_millis(100));
+                if !running.load(Ordering::SeqCst) {
+                    break;
+                }
+                reader = match WalReader::open_from_seq(
+                    stream_id, next_seq, wal_dir,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("wal reopen error: {}", e);
+                        thread::sleep(Duration::from_millis(
+                            100,
+                        ));
+                        continue;
+                    }
+                };
+            }
+            Err(e) => {
+                eprintln!("wal read error: {}", e);
+                break;
+            }
+        }
+    }
+}
+
+/// Poll loop for --follow JSON mode.
+fn dump_follow_json(
+    stream_id: u32,
+    wal_dir: &PathBuf,
+    from_seq: u64,
+    filters: &Filters,
+    running: &Arc<AtomicBool>,
+) {
+    let mut next_seq = from_seq;
+    let mut reader = WalReader::open_from_seq(
+        stream_id, next_seq, wal_dir,
+    )
+    .expect("failed to open wal");
+
+    loop {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+        match reader.next() {
+            Ok(Some(raw)) => {
+                let rt = raw.header.record_type;
+                if filters.matches(rt, &raw.payload) {
+                    let len = raw.header.len;
+                    let seq =
+                        extract_seq(&raw.payload).unwrap_or(0);
+                    let (_, fields) =
+                        decode_payload(rt, &raw.payload);
+                    let mut obj = json!({
+                        "seq": seq,
+                        "type": record_name(rt),
+                        "len": len,
+                        "crc32": format!(
+                            "0x{:08x}",
+                            raw.header.crc32,
+                        ),
+                    });
+                    if let Value::Object(m) = fields {
+                        if let Value::Object(ref mut base) =
+                            obj
+                        {
+                            base.extend(m);
+                        }
+                    }
+                    println!("{}", obj);
+                    next_seq = seq + 1;
+                }
+            }
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(100));
+                if !running.load(Ordering::SeqCst) {
+                    break;
+                }
+                reader = match WalReader::open_from_seq(
+                    stream_id, next_seq, wal_dir,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("wal reopen error: {}", e);
+                        thread::sleep(Duration::from_millis(
+                            100,
+                        ));
+                        continue;
+                    }
+                };
+            }
+            Err(e) => {
+                eprintln!("wal read error: {}", e);
+                break;
+            }
+        }
     }
 }
 
@@ -736,7 +905,7 @@ fn main() {
             from_ts,
             to_ts,
             stats,
-            follow: _follow,
+            follow,
         } => {
             let filters = Filters::from_args(
                 record_types,
@@ -747,7 +916,7 @@ fn main() {
             );
             wal_dump(
                 stream_id, wal_dir, from_seq, json, stats,
-                filters,
+                follow, filters,
             );
         }
         Commands::Dump { file } => dump_file(file),
