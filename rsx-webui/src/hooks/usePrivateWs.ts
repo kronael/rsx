@@ -51,11 +51,13 @@ export function usePrivateWs() {
             wsRef.current.send(heartbeat());
           }
         }, 5000);
-        ws.send('{"N":["positions","orders","fills"]}');
         fetchPositions().then((pos) => {
           if (!mounted) return;
           useTradingStore.getState().setPositions(pos);
-        }).catch(() => {/* positions unavailable */});
+        }).catch(() => {
+          if (!mounted) return;
+          useTradingStore.getState().setPositions([]);
+        });
       };
 
       let firstMsg = true;
