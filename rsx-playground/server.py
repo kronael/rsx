@@ -2932,10 +2932,6 @@ async def x_stale_orders():
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
     snap = _book_snap.get(symbol_id)
-    if not snap or not (snap.get("bids") or snap.get("asks")):
-        # Re-seed sim book if empty (e.g. after all-stop)
-        _seed_sim_book()
-        snap = _book_snap.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, snap))
