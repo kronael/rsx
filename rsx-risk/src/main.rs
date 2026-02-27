@@ -1,6 +1,7 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::config::CmpConfig;
+use std::collections::HashMap;
 use rsx_dxs::records::ConfigAppliedRecord;
 use rsx_dxs::records::BboRecord;
 use rsx_dxs::records::FillRecord;
@@ -48,6 +49,44 @@ use std::time::Duration;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+
+/// Parse ME CMP addresses from env.
+///
+/// Reads `RSX_ME_CMP_ADDRS` (comma-separated), falls back
+/// to `RSX_ME_CMP_ADDR` (single addr). Returns a map from
+/// symbol_id (port - BASE_ME_CMP) to SocketAddr.
+const BASE_ME_CMP: u16 = 9100;
+
+fn parse_me_cmp_addrs() -> HashMap<u32, SocketAddr> {
+    let raw = std::env::var("RSX_ME_CMP_ADDRS")
+        .or_else(|_| std::env::var("RSX_ME_CMP_ADDR"))
+        .unwrap_or_else(|_| {
+            "127.0.0.1:9110".to_owned()
+        });
+    let mut map = HashMap::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part.parse::<SocketAddr>() {
+            Ok(addr) => {
+                let port = addr.port();
+                let sid =
+                    port.saturating_sub(BASE_ME_CMP)
+                        as u32;
+                map.insert(sid, addr);
+            }
+            Err(e) => {
+                warn!(
+                    "skipping invalid ME addr '{}': {}",
+                    part, e
+                );
+            }
+        }
+    }
+    map
+}
 
 /// Backoff schedule (seconds) for shard crash-restarts.
 const RESTART_BACKOFF_SECS: &[u64] = &[
@@ -313,12 +352,10 @@ fn run_main(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_GW_CMP_ADDR");
-    let me_addr: SocketAddr =
-        env::var("RSX_ME_CMP_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9100".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_ME_CMP_ADDR");
+    let me_addrs = parse_me_cmp_addrs();
+    if me_addrs.is_empty() {
+        return Err("no ME CMP addresses configured".into());
+    }
 
     let mut gw_receiver = CmpReceiver::new(
         risk_addr, gw_addr, 0,
@@ -326,15 +363,19 @@ fn run_main(
     // SAFETY: fail-fast at startup
     .expect("failed to bind risk CMP receiver");
 
-    // Receive fills/events from ME (separate port)
+    // Receive fills/events from ME (separate port).
+    // All MEs send to this single recv addr.
     let risk_me_recv_addr: SocketAddr =
         env::var("RSX_RISK_ME_RECV_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:28301".into())
             .parse()
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
+    // Use first ME addr as the CMP peer for the receiver
+    let first_me_addr = *me_addrs.values().next()
+        .expect("me_addrs non-empty");
     let mut me_receiver = CmpReceiver::new(
         risk_me_recv_addr,
-        me_addr,
+        first_me_addr,
         0,
     )
     // SAFETY: fail-fast at startup
@@ -366,20 +407,24 @@ fn run_main(
     .expect("failed to bind mark CMP receiver");
 
     // Send validated orders to ME.
-    // Bind to a known port so ME can send NAKs back
-    // to us for reliable retransmission.
+    // One CmpSender per ME, keyed by symbol_id.
     let me_send_bind: Option<String> =
         env::var("RSX_RISK_ME_SEND_ADDR").ok();
     let mut me_sender_cfg = CmpConfig::default();
     me_sender_cfg.sender_bind_addr = me_send_bind;
-    let mut me_sender = CmpSender::with_config(
-        me_addr,
-        0,
-        Path::new(&wal_dir),
-        &me_sender_cfg,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to create ME CMP sender");
+    let mut me_senders: HashMap<u32, CmpSender> =
+        HashMap::new();
+    for (&sid, &addr) in &me_addrs {
+        let sender = CmpSender::with_config(
+            addr,
+            0,
+            Path::new(&wal_dir),
+            &me_sender_cfg,
+        )
+        // SAFETY: fail-fast at startup
+        .expect("failed to create ME CMP sender");
+        me_senders.insert(sid, sender);
+    }
 
     // Send responses to Gateway
     let mut gw_sender = CmpSender::new(
@@ -446,11 +491,27 @@ fn run_main(
                             CancelRequest,
                         >() =>
                 {
-                    // Forward cancel directly to ME.
-                    let _ = me_sender.send_raw(
-                        RECORD_CANCEL_REQUEST,
-                        &payload,
-                    );
+                    // Forward cancel to correct ME.
+                    let cancel = unsafe {
+                        std::ptr::read_unaligned(
+                            payload.as_ptr()
+                                as *const CancelRequest,
+                        )
+                    };
+                    if let Some(s) = me_senders
+                        .get_mut(&cancel.symbol_id)
+                    {
+                        let _ = s.send_raw(
+                            RECORD_CANCEL_REQUEST,
+                            &payload,
+                        );
+                    } else {
+                        warn!(
+                            "cancel for unknown \
+                             symbol_id={}",
+                            cancel.symbol_id
+                        );
+                    }
                 }
                 _ => {}
             }
