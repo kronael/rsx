@@ -6196,6 +6196,23 @@ async def v1_account(user_id: int = Query(default=0)):
 @app.get("/v1/orders")
 async def v1_orders(user_id: int = Query(default=0)):
     """Return open orders from sim book + recent orders."""
+    # build sid -> decimals lookup
+    cfg_by_id = {}
+    for _n, _c in start_mod.SYMBOLS.items():
+        cfg_by_id[_c["id"]] = _c
+
+    def fmt_px(sid, raw):
+        c = cfg_by_id.get(sid)
+        if c and isinstance(raw, (int, float)):
+            return str(raw / 10 ** c["price_dec"])
+        return raw
+
+    def fmt_qty(sid, raw):
+        c = cfg_by_id.get(sid)
+        if c and isinstance(raw, (int, float)):
+            return str(raw / 10 ** c["qty_dec"])
+        return raw
+
     result = []
     # open resting orders from sim book
     for sid, book in _sim_book.items():
@@ -6204,8 +6221,8 @@ async def v1_orders(user_id: int = Query(default=0)):
                 "cid": cid,
                 "symbolId": sid,
                 "side": "buy",
-                "price": px,
-                "qty": qty,
+                "price": fmt_px(sid, px),
+                "qty": fmt_qty(sid, qty),
                 "status": "open",
             })
         for px, qty, cid in book.get("asks", []):
@@ -6213,15 +6230,16 @@ async def v1_orders(user_id: int = Query(default=0)):
                 "cid": cid,
                 "symbolId": sid,
                 "side": "sell",
-                "price": px,
-                "qty": qty,
+                "price": fmt_px(sid, px),
+                "qty": fmt_qty(sid, qty),
                 "status": "open",
             })
     # recent submitted orders (may include filled/rejected)
     for o in recent_orders[-100:]:
+        sid = o.get("symbol_id", 0)
         result.append({
             "cid": o.get("cid", ""),
-            "symbolId": o.get("symbol_id", 0),
+            "symbolId": sid,
             "side": o.get("side", ""),
             "price": o.get("price", 0),
             "qty": o.get("qty", 0),
