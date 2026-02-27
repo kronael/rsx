@@ -4,10 +4,10 @@
 
 - [ ] Fix play_latency tests: remove skip-on-404, assert
       p50 > 0
-- [ ] Latency values always "-" in sim mode — need real
-      gateway orders for measurement
+- [ ] Latency values always "-" — need real gateway orders
+      for measurement
 - [ ] Stress reports show 0% accept rate, 0us p99 —
-      orders go to sim fallback, not real gateway
+      need real gateway running
 
 ## Scenarios not implemented
 
@@ -17,9 +17,6 @@
       with replicas — not implemented
 - [ ] "stress" scenario — not implemented
 
-## rsx-sim
-
-- [ ] Stub only — load generator not implemented
 
 ## Trade UI
 

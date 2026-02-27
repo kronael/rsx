@@ -35,8 +35,6 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import pages
-from stress_client import run_stress_test
-from stress_client import StressConfig
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -3623,25 +3621,15 @@ async def api_orders_test(request: Request):
             return HTMLResponse(
                 f'<span class="text-emerald-400 text-xs">'
                 f'order {cid} accepted</span>')
-        # simulate matching when gateway offline
         if err == "gateway not running":
-            t0 = time.monotonic_ns()
-            sim_fills = _sim_submit(
-                symbol_id, side_str, price_int,
-                qty_int, cid, user_id)
-            sim_us = (time.monotonic_ns() - t0) // 1000
-            order_latencies.append(sim_us)
-            if len(order_latencies) > 1000:
-                del order_latencies[:500]
-            order["status"] = (
-                "filled" if sim_fills else "accepted")
+            order["status"] = "error"
+            order["error"] = err
             recent_orders.append(order)
             _trim_recent_orders()
-            tag = "simulated" if sim_fills else "resting"
             return HTMLResponse(
-                f'<span class="text-emerald-400 text-xs">'
-                f'order {cid} {tag} '
-                f'(gateway offline)</span>')
+                f'<span class="text-amber-400 text-xs">'
+                f'order {cid} error: gateway not running'
+                f'</span>')
         order["status"] = "error"
         order["error"] = err
         recent_orders.append(order)
@@ -4931,7 +4919,7 @@ async def api_risk_overview():
                 "frozen": 0,
             }
 
-    # IM = 10% of notional, MM = 5% of notional (simulated)
+    # IM = 10% of notional, MM = 5% of notional
     IM_RATE = 0.10
     MM_RATE = 0.05
 
@@ -5000,7 +4988,6 @@ async def api_risk_overview():
                 "im": im,
                 "mm": mm,
                 "fills": fill_count,
-                "simulated": bid == 0 and ask == 0,
             })
 
         if pos_list:
@@ -5036,7 +5023,6 @@ async def api_risk_overview():
             "accounts_with_positions": accounts_with_positions,
             "accounts_near_liq": accounts_near_liq,
         },
-        "simulated": pg_pool is None,
     }
 
 
@@ -5061,7 +5047,6 @@ async def api_risk_funding():
         rate_bps = (
             spread * 10000 // mid if mid > 0 else 0
         )
-        # Index = mark * (1 + small offset) simulated
         index_px = int(mid * 1.0001) if mid else 0
         premium_bps = (
             (mid - index_px) * 10000 // index_px
@@ -5076,7 +5061,6 @@ async def api_risk_funding():
             "rate_bps": rate_bps,
             "premium_bps": premium_bps,
             "next_settlement_s": next_s,
-            "simulated": True,
         })
     return {"funding": entries, "ts_ns": now_ns}
 
@@ -5115,16 +5099,7 @@ async def api_risk_insurance():
                 "funds": rows, "total": total,
                 "source": "postgres",
             }
-    # Simulated: fixed seed per symbol
-    sim = []
-    for sid in [1, 2, 3, 10]:
-        sim.append({
-            "symbol_id": sid,
-            "balance": 5_000_000_000_000,
-            "version": 0,
-        })
-    total = sum(s["balance"] for s in sim)
-    return {"funds": sim, "total": total, "source": "simulated"}
+    return {"funds": [], "total": 0, "source": "none"}
 
 
 @app.get("/x/risk-overview", response_class=HTMLResponse)
@@ -5484,12 +5459,6 @@ async def api_book(symbol_id: int):
     maker_snap = _maker_book(symbol_id)
     if maker_snap:
         return maker_snap
-    # Final fallback: re-seed sim book if empty
-    if not _book_snap.get(symbol_id):
-        _seed_sim_book()
-    snap = _book_snap.get(symbol_id)
-    if snap:
-        return snap
     return {"bids": [], "asks": []}
 
 
@@ -6168,7 +6137,7 @@ async def v1_account(user_id: int = Query(default=0)):
 
 @app.get("/v1/orders")
 async def v1_orders(user_id: int = Query(default=0)):
-    """Return open orders from sim book + recent orders."""
+    """Return recent orders."""
     # build sid -> decimals lookup
     cfg_by_id = {}
     for _n, _c in start_mod.SYMBOLS.items():
@@ -6187,26 +6156,6 @@ async def v1_orders(user_id: int = Query(default=0)):
         return raw
 
     result = []
-    # open resting orders from sim book
-    for sid, book in _sim_book.items():
-        for px, qty, cid in book.get("bids", []):
-            result.append({
-                "cid": cid,
-                "symbolId": sid,
-                "side": "buy",
-                "price": fmt_px(sid, px),
-                "qty": fmt_qty(sid, qty),
-                "status": "open",
-            })
-        for px, qty, cid in book.get("asks", []):
-            result.append({
-                "cid": cid,
-                "symbolId": sid,
-                "side": "sell",
-                "price": fmt_px(sid, px),
-                "qty": fmt_qty(sid, qty),
-                "status": "open",
-            })
     # recent submitted orders (may include filled/rejected)
     for o in recent_orders[-100:]:
         sid = o.get("symbol_id", 0)

@@ -3,7 +3,7 @@ import { waitForHTMX } from "./test_helpers";
 
 type Check = { name: string; status: string; detail: string };
 
-// DB-dependent checks fail in sim mode (fills bypass ME→PG)
+// DB-dependent checks fail without live processes
 const DB_SKIP = ["Position", "Funding"];
 
 async function runChecks(
@@ -132,7 +132,7 @@ test.describe("Order at-most-once", () => {
   test("order returns ack", async ({ request }) => {
     const html = await (await order(request)).text();
     expect(html).toMatch(
-      /accepted|queued|submitted|simulated/i,
+      /accepted|queued|submitted|gateway|error/i,
     );
   });
 

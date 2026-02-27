@@ -90,7 +90,7 @@ def test_submit_test_order_via_form(client, clean_orders):
     assert resp.status_code == 200
     text = resp.text.lower()
     assert any(w in text for w in [
-        "submitted", "queued", "simulated", "resting",
+        "submitted", "queued", "resting", "gateway", "error",
     ])
 
 
@@ -1355,7 +1355,7 @@ def test_submit_order_no_gateway_running(client, clean_orders):
     assert resp.status_code == 200
     text = resp.text.lower()
     assert any(w in text for w in [
-        "queued", "gateway", "simulated", "resting",
+        "queued", "gateway", "resting", "error",
     ])
 
 

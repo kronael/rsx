@@ -27,7 +27,7 @@ updated: Feb 27 2026
 | rsx-recorder | 100% | daily rotation, buffered writes |
 | rsx-cli | 95% | WAL dump, missing LIQUIDATION decode |
 | rsx-maker | 100% | two-sided quoting, reconnect |
-| rsx-sim | stub | not implemented |
+| rsx-sim | deleted | crate removed |
 
 ## Playground
 
@@ -40,5 +40,5 @@ updated: Feb 27 2026
 
 - Latency pipeline (real gateway orders needed)
 - Scenarios: duo/full/stress not implemented
-- rsx-sim stub
+- stress.py subprocess management (stress generator)
 - CLI payload decoding (LIQUIDATION field decode)

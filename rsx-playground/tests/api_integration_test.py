@@ -175,8 +175,8 @@ def test_submit_test_order(client):
     assert resp.status_code == 200
     text = resp.text.lower()
     assert any(w in text for w in [
-        "submitted", "queued", "simulated", "resting",
-        "accepted",
+        "submitted", "queued", "resting",
+        "accepted", "gateway", "error",
     ])
 
 
@@ -283,7 +283,7 @@ def test_order_status_tracking(client):
     order = server.recent_orders[-1]
     assert order["status"] in (
         "submitted", "error", "pending", "queued",
-        "accepted", "filled", "simulated", "resting",
+        "accepted", "filled", "resting",
     )
 
 
