@@ -1,0 +1,1 @@
+- fixed RSX_ME_CMP_ADDRS multi-symbol routing, combined Binance URL, added recorder to build_spawn_plan

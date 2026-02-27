@@ -188,11 +188,17 @@ def build_spawn_plan(config, pg_url, release=False):
         mark_pairs.append(f"{name}-USD={sid}")
     mark_symbol_map = ",".join(mark_pairs)
 
-    # binance single-stream URL (first symbol @trade)
-    # for multi-symbol, handler needs combined stream fix
+    # binance combined-stream URL for all symbols
+    streams = "/".join(
+        f"{s['name'].lower()}usdt@trade" for s in symbols
+    )
     binance_ws_url = (
-        f"wss://stream.binance.com:9443/ws/"
-        f"{symbols[0]['name'].lower()}usdt@trade"
+        f"wss://stream.binance.com:9443/stream?streams={streams}"
+    )
+
+    # comma-separated ME CMP addresses for Risk + Marketdata
+    me_cmp_addrs = ",".join(
+        f"127.0.0.1:{BASE_ME_CMP + s['id']}" for s in symbols
     )
 
     # ── ME instances ────────────────────────────────
@@ -255,8 +261,7 @@ def build_spawn_plan(config, pg_url, release=False):
                     f"127.0.0.1:{BASE_RISK_CMP + shard}",
                 "RSX_GW_CMP_ADDR":
                     f"127.0.0.1:{BASE_GW_CMP}",
-                "RSX_ME_CMP_ADDR":
-                    f"127.0.0.1:{BASE_ME_CMP + symbols[0]['id']}",
+                "RSX_ME_CMP_ADDRS": me_cmp_addrs,
                 "RSX_RISK_WAL_DIR": "./tmp/wal",
                 "RSX_RISK_MARK_CMP_ADDR":
                     f"127.0.0.1:{BASE_RISK_MARK_CMP}",
@@ -285,8 +290,7 @@ def build_spawn_plan(config, pg_url, release=False):
                             f"127.0.0.1:{BASE_RISK_CMP + 10 + shard * 2 + r}",
                         "RSX_GW_CMP_ADDR":
                             f"127.0.0.1:{BASE_GW_CMP}",
-                        "RSX_ME_CMP_ADDR":
-                            f"127.0.0.1:{BASE_ME_CMP + symbols[0]['id']}",
+                        "RSX_ME_CMP_ADDRS": me_cmp_addrs,
                         "RSX_RISK_WAL_DIR": "./tmp/wal",
                         "DATABASE_URL": pg_url,
                         "RUST_LOG": "info",
@@ -330,11 +334,27 @@ def build_spawn_plan(config, pg_url, release=False):
         {
             "RSX_MD_LISTEN":
                 f"0.0.0.0:{BASE_MD_WS}",
-            "RSX_MKT_CMP_ADDR":
-                f"127.0.0.1:{BASE_MD_CMP + symbols[0]['id']}",
-            "RSX_ME_CMP_ADDR":
-                f"127.0.0.1:{BASE_ME_CMP + symbols[0]['id']}",
+            "RSX_ME_CMP_ADDRS": me_cmp_addrs,
             "RSX_MD_STREAM_ID": "1",
+            "RUST_LOG": "info",
+        },
+    ))
+
+    # ── Recorder ────────────────────────────────────
+    first = symbols[0]
+    sid = first["id"]
+    plan.append((
+        "recorder",
+        f"{target}/rsx-recorder",
+        {
+            "RSX_RECORDER_STREAM_ID":
+                str(sid),
+            "RSX_RECORDER_PRODUCER_ADDR":
+                f"127.0.0.1:{BASE_ME_CMP + sid}",
+            "RSX_RECORDER_ARCHIVE_DIR":
+                "./tmp/wal/archive",
+            "RSX_RECORDER_TIP_FILE":
+                f"./tmp/recorder-tip-{sid}",
             "RUST_LOG": "info",
         },
     ))
