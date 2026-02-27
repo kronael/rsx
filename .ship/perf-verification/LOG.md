@@ -1,2 +1,3 @@
 - fixed play_latency.spec.ts (3 tests, no skips/vacuous), added test_api_latency to api_e2e_test.py
 - added scripts/bench-gate.sh (bash+jq Criterion regression gate) and bench-gate/bench-save Makefile targets
+- added /api/gateway-mode endpoint, /x/gateway-mode HTMX badge, and pytest tests

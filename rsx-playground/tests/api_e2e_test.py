@@ -338,6 +338,24 @@ def test_api_risk_action_invalid(client):
     assert "error" in data
 
 
+def test_api_latency(client):
+    """GET /api/latency returns JSON with count field."""
+    resp = client.get("/api/latency")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "count" in data
+    assert data["count"] >= 0
+
+
+def test_api_gateway_mode(client):
+    """GET /api/gateway-mode returns mode field."""
+    resp = client.get("/api/gateway-mode")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["mode"] in ("live", "offline")
+    assert "url" in data
+
+
 def test_api_mark_prices(client):
     """GET /api/mark/prices returns JSON."""
     resp = client.get("/api/mark/prices")
