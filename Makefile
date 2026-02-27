@@ -5,7 +5,7 @@
        play-infra play-orders play-nav play-api \
        play-full \
        api-unit api-integration api-stress \
-       bench-webui help check-progress acceptance-bundle \
+       bench-webui bench-gate bench-save help check-progress acceptance-bundle \
        gen-release-truth release-gate \
        lint-snapshot lint-snapshot-tests ci-guard publish-progress regen-progress exit-criteria task-report status-doctor \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
@@ -294,6 +294,13 @@ smoke:
 # Performance benchmarks (Rust)
 perf:
 	cargo bench
+
+# Criterion regression gate (developer-local, baseline in tmp/)
+bench-gate:
+	bash scripts/bench-gate.sh
+
+bench-save:
+	bash scripts/bench-gate.sh --save-baseline
 
 # WebUI render benchmark: measures p50/p95/p99 React render latency
 # per orderbook delta update. Asserts p95 < 16ms (one rAF frame).

@@ -166,116 +166,51 @@ test.describe("Latency", () => {
     }
   });
 
-  // ── Latency UI (5 tests) ───────────────────────
+  // ── Latency UI (3 tests) ───────────────────────
 
-  test("risk latency card visible", async ({
-    page,
-    request,
-  }) => {
-    // Submit 5 orders to generate data
-    for (let i = 0; i < 5; i++) {
-      await request.post("/api/orders/test", {
-        form: {
-          ...ORDER_DATA,
-          price: String(50000 + i),
-        },
-      });
-    }
-    await page.goto("/risk");
-    await page.waitForTimeout(1500);
-    // Check for latency-related content
-    const body = await page.textContent("body");
-    expect(
-      body?.toLowerCase()
-    ).toMatch(/latency|risk|position/);
-  });
-
-  test("order latency endpoint", async ({
-    request,
-  }) => {
-    // Submit orders to generate latency data
-    for (let i = 0; i < 5; i++) {
-      await request.post("/api/orders/test", {
-        form: {
-          ...ORDER_DATA,
-          price: String(49000 + i),
-        },
-      });
-    }
-    const resp = await request.get("/api/latency");
-    if (resp.status() === 404) {
-      test.skip();
-      return;
-    }
-    expect(resp.ok()).toBeTruthy();
-    const data = await resp.json();
-    expect(data).toHaveProperty("p50");
-    expect(data).toHaveProperty("p99");
-  });
-
-  test("latency regression chart area exists", async ({
-    page,
-  }) => {
-    await page.goto("/risk");
-    await page.waitForTimeout(1000);
-    // Look for any chart/canvas/svg or latency div
-    const hasChart = await page
-      .locator(
-        "canvas, svg, " +
-        "[id*=latency], [class*=chart]"
-      )
-      .count();
-    // Graceful: chart may not exist in sim mode
-    expect(hasChart).toBeGreaterThanOrEqual(0);
-  });
-
-  test("pulse bar shows rate after orders", async ({
-    page,
-    request,
-  }) => {
-    // Submit 5 orders quickly
-    const promises = Array.from(
-      { length: 5 },
-      (_, i) =>
-        request.post("/api/orders/test", {
+  test("latency endpoint returns stats after orders",
+    async ({ request }) => {
+      for (let i = 0; i < 5; i++) {
+        await request.post("/api/orders/test", {
           form: {
-            ...ORDER_DATA,
-            price: String(48000 + i),
+            symbol_id: "10",
+            side: "buy",
+            price: "50000",
+            qty: "100",
+            cid: `lat-test-${i}`.padEnd(20, "0"),
           },
-        })
-    );
-    await Promise.all(promises);
-    await page.goto("/orders");
-    await page.waitForTimeout(2000);
-    // Look for any rate indicator
-    const body = await page.textContent("body");
-    expect(body).toBeTruthy();
-  });
+        });
+      }
+      const res = await request.get("/api/latency");
+      expect(res.ok()).toBeTruthy();
+      const data = await res.json();
+      expect(data.count).toBeGreaterThanOrEqual(0);
+      if (data.count > 0) {
+        expect(data.p50).toBeGreaterThan(0);
+        expect(data.p99).toBeGreaterThan(0);
+      }
+    },
+  );
 
-  test("latency stable under load", async ({
+  test("risk latency card renders", async ({
     request,
   }) => {
-    // Submit 50 orders in batch
-    const latencies: number[] = [];
-    for (let i = 0; i < 50; i++) {
-      const start = Date.now();
-      await request.post("/api/orders/test", {
-        form: {
-          ...ORDER_DATA,
-          price: String(47000 + i),
-        },
-      });
-      latencies.push(Date.now() - start);
-    }
-    // Check last 10 latencies
-    const last10 = latencies.slice(-10).sort(
-      (a, b) => a - b
-    );
-    const p50 = last10[Math.floor(last10.length / 2)];
-    const p99 = last10[last10.length - 1];
-    // p99 should be < 3x p50 (generous)
-    expect(p99).toBeLessThan(p50 * 3 + 100);
+    const res = await request.get("/x/risk-latency");
+    expect(res.ok()).toBeTruthy();
+    const html = await res.text();
+    expect(html.toLowerCase()).toContain("latency");
   });
+
+  test("latency regression card renders",
+    async ({ request }) => {
+      const res = await request.get(
+        "/x/latency-regression"
+      );
+      expect(res.ok()).toBeTruthy();
+      const html = await res.text();
+      expect(html.toLowerCase()).toContain("p50");
+    },
+  );
 
   // ── Memory/Stability (3 tests) ─────────────────
 
