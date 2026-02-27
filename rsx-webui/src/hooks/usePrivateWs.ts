@@ -43,7 +43,6 @@ export function usePrivateWs() {
       ws.onopen = () => {
         if (!mounted) return;
         setStatus(WsStatus.CONNECTED);
-        retryRef.current = 1000;
         hbRef.current = setInterval(() => {
           if (
             wsRef.current &&
@@ -52,13 +51,19 @@ export function usePrivateWs() {
             wsRef.current.send(heartbeat());
           }
         }, 5000);
+        ws.send('{"N":["positions","orders","fills"]}');
         fetchPositions().then((pos) => {
           if (!mounted) return;
           useTradingStore.getState().setPositions(pos);
         }).catch(() => {/* positions unavailable */});
       };
 
+      let firstMsg = true;
       ws.onmessage = (ev) => {
+        if (firstMsg) {
+          firstMsg = false;
+          retryRef.current = 1000;
+        }
         const msg = parseMessage(ev.data as string);
         if (!msg) return;
         if ("U" in msg) {
