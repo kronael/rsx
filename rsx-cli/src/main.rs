@@ -270,9 +270,11 @@ fn oid_hex(hi: u64, lo: u64) -> String {
 
 /// Decode payload bytes into record-specific fields.
 /// Returns (text_suffix, json_fields) for the record type.
+/// text_suffix uses scale for price/qty display; JSON always raw.
 fn decode_payload(
     rt: u16,
     payload: &[u8],
+    scale: &DisplayScale,
 ) -> (String, Value) {
     unsafe {
         match rt {
@@ -288,8 +290,8 @@ fn decode_payload(
                     r.symbol_id,
                     r.taker_user_id,
                     r.maker_user_id,
-                    r.price.0,
-                    r.qty.0,
+                    scale.px(r.price.0),
+                    scale.qty(r.qty.0),
                     r.taker_side,
                     oid_hex(
                         r.taker_order_id_hi,
@@ -323,10 +325,10 @@ fn decode_payload(
                 let txt = format!(
                     " sym={} bid={}x{} ask={}x{}",
                     r.symbol_id,
-                    r.bid_px.0,
-                    r.bid_qty.0,
-                    r.ask_px.0,
-                    r.ask_qty.0,
+                    scale.px(r.bid_px.0),
+                    scale.qty(r.bid_qty.0),
+                    scale.px(r.ask_px.0),
+                    scale.qty(r.ask_qty.0),
                 );
                 let j = json!({
                     "symbol_id": r.symbol_id,
@@ -352,8 +354,8 @@ fn decode_payload(
                      side={} oid={}",
                     r.symbol_id,
                     r.user_id,
-                    r.price.0,
-                    r.qty.0,
+                    scale.px(r.price.0),
+                    scale.qty(r.qty.0),
                     r.side,
                     oid_hex(r.order_id_hi, r.order_id_lo),
                 );
@@ -383,7 +385,7 @@ fn decode_payload(
                      oid={}",
                     r.symbol_id,
                     r.user_id,
-                    r.remaining_qty.0,
+                    scale.qty(r.remaining_qty.0),
                     r.reason,
                     oid_hex(r.order_id_hi, r.order_id_lo),
                 );
@@ -412,8 +414,8 @@ fn decode_payload(
                      status={} oid={}",
                     r.symbol_id,
                     r.user_id,
-                    r.filled_qty.0,
-                    r.remaining_qty.0,
+                    scale.qty(r.filled_qty.0),
+                    scale.qty(r.remaining_qty.0),
                     r.final_status,
                     oid_hex(r.order_id_hi, r.order_id_lo),
                 );
@@ -481,8 +483,8 @@ fn decode_payload(
                      side={} oid={}",
                     r.symbol_id,
                     r.user_id,
-                    r.price,
-                    r.qty,
+                    scale.px(r.price),
+                    scale.qty(r.qty),
                     r.side,
                     oid_hex(r.order_id_hi, r.order_id_lo),
                 );
@@ -509,7 +511,8 @@ fn decode_payload(
                     std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} mark={}",
-                    r.symbol_id, r.mark_price.0,
+                    r.symbol_id,
+                    scale.px(r.mark_price.0),
                 );
                 let j = json!({
                     "symbol_id": r.symbol_id,
@@ -583,8 +586,8 @@ fn decode_payload(
                     r.status,
                     r.side,
                     r.round,
-                    r.qty,
-                    r.price,
+                    scale.qty(r.qty),
+                    scale.px(r.price),
                     r.slip_bps,
                 );
                 let j = json!({
@@ -622,6 +625,7 @@ fn wal_dump(
     stats: bool,
     follow: bool,
     filters: Filters,
+    scale: DisplayScale,
 ) {
     let mut reader = WalReader::open_from_seq(
         stream_id, from_seq, &wal_dir,
@@ -640,13 +644,13 @@ fn wal_dump(
         } else {
             dump_follow_text(
                 stream_id, &wal_dir, from_seq, &filters,
-                &running,
+                &running, &scale,
             );
         }
     } else if json {
         dump_json(&mut reader, &filters);
     } else {
-        dump_text(&mut reader, &filters);
+        dump_text(&mut reader, &filters, &scale);
     }
 }
 
@@ -658,6 +662,7 @@ fn dump_follow_text(
     from_seq: u64,
     filters: &Filters,
     running: &Arc<AtomicBool>,
+    scale: &DisplayScale,
 ) {
     let mut next_seq = from_seq;
     let mut reader = WalReader::open_from_seq(
@@ -677,7 +682,7 @@ fn dump_follow_text(
                     let seq =
                         extract_seq(&raw.payload).unwrap_or(0);
                     let (fields, _) =
-                        decode_payload(rt, &raw.payload);
+                        decode_payload(rt, &raw.payload, scale);
                     println!(
                         "seq={:<8} type={:<18} len={:<4} \
                          crc=0x{:08x}{}",
@@ -725,6 +730,7 @@ fn dump_follow_json(
     filters: &Filters,
     running: &Arc<AtomicBool>,
 ) {
+    let scale = DisplayScale::new(None, None);
     let mut next_seq = from_seq;
     let mut reader = WalReader::open_from_seq(
         stream_id, next_seq, wal_dir,
@@ -743,7 +749,7 @@ fn dump_follow_json(
                     let seq =
                         extract_seq(&raw.payload).unwrap_or(0);
                     let (_, fields) =
-                        decode_payload(rt, &raw.payload);
+                        decode_payload(rt, &raw.payload, &scale);
                     let mut obj = json!({
                         "seq": seq,
                         "type": record_name(rt),
@@ -809,7 +815,11 @@ fn dump_stats(reader: &mut WalReader, filters: &Filters) {
     println!("{:<20} {}", "total", total);
 }
 
-fn dump_text(reader: &mut WalReader, filters: &Filters) {
+fn dump_text(
+    reader: &mut WalReader,
+    filters: &Filters,
+    scale: &DisplayScale,
+) {
     let mut count: u64 = 0;
     while let Ok(Some(raw)) = reader.next() {
         let rt = raw.header.record_type;
@@ -818,7 +828,8 @@ fn dump_text(reader: &mut WalReader, filters: &Filters) {
         }
         let len = raw.header.len;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
-        let (fields, _) = decode_payload(rt, &raw.payload);
+        let (fields, _) =
+            decode_payload(rt, &raw.payload, scale);
 
         println!(
             "seq={:<8} type={:<18} len={:<4} \
@@ -836,6 +847,7 @@ fn dump_text(reader: &mut WalReader, filters: &Filters) {
 
 fn dump_json(reader: &mut WalReader, filters: &Filters) {
     let mut count: u64 = 0;
+    let scale = DisplayScale::new(None, None);
     while let Ok(Some(raw)) = reader.next() {
         let rt = raw.header.record_type;
         if !filters.matches(rt, &raw.payload) {
@@ -843,7 +855,8 @@ fn dump_json(reader: &mut WalReader, filters: &Filters) {
         }
         let len = raw.header.len;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
-        let (_, fields) = decode_payload(rt, &raw.payload);
+        let (_, fields) =
+            decode_payload(rt, &raw.payload, &scale);
 
         let mut obj = json!({
             "seq": seq,
@@ -898,7 +911,8 @@ fn dump_file(file: PathBuf) {
 
         let payload = &buf[offset + 16..offset + 16 + len];
         let seq = extract_seq(payload).unwrap_or(0);
-        let (_, fields) = decode_payload(rt, payload);
+        let scale = DisplayScale::new(None, None);
+        let (_, fields) = decode_payload(rt, payload, &scale);
 
         let mut obj = json!({
             "seq": seq,
@@ -934,6 +948,8 @@ fn main() {
             to_ts,
             stats,
             follow,
+            tick_size,
+            lot_size,
         } => {
             let filters = Filters::from_args(
                 record_types,
@@ -942,9 +958,10 @@ fn main() {
                 from_ts,
                 to_ts,
             );
+            let scale = DisplayScale::new(tick_size, lot_size);
             wal_dump(
                 stream_id, wal_dir, from_seq, json, stats,
-                follow, filters,
+                follow, filters, scale,
             );
         }
         Commands::Dump { file } => dump_file(file),
