@@ -2897,6 +2897,13 @@ async def x_latency_regression():
         pages.render_latency_regression(order_latencies))
 
 
+@app.get("/x/gateway-mode", response_class=HTMLResponse)
+async def x_gateway_mode():
+    reachable = await _probe_gateway_tcp()
+    return HTMLResponse(
+        pages.render_gateway_mode_badge(reachable))
+
+
 @app.get("/x/order-trace", response_class=HTMLResponse)
 async def x_order_trace(
     oid: str = Query("", alias="trace-oid"),
