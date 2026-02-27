@@ -2318,6 +2318,19 @@ def render_reconciliation(
     return _table(["Status", "Check"], rows)
 
 
+def render_gateway_mode_badge(reachable: bool) -> str:
+    if reachable:
+        color = "text-green-400"
+        label = "GW: live"
+    else:
+        color = "text-amber-400"
+        label = "GW: offline"
+    return (
+        f'<span id="gw-mode-badge" class="{color}">'
+        f'{label}</span>'
+    )
+
+
 def render_latency_regression(latencies=None):
     """Show latency regression vs baseline targets."""
     baseline_gw_p99 = 50  # us
