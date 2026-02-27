@@ -146,144 +146,6 @@ _md_ws_task: asyncio.Task | None = None
 # recent trades from marketdata WS (capped at 200)
 recent_fills: list[dict] = []
 
-# ── simulated book (when exchange offline) ──────────────
-# symbol_id -> {"bids": [(px, qty, cid), ...],
-#               "asks": [(px, qty, cid), ...]}
-_sim_book: dict[int, dict] = {}
-_sim_wal_events: list[dict] = []
-_sim_seq = 0
-
-
-def _seed_sim_book():
-    """Pre-populate _sim_book and _book_snap with realistic
-    bid/ask levels for all configured symbols."""
-    base_prices = {
-        "BTC": 95000, "ETH": 3000, "SOL": 150,
-    }
-    default_base = 50000
-    for name, cfg in start_mod.SYMBOLS.items():
-        sid = cfg["id"]
-        price_dec = cfg["price_dec"]
-        lot = cfg["lot"]
-        scale = 10 ** price_dec
-        base = base_prices.get(name, default_base)
-        spread_step = max(1, int(base * 0.002))
-        bids = []
-        asks = []
-        for i in range(5):
-            bid_human = base - spread_step * (i + 1)
-            ask_human = base + spread_step * (i + 1)
-            bid_raw = bid_human * scale
-            ask_raw = ask_human * scale
-            bids.append((bid_raw, lot * 100, f"seed-bid-{i}"))
-            asks.append((ask_raw, lot * 100, f"seed-ask-{i}"))
-        _sim_book[sid] = {"bids": bids, "asks": asks}
-        bsnap = []
-        asnap = []
-        for px, qty, _ in sorted(bids, key=lambda x: -x[0]):
-            bsnap.append({"px": px, "qty": qty})
-        for px, qty, _ in sorted(asks, key=lambda x: x[0]):
-            asnap.append({"px": px, "qty": qty})
-        _book_snap[sid] = {"bids": bsnap, "asks": asnap}
-
-
-def _sim_submit(symbol_id, side, price, qty, cid, user_id):
-    """Simulate order matching when gateway is offline.
-
-    Maintains _sim_book, updates _book_snap, generates
-    fills in recent_fills and WAL events in _sim_wal_events.
-    """
-    global _sim_seq
-    book = _sim_book.setdefault(
-        symbol_id, {"bids": [], "asks": []})
-
-    fills_out = []
-    remain = qty
-
-    if side == "buy":
-        # match against asks (lowest first)
-        book["asks"].sort(key=lambda x: x[0])
-        new_asks = []
-        for apx, aqty, acid in book["asks"]:
-            if remain <= 0 or price < apx:
-                new_asks.append((apx, aqty, acid))
-                continue
-            fill_qty = min(remain, aqty)
-            remain -= fill_qty
-            leftover = aqty - fill_qty
-            if leftover > 0:
-                new_asks.append((apx, leftover, acid))
-            fills_out.append((apx, fill_qty))
-        book["asks"] = new_asks
-        if remain > 0:
-            book["bids"].append((price, remain, cid))
-            book["bids"].sort(
-                key=lambda x: x[0], reverse=True)
-    else:
-        # match against bids (highest first)
-        book["bids"].sort(
-            key=lambda x: x[0], reverse=True)
-        new_bids = []
-        for bpx, bqty, bcid in book["bids"]:
-            if remain <= 0 or price > bpx:
-                new_bids.append((bpx, bqty, bcid))
-                continue
-            fill_qty = min(remain, bqty)
-            remain -= fill_qty
-            leftover = bqty - fill_qty
-            if leftover > 0:
-                new_bids.append((bpx, leftover, bcid))
-            fills_out.append((bpx, fill_qty))
-        book["bids"] = new_bids
-        if remain > 0:
-            book["asks"].append((price, remain, cid))
-            book["asks"].sort(key=lambda x: x[0])
-
-    ts = datetime.now().strftime("%H:%M:%S")
-    for fpx, fqty in fills_out:
-        _sim_seq += 1
-        recent_fills.append({
-            "symbol_id": symbol_id,
-            "side": side,
-            "price": fpx,
-            "qty": fqty,
-            "ts": ts,
-        })
-        _sim_wal_events.append({
-            "type": "fill",
-            "seq": _sim_seq,
-            "symbol_id": symbol_id,
-            "price": fpx,
-            "qty": fqty,
-        })
-    if len(recent_fills) > 200:
-        del recent_fills[:100]
-
-    # auto-reseed if book got too thin from fills
-    if len(book["bids"]) < 2 or len(book["asks"]) < 2:
-        _seed_sim_book()
-
-    # update _book_snap from sim book (after reseed)
-    bids = [{"px": px, "qty": q}
-            for px, q, _ in book["bids"][:20]]
-    asks = [{"px": px, "qty": q}
-            for px, q, _ in book["asks"][:20]]
-    _book_snap[symbol_id] = {"bids": bids, "asks": asks}
-
-    # emit BBO event
-    if bids or asks:
-        _sim_seq += 1
-        _sim_wal_events.append({
-            "type": "bbo",
-            "seq": _sim_seq,
-            "symbol_id": symbol_id,
-            "bid_px": bids[0]["px"] if bids else 0,
-            "ask_px": asks[0]["px"] if asks else 0,
-        })
-    if len(_sim_wal_events) > 500:
-        del _sim_wal_events[:250]
-
-    return fills_out
 
 
 async def _md_ws_subscriber():
@@ -1040,7 +902,6 @@ _reaper_task: asyncio.Task | None = None
 @asynccontextmanager
 async def lifespan(app):
     global _md_ws_task, _watcher_task, _reaper_task
-    _seed_sim_book()
     await pg_connect()
     _md_ws_task = asyncio.create_task(_md_ws_subscriber())
     _watcher_task = asyncio.create_task(_process_watcher())
@@ -2841,8 +2702,6 @@ async def x_wal_timeline(
     all_records = []
     for stream_dir in _wal_stream_dirs():
         all_records.extend(parse_wal_records(stream_dir))
-    # merge simulated events (gateway offline)
-    all_records.extend(_sim_wal_events)
     if filter:
         f_lower = filter.lower()
         all_records = [
@@ -2909,12 +2768,6 @@ async def x_book_stats():
             if bbo:
                 stats[sid] = bbo
                 continue
-        # last resort: re-seed sim
-        if sid not in _book_snap or not (
-            _book_snap[sid].get("bids")
-            or _book_snap[sid].get("asks")
-        ):
-            _seed_sim_book()
         snap = _book_snap.get(sid)
         if snap:
             bbo = _snap_to_bbo(sid, snap)

@@ -144,7 +144,7 @@ def test_api_orders_test_with_form_data(client):
     assert "order" in text
     assert any(w in text for w in [
         "queued", "accepted", "rejected",
-        "simulated", "resting",
+        "resting", "gateway",
     ])
 
 
@@ -420,7 +420,7 @@ def test_order_flow_test_then_recent(client):
     # CID is embedded in the response HTML
     body = resp.text
     assert any(w in body for w in [
-        "pg", "accepted", "queued", "simulated", "resting",
+        "pg", "accepted", "queued", "resting", "gateway",
     ])
 
     # Check recent orders table renders with data
@@ -632,7 +632,7 @@ def test_test_order_appears_in_recent_orders(client):
     assert resp.status_code == 200
     body = resp.text
     assert any(w in body for w in [
-        "accepted", "queued", "pg", "simulated", "resting",
+        "accepted", "queued", "pg", "resting", "gateway",
     ])
 
     resp = client.get("/x/recent-orders")
