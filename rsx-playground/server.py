@@ -5023,7 +5023,7 @@ async def api_mark_prices():
                 "ask": ask,
                 "source": "wal",
             }
-    # fall back to sim book for symbols without WAL data
+    # fall back to live book snap for symbols without WAL data
     for sid, snap in _book_snap.items():
         if str(sid) in prices:
             continue
@@ -5037,7 +5037,7 @@ async def api_mark_prices():
                     "mark": (best_bid + best_ask) // 2,
                     "bid": best_bid,
                     "ask": best_ask,
-                    "source": "sim",
+                    "source": "book_snap",
                 }
     return {"prices": prices}
 
