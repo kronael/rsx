@@ -1,26 +1,21 @@
 # PROGRESS
 
-updated: Feb 27 18:43:29  
+updated: Feb 27 18:44:17  
 phase: executing
 
 ```
-[█████████████████████░░░░░░░░░] 71%  5/7
+[█████████████████████████░░░░░] 86%  6/7
 ```
 
 | | count |
 |---|---|
-| completed | 5 |
-| running | 2 |
+| completed | 6 |
+| running | 1 |
 | pending | 0 |
 | failed | 0 |
 
-## log
-
-- 18:43 verify replica RSX_ME_CMP_ADDRS: confirmed — `start` line 293 passes the same `me_cmp_addrs` variable (all symbols) to replica entries, not a hardcoded address.
-
 ## workers
 
-- w0: Verify that `build_spawn_plan()` in `start` passes `RSX_ME_CMP_ADDRS` (plural) to risk replica entries, not only to the primary risk shard. Read the replica-spawning block and confirm it uses the same `me_cmp_addrs` variable, not a hardcoded single address or a leftover reference to `symbols[0]`.
 - w2: Verify that `rsx-risk/tests/me_cmp_addrs_test.rs` runs with `--test-threads=1`. The tests use `std::env::set_var` / `remove_var` which mutate global process state. Without serial execution, concurrent tests will race on the same env vars, producing non-deterministic results that silently pass or fail.
 
 ## log
@@ -37,3 +32,4 @@ phase: executing
 - `18:39:29` done: Verify that the single-addr backward-compatibility path work (4 files, +61/-2)
 - `18:43:09` adv challenge: Verify that `rsx-risk/tests/me_cmp_addrs_test.rs` 
 - `18:43:09` adv challenge: Verify that `build_spawn_plan()` in `start` passes
+- `18:43:32` done: Verify that `build_spawn_plan()` in `start` passes `RSX_ME_C (2 files, +11/-50)
