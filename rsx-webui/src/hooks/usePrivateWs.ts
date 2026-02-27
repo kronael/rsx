@@ -80,13 +80,21 @@ export function usePrivateWs() {
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (!mounted) return;
         cleanup();
-        setStatus(WsStatus.DISCONNECTED);
-        useToastStore.getState().add(
-          "Private WS disconnected", "error",
-        );
+        if (ev.code === 1013) {
+          setStatus(WsStatus.OFFLINE);
+          useToastStore.getState().add(
+            "Exchange offline", "error",
+          );
+          retryRef.current = 30000;
+        } else {
+          setStatus(WsStatus.RECONNECTING);
+          useToastStore.getState().add(
+            "Private WS disconnected", "error",
+          );
+        }
         const delay = retryRef.current;
         retryRef.current = Math.min(delay * 2, 30000);
         timerRef.current = setTimeout(connect, delay);

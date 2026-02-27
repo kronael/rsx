@@ -191,14 +191,36 @@ export function TopBar() {
     };
   }, []);
 
-  const statusColor =
+  const bothConnected =
     privStatus === WsStatus.CONNECTED &&
-    pubStatus === WsStatus.CONNECTED
-      ? "bg-buy"
-      : privStatus === WsStatus.CONNECTING ||
-          pubStatus === WsStatus.CONNECTING
+    pubStatus === WsStatus.CONNECTED;
+  const anyOffline =
+    privStatus === WsStatus.OFFLINE ||
+    pubStatus === WsStatus.OFFLINE;
+  const anyReconnecting =
+    privStatus === WsStatus.RECONNECTING ||
+    pubStatus === WsStatus.RECONNECTING;
+  const anyConnecting =
+    privStatus === WsStatus.CONNECTING ||
+    pubStatus === WsStatus.CONNECTING;
+
+  const statusColor = bothConnected
+    ? "bg-buy"
+    : anyOffline
+      ? "bg-sell"
+      : anyReconnecting || anyConnecting
         ? "bg-accent"
         : "bg-sell";
+
+  const statusLabel = bothConnected
+    ? "live"
+    : anyOffline
+      ? "offline"
+      : anyReconnecting
+        ? "reconnecting"
+        : anyConnecting
+          ? "connecting"
+          : "disconnected";
 
   const lastPx = bbo.bidPx > 0
     ? formatPrice(bbo.bidPx, tickSize)
@@ -406,13 +428,20 @@ export function TopBar() {
             statusColor,
           )}
           role="status"
-          aria-label={
-            privStatus === WsStatus.CONNECTED &&
-            pubStatus === WsStatus.CONNECTED
-              ? "Connected"
-              : "Disconnected"
-          }
         />
+        <span
+          className={clsx(
+            "font-mono text-2xs",
+            bothConnected
+              ? "text-buy"
+              : anyOffline
+                ? "text-sell"
+                : "text-accent",
+          )}
+          data-testid="conn-status-label"
+        >
+          {statusLabel}
+        </span>
         <span className="text-text-secondary font-mono">
           {latency > 0 ? `${latency}ms` : "--"}
         </span>

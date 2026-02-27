@@ -97,5 +97,7 @@ export const enum WsStatus {
   DISCONNECTED = "disconnected",
   CONNECTING = "connecting",
   CONNECTED = "connected",
+  RECONNECTING = "reconnecting",
+  OFFLINE = "offline",
   ERROR = "error",
 }

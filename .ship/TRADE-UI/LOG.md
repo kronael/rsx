@@ -1,0 +1,1 @@
+- added RECONNECTING/OFFLINE WsStatus, code-1013 detection in onclose, exponential backoff retained, connection status label (live/connecting/reconnecting/offline) in TopBar
