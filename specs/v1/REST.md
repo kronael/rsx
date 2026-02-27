@@ -1,5 +1,8 @@
 # REST API
 
+> **Status: v2 — deferred.** Only `/health` and `/v1/symbols`
+> are implemented. All other endpoints are post-MVP targets.
+
 Gateway serves REST alongside WebSocket on the same port
 (8080). WS upgrades on `/ws`, REST on `/v1/*` and `/health`.
 
