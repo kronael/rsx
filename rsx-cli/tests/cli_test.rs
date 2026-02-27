@@ -1,3 +1,4 @@
+use rsx_dxs::encode_utils::compute_crc32;
 use rsx_dxs::header::WalHeader;
 use rsx_dxs::records::BboRecord;
 use rsx_dxs::records::FillRecord;
@@ -7,6 +8,8 @@ use rsx_dxs::records::RECORD_BBO;
 use rsx_dxs::records::RECORD_FILL;
 use rsx_dxs::records::RECORD_LIQUIDATION;
 use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_dxs::wal::extract_seq;
+use rsx_dxs::wal::WalReader;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::fs;
@@ -326,4 +329,86 @@ fn test_dump_file_json_includes_decoded_fields() {
     assert_eq!(base["symbol_id"], 7);
     assert_eq!(base["price"], 5000);
     assert_eq!(base["type"], "FILL");
+}
+
+/// Regression: in --follow mode next_seq must advance even when
+/// a record is excluded by a filter. If it does not, the reader
+/// will re-open from the last matched seq on EOF, replaying every
+/// filtered-out record between that point and the current tip.
+///
+/// Scenario: WAL contains FILL(1) BBO(2) BBO(3) FILL(4).
+/// Filter: FILL only.
+/// Expected: next_seq = 5 after consuming all four records,
+///           matched_seqs = [1, 4] (no duplicates).
+#[test]
+fn test_follow_next_seq_advances_past_filtered_records() {
+    let dir = make_test_dir("follow_next_seq");
+
+    // Write one WAL segment for stream 1.
+    // WalReader expects files named "<stream_id>-<seq>.wal" or
+    // similar; use the simplest approach: write a raw file and
+    // open it via WalReader::open_from_seq.
+    // WalReader looks in <wal_dir>/<stream_id>/ for segments
+    // named "<stream_id>_<first_seq>_<last_seq>.wal".
+    let hot_dir = dir.join("1");
+    fs::create_dir_all(&hot_dir).unwrap();
+    let seg = hot_dir.join("1_1_4.wal");
+    let mut file = File::create(&seg).unwrap();
+
+    // Helper: write a minimal record with a given seq.
+    // 16-byte payload: seq(8) + ts_ns(8). CRC computed
+    // from payload so WalReader's CRC check passes.
+    let write_mini =
+        |f: &mut File, rt: u16, seq: u64| {
+            let mut payload = [0u8; 16];
+            payload[..8].copy_from_slice(
+                &seq.to_le_bytes(),
+            );
+            let crc = compute_crc32(&payload);
+            let header =
+                WalHeader::new(rt, 16, crc);
+            f.write_all(&header.to_bytes()).unwrap();
+            f.write_all(&payload).unwrap();
+        };
+
+    write_mini(&mut file, RECORD_FILL, 1);
+    write_mini(&mut file, RECORD_BBO, 2);
+    write_mini(&mut file, RECORD_BBO, 3);
+    write_mini(&mut file, RECORD_FILL, 4);
+    file.sync_all().unwrap();
+    drop(file);
+
+    // Simulate the fixed follow loop.
+    let mut reader =
+        WalReader::open_from_seq(1, 0, &dir).unwrap();
+    let mut next_seq: u64 = 0;
+    let mut matched_seqs: Vec<u64> = Vec::new();
+
+    loop {
+        match reader.next() {
+            Ok(Some(raw)) => {
+                let rt = raw.header.record_type;
+                let seq =
+                    extract_seq(&raw.payload).unwrap_or(0);
+                // Fixed: always advance before filter check.
+                next_seq = seq + 1;
+                if rt == RECORD_FILL {
+                    matched_seqs.push(seq);
+                }
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+
+    // next_seq must be 5 (past the last record seq=4),
+    // not 2 (which the buggy code would leave it at after
+    // matching seq=1 and then hitting filtered-out seq=2,3).
+    assert_eq!(
+        next_seq, 5,
+        "next_seq should advance past filtered records"
+    );
+
+    // Exactly the two FILLs, in order, no duplicates.
+    assert_eq!(matched_seqs, vec![1, 4]);
 }

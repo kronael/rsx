@@ -783,10 +783,13 @@ fn dump_follow_text(
         match reader.next() {
             Ok(Some(raw)) => {
                 let rt = raw.header.record_type;
+                let seq =
+                    extract_seq(&raw.payload).unwrap_or(0);
+                // Always advance next_seq so filtered-out
+                // records don't cause replay on reopen.
+                next_seq = seq + 1;
                 if filters.matches(rt, &raw.payload) {
                     let len = raw.header.len;
-                    let seq =
-                        extract_seq(&raw.payload).unwrap_or(0);
                     let (fields, _) =
                         decode_payload(rt, &raw.payload, scale);
                     println!(
@@ -798,7 +801,6 @@ fn dump_follow_text(
                         raw.header.crc32,
                         fields,
                     );
-                    next_seq = seq + 1;
                 }
             }
             Ok(None) => {
@@ -850,10 +852,13 @@ fn dump_follow_json(
         match reader.next() {
             Ok(Some(raw)) => {
                 let rt = raw.header.record_type;
+                let seq =
+                    extract_seq(&raw.payload).unwrap_or(0);
+                // Always advance next_seq so filtered-out
+                // records don't cause replay on reopen.
+                next_seq = seq + 1;
                 if filters.matches(rt, &raw.payload) {
                     let len = raw.header.len;
-                    let seq =
-                        extract_seq(&raw.payload).unwrap_or(0);
                     let (_, fields) =
                         decode_payload(rt, &raw.payload, &scale);
                     let mut obj = json!({
@@ -873,7 +878,6 @@ fn dump_follow_json(
                         }
                     }
                     println!("{}", obj);
-                    next_seq = seq + 1;
                 }
             }
             Ok(None) => {
