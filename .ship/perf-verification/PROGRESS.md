@@ -1,6 +1,6 @@
 # PROGRESS
 
-updated: Feb 27 22:04:02  
+updated: Feb 27 22:04:07  
 phase: executing
 
 ```
@@ -30,3 +30,4 @@ us (14 files, +414/-105)
 - `22:01:57` adv challenge: Verify that `make bench-gate` with no pre-existing
 - `22:02:48` done: Verify that `bench-gate.sh` is protected against floating-po (4 files, +52/-36)
 - `22:03:37` judge skip: Verify that `bench-gate.sh` is protected
+- 22:04 Verify make bench-gate exits non-zero with no baseline: incomplete — worker only fixed a `declare -A` crash under `set -u` but did not verify the no-baseline exit behavior nor confirm `[[bench]]` targets are declared in Cargo.toml files.
