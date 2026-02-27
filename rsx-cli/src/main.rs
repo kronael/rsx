@@ -28,12 +28,180 @@ enum Commands {
         /// Output as JSON lines (default: text)
         #[arg(long)]
         json: bool,
+        /// Only emit records of this type (repeatable, OR logic)
+        #[arg(long = "type", value_name = "TYPE")]
+        record_types: Vec<String>,
+        /// Filter by symbol_id
+        #[arg(long)]
+        symbol: Option<u32>,
+        /// Filter by user_id
+        #[arg(long)]
+        user: Option<u32>,
+        /// Skip records with ts_ns < value
+        #[arg(long)]
+        from_ts: Option<u64>,
+        /// Stop after ts_ns > value
+        #[arg(long)]
+        to_ts: Option<u64>,
     },
     /// Dump a single WAL file as JSON lines
     Dump {
         /// WAL file path
         file: PathBuf,
     },
+}
+
+struct Filters {
+    record_types: Vec<u16>,
+    symbol: Option<u32>,
+    user: Option<u32>,
+    from_ts: Option<u64>,
+    to_ts: Option<u64>,
+}
+
+impl Filters {
+    fn from_args(
+        record_types: Vec<String>,
+        symbol: Option<u32>,
+        user: Option<u32>,
+        from_ts: Option<u64>,
+        to_ts: Option<u64>,
+    ) -> Self {
+        let rts = record_types
+            .iter()
+            .filter_map(|s| name_to_record_type(s.as_str()))
+            .collect();
+        Filters { record_types: rts, symbol, user, from_ts, to_ts }
+    }
+
+    fn matches(&self, rt: u16, payload: &[u8]) -> bool {
+        if !self.record_types.is_empty()
+            && !self.record_types.contains(&rt)
+        {
+            return false;
+        }
+        let ts = extract_ts_ns(payload);
+        if let (Some(from), Some(ts)) = (self.from_ts, ts) {
+            if ts < from {
+                return false;
+            }
+        }
+        if let (Some(to), Some(ts)) = (self.to_ts, ts) {
+            if ts > to {
+                return false;
+            }
+        }
+        if let Some(sym) = self.symbol {
+            match extract_symbol_id(rt, payload) {
+                Some(s) if s == sym => {}
+                Some(_) => return false,
+                None => return false,
+            }
+        }
+        if let Some(uid) = self.user {
+            match extract_user_id(rt, payload) {
+                Some(u) if u == uid => {}
+                Some(_) => return false,
+                None => return false,
+            }
+        }
+        true
+    }
+}
+
+fn name_to_record_type(name: &str) -> Option<u16> {
+    match name {
+        "FILL" => Some(RECORD_FILL),
+        "BBO" => Some(RECORD_BBO),
+        "ORDER_INSERTED" => Some(RECORD_ORDER_INSERTED),
+        "ORDER_CANCELLED" => Some(RECORD_ORDER_CANCELLED),
+        "ORDER_DONE" => Some(RECORD_ORDER_DONE),
+        "CONFIG_APPLIED" => Some(RECORD_CONFIG_APPLIED),
+        "CAUGHT_UP" => Some(RECORD_CAUGHT_UP),
+        "ORDER_ACCEPTED" => Some(RECORD_ORDER_ACCEPTED),
+        "MARK_PRICE" => Some(RECORD_MARK_PRICE),
+        "ORDER_REQUEST" => Some(RECORD_ORDER_REQUEST),
+        "ORDER_RESPONSE" => Some(RECORD_ORDER_RESPONSE),
+        "CANCEL_REQUEST" => Some(RECORD_CANCEL_REQUEST),
+        "ORDER_FAILED" => Some(RECORD_ORDER_FAILED),
+        "LIQUIDATION" => Some(RECORD_LIQUIDATION),
+        _ => {
+            eprintln!("unknown record type: {}", name);
+            None
+        }
+    }
+}
+
+/// Extract ts_ns from bytes [8..16] (present in all records).
+fn extract_ts_ns(payload: &[u8]) -> Option<u64> {
+    if payload.len() < 16 {
+        return None;
+    }
+    Some(u64::from_le_bytes([
+        payload[8],
+        payload[9],
+        payload[10],
+        payload[11],
+        payload[12],
+        payload[13],
+        payload[14],
+        payload[15],
+    ]))
+}
+
+fn read_u32_le(payload: &[u8], offset: usize) -> Option<u32> {
+    if payload.len() < offset + 4 {
+        return None;
+    }
+    Some(u32::from_le_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+    ]))
+}
+
+/// Extract symbol_id per record type layout.
+/// Returns None for record types without symbol_id.
+fn extract_symbol_id(rt: u16, payload: &[u8]) -> Option<u32> {
+    match rt {
+        // seq(8) + ts_ns(8) + symbol_id(4) at offset 16
+        RECORD_FILL
+        | RECORD_BBO
+        | RECORD_ORDER_INSERTED
+        | RECORD_ORDER_CANCELLED
+        | RECORD_ORDER_DONE
+        | RECORD_CONFIG_APPLIED
+        | RECORD_MARK_PRICE => read_u32_le(payload, 16),
+        // seq(8) + ts_ns(8) + user_id(4) + symbol_id(4) at 20
+        RECORD_ORDER_ACCEPTED
+        | RECORD_CANCEL_REQUEST
+        | RECORD_LIQUIDATION => read_u32_le(payload, 20),
+        // no symbol_id in CAUGHT_UP, ORDER_FAILED,
+        // ORDER_REQUEST, ORDER_RESPONSE
+        _ => None,
+    }
+}
+
+/// Extract user_id per record type layout.
+/// Returns None for record types without user_id.
+fn extract_user_id(rt: u16, payload: &[u8]) -> Option<u32> {
+    match rt {
+        // seq(8) + ts_ns(8) + symbol_id(4) + user_id(4) at 20
+        RECORD_ORDER_INSERTED
+        | RECORD_ORDER_CANCELLED
+        | RECORD_ORDER_DONE => read_u32_le(payload, 20),
+        // seq(8) + ts_ns(8) + taker_user_id(4) at 20 (fill)
+        RECORD_FILL => read_u32_le(payload, 20),
+        // seq(8) + ts_ns(8) + user_id(4) at 16
+        RECORD_ORDER_ACCEPTED
+        | RECORD_ORDER_FAILED
+        | RECORD_CANCEL_REQUEST
+        | RECORD_LIQUIDATION => read_u32_le(payload, 16),
+        // no user_id in BBO, CONFIG_APPLIED, CAUGHT_UP,
+        // MARK_PRICE
+        _ => None,
+    }
 }
 
 fn record_name(rt: u16) -> &'static str {
@@ -401,6 +569,7 @@ fn wal_dump(
     wal_dir: PathBuf,
     from_seq: u64,
     json: bool,
+    filters: Filters,
 ) {
     let mut reader = WalReader::open_from_seq(
         stream_id, from_seq, &wal_dir,
@@ -408,16 +577,19 @@ fn wal_dump(
     .expect("failed to open wal");
 
     if json {
-        dump_json(&mut reader);
+        dump_json(&mut reader, &filters);
     } else {
-        dump_text(&mut reader);
+        dump_text(&mut reader, &filters);
     }
 }
 
-fn dump_text(reader: &mut WalReader) {
+fn dump_text(reader: &mut WalReader, filters: &Filters) {
     let mut count: u64 = 0;
     while let Ok(Some(raw)) = reader.next() {
         let rt = raw.header.record_type;
+        if !filters.matches(rt, &raw.payload) {
+            continue;
+        }
         let len = raw.header.len;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
         let (fields, _) = decode_payload(rt, &raw.payload);
@@ -436,10 +608,13 @@ fn dump_text(reader: &mut WalReader) {
     eprintln!("total: {} records", count);
 }
 
-fn dump_json(reader: &mut WalReader) {
+fn dump_json(reader: &mut WalReader, filters: &Filters) {
     let mut count: u64 = 0;
     while let Ok(Some(raw)) = reader.next() {
         let rt = raw.header.record_type;
+        if !filters.matches(rt, &raw.payload) {
+            continue;
+        }
         let len = raw.header.len;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
         let (_, fields) = decode_payload(rt, &raw.payload);
@@ -526,7 +701,21 @@ fn main() {
             wal_dir,
             from_seq,
             json,
-        } => wal_dump(stream_id, wal_dir, from_seq, json),
+            record_types,
+            symbol,
+            user,
+            from_ts,
+            to_ts,
+        } => {
+            let filters = Filters::from_args(
+                record_types,
+                symbol,
+                user,
+                from_ts,
+                to_ts,
+            );
+            wal_dump(stream_id, wal_dir, from_seq, json, filters);
+        }
         Commands::Dump { file } => dump_file(file),
     }
 }
