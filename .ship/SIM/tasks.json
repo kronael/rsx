@@ -93,16 +93,17 @@
     "id": "fc673119-41de-4187-b131-8a37f8324c4a",
     "description": "Verify that `GET /x/wal-events` in `server.py` does NOT merge any fallback list \u2014 inspect the handler implementation and confirm there is no conditional that appends synthetic events when WAL is empty or gateway is down. A leftover `events = real_events or fallback` pattern would silently violate the objective.",
     "files": [],
-    "status": "running",
+    "status": "completed",
     "created_at": "2026-02-27T15:48:39.547016",
     "retries": 0,
     "error": "",
-    "result": "",
+    "result": "The files were shown as modified but git reports nothing staged \u2014 likely a pre-commit hook reverted them. There's nothing to commit; the working tree matches HEAD for those files.",
     "summary": "",
-    "session_id": "",
+    "session_id": "4152e9a2-5ba3-4915-a9fb-5078a5b7dd4e",
     "depends_on": [],
     "followups": [],
     "worker": "auto",
-    "started_at": "2026-02-27T15:49:18.662698"
+    "started_at": "2026-02-27T15:49:18.662698",
+    "completed_at": "2026-02-27T15:50:01.800686"
   }
 ]
