@@ -1,2 +1,3 @@
 - nginx config verified: WS upgrade headers present on /ws/private + /ws/public, /docs upstream correct, syntax ok
 - private WS: subscribe positions channel on connect, reset backoff on first message received (both hooks)
+- Positions: positionsLoaded flag (blank→empty state), 150ms fill delay for WAL timing

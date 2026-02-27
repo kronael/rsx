@@ -17,6 +17,7 @@ interface AccountState {
 
 interface TradingStore {
   positions: UserPosition[];
+  positionsLoaded: boolean;
   orders: UserOrder[];
   fills: UserFill[];
   account: AccountState;
@@ -46,11 +47,15 @@ const emptyAccount: AccountState = {
 export const useTradingStore = create<TradingStore>(
   (set) => ({
     positions: [],
+    positionsLoaded: false,
     orders: [],
     fills: [],
     account: emptyAccount,
 
-    setPositions: (p) => set({ positions: p }),
+    setPositions: (p) => set({
+      positions: p,
+      positionsLoaded: true,
+    }),
     setOrders: (o) => set({ orders: o }),
     setAccount: (a) => set({ account: a }),
 

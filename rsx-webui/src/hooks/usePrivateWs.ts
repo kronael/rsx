@@ -77,10 +77,15 @@ export function usePrivateWs() {
           useTradingStore.getState().addFill({
             takerOid, makerOid, price, qty, ts, fee,
           });
-          fetchPositions().then((pos) => {
+          // Delay 150ms: WAL flush interval ~10ms,
+          // allow recorder to persist before REST read.
+          setTimeout(() => {
             if (!mounted) return;
-            useTradingStore.getState().setPositions(pos);
-          }).catch(() => {/* ignore */});
+            fetchPositions().then((pos) => {
+              if (!mounted) return;
+              useTradingStore.getState().setPositions(pos);
+            }).catch(() => {/* ignore */});
+          }, 150);
         } else if ("E" in msg) {
           console.error(
             `ws private error: ${msg.E[0]} ${msg.E[1]}`,
