@@ -42,13 +42,17 @@ export function usePublicWs() {
       ws.onopen = () => {
         if (!mounted) return;
         setStatus(WsStatus.CONNECTED);
-        retryRef.current = 1000;
         const sym = useMarketStore.getState().selectedSymbol;
         ws.send(subscribe(sym, ALL_CHANNELS));
         prevSymRef.current = sym;
       };
 
+      let firstMsg = true;
       ws.onmessage = (ev) => {
+        if (firstMsg) {
+          firstMsg = false;
+          retryRef.current = 1000;
+        }
         const msg = parseMessage(ev.data as string);
         if (!msg) return;
         const store = useMarketStore.getState();
