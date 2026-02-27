@@ -666,6 +666,14 @@ def test_wal_timeline_renders_after_orders(client):
     assert "<table" in html or "No WAL" in html or "seq" in html or html.strip()
 
 
+def test_wal_timeline_filter(client):
+    """WAL timeline filter param returns 200."""
+    client.post("/api/orders/batch")
+    for f in ["", "ORDER_ACCEPTED", "FILL", "ORDER_DONE"]:
+        resp = client.get(f"/x/wal-timeline?filter={f}")
+        assert resp.status_code == 200
+
+
 # ── Trade UI API Endpoints ─────────────────────────────────
 
 
