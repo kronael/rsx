@@ -16,6 +16,7 @@ phase: executing
 
 ## log
 - 18:30 fix rsx-risk multi-symbol routing: completed — RSX_ME_CMP_ADDRS parsed, HashMap<u32,CmpSender> built, orders routed by symbol_id
+- 18:30 fix rsx-marketdata multi-symbol subscriptions: completed — RSX_ME_CMP_ADDRS parsed with fallback to RSX_ME_CMP_ADDR, one CmpReceiver per ME address, polled in loop each tick
 
 ## workers
 
