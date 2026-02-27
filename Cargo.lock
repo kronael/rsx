@@ -1977,17 +1977,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsx-sim"
-version = "0.1.0"
-dependencies = [
- "rsx-types",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "rsx-types"
 version = "0.1.0"
 dependencies = [
