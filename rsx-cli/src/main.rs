@@ -217,8 +217,11 @@ fn extract_symbol_id(rt: u16, payload: &[u8]) -> Option<u32> {
         RECORD_ORDER_ACCEPTED
         | RECORD_CANCEL_REQUEST
         | RECORD_LIQUIDATION => read_u32_le(payload, 20),
-        // no symbol_id in CAUGHT_UP, ORDER_FAILED,
-        // ORDER_REQUEST, ORDER_RESPONSE
+        // seq(8) + ts_ns(8) + user_id(4) + symbol_id(4) at 20
+        RECORD_ORDER_RESPONSE => read_u32_le(payload, 20),
+        // seq(8) + user_id(4) + symbol_id(4) at 12
+        RECORD_ORDER_REQUEST => read_u32_le(payload, 12),
+        // no symbol_id in CAUGHT_UP, ORDER_FAILED
         _ => None,
     }
 }
@@ -237,7 +240,10 @@ fn extract_user_id(rt: u16, payload: &[u8]) -> Option<u32> {
         RECORD_ORDER_ACCEPTED
         | RECORD_ORDER_FAILED
         | RECORD_CANCEL_REQUEST
-        | RECORD_LIQUIDATION => read_u32_le(payload, 16),
+        | RECORD_LIQUIDATION
+        | RECORD_ORDER_RESPONSE => read_u32_le(payload, 16),
+        // seq(8) + user_id(4) at 8
+        RECORD_ORDER_REQUEST => read_u32_le(payload, 8),
         // no user_id in BBO, CONFIG_APPLIED, CAUGHT_UP,
         // MARK_PRICE
         _ => None,
@@ -262,6 +268,40 @@ fn record_name(rt: u16) -> &'static str {
         RECORD_LIQUIDATION => "LIQUIDATION",
         _ => "UNKNOWN",
     }
+}
+
+/// Wire layout of RECORD_ORDER_REQUEST (rsx_risk::types::OrderRequest).
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+struct OrderRequestRecord {
+    seq: u64,
+    user_id: u32,
+    symbol_id: u32,
+    price: i64,
+    qty: i64,
+    order_id_hi: u64,
+    order_id_lo: u64,
+    timestamp_ns: u64,
+    side: u8,
+    tif: u8,
+    reduce_only: u8,
+    post_only: u8,
+    is_liquidation: u8,
+    _pad: [u8; 3],
+}
+
+/// Wire layout of RECORD_ORDER_RESPONSE.
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+struct OrderResponseRecord {
+    seq: u64,
+    ts_ns: u64,
+    user_id: u32,
+    symbol_id: u32,
+    order_id_hi: u64,
+    order_id_lo: u64,
+    status: u8,
+    _pad: [u8; 39],
 }
 
 fn oid_hex(hi: u64, lo: u64) -> String {
@@ -478,15 +518,20 @@ fn decode_payload(
             {
                 let r: OrderAcceptedRecord =
                     std::ptr::read(payload.as_ptr() as *const _);
+                let cid_str = std::str::from_utf8(&r.cid)
+                    .unwrap_or("")
+                    .trim_end_matches('\0')
+                    .to_string();
                 let txt = format!(
                     " sym={} user={} px={} qty={} \
-                     side={} oid={}",
+                     side={} oid={} cid={}",
                     r.symbol_id,
                     r.user_id,
                     scale.px(r.price),
                     scale.qty(r.qty),
                     r.side,
                     oid_hex(r.order_id_hi, r.order_id_lo),
+                    cid_str,
                 );
                 let j = json!({
                     "symbol_id": r.symbol_id,
@@ -498,6 +543,7 @@ fn decode_payload(
                         r.order_id_hi,
                         r.order_id_lo,
                     ),
+                    "cid": cid_str,
                 });
                 (txt, j)
             }
@@ -563,6 +609,63 @@ fn decode_payload(
                 let j = json!({
                     "user_id": r.user_id,
                     "reason": r.reason,
+                    "oid": oid_hex(
+                        r.order_id_hi,
+                        r.order_id_lo,
+                    ),
+                });
+                (txt, j)
+            }
+            RECORD_ORDER_REQUEST
+                if payload.len()
+                    >= std::mem::size_of::<
+                        OrderRequestRecord,
+                    >() =>
+            {
+                let r: OrderRequestRecord =
+                    std::ptr::read(payload.as_ptr() as *const _);
+                let txt = format!(
+                    " sym={} user={} px={} qty={} \
+                     side={} oid={}",
+                    r.symbol_id,
+                    r.user_id,
+                    scale.px(r.price),
+                    scale.qty(r.qty),
+                    r.side,
+                    oid_hex(r.order_id_hi, r.order_id_lo),
+                );
+                let j = json!({
+                    "symbol_id": r.symbol_id,
+                    "user_id": r.user_id,
+                    "price": r.price,
+                    "qty": r.qty,
+                    "side": r.side,
+                    "oid": oid_hex(
+                        r.order_id_hi,
+                        r.order_id_lo,
+                    ),
+                });
+                (txt, j)
+            }
+            RECORD_ORDER_RESPONSE
+                if payload.len()
+                    >= std::mem::size_of::<
+                        OrderResponseRecord,
+                    >() =>
+            {
+                let r: OrderResponseRecord =
+                    std::ptr::read(payload.as_ptr() as *const _);
+                let txt = format!(
+                    " sym={} user={} status={} oid={}",
+                    r.symbol_id,
+                    r.user_id,
+                    r.status,
+                    oid_hex(r.order_id_hi, r.order_id_lo),
+                );
+                let j = json!({
+                    "symbol_id": r.symbol_id,
+                    "user_id": r.user_id,
+                    "status": r.status,
                     "oid": oid_hex(
                         r.order_id_hi,
                         r.order_id_lo,

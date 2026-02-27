@@ -222,7 +222,7 @@ pub struct OrderAcceptedRecord {
     pub tif: u8,
     pub reduce_only: u8,
     pub post_only: u8,
-    pub _pad1: [u8; 12],
+    pub cid: [u8; 20],
 }
 
 impl CmpRecord for OrderAcceptedRecord {
