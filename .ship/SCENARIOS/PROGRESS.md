@@ -1,6 +1,6 @@
 # PROGRESS
 
-updated: Feb 27 18:44:42  
+updated: Feb 27 18:44:47  
 phase: executing
 
 ```
@@ -33,3 +33,4 @@ phase: executing
 - `18:43:09` adv challenge: Verify that `rsx-risk/tests/me_cmp_addrs_test.rs` 
 - `18:43:09` adv challenge: Verify that `build_spawn_plan()` in `start` passes
 - `18:43:32` done: Verify that `build_spawn_plan()` in `start` passes `RSX_ME_C (2 files, +11/-50)
+- 18:46 Verify me_cmp_addrs_test serial execution: completed — Makefile correctly adds `--test-threads=1` to the rsx-risk test target.
