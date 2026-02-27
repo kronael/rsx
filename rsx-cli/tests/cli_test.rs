@@ -331,6 +331,253 @@ fn test_dump_file_json_includes_decoded_fields() {
     assert_eq!(base["type"], "FILL");
 }
 
+/// Run `rsx-cli dump <file>` as a subprocess and return stdout.
+fn run_dump(file: &std::path::Path) -> String {
+    let bin = env!("CARGO_BIN_EXE_rsx-cli");
+    let out = std::process::Command::new(bin)
+        .arg("dump")
+        .arg(file)
+        .output()
+        .expect("failed to run rsx-cli dump");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Write a 16-byte WAL header + `payload` to a file.
+fn write_raw_record(
+    file: &mut File,
+    rt: u16,
+    payload: &[u8],
+) {
+    use rsx_dxs::encode_utils::compute_crc32;
+    use rsx_dxs::header::WalHeader;
+    let crc = compute_crc32(payload);
+    let header =
+        WalHeader::new(rt, payload.len() as u16, crc);
+    file.write_all(&header.to_bytes()).unwrap();
+    file.write_all(payload).unwrap();
+}
+
+/// Build ORDER_REQUEST payload (64 bytes, repr(C,align(64))).
+/// Layout from local OrderRequestRecord in main.rs:
+///   seq(8) user_id(4) symbol_id(4) price(8) qty(8)
+///   order_id_hi(8) order_id_lo(8) timestamp_ns(8)
+///   side(1) tif(1) reduce_only(1) post_only(1)
+///   is_liquidation(1) _pad(3)
+fn order_request_bytes(
+    seq: u64,
+    user_id: u32,
+    symbol_id: u32,
+    price: i64,
+    qty: i64,
+    oid_hi: u64,
+    oid_lo: u64,
+    side: u8,
+) -> [u8; 64] {
+    let mut b = [0u8; 64];
+    b[0..8].copy_from_slice(&seq.to_le_bytes());
+    b[8..12].copy_from_slice(&user_id.to_le_bytes());
+    b[12..16].copy_from_slice(&symbol_id.to_le_bytes());
+    b[16..24].copy_from_slice(&price.to_le_bytes());
+    b[24..32].copy_from_slice(&qty.to_le_bytes());
+    b[32..40].copy_from_slice(&oid_hi.to_le_bytes());
+    b[40..48].copy_from_slice(&oid_lo.to_le_bytes());
+    b[48..56].copy_from_slice(&9999u64.to_le_bytes());
+    b[56] = side;
+    b
+}
+
+/// Build ORDER_RESPONSE payload (128 bytes, repr(C,align(64))).
+/// Layout from local OrderResponseRecord in main.rs:
+///   seq(8) ts_ns(8) user_id(4) symbol_id(4)
+///   order_id_hi(8) order_id_lo(8) status(1) _pad(39)
+/// + align(64) padding to 128 bytes total.
+fn order_response_bytes(
+    seq: u64,
+    ts_ns: u64,
+    user_id: u32,
+    symbol_id: u32,
+    oid_hi: u64,
+    oid_lo: u64,
+    status: u8,
+) -> [u8; 128] {
+    let mut b = [0u8; 128];
+    b[0..8].copy_from_slice(&seq.to_le_bytes());
+    b[8..16].copy_from_slice(&ts_ns.to_le_bytes());
+    b[16..20].copy_from_slice(&user_id.to_le_bytes());
+    b[20..24].copy_from_slice(&symbol_id.to_le_bytes());
+    b[24..32].copy_from_slice(&oid_hi.to_le_bytes());
+    b[32..40].copy_from_slice(&oid_lo.to_le_bytes());
+    b[40] = status;
+    b
+}
+
+/// `rsx-cli dump` prints ORDER_REQUEST records with key fields.
+#[test]
+fn test_dump_order_request_decodes() {
+    let dir = make_test_dir("dump_order_request");
+    let path = dir.join("req.wal");
+    let mut file = File::create(&path).unwrap();
+    let payload = order_request_bytes(
+        5, 10, 2, 50000, 100, 0xAA, 0xBB, 1,
+    );
+    write_raw_record(
+        &mut file,
+        rsx_dxs::records::RECORD_ORDER_REQUEST,
+        &payload,
+    );
+    file.sync_all().unwrap();
+    drop(file);
+
+    let out = run_dump(&path);
+    // Must decode ORDER_REQUEST, not fall through to UNKNOWN.
+    assert!(
+        out.contains("ORDER_REQUEST"),
+        "expected ORDER_REQUEST in output, got: {}", out
+    );
+    // sym and user fields must appear.
+    assert!(
+        out.contains("\"symbol_id\":2"),
+        "expected symbol_id=2, got: {}", out
+    );
+    assert!(
+        out.contains("\"user_id\":10"),
+        "expected user_id=10, got: {}", out
+    );
+    assert!(
+        out.contains("\"price\":50000"),
+        "expected price=50000, got: {}", out
+    );
+}
+
+/// `rsx-cli dump` prints ORDER_RESPONSE records with key fields.
+#[test]
+fn test_dump_order_response_decodes() {
+    let dir = make_test_dir("dump_order_response");
+    let path = dir.join("resp.wal");
+    let mut file = File::create(&path).unwrap();
+    let payload = order_response_bytes(
+        6, 2000, 20, 3, 0xCC, 0xDD, 1,
+    );
+    write_raw_record(
+        &mut file,
+        rsx_dxs::records::RECORD_ORDER_RESPONSE,
+        &payload,
+    );
+    file.sync_all().unwrap();
+    drop(file);
+
+    let out = run_dump(&path);
+    assert!(
+        out.contains("ORDER_RESPONSE"),
+        "expected ORDER_RESPONSE in output, got: {}", out
+    );
+    assert!(
+        out.contains("\"symbol_id\":3"),
+        "expected symbol_id=3, got: {}", out
+    );
+    assert!(
+        out.contains("\"user_id\":20"),
+        "expected user_id=20, got: {}", out
+    );
+    assert!(
+        out.contains("\"status\":1"),
+        "expected status=1, got: {}", out
+    );
+}
+
+/// Unknown record types are printed as "UNKNOWN",
+/// not silently dropped.
+#[test]
+fn test_dump_unknown_type_not_skipped() {
+    let dir = make_test_dir("dump_unknown_type");
+    let path = dir.join("unk.wal");
+    let mut file = File::create(&path).unwrap();
+    // rt=0xFF is not a known record type.
+    let payload = [0u8; 16];
+    write_raw_record(&mut file, 0xFF, &payload);
+    file.sync_all().unwrap();
+    drop(file);
+
+    let out = run_dump(&path);
+    assert!(
+        out.contains("UNKNOWN"),
+        "expected UNKNOWN in output for unrecognised rt, \
+         got: {}", out
+    );
+}
+
+/// Combined: one file with LIQUIDATION + ORDER_REQUEST +
+/// ORDER_RESPONSE; all three must appear decoded in output.
+#[test]
+fn test_dump_three_new_types_combined() {
+    use rsx_dxs::records::LiquidationRecord;
+    use rsx_dxs::records::RECORD_LIQUIDATION;
+    use rsx_dxs::records::RECORD_ORDER_REQUEST;
+    use rsx_dxs::records::RECORD_ORDER_RESPONSE;
+
+    let dir = make_test_dir("dump_three_types");
+    let path = dir.join("combined.wal");
+    let mut file = File::create(&path).unwrap();
+
+    // LIQUIDATION
+    let liq = LiquidationRecord {
+        seq: 1,
+        ts_ns: 1000,
+        user_id: 5,
+        symbol_id: 1,
+        status: 2,
+        side: 1,
+        _pad0: [0; 2],
+        round: 0,
+        qty: 50,
+        price: 4000,
+        slip_bps: 10,
+    };
+    write_record_bytes(&mut file, RECORD_LIQUIDATION, &liq);
+
+    // ORDER_REQUEST
+    let req = order_request_bytes(
+        2, 7, 1, 4000, 50, 0x11, 0x22, 0,
+    );
+    write_raw_record(&mut file, RECORD_ORDER_REQUEST, &req);
+
+    // ORDER_RESPONSE
+    let resp =
+        order_response_bytes(3, 3000, 7, 1, 0x11, 0x22, 0);
+    write_raw_record(&mut file, RECORD_ORDER_RESPONSE, &resp);
+
+    file.sync_all().unwrap();
+    drop(file);
+
+    let out = run_dump(&path);
+
+    assert!(
+        out.contains("LIQUIDATION"),
+        "expected LIQUIDATION, got: {}", out
+    );
+    assert!(
+        out.contains("ORDER_REQUEST"),
+        "expected ORDER_REQUEST, got: {}", out
+    );
+    assert!(
+        out.contains("ORDER_RESPONSE"),
+        "expected ORDER_RESPONSE, got: {}", out
+    );
+    // Ensure none are falling through to UNKNOWN.
+    assert!(
+        !out.contains("UNKNOWN"),
+        "unexpected UNKNOWN in output: {}", out
+    );
+    // All three records must be present (3 JSON lines in stdout).
+    let lines: Vec<&str> =
+        out.lines().filter(|l| l.starts_with('{')).collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected 3 decoded records, got: {}", out
+    );
+}
+
 /// Regression: in --follow mode next_seq must advance even when
 /// a record is excluded by a filter. If it does not, the reader
 /// will re-open from the last matched seq on EOF, replaying every
