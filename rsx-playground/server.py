@@ -2892,8 +2892,31 @@ async def x_auth_failures():
 async def x_book_stats():
     stats = parse_wal_book_stats()
     # supplement with live snaps for symbols not in WAL
-    for sid, snap in _book_snap.items():
+    snap_copy = dict(_book_snap)
+    for sid, snap in snap_copy.items():
         if sid not in stats:
+            bbo = _snap_to_bbo(sid, snap)
+            if bbo:
+                stats[sid] = bbo
+    # fallback: maker book or re-seed for configured symbols
+    for name, cfg in start_mod.SYMBOLS.items():
+        sid = cfg["id"]
+        if sid in stats:
+            continue
+        mb = _maker_book(sid)
+        if mb:
+            bbo = _snap_to_bbo(sid, mb)
+            if bbo:
+                stats[sid] = bbo
+                continue
+        # last resort: re-seed sim
+        if sid not in _book_snap or not (
+            _book_snap[sid].get("bids")
+            or _book_snap[sid].get("asks")
+        ):
+            _seed_sim_book()
+        snap = _book_snap.get(sid)
+        if snap:
             bbo = _snap_to_bbo(sid, snap)
             if bbo:
                 stats[sid] = bbo
