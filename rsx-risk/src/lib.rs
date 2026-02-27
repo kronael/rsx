@@ -20,6 +20,8 @@ pub use account::Account;
 pub use config::LiquidationConfig;
 pub use config::ReplicationConfig;
 pub use config::ShardConfig;
+pub use config::me_cmp_addrs_from_env;
+pub use config::parse_me_cmp_addrs;
 pub use funding::FundingConfig;
 pub use insurance::InsuranceFund;
 pub use lease::AdvisoryLease;

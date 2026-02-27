@@ -144,3 +144,41 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         },
     })
 }
+
+const BASE_ME_CMP: u16 = 9100;
+
+/// Parse a comma-separated ME CMP address string into a
+/// symbol_id → SocketAddr map. symbol_id = port - BASE_ME_CMP.
+pub fn parse_me_cmp_addrs(raw: &str) -> HashMap<u32, SocketAddr> {
+    let mut map = HashMap::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part.parse::<SocketAddr>() {
+            Ok(addr) => {
+                let sid =
+                    addr.port().saturating_sub(BASE_ME_CMP) as u32;
+                map.insert(sid, addr);
+            }
+            Err(e) => {
+                warn!(
+                    "skipping invalid ME addr '{}': {}",
+                    part, e
+                );
+            }
+        }
+    }
+    map
+}
+
+/// Read ME CMP addresses from env. Prefers `RSX_ME_CMP_ADDRS`
+/// (comma-separated), falls back to `RSX_ME_CMP_ADDR` (single),
+/// then defaults to `127.0.0.1:9110`.
+pub fn me_cmp_addrs_from_env() -> HashMap<u32, SocketAddr> {
+    let raw = std::env::var("RSX_ME_CMP_ADDRS")
+        .or_else(|_| std::env::var("RSX_ME_CMP_ADDR"))
+        .unwrap_or_else(|_| "127.0.0.1:9110".to_owned());
+    parse_me_cmp_addrs(&raw)
+}
