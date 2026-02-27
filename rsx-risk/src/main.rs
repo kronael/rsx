@@ -50,43 +50,6 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-/// Parse ME CMP addresses from env.
-///
-/// Reads `RSX_ME_CMP_ADDRS` (comma-separated), falls back
-/// to `RSX_ME_CMP_ADDR` (single addr). Returns a map from
-/// symbol_id (port - BASE_ME_CMP) to SocketAddr.
-const BASE_ME_CMP: u16 = 9100;
-
-fn parse_me_cmp_addrs() -> HashMap<u32, SocketAddr> {
-    let raw = std::env::var("RSX_ME_CMP_ADDRS")
-        .or_else(|_| std::env::var("RSX_ME_CMP_ADDR"))
-        .unwrap_or_else(|_| {
-            "127.0.0.1:9110".to_owned()
-        });
-    let mut map = HashMap::new();
-    for part in raw.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        match part.parse::<SocketAddr>() {
-            Ok(addr) => {
-                let port = addr.port();
-                let sid =
-                    port.saturating_sub(BASE_ME_CMP)
-                        as u32;
-                map.insert(sid, addr);
-            }
-            Err(e) => {
-                warn!(
-                    "skipping invalid ME addr '{}': {}",
-                    part, e
-                );
-            }
-        }
-    }
-    map
-}
 
 /// Backoff schedule (seconds) for shard crash-restarts.
 const RESTART_BACKOFF_SECS: &[u64] = &[
@@ -352,7 +315,7 @@ fn run_main(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_GW_CMP_ADDR");
-    let me_addrs = parse_me_cmp_addrs();
+    let me_addrs = rsx_risk::me_cmp_addrs_from_env();
     if me_addrs.is_empty() {
         return Err("no ME CMP addresses configured".into());
     }
@@ -940,7 +903,7 @@ fn run_replica(
 
     // Set up CMP receiver from MEs (same as main).
     // Use first ME addr as CMP peer for the receiver.
-    let me_addrs = parse_me_cmp_addrs();
+    let me_addrs = rsx_risk::me_cmp_addrs_from_env();
     if me_addrs.is_empty() {
         return Err(
             "no ME CMP addresses configured".into()

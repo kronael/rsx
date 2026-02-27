@@ -2,3 +2,4 @@
 - fixed rsx-marketdata multi-symbol: RSX_ME_CMP_ADDRS parsed into Vec<CmpReceiver>, one per ME, local port = me_port+400
 - rsx-risk: RSX_ME_CMP_ADDRS multi-symbol routing, HashMap<u32,CmpSender>, cancel+order routed by symbol_id, replicas fixed
 - verified build_spawn_plan passes RSX_ME_CMP_ADDRS (plural) to risk primary, replicas, and marketdata
+- verified singular RSX_ME_CMP_ADDR compat: extracted parse_me_cmp_addrs into both config.rs, 9 tests pass (5 risk, 4 marketdata)

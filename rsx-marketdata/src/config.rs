@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 pub struct MarketDataConfig {
     pub listen_addr: String,
     pub max_symbols: usize,
@@ -108,4 +110,27 @@ pub fn load_marketdata_config() -> MarketDataConfig {
             10,
         ) * 1000,
     }
+}
+
+/// Parse a comma-separated ME CMP address string into a Vec.
+pub fn parse_me_cmp_addrs(raw: &str) -> Vec<SocketAddr> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse().unwrap_or_else(|_| {
+                panic!("invalid ME CMP addr: {}", s)
+            })
+        })
+        .collect()
+}
+
+/// Read ME CMP addresses from env. Prefers `RSX_ME_CMP_ADDRS`
+/// (comma-separated), falls back to `RSX_ME_CMP_ADDR` (single),
+/// then defaults to `127.0.0.1:9100`.
+pub fn me_cmp_addrs_from_env() -> Vec<SocketAddr> {
+    let raw = std::env::var("RSX_ME_CMP_ADDRS")
+        .or_else(|_| std::env::var("RSX_ME_CMP_ADDR"))
+        .unwrap_or_else(|_| "127.0.0.1:9100".to_owned());
+    parse_me_cmp_addrs(&raw)
 }

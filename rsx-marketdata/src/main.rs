@@ -19,7 +19,6 @@ use rsx_types::install_panic_handler;
 use rsx_types::time::time_ms;
 use rsx_types::time::time_ns;
 use std::cell::RefCell;
-use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -139,22 +138,7 @@ fn main() {
 
     let state = Rc::new(RefCell::new(state));
 
-    // Parse ME CMP addresses: RSX_ME_CMP_ADDRS (comma-sep)
-    // falls back to RSX_ME_CMP_ADDR for backwards compat.
-    let me_addrs_str = env::var("RSX_ME_CMP_ADDRS")
-        .unwrap_or_else(|_| {
-            env::var("RSX_ME_CMP_ADDR")
-                .unwrap_or_else(|_| "127.0.0.1:9100".into())
-        });
-    let me_addrs: Vec<SocketAddr> = me_addrs_str
-        .split(',')
-        .map(|s| {
-            s.trim()
-                .parse()
-                // SAFETY: fail-fast at startup
-                .expect("invalid ME CMP addr")
-        })
-        .collect();
+    let me_addrs = rsx_marketdata::config::me_cmp_addrs_from_env();
 
     // One CmpReceiver per ME. Local bind port derived from
     // ME port: BASE_MD_CMP(9500) = BASE_ME_CMP(9100) + 400.
@@ -177,7 +161,7 @@ fn main() {
         "marketdata started on {} subscribing to {} ME(s): {}",
         config.listen_addr,
         cmp_receivers.len(),
-        me_addrs_str,
+        me_addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(","),
     );
 
     // Run monoio event loop
