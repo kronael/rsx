@@ -24,3 +24,4 @@ phase: executing
 - `15:18:59` done: Strip sim mode from rsx-playground/server.py. Delete globals (22 files, +262/-555)
 - `15:19:28` done: Clean up tests and docs. In rsx-playground/tests/: remove al (22 files, +380/-538)
 - `15:20:20` judge skip: Clean up tests and docs. In rsx-playgrou
+- `15:28` Replace in-process stress with managed subprocess: complete — stress.py created with all env vars/SIGTERM handling; server.py has do_stress_start/stop, _topo_stress, three /api/stress/* routes following maker pattern, old globals removed.
