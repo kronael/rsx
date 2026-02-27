@@ -26,7 +26,7 @@ echo "==> running cargo bench --workspace"
 cargo bench --workspace
 
 # Collect current results
-declare -A CURRENT
+declare -A CURRENT=()
 while IFS= read -r f; do
     name=$(echo "$f" \
         | sed 's|target/criterion/||' \

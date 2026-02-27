@@ -2,3 +2,4 @@
 - added scripts/bench-gate.sh (bash+jq Criterion regression gate) and bench-gate/bench-save Makefile targets
 - added /api/gateway-mode endpoint, /x/gateway-mode HTMX badge, and pytest tests
 - defended bench-gate.sh against zero-baseline division (inf/nan edge case)
+- fixed declare -A CURRENT=() so empty-bench path exits 1 with actionable error under set -u; confirmed 8 bench targets all have source files
