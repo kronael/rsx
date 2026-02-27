@@ -55,19 +55,20 @@
     "id": "e0013950-9f3e-4b25-bdc0-a979588f36d6",
     "description": "Clean up tests and docs. In rsx-playground/tests/: remove all assertions that accept \"simulated\" as a valid status; remove sim-only test cases from api_e2e_test.py, api_integration_test.py, api_orders_test.py, test_order_api.py, api_maker_test.py; remove sim assertions from play_safety.spec.ts and play_guarantees.spec.ts; add gateway-down \u2192 error/503 assertions to api_orders_test.py where the old sim fallback was tested. Update docs: remove rsx-sim from TODO.md and Makefile references, update FEATURES.md (rsx-sim \u2192 stress.py), update PROGRESS.md (rsx-sim deleted), remove \"Sim-mode\" from TESTING.md. Acceptance: `pytest tests/api_e2e_test.py` passes; no test file contains \"simulated\" as an accepted status string; docs reflect current state.",
     "files": [],
-    "status": "running",
+    "status": "completed",
     "created_at": "2026-02-27T15:15:34.830844",
     "retries": 0,
     "error": "",
-    "result": "",
+    "result": "Done.",
     "summary": "",
-    "session_id": "",
+    "session_id": "e456d2d2-cb8b-4de8-b2ef-ea1c791c8b87",
     "depends_on": [
       "e20b4c4f-d16e-4dec-8337-80ed18b8cadf",
       "097903ad-4bcd-493e-9597-5b2cc068e396"
     ],
     "followups": [],
     "worker": "auto",
-    "started_at": "2026-02-27T15:15:34.836188"
+    "started_at": "2026-02-27T15:15:34.836188",
+    "completed_at": "2026-02-27T15:19:28.105700"
   }
 ]
