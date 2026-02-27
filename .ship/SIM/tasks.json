@@ -20,17 +20,18 @@
     "id": "e20b4c4f-d16e-4dec-8337-80ed18b8cadf",
     "description": "Strip sim mode from rsx-playground/server.py. Delete globals _sim_book, _sim_wal_events, _sim_seq; functions _seed_sim_book() and _sim_submit(); and every callsite: _seed_sim_book() in lifespan startup, sim fallback in POST /api/orders/test (return error \"gateway not running\" instead), _sim_wal_events merge in GET /x/wal-events, _seed_sim_book fallbacks in x_book/x_book_stats/api_book, _sim_book read in GET /v1/orders, insurance fund \"simulated\" hardcoded fallback, and mark prices \"sim\" source fallback. No endpoint may return simulated data \u2014 all return real WAL/maker data or empty. Acceptance: grep -r \"sim\" server.py returns no sim-data references; POST /api/orders/test with gateway offline returns an error response.",
     "files": [],
-    "status": "running",
+    "status": "completed",
     "created_at": "2026-02-27T15:15:34.830805",
     "retries": 0,
     "error": "",
-    "result": "",
+    "result": "Committed. Two commits:\n- `85557bc` \u2014 sim mode removal + tests + .ship/SIM artifacts\n- `f43a2df` \u2014 ship progress log update",
     "summary": "",
-    "session_id": "",
+    "session_id": "29cc6a90-409d-4920-93aa-1e225ea90718",
     "depends_on": [],
     "followups": [],
     "worker": "w1",
-    "started_at": "2026-02-27T15:15:34.834042"
+    "started_at": "2026-02-27T15:15:34.834042",
+    "completed_at": "2026-02-27T15:18:59.609196"
   },
   {
     "id": "097903ad-4bcd-493e-9597-5b2cc068e396",
