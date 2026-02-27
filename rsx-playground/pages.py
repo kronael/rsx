@@ -752,25 +752,40 @@ def wal_page():
   </label>
   <label class="cursor-pointer">
     <input type="radio" name="wal-filter-r"
-      value="MARGIN_CHECK" class="sr-only peer">
+      value="MARK_PRICE" class="sr-only peer">
+    <span class="peer-checked:bg-purple-600
+      peer-checked:text-white bg-zinc-700 text-zinc-300
+      px-2 py-1 rounded text-xs font-medium
+      hover:bg-zinc-600 transition-colors block">
+      MARK_PRICE</span>
+  </label>
+  <label class="cursor-pointer">
+    <input type="radio" name="wal-filter-r"
+      value="ORDER_DONE" class="sr-only peer">
     <span class="peer-checked:bg-amber-600
       peer-checked:text-white bg-zinc-700 text-zinc-300
       px-2 py-1 rounded text-xs font-medium
       hover:bg-zinc-600 transition-colors block">
-      MARGIN_CHECK</span>
+      ORDER_DONE</span>
   </label>
 </div>
 <script>
 document.querySelectorAll('input[name="wal-filter-r"]')
   .forEach(function(r) {
     r.addEventListener('change', function() {
-      document.getElementById('wal-filter').value
+      document.getElementById('wal-filter-val').value
         = this.value;
+      htmx.trigger(
+        document.querySelector('[hx-get="./x/wal-timeline"]'),
+        'load');
     });
   });
 </script>
+<input type="hidden" id="wal-filter-val" name="filter"
+  value="">
 <div class="max-h-64 overflow-y-auto"
   hx-get="./x/wal-timeline" hx-trigger="load, every 2s"
+  hx-include="#wal-filter-val"
   hx-swap="innerHTML">
   <span class="text-slate-600">loading...</span>
 </div>""",

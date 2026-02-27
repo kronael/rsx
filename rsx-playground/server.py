@@ -2835,12 +2835,20 @@ async def x_wal_rotation():
 
 
 @app.get("/x/wal-timeline", response_class=HTMLResponse)
-async def x_wal_timeline():
+async def x_wal_timeline(
+    filter: str = Query("", alias="filter"),
+):
     all_records = []
     for stream_dir in _wal_stream_dirs():
         all_records.extend(parse_wal_records(stream_dir))
     # merge simulated events (gateway offline)
     all_records.extend(_sim_wal_events)
+    if filter:
+        f_lower = filter.lower()
+        all_records = [
+            r for r in all_records
+            if r.get("type_name", "") == f_lower
+        ]
     all_records.sort(
         key=lambda r: r.get("seq", 0), reverse=True)
     return HTMLResponse(
