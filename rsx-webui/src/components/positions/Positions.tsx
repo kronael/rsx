@@ -280,6 +280,9 @@ interface Props {
 
 export function Positions({ send }: Props) {
   const positions = useTradingStore((s) => s.positions);
+  const positionsLoaded = useTradingStore(
+    (s) => s.positionsLoaded,
+  );
   const symbols = useMarketStore((s) => s.symbols);
   const [closing, setClosing] = useState<
     UserPosition | null
@@ -318,6 +321,14 @@ export function Positions({ send }: Props) {
     () => setClosing(null),
     [],
   );
+
+  if (!positionsLoaded) {
+    return (
+      <div className="flex items-center justify-center
+        h-full text-text-secondary text-sm"
+      />
+    );
+  }
 
   if (positions.length === 0) {
     return (
