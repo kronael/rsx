@@ -22,3 +22,4 @@ phase: executing
 
 - `15:48:39` adv challenge: Verify that `do_stress_start` in `server.py` spawn
 - `15:48:39` adv challenge: Verify that `GET /x/wal-events` in `server.py` doe
+- 15:49 subprocess parity check: confirmed — `do_stress_start` (line 4380) uses identical `managed[STRESS_NAME]` pattern, PID file write (4418), and `pipe_output()` call (4420) as `do_maker_start`; task complete.
