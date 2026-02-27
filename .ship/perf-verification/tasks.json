@@ -37,16 +37,17 @@
     "id": "51ddcc70-689c-47f3-9c5b-668f16e79069",
     "description": "Add `GET /api/gateway-mode` to `rsx-playground/server.py`\nusing the existing `_probe_gateway_tcp()` coroutine \u2014 return\n`{\"mode\": \"live\" if reachable else \"offline\", \"url\": GATEWAY_URL}`. Then\nadd an HTMX badge to the overview partial in `rsx-playground/pages.py`:\n`&lt;span hx-get=\"/api/gateway-mode\" hx-trigger=\"load\" hx-target=\"this\"&gt;GW:\nchecking...&lt;/span&gt;` that renders green for live, amber for offline. Add\n`test_api_gateway_mode` to `rsx-playground/tests/api_e2e_test.py`: GET\n`/api/gateway-mode`, assert 200, `data[\"mode\"] in (\"live\", \"offline\")`,\n`\"url\" in data`. Acceptance: curl returns valid JSON, pytest test passes,\noverview page renders badge without error.",
     "files": [],
-    "status": "running",
+    "status": "completed",
     "created_at": "2026-02-27T21:55:46.287946",
     "retries": 0,
     "error": "",
-    "result": "",
+    "result": "Done. Committed `[test] Add latency and gateway-mode pytest tests`.",
     "summary": "",
-    "session_id": "",
+    "session_id": "dcabb6c6-39dc-498c-b132-94b1021e946e",
     "depends_on": [],
     "followups": [],
     "worker": "auto",
-    "started_at": "2026-02-27T21:55:46.291437"
+    "started_at": "2026-02-27T21:55:46.291437",
+    "completed_at": "2026-02-27T21:57:18.031803"
   }
 ]

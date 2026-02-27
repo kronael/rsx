@@ -39,6 +39,7 @@ skipped Playwright tests in this file, zero vacuous assertions, pytest passes.
 ## log
 
 - 22:05 w1 fix play_latency.spec.ts: partial — three required tests added and `test_api_latency` added to pytest, but old tests were NOT removed; file still has 10 tests including multiple that skip on 404 (recent-orders, live-fills, wal-timeline), violating the "exactly three tests" and "zero skipped" acceptance criteria.
+- 21:57 w0 bench-gate.sh: complete — `scripts/bench-gate.sh` created with all six required behaviors (run benchmarks, walk criterion results, compare baseline, print table, exit 1 on >10% regression, save on --save-baseline or missing baseline) and both Makefile targets added.
 
 - w2: Add `GET /api/gateway-mode` to `rsx-playground/server.py`
 using the existing `_probe_gateway_tcp()` coroutine — return
