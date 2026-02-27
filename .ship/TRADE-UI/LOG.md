@@ -3,3 +3,4 @@
 - Positions: positionsLoaded flag (blank→empty state), 150ms fill delay for WAL timing
 - fixed positions: removed bogus gateway subscribe, set positionsLoaded=true on REST error
 - send {N:[positions,orders,fills]} subscribe frame on private WS connect
+- nginx /etc/nginx/sites-enabled/rsx already has WS upgrade headers; root cause is not nginx — remaining work is rsx-webui positions/reconnect/status
