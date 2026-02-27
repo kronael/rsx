@@ -70,7 +70,7 @@ def test_orders_test_gateway_down_queues_order(client, gw_down):
 
 
 def test_orders_test_gateway_down_order_has_error_status(client, gw_down):
-    """Order stored with sim status when gateway is unreachable."""
+    """Order stored with error status when gateway is unreachable."""
     client.post("/api/orders/test", data={})
     assert recent_orders[0]["status"] in (
         "accepted", "filled", "error"
