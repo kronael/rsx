@@ -29,3 +29,4 @@ phase: executing
 - `18:35:09` done: Verify that `build_spawn_plan()` in `start` actually passes  (2 files, +12/-61)
 - `18:38:06` adv fail: resetting
 - `18:38:11` retry: Verify that the single-addr backward-compatibility
+- `18:39` task: Complete — 7+6=13 tests added to rsx-risk and rsx-marketdata, all pass; `env_singular_addr_no_default` confirms singular `RSX_ME_CMP_ADDR` is used and no silent default is applied.
