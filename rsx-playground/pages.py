@@ -3209,6 +3209,8 @@ def render_book_stats(symbols):
             'no book data yet (waiting for orders)</span>')
     rows = []
     for sid, bbo in sorted(symbols.items()):
+        if sid not in SYMBOL_CONFIG:
+            continue
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
         bid_raw = bbo.get("bid_px", 0)
         ask_raw = bbo.get("ask_px", 0)
