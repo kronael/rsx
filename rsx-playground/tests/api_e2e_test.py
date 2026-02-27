@@ -164,18 +164,12 @@ def test_api_orders_random_post(client):
     assert "5 random orders" in resp.text
 
 
-@pytest.mark.allow_5xx
-def test_api_orders_stress_post(client):
-    """POST /api/stress/run returns JSON response."""
-    resp = client.post("/api/stress/run")
-    # 502 expected when gateway not running
-    assert resp.status_code in (200, 502)
+def test_api_stress_status(client):
+    """GET /api/stress/status returns JSON."""
+    resp = client.get("/api/stress/status")
+    assert resp.status_code == 200
     data = resp.json()
-    if resp.status_code == 200:
-        assert data.get("status") == "completed"
-        assert "results" in data
-    else:
-        assert "error" in data
+    assert "running" in data
 
 
 def test_api_orders_invalid_post(client):
