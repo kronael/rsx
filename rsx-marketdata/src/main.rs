@@ -318,6 +318,7 @@ fn main() {
             }
 
             cmp_receiver.tick();
+            } // for cmp_receiver
 
             let now = time_ns();
             if now.saturating_sub(last_heartbeat_ns) >= heartbeat_interval_ns {
