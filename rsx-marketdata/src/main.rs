@@ -139,25 +139,39 @@ fn main() {
 
     let state = Rc::new(RefCell::new(state));
 
-    let mkt_addr: SocketAddr =
-        env::var("RSX_MKT_CMP_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9103".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_MKT_CMP_ADDR");
-    let me_addr: SocketAddr =
-        env::var("RSX_ME_CMP_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9100".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_ME_CMP_ADDR");
+    // Parse ME CMP addresses: RSX_ME_CMP_ADDRS (comma-sep)
+    // falls back to RSX_ME_CMP_ADDR for backwards compat.
+    let me_addrs_str = env::var("RSX_ME_CMP_ADDRS")
+        .unwrap_or_else(|_| {
+            env::var("RSX_ME_CMP_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:9100".into())
+        });
+    let me_addrs: Vec<SocketAddr> = me_addrs_str
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .parse()
+                // SAFETY: fail-fast at startup
+                .expect("invalid ME CMP addr")
+        })
+        .collect();
 
-    // CMP/UDP: receive events from ME
-    let mut cmp_receiver = CmpReceiver::new(
-        mkt_addr, me_addr, 0,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind marketdata CMP");
+    // One CmpReceiver per ME. Local bind port derived from
+    // ME port: BASE_MD_CMP(9500) = BASE_ME_CMP(9100) + 400.
+    let mut cmp_receivers: Vec<CmpReceiver> = me_addrs
+        .iter()
+        .map(|me_addr| {
+            let md_port = me_addr.port() + 400;
+            let bind_addr: SocketAddr =
+                format!("127.0.0.1:{}", md_port)
+                    .parse()
+                    // SAFETY: fail-fast at startup
+                    .expect("invalid MD CMP bind addr");
+            CmpReceiver::new(bind_addr, *me_addr, 0)
+                // SAFETY: fail-fast at startup
+                .expect("failed to bind marketdata CMP")
+        })
+        .collect();
 
     info!(
         "marketdata started on {}",
@@ -212,7 +226,9 @@ fn main() {
         const BOOK_TTL_NS: u64 = 60_000_000_000;
 
         loop {
-            while let Some((hdr, payload)) = cmp_receiver.try_recv()
+            for cmp_receiver in &mut cmp_receivers {
+            while let Some((hdr, payload)) =
+                cmp_receiver.try_recv()
             {
                 // Seq gap detection: extract seq from payload
                 // and check for gaps. On gap, resend snapshot.
