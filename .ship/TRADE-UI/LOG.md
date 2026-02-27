@@ -1,8 +1,0 @@
-- added RECONNECTING/OFFLINE WsStatus, code-1013 detection in onclose, exponential backoff retained, connection status label (live/connecting/reconnecting/offline) in TopBar
-- installed nginx, created /etc/nginx/sites-available/rsx with WS upgrade headers (proxy_http_version 1.1, Upgrade, Connection, read_timeout 3600s) on /ws/private and /ws/public; docs proxied to 127.0.0.1:49171/docs (200 verified)
-- fetch positions via REST on private WS connect and after each fill; Positions shows 'No open positions' when empty
-- restarted playground with venv python so WS routes load; verified /ws/public + /ws/private return 101 through nginx; /docs → 200 via redirect
-- verified backoff cap: 30s reached on 6th failure and held; no closure/reset bug in retryRef mutation (lines 107-109 usePrivateWs.ts)
-- verified /docs nginx→playground route: no mismatch, docs files exist, 307→200 chain works
-- verified hbRef cleanup: clearInterval called in onclose before reconnect, no dual-interval possible
-- verified fetchPositions() called in onopen on every reconnect: no first-connect guard, no stale closure, fresh connect() on each onclose timeout
