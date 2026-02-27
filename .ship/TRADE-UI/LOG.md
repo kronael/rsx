@@ -4,3 +4,4 @@
 - fixed positions: removed bogus gateway subscribe, set positionsLoaded=true on REST error
 - send {N:[positions,orders,fills]} subscribe frame on private WS connect
 - nginx /etc/nginx/sites-enabled/rsx already has WS upgrade headers; root cause is not nginx — remaining work is rsx-webui positions/reconnect/status
+- verified: playground circuit breaker does not silently interfere with /ws/public proxying; proxy fails loudly with code 1013 when marketdata unreachable; subscriber auto-restarts every 2s via process watcher
