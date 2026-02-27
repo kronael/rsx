@@ -1,22 +1,18 @@
 # PROGRESS
 
-updated: Feb 27 22:04:07  
+updated: Feb 27 22:04:44  
 phase: executing
 
 ```
-[████████████████████████░░░░░░] 80%  4/5
+[██████████████████████████████] 100%  5/5
 ```
 
 | | count |
 |---|---|
-| completed | 4 |
-| running | 1 |
+| completed | 5 |
+| running | 0 |
 | pending | 0 |
 | failed | 0 |
-
-## workers
-
-- w0: Verify that `make bench-gate` with no pre-existing `target/criterion/` directory exits with a non-zero status code and an actionable error message rather than silently saving an empty baseline. The script runs `cargo bench --workspace` and then checks `${#CURRENT[@]} -eq 0` — but if the workspace has no `[[bench]]` sections in any `Cargo.toml` or if `cargo bench` exits 0 with no output, the script exits 1 with "no criterion results found". Confirm the workspace bench targets are correctly declared so this path is unreachable during normal use.
 
 ## log
 
@@ -30,4 +26,4 @@ us (14 files, +414/-105)
 - `22:01:57` adv challenge: Verify that `make bench-gate` with no pre-existing
 - `22:02:48` done: Verify that `bench-gate.sh` is protected against floating-po (4 files, +52/-36)
 - `22:03:37` judge skip: Verify that `bench-gate.sh` is protected
-- 22:04 Verify make bench-gate exits non-zero with no baseline: incomplete — worker only fixed a `declare -A` crash under `set -u` but did not verify the no-baseline exit behavior nor confirm `[[bench]]` targets are declared in Cargo.toml files.
+- `22:04:09` done: Verify that `make bench-gate` with no pre-existing `target/c (4 files, +57/-38)
