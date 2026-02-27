@@ -2847,7 +2847,7 @@ async def x_wal_timeline(
         f_lower = filter.lower()
         all_records = [
             r for r in all_records
-            if r.get("type_name", "") == f_lower
+            if r.get("type", "") == f_lower
         ]
     all_records.sort(
         key=lambda r: r.get("seq", 0), reverse=True)
