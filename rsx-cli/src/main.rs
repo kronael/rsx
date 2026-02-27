@@ -55,6 +55,12 @@ enum Commands {
         /// Follow WAL for new records (not yet implemented)
         #[arg(long, conflicts_with = "stats")]
         follow: bool,
+        /// Divide raw i64 prices by this for text display
+        #[arg(long)]
+        tick_size: Option<f64>,
+        /// Divide raw i64 quantities by this for text display
+        #[arg(long)]
+        lot_size: Option<f64>,
     },
     /// Dump a single WAL file as JSON lines
     Dump {
@@ -118,6 +124,28 @@ impl Filters {
             }
         }
         true
+    }
+}
+
+struct DisplayScale {
+    tick: f64,
+    lot: f64,
+}
+
+impl DisplayScale {
+    fn new(tick_size: Option<f64>, lot_size: Option<f64>) -> Self {
+        DisplayScale {
+            tick: tick_size.unwrap_or(1.0),
+            lot: lot_size.unwrap_or(1.0),
+        }
+    }
+
+    fn px(&self, raw: i64) -> f64 {
+        raw as f64 / self.tick
+    }
+
+    fn qty(&self, raw: i64) -> f64 {
+        raw as f64 / self.lot
     }
 }
 
