@@ -169,6 +169,14 @@ stacked bugs — missing env vars, TLS not compiled in, symbol name
 mismatch — each masked by the previous. Why silent error handling
 is the real bug.
 
+**[The Finalize Round](27-finalize-round.md)**
+
+Multi-angle audit methodology for shipping polished
+systems. Spawn parallel agents checking visual
+completeness, data flow, WebSocket health, error
+handling. Cross-reference specs. Every manual check
+becomes a test.
+
 ## Topics Covered
 
 - Ultra-low-latency design (<50us end-to-end, 100ns matching)
