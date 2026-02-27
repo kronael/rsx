@@ -7,6 +7,7 @@ import { WsStatus } from "../lib/types";
 import { useConnectionStore } from "../store/connection";
 import { useTradingStore } from "../store/trading";
 import { useToastStore } from "../lib/toast";
+import { fetchPositions } from "./useRestApi";
 
 export function usePrivateWs() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -51,6 +52,10 @@ export function usePrivateWs() {
             wsRef.current.send(heartbeat());
           }
         }, 5000);
+        fetchPositions().then((pos) => {
+          if (!mounted) return;
+          useTradingStore.getState().setPositions(pos);
+        }).catch(() => {/* positions unavailable */});
       };
 
       ws.onmessage = (ev) => {
@@ -67,6 +72,10 @@ export function usePrivateWs() {
           useTradingStore.getState().addFill({
             takerOid, makerOid, price, qty, ts, fee,
           });
+          fetchPositions().then((pos) => {
+            if (!mounted) return;
+            useTradingStore.getState().setPositions(pos);
+          }).catch(() => {/* ignore */});
         } else if ("E" in msg) {
           console.error(
             `ws private error: ${msg.E[0]} ${msg.E[1]}`,
