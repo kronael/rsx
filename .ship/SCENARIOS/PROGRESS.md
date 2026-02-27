@@ -1,6 +1,6 @@
 # PROGRESS
 
-updated: Feb 27 18:38:01  
+updated: Feb 27 18:39:16  
 phase: executing
 
 ```
@@ -16,7 +16,7 @@ phase: executing
 
 ## workers
 
-- w0: Verify that the single-addr backward-compatibility path works: when `RSX_ME_CMP_ADDR` (singular) is set and `RSX_ME_CMP_ADDRS` is absent, both `rsx-risk` and `rsx-marketdata` parse exactly one address and operate correctly. Confirm neither crate silently uses the default `127.0.0.1:9100` instead of the provided singular addr.
+- w1: Verify that the single-addr backward-compatibility path works: when `RSX_ME_CMP_ADDR` (singular) is set and `RSX_ME_CMP_ADDRS` is absent, both `rsx-risk` and `rsx-marketdata` parse exactly one address and operate correctly. Confirm neither crate silently uses the default `127.0.0.1:9100` instead of the provided singular addr.
 
 ## log
 
@@ -27,3 +27,5 @@ phase: executing
 - `18:34:36` adv challenge: Verify that `build_spawn_plan()` in `start` actual
 - `18:34:36` adv challenge: Verify that the single-addr backward-compatibility
 - `18:35:09` done: Verify that `build_spawn_plan()` in `start` actually passes  (2 files, +12/-61)
+- `18:38:06` adv fail: resetting
+- `18:38:11` retry: Verify that the single-addr backward-compatibility
