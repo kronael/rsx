@@ -1,12 +1,5 @@
 # TODO
 
-## Critical
-
-- [ ] Trade UI: "Market data WS disconnected" / "Private
-      WS disconnected" — trade SPA can't reach gateway
-      or marketdata WS through nginx proxy. Check CORS,
-      WS upgrade path.
-
 ## Latency pipeline (from perf-verification.md)
 
 - [ ] Fix play_latency tests: remove skip-on-404, assert
@@ -24,6 +17,10 @@
       with replicas — not implemented
 - [ ] "stress" scenario — not implemented
 
+## rsx-sim
+
+- [ ] Stub only — load generator not implemented
+
 ## Trade UI
 
 - [ ] Docs page 502 through nginx (works on direct port)
@@ -31,11 +28,6 @@
 - [ ] WS reconnect logic may be broken or proxy strips
       upgrade headers
 
-## Done
+## CLI
 
-- [x] Position SQL: `p.quantity` → `long_qty - short_qty`
-- [x] Position SQL: `taker_uid` → `taker_user_id`,
-      include maker side fills
-- [x] Funding SQL: `funding_payments` → `funding`
-- [x] Stale orders TypeError: `ts` stored as string,
-      arithmetic with float
+- [ ] RECORD_LIQUIDATION field decoding in rsx-cli

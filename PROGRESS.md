@@ -1,32 +1,44 @@
 # PROGRESS
 
-updated: Feb 22 19:44:37  
-phase: executing
+updated: Feb 27 2026
 
-```
-[██████████████████████████████] 100%  8/8
-```
+## Status: ~99% complete
 
-| | count |
-|---|---|
-| completed | 8 |
-| running | 0 |
-| pending | 0 |
-| failed | 0 |
+| Metric | Value |
+|--------|-------|
+| Crates | 9 |
+| Rust tests | ~570 |
+| Python e2e | 85 |
+| Playwright | 228 |
+| LOC (Rust) | ~21k |
 
-## log
+## Crate Status
 
-- `19:34:56` done: added pid to /api/status maker key (48 files, +3841/-6190)
-- `19:35:06` done: verified 4 Live Orderbook tests already present (48 files, +3843/-6191)
-- `19:35:06` done: verified 6 tests already present in play_maker.spec.ts (48 files, +3843/-6191)
-- `19:37:02` +1 from replanner
-- `19:37:55` done: replaced 4 api tests with page-locator DOM assertions (48 files, +3896/-6182)
-- `19:38:17` judge skip: Replace the 4 Live Orderbook tests in rs
-- `19:40:58` adv challenge: Verify that `play_maker.spec.ts` "Orderbook depth 
-- `19:40:58` adv challenge: Verify that `server.py` `GET /api/book/10` returns
-- `19:41:22` done: verified 4s sleep present, no fix needed (48 files, +3919/-6164)
-- `19:41:33` done: verified no string/number bug in /api/book schema (48 files, +3919/-6164)
-- `19:43:20` adv challenge: Verify that `playwright.config.ts` places the `mar
-- `19:43:20` adv challenge: Verify that `global-setup.ts` polls `/api/maker/st
-- `19:43:48` done: verified global-setup.ts maker poll is strictly sequential, no race condition (48 files, +3943/-6146)
-- `19:43:53` done: added market-maker dependency to trade-ui project (48 files, +3943/-6146)
+| Crate | Status | Notes |
+|-------|--------|-------|
+| rsx-types | 100% | newtypes, config, validation |
+| rsx-book | 100% | snapshot save/load, 9 tests |
+| rsx-matching | 100% | dedup, BBO, CONFIG_APPLIED |
+| rsx-dxs | 99% | WAL dump works, missing payload decode |
+| rsx-gateway | 97% | JWT, rate limit, circuit breaker |
+| rsx-risk | 99% | replication done, PG tests #[ignore] |
+| rsx-marketdata | 98% | seq gap detection done |
+| rsx-mark | 100% | Binance/Coinbase aggregation |
+| rsx-recorder | 100% | daily rotation, buffered writes |
+| rsx-cli | 95% | WAL dump, missing LIQUIDATION decode |
+| rsx-maker | 100% | two-sided quoting, reconnect |
+| rsx-sim | stub | not implemented |
+
+## Playground
+
+- 14 tabs, 60+ API endpoints
+- All screens verified with live processes (Feb 27)
+- 10 bugs found and fixed during verification
+- See TESTING.md for details
+
+## Remaining Work
+
+- Latency pipeline (real gateway orders needed)
+- Scenarios: duo/full/stress not implemented
+- rsx-sim stub
+- CLI payload decoding (LIQUIDATION field decode)
