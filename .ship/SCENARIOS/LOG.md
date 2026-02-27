@@ -4,3 +4,4 @@
 - verified build_spawn_plan passes RSX_ME_CMP_ADDRS (plural) to risk primary, replicas, and marketdata
 - verified singular RSX_ME_CMP_ADDR compat: extracted parse_me_cmp_addrs into both config.rs, 9 tests pass (5 risk, 4 marketdata)
 - verified RSX_ME_CMP_ADDR singular backward-compat via env-var tests in rsx-risk and rsx-marketdata (7+6 tests pass)
+- verified replica block uses RSX_ME_CMP_ADDRS (same me_cmp_addrs var as primary)
