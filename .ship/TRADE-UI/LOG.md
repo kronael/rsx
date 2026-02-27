@@ -1,1 +1,2 @@
 - added RECONNECTING/OFFLINE WsStatus, code-1013 detection in onclose, exponential backoff retained, connection status label (live/connecting/reconnecting/offline) in TopBar
+- installed nginx, created /etc/nginx/sites-available/rsx with WS upgrade headers (proxy_http_version 1.1, Upgrade, Connection, read_timeout 3600s) on /ws/private and /ws/public; docs proxied to 127.0.0.1:49171/docs (200 verified)
