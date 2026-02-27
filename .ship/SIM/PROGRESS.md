@@ -24,3 +24,4 @@ phase: executing
 
 - `15:16:24` done: committed rsx-sim deletion (4 files, +0/-53)
 - `15:35` task: INCOMPLETE — mark prices endpoint still has a `"sim"` source fallback at line ~4914 (`# fall back to sim book for symbols without WAL data`, `"source": "sim"`); grep still returns sim-data references.
+- 15:19 task: MOSTLY COMPLETE — no "simulated" strings remain in test files, docs updated (rsx-sim removed), but gateway-down → error/503 assertions were NOT added to api_orders_test.py as required.

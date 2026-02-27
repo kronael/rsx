@@ -3383,9 +3383,6 @@ async def api_stats():
         1 for info in managed.values()
         if info["proc"].returncode is None
     )
-    active_stress = sum(
-        1 for t in stress_tasks.values() if not t.done()
-    )
     maker_running = _maker_running()
     try:
         mcfg = json.loads(MAKER_CONFIG.read_text())
@@ -3396,7 +3393,7 @@ async def api_stats():
         "orders_submitted": len(recent_orders),
         "uptime_s": uptime_s,
         "active_connections": running,
-        "active_stress": active_stress,
+        "active_stress": int(_stress_running()),
         "maker_running": maker_running,
         "maker_spread_bps": spread_bps,
     }
@@ -3411,9 +3408,6 @@ async def x_stats():
     running = sum(
         1 for info in managed.values()
         if info["proc"].returncode is None
-    )
-    active_stress = sum(
-        1 for t in stress_tasks.values() if not t.done()
     )
     maker_running = _maker_running()
     try:
