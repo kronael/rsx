@@ -3,3 +3,4 @@
 - fetch positions via REST on private WS connect and after each fill; Positions shows 'No open positions' when empty
 - restarted playground with venv python so WS routes load; verified /ws/public + /ws/private return 101 through nginx; /docs → 200 via redirect
 - verified backoff cap: 30s reached on 6th failure and held; no closure/reset bug in retryRef mutation (lines 107-109 usePrivateWs.ts)
+- verified /docs nginx→playground route: no mismatch, docs files exist, 307→200 chain works
