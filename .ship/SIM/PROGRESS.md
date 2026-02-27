@@ -1,43 +1,24 @@
 # PROGRESS
 
-updated: Feb 27 16:00:00
-phase: complete
+updated: Feb 27 15:48:59  
+phase: executing
 
 ```
-[██████████████████████████████] 100%  4/4
+[████████████████████░░░░░░░░░░] 67%  4/6
 ```
 
 | | count |
 |---|---|
 | completed | 4 |
-| running | 0 |
-| pending | 0 |
+| running | 1 |
+| pending | 1 |
 | failed | 0 |
 
-## assessment
+## workers
 
-**Goal met: ~100%**
+- w0: Verify that `do_stress_start` in `server.py` spawns `stress.py` as an external subprocess (not an in-process thread or asyncio task) using the same `managed[STRESS_NAME]` pattern as `do_maker_start`, including PID file write and `pipe_output()` call — read both functions side by side and confirm structural parity. A stress loop running in-process would violate the "managed subprocess" requirement.
 
-All four tasks completed and verified against the live codebase:
+## log
 
-1. **rsx-sim/ deleted** — directory gone, not in workspace Cargo.toml members.
-
-2. **Sim mode stripped from server.py** — `_sim_book`, `_sim_wal_events`,
-   `_sim_seq`, `_seed_sim_book()`, `_sim_submit()`, and all callsites removed.
-   `POST /api/orders/test` with gateway down returns an error, not simulated
-   data. `GET /x/wal-events` returns real WAL only.
-
-3. **Stress subprocess management** — `stress.py` entry point exists, reads
-   all six `RSX_STRESS_*` env vars, imports `stress_client.run_stress_test`,
-   prints stats every 5 s, writes JSON report to REPORT_DIR, handles SIGTERM/
-   SIGINT. `server.py` has `do_stress_start()`, `do_stress_stop()`,
-   `_topo_stress()`, and routes `POST /api/stress/start`,
-   `POST /api/stress/stop`, `GET /api/stress/status` — matching the maker
-   subprocess pattern exactly (PID file, pipe_output, managed dict).
-
-4. **Tests and docs clean** — no test file accepts "simulated" as a valid
-   status; `play_safety.spec.ts` and `play_guarantees.spec.ts` have no sim
-   assertions; docs contain no references to rsx-sim or Sim-mode.
-
-**Quality notes:** implementation is tight and follows the maker pattern
-faithfully. No issues found.
+- `15:48:39` adv challenge: Verify that `do_stress_start` in `server.py` spawn
+- `15:48:39` adv challenge: Verify that `GET /x/wal-events` in `server.py` doe
