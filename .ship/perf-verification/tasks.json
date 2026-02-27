@@ -54,17 +54,18 @@
     "id": "ab9177cb-c100-42f0-8c87-e83ba9e02832",
     "description": "Verify that `bench-gate.sh` is protected against floating-point division producing `inf` or `nan` in awk when `baseline_ns` is `0`. If a previous run saved a benchmark with `point_estimate: 0.0` (theoretically impossible but defensively important), `awk \"BEGIN { printf \\\"%.4f\\\", $current_ns / 0 }\"` produces `inf` and `fail_flag=$(awk \"BEGIN { print (inf > 1.10) ? 1 : 0 }\")` \u2014 verify this edge case is handled or that Criterion never emits zero estimates.",
     "files": [],
-    "status": "running",
+    "status": "completed",
     "created_at": "2026-02-27T22:01:57.674869",
     "retries": 0,
     "error": "",
-    "result": "",
+    "result": "Committed as `9a7b7c3`.",
     "summary": "",
-    "session_id": "",
+    "session_id": "262ef78d-e1c8-485e-9a2a-3c6063b03b54",
     "depends_on": [],
     "followups": [],
     "worker": "auto",
-    "started_at": "2026-02-27T22:01:57.675593"
+    "started_at": "2026-02-27T22:01:57.675593",
+    "completed_at": "2026-02-27T22:02:48.363064"
   },
   {
     "id": "89c21b94-8b4f-4449-8220-61afcb06b810",

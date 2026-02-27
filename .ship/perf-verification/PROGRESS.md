@@ -1,23 +1,22 @@
 # PROGRESS
 
-updated: Feb 27 22:02:42  
+updated: Feb 27 22:04:02  
 phase: executing
 
 ```
-[██████████████████░░░░░░░░░░░░] 60%  3/5
+[████████████████████████░░░░░░] 80%  4/5
 ```
 
 | | count |
 |---|---|
-| completed | 3 |
-| running | 2 |
+| completed | 4 |
+| running | 1 |
 | pending | 0 |
 | failed | 0 |
 
 ## workers
 
 - w0: Verify that `make bench-gate` with no pre-existing `target/criterion/` directory exits with a non-zero status code and an actionable error message rather than silently saving an empty baseline. The script runs `cargo bench --workspace` and then checks `${#CURRENT[@]} -eq 0` — but if the workspace has no `[[bench]]` sections in any `Cargo.toml` or if `cargo bench` exits 0 with no output, the script exits 1 with "no criterion results found". Confirm the workspace bench targets are correctly declared so this path is unreachable during normal use.
-- w1: Verify that `bench-gate.sh` is protected against floating-point division producing `inf` or `nan` in awk when `baseline_ns` is `0`. If a previous run saved a benchmark with `point_estimate: 0.0` (theoretically impossible but defensively important), `awk "BEGIN { printf \"%.4f\", $current_ns / 0 }"` produces `inf` and `fail_flag=$(awk "BEGIN { print (inf > 1.10) ? 1 : 0 }")` — verify this edge case is handled or that Criterion never emits zero estimates.
 
 ## log
 
@@ -29,3 +28,5 @@ that (1 (14 files, +390/-105)
 us (14 files, +414/-105)
 - `22:01:57` adv challenge: Verify that `bench-gate.sh` is protected against f
 - `22:01:57` adv challenge: Verify that `make bench-gate` with no pre-existing
+- `22:02:48` done: Verify that `bench-gate.sh` is protected against floating-po (4 files, +52/-36)
+- `22:03:37` judge skip: Verify that `bench-gate.sh` is protected
