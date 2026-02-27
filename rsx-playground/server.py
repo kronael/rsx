@@ -1942,6 +1942,20 @@ def _topo_client() -> dict:
     }
 
 
+def _topo_stress() -> dict:
+    running = _stress_running()
+    info = managed.get(STRESS_NAME)
+    pid = info["proc"].pid if running and info else "-"
+    p = _topo_proc(["stress"])
+    return {
+        "name": "Stress",
+        "status": "running" if running else "stopped",
+        "pid": pid,
+        "uptime": p.get("uptime", "-"),
+        "rows": [],
+    }
+
+
 _TOPO_HANDLERS: dict = {
     "client": _topo_client,
     "gateway": _topo_gateway,
@@ -1951,6 +1965,7 @@ _TOPO_HANDLERS: dict = {
     "mark": _topo_mark,
     "recorder": _topo_recorder,
     "maker": _topo_maker,
+    "stress": _topo_stress,
 }
 
 
@@ -4355,6 +4370,124 @@ async def api_orders_quick(request: Request):
     )
 
 
+# ── stress subprocess ────────────────────────────────────
+
+STRESS_SCRIPT = ROOT / "rsx-playground" / "stress.py"
+STRESS_NAME = "stress"
+
+
+def _stress_running() -> bool:
+    info = managed.get(STRESS_NAME)
+    if not info:
+        return False
+    return info["proc"].returncode is None
+
+
+async def do_stress_start(cfg: dict | None = None) -> bool:
+    """Start stress subprocess. Returns True if started."""
+    if _stress_running():
+        return True
+    if STRESS_NAME in managed:
+        del managed[STRESS_NAME]
+    if not STRESS_SCRIPT.exists():
+        return False
+    _scfg: dict = cfg or {}
+    env = {
+        "RSX_STRESS_GW_URL": _scfg.get(
+            "gw_url", GATEWAY_URL),
+        "RSX_STRESS_USERS": str(
+            _scfg.get("users", 10)),
+        "RSX_STRESS_RATE": str(
+            _scfg.get("rate", 1000)),
+        "RSX_STRESS_DURATION": str(
+            _scfg.get("duration", 60)),
+        "RSX_STRESS_TARGET_P99": str(
+            _scfg.get("target_p99", 50000)),
+        "RSX_STRESS_REPORT_DIR": str(
+            ROOT / "tmp" / "stress"),
+    }
+    full_env = {**os.environ, **env}
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(STRESS_SCRIPT),
+        env=full_env,
+        cwd=str(ROOT / "rsx-playground"),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    managed[STRESS_NAME] = {
+        "proc": proc,
+        "binary": str(STRESS_SCRIPT),
+        "env": env,
+    }
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    (PID_DIR / f"{STRESS_NAME}.pid").write_text(str(proc.pid))
+    asyncio.create_task(
+        pipe_output(STRESS_NAME, proc.stdout))
+    await asyncio.sleep(0.2)
+    if proc.returncode is not None:
+        del managed[STRESS_NAME]
+        (PID_DIR / f"{STRESS_NAME}.pid").unlink(
+            missing_ok=True)
+        return False
+    return True
+
+
+async def do_stress_stop() -> None:
+    await stop_process(STRESS_NAME)
+    (PID_DIR / f"{STRESS_NAME}.pid").unlink(missing_ok=True)
+
+
+@app.post("/api/stress/start")
+async def api_stress_start(request: Request):
+    if _stress_running():
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'stress already running</span>')
+    if not STRESS_SCRIPT.exists():
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'stress.py not found</span>')
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    ok = await do_stress_start(body)
+    if not ok:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'stress failed to start</span>')
+    pid = managed[STRESS_NAME]["proc"].pid
+    audit_log("/api/stress/start", "start stress")
+    return HTMLResponse(
+        '<span class="text-emerald-400 text-xs">'
+        f'stress started (pid {pid})</span>')
+
+
+@app.post("/api/stress/stop")
+async def api_stress_stop(request: Request):
+    if not _stress_running():
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'stress not running</span>')
+    await do_stress_stop()
+    audit_log("/api/stress/stop", "stop stress")
+    return HTMLResponse(
+        '<span class="text-amber-400 text-xs">'
+        'stress stopped</span>')
+
+
+@app.get("/api/stress/status")
+async def api_stress_status():
+    running = _stress_running()
+    info = managed.get(STRESS_NAME)
+    pid = info["proc"].pid if running and info else None
+    return {
+        "running": running,
+        "pid": pid,
+        "name": STRESS_NAME,
+    }
 
 
 @app.get("/api/stress/reports")
