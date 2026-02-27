@@ -805,3 +805,39 @@ def test_all_pages_no_blank_no_error(client):
         assert "Internal Server Error" not in resp.text, (
             f"{path} has server error"
         )
+
+
+def test_v1_positions_returns_list(client):
+    """GET /v1/positions returns JSON list."""
+    resp = client.get("/v1/positions?user_id=0")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_v1_fills_returns_list(client):
+    """GET /v1/fills returns JSON list."""
+    resp = client.get("/v1/fills?user_id=0")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_v1_account_no_negative_collateral(client):
+    """Account collateral must never be negative."""
+    resp = client.get("/v1/account?user_id=0")
+    data = resp.json()
+    assert float(data["collateral"]) >= 0
+    assert float(data["equity"]) >= 0
+    assert float(data["available"]) >= 0
+
+
+def test_v1_funding_zero_sum(client):
+    """Funding rates should sum to zero across users."""
+    resp = client.get("/v1/funding")
+    data = resp.json()
+    if isinstance(data, list) and data:
+        total = sum(e.get("amount", 0) for e in data)
+        assert total == 0, (
+            f"funding not zero-sum: {total}"
+        )

@@ -67,3 +67,10 @@
 - [ ] 44. /v1/funding endpoint returns JSON — `api_e2e_test.py::test_v1_funding_returns_json`
 - [ ] 45. 404 pages never show Python tracebacks — `api_e2e_test.py::test_no_stack_trace_on_404`
 - [ ] 46. All pages return >100B, no Internal Server Error — `api_e2e_test.py::test_all_pages_no_blank_no_error`
+
+## Spec Compliance (from GUARANTEES.md + REST.md audit)
+- [ ] 47. /v1/orders prices/qty human-readable — `api_e2e_test.py::test_v1_orders_human_readable_prices`
+- [ ] 48. /v1/positions returns JSON list — `api_e2e_test.py::test_v1_positions_returns_list`
+- [ ] 49. /v1/fills returns JSON list — `api_e2e_test.py::test_v1_fills_returns_list`
+- [ ] 50. Account collateral never negative — `api_e2e_test.py::test_v1_account_no_negative_collateral`
+- [ ] 51. Funding zero-sum across users — `api_e2e_test.py::test_v1_funding_zero_sum`
