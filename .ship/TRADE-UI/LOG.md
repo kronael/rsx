@@ -7,3 +7,5 @@
 - verified: playground circuit breaker does not silently interfere with /ws/public proxying; proxy fails loudly with code 1013 when marketdata unreachable; subscriber auto-restarts every 2s via process watcher
 - verified docs 502 fixed: nginx /docs → 49171 works, 307→200 through nginx
 - verified: x-user-id injection always falls back to hardcoded "1" (browsers cannot set arbitrary WS headers); fix plan is correct for single-user demo mode only; multi-user requires JWT extraction at proxy boundary
+- verified: server.py /docs and /docs/{path} bind on port 49171; nginx location /docs proxies to 127.0.0.1:49171 — paths match, no mismatch, 307 confirms working
+- fixed auth failure infinite retry: close code 4001 is now terminal in usePrivateWs.ts
