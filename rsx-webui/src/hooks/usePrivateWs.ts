@@ -107,6 +107,13 @@ export function usePrivateWs() {
       ws.onclose = (ev) => {
         if (!mounted) return;
         cleanup();
+        if (ev.code === 4001) {
+          setStatus(WsStatus.ERROR);
+          useToastStore.getState().add(
+            "Authentication failed — check credentials", "error",
+          );
+          return;
+        }
         if (ev.code === 1013) {
           setStatus(WsStatus.OFFLINE);
           useToastStore.getState().add(
