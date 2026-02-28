@@ -5,3 +5,5 @@
 - send {N:[positions,orders,fills]} subscribe frame on private WS connect
 - nginx /etc/nginx/sites-enabled/rsx already has WS upgrade headers; root cause is not nginx — remaining work is rsx-webui positions/reconnect/status
 - verified: playground circuit breaker does not silently interfere with /ws/public proxying; proxy fails loudly with code 1013 when marketdata unreachable; subscriber auto-restarts every 2s via process watcher
+- verified docs 502 fixed: nginx /docs → 49171 works, 307→200 through nginx
+- verified: x-user-id injection always falls back to hardcoded "1" (browsers cannot set arbitrary WS headers); fix plan is correct for single-user demo mode only; multi-user requires JWT extraction at proxy boundary
