@@ -5598,11 +5598,19 @@ async def ws_private_proxy(ws: WebSocket):
             async with session.ws_connect(
                 GATEWAY_URL, headers=headers,
             ) as upstream:
+                close_code: int = 1000
+                close_reason: str = ""
+
                 async def fwd_up():
+                    nonlocal close_code, close_reason
                     try:
                         async for msg in upstream:
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 await ws.send_text(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.CLOSE:
+                                close_code = msg.data
+                                close_reason = msg.extra or ""
+                                break
                             elif msg.type in (
                                 aiohttp.WSMsgType.CLOSED,
                                 aiohttp.WSMsgType.ERROR,
@@ -5622,6 +5630,8 @@ async def ws_private_proxy(ws: WebSocket):
                 await asyncio.gather(
                     fwd_up(), fwd_down(),
                     return_exceptions=True)
+                await ws.close(
+                    code=close_code, reason=close_reason)
     except (ConnectionRefusedError, OSError):
         await ws.close(code=1013,
                        reason="gateway not running")
@@ -5636,11 +5646,19 @@ async def ws_public_proxy(ws: WebSocket):
             async with session.ws_connect(
                 MARKETDATA_WS,
             ) as upstream:
+                close_code: int = 1000
+                close_reason: str = ""
+
                 async def fwd_up():
+                    nonlocal close_code, close_reason
                     try:
                         async for msg in upstream:
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 await ws.send_text(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.CLOSE:
+                                close_code = msg.data
+                                close_reason = msg.extra or ""
+                                break
                             elif msg.type in (
                                 aiohttp.WSMsgType.CLOSED,
                                 aiohttp.WSMsgType.ERROR,
@@ -5660,6 +5678,8 @@ async def ws_public_proxy(ws: WebSocket):
                 await asyncio.gather(
                     fwd_up(), fwd_down(),
                     return_exceptions=True)
+                await ws.close(
+                    code=close_code, reason=close_reason)
     except (ConnectionRefusedError, OSError):
         await ws.close(code=1013,
                        reason="marketdata not running")
