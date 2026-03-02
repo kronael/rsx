@@ -52,9 +52,6 @@ export function usePrivateWs() {
             wsRef.current.send(heartbeat());
           }
         }, 5000);
-        ws.send(JSON.stringify(
-          { N: ["positions", "orders", "fills"] },
-        ));
         fetchPositions().then((pos) => {
           if (!mounted) return;
           useTradingStore.getState().setPositions(pos);
