@@ -3,3 +3,4 @@
 - fixed positions U handler: discriminate position vs order updates in usePrivateWs; add updatePosition to trading store
 - reset retryRef.current to 1000 in onopen (not firstMsg) to fix backoff stall on silent auth failure
 - verified reconnect re-subscription: onopen always sends {N:[positions,orders,fills]}; gap: positions not cleared during reconnect window (stale until fetchPositions resolves)
+- verified 150ms re-fetch chain: /v1/positions hits playground local handler (not proxy), shape matches UserPosition, no gateway handler needed
