@@ -23,6 +23,7 @@ interface TradingStore {
   account: AccountState;
 
   setPositions: (p: UserPosition[]) => void;
+  updatePosition: (p: UserPosition) => void;
   setOrders: (o: UserOrder[]) => void;
   setAccount: (a: AccountState) => void;
   updateOrder: (
@@ -55,6 +56,28 @@ export const useTradingStore = create<TradingStore>(
     setPositions: (p) => set({
       positions: p,
       positionsLoaded: true,
+    }),
+    updatePosition: (p) => set((state) => {
+      const idx = state.positions.findIndex(
+        (x) => x.symbolId === p.symbolId,
+      );
+      if (p.qty === 0) {
+        // position closed
+        const positions = state.positions.filter(
+          (x) => x.symbolId !== p.symbolId,
+        );
+        return { positions, positionsLoaded: true };
+      }
+      if (idx >= 0) {
+        const positions = state.positions.map(
+          (x) => x.symbolId === p.symbolId ? p : x,
+        );
+        return { positions, positionsLoaded: true };
+      }
+      return {
+        positions: [...state.positions, p],
+        positionsLoaded: true,
+      };
     }),
     setOrders: (o) => set({ orders: o }),
     setAccount: (a) => set({ account: a }),
