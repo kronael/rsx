@@ -1,0 +1,2 @@
+- nginx /ws/ WS headers already present, /docs upstream correct; syntax ok
+- WS reconnect backoff + connection indicator already implemented; build clean
