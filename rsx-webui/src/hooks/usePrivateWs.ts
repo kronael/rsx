@@ -42,6 +42,7 @@ export function usePrivateWs() {
 
       ws.onopen = () => {
         if (!mounted) return;
+        retryRef.current = 1000;
         setStatus(WsStatus.CONNECTED);
         hbRef.current = setInterval(() => {
           if (
@@ -63,12 +64,7 @@ export function usePrivateWs() {
         });
       };
 
-      let firstMsg = true;
       ws.onmessage = (ev) => {
-        if (firstMsg) {
-          firstMsg = false;
-          retryRef.current = 1000;
-        }
         const msg = parseMessage(ev.data as string);
         if (!msg) return;
         if ("U" in msg) {
