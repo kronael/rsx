@@ -1,2 +1,3 @@
 - nginx /ws/ WS headers already present, /docs upstream correct; syntax ok
 - WS reconnect backoff + connection indicator already implemented; build clean
+- fixed positions U handler: discriminate position vs order updates in usePrivateWs; add updatePosition to trading store

@@ -72,10 +72,44 @@ export function usePrivateWs() {
         const msg = parseMessage(ev.data as string);
         if (!msg) return;
         if ("U" in msg) {
-          const [oid, status, filled, remaining] = msg.U;
-          useTradingStore.getState().updateOrder(
-            oid, status, filled, remaining,
-          );
+          const u = msg.U as unknown[];
+          // Position updates: entries are objects with type:"position"
+          if (
+            u.length > 0 &&
+            typeof u[0] === "object" &&
+            u[0] !== null &&
+            (u[0] as Record<string, unknown>).type ===
+              "position"
+          ) {
+            const store = useTradingStore.getState();
+            for (const entry of u) {
+              const p = entry as {
+                type: string;
+                symbolId: number;
+                side: number;
+                qty: number;
+                entryPx: number;
+                markPx: number;
+                unrealizedPnl: number;
+                liqPx: number;
+              };
+              store.updatePosition({
+                symbolId: p.symbolId,
+                side: p.side,
+                qty: p.qty,
+                entryPx: p.entryPx,
+                markPx: p.markPx,
+                unrealizedPnl: p.unrealizedPnl,
+                liqPx: p.liqPx,
+              });
+            }
+          } else {
+            const [oid, status, filled, remaining] =
+              u as [string, number, number, number];
+            useTradingStore.getState().updateOrder(
+              oid, status, filled, remaining,
+            );
+          }
         } else if ("F" in msg) {
           const [takerOid, makerOid, price, qty, ts, fee] =
             msg.F;
