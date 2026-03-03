@@ -102,9 +102,9 @@ rsx-mark/       Mark price (external feeds, CMP to risk)
 rsx-recorder/   Recorder (archival DXS consumer)
 rsx-cli/        WAL dump/inspect tool (JSON + Parquet)
 rsx-maker/      Market maker bot (stub, production CMP maker)
-rsx-sim/        Trading simulator, WS load generator
 rsx-playground/ Dev dashboard (Python/FastAPI + Playwright)
-  market_maker.py  Python market maker (functional, WS)
+  stress.py       Load generator (subprocess, real WS)
+  market_maker.py Python market maker (two-sided quotes)
 rsx-webui/      Frontend (Vite + Tailwind)
 ```
 

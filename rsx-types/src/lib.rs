@@ -1,3 +1,12 @@
+//! Shared types for the RSX perpetuals exchange.
+//!
+//! Foundation crate: [`Price`], [`Qty`], [`Side`],
+//! [`SymbolConfig`], and validation. All values are i64
+//! fixed-point in smallest units (ticks for price, lots
+//! for quantity). No floats on the hot path.
+//!
+//! Used by every other rsx-* crate.
+
 pub mod macros;
 pub mod time;
 

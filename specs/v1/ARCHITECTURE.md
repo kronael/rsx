@@ -73,7 +73,7 @@ topology.
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
 | rsx-maker | Market maker bot (separate process) |
-| rsx-sim | Trading simulator, WS load generator |
+| rsx-playground | Dev dashboard (Python/FastAPI + Playwright) |
 
 Each process is a separate binary. Tile crates (rsx-book,
 rsx-matching, rsx-risk, etc.) are libraries linked into
