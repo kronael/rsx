@@ -62,7 +62,7 @@ live server with all 5 RSX processes running:
 ```
 cd rsx-playground && uv run python server.py &
 # start RSX processes
-cd tests && npx playwright test play_trade.spec.ts --reporter=list
+cd tests && bunx playwright test play_trade.spec.ts --reporter=list
 ```
 
 All tests must pass **and** the following additional assertions must

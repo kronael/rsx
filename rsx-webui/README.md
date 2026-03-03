@@ -6,9 +6,9 @@ to gateway via WebSocket.
 ## Running
 
 ```bash
-npm install
-npm run dev    # dev server at http://localhost:5173
-npm run build  # production build to dist/
+bun install
+bun run dev    # dev server at http://localhost:5173
+bun run build  # production build to dist/
 ```
 
 Production build served by playground at `/trade/`.

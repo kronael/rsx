@@ -38,7 +38,7 @@ cd "$SCRIPT_DIR"
 # artifactDir to tmp/play-artifacts/<shard>/.  No --project flag: all projects
 # run in dependency order as defined in playwright.config.ts.
 set +e
-PW_SHARD="$RUN_SHARD" npx playwright test 2>&1 | tee "$RUN_DIR/run.log"
+PW_SHARD="$RUN_SHARD" bunx playwright test 2>&1 | tee "$RUN_DIR/run.log"
 EXIT="${PIPESTATUS[0]}"
 set -e
 

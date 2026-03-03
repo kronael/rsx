@@ -98,12 +98,12 @@ or rendered. No toggle button exists.
 4. When `showDepth=true`, render `<DepthChart />` instead of
    `<Chart />` in the chart panel.
 
-Do not change `DepthChart.tsx` itself. Do not add npm dependencies.
+Do not change `DepthChart.tsx` itself. Do not add bun dependencies.
 Use existing Tailwind classes for the button.
 
 ## Acceptance Criteria
 
-1. `cd rsx-webui && npm run build` — zero TypeScript errors.
+1. `cd rsx-webui && bun run build` — zero TypeScript errors.
 2. Navigate to `/trade/` in Playwright; within 5s:
    - Symbol dropdown shows at least 1 symbol (e.g., "PENGU")
    - Orderbook panel shows bid/ask rows (may be empty if no maker)
@@ -111,12 +111,12 @@ Use existing Tailwind classes for the button.
 3. Click RSI toggle button; RSI sub-chart appears below main chart.
 4. Funding rate field shows a numeric value (not `--`) within 5s.
 5. Click "Depth" toggle; DepthChart renders in the chart panel area.
-6. `npx playwright test play_trade.spec.ts` — existing tests still
+6. `bunx playwright test play_trade.spec.ts` — existing tests still
    pass (no regressions).
 
 ## Constraints
 
-- Do NOT add new npm dependencies.
+- Do NOT add new bun dependencies.
 - Do NOT change the Zustand store shape — only wire missing calls.
 - All Tailwind classes must use existing palette
   (`bg-surface`, `text-secondary`, `buy`, `sell`, etc.).

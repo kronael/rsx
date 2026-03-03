@@ -9,13 +9,13 @@ ls -1 play_*.spec.ts | sort
 echo ""
 echo "Test counts per file:"
 for file in play_book play_risk play_wal play_verify play_logs play_topology play_faults; do
-  count=$(npx playwright test --list 2>&1 | grep "$file\.spec\.ts" | wc -l)
+  count=$(bunx playwright test --list 2>&1 | grep "$file\.spec\.ts" | wc -l)
   echo "  $file.spec.ts: $count tests"
 done
 
 echo ""
 echo "Total tests:"
-npx playwright test --list 2>&1 | tail -1
+bunx playwright test --list 2>&1 | tail -1
 
 echo ""
 echo "New interactive tests breakdown:"
