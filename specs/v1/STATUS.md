@@ -6,7 +6,7 @@ Spec-vs-implementation audit across all RSX components.
 
 ## Summary
 
-877 Rust tests, 85 Python e2e, 228 Playwright. All crates
+785 Rust tests, 1034 Python, 398 Playwright. All crates
 compile. Core exchange path (GW→Risk→ME→MD) works for
 single-symbol scenarios. Multi-symbol routing is broken.
 
@@ -114,7 +114,7 @@ testing scenarios.
 
 Specs: PLAYGROUND-DASHBOARD.md, SIM.md
 Sim mode removed. Stress generator is managed subprocess.
-85 Python e2e tests pass, 228 Playwright tests.
+1034 Python tests pass, 398 Playwright tests.
 
 Gap: PLAYGROUND-DASHBOARD.md uses `/v1/api/play/*` paths
 but server uses `/api/*`. Spec is aspirational, not

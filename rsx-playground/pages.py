@@ -577,18 +577,18 @@ and liquidation triggers.</p>""")
     </thead>
     <tbody>
       <tr><td class="py-1 px-2">Rust unit</td>
-        <td class="py-1 px-2 text-right">~895</td>
+        <td class="py-1 px-2 text-right">~785</td>
         <td class="py-1 px-2 text-right">&lt;5s</td></tr>
-      <tr><td class="py-1 px-2">Python e2e</td>
-        <td class="py-1 px-2 text-right">87</td>
-        <td class="py-1 px-2 text-right">~7s</td></tr>
+      <tr><td class="py-1 px-2">Python</td>
+        <td class="py-1 px-2 text-right">1,034</td>
+        <td class="py-1 px-2 text-right">~10s</td></tr>
       <tr><td class="py-1 px-2">Playwright</td>
-        <td class="py-1 px-2 text-right">228</td>
+        <td class="py-1 px-2 text-right">398</td>
         <td class="py-1 px-2 text-right">~60s</td></tr>
       <tr class="border-t border-slate-700 text-white">
         <td class="py-1 px-2">Total</td>
         <td class="py-1 px-2 text-right font-bold">
-          1,210</td>
+          2,217</td>
         <td class="py-1 px-2 text-right"></td></tr>
     </tbody>
   </table>
@@ -641,7 +641,7 @@ and liquidation triggers.</p>""")
     Fixed-point. Single-threaded matching.
     &lt;50us round trip.</p>
   <p class="text-xs text-slate-500 mt-2">
-    11 crates &middot; 895 tests &middot;
+    11 crates &middot; 2,217 tests &middot;
     54ns match &middot; 31ns WAL append</p>
 </div>"""
 

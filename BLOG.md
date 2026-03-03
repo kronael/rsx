@@ -151,8 +151,8 @@ events.
 
 ## What We Built
 
-11 Rust crates, roughly 21,000 lines of Rust. 895 Rust tests,
-87 Python end-to-end tests, 228 Playwright browser tests.
+11 Rust crates, roughly 21,000 lines of Rust. 785 Rust tests,
+1,034 Python tests, 398 Playwright browser tests.
 
 All 11 crates at 100% implementation against their specs.
 

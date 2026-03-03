@@ -4,21 +4,23 @@
 
 ### Rust Unit Tests
 
-- `cargo test` (~570 tests, <5s)
+- `cargo test --workspace` (~785 tests, <5s)
 - Tests in dedicated `tests/` dir with `_test.rs` suffix
+- 88 test files across 11 crates
 - Per-crate: `cargo test -p rsx-book -- test_name`
 - Per-file: `cargo test -p rsx-dxs --test wal_test`
 
-### Python E2E Tests
+### Python Tests
 
-- `pytest rsx-playground/tests/api_e2e_test.py` (85 tests)
-- Covers: all 13 pages, 27 HTMX fragments, v1 API,
-  order flow, WAL timeline, edge cases
-- Sim-mode: no running processes needed
+- `pytest rsx-playground/tests/` (1034 tests)
+- 19 test files covering: pages, HTMX fragments, v1 API,
+  order flow, WAL, risk, stress, maker, edge cases
+- api_e2e_test.py: 87 tests (core API coverage)
+- No running processes needed for most tests
 
 ### Playwright Browser Tests
 
-- 228 tests across 19 specs (~60s)
+- 398 tests across 22 specs (~60s)
 - Requires running server + processes
 - `cd rsx-playground && npx playwright test`
 
@@ -31,7 +33,17 @@
 | e2e | `make e2e` | Rust E2E + Playwright | ~30s |
 | integration | `make integration` | testcontainers (PG) | 1-5min |
 | benchmarks | `make perf` | Criterion | varies |
-| Playwright | `make play` | all 228 browser tests | ~60s |
+| bench gate | `make bench-gate` | regression gate (10%) | varies |
+| Playwright | `make play` | all browser tests | ~60s |
+
+## Test Coverage Summary
+
+| Suite | Files | Tests | Time |
+|-------|-------|-------|------|
+| Rust unit | 88 | ~785 | <5s |
+| Python | 19 | 1034 | ~10s |
+| Playwright | 22 | 398 | ~60s |
+| **Total** | **129** | **~2217** | |
 
 ## Playground Screen Verification (Feb 27)
 
@@ -63,13 +75,14 @@
 9. /v1/account returned raw i64
 10. /v1/orders returned raw i64 prices
 
-### Running Verification
+### Running Tests
 
 ```sh
 cd rsx-playground
 
-# Python e2e (no processes needed)
-python3 -m pytest tests/api_e2e_test.py -v  # 85 tests
+# Python tests (no processes needed)
+pytest tests/ -v            # all 1034 tests
+pytest tests/api_e2e_test.py -v  # 87 core API tests
 
 # Live verification with processes
 python3 server.py &
