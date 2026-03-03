@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
+    "dev": "bunx vite",
+    "build": "bunx tsc && bunx vite build",
+    "preview": "bunx vite preview",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots"
   },

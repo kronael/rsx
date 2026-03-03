@@ -12,7 +12,7 @@
  * CI threshold: p95 render latency < 16ms.
  *
  * Run standalone:
- *   npx playwright test orderbook.bench.spec.ts
+ *   bunx playwright test orderbook.bench.spec.ts
  */
 import { test, expect } from "@playwright/test";
 

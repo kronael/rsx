@@ -81,7 +81,7 @@ Levels count comes from `tmp/maker-status.json` if present.
 
 ## Acceptance Criteria
 
-1. `npx playwright test` — all 5 shards run; market-maker shard passes
+1. `bunx playwright test` — all 5 shards run; market-maker shard passes
 2. After `POST /api/processes/all/start`, maker starts within 10s
    (verifiable via `/api/maker/status`)
 3. global-setup completes with book seeded (best_bid > 0) within 20s
@@ -90,7 +90,7 @@ Levels count comes from `tmp/maker-status.json` if present.
 
 ## Constraints
 
-- No new npm dependencies
+- No new bun dependencies
 - Maker subprocess management stays in server.py (not global-setup)
 - play_maker.spec.ts uses existing `setupMaker()` pattern
 - 80 char line width, max 120

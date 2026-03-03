@@ -304,10 +304,10 @@ bench-save:
 
 # WebUI render benchmark: measures p50/p95/p99 React render latency
 # per orderbook delta update. Asserts p95 < 16ms (one rAF frame).
-# Requires: cd rsx-webui && npm run build (builds dist/ first)
+# Requires: cd rsx-webui && bun run build (builds dist/ first)
 bench-webui:
-	cd rsx-webui && npm run build && \
-	npx playwright test orderbook.bench.spec.ts --reporter=list
+	cd rsx-webui && bun run build && \
+	bunx playwright test orderbook.bench.spec.ts --reporter=list
 
 # Validate PROGRESS.md accounting (fail CI if inconsistent)
 check-progress:
@@ -440,40 +440,40 @@ play: play-infra play-overview play-topology play-book play-risk \
      play-verify play-orders play-nav play-api
 
 play-infra:
-	cd rsx-playground/tests && npx playwright test play_infra.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_infra.spec.ts
 
 play-overview:
-	cd rsx-playground/tests && npx playwright test play_overview.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_overview.spec.ts
 
 play-topology:
-	cd rsx-playground/tests && npx playwright test play_topology.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_topology.spec.ts
 
 play-book:
-	cd rsx-playground/tests && npx playwright test play_book.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_book.spec.ts
 
 play-risk:
-	cd rsx-playground/tests && npx playwright test play_risk.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_risk.spec.ts
 
 play-wal:
-	cd rsx-playground/tests && npx playwright test play_wal.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_wal.spec.ts
 
 play-logs:
-	cd rsx-playground/tests && npx playwright test play_logs.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_logs.spec.ts
 
 play-control:
-	cd rsx-playground/tests && npx playwright test play_control.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_control.spec.ts
 
 play-faults:
-	cd rsx-playground/tests && npx playwright test play_faults.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_faults.spec.ts
 
 play-verify:
-	cd rsx-playground/tests && npx playwright test play_verify.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_verify.spec.ts
 
 play-orders:
-	cd rsx-playground/tests && npx playwright test play_orders.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_orders.spec.ts
 
 play-nav:
-	cd rsx-playground/tests && npx playwright test play_navigation.spec.ts
+	cd rsx-playground/tests && bunx playwright test play_navigation.spec.ts
 
 play-api:
 	cd rsx-playground && uv run pytest tests/api_e2e_test.py -v

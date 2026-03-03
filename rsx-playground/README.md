@@ -204,8 +204,8 @@ pytest tests/
 
 # E2E tests (Playwright)
 cd tests
-npm install
-npx playwright test
+bun install
+bunx playwright test
 
 # Or use Make targets
 make test        # Python unit tests

@@ -5,7 +5,7 @@
     "@playwright/test": "^1.49.0"
   },
   "scripts": {
-    "test": "npx playwright test",
-    "test:headed": "npx playwright test --headed"
+    "test": "bunx playwright test",
+    "test:headed": "bunx playwright test --headed"
   }
 }

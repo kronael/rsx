@@ -86,7 +86,7 @@ domain_changed() {
 run_shard() {
     cd "$SCRIPT_DIR"
     mkdir -p "$ARTIFACT_DIR"
-    PW_SHARD="$SHARD" npx playwright test \
+    PW_SHARD="$SHARD" bunx playwright test \
         --project="$SHARD" \
         2>/tmp/play-shard-stderr.log || true
 }

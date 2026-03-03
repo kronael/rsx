@@ -24,7 +24,7 @@ export default defineConfig({
     headless: true,
   },
   // Reporter resolved from CLI --reporter when invoked via play-shard.sh.
-  // Default "list" for direct npx playwright test invocations.
+  // Default "list" for direct bunx playwright test invocations.
   reporter: process.env.PW_SHARD
     ? [
         ["json", { outputFile: path.join(artifactDir, "report.json") }],

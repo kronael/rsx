@@ -8,7 +8,7 @@ shard, and validated by live orderbook checks in trade-ui tests.
 ## Stack
 - TypeScript / Playwright (test layer)
 - Python 3 / FastAPI (server.py, market_maker.py)
-- No new npm or pip dependencies
+- No new bun or pip dependencies
 
 ## IO Surfaces
 | Endpoint | Method | Purpose |
@@ -27,14 +27,14 @@ shard, and validated by live orderbook checks in trade-ui tests.
 - `rsx-playground/server.py` — expose maker state in status endpoint
 
 ## Constraints
-- No new dependencies (npm or pip)
+- No new dependencies (bun or pip)
 - Subprocess management stays in server.py
 - Polling timeouts: maker ready 15s, book seeded 8s, depth 4s wait
 - 80 char line width, max 120
 - Read each file fully before editing
 
 ## Success Criteria
-1. `npx playwright test` — all 5 shards run and pass
+1. `bunx playwright test` — all 5 shards run and pass
 2. Maker starts within 10s of `POST /api/processes/all/start`
 3. global-setup completes with `best_bid > 0` within 20s
 4. play_trade.spec.ts Live Orderbook tests pass (bid < ask, price > 0)

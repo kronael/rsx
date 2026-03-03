@@ -22,7 +22,7 @@
 
 - 398 tests across 22 specs (~60s)
 - Requires running server + processes
-- `cd rsx-playground && npx playwright test`
+- `cd rsx-playground && bunx playwright test`
 
 ### Make Targets
 
