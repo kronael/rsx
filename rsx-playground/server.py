@@ -1754,7 +1754,12 @@ def read_logs(process=None, level=None, search=None,
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(pages.overview_page())
+    return RedirectResponse("./walkthrough")
+
+
+@app.get("/walkthrough", response_class=HTMLResponse)
+async def walkthrough():
+    return HTMLResponse(pages.walkthrough_page())
 
 
 @app.get("/overview", response_class=HTMLResponse)

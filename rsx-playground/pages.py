@@ -7,6 +7,7 @@ Uses Tailwind Play CDN (script tag, JIT compiler in browser)
 import html
 
 TABS = [
+    ("Walkthrough", "./walkthrough"),
     ("Overview", "./overview"),
     ("Topology", "./topology"),
     ("Book", "./book"),
@@ -127,6 +128,535 @@ def _card(title, body, header_right=""):
   </div>
   {body}
 </div>"""
+
+
+# ── Screen 0: Walkthrough ───────────────────────────────
+
+def _wt_section(sid, title, tldr, body):
+    """Walkthrough section: TL;DR bar + expandable detail."""
+    return f"""
+<section id="{sid}" class="scroll-mt-12">
+  <div class="bg-slate-900 border border-slate-800
+    rounded-lg overflow-hidden">
+    <div class="border-l-4 border-blue-500 px-4 py-2
+      bg-slate-800/50">
+      <h2 class="text-sm font-bold text-white">{title}</h2>
+      <p class="text-xs text-slate-400 mt-0.5">{tldr}</p>
+    </div>
+    <details class="group">
+      <summary class="px-4 py-2 text-xs text-blue-400
+        cursor-pointer hover:text-blue-300
+        select-none">
+        Expand details</summary>
+      <div class="px-4 pb-4 text-xs leading-relaxed
+        text-slate-300 space-y-3">
+        {body}
+      </div>
+    </details>
+  </div>
+</section>"""
+
+
+def walkthrough_page():
+    nav = """
+<div class="sticky top-0 z-10 bg-slate-950/90
+  backdrop-blur border-b border-slate-800 py-1.5 px-2
+  flex gap-2 overflow-x-auto text-[11px]
+  scrollbar-thin">
+  <a href="#big-picture"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Big Picture</a>
+  <a href="#order-lifecycle"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Order Flow</a>
+  <a href="#matching-engine"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Matching</a>
+  <a href="#risk-engine"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Risk</a>
+  <a href="#wal-transport"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">WAL</a>
+  <a href="#market-data"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Market Data</a>
+  <a href="#mark-price"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Mark Price</a>
+  <a href="#benchmarks"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Numbers</a>
+  <a href="#try-it"
+    class="text-blue-400 hover:text-white
+    whitespace-nowrap">Try It</a>
+</div>"""
+
+    # ── Section 1: Big Picture ──
+    s1 = _wt_section(
+        "big-picture",
+        "The Big Picture",
+        "7 processes, CMP/UDP between them, WAL for "
+        "recovery. Target: &lt;50us round trip.",
+        """
+<pre class="text-[10px] text-green-400
+  overflow-x-auto leading-tight my-2">
+                    +------------+
+                    |  Web (WS)  |
+                    +-----+------+
+                          |
+                    +-----v------+
+                    |  Gateway   |  WS + CMP bridge
+                    | (io_uring) |  JWT, rate limit
+                    +-----+------+
+                          | CMP/UDP
+                    +-----v------+         +----------+
+                    |   Risk     | CMP/UDP | Matching |
+                    |  Engine    +--------&gt;| Engine   |
+                    | (1 shard)  |&lt;--------+ (1/sym)  |
+                    +--+---+--+-+  fills   +----+-----+
+                       |   |  |                 |
+              +--------+   |  +------+     +----+----+
+              v            v         v     v         v
+         +--------+ +--------+ +------+ +-------+ +-----+
+         |Postgres| | Mark   | |Record| |Mktdata| | GW  |
+         | (write | | Price  | |(daily| |(shadow| |(fill |
+         | behind)| | Agg    | | WAL) | | book) | | usr)|
+         +--------+ +--------+ +------+ +-------+ +-----+
+</pre>
+<table class="w-full text-xs">
+  <thead>
+    <tr class="text-slate-500 border-b border-slate-800">
+      <th class="text-left py-1 px-2">Process</th>
+      <th class="text-left py-1 px-2">Port</th>
+      <th class="text-left py-1 px-2">Role</th>
+    </tr>
+  </thead>
+  <tbody class="text-slate-300">
+    <tr><td class="py-1 px-2">Gateway</td>
+      <td class="py-1 px-2">8080</td>
+      <td class="py-1 px-2">WS ingress, JWT auth,
+        rate limit, circuit breaker</td></tr>
+    <tr><td class="py-1 px-2">Risk</td>
+      <td class="py-1 px-2">UDP</td>
+      <td class="py-1 px-2">Per-shard margin,
+        liquidation, funding</td></tr>
+    <tr><td class="py-1 px-2">Matching</td>
+      <td class="py-1 px-2">SPSC</td>
+      <td class="py-1 px-2">Per-symbol, slab alloc,
+        price-time FIFO</td></tr>
+    <tr><td class="py-1 px-2">Marketdata</td>
+      <td class="py-1 px-2">8180</td>
+      <td class="py-1 px-2">Shadow book, L2/BBO/trades
+        broadcast</td></tr>
+    <tr><td class="py-1 px-2">Mark</td>
+      <td class="py-1 px-2">9201</td>
+      <td class="py-1 px-2">Binance/Coinbase aggregation,
+        staleness filter</td></tr>
+    <tr><td class="py-1 px-2">Recorder</td>
+      <td class="py-1 px-2">DXS</td>
+      <td class="py-1 px-2">Archival consumer,
+        daily WAL rotation</td></tr>
+    <tr><td class="py-1 px-2">Maker</td>
+      <td class="py-1 px-2">WS</td>
+      <td class="py-1 px-2">Two-sided quoting,
+        auto-reconnect</td></tr>
+  </tbody>
+</table>""")
+
+    # ── Section 2: Order Lifecycle ──
+    s2 = _wt_section(
+        "order-lifecycle",
+        "Order Lifecycle",
+        "WS &rarr; Gateway &rarr; Risk &rarr; ME "
+        "&rarr; Risk &rarr; Gateway &rarr; WS. "
+        "Six hops, &lt;50us total.",
+        """
+<pre class="text-[10px] text-green-400
+  overflow-x-auto leading-tight my-2">
+User          Gateway        Risk          ME
+ |               |             |             |
+ |--WS order---&gt;|             |             |
+ |               |--CMP/UDP-&gt;|             |
+ |               |             |--margin--&gt;|
+ |               |             |--CMP/UDP-&gt;|
+ |               |             |             |--match
+ |               |             |             |--WAL
+ |               |             |&lt;--fills----|
+ |               |             |--position   |
+ |               |&lt;--fills----|             |
+ |&lt;--WS fill----|             |             |
+</pre>
+<table class="w-full text-xs">
+  <thead>
+    <tr class="text-slate-500 border-b border-slate-800">
+      <th class="text-left py-1 px-2">Hop</th>
+      <th class="text-left py-1 px-2">From &rarr; To</th>
+      <th class="text-left py-1 px-2">Transport</th>
+      <th class="text-left py-1 px-2">Latency</th>
+    </tr>
+  </thead>
+  <tbody class="text-slate-300">
+    <tr><td class="py-1 px-2">1</td>
+      <td class="py-1 px-2">User &rarr; Gateway</td>
+      <td class="py-1 px-2">WebSocket</td>
+      <td class="py-1 px-2 text-slate-500">
+        network</td></tr>
+    <tr><td class="py-1 px-2">2</td>
+      <td class="py-1 px-2">Gateway &rarr; Risk</td>
+      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2 text-green-400">
+        ~0.5us</td></tr>
+    <tr><td class="py-1 px-2">3</td>
+      <td class="py-1 px-2">Risk &rarr; ME</td>
+      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2 text-green-400">
+        ~0.5us</td></tr>
+    <tr><td class="py-1 px-2">4</td>
+      <td class="py-1 px-2">ME match</td>
+      <td class="py-1 px-2">slab</td>
+      <td class="py-1 px-2 text-green-400
+        font-bold">54ns</td></tr>
+    <tr><td class="py-1 px-2">5</td>
+      <td class="py-1 px-2">ME &rarr; Risk</td>
+      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2 text-green-400">
+        ~0.5us</td></tr>
+    <tr><td class="py-1 px-2">6</td>
+      <td class="py-1 px-2">Risk &rarr; Gateway</td>
+      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2 text-green-400">
+        ~0.5us</td></tr>
+    <tr><td class="py-1 px-2">7</td>
+      <td class="py-1 px-2">Gateway &rarr; User</td>
+      <td class="py-1 px-2">WebSocket</td>
+      <td class="py-1 px-2 text-slate-500">
+        network</td></tr>
+    <tr class="border-t border-slate-700
+      font-bold text-white">
+      <td class="py-1 px-2" colspan="3">
+        Total (loopback)</td>
+      <td class="py-1 px-2 text-green-400">
+        ~4-6us</td></tr>
+  </tbody>
+</table>""")
+
+    # ── Section 3: Matching Engine ──
+    s3 = _wt_section(
+        "matching-engine",
+        "The Matching Engine",
+        "Slab arena + CompressionMap. "
+        "<span class='text-green-400 font-bold'>"
+        "54ns</span> per fill. "
+        "Zero heap allocation on hot path.",
+        """
+<p>One ME instance per symbol, single-threaded, pinned
+to a dedicated core. Bare busy-spin event loop.</p>
+<p><strong class="text-white">Slab Arena:</strong>
+Pre-allocated 78M OrderSlots (~10GB). O(1) alloc from
+free list (0.8ns), O(1) free (7.9ns). No malloc ever
+touches the hot path.</p>
+<p><strong class="text-white">CompressionMap:</strong>
+Maps sparse price space to dense array indices via 5
+distance-based zones. Compresses 20M possible price
+levels down to ~617K slots (~15MB per side). Near-mid
+prices get 1:1 mapping, far prices compress 1000:1.</p>
+<p><strong class="text-white">Matching:</strong>
+Price-time FIFO. Aggressive order walks the opposite
+side level-by-level. GTC/IOC/FOK supported. Events
+(fills, done, cancel) buffered in fixed [Event; 10000]
+array, drained after each cycle.</p>
+<div class="mt-2 grid grid-cols-2 gap-2">
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-green-400 text-lg font-bold">
+      54ns</div>
+    <div class="text-slate-500 text-[10px]">
+      single fill</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-green-400 text-lg font-bold">
+      857ns</div>
+    <div class="text-slate-500 text-[10px]">
+      insert order</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-green-400 text-lg font-bold">
+      2.8us</div>
+    <div class="text-slate-500 text-[10px]">
+      sweep 10 levels</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-green-400 text-lg font-bold">
+      ~0ns</div>
+    <div class="text-slate-500 text-[10px]">
+      cancel (O(1))</div>
+  </div>
+</div>""")
+
+    # ── Section 4: Risk Engine ──
+    s4 = _wt_section(
+        "risk-engine",
+        "Risk Engine",
+        "Portfolio margin, liquidation rounds, "
+        "funding every 8h. Postgres write-behind.",
+        """
+<p>One shard per user partition. Pre-trade margin check
+on every order, post-trade position update on every
+fill.</p>
+<p><strong class="text-white">Portfolio Margin:</strong>
+IMR (initial) and MMR (maintenance) calculated across
+all positions for a user. Mark price ticks trigger
+recalculation for exposed users.</p>
+<p><strong class="text-white">Liquidation:</strong>
+When equity &lt; MMR: liquidation rounds with configurable
+slip BPS, insurance fund backstop. Advisory lock ensures
+exactly one liquidator per shard.</p>
+<p><strong class="text-white">Funding:</strong>
+Every 8 hours, zero-sum settlement across all users
+per symbol. Accumulated in real-time, settled atomically.</p>
+<p><strong class="text-white">Durability:</strong>
+Postgres write-behind: 10ms batched flush, COPY for
+fills, UPSERT for positions. sync_commit=on.
+Crash recovery: load tips from PG, DXS replay from
+tip+1, go live on CaughtUp.</p>""")
+
+    # ── Section 5: WAL & Transport ──
+    s5 = _wt_section(
+        "wal-transport",
+        "WAL &amp; Transport",
+        "WAL = wire = stream. "
+        "<span class='text-green-400 font-bold'>"
+        "31ns</span> append, "
+        "<span class='text-blue-400'>24us</span> flush. "
+        "CMP/UDP with NACK flow control.",
+        """
+<p><strong class="text-white">Zero Transformation:
+</strong>
+The WAL disk format, CMP wire format, and DXS stream
+format are identical. 16B header + #[repr(C, align(64))]
+payload. No serialization, no copying, no translation.</p>
+<p><strong class="text-white">WalWriter:</strong>
+Buffer appends at 31ns each. Flush to disk every 10ms
+with fsync (24us for 64KB batch). Rotate at 64MB,
+retain 10 minutes. Backpressure: buffer full or flush
+lag &gt;10ms stalls the producer.</p>
+<p><strong class="text-white">CMP Protocol:</strong>
+Aeron-inspired UDP transport. NACK-based flow control,
+heartbeat keepalive, reorder buffer for out-of-order
+datagrams. Encode: 43ns, decode: 9ns.</p>
+<p><strong class="text-white">DXS Replay:</strong>
+Each producer IS the replay server. Consumers connect
+directly via TCP, request from sequence N. No central
+broker. Recorder, marketdata, and risk all use DXS.</p>
+<div class="mt-2 grid grid-cols-3 gap-2">
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-green-400 text-lg font-bold">
+      31ns</div>
+    <div class="text-slate-500 text-[10px]">
+      WAL append</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-blue-400 text-lg font-bold">
+      24us</div>
+    <div class="text-slate-500 text-[10px]">
+      flush+fsync</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2 text-center">
+    <div class="text-green-400 text-lg font-bold">
+      9ns</div>
+    <div class="text-slate-500 text-[10px]">
+      CMP decode</div>
+  </div>
+</div>""")
+
+    # ── Section 6: Market Data ──
+    s6 = _wt_section(
+        "market-data",
+        "Market Data",
+        "Shadow book rebuilt from WAL stream. "
+        "L2 depth, BBO, trades. Public WebSocket.",
+        """
+<p>Marketdata maintains a shadow orderbook per symbol,
+rebuilt from ME WAL events (INSERT, CANCEL, FILL) via
+DXS subscription. Not on the critical path.</p>
+<p><strong class="text-white">Outputs:</strong>
+L2 depth snapshots (20 levels), BBO updates, trade
+tape (200-entry rolling window). Broadcast to public
+WS subscribers per symbol.</p>
+<p><strong class="text-white">Seq Gap Detection:
+</strong>
+Monitors WAL sequence numbers. Gap detected = request
+resend from DXS replay server. Shadow book is ephemeral
+-- full rebuild on restart.</p>
+<p><strong class="text-white">Multi-Symbol:</strong>
+Single marketdata process subscribes to all ME instances
+via RSX_ME_CMP_ADDRS (comma-separated). One shadow book
+per symbol.</p>""")
+
+    # ── Section 7: Mark Price ──
+    s7 = _wt_section(
+        "mark-price",
+        "Mark Price",
+        "Binance + Coinbase feeds. Weighted mean "
+        "with staleness filter. 1s sweep.",
+        """
+<p>Separate process connecting to external exchange
+WebSocket feeds (Binance, Coinbase). Computes weighted
+mean across sources.</p>
+<p><strong class="text-white">Staleness:</strong>
+Sources older than configurable timeout are dropped
+from aggregation. If all sources stale, last known
+price holds (no phantom liquidations).</p>
+<p><strong class="text-white">Output:</strong>
+MARK_PRICE records written to WAL every 1s sweep.
+Risk engine consumes these for margin recalculation
+and liquidation triggers.</p>""")
+
+    # ── Section 8: The Numbers ──
+    s8 = _wt_section(
+        "benchmarks",
+        "The Numbers",
+        "Sub-microsecond matching, "
+        "sub-millisecond round trips.",
+        """
+<table class="w-full text-xs">
+  <thead>
+    <tr class="text-slate-500 border-b border-slate-800">
+      <th class="text-left py-1 px-2">Operation</th>
+      <th class="text-right py-1 px-2">Latency</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td class="py-1 px-2">Match single fill</td>
+      <td class="py-1 px-2 text-right text-green-400
+        font-bold">54 ns</td></tr>
+    <tr><td class="py-1 px-2">Insert resting order</td>
+      <td class="py-1 px-2 text-right text-green-400">
+        857 ns</td></tr>
+    <tr><td class="py-1 px-2">Cancel order</td>
+      <td class="py-1 px-2 text-right text-green-400">
+        ~0 ns</td></tr>
+    <tr><td class="py-1 px-2">Sweep 10 levels</td>
+      <td class="py-1 px-2 text-right text-green-400">
+        2.8 us</td></tr>
+    <tr><td class="py-1 px-2">WAL append</td>
+      <td class="py-1 px-2 text-right text-green-400
+        font-bold">31 ns</td></tr>
+    <tr><td class="py-1 px-2">WAL flush+fsync 64KB</td>
+      <td class="py-1 px-2 text-right text-blue-400">
+        24 us</td></tr>
+    <tr><td class="py-1 px-2">CMP encode</td>
+      <td class="py-1 px-2 text-right text-green-400">
+        43 ns</td></tr>
+    <tr><td class="py-1 px-2">CMP decode</td>
+      <td class="py-1 px-2 text-right text-green-400">
+        9 ns</td></tr>
+    <tr><td class="py-1 px-2">Replay 100k records</td>
+      <td class="py-1 px-2 text-right text-blue-400">
+        121 ms</td></tr>
+    <tr class="border-t border-slate-700 font-bold
+      text-white">
+      <td class="py-1 px-2">End-to-end (loopback)</td>
+      <td class="py-1 px-2 text-right text-green-400">
+        ~4-6 us</td></tr>
+  </tbody>
+</table>
+<div class="mt-3 text-slate-500">
+  Target: &lt;50us GW&rarr;ME&rarr;GW, &lt;500ns ME match.
+  Both exceeded by 10x.
+</div>
+<div class="mt-3">
+  <table class="w-full text-xs">
+    <thead>
+      <tr class="text-slate-500 border-b
+        border-slate-800">
+        <th class="text-left py-1 px-2">Suite</th>
+        <th class="text-right py-1 px-2">Tests</th>
+        <th class="text-right py-1 px-2">Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="py-1 px-2">Rust unit</td>
+        <td class="py-1 px-2 text-right">~895</td>
+        <td class="py-1 px-2 text-right">&lt;5s</td></tr>
+      <tr><td class="py-1 px-2">Python e2e</td>
+        <td class="py-1 px-2 text-right">87</td>
+        <td class="py-1 px-2 text-right">~7s</td></tr>
+      <tr><td class="py-1 px-2">Playwright</td>
+        <td class="py-1 px-2 text-right">228</td>
+        <td class="py-1 px-2 text-right">~60s</td></tr>
+      <tr class="border-t border-slate-700 text-white">
+        <td class="py-1 px-2">Total</td>
+        <td class="py-1 px-2 text-right font-bold">
+          1,210</td>
+        <td class="py-1 px-2 text-right"></td></tr>
+    </tbody>
+  </table>
+</div>""")
+
+    # ── Section 9: Try It ──
+    s9 = _wt_section(
+        "try-it",
+        "Try It",
+        "Start the exchange and submit your first "
+        "order.",
+        """
+<p>Click below to build and start all RSX processes
+(minimal scenario: 1 symbol, 7 processes). Takes
+30-60s on first build.</p>
+<div class="mt-3 flex flex-wrap items-center gap-3">
+  <button hx-post="./api/processes/all/start"
+    hx-vals='{"scenario":"minimal"}'
+    hx-target="#start-result"
+    hx-swap="innerHTML"
+    class="bg-blue-600 hover:bg-blue-500 text-white
+      px-4 py-2 rounded text-xs font-bold
+      cursor-pointer">
+    Start All (minimal)
+  </button>
+  <span id="start-result" class="text-xs
+    text-slate-400"></span>
+</div>
+<div class="mt-4 flex flex-wrap gap-3">
+  <a href="./trade/"
+    class="text-blue-400 hover:text-blue-300 text-xs">
+    Open Trade UI &rarr;</a>
+  <a href="./orders"
+    class="text-blue-400 hover:text-blue-300 text-xs">
+    Submit Orders &rarr;</a>
+  <a href="./book"
+    class="text-blue-400 hover:text-blue-300 text-xs">
+    View Orderbook &rarr;</a>
+  <a href="./overview"
+    class="text-blue-400 hover:text-blue-300 text-xs">
+    Dashboard &rarr;</a>
+</div>""")
+
+    hero = """
+<div class="text-center py-6">
+  <h1 class="text-2xl font-bold text-white
+    tracking-wide">RSX Exchange</h1>
+  <p class="text-sm text-slate-400 mt-1">
+    Spec-first perpetuals exchange.
+    Fixed-point. Single-threaded matching.
+    &lt;50us round trip.</p>
+  <p class="text-xs text-slate-500 mt-2">
+    11 crates &middot; 895 tests &middot;
+    54ns match &middot; 31ns WAL append</p>
+</div>"""
+
+    sections = (
+        f"{hero}"
+        f"<div class='space-y-3'>"
+        f"{s1}{s2}{s3}{s4}{s5}{s6}{s7}{s8}{s9}"
+        f"</div>"
+    )
+
+    return layout(
+        "Walkthrough",
+        f"{nav}{sections}",
+        active_tab="./walkthrough",
+    )
 
 
 # ── Screen 1: Overview ──────────────────────────────────
