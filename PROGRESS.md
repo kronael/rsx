@@ -7,9 +7,9 @@ updated: Mar 03 2026
 | Metric | Value |
 |--------|-------|
 | Crates | 11 |
-| Rust tests | ~895 |
-| Python e2e | 87 |
-| Playwright | 228 |
+| Rust tests | ~785 |
+| Python tests | 1034 |
+| Playwright | 398 |
 | LOC (Rust) | ~21k |
 
 ## Crate Status
@@ -33,7 +33,7 @@ updated: Mar 03 2026
 - 14 tabs, 60+ API endpoints
 - Scenarios: minimal/duo/full/stress implemented
 - stress.py subprocess management
-- 87 Python e2e tests, 228 Playwright tests
+- 1034 Python tests, 398 Playwright tests
 - bench-gate.sh regression gating
 
 ## Benchmarks (rsx-book, release)

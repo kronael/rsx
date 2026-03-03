@@ -35,7 +35,6 @@ rsx-mark/       Mark price aggregator (separate process)
 rsx-recorder/   Archival DXS consumer (separate process)
 rsx-cli/        WAL dump/inspect tool (clap CLI)
 rsx-maker/      Market maker bot (separate process)
-rsx-sim/        Trading simulator, WS load generator
 ```
 
 Each process is a separate binary. Crates are libraries
