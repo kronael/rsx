@@ -19,7 +19,6 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 | Mark      | 9201 | Binance/Coinbase aggregation, staleness |
 | Recorder  | DXS  | Archival consumer, daily rotation       |
 | Maker     | WS   | Two-sided quoting, auto-reconnect       |
-| Sim       | -    | Load generator (stub, TODO)             |
 
 ## Crate Features
 
@@ -74,6 +73,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Heartbeat timer, order dedup
 - Stream ordering, pre-validation (tick/lot)
 - REST contract endpoints
+- Gateway mode endpoint (/v1/gateway/mode)
 
 ### rsx-risk
 
@@ -85,7 +85,8 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Funding accumulation and settlement
 - Advisory lease (main/replica promotion)
 - WAL persistence, Postgres replay
-- CMP/UDP router, shard routing (user_id % N)
+- CMP/UDP router, multi-symbol ME addressing
+- Shard routing (user_id % N)
 - SPSC rings per symbol (fan-out)
 - Crash-restart with exponential backoff
 
@@ -98,6 +99,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - WS broadcast to subscribers
 - Seq gap detection, snapshot bootstrap
 - Heartbeat, per-symbol subscriptions
+- Multi-ME CMP subscription
 
 ### rsx-mark
 
@@ -120,7 +122,11 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - `wal-dump <stream_id> <dir>`: dump WAL directory
 - `dump <file>`: dump single WAL file
 - JSON lines output, record type names
-- Payload decoding (LIQUIDATION pending)
+- Full payload decoding (all record types)
+- Filters: --type, --symbol, --user, --from-ts, --to-ts
+- --stats: aggregate counts by record type
+- --follow: tail mode with ctrlc handler
+- --tick-size, --lot-size: display scale
 
 ### rsx-maker
 
@@ -131,10 +137,6 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - SIGINT/SIGTERM shutdown
 - Env config: mid, spread_bps, levels, qty, tick,
   lot, refresh_ms
-
-### rsx-sim
-
-- Stub (TODO)
 
 ## Playground Dashboard
 
@@ -152,8 +154,9 @@ Trade.
 - Market data: book snapshot, BBO, mark price
 - Maker: start/stop lifecycle
 - Sessions: allocate, renew, release
-- Stress: configurable load injection
+- Stress: start/stop/status (subprocess management)
 - v1 proxy: symbols, candles, funding, positions, fills
+- Gateway mode: /v1/gateway/mode
 
 ## React WebUI (rsx-webui/)
 
@@ -181,15 +184,16 @@ useSoundAlerts.
 | Infrastructure | DATABASE, DEPLOY, TELEMETRY, ARCHIVE   |
 | Dashboard      | DASHBOARD + 4 domain dashboards        |
 | Testing        | TESTING + 10 TESTING-*.md files        |
-| **Total**      | **48 spec files in specs/v1/**         |
+| Operations     | SCENARIOS, SIM, CLI, TRADE-UI          |
+| **Total**      | **50+ spec files in specs/v1/**        |
 
 ## Test Coverage
 
 | Suite      | Files | Count  | Time    |
 |------------|-------|--------|---------|
-| Rust unit  | 84    | ~570   | <5s     |
+| Rust unit  | 84+   | ~895   | <5s     |
 | Playwright | 19    | ~228   | ~60s    |
-| Python e2e | 1     | 85     | ~10s    |
+| Python e2e | 1     | 87     | ~10s    |
 | WAL        | -     | -      | <10s    |
 | E2E        | -     | -      | ~30s    |
 | Integration| -     | -      | 1-5min  |
@@ -205,6 +209,7 @@ useSoundAlerts.
 | E2E             | `make e2e`        | Rust E2E + Playwright  |
 | integration     | `make integration`| testcontainers (PG)    |
 | benchmarks      | `make perf`       | Criterion              |
+| bench gate      | `make bench-gate` | regression gate (10%)  |
 | Playwright      | `make play`       | all 228 browser tests  |
 | release gate    | `make gate`       | all 4 release gates    |
 | CI              | `make ci`         | phases 1-3             |
@@ -213,5 +218,5 @@ useSoundAlerts.
 ## Stats
 
 - ~21k LOC Rust, ~25k LOC Python, ~5k LOC TypeScript
-- 12 crates, 8 binaries
-- 48 specs, 84 Rust test files, 19 Playwright specs
+- 11 crates, 8 binaries
+- 50+ specs, 84+ Rust test files, 19 Playwright specs

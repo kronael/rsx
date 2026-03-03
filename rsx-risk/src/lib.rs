@@ -1,3 +1,14 @@
+//! Risk engine for RSX perpetuals exchange.
+//!
+//! One shard per user partition. Pre-trade margin checks,
+//! post-trade position updates, funding settlement,
+//! liquidation triggers. Postgres write-behind for
+//! durability, advisory locks for single-writer guarantee.
+//!
+//! Receives orders from gateway via CMP/UDP, routes to
+//! matching engines, processes fills back. DXS replay
+//! for crash recovery from last persisted tip.
+
 pub mod types;
 pub mod position;
 pub mod account;
