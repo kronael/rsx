@@ -130,14 +130,15 @@ export default defineConfig({
       dependencies: ["readiness"],
     },
     // Shard 5: trade-ui — React SPA (67 tests)
-    // Depends on market-maker so the book is seeded with quotes before
-    // live-orderbook tests run (explicit dependency, not positional).
+    // Depends on readiness (maker + book ready); decoupled from
+    // market-maker test results so maker edge-case failures don't
+    // block the trade UI suite.
     {
       name: "trade-ui",
       testMatch: [
         "play_trade.spec.ts",
       ],
-      dependencies: ["market-maker"],
+      dependencies: ["readiness"],
     },
     // Shard 6: latency — performance and memory bounds (15 tests)
     {

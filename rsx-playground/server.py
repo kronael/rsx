@@ -5381,15 +5381,27 @@ async def api_bbo(symbol_id: int):
             }
     # Fallback: WAL BBO
     bbo = parse_wal_bbo(symbol_id)
-    if bbo is None:
-        return JSONResponse(status_code=404, content={
-            "error": "no bbo for symbol"})
-    return {
-        "bid_px": bbo["bid_px"],
-        "ask_px": bbo["ask_px"],
-        "bid_qty": bbo["bid_qty"],
-        "ask_qty": bbo["ask_qty"],
-    }
+    if bbo is not None:
+        return {
+            "bid_px": bbo["bid_px"],
+            "ask_px": bbo["ask_px"],
+            "bid_qty": bbo["bid_qty"],
+            "ask_qty": bbo["ask_qty"],
+        }
+    # Last fallback: maker book snapshot
+    maker_snap = _maker_book(symbol_id)
+    if maker_snap:
+        bids = maker_snap.get("bids", [])
+        asks = maker_snap.get("asks", [])
+        if bids or asks:
+            return {
+                "bid_px": bids[0]["px"] if bids else 0,
+                "ask_px": asks[0]["px"] if asks else 0,
+                "bid_qty": bids[0]["qty"] if bids else 0,
+                "ask_qty": asks[0]["qty"] if asks else 0,
+            }
+    return JSONResponse(status_code=404, content={
+        "error": "no bbo for symbol"})
 
 
 @app.post("/api/sessions/allocate")
