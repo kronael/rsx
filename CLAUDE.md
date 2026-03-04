@@ -75,6 +75,9 @@ linked into their respective process binaries.
 - Panic handler: `install_panic_handler()` from rsx_types
 - Document lock acquisition order where locks exist
 
+## Documentation
+- NEVER use "rollout" as a heading or section name
+
 ## Naming
 
 - `seq` not `seq_no`, `ts_ns` not `timestamp_nanoseconds`
