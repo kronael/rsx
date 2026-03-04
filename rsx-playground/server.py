@@ -2962,18 +2962,23 @@ async def x_book(symbol_id: int = Query(10)):
             pages.render_book_ladder(symbol_id, snap))
     # Fallback: WAL BBO gives at most 1 bid + 1 ask
     bbo = parse_wal_bbo(symbol_id)
-    if bbo is None:
+    if bbo is not None:
+        snap_from_bbo: dict = {"bids": [], "asks": []}
+        if bbo.get("bid_px"):
+            snap_from_bbo["bids"] = [
+                {"px": bbo["bid_px"], "qty": bbo["bid_qty"]}]
+        if bbo.get("ask_px"):
+            snap_from_bbo["asks"] = [
+                {"px": bbo["ask_px"], "qty": bbo["ask_qty"]}]
         return HTMLResponse(
-            pages.render_book_ladder(symbol_id, None))
-    snap_from_bbo: dict = {"bids": [], "asks": []}
-    if bbo.get("bid_px"):
-        snap_from_bbo["bids"] = [
-            {"px": bbo["bid_px"], "qty": bbo["bid_qty"]}]
-    if bbo.get("ask_px"):
-        snap_from_bbo["asks"] = [
-            {"px": bbo["ask_px"], "qty": bbo["ask_qty"]}]
+            pages.render_book_ladder(symbol_id, snap_from_bbo))
+    # Last fallback: maker book
+    maker_snap = _maker_book(symbol_id)
+    if maker_snap:
+        return HTMLResponse(
+            pages.render_book_ladder(symbol_id, maker_snap))
     return HTMLResponse(
-        pages.render_book_ladder(symbol_id, snap_from_bbo))
+        pages.render_book_ladder(symbol_id, None))
 
 
 @app.get("/x/risk-user", response_class=HTMLResponse)

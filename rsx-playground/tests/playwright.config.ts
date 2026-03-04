@@ -73,6 +73,12 @@ export default defineConfig({
       ],
       dependencies: ["infra-smoke"],
     },
+    // Shard 1b: walkthrough — landing page + live depth (10 tests)
+    {
+      name: "walkthrough",
+      testMatch: ["play_walkthrough.spec.ts"],
+      dependencies: ["readiness"],
+    },
     // Shard 2: htmx-partials — HTMX data pages (49 tests)
     {
       name: "htmx-partials",

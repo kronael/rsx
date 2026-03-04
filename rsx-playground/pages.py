@@ -601,23 +601,9 @@ and liquidation triggers.</p>""")
         "Start the exchange and submit your first "
         "order.",
         """
-<p>Click below to build and start all RSX processes
-(minimal scenario: 1 symbol, 7 processes). Takes
-30-60s on first build.</p>
-<div class="mt-3 flex flex-wrap items-center gap-3">
-  <button hx-post="./api/processes/all/start"
-    hx-vals='{"scenario":"minimal"}'
-    hx-target="#start-result"
-    hx-swap="innerHTML"
-    class="bg-blue-600 hover:bg-blue-500 text-white
-      px-4 py-2 rounded text-xs font-bold
-      cursor-pointer">
-    Start All (minimal)
-  </button>
-  <span id="start-result" class="text-xs
-    text-slate-400"></span>
-</div>
-<div class="mt-4 flex flex-wrap gap-3">
+<p>See the links below to explore the running
+exchange.</p>
+<div class="mt-3 flex flex-wrap gap-3">
   <a href="./trade/"
     class="text-blue-400 hover:text-blue-300 text-xs">
     Open Trade UI &rarr;</a>
@@ -645,9 +631,80 @@ and liquidation triggers.</p>""")
     54ns match &middot; 31ns WAL append</p>
 </div>"""
 
+    # Interactive launch panel — always visible, not
+    # collapsed. Shows Start button, live process status,
+    # and live depth.
+    launch = """
+<section id="launch" class="bg-slate-900 border
+  border-slate-800 rounded-lg p-4 space-y-4">
+  <div class="flex flex-wrap items-center gap-3">
+    <button id="wt-start-btn"
+      hx-post="./api/processes/all/start"
+      hx-headers='{"x-confirm":"yes"}'
+      hx-vals='{"scenario":"minimal"}'
+      hx-target="#wt-start-result"
+      hx-swap="innerHTML"
+      class="bg-blue-600 hover:bg-blue-500 text-white
+        px-5 py-2.5 rounded text-sm font-bold
+        cursor-pointer">
+      Start All
+    </button>
+    <button
+      hx-post="./api/maker/start"
+      hx-target="#wt-start-result"
+      hx-swap="innerHTML"
+      class="bg-emerald-700 hover:bg-emerald-600
+        text-white px-4 py-2.5 rounded text-sm
+        font-bold cursor-pointer">
+      Start Maker
+    </button>
+    <span id="wt-start-result" class="text-xs
+      text-slate-400"></span>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <h3 class="text-xs font-bold text-slate-400
+        mb-2 uppercase tracking-wider">Processes</h3>
+      <div id="wt-processes"
+        hx-get="./x/processes"
+        hx-trigger="load, every 2s"
+        hx-swap="innerHTML"
+        class="text-xs">
+        <p class="text-slate-500">Loading...</p>
+      </div>
+    </div>
+    <div>
+      <h3 class="text-xs font-bold text-slate-400
+        mb-2 uppercase tracking-wider">Orderbook</h3>
+      <div id="wt-depth"
+        hx-get="./x/book?symbol_id=10"
+        hx-trigger="load, every 2s"
+        hx-swap="innerHTML"
+        class="text-xs">
+        <p class="text-slate-500">Loading depth...</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex flex-wrap gap-3 pt-1
+    border-t border-slate-800">
+    <a href="./trade/"
+      class="text-blue-400 hover:text-blue-300 text-xs">
+      Open Trade UI &rarr;</a>
+    <a href="./overview"
+      class="text-blue-400 hover:text-blue-300 text-xs">
+      Dashboard &rarr;</a>
+    <a href="./orders"
+      class="text-blue-400 hover:text-blue-300 text-xs">
+      Submit Orders &rarr;</a>
+  </div>
+</section>"""
+
     sections = (
         f"{hero}"
-        f"<div class='space-y-3'>"
+        f"{launch}"
+        f"<div class='space-y-3 mt-4'>"
         f"{s1}{s2}{s3}{s4}{s5}{s6}{s7}{s8}{s9}"
         f"</div>"
     )
