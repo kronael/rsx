@@ -195,30 +195,15 @@ and releases them on ORDER_DONE/CANCELLED/FAILED.
 
 ### 7. Per-Tick Margin Recalc
 
-On each price update (BBO or mark price) for a symbol:
+On each price update (BBO or mark price): iterate all users with exposure in the
+updated symbol, recalculate full portfolio margin, enqueue liquidation if
+`equity < maint_margin`.
 
-```
-fn on_price_update(symbol_idx: u16):
-    for user_id in &exposure[symbol_idx]:
-        positions = get_user_positions(user_id)
-        state = portfolio_margin.calculate(
-            positions, &mark_prices)
-        accounts[user_id].margin_state = state
-        if portfolio_margin.needs_liquidation(&state):
-            enqueue_liquidation(user_id)
-            // see LIQUIDATOR.md
-```
+**No liquidation race condition:** single-threaded main loop serializes fills and
+liquidation processing — a fill updates the position before
+`maybe_process_liquidations()` runs.
 
-**No liquidation race condition:** The risk engine main loop is
-single-threaded. Fills and liquidation round processing are
-serialized: a fill updates the position before
-`maybe_process_liquidations()` runs. No concurrent reads of
-partial state. The single-threaded design eliminates the race
-between fill arrival and escalation decision.
-
-- Runs on every tick -- sharding keeps it fast
-- Only checks users with exposure in the updated symbol
-- Scale horizontally by adding more user shards
+See `rsx-risk/src/shard.rs::on_price_update`.
 
 ## Persistence
 
@@ -228,77 +213,10 @@ Postgres.
 
 ### Postgres Schema
 
-```sql
-CREATE TABLE positions (
-    user_id      INT NOT NULL,
-    symbol_id    INT NOT NULL,
-    long_qty     BIGINT NOT NULL DEFAULT 0,
-    short_qty    BIGINT NOT NULL DEFAULT 0,
-    long_entry_cost   BIGINT NOT NULL DEFAULT 0,
-    short_entry_cost  BIGINT NOT NULL DEFAULT 0,
-    realized_pnl      BIGINT NOT NULL DEFAULT 0,
-    version      BIGINT NOT NULL DEFAULT 0,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, symbol_id)
-);
+Tables: `positions`, `accounts`, `fills` (partitioned by timestamp_ns),
+`tips`, `liquidation_events`, `funding_payments`.
 
-CREATE TABLE accounts (
-    user_id        INT PRIMARY KEY,
-    collateral     BIGINT NOT NULL DEFAULT 0,
-    frozen_margin  BIGINT NOT NULL DEFAULT 0,
-    version        BIGINT NOT NULL DEFAULT 0,
-    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE fills (
-    fill_id       BIGINT NOT NULL,
-    symbol_id     INT NOT NULL,
-    taker_user_id INT NOT NULL,
-    maker_user_id INT NOT NULL,
-    taker_order_id BYTEA NOT NULL,
-    maker_order_id BYTEA NOT NULL,
-    side          SMALLINT NOT NULL,
-    price         BIGINT NOT NULL,
-    qty           BIGINT NOT NULL,
-    taker_fee     BIGINT NOT NULL DEFAULT 0,
-    maker_fee     BIGINT NOT NULL DEFAULT 0,
-    seq        BIGINT NOT NULL,
-    timestamp_ns  BIGINT NOT NULL,
-    inserted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-) PARTITION BY RANGE (timestamp_ns);
-
-CREATE INDEX idx_fills_symbol_seq ON fills (symbol_id, seq);
-
-CREATE TABLE tips (
-    instance_id  INT NOT NULL,
-    symbol_id    INT NOT NULL,
-    last_seq  BIGINT NOT NULL DEFAULT 0,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (instance_id, symbol_id)
-);
-
-CREATE TABLE liquidation_events (
-    user_id       INT NOT NULL,
-    symbol_id     INT NOT NULL,
-    round         INT NOT NULL,
-    side          SMALLINT NOT NULL,
-    price         BIGINT NOT NULL,
-    qty           BIGINT NOT NULL,
-    slippage_bps  INT NOT NULL,
-    status        SMALLINT NOT NULL, -- 0=placed, 1=filled, 2=cancelled
-    timestamp_ns  BIGINT NOT NULL,
-    inserted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE funding_payments (
-    user_id      INT NOT NULL,
-    symbol_id    INT NOT NULL,
-    amount       BIGINT NOT NULL,
-    rate         BIGINT NOT NULL,
-    settlement_ts TIMESTAMPTZ NOT NULL,
-    inserted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
+See `rsx-risk/migrations/` for DDL.
 
 ### Write Patterns
 

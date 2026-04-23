@@ -124,12 +124,8 @@ that cid is byte-limited not char-limited.
 | IOC with price far from market | tif=IOC, px >> ask | no immediate fill | CANCEL: no match |
 | FOK with insufficient depth | tif=FOK, qty > book depth | partial match fails | CANCEL: partial not allowed |
 
-**Enum safety:**
+**Enum safety:** Validate with a match before use:
 ```rust
-// WRONG: unchecked cast
-let tif: TimeInForce = unsafe { std::mem::transmute(raw_tif) };
-
-// CORRECT: validated conversion
 let tif = match raw_tif {
     0 => TimeInForce::GTC,
     1 => TimeInForce::IOC,
@@ -585,18 +581,8 @@ tick_size=0.01, only 2 decimal places honored.
 - Simulate ORDER_DONE loss, verify timeout error
 - Manual frozen adjustment required (operator tool)
 
-### Edge Case Test Suite (TESTING-GATEWAY.md, TESTING-RISK.md)
-
-Each validation edge case gets a dedicated test:
-```
-tick_size_validation_rejects_early     // Gateway pre-check
-tick_size_validation_rejects_at_me     // ME authoritative check
-lot_size_edge_case_zero_after_rounding // Sub-lot rounds to 0
-notional_overflow_i64_max              // price * qty > 2^63
-position_flip_partial_fills            // Multiple fills across flip
-frozen_margin_accumulates_correctly    // Sum across orders
-dedup_after_5min_window_allows         // Pruning works
-```
+Edge case tests live in TESTING-GATEWAY.md, TESTING-RISK.md, and
+TESTING-MATCHING.md for their respective layers.
 
 ## 7. Monitoring & Alerts
 

@@ -152,18 +152,6 @@ post-deployment.
 - Fast (<1min)
 - CI: post-deployment hook
 
-**Example tests:**
-```rust
-#[test]
-fn can_submit_and_cancel_order() { ... }
-
-#[test]
-fn market_data_stream_active() { ... }
-
-#[test]
-fn risk_engine_responds() { ... }
-```
-
 ---
 
 ## 6. `make perf` - Performance Benchmarks (long-running)
