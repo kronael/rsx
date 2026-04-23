@@ -2,131 +2,190 @@
 
 ## Goal
 
-Full implementation of the gateway REST API per
-`specs/2/26-rest.md`. All 5 endpoints working end-to-end:
-account, positions, orders, fills, funding. Plus JWT auth,
-rate limits, CORS, proper error responses. Unit tests +
-integration tests. Must be productive quality (not prototype).
+Production REST API on rsx-gateway. 5 endpoints
+(account, positions, orders, fills, funding) with JWT
+Bearer auth, rate limits, CORS, proper error envelope.
+Pure monoio — no Postgres in the gateway. Data comes from
+rsx-risk via CMP query messages (risk has all state in
+memory).
 
 ## Non-goals
 
-- GraphQL or alternate protocols
-- Webhooks / server-push (use WS instead)
+- Postgres client in gateway (risk owns the DB)
 - Admin / internal endpoints (those live in playground)
+- GraphQL / WebSocket push for account state (use WS)
+- Hosting in playground (playground is dev-only)
+
+## Architecture
+
+```
+  trade UI                                rsx-risk
+    |                                    (in-memory)
+    |-- GET /v1/positions ---+              ^
+    |   Bearer <JWT>         |              |
+    v                        v              |
+  rsx-gateway (monoio) ---- CMP/UDP query --+
+    :8081 HTTP               QUERY_POSITIONS
+                                            |
+                                            v
+                             (reply) CMP: POSITIONS_RESPONSE
+    |                        ^
+    |<-- JSON response ------|
+    |
+```
+
+Gateway REST is a thin adapter:
+1. parse HTTP request
+2. validate JWT → user_id
+3. send CMP query to risk shard (routed by user_id hash)
+4. await CMP response (pending map keyed by request_id)
+5. serialize to JSON → return HTTP
+
+risk keeps everything in memory; no DB round-trip on
+reads. Postgres is the recovery store, not the read path.
 
 ## IO Surfaces
 
-- **rsx-gateway REST server** — port per `RSX_GW_HTTP_LISTEN`
-  env var (new — currently REST runs alongside WS on same
-  process; decide on port strategy)
-- **Postgres** read path — positions, orders, fills, account,
-  funding history via rsx-risk persistence layer
-- **JWT Bearer** in `Authorization` header (same secret as WS)
+- **rsx-gateway REST server** — port `RSX_GW_HTTP_LISTEN`
+  (new; e.g. `:8081`)
+- **CMP query/response** — new record types for each endpoint
+- **JWT Bearer** — Authorization header; same secret as WS
+
+## New CMP record types (specs/2/18-messages.md)
+
+Request messages sent gateway → risk:
+- `RECORD_QUERY_ACCOUNT { req_id, user_id }` (0x40)
+- `RECORD_QUERY_POSITIONS { req_id, user_id, symbol_filter }` (0x41)
+- `RECORD_QUERY_ORDERS { req_id, user_id, symbol_filter, status_filter }` (0x42)
+- `RECORD_QUERY_FILLS { req_id, user_id, symbol_filter, from_ts, to_ts, limit }` (0x43)
+- `RECORD_QUERY_FUNDING { req_id, user_id, symbol_filter, limit }` (0x44)
+
+Response messages sent risk → gateway:
+- `RECORD_ACCOUNT_RESPONSE { req_id, collateral, frozen_margin, equity, unrealized_pnl, ... }` (0x50)
+- `RECORD_POSITIONS_RESPONSE { req_id, count, entries: [...] }` (0x51)
+- `RECORD_ORDERS_RESPONSE { req_id, count, entries: [...] }` (0x52)
+- `RECORD_FILLS_RESPONSE { req_id, count, entries: [...] }` (0x53)
+- `RECORD_FUNDING_RESPONSE { req_id, count, entries: [...] }` (0x54)
+
+Response records may exceed CMP fixed-size; use `entries`
+array up to a cap, paginate via subsequent request if
+needed, OR stream via multi-record response.
 
 ## Tasks
 
-### 1. Finalize endpoint schemas
+### 1. CMP query/response record design
+Write `specs/2/18-messages.md` section documenting 5 new
+request types + 5 response types. Fixed-size layout for
+headers + variable-size entry arrays (or paginated).
 
-Review `specs/2/26-rest.md` §API section. For each of the
-5 endpoints, lock down:
-- URL path (`/v1/<endpoint>`)
-- Query params (symbol filter, time range, pagination)
-- Response schema (fields, types, pagination envelope)
-- Error codes (401, 403, 404, 429, 500)
+Files: `specs/2/18-messages.md`, `rsx-dxs/src/records.rs`
+(add 10 new Record structs), `rsx-gateway/src/protocol.rs`
+(if gateway encodes these too).
 
-Update spec to match final decisions.
+### 2. rsx-risk query handler
+In `rsx-risk/src/shard.rs`, add handlers for the 5 query
+types. Each handler reads in-memory state, builds
+response CMP record(s), sends back to gateway.
 
-### 2. Wire JWT auth on REST
+Files: `rsx-risk/src/shard.rs` (+ new `rsx-risk/src/query.rs` if
+the logic gets bulky).
 
-Existing WS JWT validation in `rsx-gateway/src/jwt.rs`.
-Add middleware that extracts Bearer token from
-`Authorization` header, validates HS256, sets user_id on
-request context. Reject 401 if invalid/expired.
+### 3. Gateway pending query map
+Similar to pending order map. Keyed by req_id. Stores
+the HTTP response channel (or future) so when the CMP
+response arrives, gateway finishes the HTTP write.
 
-### 3. Implement GET /v1/account
+Files: `rsx-gateway/src/pending_query.rs` (new),
+`rsx-gateway/src/main.rs` (wire CMP response handler).
 
-Query rsx-risk Postgres for user account state
-(collateral, frozen_margin, free_collateral, version).
-Cache per-user with short TTL (1s) to avoid hammering PG.
+### 4. JWT middleware
+Extract Bearer token, validate HS256 with shared secret.
+Reject 401. Same JWT as WS so no new issuance logic.
 
-### 4. Implement GET /v1/positions
+Files: `rsx-gateway/src/rest.rs` + reuse `rsx-gateway/src/jwt.rs`.
 
-Query positions table filtered by user_id. Support
-`?symbol_id=X` filter. Include unrealized PnL computed
-from current mark.
+### 5. REST endpoint handlers
+For each of 5 endpoints: parse path, parse query params,
+call shared `send_cmp_query()` helper, await response
+(with timeout), serialize response entries to JSON.
 
-### 5. Implement GET /v1/orders
+Files: `rsx-gateway/src/rest.rs`.
 
-Query open (not fully filled/cancelled) orders for user.
-Support `?status=open|closed|all` and `?symbol_id=X`.
-Paginate by order_id.
+### 6. Rate limits per user
+Reuse pattern from `rsx-gateway/src/rate_limit.rs`. Per-user
+token bucket. 100 req/min sustained, 10 req/s burst. Return
+429 + Retry-After header.
 
-### 6. Implement GET /v1/fills
+Files: `rsx-gateway/src/rate_limit.rs` (extend for HTTP),
+`rsx-gateway/src/rest.rs` (apply on protected routes).
 
-Query fill history for user. Support `?from_ts=X&to_ts=Y`
-time range, `?symbol_id=X` filter. Paginate by ts.
+### 7. CORS
+Permissive in dev (`Access-Control-Allow-Origin: *`).
+Configurable allowlist via env var for prod. Preflight
+OPTIONS returns 204.
 
-### 7. Implement GET /v1/funding
+Files: `rsx-gateway/src/rest.rs`.
 
-Query funding history (settlement events). Same filters
-as fills. Include rate, quantity, pnl_delta per event.
+### 8. Error response envelope
+Consistent shape: `{"error": "...", "code": "...",
+"request_id": "...}`. All error paths return JSON with
+envelope + set X-Request-Id header. Request ID via
+`uuid::Uuid::new_v4()`.
 
-### 8. Rate limits
+Files: `rsx-gateway/src/rest.rs`.
 
-Per-user: 100 req/s burst, 1000 req/min sustained.
-Return 429 with Retry-After header when exceeded. Reuse
-`rsx-gateway/src/rate_limit.rs` patterns.
+### 9. Unit tests (Rust)
+Per handler: happy path (mock risk response), 401
+(missing/invalid JWT), 429 (rate limit), 404 (unknown
+user). Mock CMP transport.
 
-### 9. CORS
+Files: `rsx-gateway/tests/rest_handlers_test.rs`.
 
-Permissive in dev (allow all origins), configurable via
-env var in prod. Preflight support.
+### 10. Integration tests (testcontainers-rs)
+Real Postgres, real risk, mock gateway TCP. Seed user,
+issue JWT, HTTP call, assert response. ≥2 per endpoint.
 
-### 10. Error responses
+Files: `rsx-gateway/tests/rest_integration_test.rs`.
 
-Consistent JSON shape: `{"error": "...", "code": "...",
-"request_id": "..."}`. Log 5xx with request_id for
-traceability.
+### 11. Playwright e2e
+Trade UI: Positions tab, Orders history, Funding tab hit
+gateway REST (not playground). Assert real data flows.
 
-### 11. Unit tests
+Files: `rsx-playground/tests/play_trade.spec.ts` (update
+to point at gateway REST endpoint or nginx-proxied path).
 
-Per endpoint: handler logic with mocked PG. Cover happy
-path, 401, 403, 404, pagination, filtering.
+### 12. Remove /v1/ squatting from playground
+playground has /v1/positions etc. — move under /api/ or
+delete; playground's catch-all /v1/{path:path} proxy
+stays to forward to gateway.
 
-### 12. Integration tests (testcontainers)
+Files: `rsx-playground/server.py`.
 
-Real Postgres via testcontainers-rs. Full flow: seed data,
-JWT token, HTTP call, assert response. At least 2 tests
-per endpoint.
-
-### 13. Playwright e2e
-
-Exercise REST from the trade UI. Ensure Positions panel,
-Orders history, Funding tab all hit the REST endpoints
-and render correctly.
-
-### 14. Documentation
-
-Update `specs/2/26-rest.md` from `partial` to `shipped`.
-Regenerate OpenAPI-style schema doc or keep as markdown
-(simpler — keep markdown).
+### 13. Spec update
+`specs/2/26-rest.md`: status partial → shipped. Document
+the 5 endpoints, auth, rate limits, error envelope. Add
+the CMP query architecture note.
 
 ## Acceptance
 
-- All 5 endpoints return valid responses for seeded test
-  users
-- JWT auth rejects unauthenticated (401) and unauthorized
-  (403) requests
-- Rate limits trigger 429 under load test
-- Integration test suite passes: at least 10 test cases
-  across all endpoints
-- `specs/2/26-rest.md` status = `shipped`, content matches
-  code
-- Trade UI positions/orders/funding tabs work against
-  gateway REST (not playground proxy fallback)
+- All 5 endpoints return valid JSON for seeded users
+- 401 on missing/invalid JWT
+- 429 under load test
+- CMP query latency <5ms (gateway→risk→gateway in same host)
+- Integration tests pass: ≥10 cases
+- Playwright e2e: trade UI renders positions/orders/funding
+  from gateway REST
+- `specs/2/26-rest.md` status = shipped
+
+## Dependencies
+
+- 11-OAUTH must be at least partially shipped (JWT issuance)
+  before end-to-end testing — OR use dev-issued JWTs during
+  08 development.
 
 ## Out of scope / follow-up
 
-- GraphQL layer if needed later
-- Websocket-based subscription to account state changes
+- WS push for account state changes (v2)
+- GraphQL
 - Admin endpoints (stay in playground)
+- Pagination beyond basic limit/offset (v2: cursor-based)
