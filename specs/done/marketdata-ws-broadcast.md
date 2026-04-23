@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Marketdata WS Broadcast Loop
 
 ## Context

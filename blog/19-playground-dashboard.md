@@ -188,5 +188,5 @@ terminals.
 - `rsx-playground/server.py` — FastAPI server, all endpoints
 - `rsx-playground/pages.py` — HTML generator, all screens
 - `rsx-playground/tests/` — 11 Playwright test files
-- `specs/v1/BLOG.md` — Playground blog spec
+- `specs/1/BLOG.md` — Playground blog spec
 - `blog/01-design-philosophy.md` — Overall design approach

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Trade UI — End-to-End Working State
 
 ## Goal
@@ -11,7 +15,7 @@ exists, and the Playwright suite passes with zero failures.
 - **SPA**: React 19 + TypeScript, Vite, Tailwind, Zustand, lightweight-charts
 - **Entry**: `rsx-webui/src/` — built to `rsx-webui/dist/`, served at `/trade/`
 - **Server**: `rsx-playground/server.py` — proxies WS and REST to gateway
-- **Protocol**: `specs/v1/WEBPROTO.md` (WS), `specs/v1/REST.md` (HTTP)
+- **Protocol**: `specs/1/49-webproto.md` (WS), `specs/1/26-rest.md` (HTTP)
 - **Tests**: `rsx-playground/tests/play_trade.spec.ts` (Playwright)
 
 Read `rsx-webui/src/` fully before making any changes. All existing
@@ -25,7 +29,7 @@ must be preserved. Do not add dependencies.
 **Symbols never load.** `server.py`'s `/v1/symbols` returns
 `{"symbols": [...objects...]}` but the UI's `fetchSymbols()` in
 `useRestApi.ts` expects `{"M": [[id, tick, lot, name], ...]}` per
-`specs/v1/REST.md`. The TopBar symbol selector stays "Loading..."
+`specs/1/26-rest.md`. The TopBar symbol selector stays "Loading..."
 permanently. Fix the server response shape to match the spec.
 
 **RSI sub-chart never renders.** In `Chart.tsx`, the RSI

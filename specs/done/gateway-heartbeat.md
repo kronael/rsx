@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Server-Initiated Heartbeats + Connection Timeout
 
 ## Context

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # RSX Crash Analysis (Value Flow + Failure Critique)
 
 Audit date: 2026-02-11

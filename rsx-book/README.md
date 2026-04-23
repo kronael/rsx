@@ -48,7 +48,7 @@ cargo test -p rsx-book
 level, matching, migration, modify, order, post-only, reduce,
 slab, snapshot, and more. All tests non-flaky with migration
 completion assertions and zone boundary edge cases.
-See `specs/v1/TESTING-BOOK.md`.
+See `specs/1/34-testing-book.md`.
 
 ## Dependencies
 
@@ -70,4 +70,4 @@ See `specs/v1/TESTING-BOOK.md`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- slab internals,
   compression zones, matching algorithm, memory layout
-- `specs/v1/ORDERBOOK.md`
+- `specs/1/21-orderbook.md`

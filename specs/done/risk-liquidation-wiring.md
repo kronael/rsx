@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Wire Liquidation into Risk Main Loop
 
 ## Context

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Phase 3+4 — Marketdata Fan-Out + Mark Price
 
 ## Context

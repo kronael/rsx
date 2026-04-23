@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # RSX Exchange
 
-Spec-first perpetuals exchange. All specs in `specs/v1/`.
+Spec-first perpetuals exchange. All specs in `specs/1/`.
 
-## Architecture (see specs/v1/NETWORK.md, TILES.md)
+## Architecture (see specs/1/20-network.md, TILES.md)
 
 - Separate processes: Gateway, Risk, ME (per symbol),
   Marketdata, Recorder, Mark
@@ -166,17 +166,17 @@ for notional = price * qty at risk boundary.
 
 | Component | Spec | Test Spec |
 |-----------|------|-----------|
-| Architecture | TILES.md (networking, tiles) | - |
-| Shared orderbook | ORDERBOOK.md | TESTING-BOOK.md |
-| Matching engine | ORDERBOOK.md, CONSISTENCY.md | TESTING-MATCHING.md |
-| DXS (WAL + replay) | DXS.md, WAL.md, CMP.md | TESTING-DXS.md |
-| Risk engine | RISK.md | TESTING-RISK.md |
-| Liquidator | LIQUIDATOR.md | TESTING-LIQUIDATOR.md |
-| Mark price | MARK.md | TESTING-MARK.md |
-| Gateway | NETWORK.md, WEBPROTO.md, RPC.md, MESSAGES.md | TESTING-GATEWAY.md |
-| Market data | MARKETDATA.md | TESTING-MARKETDATA.md |
-| SPSC rings | notes/SMRB.md | TESTING-SMRB.md |
-| Validation edge cases | VALIDATION-EDGE-CASES.md | (cross-references all) |
+| Architecture | specs/1/45-tiles.md | - |
+| Shared orderbook | specs/1/21-orderbook.md | specs/1/34-testing-book.md |
+| Matching engine | specs/1/21-orderbook.md, specs/1/6-consistency.md | specs/1/41-testing-matching.md |
+| DXS (WAL + replay) | specs/1/10-dxs.md, specs/1/48-wal.md, specs/1/4-cmp.md | specs/1/36-testing-dxs.md |
+| Risk engine | specs/1/28-risk.md | specs/1/42-testing-risk.md |
+| Liquidator | specs/1/13-liquidator.md | specs/1/38-testing-liquidator.md |
+| Mark price | specs/1/15-mark.md | specs/1/39-testing-mark.md |
+| Gateway | specs/1/20-network.md, specs/1/49-webproto.md, specs/1/29-rpc.md, specs/1/18-messages.md | specs/1/37-testing-gateway.md |
+| Market data | specs/1/16-marketdata.md | specs/1/40-testing-marketdata.md |
+| SPSC rings | notes/SMRB.md | specs/1/43-testing-smrb.md |
+| Validation edge cases | specs/1/47-validation-edge-cases.md | (cross-references all) |
 
 ## Correctness Invariants (system-wide)
 

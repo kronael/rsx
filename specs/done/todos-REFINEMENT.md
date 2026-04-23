@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Refinement Backlog
 date: 2026-02-22 (updated)
 
@@ -28,7 +32,7 @@ Evaluate tokio-uring or glommio; keep io_uring, add work stealing for
 connection distribution across many concurrent WS sessions.
 
 ### [liquidator] Symbol halt on repeated liquidation failure not implemented
-Source: specs/v1/LIQUIDATOR.md:347. When liquidation fails repeatedly,
+Source: specs/1/13-liquidator.md:347. When liquidation fails repeatedly,
 halt symbol trading (spec TODO).
 
 ### [future] Stress test targets not validated

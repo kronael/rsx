@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # CRITIQUE.md — RSX Playground
 
 Comprehensive audit of functionality gaps, test quality,

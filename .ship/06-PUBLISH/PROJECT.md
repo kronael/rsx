@@ -36,7 +36,7 @@ Actual counts: 785 Rust, 1034 Python, ~440 Playwright
 (exact count post-walkthrough additions). Update:
 - `PROGRESS.md`, `TESTING.md`, `FEATURES.md`
 - `BLOG.md`, `README.md`
-- `specs/v1/STATUS.md`
+- `specs/1/32-status.md`
 - Walkthrough hero (`rsx-playground/pages.py`)
 
 ### 3. Fix canonical Playwright count for release-gate
@@ -90,9 +90,7 @@ Files: `rsx-marketdata/`, `rsx-playground/server.py`
 ## Out of scope (new ship projects likely)
 
 - `07-SPEC-CLEANUP`: systematic audit of bloat/stale/dup
-  content in `specs/v1/` — research each finding against
+  content in `specs/1/` — research each finding against
   shipped code, trim or capture
-- `08-SPECS-REORG`: `specs/v1/` → `specs/1/` with N-topic
-  numbering and frontmatter
-- `09-DEPLOY`: public deployment (domain, Docker, TLS)
-- `10-SIGNUP`: auth flow and onboarding
+- `08-DEPLOY`: public deployment (domain, Docker, TLS)
+- `09-SIGNUP`: auth flow and onboarding

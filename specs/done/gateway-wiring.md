@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Phase 2 — Gateway Wiring
 
 ## Context

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Rust Market Maker
 
 ## Goal
@@ -15,7 +19,7 @@ cycle. Reacts to fill frames to update position tracking.
 ## References
 
 Read these files before implementing:
-- `specs/v1/WEBPROTO.md` — WS frame format (N, C, F, U, E, BBO)
+- `specs/1/49-webproto.md` — WS frame format (N, C, F, U, E, BBO)
 - `rsx-playground/market_maker.py` — Python reference implementation
 - `rsx-gateway/src/ws.rs` — handshake and frame format
 - `rsx-types/src/` — Price, Qty, Side types

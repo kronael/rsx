@@ -52,7 +52,7 @@ cargo test -p rsx-gateway
 16 test files: circuit, config, convert, handler, heartbeat,
 JWT, JWT+WS e2e, order ID, pending, protocol, rate limit,
 rate limit e2e, state, types, and more. All hot-path unwraps
-eliminated. See `specs/v1/TESTING-GATEWAY.md`.
+eliminated. See `specs/1/37-testing-gateway.md`.
 
 ## Dependencies
 
@@ -74,4 +74,4 @@ eliminated. See `specs/v1/TESTING-GATEWAY.md`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- message flow, rate
   limiting, circuit breaker, backpressure, scaling
-- `specs/v1/GATEWAY.md`, `specs/v1/WEBPROTO.md`
+- `specs/1/11-gateway.md`, `specs/1/49-webproto.md`

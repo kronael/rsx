@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Playground Feature Audit & Fix Spec
 
 Comprehensive audit of rsx-playground as a minimal viable

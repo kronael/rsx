@@ -59,7 +59,7 @@ cargo test -p rsx-dxs
 7 test files: archive, client, CMP, header, records, TLS, WAL.
 All tests non-flaky (unique temp dirs, ephemeral ports).
 Benchmarks: `wal_bench`, `encode_bench`.
-See `specs/v1/TESTING-DXS.md`.
+See `specs/1/36-testing-dxs.md`.
 
 ## Dependencies
 
@@ -82,4 +82,4 @@ See `specs/v1/TESTING-DXS.md`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- WAL format, CMP
   protocol, replay protocol, record types, performance
-- `specs/v1/DXS.md`, `specs/v1/WAL.md`, `specs/v1/CMP.md`
+- `specs/1/10-dxs.md`, `specs/1/48-wal.md`, `specs/1/4-cmp.md`
