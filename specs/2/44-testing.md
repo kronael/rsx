@@ -38,7 +38,7 @@ performance characterization.
 
 **Purpose:** Fast feedback loop for development. Run on every code change.
 
-**Actual Status:** 877 tests passing across all crates. Zero failures,
+**Actual Status:** 895 tests passing across all crates. Zero failures,
 all non-flaky (unique temp dirs, proper cleanup, ephemeral ports).
 
 **Scope:**
@@ -471,25 +471,10 @@ Verified across all test levels:
 - Cross-margining calculations
 - Correlation-based risk
 
-### Persistence/Replay Tests
-- WAL write/read correctness
-- Crash recovery from WAL
-- Replay vs real-time consistency
-
-### Multi-Machine Replication
-- Orderbook replication across machines
-- Failover testing
-- Split-brain scenarios
-
 ### Orderbook Checkpointing
 - Snapshot creation
 - Snapshot restoration
 - Incremental checkpoints
-
-### WebSocket Market Data Tests
-- L2 orderbook snapshots
-- Incremental updates (deltas)
-- Subscription management
 
 ---
 

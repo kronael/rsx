@@ -76,7 +76,7 @@ WAL replication over TCP. Firewall rules TBD.
 All processes on one host. Localhost UDP for CMP,
 localhost TCP for WAL replication.
 
-See `run.py` for automated local dev runner.
+See `start` (repo root script) for automated local dev runner.
 
 ## Configuration
 

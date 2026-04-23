@@ -26,7 +26,7 @@ Implementation path:
 Tests:
 - WS frame parsing: `rsx-gateway/tests/protocol_test.rs`
 - Risk pre-trade checks/margin: `rsx-risk/tests/margin_test.rs`, `rsx-risk/tests/shard_test.rs`
-- Matching fanout/unit: `rsx-matching/tests/fanout_test.rs`
+- Matching lifecycle/unit: `rsx-matching/tests/lifecycle_test.rs`, `rsx-matching/tests/order_processing_test.rs`
 - Gateway order lifecycle routing: `rsx-gateway/tests/order_lifecycle_test.rs`
 - No full WS->CMP->ME->WS e2e test present.
 
@@ -74,7 +74,7 @@ Implementation path:
 
 Tests:
 - Risk fill logic: `rsx-risk/tests/position_test.rs`, `rsx-risk/tests/fee_test.rs`
-- Matching fanout test (unit): `rsx-matching/tests/fanout_test.rs`
+- Matching lifecycle/unit: `rsx-matching/tests/lifecycle_test.rs`, `rsx-matching/tests/order_processing_test.rs`
 - Gateway fill routing: `rsx-gateway/tests/order_lifecycle_test.rs`
 
 ## 5) Order Completion (OrderDone / Cancelled -> Margin Release)

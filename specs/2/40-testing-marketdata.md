@@ -35,7 +35,7 @@ Binary: `rsx-marketdata`
 | MD9 | Seq gap -> client re-subscribes for snapshot | WEBPROTO.md §market data |
 | MD10 | Public endpoint, no auth | MARKETDATA.md |
 | MD11 | Single-threaded, dedicated core, busy-spin | NETWORK.md §MARKETDATA |
-| MD12 | Non-blocking epoll for WS I/O (no Tokio) | NETWORK.md §MARKETDATA |
+| MD12 | monoio (io_uring) for WS I/O (no Tokio) | NETWORK.md §MARKETDATA |
 | MD13 | CMP/UDP input from matching engine | NETWORK.md §MARKETDATA |
 | MD14 | Recovery via DXS replay from ME WAL | DXS.md §8 |
 | MD15 | WS JSON: BBO, B (snapshot), D (delta), S, X | WEBPROTO.md |
@@ -195,7 +195,7 @@ ws_seq_gap_client_resnapshots
 ws_s_subscribe_frame_parsed
 ws_x_unsubscribe_frame_parsed
 
-// recovery (planned; DXS replay not wired in v1)
+// recovery
 dxs_replay_rebuilds_shadow_book
 recovery_from_me_wal_then_live
 recovery_snapshot_sent_after_catchup

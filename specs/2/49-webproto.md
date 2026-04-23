@@ -127,9 +127,11 @@ On reconnect, client opens a fresh WebSocket with a new JWT.
 There is no session resumption and no replay of missed
 messages. To restore state after reconnect:
 
-1. Query `{O:[]}`, `{P:[]}`, `{A:[]}` on the private WS,
-   or use the REST equivalents (`/v1/orders`, `/v1/positions`,
-   `/v1/account`).
+1. Use the REST endpoints (`GET /v1/orders`, `GET /v1/positions`,
+   `GET /v1/account`) to query current state. On the playground
+   these are served by rsx-playground at `/v1/orders` etc.
+   The `{O:[]}`, `{P:[]}`, `{A:[]}` WS queries are Post-MVP
+   (not implemented on the gateway WS).
 2. Re-subscribe to market data channels on the public WS
    (separate MARKETDATA service, see MARKETDATA.md).
 
@@ -432,9 +434,6 @@ Risk engine sends to gateway over CMP/UDP. Gateway routes to user
 by user_id. Fire-and-forget delivery.
 
 ### T: Trade (Public WS)
-
-> **Post-MVP: not implemented in v1.** Trades are
-> served by rsx-marketdata directly.
 
 ```
 {T:[sym, px, qty, side, ts, u]}

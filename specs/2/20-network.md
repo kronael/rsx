@@ -54,7 +54,7 @@ Web Users (WS) ─────────────────────�
 **Matching Engine separate:**
 - Symbol-scoped (one process per symbol or symbol group)
 - Single-threaded per symbol (no locks, cache-friendly, reference ORDERBOOK.md)
-- Stateless regarding users (just order IDs, no position tracking)
+- Minimal per-user state (reduce-only UserState only, no margin tracking)
 - Scales horizontally: add symbols by adding processes
 - Clean isolation: BTC-PERP and ETH-PERP cannot interfere
 
@@ -104,8 +104,10 @@ focuses on network topology and communication patterns.
 - Validates tick size, lot size (reference ORDERBOOK.md section 2)
 - Single-threaded matching (cache-friendly, O(1) operations)
 - Generates FILL events with balance/risk impact
-- Stateless regarding users (no position tracking, no margin checks)
-- Deduplicates orders via UUIDv7 tracking (reference RPC.md)
+- Tracks minimal per-user state for reduce-only enforcement (UserState)
+- No margin checks (those are Risk's responsibility)
+- Deduplicates orders via `(user_id, order_id_hi, order_id_lo)` tuple;
+  order_id_hi/lo are the UUIDv7 bytes split at 8B boundary (reference RPC.md)
 
 **Architecture:**
 - Monolithic per symbol (NOT distributed across machines)
@@ -269,16 +271,18 @@ See MESSAGES.md for message semantics.
 Matching Engine
     │ (user A's order matches user B's order)
     │
-    ├──FILL──→ Gateway1 (user A's gateway)
-    │             ├─ Update user A position (+qty)
-    │             └─ Forward FILL to user A
-    │
-    └──FILL──→ Gateway2 (user B's gateway)
+    └──FILL──→ Risk Engine
+                  ├─ Update user A position (+qty)
                   ├─ Update user B position (-qty)
-                  └─ Forward FILL to user B
+                  ├──FILL──→ Gateway1 (user A's gateway)
+                  │             └─ Forward FILL to user A
+                  └──FILL──→ Gateway2 (user B's gateway)
+                                └─ Forward FILL to user B
 ```
 
-**Key insight:** One fill in matching engine → two FILL messages sent (one to each user's gateway).
+**Key insight:** ME sends one FILL to Risk. Risk updates
+positions for both users, then forwards FILL to each user's
+gateway. Fill routing is ME→Risk→Gateway.
 
 ### Risk Update Flow
 

@@ -98,7 +98,7 @@ L2 depth, BBO, and trade derivation from these events.
 - Positions maintained at risk tile only
 - Pre-trade margin check before order enters matching
 - Check-to-fill window is acceptable — liquidation handles overshoot
-- Risk engine persists positions — see [PERSISTENCE.md](PERSISTENCE.md)
+- Risk engine persists positions — see [8-database.md](8-database.md)
 - No rollback: fills are final
 
 ## 5. Crash Behavior
@@ -106,7 +106,7 @@ L2 depth, BBO, and trade derivation from these events.
 | Component | On crash | Recovery |
 |-----------|----------|----------|
 | Matching engine | Book lost | Restores from snapshot + WAL replay. |
-| Risk engine | Positions persisted | Restarts from persisted state. See PERSISTENCE.md. |
+| Risk engine | Positions persisted | Restarts from persisted state. See 8-database.md. |
 | Gateway | User sessions drop | Users reconnect and re-submit. |
 
 **Graceful shutdown:** SIGTERM is treated identically to a
