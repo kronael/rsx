@@ -803,13 +803,10 @@ def test_v1_candles_nonexistent_symbol(client):
     assert isinstance(data["bars"], list)
 
 
-def test_v1_account_rejects_non_numeric_x_user_id(client):
-    """Non-integer x-user-id header → 401, not 500."""
-    resp = client.get(
-        "/v1/account",
-        headers={"x-user-id": "not-a-number"},
-    )
-    assert resp.status_code == 401
+def test_v1_account_bad_user_id_returns_422(client):
+    """Non-integer user_id returns 422, not 500."""
+    resp = client.get("/v1/account?user_id=abc")
+    assert resp.status_code == 422
     assert "Traceback" not in resp.text
 
 

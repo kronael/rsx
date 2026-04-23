@@ -2,155 +2,131 @@
 
 ## Goal
 
-All 5 REST endpoints (account, positions, orders, fills,
-funding) work end-to-end with JWT auth, rate limits, CORS,
-proper error responses. Unit + integration + e2e tests.
-Productive quality.
-
-## Architecture decision
-
-**Playground is the REST host**, not rsx-gateway.
-
-Rationale:
-- Endpoints already implemented in `rsx-playground/server.py`
-  lines 5867-6074 (FastAPI + asyncpg)
-- rsx-gateway uses monoio (no tokio-postgres compatibility);
-  adding Postgres to monoio is deep-water engineering
-- Split: gateway = WS hot path (<50us); playground = REST
-  cold path (<100ms acceptable)
-- Matches what trade UI (rsx-webui) actually uses today
-
-Update `specs/2/26-rest.md` to document this architecture.
+Full implementation of the gateway REST API per
+`specs/2/26-rest.md`. All 5 endpoints working end-to-end:
+account, positions, orders, fills, funding. Plus JWT auth,
+rate limits, CORS, proper error responses. Unit tests +
+integration tests. Must be productive quality (not prototype).
 
 ## Non-goals
 
-- Moving REST to rsx-gateway (deferred to v2)
 - GraphQL or alternate protocols
-- Webhooks (use WS)
-- Admin endpoints (stay in playground's /api/ namespace)
+- Webhooks / server-push (use WS instead)
+- Admin / internal endpoints (those live in playground)
 
 ## IO Surfaces
 
-- `rsx-playground/server.py` FastAPI on :49171
-- `/v1/account`, `/v1/positions`, `/v1/orders`, `/v1/fills`,
-  `/v1/funding`, `/v1/symbols`, `/v1/candles`
-- `Authorization: Bearer <JWT>` header (same secret as gateway WS)
-- Postgres via asyncpg (already connected)
-- WAL files via `parse_wal_*` helpers (fallback when PG unavailable)
-
-## Current state (audit)
-
-| Endpoint | Exists | Auth | Rate limit | Tests | Data source |
-|----------|--------|------|------------|-------|-------------|
-| /v1/symbols | ✅ | no | no | ? | in-memory symbol_configs |
-| /v1/candles | ✅ | no | no | ? | WAL fills |
-| /v1/funding | ✅ | no | no | ? | WAL funding records |
-| /v1/positions | ✅ | no | no | ? | WAL fills (not PG!) |
-| /v1/fills | ✅ | no | no | ? | WAL fills |
-| /v1/account | ✅ | no | no | ? | ? |
-| /v1/orders | ✅ | no | no | ? | ? |
+- **rsx-gateway REST server** — port per `RSX_GW_HTTP_LISTEN`
+  env var (new — currently REST runs alongside WS on same
+  process; decide on port strategy)
+- **Postgres** read path — positions, orders, fills, account,
+  funding history via rsx-risk persistence layer
+- **JWT Bearer** in `Authorization` header (same secret as WS)
 
 ## Tasks
 
-### 1. Schema + data-source consistency pass
+### 1. Finalize endpoint schemas
 
-Each endpoint should:
-- Return JSON envelope `{"data": ..., "pagination": ..., "request_id": ...}`
-  OR keep flat array/object but document format
-- Pull from Postgres (authoritative) where possible;
-  WAL fallback only when PG down
-- Include standard fields per spec 26-rest.md
+Review `specs/2/26-rest.md` §API section. For each of the
+5 endpoints, lock down:
+- URL path (`/v1/<endpoint>`)
+- Query params (symbol filter, time range, pagination)
+- Response schema (fields, types, pagination envelope)
+- Error codes (401, 403, 404, 429, 500)
 
-Audit each handler, pick one shape, apply consistently.
+Update spec to match final decisions.
 
-### 2. JWT auth middleware
+### 2. Wire JWT auth on REST
 
-Extract `Authorization: Bearer <JWT>` header, validate
-against `RSX_GW_JWT_SECRET` (same secret as WS), set
-`user_id` on request state. Reject 401 on missing/invalid.
+Existing WS JWT validation in `rsx-gateway/src/jwt.rs`.
+Add middleware that extracts Bearer token from
+`Authorization` header, validates HS256, sets user_id on
+request context. Reject 401 if invalid/expired.
 
-Decision: **protected endpoints** (account, positions,
-orders, fills, funding) require auth. **Public endpoints**
-(symbols, candles) do not.
+### 3. Implement GET /v1/account
 
-Files: `rsx-playground/server.py` — add auth dependency,
-FastAPI `Depends(verify_jwt)`.
+Query rsx-risk Postgres for user account state
+(collateral, frozen_margin, free_collateral, version).
+Cache per-user with short TTL (1s) to avoid hammering PG.
 
-### 3. Rate limits
+### 4. Implement GET /v1/positions
 
-Per-user: 60 req/min sustained, 10 req/s burst. Rejects
-with 429 + `Retry-After` header.
+Query positions table filtered by user_id. Support
+`?symbol_id=X` filter. Include unrealized PnL computed
+from current mark.
 
-Use an in-memory token bucket keyed by user_id. Cleared
-hourly.
+### 5. Implement GET /v1/orders
 
-### 4. CORS
+Query open (not fully filled/cancelled) orders for user.
+Support `?status=open|closed|all` and `?symbol_id=X`.
+Paginate by order_id.
 
-Permissive in dev; configurable origin allowlist via env
-var. Preflight OPTIONS support.
+### 6. Implement GET /v1/fills
 
-### 5. Error response envelope
+Query fill history for user. Support `?from_ts=X&to_ts=Y`
+time range, `?symbol_id=X` filter. Paginate by ts.
 
-All error paths return `{"error": "...", "code": "...",
-"request_id": "..."}`. 401/403/404/429/500. Request ID in
-response header + body for traceability. Log 5xx with
-request_id.
+### 7. Implement GET /v1/funding
 
-### 6. Docs / OpenAPI
+Query funding history (settlement events). Same filters
+as fills. Include rate, quantity, pnl_delta per event.
 
-Document endpoints in `specs/2/26-rest.md`. Include
-request/response schema per endpoint, auth requirement,
-rate limit cost.
+### 8. Rate limits
 
-Optional: generate OpenAPI JSON from FastAPI route schemas
-for machine-readable spec.
+Per-user: 100 req/s burst, 1000 req/min sustained.
+Return 429 with Retry-After header when exceeded. Reuse
+`rsx-gateway/src/rate_limit.rs` patterns.
 
-### 7. Unit tests
+### 9. CORS
 
-Per endpoint handler:
-- Happy path (returns expected shape)
-- Missing auth → 401
-- Invalid JWT → 401
-- Non-existent user → 404
-- Filter params work correctly
+Permissive in dev (allow all origins), configurable via
+env var in prod. Preflight support.
 
-Location: `rsx-playground/tests/rest_unit_test.py`
+### 10. Error responses
 
-### 8. Integration tests
+Consistent JSON shape: `{"error": "...", "code": "...",
+"request_id": "..."}`. Log 5xx with request_id for
+traceability.
 
-Real Postgres via testcontainers-python. Seed data, get
+### 11. Unit tests
+
+Per endpoint: handler logic with mocked PG. Cover happy
+path, 401, 403, 404, pagination, filtering.
+
+### 12. Integration tests (testcontainers)
+
+Real Postgres via testcontainers-rs. Full flow: seed data,
 JWT token, HTTP call, assert response. At least 2 tests
 per endpoint.
 
-Location: `rsx-playground/tests/rest_integration_test.py`
+### 13. Playwright e2e
 
-### 9. Playwright e2e
+Exercise REST from the trade UI. Ensure Positions panel,
+Orders history, Funding tab all hit the REST endpoints
+and render correctly.
 
-Exercise REST from trade UI. Positions panel, Orders
-history, Funding tab should all hit REST endpoints and
-render. Covered via existing `play_trade.spec.ts`.
+### 14. Documentation
 
-### 10. Update 26-rest.md
-
-Document finalized architecture. Change status from
-`partial` to `shipped`. Remove "Deferred" section for
-implemented endpoints.
+Update `specs/2/26-rest.md` from `partial` to `shipped`.
+Regenerate OpenAPI-style schema doc or keep as markdown
+(simpler — keep markdown).
 
 ## Acceptance
 
-- All 5 protected endpoints: 401 without auth, 200 with
-  valid JWT
-- 429 under load (rate limit test)
-- Trade UI positions/orders/funding fully working (no
-  fallback to playground proxy — direct REST)
-- Unit test suite: 35+ test cases
-- Integration tests with testcontainers: 10+ cases pass
-- Playwright tests pass
-- `specs/2/26-rest.md` status = `shipped`
+- All 5 endpoints return valid responses for seeded test
+  users
+- JWT auth rejects unauthenticated (401) and unauthorized
+  (403) requests
+- Rate limits trigger 429 under load test
+- Integration test suite passes: at least 10 test cases
+  across all endpoints
+- `specs/2/26-rest.md` status = `shipped`, content matches
+  code
+- Trade UI positions/orders/funding tabs work against
+  gateway REST (not playground proxy fallback)
 
 ## Out of scope / follow-up
 
-- Moving REST to rsx-gateway Rust (v2)
-- GraphQL layer
-- WS account-state push (v2)
-- Admin endpoints (stay at `/api/`)
+- GraphQL layer if needed later
+- Websocket-based subscription to account state changes
+- Admin endpoints (stay in playground)
