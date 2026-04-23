@@ -56,18 +56,6 @@ all non-flaky (unique temp dirs, proper cleanup, ephemeral ports).
 - Runs in <5s total
 - CI: every commit
 
-**Example tests:**
-```rust
-#[test]
-fn slab_alloc_reuses_freed_slots() { ... }
-
-#[test]
-fn price_to_index_zone_boundaries() { ... }
-
-#[test]
-fn insert_order_updates_best_bid() { ... }
-```
-
 ---
 
 ## 2. `make e2e` - E2E Tests (~30s)
@@ -94,21 +82,6 @@ appropriate. Run on every PR.
 - Tests complete request/response flows
 - Runs in ~30s total
 - CI: every PR
-
-**Example tests:**
-```rust
-#[test]
-fn order_fully_filled_single_maker() { ... }
-
-#[test]
-fn order_partial_fill_then_cancel() { ... }
-
-#[test]
-fn duplicate_order_id_rejected() { ... }
-
-#[test]
-fn fills_precede_order_done() { ... }
-```
 
 ---
 
@@ -143,27 +116,6 @@ PR or on-demand.
 - Runs in variable time (typically 1-5min)
 - CI: every PR or on-demand
 
-**Example tests:**
-```rust
-#[test]
-fn tail_event_recentering() {
-    // BTC drops 50%, orders span all 5 zones
-    // Verify: recentering triggers, frontiers expand, no lost orders
-}
-
-#[test]
-fn matching_engine_crash_recovery() {
-    // Crash matching engine mid-order
-    // Verify: risk engine positions intact, book restores via WAL+snapshot
-}
-
-#[test]
-fn ring_full_backpressure() {
-    // Simulate CMP backpressure/NAK
-    // Verify: sender retries, no data loss
-}
-```
-
 ---
 
 ## 4. `make wal` - WAL Correctness Tests (<10s)
@@ -175,15 +127,6 @@ fn ring_full_backpressure() {
 - Fixed-record encode/decode (little-endian)
 - Sequence monotonicity
 - Replay from tip + 1
-
-**Example tests:**
-```rust
-#[test]
-fn wal_record_roundtrip_fixed() { ... }
-
-#[test]
-fn wal_tip_replay_resumes_at_tip_plus_one() { ... }
-```
 
 ---
 

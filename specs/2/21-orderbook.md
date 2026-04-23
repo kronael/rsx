@@ -305,121 +305,20 @@ section 2 for the shared abstraction and BookObserver trait.
 
 ### Price Level Array
 
-Prices map to array indices via compressed zone lookup (see section 2.5):
-
-```rust
-struct PriceLevel {
-    head: SlabIdx,      // u32 — first order (FIFO front)
-    tail: SlabIdx,      // u32 — last order (FIFO back)
-    total_qty: i64,     // aggregate quantity at this level
-    order_count: u32,   // number of orders
-}
-// 24 bytes per level — compact
-```
-
+Prices map to array indices via compressed zone lookup (see section 2.5).
+`PriceLevel` is 24 bytes (`head`, `tail`, `total_qty`, `order_count`).
 ~617K slots * 24B = ~14.8 MB per array. Two arrays = ~30 MB.
 The order slab is the main memory consumer (~10 GB).
 
-### Order Slab (Arena Allocator)
-
-```rust
-const NONE: u32 = u32::MAX;
-
-type SlabIdx = u32;
-
-#[repr(C, align(64))]
-struct OrderSlot {
-    // === Cache line 1: hot fields (touched during matching) ===
-    price: Price,           // i64, 8B
-    remaining_qty: Qty,     // i64, 8B
-    side: u8,               // 1B (0=Buy, 1=Sell)
-    flags: u8,              // 1B (bit 0: is_active, bit 1: reduce_only)
-    tif: u8,                // 1B (0=GTC, 1=IOC, 2=FOK)
-    _pad1: [u8; 5],         // 5B alignment
-    next: SlabIdx,          // u32, 4B — next in price level
-    prev: SlabIdx,          // u32, 4B — prev in price level
-    tick_index: u32,        // u32, 4B — backpointer to price level
-    _pad2: u32,             // 4B
-    // subtotal: 48B, fits in one cache line with padding to 64
-
-    // === Cache line 2: cold fields ===
-    user_id: u32,           // 4B
-    sequence: u32,          // 4B — monotonic within book
-    original_qty: Qty,      // i64, 8B
-    timestamp_ns: u64,      // 8B — nanosecond epoch
-    order_id_hi: u64,       // 8B — UUIDv7 high 8 bytes
-    order_id_lo: u64,       // 8B — UUIDv7 low 8 bytes
-    _pad4: [u8; 24],        // pad to 128B total (2 cache lines)
-}
-// Total: 128 bytes, aligned to 64B boundary
-```
-
-**Allocation** uses a generic slab — `Vec` + free list. O(1) alloc and free
-without ever shrinking the Vec (which would be O(n)). Reusable across the
-codebase for anything fixed-size.
-
-```rust
-struct Slab<T> {
-    slots: Vec<T>,
-    free_head: u32,    // NONE = free list empty, use bump
-    bump_next: u32,    // next virgin slot
-}
-
-impl<T> Slab<T> {
-    fn alloc(&mut self) -> u32 {
-        if self.free_head != NONE {
-            let idx = self.free_head;
-            self.free_head = self.slots[idx as usize].next(); // pop
-            idx
-        } else {
-            let idx = self.bump_next;
-            self.bump_next += 1;
-            idx
-        }
-    }
-
-    fn free(&mut self, idx: u32) {
-        self.slots[idx as usize].set_next(self.free_head); // push
-        self.free_head = idx;
-    }
-}
-```
-
-Free list chains through the slot's own `next` field — dead slots already
-have it, zero extra memory. Index IS the handle — O(1) lookup, no HashMap.
-
-For the orderbook: `Slab<OrderSlot>` pre-allocated (e.g. 78M slots = ~10 GB).
+See `rsx-book/src/` for `PriceLevel`, `OrderSlot` (128B, 2 cache lines, hot/cold
+split at 48B), and `Slab<T>` (Vec + free list chained through the slot's own
+`next` field — O(1) alloc/free, index IS the handle).
 
 ### Best Bid/Ask Tracking
 
-```rust
-struct Orderbook {
-    active_levels: Vec<PriceLevel>,   // current write target
-    staging_levels: Vec<PriceLevel>,  // spare for recentering
-    orders: OrderSlab,
-
-    best_bid_tick: u32,        // highest populated bid tick (NONE if empty)
-    best_ask_tick: u32,        // lowest populated ask tick (NONE if empty)
-
-    compression: CompressionMap, // zone boundaries + index mapping
-    state: BookState,            // Normal or Migrating { old, frontiers }
-
-    config: SymbolConfig,      // tick/lot curves, symbol params
-    sequence: u64,             // monotonic order ID counter
-
-    event_buf: [Event; MAX_EVENTS], // fixed array, no heap
-    event_len: u32,                 // reset to 0 each cycle
-
-    // Active user position tracking (per symbol)
-    user_states: Vec<UserState>,       // indexed by active_user_id
-    user_map: FxHashMap<u32, u16>,     // user_id -> active_user_id
-    user_free_list: Vec<u16>,          // deferred reclamation
-    user_bump: u16,                    // next virgin slot
-}
-```
-
-On removal of last order at best level, scan linearly to next populated level.
-In practice, spread is 1-2 ticks so this scan is O(1) amortized.
+`best_bid_tick` and `best_ask_tick` are cached u32 indices. On removal of the
+last order at the best level, a linear scan finds the next populated level.
+In practice spread is 1-2 ticks so this scan is O(1) amortized.
 
 During migration, all level access goes through `resolve_level(price)` which
 adds one `is_migrating()` branch (predicted away in Normal state).
@@ -443,207 +342,33 @@ adds one `is_migrating()` branch (predicted away in Normal state).
 
 ## 5. Matching Algorithm
 
-### Main Loop
+Three phases: (1) match against opposite side (walk levels from best, emit fills,
+update positions inline); (1.5) TIF enforcement — FOK rolls back event_len to saved
+position and emits OrderFailed if any qty remains unfilled; IOC cancels remainder
+without inserting; (2) insert remainder as resting order for GTC.
 
-```
-fn process_new_order(book, incoming):
-    book.event_len = 0    // single store, no clear needed
-    let saved_event_len = book.event_len    // for FOK rollback
-    validate_price_tick(incoming.price, book.config)
-    validate_qty_lot(incoming.qty, incoming.price, book.config)
+Reduce-only: checked before matching, qty clamped to position size; rejects if
+no open position on the incoming side.
 
-    // Reduce-only enforcement (before matching)
-    if incoming.reduce_only:
-        let user_state = book.user_map.get(&incoming.user_id)
-            .map(|&idx| &book.user_states[idx as usize])
-        if user_state is None or
-           (incoming.side == Buy and user_state.net_qty >= 0) or
-           (incoming.side == Sell and user_state.net_qty <= 0):
-            book.emit(OrderFailed {
-                user_id: incoming.user_id,
-                reason: REDUCE_ONLY_VIOLATION })
-            return
-        // Clamp qty to position size
-        incoming.remaining_qty = min(
-            incoming.remaining_qty,
-            user_state.net_qty.unsigned_abs())
+Cancel: O(1) doubly-linked unlink + slab free; scans for new best only when the
+cancelled order was at the best level.
 
-    // Phase 1: Match against opposite side
-    if incoming.side == Buy:
-        while incoming.remaining_qty > 0 AND book.best_ask_tick != NONE:
-            ask_level = book.levels[book.best_ask_tick]
-            ask_price = tick_to_price(book.best_ask_tick, book)
-
-            if incoming.price < ask_price:
-                break   // incoming bid below best ask — no match
-
-            match_at_level(book, book.best_ask_tick, incoming)
-
-            if ask_level.order_count == 0:
-                // Level exhausted, find next ask
-                book.best_ask_tick = scan_next_ask(book, book.best_ask_tick)
-
-    else: // Sell
-        while incoming.remaining_qty > 0 AND book.best_bid_tick != NONE:
-            bid_level = book.levels[book.best_bid_tick]
-            bid_price = tick_to_price(book.best_bid_tick, book)
-
-            if incoming.price > bid_price:
-                break   // incoming ask above best bid — no match
-
-            match_at_level(book, book.best_bid_tick, incoming)
-
-            if bid_level.order_count == 0:
-                book.best_bid_tick = scan_next_bid(book, book.best_bid_tick)
-
-    // Phase 1.5: Time-in-force enforcement
-    if incoming.tif == FOK:
-        if incoming.remaining_qty > 0:
-            // FOK not fully filled — reject entire order
-            // Undo any fills emitted above (revert event_len)
-            book.event_len = saved_event_len
-            book.emit(OrderFailed {
-                user_id: incoming.user_id,
-                reason: FOK_NOT_FILLED })
-            return
-
-    // Phase 2: Insert remainder as resting order
-    if incoming.remaining_qty > 0:
-        if incoming.tif == IOC:
-            // IOC: cancel remainder, don't insert
-            book.emit(OrderDone {
-                user_id: incoming.user_id,
-                reason: CANCELLED,
-                filled_qty: incoming.original_qty
-                    - incoming.remaining_qty,
-                remaining_qty:
-                    incoming.remaining_qty })
-        else:
-            handle = insert_resting(book, incoming)
-            book.emit(OrderInserted { handle, ... })
-
-    // caller drains book.event_buf[0..book.event_len], then event_len resets next call
-```
-
-### Fill Logic
-
-```
-fn match_at_level(book, tick, aggressor):
-    level = &book.levels[tick]
-    cursor = level.head
-
-    while cursor != NONE AND aggressor.remaining_qty > 0:
-        maker = &book.orders[cursor]
-        fill_qty = min(aggressor.remaining_qty, maker.remaining_qty)
-
-        // Execute fill
-        aggressor.remaining_qty -= fill_qty
-        maker.remaining_qty -= fill_qty
-        level.total_qty -= fill_qty
-
-        book.emit(Fill {
-            maker_order_id: maker.order_id,
-            taker_order_id: aggressor.order_id,
-            maker_user_id:  maker.user_id,
-            taker_user_id:  aggressor.user_id,
-            price:          maker.price,
-            qty:            fill_qty,
-            timestamp:      now_ns(),
-        })
-
-        update_positions_on_fill(book,
-            aggressor.user_id, maker.user_id,
-            aggressor.side, fill_qty)
-
-        next_cursor = maker.next
-
-        if maker.remaining_qty == 0:
-            // Fully filled — remove from book
-            unlink_order(book, cursor)
-            free_slot(book, cursor)
-            level.order_count -= 1
-
-        cursor = next_cursor
-```
-
-### Cancel Order
-
-```
-fn cancel_order(book, handle: SlabIdx) -> Option<Event>:
-    order = &book.orders[handle]
-    if !order.is_active(): return None
-
-    tick = order.tick_index
-    level = &book.levels[tick]
-
-    // Update level aggregates
-    level.total_qty -= order.remaining_qty
-    level.order_count -= 1
-
-    // Unlink from doubly-linked list
-    unlink_order(book, handle)
-
-    // Update best bid/ask if this was the last order at best level
-    if level.order_count == 0:
-        if order.side == Buy AND tick == book.best_bid_tick:
-            book.best_bid_tick = scan_next_bid(book, tick)
-        elif order.side == Sell AND tick == book.best_ask_tick:
-            book.best_ask_tick = scan_next_ask(book, tick)
-
-    free_slot(book, handle)
-
-    return Some(OrderCancelled { order_id: order.order_id, remaining_qty: order.remaining_qty })
-```
+See `rsx-book/src/matching.rs` for `process_new_order`, `match_at_level`,
+`cancel_order`, and fill logic.
 
 ---
 
 ## 6. Event Types
 
-Fixed-size array on the Orderbook struct. `event_len = 0` resets per cycle — single
-store, no clear, no heap. `emit()` writes `event_buf[event_len]` and bumps `event_len`.
+Fixed-size array on the Orderbook struct (`[Event; 10_000]`). `event_len = 0` resets
+per cycle — single store, no clear, no heap. `emit()` writes `event_buf[event_len]`
+and bumps `event_len`.
 
-```rust
-const MAX_EVENTS: usize = 10_000;
-
-enum Event {
-    Fill {
-        maker_handle: SlabIdx,
-        taker_user_id: u32,
-        price: Price,
-        qty: Qty,
-        side: u8,           // taker side
-    },
-    OrderInserted {
-        handle: SlabIdx,
-        user_id: u32,
-        side: u8,
-        price: Price,
-        qty: Qty,
-    },
-    OrderCancelled {
-        handle: SlabIdx,
-        user_id: u32,
-        remaining_qty: Qty,
-    },
-    OrderDone {
-        handle: SlabIdx,    // fully filled or cancelled — order is gone
-        user_id: u32,
-        reason: u8,         // 0=filled, 1=cancelled
-    },
-    OrderFailed {
-        user_id: u32,
-        reason: u8,         // maps to FailureReason enum
-    },
-}
-
-fn emit(&mut self, event: Event) {
-    self.event_buf[self.event_len as usize] = event;
-    self.event_len += 1;
-}
-```
-
+Variants: `Fill`, `OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`.
 `OrderDone` signals the risk engine and user that an order no longer exists (fully
 filled or cancelled). Emitted after the last fill or after a cancel.
+
+See `rsx-book/src/event.rs`.
 
 Events are drained after each order is processed. CMP/UDP fan-out to
 downstream consumers:
@@ -654,51 +379,13 @@ downstream consumers:
 
 ### 6.5 User Position Tracking
 
-```rust
-/// Per-user position state tracked by matching engine.
-/// Updated on every fill. Used for reduce-only enforcement.
-struct UserState {
-    user_id: u32,
-    net_qty: i64,        // long - short (signed)
-    order_count: u16,    // resting orders in book
-    _pad: [u8; 2],
-}
+`UserState` tracks `net_qty` (signed) and `order_count` per user per symbol.
+Assigned lazily on first order; reclaimed via free list when `net_qty == 0 &&
+order_count == 0` (with 60s grace period). Updated on every fill for both taker
+and maker.
 
-/// Assign active_user_id on first order for a user on this
-/// symbol. Risk engine provides the mapping; ME uses it as Vec
-/// index.
-fn get_or_assign_user(book: &mut Orderbook, user_id: u32)
-    -> u16 {
-    if let Some(&idx) = book.user_map.get(&user_id) {
-        return idx;
-    }
-    let idx = if let Some(free) = book.user_free_list.pop() {
-        book.user_states[free as usize] =
-            UserState::new(user_id);
-        free
-    } else {
-        let idx = book.user_bump;
-        book.user_bump += 1;
-        book.user_states.push(UserState::new(user_id));
-        idx
-    };
-    book.user_map.insert(user_id, idx);
-    idx
-}
-
-/// On fill: update both taker and maker positions.
-fn update_positions_on_fill(book: &mut Orderbook,
-    taker_user_id: u32, maker_user_id: u32,
-    taker_side: Side, qty: i64) {
-    let sign = if taker_side == Buy { 1 } else { -1 };
-    let taker_idx = get_or_assign_user(book, taker_user_id);
-    book.user_states[taker_idx as usize].net_qty +=
-        sign * qty;
-    let maker_idx = get_or_assign_user(book, maker_user_id);
-    book.user_states[maker_idx as usize].net_qty -=
-        sign * qty;
-}
-```
+See `rsx-book/src/user.rs` for `UserState`, `get_or_assign_user`, and
+`update_positions_on_fill`.
 
 Active user_id lifecycle:
 - Assign on first order for this symbol (risk supplies mapping).
@@ -714,37 +401,11 @@ and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).
 
 ## 7. Memory Layout & Performance
 
-### Pre-allocate Everything
+Pre-allocate everything. Roughly 15 MB for the two level arrays; the slab dominates
+(~10 GB for ~78M order slots). See bench results in `rsx-book/benches/`.
 
-```
-Component           Sizing                        Memory
-Order slab          78,000,000 slots * 128B       ~10 GB
-Price levels (x2)   617,000 slots * 24B * 2       ~30 MB
-CompressionMap      5 zones, constant              ~200 B
-Event buffer        [Event; 10,000] fixed array     1.3 MB
-Migration state     2 x i64 (bid/ask frontier)     16 B
-                                                  --------
-Total per book                                    ~10 GB
-```
-
-The order slab dominates. Price level arrays are negligible thanks to
-compressed indexing. Two arrays always pre-allocated (active + staging).
-
-### Cache Optimization
-
-- **Hot/cold split**: Matching only touches cache line 1 of OrderSlot (48 bytes)
-- **Contiguous slab**: Orders in `Vec<OrderSlot>` — sequential memory, prefetch-friendly
-- **Compact PriceLevel**: 24 bytes — multiple levels fit in one cache line
-- **No pointers**: Only u32 slab indices — half the size of pointers on x86_64
-- **No String/Vec/Box**: Everything fixed-size, Copy, no heap indirection
-- **Alignment**: `#[repr(C, align(64))]` on OrderSlot for cache line alignment
-
-### Zero Allocation Hot Path
-
-- No `malloc`/`new` during matching — slab provides all storage
-- Event buffer is a fixed array — `event_len = 0` resets per cycle (single store)
-- No `Vec` growth during matching (capacity pre-reserved)
-- No `String` formatting or logging on hot path
+Hot path is zero-allocation: slab provides all storage, event buffer is fixed array
+reset by single store, no Vec growth, no String formatting.
 
 ---
 

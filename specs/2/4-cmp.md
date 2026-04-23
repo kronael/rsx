@@ -480,16 +480,9 @@ RSX_REPL_KEY_PATH=./certs/repl.key
 
 ## 9. Performance Targets
 
-| Operation | Target |
-|-----------|--------|
-| CMP message encode | <50ns (memcpy) |
-| CMP message decode | <50ns (ptr::read) |
-| UDP round-trip (same machine) | <10us |
-| UDP round-trip (same datacenter) | <50us |
-| TCP round-trip (same machine) | <100us |
-| TCP round-trip (cross-datacenter) | <1ms |
-| UDP sustained throughput | >1M msg/s |
-| TCP sustained throughput | >500K msg/s |
+See `encode_bench.rs` for measured encode/decode targets. Network
+round-trip targets: <10us UDP same machine, <50us UDP same datacenter,
+<100us TCP same machine.
 
 ---
 
