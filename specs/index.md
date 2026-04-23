@@ -45,7 +45,6 @@ Active specs. Source of truth for system design.
 | Spec | Status | Summary |
 |------|--------|---------|
 | [2/1-architecture.md](2/1-architecture.md) | shipped | Perpetuals exchange. Fixed-point arithmetic, single-threaded |
-| [2/2-archive.md](2/2-archive.md) | shipped | Archive serves historical WAL records from flat files on disk. It is used when h |
 | [2/3-cli.md](2/3-cli.md) | shipped | `rsx-cli` is an offline WAL debugging tool. It reads WAL files written |
 | [2/4-cmp.md](2/4-cmp.md) | shipped | Fixed-size C structs over the network. One wire format for |
 | [2/5-codepaths.md](2/5-codepaths.md) | shipped | This document enumerates major end-to-end codepaths and maps them to |
@@ -102,4 +101,5 @@ Future plans, archival notes, observed implementation.
 | [3/1-future.md](3/1-future.md) | reference | This document collects optimization ideas and protocol improvements that are |
 | [3/2-implementation.md](3/2-implementation.md) | reference | This document captures notable implementation details that are now |
 | [3/3-orderbookv2.md](3/3-orderbookv2.md) | reference | **Status:** Not planned. This document is archival only. |
+| [3/4-archive.md](3/4-archive.md) | draft | **Status**: draft / deferred to phase 3. Archive replay |
 
