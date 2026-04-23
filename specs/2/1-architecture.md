@@ -59,7 +59,7 @@ Transports:
 - **DXS:** WAL streaming to consumers (recorder, marketdata).
   Transport is WAL/TCP on the cold path.
 
-See `TILES.md` for tile pattern, `NETWORK.md` for process
+See `45-tiles.md` for tile pattern, `20-network.md` for process
 topology.
 
 ## Crate Map

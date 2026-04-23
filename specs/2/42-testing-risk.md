@@ -448,15 +448,14 @@ Targets from RISK.md §performance:
 - Receives fills/BBO/OrderDone from matching engine via CMP/UDP
   (CONSISTENCY.md §1, event routing table)
 - Receives orders from gateway via CMP/UDP (NETWORK.md §data flow)
-- Mark prices from DXS are not wired into risk in v1
+- Mark prices arrive via CMP/UDP from rsx-mark (RECORD_MARK_PRICE, main.rs)
 - Sends orders to matching engine via CMP/UDP (RISK.md §6)
 - Sends fills/done to gateway via CMP/UDP (CONSISTENCY.md §1)
 - Forwards CONFIG_APPLIED to gateway (RISK.md §1)
 - Persists positions/accounts/fills/tips to Postgres via
   write-behind worker (RISK.md §persistence)
-- Replica sync not implemented in v1
+- Replica sync: replica.rs + replication_e2e_test.rs shipped
 - Advisory lock via Postgres pg_advisory_lock (RISK.md §replication)
-- Replay via WAL exists but DXS consumer path not wired in v1
 - Liquidation via embedded liquidator (LIQUIDATOR.md)
 - Funding via embedded funding engine (RISK.md §5)
 - ME failover: dedup by (symbol_id, seq) (RISK.md §ME failover)

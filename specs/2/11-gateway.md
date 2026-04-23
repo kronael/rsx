@@ -94,7 +94,6 @@ internal CMP links.
 
 The following are deferred beyond v1:
 
-- REST API endpoints (`/v1/*` read-only queries)
 - WS query messages: O, P, A, FL, FN, M
   (open orders, positions, account, fill history,
   funding history, metadata)

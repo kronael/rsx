@@ -87,6 +87,13 @@ invalid record.
 - `RECORD_STATUS_MESSAGE` (CMP control: flow control)
 - `RECORD_NAK` (CMP control: gap detection)
 - `RECORD_HEARTBEAT` (CMP control: liveness)
+- `RECORD_MARK_PRICE`
+- `RECORD_ORDER_REQUEST`
+- `RECORD_ORDER_RESPONSE`
+- `RECORD_CANCEL_REQUEST`
+- `RECORD_ORDER_FAILED`
+- `RECORD_LIQUIDATION`
+- `RECORD_REPLAY_REQUEST`
 
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
@@ -335,9 +342,9 @@ file in sorted order. Returns `None` when all files exhausted
 
 ---
 
-## 5. Replay Server
+## 5. Replay Server (DxsReplayService)
 
-Replay server embedded in each producer. Serves WAL records
+DxsReplayService embedded in each producer. Serves WAL records
 to consumers over TCP. See [CMP.md](CMP.md).
 
 **Request format (WAL record):**
@@ -491,7 +498,7 @@ RSX_RECORDER_TIP_FILE=./archive/1.tip
 **File organization:**
 
 ```
-crates/rsx-recorder/src/
+rsx-recorder/src/
     main.rs       -- entrypoint, config, daily rotation
 ```
 
@@ -754,8 +761,7 @@ records, sends new CaughtUp, resumes live tail.
 persist tip before disconnect, records will be replayed. Consumer
 dedup by seq ensures idempotency.
 
-**Implementation:** `client.rs` (not yet implemented in crate,
-specified in DXS.md §6)
+**Implementation:** `rsx-dxs/src/client.rs` (DxsConsumer, 572 lines)
 
 ### 10.14 Writer Flush Lag Exceeds Bound
 
@@ -831,11 +837,10 @@ via file-level transition.
 crates/rsx-dxs/src/
     lib.rs        -- public API: WalWriter, WalReader, DxsConsumer
     wal.rs        -- WalWriter, WalReader, file layout, GC
-    server.rs     -- DxsReplay TCP server
+    server.rs     -- DxsReplayService TCP server
     client.rs     -- DxsConsumer, tip tracking, reconnect
-    recorder.rs   -- Recorder (daily archival callback)
     config.rs     -- env config parsing
 
 crates/rsx-recorder/src/
-    main.rs       -- recorder binary entrypoint
+    main.rs       -- recorder binary entrypoint, daily rotation
 ```

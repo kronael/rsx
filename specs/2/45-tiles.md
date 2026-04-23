@@ -108,10 +108,8 @@ serialization overhead.
 
 ### Reference Implementation
 
-`/home/onvos/app/trader/monoio-client/`:
-- `ws_monoio.rs`: WebSocket client/server on monoio
-- `web_client.rs`: HTTP client with monoio
-- Production-proven in funding-bot and trader
+See sibling `trader` project (`monoio-client/`) for proven
+monoio WebSocket and HTTP client patterns.
 
 ## Tiles Within Each Process
 
@@ -144,15 +142,17 @@ WAL Writer tile via SPSC ring.
 
 Single-threaded, bare busy-spin, dedicated core.
 
-### WAL Writer Tile (CPU-pinned)
+### WAL Writer (inline in ME main loop)
 
-Reads events from SPSC ring (from ME). Appends to in-memory
-buffer via `append<T: CmpRecord>(record: &mut T)`, which
-assigns monotonic seq numbers. Flushes to disk with fsync
-every 10ms. Rotates at 64MB. Notifies DxsReplay tile on
-flush via Arc<Notify>.
+WalWriter is called inline in the ME main loop (not a
+separate tile). Appends to in-memory buffer via
+`append<T: CmpRecord>(record: &mut T)`, which assigns
+monotonic seq numbers. Calls `WalWriter::flush()` every
+10ms. Rotates at 64MB. Notifies DxsReplayService thread
+on flush via Arc<Notify>.
 
-No network I/O.
+DxsReplayService runs as a separate `std::thread::spawn`
+(tokio) for TCP streaming to external consumers.
 
 ### DxsReplay Tile (TCP)
 

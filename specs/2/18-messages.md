@@ -370,7 +370,8 @@ loop {
 
 ### CREATE (New Order)
 
-**Deduplication key:** order_id (UUIDv7)
+**Deduplication key:** `(user_id, order_id_hi, order_id_lo)` tuple
+(UUIDv7 bytes split into hi/lo u64 fields, keyed per user)
 
 **Matching Engine:**
 ```rust

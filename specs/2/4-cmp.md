@@ -524,12 +524,12 @@ pub struct CmpReceiver {
 }
 
 // TCP cold path (WAL replication)
-pub struct WalReplicationServer {
+pub struct DxsReplayService {
     listener: TcpListener,
     tls_config: Option<rustls::ServerConfig>,
 }
 
-pub struct WalReplicationClient {
+pub struct DxsConsumer {
     stream: TcpStream,
     tls_config: Option<rustls::ClientConfig>,
 }

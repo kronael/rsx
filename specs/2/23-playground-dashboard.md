@@ -37,8 +37,7 @@ Hard rule:
 
 Mode flags:
 
-- `PLAYGROUND_MODE=local|staging`
-- `PLAYGROUND_WRITES_ENABLED=true|false`
+- `PLAYGROUND_MODE=local|staging` (absent or `production` refuses to start)
 
 Default: local enabled, staging disabled until explicitly enabled.
 
@@ -74,7 +73,7 @@ Default: local enabled, staging disabled until explicitly enabled.
 
 ## 4. API
 
-Base path: `/v1/api/play`
+Base path: `/api`
 
 ### Read endpoints
 
@@ -109,14 +108,14 @@ Base path: `/v1/api/play`
 
 1. Playground writes/actions must be blocked in production.
 2. Actions must require explicit environment guard confirmation in staging.
-3. Every action writes to shared `audit_log` with `module=playground`.
+3. Every action calls `audit_log` which prints a timestamped line to stdout.
 4. Idempotency key required for non-read endpoints.
 
 ---
 
 ## 6. Data Sources
 
-- process manager (`run.py` / start script state)
+- process manager (`start` script state)
 - service HTTP/CMP health endpoints
 - Postgres read queries for state checks
 - WAL files and DXS endpoints

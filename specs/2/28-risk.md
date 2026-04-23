@@ -547,13 +547,13 @@ crates/rsx-risk/src/
     price.rs          -- IndexPrice (size-weighted mid), mark price
     funding.rs        -- FundingEngine, rate calc, settlement
     liquidation.rs    -- LiquidationEngine, state, order gen (LIQUIDATOR.md)
-    fill.rs           -- FillEvent types
-    tip.rs            -- Tip tracking
     lease.rs          -- Advisory lock acquire/renew/release
     replica.rs        -- Replica loop, fill buffer, promotion
     persist.rs        -- Write-behind worker, Postgres batching
     replay.rs         -- Replay request/response, cold start
-    mark_consumer.rs  -- DXS consumer for mark prices (MARK.md)
+    rings.rs          -- CMP ring setup and I/O helpers
+    insurance.rs      -- Insurance fund logic
+    schema.rs         -- Postgres schema / migration helpers
     config.rs         -- env config parsing
     types.rs          -- Price, Qty, type aliases
     risk_utils.rs     -- helpers
@@ -595,7 +595,7 @@ mocked CMP/UDP links. No Postgres. State in-memory only.
 Producers generate random fills. Shard processes, prints stats
 (fills/sec, margin recalcs/sec, position count).
 
-**Files:** `shard.rs`, `fill.rs`, `tip.rs`, `config.rs`
+**Files:** `shard.rs`, `rings.rs`, `config.rs`
 
 ### Phase 3: Persistence (testcontainers Postgres)
 

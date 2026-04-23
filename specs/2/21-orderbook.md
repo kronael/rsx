@@ -583,15 +583,14 @@ struct OrderSlot {
 
     // === Cache line 2: cold fields ===
     user_id: u32,           // 4B
-    sequence: u16,          // 2B — wrapping sequence, unique with timestamp
-    _pad3: [u8; 2],         // 2B
+    sequence: u32,          // 4B — monotonic within book
     original_qty: Qty,      // i64, 8B
     timestamp_ns: u64,      // 8B — nanosecond epoch
-    _pad4: [u8; 40],        // pad to 128B total (2 cache lines)
+    order_id_hi: u64,       // 8B — UUIDv7 high 8 bytes
+    order_id_lo: u64,       // 8B — UUIDv7 low 8 bytes
+    _pad4: [u8; 24],        // pad to 128B total (2 cache lines)
 }
 // Total: 128 bytes, aligned to 64B boundary
-// Note: order_id and client_order_id live at the gateway layer, not here.
-// The (timestamp_ns, sequence) pair uniquely identifies an order within the book.
 ```
 
 **Allocation** uses a generic slab — `Vec` + free list. O(1) alloc and free

@@ -16,7 +16,7 @@ Binary: `rsx-gateway`
 - [E2E Tests](#e2e-tests)
 - [Benchmarks](#benchmarks)
 - [Integration Points](#integration-points)
-- [Implementation Status](#implementation-status-2026-02-10)
+- [Implementation Status](#implementation-status)
 
 ---
 
@@ -44,7 +44,7 @@ Binary: `rsx-gateway`
 | G18 | Out-of-order response handling via order_id | RPC.md §pending |
 | G19 | Stale order policy: 5 min, client cancels/forgets | RPC.md §timeout |
 | G20 | Per-instance throughput cap: 1000 orders/s | RPC.md §rate-limit |
-| G21 | Enum validation: Side, TIF, OrderStatus, FailureReason | WEBPROTO.md §enums |
+| G21 | Enum validation: Side (0-1), TIF (0-2), OrderStatus (0-3), FailureReason (0-12) | WEBPROTO.md §enums |
 | G22 | Reduce-only (ro) field in N frame (optional, default 0) | WEBPROTO.md §N |
 | G23 | Fill fee field: signed int64, negative=rebate | WEBPROTO.md §F |
 | G24 | Error frame E: code + msg | WEBPROTO.md §E |
@@ -126,7 +126,7 @@ serialize_x_frame_unsubscribe
 enum_side_valid_0_1_only
 enum_tif_valid_0_1_2_only
 enum_order_status_valid_0_1_2_3
-enum_failure_reason_valid_0_through_7
+enum_failure_reason_valid_0_through_12
 enum_unknown_value_rejected
 ```
 
@@ -238,8 +238,6 @@ ws_new_order_rejected_insufficient_margin
 ws_new_order_rejected_invalid_tick
 ws_new_order_rejected_overloaded
 ws_new_order_timeout_returns_error
-quic_new_order_fill_done_complete
-quic_cancel_order_done
 ws_reduce_only_order_lifecycle
 ws_fill_with_fee_forwarded
 ws_error_frame_sent_on_invalid_input
@@ -305,7 +303,6 @@ bench_uuid_v7_generation            // target <50ns
 bench_pending_lifo_pop_5_orders     // target <100ns
 bench_pending_linear_scan_10        // target <100ns
 bench_rate_limit_check              // target <50ns
-bench_quic_order_serialization      // target <1us
 bench_100_concurrent_sessions       // target stable throughput
 bench_1000_orders_sec_per_user      // target <1ms per order
 bench_ws_parse_c_frame              // target <200ns
@@ -345,9 +342,9 @@ Targets from NETWORK.md:
 - Horizontal scaling via user_id hash sharding
   (NETWORK.md §gateway-scaling)
 
-## Implementation Status (2026-02-10)
+## Implementation Status
 
-97 tests across 9 files.
+See `rsx-gateway/tests/` for current test files.
 
 ### WS Protocol Parsing/Serialization
 
@@ -392,7 +389,7 @@ Targets from NETWORK.md:
 | enum_side_valid_0_1_only | DONE | protocol_test.rs |
 | enum_tif_valid_0_1_2_only | DONE | protocol_test.rs |
 | enum_order_status_valid_0_1_2_3 | DONE | protocol_test.rs |
-| enum_failure_reason_valid_0_through_7 | DONE | protocol_test.rs |
+| enum_failure_reason_valid_0_through_12 | DONE | protocol_test.rs |
 | enum_unknown_value_rejected | DONE | protocol_test.rs |
 
 ### Fill Fee / Reduce-Only / Fixed-Point
@@ -467,9 +464,9 @@ Targets from NETWORK.md:
 
 | Spec Test | Status | File |
 |-----------|--------|------|
-| heartbeat_sent_every_5s | TODO | Config exists, no timer test |
-| heartbeat_timeout_closes_at_10s | TODO | Config exists, no timer test |
-| heartbeat_client_response_resets_timer | TODO | Need handler integration |
+| heartbeat_sent_every_5s | DONE | heartbeat_test.rs |
+| heartbeat_timeout_closes_at_10s | DONE | heartbeat_test.rs |
+| heartbeat_client_response_resets_timer | DONE | heartbeat_test.rs |
 
 ### Pre-validation
 
