@@ -251,9 +251,9 @@ eliminate it entirely.
 
 ## See Also
 
-- `specs/v1/DXS.md` - DXS streaming protocol spec
-- `specs/v1/WAL.md` - WAL format and guarantees
-- `specs/v1/CMP.md` - CMP/UDP wire protocol
+- `specs/1/10-dxs.md` - DXS streaming protocol spec
+- `specs/1/48-wal.md` - WAL format and guarantees
+- `specs/1/4-cmp.md` - CMP/UDP wire protocol
 - `rsx-dxs/src/records.rs` - All record types
 - `rsx-dxs/src/wal.rs` - WAL writer implementation
 - `blog/dont-yolo-structs-over-the-wire.md` - Padding and alignment gotchas

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Post-Only Order Enforcement
 
 ## Context

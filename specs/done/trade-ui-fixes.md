@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Trade UI Fixes
 
 ## Goal

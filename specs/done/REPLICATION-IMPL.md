@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Replication/Failover Implementation
 
 Implementation of RISK.md §Replication & Failover for rsx-risk engine.

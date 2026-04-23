@@ -321,8 +321,8 @@ fills."
 
 ## See Also
 
-- `specs/v1/WAL.md` - WAL backpressure rules
-- `specs/v1/CONSISTENCY.md` - Event ordering guarantees
+- `specs/1/48-wal.md` - WAL backpressure rules
+- `specs/1/6-consistency.md` - Event ordering guarantees
 - `rsx-dxs/src/wal.rs` - WAL writer with backpressure
 - `rsx-dxs/tests/wal_test.rs` - Backpressure tests
 - `blog/04-wal-and-recovery.md` - WAL durability guarantees

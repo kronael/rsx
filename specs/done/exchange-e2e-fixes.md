@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Exchange E2E Fixes
 
 ## Goal

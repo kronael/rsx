@@ -2,7 +2,7 @@
 
 Shared orderbook with slab-allocated orders, compressed price
 levels, and price-time priority matching.
-See `specs/v1/ORDERBOOK.md`.
+See `specs/1/21-orderbook.md`.
 
 ## Module Layout
 

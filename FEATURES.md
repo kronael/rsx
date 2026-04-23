@@ -185,7 +185,7 @@ useSoundAlerts.
 | Dashboard      | DASHBOARD + 4 domain dashboards        |
 | Testing        | TESTING + 10 TESTING-*.md files        |
 | Operations     | SCENARIOS, SIM, CLI, TRADE-UI          |
-| **Total**      | **50+ spec files in specs/v1/**        |
+| **Total**      | **50+ spec files in specs/1/**        |
 
 ## Test Coverage
 

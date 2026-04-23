@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # RSX Playground — Coverage & End-State Specification
 
 updated: Feb 19 2026

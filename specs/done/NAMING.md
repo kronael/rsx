@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # NAMING
 
 Canonical names across DB tables, API endpoints, HTMX partials,

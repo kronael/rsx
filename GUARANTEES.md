@@ -11,16 +11,16 @@ various failure scenarios.
 - Dual component failure: bounded 100ms loss acceptable
 - Backpressure enforced (never drop data silently)
 
-Cross-references: [specs/v1/CONSISTENCY.md](specs/v1/CONSISTENCY.md),
-[specs/v1/WAL.md](specs/v1/WAL.md),
-[specs/v1/RISK.md](specs/v1/RISK.md),
-[specs/v1/DATABASE.md](specs/v1/DATABASE.md),
-[specs/v1/DXS.md](specs/v1/DXS.md)
+Cross-references: [specs/1/6-consistency.md](specs/1/6-consistency.md),
+[specs/1/48-wal.md](specs/1/48-wal.md),
+[specs/1/28-risk.md](specs/1/28-risk.md),
+[specs/1/8-database.md](specs/1/8-database.md),
+[specs/1/10-dxs.md](specs/1/10-dxs.md)
 
-**Edge case handling:** See [specs/v1/DXS.md](specs/v1/DXS.md)
+**Edge case handling:** See [specs/1/10-dxs.md](specs/1/10-dxs.md)
 section 10 for comprehensive WAL replay edge cases (crash
 mid-rotation, CRC corruption, sequence gaps, tip lag, etc.) and
-[specs/v1/TESTING-DXS.md](specs/v1/TESTING-DXS.md) for test
+[specs/1/36-testing-dxs.md](specs/1/36-testing-dxs.md) for test
 coverage requirements.
 
 ---
@@ -651,7 +651,7 @@ Postgres lags, replay fills from matching engine WAL to catch up.
 **Data loss:** 0ms (fills buffered in matching engine WAL)
 
 **Partition duration limit:** 10min (matching engine WAL retention,
-see specs/v1/DXS.md section 2). If partition lasts >10min, Risk must
+see specs/1/10-dxs.md section 2). If partition lasts >10min, Risk must
 rebuild from snapshot + full WAL.
 
 **Verification:** After partition heals, position = sum(fills)
@@ -771,7 +771,7 @@ happen with advisory lock, but defensive).
 ## 8. Invariants Verified on Recovery
 
 After any recovery scenario (crash, partition heal, failover), these
-invariants MUST hold. See specs/v1/TESTING-*.md for verification
+invariants MUST hold. See specs/1/TESTING-*.md for verification
 procedures.
 
 ### 8.1 Position = Sum of Fills

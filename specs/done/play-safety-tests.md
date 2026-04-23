@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Playwright: Safety, Crash & Handover Tests
 
 ## Goal

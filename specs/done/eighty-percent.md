@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: 80% Completion — Close All Major Gaps
 
 ## Context
@@ -27,7 +31,7 @@ rsx-risk/src/lib.rs, rsx-risk/src/main.rs, rsx-risk/src/types.rs
 
 **Details**:
 
-Read specs/v1/LIQUIDATOR.md first. Then read rsx-risk/src/shard.rs,
+Read specs/1/13-liquidator.md first. Then read rsx-risk/src/shard.rs,
 margin.rs, position.rs, types.rs to understand existing structures.
 
 Create rsx-risk/src/liquidation.rs with:
@@ -163,7 +167,7 @@ rsx-gateway/src/ws.rs, rsx-dxs/src/records.rs
 **Details**:
 
 Read rsx-gateway/src/main.rs, rsx-gateway/src/handler.rs,
-rsx-dxs/src/records.rs, specs/v1/MESSAGES.md, specs/v1/WEBPROTO.md.
+rsx-dxs/src/records.rs, specs/1/18-messages.md, specs/1/49-webproto.md.
 
 **Part A: ORDER_FAILED routing**
 
@@ -221,7 +225,7 @@ connection's outbound buffer. No separate timer task.
 **Details**:
 
 Read rsx-risk/src/liquidation.rs (created in Stage 1).
-Read specs/v1/TESTING-LIQUIDATOR.md for required test cases.
+Read specs/1/38-testing-liquidator.md for required test cases.
 
 Create rsx-risk/tests/liquidation_test.rs with tests:
 
@@ -289,8 +293,8 @@ constructed RiskShard (or extracted helper function).
 
 **Goal**: Update TESTING-*.md specs with coverage status,
 verify full workspace compiles and all tests pass
-**Files**: specs/v1/TESTING-LIQUIDATOR.md, specs/v1/TESTING-RISK.md,
-specs/v1/TESTING-GATEWAY.md, PROGRESS.md
+**Files**: specs/1/38-testing-liquidator.md, specs/1/42-testing-risk.md,
+specs/1/37-testing-gateway.md, PROGRESS.md
 **Subagent**: improve
 **Dependencies**: [4, 5]
 **Verification**:

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Exchange End-to-End Integration Spec
 
 ## Goal
@@ -13,7 +17,7 @@ breach without waiting for the next fill.
   symbol), `rsx-marketdata`, `rsx-mark`
 - Python maker: `rsx-playground/market_maker.py`
 - Wire: CMP/UDP (hot path), WAL replication over TCP (cold path)
-- Client API: WEBPROTO WS + REST (see specs/v1/WEBPROTO.md,
+- Client API: WEBPROTO WS + REST (see specs/1/49-webproto.md,
   RPC.md, MESSAGES.md)
 
 ## Known Issues to Fix

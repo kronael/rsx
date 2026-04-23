@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Speedup Critique
 
 Bottlenecks in current architecture, ordered by impact.

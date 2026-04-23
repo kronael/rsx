@@ -301,8 +301,8 @@ TCP."
 
 ## See Also
 
-- `specs/v1/DXS.md` - DXS protocol specification
-- `specs/v1/WAL.md` - WAL format (same as DXS stream format)
+- `specs/1/10-dxs.md` - DXS protocol specification
+- `specs/1/48-wal.md` - WAL format (same as DXS stream format)
 - `rsx-dxs/src/server.rs` - DxsReplay server implementation
 - `rsx-dxs/src/client.rs` - DxsConsumer client implementation
 - `rsx-dxs/tests/tls_test.rs` - End-to-end DXS tests

@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Maker: Index Price Feed
 
 ## Goal

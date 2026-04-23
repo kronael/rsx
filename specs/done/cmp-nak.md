@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # CMP NAK Retransmit Fix
 
 ## Goal

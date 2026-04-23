@@ -10,17 +10,14 @@ is the light backlog — items not yet a ship project.
 ## Backlog (not yet scoped)
 
 - **Spec cleanup** — audits found bloat + stale + duplicated
-  content in `specs/v1/`. Research each finding against
+  content in `specs/1/`. Research each finding against
   shipped code; trim what's in-code, capture what's not.
   Likely becomes `.ship/07-SPEC-CLEANUP/`.
-- **Specs reorg** — `specs/v1/` → `specs/1/` with
-  N-topic.md naming + frontmatter + index.md per /specs
-  skill. Likely becomes `.ship/08-SPECS-REORG/`.
 - **Deployment** — public domain, Docker, TLS, one-click
-  reviewer demo. Likely becomes `.ship/09-DEPLOY/`.
+  reviewer demo. Likely becomes `.ship/08-DEPLOY/`.
 - **Signup/onboarding** — consumer auth flow, testnet
   balance seed, first-run tour. Likely becomes
-  `.ship/10-SIGNUP/`.
+  `.ship/09-SIGNUP/`.
 
 ## Conventions
 

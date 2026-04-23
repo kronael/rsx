@@ -278,7 +278,7 @@ budget on sparse arrays.
 
 ## See Also
 
-- `specs/v1/ORDERBOOK.md` - Full orderbook spec with compression details
+- `specs/1/21-orderbook.md` - Full orderbook spec with compression details
 - `rsx-book/src/compression.rs` - CompressionMap implementation
 - `rsx-book/src/book.rs` - Orderbook with compressed levels
 - `rsx-book/tests/compression_test.rs` - Zone boundary tests

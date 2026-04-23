@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # TODO Tracking
 
 Bug hunt 2026-02-14: 59 bugs + 33 spec test gaps + 7 future items.
@@ -42,5 +46,5 @@ Bug hunt 2026-02-14: 59 bugs + 33 spec test gaps + 7 future items.
 ## Sources
 
 TODOs consolidated from: PROGRESS.md, GUARANTEES.md, CRITIQUE.md,
-LEFTOSPEC.md, specs/v1/TESTING-*.md, specs/v1/LIQUIDATOR.md,
+LEFTOSPEC.md, specs/1/*testing-*.md, specs/1/13-liquidator.md,
 and full codebase bug hunt (9 agent rounds).

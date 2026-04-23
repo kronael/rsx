@@ -2,7 +2,7 @@
 
 Matching engine process. One instance per symbol. Receives
 orders from Risk via CMP/UDP, matches against the orderbook,
-fans out events. See `specs/v1/MATCHING.md`.
+fans out events. See `specs/1/17-matching.md`.
 
 ## Module Layout
 

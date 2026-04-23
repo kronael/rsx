@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Playwright: Latency & Performance Tests
 
 ## Goal

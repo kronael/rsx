@@ -2,7 +2,7 @@
 
 WAL writer/reader, DXS replay server, DXS consumer client,
 and CMP (C Message Protocol) sender/receiver.
-See `specs/v1/DXS.md`, `specs/v1/WAL.md`, `specs/v1/CMP.md`.
+See `specs/1/10-dxs.md`, `specs/1/48-wal.md`, `specs/1/4-cmp.md`.
 
 ## Module Layout
 

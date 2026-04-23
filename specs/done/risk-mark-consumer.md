@@ -1,3 +1,7 @@
+---
+status: shipped
+---
+
 # Plan: Risk Mark Price DXS Consumer
 
 ## Context
