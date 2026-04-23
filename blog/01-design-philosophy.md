@@ -10,7 +10,7 @@ This post explains the design decisions that shaped the system.
 ## Spec-First, Code Second
 
 We wrote 35 specification documents before writing a single line of
-Rust. The specs directory (`specs/1/`) contains everything: orderbook
+Rust. The specs directory (`specs/2/`) contains everything: orderbook
 data structures, matching algorithm, risk formulas, WAL format, CMP
 wire protocol, deployment topology, testing strategy, and edge case
 catalogs.

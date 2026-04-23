@@ -44,10 +44,10 @@ src/
 - Public WS (`/ws/public`): orderbook, BBO, trades
 - Private WS (`/ws/private`): orders, fills, positions
 - Frame format: compact JSON `{N:[...]}`/`{U:[...]}`
-- See specs/1/49-webproto.md
+- See specs/2/49-webproto.md
 
 ## See Also
 
 - [rsx-gateway](../rsx-gateway/README.md) — WS backend
 - [rsx-playground](../rsx-playground/README.md) — serves at /trade/
-- [specs/1/49-webproto.md](../specs/1/49-webproto.md) — protocol
+- [specs/2/49-webproto.md](../specs/2/49-webproto.md) — protocol

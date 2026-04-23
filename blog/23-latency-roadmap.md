@@ -213,4 +213,4 @@ on a non-isolated core.
 - `rsx-risk/src/shard.rs` - Margin recalculation entry point
 - `rsx-matching/src/snapshot.rs` - Snapshot save/load (scheduler
   pending)
-- `specs/1/45-tiles.md` - Tile architecture and SPSC ring layout
+- `specs/2/45-tiles.md` - Tile architecture and SPSC ring layout

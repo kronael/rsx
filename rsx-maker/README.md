@@ -52,4 +52,4 @@ manages its lifecycle via the Control tab.
 
 - [rsx-gateway](../rsx-gateway/README.md) — WS endpoint
 - [rsx-playground](../rsx-playground/README.md) — manages maker lifecycle
-- [specs/1/49-webproto.md](../specs/1/49-webproto.md) — WS frame format
+- [specs/2/49-webproto.md](../specs/2/49-webproto.md) — WS frame format

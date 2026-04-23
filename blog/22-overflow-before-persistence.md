@@ -130,4 +130,4 @@ before persisting, not after.
   `checked_mul` chain with 9999 cap
 - `rsx-risk/src/funding.rs` - `calculate_rate()`, now uses i128
   intermediate
-- `specs/1/28-risk.md` §5 - Funding rate calculation spec
+- `specs/2/28-risk.md` §5 - Funding rate calculation spec

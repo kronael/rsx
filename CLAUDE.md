@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # RSX Exchange
 
-Spec-first perpetuals exchange. All specs in `specs/1/`.
+Spec-first perpetuals exchange. All specs in `specs/2/`.
 
-## Architecture (see specs/1/20-network.md, TILES.md)
+## Architecture (see specs/2/20-network.md, TILES.md)
 
 - Separate processes: Gateway, Risk, ME (per symbol),
   Marketdata, Recorder, Mark
@@ -166,17 +166,17 @@ for notional = price * qty at risk boundary.
 
 | Component | Spec | Test Spec |
 |-----------|------|-----------|
-| Architecture | specs/1/45-tiles.md | - |
-| Shared orderbook | specs/1/21-orderbook.md | specs/1/34-testing-book.md |
-| Matching engine | specs/1/21-orderbook.md, specs/1/6-consistency.md | specs/1/41-testing-matching.md |
-| DXS (WAL + replay) | specs/1/10-dxs.md, specs/1/48-wal.md, specs/1/4-cmp.md | specs/1/36-testing-dxs.md |
-| Risk engine | specs/1/28-risk.md | specs/1/42-testing-risk.md |
-| Liquidator | specs/1/13-liquidator.md | specs/1/38-testing-liquidator.md |
-| Mark price | specs/1/15-mark.md | specs/1/39-testing-mark.md |
-| Gateway | specs/1/20-network.md, specs/1/49-webproto.md, specs/1/29-rpc.md, specs/1/18-messages.md | specs/1/37-testing-gateway.md |
-| Market data | specs/1/16-marketdata.md | specs/1/40-testing-marketdata.md |
-| SPSC rings | notes/SMRB.md | specs/1/43-testing-smrb.md |
-| Validation edge cases | specs/1/47-validation-edge-cases.md | (cross-references all) |
+| Architecture | specs/2/45-tiles.md | - |
+| Shared orderbook | specs/2/21-orderbook.md | specs/2/34-testing-book.md |
+| Matching engine | specs/2/21-orderbook.md, specs/2/6-consistency.md | specs/2/41-testing-matching.md |
+| DXS (WAL + replay) | specs/2/10-dxs.md, specs/2/48-wal.md, specs/2/4-cmp.md | specs/2/36-testing-dxs.md |
+| Risk engine | specs/2/28-risk.md | specs/2/42-testing-risk.md |
+| Liquidator | specs/2/13-liquidator.md | specs/2/38-testing-liquidator.md |
+| Mark price | specs/2/15-mark.md | specs/2/39-testing-mark.md |
+| Gateway | specs/2/20-network.md, specs/2/49-webproto.md, specs/2/29-rpc.md, specs/2/18-messages.md | specs/2/37-testing-gateway.md |
+| Market data | specs/2/16-marketdata.md | specs/2/40-testing-marketdata.md |
+| SPSC rings | notes/SMRB.md | specs/2/43-testing-smrb.md |
+| Validation edge cases | specs/2/47-validation-edge-cases.md | (cross-references all) |
 
 ## Correctness Invariants (system-wide)
 

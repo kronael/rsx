@@ -2,7 +2,7 @@
 
 Mark price aggregator process. Consumes real-time prices from
 exchange WebSocket feeds, computes median mark prices, publishes
-to Risk via CMP/UDP. See `specs/1/15-mark.md`.
+to Risk via CMP/UDP. See `specs/2/15-mark.md`.
 
 ## Module Layout
 

@@ -18,7 +18,7 @@ are all `[docs]`:
 2026-02-08 [docs] Reorganize specs into versioned directories
 ```
 
-By the end of day 0, we had 35 spec files in `specs/1/` covering
+By the end of day 0, we had 35 spec files in `specs/2/` covering
 every component: ORDERBOOK.md, RISK.md, DXS.md, MARK.md,
 CONSISTENCY.md, LIQUIDATOR.md, MARKETDATA.md, GATEWAY.md,
 and their corresponding TESTING-*.md files.

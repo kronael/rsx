@@ -420,8 +420,8 @@ and wondered if single-threaded is faster (it is).
 
 ## See Also
 
-- `specs/1/21-orderbook.md` - Orderbook data structures and matching algorithm
-- `specs/1/45-tiles.md` - Tile architecture (pinned threads + SPSC rings)
+- `specs/2/21-orderbook.md` - Orderbook data structures and matching algorithm
+- `specs/2/45-tiles.md` - Tile architecture (pinned threads + SPSC rings)
 - `rsx-book/src/matching.rs` - Matching logic
 - `rsx-book/src/slab.rs` - Slab allocator for orders
 - `rsx-book/src/compression.rs` - Bisection for price-to-index

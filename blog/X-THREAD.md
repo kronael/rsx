@@ -56,7 +56,7 @@ sum of fills tested in every scenario. Backpressure never
 drops. Exactly-one completion per order.
 
 12/ All specs written before code. 35+ spec documents in
-specs/1/. Implementation validates spec. Tests encode
+specs/2/. Implementation validates spec. Tests encode
 invariants. Code follows architecture.
 
 Spec-first. Delete what you can. Test what remains.

@@ -297,7 +297,7 @@ systems where correctness matters more than coverage percentage.
 
 ## See Also
 
-- `specs/1/44-testing.md` - Test levels and invariants
+- `specs/2/44-testing.md` - Test levels and invariants
 - `blog/06-test-suite-archaeology.md` - Agent audit methodology
 - `blog/07-port-binding-toctou.md` - Port binding race conditions
 - `blog/08-tempdir-over-tmp.md` - Why TempDir eliminates a bug category

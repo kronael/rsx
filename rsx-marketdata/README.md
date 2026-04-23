@@ -53,7 +53,7 @@ cargo test -p rsx-marketdata
 11 test files: config, heartbeat, main loop, protocol, replay,
 replay e2e, seq gap, shadow book, shadow, subscription, and
 more. Seq gap detection with automatic L2 snapshot resend.
-See `specs/1/40-testing-marketdata.md`.
+See `specs/2/40-testing-marketdata.md`.
 
 ## Dependencies
 
@@ -75,4 +75,4 @@ See `specs/1/40-testing-marketdata.md`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- data flow, CMP
   decode loop, publishing, seq gap detection
-- `specs/1/16-marketdata.md`
+- `specs/2/16-marketdata.md`

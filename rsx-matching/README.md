@@ -58,7 +58,7 @@ cargo test -p rsx-matching
 
 10 test files: config, config poll, dedup, fanout, main loop,
 order processing, WAL integration, wire, and more. Dedup
-boundary logic validated. See `specs/1/41-testing-matching.md`.
+boundary logic validated. See `specs/2/41-testing-matching.md`.
 
 ## Dependencies
 
@@ -81,4 +81,4 @@ boundary logic validated. See `specs/1/41-testing-matching.md`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- main loop, dedup,
   config hot reload, event fanout
-- `specs/1/17-matching.md`
+- `specs/2/17-matching.md`

@@ -48,8 +48,8 @@ systemctl restart rsx-gateway
 
 **Cross-References:**
 - [GUARANTEES.md](GUARANTEES.md) - Data loss bounds and recovery time objectives
-- [TESTING.md](specs/1/44-testing.md) - Testing procedures referenced in verification steps
-- Component-specific test specs in specs/1/TESTING-*.md
+- [TESTING.md](specs/2/44-testing.md) - Testing procedures referenced in verification steps
+- Component-specific test specs in specs/2/TESTING-*.md
 
 ---
 

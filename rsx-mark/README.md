@@ -45,7 +45,7 @@ cargo test -p rsx-mark
 ```
 
 3 test files: aggregator, config, types.
-See `specs/1/39-testing-mark.md`.
+See `specs/2/39-testing-mark.md`.
 
 ## Dependencies
 
@@ -69,4 +69,4 @@ See `specs/1/39-testing-mark.md`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- aggregation logic,
   staleness, source architecture, main loop
-- `specs/1/15-mark.md`
+- `specs/2/15-mark.md`
