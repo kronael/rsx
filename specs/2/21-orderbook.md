@@ -41,28 +41,8 @@ status: shipped
 Floating point is non-deterministic (rounding varies across architectures) and introduces
 precision errors that compound across trades. Every production exchange uses integer arithmetic.
 
-```rust
-/// Price in smallest tick units. 1 = one tick.
-/// For BTC-USD with tick_size = 0.01 USD: Price(5000000) = $50,000.00
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct Price(pub i64);
-
-/// Quantity in smallest lot units. 1 = one lot.
-/// For BTC with lot_size = 0.001 BTC: Qty(1000) = 1.0 BTC
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct Qty(pub i64);
-```
-
-Conversion from human-readable:
-```
-price_raw = (human_price / tick_size) as i64     // e.g. 50000.00 / 0.01 = 5000000
-qty_raw   = (human_qty / lot_size) as i64        // e.g. 1.5 / 0.001 = 1500
-```
-
-All arithmetic in the matching engine uses these integer types. Display conversion
-happens only at the API boundary.
+`Price(i64)` and `Qty(i64)` are `#[repr(transparent)]` newtypes. Display conversion
+happens only at the API boundary. See `rsx-types/src/lib.rs`.
 
 ---
 
@@ -73,36 +53,8 @@ happens only at the API boundary.
 Each symbol has a single, fixed tick size and lot size. All valid prices are
 multiples of tick_size. All valid quantities are multiples of lot_size.
 
-```rust
-struct SymbolConfig {
-    symbol_id: u32,
-    /// Price decimals (e.g. 8 = prices stored as price * 10^8)
-    price_decimals: u8,
-    /// Qty decimals (e.g. 8 = qtys stored as qty * 10^8)
-    qty_decimals: u8,
-    /// Minimum price increment (in Price units)
-    tick_size: i64,
-    /// Minimum quantity increment (in Qty units)
-    lot_size: i64,
-}
-```
-
-**Examples:**
-
-| Symbol | Tick Size | Lot Size | Price(50000.01) | Qty(1.5) |
-|---|---|---|---|---|
-| BTC-PERP | $0.01 (tick_size=1) | 0.001 BTC (lot_size=1000) | Price(5000001) | Qty(1500000) |
-| ETH-PERP | $0.01 (tick_size=1) | 0.01 ETH (lot_size=10000) | Price(300001) | Qty(150000) |
-
-**Validation at order entry:**
-```rust
-fn validate_order(config: &SymbolConfig, price: Price, qty: Qty) -> bool {
-    price.0 % config.tick_size == 0
-    && qty.0 % config.lot_size == 0
-    && qty.0 > 0
-    && price.0 > 0
-}
-```
+`SymbolConfig` holds `tick_size`, `lot_size`, `price_decimals`, `qty_decimals`.
+Validation checks alignment to tick/lot at order entry. See `rsx-types/src/`.
 
 Variable tick sizes (changing with price) are a v2 feature — see
 [ORDERBOOK_V2.md](ORDERBOOK_V2.md).
@@ -176,61 +128,12 @@ when it does, recentering unsmooshes them.
 ### Compression Band Lookup — Bisection, Not Linear
 
 The zone lookup uses pre-computed absolute price thresholds and binary search
-(not iteration, not logarithms). With 5 zones, a bisection is 2-3 comparisons:
+(not iteration, not logarithms). With 5 zones, a bisection is 2-3 comparisons.
+Cost: ~2-5ns (2-3 branches + one integer division by a constant).
+Division by compression factor can be replaced with multiply+shift for known
+constant factors (1, 10, 100, 1000).
 
-```rust
-/// Pre-computed zone boundaries (absolute prices, not distances)
-/// Recomputed once per recenter — NOT per order
-struct CompressionMap {
-    mid_price: i64,
-    /// Sorted thresholds: [zone0_end, zone1_end, zone2_end, zone3_end]
-    /// Zone 4 is everything beyond zone3_end (catch-all)
-    thresholds: [i64; 4],      // absolute price boundaries
-    compressions: [u32; 5],    // ticks-per-slot for each zone [1, 10, 100, 1000, INF]
-    base_indices: [u32; 5],    // first array index for each zone
-    zone_slots: [u32; 5],      // number of slots per zone
-}
-
-impl CompressionMap {
-    /// Bisection: 2-3 comparisons, no loops, no log/div on hot path
-    #[inline(always)]
-    fn price_to_index(&self, price: i64) -> u32 {
-        let distance = (price - self.mid_price).unsigned_abs() as i64;
-        let side = if price >= self.mid_price { 0 } else { 1 }; // ask=0, bid=1
-
-        // Binary search on 4 thresholds → 2-3 branches
-        let zone = if distance < self.thresholds[1] {
-            if distance < self.thresholds[0] { 0 } else { 1 }
-        } else {
-            if distance < self.thresholds[2] { 2 }
-            else if distance < self.thresholds[3] { 3 }
-            else { 4 } // catch-all
-        };
-
-        if zone == 4 {
-            // Catch-all: one slot per side
-            return self.base_indices[4] + side as u32;
-        }
-
-        let zone_start_distance = if zone == 0 { 0 } else {
-            self.thresholds[zone - 1]
-        };
-        let local_offset = ((distance - zone_start_distance) / self.compressions[zone] as i64) as u32;
-        let zone_base = self.base_indices[zone];
-        let half_slots = self.zone_slots[zone] / 2;
-
-        if side == 0 { // ask side
-            zone_base + half_slots + local_offset
-        } else { // bid side
-            zone_base + half_slots - 1 - local_offset
-        }
-    }
-}
-```
-
-**Cost: ~2-5ns** (2-3 branches + one integer division by a constant).
-The division by compression factor can be replaced with multiply+shift for
-known constant factors (1, 10, 100, 1000).
+See `rsx-book/src/compression.rs` for `CompressionMap` and `price_to_index`.
 
 ---
 
@@ -260,27 +163,10 @@ Zone 2, slot 8042 (compression 1:100, covers ticks 50420-50519):
 ### Matching at Smooshed Levels
 
 During extreme moves, matching may reach smooshed levels. Within a smooshed
-level, scan instead of skip:
+level, scan instead of skip: check each order's actual price and skip non-matching
+prices without breaking (later orders in the slot may still qualify).
 
-```
-fn match_at_level(book, tick, aggressor, events):
-    level = &book.levels[tick]
-    cursor = level.head
-
-    while cursor != NONE AND aggressor.remaining_qty > 0:
-        maker = &book.orders[cursor]
-
-        // In smooshed ticks, check ACTUAL price
-        if aggressor.side == Buy AND maker.price.0 > aggressor.price.0:
-            cursor = maker.next   // skip — but don't break (later orders may qualify)
-            continue
-        if aggressor.side == Sell AND maker.price.0 < aggressor.price.0:
-            cursor = maker.next
-            continue
-
-        fill_qty = min(aggressor.remaining_qty, maker.remaining_qty)
-        // ... normal fill logic, fill price = maker.price (exact)
-```
+See `rsx-book/src/matching.rs` for `match_at_level`.
 
 This is O(k) per smooshed slot where k = orders in that slot. But:
 - **Near mid (zone 0)**: 1:1, no smooshing, O(1) per level as before
@@ -301,148 +187,32 @@ action. Recenter by migrating to a new array with updated zone boundaries.
 
 ### Two Pre-Allocated Arrays
 
-```rust
-struct Orderbook {
-    active_levels: Vec<PriceLevel>,    // current, all writes go here
-    staging_levels: Vec<PriceLevel>,   // spare, used during recenter
-    compression: CompressionMap,        // current zone boundaries
-    state: BookState,
-    // ... rest of book
-}
+`Orderbook` holds `active_levels` (current write target) and `staging_levels`
+(spare, used during recenter). `BookState` is either `Normal` or `Migrating`
+with `bid_frontier`/`ask_frontier` (two i64s). Everything between the frontiers
+is in the new array; everything outside is in old. No bitmap needed.
 
-enum BookState {
-    Normal,
-    Migrating {
-        old_levels: Vec<PriceLevel>,   // being drained
-        old_compression: CompressionMap,
-        bid_frontier: i64,             // lowest price migrated (expands down)
-        ask_frontier: i64,             // highest price migrated (expands up)
-    },
-}
-```
-
-**Migration tracking = two i64 prices.** Everything between bid_frontier and
-ask_frontier is in the new array. Everything outside is in old. No bitmap.
+See `rsx-book/src/migration.rs` for `BookState`, trigger logic, `resolve_level`,
+`migrate_single_level`, and `migrate_batch`.
 
 ### Trigger & Start
 
-```
-When mid-price drifts > 50% of zone 0 width from array center:
-
-1. new_levels = staging_levels (pre-allocated, zeroed)
-2. Compute new CompressionMap centered on current mid
-3. old_levels = swap out active_levels
-4. active_levels = new_levels
-5. bid_frontier = ask_frontier = new mid-price
-6. state = Migrating { old_levels, old_compression, bid_frontier, ask_frontier }
-```
-
-From this instant: **all new writes go to new array.**
+When mid-price drifts > 50% of zone 0 width from array center: swap staging into
+active, compute new `CompressionMap` centered on current mid, set frontiers to
+current mid. All new writes go to the new array from this instant.
 
 ### Main Loop: Interleaved Migration
 
-```
-loop {
-    if let Some(order) = spsc.try_pop() {
-        process_order(order)           // may trigger lazy migration
-    } else if book.is_migrating() {
-        migrate_batch(100)             // steal idle cycles, expand frontiers
-    } else {
-        // busy-spin: no pause/yield — dedicated core, bare loop
-    }
-}
-```
+Main loop steals idle cycles for `migrate_batch(100)` when no orders are pending;
+lazy frontier advance fires on every `resolve_level` call for a price outside the
+current frontier. Empty levels cost ~1ns each to skip; a jump of 10K empty levels
+costs ~10us.
 
-### Lazy Migration: Frontier Advance on Access
+### Proactive Sweep
 
-Every level access goes through `resolve_level`. One branch on hot path:
-
-```
-fn resolve_level(&mut self, price: Price) -> &mut PriceLevel {
-    if self.is_migrating() && !self.is_within_frontier(price) {
-        self.advance_frontier_to(price);
-    }
-    let idx = self.compression.price_to_index(price.0);
-    &mut self.active_levels[idx as usize]
-}
-
-fn is_within_frontier(&self, price: Price) -> bool {
-    // Two comparisons
-    price.0 >= self.bid_frontier && price.0 <= self.ask_frontier
-}
-```
-
-`advance_frontier_to` walks from the current frontier toward the target price,
-migrating every populated level it passes. Empty levels = one `order_count == 0`
-check (~1ns each). A jump of 10K empty levels = ~10us.
-
-### migrate_single_level
-
-```
-fn migrate_single_level(&mut self, old_idx: u32) {
-    let old_level = &self.old_levels[old_idx];
-    if old_level.order_count == 0 { return; }
-
-    // Iterate orders — each stores its exact price.
-    // Orders in a smooshed old level may have different prices,
-    // mapping to different new indices (unsmooshing).
-    let mut cursor = old_level.head;
-    while cursor != NONE {
-        let next = self.orders[cursor].next;
-        let price = self.orders[cursor].price;
-        let new_idx = self.compression.price_to_index(price.0);
-
-        // Unlink from old level, append to new level
-        let new_level = &mut self.active_levels[new_idx];
-        if new_level.order_count > 0 {
-            self.orders[new_level.tail].next = cursor;
-            self.orders[cursor].prev = new_level.tail;
-            self.orders[cursor].next = NONE;
-            new_level.tail = cursor;
-        } else {
-            new_level.head = cursor;
-            new_level.tail = cursor;
-            self.orders[cursor].prev = NONE;
-            self.orders[cursor].next = NONE;
-        }
-        new_level.total_qty += self.orders[cursor].qty;
-        new_level.order_count += 1;
-        self.orders[cursor].tick_index = new_idx;
-
-        cursor = next;
-    }
-}
-```
-
-### Proactive Sweep: Expand Frontiers in Idle Cycles
-
-```
-fn migrate_batch(&mut self, batch_size: u32) {
-    let mut migrated = 0;
-    while migrated < batch_size {
-        // Alternate: expand bid frontier down, ask frontier up
-        if self.bid_frontier > self.old_min_price {
-            self.bid_frontier -= self.old_tick_step;
-            let old_idx = self.old_compression.price_to_index(self.bid_frontier);
-            self.migrate_single_level(old_idx);
-            migrated += 1;
-        }
-        if self.ask_frontier < self.old_max_price {
-            self.ask_frontier += self.old_tick_step;
-            let old_idx = self.old_compression.price_to_index(self.ask_frontier);
-            self.migrate_single_level(old_idx);
-            migrated += 1;
-        }
-        // Both edges reached → done
-        if self.bid_frontier <= self.old_min_price
-            && self.ask_frontier >= self.old_max_price {
-            self.staging_levels = std::mem::take(&mut self.old_levels);
-            self.state = BookState::Normal;
-            break;
-        }
-    }
-}
-```
+`migrate_batch` alternately expands bid frontier down and ask frontier up, calling
+`migrate_single_level` per step. Orders in smooshed old slots unsmoosh naturally:
+each stores its exact price, mapping to potentially different new indices.
 
 ---
 
@@ -507,16 +277,7 @@ until recentering catches up.
 
 ### Cancel/Modify During Migration
 
-```
-fn cancel_order(&mut self, handle: SlabIdx) {
-    let price = self.orders[handle].price;
-    self.resolve_level(price);  // ensures level is in new array
-    // Cancel normally from new array
-    ...
-}
-```
-
-New orders always go to new array. `resolve_level` ensures the target level
+New orders always go to the new array. `resolve_level` ensures the target level
 is migrated first. Zero special handling beyond the one `is_migrating()` branch.
 
 ---
