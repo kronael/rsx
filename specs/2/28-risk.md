@@ -313,41 +313,12 @@ recovery, all positions are reconstructed from ME fills (position = sum(fills)).
 
 ## Main Loop Pseudocode
 
-```
-loop {
-    // 1. Fills from all MEs (highest priority, NEVER skip)
-    for ring in me_rings:
-        while let Ok(event) = ring.try_pop():
-            match event:
-                Fill(f) => process_fill(f)
-                BBO(b)  => stash_bbo(b)  // save latest, process later
+Priority order: (1) fills from all MEs — never skip, stash BBOs for later;
+(2) new orders from gateway — never skip; (3) mark prices; (4) BBO price updates
+— skippable under load, only process latest per symbol, triggers margin recalc;
+(5) funding settlement every 8h; (5.5) liquidation processing; (6) lease renewal ~1s.
 
-    // 2. New orders from gateway (NEVER skip)
-    while let Ok(order) = gateway_ring.try_pop():
-        process_order(order)
-
-    // 3. Mark prices from aggregator (DXS consumer, see MARK.md)
-    while let Ok(mp) = mark_ring.try_pop():
-        mark_prices[mp.symbol_id] = mp.price
-
-    // 4. BBO price updates (LAST, skippable under load)
-    //    Only process latest BBO per symbol (skip stale)
-    //    Triggers margin recalc for all exposed users
-    if has_budget():
-        for (sym, bbo) in drain_stashed_bbos():
-            update_index_price(bbo)
-            recalc_margins_for_symbol(sym)
-
-    // 5. Funding check (amortized, every 8h)
-    maybe_settle_funding()
-
-    // 5.5. Liquidation processing (see LIQUIDATOR.md)
-    maybe_process_liquidations()
-
-    // 6. Lease renewal (every ~1s)
-    maybe_renew_lease()
-}
-```
+See `rsx-risk/src/shard.rs` main loop.
 
 ## File Organization
 
