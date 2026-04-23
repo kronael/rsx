@@ -10,19 +10,19 @@ is the light backlog — items not yet a ship project.
 
 ## Scheduled (will become ship projects)
 
-- **08-REST-ENDPOINTS** — FULL impl of gateway REST (5
-  endpoints, JWT, rate limits, CORS, tests, integration
-  tests). Scoped after 07 completes.
+- **08-REST-ENDPOINTS** — gateway REST via CMP queries to risk
+  (monoio, no Postgres in gateway). 5 endpoints + JWT + rate
+  limits. Scoped.
 - **09-DASHBOARDS** — finalize + SHIP all 5 dashboards
   (support, health, management, playground, risk). Simple,
-  user-friendly. Scoped after 07 completes.
+  user-friendly. Scoped.
+- **11-OAUTH** — GitHub OAuth via new Python `rsx-auth/`
+  service. Users table, JWT issuance. Scoped.
 
 ## Backlog (not yet scoped)
 
 - **10-DEPLOY** — public domain, Docker, TLS, one-click
   reviewer demo
-- **11-SIGNUP** — consumer auth flow, testnet balance seed,
-  first-run tour
 
 ## Conventions
 
