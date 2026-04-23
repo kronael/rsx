@@ -5,19 +5,24 @@ is the light backlog — items not yet a ship project.
 
 ## Active
 
-- See `.ship/06-PUBLISH/PROJECT.md`
+- `.ship/06-PUBLISH/PROJECT.md` — publish-readiness punch list
+- `.ship/07-SPEC-CLEANUP/PROJECT.md` — spec cleanup (in progress)
+
+## Scheduled (will become ship projects)
+
+- **08-REST-ENDPOINTS** — FULL impl of gateway REST (5
+  endpoints, JWT, rate limits, CORS, tests, integration
+  tests). Scoped after 07 completes.
+- **09-DASHBOARDS** — finalize + SHIP all 5 dashboards
+  (support, health, management, playground, risk). Simple,
+  user-friendly. Scoped after 07 completes.
 
 ## Backlog (not yet scoped)
 
-- **Spec cleanup** — audits found bloat + stale + duplicated
-  content in `specs/2/`. Research each finding against
-  shipped code; trim what's in-code, capture what's not.
-  Likely becomes `.ship/07-SPEC-CLEANUP/`.
-- **Deployment** — public domain, Docker, TLS, one-click
-  reviewer demo. Likely becomes `.ship/08-DEPLOY/`.
-- **Signup/onboarding** — consumer auth flow, testnet
-  balance seed, first-run tour. Likely becomes
-  `.ship/09-SIGNUP/`.
+- **10-DEPLOY** — public domain, Docker, TLS, one-click
+  reviewer demo
+- **11-SIGNUP** — consumer auth flow, testnet balance seed,
+  first-run tour
 
 ## Conventions
 

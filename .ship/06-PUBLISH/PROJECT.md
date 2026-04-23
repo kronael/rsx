@@ -32,12 +32,12 @@ committed state.
 Files: `.gitignore`, `rsx-playground/.env`
 
 ### 2. Fix stale test counts across all docs
-Actual counts: 785 Rust, 1034 Python, ~440 Playwright
+Actual counts: ~1035 Rust, 1034 Python, ~440 Playwright
 (exact count post-walkthrough additions). Update:
 - `PROGRESS.md`, `TESTING.md`, `FEATURES.md`
 - `BLOG.md`, `README.md`
-- `specs/1/32-status.md`
 - Walkthrough hero (`rsx-playground/pages.py`)
+- `specs/2/44-testing.md` (check-pass flagged 877 vs 1035 drift)
 
 ### 3. Fix canonical Playwright count for release-gate
 `Makefile` release-gate hardcodes 223 but actual is much
@@ -69,7 +69,32 @@ document the limitation.
 
 Files: `rsx-marketdata/`, `rsx-playground/server.py`
 
-### 7. Full `make gate` run + clean-boot verification
+### 7. Wire RSX_LIQUIDATION_MAX_SLIP_BPS into LiquidationConfig
+Check-pass (`findings-bucket-2.md`) found 13-liquidator
+spec advertises `RSX_LIQUIDATION_MAX_SLIP_BPS=500` as
+slippage cap, but `LiquidationConfig` has no `max_slip_bps`
+field — cap is unenforced. Wire the env var, add field to
+config, enforce cap in price clamping logic.
+
+Files: `rsx-risk/src/liquidation.rs`, config loader
+
+### 8. Remove test.skip() from play_latency.spec.ts
+Lines 245, 298, 335 still have `test.skip()` — vacuous
+assertions. Either implement the check or delete the
+skipped test. Found by check-pass on 22-perf-verification.
+
+Files: `rsx-playground/tests/play_latency.spec.ts`
+
+### 9. Reconcile liquidator main-loop ordering
+13-liquidator spec §7 says liquidation runs between funding
++ lease renewal; code runs it at shard tick step 1b. Either
+update spec to match code (preferred if code is correct) or
+move code to match spec (if spec's ordering was intentional
+for a correctness reason). Investigate + decide.
+
+Files: `specs/2/13-liquidator.md` or `rsx-risk/src/shard.rs`
+
+### 10. Full `make gate` run + clean-boot verification
 - `make gate-1-startup` through `gate-4-playwright` pass
 - `make release-gate` exits 0
 - Clean boot: kill all, start playground, open /walkthrough,
@@ -87,10 +112,11 @@ Files: `rsx-marketdata/`, `rsx-playground/server.py`
 - Clean-boot demo: from `pkill -f rsx-`, a new user can
   follow a documented path and see live depth in <60s
 
-## Out of scope (new ship projects likely)
+## Out of scope (tracked as separate ship projects)
 
-- `07-SPEC-CLEANUP`: systematic audit of bloat/stale/dup
-  content in `specs/1/` — research each finding against
-  shipped code, trim or capture
-- `08-DEPLOY`: public deployment (domain, Docker, TLS)
-- `09-SIGNUP`: auth flow and onboarding
+- `07-SPEC-CLEANUP`: in progress, see its PROJECT.md
+- `08-REST-ENDPOINTS`: FULL gateway REST impl (5 endpoints,
+  JWT, rate limits, CORS, tests)
+- `09-DASHBOARDS`: ship all 5 dashboards
+- `10-DEPLOY`: public deployment (domain, Docker, TLS)
+- `11-SIGNUP`: auth flow + onboarding
