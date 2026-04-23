@@ -1,5 +1,5 @@
 ---
-status: shipped
+status: partial
 ---
 
 # Deployment Specification (v1)

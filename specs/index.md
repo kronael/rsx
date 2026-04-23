@@ -37,6 +37,7 @@ Completed ship projects, renamed from specs/done/.
 | [1/27-todos-refinement.md](1/27-todos-refinement.md) | shipped | date: 2026-02-22 (updated) |
 | [1/28-trade-ui-fixes.md](1/28-trade-ui-fixes.md) | shipped | The `/trade/` React SPA shows live data for all panels. Read all |
 | [1/29-trade-ui.md](1/29-trade-ui.md) | shipped | The `/trade/` SPA works correctly with live RSX processes running. |
+| [1/30-sim.md](1/30-sim.md) | shipped | **Archived.** This was a deletion plan; all work shipped. |
 
 ## Phase 2 — Current architectural reference
 
@@ -49,14 +50,14 @@ Active specs. Source of truth for system design.
 | [2/4-cmp.md](2/4-cmp.md) | shipped | Fixed-size C structs over the network. One wire format for |
 | [2/5-codepaths.md](2/5-codepaths.md) | shipped | This document enumerates major end-to-end codepaths and maps them to |
 | [2/6-consistency.md](2/6-consistency.md) | shipped | Matching engine produces events into a fixed array buffer. Events fan out |
-| [2/7-dashboard.md](2/7-dashboard.md) | shipped | Support-facing dashboard for user-level operations: |
-| [2/8-database.md](2/8-database.md) | shipped | - [Recommendation](#recommendation) |
-| [2/9-deploy.md](2/9-deploy.md) | shipped | - [Multi-Server Topology](#multi-server-topology) |
+| [2/7-dashboard.md](2/7-dashboard.md) | draft | Support-facing dashboard for user-level operations: |
+| [2/8-database.md](2/8-database.md) | reference | - [Recommendation](#recommendation) |
+| [2/9-deploy.md](2/9-deploy.md) | partial | - [Multi-Server Topology](#multi-server-topology) |
 | [2/10-dxs.md](2/10-dxs.md) | shipped | Brokerless WAL streaming. Each producer IS the server for its own |
 | [2/11-gateway.md](2/11-gateway.md) | shipped | Gateway adapts external clients to internal CMP. It owns |
-| [2/12-health-dashboard.md](2/12-health-dashboard.md) | shipped | Systems operations dashboard for platform health: |
-| [2/13-liquidator.md](2/13-liquidator.md) | shipped | - [Context](#context) |
-| [2/14-management-dashboard.md](2/14-management-dashboard.md) | shipped | This spec is intentionally split into four separate dashboards: |
+| [2/12-health-dashboard.md](2/12-health-dashboard.md) | draft | Systems operations dashboard for platform health: |
+| [2/13-liquidator.md](2/13-liquidator.md) | partial | - [Context](#context) |
+| [2/14-management-dashboard.md](2/14-management-dashboard.md) | draft | This spec is intentionally split into four separate dashboards: |
 | [2/15-mark.md](2/15-mark.md) | shipped | Standalone network service. Aggregates mark prices from external |
 | [2/16-marketdata.md](2/16-marketdata.md) | shipped | Market data is served by a dedicated service. It consumes orderbook |
 | [2/17-matching.md](2/17-matching.md) | shipped | Matching is per-symbol, single-threaded, and stateless with |
@@ -64,17 +65,16 @@ Active specs. Source of truth for system design.
 | [2/19-metadata.md](2/19-metadata.md) | shipped | This spec defines how symbol configuration is scheduled and propagated. Matching |
 | [2/20-network.md](2/20-network.md) | shipped | - [Overview](#overview) |
 | [2/21-orderbook.md](2/21-orderbook.md) | shipped | - [Design Goals](#design-goals-from-todomd) |
-| [2/22-perf-verification.md](2/22-perf-verification.md) | shipped | Wire up latency measurement end-to-end in the playground |
-| [2/23-playground-dashboard.md](2/23-playground-dashboard.md) | shipped | Developer/testing dashboard for local and staging playground workflows. |
-| [2/24-position-edge-cases.md](2/24-position-edge-cases.md) | shipped | Comprehensive catalog of edge cases for position tracking across |
+| [2/22-perf-verification.md](2/22-perf-verification.md) | partial | Wire up latency measurement end-to-end in the playground |
+| [2/23-playground-dashboard.md](2/23-playground-dashboard.md) | draft | Developer/testing dashboard for local and staging playground workflows. |
+| [2/24-position-edge-cases.md](2/24-position-edge-cases.md) | reference | Comprehensive catalog of edge cases for position tracking across |
 | [2/25-process.md](2/25-process.md) | shipped | - [Scope](#scope) |
-| [2/26-rest.md](2/26-rest.md) | shipped | > **Status: v2 — deferred.** Only `/health` and `/v1/symbols` |
-| [2/27-risk-dashboard.md](2/27-risk-dashboard.md) | shipped | Risk/operations dashboard for exchange-wide controls: |
+| [2/26-rest.md](2/26-rest.md) | partial | > **Status: v2 — deferred.** Only `/health` and `/v1/symbols` |
+| [2/27-risk-dashboard.md](2/27-risk-dashboard.md) | draft | Risk/operations dashboard for exchange-wide controls: |
 | [2/28-risk.md](2/28-risk.md) | shipped | - [Context](#context) |
 | [2/29-rpc.md](2/29-rpc.md) | shipped | - [Overview](#overview) |
 | [2/30-scenarios.md](2/30-scenarios.md) | shipped | Deployment scenarios for the RSX exchange. Defines which |
-| [2/31-sim.md](2/31-sim.md) | shipped | The playground has fake order-matching (`_sim_submit`, |
-| [2/33-telemetry.md](2/33-telemetry.md) | shipped | How RSX processes emit metrics and how they reach |
+| [2/33-telemetry.md](2/33-telemetry.md) | partial | How RSX processes emit metrics and how they reach |
 | [2/34-testing-book.md](2/34-testing-book.md) | shipped | Source specs: [ORDERBOOK.md](ORDERBOOK.md), |
 | [2/35-testing-cmp.md](2/35-testing-cmp.md) | shipped | Version: 1.0 |
 | [2/36-testing-dxs.md](2/36-testing-dxs.md) | shipped | Source specs: [DXS.md](DXS.md), [WAL.md](WAL.md) |
@@ -84,10 +84,10 @@ Active specs. Source of truth for system design.
 | [2/40-testing-marketdata.md](2/40-testing-marketdata.md) | shipped | Source specs: [MARKETDATA.md](MARKETDATA.md), |
 | [2/41-testing-matching.md](2/41-testing-matching.md) | shipped | Source specs: [ORDERBOOK.md](ORDERBOOK.md), |
 | [2/42-testing-risk.md](2/42-testing-risk.md) | shipped | Source spec: [RISK.md](RISK.md) |
-| [2/43-testing-smrb.md](2/43-testing-smrb.md) | shipped | Source specs: [notes/SMRB.md](../../notes/SMRB.md), |
+| [2/43-testing-smrb.md](2/43-testing-smrb.md) | reference | Source specs: [notes/SMRB.md](../../notes/SMRB.md), |
 | [2/44-testing.md](2/44-testing.md) | shipped | For comprehensive edge case documentation across all validation layers, |
 | [2/45-tiles.md](2/45-tiles.md) | shipped | - [Overview](#overview) |
-| [2/46-trade-ui.md](2/46-trade-ui.md) | shipped | Trade UI integration issues and fix plan. |
+| [2/46-trade-ui.md](2/46-trade-ui.md) | partial | Trade UI integration issues and fix plan. |
 | [2/47-validation-edge-cases.md](2/47-validation-edge-cases.md) | shipped | Comprehensive documentation of edge cases for order validation |
 | [2/48-wal.md](2/48-wal.md) | shipped | > **Note:** The concrete WAL implementation (file format, writer, |
 | [2/49-webproto.md](2/49-webproto.md) | shipped | Gateway exposes a compact WebSocket protocol and translates |
