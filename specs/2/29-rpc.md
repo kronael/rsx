@@ -87,100 +87,21 @@ See `rsx-gateway/src/order_id.rs`.
 
 ### Gateway Side: LIFO VecDeque
 
-**Data structure:**
-```rust
-struct PendingOrders {
-    queue: VecDeque<(UUIDv7, OrderContext)>,
-}
+`VecDeque<(UUIDv7, OrderContext)>` per user. LIFO optimization: for typical 1-5
+concurrent orders, pop_back hits the most recent response in O(1). Fallback for
+out-of-order responses: linear scan O(n), n is small (~1-10). VecDeque wins vs
+HashMap for <10 pending orders; config flag to switch at >100 (future).
 
-struct OrderContext {
-    user_id: u32,
-    symbol: u32,
-    client_order_id: Option<u64>,  // user-provided ID (optional)
-    response_channel: oneshot::Sender<OrderResult>,
-}
-```
-
-**LIFO optimization rationale:**
-
-Matching engine processes orders synchronously (single-threaded, reference
-ORDERBOOK.md). When Gateway sends multiple orders concurrently for the same
-user/symbol, the matching engine processes them serially. Responses come back
-in reverse order of the last few submissions:
-
-```
-Gateway sends:     ORDER(A), ORDER(B), ORDER(C)
-Matching processes: A → B → C (serial queue)
-Responses arrive:   DONE(A), DONE(B), DONE(C)
-
-But if user sends rapid-fire:
-  ORDER(X) at T=0   (matches immediately)
-  ORDER(Y) at T=1   (matches immediately)
-  ORDER(Z) at T=2   (matches immediately)
-
-Matching engine (single-threaded) processes:
-  T=0: X matches, send DONE(X)
-  T=1: Y matches, send DONE(Y)
-  T=2: Z matches, send DONE(Z)
-
-Gateway receives: DONE(X), DONE(Y), DONE(Z)
-```
-
-For typical case (1-5 concurrent orders per user), LIFO gives:
-- O(1) push_back (new order)
-- O(1) pop_back (latest response)
-- No HashMap overhead (hash, collision, allocation)
-
-**Fallback for out-of-order:**
-- If pop_back order_id doesn't match response order_id → linear scan
-- Linear scan is O(n) but n is small (~1-10 pending orders per user)
-- Rare: only when network/matching engine reorders responses
-
-**Trade-off:**
-- VecDeque wins for <10 pending orders (typical)
-- HashMap wins for >100 pending orders (unusual)
-- Config flag to switch if needed (future)
-
-**Memory:**
-- VecDeque: 48 bytes overhead + inline elements
-- HashMap: 64 bytes per entry + heap allocation
-- For 5 pending orders: VecDeque ~240B, HashMap ~320B
+See `rsx-gateway/src/pending.rs` for `PendingOrders` and `OrderContext`.
 
 ### Matching Engine Side: FxHashMap
 
-**Data structure:**
-```rust
-use fxhash::FxHashMap;  // faster than std HashMap for integer-like keys
+`FxHashMap<UUIDv7, OrderHandle>` for O(1) cancel/modify lookup across thousands of
+resting orders. Completed orders remain 5min for dedup; pruned via a companion
+`VecDeque<(UUIDv7, Instant)>` scanned every 10s.
 
-struct MatchingEngine {
-    active_orders: FxHashMap<UUIDv7, OrderHandle>,
-    pruning_queue: VecDeque<(UUIDv7, Instant)>,
-}
-```
-
-**Why HashMap here:**
-- Cancels/modifies require O(1) lookup by order_id
-- Order count is large (thousands of resting orders)
-- VecDeque linear scan would be O(n) = too slow
-
-**Why FxHashMap:**
-- Reference: `../../app/trader/fxhashmap` (faster than std HashMap)
-- UUIDv7 is 128-bit integer (good hash distribution)
-- FxHash is faster for integer-like keys (no DOS protection needed)
-- ~30% faster than std HashMap for this use case
-
-**Deduplication strategy:**
-- On ORDER: check if order_id exists in FxHashMap
-- If exists → ORDER_FAILED(DUPLICATE_ORDER_ID)
-- If not → insert into FxHashMap, process order
-
-**Cleanup strategy:**
-- Completed/canceled orders remain in FxHashMap for 5min (dedup window)
-- Add to pruning_queue on completion: `queue.push_back((order_id, now()))`
-- Periodic scan (every 10s): pop old entries from front of pruning_queue
-- Remove from both pruning_queue AND FxHashMap after 5min
-
-See MESSAGES.md section 7 for full deduplication design.
+See `rsx-matching/src/` for the ME-side pending map. See MESSAGES.md §7 for full
+deduplication design.
 
 ## Request Lifecycle
 
@@ -200,111 +121,14 @@ PENDING ──→ PARTIAL_FILL* ──→ DONE
 
 ### Flow
 
-**1. User submits order:**
-```
-User ──ORDER(symbol, side, price, qty)──→ Gateway
-```
+State machine: PENDING → PARTIAL_FILL* → DONE / FAILED
 
-**2. Gateway validates ingress and assigns ID:**
-```rust
-// Validate user session, rate limits
-if !check_rate_limit(user_id) {
-    return ORDER_FAILED(RATE_LIMIT);
-}
-
-// Assign UUIDv7 order ID
-let order_id = UUIDv7::new();
-
-// Add to pending tracking (LIFO VecDeque)
-let (tx, rx) = oneshot::channel();
-pending.queue.push_back((order_id, OrderContext {
-    user_id,
-    symbol,
-    client_order_id: user_provided_id,
-    response_channel: tx,
-}));
-```
-
-**3. Gateway sends to risk engine (CMP/UDP):**
-```
-Gateway ──ORDER(order_id, user_id, symbol, side, price, qty)──→ Risk
-```
-
-**4. Risk engine processes:**
-```rust
-// Check risk (margin, position limits)
-if !check_margin(user_id, symbol, side, price, qty) {
-    return ORDER_FAILED(INSUFFICIENT_MARGIN);
-}
-
-// Forward to matching engine
-stream.send(ORDER { order_id, ... });
-```
-
-**5. Matching engine processes:**
-```rust
-// Validate tick/lot size
-if !validate_price_tick(price, symbol_config) {
-    return ORDER_FAILED(INVALID_TICK_SIZE);
-}
-
-// Check deduplication
-if active_orders.contains_key(&order_id) {
-    return ORDER_FAILED(DUPLICATE_ORDER_ID);
-}
-
-// Insert into orderbook, match
-let fills = orderbook.process_order(order);
-
-// Stream fills (0+ fills)
-for fill in fills {
-    stream.send(FILL { order_id, ... });
-}
-
-// Send completion
-stream.send(ORDER_DONE { order_id, final_status });
-```
-
-**6. Gateway receives responses:**
-```rust
-// Receive FILL messages (0+)
-loop {
-    match stream.recv() {
-        FILL { order_id, maker_order_id, price, qty, .. } => {
-            // Update user positions
-            update_position(user_id, symbol, side, qty);
-
-            // Forward to user
-            user_stream.send(FILL { ... });
-        }
-
-        ORDER_DONE { order_id, final_status } => {
-            // Pop from pending (LIFO)
-            let (pending_id, ctx) = pending.queue.pop_back().unwrap();
-
-            if pending_id != order_id {
-                // Out-of-order response, linear scan
-                for i in (0..pending.queue.len()).rev() {
-                    if pending.queue[i].0 == order_id {
-                        let (_, ctx) = pending.queue.remove(i).unwrap();
-                        break;
-                    }
-                }
-            }
-
-            // Notify user
-            ctx.response_channel.send(Ok(final_status));
-            break;
-        }
-
-        ORDER_FAILED { order_id, reason } => {
-            // Same pop logic as ORDER_DONE
-            ctx.response_channel.send(Err(reason));
-            break;
-        }
-    }
-}
-```
+1. User submits ORDER → Gateway
+2. Gateway: validate rate limit, assign UUIDv7, push to pending VecDeque, send to Risk
+3. Risk: margin check → forward to ME (or ORDER_FAILED)
+4. ME: dedup check, tick/lot validation, match → stream FILL(s) → ORDER_DONE
+5. Gateway: forward FILLs to user; on ORDER_DONE/FAILED pop from pending (LIFO,
+   fallback to linear scan on out-of-order)
 
 ## Bidirectional Stream Protocol
 
@@ -462,179 +286,36 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 
 ### Application-Level Rate Limiting
 
-**Gateway rate limits (per user):**
-```rust
-struct RateLimiter {
-    tokens: u32,
-    capacity: u32,
-    refill_rate: u32,  // tokens per second
-}
+Token-bucket per user: 10 orders/sec default (configurable), 100/sec per IP,
+1000/sec per Gateway instance. Exceeded → ORDER_FAILED(RATE_LIMIT), no queueing.
 
-impl RateLimiter {
-    fn try_consume(&mut self) -> bool {
-        if self.tokens > 0 {
-            self.tokens -= 1;
-            true
-        } else {
-            false  // rate limited
-        }
-    }
-}
-```
-
-**Limits:**
-- 10 orders/sec per user (configurable)
-- 100 orders/sec per IP (prevent DDoS)
-- 1000 orders/sec per Gateway instance (total throughput)
-
-**Handling:**
-- If rate limit exceeded → ORDER_FAILED(RATE_LIMIT)
-- No queueing (fail fast, user retries later)
+See `rsx-gateway/src/rate_limit.rs`.
 
 ### Circuit Breaker
 
-**Risk tracks matching engine health:**
-```rust
-struct CircuitBreaker {
-    failures: u32,
-    threshold: u32,  // e.g., 10 failures
-    state: State,     // Closed, Open, HalfOpen
-}
+Tracks ME stream health: 10 failures/min → Open (reject all, no network);
+after 30s → HalfOpen (probe one order); success → Closed. State enum:
+`Closed | Open | HalfOpen`.
 
-enum State {
-    Closed,      // Normal operation
-    Open,        // Matching engine is down, reject all orders
-    HalfOpen,    // Test with one order, if succeeds → Closed
-}
-```
-
-**Behavior:**
-- If matching engine stream fails 10 times in 1min → Open state
-- Open state: reject all orders immediately (no network calls)
-- After 30s: HalfOpen (try one order)
-- If succeeds → Closed (back to normal)
-- If fails → Open (wait another 30s)
-
-**User impact:**
-- Fast failure (no waiting for timeout)
-- Error message: "Symbol temporarily unavailable, try again later"
+See `rsx-gateway/src/circuit.rs`.
 
 ## Concurrency Model
 
 ### Gateway: Async Runtime (Tokio)
 
-**One task per user session:**
-```rust
-async fn handle_user_session(user_id: u32, stream: UserStream, risk: RiskStream) {
-    loop {
-        match stream.recv().await {
-            ORDER { symbol, side, price, qty } => {
-                let order_id = UUIDv7::new();
-                pending.push_back((order_id, ...));
-                risk.send(ORDER { order_id, ... }).await;
-            }
-            DISCONNECT => break,
-        }
-    }
-}
-```
-
-**Concurrency:**
-- Thousands of tasks (one per user session)
-- Tokio scheduler multiplexes tasks on thread pool
-- Single CMP/UDP link to Risk
+One Tokio task per user session; thousands of tasks multiplexed on thread pool;
+single CMP/UDP link to Risk. See `rsx-gateway/src/`.
 
 ### Matching Engine: Single-Threaded Event Loop
 
-**Main loop (single stream from Risk):**
-```rust
-fn main() {
-    let mut orderbook = Orderbook::new();
-    let mut stream = connect_to_risk();
-
-    loop {
-        if let Some(msg) = stream.try_recv() {
-            match msg {
-                ORDER { order_id, side, price, qty } => {
-                    let fills = orderbook.process_order(...);
-                    for fill in fills {
-                        stream.send(FILL { ... });
-                    }
-                    stream.send(ORDER_DONE { ... });
-                }
-                CANCEL { order_id } => {
-                    orderbook.cancel_order(order_id);
-                    stream.send(ORDER_CANCELED { ... });
-                }
-            }
-        }
-    }
-}
-```
-
-**Why single-threaded:**
-- No locks (entire orderbook state is single-threaded)
-- Cache-friendly (no inter-thread communication, no MESI invalidation)
-- O(1) operations (reference ORDERBOOK.md)
-- Dedicated core (pinned, no context switches)
+Single-threaded busy-spin on dedicated pinned core: no locks, no MESI invalidation,
+O(1) orderbook operations. See `rsx-matching/src/main.rs`.
 
 ## Performance Considerations
 
-### VecDeque vs HashMap Trade-off
-
-**VecDeque:**
-- Best case: O(1) push_back, O(1) pop_back
-- Worst case: O(n) linear scan (out-of-order response)
-- Memory: 48 bytes overhead + inline elements
-- Cache: Linear memory, cache-friendly scan
-
-**HashMap:**
-- All cases: O(1) insert, O(1) lookup, O(1) remove
-- Memory: 64 bytes per entry + heap allocation
-- Cache: Random memory, cache-unfriendly
-
-**Crossover point:**
-- VecDeque wins: <10 pending orders (typical user)
-- HashMap wins: >100 pending orders (market maker, HFT bot)
-
-**Measurement:**
-- Typical user: 1-5 concurrent orders → VecDeque
-- Active trader: 10-50 concurrent orders → VecDeque (still faster)
-- Market maker: 100-1000 concurrent orders → HashMap (future config flag)
-
-### Memory Overhead
-
-**VecDeque per user:**
-- 48 bytes overhead
-- ~100 bytes per pending order (UUIDv7 + OrderContext)
-- Typical: 5 pending orders = ~548 bytes per user
-- 10,000 users = ~5.5 MB
-
-**HashMap per user (if used):**
-- 64 bytes per entry
-- ~164 bytes per pending order (entry overhead + key + value)
-- Typical: 5 pending orders = ~820 bytes per user
-- 10,000 users = ~8.2 MB
-
-**Not significant** compared to orderbook memory (10 GB, reference ORDERBOOK.md).
-
-### Cache Locality
-
-**VecDeque linear scan:**
-- Sequential memory access (cache-friendly)
-- Prefetcher loads next cache line
-- ~5-10ns per entry scan
-- 10 entries = ~50-100ns total
-
-**HashMap lookup:**
-- Random memory access (cache miss)
-- Hash computation: ~5ns
-- Cache miss: ~50-100ns
-- Total: ~55-105ns
-
-**For <10 entries:** VecDeque linear scan (~50-100ns) ≈ HashMap lookup (~55-105ns).
-
-**For >100 entries:** VecDeque linear scan (~500-1000ns) > HashMap lookup (~55-105ns).
+VecDeque linear scan (~5-10ns/entry) beats FxHashMap lookup for <10 pending orders
+(typical user); crossover at ~100+ entries (market maker). Memory is negligible
+(~5.5 MB for 10k users at 5 pending each) vs orderbook (10 GB).
 
 ## Cross-References
 
