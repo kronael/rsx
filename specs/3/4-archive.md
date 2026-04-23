@@ -1,8 +1,13 @@
 ---
-status: shipped
+status: draft
 ---
 
 # ARCHIVE (WAL Offload + Replay)
+
+**Status**: draft / deferred to phase 3. Archive replay
+server and consumer fallback are not implemented. Recorder
+writes archive files (`rsx-recorder`) but no replay service
+reads them back. See `.ship/07-SPEC-CLEANUP/findings.md`.
 
 Archive serves historical WAL records from flat files on disk. It is used when hot DXS retention is insufficient.
 
