@@ -85,32 +85,9 @@ Gateway -[CMP/UDP]-> Risk Shard (main) -[CMP/UDP]-> Matching Engines
 
 ### 2. Position Manager
 
-In-memory `FxHashMap<(user_id, symbol_id), Position>`:
+In-memory `FxHashMap<(user_id, symbol_id), Position>` and `FxHashMap<u32, Account>`.
 
-```rust
-struct Position {
-    user_id: u32,
-    symbol_id: u32,
-    long_qty: i64,          // fixed-point lot units
-    short_qty: i64,
-    long_entry_cost: i64,   // sum(price * qty) for avg price
-    short_entry_cost: i64,
-    realized_pnl: i64,
-    last_fill_seq: u64,
-    version: u64,           // monotonic, for CAS on Postgres upsert
-}
-```
-
-In-memory `FxHashMap<u32, Account>`:
-
-```rust
-struct Account {
-    user_id: u32,
-    collateral: i64,        // fixed-point
-    frozen_margin: i64,     // reserved by open orders
-    version: u64,
-}
-```
+See `rsx-risk/src/position.rs` for `Position` and `rsx-risk/src/account.rs` for `Account`.
 
 ### 3. Margin Calculator (Portfolio Margin)
 
@@ -133,79 +110,20 @@ horizontally by adding more user shards.
 
 **Formulas** (all values fixed-point integers):
 
-Per-position:
-```
-net_qty  = long_qty - short_qty  (signed, + = long)
-notional = |net_qty| * mark_price
-avg_entry = entry_cost / |net_qty|
-  (long_entry_cost if net_qty > 0, short_entry_cost if < 0)
-unrealized_pnl = net_qty * (mark_price - avg_entry)
-```
+Per-position: `net_qty = long_qty - short_qty`, `notional = |net_qty| * mark_price`,
+`unrealized_pnl = net_qty * (mark_price - avg_entry)`.
 
-Per-user (across all positions):
-```
-equity     = collateral + sum(unrealized_pnl_i)
-initial_margin = sum(notional_i * initial_margin_rate_i)
-maint_margin   = sum(notional_i * maintenance_margin_rate_i)
-available  = equity - initial_margin - frozen_margin
-```
+Per-user: `equity = collateral + sum(unrealized_pnl)`,
+`available = equity - initial_margin - frozen_margin`.
 
-Pre-trade (section 6):
-```
-order_im  = order_notional * initial_margin_rate
-order_fee = order_notional * taker_fee_bps / 10_000
-accept if: available >= order_im + order_fee
-```
+Pre-trade: accept if `available >= order_notional * im_rate + taker_fee`.
+Liquidation trigger: `equity < maint_margin`.
 
-Liquidation trigger (section 7):
-```
-if equity < maint_margin: enqueue_liquidation(user_id)
-```
+Edge cases: empty position → upnl=0; position flip → realize PnL, open new
+entry at fill price (two-step in `apply_fill`); mark unavailable → use index price.
 
-Edge cases:
-- Empty position (qty=0): upnl=0, notional=0
-- Position flip: close old at fill price (realize PnL),
-  open new with entry = fill price. Two-step in apply_fill.
-- Mark price unavailable: use index price (section 4)
-
-```rust
-struct PortfolioMargin {
-    // Per-symbol risk parameters (loaded from config)
-    symbol_params: Vec<SymbolRiskParams>,
-}
-
-struct SymbolRiskParams {
-    initial_margin_rate: i64,      // fixed-point bps
-    maintenance_margin_rate: i64,
-    max_leverage: i64,
-}
-
-impl PortfolioMargin {
-    /// Full portfolio margin for a user across all positions
-    fn calculate(&self, positions: &[(u32, &Position)],
-        mark_prices: &Vec<i64>) -> MarginState;
-
-    /// Pre-trade: can this order be placed given current portfolio?
-    fn check_order(&self, account: &Account,
-        positions: &[(u32, &Position)],
-        order: &OrderRequest,
-        mark_prices: &Vec<i64>)
-        -> Result<i64, RejectReason>;
-
-    /// Is this user below maintenance margin?
-    fn needs_liquidation(&self, state: &MarginState) -> bool;
-}
-
-struct MarginState {
-    equity: i64,
-    unrealized_pnl: i64,
-    initial_margin: i64,
-    maintenance_margin: i64,
-    available_margin: i64,
-}
-```
-
-Margin recalculated on every price tick for all exposed users.
+See `rsx-risk/src/margin.rs` for `PortfolioMargin`, `SymbolRiskParams`, and
+`MarginState`. Margin recalculated on every price tick for all exposed users.
 
 ### 4. Price Feeds
 
@@ -261,36 +179,14 @@ Logically part of risk engine, could be extracted later.
 
 ### 6. Pre-Trade Risk Check
 
-```
-process_order(order):
-    // Reduce-only: pass through to ME (ME enforces)
-    // is_liquidation: skip margin check entirely
-    if order.is_liquidation:
-        route order to matching engine
-        return  // no frozen margin, no margin check
+Liquidation orders bypass margin check entirely. All others: validate size limits,
+run full portfolio margin check with latest mark prices, reserve worst-case taker fee,
+freeze margin, route to matching engine.
 
-    // Validate order size limits
-    if order.qty > symbol_config.max_order_qty:
-        reject ORDER_FAILED(INVALID_LOT_SIZE)
-    if order.price * order.qty < symbol_config.min_notional:
-        reject ORDER_FAILED(INSUFFICIENT_MARGIN)
-
-    // Collect all positions for this user
-    user_positions = get_user_positions(order.user_id)
-    // Full portfolio margin recalc with latest mark prices
-    margin_needed = portfolio_margin.check_order(
-        account, user_positions, order, mark_prices)
-    if err: reject to gateway
-    // Reserve worst-case taker fee
-    order_notional = order.price * order.qty
-    fee_reserve = order_notional * taker_fee_bps / 10_000
-    margin_needed += fee_reserve
-    account.frozen_margin += margin_needed
-    route order to matching engine for symbol_id
-```
-
-On fill: update position, margin recalculated on next price tick.
+On fill: update position; margin recalculated on next price tick.
 On ORDER_DONE: release frozen margin for that order.
+
+See `rsx-risk/src/shard.rs::process_order`.
 
 Frozen margin is derived state: not persisted to Postgres.
 On restart, WAL replay reconstructs frozen_orders from

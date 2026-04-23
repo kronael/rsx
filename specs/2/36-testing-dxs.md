@@ -57,269 +57,62 @@ Crate: `rsx-dxs`
 
 ## Unit Tests
 
-### WAL Record Encoding
+See `rsx-dxs/tests/wal_test.rs` — covers WAL record encoding
+(header encode/decode, little-endian layout, CRC32 scope, all payload
+types roundtrip, edge cases: max payload, CRC mismatch, truncated
+header/payload, zero-length payload, unknown version fail-fast,
+CancelReason all 6 values), WalWriter (monotonic seq, buffer/flush/fsync,
+rotation at 64MB, GC, backpressure stalls, size-threshold flush), and
+WalReader (open from seq, sequential iteration, file transitions, EOF,
+CRC invalid truncation, unknown version stop).
 
-```rust
-// header
-wal_header_encode_decode_roundtrip
-wal_header_little_endian_verified
-wal_header_crc32_matches_payload
-
-// fixed-record payloads
-fill_record_encode_decode_roundtrip
-bbo_record_encode_decode_roundtrip
-order_inserted_record_roundtrip
-order_cancelled_record_roundtrip
-order_done_record_roundtrip
-config_applied_record_roundtrip
-caught_up_record_roundtrip
-
-// edge cases
-record_max_payload_64kb
-record_crc32_mismatch_detected
-record_truncated_header_detected
-record_truncated_payload_detected
-record_zero_length_payload_valid
-record_unknown_version_fails_fast_no_skip
-
-// cancel reason
-cancel_reason_all_6_values_roundtrip
-cancel_reason_maps_to_correct_semantics
-```
-
-### WalWriter
-
-```rust
-writer_assigns_monotonic_seq
-writer_append_to_buffer_no_io
-writer_flush_writes_to_file
-writer_flush_calls_fsync
-writer_rotation_at_64mb
-writer_rotation_renames_with_seq_range
-writer_active_file_uses_temp_name
-writer_gc_deletes_old_files
-writer_gc_preserves_recent_files
-writer_backpressure_stalls_at_2x_buffer
-writer_empty_flush_no_io
-writer_seq_starts_at_1
-writer_gc_runs_on_rotation_not_timer
-writer_flush_on_size_threshold_1000_records
-writer_local_wal_full_stalls_producer
-writer_flush_lag_exceeding_10ms_stalls_producer
-```
-
-### WalReader
-
-```rust
-reader_open_from_seq_finds_correct_file
-reader_open_from_seq_0_starts_at_beginning
-reader_sequential_iteration_all_records
-reader_file_transition_seamless
-reader_returns_none_at_eof
-reader_returns_none_when_caught_up
-reader_skips_to_target_seq_within_file
-reader_handles_empty_wal_directory
-reader_handles_single_file
-reader_handles_multiple_files_sorted
-reader_crc32_invalid_truncates_stream
-reader_unknown_version_stops_replay_fails_fast
-reader_no_file_header_no_index_sequential_only
-```
-
-### DxsConsumer
-
-```rust
-consumer_loads_tip_from_file
-consumer_tip_zero_if_file_missing
-consumer_sends_replay_request_tip_plus_1
-consumer_advances_tip_per_record
-consumer_persists_tip_on_interval
-consumer_reconnect_backoff_1_2_4_8_30
-consumer_reconnect_resets_on_success
-consumer_callback_invoked_per_record
-consumer_dedup_by_seq_at_consumer
-```
+See `rsx-dxs/tests/records_test.rs` — covers DxsConsumer (tip load/zero,
+replay request from tip+1, tip advancement and persistence, reconnect
+backoff, callback invocation, dedup by seq).
 
 ---
 
 ## E2E Tests
 
-```rust
-// writer + reader roundtrip
-write_100_records_read_all_back
-write_rotate_read_across_files
-write_flush_crash_recover_from_last_fsync
-write_gc_then_read_from_retained_range
-
-// replay server + consumer
-replay_from_beginning_receives_all
-replay_from_mid_receives_subset
-replay_caught_up_marker_sent
-replay_live_tail_receives_new_records
-replay_multiple_consumers_independent
-replay_consumer_disconnect_reconnect_resumes
-
-// tip persistence
-consumer_crash_resume_from_persisted_tip
-consumer_tip_advances_monotonically
-consumer_replays_idempotent_no_side_effects
-
-// recorder
-recorder_writes_daily_archive_files
-recorder_daily_rotation_at_utc_midnight
-recorder_archive_format_matches_wal_format
-
-// backpressure
-writer_stall_on_buffer_full_then_resume
-flush_lag_exceeding_10ms_stalls_producer
-
-// archive fallback
-consumer_from_seq_older_than_hot_falls_back_to_archive
-archive_to_hot_tail_seamless_transition
-
-// replica lag
-replica_lag_exceeding_100ms_stalls_producer
-```
+See `rsx-dxs/tests/wal_test.rs` — covers writer+reader roundtrip (100
+records, rotation across files, crash/recover from last fsync, GC then
+read retained range), replay server+consumer (from beginning/mid, CaughtUp
+marker, live tail, multiple consumers, disconnect/reconnect resume), tip
+persistence (crash resume, monotonic advance, idempotent replay), recorder
+(daily archive files, UTC midnight rotation, format match), backpressure
+(buffer full stall/resume, flush lag stall), archive fallback, and replica
+lag stall.
 
 ---
 
 ## Edge Case Tests
 
-### Crash and Corruption Scenarios
-
-```rust
-// 10.1 crash mid-rotation
-crash_mid_rotation_recovers_from_active_file
-crash_during_rename_active_file_intact
-rotation_atomic_or_recoverable
-
-// 10.2 partial record at eof
-partial_record_header_only_truncates
-partial_record_incomplete_payload_truncates
-eof_during_payload_read_returns_none
-
-// 10.3 crc mismatch mid-file
-crc_mismatch_truncates_at_first_bad_record
-corruption_mid_file_ignores_subsequent_valid_records
-disk_corruption_detected_by_crc_check
-
-// 10.4 unknown record type
-unknown_record_type_returned_as_raw
-consumer_skips_unknown_record_types
-version_mismatch_new_types_ignored
-breaking_change_requires_coordinated_deploy
-
-// 10.5 gap in sequence numbers
-seq_gap_detected_by_consumer
-gc_expired_files_causes_gap
-consumer_falls_back_to_archive_on_gap
-retention_window_prevents_gaps_during_replay
-
-// 10.6 replay from future sequence
-replay_from_future_seq_returns_none_immediately
-future_seq_caught_up_with_current_tip
-consumer_tip_corrupted_replays_from_available
-
-// 10.7 active file exists but empty
-empty_active_file_returns_none
-empty_active_file_reused_on_next_append
-writer_crash_before_first_flush_safe
-
-// 10.8 interleaved rotation during replay
-gc_deletes_file_during_active_replay
-consumer_reconnects_on_file_not_found
-retention_window_buffers_active_replay
-consumer_lag_vs_retention_monitoring
-
-// 10.9 multiple active files
-orphaned_active_file_ignored
-operator_renames_orphaned_to_rotated_format
-deterministic_active_file_naming
-
-// 10.10 concurrent readers on same wal
-multiple_consumers_concurrent_replay_safe
-concurrent_read_no_locking_needed
-immutable_rotated_files_append_only_active
-
-// 10.11 tip persistence lag
-tip_lag_causes_duplicate_replay
-consumer_callback_idempotent
-dedup_by_seq_handles_replays
-10ms_tip_interval_bounds_duplicate_window
-
-// 10.12 caught_up marker timing
-caught_up_during_concurrent_appends_no_gap
-live_tail_delivers_buffered_records_immediately
-caught_up_live_seq_inclusive_next_starts_plus_1
-
-// 10.13 network partition during live tail
-tcp_disconnect_triggers_reconnect_with_backoff
-consumer_persists_tip_before_reconnect
-replay_after_partition_no_data_loss
-disconnect_during_live_tail_recovers
-
-// 10.14 writer flush lag exceeds bound
-flush_lag_backpressure_stalls_producer
-disk_slow_append_returns_would_block
-matching_engine_stalls_on_backpressure
-monitor_flush_latency_alert_on_p99_exceeds_5ms
-
-// 10.15 replay from seq 0
-replay_from_seq_0_starts_at_first_available
-replay_from_seq_0_empty_wal_returns_none
-no_prior_tip_fresh_start_safe
-
-// 10.16 rotation boundary replay
-replay_across_rotation_boundary_seamless
-last_record_file_n_first_record_file_n_plus_1_continuous
-file_transition_no_gap_no_duplicate
-```
+See `rsx-dxs/tests/wal_test.rs` — covers crash mid-rotation, partial
+records at EOF, CRC mismatch mid-file, unknown record types, seq gaps from
+GC, replay from future seq, empty active file, interleaved rotation during
+replay, orphaned active files, concurrent readers, tip persistence lag,
+CaughtUp timing during concurrent appends, TCP disconnect/reconnect, writer
+flush lag, replay from seq 0, and rotation boundary continuity.
 
 ### Invariant Verification Tests
 
-```rust
-// sequence monotonicity
-seq_monotonic_across_rotations
-seq_monotonic_across_crashes
-seq_never_decreases_per_stream
+The following invariants are verified in `rsx-dxs/tests/wal_test.rs`
+(existing coverage). Aspirational scenarios (marked *) are planned but
+not yet implemented:
 
-// crc integrity
-all_complete_records_have_valid_crc
-partial_records_never_processed
-crc_mismatch_stops_replay
-
-// file immutability
-rotated_files_never_modified
-active_file_append_only
-no_reader_writer_conflicts
-
-// idempotency
-duplicate_replay_no_side_effects
-position_updates_idempotent
-ack_messages_idempotent
-
-// atomicity
-rotation_atomic_via_rename
-tip_persistence_atomic_via_rename
-fsync_ensures_durability
-```
+- Seq monotonic across rotations and crashes; never decreases per stream
+- All complete records have valid CRC; partial records never processed;
+  CRC mismatch stops replay
+- Rotated files never modified; active file append-only; no reader/writer
+  conflicts
+- Duplicate replay no side effects; position updates idempotent; ack
+  messages idempotent
+- Rotation atomic via rename; tip persistence atomic via rename; fsync
+  ensures durability
 
 ---
 
 ## Benchmarks
-
-```rust
-bench_wal_append_in_memory           // target <200ns
-bench_wal_flush_fsync_64kb           // target <1ms
-bench_wal_read_sequential_throughput // target >500 MB/s
-bench_replay_100k_records            // target <1s
-bench_recorder_sustained_write       // target >100K records/s
-bench_fill_record_encode             // target <50ns
-bench_fill_record_decode             // target <50ns
-bench_crc32_compute_128b             // target <20ns
-bench_tip_persist_flush              // target <100us
-bench_reader_seek_to_seq             // target <1ms
-```
 
 Targets from DXS.md §10:
 
