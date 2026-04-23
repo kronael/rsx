@@ -1,5 +1,5 @@
 ---
-status: shipped
+status: draft
 ---
 
 # Playground Dashboard (Dev/Test Control Plane)

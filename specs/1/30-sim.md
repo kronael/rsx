@@ -4,6 +4,10 @@ status: shipped
 
 # SIM.md — Remove Sim Mode + Stress Generator
 
+**Archived.** This was a deletion plan; all work shipped.
+rsx-sim crate removed, stress.py subprocess wired. Kept as
+historical ship log.
+
 ## Context
 
 The playground has fake order-matching (`_sim_submit`,
