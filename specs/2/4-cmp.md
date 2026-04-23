@@ -186,43 +186,7 @@ struct CmpHeartbeat {
 - Retransmits are just normal data records re-read from
   WAL and re-sent. No special record type.
 
-### Sender
-
-```rust
-pub struct CmpSender {
-    socket: UdpSocket,
-    dest: SocketAddr,
-    stream_id: u32,
-    next_seq: u64,
-    peer_consumption_seq: u64,
-    peer_window: u64,
-    last_heartbeat: Instant,
-    wal_dir: PathBuf,   // WalReader opened on-demand per NAK
-}
-
-impl CmpSender {
-    pub fn send<T: CmpRecord>(&mut self, record: &mut T) -> Result<()> {
-        record.set_seq(self.next_seq);
-        self.next_seq += 1;
-        // encode header + payload, sendto
-    }
-}
-```
-
-### Receiver
-
-```rust
-pub struct CmpReceiver {
-    socket: UdpSocket,
-    sender_addr: SocketAddr,
-    stream_id: u32,
-    expected_seq: u64,
-    highest_seen: u64,
-    reorder_buf: BTreeMap<u64, Vec<u8>>,
-    last_status: Instant,
-    window: u64,
-}
-```
+See `rsx-dxs/src/cmp.rs` for `CmpSender` and `CmpReceiver`.
 
 Reorder buffer bounded at 512 slots.
 
@@ -496,47 +460,9 @@ Complexity   high        low         low
 
 ## 8. Implementation
 
-Crate: `rsx-dxs` (same crate, transport is implementation
-detail).
-
-```rust
-// CMP/UDP hot path
-pub struct CmpSender {
-    socket: UdpSocket,
-    dest: SocketAddr,
-    stream_id: u32,
-    next_seq: u64,
-    peer_consumption_seq: u64,
-    peer_window: u64,
-    last_heartbeat: Instant,
-    wal_reader: WalReader,
-}
-
-pub struct CmpReceiver {
-    socket: UdpSocket,
-    sender_addr: SocketAddr,
-    stream_id: u32,
-    expected_seq: u64,
-    highest_seen: u64,
-    reorder_buf: BTreeMap<u64, Vec<u8>>,
-    last_status: Instant,
-    window: u64,
-}
-
-// TCP cold path (WAL replication)
-pub struct DxsReplayService {
-    listener: TcpListener,
-    tls_config: Option<rustls::ServerConfig>,
-}
-
-pub struct DxsConsumer {
-    stream: TcpStream,
-    tls_config: Option<rustls::ClientConfig>,
-}
-
-// Shared: same WalHeader, same record types,
-// same encode/decode functions
-```
+Crate: `rsx-dxs`. See `rsx-dxs/src/cmp.rs` (`CmpSender`, `CmpReceiver`),
+`rsx-dxs/src/server.rs` (`DxsReplayService`), `rsx-dxs/src/client.rs`
+(`DxsConsumer`).
 
 Config:
 ```

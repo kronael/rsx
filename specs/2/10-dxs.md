@@ -125,116 +125,7 @@ The dedup window is bounded by the same 5min pruning as
 in-memory (MESSAGES.md section 7). During replay, records older
 than 5min from WAL tip are skipped.
 
-**Payload layouts (v1):**
-```
-#[repr(C, align(64))]
-struct FillRecord {
-  u64 seq;           // CmpRecord first field
-  u64 ts_ns;
-  u32 symbol_id;
-  u32 taker_user_id;
-  u32 maker_user_id;
-  u32 _pad0;
-  u64 taker_order_id_hi;
-  u64 taker_order_id_lo;
-  u64 maker_order_id_hi;
-  u64 maker_order_id_lo;
-  i64 price;
-  i64 qty;
-  u8  taker_side;
-  u8  reduce_only;
-  u8  tif;
-  u8  post_only;
-  u8  _pad1[4];
-}
-
-#[repr(C, align(64))]
-struct BboRecord {
-  u64 seq;
-  u64 ts_ns;
-  u32 symbol_id;
-  u32 _pad0;
-  i64 bid_px;
-  i64 bid_qty;
-  u32 bid_count;
-  u32 _pad1;
-  i64 ask_px;
-  i64 ask_qty;
-  u32 ask_count;
-  u32 _pad2;
-}
-
-#[repr(C, align(64))]
-struct OrderInsertedRecord {
-  u64 seq;
-  u64 ts_ns;
-  u32 symbol_id;
-  u32 user_id;
-  u64 order_id_hi;
-  u64 order_id_lo;
-  i64 price;
-  i64 qty;
-  u8  side;
-  u8  reduce_only;
-  u8  tif;
-  u8  post_only;
-  u8  _pad1[4];
-}
-
-#[repr(C, align(64))]
-struct OrderCancelledRecord {
-  u64 seq;
-  u64 ts_ns;
-  u32 symbol_id;
-  u32 user_id;
-  u64 order_id_hi;
-  u64 order_id_lo;
-  i64 remaining_qty;
-  u8  reason;        // CancelReason
-  u8  reduce_only;
-  u8  tif;
-  u8  post_only;
-  u8  _pad1[4];
-}
-
-#[repr(C, align(64))]
-struct OrderDoneRecord {
-  u64 seq;
-  u64 ts_ns;
-  u32 symbol_id;
-  u32 user_id;
-  u64 order_id_hi;
-  u64 order_id_lo;
-  i64 filled_qty;
-  i64 remaining_qty;
-  u8  final_status;
-  u8  reduce_only;
-  u8  tif;
-  u8  post_only;
-  u8  _pad1[4];
-}
-
-#[repr(C, align(64))]
-struct ConfigAppliedRecord {
-  u64 seq;
-  u64 ts_ns;
-  u32 symbol_id;
-  u32 _pad0;
-  u64 config_version;
-  u64 effective_at_ms;
-  u64 applied_at_ns;
-}
-
-#[repr(C, align(64))]
-struct CaughtUpRecord {
-  u64 seq;
-  u64 ts_ns;
-  u32 stream_id;     // coordination/routing
-  u32 _pad0;
-  u64 live_seq;
-  u8  _pad1[40];
-}
-```
+See `rsx-dxs/src/records.rs`
 
 All fields are encoded little-endian on disk/wire.
 
@@ -273,21 +164,7 @@ request replay from ARCHIVE (see ARCHIVE.md), then resume from DXS hot tail.
 
 ## 3. WalWriter
 
-Append-only writer embedded in each producer.
-
-```rust
-struct WalWriter {
-    stream_id: u32,
-    next_seq: u64,
-    buf: Vec<u8>,         // write buffer, flushed periodically
-    file: File,           // current WAL file
-    file_size: u64,       // bytes written to current file
-    first_seq: u64,       // first seq in current file
-    wal_dir: PathBuf,
-    max_file_size: u64,   // 64MB default
-    retention_ns: u64,    // 10min default
-}
-```
+Append-only writer embedded in each producer. See `rsx-dxs/src/wal.rs`
 
 **Append:** `append<T: CmpRecord>(record: &mut T)` assigns
 monotonic `seq`, serializes fixed record to buf.
@@ -311,23 +188,7 @@ growth if flush falls behind.
 
 ## 4. WalReader
 
-Sequential reader for WAL files.
-
-```rust
-struct WalReader {
-    stream_id: u32,
-    wal_dir: PathBuf,
-    current_file: Option<File>,
-    current_offset: u64,
-    files: Vec<WalFileInfo>,  // sorted by first_seq
-}
-
-struct WalFileInfo {
-    path: PathBuf,
-    first_seq: u64,
-    last_seq: u64,
-}
-```
+Sequential reader for WAL files. See `rsx-dxs/src/wal.rs`
 
 **Open from seq:** list files, parse filenames, binary search
 for the file containing `target_seq`. Seek within file by reading
@@ -412,16 +273,7 @@ transport specification.
 
 Embedded in each consumer process. Manages connection to a
 producer's DxsReplay service, tracks processing tips.
-
-```rust
-struct DxsConsumer {
-    stream_id: u32,
-    producer_addr: SocketAddr,
-    tip: u64,              // last processed seq
-    tip_file: PathBuf,     // persisted tip
-    callback: Box<dyn FnMut(WalRecord)>,
-}
-```
+See `rsx-dxs/src/client.rs`
 
 **Startup sequence:**
 
@@ -552,8 +404,6 @@ payload.
 after header. Logs warning and returns `None` (end of valid data).
 Subsequent replay from tip+1 will skip the partial record.
 
-**Implementation:** `wal.rs:393-404` (payload read with EOF check)
-
 **Invariant:** All complete records have valid CRC. Partial
 records are never processed.
 
@@ -569,8 +419,6 @@ record, then potentially more valid records.
 mismatch, logs warning and returns `None` (truncates at first
 bad record). All subsequent records in file and later files are
 ignored.
-
-**Implementation:** `wal.rs:407-414` (CRC validation)
 
 **Trade-off:** Conservative truncation vs attempting to skip bad
 record. We truncate because: (1) simpler, (2) avoids processing
@@ -651,8 +499,6 @@ append+flush.
 `UnexpectedEof`, advances to next file (none), returns `None`.
 No records replayed. Next writer append will reuse the empty
 active file.
-
-**Implementation:** `wal.rs:362-374` (EOF handling)
 
 ### 10.8 Interleaved Rotation During Replay
 
@@ -761,8 +607,6 @@ records, sends new CaughtUp, resumes live tail.
 persist tip before disconnect, records will be replayed. Consumer
 dedup by seq ensures idempotency.
 
-**Implementation:** `rsx-dxs/src/client.rs` (DxsConsumer, 572 lines)
-
 ### 10.14 Writer Flush Lag Exceeds Bound
 
 **Scenario:** Disk slow, fsync takes >10ms. Writer buffer fills
@@ -778,8 +622,6 @@ increases, but correctness maintained.
 **Mitigation:** Use fast SSD with consistent <1ms fsync. Monitor
 flush latency. Alert on >5ms p99.
 
-**Implementation:** `wal.rs:94-103` (backpressure check)
-
 ### 10.15 Replay from Seq 0
 
 **Scenario:** Consumer requests replay from seq 0 (fresh start,
@@ -793,9 +635,6 @@ first available seq (may be > 0). If no files exist, returns
 `None` immediately (caught up). Consumer receives CaughtUp with
 `live_seq = 0` (or first available seq), then waits for new
 records.
-
-**Implementation:** `wal.rs:314-333` (file selection logic treats
-seq 0 as "start from beginning")
 
 ### 10.16 Rotation Boundary Replay
 
@@ -814,20 +653,11 @@ in next file is `last_seq + 1` of previous file (if consecutive).
 Gap in filename seq ranges is allowed (GC), but reader handles
 via file-level transition.
 
-**Implementation:** `wal.rs:431-441` (advance_file)
-
 ---
 
 ## 11. Performance Targets
 
-| Operation | Target |
-|-----------|--------|
-| WAL append (in-memory) | <200ns |
-| WAL flush (fsync) | <1ms per 64KB batch |
-| WAL read (sequential) | >500 MB/s |
-| Replay 100K records | <1s |
-| Recorder sustained write | >100K records/s |
-| Tip persist | every 10ms, batched |
+See `wal_bench.rs` and `encode_bench.rs` for measured targets.
 
 ---
 

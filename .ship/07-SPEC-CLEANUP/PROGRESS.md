@@ -2,29 +2,35 @@
 
 ## Session log
 
-### Session 1 — 2026-04-23 (in progress)
+### Session 1 — 2026-04-23
 - Created PROJECT.md with 9-task plan
-- Defined 4 buckets (12 specs each) over `specs/2/`
-- Spawning 4 parallel Explore subagents for check pass
-- Subagent outputs land in `findings-bucket-{1,2,3,4}.md`
-- Consolidated summary written to `findings.md`
+- 4-bucket check-pass completed; findings consolidated
+- Phase (d): folded 3 code-side bugs into `.ship/06-PUBLISH/`
+  (max_slip_bps, test.skip, liquidator main-loop ordering)
+- Phase (a): 18 spec-side drift fixes applied + committed
+  (commits: 7a8b8c5, d275f14)
+- Phase (c): 2-archive.md moved to specs/3/4-archive.md
+  (status: draft; commit: bb5ca00)
+- Phase (b): 4 parallel trim subagents running on 18 specs
+- Created `.ship/08-REST-ENDPOINTS/PROJECT.md`
+- Created `.ship/09-DASHBOARDS/PROJECT.md`
 
 ## Task progress
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | Per-spec check pass (4 subagents) | **done** | Session 1; see findings.md |
-| 2 | Resolve drift cases (spec-side, mechanical) | pending | (A) in findings.md — ~20 items |
-| 3 | Resolve drift cases (code-side, vital) | pending | max_slip_bps, test.skip() |
-| 4 | Decide scope for unshipped vital items | pending | user input on REST endpoints |
-| 5 | Move unshipped + not-vital → specs/3/ | pending | 7/12/27 dashboards + 33 telemetry prod + 9 stubs + 2 archive |
-| 6 | Capture unshipped + vital → ship projects | pending | depends on #4 |
-| 7 | Trim bloat | pending | (D) in findings.md — mechanical |
-| 8 | Consolidate duplication | pending | (E) in findings.md — higher risk |
+| 1 | Per-spec check pass (4 subagents) | **done** | Session 1; findings.md |
+| 2 | Resolve drift cases (spec-side, mechanical) | **done** | Phase (a); commits 7a8b8c5, d275f14 |
+| 3 | Resolve drift cases (code-side, vital) | handed off | Folded into 06-PUBLISH tasks 7-9 |
+| 4 | Decide scope for unshipped vital items | **done** | User: ship all dashboards + full REST |
+| 5 | Move unshipped + not-vital → specs/3/ | **done** | Phase (c); only 2-archive moved |
+| 6 | Capture unshipped + vital → ship projects | **done** | 08-REST-ENDPOINTS, 09-DASHBOARDS |
+| 7 | Trim bloat | **in progress** | Phase (b); 4 subagents on 18 specs |
+| 8 | Consolidate duplication | pending | (E) in findings.md — after trim |
 | 9 | Delete/archive 31-sim, 43-smrb | pending | (F) in findings.md |
-| 10 | Update status frontmatter | pending | — |
-| 11 | Regenerate specs/index.md | pending | — |
-| 12 | Reference sweep | pending | — |
+| 10 | Update status frontmatter | pending | after trim + consolidate |
+| 11 | Regenerate specs/index.md | pending | after all moves/deletes |
+| 12 | Reference sweep | pending | final pass |
 | 13 | Second-audit cycle | pending | acceptance gate |
 
 ## Bucket assignments (48 specs in specs/2/)
