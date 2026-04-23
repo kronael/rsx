@@ -77,7 +77,13 @@ topology.
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
 | rsx-maker | Market maker bot (separate process) |
-| rsx-playground | Dev dashboard (Python/FastAPI + Playwright) |
+
+Non-Rust supporting projects (not in Cargo workspace):
+
+| Project | Role |
+|-------|------|
+| rsx-playground | Dev dashboard (Python/FastAPI + Playwright tests) |
+| rsx-webui | Trade UI SPA (TypeScript/React/Vite, built to dist/) |
 
 Each process is a separate binary. Tile crates (rsx-book,
 rsx-matching, rsx-risk, etc.) are libraries linked into
@@ -210,24 +216,26 @@ Durability guarantees:
 
 ## Spec Index
 
+See `specs/index.md` for the complete master index.
+Key references:
+
 | File | Covers |
 |------|--------|
-| ORDERBOOK.md | Book data structures, matching algorithm, compression zones |
-| RISK.md | Margin, positions, funding, liquidation triggers, main loop |
-| LIQUIDATOR.md | Liquidation rounds, slippage, order generation |
-| DXS.md | WAL format, writer/reader, replay server, consumer |
-| WAL.md | Shared WAL design, backpressure rules, flush bounds |
-| MARK.md | Mark price aggregator, external feeds, median, staleness |
-| METADATA.md | Symbol config scheduling, propagation, cold start |
-| CONSISTENCY.md | Event fan-out, CMP/UDP routing, ordering guarantees |
-| NETWORK.md | Topology, transport, service discovery, startup ordering |
-| MESSAGES.md | Message semantics (transport is CMP/UDP) |
-| WEBPROTO.md | WS compact JSON protocol, frame types |
-| RPC.md | Async order handling, UUIDv7, pending tracking |
-| MARKETDATA.md | Shadow book, L2/BBO/trades, public WS |
-| DATABASE.md | Postgres as system of record, write-behind pattern |
-| DEPLOY.md | Single-machine topology, env config, ring sizing |
-| ARCHIVE.md | WAL offload, infinite retention, gap handling |
-| REST.md | REST API endpoints, request/response schemas |
-| TELEMETRY.md | Structured metrics, tracing, log shipping |
-| TESTING.md | Test levels, make targets, invariants, benchmarks |
+| 21-orderbook.md | Book data structures, matching algorithm, compression zones |
+| 28-risk.md | Margin, positions, funding, liquidation triggers, main loop |
+| 13-liquidator.md | Liquidation rounds, slippage, order generation |
+| 10-dxs.md | WAL format, writer/reader, replay server, consumer |
+| 48-wal.md | Shared WAL design, backpressure rules, flush bounds |
+| 15-mark.md | Mark price aggregator, external feeds, median, staleness |
+| 19-metadata.md | Symbol config scheduling, propagation, cold start |
+| 6-consistency.md | Event fan-out, CMP/UDP routing, ordering guarantees |
+| 20-network.md | Topology, transport, service discovery, startup ordering |
+| 18-messages.md | Message semantics (transport is CMP/UDP) |
+| 49-webproto.md | WS compact JSON protocol, frame types |
+| 29-rpc.md | Async order handling, UUIDv7, pending tracking |
+| 16-marketdata.md | Shadow book, L2/BBO/trades, public WS |
+| 8-database.md | Postgres as system of record, write-behind pattern |
+| 9-deploy.md | Single-machine topology, env config, ring sizing |
+| 26-rest.md | REST API endpoints, request/response schemas |
+| 33-telemetry.md | Structured metrics, tracing, log shipping |
+| 44-testing.md | Test levels, make targets, invariants, benchmarks |
