@@ -23,12 +23,15 @@ from pathlib import Path
 import aiohttp
 import psutil
 import uvicorn
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Form
+from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
+import jwt as pyjwt
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
@@ -5749,6 +5752,112 @@ async def _probe_marketdata_tcp() -> bool:
         return False
 
 
+# ── /v1/ REST — JWT auth + rate limits ────────────────
+#
+# Architecture: playground hosts the public REST API.
+# Gateway is WS-only for hot path. Auth uses the same
+# JWT secret (RSX_GW_JWT_SECRET). Protected endpoints
+# (account, positions, orders, fills, funding) require
+# Authorization: Bearer <JWT>; public endpoints (symbols,
+# candles) do not.
+
+JWT_SECRET = os.environ.get("RSX_GW_JWT_SECRET", "")
+_rate_buckets: dict[int, list[float]] = {}
+RATE_LIMIT_PER_MINUTE = 60
+
+
+async def verify_jwt(request: Request) -> int:
+    """Validate Authorization header JWT; return user_id.
+
+    Dev fallback (if RSX_GW_JWT_SECRET is unset and
+    x-user-id header present) for local testing. 401 on
+    any failure.
+    """
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        if not JWT_SECRET:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "jwt secret not configured",
+                    "code": "no_secret",
+                })
+        try:
+            payload = pyjwt.decode(
+                token, JWT_SECRET, algorithms=["HS256"])
+        except pyjwt.InvalidTokenError as e:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": f"invalid token: {e}",
+                    "code": "invalid_token",
+                })
+        uid = payload.get("user_id")
+        if uid is None:
+            uid = payload.get("sub")
+        if uid is None:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "no user_id in token",
+                    "code": "no_user_id",
+                })
+        try:
+            return int(uid)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "user_id not numeric",
+                    "code": "bad_user_id",
+                })
+    # Dev fallback: x-user-id header (only when no JWT secret)
+    if not JWT_SECRET:
+        hdr = request.headers.get("x-user-id")
+        if hdr:
+            try:
+                return int(hdr)
+            except ValueError:
+                pass
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "error": "missing auth",
+            "code": "no_auth",
+        })
+
+
+async def check_rate_limit(user_id: int) -> None:
+    """Token bucket: 60 req/min per user. 429 on excess."""
+    now = time.time()
+    bucket = _rate_buckets.setdefault(user_id, [])
+    # drop entries older than 60s
+    cutoff = now - 60
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    if len(bucket) >= RATE_LIMIT_PER_MINUTE:
+        retry_after = int(60 - (now - bucket[0])) + 1
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate limit exceeded",
+                "code": "rate_limited",
+                "retry_after_s": retry_after,
+            },
+            headers={"Retry-After": str(retry_after)})
+    bucket.append(now)
+
+
+async def authed_rate_limited(
+    request: Request,
+) -> int:
+    """Combined dependency: auth + rate limit. Returns user_id."""
+    user_id = await verify_jwt(request)
+    await check_rate_limit(user_id)
+    return user_id
+
+
 @app.get("/v1/symbols")
 async def v1_symbols():
     """Return configured symbol catalog (local fallback)."""
@@ -5884,11 +5993,12 @@ async def v1_candles(
 
 @app.get("/v1/funding")
 async def v1_funding(
+    user_id: int = Depends(authed_rate_limited),
     sym: int = Query(None),
     limit: int = Query(50),
     before: str = Query(None),
 ):
-    """Return funding entries derived from WAL BBO data."""
+    """Return funding entries for authed user."""
     book_stats = parse_wal_book_stats()
     now_ms = int(time.time() * 1000)
     entries = []
@@ -5922,8 +6032,14 @@ async def v1_funding(
 
 
 @app.get("/v1/positions")
-async def v1_positions(user_id: int = Query(default=0)):
-    """Return open positions derived from WAL fills."""
+async def v1_positions(
+    user_id: int = Depends(authed_rate_limited),
+):
+    """Return open positions derived from WAL fills.
+
+    Requires Authorization: Bearer <JWT>. user_id is taken
+    from JWT claim (user_id or sub), never from query.
+    """
     fills = parse_wal_fills(max_fills=1000)
     # net qty per symbol for this user
     net: dict[int, int] = {}
@@ -5968,11 +6084,11 @@ async def v1_positions(user_id: int = Query(default=0)):
 
 @app.get("/v1/fills")
 async def v1_fills(
-    user_id: int = Query(default=0),
+    user_id: int = Depends(authed_rate_limited),
     sym: int = Query(default=0),
     limit: int = Query(default=50),
 ):
-    """Return recent fills from WAL."""
+    """Return recent fills from WAL for authed user."""
     fills = parse_wal_fills(max_fills=limit * 4)
     result = []
     for f in fills:
@@ -6001,7 +6117,9 @@ async def v1_fills(
 
 
 @app.get("/v1/account")
-async def v1_account(user_id: int = Query(default=0)):
+async def v1_account(
+    user_id: int = Depends(authed_rate_limited),
+):
     """Account summary: collateral, pnl, equity, margins."""
     collateral = _SEED_COLLATERAL
     # try postgres first
@@ -6072,8 +6190,10 @@ async def v1_account(user_id: int = Query(default=0)):
 
 
 @app.get("/v1/orders")
-async def v1_orders(user_id: int = Query(default=0)):
-    """Return recent orders."""
+async def v1_orders(
+    user_id: int = Depends(authed_rate_limited),
+):
+    """Return recent orders for authed user."""
     # build sid -> decimals lookup
     cfg_by_id = {}
     for _n, _c in start_mod.SYMBOLS.items():

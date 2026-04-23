@@ -521,8 +521,15 @@ def gateway_small_pending():
 
 @pytest.fixture
 def client():
-    """Create TestClient for server app."""
-    return TestClient(server.app)
+    """Create TestClient for server app.
+
+    Dev-fallback auth header added globally so existing
+    /v1/ tests keep working. Tests that exercise JWT
+    behavior directly can override `authorization`.
+    """
+    c = TestClient(server.app)
+    c.headers.update({"x-user-id": "1"})
+    return c
 
 
 @pytest.fixture(autouse=True)
