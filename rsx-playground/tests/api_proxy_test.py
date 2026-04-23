@@ -36,8 +36,12 @@ def test_v1_proxy_path_rewriting(client):
 
 @pytest.mark.allow_5xx
 def test_v1_proxy_502_not_500_on_connection_refused(client):
-    """ConnectionRefusedError must return 502, never 500."""
-    resp = client.get("/v1/orders")
+    """ConnectionRefusedError on unspecified /v1/* path → 502.
+
+    NOTE: /v1/orders, /v1/account etc. now have local handlers
+    and don't proxy. This tests the catch-all proxy path.
+    """
+    resp = client.get("/v1/proxy-only-path")
     assert resp.status_code == 502
     assert resp.json()["error"] == "gateway not running"
 
@@ -139,7 +143,8 @@ def test_v1_proxy_upstream_status_propagated(client):
             pass
 
     with patch("aiohttp.ClientSession", return_value=FakeSession()):
-        resp = client.get("/v1/account")
+        # Use proxy-only path since /v1/account now has local handler
+        resp = client.get("/v1/proxy-only-status-test")
 
     assert resp.status_code == 401
 
