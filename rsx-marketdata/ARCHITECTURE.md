@@ -2,7 +2,7 @@
 
 Market data process. Maintains shadow orderbooks from ME
 events, publishes L2 depth, BBO, and trades to subscribed
-WebSocket clients. See `specs/1/16-marketdata.md`.
+WebSocket clients. See `specs/2/16-marketdata.md`.
 
 ## Module Layout
 

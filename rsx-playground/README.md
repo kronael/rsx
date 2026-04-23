@@ -43,7 +43,7 @@ Includes:
 - [API Reference](docs/api.md) - HTTP endpoints
 - [Troubleshooting](docs/troubleshooting.md) - Common issues
 
-**Project Documentation:** See [../README.md](../README.md) and [../specs/1/1-architecture.md](../specs/1/1-architecture.md)
+**Project Documentation:** See [../README.md](../README.md) and [../specs/2/1-architecture.md](../specs/2/1-architecture.md)
 
 Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX documentation.
 
@@ -256,7 +256,7 @@ The playground is a Python web server (server.py) that:
 
 **Not a production component.** Development/testing tool only.
 
-For RSX system architecture, see [../specs/1/1-architecture.md](../specs/1/1-architecture.md).
+For RSX system architecture, see [../specs/2/1-architecture.md](../specs/2/1-architecture.md).
 
 ## Files
 
@@ -291,7 +291,7 @@ rsx-playground/
 - API endpoints
 - Troubleshooting UI issues
 
-**Project docs (../specs/1/, ../architecture/):** How the SYSTEM works
+**Project docs (../specs/2/, ../architecture/):** How the SYSTEM works
 - Architecture (CMP/UDP, WAL, tiles)
 - Orderbook algorithm
 - Risk engine logic

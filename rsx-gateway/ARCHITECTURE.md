@@ -3,7 +3,7 @@
 WebSocket gateway process. Accepts client connections,
 validates orders, routes to Risk via CMP/UDP, pushes
 fills/updates back to clients.
-See `specs/1/11-gateway.md`, `specs/1/49-webproto.md`.
+See `specs/2/11-gateway.md`, `specs/2/49-webproto.md`.
 
 ## Module Layout
 

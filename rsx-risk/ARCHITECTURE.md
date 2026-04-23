@@ -2,7 +2,7 @@
 
 Risk engine process. One instance per user shard. Pre-trade
 margin checks, position tracking, funding, liquidation,
-insurance fund, and replication. See `specs/1/28-risk.md`.
+insurance fund, and replication. See `specs/2/28-risk.md`.
 
 ## Module Layout
 

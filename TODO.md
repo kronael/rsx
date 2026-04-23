@@ -10,7 +10,7 @@ is the light backlog — items not yet a ship project.
 ## Backlog (not yet scoped)
 
 - **Spec cleanup** — audits found bloat + stale + duplicated
-  content in `specs/1/`. Research each finding against
+  content in `specs/2/`. Research each finding against
   shipped code; trim what's in-code, capture what's not.
   Likely becomes `.ship/07-SPEC-CLEANUP/`.
 - **Deployment** — public domain, Docker, TLS, one-click

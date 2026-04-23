@@ -86,7 +86,7 @@ cargo test --workspace   # all tests
 - Within process: tile threads + SPSC rings (rtrb)
 - DXS: WAL streaming to consumers over TCP
 
-See [specs/1/1-architecture.md](specs/1/1-architecture.md).
+See [specs/2/1-architecture.md](specs/2/1-architecture.md).
 
 ## Crate Layout
 
@@ -199,8 +199,8 @@ Single test: `cargo test -p rsx-book -- test_name`
 
 ## Specs
 
-All specifications in `specs/1/`. Entry point:
-[specs/1/1-architecture.md](specs/1/1-architecture.md).
+All specifications in `specs/2/`. Entry point:
+[specs/2/1-architecture.md](specs/2/1-architecture.md).
 
 | Spec | Covers |
 |------|--------|
@@ -222,4 +222,4 @@ All specifications in `specs/1/`. Entry point:
 | [GUARANTEES.md](GUARANTEES.md) | Consistency, durability |
 | [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | Failure modes |
 | [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | Ops recovery |
-| [specs/1/](specs/1/) | All specifications |
+| [specs/2/](specs/2/) | All specifications |

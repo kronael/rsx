@@ -63,7 +63,7 @@ Use `--test-threads=1` for tests with global state.
 17 test files covering: account, fees, funding, insurance,
 liquidation, main loop, margin, order processing, persist,
 position, price, replica, replication e2e, shard, shard e2e,
-and more. See `specs/1/42-testing-risk.md`.
+and more. See `specs/2/42-testing-risk.md`.
 
 ## Dependencies
 
@@ -89,4 +89,4 @@ and more. See `specs/1/42-testing-risk.md`.
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- main loop, margin
   calculation, position tracking, funding, liquidation,
   persistence, replication
-- `specs/1/28-risk.md`
+- `specs/2/28-risk.md`
