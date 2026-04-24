@@ -46,12 +46,37 @@ higher. Update canonical to current total.
 Files: `Makefile`, `scripts/acceptance-bundle.py`,
 `scripts/gen-release-truth.py`, `scripts/ci-guard.py`
 
-### 4. Fix maker mid_override bug
-The maker reads `tmp/maker-config.json` correctly but
-quotes don't shift. Root cause unknown — debug, fix, and
-verify `bbo shift within 6s` Playwright test passes.
+### 4. Fix order-flow pipeline (was: maker mid_override)
 
-Files: `rsx-playground/market_maker.py`
+**Discovery**: mid_override IS being read correctly by
+maker. But orders submitted (by maker AND by manual
+`/api/orders/test`) NEVER reach the matching engine.
+WAL is 0 bytes, ME logs show "cancel: order not found"
+because the inserts that those cancels target were never
+recorded.
+
+The book endpoint shows live data only because of the
+`_maker_book` fallback (reads maker-status.json), which
+reflects what the MAKER thinks it sent — not real ME state.
+
+**Likely candidates** (need investigation):
+- gateway → risk CMP path drops orders silently
+- risk → ME CMP path drops orders silently
+- ME WAL writer not actually writing (config or path issue)
+- Risk silently rejects every order (e.g., wrong symbol_id
+  bounds, missing mark price, 0-collateral account for
+  user 99 / maker)
+
+**Verification approach**:
+1. Add structured logging at each CMP boundary (gateway
+   send / risk receive / risk send / ME receive)
+2. Or: bypass and write a unit test that spawns the chain
+   and asserts WAL has records
+3. Once order-flow is verified working, mid_override
+   shift becomes visible automatically
+
+Files: `rsx-gateway/src/handler.rs`, `rsx-risk/src/main.rs`,
+`rsx-matching/src/main.rs`, `rsx-dxs/src/cmp.rs`
 
 ### 5. Fix WS F/U frames test
 `play_maker.spec.ts:163` — user 1 cross-fill expects F + U
