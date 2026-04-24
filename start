@@ -256,6 +256,13 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_RISK_SHARD_ID": str(shard),
                 "RSX_RISK_SHARD_COUNT":
                     str(config["risk_shards"]),
+                # Dev default: reset stale frozen_margin on
+                # cold start. Without this, a crash mid-order
+                # or WAL-retention-expiry can leak frozen
+                # margin across runs until accounts become
+                # unusable. Production should reconcile vs
+                # ME book instead.
+                "RSX_RISK_RESET_FROZEN_ON_START": "1",
                 "RSX_RISK_MAX_SYMBOLS": str(max(s["id"] for s in symbols) + 1),
                 "RSX_RISK_CMP_ADDR":
                     f"127.0.0.1:{BASE_RISK_CMP + shard}",

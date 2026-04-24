@@ -34,13 +34,30 @@ pub async fn load_from_postgres(
             ],
         )
         .await?;
+    // If RSX_RISK_RESET_FROZEN_ON_START=1, zero the
+    // persisted frozen_margin on cold start. WAL replay
+    // will re-freeze any still-pending orders (ACCEPTED
+    // since tip+1). Older pending orders lose their
+    // reservation — acceptable in dev to escape stale
+    // leaks accumulated across runs. NEVER set true in
+    // production without a reconciliation against the ME
+    // book state.
+    let reset_frozen = std::env::var(
+        "RSX_RISK_RESET_FROZEN_ON_START",
+    )
+    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    .unwrap_or(false);
     for row in &rows {
         let user_id: i32 = row.get(0);
         let mut acct = Account::new(
             user_id as u32,
             row.get::<_, i64>(1),
         );
-        acct.frozen_margin = row.get::<_, i64>(2);
+        acct.frozen_margin = if reset_frozen {
+            0
+        } else {
+            row.get::<_, i64>(2)
+        };
         acct.version = row.get::<_, i64>(3) as u64;
         accounts.insert(user_id as u32, acct);
     }
