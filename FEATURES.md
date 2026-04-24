@@ -191,9 +191,9 @@ useSoundAlerts.
 
 | Suite      | Files | Count  | Time    |
 |------------|-------|--------|---------|
-| Rust unit  | 88    | ~785   | <5s     |
-| Playwright | 22    | 398    | ~60s    |
-| Python     | 19    | 1034   | ~10s    |
+| Rust unit  | 88    | ~895   | <5s     |
+| Playwright | 23    | 421    | ~60s    |
+| Python     | 21    | 1048   | ~10s    |
 | WAL        | -     | -      | <10s    |
 | E2E        | -     | -      | ~30s    |
 | Integration| -     | -      | 1-5min  |
@@ -210,7 +210,7 @@ useSoundAlerts.
 | integration     | `make integration`| testcontainers (PG)    |
 | benchmarks      | `make perf`       | Criterion              |
 | bench gate      | `make bench-gate` | regression gate (10%)  |
-| Playwright      | `make play`       | all 398 browser tests  |
+| Playwright      | `make play`       | all 421 browser tests  |
 | release gate    | `make gate`       | all 4 release gates    |
 | CI              | `make ci`         | phases 1-3             |
 | CI full         | `make ci-full`    | all phases + shard fan |

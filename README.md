@@ -174,7 +174,7 @@ location /rsx-play/ {
 
 ```bash
 make check       # cargo check (fastest feedback)
-make test        # Rust unit tests (~785, <5s)
+make test        # Rust unit tests (~895, <5s)
 make wal         # WAL correctness
 make e2e         # Rust + API + Playwright (~3min)
 make integration # testcontainers (1-5min)

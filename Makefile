@@ -48,7 +48,7 @@ help:
 	@echo "  make gate-1-startup    - Gate 1: server imports cleanly"
 	@echo "  make gate-2-partials   - Gate 2: all routes + HTMX partials HTTP 200"
 	@echo "  make gate-3-api        - Gate 3: full API test suite"
-	@echo "  make gate-4-playwright - Gate 4: Playwright 228/228 (requires gate-3 first)"
+	@echo "  make gate-4-playwright - Gate 4: Playwright 421/421 (requires gate-3 first)"
 	@echo ""
 	@echo "Quality:"
 	@echo "  make lint          - Run clippy with warnings as errors"
@@ -57,7 +57,7 @@ help:
 	@echo "  make task-report       - Rewrite PROGRESS.md from tasks.json (truth source)"
 	@echo "  make exit-criteria     - Auto-reopen completed tasks whose linked tests aren't green on HEAD"
 	@echo "  make gen-release-truth - Generate release_truth.json (no ext CLI dep)"
-	@echo "  make release-gate      - BLOCK release unless Playwright==223/223 and all gates green"
+	@echo "  make release-gate      - BLOCK release unless Playwright==421/421 and all gates green"
 	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
 	@echo "  make bench-webui   - React render benchmark: p95 latency per orderbook update"
 	@echo "  make clean         - Clean build artifacts"
@@ -89,7 +89,7 @@ help:
 #        make gate-1-startup   (imports only, ~1s)
 #        make gate-2-partials  (routing + HTMX partials, ~5s)
 #        make gate-3-api       (API unit tests, ~30s)
-#        make gate-4-playwright (full Playwright suite, 228 tests, ~2min)
+#        make gate-4-playwright (full Playwright suite, 421 tests, ~2min)
 #
 # NEVER run gate-4-playwright directly — use 'make gate' to enforce order.
 
@@ -315,7 +315,7 @@ check-progress:
 
 # Local deterministic PROGRESS regeneration check.
 # Reads PROGRESS.md only; no bundle, no network.
-# Fails if denominator != 223 or header diverges from log counts.
+# Fails if denominator != 421 or header diverges from log counts.
 regen-progress:
 	python3 scripts/regen-progress.py
 
@@ -347,7 +347,7 @@ gen-release-truth: acceptance-bundle
 	python3 scripts/gen-release-truth.py
 	@echo "    written: rsx-playground/tmp/release_truth.json"
 
-# Release gate: blocks unless Playwright==223/223 AND all upstream gates green.
+# Release gate: blocks unless Playwright==421/421 AND all upstream gates green.
 # Runs acceptance-bundle + gen-release-truth; exits non-zero on any failure.
 # Use this as the final CI gate before tagging a release.
 release-gate: gen-release-truth
@@ -357,7 +357,7 @@ b = json.load(open('rsx-playground/tmp/release_truth.json')); \
 pw = b['playwright_passed']; \
 ok = b['all_green']; \
 canon = b['canonical_ok']; \
-print(f'[release-gate] playwright={pw}/223 all_green={ok} canonical_ok={canon}'); \
+print(f'[release-gate] playwright={pw}/421 all_green={ok} canonical_ok={canon}'); \
 sys.exit(0 if ok and canon else 1)"
 
 # Deterministic exit criteria: auto-reopens completed tasks whose linked
@@ -377,7 +377,7 @@ lint-snapshot:
 	python3 scripts/lint-snapshot.py
 
 # Unit tests for snapshot linter and acceptance-bundle CI checks.
-# Covers: denominator != 223, phase-semantics zombie state, DONE-FAIL splits.
+# Covers: denominator != 421, phase-semantics zombie state, DONE-FAIL splits.
 # Also covers exit-criteria: SHA check, artifact timestamp, reopen logic.
 lint-snapshot-tests:
 	python3 scripts/tests/test_lint_snapshot.py
@@ -389,7 +389,7 @@ lint-snapshot-tests:
 		scripts/tests/test_local_runner.py \
 		-q
 
-# CI guard: validate artifact JSON — fail on denominator != 223 or
+# CI guard: validate artifact JSON — fail on denominator != 421 or
 # phase-state contradictions (zombie/stuck execution states).
 # Usage: make ci-guard ARTIFACT=rsx-playground/tmp/acceptance-bundle.json
 ci-guard:

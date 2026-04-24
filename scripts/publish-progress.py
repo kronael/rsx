@@ -44,7 +44,7 @@ BUNDLE_PATH = TMP / "acceptance-bundle.json"
 TRUTH_PATH = TMP / "release_truth.json"
 
 # The single canonical total.
-CANONICAL_TOTAL = 223
+CANONICAL_TOTAL = 421
 
 # Bundle is stale after 24 hours.
 BUNDLE_STALE_SECONDS = 86400
@@ -153,7 +153,7 @@ def check_release_truth() -> None:
 
 
 def build_bar(passed: int, total: int) -> str:
-    """Build progress bar: [███░░] 45%  100/223"""
+    """Build progress bar: [███░░] 45%  100/421"""
     if total == 0:
         return "[░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%    0/0"
     pct = round(100 * passed / total)
