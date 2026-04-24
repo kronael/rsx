@@ -43,6 +43,7 @@ pub struct LiquidationEngine {
     base_delay_ns: u64,
     base_slip_bps: i64,
     max_rounds: u32,
+    max_slip_bps: i64,
 }
 
 impl LiquidationEngine {
@@ -50,6 +51,7 @@ impl LiquidationEngine {
         base_delay_ns: u64,
         base_slip_bps: i64,
         max_rounds: u32,
+        max_slip_bps: i64,
     ) -> Self {
         Self {
             active: Vec::new(),
@@ -57,6 +59,7 @@ impl LiquidationEngine {
             base_delay_ns,
             base_slip_bps,
             max_rounds,
+            max_slip_bps,
         }
     }
 
@@ -168,8 +171,8 @@ impl LiquidationEngine {
             let slip = (state.round as i64)
                 .checked_mul(state.round as i64)
                 .and_then(|v| v.checked_mul(self.base_slip_bps))
-                .map(|v| v.min(9999))
-                .unwrap_or(9999);
+                .map(|v| v.min(self.max_slip_bps))
+                .unwrap_or(self.max_slip_bps);
             let (side, price) = if net_qty > 0 {
                 let slip_price = mark
                     .checked_mul(10_000 - slip)

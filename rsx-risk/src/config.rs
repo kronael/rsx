@@ -9,6 +9,11 @@ pub struct LiquidationConfig {
     pub base_delay_ns: u64,
     pub base_slip_bps: u64,
     pub max_rounds: u32,
+    /// Cap on aggregate slippage (round^2 * base_slip_bps)
+    /// applied when generating liquidation orders. Default
+    /// 9999 (99.99%) — loose cap preserving legacy behavior.
+    /// Lower values halt runaway slippage sooner.
+    pub max_slip_bps: u64,
 }
 
 impl Default for LiquidationConfig {
@@ -17,6 +22,7 @@ impl Default for LiquidationConfig {
             base_delay_ns: 100_000_000, // 100ms
             base_slip_bps: 1,
             max_rounds: 10,
+            max_slip_bps: 9999,
         }
     }
 }
@@ -134,8 +140,18 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         taker_fee_bps,
         maker_fee_bps,
         funding_config: FundingConfig::default(),
-        liquidation_config:
-            LiquidationConfig::default(),
+        liquidation_config: LiquidationConfig {
+            base_delay_ns: env_u64(
+                "RSX_LIQUIDATION_BASE_DELAY_NS",
+                100_000_000,
+            ),
+            base_slip_bps: env_u64(
+                "RSX_LIQUIDATION_BASE_SLIP_BPS", 1),
+            max_rounds: env_u64(
+                "RSX_LIQUIDATION_MAX_ROUNDS", 10) as u32,
+            max_slip_bps: env_u64(
+                "RSX_LIQUIDATION_MAX_SLIP_BPS", 9999),
+        },
         replication_config: ReplicationConfig {
             is_replica,
             lease_poll_interval_ms,
