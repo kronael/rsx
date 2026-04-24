@@ -861,10 +861,12 @@ async def start_all(scenario="minimal"):
     if started:
         current_scenario = scenario
 
-    # wait for processes to stabilize, then auto-start maker
+    # wait for processes to stabilize, then auto-start maker + auth
     if started:
         await asyncio.sleep(3.0)
         await do_maker_start()
+        # rsx-auth is optional — silently skips if not configured
+        await do_auth_start()
         # restart md WS subscriber if it exhausted retries while
         # marketdata was not yet running
         global _md_ws_task
@@ -5111,6 +5113,142 @@ async def api_status():
             "levels": maker_stats.get("levels", 0),
         },
     }
+
+
+# ── rsx-auth (OAuth identity service) ───────────────────
+
+AUTH_DIR = ROOT / "rsx-auth"
+AUTH_PYTHON = AUTH_DIR / ".venv" / "bin" / "python"
+AUTH_NAME = "auth"
+
+
+def _auth_running() -> bool:
+    info = managed.get(AUTH_NAME)
+    if not info:
+        return False
+    return info["proc"].returncode is None
+
+
+def _auth_configured() -> bool:
+    """True if GitHub client id + secret are present."""
+    return bool(
+        os.environ.get("RSX_AUTH_GITHUB_CLIENT_ID")
+        and os.environ.get("RSX_AUTH_GITHUB_CLIENT_SECRET")
+        and os.environ.get("RSX_GW_JWT_SECRET")
+    )
+
+
+async def do_auth_start() -> bool:
+    """Start rsx-auth subprocess. No-op if misconfigured."""
+    if _auth_running():
+        return True
+    if AUTH_NAME in managed:
+        del managed[AUTH_NAME]
+    if not AUTH_PYTHON.exists():
+        return False
+    if not _auth_configured():
+        # Don't start without GitHub app secrets
+        return False
+    env = {
+        "RSX_AUTH_LISTEN": os.environ.get(
+            "RSX_AUTH_LISTEN", "0.0.0.0:8082"),
+        "RSX_GW_JWT_SECRET": os.environ.get(
+            "RSX_GW_JWT_SECRET", ""),
+        "RSX_AUTH_GITHUB_CLIENT_ID": os.environ.get(
+            "RSX_AUTH_GITHUB_CLIENT_ID", ""),
+        "RSX_AUTH_GITHUB_CLIENT_SECRET": os.environ.get(
+            "RSX_AUTH_GITHUB_CLIENT_SECRET", ""),
+        "RSX_AUTH_REDIRECT_URI": os.environ.get(
+            "RSX_AUTH_REDIRECT_URI",
+            "http://localhost:49171/oauth/github/callback"),
+        "RSX_AUTH_TRADE_UI_URL": os.environ.get(
+            "RSX_AUTH_TRADE_UI_URL",
+            "http://localhost:49171/trade/"),
+        "RSX_AUTH_STARTER_COLLATERAL": os.environ.get(
+            "RSX_AUTH_STARTER_COLLATERAL", "0"),
+        "RSX_AUTH_JWT_TTL_S": os.environ.get(
+            "RSX_AUTH_JWT_TTL_S", str(7 * 24 * 3600)),
+        "DATABASE_URL": os.environ.get("DATABASE_URL", PG_URL),
+    }
+    full_env = {**os.environ, **env}
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        str(AUTH_PYTHON),
+        "-m", "rsx_auth.app",
+        env=full_env,
+        cwd=str(AUTH_DIR),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    managed[AUTH_NAME] = {
+        "proc": proc,
+        "binary": str(AUTH_PYTHON),
+        "env": env,
+    }
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    (PID_DIR / f"{AUTH_NAME}.pid").write_text(str(proc.pid))
+    asyncio.create_task(pipe_output(AUTH_NAME, proc.stdout))
+    await asyncio.sleep(0.3)
+    if proc.returncode is not None:
+        del managed[AUTH_NAME]
+        (PID_DIR / f"{AUTH_NAME}.pid").unlink(missing_ok=True)
+        return False
+    return True
+
+
+async def do_auth_stop() -> None:
+    info = managed.get(AUTH_NAME)
+    if not info:
+        return
+    proc = info["proc"]
+    try:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+    except ProcessLookupError:
+        pass
+    if AUTH_NAME in managed:
+        del managed[AUTH_NAME]
+    (PID_DIR / f"{AUTH_NAME}.pid").unlink(missing_ok=True)
+
+
+@app.get("/api/auth/status")
+async def api_auth_status():
+    running = _auth_running()
+    info = managed.get(AUTH_NAME)
+    pid = info["proc"].pid if running and info else None
+    return {
+        "running": running,
+        "pid": pid,
+        "configured": _auth_configured(),
+    }
+
+
+@app.post("/api/auth/start")
+async def api_auth_start():
+    if not _auth_configured():
+        return JSONResponse(
+            {"error": "rsx-auth not configured "
+             "(set RSX_AUTH_GITHUB_CLIENT_ID, "
+             "RSX_AUTH_GITHUB_CLIENT_SECRET, "
+             "RSX_GW_JWT_SECRET)"},
+            status_code=400)
+    ok = await do_auth_start()
+    if not ok:
+        return JSONResponse(
+            {"error": "rsx-auth failed to start "
+             "(check logs)"},
+            status_code=500)
+    return {"ok": True}
+
+
+@app.post("/api/auth/stop")
+async def api_auth_stop():
+    await do_auth_stop()
+    return {"ok": True}
 
 
 # ── market maker ────────────────────────────────────────
