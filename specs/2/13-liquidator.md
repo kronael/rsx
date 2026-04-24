@@ -125,15 +125,24 @@ orders, remove from liquidation map, set status=Cancelled.
 
 ## 7. Main Loop Integration
 
-Added between funding check and lease renewal in
-[RISK.md](RISK.md) main loop:
+Liquidation runs at step 1b in `Shard::run_once`, right
+after fill draining and before order draining:
 
 ```
-    // 5.5. Liquidation processing
-    maybe_process_liquidations()
+1.  Drain fills           (highest priority)
+1b. Process liquidations  (positions are current)
+2.  Drain orders
+3.  Drain mark price updates
+4.  Drain BBOs
+5.  Funding settlement
 ```
 
-Same pattern as `maybe_settle_funding()`.
+Rationale: liquidation decisions depend on latest position
+state. Drain fills first so positions reflect the most
+recent activity; check liquidation eligibility before
+accepting new orders that might further deteriorate margin.
+
+See `rsx-risk/src/shard.rs::run_once`.
 
 ## 8. Persistence
 
