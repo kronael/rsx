@@ -237,14 +237,12 @@ test.describe("Latency", () => {
       "/api/orders/recent"
     );
     if (resp.status() === 404) {
-      // Try HTML endpoint
+      // /api/orders/recent isn't implemented; fall back
+      // to HTML endpoint /x/recent-orders (must exist).
       const html = await request.get(
         "/x/recent-orders"
       );
-      if (html.status() === 404) {
-        test.skip();
-        return;
-      }
+      expect(html.status()).toBe(200);
       const text = await html.text();
       const rows = (
         text.match(/<tr[\s>]/g) || []
@@ -294,10 +292,8 @@ test.describe("Latency", () => {
       await Promise.all(promises);
     }
     const resp = await request.get("/x/live-fills");
-    if (resp.status() === 404) {
-      test.skip();
-      return;
-    }
+    // /x/live-fills must exist; regression if 404
+    expect(resp.status()).toBe(200);
     const text = await resp.text();
     const rows = (
       text.match(/<tr[\s>]/g) || []
@@ -331,10 +327,8 @@ test.describe("Latency", () => {
     const resp = await request.get(
       "/x/wal-timeline"
     );
-    if (resp.status() === 404) {
-      test.skip();
-      return;
-    }
+    // /x/wal-timeline must exist; regression if 404
+    expect(resp.status()).toBe(200);
     const text = await resp.text();
     const rows = (
       text.match(/<tr[\s>]/g) || []
