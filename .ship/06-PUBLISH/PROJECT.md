@@ -46,37 +46,49 @@ higher. Update canonical to current total.
 Files: `Makefile`, `scripts/acceptance-bundle.py`,
 `scripts/gen-release-truth.py`, `scripts/ci-guard.py`
 
-### 4. Fix order-flow pipeline (was: maker mid_override)
+### 4. Fix frozen-margin leak (was: maker mid_override)
 
-**Discovery**: mid_override IS being read correctly by
-maker. But orders submitted (by maker AND by manual
-`/api/orders/test`) NEVER reach the matching engine.
-WAL is 0 bytes, ME logs show "cancel: order not found"
-because the inserts that those cancels target were never
-recorded.
+**Root cause found** — order flow is fundamentally healthy:
+gateway → risk → ME → WAL → marketdata all work correctly
+from a clean DB state. The observed "orders don't reach ME"
+symptom was caused by a **frozen-margin leak** in `accounts`:
+across runs, `frozen_margin` accumulated beyond collateral,
+so every pre-trade margin check rejected with
+`InsufficientMargin`. Zero orders reached ME, WAL stayed
+empty, the `/api/book` fallback showed `_maker_book`
+synthetic state.
 
-The book endpoint shows live data only because of the
-`_maker_book` fallback (reads maker-status.json), which
-reflects what the MAKER thinks it sent — not real ME state.
+After `UPDATE accounts SET frozen_margin = 0` + cold start,
+orders flow end-to-end: WAL grew to 500KB+ in seconds,
+ORDER_ACCEPTED/INSERTED/CANCELLED events stream correctly,
+maker mid_override is reflected in actual ME quotes
+(50000 mid → 49900/50100 in WAL; changed to 51000 → shifts
+to 50898/51102).
 
-**Likely candidates** (need investigation):
-- gateway → risk CMP path drops orders silently
-- risk → ME CMP path drops orders silently
-- ME WAL writer not actually writing (config or path issue)
-- Risk silently rejects every order (e.g., wrong symbol_id
-  bounds, missing mark price, 0-collateral account for
-  user 99 / maker)
+**Still open**:
+- **Frozen margin release bug** — release_frozen_for_order()
+  only fires on ORDER_DONE / ORDER_CANCELLED events. If an
+  order is accepted by risk but then dropped somewhere
+  before completing a full lifecycle, frozen margin leaks.
+  Need to audit: every accepted order must eventually
+  release frozen margin (on fill, cancel, or reject after
+  accept). Add a reconciliation check at risk that warns
+  if `sum(frozen_per_order) != acct.frozen_margin`.
+- Consider adding `RSX_RISK_RESET_FROZEN_ON_START=true`
+  dev-only env flag to zero frozen_margin on cold start.
 
-**Verification approach**:
-1. Add structured logging at each CMP boundary (gateway
-   send / risk receive / risk send / ME receive)
-2. Or: bypass and write a unit test that spawns the chain
-   and asserts WAL has records
-3. Once order-flow is verified working, mid_override
-   shift becomes visible automatically
+Files: `rsx-risk/src/shard.rs` (`release_frozen_for_order`,
+main loop), `rsx-risk/src/replay.rs`
 
-Files: `rsx-gateway/src/handler.rs`, `rsx-risk/src/main.rs`,
-`rsx-matching/src/main.rs`, `rsx-dxs/src/cmp.rs`
+### 4b. `/api/book` shows stale data
+Playground `_book_snap` (from MD WS subscription) isn't
+updating after book changes. `/api/book` falls through to
+`_maker_book` fallback. This is a DISPLAY bug, not a core
+bug — WAL / ME have correct state.
+
+Files: `rsx-playground/server.py` (marketdata WS
+subscriber), possibly `rsx-marketdata/` shadow book
+broadcast.
 
 ### 5. Fix WS F/U frames test
 `play_maker.spec.ts:163` — user 1 cross-fill expects F + U
