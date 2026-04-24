@@ -15,6 +15,7 @@ import { fetchAccount } from "../../hooks/useRestApi";
 import { fetchPositions } from "../../hooks/useRestApi";
 import { fetchOrders } from "../../hooks/useRestApi";
 import { fetchFunding } from "../../hooks/useRestApi";
+import { AuthButton } from "../AuthButton";
 
 // ▲ up, ▼ down, — flat
 type TickDir = "up" | "down" | "flat";
@@ -445,6 +446,11 @@ export function TopBar() {
         <span className="text-text-secondary font-mono">
           {latency > 0 ? `${latency}ms` : "--"}
         </span>
+      </div>
+
+      {/* Auth */}
+      <div className="shrink-0">
+        <AuthButton />
       </div>
     </div>
   );

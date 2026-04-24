@@ -32,6 +32,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 import pages
@@ -68,6 +69,9 @@ GATEWAY_HTTP = os.environ.get(
 )
 MARKETDATA_WS = os.environ.get(
     "MARKETDATA_WS", "ws://localhost:8180"
+)
+AUTH_HTTP = os.environ.get(
+    "AUTH_HTTP", "http://localhost:8082"
 )
 WEBUI_DIST = ROOT / "rsx-webui" / "dist"
 
@@ -6105,6 +6109,64 @@ async def v1_orders(user_id: int = Query(default=0)):
             "ts": o.get("ts", 0),
         })
     return JSONResponse(result)
+
+
+@app.api_route(
+    "/auth/{path:path}",
+    methods=["GET", "POST"],
+)
+@app.api_route(
+    "/oauth/{path:path}",
+    methods=["GET", "POST"],
+)
+async def auth_proxy(path: str, request: Request):
+    """Proxy /auth/* and /oauth/* to rsx-auth.
+
+    In dev, trade UI talks to playground; playground
+    forwards auth flows to rsx-auth on :8082. Production
+    should use nginx or similar to route directly.
+    """
+    prefix = request.url.path.split("/", 2)[1]  # 'auth' or 'oauth'
+    url = f"{AUTH_HTTP}/{prefix}/{path}"
+    qs = str(request.query_params)
+    if qs:
+        url += f"?{qs}"
+    try:
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.DummyCookieJar(),
+        ) as session:
+            method = request.method.lower()
+            body = await request.body()
+            fwd_headers = {}
+            for h in ("authorization", "cookie",
+                      "content-type"):
+                if h in request.headers:
+                    fwd_headers[h] = request.headers[h]
+            async with session.request(
+                method, url,
+                data=body if body else None,
+                headers=fwd_headers,
+                allow_redirects=False,
+            ) as resp:
+                data = await resp.read()
+                headers = dict(resp.headers)
+                # Drop hop-by-hop + CL (we re-send)
+                for k in ("transfer-encoding",
+                          "content-encoding",
+                          "content-length",
+                          "connection"):
+                    headers.pop(k.title(), None)
+                    headers.pop(k, None)
+                return Response(
+                    content=data,
+                    status_code=resp.status,
+                    headers=headers,
+                )
+    except (ConnectionRefusedError, OSError,
+            aiohttp.ClientConnectorError):
+        return JSONResponse(
+            status_code=502,
+            content={"error": "rsx-auth not running"})
 
 
 @app.api_route(
