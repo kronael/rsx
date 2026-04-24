@@ -446,7 +446,12 @@ fn run_main(
                                 as *const OrderRequest,
                         )
                     };
-                    let _ = order_prod.push(order);
+                    if order_prod.push(order).is_err() {
+                        warn!(
+                            "order_prod ring full — \
+                             dropping order"
+                        );
+                    }
                 }
                 RECORD_CANCEL_REQUEST
                     if payload.len()
