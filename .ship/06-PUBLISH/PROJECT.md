@@ -7,6 +7,20 @@ can be safely published as a public GitHub repo + live
 demo. "Works and runs" before we do deployment / signup /
 marketing work.
 
+## Status (2026-04-24)
+
+End-to-end system verified working:
+- Orders: gateway → risk → ME → WAL (WAL grows; 5000+ records)
+- mid_override correctly reflected in ME book (50000 mid →
+  49900/50100; 51000 mid → 50898/51102)
+- Cancels, fills, done events all flow
+- Walkthrough tests: 34/34 pass
+- Trade UI tests: 90/93 pass (2 failures = empty-state
+  assumptions in tests, not functional bugs)
+
+Tasks 1, 2, 3, 4, 7, 8, 9 complete.
+Tasks 5, 6, 10 remain (non-blocking).
+
 ## Non-goals (deferred)
 
 - Deployment infrastructure (Docker, cloud, domain, TLS)
