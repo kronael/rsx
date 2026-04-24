@@ -24,7 +24,7 @@ TMP = PLAYGROUND / "tmp"
 BUNDLE_PATH = TMP / "acceptance-bundle.json"
 OUT_PATH = TMP / "release_truth.json"
 
-CANONICAL_TOTAL = 223
+CANONICAL_TOTAL = 421
 BUNDLE_STALE_SECONDS = 86400
 
 
