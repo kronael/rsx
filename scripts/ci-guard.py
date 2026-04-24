@@ -2,7 +2,7 @@
 """CI guard: validate acceptance-bundle artifact JSON.
 
 Fails if:
-  - denominator (expected + unexpected) != 223
+  - denominator (expected + unexpected) != 421
   - artifact commit_sha != current HEAD short SHA
   - phase-state contradictions: interrupted/timedOut tests +
     nonterminal failures with nothing running (zombie state)
@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLAYWRIGHT_CANONICAL = 223
+PLAYWRIGHT_CANONICAL = 421
 
 ZOMBIE_STATUSES = {"interrupted", "timedOut"}
 

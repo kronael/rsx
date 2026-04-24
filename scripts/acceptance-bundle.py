@@ -40,7 +40,7 @@ PLAY_ARTIFACT_DIR = TMP / "play-artifacts"
 FULL_RUN_REPORT = PLAY_ARTIFACT_DIR / "full-run" / "report.json"
 
 # Playwright canonical total — must equal this for release gate to pass
-PLAYWRIGHT_CANONICAL = 223
+PLAYWRIGHT_CANONICAL = 421
 
 # Bundle is stale after 24 hours
 STALE_SECONDS = 86400
@@ -398,16 +398,16 @@ def drift_check() -> dict:
 
     Counts bare `test(` lines in rsx-playground/tests/play_*.spec.ts.
     The 9 webui order-entry tests are validated at runtime by gate-4
-    artifact total (total_passed must equal PLAYWRIGHT_CANONICAL=223).
+    artifact total (total_passed must equal PLAYWRIGHT_CANONICAL=421).
 
     Playground source canonical: 214 tests across 12 spec files.
-    Full release canonical: PLAYWRIGHT_CANONICAL = 223 (includes 9 webui).
+    Full release canonical: PLAYWRIGHT_CANONICAL = 421 (includes 9 webui).
 
     Returns dict with:
       ok: bool — True if playground count matches PLAYGROUND_SPEC_COUNT
       actual: int — counted playground tests
       canonical: int — PLAYGROUND_SPEC_COUNT (214)
-      total_canonical: int — PLAYWRIGHT_CANONICAL (223)
+      total_canonical: int — PLAYWRIGHT_CANONICAL (421)
       drift: int — actual - canonical (0 = no drift)
       detail: dict[spec_name, int] — per-spec counts
     """
@@ -479,7 +479,7 @@ def main():
         # Drift is a hard blocker — exit 2 so CI treats it as config error
         sys.exit(2)
 
-    # Release gate: all gates green AND playwright == 223/223
+    # Release gate: all gates green AND playwright == 421/421
     all_green = (
         g1 == "pass"
         and g2 in ("pass", "assumed-pass")
