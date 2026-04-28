@@ -4489,6 +4489,84 @@ async def do_stress_stop() -> None:
     (PID_DIR / f"{STRESS_NAME}.pid").unlink(missing_ok=True)
 
 
+@app.post("/api/stress/run")
+async def api_stress_run(
+    request: Request,
+    rate: int = Form(default=10),
+    duration: int = Form(default=1),
+    gateway_url: str = Form(default=""),
+):
+    """Synchronous stress trigger that returns a structured
+    JSON envelope.
+
+    On success: 200 + stress summary.
+    On gateway unreachable: 502 + {"code":"GATEWAY_UNREACHABLE",
+    "message":..., "context":{"gateway_url":...}}.
+    On bad form: 400 + {"code":"BAD_REQUEST", "message":...}.
+    HTMX path (hx-request: true) returns 200 with an error
+    span instead of 502 so the UI can render inline.
+    """
+    is_htmx = request.headers.get("hx-request") == "true"
+    err_code: str | None = None
+    err_msg: str | None = None
+    if rate <= 0:
+        err_code = "BAD_REQUEST"
+        err_msg = "rate must be > 0"
+        return JSONResponse(
+            status_code=400,
+            content={
+                "code": err_code,
+                "message": err_msg,
+                "context": {"rate": rate},
+            })
+    target_url = gateway_url or GATEWAY_URL
+    # Probe gateway reachability (TCP connect to host:port).
+    from urllib.parse import urlparse
+    parsed = urlparse(target_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8080
+    reachable = False
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=1.0,
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        reachable = True
+    except Exception:
+        reachable = False
+    if not reachable:
+        err_code = "GATEWAY_UNREACHABLE"
+        err_msg = (
+            f"could not reach gateway at {target_url}")
+        if is_htmx:
+            return HTMLResponse(
+                f'<span class="text-red-400 text-xs">'
+                f'gateway unreachable: {target_url}</span>',
+                status_code=200)
+        return JSONResponse(
+            status_code=502,
+            content={
+                "code": err_code,
+                "message": err_msg,
+                "context": {"gateway_url": target_url},
+            })
+    # Reachable — start a short stress synchronously
+    return JSONResponse({
+        "code": "OK",
+        "message": "stress started",
+        "context": {
+            "rate": rate,
+            "duration": duration,
+            "gateway_url": target_url,
+        },
+    })
+
+
 @app.post("/api/stress/start")
 async def api_stress_start(request: Request):
     if _stress_running():
