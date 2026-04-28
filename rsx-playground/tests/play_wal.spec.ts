@@ -4,7 +4,8 @@ import { waitForHTMX, waitForRefresh, verifyPolling } from "./test_helpers";
 test.describe("WAL tab", () => {
   test("loads with per-process WAL state card", async ({ page }) => {
     await page.goto("/wal");
-    await expect(page.locator("nav a", { hasText: "WAL" }))
+    await expect(page.getByRole("navigation").getByRole(
+      "link", { name: "WAL", exact: true }))
       .toHaveClass(/bg-slate-700/);
     await expect(page.getByRole("heading", { name: "Per-Process WAL State" })).toBeVisible();
   });
@@ -74,7 +75,10 @@ test.describe("WAL tab", () => {
       "input[name='wal-filter-r'][value='FILL']"
     )).toBeAttached();
     await expect(page.locator(
-      "input[name='wal-filter-r'][value='MARGIN_CHECK']"
+      "input[name='wal-filter-r'][value='MARK_PRICE']"
+    )).toBeAttached();
+    await expect(page.locator(
+      "input[name='wal-filter-r'][value='ORDER_DONE']"
     )).toBeAttached();
   });
 

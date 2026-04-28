@@ -3482,7 +3482,7 @@ async def x_stats():
         ("orders submitted", len(recent_orders)),
         ("uptime", uptime_str),
         ("active processes", running),
-        ("active stress", active_stress),
+        ("active stress", int(_stress_running())),
         ("maker", maker_label),
     ]
     inner = "".join(

@@ -1,7 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-// Tabs that render playground layout (have active nav)
+// Tabs that render playground layout (have active nav).
+// Use getByRole({name, exact:true}) so e.g. "WAL" doesn't
+// match "Walkthrough".
 const TABS = [
+  { label: "Walkthrough", path: "/walkthrough" },
   { label: "Overview", path: "/overview" },
   { label: "Topology", path: "/topology" },
   { label: "Book", path: "/book" },
@@ -23,11 +26,12 @@ const EXTERNAL_TABS = [
 ];
 
 test.describe("Navigation", () => {
-  test("all 14 tab links are present", async ({ page }) => {
+  test("all 15 tab links are present", async ({ page }) => {
     await page.goto("/");
     for (const tab of [...TABS, ...EXTERNAL_TABS]) {
       await expect(
-        page.locator("nav a", { hasText: tab.label })
+        page.getByRole("navigation").getByRole(
+          "link", { name: tab.label, exact: true })
       ).toBeVisible();
     }
   });
@@ -36,11 +40,13 @@ test.describe("Navigation", () => {
     test(`clicking ${tab.label} navigates`, async ({ page }) => {
       await page.goto("/");
       await page
-        .locator("nav a", { hasText: tab.label })
+        .getByRole("navigation").getByRole(
+          "link", { name: tab.label, exact: true })
         .click();
       await expect(page).toHaveURL(new RegExp(tab.path));
       await expect(
-        page.locator("nav a", { hasText: tab.label })
+        page.getByRole("navigation").getByRole(
+          "link", { name: tab.label, exact: true })
       ).toHaveClass(/bg-slate-700/);
     });
   }
