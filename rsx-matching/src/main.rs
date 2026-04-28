@@ -212,7 +212,12 @@ fn main() {
         (None, 0)
     };
 
-    let mut book = Orderbook::new(initial_config, 1024, 50_000);
+    // 65k order slab + 50k price levels per ME. 1024 was
+    // too small for sustained maker-driven dev workloads
+    // (slab exhaust panic after a few minutes). 65k gives
+    // ~3 hours of headroom at 5 ord/s with imperfect cancel
+    // tracking; production tuning tracked separately.
+    let mut book = Orderbook::new(initial_config, 65_536, 50_000);
 
     // WAL writer
     let wal_dir = env::var("RSX_ME_WAL_DIR")
