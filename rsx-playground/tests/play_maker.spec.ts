@@ -176,6 +176,14 @@ test.describe("Market maker e2e", () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const WS = require("ws");
 
+      // Get symbol meta to use a valid qty (1 lot)
+      const symRes = await request.get("/v1/symbols");
+      const symData = await symRes.json();
+      const sym = (symData.symbols || []).find(
+        (s: { id: number }) => s.id === SYMBOL_ID,
+      );
+      const lotSize: number = sym?.lot_size ?? 100000;
+
       const frames = await new Promise<string[]>((resolve) => {
         const collected: string[] = [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,10 +192,13 @@ test.describe("Market maker e2e", () => {
         });
 
         ws.on("open", () => {
-          // Aggressive buy: side=0 (bid), price=bestAsk+1, qty=1
+          // Aggressive buy: side=0 (bid), price=bestAsk+1,
+          // qty=1 lot (raw units = lot_size). cid is a
+          // string per protocol.
           ws.send(
             JSON.stringify(
-              { N: [SYMBOL_ID, 0, bestAsk + 1, 1, 9001, 0] },
+              { N: [SYMBOL_ID, 0, bestAsk + 1, lotSize,
+                    "test9001", 0] },
             ),
           );
         });
