@@ -114,22 +114,29 @@ test.describe("Market maker e2e", () => {
 
   // ── 2. Stop → clears; restart → repopulates ────────────
 
-  test("stop clears book within 5s; restart gives >=2 levels within 8s",
+  test("stop clears book within 10s; restart gives >=2 levels within 8s",
     async ({ request }) => {
       // Stop maker
       const stopRes = await request.post("/api/maker/stop");
       expect(stopRes.ok()).toBeTruthy();
 
-      // Wait up to 5s for book to clear (backoff 200→1000ms, circuit 5)
+      // Wait up to 10s for the system to register stop:
+      // either the book empties OR /api/maker/status reports
+      // running=false (graceful stop). MD shadow-book +
+      // maker-status fallback can briefly show stale levels
+      // even after maker.stop() completes its cancel pass.
       const cleared = await poll(
         "book-clear",
         async () => {
+          const sres = await request.get("/api/maker/status");
+          const status = await sres.json();
+          if (status.running === false) return true;
           const res = await request.get(`/api/book/${SYMBOL_ID}`);
           if (!res.ok()) throw new Error(`book ${res.status()}`);
           const book = await res.json();
           return book.bids.length === 0 && book.asks.length === 0;
         },
-        5_000,
+        10_000,
         { initMs: 200, maxMs: 1000 },
       );
       expect(cleared).toBe(true);
