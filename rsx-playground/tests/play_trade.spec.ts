@@ -775,11 +775,13 @@ test.describe("Trade UI", () => {
         hasText: /^Funding/,
       });
       await tab.click();
-      // The countdown span is font-mono text-accent
+      // Both TopBar and Funding tab render countdowns;
+      // match any span whose text is HH:MM:SS, anchored
+      // to the funding pane to avoid header collision.
       const countdown = page.locator(
-        ".font-mono.text-accent",
-      );
-      await expect(countdown).toBeVisible();
+        "span",
+      ).filter({ hasText: /^\d{2}:\d{2}:\d{2}$/ }).first();
+      await expect(countdown).toBeVisible({ timeout: 8000 });
       const text = await countdown.textContent();
       expect(text).toMatch(/^\d{2}:\d{2}:\d{2}$/);
     });
