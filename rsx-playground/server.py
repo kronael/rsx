@@ -175,7 +175,9 @@ async def _md_ws_subscriber():
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(
                     MARKETDATA_WS,
-                    heartbeat=10,
+                    # Ping every 4s; MD drops after 10s
+                    # silence. 4s gives 2x margin.
+                    heartbeat=4,
                 ) as ws:
                     # connected — reset backoff counters
                     consec_infra = 0
@@ -184,6 +186,23 @@ async def _md_ws_subscriber():
                     for sid in DEFAULT_SYMBOLS:
                         await ws.send_str(
                             json.dumps({"S": [sid, CHANNELS]}))
+
+                    # MD expects application-level heartbeat
+                    # `{"H":[ts_ms]}` every <10s. WS pings
+                    # aren't recognized.
+                    async def heartbeat_loop():
+                        while True:
+                            await asyncio.sleep(4)
+                            try:
+                                await ws.send_str(
+                                    json.dumps({"H": [
+                                        int(time.time() * 1000)
+                                    ]}))
+                            except Exception:
+                                return
+                    hb_task = asyncio.create_task(
+                        heartbeat_loop())
+
                     async for msg in ws:
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             continue
@@ -274,6 +293,13 @@ async def _md_ws_subscriber():
                             })
                             if len(recent_fills) > 200:
                                 del recent_fills[:100]
+                    # WS disconnected; cancel heartbeat loop
+                    hb_task.cancel()
+                    try:
+                        await hb_task
+                    except (asyncio.CancelledError,
+                            Exception):
+                        pass
         except asyncio.CancelledError:
             break
         except (ConnectionRefusedError, OSError):

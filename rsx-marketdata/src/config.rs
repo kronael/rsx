@@ -81,7 +81,7 @@ pub fn load_marketdata_config() -> MarketDataConfig {
         ),
         book_capacity: env_u32(
             "RSX_MD_BOOK_CAPACITY",
-            1024,
+            65_536,
         ),
         mid_price: env_i64(
             "RSX_MD_BOOK_MID_PRICE",
