@@ -728,7 +728,13 @@ _SEED_COLLATERAL = 100_000_000_000_000_000
 
 
 async def seed_accounts():
-    """Upsert playground test accounts into Postgres."""
+    """Upsert playground test accounts into Postgres.
+
+    Uses ON CONFLICT UPDATE so test/dev runs always start
+    with the configured collateral. Older runs (e.g. from
+    acceptance_test.py at 10M) won't leak under-funded
+    accounts that prevent test orders from clearing margin.
+    """
     if pg_pool is None:
         return
     try:
@@ -738,7 +744,9 @@ async def seed_accounts():
                     "INSERT INTO accounts "
                     "(user_id, collateral, frozen_margin, version) "
                     "VALUES ($1, $2, 0, 0) "
-                    "ON CONFLICT (user_id) DO NOTHING",
+                    "ON CONFLICT (user_id) DO UPDATE "
+                    "SET collateral = EXCLUDED.collateral, "
+                    "    frozen_margin = 0",
                     uid, _SEED_COLLATERAL,
                 )
     except Exception as e:
