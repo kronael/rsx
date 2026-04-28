@@ -26,6 +26,10 @@ pub struct GatewayState {
     pub circuit: CircuitBreaker,
     pub symbol_configs: Vec<SymbolConfig>,
     pub config_versions: Vec<u64>,
+    /// Rate limit capacities (per-user, per-ip). Used when
+    /// the corresponding limiter is first created.
+    pub rate_limit_per_user: u32,
+    pub rate_limit_per_ip: u32,
 }
 
 impl GatewayState {
@@ -47,6 +51,9 @@ impl GatewayState {
             ),
             config_versions: vec![0; symbol_configs.len()],
             symbol_configs,
+            // Sensible defaults; overridden via main.rs from config.
+            rate_limit_per_user: 10,
+            rate_limit_per_ip: 100,
         }
     }
 

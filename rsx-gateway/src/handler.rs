@@ -9,8 +9,6 @@ use crate::protocol::parse;
 use crate::protocol::serialize;
 use crate::protocol::CancelKey;
 use crate::protocol::WsFrame;
-use crate::rate_limit::per_ip;
-use crate::rate_limit::per_user;
 use crate::state::GatewayState;
 use crate::rest::handle_rest;
 use crate::ws::is_ws_upgrade;
@@ -307,10 +305,14 @@ pub async fn handle_connection(
             } => {
                 {
                     let mut st = state.borrow_mut();
+                    let cap = st.rate_limit_per_ip;
                     let ip_limiter = st
                         .ip_limiters
                         .entry(peer.ip())
-                        .or_insert_with(per_ip);
+                        .or_insert_with(|| {
+                            crate::rate_limit::RateLimiter::new(
+                                cap, cap)
+                        });
                     if !ip_limiter.try_consume() {
                         drop(st);
                         send_error(
@@ -325,10 +327,14 @@ pub async fn handle_connection(
 
                 {
                     let mut st = state.borrow_mut();
+                    let cap = st.rate_limit_per_user;
                     let limiter = st
                         .user_limiters
                         .entry(user_id)
-                        .or_insert_with(per_user);
+                        .or_insert_with(|| {
+                            crate::rate_limit::RateLimiter::new(
+                                cap, cap)
+                        });
                     if !limiter.try_consume() {
                         drop(st);
                         send_error(

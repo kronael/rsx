@@ -130,15 +130,20 @@ fn main() {
             .expect("failed to build monoio runtime");
 
     let listen_addr = config.listen_addr.clone();
+    let rl_user = config.rate_limit_per_user;
+    let rl_ip = config.rate_limit_per_ip;
     rt.block_on(async move {
-        let state = Rc::new(RefCell::new(
-            GatewayState::new(
+        let state = Rc::new(RefCell::new({
+            let mut s = GatewayState::new(
                 max_pending,
                 circuit_threshold,
                 circuit_cooldown_ms,
                 config.symbol_configs,
-            ),
-        ));
+            );
+            s.rate_limit_per_user = rl_user;
+            s.rate_limit_per_ip = rl_ip;
+            s
+        }));
         let sender =
             Rc::new(RefCell::new(cmp_sender));
 
