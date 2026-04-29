@@ -11,7 +11,6 @@ pub mod macros;
 pub mod time;
 
 pub use macros::install_panic_handler;
-pub use macros::DeferCall;
 
 /// Price in smallest tick units. 1 = one tick.
 #[derive(

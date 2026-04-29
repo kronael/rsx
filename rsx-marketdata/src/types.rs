@@ -47,11 +47,3 @@ pub struct TradeEvent {
     pub timestamp_ns: u64,
     pub seq: u64,
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MarketDataMessage {
-    Bbo(BboUpdate),
-    Snapshot(L2Snapshot),
-    Delta(L2Delta),
-    Trade(TradeEvent),
-}

@@ -51,14 +51,3 @@ pub struct BboUpdate {
     pub ask_px: i64,
     pub ask_qty: i64,
 }
-
-/// From ME: order completed or failed. Releases frozen
-/// margin.
-#[derive(Clone, Debug)]
-#[repr(C, align(64))]
-pub struct OrderDoneEvent {
-    pub seq: u64,
-    pub user_id: u32,
-    pub symbol_id: u32,
-    pub frozen_amount: i64,
-}

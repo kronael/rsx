@@ -1,7 +1,6 @@
 use crate::types::FillEvent;
 use rustc_hash::FxHashMap;
 use tracing::debug;
-use tracing::info;
 
 pub struct ReplicaState {
     buffered_fills: Vec<FxHashMap<u64, FillEvent>>,
@@ -70,44 +69,7 @@ impl ReplicaState {
         all_fills
     }
 
-    pub fn buffered_count(&self, symbol_id: u32) -> usize {
-        let sym_idx = symbol_id as usize;
-        if sym_idx >= self.buffered_fills.len() {
-            return 0;
-        }
-        self.buffered_fills[sym_idx].len()
-    }
-
     pub fn total_buffered(&self) -> usize {
         self.buffered_fills.iter().map(|m| m.len()).sum()
-    }
-
-    pub fn last_tip(&self, symbol_id: u32) -> u64 {
-        let sym_idx = symbol_id as usize;
-        if sym_idx >= self.last_tips.len() {
-            return 0;
-        }
-        self.last_tips[sym_idx]
-    }
-}
-
-pub struct ReplicaPromotion {
-    pub fills_applied: usize,
-    pub final_tips: Vec<u64>,
-}
-
-pub fn promote_replica(
-    state: &mut ReplicaState,
-) -> ReplicaPromotion {
-    let fills = state.drain_all_up_to_tips();
-    let count = fills.len();
-    let final_tips = state.last_tips.clone();
-    info!(
-        fills_applied = count,
-        "promotion: applying buffered fills up to last tips"
-    );
-    ReplicaPromotion {
-        fills_applied: count,
-        final_tips,
     }
 }

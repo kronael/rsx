@@ -44,7 +44,6 @@ pub use persist::PersistEvent;
 pub use replay::ColdStartState;
 pub use position::Position;
 pub use price::IndexPrice;
-pub use replica::ReplicaPromotion;
 pub use replica::ReplicaState;
 pub use rings::OrderResponse;
 pub use rings::ShardRings;
