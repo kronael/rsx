@@ -245,7 +245,7 @@ def test_ws_public_returns_1013_when_marketdata_down(client):
 
 
 def test_ws_private_upgrades_and_forwards_user_id(client):
-    """/ws/private passes x-user-id header to upstream WS."""
+    """/ws/private forwards x-user-id only in explicit insecure-dev mode."""
     forwarded_headers = {}
     connected = False
 
@@ -270,27 +270,27 @@ def test_ws_private_upgrades_and_forwards_user_id(client):
     mock_session.ws_connect = fake_ws_connect
 
     with patch("aiohttp.ClientSession", return_value=mock_session):
-        with client.websocket_connect(
-            "/ws/private",
-            headers={"x-user-id": "42"},
-        ) as ws:
-            try:
-                ws.receive_json()
-            except Exception:
-                pass
+        with patch.dict("os.environ", {"PLAYGROUND_ALLOW_INSECURE_USER_ID": "1"}):
+            with client.websocket_connect(
+                "/ws/private",
+                headers={"x-user-id": "42"},
+            ) as ws:
+                try:
+                    ws.receive_json()
+                except Exception:
+                    pass
 
-    # x-user-id should be forwarded
+    # x-user-id should be forwarded only when insecure mode is enabled
     assert forwarded_headers.get("x-user-id") == "42"
 
 
-def test_ws_private_default_user_id_when_header_missing(client):
-    """/ws/private defaults x-user-id to '1' when not provided."""
+def test_ws_private_rejects_missing_auth_when_no_insecure_mode(client):
+    """/ws/private does not invent a default user."""
     forwarded_headers = {}
 
     class FakeWsCtx:
-        """Async context manager that raises on enter to simulate gateway down."""
         async def __aenter__(self):
-            raise ConnectionRefusedError("not running")
+            raise AssertionError("upstream should not be contacted")
         async def __aexit__(self, *a):
             pass
 
@@ -306,13 +306,15 @@ def test_ws_private_default_user_id_when_header_missing(client):
     mock_session.ws_connect = fake_ws_connect
 
     with patch("aiohttp.ClientSession", return_value=mock_session):
-        with client.websocket_connect("/ws/private") as ws:
+        with client.websocket_connect(
+            "/ws/private",
+        ) as ws:
             try:
                 ws.receive_json()
             except Exception:
                 pass
 
-    assert forwarded_headers.get("x-user-id") == "1"
+    assert forwarded_headers == {}
 
 
 # ── /v1/symbols local endpoint ────────────────────────────

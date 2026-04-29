@@ -698,7 +698,7 @@ def test_wal_timeline_filter(client):
 # ── Trade UI API Endpoints ─────────────────────────────────
 
 
-def test_v1_orders_returns_list(client):
+def test_v1_orders_returns_list(client, auth_headers):
     """GET /v1/orders returns JSON list of orders."""
     # submit an order first so there's data
     client.post(
@@ -710,7 +710,7 @@ def test_v1_orders_returns_list(client):
             "qty": "100000",
         },
     )
-    resp = client.get("/v1/orders?user_id=0")
+    resp = client.get("/v1/orders", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
@@ -722,7 +722,7 @@ def test_v1_orders_returns_list(client):
     assert "status" in order
 
 
-def test_v1_orders_human_readable_prices(client):
+def test_v1_orders_human_readable_prices(client, auth_headers):
     """Orders have human-readable prices, not raw i64."""
     # submit a test order so there's data
     client.post(
@@ -734,7 +734,7 @@ def test_v1_orders_human_readable_prices(client):
             "qty": "100000",
         },
     )
-    resp = client.get("/v1/orders?user_id=0")
+    resp = client.get("/v1/orders", headers=auth_headers)
     data = resp.json()
     if not data:
         return  # no orders, skip
@@ -775,9 +775,9 @@ def test_production_mode_guard(client, monkeypatch):
 # ── Investor Demo Verification ─────────────────────────────
 
 
-def test_v1_account_returns_human_readable(client):
+def test_v1_account_returns_human_readable(client, auth_headers):
     """Account values are human-readable, not raw i64."""
-    resp = client.get("/v1/account?user_id=0")
+    resp = client.get("/v1/account", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     for key in (
@@ -803,9 +803,9 @@ def test_v1_candles_nonexistent_symbol(client):
     assert isinstance(data["bars"], list)
 
 
-def test_v1_account_bad_user_id_returns_422(client):
+def test_v1_account_bad_user_id_returns_422(client, auth_headers):
     """Non-integer user_id returns 422, not 500."""
-    resp = client.get("/v1/account?user_id=abc")
+    resp = client.get("/v1/account?user_id=abc", headers=auth_headers)
     assert resp.status_code == 422
     assert "Traceback" not in resp.text
 
@@ -846,25 +846,25 @@ def test_all_pages_no_blank_no_error(client):
         )
 
 
-def test_v1_positions_returns_list(client):
+def test_v1_positions_returns_list(client, auth_headers):
     """GET /v1/positions returns JSON list."""
-    resp = client.get("/v1/positions?user_id=0")
+    resp = client.get("/v1/positions", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
 
 
-def test_v1_fills_returns_list(client):
+def test_v1_fills_returns_list(client, auth_headers):
     """GET /v1/fills returns JSON list."""
-    resp = client.get("/v1/fills?user_id=0")
+    resp = client.get("/v1/fills", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
 
 
-def test_v1_account_no_negative_collateral(client):
+def test_v1_account_no_negative_collateral(client, auth_headers):
     """Account collateral must never be negative."""
-    resp = client.get("/v1/account?user_id=0")
+    resp = client.get("/v1/account", headers=auth_headers)
     data = resp.json()
     assert float(data["collateral"]) >= 0
     assert float(data["equity"]) >= 0

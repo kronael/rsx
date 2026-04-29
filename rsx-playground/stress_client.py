@@ -53,10 +53,11 @@ class StressClient:
     def generate_jwt(self) -> str:
         """Generate JWT token for authentication"""
         payload = {
-            "sub": str(self.user_id),
+            "sub": f"stress:{self.user_id}",
+            "user_id": self.user_id,
             "exp": int(time.time()) + 3600,
             "aud": "rsx-gateway",
-            "iss": "rsx",
+            "iss": "rsx-auth",
         }
         return pyjwt.encode(
             payload,
@@ -181,16 +182,17 @@ class StressClient:
 
 async def _probe_gateway(
     url: str,
-    jwt_secret: str = "dev-secret-change-in-production",
+    jwt_secret: str = "",
 ) -> str | None:
     """Return error string if gateway unreachable, else None."""
     if jwt_secret:
         token = pyjwt.encode(
             {
-                "sub": "1",
+                "sub": "stress:1",
+                "user_id": 1,
                 "exp": int(time.time()) + 3600,
                 "aud": "rsx-gateway",
-                "iss": "rsx",
+                "iss": "rsx-auth",
             },
             jwt_secret,
             algorithm="HS256",

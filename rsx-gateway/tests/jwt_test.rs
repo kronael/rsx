@@ -21,7 +21,8 @@ fn test_validate_jwt_valid() {
     let exp = now_secs() + 3600;
 
     let claims = Claims {
-        sub: user_id.to_string(),
+        sub: format!("github:{user_id}"),
+        user_id: Some(user_id),
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
@@ -46,7 +47,8 @@ fn test_validate_jwt_expired() {
     let exp = now_secs().saturating_sub(3600);
 
     let claims = Claims {
-        sub: user_id.to_string(),
+        sub: format!("github:{user_id}"),
+        user_id: Some(user_id),
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
@@ -74,7 +76,8 @@ fn test_validate_jwt_invalid_secret() {
     let exp = now_secs() + 3600;
 
     let claims = Claims {
-        sub: user_id.to_string(),
+        sub: format!("github:{user_id}"),
+        user_id: Some(user_id),
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
@@ -98,6 +101,7 @@ fn test_validate_jwt_invalid_user_id() {
 
     let claims = Claims {
         sub: "not-a-number".to_string(),
+        user_id: None,
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),

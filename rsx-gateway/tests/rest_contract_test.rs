@@ -476,7 +476,7 @@ fn ws_handshake_responds_101() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             // empty secret = allow X-User-Id fallback
-            let _ = ws_handshake(&mut stream, "").await;
+            let _ = ws_handshake(&mut stream, "", true).await;
         });
 
         monoio::time::sleep(
@@ -552,7 +552,7 @@ fn ws_handshake_401_without_auth() {
             // Non-empty secret = JWT required,
             // X-User-Id fallback disabled.
             let _ =
-                ws_handshake(&mut stream, "secret").await;
+                ws_handshake(&mut stream, "secret", false).await;
         });
 
         monoio::time::sleep(

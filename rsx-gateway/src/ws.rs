@@ -69,8 +69,15 @@ pub async fn ws_handshake_from_request(
     stream: &mut TcpStream,
     request: &str,
     jwt_secret: &str,
+    allow_insecure_user_id: bool,
 ) -> io::Result<(String, u32)> {
-    ws_handshake_inner(stream, request, jwt_secret).await
+    ws_handshake_inner(
+        stream,
+        request,
+        jwt_secret,
+        allow_insecure_user_id,
+    )
+    .await
 }
 
 /// Perform WebSocket upgrade handshake on a raw
@@ -79,12 +86,18 @@ pub async fn ws_handshake_from_request(
 pub async fn ws_handshake(
     stream: &mut TcpStream,
     jwt_secret: &str,
+    allow_insecure_user_id: bool,
 ) -> io::Result<(String, u32, Vec<u8>)> {
     let (request, leftover) =
         read_http_request(stream).await?;
     let (key, uid) =
-        ws_handshake_inner(stream, &request, jwt_secret)
-            .await?;
+        ws_handshake_inner(
+            stream,
+            &request,
+            jwt_secret,
+            allow_insecure_user_id,
+        )
+        .await?;
     Ok((key, uid, leftover))
 }
 
@@ -92,6 +105,7 @@ async fn ws_handshake_inner(
     stream: &mut TcpStream,
     request: &str,
     jwt_secret: &str,
+    allow_insecure_user_id: bool,
 ) -> io::Result<(String, u32)> {
 
     // Extract Sec-WebSocket-Key
@@ -106,7 +120,11 @@ async fn ws_handshake_inner(
 
     // Extract user_id from auth headers
     let user_id =
-        match extract_user_id(request, jwt_secret) {
+        match extract_user_id(
+            request,
+            jwt_secret,
+            allow_insecure_user_id,
+        ) {
             Some(id) => id,
             None => {
                 let resp = b"HTTP/1.1 401 Unauthorized\r\n\
@@ -147,6 +165,7 @@ Sec-WebSocket-Accept: {}\r\n\
 fn extract_user_id(
     request: &str,
     jwt_secret: &str,
+    allow_insecure_user_id: bool,
 ) -> Option<u32> {
     for line in request.lines() {
         let lower = line.to_ascii_lowercase();
@@ -164,7 +183,7 @@ fn extract_user_id(
             .ok();
         }
     }
-    if jwt_secret.is_empty() {
+    if jwt_secret.is_empty() && allow_insecure_user_id {
         for line in request.lines() {
             let lower = line.to_ascii_lowercase();
             if lower.starts_with("x-user-id:") {

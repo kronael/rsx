@@ -22,10 +22,15 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt as pyjwt
 import psutil
 import pytest
 from fastapi.testclient import TestClient
 
+os.environ.setdefault(
+    "RSX_GW_JWT_SECRET",
+    "test-secret-at-least-32-bytes-long-please!",
+)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
@@ -388,6 +393,7 @@ def gateway():
         **os.environ,
         "RSX_GW_LISTEN": f"0.0.0.0:{GW_WS_PORT}",
         "RSX_GW_JWT_SECRET": "",
+        "RSX_GW_ALLOW_INSECURE_USER_ID": "1",
         "RSX_GW_IDLE_TIMEOUT_S": "60",
         "RSX_GW_ORDER_TIMEOUT_MS": "2000",
         "RSX_GW_MAX_PENDING": "10000",
@@ -461,6 +467,7 @@ def gateway_small_pending():
         **os.environ,
         "RSX_GW_LISTEN": f"0.0.0.0:{ws_port}",
         "RSX_GW_JWT_SECRET": "",
+        "RSX_GW_ALLOW_INSECURE_USER_ID": "1",
         "RSX_GW_IDLE_TIMEOUT_S": "60",
         "RSX_GW_ORDER_TIMEOUT_MS": "30000",
         "RSX_GW_MAX_PENDING": "1",
@@ -523,6 +530,22 @@ def gateway_small_pending():
 def client():
     """Create TestClient for server app."""
     return TestClient(server.app)
+
+
+@pytest.fixture
+def auth_headers():
+    token = pyjwt.encode(
+        {
+            "sub": "github:test-user",
+            "user_id": 1,
+            "aud": "rsx-gateway",
+            "iss": "rsx-auth",
+            "exp": int(time.time()) + 3600,
+        },
+        os.environ["RSX_GW_JWT_SECRET"],
+        algorithm="HS256",
+    )
+    return {"authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(autouse=True)

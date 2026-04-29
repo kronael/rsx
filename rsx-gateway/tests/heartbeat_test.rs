@@ -1,15 +1,26 @@
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::state::GatewayState;
 
+fn load_test_config() -> rsx_gateway::config::GatewayConfig {
+    unsafe {
+        std::env::set_var("RSX_GW_JWT_SECRET", "");
+        std::env::set_var(
+            "RSX_GW_ALLOW_INSECURE_USER_ID",
+            "1",
+        );
+    }
+    load_gateway_config()
+}
+
 #[test]
 fn heartbeat_config_interval_5s() {
-    let config = load_gateway_config();
+    let config = load_test_config();
     assert_eq!(config.heartbeat_interval_ms, 5_000);
 }
 
 #[test]
 fn heartbeat_config_timeout_10s() {
-    let config = load_gateway_config();
+    let config = load_test_config();
     assert_eq!(config.heartbeat_timeout_ms, 10_000);
 }
 
