@@ -31,14 +31,14 @@ TASKS_FILE = ROOT / ".ship" / "tasks.json"
 PROGRESS = ROOT / "PROGRESS.md"
 
 # Acceptance target: number of Playwright tests that must pass.
-ACCEPTANCE_TARGET = 223
+ACCEPTANCE_TARGET = 421
 
-# Keywords that mark a task as release-critical (blocks 223 passing).
+# Keywords that mark a task as release-critical (blocks acceptance passing).
 _RELEASE_CRITICAL = re.compile(
     r"playwright|fix 500|fix /x/|fix /api/|fix order|fix book"
     r"|fix risk|fix wal|fix maker|fix gateway|fix stress"
     r"|page routes|htmx partial|test all|rest/ws contract"
-    r"|e2e test|acceptance|223",
+    r"|e2e test|acceptance|421",
     re.IGNORECASE,
 )
 
@@ -123,7 +123,7 @@ def collapse_tasks(tasks: list[dict]) -> list[dict]:
 
 
 def classify_task(t: dict) -> str:
-    """Return 'release' if the task blocks the 223-test target, else 'feature'."""
+    """Return 'release' if the task blocks the acceptance target, else 'feature'."""
     desc = t.get("description", "")
     if _RELEASE_CRITICAL.search(desc):
         return "release"

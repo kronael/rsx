@@ -172,7 +172,13 @@ def check_phase_semantics(
     phase: str,
     counts: dict[str, int],
 ) -> None:
-    """Phase field must be semantically consistent with counts."""
+    """Phase field must be semantically consistent with publication state.
+
+    PROGRESS header counts are artifact/result counts, not a live work queue.
+    Keep semantics minimal:
+      - `complete` means no runnable work and no failures remain.
+      - `executing` means anything not yet complete.
+    """
     completed = counts.get("completed", 0)
     running = counts.get("running", 0)
     pending = counts.get("pending", 0)
@@ -197,17 +203,6 @@ def check_phase_semantics(
                 f"complete phase requires zero failed tasks"
             )
     elif phase == "executing":
-        if (
-            runnable == 0
-            and failed > 0
-            and completed < total
-        ):
-            fail(
-                f"phase=executing but runnable backlog is zero "
-                f"(running={running}, pending={pending}) with "
-                f"failed={failed} — stuck/zombie state; "
-                f"requeue failed tasks or mark phase blocked"
-            )
         if completed == total and runnable == 0 and failed == 0:
             fail(
                 f"phase=executing but completed={completed}/{total} "
