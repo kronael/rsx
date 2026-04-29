@@ -29,11 +29,14 @@ pub struct PortfolioMargin {
 
 impl PortfolioMargin {
     /// RISK.md §3. Full portfolio margin calculation.
+    /// `frozen` is the sum of margin reserved for the
+    /// account's open orders (see `RiskShard::frozen_for_user`).
     pub fn calculate(
         &self,
         account: &Account,
         positions: &[&Position],
         mark_prices: &[i64],
+        frozen: i64,
     ) -> MarginState {
         let mut upnl = 0i64;
         let mut im = 0i64;
@@ -81,7 +84,7 @@ impl PortfolioMargin {
             account.collateral.saturating_add(upnl);
         let available = equity
             .saturating_sub(im)
-            .saturating_sub(account.frozen_margin);
+            .saturating_sub(frozen);
         MarginState {
             equity,
             unrealized_pnl: upnl,
@@ -99,6 +102,7 @@ impl PortfolioMargin {
         order: &OrderRequest,
         mark_prices: &[i64],
         taker_fee_bps: i64,
+        frozen: i64,
     ) -> Result<i64, RejectReason> {
         if order.is_liquidation {
             return Ok(0);
@@ -107,7 +111,7 @@ impl PortfolioMargin {
             return Ok(0);
         }
         let state =
-            self.calculate(account, positions, mark_prices);
+            self.calculate(account, positions, mark_prices, frozen);
         let notional_128 = order.price as i128
             * order.qty as i128;
         let order_notional = i64::try_from(notional_128)

@@ -6,6 +6,7 @@ fn make_engine() -> LiquidationEngine {
         1_000_000_000, // 1s
         10,            // base_slip_bps
         10,            // max_rounds
+        500,           // max_slip_bps
     )
 }
 
@@ -207,6 +208,7 @@ fn maybe_process_marks_done_after_max_rounds() {
         0, // no delay
         10,
         3, // max 3 rounds
+        500,
     );
     e.enqueue(1, 100, 0);
 
@@ -249,7 +251,7 @@ fn cancel_if_recovered_noop_when_not_active() {
 
 #[test]
 fn remove_done_cleans_completed() {
-    let mut e = LiquidationEngine::new(0, 10, 1);
+    let mut e = LiquidationEngine::new(0, 10, 1, 500);
     e.enqueue(1, 100, 0);
     // round 1 places order, round 2 > max_rounds triggers Done
     let (_, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
@@ -284,6 +286,7 @@ fn multiple_users_independent_rounds() {
         1_000_000_000,
         10,
         10,
+        500,
     );
     e.enqueue(1, 100, 0);
     e.enqueue(2, 100, 500_000_000); // enqueued later
@@ -383,7 +386,7 @@ fn multiple_positions_all_get_orders() {
 #[test]
 fn partial_fill_reduces_position() {
     // Simulate position reduction between rounds
-    let mut e = LiquidationEngine::new(0, 10, 10);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500);
     e.enqueue(1, 0, 0);
     // Round 1: position=100
     let (orders, _) = e.maybe_process(
@@ -403,7 +406,7 @@ fn partial_fill_reduces_position() {
 
 #[test]
 fn full_fill_closes_position() {
-    let mut e = LiquidationEngine::new(0, 10, 10);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500);
     e.enqueue(1, 0, 0);
     // Round 1: places order
     let (orders, _) = e.maybe_process(
@@ -471,7 +474,7 @@ fn frozen_margin_released_on_entry() {
 fn mark_price_update_rechecks_liquidating_users() {
     // Engine uses get_mark_fn at maybe_process time.
     // Changing mark between calls changes behavior.
-    let mut e = LiquidationEngine::new(0, 10, 10);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500);
     e.enqueue(1, 0, 0);
     // Round 1 with mark=50000
     let (orders, _) = e.maybe_process(
@@ -513,7 +516,7 @@ fn order_failed_other_escalates_next_round() {
     // After a failed order, the round was already
     // incremented. Next maybe_process with sufficient
     // delay fires at higher round (more slippage).
-    let mut e = LiquidationEngine::new(0, 10, 10);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500);
     e.enqueue(1, 0, 0);
     // Round 1
     let (orders, _) = e.maybe_process(
@@ -538,6 +541,7 @@ fn first_order_fires_immediately_no_delay() {
         5_000_000_000, // 5s base delay
         10,
         10,
+        500,
     );
     e.enqueue(1, 0, 0);
     // First order fires at t=0 (last_order_ns=0)
@@ -551,7 +555,7 @@ fn first_order_fires_immediately_no_delay() {
 
 #[test]
 fn mark_price_zero_pauses_round_no_increment() {
-    let mut e = LiquidationEngine::new(0, 10, 10);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500);
     e.enqueue(1, 0, 0);
     // Mark = 0 -> skip (no order, no round increment)
     let (orders, _) = e.maybe_process(
@@ -571,6 +575,7 @@ fn multiple_symbols_independent_round_timers() {
         1_000_000_000, // 1s
         10,
         10,
+        500,
     );
     e.enqueue(1, 0, 0);
     e.enqueue(1, 1, 500_000_000); // later
@@ -605,6 +610,7 @@ fn rapid_fire_maybe_process_no_duplicate_orders() {
         1_000_000_000,
         10,
         10,
+        500,
     );
     e.enqueue(1, 0, 0);
     // First call at t=1s fires order
@@ -633,7 +639,7 @@ fn rapid_fire_maybe_process_no_duplicate_orders() {
 
 #[test]
 fn socialized_loss_when_round_exceeds_max_rounds() {
-    let mut e = LiquidationEngine::new(0, 10, 2);
+    let mut e = LiquidationEngine::new(0, 10, 2, 500);
     e.enqueue(1, 0, 0);
     // Round 1: order
     let (orders, losses) = e.maybe_process(
@@ -671,7 +677,7 @@ fn socialized_loss_when_round_exceeds_max_rounds() {
 
 #[test]
 fn base_delay_zero_all_rounds_immediate() {
-    let mut e = LiquidationEngine::new(0, 10, 5);
+    let mut e = LiquidationEngine::new(0, 10, 5, 500);
     e.enqueue(1, 0, 0);
     // All rounds fire at same timestamp
     for i in 0..5 {
@@ -699,7 +705,7 @@ fn base_delay_zero_all_rounds_immediate() {
 
 #[test]
 fn max_rounds_zero_allows_round_one_then_socializes() {
-    let mut e = LiquidationEngine::new(0, 10, 0);
+    let mut e = LiquidationEngine::new(0, 10, 0, 500);
     e.enqueue(1, 0, 0);
     // Round 1 > max_rounds(0): immediate socialized loss
     let (orders, losses) = e.maybe_process(

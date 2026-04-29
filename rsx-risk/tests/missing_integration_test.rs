@@ -384,7 +384,7 @@ fn liquidation_cascade_independent_per_user_symbol() {
 fn insurance_fund_debited_on_socialized_loss() {
     // Set up liquidation engine with max_rounds=1 so it immediately
     // escalates to socialized loss on the second tick.
-    let mut engine = LiquidationEngine::new(0, 10, 1);
+    let mut engine = LiquidationEngine::new(0, 10, 1, 500);
     let mut fund = InsuranceFund::new(0, 1_000_000);
 
     engine.enqueue(1, 0, 0);

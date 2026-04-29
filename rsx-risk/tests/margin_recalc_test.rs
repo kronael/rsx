@@ -27,7 +27,7 @@ fn margin_check_detects_undercollateralized() {
     // equity = 1000 + (-9000) = -8000
     // notional = 100*10 = 1000, mm = 50
     let a = Account::new(1, 1000);
-    let state = pm.calculate(&a, &[&p], &[10]);
+    let state = pm.calculate(&a, &[&p], &[10], 0);
     assert!(state.equity < state.maintenance_margin);
     assert!(pm.needs_liquidation(&state));
 }
@@ -38,7 +38,7 @@ fn margin_check_passes_healthy_account() {
     let mut p = Position::new(1, 0);
     p.apply_fill(0, 100, 10, 1);
     let a = Account::new(1, 100_000);
-    let state = pm.calculate(&a, &[&p], &[100]);
+    let state = pm.calculate(&a, &[&p], &[100], 0);
     // equity=100000, im=100, mm=50
     assert!(state.equity > state.initial_margin);
     assert!(!pm.needs_liquidation(&state));

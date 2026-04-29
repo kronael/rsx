@@ -387,7 +387,6 @@ async fn both_crash_cold_start_from_postgres() {
         Account {
             user_id: 100,
             collateral: 1000_0000_0000,
-            frozen_margin: 0,
             version: 1,
         },
     );
@@ -415,6 +414,7 @@ async fn both_crash_cold_start_from_postgres() {
         positions,
         insurance_funds: FxHashMap::default(),
         tips,
+        frozen_orders: FxHashMap::default(),
     };
 
     shard.load_state(state);

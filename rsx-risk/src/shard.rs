@@ -7,10 +7,11 @@ use crate::liquidation::LiquidationEngine;
 use crate::liquidation::LiquidationOrder;
 use crate::margin::ExposureIndex;
 use crate::margin::PortfolioMargin;
+use crate::persist::FillRecord;
+use crate::persist::FrozenOrderRecord;
 use crate::persist::FundingRecord;
 use crate::persist::LiquidationRecord;
 use crate::persist::PersistEvent;
-use crate::persist::FillRecord;
 use crate::position::Position;
 use crate::price::IndexPrice;
 use crate::replica::ReplicaState;
@@ -127,10 +128,24 @@ impl RiskShard {
         self.accounts = state.accounts;
         self.positions = state.positions;
         self.insurance_funds = state.insurance_funds;
-        // frozen_orders rebuilt from WAL replay
+        self.frozen_orders = state.frozen_orders;
         let len = self.tips.len().min(state.tips.len());
         self.tips[..len]
             .copy_from_slice(&state.tips[..len]);
+    }
+
+    /// Sum of margin reserved for the user's open orders.
+    /// Derived from `frozen_orders`; the only authoritative
+    /// view of frozen margin.
+    pub fn frozen_for_user(&self, user_id: u32) -> i64 {
+        let mut total: i64 = 0;
+        for &(owner, amount) in self.frozen_orders.values()
+        {
+            if owner == user_id {
+                total = total.saturating_add(amount);
+            }
+        }
+        total
     }
 
     fn push_persist(&mut self, event: PersistEvent) {
@@ -398,10 +413,12 @@ impl RiskShard {
             None => return,
         };
         let positions = self.positions_for_user(user_id);
+        let frozen = self.frozen_for_user(user_id);
         let state = self.margin.calculate(
             account,
             &positions,
             &self.mark_prices,
+            frozen,
         );
         let syms: Vec<u32> = positions
             .iter()
@@ -470,6 +487,7 @@ impl RiskShard {
         let account = &self.accounts[&order.user_id];
         let positions =
             self.positions_for_user(order.user_id);
+        let frozen = self.frozen_for_user(order.user_id);
 
         // Use cached fallback (index fills mark=0 gaps).
         let mark_prices = &self.fallback_mark_prices;
@@ -477,6 +495,7 @@ impl RiskShard {
             account,
             &positions,
             mark_prices,
+            frozen,
         );
         if self.margin.needs_liquidation(&state)
             && !order.is_liquidation
@@ -504,25 +523,9 @@ impl RiskShard {
             order,
             mark_prices,
             self.taker_fee_bps[sid],
+            frozen,
         ) {
             Ok(margin_needed) => {
-                let Some(acct) =
-                    self.accounts.get_mut(&order.user_id)
-                else {
-                    error!(
-                        "missing account after ensure: \
-                         user={}",
-                        order.user_id
-                    );
-                    return OrderResponse::Rejected {
-                        user_id: order.user_id,
-                        reason:
-                            RejectReason::InsufficientMargin,
-                        order_id_hi: order.order_id_hi,
-                        order_id_lo: order.order_id_lo,
-                    };
-                };
-                acct.freeze_margin(margin_needed);
                 self.frozen_orders.insert(
                     order_key(
                         order.order_id_hi,
@@ -531,9 +534,16 @@ impl RiskShard {
                     (order.user_id, margin_needed),
                 );
                 self.orders_processed += 1;
-                let acct_clone = acct.clone();
                 self.push_persist(
-                    PersistEvent::Account(acct_clone),
+                    PersistEvent::FrozenInsert(
+                        FrozenOrderRecord {
+                            user_id: order.user_id,
+                            order_id_hi: order.order_id_hi,
+                            order_id_lo: order.order_id_lo,
+                            symbol_id: order.symbol_id,
+                            amount: margin_needed,
+                        },
+                    ),
                 );
                 OrderResponse::Accepted {
                     user_id: order.user_id,
@@ -562,18 +572,18 @@ impl RiskShard {
             return;
         }
         let key = order_key(order_id_hi, order_id_lo);
-        let entry = self.frozen_orders.remove(&key);
-        let Some((owner, amount)) = entry else {
+        let Some((owner, _)) = self.frozen_orders.remove(&key)
+        else {
             return;
         };
         if owner != user_id {
             return;
         }
-        if let Some(acct) = self.accounts.get_mut(&user_id) {
-            acct.release_margin(amount);
-            let snapshot = acct.clone();
-            self.push_persist(PersistEvent::Account(snapshot));
-        }
+        self.push_persist(PersistEvent::FrozenRemove {
+            user_id,
+            order_id_hi,
+            order_id_lo,
+        });
     }
 
     /// Reconstruct a frozen order from WAL replay.
@@ -615,16 +625,14 @@ impl RiskShard {
         );
         let margin_needed =
             order_im.saturating_add(order_fee);
-        let Some(acct) = self.accounts.get_mut(&user_id)
-        else {
+        if !self.accounts.contains_key(&user_id) {
             error!(
                 "missing account after ensure during \
                  replay: user={}",
                 user_id
             );
             return;
-        };
-        acct.freeze_margin(margin_needed);
+        }
         self.frozen_orders.insert(
             order_key(order_id_hi, order_id_lo),
             (user_id, margin_needed),
