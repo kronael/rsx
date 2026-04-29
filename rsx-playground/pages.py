@@ -727,7 +727,7 @@ def overview_page():
   </div>
   <div class="flex gap-3 text-xs items-center">
     <span id="gw-mode-badge"
-      hx-get="/x/gateway-mode"
+      hx-get="./x/gateway-mode"
       hx-trigger="load"
       hx-target="#gw-mode-badge"
       hx-swap="outerHTML"
