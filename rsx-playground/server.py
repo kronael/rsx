@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import aiohttp
+import jwt as pyjwt
 import psutil
 import uvicorn
 from fastapi import FastAPI
@@ -74,6 +75,9 @@ AUTH_HTTP = os.environ.get(
     "AUTH_HTTP", "http://localhost:8082"
 )
 WEBUI_DIST = ROOT / "rsx-webui" / "dist"
+PLAYGROUND_ADMIN_TOKEN = os.environ.get(
+    "PLAYGROUND_ADMIN_TOKEN", ""
+)
 
 # ── import start script's config ────────────────────────
 
@@ -347,6 +351,82 @@ _RESTART_MAX_DELAY = 60.0  # backoff ceiling
 
 _watcher_task: asyncio.Task | None = None
 
+
+def _register_managed_process(
+    name: str,
+    proc: asyncio.subprocess.Process,
+    binary: str,
+    env: dict,
+) -> asyncio.Task:
+    output_task = asyncio.create_task(
+        pipe_output(name, proc.stdout),
+        name=f"log-{name}",
+    )
+    managed[name] = {
+        "proc": proc,
+        "binary": binary,
+        "env": env,
+        "output_task": output_task,
+    }
+    return output_task
+
+
+async def _await_output_task(info: dict) -> None:
+    output_task = info.get("output_task")
+    if output_task is None:
+        return
+    task_loop = output_task.get_loop()
+    if task_loop.is_closed():
+        return
+    if task_loop is not asyncio.get_running_loop():
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(output_task),
+            timeout=1.0,
+        )
+    except asyncio.TimeoutError:
+        output_task.cancel()
+        try:
+            await output_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _wait_for_pid_exit(
+    pid: int,
+    timeout: float,
+) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+def _close_process_transport(
+    proc: asyncio.subprocess.Process,
+) -> None:
+    transport = getattr(proc, "_transport", None)
+    if transport is None:
+        return
+    try:
+        transport.close()
+    except RuntimeError:
+        pass
+
+
+async def _remove_managed_process(name: str) -> dict | None:
+    info = managed.pop(name, None)
+    if info is None:
+        return None
+    _close_process_transport(info["proc"])
+    await _await_output_task(info)
+    return info
+
 # ── orchestrator session lifecycle ──────────────────────
 # At most ONE test run may hold the session lock at a time.
 # Concurrent callers get 409 Conflict (hard-fail the run).
@@ -477,9 +557,7 @@ async def spawn_process(name, binary, env):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    managed[name] = {
-        "proc": proc, "binary": binary, "env": env,
-    }
+    _register_managed_process(name, proc, binary, env)
     # Register for auto-restart watching.  Preserve existing restart
     # counters if this is a watcher-triggered restart; otherwise reset.
     if name not in _restart_state:
@@ -493,7 +571,6 @@ async def spawn_process(name, binary, env):
     else:
         # Clear intentional flag so future crashes are auto-restarted.
         _restart_state[name]["intentional"] = False
-    asyncio.create_task(pipe_output(name, proc.stdout))
     # write PID file before stability check
     PID_DIR.mkdir(parents=True, exist_ok=True)
     (PID_DIR / f"{name}.pid").write_text(str(proc.pid))
@@ -505,8 +582,7 @@ async def spawn_process(name, binary, env):
         pid_file = PID_DIR / f"{name}.pid"
         if pid_file.exists():
             pid_file.unlink()
-        if name in managed:
-            del managed[name]
+        await _remove_managed_process(name)
         _restart_state.pop(name, None)
         return {"error": f"process exited immediately (code "
                          f"{proc.returncode})"}
@@ -527,21 +603,26 @@ async def stop_process(name):
         pid_file = PID_DIR / f"{name}.pid"
         if pid_file.exists():
             pid_file.unlink()
-        del managed[name]
+        await _remove_managed_process(name)
         _restart_state.pop(name, None)
         return {"status": f"{name} already stopped"}
-    proc.terminate()
     try:
-        await asyncio.wait_for(proc.wait(), timeout=5.0)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        os.kill(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    exited = await _wait_for_pid_exit(proc.pid, timeout=5.0)
+    if not exited:
+        try:
+            os.kill(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await _wait_for_pid_exit(proc.pid, timeout=2.0)
+    _close_process_transport(proc)
     pid_file = PID_DIR / f"{name}.pid"
     if pid_file.exists():
         pid_file.unlink()
     # Clean up managed and restart tracking.
-    if name in managed:
-        del managed[name]
+    await _remove_managed_process(name)
     _restart_state.pop(name, None)
     return {"status": f"{name} stopped"}
 
@@ -557,15 +638,19 @@ async def kill_process(name):
         rs["intentional"] = True
     proc = info["proc"]
     if proc.returncode is not None:
-        del managed[name]
+        await _remove_managed_process(name)
         _restart_state.pop(name, None)
         return {"status": f"{name} already stopped"}
-    proc.kill()
-    await proc.wait()
+    try:
+        os.kill(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    await _wait_for_pid_exit(proc.pid, timeout=2.0)
+    _close_process_transport(proc)
     pid_file = PID_DIR / f"{name}.pid"
     if pid_file.exists():
         pid_file.unlink()
-    del managed[name]
+    await _remove_managed_process(name)
     _restart_state.pop(name, None)
     return {"status": f"{name} killed"}
 
@@ -699,22 +784,22 @@ async def do_build(release=False):
     """Run cargo build, return success."""
     build_log.clear()
     build_log.append("building...")
-    cmd = ["cargo", "build", "--workspace"]
+    cmd = [_cargo_bin(), "build", "--workspace"]
     if release:
         cmd.append("--release")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
+    proc = subprocess.Popen(
+        cmd,
         cwd=str(ROOT),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     while True:
-        line = await proc.stdout.readline()
+        line = await asyncio.to_thread(proc.stdout.readline)
         if not line:
             break
-        build_log.append(
-            line.decode("utf-8", errors="replace").rstrip())
-    await proc.wait()
+        build_log.append(line.rstrip())
+    await asyncio.to_thread(proc.wait)
     ok = proc.returncode == 0
     build_log.append("build ok" if ok else "build FAILED")
     return ok
@@ -757,7 +842,7 @@ async def do_maker_start() -> bool:
     if _maker_running():
         return True
     if MAKER_NAME in managed:
-        del managed[MAKER_NAME]
+        await _remove_managed_process(MAKER_NAME)
     if not MAKER_SCRIPT.exists():
         return False
     # Load saved maker config if present
@@ -790,17 +875,17 @@ async def do_maker_start() -> bool:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    managed[MAKER_NAME] = {
-        "proc": proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": env,
-    }
+    _register_managed_process(
+        MAKER_NAME,
+        proc,
+        str(MAKER_SCRIPT),
+        env,
+    )
     PID_DIR.mkdir(parents=True, exist_ok=True)
     (PID_DIR / f"{MAKER_NAME}.pid").write_text(str(proc.pid))
-    asyncio.create_task(pipe_output(MAKER_NAME, proc.stdout))
     await asyncio.sleep(0.2)
     if proc.returncode is not None:
-        del managed[MAKER_NAME]
+        await _remove_managed_process(MAKER_NAME)
         (PID_DIR / f"{MAKER_NAME}.pid").unlink(missing_ok=True)
         return False
     return True
@@ -965,6 +1050,8 @@ async def lifespan(app):
         except asyncio.TimeoutError:
             info["proc"].kill()
             await info["proc"].wait()
+        _close_process_transport(info["proc"])
+        await _await_output_task(info)
     # Clear managed dict
     managed.clear()
     # cleanup server PID file
@@ -1009,6 +1096,114 @@ async def static_file(filename: str):
 def audit_log(endpoint: str, action: str):
     ts = datetime.now().strftime("%b %d %H:%M:%S")
     print(f"{ts} audit: {endpoint} {action}")
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    return host in {
+        "127.0.0.1",
+        "::1",
+        "localhost",
+        "testclient",
+    }
+
+
+def _allow_insecure_user_id() -> bool:
+    return os.environ.get(
+        "PLAYGROUND_ALLOW_INSECURE_USER_ID", ""
+    ).lower() in {"1", "true", "yes", "on"}
+
+
+def _extract_token_from_headers(headers) -> str | None:
+    auth = headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:].strip()
+    cookie = headers.get("cookie", "")
+    for part in cookie.split(";"):
+        item = part.strip()
+        if item.startswith("rsx_token="):
+            return item.split("=", 1)[1].strip()
+    return None
+
+
+def _decode_user_token(token: str) -> tuple[int | None, str]:
+    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+    if not secret:
+        return None, "RSX_GW_JWT_SECRET not configured"
+    try:
+        claims = pyjwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            audience="rsx-gateway",
+            issuer="rsx-auth",
+        )
+    except pyjwt.InvalidTokenError as exc:
+        return None, f"invalid token: {exc}"
+    user_id = claims.get("user_id")
+    if not isinstance(user_id, int):
+        return None, "token missing numeric user_id"
+    return user_id, ""
+
+
+def _request_auth_headers(request: Request) -> tuple[dict, str]:
+    token = _extract_token_from_headers(request.headers)
+    if token:
+        return {"authorization": f"Bearer {token}"}, ""
+    if (
+        _allow_insecure_user_id()
+        and _is_loopback_host(request.client.host if request.client else None)
+    ):
+        user_id = request.headers.get("x-user-id")
+        if user_id:
+            return {"x-user-id": user_id}, ""
+    return {}, "missing authenticated user context"
+
+
+def _resolve_request_user(request: Request) -> tuple[int | None, str]:
+    token = _extract_token_from_headers(request.headers)
+    if token:
+        return _decode_user_token(token)
+    if (
+        _allow_insecure_user_id()
+        and _is_loopback_host(request.client.host if request.client else None)
+    ):
+        raw = request.headers.get("x-user-id")
+        if raw:
+            try:
+                return int(raw), ""
+            except ValueError:
+                return None, "invalid x-user-id header"
+    return None, "missing authenticated user context"
+
+
+def _require_admin_request(request: Request):
+    host = request.client.host if request.client else None
+    if _is_loopback_host(host):
+        return None
+    if PLAYGROUND_ADMIN_TOKEN:
+        supplied = request.headers.get("x-admin-token", "")
+        if supplied == PLAYGROUND_ADMIN_TOKEN:
+            return None
+        return JSONResponse(
+            {"error": "admin token required"},
+            status_code=401,
+        )
+    return JSONResponse(
+        {"error": "admin access requires loopback client or PLAYGROUND_ADMIN_TOKEN"},
+        status_code=403,
+    )
+
+
+def _require_private_user(request: Request) -> tuple[int | None, Response | None]:
+    user_id, err = _resolve_request_user(request)
+    if user_id is not None:
+        return user_id, None
+    return None, JSONResponse(
+        {"error": err},
+        status_code=401,
+    )
 
 
 DESTRUCTIVE_ENDPOINTS = {
@@ -1087,6 +1282,17 @@ def human_uptime(start_time):
     if elapsed < 3600:
         return f"{elapsed / 60:.0f}m{elapsed % 60:.0f}s"
     return f"{elapsed / 3600:.0f}h{(elapsed % 3600) / 60:.0f}m"
+
+
+def _cargo_bin() -> str:
+    configured = os.environ.get("RSX_CARGO_BIN", "").strip()
+    if configured:
+        return configured
+    found = shutil.which("cargo")
+    if found:
+        return found
+    fallback = Path.home() / ".cargo" / "bin" / "cargo"
+    return str(fallback)
 
 
 # Cache psutil.Process objects by PID so cpu_percent() has a
@@ -3123,8 +3329,11 @@ async def api_build_log():
 
 
 @app.post("/api/build")
-async def api_build():
+async def api_build(request: Request):
     """Trigger cargo build."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     ok = await do_build()
     return HTMLResponse(
         f'<span class="text-{"emerald" if ok else "red"}'
@@ -3138,6 +3347,9 @@ async def api_start_all(
     scenario: str = Query("minimal"),
 ):
     """Build + start all processes."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     ok, err = _check_run_id(request)
     if not ok:
         return JSONResponse(
@@ -3161,6 +3373,9 @@ async def api_start_all(
 @app.post("/api/processes/all/stop")
 async def api_stop_all(request: Request):
     """Stop all managed processes."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     ok, err = _check_run_id(request)
     if not ok:
         return JSONResponse(
@@ -3178,7 +3393,14 @@ async def api_stop_all(request: Request):
 
 
 @app.post("/api/processes/{name}/{action}")
-async def api_process_action(name: str, action: str):
+async def api_process_action(
+    request: Request,
+    name: str,
+    action: str,
+):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if action not in ("start", "stop", "kill", "restart"):
         return JSONResponse(
             {"error": f"unknown action: {action}"},
@@ -3351,6 +3573,9 @@ async def api_process_action(name: str, action: str):
 
 @app.post("/api/scenario/switch")
 async def api_scenario_switch(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     denied = check_confirm(request, "/api/scenario/switch")
     if denied:
         return denied
@@ -3419,8 +3644,11 @@ async def api_logs(
 
 
 @app.post("/api/logs/clear")
-async def api_logs_clear():
+async def api_logs_clear(request: Request):
     """Truncate all log files in ./log/ directory."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     cleared = []
     if LOG_DIR.exists():
         for p in LOG_DIR.glob("*.log"):
@@ -3497,7 +3725,24 @@ async def x_stats():
 async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     """Send order to Gateway WebSocket if available."""
     try:
-        headers = {"x-user-id": str(user_id)}
+        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+        if secret:
+            token = pyjwt.encode(
+                {
+                    "sub": f"playground:{user_id}",
+                    "user_id": user_id,
+                    "aud": "rsx-gateway",
+                    "iss": "rsx-auth",
+                    "exp": int(time.time()) + 3600,
+                },
+                secret,
+                algorithm="HS256",
+            )
+            headers = {"authorization": f"Bearer {token}"}
+        elif _allow_insecure_user_id():
+            headers = {"x-user-id": str(user_id)}
+        else:
+            return None, "gateway auth is not configured", None
         start_ns = time.perf_counter_ns()
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
@@ -3549,6 +3794,9 @@ def _trim_recent_orders():
 
 @app.post("/api/orders/test")
 async def api_orders_test(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     idem_key = request.headers.get("x-idempotency-key")
     if idem_key:
         now = time.time()
@@ -4438,7 +4686,7 @@ async def do_stress_start(cfg: dict | None = None) -> bool:
     if _stress_running():
         return True
     if STRESS_NAME in managed:
-        del managed[STRESS_NAME]
+        await _remove_managed_process(STRESS_NAME)
     if not STRESS_SCRIPT.exists():
         return False
     _scfg: dict = cfg or {}
@@ -4465,18 +4713,17 @@ async def do_stress_start(cfg: dict | None = None) -> bool:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    managed[STRESS_NAME] = {
-        "proc": proc,
-        "binary": str(STRESS_SCRIPT),
-        "env": env,
-    }
+    _register_managed_process(
+        STRESS_NAME,
+        proc,
+        str(STRESS_SCRIPT),
+        env,
+    )
     PID_DIR.mkdir(parents=True, exist_ok=True)
     (PID_DIR / f"{STRESS_NAME}.pid").write_text(str(proc.pid))
-    asyncio.create_task(
-        pipe_output(STRESS_NAME, proc.stdout))
     await asyncio.sleep(0.2)
     if proc.returncode is not None:
-        del managed[STRESS_NAME]
+        await _remove_managed_process(STRESS_NAME)
         (PID_DIR / f"{STRESS_NAME}.pid").unlink(
             missing_ok=True)
         return False
@@ -4568,6 +4815,9 @@ async def api_stress_run(
 
 @app.post("/api/stress/start")
 async def api_stress_start(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if _stress_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
@@ -4595,6 +4845,9 @@ async def api_stress_start(request: Request):
 
 @app.post("/api/stress/stop")
 async def api_stress_stop(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if not _stress_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
@@ -4738,7 +4991,10 @@ async def api_orders_invalid():
 
 
 @app.post("/api/users/create")
-async def api_create_user():
+async def api_create_user(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if pg_pool is None:
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
@@ -4766,9 +5022,13 @@ async def api_create_user():
 
 @app.post("/api/users/{user_id}/deposit")
 async def api_deposit(
+    request: Request,
     user_id: int,
     amount: int = Form(100_000),
 ):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     _user_balances[user_id] = (
         _user_balances.get(user_id, 0) + amount)
     bal = _user_balances[user_id]
@@ -4780,9 +5040,13 @@ async def api_deposit(
 
 @app.post("/api/risk/liquidate")
 async def api_liquidate(
+    request: Request,
     user_id: int = Form(0),
     symbol_id: int = Form(10),
 ):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     entry = {
         "user_id": user_id,
         "symbol_id": symbol_id,
@@ -4847,7 +5111,10 @@ async def api_wal_dump():
 
 
 @app.get("/api/risk/users/{user_id}")
-async def api_risk_user(user_id: int):
+async def api_risk_user(request: Request, user_id: int):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     data = await pg_query(
         "SELECT * FROM positions "
         "WHERE user_id = $1",
@@ -4860,7 +5127,14 @@ async def api_risk_user(user_id: int):
 
 
 @app.post("/api/risk/users/{user_id}/{action}")
-async def api_risk_action(user_id: int, action: str):
+async def api_risk_action(
+    request: Request,
+    user_id: int,
+    action: str,
+):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if action not in ("freeze", "unfreeze"):
         return JSONResponse(
             {"error": f"unknown action: {action}"},
@@ -5258,7 +5532,7 @@ async def do_auth_start() -> bool:
     if _auth_running():
         return True
     if AUTH_NAME in managed:
-        del managed[AUTH_NAME]
+        await _remove_managed_process(AUTH_NAME)
     if not AUTH_PYTHON.exists():
         return False
     if not _auth_configured():
@@ -5295,17 +5569,17 @@ async def do_auth_start() -> bool:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    managed[AUTH_NAME] = {
-        "proc": proc,
-        "binary": str(AUTH_PYTHON),
-        "env": env,
-    }
+    _register_managed_process(
+        AUTH_NAME,
+        proc,
+        str(AUTH_PYTHON),
+        env,
+    )
     PID_DIR.mkdir(parents=True, exist_ok=True)
     (PID_DIR / f"{AUTH_NAME}.pid").write_text(str(proc.pid))
-    asyncio.create_task(pipe_output(AUTH_NAME, proc.stdout))
     await asyncio.sleep(0.3)
     if proc.returncode is not None:
-        del managed[AUTH_NAME]
+        await _remove_managed_process(AUTH_NAME)
         (PID_DIR / f"{AUTH_NAME}.pid").unlink(missing_ok=True)
         return False
     return True
@@ -5325,8 +5599,7 @@ async def do_auth_stop() -> None:
             await proc.wait()
     except ProcessLookupError:
         pass
-    if AUTH_NAME in managed:
-        del managed[AUTH_NAME]
+    await _remove_managed_process(AUTH_NAME)
     (PID_DIR / f"{AUTH_NAME}.pid").unlink(missing_ok=True)
 
 
@@ -5343,7 +5616,10 @@ async def api_auth_status():
 
 
 @app.post("/api/auth/start")
-async def api_auth_start():
+async def api_auth_start(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if not _auth_configured():
         return JSONResponse(
             {"error": "rsx-auth not configured "
@@ -5361,7 +5637,10 @@ async def api_auth_start():
 
 
 @app.post("/api/auth/stop")
-async def api_auth_stop():
+async def api_auth_stop(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     await do_auth_stop()
     return {"ok": True}
 
@@ -5390,6 +5669,9 @@ def _maker_running() -> bool:
 
 @app.post("/api/maker/start")
 async def api_maker_start(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if _maker_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
@@ -5412,6 +5694,9 @@ async def api_maker_start(request: Request):
 
 @app.post("/api/maker/stop")
 async def api_maker_stop(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if not _maker_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
@@ -5445,6 +5730,9 @@ MAKER_CONFIG = TMP / "maker-config.json"
 
 @app.patch("/api/maker/config")
 async def api_maker_config(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     body = await request.json()
     mid_override = body.get("mid_override")
     if not isinstance(mid_override, (int, float)):
@@ -5473,6 +5761,9 @@ async def api_maker_config_save(
     levels: int = Form(5),
 ):
     """Save maker config and restart if running."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     MAKER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     # Preserve existing mid_override if present
     try:
@@ -5515,6 +5806,9 @@ async def api_maker_config_save(
 @app.post("/api/maker/restart")
 async def api_maker_restart(request: Request):
     """Restart the market maker."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     if _maker_running():
         await stop_process(MAKER_NAME)
         await asyncio.sleep(0.3)
@@ -5867,11 +6161,18 @@ async def x_maker_live():
 async def ws_private_proxy(ws: WebSocket):
     """Proxy private WS to Gateway."""
     await ws.accept()
-    headers = {"x-user-id": ws.headers.get(
-        "x-user-id", "1")}
-    auth = ws.headers.get("authorization")
-    if auth:
-        headers["authorization"] = auth
+    token = _extract_token_from_headers(ws.headers)
+    if token:
+        headers = {"authorization": f"Bearer {token}"}
+    elif (
+        _allow_insecure_user_id()
+        and _is_loopback_host(ws.client.host if ws.client else None)
+        and ws.headers.get("x-user-id")
+    ):
+        headers = {"x-user-id": ws.headers["x-user-id"]}
+    else:
+        await ws.close(code=4001, reason="authentication required")
+        return
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
@@ -6179,16 +6480,27 @@ async def v1_funding(
 
 
 @app.get("/v1/positions")
-async def v1_positions(user_id: int = Query(default=0)):
+async def v1_positions(
+    request: Request,
+    user_id: int | None = Query(default=None),
+):
     """Return open positions derived from WAL fills."""
+    resolved_user_id, denied = _require_private_user(request)
+    if denied:
+        return denied
+    if user_id is not None and user_id != resolved_user_id:
+        return JSONResponse(
+            {"error": "user_id does not match authenticated user"},
+            status_code=403,
+        )
     fills = parse_wal_fills(max_fills=1000)
     # net qty per symbol for this user
     net: dict[int, int] = {}
     entry: dict[int, int] = {}
     for f in fills:
-        if user_id and (
-            f["taker_uid"] != user_id
-            and f["maker_uid"] != user_id
+        if resolved_user_id and (
+            f["taker_uid"] != resolved_user_id
+            and f["maker_uid"] != resolved_user_id
         ):
             continue
         sid = f["symbol_id"]
@@ -6225,17 +6537,26 @@ async def v1_positions(user_id: int = Query(default=0)):
 
 @app.get("/v1/fills")
 async def v1_fills(
+    request: Request,
     user_id: int = Query(default=0),
     sym: int = Query(default=0),
     limit: int = Query(default=50),
 ):
     """Return recent fills from WAL."""
+    resolved_user_id, denied = _require_private_user(request)
+    if denied:
+        return denied
+    if user_id and user_id != resolved_user_id:
+        return JSONResponse(
+            {"error": "user_id does not match authenticated user"},
+            status_code=403,
+        )
     fills = parse_wal_fills(max_fills=limit * 4)
     result = []
     for f in fills:
-        if user_id and (
-            f["taker_uid"] != user_id
-            and f["maker_uid"] != user_id
+        if resolved_user_id and (
+            f["taker_uid"] != resolved_user_id
+            and f["maker_uid"] != resolved_user_id
         ):
             continue
         if sym and f["symbol_id"] != sym:
@@ -6258,14 +6579,25 @@ async def v1_fills(
 
 
 @app.get("/v1/account")
-async def v1_account(user_id: int = Query(default=0)):
+async def v1_account(
+    request: Request,
+    user_id: int | None = Query(default=None),
+):
     """Account summary: collateral, pnl, equity, margins."""
+    resolved_user_id, denied = _require_private_user(request)
+    if denied:
+        return denied
+    if user_id is not None and user_id != resolved_user_id:
+        return JSONResponse(
+            {"error": "user_id does not match authenticated user"},
+            status_code=403,
+        )
     collateral = _SEED_COLLATERAL
     # try postgres first
     if pg_pool:
         rows = await pg_query(
             "SELECT collateral FROM accounts WHERE user_id = $1",
-            user_id,
+            resolved_user_id,
         )
         if rows and isinstance(rows, list) and rows:
             collateral = rows[0]["collateral"]
@@ -6275,9 +6607,9 @@ async def v1_account(user_id: int = Query(default=0)):
     net: dict[int, int] = {}
     entry_px: dict[int, int] = {}
     for f in fills:
-        if user_id and (
-            f["taker_uid"] != user_id
-            and f["maker_uid"] != user_id
+        if resolved_user_id and (
+            f["taker_uid"] != resolved_user_id
+            and f["maker_uid"] != resolved_user_id
         ):
             continue
         sid = f["symbol_id"]
@@ -6317,7 +6649,7 @@ async def v1_account(user_id: int = Query(default=0)):
         return str(round(v / d, 8))
 
     return JSONResponse({
-        "userId": user_id,
+        "userId": resolved_user_id,
         "collateral": h(collateral),
         "pnl": h(total_pnl),
         "equity": h(equity),
@@ -6328,8 +6660,19 @@ async def v1_account(user_id: int = Query(default=0)):
 
 
 @app.get("/v1/orders")
-async def v1_orders(user_id: int = Query(default=0)):
+async def v1_orders(
+    request: Request,
+    user_id: int | None = Query(default=None),
+):
     """Return recent orders."""
+    resolved_user_id, denied = _require_private_user(request)
+    if denied:
+        return denied
+    if user_id is not None and user_id != resolved_user_id:
+        return JSONResponse(
+            {"error": "user_id does not match authenticated user"},
+            status_code=403,
+        )
     # build sid -> decimals lookup
     cfg_by_id = {}
     for _n, _c in start_mod.SYMBOLS.items():
@@ -6350,6 +6693,8 @@ async def v1_orders(user_id: int = Query(default=0)):
     result = []
     # recent submitted orders (may include filled/rejected)
     for o in recent_orders[-100:]:
+        if o.get("user_id") != resolved_user_id:
+            continue
         sid = o.get("symbol_id", 0)
         result.append({
             "cid": o.get("cid", ""),
@@ -6439,12 +6784,8 @@ async def v1_proxy(path: str, request: Request):
                 "content-type": request.headers.get(
                     "content-type", "application/json"),
             }
-            if "authorization" in request.headers:
-                fwd_headers["authorization"] = (
-                    request.headers["authorization"])
-            if "x-user-id" in request.headers:
-                fwd_headers["x-user-id"] = (
-                    request.headers["x-user-id"])
+            auth_headers, _ = _request_auth_headers(request)
+            fwd_headers.update(auth_headers)
             async with session.request(
                 method, url,
                 data=body if body else None,
