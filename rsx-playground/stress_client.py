@@ -52,6 +52,7 @@ class StressClient:
 
     def generate_jwt(self) -> str:
         """Generate JWT token for authentication"""
+        secret = self.config.jwt_secret or "rsx-dev-secret-not-for-prod"
         payload = {
             "sub": f"stress:{self.user_id}",
             "user_id": self.user_id,
@@ -61,17 +62,15 @@ class StressClient:
         }
         return pyjwt.encode(
             payload,
-            self.config.jwt_secret,
+            secret,
             algorithm="HS256",
         )
 
     def _headers(self):
         """Auth headers for dev/testing"""
-        if self.config.jwt_secret:
-            return {
-                "Authorization": f"Bearer {self.generate_jwt()}"
-            }
-        return {"x-user-id": str(self.user_id)}
+        return {
+            "Authorization": f"Bearer {self.generate_jwt()}"
+        }
 
     def generate_order(self) -> str:
         """Generate compact wire-format order frame."""
@@ -185,21 +184,19 @@ async def _probe_gateway(
     jwt_secret: str = "",
 ) -> str | None:
     """Return error string if gateway unreachable, else None."""
-    if jwt_secret:
-        token = pyjwt.encode(
-            {
-                "sub": "stress:1",
-                "user_id": 1,
-                "exp": int(time.time()) + 3600,
-                "aud": "rsx-gateway",
-                "iss": "rsx-auth",
-            },
-            jwt_secret,
-            algorithm="HS256",
-        )
-        headers = {"Authorization": f"Bearer {token}"}
-    else:
-        headers = {"x-user-id": "1"}
+    secret = jwt_secret or "rsx-dev-secret-not-for-prod"
+    token = pyjwt.encode(
+        {
+            "sub": "stress:1",
+            "user_id": 1,
+            "exp": int(time.time()) + 3600,
+            "aud": "rsx-gateway",
+            "iss": "rsx-auth",
+        },
+        secret,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(

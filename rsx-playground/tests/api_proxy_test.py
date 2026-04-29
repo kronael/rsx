@@ -21,6 +21,7 @@ Run with:
 """
 
 import json
+import os
 import socket
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -245,15 +246,19 @@ def test_ws_public_returns_1013_when_marketdata_down(client):
 
 
 def test_ws_private_upgrades_and_forwards_user_id(client):
-    """/ws/private forwards x-user-id only in explicit insecure-dev mode."""
+    """/ws/private mints a JWT server-side from x-user-id (loopback dev only).
+
+    Production gateway accepts only Authorization: Bearer <JWT>. The
+    playground is a trusted dev proxy: when its own
+    PLAYGROUND_ALLOW_INSECURE_USER_ID flag is on, it accepts an
+    x-user-id header from the loopback client and mints a real JWT
+    against RSX_GW_JWT_SECRET before connecting to the gateway.
+    """
+    import jwt as pyjwt
     forwarded_headers = {}
-    connected = False
 
     class FakeWsCtx:
-        """Async context manager that raises on enter to simulate gateway down."""
         async def __aenter__(self):
-            nonlocal connected, forwarded_headers
-            connected = True
             raise ConnectionRefusedError("not running")
         async def __aexit__(self, *a):
             pass
@@ -280,8 +285,19 @@ def test_ws_private_upgrades_and_forwards_user_id(client):
                 except Exception:
                     pass
 
-    # x-user-id should be forwarded only when insecure mode is enabled
-    assert forwarded_headers.get("x-user-id") == "42"
+    auth = forwarded_headers.get("Authorization") or forwarded_headers.get("authorization")
+    assert auth and auth.startswith("Bearer "), (
+        f"expected Bearer JWT, got headers={forwarded_headers}"
+    )
+    claims = pyjwt.decode(
+        auth.split(" ", 1)[1],
+        os.environ["RSX_GW_JWT_SECRET"],
+        algorithms=["HS256"],
+        audience="rsx-gateway",
+        issuer="rsx-auth",
+    )
+    assert claims["user_id"] == 42
+    assert "x-user-id" not in {k.lower() for k in forwarded_headers}
 
 
 def test_ws_private_rejects_missing_auth_when_no_insecure_mode(client):

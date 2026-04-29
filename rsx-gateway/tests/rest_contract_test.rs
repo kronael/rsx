@@ -459,7 +459,34 @@ fn malformed_request_returns_404() {
 
 #[test]
 fn ws_handshake_responds_101() {
+    use jsonwebtoken::encode;
+    use jsonwebtoken::Algorithm;
+    use jsonwebtoken::EncodingKey;
+    use jsonwebtoken::Header;
+    use rsx_gateway::jwt::Claims;
     use rsx_gateway::ws::ws_handshake;
+    use std::time::SystemTime;
+    use std::time::UNIX_EPOCH;
+
+    let secret = "test-secret";
+    let claims = Claims {
+        sub: "github:1".to_string(),
+        user_id: Some(1),
+        exp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx-auth".to_string()),
+    };
+    let token = encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .unwrap();
+
     let mut rt = monoio::RuntimeBuilder::<
         monoio::FusionDriver,
     >::new()
@@ -475,8 +502,7 @@ fn ws_handshake_responds_101() {
         monoio::spawn(async move {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
-            // empty secret = allow X-User-Id fallback
-            let _ = ws_handshake(&mut stream, "", true).await;
+            let _ = ws_handshake(&mut stream, secret).await;
         });
 
         monoio::time::sleep(
@@ -487,17 +513,19 @@ fn ws_handshake_responds_101() {
         let mut client =
             TcpStream::connect(addr).await.unwrap();
 
-        let req =
+        let req = format!(
             "GET /ws/private HTTP/1.1\r\n\
             Host: localhost\r\n\
             Upgrade: websocket\r\n\
             Connection: Upgrade\r\n\
             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-            X-User-Id: 1\r\n\
+            Authorization: Bearer {}\r\n\
             Sec-WebSocket-Version: 13\r\n\
-            \r\n";
+            \r\n",
+            token,
+        );
         let (res, _) = client
-            .write_all(req.as_bytes().to_vec())
+            .write_all(req.into_bytes())
             .await;
         res.unwrap();
 
@@ -549,10 +577,9 @@ fn ws_handshake_401_without_auth() {
         monoio::spawn(async move {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
-            // Non-empty secret = JWT required,
-            // X-User-Id fallback disabled.
+            // Non-empty secret = JWT required.
             let _ =
-                ws_handshake(&mut stream, "secret", false).await;
+                ws_handshake(&mut stream, "secret").await;
         });
 
         monoio::time::sleep(

@@ -37,7 +37,6 @@ pub async fn handle_connection(
     state: Rc<RefCell<GatewayState>>,
     cmp_sender: Rc<RefCell<CmpSender>>,
     jwt_secret: &str,
-    allow_insecure_user_id: bool,
     heartbeat_interval_ms: u64,
     heartbeat_timeout_ms: u64,
 ) {
@@ -62,7 +61,6 @@ pub async fn handle_connection(
         &mut stream,
         &request,
         jwt_secret,
-        allow_insecure_user_id,
     )
     .await
     {

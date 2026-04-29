@@ -57,7 +57,7 @@ fn test_ws_handshake_with_valid_jwt() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret, false).await;
+                ws_handshake(&mut stream, secret).await;
             assert!(result.is_ok());
             let (_key, uid, _leftover) = result.unwrap();
             assert_eq!(uid, user_id);
@@ -121,7 +121,7 @@ fn test_ws_handshake_with_expired_jwt() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret, false).await;
+                ws_handshake(&mut stream, secret).await;
             assert!(result.is_err());
         });
 
@@ -180,7 +180,7 @@ fn test_ws_handshake_missing_auth() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret, false).await;
+                ws_handshake(&mut stream, secret).await;
             assert!(result.is_err());
         });
 
@@ -215,64 +215,3 @@ Sec-WebSocket-Version: 13\r\n\
     });
 }
 
-#[test]
-fn test_ws_handshake_x_user_id_fallback() {
-    let secret = "";
-    let user_id = 67890u32;
-
-    let mut runtime = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
-
-    runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
-            "127.0.0.1:0",
-        )
-        .unwrap();
-        let local_addr = listener.local_addr().unwrap();
-
-        monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
-            let result =
-                ws_handshake(&mut stream, secret, true).await;
-            assert!(result.is_ok());
-            let (_key, uid, _leftover) = result.unwrap();
-            assert_eq!(uid, user_id);
-        });
-
-        monoio::time::sleep(
-            std::time::Duration::from_millis(10),
-        )
-        .await;
-
-        let mut client = TcpStream::connect(local_addr)
-            .await
-            .unwrap();
-
-        let request = format!(
-            "GET / HTTP/1.1\r\n\
-Host: localhost\r\n\
-Upgrade: websocket\r\n\
-Connection: Upgrade\r\n\
-Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-X-User-Id: {}\r\n\
-Sec-WebSocket-Version: 13\r\n\
-\r\n",
-            user_id
-        );
-
-        use monoio::io::AsyncWriteRentExt;
-        let (res, _) =
-            client.write_all(request.into_bytes()).await;
-        res.unwrap();
-
-        monoio::time::sleep(
-            std::time::Duration::from_millis(100),
-        )
-        .await;
-    });
-}
