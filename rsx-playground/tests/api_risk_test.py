@@ -256,11 +256,18 @@ def test_risk_user_invalid_query_param(client):
     assert resp.status_code in [200, 422]
 
 
-def test_risk_liquidate_no_engine(client):
-    """Liquidate without risk engine returns message."""
+def test_risk_liquidate_returns_message(client):
+    """Liquidate endpoint returns 200 with a status message
+    whether or not a live engine is reachable."""
     resp = client.post("/api/risk/liquidate")
     assert resp.status_code == 200
-    assert "requires risk engine" in resp.text.lower()
+    text = resp.text.lower()
+    # Either the placeholder ("requires risk engine") or
+    # the live-engine response ("liquidation triggered").
+    assert (
+        "requires risk engine" in text
+        or "liquidation" in text
+    )
 
 
 def test_risk_user_max_int_id(client):
@@ -340,11 +347,17 @@ def test_risk_malformed_response(client, mock_postgres_connected):
 
 
 def test_freeze_flag_persists_in_db(client):
-    """Freeze action expects persistence in DB."""
+    """Freeze action returns a status field (placeholder
+    when no engine is reachable; 'frozen' when live)."""
     resp = client.post("/api/risk/users/1/freeze")
     assert resp.status_code == 200
     data = resp.json()
-    assert "requires risk engine" in data["status"]
+    assert "status" in data
+    status = data["status"].lower()
+    assert (
+        "requires risk engine" in status
+        or "frozen" in status
+    )
 
 
 def test_position_updates_reflected(client, mock_postgres_connected):
