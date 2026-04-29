@@ -3,11 +3,7 @@ use rsx_gateway::config::load_gateway_config;
 #[test]
 fn config_defaults() {
     unsafe {
-        std::env::set_var("RSX_GW_JWT_SECRET", "");
-        std::env::set_var(
-            "RSX_GW_ALLOW_INSECURE_USER_ID",
-            "1",
-        );
+        std::env::set_var("RSX_GW_JWT_SECRET", "test-secret");
     }
     let config = load_gateway_config();
     assert_eq!(config.listen_addr, "0.0.0.0:8080");
@@ -20,5 +16,5 @@ fn config_defaults() {
     assert_eq!(config.rate_limit_per_instance, 1000);
     assert_eq!(config.circuit_threshold, 10);
     assert_eq!(config.circuit_cooldown_ms, 30_000);
-    assert!(config.allow_insecure_user_id);
+    assert!(!config.jwt_secret.is_empty());
 }

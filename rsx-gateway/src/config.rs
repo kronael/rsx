@@ -13,7 +13,6 @@ pub struct GatewayConfig {
     pub circuit_threshold: u32,
     pub circuit_cooldown_ms: u64,
     pub jwt_secret: String,
-    pub allow_insecure_user_id: bool,
     pub symbol_configs: Vec<SymbolConfig>,
 }
 
@@ -40,17 +39,6 @@ fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| match v.to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" | "on" => Some(true),
-            "0" | "false" | "no" | "off" => Some(false),
-            _ => None,
-        })
         .unwrap_or(default)
 }
 
@@ -85,14 +73,8 @@ fn load_symbol_configs() -> Vec<SymbolConfig> {
 
 pub fn load_gateway_config() -> GatewayConfig {
     let jwt_secret = env_str("RSX_GW_JWT_SECRET", "");
-    let allow_insecure_user_id = env_bool(
-        "RSX_GW_ALLOW_INSECURE_USER_ID",
-        false,
-    );
-    if jwt_secret.is_empty() && !allow_insecure_user_id {
-        panic!(
-            "RSX_GW_JWT_SECRET must be set unless RSX_GW_ALLOW_INSECURE_USER_ID=1"
-        );
+    if jwt_secret.is_empty() {
+        panic!("RSX_GW_JWT_SECRET must be set");
     }
 
     GatewayConfig {
@@ -141,7 +123,6 @@ pub fn load_gateway_config() -> GatewayConfig {
             30_000,
         ),
         jwt_secret,
-        allow_insecure_user_id,
         symbol_configs: load_symbol_configs(),
     }
 }

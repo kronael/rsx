@@ -392,8 +392,7 @@ def gateway():
     env = {
         **os.environ,
         "RSX_GW_LISTEN": f"0.0.0.0:{GW_WS_PORT}",
-        "RSX_GW_JWT_SECRET": "",
-        "RSX_GW_ALLOW_INSECURE_USER_ID": "1",
+        "RSX_GW_JWT_SECRET": "test-secret-at-least-32-bytes-long-please!",
         "RSX_GW_IDLE_TIMEOUT_S": "60",
         "RSX_GW_ORDER_TIMEOUT_MS": "2000",
         "RSX_GW_MAX_PENDING": "10000",
@@ -466,8 +465,7 @@ def gateway_small_pending():
     env = {
         **os.environ,
         "RSX_GW_LISTEN": f"0.0.0.0:{ws_port}",
-        "RSX_GW_JWT_SECRET": "",
-        "RSX_GW_ALLOW_INSECURE_USER_ID": "1",
+        "RSX_GW_JWT_SECRET": "test-secret-at-least-32-bytes-long-please!",
         "RSX_GW_IDLE_TIMEOUT_S": "60",
         "RSX_GW_ORDER_TIMEOUT_MS": "30000",
         "RSX_GW_MAX_PENDING": "1",

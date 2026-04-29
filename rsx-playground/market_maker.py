@@ -203,21 +203,22 @@ class DummyMarketMaker:
         await self._cancel_all()
 
     def _gateway_headers(self) -> dict[str, str]:
-        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-        if secret:
-            token = pyjwt.encode(
-                {
-                    "sub": f"maker:{self.user_id}",
-                    "user_id": self.user_id,
-                    "aud": "rsx-gateway",
-                    "iss": "rsx-auth",
-                    "exp": int(time.time()) + 3600,
-                },
-                secret,
-                algorithm="HS256",
-            )
-            return {"Authorization": f"Bearer {token}"}
-        return {"x-user-id": str(self.user_id)}
+        secret = os.environ.get(
+            "RSX_GW_JWT_SECRET",
+            "rsx-dev-secret-not-for-prod",
+        )
+        token = pyjwt.encode(
+            {
+                "sub": f"maker:{self.user_id}",
+                "user_id": self.user_id,
+                "aud": "rsx-gateway",
+                "iss": "rsx-auth",
+                "exp": int(time.time()) + 3600,
+            },
+            secret,
+            algorithm="HS256",
+        )
+        return {"Authorization": f"Bearer {token}"}
 
     def _next_cid(self):
         self._order_counter += 1

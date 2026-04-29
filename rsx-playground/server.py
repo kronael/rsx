@@ -3725,24 +3725,22 @@ async def x_stats():
 async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     """Send order to Gateway WebSocket if available."""
     try:
-        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-        if secret:
-            token = pyjwt.encode(
-                {
-                    "sub": f"playground:{user_id}",
-                    "user_id": user_id,
-                    "aud": "rsx-gateway",
-                    "iss": "rsx-auth",
-                    "exp": int(time.time()) + 3600,
-                },
-                secret,
-                algorithm="HS256",
-            )
-            headers = {"authorization": f"Bearer {token}"}
-        elif _allow_insecure_user_id():
-            headers = {"x-user-id": str(user_id)}
-        else:
-            return None, "gateway auth is not configured", None
+        secret = os.environ.get(
+            "RSX_GW_JWT_SECRET",
+            "rsx-dev-secret-not-for-prod",
+        )
+        token = pyjwt.encode(
+            {
+                "sub": f"playground:{user_id}",
+                "user_id": user_id,
+                "aud": "rsx-gateway",
+                "iss": "rsx-auth",
+                "exp": int(time.time()) + 3600,
+            },
+            secret,
+            algorithm="HS256",
+        )
+        headers = {"authorization": f"Bearer {token}"}
         start_ns = time.perf_counter_ns()
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
@@ -6169,7 +6167,29 @@ async def ws_private_proxy(ws: WebSocket):
         and _is_loopback_host(ws.client.host if ws.client else None)
         and ws.headers.get("x-user-id")
     ):
-        headers = {"x-user-id": ws.headers["x-user-id"]}
+        # Dev path: trusted local caller passed x-user-id to playground.
+        # Mint a real JWT server-side for the gateway hop.
+        try:
+            user_id = int(ws.headers["x-user-id"])
+        except ValueError:
+            await ws.close(code=4001, reason="invalid x-user-id")
+            return
+        secret = os.environ.get(
+            "RSX_GW_JWT_SECRET",
+            "rsx-dev-secret-not-for-prod",
+        )
+        minted = pyjwt.encode(
+            {
+                "sub": f"playground:{user_id}",
+                "user_id": user_id,
+                "aud": "rsx-gateway",
+                "iss": "rsx-auth",
+                "exp": int(time.time()) + 3600,
+            },
+            secret,
+            algorithm="HS256",
+        )
+        headers = {"authorization": f"Bearer {minted}"}
     else:
         await ws.close(code=4001, reason="authentication required")
         return

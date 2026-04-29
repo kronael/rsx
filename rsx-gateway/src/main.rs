@@ -119,7 +119,6 @@ fn main() {
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
     let jwt_secret = config.jwt_secret.clone();
-    let allow_insecure_user_id = config.allow_insecure_user_id;
     let hb_interval = config.heartbeat_interval_ms;
     let hb_timeout = config.heartbeat_timeout_ms;
 
@@ -167,7 +166,6 @@ fn main() {
                             handle_connection(
                                 stream, peer, st, snd,
                                 &secret,
-                                allow_insecure_user_id,
                                 hb_interval,
                                 hb_timeout,
                             )

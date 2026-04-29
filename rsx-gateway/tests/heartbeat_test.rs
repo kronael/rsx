@@ -3,11 +3,7 @@ use rsx_gateway::state::GatewayState;
 
 fn load_test_config() -> rsx_gateway::config::GatewayConfig {
     unsafe {
-        std::env::set_var("RSX_GW_JWT_SECRET", "");
-        std::env::set_var(
-            "RSX_GW_ALLOW_INSECURE_USER_ID",
-            "1",
-        );
+        std::env::set_var("RSX_GW_JWT_SECRET", "test-secret");
     }
     load_gateway_config()
 }
