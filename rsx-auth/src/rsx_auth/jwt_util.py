@@ -16,6 +16,8 @@ def issue(
         "sub": f"{provider}:{provider_sub}",
         "user_id": user_id,
         "email": email,
+        "aud": "rsx-gateway",
+        "iss": "rsx-auth",
         "iat": now,
         "exp": now + ttl_s,
     }
@@ -24,4 +26,10 @@ def issue(
 
 def verify(token: str, secret: str) -> dict:
     """Raises pyjwt.InvalidTokenError on failure."""
-    return pyjwt.decode(token, secret, algorithms=["HS256"])
+    return pyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="rsx-gateway",
+        issuer="rsx-auth",
+    )

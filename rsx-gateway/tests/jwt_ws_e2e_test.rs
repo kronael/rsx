@@ -18,7 +18,8 @@ fn now_secs() -> u64 {
 
 fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
     let claims = Claims {
-        sub: user_id.to_string(),
+        sub: format!("github:{user_id}"),
+        user_id: Some(user_id),
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
@@ -56,7 +57,7 @@ fn test_ws_handshake_with_valid_jwt() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret).await;
+                ws_handshake(&mut stream, secret, false).await;
             assert!(result.is_ok());
             let (_key, uid, _leftover) = result.unwrap();
             assert_eq!(uid, user_id);
@@ -120,7 +121,7 @@ fn test_ws_handshake_with_expired_jwt() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret).await;
+                ws_handshake(&mut stream, secret, false).await;
             assert!(result.is_err());
         });
 
@@ -179,7 +180,7 @@ fn test_ws_handshake_missing_auth() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret).await;
+                ws_handshake(&mut stream, secret, false).await;
             assert!(result.is_err());
         });
 
@@ -237,7 +238,7 @@ fn test_ws_handshake_x_user_id_fallback() {
             let (mut stream, _) =
                 listener.accept().await.unwrap();
             let result =
-                ws_handshake(&mut stream, secret).await;
+                ws_handshake(&mut stream, secret, true).await;
             assert!(result.is_ok());
             let (_key, uid, _leftover) = result.unwrap();
             assert_eq!(uid, user_id);

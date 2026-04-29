@@ -23,6 +23,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 import aiohttp
+import jwt as pyjwt
 
 _STATUS_FILE = (
     Path(__file__).resolve().parent.parent / "tmp" / "maker-status.json"
@@ -167,7 +168,7 @@ class DummyMarketMaker:
         """Cancel all resting orders in the gateway before stopping."""
         if not self.active_cids:
             return
-        headers = {"x-user-id": str(self.user_id)}
+        headers = self._gateway_headers()
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(
@@ -200,6 +201,23 @@ class DummyMarketMaker:
                 pass
             self._task = None
         await self._cancel_all()
+
+    def _gateway_headers(self) -> dict[str, str]:
+        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+        if secret:
+            token = pyjwt.encode(
+                {
+                    "sub": f"maker:{self.user_id}",
+                    "user_id": self.user_id,
+                    "aud": "rsx-gateway",
+                    "iss": "rsx-auth",
+                    "exp": int(time.time()) + 3600,
+                },
+                secret,
+                algorithm="HS256",
+            )
+            return {"Authorization": f"Bearer {token}"}
+        return {"x-user-id": str(self.user_id)}
 
     def _next_cid(self):
         self._order_counter += 1
@@ -318,7 +336,7 @@ class DummyMarketMaker:
 
     async def _preflight(self) -> bool:
         """Check gateway connectivity before quoting."""
-        headers = {"x-user-id": str(self.user_id)}
+        headers = self._gateway_headers()
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(
@@ -430,7 +448,7 @@ class DummyMarketMaker:
 
     async def _quote_cycle(self):
         """Cancel stale orders and place new quotes."""
-        headers = {"x-user-id": str(self.user_id)}
+        headers = self._gateway_headers()
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
                 self.gateway_url,

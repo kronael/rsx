@@ -8,6 +8,8 @@ use serde::Serialize;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Claims {
     pub sub: String,
+    #[serde(default)]
+    pub user_id: Option<u32>,
     pub exp: u64,
     #[serde(default)]
     pub aud: Option<String>,
@@ -31,11 +33,14 @@ pub fn validate_jwt(
     )
     .map_err(|e| format!("jwt decode failed: {e}"))?;
 
-    let user_id = token_data
-        .claims
-        .sub
-        .parse::<u32>()
-        .map_err(|e| format!("invalid user_id: {e}"))?;
+    let user_id = match token_data.claims.user_id {
+        Some(user_id) => user_id,
+        None => token_data
+            .claims
+            .sub
+            .parse::<u32>()
+            .map_err(|e| format!("invalid user_id: {e}"))?,
+    };
 
     Ok(user_id)
 }
