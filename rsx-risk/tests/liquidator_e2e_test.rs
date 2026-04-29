@@ -352,14 +352,8 @@ fn mark_price_drop_triggers_liquidation_rejection() {
         "expected Accepted before drop"
     );
     // Release the frozen margin from above
-    s.accounts.get_mut(&0).unwrap().release_margin(
-        match ok {
-            OrderResponse::Accepted {
-                margin_reserved, ..
-            } => margin_reserved,
-            _ => 0,
-        },
-    );
+    let _ = ok;
+    s.release_frozen_for_order(0, 0, 0);
 
     // Drop mark price — upnl = 100*(1-10000) = -999,900
     // equity = 200,000 + (-999,900) = -799,900
@@ -665,6 +659,7 @@ fn recovery_resumes_pending_liquidations() {
         positions,
         tips: vec![0u64; 4],
         insurance_funds: FxHashMap::default(),
+        frozen_orders: FxHashMap::default(),
     };
 
     s.load_state(state);

@@ -54,7 +54,7 @@ fn portfolio_margin_single_position() {
     p.apply_fill(0, 100, 10, 1); // long 10@100
     let a = Account::new(1, 50000);
     let marks = vec![110];
-    let s = pm.calculate(&a, &[&p], &marks);
+    let s = pm.calculate(&a, &[&p], &marks, 0);
     // upnl = 10*(110-100) = 100
     assert_eq!(s.unrealized_pnl, 100);
     // equity = 50000 + 100 = 50100
@@ -76,7 +76,7 @@ fn portfolio_margin_multi_symbol() {
     p1.apply_fill(1, 200, 5, 2);
     let a = Account::new(1, 100000);
     let marks = vec![100, 200];
-    let s = pm.calculate(&a, &[&p0, &p1], &marks);
+    let s = pm.calculate(&a, &[&p0, &p1], &marks, 0);
     // upnl p0 = 0, upnl p1 = -5*(200-200)=0
     assert_eq!(s.unrealized_pnl, 0);
     // notional p0=1000, p1=1000, im=100+100=200
@@ -91,7 +91,7 @@ fn portfolio_margin_long_short_offset() {
     p.apply_fill(1, 100, 5, 2); // net 5 long
     let a = Account::new(1, 50000);
     let marks = vec![100];
-    let s = pm.calculate(&a, &[&p], &marks);
+    let s = pm.calculate(&a, &[&p], &marks, 0);
     // notional = 5*100=500, im=50
     assert_eq!(s.initial_margin, 50);
 }
@@ -103,7 +103,7 @@ fn check_order_sufficient_margin_accepts() {
     let marks = vec![100];
     let order = make_order(1, 0, 100, 1, 0);
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert!(result.is_ok());
 }
 
@@ -114,7 +114,7 @@ fn check_order_insufficient_margin_rejects() {
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert_eq!(
         result,
         Err(RejectReason::InsufficientMargin)
@@ -143,26 +143,8 @@ fn needs_liquidation_above_maintenance_ok() {
     assert!(!pm.needs_liquidation(&state));
 }
 
-#[test]
-fn frozen_margin_reserved_on_order() {
-    let pm = make_pm(1);
-    let mut a = Account::new(1, 10000);
-    let marks = vec![100];
-    let order = make_order(1, 0, 100, 10, 0);
-    let needed =
-        pm.check_order(&a, &[], &order, &marks, 10)
-            .unwrap();
-    a.freeze_margin(needed);
-    assert!(a.frozen_margin > 0);
-}
-
-#[test]
-fn frozen_margin_released_on_done() {
-    let mut a = Account::new(1, 10000);
-    a.freeze_margin(500);
-    a.release_margin(500);
-    assert_eq!(a.frozen_margin, 0);
-}
+// frozen-margin lifecycle is exercised in shard_test.rs
+// against `RiskShard::frozen_for_user`.
 
 // -- edge cases --
 
@@ -175,7 +157,7 @@ fn check_order_exactly_at_margin_limit_accepts() {
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert!(result.is_ok());
 }
 
@@ -187,7 +169,7 @@ fn check_order_one_unit_over_limit_rejects() {
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert_eq!(
         result,
         Err(RejectReason::InsufficientMargin)
@@ -201,7 +183,7 @@ fn margin_with_zero_collateral_rejects_all() {
     let marks = vec![100];
     let order = make_order(1, 0, 100, 1, 0);
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert_eq!(
         result,
         Err(RejectReason::InsufficientMargin)
@@ -213,7 +195,7 @@ fn margin_with_no_positions_all_available() {
     let pm = make_pm(1);
     let a = Account::new(1, 10000);
     let marks = vec![100];
-    let s = pm.calculate(&a, &[], &marks);
+    let s = pm.calculate(&a, &[], &marks, 0);
     assert_eq!(s.available_margin, 10000);
     assert_eq!(s.initial_margin, 0);
 }
@@ -225,7 +207,7 @@ fn margin_unrealized_pnl_affects_equity() {
     p.apply_fill(0, 100, 10, 1);
     let a = Account::new(1, 1000);
     // mark at 50 -> upnl = 10*(50-100) = -500
-    let s = pm.calculate(&a, &[&p], &[50]);
+    let s = pm.calculate(&a, &[&p], &[50], 0);
     assert_eq!(s.equity, 500);
 }
 
@@ -240,7 +222,7 @@ fn margin_mark_price_unavailable_uses_index() {
     let a = Account::new(1, 5000);
     let index_as_mark = vec![105];
     let s =
-        pm.calculate(&a, &[&p], &index_as_mark);
+        pm.calculate(&a, &[&p], &index_as_mark, 0);
     assert_eq!(s.unrealized_pnl, 50); // 10*(105-100)
 }
 
@@ -250,7 +232,7 @@ fn margin_mark_price_zero_handled() {
     let mut p = Position::new(1, 0);
     p.apply_fill(0, 100, 10, 1);
     let a = Account::new(1, 5000);
-    let s = pm.calculate(&a, &[&p], &[0]);
+    let s = pm.calculate(&a, &[&p], &[0], 0);
     // upnl = 10*(0-100) = -1000
     assert_eq!(s.unrealized_pnl, -1000);
     assert_eq!(s.initial_margin, 0); // notional=0
@@ -270,47 +252,11 @@ fn margin_max_leverage_enforced() {
     let mut p = Position::new(1, 0);
     p.apply_fill(0, 100, 100, 1);
     let a = Account::new(1, 1000);
-    let s = pm.calculate(&a, &[&p], &[100]);
+    let s = pm.calculate(&a, &[&p], &[100], 0);
     // notional=10000, im=500
     assert_eq!(s.initial_margin, 500);
 }
 
-#[test]
-fn frozen_margin_across_multiple_pending_orders() {
-    let pm = make_pm(1);
-    let mut a = Account::new(1, 10000);
-    let marks = vec![100];
-    let o1 = make_order(1, 0, 100, 10, 0);
-    let n1 =
-        pm.check_order(&a, &[], &o1, &marks, 10)
-            .unwrap();
-    a.freeze_margin(n1);
-    let o2 = make_order(1, 0, 100, 10, 0);
-    let r2 =
-        pm.check_order(&a, &[], &o2, &marks, 10);
-    assert!(r2.is_ok());
-    let n2 = r2.unwrap();
-    a.freeze_margin(n2);
-    assert_eq!(a.frozen_margin, n1 + n2);
-}
-
-#[test]
-fn order_done_partial_fill_releases_remaining_frozen()
-{
-    let mut a = Account::new(1, 10000);
-    a.freeze_margin(500);
-    // Partial fill used 200, release remaining
-    a.release_margin(300);
-    assert_eq!(a.frozen_margin, 200);
-}
-
-#[test]
-fn order_failed_releases_all_frozen() {
-    let mut a = Account::new(1, 10000);
-    a.freeze_margin(500);
-    a.release_margin(500);
-    assert_eq!(a.frozen_margin, 0);
-}
 
 #[test]
 fn fee_reserve_included_in_pretrade_check() {
@@ -321,12 +267,12 @@ fn fee_reserve_included_in_pretrade_check() {
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
     let result =
-        pm.check_order(&a, &[], &order, &marks, 50);
+        pm.check_order(&a, &[], &order, &marks, 50, 0);
     assert!(result.is_ok());
     // With 104, should fail
     let a2 = Account::new(1, 104);
     let result2 =
-        pm.check_order(&a2, &[], &order, &marks, 50);
+        pm.check_order(&a2, &[], &order, &marks, 50, 0);
     assert_eq!(
         result2,
         Err(RejectReason::InsufficientMargin)
@@ -398,7 +344,7 @@ fn check_order_reduce_only_bypasses_margin() {
     let mut order = make_order(1, 0, 100, 10, 0);
     order.reduce_only = true;
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert_eq!(result, Ok(0));
 }
 
@@ -410,7 +356,7 @@ fn check_order_liquidation_order_skips_margin_check() {
     let mut order = make_order(1, 0, 100, 10, 0);
     order.is_liquidation = true;
     let result =
-        pm.check_order(&a, &[], &order, &marks, 10);
+        pm.check_order(&a, &[], &order, &marks, 10, 0);
     assert_eq!(result, Ok(0));
 }
 

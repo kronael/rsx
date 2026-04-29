@@ -603,13 +603,13 @@ fn partial_fill_releases_remaining_frozen() {
     assert!(
         matches!(resp, OrderResponse::Accepted { .. })
     );
-    let frozen_before = s.accounts[&0].frozen_margin;
+    let frozen_before = s.frozen_for_user(0);
     assert!(frozen_before > 0);
     // Partial fill of 6 out of 10
     s.process_fill(&fill(0, 1, 0, 10_000, 6, 1));
     // Order done -> release remaining frozen
     s.release_frozen_for_order(0, 0, 42);
-    assert_eq!(s.accounts[&0].frozen_margin, 0);
+    assert_eq!(s.frozen_for_user(0), 0);
 }
 
 // --- Liquidation integration in shard ---

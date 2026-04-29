@@ -77,7 +77,6 @@ async fn persist_positions_roundtrip() {
 async fn persist_accounts_roundtrip() {
     let (_c, mut client) = pg_client().await;
     let mut acct = Account::new(42, 10_000);
-    acct.frozen_margin = 500;
     acct.version = 7;
     let tx = client.transaction().await.unwrap();
     upsert_accounts(&tx, &[acct]).await.unwrap();
@@ -85,7 +84,7 @@ async fn persist_accounts_roundtrip() {
 
     let rows = client
         .query(
-            "SELECT collateral, frozen_margin, version \
+            "SELECT collateral, version \
              FROM accounts WHERE user_id = 42",
             &[],
         )
@@ -93,8 +92,7 @@ async fn persist_accounts_roundtrip() {
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, i64>(0), 10_000);
-    assert_eq!(rows[0].get::<_, i64>(1), 500);
-    assert_eq!(rows[0].get::<_, i64>(2), 7);
+    assert_eq!(rows[0].get::<_, i64>(1), 7);
 }
 
 #[tokio::test]
@@ -538,7 +536,7 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
         _pad: [0; 3],
     };
     let _ = shard.process_order(&order);
-    assert!(shard.accounts[&0].frozen_margin > 0);
+    assert!(shard.frozen_for_user(0) > 0);
 
     let mut done = OrderDoneRecord {
         seq: 1,
@@ -559,7 +557,7 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
     writer.flush().unwrap();
 
     let _ = replay_from_wal(&mut shard, wal_path, &[0]).unwrap();
-    assert_eq!(shard.accounts[&0].frozen_margin, 0);
+    assert_eq!(shard.frozen_for_user(0), 0);
 }
 
 #[tokio::test]

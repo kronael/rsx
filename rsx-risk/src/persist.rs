@@ -16,6 +16,21 @@ pub enum PersistEvent {
     Funding(FundingRecord),
     InsuranceFund(InsuranceFund),
     Liquidation(LiquidationRecord),
+    FrozenInsert(FrozenOrderRecord),
+    FrozenRemove {
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct FrozenOrderRecord {
+    pub user_id: u32,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+    pub symbol_id: u32,
+    pub amount: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -96,17 +111,62 @@ pub async fn upsert_accounts(
     for a in accounts {
         tx.execute(
             "INSERT INTO accounts \
-             (user_id, collateral, frozen_margin, version) \
-             VALUES ($1,$2,$3,$4) \
+             (user_id, collateral, version) \
+             VALUES ($1,$2,$3) \
              ON CONFLICT (user_id) \
              DO UPDATE SET \
-               collateral = $2, frozen_margin = $3, \
-               version = $4",
+               collateral = $2, version = $3",
             &[
                 &(a.user_id as i32),
                 &a.collateral,
-                &a.frozen_margin,
                 &(a.version as i64),
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn upsert_frozen_orders(
+    tx: &tokio_postgres::Transaction<'_>,
+    frozen: &[FrozenOrderRecord],
+) -> Result<(), Error> {
+    for f in frozen {
+        tx.execute(
+            "INSERT INTO frozen_orders \
+             (user_id, order_id_hi, order_id_lo, \
+              symbol_id, amount) \
+             VALUES ($1,$2,$3,$4,$5) \
+             ON CONFLICT (user_id, order_id_hi, order_id_lo) \
+             DO UPDATE SET \
+               symbol_id = $4, amount = $5",
+            &[
+                &(f.user_id as i32),
+                &(f.order_id_hi as i64),
+                &(f.order_id_lo as i64),
+                &(f.symbol_id as i32),
+                &f.amount,
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn delete_frozen_orders(
+    tx: &tokio_postgres::Transaction<'_>,
+    keys: &[(u32, u64, u64)],
+) -> Result<(), Error> {
+    for &(user_id, hi, lo) in keys {
+        tx.execute(
+            "DELETE FROM frozen_orders \
+             WHERE user_id = $1 \
+               AND order_id_hi = $2 \
+               AND order_id_lo = $3",
+            &[
+                &(user_id as i32),
+                &(hi as i64),
+                &(lo as i64),
             ],
         )
         .await?;
@@ -254,6 +314,8 @@ pub async fn flush_batch(
     let mut funding = Vec::new();
     let mut insurance_funds = Vec::new();
     let mut liquidations = Vec::new();
+    let mut frozen_inserts = Vec::new();
+    let mut frozen_removes = Vec::new();
     for e in events {
         match e {
             PersistEvent::Position(p) => {
@@ -277,12 +339,26 @@ pub async fn flush_batch(
             PersistEvent::Liquidation(liq) => {
                 liquidations.push(liq.clone())
             }
+            PersistEvent::FrozenInsert(f) => {
+                frozen_inserts.push(f.clone())
+            }
+            PersistEvent::FrozenRemove {
+                user_id,
+                order_id_hi,
+                order_id_lo,
+            } => frozen_removes.push((
+                *user_id,
+                *order_id_hi,
+                *order_id_lo,
+            )),
         }
     }
 
     let tx = client.transaction().await?;
     upsert_positions(&tx, &positions).await?;
     upsert_accounts(&tx, &accounts).await?;
+    upsert_frozen_orders(&tx, &frozen_inserts).await?;
+    delete_frozen_orders(&tx, &frozen_removes).await?;
     insert_fills(&tx, &fills).await?;
     upsert_tips(&tx, shard_id, &tips).await?;
     insert_funding(&tx, &funding).await?;

@@ -234,15 +234,11 @@ fn shard_cancel_restores_margin() {
         _ => panic!("expected accepted"),
     };
     assert!(reserved > 0);
-    let frozen = s.accounts[&0].frozen_margin;
-    assert_eq!(frozen, reserved);
+    assert_eq!(s.frozen_for_user(0), reserved);
 
     // Simulate cancel: release margin
-    s.accounts
-        .get_mut(&0)
-        .unwrap()
-        .release_margin(reserved);
-    assert_eq!(s.accounts[&0].frozen_margin, 0);
+    s.release_frozen_for_order(0, 0, 0);
+    assert_eq!(s.frozen_for_user(0), 0);
 }
 
 #[test]
@@ -428,10 +424,7 @@ fn full_lifecycle_order_to_settlement() {
         margin_reserved > 0,
         "margin must be frozen on accepted order"
     );
-    assert_eq!(
-        s.accounts[&0].frozen_margin,
-        margin_reserved
-    );
+    assert_eq!(s.frozen_for_user(0), margin_reserved);
 
     // Step 3: fill -> position opened, frozen margin released
     // taker side=0 (buy), maker side=1 (sell)

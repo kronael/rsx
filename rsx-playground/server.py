@@ -742,11 +742,10 @@ async def seed_accounts():
             for uid in _SEED_USERS:
                 await conn.execute(
                     "INSERT INTO accounts "
-                    "(user_id, collateral, frozen_margin, version) "
-                    "VALUES ($1, $2, 0, 0) "
+                    "(user_id, collateral, version) "
+                    "VALUES ($1, $2, 0) "
                     "ON CONFLICT (user_id) DO UPDATE "
-                    "SET collateral = EXCLUDED.collateral, "
-                    "    frozen_margin = 0",
+                    "SET collateral = EXCLUDED.collateral",
                     uid, _SEED_COLLATERAL,
                 )
     except Exception as e:
@@ -4914,14 +4913,18 @@ async def api_risk_overview():
     accounts: dict[int, dict] = {}
     if pg_pool is not None:
         rows = await pg_query(
-            "SELECT user_id, collateral, frozen_margin "
-            "FROM accounts ORDER BY user_id"
+            "SELECT a.user_id, a.collateral, "
+            "       COALESCE(SUM(f.amount), 0)::bigint AS frozen "
+            "FROM accounts a "
+            "LEFT JOIN frozen_orders f USING (user_id) "
+            "GROUP BY a.user_id, a.collateral "
+            "ORDER BY a.user_id"
         )
         if rows and isinstance(rows, list):
             for r in rows:
                 accounts[r["user_id"]] = {
                     "collateral": r["collateral"],
-                    "frozen": r["frozen_margin"],
+                    "frozen": r["frozen"],
                 }
 
     # Fallback: use seed users with seed collateral
@@ -6261,8 +6264,7 @@ async def v1_account(user_id: int = Query(default=0)):
     # try postgres first
     if pg_pool:
         rows = await pg_query(
-            "SELECT collateral, frozen_margin"
-            " FROM accounts WHERE user_id = $1",
+            "SELECT collateral FROM accounts WHERE user_id = $1",
             user_id,
         )
         if rows and isinstance(rows, list) and rows:

@@ -13,6 +13,10 @@ pub struct ColdStartState {
     pub positions: FxHashMap<(u32, u32), Position>,
     pub tips: Vec<u64>,
     pub insurance_funds: FxHashMap<u32, InsuranceFund>,
+    /// Per-order frozen margin reservations, keyed by
+    /// `(order_id_hi as u128) << 64 | order_id_lo as u128`.
+    /// Source of truth — aggregate is derived.
+    pub frozen_orders: FxHashMap<u128, (u32, i64)>,
 }
 
 pub async fn load_from_postgres(
@@ -24,8 +28,7 @@ pub async fn load_from_postgres(
     let mut accounts = FxHashMap::default();
     let rows = client
         .query(
-            "SELECT user_id, collateral, \
-             frozen_margin, version \
+            "SELECT user_id, collateral, version \
              FROM accounts \
              WHERE user_id % $1 = $2",
             &[
@@ -34,31 +37,13 @@ pub async fn load_from_postgres(
             ],
         )
         .await?;
-    // If RSX_RISK_RESET_FROZEN_ON_START=1, zero the
-    // persisted frozen_margin on cold start. WAL replay
-    // will re-freeze any still-pending orders (ACCEPTED
-    // since tip+1). Older pending orders lose their
-    // reservation — acceptable in dev to escape stale
-    // leaks accumulated across runs. NEVER set true in
-    // production without a reconciliation against the ME
-    // book state.
-    let reset_frozen = std::env::var(
-        "RSX_RISK_RESET_FROZEN_ON_START",
-    )
-    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    .unwrap_or(false);
     for row in &rows {
         let user_id: i32 = row.get(0);
         let mut acct = Account::new(
             user_id as u32,
             row.get::<_, i64>(1),
         );
-        acct.frozen_margin = if reset_frozen {
-            0
-        } else {
-            row.get::<_, i64>(2)
-        };
-        acct.version = row.get::<_, i64>(3) as u64;
+        acct.version = row.get::<_, i64>(2) as u64;
         accounts.insert(user_id as u32, acct);
     }
 
@@ -126,11 +111,34 @@ pub async fn load_from_postgres(
         insurance_funds.insert(sid as u32, fund);
     }
 
+    let mut frozen_orders = FxHashMap::default();
+    let rows = client
+        .query(
+            "SELECT user_id, order_id_hi, order_id_lo, \
+             amount FROM frozen_orders \
+             WHERE user_id % $1 = $2",
+            &[
+                &(shard_count as i32),
+                &(shard_id as i32),
+            ],
+        )
+        .await?;
+    for row in &rows {
+        let uid: i32 = row.get(0);
+        let hi: i64 = row.get(1);
+        let lo: i64 = row.get(2);
+        let amount: i64 = row.get(3);
+        let key = ((hi as u64 as u128) << 64)
+            | (lo as u64 as u128);
+        frozen_orders.insert(key, (uid as u32, amount));
+    }
+
     Ok(ColdStartState {
         accounts,
         positions,
         tips,
         insurance_funds,
+        frozen_orders,
     })
 }
 

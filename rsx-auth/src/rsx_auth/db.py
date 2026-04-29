@@ -52,8 +52,8 @@ async def seed_account_if_missing(
         await conn.execute(
             """
             INSERT INTO accounts
-                (user_id, collateral, frozen_margin, version)
-            VALUES ($1, $2, 0, 0)
+                (user_id, collateral, version)
+            VALUES ($1, $2, 0)
             ON CONFLICT (user_id) DO NOTHING
             """,
             user_id, starter_collateral,
