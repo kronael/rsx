@@ -371,6 +371,7 @@ def test_healthz_has_gateway_field(client):
 
 def test_healthz_gateway_false_when_no_gateway(client):
     """/healthz reports gateway=false when port 8080 closed."""
+    _skip_if_gateway_up()
     resp = client.get("/healthz")
     # Gateway not running in test env → False
     assert resp.json()["gateway"] is False
