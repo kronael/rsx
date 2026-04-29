@@ -635,10 +635,6 @@ def test_spawn_plan_includes_matching_engine(client):
 # ── Integration Tests (20) ─────────────────────────────────
 
 
-@pytest.mark.xfail(
-    reason="python 3.14 asyncio subprocess loop mismatch",
-    strict=False,
-)
 def test_full_lifecycle_start_stop(client):
     """Full lifecycle: build → start → stop."""
     # Build
@@ -730,10 +726,6 @@ def test_multiple_restarts_work(client):
         time.sleep(0.3)
 
 
-@pytest.mark.xfail(
-    reason="python 3.14 asyncio subprocess loop mismatch",
-    strict=False,
-)
 def test_start_stop_start_cycle(client):
     """Start → stop → start cycle works."""
     client.post("/api/processes/all/start?scenario=minimal", headers={"x-confirm": "yes"})
