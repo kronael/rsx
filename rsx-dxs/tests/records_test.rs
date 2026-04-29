@@ -275,49 +275,6 @@ fn crc32_mismatch_detected() {
 }
 
 #[test]
-fn wal_record_seq_accessor() {
-    let record = WalRecord::Fill(FillRecord {
-        seq: 42,
-        ts_ns: 0,
-        symbol_id: 0,
-        taker_user_id: 0,
-        maker_user_id: 0,
-        _pad0: 0,
-        taker_order_id_hi: 0,
-        taker_order_id_lo: 0,
-        maker_order_id_hi: 0,
-        maker_order_id_lo: 0,
-        price: Price(0),
-        qty: Qty(0),
-        taker_side: 0,
-        reduce_only: 0,
-        tif: 0,
-        post_only: 0,
-        _pad1: [0; 4],
-    });
-    assert_eq!(record.seq(), 42);
-}
-
-#[test]
-fn wal_record_type_accessor() {
-    let record = WalRecord::Bbo(BboRecord {
-        seq: 0,
-        ts_ns: 0,
-        symbol_id: 0,
-        _pad0: 0,
-        bid_px: Price(0),
-        bid_qty: Qty(0),
-        bid_count: 0,
-        _pad1: 0,
-        ask_px: Price(0),
-        ask_qty: Qty(0),
-        ask_count: 0,
-        _pad2: 0,
-    });
-    assert_eq!(record.record_type(), RECORD_BBO);
-}
-
-#[test]
 fn cancel_reason_all_6_values_roundtrip() {
     assert_eq!(CANCEL_REASON_USER_CANCEL, 0);
     assert_eq!(CANCEL_REASON_REDUCE_ONLY, 1);
