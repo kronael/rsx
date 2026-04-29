@@ -23,6 +23,8 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
 
 ## Crate Layout
 
+Rust workspace (11 crates, see Cargo.toml):
+
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
 rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab, CompressionMap)
@@ -39,6 +41,15 @@ rsx-maker/      Market maker bot (separate process)
 
 Each process is a separate binary. Crates are libraries
 linked into their respective process binaries.
+
+Non-Rust subprojects (NOT in cargo workspace):
+
+```
+rsx-playground/ Python/FastAPI dev dashboard + Playwright tests
+                (uv-managed; pyproject.toml; tests/api_*.py and play_*.spec.ts)
+rsx-webui/      Vite + React + Tailwind Trade UI SPA (bun)
+rsx-auth/       Python auth service (uv; sqlx migrations)
+```
 
 ## Implementation Philosophy
 
@@ -94,14 +105,43 @@ linked into their respective process binaries.
 - Single test file: `cargo test -p rsx-dxs --test wal_test`
 - Debug builds default (~3x faster compile than release)
 - 80 char line width, max 120
-- `make test`: unit tests <5s, every commit
-- `make e2e`: component tests ~30s, every PR
-- `make integration`: testcontainers, 1-5min
-- `make wal`: WAL correctness <10s
+- `make test`: Rust unit tests (`--lib` only) <5s, every commit
+- `make e2e`: Rust + API + Playwright (~3min), every PR
+- `make integration`: testcontainers, 1-5min (uses `--ignored`)
+- `make wal`: WAL correctness <10s (cargo test -p rsx-dxs)
 - `make smoke`: deployed system <1min
 - `make perf`: Criterion benchmarks, nightly
+- `make lint`: clippy with `-D warnings`
 - Config via env vars only (no TOML args)
 - Entrypoint always called `main`
+
+## Playground (Primary Dev Entrypoint)
+
+```bash
+./rsx-playground/playground start     # FastAPI dashboard on :49171
+./rsx-playground/playground start-all # build + launch all RSX processes
+./rsx-playground/playground stop-all  # stop processes
+./rsx-playground/playground reset     # stop + clean state
+```
+
+Web dashboard lets you submit orders, inspect WAL, control
+processes, inject faults. See `rsx-playground/README.md`.
+
+## Release Gates (acceptance pipeline)
+
+The repo enforces a 4-gate pipeline; never run `gate-4` directly.
+
+```bash
+make gate              # all 4 gates in order
+make ci                # check-progress + gates 1-3 + infra-smoke (no fan-out)
+make ci-full           # ci + shards-gated (fan-out after 3 green infra-smokes)
+make status-doctor     # required before any PROGRESS.md update
+make release-gate      # blocks unless Playwright == 421/421 + all green
+```
+
+Gate ordering: `gate-1-startup` (server imports) → `gate-2-partials`
+(HTMX 200s) → `gate-3-api` (Python API tests) → `gate-4-playwright`
+(full Playwright suite, JSON+JUnit artifacts).
 
 ## Testing
 
@@ -177,6 +217,24 @@ for notional = price * qty at risk boundary.
 | Market data | specs/2/16-marketdata.md | specs/2/40-testing-marketdata.md |
 | SPSC rings | notes/SMRB.md | specs/2/43-testing-smrb.md |
 | Validation edge cases | specs/2/47-validation-edge-cases.md | (cross-references all) |
+
+## Root Navigation
+
+| File | Purpose |
+|------|---------|
+| README.md | Quick start, architecture diagram, deployment |
+| PROGRESS.md | Per-crate status, regenerated from artifacts |
+| GUARANTEES.md | Consistency, durability, ordering guarantees |
+| CRASH-SCENARIOS.md | Failure mode catalog |
+| RECOVERY-RUNBOOK.md | Ops recovery procedures |
+| TESTING.md | Test taxonomy and how to run each tier |
+| MONITORING.md | Structured-log metrics shipping |
+| FEATURES.md | Feature inventory |
+| BLOG.md | Publishable narrative (not internal docs) |
+| TODO.md | Open work |
+
+`.ship/` is gitignored, ephemeral; `.diary/` is the long-lived
+shipping log (date-named YYYYMMDD.md).
 
 ## Correctness Invariants (system-wide)
 
