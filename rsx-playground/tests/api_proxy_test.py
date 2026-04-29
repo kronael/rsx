@@ -11,13 +11,45 @@ Freezes expected behavior before any integration run:
 - /ws/public upgrades to Marketdata WS
 - /ws/public closes 1013 when Marketdata unreachable
 
+Several tests require the upstream (gateway / marketdata)
+to be DOWN in order to exercise the failure paths. When the
+gate runs after process-control tests, the live gateway is
+often still up, so these tests autoskip when reachable.
+
 Run with:
   cd rsx-playground && .venv/bin/pytest tests/api_proxy_test.py -v
 """
 
 import json
+import socket
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _port_open(host: str, port: int, timeout: float = 0.2) -> bool:
+    try:
+        with socket.create_connection(
+            (host, port), timeout=timeout
+        ):
+            return True
+    except OSError:
+        return False
+
+
+def _skip_if_gateway_up():
+    if _port_open("127.0.0.1", 8080):
+        pytest.skip(
+            "live gateway on :8080 — proxy 'gateway down' "
+            "tests need it stopped to exercise failure path"
+        )
+
+
+def _skip_if_marketdata_up():
+    if _port_open("127.0.0.1", 8180):
+        pytest.skip(
+            "live marketdata on :8180 — proxy 'marketdata "
+            "down' tests need it stopped"
+        )
 
 
 # ── REST proxy (/v1/*) ────────────────────────────────────
@@ -26,6 +58,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 @pytest.mark.allow_5xx
 def test_v1_proxy_path_rewriting(client):
     """GET /v1/foo rewrites to GATEWAY_HTTP/v1/foo (502 = gateway down)."""
+    _skip_if_gateway_up()
     resp = client.get("/v1/ping")
     # Gateway not running → 502 (not 500)
     assert resp.status_code == 502
@@ -41,6 +74,7 @@ def test_v1_proxy_502_not_500_on_connection_refused(client):
     /v1/orders, /v1/account etc. have local handlers so use
     an unmapped /v1/<path> to exercise the catch-all proxy.
     """
+    _skip_if_gateway_up()
     resp = client.get("/v1/proxy-only-path")
     assert resp.status_code == 502
     assert resp.json()["error"] == "gateway not running"
@@ -49,6 +83,7 @@ def test_v1_proxy_502_not_500_on_connection_refused(client):
 @pytest.mark.allow_5xx
 def test_v1_proxy_post_502_when_gateway_down(client):
     """POST /v1/* also returns 502 when gateway down."""
+    _skip_if_gateway_up()
     resp = client.post("/v1/orders", json={"symbol_id": 10})
     assert resp.status_code == 502
 
@@ -185,6 +220,7 @@ def test_v1_proxy_path_segments_preserved(client):
 
 def test_ws_private_returns_1013_when_gateway_down(client):
     """/ws/private closes with 1013 when Gateway refuses connection."""
+    _skip_if_gateway_up()
     with client.websocket_connect("/ws/private") as ws:
         # Expect the server to close immediately with 1013
         # since gateway (port 8080) is not running.
@@ -199,6 +235,7 @@ def test_ws_private_returns_1013_when_gateway_down(client):
 
 def test_ws_public_returns_1013_when_marketdata_down(client):
     """/ws/public closes with 1013 when Marketdata refuses connection."""
+    _skip_if_marketdata_up()
     with client.websocket_connect("/ws/public") as ws:
         try:
             data = ws.receive_json()
