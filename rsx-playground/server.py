@@ -78,6 +78,10 @@ WEBUI_DIST = ROOT / "rsx-webui" / "dist"
 PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
+# Default user_id for unauthenticated loopback Trade UI sessions
+# in dev mode. Browsers cannot set custom WS headers, so the
+# proxy mints a JWT for this user when no auth is supplied.
+_GUEST_USER_ID = 99
 
 # ── import start script's config ────────────────────────
 
@@ -6119,20 +6123,30 @@ async def ws_private_proxy(ws: WebSocket):
     """Proxy private WS to Gateway."""
     await ws.accept()
     token = _extract_token_from_headers(ws.headers)
+    loopback_dev = (
+        _allow_insecure_user_id()
+        and _is_loopback_host(
+            ws.client.host if ws.client else None
+        )
+    )
     if token:
         headers = {"authorization": f"Bearer {token}"}
-    elif (
-        _allow_insecure_user_id()
-        and _is_loopback_host(ws.client.host if ws.client else None)
-        and ws.headers.get("x-user-id")
-    ):
-        # Dev path: trusted local caller passed x-user-id to playground.
-        # Mint a real JWT server-side for the gateway hop.
-        try:
-            user_id = int(ws.headers["x-user-id"])
-        except ValueError:
-            await ws.close(code=4001, reason="invalid x-user-id")
-            return
+    elif loopback_dev:
+        # Dev path: trusted local caller. Take x-user-id if
+        # present (e.g. CLI tools, tests using headers); else
+        # default to a guest user so the in-tree Trade UI
+        # connects without a login flow. Mint a real JWT for
+        # the gateway hop in either case.
+        raw = ws.headers.get("x-user-id")
+        if raw is not None:
+            try:
+                user_id = int(raw)
+            except ValueError:
+                await ws.close(
+                    code=4001, reason="invalid x-user-id")
+                return
+        else:
+            user_id = _GUEST_USER_ID
         secret = os.environ.get(
             "RSX_GW_JWT_SECRET",
             "rsx-dev-secret-not-for-prod",
@@ -6150,7 +6164,8 @@ async def ws_private_proxy(ws: WebSocket):
         )
         headers = {"authorization": f"Bearer {minted}"}
     else:
-        await ws.close(code=4001, reason="authentication required")
+        await ws.close(
+            code=4001, reason="authentication required")
         return
     try:
         async with aiohttp.ClientSession() as session:
