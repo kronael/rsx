@@ -7,19 +7,20 @@ can be safely published as a public GitHub repo + live
 demo. "Works and runs" before we do deployment / signup /
 marketing work.
 
-## Status (2026-04-24)
+## Status (2026-04-29)
 
-End-to-end system verified working:
-- Orders: gateway → risk → ME → WAL (WAL grows; 5000+ records)
-- mid_override correctly reflected in ME book (50000 mid →
-  49900/50100; 51000 mid → 50898/51102)
+End-to-end system verified working post-leak-fix:
+- Orders: gateway → risk → ME → WAL (1500+ records, maker
+  placing ~20 ord/s, 10 active)
 - Cancels, fills, done events all flow
-- Walkthrough tests: 34/34 pass
-- Trade UI tests: 90/93 pass (2 failures = empty-state
-  assumptions in tests, not functional bugs)
+- gate-4 Playwright: 417/422 (98.8%); 2 failures, 3 skipped
+  - `play_maker.spec.ts:247` — F/U frames timeout (= task 5)
+  - `play_trade.spec.ts:162` — Trade UI dot still red, FIXED
+    in commits f564948 + 26f38cb (next gate-4 run should be
+    418/422 or 419/422)
 
-Tasks 1, 2, 3, 4, 7, 8, 9 complete.
-Tasks 5, 6, 10 remain (non-blocking).
+Tasks 1, 2, 3, 4, 4b, 6, 7, 8 complete.
+Tasks 5, 9, 10 remain (non-blocking).
 
 ## Non-goals (deferred)
 
