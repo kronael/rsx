@@ -22,7 +22,6 @@ HTMX_PARTIALS = [
     "/x/key-metrics",
     "/x/latency-regression",
     "/x/liquidations",
-    "/x/fills",
     "/x/live-fills",
     "/x/logs",
     "/x/maker-status",
