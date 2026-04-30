@@ -37,6 +37,14 @@ export default defineConfig({
     url: "http://localhost:49171",
     reuseExistingServer: true,
     timeout: 10000,
+    env: {
+      // Loopback-only dev fallback: lets the in-tree Trade UI's
+      // /ws/private connect without a login flow (the playground
+      // mints a guest JWT). Production server.py must NOT have
+      // this set.
+      PLAYGROUND_ALLOW_INSECURE_USER_ID: "1",
+      RSX_GW_JWT_SECRET: "rsx-dev-secret-not-for-prod",
+    },
   },
   projects: [
     // Shard 0a: session-preflight — collision self-test (3 tests).
