@@ -125,10 +125,9 @@ No TOML config files. API keys via env vars.
 | RSX_GW_CMP_ADDR | no | 127.0.0.1:9102 | GW CMP addr |
 | RSX_RISK_CMP_ADDR | no | 127.0.0.1:9101 | Risk CMP addr |
 | RSX_GW_WAL_DIR | no | ./tmp/wal | WAL directory |
-| RSX_GW_JWT_SECRET | no | dev-secret | JWT secret |
+| RSX_GW_JWT_SECRET | yes | (panic) | HMAC-SHA256 JWT signing secret. Production must override the dev secret used by `start`. |
 | RSX_GW_RL_USER | no | 10 | Rate limit/user |
 | RSX_GW_RL_IP | no | 100 | Rate limit/IP |
-| RSX_GW_RL_INSTANCE | no | 1000 | Rate limit total |
 
 ### Marketdata
 
