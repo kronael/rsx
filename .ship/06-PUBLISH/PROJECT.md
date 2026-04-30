@@ -94,15 +94,15 @@ to 50898/51102).
 Files: `rsx-risk/src/shard.rs` (`release_frozen_for_order`,
 main loop), `rsx-risk/src/replay.rs`
 
-### 4b. `/api/book` shows stale data
-Playground `_book_snap` (from MD WS subscription) isn't
-updating after book changes. `/api/book` falls through to
-`_maker_book` fallback. This is a DISPLAY bug, not a core
-bug — WAL / ME have correct state.
-
-Files: `rsx-playground/server.py` (marketdata WS
-subscriber), possibly `rsx-marketdata/` shadow book
-broadcast.
+### 4b. `/api/book` shows stale data — RESOLVED (cascade)
+**Status (2026-04-29):** This was a cascade of the frozen_margin
+leak (commit 9ca6f10). Pre-trade margin checks rejected every order,
+so no `OrderInsertedRecord` ever reached marketdata, so `_book_snap`
+stayed empty, so `/api/book` fell through to the `_maker_book`
+synthetic fallback. With the leak fixed, orders flow end-to-end
+through ME → marketdata; `_book_snap` populates from live BBO/L2
+deltas. Verified post-fix: WAL grew to 1500+ records and maker
+status reports orders_placed=430, active_orders=10.
 
 ### 5. Fix WS F/U frames test
 `play_maker.spec.ts:163` — user 1 cross-fill expects F + U
@@ -112,29 +112,28 @@ forwarding direction and private channel routing.
 Files: `rsx-playground/server.py` (WS proxy),
 `rsx-gateway/` (private WS handler)
 
-### 6. Marketdata WS pipeline (optional / may defer)
-Public `/ws/public` subscribers currently get no BBO frames
-from live marketdata. Papered over with `_maker_book`
-fallback for depth widgets. Fix root cause OR explicitly
-document the limitation.
+### 6. Marketdata WS pipeline — RESOLVED (cascade)
+**Status (2026-04-29):** Same root cause as 4b. With the
+frozen_margin leak fixed (commit 9ca6f10), orders reach ME, ME
+emits `OrderInsertedRecord` over CMP/UDP to marketdata, and
+marketdata broadcasts BBO/L2 to subscribed WS clients. Confirmed
+end-to-end: maker placing 20 orders/sec; WAL records flowing.
+The `_maker_book` synthetic fallback in playground server.py is
+now redundant on the happy path; it remains as a defense-in-depth
+fallback for empty-book startup windows.
 
-Files: `rsx-marketdata/`, `rsx-playground/server.py`
+### 7. Wire RSX_LIQUIDATION_MAX_SLIP_BPS — DONE
+**Status (2026-04-29):** Wired in commit 73e7131. `LiquidationConfig`
+has `max_slip_bps: u64` (config.rs:16, env-loaded at line 152);
+`LiquidationEngine::new` takes it as the 4th arg (liquidation.rs:54);
+the price-clamping path at liquidation.rs:174 caps slippage with
+`.min(self.max_slip_bps)`. Tests propagated to use the new arity
+in commit 9ca6f10.
 
-### 7. Wire RSX_LIQUIDATION_MAX_SLIP_BPS into LiquidationConfig
-Check-pass (`findings-bucket-2.md`) found 13-liquidator
-spec advertises `RSX_LIQUIDATION_MAX_SLIP_BPS=500` as
-slippage cap, but `LiquidationConfig` has no `max_slip_bps`
-field — cap is unenforced. Wire the env var, add field to
-config, enforce cap in price clamping logic.
-
-Files: `rsx-risk/src/liquidation.rs`, config loader
-
-### 8. Remove test.skip() from play_latency.spec.ts
-Lines 245, 298, 335 still have `test.skip()` — vacuous
-assertions. Either implement the check or delete the
-skipped test. Found by check-pass on 22-perf-verification.
-
-Files: `rsx-playground/tests/play_latency.spec.ts`
+### 8. Remove test.skip() from play_latency.spec.ts — DONE
+**Status (2026-04-29):** No `test.skip()` calls remain in
+play_latency.spec.ts (verified via grep). Resolved in an earlier
+ship cycle; not surfaced because PROJECT.md wasn't updated.
 
 ### 9. Reconcile liquidator main-loop ordering
 13-liquidator spec §7 says liquidation runs between funding
