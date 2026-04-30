@@ -550,8 +550,14 @@ async def spawn_process(name, binary, env):
         return {"error": f"binary not found: {binary}"}
     full_env = {**os.environ, **env}
     full_env.setdefault("DATABASE_URL", PG_URL)
+    # Python scripts get dispatched through the interpreter so
+    # auto-restart works regardless of file +x bit.
+    if binary_path.suffix == ".py":
+        argv = [sys.executable, str(binary_path)]
+    else:
+        argv = [str(binary_path)]
     proc = await asyncio.create_subprocess_exec(
-        str(binary_path),
+        *argv,
         env=full_env,
         cwd=str(ROOT),
         stdout=asyncio.subprocess.PIPE,
