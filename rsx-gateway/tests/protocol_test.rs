@@ -159,58 +159,6 @@ fn parse_e_frame_error_code_and_msg() {
 }
 
 #[test]
-fn parse_s_frame_subscribe_bbo() {
-    let json = r#"{"S":[1,1]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::Subscribe {
-            symbol_id: 1,
-            channels: 1,
-        }
-    );
-}
-
-#[test]
-fn parse_s_frame_subscribe_depth() {
-    let json = r#"{"S":[1,2]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::Subscribe {
-            symbol_id: 1,
-            channels: 2,
-        }
-    );
-}
-
-#[test]
-fn parse_x_frame_unsubscribe() {
-    let json = r#"{"X":[1,1]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::Unsubscribe {
-            symbol_id: 1,
-            channels: 1,
-        }
-    );
-}
-
-#[test]
-fn parse_x_frame_unsubscribe_all() {
-    let json = r#"{"X":[0,0]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::Unsubscribe {
-            symbol_id: 0,
-            channels: 0,
-        }
-    );
-}
-
-#[test]
 fn parse_q_frame_liquidation_all_statuses() {
     for status in 0..=4u8 {
         let json = format!(
@@ -228,61 +176,6 @@ fn parse_q_frame_liquidation_all_statuses() {
     // status=5 rejected
     let json = r#"{"Q":[1,5,10,0,500,49000,50]}"#;
     assert!(parse(json).is_err());
-}
-
-#[test]
-fn parse_bbo_frame_all_fields() {
-    let json =
-        r#"{"BBO":[1,50000,100,5,50100,200,3,1700000,42]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::BboUpdate {
-            symbol_id: 1,
-            bid_px: 50000,
-            bid_qty: 100,
-            bid_count: 5,
-            ask_px: 50100,
-            ask_qty: 200,
-            ask_count: 3,
-            timestamp_ns: 1700000,
-            seq: 42,
-        }
-    );
-}
-
-#[test]
-fn parse_b_snapshot_frame() {
-    let json = r#"{"B":[1,[[50000,100,3],[49900,200,5]],[[50100,150,2]],1700000,42]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::L2Snapshot {
-            symbol_id: 1,
-            bids: vec![(50000, 100, 3), (49900, 200, 5)],
-            asks: vec![(50100, 150, 2)],
-            timestamp_ns: 1700000,
-            seq: 42,
-        }
-    );
-}
-
-#[test]
-fn parse_d_delta_frame() {
-    let json = r#"{"D":[1,0,50000,100,3,1700000,42]}"#;
-    let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::L2Delta {
-            symbol_id: 1,
-            side: 0,
-            price: 50000,
-            qty: 100,
-            count: 3,
-            timestamp_ns: 1700000,
-            seq: 42,
-        }
-    );
 }
 
 #[test]
@@ -368,54 +261,6 @@ fn serialize_h_frame_heartbeat() {
 }
 
 #[test]
-fn serialize_bbo_frame() {
-    let f = WsFrame::BboUpdate {
-        symbol_id: 1,
-        bid_px: 50000,
-        bid_qty: 100,
-        bid_count: 5,
-        ask_px: 50100,
-        ask_qty: 200,
-        ask_count: 3,
-        timestamp_ns: 1700000,
-        seq: 42,
-    };
-    let s = serialize(&f);
-    let parsed = parse(&s).unwrap();
-    assert_eq!(parsed, f);
-}
-
-#[test]
-fn serialize_b_frame_l2_snapshot() {
-    let f = WsFrame::L2Snapshot {
-        symbol_id: 1,
-        bids: vec![(50000, 100, 3), (49900, 200, 5)],
-        asks: vec![(50100, 150, 2)],
-        timestamp_ns: 1700000,
-        seq: 42,
-    };
-    let s = serialize(&f);
-    let parsed = parse(&s).unwrap();
-    assert_eq!(parsed, f);
-}
-
-#[test]
-fn serialize_d_frame_l2_delta() {
-    let f = WsFrame::L2Delta {
-        symbol_id: 1,
-        side: 0,
-        price: 50000,
-        qty: 100,
-        count: 3,
-        timestamp_ns: 1700000,
-        seq: 42,
-    };
-    let s = serialize(&f);
-    let parsed = parse(&s).unwrap();
-    assert_eq!(parsed, f);
-}
-
-#[test]
 fn serialize_q_frame_liquidation() {
     let f = WsFrame::Liquidation {
         symbol_id: 1,
@@ -425,28 +270,6 @@ fn serialize_q_frame_liquidation() {
         qty: 500,
         price: 49000,
         slip_bps: 50,
-    };
-    let s = serialize(&f);
-    let parsed = parse(&s).unwrap();
-    assert_eq!(parsed, f);
-}
-
-#[test]
-fn serialize_s_frame_subscribe() {
-    let f = WsFrame::Subscribe {
-        symbol_id: 1,
-        channels: 2,
-    };
-    let s = serialize(&f);
-    let parsed = parse(&s).unwrap();
-    assert_eq!(parsed, f);
-}
-
-#[test]
-fn serialize_x_frame_unsubscribe() {
-    let f = WsFrame::Unsubscribe {
-        symbol_id: 0,
-        channels: 0,
     };
     let s = serialize(&f);
     let parsed = parse(&s).unwrap();

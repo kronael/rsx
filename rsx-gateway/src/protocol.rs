@@ -47,41 +47,6 @@ pub enum WsFrame {
         price: i64,
         slip_bps: i64,
     },
-    Subscribe {
-        symbol_id: u32,
-        channels: u32,
-    },
-    Unsubscribe {
-        symbol_id: u32,
-        channels: u32,
-    },
-    BboUpdate {
-        symbol_id: u32,
-        bid_px: i64,
-        bid_qty: i64,
-        bid_count: u32,
-        ask_px: i64,
-        ask_qty: i64,
-        ask_count: u32,
-        timestamp_ns: u64,
-        seq: u64,
-    },
-    L2Snapshot {
-        symbol_id: u32,
-        bids: Vec<(i64, i64, u32)>,
-        asks: Vec<(i64, i64, u32)>,
-        timestamp_ns: u64,
-        seq: u64,
-    },
-    L2Delta {
-        symbol_id: u32,
-        side: u8,
-        price: i64,
-        qty: i64,
-        count: u32,
-        timestamp_ns: u64,
-        seq: u64,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -201,11 +166,6 @@ pub fn parse(text: &str) -> Result<WsFrame, ParseError> {
         "E" => parse_error(arr),
         "H" => parse_heartbeat(arr),
         "Q" => parse_liquidation(arr),
-        "S" => parse_subscribe(arr),
-        "X" => parse_unsubscribe(arr),
-        "BBO" => parse_bbo(arr),
-        "B" => parse_l2_snapshot(arr),
-        "D" => parse_l2_delta(arr),
         other => {
             Err(ParseError::UnknownType(other.to_string()))
         }
@@ -399,131 +359,6 @@ fn parse_liquidation(
     })
 }
 
-fn parse_subscribe(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
-    if arr.len() < 2 {
-        return Err(ParseError::MissingField(
-            "S requires 2 fields".to_string(),
-        ));
-    }
-    let symbol_id = as_u32(&arr[0], "sym")?;
-    let channels = as_u32(&arr[1], "channels")?;
-    Ok(WsFrame::Subscribe { symbol_id, channels })
-}
-
-fn parse_unsubscribe(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
-    if arr.len() < 2 {
-        return Err(ParseError::MissingField(
-            "X requires 2 fields".to_string(),
-        ));
-    }
-    let symbol_id = as_u32(&arr[0], "sym")?;
-    let channels = as_u32(&arr[1], "channels")?;
-    Ok(WsFrame::Unsubscribe { symbol_id, channels })
-}
-
-fn parse_bbo(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
-    if arr.len() < 9 {
-        return Err(ParseError::MissingField(
-            "BBO requires 9 fields".to_string(),
-        ));
-    }
-    Ok(WsFrame::BboUpdate {
-        symbol_id: as_u32(&arr[0], "sym")?,
-        bid_px: as_i64(&arr[1], "bp")?,
-        bid_qty: as_i64(&arr[2], "bq")?,
-        bid_count: as_u32(&arr[3], "bc")?,
-        ask_px: as_i64(&arr[4], "ap")?,
-        ask_qty: as_i64(&arr[5], "aq")?,
-        ask_count: as_u32(&arr[6], "ac")?,
-        timestamp_ns: as_u64(&arr[7], "ts")?,
-        seq: as_u64(&arr[8], "u")?,
-    })
-}
-
-fn parse_level_array(
-    val: &Value,
-    field: &str,
-) -> Result<Vec<(i64, i64, u32)>, ParseError> {
-    let arr = val.as_array().ok_or_else(|| {
-        ParseError::InvalidValue(field.to_string())
-    })?;
-    let mut out = Vec::with_capacity(arr.len());
-    for entry in arr {
-        let e = entry.as_array().ok_or_else(|| {
-            ParseError::InvalidValue(field.to_string())
-        })?;
-        if e.len() < 3 {
-            return Err(ParseError::MissingField(
-                format!("{} entry needs 3 elements", field),
-            ));
-        }
-        let p = as_i64(&e[0], "p")?;
-        let q = as_i64(&e[1], "q")?;
-        let c = as_u32(&e[2], "c")?;
-        out.push((p, q, c));
-    }
-    Ok(out)
-}
-
-fn parse_l2_snapshot(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
-    if arr.len() < 5 {
-        return Err(ParseError::MissingField(
-            "B requires 5 fields".to_string(),
-        ));
-    }
-    let symbol_id = as_u32(&arr[0], "sym")?;
-    let bids = parse_level_array(&arr[1], "bids")?;
-    let asks = parse_level_array(&arr[2], "asks")?;
-    let timestamp_ns = as_u64(&arr[3], "ts")?;
-    let seq = as_u64(&arr[4], "u")?;
-    Ok(WsFrame::L2Snapshot {
-        symbol_id,
-        bids,
-        asks,
-        timestamp_ns,
-        seq,
-    })
-}
-
-fn parse_l2_delta(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
-    if arr.len() < 7 {
-        return Err(ParseError::MissingField(
-            "D requires 7 fields".to_string(),
-        ));
-    }
-    let symbol_id = as_u32(&arr[0], "sym")?;
-    let side = as_u8(&arr[1], "side")?;
-    if side > 1 {
-        return Err(ParseError::InvalidValue(
-            "side must be 0 or 1".to_string(),
-        ));
-    }
-    let price = as_i64(&arr[2], "p")?;
-    let qty = as_i64(&arr[3], "q")?;
-    let count = as_u32(&arr[4], "c")?;
-    let timestamp_ns = as_u64(&arr[5], "ts")?;
-    let seq = as_u64(&arr[6], "u")?;
-    Ok(WsFrame::L2Delta {
-        symbol_id,
-        side,
-        price,
-        qty,
-        count,
-        timestamp_ns,
-        seq,
-    })
-}
-
 pub fn serialize(frame: &WsFrame) -> String {
     match frame {
         WsFrame::NewOrder {
@@ -600,82 +435,6 @@ pub fn serialize(frame: &WsFrame) -> String {
                 "{{\"Q\":[{},{},{},{},{},{},{}]}}",
                 symbol_id, status, round, side,
                 qty, price, slip_bps,
-            )
-        }
-        WsFrame::Subscribe {
-            symbol_id,
-            channels,
-        } => {
-            format!(
-                "{{\"S\":[{},{}]}}",
-                symbol_id, channels,
-            )
-        }
-        WsFrame::Unsubscribe {
-            symbol_id,
-            channels,
-        } => {
-            format!(
-                "{{\"X\":[{},{}]}}",
-                symbol_id, channels,
-            )
-        }
-        WsFrame::BboUpdate {
-            symbol_id,
-            bid_px,
-            bid_qty,
-            bid_count,
-            ask_px,
-            ask_qty,
-            ask_count,
-            timestamp_ns,
-            seq,
-        } => {
-            format!(
-                "{{\"BBO\":[{},{},{},{},{},{},{},{},{}]}}",
-                symbol_id, bid_px, bid_qty, bid_count,
-                ask_px, ask_qty, ask_count,
-                timestamp_ns, seq,
-            )
-        }
-        WsFrame::L2Snapshot {
-            symbol_id,
-            bids,
-            asks,
-            timestamp_ns,
-            seq,
-        } => {
-            let fmt_levels = |levels: &[(i64, i64, u32)]| {
-                let parts: Vec<String> = levels
-                    .iter()
-                    .map(|(p, q, c)| {
-                        format!("[{},{},{}]", p, q, c)
-                    })
-                    .collect();
-                format!("[{}]", parts.join(","))
-            };
-            format!(
-                "{{\"B\":[{},{},{},{},{}]}}",
-                symbol_id,
-                fmt_levels(bids),
-                fmt_levels(asks),
-                timestamp_ns,
-                seq,
-            )
-        }
-        WsFrame::L2Delta {
-            symbol_id,
-            side,
-            price,
-            qty,
-            count,
-            timestamp_ns,
-            seq,
-        } => {
-            format!(
-                "{{\"D\":[{},{},{},{},{},{},{}]}}",
-                symbol_id, side, price, qty,
-                count, timestamp_ns, seq,
             )
         }
     }

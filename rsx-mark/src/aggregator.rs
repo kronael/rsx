@@ -51,23 +51,6 @@ pub fn compute_mask(
     mask
 }
 
-/// Result of an aggregation: Some(event) if should publish.
-pub fn aggregate(
-    state: &mut SymbolMarkState,
-    update: SourcePrice,
-    now_ns: u64,
-    symbol_id: u32,
-) -> Option<MarkPriceEvent> {
-    let sid = update.source_id as usize;
-    if sid >= MAX_SOURCES {
-        return None;
-    }
-
-    state.sources[sid] = Some(update);
-
-    reaggregate(state, now_ns, symbol_id, STALENESS_NS)
-}
-
 /// Re-aggregate from current sources. Returns event if
 /// there are fresh sources.
 pub fn reaggregate(
@@ -118,26 +101,6 @@ fn make_event(
         source_count: state.source_count as u32,
         _pad1: [0; 24],
     }
-}
-
-/// Staleness sweep for one symbol. MARK.md §4.
-/// Returns Some(event) if mark price changed due to
-/// a source becoming stale.
-pub fn sweep_stale(
-    state: &mut SymbolMarkState,
-    now_ns: u64,
-    symbol_id: u32,
-) -> Option<MarkPriceEvent> {
-    // Check if any previously-fresh source is now stale
-    let old_mask = state.source_mask;
-    let new_mask = compute_mask(state, now_ns, STALENESS_NS);
-
-    if new_mask == old_mask {
-        return None;
-    }
-
-    // A source became stale, re-aggregate
-    reaggregate(state, now_ns, symbol_id, STALENESS_NS)
 }
 
 /// Same as aggregate but with configurable staleness.

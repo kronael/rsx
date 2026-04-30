@@ -7,7 +7,6 @@
 
 pub mod protocol;
 pub mod convert;
-pub mod types;
 pub mod config;
 pub mod rate_limit;
 pub mod circuit;

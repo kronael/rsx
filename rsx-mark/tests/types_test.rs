@@ -1,9 +1,20 @@
 use std::mem::align_of;
 use std::mem::size_of;
 
+use rsx_mark::aggregator::aggregate_with_staleness;
+use rsx_mark::aggregator::STALENESS_NS;
 use rsx_mark::types::MarkPriceEvent;
 use rsx_mark::types::SourcePrice;
 use rsx_mark::types::SymbolMarkState;
+
+fn aggregate(
+    state: &mut SymbolMarkState,
+    update: SourcePrice,
+    now_ns: u64,
+    symbol_id: u32,
+) -> Option<MarkPriceEvent> {
+    aggregate_with_staleness(state, update, now_ns, symbol_id, STALENESS_NS)
+}
 
 #[test]
 fn mark_price_event_size_is_64() {
@@ -40,7 +51,6 @@ fn mark_state_initial_all_none() {
 
 #[test]
 fn mark_state_source_mask_correct_bitmask() {
-    use rsx_mark::aggregator::aggregate;
     let mut state = SymbolMarkState::new();
     let now = 1_000_000_000u64;
     let update = SourcePrice {
@@ -55,7 +65,6 @@ fn mark_state_source_mask_correct_bitmask() {
 
 #[test]
 fn mark_state_source_count_matches_fresh() {
-    use rsx_mark::aggregator::aggregate;
     let mut state = SymbolMarkState::new();
     let now = 1_000_000_000u64;
     for i in 0..3u8 {
@@ -72,7 +81,6 @@ fn mark_state_source_count_matches_fresh() {
 
 #[test]
 fn mark_state_mark_price_updated_on_aggregate() {
-    use rsx_mark::aggregator::aggregate;
     let mut state = SymbolMarkState::new();
     let now = 1_000_000_000u64;
     let update = SourcePrice {
