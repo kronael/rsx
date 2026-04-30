@@ -1261,8 +1261,6 @@ _idempotency_keys: dict[str, float] = {}
 _IDEMPOTENCY_TTL = 300
 SERVER_START: float = time.time()
 _user_balances: dict[int, int] = {}
-_user_frozen: set[int] = set()
-_liquidation_log: list[dict] = []
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -3041,7 +3039,6 @@ async def x_book_stats():
 
 
 @app.get("/x/live-fills", response_class=HTMLResponse)
-@app.get("/x/fills", response_class=HTMLResponse)
 async def x_fills():
     fills = parse_wal_fills()
     if not fills:
@@ -5045,15 +5042,11 @@ async def api_liquidate(
     denied = _require_admin_request(request)
     if denied:
         return denied
-    entry = {
-        "user_id": user_id,
-        "symbol_id": symbol_id,
-        "ts": time.time(),
-        "status": "triggered",
-    }
-    _liquidation_log.append(entry)
     import logging
-    logging.info("liquidation triggered: %s", entry)
+    logging.info(
+        "liquidation triggered: user=%s symbol=%s",
+        user_id, symbol_id,
+    )
     return HTMLResponse(
         f'<span class="text-amber-400 text-xs">'
         f'liquidation triggered for user {user_id} '
@@ -5137,15 +5130,9 @@ async def api_risk_action(
         return JSONResponse(
             {"error": f"unknown action: {action}"},
             status_code=400)
-    if action == "freeze":
-        _user_frozen.add(user_id)
-        return {"user_id": user_id, "action": "freeze",
-                "status": "frozen"}
-    else:
-        _user_frozen.discard(user_id)
-        return {"user_id": user_id,
-                "action": "unfreeze",
-                "status": "unfrozen"}
+    status = "frozen" if action == "freeze" else "unfrozen"
+    return {"user_id": user_id, "action": action,
+            "status": status}
 
 
 # ── Risk dashboard API endpoints ──────────────────────────
@@ -5417,15 +5404,6 @@ async def api_latency():
         "min": s[0],
         "max": s[-1],
     })
-
-
-@app.get("/api/gateway-mode")
-async def api_gateway_mode():
-    reachable = await _probe_gateway_tcp()
-    return {
-        "mode": "live" if reachable else "offline",
-        "url": GATEWAY_URL,
-    }
 
 
 @app.get("/api/mark/prices")
@@ -5820,31 +5798,6 @@ async def api_maker_restart(request: Request):
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
         f'maker restarted (pid {pid})</span>')
-
-
-@app.get("/api/maker/stats")
-async def api_maker_stats():
-    """Return maker live stats from status file."""
-    running = _maker_running()
-    stats = _read_maker_stats() if running else {}
-    cfg: dict = {}
-    try:
-        cfg = json.loads(MAKER_CONFIG.read_text())
-    except Exception:
-        pass
-    return {
-        "running": running,
-        "orders_placed": stats.get("orders_placed", 0),
-        "active_orders": stats.get("active_orders", 0),
-        "mid_prices": stats.get("mid_prices", {}),
-        "errors": stats.get("errors", []),
-        "spread_bps": cfg.get(
-            "spread_bps", stats.get("spread_bps", 20)),
-        "qty": cfg.get("qty", 10),
-        "symbol_id": cfg.get("symbol_id", 10),
-        "refresh_ms": cfg.get("refresh_ms", 500),
-        "levels": cfg.get("levels", 5),
-    }
 
 
 def _maker_book(symbol_id: int) -> dict | None:
