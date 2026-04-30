@@ -336,7 +336,6 @@ def build_spawn_plan(config, pg_url, release=False):
                 # rate-limit errors.
                 "RSX_GW_RL_USER": "5000",
                 "RSX_GW_RL_IP": "10000",
-                "RSX_GW_RL_INSTANCE": "100000",
                 "RSX_MAX_SYMBOLS": "16",
                 **sym_env,
                 "RUST_LOG": "info",

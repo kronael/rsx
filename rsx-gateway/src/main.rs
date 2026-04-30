@@ -39,7 +39,7 @@ fn log_effective_gateway_config(
     config: &rsx_gateway::config::GatewayConfig,
 ) {
     info!(
-        "gateway effective config: listen={} risk_addr={} max_pending={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} rl_instance={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
+        "gateway effective config: listen={} risk_addr={} max_pending={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
         config.listen_addr,
         config.risk_addr,
         config.max_pending,
@@ -48,7 +48,6 @@ fn log_effective_gateway_config(
         config.heartbeat_timeout_ms,
         config.rate_limit_per_user,
         config.rate_limit_per_ip,
-        config.rate_limit_per_instance,
         config.circuit_threshold,
         config.circuit_cooldown_ms,
         !config.jwt_secret.is_empty(),

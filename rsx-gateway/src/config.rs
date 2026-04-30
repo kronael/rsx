@@ -9,7 +9,6 @@ pub struct GatewayConfig {
     pub heartbeat_timeout_ms: u64,
     pub rate_limit_per_user: u32,
     pub rate_limit_per_ip: u32,
-    pub rate_limit_per_instance: u32,
     pub circuit_threshold: u32,
     pub circuit_cooldown_ms: u64,
     pub jwt_secret: String,
@@ -109,10 +108,6 @@ pub fn load_gateway_config() -> GatewayConfig {
         rate_limit_per_ip: env_u32(
             "RSX_GW_RL_IP",
             100,
-        ),
-        rate_limit_per_instance: env_u32(
-            "RSX_GW_RL_INSTANCE",
-            1000,
         ),
         circuit_threshold: env_u32(
             "RSX_GW_CB_THRESHOLD",

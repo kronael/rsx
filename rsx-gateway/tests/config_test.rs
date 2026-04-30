@@ -13,7 +13,6 @@ fn config_defaults() {
     assert_eq!(config.heartbeat_timeout_ms, 10_000);
     assert_eq!(config.rate_limit_per_user, 10);
     assert_eq!(config.rate_limit_per_ip, 100);
-    assert_eq!(config.rate_limit_per_instance, 1000);
     assert_eq!(config.circuit_threshold, 10);
     assert_eq!(config.circuit_cooldown_ms, 30_000);
     assert!(!config.jwt_secret.is_empty());

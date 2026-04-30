@@ -1,8 +1,9 @@
-use rsx_mark::aggregator::aggregate;
+use rsx_mark::aggregator::aggregate_with_staleness;
 use rsx_mark::aggregator::compute_mask;
-use rsx_mark::aggregator::sweep_stale;
+use rsx_mark::aggregator::sweep_stale_with_staleness;
 use rsx_mark::aggregator::MAX_SOURCES;
 use rsx_mark::aggregator::STALENESS_NS;
+use rsx_mark::types::MarkPriceEvent;
 use rsx_mark::types::SourcePrice;
 use rsx_mark::types::SymbolMarkState;
 
@@ -13,6 +14,23 @@ fn sp(id: u8, price: i64, ts: u64) -> SourcePrice {
         price,
         timestamp_ns: ts,
     }
+}
+
+fn aggregate(
+    state: &mut SymbolMarkState,
+    update: SourcePrice,
+    now_ns: u64,
+    symbol_id: u32,
+) -> Option<MarkPriceEvent> {
+    aggregate_with_staleness(state, update, now_ns, symbol_id, STALENESS_NS)
+}
+
+fn sweep_stale(
+    state: &mut SymbolMarkState,
+    now_ns: u64,
+    symbol_id: u32,
+) -> Option<MarkPriceEvent> {
+    sweep_stale_with_staleness(state, now_ns, symbol_id, STALENESS_NS)
 }
 
 // --- single source ---

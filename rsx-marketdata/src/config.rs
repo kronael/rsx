@@ -4,7 +4,6 @@ pub struct MarketDataConfig {
     pub listen_addr: String,
     pub max_symbols: usize,
     pub snapshot_depth: u32,
-    pub spsc_ring_size: usize,
     pub book_capacity: u32,
     pub mid_price: i64,
     pub tick_size: i64,
@@ -74,10 +73,6 @@ pub fn load_marketdata_config() -> MarketDataConfig {
         snapshot_depth: env_u32(
             "RSX_MD_SNAPSHOT_DEPTH",
             10,
-        ),
-        spsc_ring_size: env_usize(
-            "RSX_MD_RING_SIZE",
-            8192,
         ),
         book_capacity: env_u32(
             "RSX_MD_BOOK_CAPACITY",

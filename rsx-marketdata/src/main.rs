@@ -28,11 +28,10 @@ fn log_effective_marketdata_config(
     config: &rsx_marketdata::config::MarketDataConfig,
 ) {
     info!(
-        "marketdata effective config: listen={} max_symbols={} snapshot_depth={} ring_size={} book_capacity={} mid_price={} tick_size={} lot_size={} price_decimals={} qty_decimals={} max_outbound={} replay_addr={} stream_id={} tip_file={} heartbeat_interval_ms={} heartbeat_timeout_ms={}",
+        "marketdata effective config: listen={} max_symbols={} snapshot_depth={} book_capacity={} mid_price={} tick_size={} lot_size={} price_decimals={} qty_decimals={} max_outbound={} replay_addr={} stream_id={} tip_file={} heartbeat_interval_ms={} heartbeat_timeout_ms={}",
         config.listen_addr,
         config.max_symbols,
         config.snapshot_depth,
-        config.spsc_ring_size,
         config.book_capacity,
         config.mid_price,
         config.tick_size,
