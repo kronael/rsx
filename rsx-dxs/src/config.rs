@@ -19,6 +19,12 @@ pub struct CmpConfig {
     /// instead of a random ephemeral port. Allows
     /// receivers to send NAKs to a known port.
     pub sender_bind_addr: Option<String>,
+    /// If true, CmpReceiver accepts datagrams from any
+    /// source address. Default is false: receivers drop
+    /// datagrams whose source IP doesn't match the
+    /// configured sender_addr.ip(). The "trusted internal
+    /// network" claim from spec §4-cmp.md becomes enforced.
+    pub recv_allow_any_source: bool,
 }
 
 impl Default for CmpConfig {
@@ -29,6 +35,7 @@ impl Default for CmpConfig {
             status_interval_ms: 10,
             default_window: 64 * 1024,
             sender_bind_addr: None,
+            recv_allow_any_source: false,
         }
     }
 }
@@ -46,6 +53,10 @@ impl CmpConfig {
                 "RSX_CMP_DEFAULT_WINDOW", 64 * 1024),
             sender_bind_addr: env::var(
                 "RSX_CMP_SENDER_BIND_ADDR").ok(),
+            recv_allow_any_source: env::var(
+                "RSX_CMP_RECV_ALLOW_ANY_SOURCE")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
         }
     }
 }
