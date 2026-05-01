@@ -6,7 +6,7 @@
 
 - `cargo test --workspace` (~1,200 tests, <5s)
 - Tests in dedicated `tests/` dir with `_test.rs` suffix
-- 88 test files across 11 crates
+- 88 test files across 12 crates
 - Per-crate: `cargo test -p rsx-book -- test_name`
 - Per-file: `cargo test -p rsx-dxs --test wal_test`
 
