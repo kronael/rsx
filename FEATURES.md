@@ -50,17 +50,29 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - CONFIG_APPLIED handling
 - Message encoding for outbound CMP
 
-### rsx-dxs
+### rsx-dxs (transport, domain-agnostic)
 
 - WalWriter: 10ms flush, 64MB rotate, 10min retain
 - WalReader with sequence extraction
 - DxsReplayService (TCP, from seq N)
 - CMP protocol: UDP flow control, NACK-based
-- 15 record types: FILL, BBO, ORDER_ACCEPTED,
-  ORDER_DONE, ORDER_FAILED, ORDER_CANCEL_ACCEPTED,
-  ORDER_CANCEL_REJECTED, MARK_PRICE, LIQUIDATION,
-  CONFIG_APPLIED, CAUGHT_UP, and more
+- Two-tier NAK retransmit: in-mem ring + WAL random-access
+- Protocol records: StatusMessage, Nak, CmpHeartbeat,
+  ReplayRequest, CaughtUpRecord (in `protocol.rs`)
 - TLS support, backpressure, tip persistence
+- No `rsx-types` dep — transport accepts any
+  `CmpRecord` (repr(C) + seq at offset 0)
+
+### rsx-messages (exchange wire records)
+
+- 11 `#[repr(C, align(64))]` records on top of `rsx-dxs`
+- FillRecord, BboRecord, OrderInsertedRecord,
+  OrderCancelledRecord, OrderDoneRecord,
+  OrderAcceptedRecord, OrderFailedRecord,
+  MarkPriceRecord, LiquidationRecord,
+  ConfigAppliedRecord, CancelRequest
+- Per-type encode/decode helpers
+- New record types added without editing the transport
 
 ### rsx-gateway
 
@@ -218,5 +230,5 @@ useSoundAlerts.
 ## Stats
 
 - ~21k LOC Rust, ~25k LOC Python, ~5k LOC TypeScript
-- 11 crates, 8 binaries
+- 12 crates, 8 binaries
 - 50+ specs, 88 Rust test files, 22 Playwright specs

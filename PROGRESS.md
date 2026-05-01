@@ -26,7 +26,8 @@ that should be on `monoio`. See `.ship/12-SHOWCASE-HONEST/`.
 | rsx-types | 100% | newtypes, config, validation |
 | rsx-book | 100% | snapshot, matching, compression |
 | rsx-matching | 100% | dedup, BBO, CONFIG_APPLIED |
-| rsx-dxs | 100% | WAL, CMP, DXS replay, CLI decode |
+| rsx-dxs | 100% | WAL, CMP, DXS replay (domain-agnostic transport) |
+| rsx-messages | 100% | Exchange wire records (Fill/BBO/Order*/Mark/Liquidation) |
 | rsx-gateway | 100% | JWT, rate limit, circuit breaker, REST |
 | rsx-risk | 100% | replication, funding, liquidation, PG |
 | rsx-marketdata | 100% | shadow book, seq gap, multi-ME |

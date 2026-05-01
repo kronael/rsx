@@ -135,10 +135,13 @@ and [specs/2/20-network.md](specs/2/20-network.md).
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, macros
+rsx-dxs/        Domain-agnostic transport: WAL + CMP/UDP +
+                DXS/TCP replay (no rsx-types dep)
+rsx-messages/   Exchange wire records: Fill, BBO, Order*,
+                MarkPrice, Liquidation, ConfigApplied
 rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
 rsx-matching/   ME (per-symbol, single-threaded, core-pinned)
 rsx-risk/       Risk (per-shard, full tile arrangement)
-rsx-dxs/        WAL, CMP transport, DXS replay TCP server
 rsx-gateway/    Gateway (monoio WS + CMP bridge, JWT, RL)
 rsx-marketdata/ Marketdata (monoio shadow book, L2/BBO)
 rsx-mark/       Mark price (external feeds, CMP to risk)

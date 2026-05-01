@@ -23,14 +23,18 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
 
 ## Crate Layout
 
-Rust workspace (11 crates, see Cargo.toml):
+Rust workspace (12 crates, see Cargo.toml):
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
-rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab, CompressionMap)
+rsx-dxs/        Domain-agnostic transport: CMP/UDP + WAL +
+                DXS/TCP replay (no rsx-types dep)
+rsx-messages/   RSX exchange wire records (Fill/BBO/Order*/...)
+                on top of rsx-dxs
+rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab,
+                CompressionMap)
 rsx-matching/   ME tile logic (one instance per symbol)
 rsx-risk/       Risk tile logic (one per user shard)
-rsx-dxs/        WAL writer/reader, DxsConsumer, DxsReplay server
 rsx-gateway/    Gateway tile, WS ingress + CMP/UDP to risk
 rsx-marketdata/ Marketdata tile, shadow book, L2/BBO/trades
 rsx-mark/       Mark price aggregator (separate process)

@@ -1,6 +1,6 @@
 # RSX System Architecture
 
-Spec-first perpetuals exchange. ~21k LOC Rust across 11 crates.
+Spec-first perpetuals exchange. ~21k LOC Rust across 12 crates.
 All specifications in `specs/2/`.
 
 ## System Diagram
@@ -60,10 +60,13 @@ consensus, no Raft, no cross-process coordination within a tier.
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, newtypes
+rsx-dxs/        Domain-agnostic transport: WalWriter, WalReader,
+                CmpSender, CmpReceiver, DxsReplayService,
+                DxsConsumer (no rsx-types dep)
+rsx-messages/   Exchange wire records: FillRecord, BboRecord,
+                Order*, MarkPriceRecord, LiquidationRecord
 rsx-book/       Orderbook, Slab, CompressionMap, PriceLevel
 rsx-matching/   ME main loop, fanout, dedup, WAL integration
-rsx-dxs/        WalWriter, WalReader, CmpSender, CmpReceiver,
-                DxsReplayService, DxsConsumer
 rsx-risk/       RiskShard, margin, positions, liquidation,
                 funding, persistence, replication
 rsx-gateway/    WS handler, JWT, rate limit, circuit breaker
@@ -96,7 +99,9 @@ Mark    --[DXS/TCP]--> Risk (mark prices)
 
 Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
 16-byte WalHeader + `#[repr(C, align(64))]` payload. Zero
-serialization. See `rsx-dxs/src/header.rs`, `rsx-dxs/src/records.rs`.
+serialization. See `rsx-dxs/src/header.rs` (transport),
+`rsx-dxs/src/protocol.rs` (CmpRecord trait + control messages),
+`rsx-messages/src/lib.rs` (domain wire records).
 
 ## Order Lifecycle
 
