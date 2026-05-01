@@ -305,14 +305,8 @@ pub async fn handle_connection(
             } => {
                 {
                     let mut st = state.borrow_mut();
-                    let cap = st.rate_limit_per_ip;
-                    let ip_limiter = st
-                        .ip_limiters
-                        .entry(peer.ip())
-                        .or_insert_with(|| {
-                            crate::rate_limit::RateLimiter::new(
-                                cap, cap)
-                        });
+                    let ip_limiter =
+                        st.ip_limiter_for(peer.ip());
                     if !ip_limiter.try_consume() {
                         drop(st);
                         send_error(
