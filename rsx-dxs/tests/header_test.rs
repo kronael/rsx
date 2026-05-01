@@ -47,3 +47,41 @@ fn wal_header_crc32_matches_payload() {
     let header = WalHeader::new(1, payload.len() as u16, crc);
     assert_eq!(header.crc32, crc);
 }
+
+/// Stress the decoder with random byte sequences. Goal is
+/// not to verify correctness — random bytes don't have a
+/// known expected output — but to catch any panic, OOB
+/// access, or arithmetic overflow in `from_bytes`. This is
+/// a deterministic property-style test (seeded LCG) that
+/// runs on every `cargo test`. The dedicated cargo-fuzz
+/// target in `rsx-dxs/fuzz/` exists for longer runs.
+#[test]
+fn header_from_bytes_no_panic_on_random_input() {
+    let mut state: u64 = 0xCAFEBABEu64;
+    let mut buf = [0u8; 16];
+    for _ in 0..100_000 {
+        for b in buf.iter_mut() {
+            // splitmix64
+            state = state.wrapping_add(0x9E3779B97F4A7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30))
+                .wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27))
+                .wrapping_mul(0x94D049BB133111EB);
+            *b = (z ^ (z >> 31)) as u8;
+        }
+        // Must not panic for any 16-byte input. We don't
+        // care about the result, only that the call returns.
+        let _ = WalHeader::from_bytes(&buf);
+    }
+}
+
+/// Same idea but for short slices: from_bytes must return
+/// None for any slice shorter than 16, never panic.
+#[test]
+fn header_from_bytes_no_panic_on_short_input() {
+    for len in 0..16 {
+        let buf = vec![0xFFu8; len];
+        assert!(WalHeader::from_bytes(&buf).is_none());
+    }
+}
