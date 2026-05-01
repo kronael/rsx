@@ -2,9 +2,9 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
 use rsx_dxs::*;
+use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
-use std::mem;
 use tempfile::TempDir;
 
 fn fill_record() -> FillRecord {

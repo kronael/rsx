@@ -1,14 +1,27 @@
+//! RSX exchange wire messages on top of `rsx-dxs` transport.
+//!
+//! Application-level records that flow over CMP/UDP and DXS/TCP:
+//! order events, fills, BBO, marks, liquidations. All
+//! `#[repr(C, align(64))]`, all `Copy`, all carry a `seq: u64`
+//! at offset 0 (per the `rsx_dxs::CmpRecord` trait).
+//!
+//! Disk bytes = wire bytes = stream bytes. No serialization step.
+
+use rsx_dxs::CmpRecord;
+use rsx_dxs::encode_record;
+use rsx_dxs::as_bytes;
 use rsx_types::Price;
 use rsx_types::Qty;
+use std::mem;
 
-/// Record type constants
+/// Record type constants — domain layer (transport-level
+/// constants live in `rsx_dxs::protocol`).
 pub const RECORD_FILL: u16 = 0;
 pub const RECORD_BBO: u16 = 1;
 pub const RECORD_ORDER_INSERTED: u16 = 2;
 pub const RECORD_ORDER_CANCELLED: u16 = 3;
 pub const RECORD_ORDER_DONE: u16 = 4;
 pub const RECORD_CONFIG_APPLIED: u16 = 5;
-pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_ORDER_ACCEPTED: u16 = 7;
 pub const RECORD_MARK_PRICE: u16 = 8;
 pub const RECORD_ORDER_REQUEST: u16 = 9;
@@ -16,19 +29,6 @@ pub const RECORD_ORDER_RESPONSE: u16 = 10;
 pub const RECORD_CANCEL_REQUEST: u16 = 11;
 pub const RECORD_ORDER_FAILED: u16 = 12;
 pub const RECORD_LIQUIDATION: u16 = 13;
-pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
-pub const RECORD_NAK: u16 = 0x11;
-pub const RECORD_HEARTBEAT: u16 = 0x12;
-pub const RECORD_REPLAY_REQUEST: u16 = 0x13;
-
-/// Trait for all CMP data records. Guarantees seq is
-/// readable/writable at a known location in the payload.
-/// All implementors are #[repr(C, align(64))], Copy.
-pub trait CmpRecord: Copy {
-    fn seq(&self) -> u64;
-    fn set_seq(&mut self, seq: u64);
-    fn record_type() -> u16;
-}
 
 /// CancelReason enum (u8)
 pub const CANCEL_REASON_USER_CANCEL: u8 = 0;
@@ -184,29 +184,10 @@ impl CmpRecord for ConfigAppliedRecord {
     fn record_type() -> u16 { RECORD_CONFIG_APPLIED }
 }
 
-/// CaughtUpRecord (64-byte aligned)
-/// Keeps stream_id (TCP coordination msg).
-#[repr(C, align(64))]
-#[derive(Debug, Clone, Copy)]
-pub struct CaughtUpRecord {
-    pub seq: u64,
-    pub ts_ns: u64,
-    pub stream_id: u32,
-    pub _pad0: u32,
-    pub live_seq: u64,
-    pub _pad1: [u8; 40],
-}
-
-impl CmpRecord for CaughtUpRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_CAUGHT_UP }
-}
-
 /// OrderAcceptedRecord (64-byte aligned)
-/// Dedup key is (user_id, order_id).
-/// Contains full order fields so WAL replay can
-/// reconstruct frozen margin without Postgres.
+/// Dedup key is (user_id, order_id). Contains full order
+/// fields so WAL replay can reconstruct frozen margin
+/// without Postgres.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct OrderAcceptedRecord {
@@ -268,12 +249,8 @@ pub struct OrderFailedRecord {
 
 impl CmpRecord for OrderFailedRecord {
     fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) {
-        self.seq = seq;
-    }
-    fn record_type() -> u16 {
-        RECORD_ORDER_FAILED
-    }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_ORDER_FAILED }
 }
 
 /// CancelRequest (64-byte aligned)
@@ -314,52 +291,77 @@ pub struct LiquidationRecord {
 
 impl CmpRecord for LiquidationRecord {
     fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) {
-        self.seq = seq;
-    }
-    fn record_type() -> u16 {
-        RECORD_LIQUIDATION
-    }
+    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
+    fn record_type() -> u16 { RECORD_LIQUIDATION }
 }
 
-/// CMP StatusMessage (64-byte aligned)
-/// Receiver -> sender, every 10ms
-#[repr(C, align(64))]
-#[derive(Debug, Clone, Copy)]
-pub struct StatusMessage {
-    pub consumption_seq: u64,
-    pub receiver_window: u64,
-    pub _pad1: [u8; 48],
+// Per-type encode helpers. Wrap the generic
+// `rsx_dxs::encode_record` with the matching record_type.
+
+pub fn encode_fill_record(record: &FillRecord) -> Vec<u8> {
+    encode_record(RECORD_FILL, as_bytes(record))
 }
 
-/// CMP Nak (64-byte aligned)
-/// Receiver -> sender, on gap detection
-#[repr(C, align(64))]
-#[derive(Debug, Clone, Copy)]
-pub struct Nak {
-    pub from_seq: u64,
-    pub count: u64,
-    pub _pad1: [u8; 48],
+pub fn encode_bbo_record(record: &BboRecord) -> Vec<u8> {
+    encode_record(RECORD_BBO, as_bytes(record))
 }
 
-/// CMP Heartbeat (64-byte aligned)
-/// Sender -> receiver, every 10ms
-#[repr(C, align(64))]
-#[derive(Debug, Clone, Copy)]
-pub struct CmpHeartbeat {
-    pub highest_seq: u64,
-    pub _pad1: [u8; 56],
+pub fn encode_order_inserted_record(
+    record: &OrderInsertedRecord,
+) -> Vec<u8> {
+    encode_record(RECORD_ORDER_INSERTED, as_bytes(record))
 }
 
-/// ReplayRequest (64-byte aligned)
-/// Client -> server for WAL/TCP replay.
-/// Keeps stream_id (TCP routing).
-#[repr(C, align(64))]
-#[derive(Debug, Clone, Copy)]
-pub struct ReplayRequest {
-    pub stream_id: u32,
-    pub _pad0: u32,
-    pub from_seq: u64,
-    pub _pad1: [u8; 48],
+pub fn encode_order_cancelled_record(
+    record: &OrderCancelledRecord,
+) -> Vec<u8> {
+    encode_record(RECORD_ORDER_CANCELLED, as_bytes(record))
 }
 
+pub fn encode_order_done_record(
+    record: &OrderDoneRecord,
+) -> Vec<u8> {
+    encode_record(RECORD_ORDER_DONE, as_bytes(record))
+}
+
+pub fn encode_config_applied_record(
+    record: &ConfigAppliedRecord,
+) -> Vec<u8> {
+    encode_record(RECORD_CONFIG_APPLIED, as_bytes(record))
+}
+
+pub fn encode_order_accepted_record(
+    record: &OrderAcceptedRecord,
+) -> Vec<u8> {
+    encode_record(RECORD_ORDER_ACCEPTED, as_bytes(record))
+}
+
+pub fn encode_order_failed_record(
+    record: &OrderFailedRecord,
+) -> Vec<u8> {
+    encode_record(RECORD_ORDER_FAILED, as_bytes(record))
+}
+
+macro_rules! decode_record {
+    ($name:ident, $ty:ty) => {
+        pub fn $name(payload: &[u8]) -> Option<$ty> {
+            if payload.len() < mem::size_of::<$ty>() {
+                return None;
+            }
+            Some(unsafe {
+                std::ptr::read_unaligned(
+                    payload.as_ptr() as *const $ty,
+                )
+            })
+        }
+    };
+}
+
+decode_record!(decode_fill_record, FillRecord);
+decode_record!(decode_bbo_record, BboRecord);
+decode_record!(decode_order_inserted_record, OrderInsertedRecord);
+decode_record!(decode_order_cancelled_record, OrderCancelledRecord);
+decode_record!(decode_order_done_record, OrderDoneRecord);
+decode_record!(decode_config_applied_record, ConfigAppliedRecord);
+decode_record!(decode_order_failed_record, OrderFailedRecord);
+decode_record!(decode_order_accepted_record, OrderAcceptedRecord);

@@ -1,7 +1,9 @@
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_dxs::*;
+use rsx_messages::*;
+use rsx_dxs::WalHeader;
+use rsx_dxs::compute_crc32;
 use rsx_types::Price;
 use rsx_types::Qty;
 

@@ -15,6 +15,7 @@ path = "src/main.rs"
 rsx-types = { path = "../rsx-types" }
 rsx-matching = { path = "../rsx-matching" }
 rsx-dxs = { path = "../rsx-dxs" }
+rsx-messages = { path = "../rsx-messages" }
 rustc-hash = "2"
 rtrb = "0.3"
 tokio = { version = "1", features = ["rt", "time"] }

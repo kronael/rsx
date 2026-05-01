@@ -1,9 +1,9 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_dxs::records::FillRecord;
-use rsx_dxs::records::OrderCancelledRecord;
-use rsx_dxs::records::OrderDoneRecord;
-use rsx_dxs::records::OrderInsertedRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderInsertedRecord;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::protocol::serialize;

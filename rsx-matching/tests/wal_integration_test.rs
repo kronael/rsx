@@ -3,7 +3,7 @@ use rsx_types::Qty;
 use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
-use rsx_dxs::FillRecord;
+use rsx_messages::FillRecord;
 use rsx_dxs::wal::WalReader;
 use rsx_dxs::wal::WalWriter;
 use rsx_matching::wal_integration::flush_if_due;

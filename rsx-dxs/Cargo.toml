@@ -15,19 +15,16 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 chrono = "0.4"
-rsx-types = { path = "../rsx-types" }
 
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3"
 rcgen = "0.13"
+rsx-messages = { path = "../rsx-messages" }
+rsx-types = { path = "../rsx-types" }
 
 [[bench]]
 name = "wal_bench"
-harness = false
-
-[[bench]]
-name = "encode_bench"
 harness = false
 
 [[bench]]

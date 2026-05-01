@@ -11,6 +11,7 @@ members = [
     "rsx-marketdata",
     "rsx-cli",
     "rsx-maker",
+    "rsx-messages",
 ]
 resolver = "2"
 

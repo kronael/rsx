@@ -10,7 +10,12 @@ use crate::wal::extract_seq;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::ServerConfig;
-use rsx_types::time::time_ns;
+fn time_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
 use std::collections::HashMap;
 use std::fs;
 use std::io;

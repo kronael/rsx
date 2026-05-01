@@ -3,6 +3,7 @@ use clap::Subcommand;
 use rsx_dxs::records::*;
 use rsx_dxs::wal::extract_seq;
 use rsx_dxs::wal::WalReader;
+use rsx_messages::*;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;

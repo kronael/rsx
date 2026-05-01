@@ -1,6 +1,6 @@
-use rsx_dxs::records::FillRecord;
-use rsx_dxs::records::OrderDoneRecord;
-use rsx_dxs::records::OrderFailedRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::protocol::parse;

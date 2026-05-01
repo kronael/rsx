@@ -1,85 +1,100 @@
 # rsx-dxs
 
-WAL writer/reader, DXS replay server/client, and CMP
-(C Message Protocol) UDP transport. Library crate used by
-all binary processes.
+Log-backed reliable UDP transport (CMP) + TCP cold-path replay
+(DXS) for fixed-format binary records.
 
-## What It Provides
+**Wire bytes = disk bytes = stream bytes.** No serialization
+step. NAK retransmits read from the WAL itself, so the
+retransmit horizon equals **log retention**, not buffer size.
 
-- `WalWriter` -- append-only WAL with fsync, rotation, GC
-- `WalReader` -- sequential read with CRC validation
-- `CmpSender` / `CmpReceiver` -- UDP transport with NACK
-- `DxsReplayService` -- TCP replay server (historical + live)
-- `DxsConsumer` -- TCP replay client with tip persistence
-- All `#[repr(C, align(64))]` record structs and `CmpRecord`
-  trait
+## Why this exists
 
-## Public API
+Inside an exchange, every microsecond of encoding is a
+microsecond off the matching engine. Existing options put a
+length-prefixed framing layer on top of records that are
+*already* framed (gRPC over HTTP/2, QUIC frames, Aeron sessions).
+`rsx-dxs` skips it: the same 16-byte header serves disk format,
+wire format, and stream format.
+
+## What it gives you
+
+- **CMP/UDP** — point-to-point reliable UDP. Aeron-inspired:
+  receiver sends `StatusMessage` (every 10 ms) advertising a
+  flow-control window; sender sends `CmpHeartbeat` (every
+  10 ms) so idle gaps are detectable; receiver sends `Nak` on
+  gap detection; sender retransmits.
+- **Two-tier retransmit.** First the in-memory `send_ring`
+  (~4 K records, ~µs to re-send). On miss, fall back to
+  `wal::read_record_at_seq` — a random-access read from the WAL
+  file that holds that seq. This is the load-bearing claim:
+  retransmit is bounded by **WAL retention**, not RAM.
+- **DXS/TCP** — same record bytes, reliable transport.
+  Used for cold-start replay (`DxsConsumer::run`) and
+  archival/replication. Optional rustls TLS.
+- **Domain-agnostic.** `rsx-dxs` knows nothing about
+  fills/orders/marks. It moves bytes that implement
+  [`CmpRecord`]. The exchange's domain records live in
+  `rsx-messages`.
+
+## Wire format
+
+Every CMP datagram and every WAL record is:
+
+```
++------------------+-------------------------------+
+| WalHeader (16B)  | payload (<= 65535B, repr(C))  |
++------------------+-------------------------------+
+  record_type: u16
+  len:         u16
+  crc32c:      u32   (Castagnoli, payload only)
+  reserved:    8B    (zero on receive)
+```
+
+Payloads are `#[repr(C, align(64))]`. Sequence number is the
+first `u64` of every data record (per the [`CmpRecord`] trait).
+
+## Quick start (sender)
 
 ```rust
-use rsx_dxs::WalWriter;
-use rsx_dxs::WalReader;
-use rsx_dxs::CmpSender;
+use rsx_dxs::{CmpSender, WalWriter};
+use rsx_messages::FillRecord;  // or your own CmpRecord
+
+let mut wal = WalWriter::new(stream_id, &wal_dir, None,
+                             64 * 1024 * 1024,
+                             10 * 60 * 1_000_000_000)?;
+let mut sender = CmpSender::new(dest_addr, stream_id, &wal_dir)?;
+
+let mut fill = FillRecord { /* ... */ };
+sender.send(&mut fill)?;        // assigns seq, sends, caches
+sender.tick()?;                  // periodic heartbeat
+sender.recv_control();           // process status/nak from peer
+```
+
+## Quick start (receiver)
+
+```rust
 use rsx_dxs::CmpReceiver;
-use rsx_dxs::DxsReplayService;
-use rsx_dxs::DxsConsumer;
-use rsx_dxs::records::FillRecord;
+
+let mut rx = CmpReceiver::new(bind_addr, sender_addr, stream_id)?;
+loop {
+    rx.tick();                   // periodic status to sender
+    while let Some((hdr, payload)) = rx.try_recv() {
+        // dispatch by hdr.record_type — transport doesn't care
+    }
+}
 ```
 
-Used by: rsx-matching, rsx-risk, rsx-gateway, rsx-marketdata,
-rsx-mark, rsx-recorder, rsx-cli.
+## When NOT to use this
 
-## Environment Variables
+- Multi-language consumers (use protobuf/FlatBuffers/JSON)
+- Public internet (use QUIC; no TLS, no congestion control here)
+- Schema that changes often (zero-copy = field-stable structs)
+- Big-endian targets (compile-time enforced LE)
 
-| Env Var | Purpose |
-|---------|---------|
-| `RSX_WAL_DIR` | WAL directory |
-| `RSX_WAL_ARCHIVE_DIR` | Archive directory |
-| `RSX_WAL_MAX_FILE_SIZE` | Max file before rotation (64MB) |
-| `RSX_WAL_RETENTION_NS` | Retention window (10min) |
-| `RSX_CMP_REORDER_BUF_LIMIT` | Max reorder buffer (512) |
-| `RSX_CMP_HEARTBEAT_INTERVAL_MS` | Heartbeat interval (10ms) |
-| `RSX_REPL_TLS` | Enable TLS for replay |
-| `RSX_REPL_CERT_PATH` | TLS certificate path |
-| `RSX_REPL_KEY_PATH` | TLS private key path |
+## See also
 
-## Building
-
-```
-cargo check -p rsx-dxs
-cargo build -p rsx-dxs
-```
-
-## Testing
-
-```
-cargo test -p rsx-dxs
-```
-
-7 test files: archive, client, CMP, header, records, TLS, WAL.
-All tests non-flaky (unique temp dirs, ephemeral ports).
-Benchmarks: `wal_bench`, `encode_bench`.
-See `specs/2/36-testing-dxs.md`.
-
-## Dependencies
-
-- `rsx-types` -- Price, Qty, Side
-
-## Gotchas
-
-- WAL bytes = disk bytes = wire bytes = memory bytes. No
-  serialization step. Same `#[repr(C)]` structs everywhere.
-- WAL files have no header or index. Sequential read only.
-  Filenames encode seq range for O(1) file selection.
-- WalWriter flush is caller-driven (not background thread).
-  If the caller doesn't call flush, nothing hits disk.
-- CMP reorder buffer is a BTreeMap. Under sustained packet
-  loss, it grows up to `RSX_CMP_REORDER_BUF_LIMIT` entries.
-- TLS is optional for replay connections. CMP/UDP has no
-  encryption (same-machine only).
-
-## See Also
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- WAL format, CMP
-  protocol, replay protocol, record types, performance
-- `specs/2/10-dxs.md`, `specs/2/48-wal.md`, `specs/2/4-cmp.md`
+- `specs/2/4-cmp.md` — protocol spec, byte-exact
+- `specs/2/48-wal.md` — WAL flush rules, retention, rotation
+- `specs/2/10-dxs.md` — TCP replay protocol details
+- `blog/cmp.md` — design narrative
+- `rsx-messages/` — RSX exchange domain records on top of this

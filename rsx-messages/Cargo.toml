@@ -1,0 +1,15 @@
+[package]
+name = "rsx-messages"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rsx-types = { path = "../rsx-types" }
+rsx-dxs = { path = "../rsx-dxs" }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "encode_bench"
+harness = false

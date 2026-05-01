@@ -1,6 +1,6 @@
 use rsx_dxs::encode_utils::as_bytes;
-use rsx_dxs::encode_utils::decode_config_applied_record;
-use rsx_dxs::records::ConfigAppliedRecord;
+use rsx_messages::decode_config_applied_record;
+use rsx_messages::ConfigAppliedRecord;
 use rsx_matching::wire::OrderMessage;
 use rsx_types::Side;
 use rsx_types::TimeInForce;

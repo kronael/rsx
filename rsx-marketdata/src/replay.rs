@@ -1,13 +1,13 @@
 use rsx_dxs::CaughtUpRecord;
 use rsx_dxs::DxsConsumer;
-use rsx_dxs::FillRecord;
-use rsx_dxs::OrderCancelledRecord;
-use rsx_dxs::OrderInsertedRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderInsertedRecord;
 use rsx_dxs::RawWalRecord;
 use rsx_dxs::RECORD_CAUGHT_UP;
-use rsx_dxs::RECORD_FILL;
-use rsx_dxs::RECORD_ORDER_CANCELLED;
-use rsx_dxs::RECORD_ORDER_INSERTED;
+use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_ORDER_CANCELLED;
+use rsx_messages::RECORD_ORDER_INSERTED;
 use std::path::PathBuf;
 use tracing::info;
 

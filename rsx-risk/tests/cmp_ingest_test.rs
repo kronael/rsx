@@ -1,9 +1,9 @@
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::records::BboRecord;
-use rsx_dxs::records::MarkPriceRecord;
-use rsx_dxs::records::RECORD_BBO;
-use rsx_dxs::records::RECORD_MARK_PRICE;
+use rsx_messages::BboRecord;
+use rsx_messages::MarkPriceRecord;
+use rsx_messages::RECORD_BBO;
+use rsx_messages::RECORD_MARK_PRICE;
 use rsx_risk::config::LiquidationConfig;
 use rsx_risk::config::ReplicationConfig;
 use rsx_risk::config::ShardConfig;

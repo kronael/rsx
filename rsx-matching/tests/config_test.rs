@@ -1,7 +1,7 @@
-use rsx_dxs::encode_utils::decode_config_applied_record;
-use rsx_dxs::records::ConfigAppliedRecord;
-use rsx_dxs::records::CmpRecord;
-use rsx_dxs::records::RECORD_CONFIG_APPLIED;
+use rsx_messages::decode_config_applied_record;
+use rsx_messages::ConfigAppliedRecord;
+use rsx_dxs::CmpRecord;
+use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_dxs::wal::WalReader;
 use rsx_dxs::wal::WalWriter;
 use rsx_types::time::time_ns;
@@ -72,7 +72,7 @@ fn config_version_increments() {
 fn config_applied_record_type() {
     assert_eq!(
         ConfigAppliedRecord::record_type(),
-        rsx_dxs::records::RECORD_CONFIG_APPLIED
+        rsx_messages::RECORD_CONFIG_APPLIED
     );
 }
 

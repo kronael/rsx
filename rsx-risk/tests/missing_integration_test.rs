@@ -182,7 +182,7 @@ fn margin_recalculated_after_fill_detects_liquidation() {
 
 #[test]
 fn wal_replay_rebuilds_positions_from_tip() {
-    use rsx_dxs::FillRecord;
+    use rsx_messages::FillRecord;
     use rsx_dxs::WalWriter;
     use rsx_risk::replay::replay_from_wal;
 
@@ -244,7 +244,7 @@ fn wal_replay_rebuilds_positions_from_tip() {
 
 #[test]
 fn wal_replay_resumes_from_tip_skips_already_applied() {
-    use rsx_dxs::FillRecord;
+    use rsx_messages::FillRecord;
     use rsx_dxs::WalWriter;
     use rsx_risk::replay::replay_from_wal;
 

@@ -1,5 +1,5 @@
 use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::records::RECORD_MARK_PRICE;
+use rsx_messages::RECORD_MARK_PRICE;
 use rsx_dxs::wal::WalWriter;
 use rsx_dxs::DxsReplayService;
 use rsx_mark::aggregator::aggregate_with_staleness;

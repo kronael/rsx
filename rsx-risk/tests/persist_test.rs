@@ -390,7 +390,7 @@ async fn advisory_lock_exclusive() {
 #[tokio::test]
 #[ignore]
 async fn replay_from_wal_rebuilds_positions() {
-    use rsx_dxs::FillRecord;
+    use rsx_messages::FillRecord;
     use rsx_dxs::WalWriter;
 
     let wal_dir =
@@ -479,7 +479,7 @@ async fn replay_from_wal_rebuilds_positions() {
 #[tokio::test]
 #[ignore]
 async fn replay_from_wal_releases_frozen_on_order_done() {
-    use rsx_dxs::OrderDoneRecord;
+    use rsx_messages::OrderDoneRecord;
     use rsx_dxs::WalWriter;
     use rsx_risk::types::OrderRequest;
 

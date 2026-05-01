@@ -1,6 +1,6 @@
 use rsx_dxs::encode_utils::compute_crc32;
 use rsx_dxs::header::WalHeader;
-use rsx_dxs::records::RECORD_BBO;
+use rsx_messages::RECORD_BBO;
 use rsx_dxs::wal::WalReader;
 use rsx_dxs::RawWalRecord;
 use std::fs;
