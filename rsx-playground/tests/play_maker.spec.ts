@@ -199,12 +199,14 @@ test.describe("Market maker e2e", () => {
         });
 
         ws.on("open", () => {
-          // Aggressive buy: side=0 (bid), price=bestAsk+1,
-          // qty=1 lot (raw units = lot_size). cid is a
-          // string per protocol.
+          // Buy 1% above bestAsk so the order crosses past
+          // multiple maker levels even if the BBO drifts a
+          // tick during refresh cycles. bestAsk+1 is the
+          // marginal cross and was flaky.
+          const crossPx = Math.floor(bestAsk * 101 / 100);
           ws.send(
             JSON.stringify(
-              { N: [SYMBOL_ID, 0, bestAsk + 1, lotSize,
+              { N: [SYMBOL_ID, 0, crossPx, lotSize,
                     "test9001", 0] },
             ),
           );
