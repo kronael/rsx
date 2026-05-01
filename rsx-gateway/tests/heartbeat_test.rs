@@ -3,7 +3,7 @@ use rsx_gateway::state::GatewayState;
 
 fn load_test_config() -> rsx_gateway::config::GatewayConfig {
     unsafe {
-        std::env::set_var("RSX_GW_JWT_SECRET", "test-secret");
+        std::env::set_var("RSX_GW_JWT_SECRET", "test-secret-padded-to-32-bytes-minlen!");
     }
     load_gateway_config()
 }

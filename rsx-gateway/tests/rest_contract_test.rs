@@ -468,7 +468,7 @@ fn ws_handshake_responds_101() {
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
 
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let claims = Claims {
         sub: "github:1".to_string(),
         user_id: Some(1),
