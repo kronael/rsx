@@ -5,6 +5,7 @@ Integrated with playground API for real load testing
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass
 import aiohttp
@@ -52,7 +53,12 @@ class StressClient:
 
     def generate_jwt(self) -> str:
         """Generate JWT token for authentication"""
-        secret = self.config.jwt_secret or "rsx-dev-secret-not-for-prod"
+        secret = self.config.jwt_secret or os.environ.get(
+            "RSX_GW_JWT_SECRET", "")
+        if not secret:
+            raise RuntimeError(
+                "RSX_GW_JWT_SECRET not configured "
+                "(pass --jwt-secret or set env var)")
         payload = {
             "sub": f"stress:{self.user_id}",
             "user_id": self.user_id,
@@ -184,7 +190,9 @@ async def _probe_gateway(
     jwt_secret: str = "",
 ) -> str | None:
     """Return error string if gateway unreachable, else None."""
-    secret = jwt_secret or "rsx-dev-secret-not-for-prod"
+    secret = jwt_secret or os.environ.get("RSX_GW_JWT_SECRET", "")
+    if not secret:
+        return "RSX_GW_JWT_SECRET not configured"
     token = pyjwt.encode(
         {
             "sub": "stress:1",

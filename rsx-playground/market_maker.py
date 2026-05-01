@@ -203,10 +203,10 @@ class DummyMarketMaker:
         await self._cancel_all()
 
     def _gateway_headers(self) -> dict[str, str]:
-        secret = os.environ.get(
-            "RSX_GW_JWT_SECRET",
-            "rsx-dev-secret-not-for-prod",
-        )
+        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+        if not secret:
+            raise RuntimeError(
+                "RSX_GW_JWT_SECRET not configured")
         token = pyjwt.encode(
             {
                 "sub": f"maker:{self.user_id}",

@@ -1125,10 +1125,23 @@ def _is_loopback_host(host: str | None) -> bool:
     }
 
 
+_INSECURE_USER_ID_WARNED = False
+
+
 def _allow_insecure_user_id() -> bool:
-    return os.environ.get(
+    global _INSECURE_USER_ID_WARNED
+    enabled = os.environ.get(
         "PLAYGROUND_ALLOW_INSECURE_USER_ID", ""
     ).lower() in {"1", "true", "yes", "on"}
+    if enabled and not _INSECURE_USER_ID_WARNED:
+        _INSECURE_USER_ID_WARNED = True
+        print(
+            "WARN PLAYGROUND_ALLOW_INSECURE_USER_ID=1: "
+            "loopback callers can spoof x-user-id "
+            "(dev-only; never set in production)",
+            flush=True,
+        )
+    return enabled
 
 
 def _extract_token_from_headers(headers) -> str | None:
@@ -3738,10 +3751,10 @@ async def x_stats():
 async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     """Send order to Gateway WebSocket if available."""
     try:
-        secret = os.environ.get(
-            "RSX_GW_JWT_SECRET",
-            "rsx-dev-secret-not-for-prod",
-        )
+        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+        if not secret:
+            return {"ok": False, "error":
+                    "RSX_GW_JWT_SECRET not configured"}
         token = pyjwt.encode(
             {
                 "sub": f"playground:{user_id}",
@@ -6153,10 +6166,12 @@ async def ws_private_proxy(ws: WebSocket):
                 return
         else:
             user_id = _GUEST_USER_ID
-        secret = os.environ.get(
-            "RSX_GW_JWT_SECRET",
-            "rsx-dev-secret-not-for-prod",
-        )
+        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+        if not secret:
+            await ws.close(
+                code=4001,
+                reason="RSX_GW_JWT_SECRET not configured")
+            return
         minted = pyjwt.encode(
             {
                 "sub": f"playground:{user_id}",

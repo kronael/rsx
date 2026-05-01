@@ -6,6 +6,8 @@ step instructions for each failure scenario.
 
 **Prerequisites:**
 - Familiarity with [GUARANTEES.md](GUARANTEES.md) for data loss bounds and consistency guarantees
+- `RSX_ROOT` set to the repo root (commands fall back to
+  `git rev-parse --show-toplevel` if unset)
 - Database credentials configured (set environment variables before operations):
 
 ```bash
@@ -36,7 +38,7 @@ psql -h postgres-master -U rsx -d rsx -c \
   "SELECT objid, COUNT(*) FROM pg_locks WHERE locktype='advisory' GROUP BY objid;"
 
 # Quick position reconciliation (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- --shard-id 0
 
 # Restart components (safe operations, idempotent)
 systemctl restart rsx-matching@BTCUSD
@@ -141,7 +143,7 @@ curl http://localhost:9100/health
 # Expected: {"status": "ok", "role": "master", "seq": 12345678}
 
 # 5. Check ME WAL has no gaps (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin dxs-verify -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin dxs-verify -- \
   --wal-dir /srv/data/rsx/wal/1 \
   --from-seq 0
 # Expected: "No sequence gaps detected"
@@ -152,7 +154,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 # Compare last_seq with ME health endpoint seq, should match within seconds
 
 # 7. Run position reconciliation (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- \
   --symbol-id 1 \
   --max-delta 0
 # Expected output: "All positions match fills. Checked: 1234 users"
@@ -235,7 +237,7 @@ timeout 60 journalctl -u rsx-risk@shard0 -f --no-pager | grep -m 1 "caught up"
 # Expected to see: "caught up for all symbols, going live"
 
 # 8. Verify positions match fills (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --max-delta 0
 # Expected output: "All positions match fills. Checked: 6250 users"
@@ -416,8 +418,8 @@ iostat -x 1 10
 # Focus on device with /srv/data/rsx/wal mounted
 
 # 3. Check if fsync is slow (run for 10s, then Ctrl-C)
-mkdir -p /home/onvos/sandbox/rsx/tmp
-timeout 10 strace -p $(pgrep rsx-matching) -e fsync -T 2>&1 | tee /home/onvos/sandbox/rsx/tmp/fsync_trace.log
+mkdir -p "${RSX_ROOT:-$(git rev-parse --show-toplevel)}/tmp"
+timeout 10 strace -p $(pgrep rsx-matching) -e fsync -T 2>&1 | tee "${RSX_ROOT:-$(git rev-parse --show-toplevel)}/tmp"/fsync_trace.log
 # Review tmp/fsync_trace.log, look for: fsync(3) = 0 <0.015234>
 # If times consistently >0.010 seconds, disk is slow
 
@@ -606,7 +608,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 # Expected: count = 1 (only main)
 
 # 6. Run position reconciliation (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --max-delta 0
 # Expected: "All positions match fills"
@@ -630,7 +632,7 @@ curl -X POST http://gateway:8080/api/v1/orders \
 # Expected: {"status":"ok","order_id":"..."}
 
 # Positions consistent (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- --shard-id 0
 # Expected: "All positions match fills"
 ```
 
@@ -683,7 +685,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 # Expected: count = 1
 
 # 9. Run position reconciliation (critical!)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --max-delta 0
 # If ANY mismatch detected, investigate which fills were applied by which instance
@@ -701,7 +703,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 # Expected: count = 1
 
 # Positions consistent
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- --shard-id 0
 # Expected: "All positions match fills"
 
 # No duplicate fills applied
@@ -732,7 +734,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 systemctl stop rsx-gateway
 
 # 2. Identify gap location (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin dxs-verify -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin dxs-verify -- \
   --wal-dir /srv/data/rsx/wal/1 \
   --from-seq 0
 # Expected output: "Gap detected at seq=12345678" or "No gaps detected"
@@ -777,13 +779,13 @@ journalctl -u rsx-matching@BTCUSD -S "10 minutes ago" | grep "seq=12345678"
 **Post-Mitigation Verification:**
 ```bash
 # No gaps in WAL (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin dxs-verify -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin dxs-verify -- \
   --wal-dir /srv/data/rsx/wal/1 \
   --from-seq 0
 # Expected: "No sequence gaps detected"
 
 # Positions match fills (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --symbol-id 1
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- --symbol-id 1
 # Expected: "All positions match fills"
 ```
 
@@ -804,7 +806,7 @@ cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --symbol-id
 systemctl stop rsx-gateway
 
 # 2. Run detailed reconciliation (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- \
   --shard-id 0 \
   --verbose
 # Expected output: List of mismatched positions with deltas
@@ -860,7 +862,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 **Post-Mitigation Verification:**
 ```bash
 # All positions match fills (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin reconcile-positions -- --shard-id 0
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin reconcile-positions -- --shard-id 0
 # Expected: "All positions match fills. Checked: 6250 users"
 
 # Margin recalculated correctly
@@ -880,7 +882,7 @@ curl http://risk:9200/api/v1/margin?user_id=123
 
 ```bash
 # Run chaos test for 10min (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin chaos-test -- \
   --duration 10m \
   --kill-interval 30s \
   --components ME,Risk,Gateway
@@ -905,7 +907,7 @@ cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
 
 ```bash
 # Crash ME master + replica within 10ms (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin chaos-test -- \
   --scenario dual-me-crash \
   --symbol BTCUSD
 
@@ -916,7 +918,7 @@ cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
 # - Positions consistent after recovery
 
 # Crash Risk master + replica within 10ms (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin chaos-test -- \
   --scenario dual-risk-crash \
   --shard-id 0
 
@@ -937,7 +939,7 @@ cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
 
 ```bash
 # Simulate disk full (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin chaos-test -- \
   --scenario disk-full \
   --component ME
 
@@ -948,7 +950,7 @@ cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
 # - Recovery after disk space freed
 
 # Simulate disk slow (inject latency, from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin chaos-test -- \
   --scenario disk-slow \
   --component ME \
   --latency 50ms
@@ -969,7 +971,7 @@ cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
 
 ```bash
 # Partition Risk <-> ME for 5min (from project root)
-cd /home/onvos/sandbox/rsx && cargo run --bin chaos-test -- \
+cd "${RSX_ROOT:-$(git rev-parse --show-toplevel)}" && cargo run --bin chaos-test -- \
   --scenario partition \
   --source Risk \
   --target ME \
