@@ -392,10 +392,12 @@ fn main() {
                         reason: REASON_DUPLICATE,
                         _pad: [0; 23],
                     };
-                    let _ =
-                        wal_writer.append(&mut fail);
-                    let _ =
-                        cmp_sender.send(&mut fail);
+                    wal_writer
+                        .append(&mut fail)
+                        .expect("wal append failed (duplicate-reject path) — matching is authoritative, cannot silently lose record");
+                    if let Err(e) = cmp_sender.send(&mut fail) {
+                        warn!("cmp send fail-record (duplicate): {e}");
+                    }
                 } else {
                     // Record acceptance in WAL
                     let ts = time_ns();
@@ -419,8 +421,9 @@ fn main() {
                                 .post_only,
                             cid: [0; 20],
                         };
-                    let _ = wal_writer
-                        .append(&mut accepted);
+                    wal_writer
+                        .append(&mut accepted)
+                        .expect("wal append failed (order-accepted path) — matching is authoritative, cannot silently lose record");
 
                     let mut incoming =
                         order_msg.to_incoming();
@@ -428,34 +431,40 @@ fn main() {
                         &mut book, &mut incoming,
                     );
 
-                    // Write events to WAL
+                    // Write events to WAL — authoritative,
+                    // crash on failure rather than lose fills.
                     let ts_ns = time_ns();
-                    let _ = write_events_to_wal(
+                    write_events_to_wal(
                         &mut wal_writer,
                         &book,
                         symbol_id,
                         ts_ns,
-                    );
+                    )
+                    .expect("wal append failed (event path) — invariant #1 (fills precede ORDER_DONE) demands persistence");
 
-                    // Send events to Risk (all)
+                    // CMP sends are best-effort: receivers
+                    // recover via NAK / TCP replay.
                     for event in book.events() {
-                        let _ = send_event_cmp(
+                        if let Err(e) = send_event_cmp(
                             &mut cmp_sender,
                             event,
                             symbol_id,
                             ts_ns,
-                        );
+                        ) {
+                            warn!("cmp send event to risk failed: {e}");
+                        }
                     }
 
-                    // Send to Marketdata (no OrderDone)
                     for event in book.events() {
-                        let _ =
+                        if let Err(e) =
                             send_event_marketdata(
                                 &mut mkt_sender,
                                 event,
                                 symbol_id,
                                 ts_ns,
-                            );
+                            ) {
+                            warn!("cmp send event to marketdata failed: {e}");
+                        }
                     }
                 }
             } else if hdr.record_type
@@ -542,8 +551,12 @@ fn main() {
             last_snapshot = Instant::now();
         }
 
-        let _ = cmp_sender.tick();
-        let _ = mkt_sender.tick();
+        if let Err(e) = cmp_sender.tick() {
+            warn!("cmp_sender tick (heartbeat) failed: {e}");
+        }
+        if let Err(e) = mkt_sender.tick() {
+            warn!("mkt_sender tick (heartbeat) failed: {e}");
+        }
         cmp_receiver.tick();
         cmp_sender.recv_control();
         mkt_sender.recv_control();
@@ -711,9 +724,14 @@ fn emit_config_applied(
         effective_at_ms,
         applied_at_ns: ts,
     };
-    let _ = wal.append(&mut record);
-    let _ = risk_sender.send(&mut record);
-    let _ = mkt_sender.send(&mut record);
+    wal.append(&mut record)
+        .expect("wal append failed (config_applied) — must persist before announcing");
+    if let Err(e) = risk_sender.send(&mut record) {
+        warn!("cmp send config_applied to risk failed: {e}");
+    }
+    if let Err(e) = mkt_sender.send(&mut record) {
+        warn!("cmp send config_applied to marketdata failed: {e}");
+    }
     info!(
         "emitted config_applied v{} for symbol {}",
         config_version, symbol_id,
@@ -817,18 +835,23 @@ fn process_cancel(
     }
 
     let ts_ns = time_ns();
-    let _ = write_events_to_wal(
+    write_events_to_wal(
         wal_writer, book, symbol_id, ts_ns,
-    );
+    )
+    .expect("wal append failed (cancel path) — cancel events must persist");
     for event in book.events() {
-        let _ = send_event_cmp(
+        if let Err(e) = send_event_cmp(
             cmp_sender, event, symbol_id, ts_ns,
-        );
+        ) {
+            warn!("cmp send cancel-event to risk failed: {e}");
+        }
     }
     for event in book.events() {
-        let _ = send_event_marketdata(
+        if let Err(e) = send_event_marketdata(
             mkt_sender, event, symbol_id, ts_ns,
-        );
+        ) {
+            warn!("cmp send cancel-event to marketdata failed: {e}");
+        }
     }
 }
 
