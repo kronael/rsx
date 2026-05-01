@@ -125,7 +125,8 @@ The dedup window is bounded by the same 5min pruning as
 in-memory (MESSAGES.md section 7). During replay, records older
 than 5min from WAL tip are skipped.
 
-See `rsx-dxs/src/records.rs`
+See `rsx-messages/src/lib.rs` (domain records) and
+`rsx-dxs/src/protocol.rs` (transport control records).
 
 All fields are encoded little-endian on disk/wire.
 
@@ -657,20 +658,32 @@ via file-level transition.
 
 ## 11. Performance Targets
 
-See `wal_bench.rs` and `encode_bench.rs` for measured targets.
+See `rsx-dxs/benches/wal_bench.rs` and
+`rsx-messages/benches/encode_bench.rs` for measured targets.
 
 ---
 
 ## 12. File Organization
 
 ```
-crates/rsx-dxs/src/
-    lib.rs        -- public API: WalWriter, WalReader, DxsConsumer
-    wal.rs        -- WalWriter, WalReader, file layout, GC
-    server.rs     -- DxsReplayService TCP server
-    client.rs     -- DxsConsumer, tip tracking, reconnect
-    config.rs     -- env config parsing
+rsx-dxs/src/
+    lib.rs         -- public API: explicit re-exports
+    header.rs      -- WalHeader (16 B)
+    protocol.rs    -- CmpRecord trait, StatusMessage, Nak,
+                      CmpHeartbeat, ReplayRequest, CaughtUpRecord
+    encode_utils.rs -- compute_crc32, as_bytes, encode_record,
+                      decode_payload (generic)
+    cmp.rs         -- CmpSender, CmpReceiver (UDP transport)
+    wal.rs         -- WalWriter, WalReader, file layout, GC,
+                      read_record_at_seq (NAK fallback)
+    server.rs      -- DxsReplayService (TCP)
+    client.rs      -- DxsConsumer, tip tracking, reconnect
+    config.rs      -- CmpConfig, TlsConfig
 
-crates/rsx-recorder/src/
-    main.rs       -- recorder binary entrypoint, daily rotation
+rsx-messages/src/
+    lib.rs         -- exchange wire records (FillRecord etc.)
+
+rsx-recorder/src/
+    main.rs        -- recorder binary, daily rotation
+    config.rs      -- RecorderConfig (env parsing)
 ```

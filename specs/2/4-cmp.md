@@ -16,8 +16,9 @@ the current implementation. Where the spec previously
 hand-waved or contradicted the code, this revision states
 the actual behaviour.
 
-Implementation: `rsx-dxs/src/cmp.rs` (619 LoC),
-`rsx-dxs/src/records.rs`, `rsx-dxs/src/header.rs`.
+Implementation: `rsx-dxs/src/cmp.rs`,
+`rsx-dxs/src/protocol.rs` (CmpRecord trait + control messages),
+`rsx-dxs/src/header.rs`. Domain wire records: `rsx-messages/`.
 
 ## Table of contents
 
@@ -41,6 +42,12 @@ Implementation: `rsx-dxs/src/cmp.rs` (619 LoC),
 CMP is **the C-struct wire format** plus **the UDP transport
 glue** (sequencing, flow control, gap recovery) that carries
 RSX's WAL records between processes on the hot path.
+
+The transport layer (`rsx-dxs`) is **domain-agnostic** — it
+moves any record that implements `CmpRecord` (a `repr(C)`
+type with a `seq: u64` at offset 0). RSX's exchange records
+(`FillRecord`, `BboRecord`, …) live in the `rsx-messages`
+crate and are not visible to the transport.
 
 CMP is **not** a general-purpose framework. It assumes:
 - One sender per stream, one receiver per stream

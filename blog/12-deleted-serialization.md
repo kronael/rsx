@@ -18,7 +18,7 @@ Gateway), that's 3% gone before you've done any actual work.
 What if the serialization layer doesn't exist?
 
 ```rust
-// rsx-dxs/src/records.rs
+// rsx-messages/src/lib.rs
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
@@ -254,6 +254,6 @@ eliminate it entirely.
 - `specs/2/10-dxs.md` - DXS streaming protocol spec
 - `specs/2/48-wal.md` - WAL format and guarantees
 - `specs/2/4-cmp.md` - CMP/UDP wire protocol
-- `rsx-dxs/src/records.rs` - All record types
+- `rsx-messages/src/lib.rs` - All record types
 - `rsx-dxs/src/wal.rs` - WAL writer implementation
 - `blog/dont-yolo-structs-over-the-wire.md` - Padding and alignment gotchas

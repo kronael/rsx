@@ -41,7 +41,8 @@ See `specs/2/36-testing-dxs.md`.
 
 ## Dependencies
 
-- `rsx-dxs` -- DxsConsumer, WAL record types
+- `rsx-dxs` -- DxsConsumer (TCP replay client)
+- `rsx-messages` -- domain wire records (Fill/BBO/Order*/...)
 
 ## Gotchas
 

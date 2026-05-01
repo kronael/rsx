@@ -115,7 +115,9 @@ CMP/UDP. All data payloads start with the CMP prefix:
 `seq:u64, ver:u16, kind:u8, _pad:u8, len:u32` (CMP.md).
 
 Record layouts are defined in:
-- `rsx-dxs` records (DXS/WAL types)
+- `rsx-messages` (domain wire records: Fill/BBO/Order*/Mark/Liquidation)
+- `rsx-dxs::protocol` (transport control records: StatusMessage,
+  Nak, CmpHeartbeat, ReplayRequest, CaughtUpRecord)
 - per-service wire types (Gateway/Risk/Matching)
 
 ## Message Flow Sequences
