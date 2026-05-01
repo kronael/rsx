@@ -271,7 +271,8 @@ def walkthrough_page():
         "Order Lifecycle",
         "WS &rarr; Gateway &rarr; Risk &rarr; ME "
         "&rarr; Risk &rarr; Gateway &rarr; WS. "
-        "Six hops, &lt;50us total.",
+        "Six hops, &lt;50us design budget "
+        "(component sum &mdash; E2E harness pending).",
         """
 <pre class="text-[10px] text-green-400
   overflow-x-auto leading-tight my-2">
@@ -631,7 +632,7 @@ exchange.</p>
     Fixed-point. Single-threaded matching.
     &lt;50us round trip.</p>
   <p class="text-xs text-slate-500 mt-2">
-    11 crates &middot; 2,364 tests &middot;
+    11 crates &middot; ~2,550 tests &middot;
     54ns match &middot; 31ns WAL append</p>
 </div>"""
 

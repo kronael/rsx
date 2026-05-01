@@ -71,8 +71,8 @@ make prepare
 ./rsx-playground/playground start
 
 # Visit http://localhost:49171, click "Start All" to launch
-# the 8 RSX processes (gateway, risk, ME, marketdata, mark,
-# recorder + maker), submit orders, view fills, inspect WAL
+# the 7 RSX processes (gateway, risk, ME, marketdata, mark,
+# recorder, maker), submit orders, view fills, inspect WAL
 
 # Stop when done
 ./rsx-playground/playground stop

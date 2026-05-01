@@ -16,7 +16,7 @@ End-to-end system verified working, all gates green:
 - `make release-gate` exits 0:
   `playwright=419/419 all_green=True canonical_ok=True`
 
-All 10 tasks complete (1, 2, 3, 4, 4b, 5, 6, 7, 8, 9, 10).
+All 11 tasks complete (1, 2, 3, 4, 4b, 5, 6, 7, 8, 9, 10).
 
 ## Non-goals (deferred)
 
