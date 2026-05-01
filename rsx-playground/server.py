@@ -2392,6 +2392,11 @@ async def orders():
     return HTMLResponse(pages.orders_page())
 
 
+@app.get("/latency", response_class=HTMLResponse)
+async def latency_page():
+    return HTMLResponse(pages.latency_page())
+
+
 @app.get("/stress", response_class=HTMLResponse)
 async def stress():
     return HTMLResponse(pages.stress_page())

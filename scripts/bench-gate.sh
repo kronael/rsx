@@ -3,15 +3,17 @@
 # Usage: bash scripts/bench-gate.sh [--save-baseline]
 #
 # Runs cargo bench --workspace, walks target/criterion/*/new/estimates.json,
-# compares against tmp/bench-baseline.json (if it exists), and exits 1
-# if any benchmark exceeds 1.10x baseline.
+# compares against bench-baseline.json (at repo root, checked in), and
+# exits 1 if any benchmark exceeds 1.10x baseline.
 #
-# --save-baseline: overwrite baseline file and exit 0.
-# No baseline file: save + pass on first run.
+# --save-baseline: overwrite baseline file and exit 0. Commit the result
+#   so CI runs have a stable reference.
+# No baseline file: print a guidance message and exit 0 (does not fail
+#   the build; the project just has no baseline yet).
 
 set -euo pipefail
 
-BASELINE="tmp/bench-baseline.json"
+BASELINE="bench-baseline.json"
 SAVE=0
 
 for arg in "$@"; do
@@ -41,12 +43,11 @@ if [ ${#CURRENT[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Save baseline if requested or if none exists
-if [ "$SAVE" -eq 1 ] || [ ! -f "$BASELINE" ]; then
-    mkdir -p tmp
+# Save baseline if requested
+if [ "$SAVE" -eq 1 ]; then
     printf '{\n' > "$BASELINE"
     first=1
-    for name in "${!CURRENT[@]}"; do
+    for name in $(echo "${!CURRENT[@]}" | tr ' ' '\n' | sort); do
         ns="${CURRENT[$name]}"
         if [ "$first" -eq 1 ]; then
             first=0
@@ -56,7 +57,16 @@ if [ "$SAVE" -eq 1 ] || [ ! -f "$BASELINE" ]; then
         printf '  "%s": %s' "$name" "$ns" >> "$BASELINE"
     done
     printf '\n}\n' >> "$BASELINE"
-    echo "==> baseline saved to $BASELINE"
+    echo "==> baseline saved to $BASELINE (commit this file)"
+    exit 0
+fi
+
+# No baseline: print guidance and exit clean. The gate is
+# only meaningful with a committed reference.
+if [ ! -f "$BASELINE" ]; then
+    echo "==> no baseline at $BASELINE"
+    echo "    create one with: make bench-save"
+    echo "    then commit $BASELINE so CI has a reference"
     exit 0
 fi
 

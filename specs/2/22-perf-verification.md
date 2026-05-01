@@ -72,11 +72,13 @@ Implementation: pure bash + jq, no Python or npm. Reads
 `tmp/bench-baseline.json`. Prints a per-bench table with
 ratio and PASS/FAIL.
 
-The baseline lives at `tmp/bench-baseline.json` —
-gitignored, developer-local. CI does not currently
-enforce regressions across runs (no shared baseline). For
-that, see §7 of `.ship/12-SHOWCASE-HONEST/PROJECT.md`
-task G.
+The baseline lives at `bench-baseline.json` at the repo
+root and is checked in. Update it locally with
+`make bench-save`, then commit the result so CI runs
+have a stable reference. The script exits cleanly with a
+guidance message when no baseline exists yet, so a fresh
+clone doesn't fail the gate before anyone has run
+`bench-save`.
 
 ## 3. Playground latency pipeline (shipped)
 
