@@ -151,10 +151,14 @@ events.
 
 ## What We Built
 
-11 Rust crates, roughly 21,000 lines of Rust. 895 Rust tests,
-1,048 Python tests, 421 Playwright browser tests.
+11 Rust crates, roughly 21,000 lines of Rust. ~1,200 Rust
+tests, ~930 Python tests, 419 Playwright browser tests
+(3 conditional skips on optional gates).
 
-All 11 crates at 100% implementation against their specs.
+All 11 crates build and run end-to-end. The spec corpus is
+catching up to the code — see PROGRESS.md for current status
+and `.ship/12-SHOWCASE-HONEST/` for the in-flight tightening
+work.
 
 A Python/FastAPI playground dashboard with 14 tabs and 60+
 API endpoints: process control, order submission, WAL

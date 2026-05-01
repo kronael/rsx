@@ -353,9 +353,10 @@ User          Gateway        Risk          ME
 <p>One ME instance per symbol, single-threaded, pinned
 to a dedicated core. Bare busy-spin event loop.</p>
 <p><strong class="text-white">Slab Arena:</strong>
-Pre-allocated 78M OrderSlots (~10GB). O(1) alloc from
-free list (0.8ns), O(1) free (7.9ns). No malloc ever
-touches the hot path.</p>
+Pre-allocated 65,536 OrderSlots per symbol
+(rsx-matching/src/main.rs:220), O(1) alloc from free list
+(0.8ns), O(1) free (7.9ns). No malloc ever touches the
+hot path.</p>
 <p><strong class="text-white">CompressionMap:</strong>
 Maps sparse price space to dense array indices via 5
 distance-based zones. Compresses 20M possible price
@@ -577,18 +578,18 @@ and liquidation triggers.</p>""")
     </thead>
     <tbody>
       <tr><td class="py-1 px-2">Rust unit</td>
-        <td class="py-1 px-2 text-right">~895</td>
+        <td class="py-1 px-2 text-right">~1,200</td>
         <td class="py-1 px-2 text-right">&lt;5s</td></tr>
       <tr><td class="py-1 px-2">Python</td>
-        <td class="py-1 px-2 text-right">1,034</td>
+        <td class="py-1 px-2 text-right">~930</td>
         <td class="py-1 px-2 text-right">~10s</td></tr>
       <tr><td class="py-1 px-2">Playwright</td>
-        <td class="py-1 px-2 text-right">421</td>
+        <td class="py-1 px-2 text-right">419</td>
         <td class="py-1 px-2 text-right">~60s</td></tr>
       <tr class="border-t border-slate-700 text-white">
         <td class="py-1 px-2">Total</td>
         <td class="py-1 px-2 text-right font-bold">
-          2,364</td>
+          ~2,550</td>
         <td class="py-1 px-2 text-right"></td></tr>
     </tbody>
   </table>

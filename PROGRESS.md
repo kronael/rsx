@@ -1,15 +1,22 @@
 # PROGRESS
 
-updated: Mar 03 2026
+updated: May 01 2026
 
-## Status: 100% core, polish remaining
+## Status: core complete, surfacing & spec rigor in progress
+
+The 11 Rust crates build, the matching pipeline runs end-to-end
+from a clean boot, and Playwright gate-4 is green. What's not
+done: surfacing the genuine novelty (latency dashboard, E2E
+harness), tightening the spec corpus so it doesn't retract
+its own claims, and a few migrations off `tokio` on services
+that should be on `monoio`. See `.ship/12-SHOWCASE-HONEST/`.
 
 | Metric | Value |
 |--------|-------|
 | Crates | 11 |
-| Rust tests | ~895 |
-| Python tests | 1048 |
-| Playwright | 421 |
+| Rust tests (unit + integration) | ~1,200 |
+| Python tests (rsx-playground) | ~930 |
+| Playwright (gate-4) | 419 passing / 422 total (3 conditional skips) |
 | LOC (Rust) | ~21k |
 
 ## Crate Status
@@ -33,8 +40,8 @@ updated: Mar 03 2026
 - 14 tabs, 60+ API endpoints
 - Scenarios: minimal/duo/full/stress implemented
 - stress.py subprocess management
-- 1048 Python tests, 421 Playwright tests
-- bench-gate.sh regression gating
+- ~930 Python tests, 419 Playwright (canonical)
+- bench-gate.sh regression gating (10% threshold)
 
 ## Benchmarks (rsx-book, release)
 
