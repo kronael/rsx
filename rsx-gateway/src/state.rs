@@ -7,6 +7,13 @@ use std::net::IpAddr;
 use std::time::Duration;
 use rsx_types::SymbolConfig;
 
+/// Hard cap on the per-IP limiter map. Above this, we evict
+/// the oldest entry on each new insert (FIFO). Bounds memory
+/// against an adversary rotating source IPs, while still
+/// catching legitimate misbehaviour from any single IP for
+/// long enough to matter.
+pub const IP_LIMITER_MAX: usize = 10_000;
+
 /// Per-connection state.
 pub struct ConnectionState {
     pub user_id: u32,
@@ -23,6 +30,9 @@ pub struct GatewayState {
     pub next_conn_id: u64,
     pub user_limiters: FxHashMap<u32, RateLimiter>,
     pub ip_limiters: FxHashMap<IpAddr, RateLimiter>,
+    /// Insertion order for ip_limiters, used for FIFO eviction
+    /// once the map reaches IP_LIMITER_MAX entries.
+    pub ip_limiter_order: VecDeque<IpAddr>,
     pub circuit: CircuitBreaker,
     pub symbol_configs: Vec<SymbolConfig>,
     pub config_versions: Vec<u64>,
@@ -45,6 +55,9 @@ impl GatewayState {
             next_conn_id: 0,
             user_limiters: FxHashMap::default(),
             ip_limiters: FxHashMap::default(),
+            ip_limiter_order: VecDeque::with_capacity(
+                IP_LIMITER_MAX,
+            ),
             circuit: CircuitBreaker::new(
                 circuit_threshold,
                 Duration::from_millis(circuit_cooldown_ms),
@@ -277,5 +290,33 @@ impl GatewayState {
         } else {
             Vec::new()
         }
+    }
+
+    /// Get-or-insert a per-IP rate limiter. Bounded by
+    /// IP_LIMITER_MAX; on overflow, evicts the oldest IP
+    /// (FIFO). Returns &mut so the caller can `try_consume`.
+    pub fn ip_limiter_for(
+        &mut self,
+        ip: IpAddr,
+    ) -> &mut RateLimiter {
+        if !self.ip_limiters.contains_key(&ip) {
+            // About to insert — evict if at capacity.
+            if self.ip_limiters.len() >= IP_LIMITER_MAX {
+                if let Some(oldest) =
+                    self.ip_limiter_order.pop_front()
+                {
+                    self.ip_limiters.remove(&oldest);
+                }
+            }
+            self.ip_limiter_order.push_back(ip);
+            let cap = self.rate_limit_per_ip;
+            self.ip_limiters.insert(
+                ip,
+                RateLimiter::new(cap, cap),
+            );
+        }
+        self.ip_limiters.get_mut(&ip).expect(
+            "ip_limiter present after insert",
+        )
     }
 }

@@ -141,3 +141,40 @@ fn circuit_breaker_opens_on_gateway_overload() {
     assert_eq!(state.circuit.state(), State::Open);
     assert!(!state.circuit.allow());
 }
+
+#[test]
+fn ip_limiter_map_is_bounded() {
+    use rsx_gateway::state::IP_LIMITER_MAX;
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    state.rate_limit_per_ip = 100;
+
+    // Insert IP_LIMITER_MAX + 5 unique IPs and verify the
+    // map never grows past the cap.
+    for i in 0..(IP_LIMITER_MAX + 5) as u32 {
+        let ip: std::net::IpAddr = std::net::Ipv4Addr::from(i).into();
+        let _ = state.ip_limiter_for(ip).try_consume();
+        assert!(
+            state.ip_limiters.len() <= IP_LIMITER_MAX,
+            "ip_limiters grew past cap at i={i} (len={})",
+            state.ip_limiters.len()
+        );
+    }
+    assert_eq!(state.ip_limiters.len(), IP_LIMITER_MAX);
+
+    // The very first IP should have been evicted.
+    let first_ip: std::net::IpAddr =
+        std::net::Ipv4Addr::from(0u32).into();
+    assert!(
+        !state.ip_limiters.contains_key(&first_ip),
+        "oldest IP should have been evicted"
+    );
+
+    // The last-inserted IP should still be present.
+    let last_ip: std::net::IpAddr =
+        std::net::Ipv4Addr::from((IP_LIMITER_MAX + 4) as u32)
+            .into();
+    assert!(
+        state.ip_limiters.contains_key(&last_ip),
+        "newest IP should be present"
+    );
+}
