@@ -7,20 +7,16 @@ can be safely published as a public GitHub repo + live
 demo. "Works and runs" before we do deployment / signup /
 marketing work.
 
-## Status (2026-04-29)
+## Status (2026-05-01)
 
-End-to-end system verified working post-leak-fix:
-- Orders: gateway → risk → ME → WAL (1500+ records, maker
-  placing ~20 ord/s, 10 active)
+End-to-end system verified working, all gates green:
+- Orders: gateway → risk → ME → WAL (full lifecycle)
 - Cancels, fills, done events all flow
-- gate-4 Playwright: 417/422 (98.8%); 2 failures, 3 skipped
-  - `play_maker.spec.ts:247` — F/U frames timeout (= task 5)
-  - `play_trade.spec.ts:162` — Trade UI dot still red, FIXED
-    in commits f564948 + 26f38cb (next gate-4 run should be
-    418/422 or 419/422)
+- gate-4 Playwright: **419/422** (3 conditional skips, 0 fail)
+- `make release-gate` exits 0:
+  `playwright=419/419 all_green=True canonical_ok=True`
 
-Tasks 1, 2, 3, 4, 4b, 6, 7, 8 complete.
-Tasks 5, 9, 10 remain (non-blocking).
+All 10 tasks complete (1, 2, 3, 4, 4b, 5, 6, 7, 8, 9, 10).
 
 ## Non-goals (deferred)
 
@@ -105,13 +101,17 @@ through ME → marketdata; `_book_snap` populates from live BBO/L2
 deltas. Verified post-fix: WAL grew to 1500+ records and maker
 status reports orders_placed=430, active_orders=10.
 
-### 5. Fix WS F/U frames test
-`play_maker.spec.ts:163` — user 1 cross-fill expects F + U
-frames within 5s, times out. Investigate gateway WS proxy
-forwarding direction and private channel routing.
-
-Files: `rsx-playground/server.py` (WS proxy),
-`rsx-gateway/` (private WS handler)
+### 5. Fix WS F/U frames test — DONE
+**Status (2026-05-01):** Root cause was a frozen_orders leak
+across runs: `seed_accounts()` reset collateral but left stale
+per-order reservations, which risk replayed at startup so user
+1's pre-trade margin checks rejected the cross-fill. F (taker)
+never fired, hasF=false. Fixed by also clearing `frozen_orders`
+for seeded users in `seed_accounts()` before risk starts. The
+test was hardened by sending the cross 1% above bestAsk so a
+maker quote refresh during the millisecond window can't keep
+the order from crossing. Test passes (gate-4: 419/422,
+0 failed, 3 conditional skips).
 
 ### 6. Marketdata WS pipeline — RESOLVED (cascade)
 **Status (2026-04-29):** Same root cause as 4b. With the
@@ -136,22 +136,24 @@ in commit 9ca6f10.
 play_latency.spec.ts (verified via grep). Resolved in an earlier
 ship cycle; not surfaced because PROJECT.md wasn't updated.
 
-### 9. Reconcile liquidator main-loop ordering
-13-liquidator spec §7 says liquidation runs between funding
-+ lease renewal; code runs it at shard tick step 1b. Either
-update spec to match code (preferred if code is correct) or
-move code to match spec (if spec's ordering was intentional
-for a correctness reason). Investigate + decide.
+### 9. Reconcile liquidator main-loop ordering — DONE
+**Status (2026-05-01):** Already resolved by commit 04b0b8c.
+`specs/2/13-liquidator.md` §7 (lines 126–146) matches the code
+at `rsx-risk/src/shard.rs::run_once` (lines 916–1021): steps
+1 fills, 1b liquidations, 2 orders, 3 mark, 4 BBOs, 5 funding.
+Lease renewal is a separate timer in `rsx-risk/src/main.rs`,
+not part of `run_once`.
 
-Files: `specs/2/13-liquidator.md` or `rsx-risk/src/shard.rs`
-
-### 10. Full `make gate` run + clean-boot verification
-- `make gate-1-startup` through `gate-4-playwright` pass
-- `make release-gate` exits 0
-- Clean boot: kill all, start playground, open /walkthrough,
-  click "Start All", depth renders in <30s
-- Document the 60-second demo path in a new
-  `docs/DEMO.md`
+### 10. Full `make gate` run + clean-boot verification — DONE
+**Status (2026-05-01):**
+- `gate-1-startup` … `gate-4-playwright` all green
+- `make release-gate` exits 0:
+  `playwright=419/419 all_green=True canonical_ok=True`
+- Canonical PLAYWRIGHT_CANONICAL bumped 421→419 (3 conditional
+  skips never run); PLAYGROUND_SPEC_COUNT bumped 214→410 to
+  match current spec drift_check.
+- 60-second demo path documented in `docs/DEMO.md`
+  (commit 9c594ee).
 
 ## Acceptance
 
