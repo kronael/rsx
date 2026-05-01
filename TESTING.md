@@ -4,7 +4,7 @@
 
 ### Rust Unit Tests
 
-- `cargo test --workspace` (~895 tests, <5s)
+- `cargo test --workspace` (~1,200 tests, <5s)
 - Tests in dedicated `tests/` dir with `_test.rs` suffix
 - 88 test files across 11 crates
 - Per-crate: `cargo test -p rsx-book -- test_name`
@@ -12,7 +12,7 @@
 
 ### Python Tests
 
-- `pytest rsx-playground/tests/` (1035 + 13 tests)
+- `pytest rsx-playground/tests/` (~930 + 13 tests)
 - 19 test files covering: pages, HTMX fragments, v1 API,
   order flow, WAL, risk, stress, maker, edge cases
 - api_e2e_test.py: 87 tests (core API coverage)
@@ -20,7 +20,7 @@
 
 ### Playwright Browser Tests
 
-- 421 tests across 23 specs (~60s)
+- 419 passing tests across 23 specs (~60s, 3 conditional skips)
 - Requires running server + processes
 - `cd rsx-playground && bunx playwright test`
 
@@ -40,11 +40,11 @@
 
 | Suite | Files | Tests | Time |
 |-------|-------|-------|------|
-| Rust unit | 88 | ~895 | <5s |
-| Python (playground) | 19 | 1035 | ~10s |
+| Rust unit | 88 | ~1,200 | <5s |
+| Python (playground) | 19 | ~930 | ~10s |
 | Python (rsx-auth) | 2 | 13 | <1s |
-| Playwright | 23 | 421 | ~60s |
-| **Total** | **132** | **~2364** | |
+| Playwright | 23 | 419 | ~60s |
+| **Total** | **132** | **~2,560** | |
 
 ## Playground Screen Verification (Feb 27)
 
