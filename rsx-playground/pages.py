@@ -10,6 +10,7 @@ TABS = [
     ("Walkthrough", "./walkthrough"),
     ("Overview", "./overview"),
     ("Topology", "./topology"),
+    ("Latency", "./latency"),
     ("Book", "./book"),
     ("Risk", "./risk"),
     ("WAL", "./wal"),
@@ -1746,6 +1747,151 @@ def faults_page():
         '</div>',
     )
     return layout("Faults", grid + info, "./faults")
+
+
+# ── Latency screen ───────────────────────────────────────
+
+def latency_page():
+    """Showcase latency. The numbers below are real;
+    the design budget is documented under each measured
+    block so readers can compare 'what we hit' to
+    'what we aim for'."""
+    measured_intro = (
+        '<p class="text-xs text-slate-400">'
+        'Live measurements from the running system. '
+        '<code class="bg-slate-800 px-1 rounded">'
+        '/api/latency</code> tracks the gateway '
+        'round-trip on every order submission '
+        '(playground &rarr; gateway &rarr; playground). '
+        'See <a class="text-blue-400 hover:underline" '
+        'href="./docs">Docs</a> &rarr; '
+        '<code class="bg-slate-800 px-1 rounded">'
+        'specs/2/22-perf-verification.md</code> for what '
+        'these numbers do and don\'t cover.</p>'
+    )
+    live = _card(
+        "Gateway round-trip (live)",
+        f"""{measured_intro}
+<div class="mt-3" hx-get="./x/risk-latency"
+  hx-trigger="load, every 2s" hx-swap="innerHTML">
+  <span class="text-slate-600">loading...</span>
+</div>""",
+    )
+    regression = _card(
+        "Regression vs published baseline",
+        '<div hx-get="./x/latency-regression" '
+        'hx-trigger="load, every 5s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    components = _card(
+        "Component microbenches (Criterion, single thread)",
+        """<div class="grid grid-cols-2 md:grid-cols-3
+gap-2 text-xs">
+  <div class="bg-slate-800 rounded p-2">
+    <div class="text-slate-400">match single fill</div>
+    <div class="text-emerald-400 text-lg font-bold">
+      54 ns</div>
+    <div class="text-slate-500">rsx-book bench</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2">
+    <div class="text-slate-400">WAL append (in-mem)</div>
+    <div class="text-emerald-400 text-lg font-bold">
+      31 ns</div>
+    <div class="text-slate-500">rsx-dxs bench</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2">
+    <div class="text-slate-400">CMP encode</div>
+    <div class="text-emerald-400 text-lg font-bold">
+      43 ns</div>
+    <div class="text-slate-500">rsx-gateway bench</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2">
+    <div class="text-slate-400">CMP decode</div>
+    <div class="text-emerald-400 text-lg font-bold">
+      9 ns</div>
+    <div class="text-slate-500">rsx-gateway bench</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2">
+    <div class="text-slate-400">SPSC ring hop</div>
+    <div class="text-emerald-400 text-lg font-bold">
+      50&ndash;170 ns</div>
+    <div class="text-slate-500">rtrb bench</div>
+  </div>
+  <div class="bg-slate-800 rounded p-2">
+    <div class="text-slate-400">WAL flush + fsync 64 KB</div>
+    <div class="text-amber-400 text-lg font-bold">
+      ~24 &micro;s</div>
+    <div class="text-slate-500">rsx-dxs bench</div>
+  </div>
+</div>
+<p class="text-xs text-slate-500 mt-2">
+Run locally with
+<code class="bg-slate-800 px-1 rounded">make perf</code>
+or
+<code class="bg-slate-800 px-1 rounded">make bench-gate</code>
+(10% regression check vs saved baseline).</p>""",
+    )
+    budget = _card(
+        "Design budgets (not measured E2E yet)",
+        """<div class="text-xs text-slate-300 space-y-2">
+<p>The headline targets &mdash; documented but not
+asserted by an automated harness today. The continuous
+end-to-end probe is queued as task F1 in
+<code class="bg-slate-800 px-1 rounded">
+.ship/12-SHOWCASE-HONEST</code>.</p>
+<table class="w-full text-xs">
+  <thead class="text-slate-500">
+    <tr>
+      <th class="text-left py-1">Path</th>
+      <th class="text-right py-1">Target</th>
+      <th class="text-left py-1 pl-3">State</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr class="border-t border-slate-700">
+      <td class="py-1">ME match (single fill)</td>
+      <td class="text-right py-1">&lt; 500 ns</td>
+      <td class="pl-3 py-1 text-emerald-400">
+        measured 54 ns</td>
+    </tr>
+    <tr class="border-t border-slate-700">
+      <td class="py-1">Risk pre-trade</td>
+      <td class="text-right py-1">&lt; 5 &micro;s</td>
+      <td class="pl-3 py-1 text-amber-400">
+        budget, no harness</td>
+    </tr>
+    <tr class="border-t border-slate-700">
+      <td class="py-1">GW &rarr; ME &rarr; GW round-trip</td>
+      <td class="text-right py-1">&lt; 50 &micro;s</td>
+      <td class="pl-3 py-1 text-amber-400">
+        budget, no harness</td>
+    </tr>
+    <tr class="border-t border-slate-700">
+      <td class="py-1">Gateway WS frame</td>
+      <td class="text-right py-1">&lt; 50 &micro;s</td>
+      <td class="pl-3 py-1 text-amber-400">
+        budget, no harness</td>
+    </tr>
+  </tbody>
+</table>
+<p class="text-xs text-slate-500 mt-2">
+The gateway round-trip card above measures the
+playground &harr; gateway path (Python &rarr; aiohttp
+&rarr; gateway WS &rarr; JSON &rarr; JWT &rarr; CMP
+&rarr; reverse). It overstates the matching
+latency &mdash; it's useful as a liveness signal,
+not as the &lt;50 &micro;s claim.</p>
+</div>""",
+    )
+    content = f"""
+{live}
+{components}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{budget}
+{regression}
+</div>"""
+    return layout("Latency", content, "./latency")
 
 
 # ── Screen 9: Verify ─────────────────────────────────────
