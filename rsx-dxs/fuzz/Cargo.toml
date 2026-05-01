@@ -1,0 +1,29 @@
+[package]
+name = "rsx-dxs-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# This package is a cargo-fuzz target collection. Run with:
+#   cargo install cargo-fuzz   (one-time, requires nightly)
+#   cd rsx-dxs && cargo +nightly fuzz run wal_header
+#
+# A deterministic regression test in
+# rsx-dxs/tests/header_test.rs covers the same surface on
+# every `cargo test`; this exists for longer-soak runs.
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rsx-dxs = { path = ".." }
+
+[[bin]]
+name = "wal_header"
+path = "fuzz_targets/wal_header.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

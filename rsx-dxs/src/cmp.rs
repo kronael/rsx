@@ -19,8 +19,16 @@ use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
+/// Wire payload ceiling. `WalHeader::len` is u16, so this is
+/// the protocol-level maximum — but the receiver enforces it
+/// explicitly to give downstream consumers a hard upper bound
+/// before any unsafe casts. Live records are <= 64 bytes
+/// (one cache line); this ceiling exists to allow future
+/// snapshot-style records without a wire-format change.
+pub const MAX_PAYLOAD: usize = 65535;
+
 /// UDP send/recv buffer = header(16) + max payload(65535)
-const PACKET_BUF_SIZE: usize = 65536;
+const PACKET_BUF_SIZE: usize = WalHeader::SIZE + MAX_PAYLOAD + 1;
 
 pub struct CmpSender {
     socket: UdpSocket,
@@ -167,8 +175,18 @@ impl CmpSender {
     }
 
     pub fn handle_nak(&mut self, nak: &Nak) {
-        for i in 0..nak.count {
-            let seq = nak.from_seq + i as u64;
+        // Clamp count so a malicious or buggy peer can't
+        // make us loop on u64::MAX. The send_ring caps the
+        // recoverable range anyway.
+        let count = nak.count.min(self.send_ring_limit as u64);
+        if count != nak.count {
+            warn!(
+                "nak count={} clamped to {}",
+                nak.count, count
+            );
+        }
+        for i in 0..count {
+            let seq = nak.from_seq.saturating_add(i);
             if let Some(frame) =
                 self.send_ring.get(&seq)
             {
@@ -363,6 +381,9 @@ impl CmpReceiver {
                         None => continue,
                     };
                     let payload_len = hdr.len as usize;
+                    if payload_len > MAX_PAYLOAD {
+                        continue;
+                    }
                     if WalHeader::SIZE + payload_len > n {
                         continue;
                     }
