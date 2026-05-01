@@ -826,9 +826,11 @@ async def seed_accounts():
     """Upsert playground test accounts into Postgres.
 
     Uses ON CONFLICT UPDATE so test/dev runs always start
-    with the configured collateral. Older runs (e.g. from
-    acceptance_test.py at 10M) won't leak under-funded
-    accounts that prevent test orders from clearing margin.
+    with the configured collateral. Also clears any stale
+    frozen_orders rows for these users — without this, a
+    crashed prior run can leave reservations behind that
+    block new orders with InsufficientMargin until risk
+    replays them.
     """
     if pg_pool is None:
         return
@@ -842,6 +844,10 @@ async def seed_accounts():
                     "ON CONFLICT (user_id) DO UPDATE "
                     "SET collateral = EXCLUDED.collateral",
                     uid, _SEED_COLLATERAL,
+                )
+                await conn.execute(
+                    "DELETE FROM frozen_orders WHERE user_id = $1",
+                    uid,
                 )
     except Exception as e:
         print(f"seed_accounts failed: {e}")
