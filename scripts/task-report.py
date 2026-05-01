@@ -31,7 +31,7 @@ TASKS_FILE = ROOT / ".ship" / "tasks.json"
 PROGRESS = ROOT / "PROGRESS.md"
 
 # Acceptance target: number of Playwright tests that must pass.
-ACCEPTANCE_TARGET = 419
+ACCEPTANCE_TARGET = 421
 
 # Keywords that mark a task as release-critical (blocks acceptance passing).
 _RELEASE_CRITICAL = re.compile(

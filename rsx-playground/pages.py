@@ -591,7 +591,7 @@ and liquidation triggers.</p>""")
         <td class="py-1 px-2 text-right">~930</td>
         <td class="py-1 px-2 text-right">~10s</td></tr>
       <tr><td class="py-1 px-2">Playwright</td>
-        <td class="py-1 px-2 text-right">419</td>
+        <td class="py-1 px-2 text-right">421</td>
         <td class="py-1 px-2 text-right">~60s</td></tr>
       <tr class="border-t border-slate-700 text-white">
         <td class="py-1 px-2">Total</td>

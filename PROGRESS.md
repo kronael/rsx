@@ -16,7 +16,7 @@ that should be on `monoio`. See `.ship/12-SHOWCASE-HONEST/`.
 | Crates | 11 |
 | Rust tests (unit + integration) | ~1,200 |
 | Python tests (rsx-playground) | ~930 |
-| Playwright (gate-4) | 419 passing / 422 total (3 conditional skips) |
+| Playwright (gate-4) | 421 passing / 424 total (3 conditional skips) |
 | LOC (Rust) | ~21k |
 
 ## Crate Status
@@ -40,7 +40,7 @@ that should be on `monoio`. See `.ship/12-SHOWCASE-HONEST/`.
 - 14 tabs, 60+ API endpoints
 - Scenarios: minimal/duo/full/stress implemented
 - stress.py subprocess management
-- ~930 Python tests, 419 Playwright (canonical)
+- ~930 Python tests, 421 Playwright (canonical)
 - bench-gate.sh regression gating (10% threshold)
 
 ## Benchmarks (rsx-book, release)

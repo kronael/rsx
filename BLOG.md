@@ -162,7 +162,7 @@ events.
 ## What We Built
 
 11 Rust crates, roughly 21,000 lines of Rust. ~1,200 Rust
-tests, ~930 Python tests, 419 Playwright browser tests
+tests, ~930 Python tests, 421 Playwright browser tests
 (3 conditional skips on optional gates).
 
 All 11 crates build and run end-to-end. The spec corpus is
