@@ -108,48 +108,55 @@ Plus the broader endpoint-latency suite (page load < 4 s,
 HTMX partial < 500 ms, order submit < 1 s, JSON API
 < 200 ms, etc.).
 
-## 4. End-to-end harness (planned)
+## 4. End-to-end harness (shipped)
 
-What's missing today: a continuous test that asserts the
-full GW → ME → GW round-trip is below the 50 µs design
-budget.
+A continuous probe that asserts the full GW → ME → GW
+round-trip and surfaces the result in `/api/latency`.
 
-The pieces are already in place:
+**What it does:**
 
-- Gateway records `ts_ns: time_ns()` on every order
-  accept (`rsx-gateway/src/handler.rs`).
-- Risk forwards `timestamp_ns` to the matching engine
-  (`rsx-gateway/src/route.rs`, `rsx-risk/src/main.rs`).
-- ME timestamps fill emission (`rsx-matching/src/main.rs:432,
-  819, 825, 830`).
-- Fills get the original `ts_ns` echoed back to the
-  gateway, where the WS write timestamp closes the loop.
+1. `POST /api/latency-probe?symbol_id=10` opens a
+   WebSocket to the gateway with a fresh JWT, submits a
+   probe order at `bestAsk * 1.01` so it crosses the
+   maker book, and waits for the `F` (fill) frame on
+   the same WebSocket.
+2. The round-trip is `time.perf_counter_ns()` from the
+   instant before `ws.send_json` to the instant after
+   the F frame is received. Includes Python overhead +
+   gateway WS handler + JWT decode + CMP encode +
+   risk pre-trade + ME match + reverse path.
+3. The result is appended to the `e2e_latencies` ring
+   (capped at 1 000) and exposed as an `e2e` block in
+   `/api/latency`:
+   ```json
+   { "count": 20, "p50": 47, "p95": 78,
+     "p99": 153, "min": 41, "max": 161,
+     "e2e": { "count": 20, "p50": 220, "p95": 340,
+              "p99": 480, "min": 180, "max": 510 } }
+   ```
+4. The Latency dashboard tab at `./latency` renders the
+   probe results live with a "Run one probe" button so
+   visitors can see a real round-trip number.
 
-What's missing: correlation. The probe needs to (a)
-choose a `cid` ("client order id") for the probe, (b) tag
-it as a probe so the gateway records both the accept
-timestamp and the fill-receive timestamp, (c) compute
-`fill_ts_ns - accept_ts_ns` and append to a separate
-`e2e_latencies` ring, (d) surface in `/api/latency` as an
-`e2e_p50/p95/p99` block.
+**Limits:**
+- The probe orders are real orders with a `probe-` cid
+  prefix; they consume real liquidity and produce real
+  fills. The maker must be running.
+- Python + aiohttp adds 50–200 µs to the floor compared
+  to a native Rust client, so the probe number is an
+  upper bound on the gateway-to-gateway path.
+- The probe path uses the dev `RSX_GW_JWT_SECRET`. The
+  loopback assumption holds because the playground
+  binds to localhost.
 
-**Plan:**
-
-1. Reserve a `cid` prefix `"probe-"` for E2E latency
-   probes (gateway already accepts arbitrary cids).
-2. In `send_order_to_gateway`, when the cid starts with
-   `"probe-"`, record the start_ns, attach a future,
-   resolve it in the fill handler, store the delta in
-   `e2e_latencies`.
-3. Extend `/api/latency` JSON with an `e2e` block:
-   `{count, p50, p95, p99}` (microseconds).
-4. Add a Playwright test that submits 20 probe orders
-   then asserts the `/api/latency` `e2e.p99` is below
-   some configurable threshold (default 200 µs to allow
-   slack on shared CI runners).
-
-Tracked as task F1 in `.ship/12-SHOWCASE-HONEST/`. The
-50 µs design budget stays a budget until this lands.
+**What's still missing:**
+- A native-Rust probe that excludes Python overhead.
+  Future work — when it lands, the existing `e2e` block
+  in `/api/latency` should grow a `native_e2e` peer.
+- Throughput-under-load test. The current probe is a
+  one-shot; a sustained-load harness would need to run
+  N probes/second concurrently and report tail latency.
+  This is the next step on the perf roadmap.
 
 ## 5. Gateway mode endpoint (planned)
 

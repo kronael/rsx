@@ -116,8 +116,12 @@ impl LiquidationEngine {
         get_position_fn: &dyn Fn(u32, u32) -> i64,
         get_mark_fn: &dyn Fn(u32) -> i64,
     ) -> (Vec<LiquidationOrder>, Vec<SocializedLoss>) {
-        let mut orders = Vec::new();
-        let mut socialized = Vec::new();
+        // Most ticks emit zero events; pre-size for the
+        // typical case to avoid the realloc cycle in the
+        // common path. Unused capacity is freed when the
+        // caller drops the Vec.
+        let mut orders = Vec::with_capacity(4);
+        let mut socialized = Vec::with_capacity(4);
         for state in &mut self.active {
             if state.status != LiquidationStatus::Active {
                 continue;

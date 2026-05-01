@@ -1776,11 +1776,39 @@ def latency_page():
         'these numbers do and don\'t cover.</p>'
     )
     live = _card(
-        "Gateway round-trip (live)",
+        "Gateway round-trip (live, playground &harr; gateway)",
         f"""{measured_intro}
 <div class="mt-3" hx-get="./x/risk-latency"
   hx-trigger="load, every 2s" hx-swap="innerHTML">
   <span class="text-slate-600">loading...</span>
+</div>""",
+    )
+    e2e_intro = (
+        '<p class="text-xs text-slate-400">'
+        'End-to-end probe: WS &rarr; Gateway &rarr; Risk '
+        '&rarr; ME &rarr; Risk &rarr; Gateway &rarr; WS, '
+        'measured by submitting a marketable order and '
+        'waiting for the F (fill) frame on the same '
+        'WebSocket. Requires the maker to be running so '
+        'there is liquidity to cross.</p>'
+    )
+    e2e_probe_btn = (
+        '<button class="bg-blue-900/40 text-blue-400 '
+        'px-3 py-1 rounded text-xs border border-blue-900 '
+        'hover:bg-blue-900 cursor-pointer mt-2" '
+        'hx-post="./api/latency-probe?symbol_id=10" '
+        'hx-target="#probe-result" '
+        'hx-swap="innerHTML">Run one probe</button>'
+    )
+    e2e_card = _card(
+        "End-to-end (GW &rarr; ME &rarr; GW, real)",
+        f"""{e2e_intro}
+<div class="mt-3" hx-get="./x/e2e-latency"
+  hx-trigger="load, every 2s" hx-swap="innerHTML">
+  <span class="text-slate-600">loading...</span>
+</div>
+{e2e_probe_btn}
+<div id="probe-result" class="text-xs text-slate-400 mt-2">
 </div>""",
     )
     regression = _card(
@@ -1891,6 +1919,7 @@ not as the &lt;50 &micro;s claim.</p>
 </div>""",
     )
     content = f"""
+{e2e_card}
 {live}
 {components}
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1898,6 +1927,44 @@ not as the &lt;50 &micro;s claim.</p>
 {regression}
 </div>"""
     return layout("Latency", content, "./latency")
+
+
+def render_e2e_latency(latencies=None):
+    """Render the E2E p50/p95/p99 latency block."""
+    if not latencies:
+        return (
+            '<div class="flex gap-6">'
+            + _metric("p50", "--", "slate-500")
+            + _metric("p95", "--", "slate-500")
+            + _metric("p99", "--", "slate-500")
+            + _metric("max", "--", "slate-500")
+            + '<div class="text-xs text-slate-500 self-center">'
+            'no probes yet — click Run one probe</div>'
+            '</div>'
+        )
+    sorted_lat = sorted(latencies)
+    p50 = int(_percentile(sorted_lat, 50))
+    p95 = int(_percentile(sorted_lat, 95))
+    p99 = int(_percentile(sorted_lat, 99))
+    max_lat = sorted_lat[-1]
+
+    def color_for_lat(lat_us: int) -> str:
+        if lat_us < 100:
+            return "emerald-400"
+        elif lat_us < 1000:
+            return "amber-400"
+        return "red-400"
+    return (
+        '<div class="flex gap-6">'
+        + _metric("p50", f"{p50}us", color_for_lat(p50))
+        + _metric("p95", f"{p95}us", color_for_lat(p95))
+        + _metric("p99", f"{p99}us", color_for_lat(p99))
+        + _metric("max", f"{max_lat}us",
+                  color_for_lat(max_lat))
+        + f'<div class="text-xs text-slate-500 '
+        f'self-center">n={len(latencies)} probes</div>'
+        + '</div>'
+    )
 
 
 # ── Screen 9: Verify ─────────────────────────────────────
