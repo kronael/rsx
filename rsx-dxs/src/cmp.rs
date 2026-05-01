@@ -32,6 +32,20 @@ pub const MAX_PAYLOAD: usize = 65535;
 /// UDP send/recv buffer = header(16) + max payload(65535)
 const PACKET_BUF_SIZE: usize = WalHeader::SIZE + MAX_PAYLOAD + 1;
 
+/// Preallocated send-ring frame size. Covers the 16-byte
+/// header plus any current `#[repr(C, align(64))]` record
+/// (all <= 64 bytes payload) with headroom. Records larger
+/// than this skip the ring; NAK fallback reads them from
+/// the WAL via `read_record_at_seq`.
+const SEND_RING_FRAME_BYTES: usize = 128;
+
+/// Send-ring capacity. Power of two so seq -> slot is a
+/// bitwise AND. Drives the recovery horizon for NAK on the
+/// hot tier; older NAKs fall through to WAL random-access.
+const SEND_RING_CAPACITY: usize = 4096;
+const SEND_RING_MASK: u64 =
+    SEND_RING_CAPACITY as u64 - 1;
+
 pub struct CmpSender {
     socket: UdpSocket,
     dest: SocketAddr,
@@ -40,11 +54,25 @@ pub struct CmpSender {
     peer_window: u64,
     last_heartbeat: Instant,
     heartbeat_interval: Duration,
-    send_ring: BTreeMap<u64, Vec<u8>>,
-    send_ring_limit: usize,
+    /// Preallocated retransmit cache. Three parallel arrays
+    /// of length SEND_RING_CAPACITY indexed by
+    /// `seq & SEND_RING_MASK`. `ring_seqs[i] == 0` means the
+    /// slot has never been written; otherwise it holds the
+    /// frame for that exact seq. NAK lookup checks the seq
+    /// matches before re-sending. Records that don't fit in
+    /// SEND_RING_FRAME_BYTES bypass the ring (ring_lens=0)
+    /// and force NAK to fall through to WAL.
+    ///
+    /// One-time allocation at construction; **zero heap
+    /// allocations on the hot send path** (the prior
+    /// `BTreeMap<u64, Vec<u8>>` heap-allocated per send and
+    /// per cleanup).
+    ring_seqs: Box<[u64]>,
+    ring_lens: Box<[u16]>,
+    ring_frames: Box<[u8]>,
     /// Stream id used by the WAL filename layout. Needed
     /// for NAK retransmit when the requested seq has
-    /// fallen out of `send_ring`.
+    /// fallen out of `ring_seqs`.
     stream_id: u32,
     /// Hot WAL directory; used to recover NAK targets that
     /// missed the in-memory ring.
@@ -88,8 +116,16 @@ impl CmpSender {
             heartbeat_interval: Duration::from_millis(
                 config.heartbeat_interval_ms,
             ),
-            send_ring: BTreeMap::new(),
-            send_ring_limit: 4096,
+            ring_seqs: vec![0u64; SEND_RING_CAPACITY]
+                .into_boxed_slice(),
+            ring_lens: vec![0u16; SEND_RING_CAPACITY]
+                .into_boxed_slice(),
+            ring_frames: vec![
+                0u8;
+                SEND_RING_CAPACITY
+                    * SEND_RING_FRAME_BYTES
+            ]
+            .into_boxed_slice(),
             stream_id,
             wal_dir: wal_dir.to_path_buf(),
             buf: [0u8; PACKET_BUF_SIZE],
@@ -99,6 +135,8 @@ impl CmpSender {
     /// Send a typed CMP record. Assigns seq via
     /// CmpRecord::set_seq. Returns false if flow
     /// control stalls.
+    ///
+    /// Hot path: zero heap allocations.
     pub fn send<T: CmpRecord>(
         &mut self,
         record: &mut T,
@@ -127,22 +165,28 @@ impl CmpSender {
             .copy_from_slice(payload);
         self.socket
             .send_to(&self.buf[..total], self.dest)?;
-        self.send_ring
-            .insert(seq, self.buf[..total].to_vec());
-        while let Some(entry) =
-            self.send_ring.first_entry()
-        {
-            if *entry.key() < self.peer_consumption_seq {
-                entry.remove();
-            } else {
-                break;
-            }
+
+        // Cache the frame in the preallocated ring for
+        // NAK retransmit. Skip frames larger than the
+        // slot — those are recoverable via WAL fallback.
+        if total <= SEND_RING_FRAME_BYTES {
+            let slot =
+                (seq & SEND_RING_MASK) as usize;
+            self.ring_seqs[slot] = seq;
+            self.ring_lens[slot] = total as u16;
+            let off = slot * SEND_RING_FRAME_BYTES;
+            self.ring_frames[off..off + total]
+                .copy_from_slice(&self.buf[..total]);
+        } else {
+            // Mark slot dirty: if a NAK targets this seq,
+            // the seq mismatch fall-through pushes it to
+            // WAL, which is correct.
+            let slot =
+                (seq & SEND_RING_MASK) as usize;
+            self.ring_seqs[slot] = 0;
+            self.ring_lens[slot] = 0;
         }
-        while self.send_ring.len()
-            > self.send_ring_limit
-        {
-            self.send_ring.pop_first();
-        }
+
         self.next_seq += 1;
         Ok(true)
     }
@@ -187,9 +231,9 @@ impl CmpSender {
 
     pub fn handle_nak(&mut self, nak: &Nak) {
         // Clamp count so a malicious or buggy peer can't
-        // make us loop on u64::MAX. The send_ring caps the
-        // recoverable range anyway.
-        let count = nak.count.min(self.send_ring_limit as u64);
+        // make us loop on u64::MAX. Beyond ring capacity
+        // we'd be reading WAL anyway; cap at capacity.
+        let count = nak.count.min(SEND_RING_CAPACITY as u64);
         if count != nak.count {
             warn!(
                 "nak count={} clamped to {}",
@@ -198,14 +242,22 @@ impl CmpSender {
         }
         for i in 0..count {
             let seq = nak.from_seq.saturating_add(i);
-            if let Some(frame) =
-                self.send_ring.get(&seq)
+            // Hot tier: preallocated ring lookup. Slot may
+            // hold either this seq (cache hit), an older
+            // seq the ring has wrapped past (cache miss
+            // via seq mismatch), or be unused
+            // (ring_seqs[slot] == 0).
+            let slot = (seq & SEND_RING_MASK) as usize;
+            if seq != 0
+                && self.ring_seqs[slot] == seq
+                && self.ring_lens[slot] > 0
             {
-                let frame = frame.clone();
-                if let Err(e) = self
-                    .socket
-                    .send_to(&frame, self.dest)
-                {
+                let len = self.ring_lens[slot] as usize;
+                let off = slot * SEND_RING_FRAME_BYTES;
+                if let Err(e) = self.socket.send_to(
+                    &self.ring_frames[off..off + len],
+                    self.dest,
+                ) {
                     warn!(
                         "nak retransmit send \
                          failed seq={seq}: {e}"
