@@ -26,6 +26,8 @@ fn test_validate_jwt_valid() {
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
+        nbf: None,
+        jti: None,
     };
 
     let token = encode(
@@ -52,6 +54,8 @@ fn test_validate_jwt_expired() {
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
+        nbf: None,
+        jti: None,
     };
 
     let token = encode(
@@ -81,6 +85,8 @@ fn test_validate_jwt_invalid_secret() {
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
+        nbf: None,
+        jti: None,
     };
 
     let token = encode(
@@ -105,6 +111,8 @@ fn test_validate_jwt_invalid_user_id() {
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
+        nbf: None,
+        jti: None,
     };
 
     let token = encode(
@@ -126,4 +134,56 @@ fn test_validate_jwt_malformed() {
     let secret = "test-secret";
     let result = validate_jwt("not-a-jwt", secret);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_jwt_rejects_nbf_in_future() {
+    use jsonwebtoken::{encode, EncodingKey, Header, Algorithm};
+    let secret = "a-secret-that-is-32-chars-long-padpadpad";
+    let user_id = 7u32;
+    let exp = now_secs() + 3600;
+    // nbf 1 hour in the future — token not yet valid.
+    let nbf = now_secs() + 3600;
+    let claims = Claims {
+        sub: format!("github:{user_id}"),
+        user_id: Some(user_id),
+        exp,
+        aud: Some("rsx-gateway".to_string()),
+        iss: Some("rsx-auth".to_string()),
+        nbf: Some(nbf),
+        jti: None,
+    };
+    let token = encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .unwrap();
+    let result = validate_jwt(&token, secret);
+    assert!(
+        result.is_err(),
+        "nbf in the future must reject token: {result:?}"
+    );
+}
+
+#[test]
+fn test_jti_tracker_rejects_replay() {
+    use rsx_gateway::jwt::JtiTracker;
+    let mut t = JtiTracker::new(8);
+    assert!(t.record(Some("abc")));
+    assert!(t.record(Some("def")));
+    assert!(!t.record(Some("abc"))); // replay
+    assert!(t.record(None)); // tokens without jti always pass
+}
+
+#[test]
+fn test_jti_tracker_evicts_oldest_when_full() {
+    use rsx_gateway::jwt::JtiTracker;
+    let mut t = JtiTracker::new(2);
+    assert!(t.record(Some("a")));
+    assert!(t.record(Some("b")));
+    assert!(t.record(Some("c"))); // evicts "a"
+    // "a" is now fresh again because it was evicted.
+    assert!(t.record(Some("a")));
+    assert_eq!(t.len(), 2);
 }
