@@ -1,238 +1,305 @@
 ---
-status: shipped
+status: partial
 ---
 
-# TILES: Thread-per-Concern Architecture
+# Tile architecture
 
-## Table of Contents
+A "tile" is a pinned thread doing one thing, communicating
+with sibling threads through SPSC rings. Tiles trade
+language and runtime simplicity for predictable latency:
+no scheduler, no async wakeup, no allocator on the hot
+path. They sit between processes (which are isolated by
+OS) and async tasks (which share a runtime).
 
-- [Overview](#overview)
-- [Processes](#processes)
-- [Tile Pattern](#tile-pattern-within-each-process)
-- [Runtime Selection](#runtime-selection)
-- [Networking Stack](#networking-stack)
-- [Tiles Within Each Process](#tiles-within-each-process)
-- [External Processes](#external-processes)
-- [Inter-Process Communication Topology](#inter-process-communication-topology)
-- [Future: Userspace Networking](#future-userspace-networking)
-- [Performance Targets](#performance-targets)
+This document describes the tile pattern, the parts of RSX
+that use it today, the parts that don't, and why.
+
+The previous status field said "shipped." That overstated
+it. Tiles are shipped in the **risk engine** (the heaviest
+user) and in **mark price aggregation**. The **matching
+engine** uses a pinned-thread single-loop variant (one
+"tile" = the whole process). **Gateway** and **marketdata**
+use monoio async, not tiles, by deliberate choice. Status
+is now "partial" to reflect that.
+
+## Table of contents
+
+- [1. Why tiles](#1-why-tiles)
+- [2. The pattern](#2-the-pattern)
+- [3. Per-process status](#3-per-process-status)
+- [4. Inter-process communication](#4-inter-process-communication)
+- [5. Threading inventory](#5-threading-inventory)
+- [6. Why some processes aren't tiled](#6-why-some-processes-arent-tiled)
+- [7. Performance characteristics](#7-performance-characteristics)
+- [8. Future work](#8-future-work)
+- [Cross-references](#cross-references)
 
 ---
 
-## Overview
+## 1. Why tiles
 
-Tiles describe the intended thread-per-concern architecture.
-In v1 code, most processes run as a single main loop with
-inline concerns; SPSC rings are used only where implemented.
-Between processes: CMP/UDP (hot path) and WAL/TCP (cold path).
-See NETWORK.md.
+A tile is a `std::thread::spawn` that runs a tight loop on
+a dedicated CPU core, drains one or more SPSC input rings,
+performs computation, and writes to one or more SPSC output
+rings. The pattern dates to LMAX Disruptor (2011) and is
+standard in Seastar / ScyllaDB and most HFT trading systems.
 
-## Processes
+What it gives you:
+- **No scheduler latency.** The thread is pinned and
+  busy-spinning; the kernel won't take it away from the
+  core for ≥10 ms because it's never actually blocked.
+- **L1/L2-warm hot data.** All state owned by a tile lives
+  on its core's caches.
+- **Backpressure for free.** A full output ring stalls
+  the producer; the consumer can't be DoSed.
+- **Single-writer invariant.** Each ring has one producer
+  and one consumer; the lock-free protocol is `rtrb`'s
+  cache-line-aligned head/tail.
 
-Each is a separate monolithic process (see NETWORK.md):
+What you give up:
+- **You eat one core per tile.** A 4-tile process needs
+  4 cores it actually owns.
+- **Cross-tile coordination is rings, not async.** No
+  `await`, no `select!` — explicit drain loops.
+- **A blocking operation in a tile poisons the whole
+  process.** A syscall that takes 1 ms is a 1 ms latency
+  spike.
 
-- **Gateway** -- WS ingress, auth, rate limit
-- **Risk Engine** -- margin, positions, liquidation
-- **Matching Engine** -- one per symbol, orderbook
-- **Marketdata** -- shadow book, L2/BBO/trades fan-out
-- **Recorder** -- daily WAL archival (DXS consumer)
-- **Mark** -- external price aggregator
+So the rule is: tile when you need predictable
+microsecond-scale latency on a hot loop; use async
+elsewhere.
 
-Between processes: CMP/UDP for hot path (orders, fills),
-WAL replication over TCP for cold path (replay, archival).
-See CMP.md, NETWORK.md.
+## 2. The pattern
 
-Terminology:
-- **Process**: monolithic binary (Gateway, Risk, Matching, etc.)
-- **Tile**: pinned thread loop inside a process
-- **Link**: inter-process CMP/UDP or WAL/TCP connection
+```rust
+fn risk_tile(
+    mut order_in:   rtrb::Consumer<OrderRequest>,
+    mut fill_in:    rtrb::Consumer<FillEvent>,
+    mut order_out:  rtrb::Producer<OrderResponse>,
+    mut persist_out: rtrb::Producer<PersistEvent>,
+) {
+    core_affinity::set_for_current(MY_CORE);
+    let mut state = RiskState::new();
+    loop {
+        while let Ok(o) = order_in.pop() {
+            state.handle_order(&o, &mut order_out,
+                               &mut persist_out);
+        }
+        while let Ok(f) = fill_in.pop() {
+            state.handle_fill(&f, &mut persist_out);
+        }
+        // tick liquidations, mark price, BBOs ...
+    }
+}
+```
 
-## Tile Pattern (within each process)
+The tile drains every ring on every iteration. Output
+rings are bounded; if `order_out` is full, the producing
+loop stalls (`order_out.push()` returns `Err`). The
+matching engine and risk shard implement explicit
+backpressure handling for these stalls.
 
-Each process internally runs pinned threads (tiles) for
-its own concerns, connected by SPSC rings (rtrb):
+## 3. Per-process status
+
+The actual runtime layout, with file references for each
+claim. Read this before believing the architecture
+diagrams.
+
+### 3.1 Matching engine — `rsx-matching` (pinned single loop)
 
 ```
-Example: Matching Engine process
-+===============================================+
-|  +-------+  SPSC  +---------+  SPSC  +------+ |
-|  |  Net  |------->| Matching|------->| WAL  | |
-|  | tile  |<-------| tile    |------->|Writer| |
-|  |(monoio|  fills |         | events | tile | |
-|  +-------+        +---------+        +--+---+ |
-|                        |           +----v----+ |
-|                        |          |DxsReplay | |
-|                        |          |  tile    | |
-|                        |          +---------+  |
-+===============================================+
-       CMP/UDP ↕             TCP ↕
-     Risk Engine          Recorder, Mark
+rsx-matching/src/main.rs:145-155
+    if let Some(core_id) = env_core_id() {
+        let ids = core_affinity::get_core_ids() ...;
+        if let Some(id) = ids.iter().find(|c| c.id == core_id) {
+            core_affinity::set_for_current(*id);
+            info!("pinned to core {}", core_id);
+        }
+    }
 ```
 
-**Within process:** SPSC rings (rtrb). Same address space,
-pinned threads, zero syscall overhead, 50-170ns per hop.
+Matching is **one core-pinned thread**, no SPSC rings
+within the process. Inside that loop:
 
-**Between processes:** CMP/UDP for hot path, WAL/TCP for
-cold path. DXS streams WAL records to external consumers.
+1. Drain CMP UDP recv (orders from risk).
+2. Run matching algorithm against the orderbook.
+3. Append events to WAL writer (inline call, not a ring).
+4. Send fills via CMP UDP to risk (and to marketdata).
 
-## Runtime Selection
+Why no rings: there's only one thread doing computational
+work, so there's nothing to send across a ring to. The
+WAL writer is an inline data structure with periodic
+fsync; the DXS replay TCP server runs on a separate
+`std::thread::spawn` (not pinned) and reads from the
+already-flushed WAL files.
 
-- **Hot path tiles** (network ingress, matching, risk,
-  marketdata): use **monoio** where possible.
-- **Auxiliary tiles** (telemetry, archival, persistence,
-  external integrations): **tokio** is acceptable for
-  broader library support.
+This is sometimes called a "degenerate tile" — the whole
+process is one tile.
 
-## Networking Stack
+### 3.2 Risk shard — `rsx-risk` (full tile architecture)
 
-### monoio with io_uring
+The heaviest user of tiles. One pinned thread for the risk
+state machine, plus 7 SPSC rings for input and output:
 
-Gateway and Market Data tiles use **monoio** (io_uring) for
-all client-facing network I/O:
+| Ring                       | Capacity | File:line                       |
+|----------------------------|----------|---------------------------------|
+| `PersistEvent`             | 8 192    | `rsx-risk/src/main.rs:239`      |
+| `FillEvent`                | 4 096    | `rsx-risk/src/main.rs:403`      |
+| `OrderRequest` (primary)   | 2 048    | `rsx-risk/src/main.rs:405`      |
+| `MarkPriceUpdate`          | 256      | `rsx-risk/src/main.rs:407`      |
+| `BboUpdate`                | 256      | `rsx-risk/src/main.rs:409`      |
+| `OrderResponse`            | 2 048    | `rsx-risk/src/main.rs:411`      |
+| `OrderRequest` (replica)   | 2 048    | `rsx-risk/src/main.rs:413`      |
 
-- WebSocket accept/read/write (gateway, market data)
-- HTTP client (mark price aggregator)
-- Zero-copy via kernel submission queues
-- Lower latency than tokio (epoll)
+Core pinning at `rsx-risk/src/main.rs:297-301`. Postgres
+write-behind is a separate `tokio` runtime in a sidecar
+thread (it does blocking IO, can't live on the pinned
+core).
 
-### Why not tokio everywhere?
+This is the canonical RSX tile arrangement.
 
-tokio is epoll-based. Each I/O operation is a syscall. For a
-gateway handling 100K+ connections, that's too many syscalls.
-io_uring batches submissions and completions in shared
-kernel/userspace rings.
+### 3.3 Mark — `rsx-mark` (partial tile)
 
-DxsReplay uses WAL/TCP -- it's a cold path (external
-consumers, not hot-path matching). Raw fixed records minimize
-serialization overhead.
+```
+rsx-mark/src/main.rs:117
+    rtrb::RingBuffer::<SourcePrice>::new(1024);
+```
 
-### Reference Implementation
+The aggregator main loop is a synchronous busy-spin that
+drains one SPSC ring per external price source (Binance,
+Coinbase, …). The sources themselves are async tasks on
+a `tokio` runtime that scrape WebSockets and push into
+the rings. Aggregator → CMP/UDP send is inline.
 
-See sibling `trader` project (`monoio-client/`) for proven
-monoio WebSocket and HTTP client patterns.
+The aggregator is not currently core-pinned. The next
+ship cycle migrates the source tasks off `tokio` and
+adds core affinity. Tracked in `.ship/12-SHOWCASE-HONEST/`
+task 18.
 
-## Tiles Within Each Process
+### 3.4 Gateway — `rsx-gateway` (monoio async, not tiled)
 
-### Gateway Tile (monoio, thread pool)
+Gateway is one `monoio` runtime per thread (single-thread
+per-core scaling in deployment, but a single thread in
+default dev config). Inside:
 
-Accepts client WebSocket connections. Authenticates,
-rate-limits, validates basic fields. Sends orders to Risk
-via CMP/UDP. Receives fills/dones from Risk via CMP/UDP,
-sends back to client.
+- Accept loop spawns one task per WebSocket connection.
+- Each task `read_frame → validate → CmpSender::send` to
+  the risk shard.
+- Fill responses come back from risk via CMP, route to
+  the right WS task via a per-connection broker channel.
 
-### Risk Tile (CPU-pinned, per user shard)
+There is no SPSC ring within gateway. The justification:
+WebSocket parsing dominates the per-frame cost, and
+io_uring batches the syscalls; a tile would have to do
+the same WS parsing. The flow-control buffer between
+gateway and risk is the CMP wire window (§5 of `4-cmp.md`),
+not a ring.
 
-Pre-trade: checks portfolio margin across all symbols for the
-user. Post-trade: applies fills, recalculates margin, triggers
-liquidation if equity < maintenance margin. Sits **between**
-gateway and ME -- all orders pass through risk first.
+### 3.5 Marketdata — `rsx-marketdata` (monoio async, not tiled)
 
-Communicates:
-- Gateway → Risk: CMP/UDP (orders in)
-- Risk → ME: CMP/UDP (validated orders)
-- ME → Risk: CMP/UDP (fills, dones)
-- Risk → Gateway: CMP/UDP (fills, dones back to user)
-- Risk → Postgres: SPSC write-behind (positions, accounts)
+Same pattern as gateway: `monoio` runtime, async WS
+broadcast tasks, CMP UDP recv for fill/insert/cancel
+events from ME. No SPSC rings, no core pinning.
 
-### Matching Engine Tile (CPU-pinned, per symbol)
+The `replay.rs` startup path is on `tokio` (one-shot
+catch-up before going live); not on the hot path.
 
-Pure computation. No network I/O. Reads validated orders from
-SPSC ring (from Risk). Matches against book. Drains events to
-WAL Writer tile via SPSC ring.
+## 4. Inter-process communication
 
-Single-threaded, bare busy-spin, dedicated core.
-
-### WAL Writer (inline in ME main loop)
-
-WalWriter is called inline in the ME main loop (not a
-separate tile). Appends to in-memory buffer via
-`append<T: CmpRecord>(record: &mut T)`, which assigns
-monotonic seq numbers. Calls `WalWriter::flush()` every
-10ms. Rotates at 64MB. Notifies DxsReplayService thread
-on flush via Arc<Notify>.
-
-DxsReplayService runs as a separate `std::thread::spawn`
-(tokio) for TCP streaming to external consumers.
-
-### DxsReplay Tile (TCP)
-
-TCP server. Reads WAL files, streams raw fixed records to
-external consumers (recorder, mark aggregator, or risk
-during recovery replay). Multiple consumers get independent
-streams.
-
-TCP streaming is used for DXS: this is a cold path
-(external consumers, not hot-path matching). The interface
-is "stream records from seq N" and raw fixed records
-minimize serialization overhead.
-
-This is the **only tile that talks to external processes**.
-
-### Market Data Tile (monoio WebSocket server)
-
-Maintains shadow orderbook from ME events (via SPSC from WAL
-writer or directly from ME). Computes L2/BBO/trades.
-Broadcasts to subscriber WebSocket connections.
-
-### Postgres Write-Behind Tile
-
-Receives position/account updates from Risk via SPSC. Batches
-writes to Postgres every 10ms (COPY for fills, UPSERT for
-positions). sync_commit=on.
-
-### Telemetry Tile (out-of-band)
-
-Each process includes a telemetry tile that receives
-structured events/heartbeats via SPSC and appends to an
-on-disk telemetry log. A separate telemetry service may
-poll/ship these logs asynchronously.
-
-## External Processes
-
-### rsx-recorder (separate binary)
-
-Connects to rsx-engine's DxsReplay TCP endpoint.
-Writes daily archive files. Same WAL format, infinite
-retention. Runs on same or different host.
-
-### rsx-mark (separate binary)
-
-Fetches mark prices from external exchanges (Binance, etc.)
-via monoio HTTP client. Publishes to rsx-engine via CMP/UDP.
-Runs on same or different host.
-
-## Inter-Process Communication Topology
+Within a process, where rings exist, they're rtrb SPSC.
+Between processes, CMP/UDP for the hot path and TCP+WAL
+for the cold path. See `4-cmp.md` for the wire protocol.
 
 ```
 Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
 Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
                        Risk --[SPSC]-----> PG write-behind
-                                    ME --[SPSC]--> WAL Writer
-                          WAL Writer --[notify]--> DxsReplay
-                                    ME --[CMP/UDP]--> Marketdata
+                                    ME --[fsync+notify]--> WAL files
+                          WAL files --[TCP fan-out]--> {recorder, mktdata}
+                          ME --[CMP/UDP]--> Marketdata
+                          Mark --[CMP/UDP]--> Risk
 ```
 
-Between processes: CMP/UDP (hot path). Within a process:
-SPSC rings (rtrb, 50-170ns). Per-consumer rings: slow
-market data broadcast doesn't stall risk. Ring full =
-producer stalls (backpressure).
+## 5. Threading inventory
 
-## Future: Userspace Networking
+A complete count of OS threads by process, default config:
 
-Replace monoio (kernel io_uring) with userspace networking:
-- DPDK or AF_XDP: NIC → userspace ring buffer, no kernel
-- Sub-microsecond latency for gateway
-- Same tile architecture, swap the I/O layer
-- No changes to ME (still reads from SPSC ring)
+| Process       | Pinned | Async (tokio/monoio) | SPSC rings |
+|---------------|--------|----------------------|------------|
+| rsx-matching  | 1      | 1 (DXS replay TCP)   | 0          |
+| rsx-risk      | 1      | 1 (tokio: PG)        | 7          |
+| rsx-gateway   | 0      | 1 (monoio)           | 0          |
+| rsx-marketdata| 0      | 1 (monoio)           | 0          |
+| rsx-mark      | 0      | 1 (tokio: HTTP/WS)   | 1+         |
+| rsx-recorder  | 0      | 1 (tokio: TCP)       | 0          |
 
-## Performance Targets
+The aspirational "everything is a tile" picture in earlier
+revisions of this spec was wrong. What's actually shipped
+is hybrid: tile-architected where it pays off (risk),
+async where I/O multiplexing dominates (gateway,
+marketdata), single-loop where there's only one thing to
+compute (matching).
 
-| Path | Latency | Notes |
-|------|---------|-------|
-| SPSC hop | 50-170ns | intra-process, same cache |
-| ME match | 100-500ns | per order |
-| Risk pre-trade | <5us | margin check |
-| Risk post-trade | <1us | apply fill |
-| End-to-end (GW→ME→GW) | <50us | same machine |
-| DxsReplay stream | 10-100us | TCP, external |
-| Gateway WS | <50us | client-facing |
+## 6. Why some processes aren't tiled
+
+Not every process needs tiles. The tradeoff is:
+
+- **Use tiles** when the hot loop is compute-bound and you
+  want bounded, single-digit-microsecond tail latency.
+- **Use async** when the loop is I/O-bound across many
+  fds, and io_uring batching beats one-thread-per-fd.
+
+Risk is compute-bound (margin checks, fill application,
+liquidation triggers) so it's a tile. Gateway is I/O-bound
+across N WebSocket connections, so it's monoio. Mark is
+I/O-bound across M external feeds, so its scrapers are
+tokio.
+
+If gateway grew to a workload where WS parsing was no
+longer the bottleneck (e.g. binary FIX-like protocol),
+tiling it would make sense. Today it doesn't.
+
+## 7. Performance characteristics
+
+Measured CPU costs of the tile primitives (from
+`rsx-book/benches`, `rsx-gateway/benches`):
+
+| Operation                      | ns      |
+|--------------------------------|---------|
+| SPSC `Producer::push` (rtrb)   | 50–170  |
+| SPSC `Consumer::pop` (rtrb)    | 50–170  |
+| Match single fill (orderbook)  | 54      |
+| CMP encode (one record)        | 43      |
+| CMP decode (one record)        | 9       |
+| WAL append (in-memory)         | 31      |
+
+These are the building blocks. End-to-end **GW → ME → GW**
+under load is **not currently gated** by an automated
+harness — see `22-perf-verification.md` and
+`.ship/12-SHOWCASE-HONEST/` task F1. Expect numbers but
+don't trust them until the harness lands.
+
+## 8. Future work
+
+Tracked in `.ship/12-SHOWCASE-HONEST/`:
+
+- **F1: end-to-end latency harness.** Wire ts_ns
+  timestamps in gateway + ME into a probe that returns
+  GW→ME→GW microseconds. Convert the design budget into a
+  measurement.
+- **18: mark off tokio.** Move source scrapers to monoio
+  TCP, add core pinning to the aggregator.
+- **17: monoio UDP for CMP.** Replace `std::net::UdpSocket`
+  with monoio io_uring SQEs. Removes one syscall per
+  send/recv on the hot path.
+- **userspace networking (DPDK / AF_XDP).** Long-horizon.
+  The tile / async split above stays the same; only the
+  network driver changes.
+
+## Cross-references
+
+- `specs/2/4-cmp.md` — CMP wire protocol and flow control
+- `specs/2/10-dxs.md` — DXS replay (TCP fan-out)
+- `specs/2/20-network.md` — Process topology, ports
+- `specs/2/22-perf-verification.md` — Bench gate, harness plan
+- `specs/2/48-wal.md` — WAL flush, fsync, rotation

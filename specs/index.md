@@ -86,7 +86,7 @@ Active specs. Source of truth for system design.
 | [2/42-testing-risk.md](2/42-testing-risk.md) | shipped | Source spec: [RISK.md](RISK.md) |
 | [2/43-testing-smrb.md](2/43-testing-smrb.md) | reference | Source specs: [notes/SMRB.md](../../notes/SMRB.md), |
 | [2/44-testing.md](2/44-testing.md) | shipped | For comprehensive edge case documentation across all validation layers, |
-| [2/45-tiles.md](2/45-tiles.md) | shipped | - [Overview](#overview) |
+| [2/45-tiles.md](2/45-tiles.md) | partial | Tile pattern and per-process status (risk full, mark partial, gateway/marketdata async). |
 | [2/46-trade-ui.md](2/46-trade-ui.md) | partial | Trade UI integration issues and fix plan. |
 | [2/47-validation-edge-cases.md](2/47-validation-edge-cases.md) | shipped | Comprehensive documentation of edge cases for order validation |
 | [2/48-wal.md](2/48-wal.md) | shipped | > **Note:** The concrete WAL implementation (file format, writer, |
