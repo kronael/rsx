@@ -198,7 +198,8 @@ def walkthrough_page():
         "big-picture",
         "The Big Picture",
         "7 processes, CMP/UDP between them, WAL for "
-        "recovery. Target: &lt;50us round trip.",
+        "recovery. &lt;50us round-trip design budget; "
+        "ME match measured at 54 ns.",
         """
 <pre class="text-[10px] text-green-400
   overflow-x-auto leading-tight my-2">
@@ -271,7 +272,7 @@ def walkthrough_page():
         "Order Lifecycle",
         "WS &rarr; Gateway &rarr; Risk &rarr; ME "
         "&rarr; Risk &rarr; Gateway &rarr; WS. "
-        "Six hops, &lt;50us design budget "
+        "Seven hops, &lt;50us design budget "
         "(component sum &mdash; E2E harness pending).",
         """
 <pre class="text-[10px] text-green-400
@@ -519,8 +520,10 @@ and liquidation triggers.</p>""")
     s8 = _wt_section(
         "benchmarks",
         "The Numbers",
-        "Sub-microsecond matching, "
-        "sub-millisecond round trips.",
+        "Measured: sub-microsecond match (54 ns), "
+        "31 ns WAL append, 9 ns CMP decode. "
+        "Round-trip is a component-sum budget pending the "
+        "E2E harness.",
         """
 <table class="w-full text-xs">
   <thead>
@@ -630,7 +633,7 @@ exchange.</p>
   <p class="text-sm text-slate-400 mt-1">
     Spec-first perpetuals exchange.
     Fixed-point. Single-threaded matching.
-    &lt;50us round trip.</p>
+    54 ns match (measured); &lt;50us round-trip budget.</p>
   <p class="text-xs text-slate-500 mt-2">
     11 crates &middot; ~2,550 tests &middot;
     54ns match &middot; 31ns WAL append</p>
