@@ -479,6 +479,8 @@ fn ws_handshake_responds_101() {
             + 3600,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
+        nbf: None,
+        jti: None,
     };
     let token = encode(
         &Header::new(Algorithm::HS256),

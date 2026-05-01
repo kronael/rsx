@@ -70,11 +70,26 @@ fn load_symbol_configs() -> Vec<SymbolConfig> {
         .collect()
 }
 
+/// Minimum JWT secret length. HS256 with a short secret is
+/// brute-forceable from a single observed token, so refuse
+/// to start with anything weaker. 32 bytes is the floor; 64
+/// is recommended for HMAC-SHA256.
+pub const JWT_SECRET_MIN_LEN: usize = 32;
+
 pub fn load_gateway_config() -> GatewayConfig {
     let jwt_secret = env_str("RSX_GW_JWT_SECRET", "");
     if jwt_secret.is_empty() {
         eprintln!(
             "rsx-gateway: RSX_GW_JWT_SECRET must be set"
+        );
+        std::process::exit(2);
+    }
+    if jwt_secret.len() < JWT_SECRET_MIN_LEN {
+        eprintln!(
+            "rsx-gateway: RSX_GW_JWT_SECRET too short \
+             ({} bytes; minimum {} for HS256)",
+            jwt_secret.len(),
+            JWT_SECRET_MIN_LEN,
         );
         std::process::exit(2);
     }

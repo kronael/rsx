@@ -23,6 +23,8 @@ fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
         exp,
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
+        nbf: None,
+        jti: None,
     };
     encode(
         &Header::new(Algorithm::HS256),
