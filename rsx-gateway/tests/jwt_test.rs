@@ -16,7 +16,7 @@ fn now_secs() -> u64 {
 
 #[test]
 fn test_validate_jwt_valid() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let user_id = 12345u32;
     let exp = now_secs() + 3600;
 
@@ -44,7 +44,7 @@ fn test_validate_jwt_valid() {
 
 #[test]
 fn test_validate_jwt_expired() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let user_id = 12345u32;
     let exp = now_secs().saturating_sub(3600);
 
@@ -74,7 +74,7 @@ fn test_validate_jwt_expired() {
 
 #[test]
 fn test_validate_jwt_invalid_secret() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let wrong_secret = "wrong-secret";
     let user_id = 12345u32;
     let exp = now_secs() + 3600;
@@ -102,7 +102,7 @@ fn test_validate_jwt_invalid_secret() {
 
 #[test]
 fn test_validate_jwt_invalid_user_id() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let exp = now_secs() + 3600;
 
     let claims = Claims {
@@ -131,7 +131,7 @@ fn test_validate_jwt_invalid_user_id() {
 
 #[test]
 fn test_validate_jwt_malformed() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let result = validate_jwt("not-a-jwt", secret);
     assert!(result.is_err());
 }

@@ -36,7 +36,7 @@ fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
 
 #[test]
 fn test_ws_handshake_with_valid_jwt() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let user_id = 12345u32;
     let exp = now_secs() + 3600;
     let token = make_jwt(user_id, exp, secret);
@@ -100,7 +100,7 @@ Sec-WebSocket-Version: 13\r\n\
 
 #[test]
 fn test_ws_handshake_with_expired_jwt() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let user_id = 12345u32;
     let exp = now_secs().saturating_sub(3600);
     let token = make_jwt(user_id, exp, secret);
@@ -162,7 +162,7 @@ Sec-WebSocket-Version: 13\r\n\
 
 #[test]
 fn test_ws_handshake_missing_auth() {
-    let secret = "test-secret";
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
 
     let mut runtime = monoio::RuntimeBuilder::<
         monoio::FusionDriver,
