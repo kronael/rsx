@@ -651,3 +651,122 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
         payload[4], payload[5], payload[6], payload[7],
     ]))
 }
+
+/// Random-access read of a single WAL record by seq.
+///
+/// Used by CMP NAK retransmit when the requested seq has
+/// fallen out of the in-memory send_ring (default 4096).
+/// The cost is one file open + a sequential scan within
+/// that file (≤ 64 MB by default rotation), so a NAK
+/// for a 1-hour-old record becomes "open one file + scan
+/// it" rather than impossible.
+///
+/// Returns Ok(Some(_)) if found, Ok(None) if the seq
+/// isn't present in any visible WAL file (already GC'd
+/// past the retention window), Err(_) on IO failures.
+pub fn read_record_at_seq(
+    stream_id: u32,
+    target_seq: u64,
+    wal_dir: &Path,
+    archive_dir: Option<&Path>,
+) -> io::Result<Option<RawWalRecord>> {
+    let hot_dir = wal_dir.join(stream_id.to_string());
+    let mut files = list_wal_files(stream_id, &hot_dir)?;
+    files.sort_by_key(|f| f.first_seq);
+    if let Some(target) = pick_file_for_seq(&files, target_seq)
+    {
+        if let Some(rec) = scan_file_for_seq(
+            &target.path, target_seq,
+        )? {
+            return Ok(Some(rec));
+        }
+    }
+    // Fall back to archive if configured.
+    if let Some(arc) = archive_dir {
+        let arc_dir = arc.join(stream_id.to_string());
+        let mut arc_files =
+            list_wal_files(stream_id, &arc_dir)?;
+        arc_files.sort_by_key(|f| f.first_seq);
+        if let Some(target) =
+            pick_file_for_seq(&arc_files, target_seq)
+        {
+            if let Some(rec) = scan_file_for_seq(
+                &target.path, target_seq,
+            )? {
+                return Ok(Some(rec));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn pick_file_for_seq(
+    files: &[WalFileInfo],
+    target_seq: u64,
+) -> Option<&WalFileInfo> {
+    // Rotated files have first_seq..=last_seq populated.
+    // Active file has u64::MAX sentinels — always check
+    // it last in case the seq is post-rotation.
+    for f in files {
+        if !f.is_active
+            && target_seq >= f.first_seq
+            && target_seq <= f.last_seq
+        {
+            return Some(f);
+        }
+    }
+    files.iter().find(|f| f.is_active)
+}
+
+fn scan_file_for_seq(
+    path: &Path,
+    target_seq: u64,
+) -> io::Result<Option<RawWalRecord>> {
+    let mut file = File::open(path)?;
+    let mut hdr_buf = [0u8; WalHeader::SIZE];
+    loop {
+        match file.read_exact(&mut hdr_buf) {
+            Ok(()) => {}
+            Err(e)
+                if e.kind()
+                    == io::ErrorKind::UnexpectedEof =>
+            {
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        }
+        let header = match WalHeader::from_bytes(&hdr_buf) {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+        let mut payload = vec![0u8; header.len as usize];
+        match file.read_exact(&mut payload) {
+            Ok(()) => {}
+            Err(e)
+                if e.kind()
+                    == io::ErrorKind::UnexpectedEof =>
+            {
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        }
+        if compute_crc32(&payload) != header.crc32 {
+            // Skip corrupt records rather than aborting —
+            // we may still find the target later in the
+            // same file.
+            continue;
+        }
+        if let Some(seq) = extract_seq(&payload) {
+            if seq == target_seq {
+                return Ok(Some(RawWalRecord {
+                    header,
+                    payload,
+                }));
+            }
+            if seq > target_seq {
+                // Past the target without finding it.
+                return Ok(None);
+            }
+        }
+    }
+}
