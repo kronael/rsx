@@ -4,298 +4,302 @@ status: shipped
 
 # CMP — C Message Protocol
 
-Fixed-size C structs over the network. One wire format for
-disk, network, and memory. No IDL, no codegen, no
-serialization step.
+CMP carries WAL records over UDP between Gateway, Risk, and
+Matching Engine. The same bytes go to disk (WAL), to the
+network (CMP/UDP), and into shared memory. No serialization
+step. Sequence numbers, NAK-based gap recovery, sender-stall
+flow control.
 
-Two transport modes:
-- **CMP/UDP** — hot path (order flow, fills). Lowest
-  latency. Aeron-inspired NACK + flow control.
-- **WAL replication over TCP** — cold path (WAL replay,
-  replication). Plain TCP byte stream, optional TLS.
+This document specifies the wire format byte-by-byte, the
+reliability and flow-control semantics, and the limits of
+the current implementation. Where the spec previously
+hand-waved or contradicted the code, this revision states
+the actual behaviour.
 
-Both carry identical WAL records. Only the transport differs.
+Implementation: `rsx-dxs/src/cmp.rs` (619 LoC),
+`rsx-dxs/src/records.rs`, `rsx-dxs/src/header.rs`.
 
-## Table of Contents
+## Table of contents
 
-- [1. Design](#1-design)
-- [2. Wire Format](#2-wire-format)
-- [3. Transport: CMP/UDP (hot path)](#3-transport-cmpudp-hot-path)
-- [4. Transport: WAL Replication over TCP (cold path)](#4-transport-wal-replication-over-tcp-cold-path)
-- [5. Protocol Patterns](#5-protocol-patterns)
-- [6. Known Pitfalls](#6-known-pitfalls)
-- [7. Comparison](#7-comparison)
-- [8. Implementation](#8-implementation)
-- [9. Performance Targets](#9-performance-targets)
-- [Cross-References](#cross-references)
-
----
-
-## 1. Design
-
-```
-WAL bytes = disk bytes = wire bytes = memory bytes
-```
-
-A CMP message is a WAL record: 16-byte header followed by a
-fixed-size `#[repr(C, align(64))]` payload. The same bytes
-are written to WAL files, sent over the network, and read
-into memory with zero transformation.
-
-### Why CMP
-
-CMP is raw fixed-record bytes with a 16B WAL header. No
-serialization step, no schema codegen, no extra framing.
+- [1. What CMP is and isn't](#1-what-cmp-is-and-isnt)
+- [2. Wire format](#2-wire-format)
+- [3. Sequence numbers and CmpRecord](#3-sequence-numbers-and-cmprecord)
+- [4. Control messages](#4-control-messages)
+- [5. Flow control](#5-flow-control)
+- [6. Loss recovery (NAK)](#6-loss-recovery-nak)
+- [7. WAL replication over TCP (cold path)](#7-wal-replication-over-tcp-cold-path)
+- [8. Comparison with related protocols](#8-comparison-with-related-protocols)
+- [9. Performance](#9-performance)
+- [10. Known limits and design tradeoffs](#10-known-limits-and-design-tradeoffs)
+- [11. Configuration](#11-configuration)
+- [Cross-references](#cross-references)
 
 ---
 
-## 2. Wire Format
+## 1. What CMP is and isn't
 
-Every CMP message is a WAL record (see DXS.md section 1):
+CMP is **the C-struct wire format** plus **the UDP transport
+glue** (sequencing, flow control, gap recovery) that carries
+RSX's WAL records between processes on the hot path.
+
+CMP is **not** a general-purpose framework. It assumes:
+- One sender per stream, one receiver per stream
+  (point-to-point, not multicast). For fan-out, run multiple
+  senders.
+- Trusted internal network. No authentication, no encryption.
+  External clients use the WebSocket JSON path on the gateway.
+- Little-endian x86_64 (or aarch64 LE). Compile-time check.
+- All endpoints are RSX processes built from the same repo.
+
+What CMP gives up to be fast:
+- No connection handshake (just `bind` + `sendto`).
+- No congestion control. The dedicated network is sized for
+  peak load; senders stall on flow-control window only.
+- No fragmentation. Each WAL record is one UDP datagram.
+- No schema evolution beyond appending new record types.
+
+## 2. Wire format
+
+Every CMP datagram is a 16-byte WAL header followed by a
+fixed-size, `#[repr(C, align(64))]` payload. **WAL bytes =
+disk bytes = wire bytes = memory bytes.**
 
 ```
-struct WalHeader {       // 16 bytes
-    record_type: u16,    // message type enum
-    len: u16,            // payload length in bytes
-    crc32: u32,          // CRC32 of payload
-    _reserved: [u8; 8],  // reserved for future use
+struct WalHeader {        // 16 bytes, repr(C)
+    record_type: u16,     // see RECORD_* constants
+    len: u16,             // payload length in bytes
+    crc32: u32,           // CRC32C of payload
+    _reserved: [u8; 8],   // reserved, must be zero
 }
 ```
 
-Payload immediately follows header. All fields little-endian.
-All payloads are `#[repr(C, align(64))]` with explicit
-padding fields.
+All fields little-endian. The reserved bytes are checked to
+be zero on receive — they're available for future
+extensions but no version field is allocated yet (see §10).
 
-### CmpRecord convention
+### Payload size
 
-All data records implement the CmpRecord trait, which requires
-a `seq: u64` field as the first 8 bytes of the payload.
-Sequence numbers are monotonic per stream and are assigned by
-WalWriter::append or CmpSender::send. Control messages
-(StatusMessage, Nak, Heartbeat) do not carry `seq`.
+`len` is `u16`, so the protocol bound is **65 535 bytes**
+per datagram. The receiver enforces this implicitly: any
+datagram larger than `WalHeader::SIZE + 65 535 = 65 551`
+bytes cannot be parsed because `len` cannot represent it.
+The send buffer is sized at 65 536 bytes (`PACKET_BUF_SIZE`,
+`cmp.rs:23`).
 
-### Maximum message size
+In **practice**, every CMP record currently in use is
+≤ 64 bytes (one cache line) — `OrderRequest`, `Fill`,
+`OrderInsertedRecord`, etc. are all
+`#[repr(C, align(64))]` with explicit padding to 64 bytes.
+So all live datagrams fit in one MTU, no fragmentation
+risk, and the cache-line alignment matches the alignment
+of the in-memory layout.
 
-`len` is u16 and capped at 64KB (`MAX_PAYLOAD`). Messages
-larger than 64KB are rejected at the sender. This prevents
-DoS via length field and keeps allocation bounded.
+The 65 535 ceiling exists so that future record types
+(e.g. snapshot blobs) can grow beyond 64 bytes without a
+wire-format change, while the current hot path stays
+cache-line-sized.
 
----
+### CRC
 
-## 3. Transport: CMP/UDP (hot path)
+`crc32` is CRC32C (Castagnoli) over the payload only —
+**not** over the header. Receivers recompute and discard
+mismatches silently (`cmp.rs:373-376`). This catches bit
+errors on the wire, not malicious tampering; CMP has no
+authentication.
 
-For the live order/fill path between Gateway, Risk, and ME.
-Lowest possible latency. One WAL record per UDP datagram.
+### Endianness and platform
 
-### Wire format
+`#[repr(C)]` with explicit field order. Compile-time assert
+on `cfg(target_endian = "little")`. Big-endian is not
+supported.
 
-```
-[UDP datagram]
-  [16B WalHeader][payload]
-```
+## 3. Sequence numbers and CmpRecord
 
-One record per datagram. No fragmentation — all payloads
-are <=64 bytes (one cache line), well under MTU.
-
-### Why UDP
-
-- No connection setup (just sendto/recvfrom)
-- No head-of-line blocking
-- No congestion control (dedicated network, we control
-  both ends)
-- No TLS overhead
-- Kernel bypass ready (DPDK/AF_XDP swaps sendto for
-  direct NIC write)
-
-### CmpRecord trait
-
-All **data** records implement the CmpRecord trait:
+Data records implement the `CmpRecord` trait
+(`records.rs:15-28`):
 
 ```rust
-pub trait CmpRecord: Copy {
+pub trait CmpRecord: Copy + Sized {
+    const RECORD_TYPE: u16;
     fn seq(&self) -> u64;
     fn set_seq(&mut self, seq: u64);
+    fn record_type() -> u16 { Self::RECORD_TYPE }
 }
 ```
 
-- First 8 bytes of every data payload are `seq: u64`
-  (monotonic per stream).
-- WalWriter::append<T: CmpRecord> and CmpSender::send<T:
-  CmpRecord> assign `seq` before encoding.
-- extract_seq(payload: &[u8]) reads first 8 bytes as u64.
-- Control messages (StatusMessage, Nak, Heartbeat) do NOT
-  implement CmpRecord and have no seq field.
+The first 8 bytes of every data payload are `seq: u64`,
+monotonic per stream, assigned by `CmpSender::send` at
+transmission (`cmp.rs:94`). The receiver uses
+`extract_seq(payload: &[u8])` (`wal.rs::extract_seq`) to
+read it back without unpacking the rest.
 
-### Control Messages
+Control messages (StatusMessage, Nak, CmpHeartbeat) do
+**not** implement `CmpRecord` and have no `seq` field.
+They're identified solely by `record_type` in the header.
 
-Three control message types for reliability and flow
-control, inspired by Aeron's protocol design.
+Sequence numbers start at 1 (`cmp.rs:67`) and are never
+reused within a stream. On sender restart with the same
+`stream_id`, a fresh sequence space starts at 1; receivers
+detect this from heartbeats and resync.
 
-**Record types:**
+## 4. Control messages
+
+Three control record types, fixed-size, 64-byte aligned:
+
 ```
-RECORD_STATUS_MESSAGE = 0x10
-RECORD_NAK            = 0x11
-RECORD_HEARTBEAT      = 0x12
+RECORD_STATUS_MESSAGE = 0x10  // receiver -> sender
+RECORD_NAK            = 0x11  // receiver -> sender
+RECORD_HEARTBEAT      = 0x12  // sender -> receiver
 ```
 
-**StatusMessage** (receiver -> sender, every 10ms):
-```
+### StatusMessage (every 10 ms, receiver → sender)
+
+```rust
 #[repr(C, align(64))]
-struct StatusMessage {
-    consumption_seq: u64,   // last fully received seq
-    receiver_window: u64,   // bytes willing to receive
-    _pad1: [u8; 48],
+pub struct StatusMessage {
+    pub consumption_seq: u64,    // last fully-received seq
+    pub receiver_window: u64,    // seq delta receiver allows
+    pub _pad1: [u8; 48],
 }
 ```
 
-**Nak** (receiver -> sender, on gap detection):
-```
+`receiver_window` is a **count of records** (a sequence-
+number delta), not bytes. The sender stalls when
+`next_seq > consumption_seq + receiver_window`
+(`cmp.rs:88-91`). With the default window of 65 536
+(`config.rs::default_window`), at the live record size
+of ~64 B that's about 4 MB of in-flight data.
+
+The previous spec said "bytes" — that was wrong. The code
+has always treated this field as a record count.
+
+### Nak (on gap detection, receiver → sender)
+
+```rust
 #[repr(C, align(64))]
-struct Nak {
-    from_seq: u64,          // first missing seq
-    count: u64,             // number of missing records
-    _pad1: [u8; 48],
+pub struct Nak {
+    pub from_seq: u64,    // first missing seq
+    pub count: u64,       // number of consecutive missing
+    pub _pad1: [u8; 48],
 }
 ```
 
-**CmpHeartbeat** (sender -> receiver, every 10ms):
-```
+### CmpHeartbeat (every 10 ms, sender → receiver)
+
+```rust
 #[repr(C, align(64))]
-struct CmpHeartbeat {
-    highest_seq: u64,       // last sent seq
-    _pad1: [u8; 56],
+pub struct CmpHeartbeat {
+    pub highest_seq: u64,    // last seq sent
+    pub _pad1: [u8; 56],
 }
 ```
 
-### Flow Control (Aeron model)
+Heartbeats let an idle receiver detect a gap that ends
+the stream (no new data records arrive to expose the
+missing tail).
 
-- Sender tracks `consumption_seq + receiver_window`
-  from the latest StatusMessage
-- Sender won't send beyond that limit (backpressure)
-- Receiver sends StatusMessage every 10ms
-- If sender has no room, `send` returns `false`. Caller may
-  stall/retry or drop based on policy.
+## 5. Flow control
 
-### Gap Detection (Aeron model)
-
-- Receiver expects sequential seq numbers per stream
-- Heartbeat tells receiver the sender's highest_seq
-- Gap detected: receiver sends Nak immediately
-- Sender reads Nak, fetches missing records from WAL,
-  resends as normal data records
-- Retransmits are just normal data records re-read from
-  WAL and re-sent. No special record type.
-
-See `rsx-dxs/src/cmp.rs` for `CmpSender` and `CmpReceiver`.
-
-Reorder buffer bounded at 512 slots.
-
----
-
-## 4. Transport: WAL Replication over TCP (cold path)
-
-For WAL replay, replication, and any bulk streaming where
-throughput matters more than latency. Plain TCP byte stream.
-Optional TLS via rustls.
-
-### Protocol
-
-1. Client connects via TCP (optionally TLS)
-2. Client sends ReplayRequest (WAL record)
-3. Server streams WAL records: `write_all(header)`,
-   `write_all(payload)`, repeat
-4. Client reads: `read_exact(16)`, `read_exact(len)`,
-   repeat
-5. Server sends `RECORD_CAUGHT_UP` when replay complete,
-   then transitions to live broadcast
-
-No additional framing. The 16-byte WAL
-header provides all necessary framing (version, type,
-length, CRC).
-
-### Connection patterns
-
-**Streaming (WAL replay, live tail):**
-- Client sends single request record (stream_id, from_seq)
-- Server writes WAL records continuously
-- Unidirectional from server to client after handshake
-- Server sends RECORD_CAUGHT_UP when replay complete,
-  then transitions to live broadcast
-
-**Fan-out (fills to multiple consumers):**
-- One TCP connection per consumer
-- Producer writes same records to each connection
-- No pub/sub abstraction — explicit per-consumer streams
-
-### Reconnect
-
-Exponential backoff: 1s / 2s / 4s / 8s, max 30s.
-Resume from `tip + 1`.
-
-### TLS
-
-Optional via rustls (config flag).
-
-**Same machine (development/single-node):**
-- No TLS needed (localhost)
-
-**Cross-machine (production):**
-- Enable TLS via config
-- Self-signed certificate distributed to all nodes
-- Optional: mutual TLS with per-node certificates
-
-### Config
+Sender keeps a window of `receiver_window` records ahead
+of `consumption_seq`. On `send`:
 
 ```
-RSX_REPL_ADDR=10.0.0.1:9300
-RSX_REPL_TLS=true
-RSX_REPL_CERT_PATH=./certs/repl.pem
-RSX_REPL_KEY_PATH=./certs/repl.key
+limit = peer_consumption_seq + peer_window
+if next_seq > limit && limit > 0 {
+    return Ok(false);  // caller must retry or drop
+}
 ```
 
----
+`limit > 0` means "until we get the first StatusMessage,
+don't stall" — bootstrap path so the very first records
+flow before the receiver has a chance to advertise a
+window.
 
-## 5. Protocol Patterns
+The receiver advertises its window in every StatusMessage
+(every 10 ms). It can shrink the window by advertising a
+smaller value; the sender will stall until the window
+reopens.
 
-### 5.1 Order Flow (Gateway -> Risk -> ME) — CMP/UDP
+There is no congestion control beyond this. The deployed
+network is dimensioned for peak; if receivers can't keep
+up, the sender backpressure stops the matching engine.
 
-```
-Gateway                   Risk                    ME
-   |                        |                      |
-   |--[NewOrder]--UDP------>|                      |
-   |                        |--[NewOrder]--UDP---->|
-   |                        |                      |
-   |                        |<--[Fill]------UDP----|
-   |<--[Fill]--------UDP----|                      |
-   |                        |<--[OrderDone]-UDP----|
-   |<--[OrderDone]---UDP----|                      |
-```
+## 6. Loss recovery (NAK)
 
-Same WAL record types used everywhere. No translation
-between components. Each record is one UDP datagram.
+UDP has no retransmit. CMP layers a NAK loop on top.
 
-### 5.2 WAL Replay — TCP
+### Detection
+
+The receiver tracks `expected_seq` (next seq it wants).
+A gap is detected two ways:
+
+1. A **data record** arrives with `seq > expected_seq`.
+   The receiver buffers it in a bounded reorder buffer
+   (default 512 slots, `config.reorder_buf_limit`) and
+   sends a NAK for `[expected_seq, seq)`.
+2. A **heartbeat** arrives with `highest_seq > expected_seq`
+   while no new data is arriving. The receiver NAKs the
+   tail.
+
+NAKs are **not** dedup-suppressed in the current
+implementation — if loss recurs on the same range, multiple
+NAKs may fly. This is a deliberate simplification; the
+network is internal and loss is rare.
+
+### Retransmit source
+
+When the sender receives a NAK, it walks `from_seq ..
+from_seq + count` and looks each seq up in its
+**send_ring** — an in-memory `BTreeMap<u64, Vec<u8>>`
+holding the most recent sent frames (`cmp.rs:33-34`,
+limit 4096 entries, `cmp.rs:75`).
+
+If the seq is in the ring, the sender re-sends the
+cached frame. If it's not, the sender logs a warning and
+drops the request (`cmp.rs:185-189`).
+
+**This is the load-bearing tradeoff in CMP.** The previous
+spec described retransmit as "fetches missing records
+from WAL." It does not. Reading WAL by seq would require
+a random-access index over rotated WAL files — see §10.
+The current design accepts unrecoverable loss for records
+older than 4 096 sequences behind the receiver, which at
+peak rates (~10 K records/s) is ~400 ms of history.
+
+### Reorder buffer
+
+The receiver buffers up to `reorder_buf_limit` (default
+512) out-of-order records while it waits for the NAK fill.
+On overflow, the receiver advances `expected_seq` past the
+gap, drops the missing records, and emits a structured-log
+warning. The shadow-book / risk consumers handle
+gap-advance via their own resync paths (CAUGHT_UP records
+on TCP replay).
+
+## 7. WAL replication over TCP (cold path)
+
+Same WAL records, different transport: TCP byte stream
+with optional rustls TLS. Used for replay (recover from
+crash), replication (warm replicas), and archival
+(rsx-recorder). Throughput-oriented, not latency-oriented.
+
+Implementation: `rsx-dxs/src/server.rs` (`DxsReplayService`),
+`rsx-dxs/src/client.rs` (`DxsConsumer`).
 
 ```
 Consumer                          Producer
-   |                                 |
-   |--[ReplayRequest]--TCP-------->|
+   |--[ReplayRequest]--TCP--------->|
    |   {stream_id, from_seq}        |
-   |                                 |
-   |<--[WalRecord]-------TCP-------|
-   |<--[WalRecord]-------TCP-------|
-   |<--[WalRecord]-------TCP-------|
-   |<--[RECORD_CAUGHT_UP]-TCP-----|
-   |                                 |
-   |   (live tail: new records as    |
-   |    they are appended to WAL)    |
-   |                                 |
-   |<--[WalRecord]-------TCP-------|
-   |<--[WalRecord]-------TCP-------|
+   |<--[WalRecord]----TCP-----------|
+   |<--[WalRecord]----TCP-----------|
+   |<--[RECORD_CAUGHT_UP]----TCP----|
+   |   (live tail follows)          |
+   |<--[WalRecord]----TCP-----------|
 ```
 
 ReplayRequest is itself a WAL record:
-```
+
+```rust
 #[repr(C, align(64))]
 struct ReplayRequest {
     stream_id: u32,
@@ -305,191 +309,213 @@ struct ReplayRequest {
 }
 ```
 
-### 5.3 Gap Fill — CMP/UDP
+No additional framing — the 16 B WAL header is its own
+length-prefix. Read-side: `read_exact(16)` →
+`read_exact(len)`. Reconnect uses exponential backoff
+(1 / 2 / 4 / 8 / max 30 s) and resumes from `tip + 1`
+based on the last-persisted tip.
 
-```
-Receiver                          Sender
-   |                                 |
-   | (detects gap via Heartbeat)     |
-   |--[Nak]--UDP----------------->|
-   |   {stream_id, from:41, count:1} |
-   |                                 |
-   |   (sender reads seq 41 from WAL)|
-   |                                 |
-   |<--[WalRecord seq=41]---UDP-----|
-```
+## 8. Comparison with related protocols
 
-Gap fill uses the same UDP path. Sender reads from WAL
-(already on disk), resends as normal data record.
+CMP isn't novel; it's a particular fixed-point in the
+design space. The comparison clarifies what's different.
 
----
+| Property            | CMP/UDP        | Aeron          | kcp            | QUIC           | gRPC/HTTP2     |
+|---------------------|----------------|----------------|----------------|----------------|----------------|
+| Connection setup    | none (sendto)  | session SETUP  | none           | TLS handshake  | TLS+SETTINGS   |
+| Wire format         | repr(C)        | length+type    | custom hdr     | varint frames  | HPACK+protobuf |
+| Per-record overhead | 16 B header    | 32 B header    | 24 B header    | 5–10 B varint  | 9 B + HPACK    |
+| Reliability         | NAK (4 K ring) | NAK (term log) | ARQ (sliding)  | ACK + retx     | TCP            |
+| Retransmit source   | in-mem ring    | term log file  | in-mem queue   | in-mem queue   | TCP buffer     |
+| Flow control        | seq window     | term position  | window         | per-stream cw  | per-stream cw  |
+| Congestion control  | none           | static rate    | BBR-like       | BBR/Cubic      | TCP CC         |
+| Multicast           | no             | yes            | no             | no             | no             |
+| Encryption          | none           | optional       | none           | mandatory      | TLS            |
+| Multi-language      | Rust only      | yes (codegen)  | C+wrappers     | many           | many           |
+| Suitable for        | trusted LAN    | LAN+WAN        | gaming/UDP VPN | internet       | RPC            |
 
-## 6. Known Pitfalls
+What's actually borrowed:
+- **NAK-based recovery + heartbeat-driven gap exposure**
+  is the Aeron protocol pattern.
+- **Sequence-window flow control** is Aeron-style as well
+  (Aeron uses a position field; same idea expressed in seq
+  numbers).
+- **`#[repr(C)]` zero-copy wire** is standard HFT practice.
+- **Per-consumer streams** instead of pub/sub is a tile-
+  architecture decision (one slow consumer can't stall a
+  fast one).
 
-These are the trade-offs of using raw C structs on the wire.
-All are accepted for an internal single-team exchange.
+What's **simplified vs Aeron**: CMP has no term/page log
+on disk for retransmit (in-memory ring only), no
+multi-destination multicast, no congestion control, no
+session setup, no encryption. The simplification is
+deliberate: less code, lower latency on the happy path,
+acceptable loss recovery for an internal LAN.
 
-### 6.1 Endianness
+What's **simpler than QUIC**: no TLS, no per-stream
+multiplexing, no head-of-line avoidance (we don't need
+it — one sender, one receiver per stream). CMP would be
+strictly worse than QUIC over the public internet.
 
-All fields are little-endian. Works on x86/x86_64 and
-ARM little-endian (aarch64 default). Would break on
-big-endian architectures. We are x86-only.
+## 9. Performance
 
-**Mitigation:** `#[repr(C)]` with explicit field order.
-Compile-time assert on `cfg(target_endian = "little")`.
+### Encode / decode
 
-### 6.2 Alignment and Padding
+Measured by `rsx-dxs/benches/wal_bench.rs`:
 
-Compilers insert padding between struct fields for
-alignment. Different compilers or platforms may pad
-differently.
+| Op                          | ns      |
+|-----------------------------|---------|
+| WAL append (in-memory)      | 31      |
+| WAL flush + fsync (64 KB)   | ~24 000 |
+| Sequential read (10 K recs) | TBD     |
+| Replay (100 K recs)         | TBD     |
 
-**Mitigation:** `#[repr(C, align(64))]` with explicit
-`_pad` fields. Compile-time `assert_eq!(size_of::<T>(), N)`
-for every wire type. All padding bytes set to zero.
+`rsx-gateway/benches/gateway_bench.rs`:
 
-### 6.3 Limited Schema Evolution
+| Op                          | ns  |
+|-----------------------------|-----|
+| CMP encode (one record)     | 43  |
+| CMP decode (one record)     | 9   |
+
+These are the load-bearing measurements behind the
+sub-microsecond CPU cost of one CMP frame. They do **not**
+include the syscall overhead of `sendto` / `recvfrom`
+(typically 500–1 000 ns on modern Linux), so the on-the-
+wire round trip per packet is dominated by the syscall +
+NIC, not the encode.
+
+### End-to-end latency
+
+The "<50 µs GW→ME→GW" target is **not currently gated by
+an automated harness**. See `specs/2/22-perf-verification.md`
+for the harness plan. The published unit-bench numbers
+(matching, encode/decode, WAL append) sum to a budget that
+fits inside 50 µs, but a continuous-integration harness
+that asserts the round-trip is in
+`.ship/12-SHOWCASE-HONEST/` and is **not** yet landed.
+
+Until then, treat the 50 µs number as a **design budget**,
+not a measurement.
+
+### Future: monoio UDP transport
+
+CMP currently uses `std::net::UdpSocket` (non-blocking,
+`cmp.rs:16,62`). The rest of the gateway and marketdata
+stacks use `monoio` for io_uring. Replacing CMP's UDP
+sockets with monoio io_uring SQEs would eliminate one
+syscall per send/recv on the hot path. This is tracked
+as future work; the wire format and protocol semantics
+would not change.
+
+## 10. Known limits and design tradeoffs
+
+These are the rough edges. They're documented so a
+reader can decide whether CMP fits their use case.
+
+### 10.1 Endianness
+
+All fields little-endian. Compile-time `cfg` check. No
+big-endian support. Acceptable: x86_64 and aarch64-LE
+cover everything we deploy on.
+
+### 10.2 Schema evolution
 
 Cannot remove or reorder fields in existing record types
-without breaking all readers.
+without breaking all readers. New record types are
+additive; readers ignore unknown `record_type`s. Breaking
+changes need a coordinated deploy: stop all producers,
+upgrade all readers, then producers.
 
-**Mitigation:** New record types are additive. Readers ignore
-unknown record types. Breaking changes (field reorder, type
-changes) require coordinated deployment (stop all producers,
-upgrade all readers, restart).
+There is no version field. The 8 reserved bytes in the
+header are checked-zero on receive; if a future extension
+needs them, both sides must roll forward together. This
+is the cost of zero-copy wire bytes; we accept it.
 
-**Version policy:** New record types added without version
-bump. Unknown record types are logged and ignored. Breaking
-changes = coordinated deploy window.
+### 10.3 Retransmit window: 4 096 records
 
-**Upgrade order:** consumers first (they ignore unknown
-record types), then producers.
+The send_ring is 4 096 entries (`cmp.rs:75`). A NAK for a
+sequence older than that is unrecoverable on the UDP path
+— the receiver must fall back to TCP replay. At ~10 K
+records/s peak, that's ~400 ms of history; for the
+inter-process hop, that's far longer than any reasonable
+NAK latency, so the ring is sized correctly for the
+common case.
 
-### 6.4 Torn Reads
+The alternative — random-access read by seq from rotated
+WAL files — would require a per-file `(first_seq,
+file_offset)` index. This is cheap to add (one u64 per
+record on rotation) but is not in the current shipped
+code. Tracked in `.ship/12-SHOWCASE-HONEST/` task 17.
 
-Partial write + crash = truncated record on disk or wire.
+### 10.4 No encryption, no auth
 
-**Mitigation:** CRC32 in header covers payload. Readers
-validate CRC and discard invalid records. WAL truncates at
-first bad CRC. TCP handles partial reads at transport
-level (reliable delivery).
+CMP is for trusted intra-datacenter traffic. External
+clients hit the WebSocket JSON gateway, which terminates
+TLS and validates JWT.
 
-### 6.5 Transmute Unsoundness
+### 10.5 No multicast, no fan-out
 
-Casting arbitrary bytes to a Rust struct can be undefined
-behavior if the struct has validity invariants.
+One sender, one receiver per stream. Fan-out is N
+independent streams (e.g. ME → marketdata, ME → recorder
+each get their own UDP stream). This makes per-consumer
+backpressure clean: a slow recorder can't stall the live
+marketdata path.
 
-**Mitigation:** Use `ptr::read` on Copy types only. Never
-`transmute`. Wire types have no invariants beyond field
-types (all integer/bool, no enums on wire).
+### 10.6 Wire-format DoS surface
 
-### 6.6 Invalid Enum Values
+The `WalHeader::from_bytes` decoder is the obvious attack
+surface for a malicious or buggy peer. The receiver
+discards datagrams smaller than 16 B, validates `len`
+against datagram size (`cmp.rs:365-368`), and validates
+CRC. There is no `cargo-fuzz` target on it yet — tracked
+in `.ship/12-SHOWCASE-HONEST/` task E2.
 
-A u8 field with value 7 when the enum has variants 0-5.
+### 10.7 NAK count is unclamped
 
-**Mitigation:** Wire types use raw integers (u8, u16),
-not Rust enums. Conversion to enum happens at the API
-boundary with explicit validation.
+A NAK with `count = u64::MAX` would loop in the sender's
+retransmit path. The receiver implementation in this
+repo never emits unbounded NAKs (it only NAKs gaps it
+has seen), but a malicious peer could. The fix is a
+per-NAK clamp at the sender (e.g., `count.min(4096)`).
+Small and pending; not a documented vulnerability because
+the deploy assumes trusted peers.
 
-### 6.7 No Floating Point
+### 10.8 No tcpdump/curl debuggability
 
-NaN != NaN, platform-dependent representations, loss of
-precision.
+Binary on the wire. The `rsx-cli wal dump` tool decodes
+records to JSON for offline inspection. We debug from
+WAL files, not packet captures.
 
-**Mitigation:** All prices and quantities are i64
-fixed-point. Zero floats anywhere in the system. Conversion
-to/from human-readable format at the API boundary only.
+## 11. Configuration
 
-### 6.8 DoS via Length Field
+```bash
+# CMP/UDP (hot path)
+RSX_CMP_UDP_ADDR=127.0.0.1:9100   # receiver bind addr
+                                  # sender derives dest
 
-Malicious header claims len = 4GB, reader allocates.
-
-**Mitigation:** `MAX_PAYLOAD = 64KB`. Reader rejects any
-header with `len > MAX_PAYLOAD` before allocating.
-
-### 6.9 No Framing Beyond Header
-
-TCP is a byte stream, not message-oriented.
-
-**Mitigation:** 16-byte header with length field provides
-framing. Reader always reads exactly 16 bytes first, then
-exactly `len` bytes. No ambiguity.
-
-### 6.10 No Cross-Language Support
-
-C struct layout is Rust-specific. Other languages need
-manual struct definitions.
-
-**Mitigation:** Not needed. All components are Rust,
-compiled from same repo. External consumers (if any)
-would use the WebSocket JSON API, not CMP.
-
-### 6.11 No Human Readability
-
-Binary on the wire. Can't `curl` or `tcpdump` easily.
-
-**Mitigation:** WAL dump tool that decodes records to JSON
-for debugging. Structured logging at each component
-boundary. In practice, we debug with tracing, not wire
-captures.
-
----
-
-## 7. Comparison
-
-```
-             Other       CMP/UDP     WAL/TCP
-Use case     general     hot path    cold path
-Framing      Envelope    WAL header  WAL header
-Serialize    protobuf    zero-copy   zero-copy
-TLS          optional    none        optional
-Reliability  TCP         Nak+WAL     TCP
-Latency      ~5us        ~200ns      ~100us
-Complexity   high        low         low
-```
-
-### When to use which
-
-| Path | Transport | Why |
-|------|-----------|-----|
-| GW <-> Risk <-> ME (live) | CMP/UDP | Lowest latency, same datacenter |
-| WAL replay / replication | TCP (+TLS) | Reliable streaming, cross-DC |
-| External clients | WebSocket JSON | Human-readable, public API |
-
----
-
-## 8. Implementation
-
-Crate: `rsx-dxs`. See `rsx-dxs/src/cmp.rs` (`CmpSender`, `CmpReceiver`),
-`rsx-dxs/src/server.rs` (`DxsReplayService`), `rsx-dxs/src/client.rs`
-(`DxsConsumer`).
-
-Config:
-```
-# Hot path (CMP/UDP)
-RSX_CMP_UDP_ADDR=127.0.0.1:9100
-
-# Cold path (WAL replication over TCP)
+# WAL replication over TCP (cold path)
 RSX_REPL_ADDR=127.0.0.1:9200
 RSX_REPL_TLS=false
 RSX_REPL_CERT_PATH=./certs/repl.pem
 RSX_REPL_KEY_PATH=./certs/repl.key
 ```
 
----
+CmpConfig (`rsx-dxs/src/config.rs`):
 
-## 9. Performance Targets
+| Field                   | Default | Meaning                              |
+|-------------------------|---------|--------------------------------------|
+| `default_window`        | 65 536  | seq-delta flow-control window        |
+| `heartbeat_interval_ms` | 10      | sender → receiver heartbeat period   |
+| `status_interval_ms`    | 10      | receiver → sender status period      |
+| `reorder_buf_limit`     | 512     | receiver-side reorder buffer slots   |
+| `send_ring_limit`       | 4 096   | sender-side retransmit cache slots   |
+| `sender_bind_addr`      | 0.0.0.0:0 | sender source addr for UDP socket  |
 
-See `encode_bench.rs` for measured encode/decode targets. Network
-round-trip targets: <10us UDP same machine, <50us UDP same datacenter,
-<100us TCP same machine.
+## Cross-references
 
----
-
-## Cross-References
-
-- DXS.md: WAL record format, record types, payload layouts
-- WAL.md: flush/backpressure rules
-- NETWORK.md: system topology, connection patterns
-- TILES.md: tile architecture, intra-process IPC
-- blog/cmp.md: rationale and pitfalls
+- `specs/2/10-dxs.md` — DXS streaming server (TCP) on top of CMP
+- `specs/2/48-wal.md` — WAL flush rules, retention, rotation
+- `specs/2/20-network.md` — Process topology, port assignments
+- `specs/2/45-tiles.md` — Tile architecture (within-process IPC)
+- `specs/2/18-messages.md` — Record-type catalogue
+- `specs/2/22-perf-verification.md` — Bench gate, latency harness

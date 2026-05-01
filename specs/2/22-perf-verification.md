@@ -2,167 +2,157 @@
 status: partial
 ---
 
-# Spec: Performance Verification
+# Performance verification
 
-Wire up latency measurement end-to-end in the playground
-and add a Criterion regression gate script.
+How the project measures, gates, and surfaces latency
+numbers. The split is:
 
-## Status quo
+- **Unit benches** (Criterion) for component-level numbers.
+  Already comprehensive (60+ benches across 8 crates).
+- **Regression gate** (`scripts/bench-gate.sh`) catches
+  >10% slowdowns locally. Already shipped.
+- **Playground latency endpoint** for live observation.
+  Already shipped (`/api/latency`, `/x/risk-latency`,
+  `/x/latency-regression`, with backing Playwright tests).
+- **End-to-end harness** that asserts GW→ME→GW round-trip.
+  **Not yet shipped.** Plan in §4.
+- **Gateway mode endpoint** for the live/offline badge.
+  **Not yet shipped.** Plan in §5.
 
-| Claim | Evidence today |
-|---|---|
-| <500ns ME match | Criterion bench exists, not gated |
-| Playground latency | `/api/latency` exists, returns p50/p95/p99. `order_latencies` populated on real gateway orders. UI cards render but play_latency tests skip or assert nothing. |
+The previous version of this spec said "deferred" for the
+E2E harness without specifying a plan. This version
+specifies one.
 
-Stress testing is handled by `stress.py` (see SIM.md).
-E2E latency harness (GW→ME→GW) is deferred — requires
-running processes and is not a unit test.
+## Table of contents
 
----
-
-## Deliverable 1: Criterion CI gate
-
-A bash script that runs `cargo bench`, parses Criterion
-results, and fails if any benchmark regresses >10%.
-
-**Where:** `scripts/bench-gate.sh`
-
-**How:**
-
-Criterion writes JSON estimates to
-`target/criterion/<name>/new/estimates.json`. Each file
-contains `{"mean": {"point_estimate": <ns>, ...}, ...}`.
-
-The script:
-1. Run `cargo bench --workspace` (produces estimate files)
-2. Walk `target/criterion/*/new/estimates.json`
-3. Extract `mean.point_estimate` per benchmark
-4. Compare against `tmp/bench-baseline.json`
-5. Exit 1 if any benchmark > 1.10x baseline
-6. `--save-baseline` flag overwrites baseline file
-
-Baseline is gitignored (developer-local workflow). First
-run with no baseline = save + pass. CI does not use this
-gate (no baseline persistence across runs). This is a
-developer tool for catching regressions locally.
-
-**Constraints:**
-- Pure bash + jq (no Python, no npm)
-- Baseline at `tmp/bench-baseline.json` (gitignored)
-- Print table: benchmark name, baseline ns, current ns,
-  ratio, PASS/FAIL
-
-**Makefile:**
-```
-bench-gate:
-	bash scripts/bench-gate.sh
-bench-save:
-	bash scripts/bench-gate.sh --save-baseline
-```
-
-**Acceptance:**
-- `make bench-gate` with no baseline saves and passes
-- `make bench-gate` with baseline fails if >10% regression
-- `make bench-save` overwrites baseline
-- Parses all existing Criterion benchmarks in workspace
+- [1. Unit benches (shipped)](#1-unit-benches-shipped)
+- [2. Regression gate (shipped)](#2-regression-gate-shipped)
+- [3. Playground latency pipeline (shipped)](#3-playground-latency-pipeline-shipped)
+- [4. End-to-end harness (planned)](#4-end-to-end-harness-planned)
+- [5. Gateway mode endpoint (planned)](#5-gateway-mode-endpoint-planned)
+- [6. What the numbers mean](#6-what-the-numbers-mean)
 
 ---
 
-## Deliverable 2: Playground latency pipeline
+## 1. Unit benches (shipped)
 
-The server already has:
-- `order_latencies` list (capped at 1000 entries)
-- `/api/latency` returning `{count, p50, p95, p99, min, max}`
-- `/x/risk-latency` rendering latency card
-- `/x/latency-regression` rendering regression card
+`cargo bench --workspace` runs 60+ Criterion benches across
+8 crates. The headline measurements:
 
-What's broken:
-- `play_latency.spec.ts` tests skip on 404 or assert nothing
-- No test submits orders then checks latency populated
+| Operation                   | ns    | Source                                |
+|-----------------------------|-------|---------------------------------------|
+| Match single fill           | 54    | `rsx-book/benches/book_bench.rs`      |
+| WAL append (in-memory)      | 31    | `rsx-dxs/benches/wal_bench.rs`        |
+| WAL flush + fsync 64 KB     | ~24 µs| `rsx-dxs/benches/wal_bench.rs`        |
+| CMP encode (one record)     | 43    | `rsx-gateway/benches/gateway_bench.rs`|
+| CMP decode (one record)     | 9     | `rsx-gateway/benches/gateway_bench.rs`|
+| SPSC `push` / `pop` (rtrb)  | 50–170| `rsx-book/benches/book_bench.rs`      |
 
-**Fix `play_latency.spec.ts`:**
+These are **single-thread, no-contention** numbers. They
+are CPU costs of the operation in isolation, not throughput
+under load.
 
-Replace vacuous tests with:
+`make perf` runs the full suite. `make bench-webui` runs the
+React render benchmark for orderbook deltas (asserts p95
+< 16 ms).
 
-```typescript
-test("latency endpoint returns stats after orders",
-  async ({ request }) => {
-    // Submit 5 orders via /api/orders/test
-    for (let i = 0; i < 5; i++) {
-      await request.post("/api/orders/test", {
-        form: {
-          symbol_id: "10",
-          side: "buy",
-          price: "50000",
-          qty: "100",
-          cid: `lat-test-${i}`.padEnd(20, "0"),
-        },
-      });
-    }
+## 2. Regression gate (shipped)
 
-    const res = await request.get("/api/latency");
-    expect(res.ok()).toBeTruthy();
-    const data = await res.json();
-    // Orders were submitted (gateway may be down,
-    // but latency is tracked even for error path)
-    expect(data.count).toBeGreaterThanOrEqual(0);
-    if (data.count > 0) {
-      expect(data.p50).toBeGreaterThan(0);
-      expect(data.p99).toBeGreaterThan(0);
-    }
-  },
-);
+`scripts/bench-gate.sh` parses Criterion estimates and
+fails on >10% slowdown vs a saved baseline.
 
-test("risk latency card renders", async ({ request }) => {
-  const res = await request.get("/x/risk-latency");
-  expect(res.ok()).toBeTruthy();
-  const html = await res.text();
-  // Card should contain "latency" and render without error
-  expect(html.toLowerCase()).toContain("latency");
-});
-
-test("latency regression card renders",
-  async ({ request }) => {
-    const res = await request.get("/x/latency-regression");
-    expect(res.ok()).toBeTruthy();
-    const html = await res.text();
-    expect(html.toLowerCase()).toContain("p50");
-  },
-);
+```
+make bench-save   # save current run as baseline
+make bench-gate   # diff current run against baseline
 ```
 
-Remove any tests that:
-- Skip on 404 (endpoint exists now)
-- Assert `>= 0` (always true, tests nothing)
+Implementation: pure bash + jq, no Python or npm. Reads
+`target/criterion/<name>/new/estimates.json`, extracts
+`mean.point_estimate`, compares against
+`tmp/bench-baseline.json`. Prints a per-bench table with
+ratio and PASS/FAIL.
 
-**Add to `api_e2e_test.py`:**
+The baseline lives at `tmp/bench-baseline.json` —
+gitignored, developer-local. CI does not currently
+enforce regressions across runs (no shared baseline). For
+that, see §7 of `.ship/12-SHOWCASE-HONEST/PROJECT.md`
+task G.
 
-```python
-def test_api_latency(client):
-    """GET /api/latency returns JSON with count field."""
-    resp = client.get("/api/latency")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "count" in data
-    assert data["count"] >= 0
-```
+## 3. Playground latency pipeline (shipped)
 
-**Acceptance:**
-- `GET /api/latency` returns JSON (already works)
-- `play_latency.spec.ts` — no skipped tests, no vacuous
-  assertions
-- `api_e2e_test.py` — latency endpoint test passes
-- `/x/risk-latency` and `/x/latency-regression` render
-  without error
+The playground records gateway round-trip latency on every
+order submission. State and endpoints:
 
----
+- `order_latencies: list[float]` — bounded ring of the
+  most recent 1 000 latencies, in microseconds. Populated
+  by `send_order_to_gateway()` (`server.py:3757-3790`)
+  with `time.perf_counter_ns()` deltas.
+- `GET /api/latency` (`server.py:5409-5422`) — returns
+  `{count, p50, p95, p99, min, max}` over the ring.
+- `GET /x/risk-latency` — HTMX partial, renders a
+  latency card (uses `pages.render_risk_latency()`).
+- `GET /x/latency-regression` — HTMX partial, renders
+  the regression-comparison card.
 
-## Deliverable 3: Gateway mode endpoint
+Tests: `rsx-playground/tests/play_latency.spec.ts` has 13
+tests, no skips, with real assertions. Notable:
+- `latency endpoint returns stats after orders` —
+  submits 5 orders, asserts stats populated.
+- `risk latency card renders` and
+  `latency regression card renders` — assert HTMX partials
+  render without error.
 
-**Where:** `rsx-playground/server.py`
+Plus the broader endpoint-latency suite (page load < 4 s,
+HTMX partial < 500 ms, order submit < 1 s, JSON API
+< 200 ms, etc.).
 
-**What:** `GET /api/gateway-mode` returns JSON indicating
-whether the gateway is reachable:
+## 4. End-to-end harness (planned)
+
+What's missing today: a continuous test that asserts the
+full GW → ME → GW round-trip is below the 50 µs design
+budget.
+
+The pieces are already in place:
+
+- Gateway records `ts_ns: time_ns()` on every order
+  accept (`rsx-gateway/src/handler.rs`).
+- Risk forwards `timestamp_ns` to the matching engine
+  (`rsx-gateway/src/route.rs`, `rsx-risk/src/main.rs`).
+- ME timestamps fill emission (`rsx-matching/src/main.rs:432,
+  819, 825, 830`).
+- Fills get the original `ts_ns` echoed back to the
+  gateway, where the WS write timestamp closes the loop.
+
+What's missing: correlation. The probe needs to (a)
+choose a `cid` ("client order id") for the probe, (b) tag
+it as a probe so the gateway records both the accept
+timestamp and the fill-receive timestamp, (c) compute
+`fill_ts_ns - accept_ts_ns` and append to a separate
+`e2e_latencies` ring, (d) surface in `/api/latency` as an
+`e2e_p50/p95/p99` block.
+
+**Plan:**
+
+1. Reserve a `cid` prefix `"probe-"` for E2E latency
+   probes (gateway already accepts arbitrary cids).
+2. In `send_order_to_gateway`, when the cid starts with
+   `"probe-"`, record the start_ns, attach a future,
+   resolve it in the fill handler, store the delta in
+   `e2e_latencies`.
+3. Extend `/api/latency` JSON with an `e2e` block:
+   `{count, p50, p95, p99}` (microseconds).
+4. Add a Playwright test that submits 20 probe orders
+   then asserts the `/api/latency` `e2e.p99` is below
+   some configurable threshold (default 200 µs to allow
+   slack on shared CI runners).
+
+Tracked as task F1 in `.ship/12-SHOWCASE-HONEST/`. The
+50 µs design budget stays a budget until this lands.
+
+## 5. Gateway mode endpoint (planned)
+
+A single endpoint the dashboard polls to decide whether
+to display "GW: live" (green) or "GW: offline" (amber).
 
 ```python
 @app.get("/api/gateway-mode")
@@ -174,26 +164,16 @@ async def api_gateway_mode():
     }
 ```
 
-`_probe_gateway_tcp()` already exists in server.py. No
-new functions needed.
+`_probe_gateway_tcp()` already exists in `server.py`. The
+endpoint itself does not. Adding it is task F2 in the
+ship project; it's grouped with the latency dashboard
+work because both surface the same "is the system
+actually running" question.
 
-No "sim" mode — sim was removed. Mode is either "live"
-(gateway reachable) or "offline" (not reachable).
-
-**Overview page badge:** Add to overview HTMX partial:
-```html
-<span class="text-xs"
-  hx-get="/api/gateway-mode" hx-trigger="load"
-  hx-target="this">GW: checking...</span>
-```
-
-Renders "GW: live" (green) or "GW: offline" (amber).
-
-**Python test:**
+Test:
 
 ```python
 def test_api_gateway_mode(client):
-    """GET /api/gateway-mode returns mode field."""
     resp = client.get("/api/gateway-mode")
     assert resp.status_code == 200
     data = resp.json()
@@ -201,33 +181,37 @@ def test_api_gateway_mode(client):
     assert "url" in data
 ```
 
-No Playwright test for this — would require running
-processes. The Python test validates the endpoint shape.
+## 6. What the numbers mean
 
-**Acceptance:**
-- `GET /api/gateway-mode` returns `{"mode": "...", "url": "..."}`
-- Python e2e test passes
-- Overview page shows gateway mode badge
+Three classes of numbers appear in this repo. Be careful
+not to confuse them.
 
----
+**Microbench numbers** (54 ns match, 31 ns WAL append,
+…). These are the CPU cost of the operation **in
+isolation** with warm caches and no contention. They
+are real, reproducible, and useful for catching
+regressions, but they are not the latency a packet
+experiences in production.
 
-## Files
+**End-to-end design budgets** (<50 µs GW→ME→GW). These
+are aspirational targets derived from summing component
+budgets (gateway parse + CMP encode + UDP roundtrip +
+risk + match + WAL append + reverse path). The total
+fits inside 50 µs by component math, but until the §4
+harness lands, the system has not been measured under
+contention end-to-end. Treat these as goals, not
+measurements.
 
-```
-scripts/bench-gate.sh               — NEW
-rsx-playground/server.py            — add /api/gateway-mode
-rsx-playground/pages.py             — overview badge
-rsx-playground/tests/api_e2e_test.py — add latency + gw-mode tests
-rsx-playground/tests/play_latency.spec.ts — fix tests
-Makefile                            — add bench-gate, bench-save
-```
+**Playground gateway-roundtrip** (the `/api/latency`
+numbers). These measure the time from `send_order_to_gateway`
+in the Python server until the gateway responds with
+HTTP. That includes Python, aiohttp, gateway WS handler,
+JSON parse, and JWT validation, but **not** ME or risk
+— the gateway can respond before the order is matched.
+These numbers are useful for "is the gateway alive,"
+not for the matching latency claim.
 
----
-
-## Verification
-
-1. `make bench-gate` — passes (saves baseline on first run)
-2. `python3 -m pytest tests/api_e2e_test.py` — all pass
-3. `curl localhost:49171/api/latency` returns JSON
-4. `curl localhost:49171/api/gateway-mode` returns JSON
-5. No existing tests broken
+The §4 E2E harness is the bridge between microbench
+numbers and the design budget. Until it lands, the spec
+keeps the budget but explicitly disclaims it as
+unmeasured.
