@@ -208,6 +208,60 @@ test.describe("Latency", () => {
     expect(html).toMatch(/p50|p99|no data|--/i);
   });
 
+  test("latency endpoint exposes e2e block",
+    async ({ request }) => {
+      // /api/latency should always return an `e2e` block
+      // even if it's empty (count=0). This is the schema
+      // contract the dashboard depends on.
+      const res = await request.get("/api/latency");
+      expect(res.ok()).toBeTruthy();
+      const data = await res.json();
+      expect(data.e2e).toBeDefined();
+      expect(typeof data.e2e.count).toBe("number");
+      // After F1 lands, e2e.count is 0 unless probes have
+      // run; we only assert shape here.
+    },
+  );
+
+  test("e2e probe records a sample on success",
+    async ({ request }) => {
+      // The probe only succeeds when the maker is up and
+      // there's liquidity. Skip-on-failure rather than
+      // fail-the-suite so the test is informative across
+      // CI environments (CI without maker = no liquidity).
+      const beforeRes = await request.get("/api/latency");
+      const before = await beforeRes.json();
+      const beforeCount = before.e2e?.count ?? 0;
+
+      const probeRes = await request.post(
+        "/api/latency-probe?symbol_id=10",
+      );
+      const probe = await probeRes.json();
+      if (!probe.ok) {
+        test.info().annotations.push({
+          type: "skip-reason",
+          description: probe.error ?? "unknown",
+        });
+        // probe didn't fire (maker idle, gateway down,
+        // etc); the endpoint still returned a structured
+        // error which is the contract under test.
+        expect(typeof probe.error).toBe("string");
+        return;
+      }
+      // Successful probe: assert sane bounds and counter
+      // increment.
+      expect(probe.elapsed_us).toBeGreaterThan(0);
+      expect(probe.elapsed_us).toBeLessThan(5_000_000);
+      expect(probe.cid).toMatch(/^probe-/);
+
+      const afterRes = await request.get("/api/latency");
+      const after = await afterRes.json();
+      expect(after.e2e.count).toBeGreaterThanOrEqual(
+        beforeCount + 1,
+      );
+    },
+  );
+
   test("latency regression card renders",
     async ({ request }) => {
       // Regression card always shows p99 rows for

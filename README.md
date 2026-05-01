@@ -212,7 +212,7 @@ Single crate: `cargo test -p rsx-book`
 Single test: `cargo test -p rsx-book -- test_name`
 
 Test count, current truth: ~1 200 Rust unit + integration,
-~930 Python (rsx-playground), 419 Playwright (canonical).
+~930 Python (rsx-playground), 421 Playwright (canonical).
 [PROGRESS.md](PROGRESS.md) is the source of truth.
 
 ## Design principles

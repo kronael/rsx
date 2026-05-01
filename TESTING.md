@@ -20,7 +20,7 @@
 
 ### Playwright Browser Tests
 
-- 419 passing tests across 23 specs (~60s, 3 conditional skips)
+- 421 passing tests across 23 specs (~60s, 3 conditional skips)
 - Requires running server + processes
 - `cd rsx-playground && bunx playwright test`
 
@@ -43,8 +43,8 @@
 | Rust unit | 88 | ~1,200 | <5s |
 | Python (playground) | 19 | ~930 | ~10s |
 | Python (rsx-auth) | 2 | 13 | <1s |
-| Playwright | 23 | 419 | ~60s |
-| **Total** | **132** | **~2,560** | |
+| Playwright | 23 | 421 | ~60s |
+| **Total** | **132** | **~2,565** | |
 
 ## Playground Screen Verification (Feb 27)
 
