@@ -76,7 +76,8 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 
 ### rsx-gateway
 
-- WS server on monoio (io_uring, not epoll)
+- WS server on monoio with io_uring (gateway and marketdata
+  only — matching/risk/mark/recorder run on tokio)
 - JWT authentication
 - Rate limiting: per-user, per-IP, per-instance
 - Circuit breaker (open/half-open/closed)

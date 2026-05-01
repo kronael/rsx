@@ -16,7 +16,10 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
   - Cold path: WAL replication over TCP (replay, replication)
 - Within each process: tile architecture (pinned threads
   + SPSC rings for intra-process IPC, see TILES.md)
-- Hot path I/O: monoio (io_uring), not tokio (epoll)
+- Hot path I/O: monoio (io_uring) on Gateway + Marketdata.
+  Matching, Risk, Mark, Recorder run on `tokio` for ergonomic
+  reasons (single-threaded reactor, blocking PG write-behind);
+  none of them sit on the GW→ME→GW critical path.
 - Later: DPDK/AF_XDP swaps I/O layer, same interfaces
 - Target: <50us GW→ME→GW, <500ns ME match
 - Zero heap on hot path, i64 fixed-point, no floats
@@ -194,7 +197,8 @@ for notional = price * qty at risk boundary.
   or ME.
 - **DXS:** CMP/UDP for hot path, WAL replication over TCP
   for cold path. Same wire format as disk. See CMP.md.
-- Reference impl: `/home/onvos/app/trader/monoio-client/`
+- Reference impl: sibling `trader/monoio-client/` (set
+  `RSX_TRADER_REF_DIR` to the absolute path locally)
   - `ws_monoio.rs`: WebSocket client/server on monoio
   - `web_client.rs`: HTTP client with monoio
   - Proven in production (funding-bot, trader)

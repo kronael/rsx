@@ -2,39 +2,50 @@
 
 updated: May 01 2026
 
-## Status: core complete, surfacing & spec rigor in progress
+## Status: core complete, productionisation in progress
 
-The 11 Rust crates build, the matching pipeline runs end-to-end
+The 12 Rust crates build, the matching pipeline runs end-to-end
 from a clean boot, and Playwright gate-4 is green. What's not
-done: surfacing the genuine novelty (latency dashboard, E2E
-harness), tightening the spec corpus so it doesn't retract
-its own claims, and a few migrations off `tokio` on services
-that should be on `monoio`. See `.ship/12-SHOWCASE-HONEST/`.
+done: a measured GW→ME→GW p50/p99 under sustained load (the
+probe is shipped — see commit `bded133`), schema versioning on
+the wire, and tile-architecture parity for gateway and
+marketdata (currently monoio reactors, not pinned tiles). See
+`.ship/12-SHOWCASE-HONEST/` and `.ship/13-A16Z-FIXES/`.
 
-| Metric | Value |
-|--------|-------|
-| Crates | 11 |
-| Rust tests (unit + integration) | ~1,200 |
-| Python tests (rsx-playground) | ~930 |
-| Playwright (gate-4) | 421 passing / 424 total (3 conditional skips) |
-| LOC (Rust) | ~21k |
+The "% complete" framing was retired in this revision — every
+crate has open work and stating otherwise is misleading. Status
+verbs below describe what the crate currently delivers.
+
+| Metric | Value | Source |
+|--------|-------|--------|
+| Crates | 12 | `Cargo.toml` workspace |
+| Rust `#[test]` + `#[tokio::test]` attributes | 912 | `grep -rn '^#\[test\]\|^#\[tokio::test\]'` |
+| Rust tests passing (`cargo test --workspace`) | 877 | `make test` |
+| Python tests (rsx-playground) | ~930 | `pytest -q` |
+| Playwright (gate-4) | 421 passing / 424 (3 conditional skips) | `make e2e` |
+| LOC (Rust) | ~21k | `tokei` |
+
+The attribute count (912) and runner-passing count (877) differ
+because some tests are gated by feature flags or marked
+`#[ignore]` for integration suites. Always quote whichever
+matches the question being asked.
 
 ## Crate Status
 
-| Crate | Status | Notes |
-|-------|--------|-------|
-| rsx-types | 100% | newtypes, config, validation |
-| rsx-book | 100% | snapshot, matching, compression |
-| rsx-matching | 100% | dedup, BBO, CONFIG_APPLIED |
-| rsx-dxs | 100% | WAL, CMP, DXS replay (domain-agnostic transport) |
-| rsx-messages | 100% | Exchange wire records (Fill/BBO/Order*/Mark/Liquidation) |
-| rsx-gateway | 100% | JWT, rate limit, circuit breaker, REST |
-| rsx-risk | 100% | replication, funding, liquidation, PG |
-| rsx-marketdata | 100% | shadow book, seq gap, multi-ME |
-| rsx-mark | 100% | Binance/Coinbase aggregation |
-| rsx-recorder | 100% | daily rotation, buffered writes |
-| rsx-cli | 100% | filters, stats, follow, display scale |
-| rsx-maker | 100% | two-sided quoting, reconnect |
+| Crate | Status | Delivers | Open |
+|-------|--------|----------|------|
+| rsx-types | shipped | newtypes, config, validation | — |
+| rsx-book | shipped | snapshot, matching, compression | proptest harness |
+| rsx-matching | shipped | dedup, BBO, CONFIG_APPLIED | (T2.2) `(user,oid)` cancel index |
+| rsx-dxs | shipped | WAL, CMP/UDP, DXS/TCP — domain-agnostic transport | (T3.1) wire schema versioning |
+| rsx-messages | shipped | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | — |
+| rsx-gateway | shipped | JWT (HS256, exp/nbf, min-secret), rate limit, circuit breaker, REST, monoio WS | tile parity (pinning, ring) |
+| rsx-risk | shipped | replication, funding, liquidation, PG write-behind, full tile (7 SPSC rings) | (T3.2) replica → main promotion via state machine |
+| rsx-marketdata | shipped | shadow book, seq gap recovery, multi-ME | tile parity (pinning, ring) |
+| rsx-mark | shipped | Binance/Coinbase aggregation, 1 SPSC ring | core pinning |
+| rsx-recorder | shipped | daily rotation, buffered writes | — |
+| rsx-cli | shipped | WAL dump (filters, stats, follow, display scale) | — |
+| rsx-maker | shipped | two-sided quoting, reconnect | — |
 
 ## Playground
 
