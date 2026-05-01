@@ -62,9 +62,8 @@ test.describe("Overview tab", () => {
     expect(trigger).toContain("every 2s");
   });
 
-  test("has scenario selector dropdown", async ({ page }) => {
+  test("has scenario selector radios", async ({ page }) => {
     await page.goto("/overview");
-    // Scenario uses radio buttons, not a select
     const radios = page.locator(
       "input[name='scenario-ov']");
     const count = await radios.count();
