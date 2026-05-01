@@ -1285,6 +1285,10 @@ async def healthz():
 recent_orders: list[dict] = []
 verify_results: list[dict] = []
 order_latencies: list[int] = []
+# E2E round-trip in microseconds: order submit (WS send) →
+# fill (F frame) received over the same WS. Populated by
+# /api/latency-probe; surfaced in /api/latency `e2e` block.
+e2e_latencies: list[int] = []
 gateway_ws = None
 _idempotency_keys: dict[str, float] = {}
 _IDEMPOTENCY_TTL = 300
@@ -3115,6 +3119,12 @@ async def x_funding():
     stats = parse_wal_book_stats()
     return HTMLResponse(
         pages.render_funding(stats or None))
+
+
+@app.get("/x/e2e-latency", response_class=HTMLResponse)
+async def x_e2e_latency():
+    return HTMLResponse(
+        pages.render_e2e_latency(e2e_latencies))
 
 
 @app.get("/x/risk-latency", response_class=HTMLResponse)
@@ -5424,20 +5434,162 @@ async def x_risk_overview():
     )
 
 
-@app.get("/api/latency")
-async def api_latency():
-    if not order_latencies:
-        return JSONResponse({"count": 0})
-    s = sorted(order_latencies)
+def _percentiles(data: list[int]) -> dict:
+    s = sorted(data)
     n = len(s)
-    return JSONResponse({
+    if n == 0:
+        return {"count": 0}
+    return {
         "count": n,
         "p50": s[n // 2],
         "p95": s[int(n * 0.95)],
         "p99": s[int(n * 0.99)],
         "min": s[0],
         "max": s[-1],
-    })
+    }
+
+
+@app.get("/api/latency")
+async def api_latency():
+    body = _percentiles(order_latencies)
+    body["e2e"] = _percentiles(e2e_latencies)
+    return JSONResponse(body)
+
+
+# ── E2E latency probe (GW → ME → GW) ─────────────────────
+# Opens a WebSocket to the gateway, submits a probe order
+# above bestAsk so the maker fills it immediately, waits
+# for the F (fill) frame, and records the round-trip in
+# microseconds. The probe is one of the few places where
+# the playground actually measures the headline <50µs
+# budget end-to-end on a live system.
+
+_PROBE_CID_PREFIX = "probe-"
+_PROBE_TIMEOUT_S = 2.0
+
+
+async def _run_latency_probe(symbol_id: int = 10) -> dict:
+    book_resp = await api_book(symbol_id)
+    if isinstance(book_resp, JSONResponse):
+        body = json.loads(book_resp.body)
+    else:
+        body = book_resp
+    asks = body.get("asks", []) if isinstance(body, dict) else []
+    if not asks:
+        return {"ok": False, "error": "no asks; maker idle?"}
+    best_ask = int(asks[0]["px"])
+
+    sym_resp = await v1_symbols()
+    if isinstance(sym_resp, JSONResponse):
+        sym_body = json.loads(sym_resp.body)
+    else:
+        sym_body = sym_resp
+    sym_meta = next(
+        (s for s in (sym_body.get("symbols") or [])
+         if int(s.get("id", -1)) == symbol_id),
+        None,
+    )
+    lot_size = int((sym_meta or {}).get("lot_size", 100_000))
+
+    cross_px = best_ask * 101 // 100
+    cid = f"{_PROBE_CID_PREFIX}{int(time.time() * 1e6) % 10_000_000}"
+
+    # Mint guest JWT for the probe user (id 1).
+    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+    if not secret:
+        return {"ok": False,
+                "error": "RSX_GW_JWT_SECRET not configured"}
+    token = pyjwt.encode(
+        {
+            "sub": "playground:1",
+            "user_id": 1,
+            "aud": "rsx-gateway",
+            "iss": "rsx-auth",
+            "exp": int(time.time()) + 60,
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+    ws_url = GATEWAY_URL.rstrip("/")
+    headers = {"authorization": f"Bearer {token}"}
+
+    start_ns = 0
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                ws_url,
+                headers=headers,
+                heartbeat=None,
+                timeout=aiohttp.ClientWSTimeout(
+                    ws_close=_PROBE_TIMEOUT_S),
+            ) as ws:
+                start_ns = time.perf_counter_ns()
+                await ws.send_json({
+                    "N": [symbol_id, 0, cross_px, lot_size,
+                          cid, 0],
+                })
+                deadline = (
+                    asyncio.get_event_loop().time()
+                    + _PROBE_TIMEOUT_S
+                )
+                while True:
+                    remaining = (
+                        deadline
+                        - asyncio.get_event_loop().time()
+                    )
+                    if remaining <= 0:
+                        return {"ok": False,
+                                "error": "timeout waiting for fill"}
+                    try:
+                        msg = await asyncio.wait_for(
+                            ws.receive(),
+                            timeout=remaining,
+                        )
+                    except asyncio.TimeoutError:
+                        return {"ok": False,
+                                "error": "timeout waiting for fill"}
+                    if msg.type != aiohttp.WSMsgType.TEXT:
+                        continue
+                    try:
+                        frame = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        continue
+                    if "F" in frame:
+                        elapsed_ns = (
+                            time.perf_counter_ns() - start_ns
+                        )
+                        elapsed_us = max(1, elapsed_ns // 1000)
+                        e2e_latencies.append(elapsed_us)
+                        if len(e2e_latencies) > 1000:
+                            del e2e_latencies[:500]
+                        return {
+                            "ok": True,
+                            "elapsed_us": elapsed_us,
+                            "cid": cid,
+                            "cross_px": cross_px,
+                            "best_ask": best_ask,
+                        }
+    except aiohttp.ClientError as exc:
+        return {"ok": False,
+                "error": f"gateway unreachable: {exc}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"probe failed: {exc}"}
+
+
+@app.post("/api/latency-probe")
+async def api_latency_probe(
+    request: Request,
+    symbol_id: int = 10,
+):
+    """Submit a probe order, wait for fill, record E2E us.
+
+    Requires the maker to be running (so the order fills
+    against existing liquidity). Use this to populate the
+    E2E block of /api/latency. Loopback only (no admin
+    token required since it operates as user 1)."""
+    return JSONResponse(
+        await _run_latency_probe(symbol_id))
 
 
 @app.get("/api/mark/prices")
