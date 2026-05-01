@@ -336,9 +336,9 @@ User          Gateway        Risk          ME
     <tr class="border-t border-slate-700
       font-bold text-white">
       <td class="py-1 px-2" colspan="3">
-        Total (loopback)</td>
-      <td class="py-1 px-2 text-green-400">
-        ~4-6us</td></tr>
+        Total (component sum, budget)</td>
+      <td class="py-1 px-2 text-amber-400">
+        &lt;50us</td></tr>
   </tbody>
 </table>""")
 
@@ -558,14 +558,16 @@ and liquidation triggers.</p>""")
         121 ms</td></tr>
     <tr class="border-t border-slate-700 font-bold
       text-white">
-      <td class="py-1 px-2">End-to-end (loopback)</td>
-      <td class="py-1 px-2 text-right text-green-400">
-        ~4-6 us</td></tr>
+      <td class="py-1 px-2">End-to-end (budget, no harness)</td>
+      <td class="py-1 px-2 text-right text-amber-400">
+        &lt;50 us</td></tr>
   </tbody>
 </table>
 <div class="mt-3 text-slate-500">
-  Target: &lt;50us GW&rarr;ME&rarr;GW, &lt;500ns ME match.
-  Both exceeded by 10x.
+  Budgets: &lt;50us GW&rarr;ME&rarr;GW, &lt;500ns ME match.
+  ME match is measured (54 ns); E2E is a component-sum
+  budget pending the continuous harness in
+  <code>specs/2/22-perf-verification.md</code>.
 </div>
 <div class="mt-3">
   <table class="w-full text-xs">

@@ -58,7 +58,8 @@ default dev URL. Override with `PG_URL=…` if you have a
 different setup. The `rsx-auth` service additionally needs
 GitHub OAuth credentials, but the playground runs without
 the auth service — it mints dev JWTs from
-`RSX_GW_JWT_SECRET`.
+`RSX_GW_JWT_SECRET`. Copy [`.env.example`](.env.example)
+to `.env` for the full list of variables.
 
 ```bash
 git clone <repo-url> && cd rsx
