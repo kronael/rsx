@@ -10,10 +10,12 @@ use crate::records::RECORD_NAK;
 use crate::records::RECORD_STATUS_MESSAGE;
 use crate::records::StatusMessage;
 use crate::wal::extract_seq;
+use crate::wal::read_record_at_seq;
 use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
@@ -40,6 +42,13 @@ pub struct CmpSender {
     heartbeat_interval: Duration,
     send_ring: BTreeMap<u64, Vec<u8>>,
     send_ring_limit: usize,
+    /// Stream id used by the WAL filename layout. Needed
+    /// for NAK retransmit when the requested seq has
+    /// fallen out of `send_ring`.
+    stream_id: u32,
+    /// Hot WAL directory; used to recover NAK targets that
+    /// missed the in-memory ring.
+    wal_dir: PathBuf,
     buf: [u8; PACKET_BUF_SIZE],
 }
 
@@ -59,8 +68,8 @@ impl CmpSender {
 
     pub fn with_config(
         dest: SocketAddr,
-        _stream_id: u32,
-        _wal_dir: &std::path::Path,
+        stream_id: u32,
+        wal_dir: &std::path::Path,
         config: &CmpConfig,
     ) -> io::Result<Self> {
         let bind = config
@@ -81,6 +90,8 @@ impl CmpSender {
             ),
             send_ring: BTreeMap::new(),
             send_ring_limit: 4096,
+            stream_id,
+            wal_dir: wal_dir.to_path_buf(),
             buf: [0u8; PACKET_BUF_SIZE],
         })
     }
@@ -200,11 +211,60 @@ impl CmpSender {
                          failed seq={seq}: {e}"
                     );
                 }
-            } else {
-                warn!(
-                    "nak retransmit: seq={seq} \
-                     not in ring"
-                );
+                continue;
+            }
+            // Ring miss — fall back to disk. The WAL has
+            // every seq we've ever appended (until GC).
+            // This makes NAK retransmit work for records
+            // older than send_ring_limit, which the prior
+            // implementation dropped.
+            match read_record_at_seq(
+                self.stream_id,
+                seq,
+                &self.wal_dir,
+                None,
+            ) {
+                Ok(Some(rec)) => {
+                    let total = WalHeader::SIZE
+                        + rec.payload.len();
+                    if total > self.buf.len() {
+                        warn!(
+                            "nak wal record too large \
+                             for buf seq={seq} len={}",
+                            rec.payload.len()
+                        );
+                        continue;
+                    }
+                    let hdr = rec.header.to_bytes();
+                    self.buf[..WalHeader::SIZE]
+                        .copy_from_slice(&hdr);
+                    self.buf
+                        [WalHeader::SIZE..total]
+                        .copy_from_slice(&rec.payload);
+                    if let Err(e) = self
+                        .socket
+                        .send_to(
+                            &self.buf[..total], self.dest,
+                        )
+                    {
+                        warn!(
+                            "nak wal-retransmit send \
+                             failed seq={seq}: {e}"
+                        );
+                    }
+                }
+                Ok(None) => {
+                    warn!(
+                        "nak retransmit: seq={seq} \
+                         not in ring or wal"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "nak wal-read failed \
+                         seq={seq}: {e}"
+                    );
+                }
             }
         }
     }

@@ -1085,3 +1085,79 @@ fn wal_gc_removes_old_files() {
         "gc should remove old rotated files"
     );
 }
+
+#[test]
+fn read_record_at_seq_finds_active() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), None, 1024 * 1024, u64::MAX,
+    )
+    .unwrap();
+    for _ in 0..100 {
+        let mut fill = make_fill(0);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+    drop(writer);
+
+    // Read back seq 42 by random access.
+    let rec = read_record_at_seq(
+        1, 42, tmp.path(), None,
+    )
+    .unwrap()
+    .expect("seq 42 should exist");
+    assert_eq!(extract_seq(&rec.payload), Some(42));
+}
+
+#[test]
+fn read_record_at_seq_returns_none_for_missing() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), None, 1024 * 1024, u64::MAX,
+    )
+    .unwrap();
+    for _ in 0..10 {
+        let mut fill = make_fill(0);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+    drop(writer);
+
+    let rec = read_record_at_seq(
+        1, 999, tmp.path(), None,
+    )
+    .unwrap();
+    assert!(rec.is_none());
+}
+
+#[test]
+fn read_record_at_seq_finds_in_rotated_file() {
+    let tmp = TempDir::new().unwrap();
+    // Small rotation threshold so we get multiple files.
+    let mut writer = WalWriter::new(
+        1, tmp.path(), None, 256, u64::MAX,
+    )
+    .unwrap();
+    for _ in 0..200 {
+        let mut fill = make_fill(0);
+        writer.append(&mut fill).unwrap();
+    }
+    writer.flush().unwrap();
+    drop(writer);
+
+    // Multi-file: read seq 5 (early, rotated) and seq 195
+    // (late, possibly active).
+    let early = read_record_at_seq(
+        1, 5, tmp.path(), None,
+    )
+    .unwrap()
+    .expect("seq 5 should exist");
+    assert_eq!(extract_seq(&early.payload), Some(5));
+
+    let late = read_record_at_seq(
+        1, 195, tmp.path(), None,
+    )
+    .unwrap()
+    .expect("seq 195 should exist");
+    assert_eq!(extract_seq(&late.payload), Some(195));
+}

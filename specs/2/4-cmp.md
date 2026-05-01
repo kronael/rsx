@@ -246,25 +246,41 @@ implementation — if loss recurs on the same range, multiple
 NAKs may fly. This is a deliberate simplification; the
 network is internal and loss is rare.
 
-### Retransmit source
+### Retransmit source — two-tier
 
 When the sender receives a NAK, it walks `from_seq ..
-from_seq + count` and looks each seq up in its
-**send_ring** — an in-memory `BTreeMap<u64, Vec<u8>>`
-holding the most recent sent frames (`cmp.rs:33-34`,
-limit 4096 entries, `cmp.rs:75`).
+from_seq + count`. For each seq:
 
-If the seq is in the ring, the sender re-sends the
-cached frame. If it's not, the sender logs a warning and
-drops the request (`cmp.rs:185-189`).
+1. **Hot tier — `send_ring`.** An in-memory
+   `BTreeMap<u64, Vec<u8>>` holding the most recent sent
+   frames (`cmp.rs:33-34`, limit 4096 entries,
+   `cmp.rs:75`). O(log n) lookup, O(1) re-send. Covers
+   the common case of a NAK arriving within ~400 ms of
+   the lost record at typical rates.
 
-**This is the load-bearing tradeoff in CMP.** The previous
-spec described retransmit as "fetches missing records
-from WAL." It does not. Reading WAL by seq would require
-a random-access index over rotated WAL files — see §10.
-The current design accepts unrecoverable loss for records
-older than 4 096 sequences behind the receiver, which at
-peak rates (~10 K records/s) is ~400 ms of history.
+2. **Cold tier — WAL random-access.** On ring miss, the
+   sender calls `read_record_at_seq(stream_id, seq,
+   wal_dir, None)` (`rsx-dxs/src/wal.rs`). The function
+   identifies the right file by its filename
+   (`{stream_id}_{first_seq}_{last_seq}.wal`), opens it,
+   and scans forward record-by-record until it hits the
+   target seq. Cost: one file open + a sequential scan
+   of up to one rotation worth (≤ 64 MB). On modern NVMe
+   that's microseconds for cached pages, milliseconds for
+   cold ones. The active file is searched too if the
+   target post-dates the last rotation.
+
+Only when both tiers miss does the sender log and drop:
+the seq has been GC'd past WAL retention (default 10
+minutes). At that point the receiver's only recourse is a
+full TCP replay from `tip + 1`.
+
+The previous spec described retransmit as "fetches
+missing records from WAL" without the two-tier story —
+that wording was actually correct in spirit but the code
+only had the in-memory ring. The two-tier path is now
+shipped and unit-tested
+(`rsx-dxs/tests/wal_test.rs::read_record_at_seq_*`).
 
 ### Reorder buffer
 
@@ -431,21 +447,24 @@ header are checked-zero on receive; if a future extension
 needs them, both sides must roll forward together. This
 is the cost of zero-copy wire bytes; we accept it.
 
-### 10.3 Retransmit window: 4 096 records
+### 10.3 Retransmit horizon: WAL retention
 
-The send_ring is 4 096 entries (`cmp.rs:75`). A NAK for a
-sequence older than that is unrecoverable on the UDP path
-— the receiver must fall back to TCP replay. At ~10 K
-records/s peak, that's ~400 ms of history; for the
-inter-process hop, that's far longer than any reasonable
-NAK latency, so the ring is sized correctly for the
-common case.
+The fast path is the 4 096-entry `send_ring` (one
+rotation's worth of cache-line records). Beyond that,
+NAK retransmit reads from the WAL via the two-tier path
+described in §6 — the practical horizon is therefore
+**WAL retention**, not the ring size. Default retention
+is 10 minutes on the hot WAL plus whatever the recorder
+keeps in archive (effectively unbounded). A NAK for a
+seq older than retention is genuinely unrecoverable on
+the UDP path; the receiver must fall back to TCP replay
+from `tip + 1`.
 
-The alternative — random-access read by seq from rotated
-WAL files — would require a per-file `(first_seq,
-file_offset)` index. This is cheap to add (one u64 per
-record on rotation) but is not in the current shipped
-code. Tracked in `.ship/12-SHOWCASE-HONEST/` task 17.
+A per-file `(seq, file_offset)` index would replace the
+linear scan with O(log n) lookup. The current code's
+sequential-scan-within-one-file is already fast enough
+on typical NAK volumes (microseconds on cached pages),
+so the index hasn't been built yet.
 
 ### 10.4 No encryption, no auth
 
