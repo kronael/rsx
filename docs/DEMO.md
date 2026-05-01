@@ -64,12 +64,14 @@ curl -X POST http://localhost:49171/api/processes/all/stop -H 'x-confirm: yes'
 
 ## Auth in the demo
 
-The dev gateway runs with
-`RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` (set by the
-`start` script). The maker, stress client, and the Trade UI
-all mint JWTs against that secret. Production must override
-`RSX_GW_JWT_SECRET`; the demo secret is not safe for any
-internet-facing deploy.
+`./rsx-playground/playground start` injects
+`RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` for the
+playground server when the operator hasn't already set one;
+the same secret is exported by the root `start` launcher
+when it spawns gateway / risk / ME. The maker, stress
+client, and Trade UI all mint JWTs against that secret.
+Production must override `RSX_GW_JWT_SECRET`; the demo
+value is not safe for any internet-facing deploy.
 
 ## Troubleshooting
 
@@ -94,7 +96,8 @@ internet-facing deploy:
 - `RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` — replace
   with a real secret minted by the auth service. The
   playground server, market maker, and stress client all
-  fail-fast if the env var is unset.
+  fail-fast if the env var is unset; the launcher injects
+  the dev value if it isn't set in the parent shell.
 - `PLAYGROUND_ALLOW_INSECURE_USER_ID=1` — when set, any
   loopback caller can spoof user identity via the
   `x-user-id` request header. The server prints a WARN line
