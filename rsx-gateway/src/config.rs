@@ -73,7 +73,10 @@ fn load_symbol_configs() -> Vec<SymbolConfig> {
 pub fn load_gateway_config() -> GatewayConfig {
     let jwt_secret = env_str("RSX_GW_JWT_SECRET", "");
     if jwt_secret.is_empty() {
-        panic!("RSX_GW_JWT_SECRET must be set");
+        eprintln!(
+            "rsx-gateway: RSX_GW_JWT_SECRET must be set"
+        );
+        std::process::exit(2);
     }
 
     GatewayConfig {

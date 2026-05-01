@@ -8,9 +8,13 @@ Risk, Matching Engine, Marketdata, Mark Price, Recorder --
 communicating over CMP (C structs over UDP) on the hot path
 and WAL replication over TCP on the cold path.
 
-The design target: under 50 microseconds from gateway ingress
+The design budget: under 50 microseconds from gateway ingress
 to gateway egress, under 500 nanoseconds for a match inside
-the matching engine. Both targets exceeded.
+the matching engine. The match-engine number is measured
+(54 ns single fill, Criterion); the end-to-end number is a
+component-sum budget — the continuous E2E harness that
+asserts it is the next item on the punch list, not yet
+landed. See README "What's measured vs what's a budget."
 
 ## Architecture in 60 Seconds
 
@@ -64,11 +68,17 @@ Criterion benchmarks on the orderbook and transport layer:
 | CMP encode             | 43 ns    |
 | CMP decode             | 9 ns     |
 
-End-to-end estimate on loopback (Gateway to ME and back):
-roughly 4-6 microseconds. The target was 50 microseconds.
+End-to-end on loopback (Gateway → ME → Gateway): not yet
+asserted by an automated harness. Summing the measured
+components (gateway parse, CMP encode, UDP send, risk
+pre-trade, match, WAL append, reverse path) puts the
+budget comfortably inside the 50 µs design target, but
+treat that as a budget until the harness in
+`specs/2/22-perf-verification.md §4` lands.
 
-The matching engine target was 500 nanoseconds. A single fill
-completes in 54 nanoseconds -- about 9x under budget.
+The matching-engine target was 500 nanoseconds. A single
+fill completes in 54 nanoseconds — about 9× under budget,
+single thread, no contention (`rsx-book/benches/book_bench.rs`).
 
 ## Key Design Decisions
 

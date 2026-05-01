@@ -456,15 +456,22 @@ def logs_cmd(follow=False):
 # ── Utils ───────────────────────────────────────────────
 
 
-def reset():
+def reset(yes: bool = False):
     """Stop all and clean state."""
     print("warning: this will delete all logs and temp files")
-    print("press enter to continue or ctrl-c to cancel...")
-    try:
-        input()
-    except KeyboardInterrupt:
-        print("\ncancelled")
-        return 1
+    if not yes:
+        if not sys.stdin.isatty():
+            print(
+                "non-interactive shell: pass --yes to confirm",
+                file=sys.stderr,
+            )
+            return 1
+        print("press enter to continue or ctrl-c to cancel...")
+        try:
+            input()
+        except KeyboardInterrupt:
+            print("\ncancelled")
+            return 1
 
     print("resetting playground...")
     stop_all()
@@ -563,7 +570,8 @@ def main():
 
     # utils
     elif cmd == "reset":
-        return reset()
+        yes = "--yes" in sys.argv or "-y" in sys.argv
+        return reset(yes=yes)
 
     else:
         print(f"unknown command: {cmd}")

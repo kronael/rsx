@@ -114,7 +114,11 @@ pub fn parse_me_cmp_addrs(raw: &str) -> Vec<SocketAddr> {
         .filter(|s| !s.is_empty())
         .map(|s| {
             s.parse().unwrap_or_else(|_| {
-                panic!("invalid ME CMP addr: {}", s)
+                eprintln!(
+                    "rsx-marketdata: invalid ME CMP addr: {}",
+                    s
+                );
+                std::process::exit(2);
             })
         })
         .collect()

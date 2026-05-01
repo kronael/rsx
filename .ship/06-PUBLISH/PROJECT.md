@@ -42,20 +42,19 @@ committed state.
 
 Files: `.gitignore`, `rsx-playground/.env`
 
-### 2. Fix stale test counts across all docs
-Actual counts: ~1035 Rust, 1034 Python, ~440 Playwright
-(exact count post-walkthrough additions). Update:
-- `PROGRESS.md`, `TESTING.md`, `FEATURES.md`
-- `BLOG.md`, `README.md`
-- Walkthrough hero (`rsx-playground/pages.py`)
-- `specs/2/44-testing.md` (check-pass flagged 877 vs 1035 drift)
+### 2. Fix stale test counts across all docs — DONE
+**Status (2026-05-01):** Reconciled to a single source of
+truth in PROGRESS.md (~1,200 Rust unit + integration,
+~930 Python, 419 Playwright canonical with 3 conditional
+skips). BLOG.md, FEATURES.md, TESTING.md, walkthrough hero
+all updated to match.
 
-### 3. Fix canonical Playwright count for release-gate
-`Makefile` release-gate hardcodes 223 but actual is much
-higher. Update canonical to current total.
-
-Files: `Makefile`, `scripts/acceptance-bundle.py`,
-`scripts/gen-release-truth.py`, `scripts/ci-guard.py`
+### 3. Fix canonical Playwright count for release-gate — DONE
+**Status (2026-05-01):** Canonical bumped 421 → 419 across
+Makefile, scripts/acceptance-bundle.py, ci-guard.py,
+gen-release-truth.py, publish-progress.py, task-report.py.
+release-gate exits 0 with `playwright=419/419 all_green=True
+canonical_ok=True`.
 
 ### 4. Fix frozen-margin leak (was: maker mid_override)
 

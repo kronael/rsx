@@ -1066,41 +1066,46 @@ All 8 invariants programmatically verified in tests:
 
 ---
 
-## 13. Open Questions & Future Work
+## 13. Future work
 
-### 13.1 Quantified Stress Test Targets
+The guarantees above are based on the current design and the
+component-level evidence cited per section. Larger-scale
+validation and multi-DC scope are out of band for this repo
+and tracked here as future work, not as gaps in the current
+guarantees.
 
-**TODO:** Run actual stress tests to validate:
-- Matching engine can sustain 1M fills/sec with 10ms WAL flush
-- Risk can sustain 1M fills/sec with 10ms Postgres flush
-- DXS replay can serve 100K fills/sec to 10 consumers concurrently
-- Postgres can handle 100K position updates/sec in batches
+### 13.1 Quantified stress-test targets
 
-### 13.2 Multi-Datacenter Replication
+Continuous-load validation of the per-component throughput
+budgets is queued. Specifically:
+- Matching engine sustaining 1 M fills/sec with the 10 ms
+  WAL flush cadence
+- Risk sustaining 1 M fills/sec with the 10 ms Postgres
+  flush cadence
+- DXS replay serving 100 K fills/sec to 10 concurrent
+  consumers
+- Postgres handling 100 K position updates/sec in batches
 
-**TODO:** Specify guarantees for geo-distributed deployments:
-- Cross-DC latency impact on WAL flush
-- Cross-DC replica lag bounds
-- Partition tolerance across DC link failure
+### 13.2 Multi-datacenter replication
 
-### 13.3 Snapshot Frequency vs Replay Time
+This repo is single-DC. Cross-DC scope (WAL flush latency
+impact, replica lag bounds, partition tolerance across the
+DC link) is a separate design problem and would be a new
+spec, not an extension of `48-wal.md`.
 
-**Current:** Matching engine snapshots every 10s, Risk has no snapshot
-(rebuilds from Postgres)
+### 13.3 Snapshot frequency vs replay time
 
-**TODO:** Analyze tradeoff:
-- More frequent snapshots = faster recovery, higher I/O overhead
-- Less frequent snapshots = slower recovery, lower I/O overhead
+Matching engine snapshots every 10 s; Risk rebuilds from
+Postgres on cold start. The current cadence is a working
+tradeoff; tuning it is workload-dependent and out of scope
+for the spec.
 
-### 13.4 WAL Retention vs Disk Usage
+### 13.4 WAL retention vs disk usage
 
-**Current:** 10min retention on matching engine WAL, then offload to
-Recorder
-
-**TODO:** Analyze:
-- Worst-case disk usage for 10min retention
-- Replay time if consumer lags >10min (must rebuild from snapshot +
-  full WAL)
+10 min retention on matching engine WAL, then offload to
+recorder. Worst-case disk usage and recovery cost when a
+consumer lags > 10 min are measurable from a test bed; the
+numbers should accompany the §13.1 stress validation.
 
 ---
 

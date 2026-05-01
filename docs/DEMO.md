@@ -100,5 +100,6 @@ internet-facing deploy:
   `x-user-id` request header. The server prints a WARN line
   on first use. Production must leave this unset.
 
-See [.ship/06-PUBLISH/PROJECT.md](../.ship/06-PUBLISH/PROJECT.md)
-for the publish-readiness punch list.
+For current state and the in-flight surface-honesty work,
+see [PROGRESS.md](../PROGRESS.md) and
+[.ship/12-SHOWCASE-HONEST/](../.ship/12-SHOWCASE-HONEST/).
