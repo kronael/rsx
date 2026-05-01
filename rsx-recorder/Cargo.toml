@@ -6,7 +6,9 @@ edition = "2021"
 [dependencies]
 rsx-dxs = { path = "../rsx-dxs" }
 rsx-types = { path = "../rsx-types" }
+rsx-messages = { path = "../rsx-messages" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 chrono = "0.4"
+serde = { version = "1", features = ["derive"] }

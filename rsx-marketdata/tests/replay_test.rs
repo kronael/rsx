@@ -1,8 +1,8 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_dxs::FillRecord;
-use rsx_dxs::OrderCancelledRecord;
-use rsx_dxs::OrderInsertedRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderInsertedRecord;
 use rsx_marketdata::state::MarketDataState;
 use rsx_types::SymbolConfig;
 

@@ -1,8 +1,10 @@
+mod config;
+
 use chrono::NaiveDate;
 use chrono::Utc;
+use config::RecorderConfig;
 use rsx_dxs::DxsConsumer;
 use rsx_dxs::RawWalRecord;
-use rsx_dxs::RecorderConfig;
 use rsx_types::install_panic_handler;
 use std::fs;
 use std::fs::File;

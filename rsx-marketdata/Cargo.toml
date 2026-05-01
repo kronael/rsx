@@ -15,6 +15,7 @@ path = "src/lib.rs"
 rsx-types = { path = "../rsx-types" }
 rsx-book = { path = "../rsx-book" }
 rsx-dxs = { path = "../rsx-dxs" }
+rsx-messages = { path = "../rsx-messages" }
 monoio = "0.2"
 tokio = { version = "1", features = ["rt", "macros"] }
 tracing = "0.1"

@@ -1,6 +1,6 @@
 //! Mark price data structures. MARK.md §2.
 
-pub type MarkPriceEvent = rsx_dxs::records::MarkPriceRecord;
+pub type MarkPriceEvent = rsx_messages::MarkPriceRecord;
 
 pub type SymbolMap = std::collections::HashMap<String, u32>;
 

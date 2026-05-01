@@ -2,23 +2,7 @@ use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::ReplayRequest;
-use crate::records::RECORD_BBO;
-use crate::records::RECORD_CANCEL_REQUEST;
-use crate::records::RECORD_CAUGHT_UP;
-use crate::records::RECORD_CONFIG_APPLIED;
-use crate::records::RECORD_FILL;
-use crate::records::RECORD_HEARTBEAT;
-use crate::records::RECORD_MARK_PRICE;
-use crate::records::RECORD_NAK;
-use crate::records::RECORD_ORDER_ACCEPTED;
-use crate::records::RECORD_ORDER_CANCELLED;
-use crate::records::RECORD_ORDER_DONE;
-use crate::records::RECORD_ORDER_FAILED;
-use crate::records::RECORD_ORDER_INSERTED;
-use crate::records::RECORD_ORDER_REQUEST;
-use crate::records::RECORD_ORDER_RESPONSE;
 use crate::records::RECORD_REPLAY_REQUEST;
-use crate::records::RECORD_STATUS_MESSAGE;
 use crate::wal::RawWalRecord;
 use crate::wal::extract_seq;
 use rustls::pki_types::CertificateDer;
@@ -41,29 +25,6 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tracing::info;
 use tracing::warn;
-
-fn is_known_record_type(record_type: u16) -> bool {
-    matches!(
-        record_type,
-        RECORD_FILL
-            | RECORD_BBO
-            | RECORD_ORDER_INSERTED
-            | RECORD_ORDER_CANCELLED
-            | RECORD_ORDER_DONE
-            | RECORD_CONFIG_APPLIED
-            | RECORD_CAUGHT_UP
-            | RECORD_ORDER_ACCEPTED
-            | RECORD_MARK_PRICE
-            | RECORD_ORDER_REQUEST
-            | RECORD_ORDER_RESPONSE
-            | RECORD_CANCEL_REQUEST
-            | RECORD_ORDER_FAILED
-            | RECORD_STATUS_MESSAGE
-            | RECORD_NAK
-            | RECORD_HEARTBEAT
-            | RECORD_REPLAY_REQUEST
-    )
-}
 
 pub struct DxsConsumer {
     pub stream_id: u32,
@@ -337,17 +298,6 @@ impl DxsConsumer {
                 self.tip = self.tip.max(seq);
             }
 
-            if !is_known_record_type(
-                header.record_type,
-            ) {
-                warn!(
-                    "unknown record type {}, \
-                     skipping",
-                    header.record_type
-                );
-                continue;
-            }
-
             let record =
                 RawWalRecord { header, payload };
             callback(record);
@@ -433,17 +383,6 @@ impl DxsConsumer {
 
             if let Some(seq) = extract_seq(&payload) {
                 self.tip = self.tip.max(seq);
-            }
-
-            if !is_known_record_type(
-                header.record_type,
-            ) {
-                warn!(
-                    "unknown record type {}, \
-                     skipping",
-                    header.record_type
-                );
-                continue;
             }
 
             let record =

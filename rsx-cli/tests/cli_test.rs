@@ -1,13 +1,13 @@
 use rsx_dxs::encode_utils::compute_crc32;
 use rsx_dxs::header::WalHeader;
-use rsx_dxs::records::BboRecord;
-use rsx_dxs::records::FillRecord;
-use rsx_dxs::records::LiquidationRecord;
-use rsx_dxs::records::OrderInsertedRecord;
-use rsx_dxs::records::RECORD_BBO;
-use rsx_dxs::records::RECORD_FILL;
-use rsx_dxs::records::RECORD_LIQUIDATION;
-use rsx_dxs::records::RECORD_ORDER_INSERTED;
+use rsx_messages::BboRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::LiquidationRecord;
+use rsx_messages::OrderInsertedRecord;
+use rsx_messages::RECORD_BBO;
+use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_LIQUIDATION;
+use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_dxs::wal::extract_seq;
 use rsx_dxs::wal::WalReader;
 use rsx_types::Price;
@@ -422,7 +422,7 @@ fn test_dump_order_request_decodes() {
     );
     write_raw_record(
         &mut file,
-        rsx_dxs::records::RECORD_ORDER_REQUEST,
+        rsx_messages::RECORD_ORDER_REQUEST,
         &payload,
     );
     file.sync_all().unwrap();
@@ -460,7 +460,7 @@ fn test_dump_order_response_decodes() {
     );
     write_raw_record(
         &mut file,
-        rsx_dxs::records::RECORD_ORDER_RESPONSE,
+        rsx_messages::RECORD_ORDER_RESPONSE,
         &payload,
     );
     file.sync_all().unwrap();
@@ -510,10 +510,10 @@ fn test_dump_unknown_type_not_skipped() {
 /// ORDER_RESPONSE; all three must appear decoded in output.
 #[test]
 fn test_dump_three_new_types_combined() {
-    use rsx_dxs::records::LiquidationRecord;
-    use rsx_dxs::records::RECORD_LIQUIDATION;
-    use rsx_dxs::records::RECORD_ORDER_REQUEST;
-    use rsx_dxs::records::RECORD_ORDER_RESPONSE;
+    use rsx_messages::LiquidationRecord;
+    use rsx_messages::RECORD_LIQUIDATION;
+    use rsx_messages::RECORD_ORDER_REQUEST;
+    use rsx_messages::RECORD_ORDER_RESPONSE;
 
     let dir = make_test_dir("dump_three_types");
     let path = dir.join("combined.wal");

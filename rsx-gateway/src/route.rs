@@ -2,12 +2,12 @@ use crate::order_id::order_id_to_hex;
 use crate::protocol::serialize;
 use crate::protocol::WsFrame;
 use crate::state::GatewayState;
-use rsx_dxs::records::FillRecord;
-use rsx_dxs::records::LiquidationRecord;
-use rsx_dxs::records::OrderCancelledRecord;
-use rsx_dxs::records::OrderDoneRecord;
-use rsx_dxs::records::OrderFailedRecord;
-use rsx_dxs::records::OrderInsertedRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::LiquidationRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
+use rsx_messages::OrderInsertedRecord;
 use std::cell::RefCell;
 use std::rc::Rc;
 

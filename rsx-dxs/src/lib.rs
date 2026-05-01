@@ -1,28 +1,53 @@
-//! WAL, CMP, and DXS transport library for RSX.
+//! Log-backed reliable UDP transport (CMP) + TCP cold-path
+//! replay (DXS).
 //!
-//! Three concerns: WAL persistence (write/read/rotate),
-//! CMP protocol (UDP flow control with NACK), and DXS
-//! replay (TCP streaming from sequence N). Disk format =
-//! wire format = stream format — no transformation.
+//! Wire bytes = disk bytes = stream bytes. No serialization
+//! step. NAK retransmits read from the WAL itself, so the
+//! retransmit horizon is log retention, not buffer size.
 //!
-//! 16B header + `#[repr(C, align(64))]` payload per record.
-//! 15 record types covering fills, BBO, orders, marks,
-//! liquidations, and config events.
+//! Transport-only; domain wire records live in `rsx-messages`
+//! (or any consumer-defined crate). The transport accepts any
+//! 16-byte-header + repr(C) payload that implements
+//! [`CmpRecord`].
 
 pub mod header;
-pub mod records;
+pub mod protocol;
 pub mod encode_utils;
 pub mod wal;
+pub mod cmp;
 pub mod server;
 pub mod client;
 pub mod config;
-pub mod cmp;
 
-pub use header::*;
-pub use records::*;
-pub use encode_utils::*;
-pub use wal::*;
-pub use server::*;
-pub use client::*;
-pub use config::*;
-pub use cmp::*;
+// Backwards-compatible alias for the old module name. Slated
+// for removal once external references have settled.
+pub use protocol as records;
+
+pub use header::WalHeader;
+pub use protocol::CmpHeartbeat;
+pub use protocol::CmpRecord;
+pub use protocol::CaughtUpRecord;
+pub use protocol::Nak;
+pub use protocol::ReplayRequest;
+pub use protocol::StatusMessage;
+pub use protocol::RECORD_CAUGHT_UP;
+pub use protocol::RECORD_HEARTBEAT;
+pub use protocol::RECORD_NAK;
+pub use protocol::RECORD_REPLAY_REQUEST;
+pub use protocol::RECORD_STATUS_MESSAGE;
+pub use encode_utils::as_bytes;
+pub use encode_utils::compute_crc32;
+pub use encode_utils::decode_payload;
+pub use encode_utils::encode_record;
+pub use wal::extract_seq;
+pub use wal::read_record_at_seq;
+pub use wal::RawWalRecord;
+pub use wal::WalReader;
+pub use wal::WalWriter;
+pub use cmp::CmpReceiver;
+pub use cmp::CmpSender;
+pub use cmp::MAX_PAYLOAD;
+pub use server::DxsReplayService;
+pub use client::DxsConsumer;
+pub use config::CmpConfig;
+pub use config::TlsConfig;

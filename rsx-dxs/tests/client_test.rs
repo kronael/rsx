@@ -158,7 +158,7 @@ fn consumer_reconnect_resets_on_success() {
 #[test]
 fn consumer_skips_unknown_record_types() {
     use rsx_dxs::header::WalHeader;
-    use rsx_dxs::records::RECORD_FILL;
+    use rsx_messages::RECORD_FILL;
     use rsx_dxs::wal::RawWalRecord;
 
     let mut known_count = 0u32;

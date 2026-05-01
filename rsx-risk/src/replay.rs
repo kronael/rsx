@@ -147,17 +147,17 @@ pub fn replay_from_wal(
     wal_dir: &Path,
     symbol_ids: &[u32],
 ) -> std::io::Result<u64> {
-    use rsx_dxs::decode_fill_record;
-    use rsx_dxs::records::OrderAcceptedRecord;
-    use rsx_dxs::records::OrderCancelledRecord;
-    use rsx_dxs::records::OrderDoneRecord;
-    use rsx_dxs::records::OrderFailedRecord;
+    use rsx_messages::decode_fill_record;
+    use rsx_messages::OrderAcceptedRecord;
+    use rsx_messages::OrderCancelledRecord;
+    use rsx_messages::OrderDoneRecord;
+    use rsx_messages::OrderFailedRecord;
     use rsx_dxs::WalReader;
-    use rsx_dxs::RECORD_ORDER_ACCEPTED;
-    use rsx_dxs::RECORD_ORDER_FAILED;
-    use rsx_dxs::RECORD_ORDER_CANCELLED;
-    use rsx_dxs::RECORD_ORDER_DONE;
-    use rsx_dxs::RECORD_FILL;
+    use rsx_messages::RECORD_ORDER_ACCEPTED;
+    use rsx_messages::RECORD_ORDER_FAILED;
+    use rsx_messages::RECORD_ORDER_CANCELLED;
+    use rsx_messages::RECORD_ORDER_DONE;
+    use rsx_messages::RECORD_FILL;
 
     let mut replayed = 0u64;
     for &sid in symbol_ids {
