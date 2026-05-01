@@ -5878,7 +5878,7 @@ async def api_book(symbol_id: int):
     # Prefer live snapshot from marketdata WS
     snap = _book_snap.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
-        return snap
+        return {**snap, "source": "live"}
     # Fallback: WAL BBO (at most 1 bid + 1 ask)
     bbo = parse_wal_bbo(symbol_id)
     if bbo is not None:
@@ -5889,12 +5889,13 @@ async def api_book(symbol_id: int):
         if bbo["ask_px"] != 0:
             asks.append({"px": bbo["ask_px"], "qty": bbo["ask_qty"]})
         if bids or asks:
-            return {"bids": bids, "asks": asks}
-    # Last fallback: synthesize from maker-status.json
+            return {"bids": bids, "asks": asks, "source": "wal"}
+    # Last fallback: synthesize from maker-status.json. Tag
+    # the response so consumers know this is not live data.
     maker_snap = _maker_book(symbol_id)
     if maker_snap:
-        return maker_snap
-    return {"bids": [], "asks": []}
+        return {**maker_snap, "source": "synthetic"}
+    return {"bids": [], "asks": [], "source": "empty"}
 
 
 @app.get("/api/bbo/{symbol_id}")
@@ -5914,6 +5915,7 @@ async def api_bbo(symbol_id: int):
                 "ask_px": ask_px,
                 "bid_qty": bid_qty,
                 "ask_qty": ask_qty,
+                "source": "live",
             }
     # Fallback: WAL BBO
     bbo = parse_wal_bbo(symbol_id)
@@ -5923,8 +5925,10 @@ async def api_bbo(symbol_id: int):
             "ask_px": bbo["ask_px"],
             "bid_qty": bbo["bid_qty"],
             "ask_qty": bbo["ask_qty"],
+            "source": "wal",
         }
-    # Last fallback: maker book snapshot
+    # Last fallback: maker book snapshot. Tag the response
+    # so consumers know it's synthesized.
     maker_snap = _maker_book(symbol_id)
     if maker_snap:
         bids = maker_snap.get("bids", [])
@@ -5935,6 +5939,7 @@ async def api_bbo(symbol_id: int):
                 "ask_px": asks[0]["px"] if asks else 0,
                 "bid_qty": bids[0]["qty"] if bids else 0,
                 "ask_qty": asks[0]["qty"] if asks else 0,
+                "source": "synthetic",
             }
     return JSONResponse(status_code=404, content={
         "error": "no bbo for symbol"})
@@ -6443,16 +6448,24 @@ async def v1_candles(
     tf: str = Query("1m"),
     limit: int = Query(200),
 ):
-    """OHLCV bars from WAL fills, falling back to synthetic stubs."""
+    """OHLCV bars from WAL fills, falling back to synthetic stubs.
+
+    Response includes "source": "wal" | "synthetic" so the
+    UI / API consumer can show a "synthetic data" badge when
+    the WAL has no fills yet.
+    """
     tf_secs = TF_SECONDS.get(tf, 60)
     limit = max(1, min(limit, 1000))
     sym_id = _symbol_id_for(sym)
     bars = []
+    source = "synthetic"
     if sym_id is not None:
         bars = _build_candles_from_wal(sym_id, tf_secs, limit)
-    if not bars:
+    if bars:
+        source = "wal"
+    else:
         bars = _synthetic_candles(sym, tf_secs, limit)
-    return JSONResponse({"bars": bars})
+    return JSONResponse({"bars": bars, "source": source})
 
 
 @app.get("/v1/funding")
@@ -6461,7 +6474,13 @@ async def v1_funding(
     limit: int = Query(50),
     before: str = Query(None),
 ):
-    """Return funding entries derived from WAL BBO data."""
+    """Return funding entries derived from WAL BBO data.
+
+    Each entry carries a "source" field: "wal" when derived
+    from a real BBO record, "synthetic" when fabricated from
+    config (placeholder 0.01% rate, used for empty-WAL
+    startup window so the dashboard renders something).
+    """
     book_stats = parse_wal_book_stats()
     now_ms = int(time.time() * 1000)
     entries = []
@@ -6477,9 +6496,12 @@ async def v1_funding(
             "symbolId": sid,
             "amount": 0,
             "rate": rate,
+            "source": "wal",
         })
     if not entries:
-        # synthetic fallback: 0.01% rate per configured symbol
+        # Synthetic fallback for empty-WAL startup window:
+        # 0.01% rate per configured symbol. Tagged so the UI
+        # can show a "synthetic" badge.
         for name, cfg in start_mod.SYMBOLS.items():
             sid = cfg["id"]
             if sym is not None and sid != sym:
@@ -6489,6 +6511,7 @@ async def v1_funding(
                 "symbolId": sid,
                 "amount": 0,
                 "rate": 0.0001,
+                "source": "synthetic",
             })
     return JSONResponse(entries[:limit])
 
