@@ -332,10 +332,12 @@ fn run_main(
         env::var("RSX_RISK_ME_RECV_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:28301".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
     // Use first ME addr as the CMP peer for the receiver
+    // SAFETY: me_addrs.is_empty() checked above
     let first_me_addr = *me_addrs.values().next()
-        .expect("me_addrs non-empty");
+        .expect("INVARIANT: me_addrs non-empty (checked above)");
     let mut me_receiver = CmpReceiver::new(
         risk_me_recv_addr,
         first_me_addr,
@@ -945,8 +947,9 @@ fn run_replica(
             "no ME CMP addresses configured".into()
         );
     }
+    // SAFETY: me_addrs.is_empty() checked above
     let first_me_addr =
-        *me_addrs.values().next().expect("non-empty");
+        *me_addrs.values().next().expect("INVARIANT: me_addrs non-empty (checked above)");
     let mut me_receiver = CmpReceiver::new(
         // SAFETY: literal addr is always valid
         "127.0.0.1:0".parse().expect("valid addr"),

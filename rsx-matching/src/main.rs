@@ -315,6 +315,7 @@ fn main() {
         env::var("RSX_RISK_ME_RECV_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:28301".into())
             .parse()
+            // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
     let mut cmp_receiver = CmpReceiver::new(
