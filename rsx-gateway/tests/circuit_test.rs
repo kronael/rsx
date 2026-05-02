@@ -1,7 +1,8 @@
 use rsx_gateway::circuit::CircuitBreaker;
 use rsx_gateway::circuit::State;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 #[test]
 fn circuit_closed_allows_orders() {
