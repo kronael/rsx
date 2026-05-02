@@ -3,6 +3,7 @@ use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 use std::cell::RefCell;
 use std::rc::Rc;
+use tracing::warn;
 
 /// Parse the request path from an HTTP request line.
 /// Returns None if the request line is malformed.
@@ -46,7 +47,10 @@ async fn send_bytes(
     stream: &mut TcpStream,
     bytes: Vec<u8>,
 ) {
-    let (_, _) = stream.write_all(bytes).await;
+    let (res, _) = stream.write_all(bytes).await;
+    if let Err(e) = res {
+        warn!("rest write failed: {e}");
+    }
 }
 
 /// Handle a REST HTTP request. Writes response and

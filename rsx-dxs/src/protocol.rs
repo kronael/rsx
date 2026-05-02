@@ -5,6 +5,8 @@
 //! protocol-level records the transport itself emits and
 //! consumes.
 
+use std::mem;
+
 /// Transport-level record type constants.
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
@@ -29,6 +31,8 @@ pub struct CmpHeartbeat {
     pub highest_seq: u64,
     pub _pad1: [u8; 56],
 }
+const _: () = assert!(mem::size_of::<CmpHeartbeat>() == 64);
+const _: () = assert!(mem::align_of::<CmpHeartbeat>() == 64);
 
 /// CMP StatusMessage (64-byte aligned)
 /// Receiver -> sender, every 10ms.
@@ -39,6 +43,8 @@ pub struct StatusMessage {
     pub receiver_window: u64,
     pub _pad1: [u8; 48],
 }
+const _: () = assert!(mem::size_of::<StatusMessage>() == 64);
+const _: () = assert!(mem::align_of::<StatusMessage>() == 64);
 
 /// CMP Nak (64-byte aligned)
 /// Receiver -> sender, on gap detection.
@@ -49,6 +55,8 @@ pub struct Nak {
     pub count: u64,
     pub _pad1: [u8; 48],
 }
+const _: () = assert!(mem::size_of::<Nak>() == 64);
+const _: () = assert!(mem::align_of::<Nak>() == 64);
 
 /// ReplayRequest (64-byte aligned)
 /// Client -> server for WAL/TCP replay. Keeps stream_id
@@ -61,6 +69,8 @@ pub struct ReplayRequest {
     pub from_seq: u64,
     pub _pad1: [u8; 48],
 }
+const _: () = assert!(mem::size_of::<ReplayRequest>() == 64);
+const _: () = assert!(mem::align_of::<ReplayRequest>() == 64);
 
 /// CaughtUpRecord (64-byte aligned)
 /// TCP replay control: server emits this to mark the
@@ -75,6 +85,8 @@ pub struct CaughtUpRecord {
     pub live_seq: u64,
     pub _pad1: [u8; 40],
 }
+const _: () = assert!(mem::size_of::<CaughtUpRecord>() == 128);
+const _: () = assert!(mem::align_of::<CaughtUpRecord>() == 64);
 
 impl CmpRecord for CaughtUpRecord {
     fn seq(&self) -> u64 { self.seq }

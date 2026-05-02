@@ -438,6 +438,15 @@ pub struct CmpReceiver {
     last_drop_warn: Instant,
     expected_seq: u64,
     highest_seen: u64,
+    /// Out-of-order packet buffer. Heap-allocates per inserted
+    /// packet. Acceptable because: (1) bounded at
+    /// `reorder_buf_limit` (default 512) — overflow drops the
+    /// oldest gap and re-syncs; (2) on a trusted LAN the
+    /// happy path is in-order delivery, so this allocator
+    /// rarely fires; (3) NAK retransmits go through the
+    /// preallocated `send_ring` on the sender, not here.
+    /// Keeping the simpler BTreeMap avoids a second slab when
+    /// the path it guards is cold.
     reorder_buf: BTreeMap<u64, Vec<u8>>,
     reorder_buf_limit: usize,
     last_status: Instant,

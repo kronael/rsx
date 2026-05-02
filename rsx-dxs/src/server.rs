@@ -1,4 +1,5 @@
 use crate::config::TlsConfig;
+use crate::encode_utils::compute_crc32;
 use crate::encode_utils::encode_record;
 use crate::header::WalHeader;
 use crate::records::CaughtUpRecord;
@@ -158,6 +159,15 @@ where
                 "bad header",
             )
         })?;
+    if !hdr.is_supported_version() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "unsupported wire version v{}",
+                hdr.version
+            ),
+        ));
+    }
     if hdr.record_type != RECORD_REPLAY_REQUEST {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -168,6 +178,15 @@ where
     let mut payload_buf = vec![0u8; payload_len];
     stream.read_exact(&mut payload_buf).await?;
 
+    // CRC must validate before any unsafe cast — same rule as
+    // CMP/UDP ingress (cmp.rs::try_recv).
+    let crc = compute_crc32(&payload_buf);
+    if crc != hdr.crc32 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "replay request crc mismatch",
+        ));
+    }
     if payload_buf.len()
         < std::mem::size_of::<ReplayRequest>()
     {

@@ -105,7 +105,12 @@ async fn ws_handshake_inner(
         },
     )?;
 
-    // Extract user_id from auth headers
+    // Extract user_id from auth headers.
+    // TODO(13-A16Z-FIXES T1.3): wire JtiTracker through ws_handshake.
+    // Today validate_jwt only returns user_id; we need
+    // validate_jwt_with_claims plus a process-wide (or shared)
+    // JtiTracker to actually reject jti replay. Design discussion
+    // pending: per-process vs shared (Redis) replay state.
     let user_id =
         match extract_user_id(request, jwt_secret) {
             Some(id) => id,
