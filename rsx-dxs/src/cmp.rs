@@ -266,10 +266,9 @@ impl CmpSender {
                 continue;
             }
             // Ring miss — fall back to disk. The WAL has
-            // every seq we've ever appended (until GC).
-            // This makes NAK retransmit work for records
-            // older than send_ring_limit, which the prior
-            // implementation dropped.
+            // every seq we've ever appended (until GC), so
+            // NAK retransmit works for records older than
+            // send_ring_limit.
             match read_record_at_seq(
                 self.stream_id,
                 seq,

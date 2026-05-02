@@ -259,11 +259,6 @@ fn main() {
         (None, 0)
     };
 
-    // 65k order slab + 50k price levels per ME. 1024 was
-    // too small for sustained maker-driven dev workloads
-    // (slab exhaust panic after a few minutes). 65k gives
-    // ~3 hours of headroom at 5 ord/s with imperfect cancel
-    // tracking; production tuning tracked separately.
     let mut book = Orderbook::new(initial_config, 65_536, 50_000);
 
     // WAL writer
@@ -301,8 +296,7 @@ fn main() {
         // SAFETY: fail-fast at startup
         .expect("invalid RSX_ME_CMP_ADDR");
     // NAK destination: risk's ME sender bind addr
-    // (RSX_RISK_ME_SEND_ADDR). Falls back to
-    // RSX_RISK_CMP_ADDR if not set (old behaviour).
+    // (RSX_RISK_ME_SEND_ADDR), with RSX_RISK_CMP_ADDR as fallback.
     let risk_nak_addr: SocketAddr =
         env::var("RSX_RISK_ME_SEND_ADDR")
             .or_else(|_| env::var("RSX_RISK_CMP_ADDR"))
@@ -400,8 +394,7 @@ fn main() {
 
     let mut dedup = DedupTracker::new();
     // (user_id, oid_hi, oid_lo) -> slab handle. Maintained
-    // from book.events() after every match cycle. Replaces
-    // the O(n) slab scan in process_cancel.
+    // from book.events() after every match cycle for O(1) cancel.
     let mut order_index: FxHashMap<OrderKey, u32> =
         FxHashMap::default();
 

@@ -58,7 +58,6 @@ impl RecorderState {
         &mut self,
         record: &RawWalRecord,
     ) -> io::Result<()> {
-        // check daily rotation
         let today = Utc::now().date_naive();
         if today != self.current_date {
             self.rotate(today)?;
@@ -70,7 +69,6 @@ impl RecorderState {
         self.buf.extend_from_slice(&record.payload);
         self.record_count += 1;
 
-        // flush every 1000 records
         if self.record_count % 1000 == 0 {
             self.flush()?;
         }

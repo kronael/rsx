@@ -92,7 +92,6 @@ fn quote_cycle(
     let req = build_request(addr, user_id);
     let (mut ws, _) = tungstenite::connect(req)?;
 
-    // cancel existing orders, drain 100ms per cancel
     set_timeout(&mut ws, Duration::from_millis(100));
     for cid in active_cids.iter() {
         let msg = serde_json::json!({"C": [cid]}).to_string();
@@ -131,7 +130,6 @@ fn quote_cycle(
         ))?;
         active_cids.insert(ask_cid);
 
-        // drain up to 2 responses per order pair
         drain(&mut ws, 2);
     }
 
@@ -156,7 +154,6 @@ fn main() {
     let lot = env_u64("RSX_MAKER_LOT", 100_000) as i64;
     let refresh_ms = env_u64("RSX_MAKER_REFRESH", 2000);
 
-    // align qty to lot boundary
     let qty = (qty / lot) * lot;
 
     info!(

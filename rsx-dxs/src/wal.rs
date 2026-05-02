@@ -530,8 +530,6 @@ impl WalReader {
                 ));
             }
 
-            // MAX_PAYLOAD check removed - header.len is u16, already bounded
-
             let mut payload = vec![0u8; header.len as usize];
             match file.read_exact(&mut payload) {
                 Ok(()) => {}
