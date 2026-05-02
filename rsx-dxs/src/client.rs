@@ -476,7 +476,7 @@ fn build_tls_connector(
             })?;
         }
     } else {
-        // TODO: Add webpki_roots once cargo registry is accessible
+        // TODO(TODO.md 10-DEPLOY): add webpki_roots fallback for public TLS
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "TLS requires cert_path in config",
