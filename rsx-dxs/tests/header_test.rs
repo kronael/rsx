@@ -1,4 +1,7 @@
 use rsx_dxs::WalHeader;
+use rsx_dxs::header::WAL_HEADER_VERSION_LATEST;
+use rsx_dxs::header::WAL_HEADER_VERSION_V0;
+use rsx_dxs::header::WAL_HEADER_VERSION_V1;
 
 #[test]
 fn header_encode_decode_roundtrip() {
@@ -8,24 +11,65 @@ fn header_encode_decode_roundtrip() {
     assert_eq!(decoded.record_type, 1);
     assert_eq!(decoded.len, 64);
     assert_eq!(decoded.crc32, 0xDEADBEEF);
-    assert_eq!(decoded._reserved, [0u8; 8]);
+    assert_eq!(decoded.version, WAL_HEADER_VERSION_LATEST);
+    assert_eq!(decoded._reserved, [0u8; 7]);
 }
 
 #[test]
 fn header_little_endian_verified() {
-    // Test from_bytes directly with known byte layout
+    // Wire format: bytes 0-7 = record_type(2)+len(2)+crc(4),
+    // byte 8 = version, bytes 9-15 = reserved (zero).
     let raw: [u8; 16] = [
         0x02, 0x01, // record_type = 0x0102 LE
         0x03, 0x04, // len = 0x0403 LE
         0x05, 0x06, 0x07, 0x08, // crc32 LE
-        0x00, 0x00, 0x00, 0x00, // _reserved
-        0x00, 0x00, 0x00, 0x00, // _reserved
+        WAL_HEADER_VERSION_V1, // version
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
     ];
     let h = WalHeader::from_bytes(&raw).unwrap();
     assert_eq!(h.record_type, 0x0102);
     assert_eq!(h.len, 0x0403);
     assert_eq!(h.crc32, 0x08070605);
-    assert_eq!(h._reserved, [0u8; 8]);
+    assert_eq!(h.version, WAL_HEADER_VERSION_V1);
+    assert_eq!(h._reserved, [0u8; 7]);
+}
+
+#[test]
+fn header_new_writes_latest_version() {
+    let header = WalHeader::new(1, 0, 0);
+    assert_eq!(header.version, WAL_HEADER_VERSION_LATEST);
+    assert_eq!(WAL_HEADER_VERSION_LATEST, WAL_HEADER_VERSION_V1);
+}
+
+#[test]
+fn header_v0_legacy_zero_is_supported() {
+    // Pre-version-byte WALs had bytes 8-15 all zero. They
+    // must still decode to a supported version (back-compat).
+    let raw: [u8; 16] = [
+        0x01, 0x00, 0x40, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let h = WalHeader::from_bytes(&raw).unwrap();
+    assert_eq!(h.version, WAL_HEADER_VERSION_V0);
+    assert!(
+        h.is_supported_version(),
+        "v0 must remain readable for back-compat"
+    );
+}
+
+#[test]
+fn header_unknown_version_rejected() {
+    let raw: [u8; 16] = [
+        0x01, 0x00, 0x40, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
+        0xFF, // unknown version
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let h = WalHeader::from_bytes(&raw).unwrap();
+    assert_eq!(h.version, 0xFF);
+    assert!(
+        !h.is_supported_version(),
+        "unknown version must be rejected"
+    );
 }
 
 #[test]
