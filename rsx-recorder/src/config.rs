@@ -4,15 +4,15 @@ use std::io;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct RecorderConfig {
-    pub stream_id: u32,
-    pub producer_addr: String,
-    pub archive_dir: PathBuf,
-    pub tip_file: PathBuf,
+pub(crate) struct RecorderConfig {
+    pub(crate) stream_id: u32,
+    pub(crate) producer_addr: String,
+    pub(crate) archive_dir: PathBuf,
+    pub(crate) tip_file: PathBuf,
 }
 
 impl RecorderConfig {
-    pub fn from_env() -> io::Result<Self> {
+    pub(crate) fn from_env() -> io::Result<Self> {
         let stream_id = get_env_u32("RSX_RECORDER_STREAM_ID")?;
         let producer_addr =
             get_env_string("RSX_RECORDER_PRODUCER_ADDR")?;

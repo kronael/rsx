@@ -9,14 +9,6 @@ pub fn time_ns() -> u64 {
 }
 
 #[inline]
-pub fn time_us() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros() as u64
-}
-
-#[inline]
 pub fn time_ms() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

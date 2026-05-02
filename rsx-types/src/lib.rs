@@ -81,8 +81,6 @@ pub enum FailureReason {
 /// Sentinel for "no index" in slab/level linked lists.
 pub const NONE: u32 = u32::MAX;
 
-pub type SlabIdx = u32;
-
 #[derive(Clone, Debug)]
 pub struct SymbolConfig {
     pub symbol_id: u32,
