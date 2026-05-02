@@ -138,7 +138,10 @@ fn test_validate_jwt_malformed() {
 
 #[test]
 fn test_validate_jwt_rejects_nbf_in_future() {
-    use jsonwebtoken::{encode, EncodingKey, Header, Algorithm};
+    use jsonwebtoken::encode;
+    use jsonwebtoken::EncodingKey;
+    use jsonwebtoken::Header;
+    use jsonwebtoken::Algorithm;
     let secret = "a-secret-that-is-32-chars-long-padpadpad";
     let user_id = 7u32;
     let exp = now_secs() + 3600;
