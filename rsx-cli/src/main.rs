@@ -7,12 +7,26 @@ use rsx_messages::*;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
+use std::process::exit;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+/// Print error and exit with code 1 (runtime error).
+fn die(msg: impl std::fmt::Display) -> ! {
+    eprintln!("Error: {}", msg);
+    exit(1);
+}
+
+/// Print error and exit with code 2 (CLI misuse).
+fn misuse(msg: impl std::fmt::Display) -> ! {
+    eprintln!("Error: {}", msg);
+    exit(2);
+}
 
 #[derive(Parser)]
 #[command(name = "rsxcli", about = "RSX CLI tools")]
@@ -90,10 +104,9 @@ impl Filters {
         for s in &record_types {
             match name_to_record_type(s.as_str()) {
                 Some(rt) => rts.push(rt),
-                None => {
-                    eprintln!("error: unknown record type: {}", s);
-                    std::process::exit(1);
-                }
+                None => misuse(format!(
+                    "unknown record type: {}", s,
+                )),
             }
         }
         Filters { record_types: rts, symbol, user, from_ts, to_ts }
@@ -720,8 +733,9 @@ fn install_ctrlc_handler() -> Arc<AtomicBool> {
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
     })
-    // SAFETY: fail-fast at startup
-    .expect("failed to set ctrl-c handler");
+    .unwrap_or_else(|e| {
+        die(format!("failed to install signal handler: {}", e))
+    });
     running
 }
 
@@ -738,8 +752,9 @@ fn wal_dump(
     let mut reader = WalReader::open_from_seq(
         stream_id, from_seq, &wal_dir,
     )
-    // SAFETY: fail-fast at startup (CLI subcommand)
-    .expect("failed to open wal");
+    .unwrap_or_else(|e| {
+        die(format!("failed to open wal: {}", e))
+    });
 
     if stats {
         dump_stats(&mut reader, &filters);
@@ -767,7 +782,7 @@ fn wal_dump(
 /// Re-opens WalReader from last_seq+1 when None is returned.
 fn dump_follow_text(
     stream_id: u32,
-    wal_dir: &PathBuf,
+    wal_dir: &Path,
     from_seq: u64,
     filters: &Filters,
     running: &Arc<AtomicBool>,
@@ -777,8 +792,9 @@ fn dump_follow_text(
     let mut reader = WalReader::open_from_seq(
         stream_id, next_seq, wal_dir,
     )
-    // SAFETY: fail-fast at startup (CLI subcommand)
-    .expect("failed to open wal");
+    .unwrap_or_else(|e| {
+        die(format!("failed to open wal: {}", e))
+    });
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -837,7 +853,7 @@ fn dump_follow_text(
 /// Poll loop for --follow JSON mode.
 fn dump_follow_json(
     stream_id: u32,
-    wal_dir: &PathBuf,
+    wal_dir: &Path,
     from_seq: u64,
     filters: &Filters,
     running: &Arc<AtomicBool>,
@@ -847,8 +863,9 @@ fn dump_follow_json(
     let mut reader = WalReader::open_from_seq(
         stream_id, next_seq, wal_dir,
     )
-    // SAFETY: fail-fast at startup (CLI subcommand)
-    .expect("failed to open wal");
+    .unwrap_or_else(|e| {
+        die(format!("failed to open wal: {}", e))
+    });
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -994,11 +1011,17 @@ fn dump_file(file: PathBuf) {
     use std::fs::File;
     use std::io::Read;
 
-    // SAFETY: fail-fast at startup (CLI subcommand)
-    let mut f = File::open(&file).expect("failed to open file");
+    let mut f = File::open(&file).unwrap_or_else(|e| {
+        die(format!(
+            "failed to open {}: {}", file.display(), e,
+        ))
+    });
     let mut buf = Vec::new();
-    // SAFETY: fail-fast at startup (CLI subcommand)
-    f.read_to_end(&mut buf).expect("failed to read file");
+    f.read_to_end(&mut buf).unwrap_or_else(|e| {
+        die(format!(
+            "failed to read {}: {}", file.display(), e,
+        ))
+    });
 
     let mut offset = 0;
     let mut count = 0;
