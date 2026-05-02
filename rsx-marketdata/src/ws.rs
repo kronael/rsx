@@ -119,7 +119,9 @@ pub async fn ws_read_frame(
         res?;
         // SAFETY: ext is exactly 8 bytes from read_exact
         usize::from_be_bytes(
-            ext[..8].try_into().unwrap(),
+            ext[..8].try_into().expect(
+                "INVARIANT: ext is exactly 8 bytes from read_exact",
+            ),
         )
     };
 

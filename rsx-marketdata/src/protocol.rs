@@ -79,7 +79,9 @@ pub fn parse_client_frame(
         return Err(MdParseError::MultipleKeys);
     }
     // SAFETY: obj.len()==1 checked above
-    let (key, value) = obj.iter().next().unwrap();
+    let (key, value) = obj.iter().next().expect(
+        "INVARIANT: obj has exactly one entry (len==1 checked above)",
+    );
     let arr = value
         .as_array()
         .ok_or(MdParseError::InvalidJson)?;
