@@ -433,12 +433,9 @@ impl CmpSender {
 pub struct CmpReceiver {
     socket: UdpSocket,
     sender_addr: SocketAddr,
-    /// If true, accept datagrams from any source IP.
-    /// If false (default), drop datagrams whose source IP
-    /// doesn't match `sender_addr.ip()`.
-    allow_any_source: bool,
-    /// Throttle: time of last "dropped from unauthorized
-    /// source" warning. Avoid log-flood under attack.
+    /// Throttle: time of last "dropped" warning (e.g. on
+    /// unsupported wire version). Avoids log-flood from a
+    /// stuck or buggy peer.
     last_drop_warn: Instant,
     expected_seq: u64,
     highest_seen: u64,
@@ -475,7 +472,6 @@ impl CmpReceiver {
         Ok(Self {
             socket,
             sender_addr,
-            allow_any_source: config.recv_allow_any_source,
             last_drop_warn: Instant::now()
                 .checked_sub(Duration::from_secs(60))
                 .unwrap_or_else(Instant::now),
@@ -498,38 +494,7 @@ impl CmpReceiver {
     ) -> Option<(WalHeader, Vec<u8>)> {
         loop {
             match self.socket.recv_from(&mut self.buf) {
-                Ok((n, src)) => {
-                    // Filter source: drop datagrams whose
-                    // source IP doesn't match the expected
-                    // sender. Bypass when (a) explicitly
-                    // allowed, or (b) sender_addr.ip() is the
-                    // unspecified address (`0.0.0.0` / `::`),
-                    // which means "I don't know the source IP
-                    // ahead of time" — typical for senders
-                    // bound to 0.0.0.0:0.
-                    let expected_ip = self.sender_addr.ip();
-                    if !self.allow_any_source
-                        && !expected_ip.is_unspecified()
-                        && src.ip() != expected_ip
-                    {
-                        // Throttle warning to once per 5s
-                        // to avoid log-flood under spray.
-                        let now = Instant::now();
-                        if now
-                            .duration_since(self.last_drop_warn)
-                            >= Duration::from_secs(5)
-                        {
-                            warn!(
-                                "cmp: dropped datagram from \
-                                 unauthorized source {} \
-                                 (expected ip={})",
-                                src,
-                                self.sender_addr.ip()
-                            );
-                            self.last_drop_warn = now;
-                        }
-                        continue;
-                    }
+                Ok((n, _)) => {
                     if n < WalHeader::SIZE {
                         continue;
                     }
