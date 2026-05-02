@@ -147,7 +147,9 @@ pub fn parse(text: &str) -> Result<WsFrame, ParseError> {
         return Err(ParseError::MultipleKeys);
     }
     // SAFETY: obj.len()==1 checked above
-    let (key, value) = obj.iter().next().unwrap();
+    let (key, value) = obj.iter().next().expect(
+        "INVARIANT: obj has exactly one entry (len==1 checked above)",
+    );
 
     // Validate key is alphabetic
     if !key.chars().all(|c| c.is_ascii_alphabetic()) {
