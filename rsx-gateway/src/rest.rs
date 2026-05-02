@@ -63,7 +63,6 @@ pub async fn handle_rest(
             return;
         }
     };
-    // Strip query string
     let path = path.split('?').next().unwrap_or(path);
 
     match path {

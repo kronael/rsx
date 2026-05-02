@@ -35,7 +35,7 @@ use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
 use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
-use rsx_risk::PersistEvent;
+use rsx_risk::persist::PersistEvent;
 use rsx_types::install_panic_handler;
 use rsx_types::FailureReason;
 use rsx_types::time::time;

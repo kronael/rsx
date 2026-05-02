@@ -153,7 +153,6 @@ impl MarketDataState {
                 &book.derive_l2_snapshot(depth as usize),
             ));
         }
-        // empty-book snapshot
         Some(serialize_l2_snapshot(
             &crate::types::L2Snapshot {
                 symbol_id,
