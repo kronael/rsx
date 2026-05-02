@@ -1083,6 +1083,11 @@ fn run_replica(
     // After promotion, restart as main
     // lease released at scope end
     drop(client);
+    // TODO(.ship/13-A16Z-FIXES T3.2): replica→main promotion uses
+    // std::env::set_var (UB-adjacent on glibc with concurrent reads
+    // — see rust-lang/rust#27970) and a recursive run_main call
+    // (stack growth on every promotion). Refactor to a state-machine
+    // loop. Deferred — needs replication E2E coverage to grow first.
     std::env::set_var("RSX_RISK_IS_REPLICA", "false");
     run_main(shard_id, max_symbols)
 }

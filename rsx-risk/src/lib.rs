@@ -8,6 +8,16 @@
 //! Receives orders from gateway via CMP/UDP, routes to
 //! matching engines, processes fills back. DXS replay
 //! for crash recovery from last persisted tip.
+//!
+//! Lock order: none. The hot-path tile is single-threaded
+//! (one pinned thread owns RiskShard); cross-thread state
+//! handoff is exclusively through SPSC rings. The persist
+//! sidecar uses its own Postgres client — no shared locks
+//! between tiles. Only postgres-side row/advisory locks
+//! exist (see `lease.rs`: AdvisoryLease) and they're held
+//! solely by the main-thread tokio runtime, never by the
+//! pinned tile. If you add a Mutex/RwLock/DashMap, document
+//! the acquisition order here.
 
 pub mod types;
 pub mod position;

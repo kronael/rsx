@@ -440,7 +440,7 @@ fn main() {
                     };
                     wal_writer
                         .append(&mut fail)
-                        .expect("wal append failed (duplicate-reject path) — matching is authoritative, cannot silently lose record");
+                        .expect("wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)");
                     if let Err(e) = cmp_sender.send(&mut fail) {
                         warn!("cmp send fail-record (duplicate): {e}");
                     }
@@ -469,7 +469,7 @@ fn main() {
                         };
                     wal_writer
                         .append(&mut accepted)
-                        .expect("wal append failed (order-accepted path) — matching is authoritative, cannot silently lose record");
+                        .expect("wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay");
 
                     let mut incoming =
                         order_msg.to_incoming();
@@ -486,7 +486,7 @@ fn main() {
                         symbol_id,
                         ts_ns,
                     )
-                    .expect("wal append failed (event path) — invariant #1 (fills precede ORDER_DONE) demands persistence");
+                    .expect("wal append failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
 
                     // Maintain the (user, oid) -> handle
                     // index so subsequent cancels are O(1).
@@ -787,7 +787,7 @@ fn emit_config_applied(
         applied_at_ns: ts,
     };
     wal.append(&mut record)
-        .expect("wal append failed (config_applied) — must persist before announcing");
+        .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede CMP fan-out");
     if let Err(e) = risk_sender.send(&mut record) {
         warn!("cmp send config_applied to risk failed: {e}");
     }
@@ -910,7 +910,7 @@ fn process_cancel(
     write_events_to_wal(
         wal_writer, book, symbol_id, ts_ns,
     )
-    .expect("wal append failed (cancel path) — cancel events must persist");
+    .expect("wal append failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
     for event in book.events() {
         if let Err(e) = send_event_cmp(
             cmp_sender, event, symbol_id, ts_ns,
