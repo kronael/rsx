@@ -32,6 +32,7 @@ use rsx_types::SymbolConfig;
 use rsx_types::time::time_ms;
 use rsx_types::time::time_ns;
 use rsx_matching::dedup::DedupTracker;
+use rustc_hash::FxHashMap;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
@@ -43,6 +44,52 @@ use tracing::info;
 use tracing::warn;
 
 const REASON_DUPLICATE: u8 = 3;
+
+/// Key into the order index. The matching engine maintains
+/// `FxHashMap<OrderKey, slab_handle: u32>` so cancels are
+/// O(1) instead of an O(n) slab scan. Updated from
+/// `book.events()` after every match cycle: OrderInserted
+/// adds, OrderDone removes.
+type OrderKey = (u32, u64, u64);
+
+/// After a match cycle, walk `book.events()` once and keep
+/// the order index in sync. Insert on OrderInserted, remove
+/// on OrderDone (which fires for every terminal transition,
+/// including fully-filled and cancelled).
+fn update_order_index(
+    events: &[rsx_book::event::Event],
+    index: &mut FxHashMap<OrderKey, u32>,
+) {
+    for event in events {
+        match *event {
+            rsx_book::event::Event::OrderInserted {
+                handle,
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                ..
+            } => {
+                index.insert(
+                    (user_id, order_id_hi, order_id_lo),
+                    handle,
+                );
+            }
+            rsx_book::event::Event::OrderDone {
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                ..
+            } => {
+                index.remove(&(
+                    user_id,
+                    order_id_hi,
+                    order_id_lo,
+                ));
+            }
+            _ => {}
+        }
+    }
+}
 
 fn log_effective_matching_config(
     cfg: &SymbolConfig,
@@ -351,6 +398,11 @@ fn main() {
     }
 
     let mut dedup = DedupTracker::new();
+    // (user_id, oid_hi, oid_lo) -> slab handle. Maintained
+    // from book.events() after every match cycle. Replaces
+    // the O(n) slab scan in process_cancel.
+    let mut order_index: FxHashMap<OrderKey, u32> =
+        FxHashMap::default();
 
     info!("matching engine started");
 
@@ -442,6 +494,13 @@ fn main() {
                     )
                     .expect("wal append failed (event path) — invariant #1 (fills precede ORDER_DONE) demands persistence");
 
+                    // Maintain the (user, oid) -> handle
+                    // index so subsequent cancels are O(1).
+                    update_order_index(
+                        book.events(),
+                        &mut order_index,
+                    );
+
                     // CMP sends are best-effort: receivers
                     // recover via NAK / TCP replay.
                     for event in book.events() {
@@ -485,10 +544,15 @@ fn main() {
                     &mut wal_writer,
                     &mut cmp_sender,
                     &mut mkt_sender,
+                    &order_index,
                     symbol_id,
                     req.user_id,
                     req.order_id_hi,
                     req.order_id_lo,
+                );
+                update_order_index(
+                    book.events(),
+                    &mut order_index,
                 );
             }
         } else if book.is_migrating() {
@@ -740,37 +804,47 @@ fn emit_config_applied(
 
 /// Cancel a resting order by order_id, emit events,
 /// write WAL, and send CMP to risk + marketdata.
+///
+/// Looks up the slab handle in `order_index` (O(1)) instead
+/// of a linear slab scan. The caller must call
+/// `update_order_index` after this returns so the OrderDone
+/// event removes the entry.
 fn process_cancel(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
     cmp_sender: &mut CmpSender,
     mkt_sender: &mut CmpSender,
+    order_index: &FxHashMap<OrderKey, u32>,
     symbol_id: u32,
     user_id: u32,
     order_id_hi: u64,
     order_id_lo: u64,
 ) {
-    // Find the slab handle by scanning active orders.
-    // Slab is bounded (capacity=1024), so linear scan
-    // is acceptable on the hot path for cancels.
-    let cap = book.orders.len();
-    let mut found = NONE;
-    for i in 0..cap {
-        let slot = book.orders.get(i);
-        if slot.is_active()
-            && slot.user_id == user_id
-            && slot.order_id_hi == order_id_hi
-            && slot.order_id_lo == order_id_lo
-        {
-            found = i;
-            break;
+    let key: OrderKey = (user_id, order_id_hi, order_id_lo);
+    let found = match order_index.get(&key) {
+        Some(&h) => h,
+        None => {
+            warn!(
+                "cancel: order not found \
+                 user={} id={:#x}/{:#x}",
+                user_id, order_id_hi, order_id_lo,
+            );
+            return;
         }
-    }
-    if found == NONE {
+    };
+    // Defensive: index says the order exists; verify the
+    // slab slot still matches before we cancel. This catches
+    // any drift between index and slab without crashing.
+    let slot_check = book.orders.get(found);
+    if !slot_check.is_active()
+        || slot_check.user_id != user_id
+        || slot_check.order_id_hi != order_id_hi
+        || slot_check.order_id_lo != order_id_lo
+    {
         warn!(
-            "cancel: order not found \
-             user={} id={:#x}/{:#x}",
-            user_id, order_id_hi, order_id_lo,
+            "cancel: index/slab drift detected \
+             user={} id={:#x}/{:#x} handle={}",
+            user_id, order_id_hi, order_id_lo, found,
         );
         return;
     }
