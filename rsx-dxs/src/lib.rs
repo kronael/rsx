@@ -19,8 +19,6 @@ pub mod server;
 pub mod client;
 pub mod config;
 
-// Backwards-compatible alias for the old module name. Slated
-// for removal once external references have settled.
 pub use protocol as records;
 
 pub use header::WalHeader;
@@ -28,26 +26,17 @@ pub use protocol::CmpHeartbeat;
 pub use protocol::CmpRecord;
 pub use protocol::CaughtUpRecord;
 pub use protocol::Nak;
-pub use protocol::ReplayRequest;
 pub use protocol::StatusMessage;
 pub use protocol::RECORD_CAUGHT_UP;
 pub use protocol::RECORD_HEARTBEAT;
 pub use protocol::RECORD_NAK;
-pub use protocol::RECORD_REPLAY_REQUEST;
 pub use protocol::RECORD_STATUS_MESSAGE;
 pub use encode_utils::as_bytes;
 pub use encode_utils::compute_crc32;
-pub use encode_utils::decode_payload;
 pub use encode_utils::encode_record;
-pub use wal::extract_seq;
 pub use wal::read_record_at_seq;
 pub use wal::RawWalRecord;
 pub use wal::WalReader;
 pub use wal::WalWriter;
-pub use cmp::CmpReceiver;
-pub use cmp::CmpSender;
-pub use cmp::MAX_PAYLOAD;
 pub use server::DxsReplayService;
 pub use client::DxsConsumer;
-pub use config::CmpConfig;
-pub use config::TlsConfig;

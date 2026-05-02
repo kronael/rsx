@@ -20,13 +20,9 @@ pub mod matching;
 pub mod migration;
 pub mod snapshot;
 
-pub use book::BookState;
 pub use book::Orderbook;
 pub use compression::CompressionMap;
 pub use event::Event;
 pub use level::PriceLevel;
 pub use order::OrderSlot;
 pub use slab::Slab;
-pub use user::UserState;
-pub use user::try_reclaim;
-pub use user::RECLAIM_GRACE_NS;
