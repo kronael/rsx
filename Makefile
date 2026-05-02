@@ -5,7 +5,7 @@
        play-infra play-orders play-nav play-api \
        play-full \
        api-unit api-integration api-stress \
-       bench-webui bench-gate bench-save help check-progress acceptance-bundle \
+       bench-webui bench-gate bench-save latency-publish help check-progress acceptance-bundle \
        gen-release-truth release-gate \
        lint-snapshot lint-snapshot-tests ci-guard publish-progress regen-progress exit-criteria task-report status-doctor \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
@@ -301,6 +301,13 @@ bench-gate:
 
 bench-save:
 	bash scripts/bench-gate.sh --save-baseline
+
+# Drive the F1 latency probe under load and write measured
+# E2E p50/p99 (GW->ME->GW round trip) into bench-baseline.json.
+# Pre: rsx-playground/playground start-all && rsx-maker running.
+# Default N=2000; override with N=10000 etc.
+latency-publish:
+	bash scripts/latency-publish.sh
 
 # WebUI render benchmark: measures p50/p95/p99 React render latency
 # per orderbook delta update. Asserts p95 < 16ms (one rAF frame).
