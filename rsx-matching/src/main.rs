@@ -577,12 +577,14 @@ fn main() {
                             book.update_config(new_config);
                             config_version = cfg.config_version;
                             let ts = time_ns();
-                            let _ = rt.block_on(write_applied_config(
+                            if let Err(e) = rt.block_on(write_applied_config(
                                 client,
                                 symbol_id,
                                 &cfg,
                                 ts,
-                            ));
+                            )) {
+                                warn!("matching: write_applied_config failed: {e}");
+                            }
                             emit_config_applied(
                                 &mut wal_writer,
                                 &mut cmp_sender,
@@ -601,9 +603,11 @@ fn main() {
             last_config_poll = Instant::now();
         }
 
-        let _ = flush_if_due(
+        if let Err(e) = flush_if_due(
             &mut wal_writer, &mut last_flush,
-        );
+        ) {
+            warn!("matching: wal flush_if_due failed: {e}");
+        }
 
         // Save snapshot every 10s
         if last_snapshot.elapsed().as_secs() >= 10 {

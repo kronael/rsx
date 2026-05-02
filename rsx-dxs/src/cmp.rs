@@ -215,10 +215,10 @@ impl CmpSender {
                 .copy_from_slice(&hdr_bytes);
             self.buf[WalHeader::SIZE..total]
                 .copy_from_slice(payload);
-            let _ = self.socket.send_to(
+            self.socket.send_to(
                 &self.buf[..total],
                 self.dest,
-            );
+            )?;
             self.last_heartbeat = now;
         }
         Ok(())
@@ -725,10 +725,12 @@ impl CmpReceiver {
             .copy_from_slice(payload);
         let total =
             WalHeader::SIZE + payload.len();
-        let _ = self.socket.send_to(
+        if let Err(e) = self.socket.send_to(
             &buf[..total],
             self.sender_addr,
-        );
+        ) {
+            warn!("cmp: send_nak failed: {e}");
+        }
     }
 
     pub fn tick(&mut self) {
@@ -760,10 +762,12 @@ impl CmpReceiver {
                 .copy_from_slice(payload);
             let total =
                 WalHeader::SIZE + payload.len();
-            let _ = self.socket.send_to(
+            if let Err(e) = self.socket.send_to(
                 &buf[..total],
                 self.sender_addr,
-            );
+            ) {
+                warn!("cmp: status send failed: {e}");
+            }
             self.last_status = now;
         }
     }

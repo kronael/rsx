@@ -469,10 +469,12 @@ fn run_main(
                     if let Some(s) = me_senders
                         .get_mut(&cancel.symbol_id)
                     {
-                        let _ = s.send_raw(
+                        if let Err(e) = s.send_raw(
                             RECORD_CANCEL_REQUEST,
                             &payload,
-                        );
+                        ) {
+                            warn!("risk: forward cancel to me failed: {e}");
+                        }
                     } else {
                         warn!(
                             "cancel for unknown \
@@ -502,6 +504,7 @@ fn run_main(
                                 as *const BboRecord,
                         )
                     };
+                    // ring full = drop newest (intentional backpressure)
                     let _ = bbo_prod.push(BboUpdate {
                         seq: rec.seq,
                         symbol_id: rec.symbol_id,
@@ -512,10 +515,12 @@ fn run_main(
                     });
                     // Forward to GW to maintain CMP seq
                     // continuity (GW ignores BBO content).
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_BBO,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward bbo to gw failed: {e}");
+                    }
                 }
                 RECORD_FILL
                     if payload.len()
@@ -529,6 +534,7 @@ fn run_main(
                                 as *const FillRecord,
                         )
                     };
+                    // ring full = drop newest (intentional backpressure)
                     let _ = fill_prod.push(FillEvent {
                         seq: fill.seq,
                         symbol_id: fill.symbol_id,
@@ -542,10 +548,12 @@ fn run_main(
                         timestamp_ns: fill.ts_ns,
                     });
                     // Forward fill to GW
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_FILL,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward fill to gw failed: {e}");
+                    }
                 }
                 RECORD_ORDER_DONE
                     if payload.len()
@@ -565,10 +573,12 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_ORDER_DONE,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward order_done to gw failed: {e}");
+                    }
                 }
                 RECORD_ORDER_CANCELLED
                     if payload.len()
@@ -588,10 +598,12 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_ORDER_CANCELLED,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward order_cancelled to gw failed: {e}");
+                    }
                 }
                 RECORD_ORDER_INSERTED
                     if payload.len()
@@ -599,10 +611,12 @@ fn run_main(
                             OrderInsertedRecord,
                         >() =>
                 {
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_ORDER_INSERTED,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward order_inserted to gw failed: {e}");
+                    }
                 }
                 RECORD_ORDER_FAILED
                     if payload.len()
@@ -622,10 +636,12 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_ORDER_FAILED,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward order_failed to gw failed: {e}");
+                    }
                 }
                 RECORD_CONFIG_APPLIED
                     if payload.len()
@@ -649,10 +665,12 @@ fn run_main(
                         rec.symbol_id,
                         rec.config_version,
                     );
-                    let _ = gw_sender.send_raw(
+                    if let Err(e) = gw_sender.send_raw(
                         RECORD_CONFIG_APPLIED,
                         &payload,
-                    );
+                    ) {
+                        warn!("risk: forward config_applied to gw failed: {e}");
+                    }
                 }
                 _ => {}
             }
@@ -674,6 +692,7 @@ fn run_main(
                             as *const MarkPriceRecord,
                     )
                 };
+                // ring full = drop newest (intentional backpressure)
                 let _ = mark_prod.push(MarkPriceUpdate {
                     seq: rec.seq,
                     symbol_id: rec.symbol_id,
@@ -725,10 +744,12 @@ fn run_main(
                         >(),
                     )
                 };
-                let _ = gw_sender.send_raw(
+                if let Err(e) = gw_sender.send_raw(
                     RECORD_ORDER_FAILED,
                     bytes,
-                );
+                ) {
+                    warn!("risk: send order_failed to gw failed: {e}");
+                }
             }
         }
 
@@ -769,10 +790,12 @@ fn run_main(
             if let Some(s) = me_senders
                 .get_mut(&order.symbol_id)
             {
-                let _ = s.send_raw(
+                if let Err(e) = s.send_raw(
                     RECORD_ORDER_REQUEST,
                     bytes,
-                );
+                ) {
+                    warn!("risk: forward order to me failed: {e}");
+                }
             } else {
                 warn!(
                     "order for unknown symbol_id={}",
@@ -783,10 +806,14 @@ fn run_main(
 
         // CMP housekeeping
         for s in me_senders.values_mut() {
-            let _ = s.tick();
+            if let Err(e) = s.tick() {
+                warn!("risk: me_sender tick failed: {e}");
+            }
             s.recv_control();
         }
-        let _ = gw_sender.tick();
+        if let Err(e) = gw_sender.tick() {
+            warn!("risk: gw_sender tick failed: {e}");
+        }
         gw_receiver.tick();
         me_receiver.tick();
         mark_receiver.tick();
@@ -812,9 +839,13 @@ fn run_main(
                         >(),
                     )
                 };
-                let _ = sender.send_raw(0x20, bytes);
+                if let Err(e) = sender.send_raw(0x20, bytes) {
+                    warn!("risk: tip send to replica failed: {e}");
+                }
             }
-            let _ = sender.tick();
+            if let Err(e) = sender.tick() {
+                warn!("risk: tip_sender tick failed: {e}");
+            }
         }
 
         // Lease renewal (~1s interval)

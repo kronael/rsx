@@ -7,6 +7,7 @@ use sha1::Digest;
 use sha1::Sha1;
 use std::io;
 use tracing::info;
+use tracing::warn;
 
 const WS_MAGIC: &str =
     "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -114,7 +115,9 @@ Connection: close\r\n\
 \r\n";
                 let (res, _) =
                     stream.write_all(resp.to_vec()).await;
-                let _ = res;
+                if let Err(e) = res {
+                    warn!("gateway: 401 response write failed: {e}");
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "missing or invalid auth",

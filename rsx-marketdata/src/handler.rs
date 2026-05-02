@@ -58,7 +58,9 @@ pub async fn handle_connection(
             };
             let mut pong = vec![0x8A, pong_payload.len() as u8];
             pong.extend_from_slice(pong_payload);
-            let _ = ws_write_raw(&mut stream, &pong).await;
+            if let Err(e) = ws_write_raw(&mut stream, &pong).await {
+                warn!("md: pong write failed conn {}: {e}", conn_id);
+            }
             continue;
         }
 

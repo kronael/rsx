@@ -12,6 +12,7 @@ pub fn order_id_to_hex(id: &[u8; 16]) -> String {
     let mut s = String::with_capacity(32);
     for byte in id {
         use std::fmt::Write;
+        // write! into String is infallible
         let _ = write!(s, "{:02x}", byte);
     }
     s

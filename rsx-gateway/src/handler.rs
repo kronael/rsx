@@ -489,10 +489,12 @@ pub async fn handle_connection(
                 {
                     let mut sender =
                         cmp_sender.borrow_mut();
-                    let _ = sender.send_raw(
+                    if let Err(e) = sender.send_raw(
                         RECORD_ORDER_REQUEST,
                         bytes,
-                    );
+                    ) {
+                        warn!("gateway: forward order to risk failed: {e}");
+                    }
                     sender.advance_seq();
                 }
                 state
@@ -686,7 +688,9 @@ fn send_cancel(
             std::mem::size_of::<CancelRequest>(),
         )
     };
-    let _ = sender.send_raw(RECORD_CANCEL_REQUEST, bytes);
+    if let Err(e) = sender.send_raw(RECORD_CANCEL_REQUEST, bytes) {
+        warn!("gateway: forward cancel to risk failed: {e}");
+    }
     sender.advance_seq();
 }
 

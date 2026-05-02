@@ -320,7 +320,9 @@ fn main() {
                 }
             }
 
-            let _ = sender.borrow_mut().tick();
+            if let Err(e) = sender.borrow_mut().tick() {
+                tracing::warn!("gateway: cmp_sender tick failed: {e}");
+            }
             cmp_receiver.tick();
             sender.borrow_mut().recv_control();
 
