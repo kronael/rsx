@@ -206,6 +206,7 @@ fn handle_binance_msg(
                 "binance price: sym={} px={}",
                 symbol, price,
             );
+            // ring full = drop newest (intentional backpressure)
             let _ = tx.push(SourcePrice {
                 source_id,
                 price,
@@ -244,6 +245,7 @@ fn handle_coinbase_msg(
         Some(p) => p,
         None => return,
     };
+    // ring full = drop newest (intentional backpressure)
     let _ = tx.push(SourcePrice {
         source_id,
         price,

@@ -968,6 +968,7 @@ impl RiskShard {
                 resp,
                 OrderResponse::Accepted { .. }
             ) {
+                // ring full = drop newest (intentional backpressure)
                 let _ = rings
                     .accepted_producer
                     .push(order);
@@ -996,10 +997,12 @@ impl RiskShard {
                 resp,
                 OrderResponse::Accepted { .. }
             ) {
+                // ring full = drop newest (intentional backpressure)
                 let _ = rings
                     .accepted_producer
                     .push(order.clone());
             }
+            // ring full = drop newest (intentional backpressure)
             let _ = rings.response_producer.push(resp);
         }
 

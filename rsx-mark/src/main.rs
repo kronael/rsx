@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
+use tracing::warn;
 
 const FLUSH_INTERVAL: Duration =
     Duration::from_millis(10);
@@ -183,10 +184,12 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                                 std::mem::size_of_val(&evt),
                             )
                         };
-                        let _ = mark_sender.send_raw(
+                        if let Err(e) = mark_sender.send_raw(
                             RECORD_MARK_PRICE,
                             bytes,
-                        );
+                        ) {
+                            warn!("mark: cmp send (aggregate) failed: {e}");
+                        }
                     }
                 }
             }
@@ -216,10 +219,12 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                                 std::mem::size_of_val(&evt),
                             )
                         };
-                        let _ = mark_sender.send_raw(
+                        if let Err(e) = mark_sender.send_raw(
                             RECORD_MARK_PRICE,
                             bytes,
-                        );
+                        ) {
+                            warn!("mark: cmp send (sweep) failed: {e}");
+                        }
                     }
                 }
             }
@@ -230,11 +235,15 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         if now.duration_since(last_flush)
             >= FLUSH_INTERVAL
         {
-            let _ = wal_writer.flush();
+            if let Err(e) = wal_writer.flush() {
+                warn!("mark: wal flush failed: {e}");
+            }
             last_flush = now;
         }
 
-        let _ = mark_sender.tick();
+        if let Err(e) = mark_sender.tick() {
+            warn!("mark: cmp_sender tick failed: {e}");
+        }
         mark_sender.recv_control();
 
         // bare busy-spin: no yield, dedicated core

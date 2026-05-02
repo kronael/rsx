@@ -36,7 +36,9 @@ fn set_timeout(
 ) {
     match ws.get_mut() {
         MaybeTlsStream::Plain(s) => {
-            let _ = s.set_read_timeout(Some(dur));
+            if let Err(e) = s.set_read_timeout(Some(dur)) {
+                warn!("maker: set_read_timeout failed: {e}");
+            }
         }
         _ => {}
     }
@@ -131,7 +133,9 @@ fn quote_cycle(
         drain(&mut ws, 2);
     }
 
-    let _ = ws.close(None);
+    if let Err(e) = ws.close(None) {
+        warn!("maker: ws close failed: {e}");
+    }
     Ok(())
 }
 
