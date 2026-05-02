@@ -16,7 +16,7 @@ lint gate, `rsx-dxs` production lib has zero `rsx-types` dep.
 | Reviewer Finding | Severity | Resolution | Files | Verifying tests |
 |---|---|---|---|---|
 | WAL append errors swallowed on fill path (`let _ = wal_writer.append(...)` x6) | **correctness** (Invariant #1) | `82a9206` — replaced with `.expect()` (matching is authoritative) for WAL; explicit `if let Err` log for CMP sends | `rsx-matching/src/main.rs` | existing matching tests still pass under the new error contract |
-| CMP UDP receiver accepts datagrams from any source IP | **CVE-grade**: anyone with L3 reach to ME owns matching | `acd245f` — filter on `src.ip() == sender_addr.ip()` (with unspecified-IP and `recv_allow_any_source` opt-outs); throttled drop warning | `rsx-dxs/src/cmp.rs`, `config.rs` | `cmp_drops_datagrams_from_unauthorized_source`, `cmp_allows_any_source_when_configured` |
+| CMP UDP receiver accepts datagrams from any source IP | **finding rejected on review**: spec §10.4 already states "trusted internal network, no authentication, no encryption." Auth is delegated to the gateway (JWT) for external clients and the L3 network (firewall/VPC/namespace) for internal peers. Adding a per-frame source-IP filter contradicts the spec's explicit trust model and gives false confidence. | `acd245f` was added then reverted. New rule in `CLAUDE.md` §"Trust boundaries" prevents the same misclassification next time. | `rsx-dxs/src/cmp.rs` (filter removed), `CLAUDE.md` (rule added) | n/a (no behaviour change vs. pre-`acd245f`) |
 | Gateway per-IP limiter map unbounded (slow-burn DoS via IP rotation) | **memory DoS** | `b579160` — hard cap at `IP_LIMITER_MAX = 10_000` with FIFO eviction via parallel `VecDeque` | `rsx-gateway/src/state.rs`, `handler.rs` | `ip_limiter_map_is_bounded` (inserts 10_005 IPs, asserts cap not exceeded and oldest evicted) |
 | JWT: short secret, no `nbf`, no `jti` replay protection | **auth surface** | `a6a92c3` — `JWT_SECRET_MIN_LEN = 32` (refuse to start), `validate_nbf=true`, new bounded `JtiTracker` (FIFO replay set) | `rsx-gateway/src/jwt.rs`, `config.rs` | `test_validate_jwt_rejects_nbf_in_future`, `test_jti_tracker_rejects_replay`, `test_jti_tracker_evicts_oldest_when_full` |
 | `send_ring` heap-allocates per send (`BTreeMap<u64, Vec<u8>>`) — contradicts "zero heap on hot path" | **perf** (likely cause of missed 50us budget) | `7befe76` — three preallocated `Box<[T]>` slabs (`ring_seqs[u64; 4096]`, `ring_lens[u16; 4096]`, `ring_frames[u8; 4096*128]`); slot index is `seq & MASK`; one-shot init, zero allocs on send path | `rsx-dxs/src/cmp.rs` | full `cmp_test` suite (12 tests) including `nak_retransmit_within_ring` and `nak_retransmit_from_wal` |
@@ -43,12 +43,12 @@ its own load-bearing risk if landed without proper coverage:
 
 | Metric | Before | After |
 |---|---|---|
-| `cargo test --workspace` passing | 871 | **880** (+9 new attack/version/JWT tests) |
+| `cargo test --workspace` passing | 871 | **878** (+7 net: version/JWT tests; -2 reverted source-IP attack tests) |
 | `cargo test --workspace` failing | 0 | **0** |
 | `rsx-dxs` production deps on `rsx-types` | (cleared by prior refactor) | 0 |
 | Domain types referenced in `rsx-dxs/src/` | 1 doc-comment | 1 doc-comment |
 | `let _ = wal.append(...)` in matching | 6 | 0 |
-| CMP datagrams accepted from arbitrary source | yes | no (default; `recv_allow_any_source` to opt out) |
+| CMP wire trust model | "trusted network" (per spec §10.4) | unchanged: spec was right; auth lives at the gateway and at L3, not at CMP |
 | Gateway ip_limiter map upper bound | unbounded | 10_000 entries, FIFO evict |
 | JWT min secret length enforced | no | yes (32 B) |
 | JWT `nbf` enforced | no | yes |
@@ -69,13 +69,15 @@ The audit's three converging conclusions were:
    `19a3d6e` flips the doc from "100% complete" to a
    measured-vs-budget framing the founder can defend.
 3. *The headline claims are not yet evidence-backed.* —
-   **closed for security** (CMP wire is now authenticated by
-   source IP; JWT is hardened; gateway memory is bounded);
-   **closed for correctness** (WAL errors now crash instead
-   of silently dropping fills; wire format is versioned);
-   **closed for the per-send heap claim** (`send_ring` is
-   genuinely heap-free now); **harness ready for the <50us
-   claim** (`make latency-publish` produces the number).
+   The CMP-unauth finding is **rejected on review** (spec
+   §10.4 already documented the trust model; CMP is
+   intentionally unauthenticated, auth lives at the gateway
+   and at the L3 network). What did land: **JWT hardened**
+   (min secret, nbf, jti tracker), **gateway memory
+   bounded**, **WAL errors crash instead of silently
+   dropping fills**, **wire format versioned**, **`send_ring`
+   genuinely heap-free**, and **harness ready for the <50us
+   claim** (`make latency-publish`).
 
 The next investor conversation can say:
 - "Your three pre-mainnet items? Closed. Here's the diff."

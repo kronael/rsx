@@ -93,6 +93,35 @@ rsx-auth/       Python auth service (uv; sqlx migrations)
 - Panic handler: `install_panic_handler()` from rsx_types
 - Document lock acquisition order where locks exist
 
+## Trust boundaries (read this before adding "security")
+
+When the spec explicitly delegates a concern to a different
+layer, do NOT add code in the layer that's being delegated
+*from*. Cite the spec; trust the boundary. Concretely:
+
+- **CMP is intentionally unauthenticated.** specs/2/4-cmp.md
+  §10.4 states "Trusted internal network. No authentication,
+  no encryption." Auth lives at the gateway (JWT, TLS) for
+  external clients and at the L3 network (firewall, VPC,
+  namespace) for internal RSX peers. Do not add per-frame
+  source-IP filters, MACs, or signing to CmpReceiver. If
+  cross-DC peer auth is ever genuinely needed, do it as a
+  sealed-frame extension under a future `WalHeader.version`,
+  not by retrofitting the current zero-copy path.
+- **The matching engine doesn't validate user input.** The
+  gateway and risk tile validate before the order ever
+  reaches ME. ME assumes its inputs are well-formed. Don't
+  add re-validation on the hot path.
+- **Audit-style "X is unauthenticated" findings are not
+  automatically actionable.** Read the spec first. If the
+  spec already documented X as out-of-scope-by-design (with
+  a named layer that owns it), the finding is closed by
+  citing the spec — not by writing code in the wrong layer.
+
+The general rule: every concern has one owner. Adding a
+second owner adds complexity, contradicts the spec, and
+gives false confidence. Don't do it.
+
 ## Documentation
 - NEVER use "rollout" as a heading or section name
 
