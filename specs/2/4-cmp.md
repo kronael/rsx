@@ -72,17 +72,21 @@ fixed-size, `#[repr(C, align(64))]` payload. **WAL bytes =
 disk bytes = wire bytes = memory bytes.**
 
 ```
-struct WalHeader {        // 16 bytes, repr(C)
+struct WalHeader {        // 16 bytes, manual encode
     record_type: u16,     // see RECORD_* constants
     len: u16,             // payload length in bytes
     crc32: u32,           // CRC32C of payload
-    _reserved: [u8; 8],   // reserved, must be zero
+    version: u8,          // wire-format version (V0 or V1)
+    _reserved: [u8; 7],   // reserved, must be zero
 }
 ```
 
-All fields little-endian. The reserved bytes are checked to
-be zero on receive — they're available for future
-extensions but no version field is allocated yet (see §10).
+All fields little-endian. `version` at offset 8 carries the
+wire-format version (`0` = legacy zero-reserved layout,
+accepted on read for back-compat; `1` = current, written by
+all new senders). Receivers reject unknown versions. The
+remaining 7 reserved bytes must be zero. See §10.2 for
+schema-evolution semantics.
 
 ### Payload size
 
@@ -445,14 +449,20 @@ cover everything we deploy on.
 
 Cannot remove or reorder fields in existing record types
 without breaking all readers. New record types are
-additive; readers ignore unknown `record_type`s. Breaking
-changes need a coordinated deploy: stop all producers,
-upgrade all readers, then producers.
+additive; readers ignore unknown `record_type`s.
 
-There is no version field. The 8 reserved bytes in the
-header are checked-zero on receive; if a future extension
-needs them, both sides must roll forward together. This
-is the cost of zero-copy wire bytes; we accept it.
+The header carries a `version: u8` at offset 8 (see §2).
+Adding a new record type does **not** bump the version —
+record types are additive. Bumping the version is reserved
+for changes that would break a v1 reader (header layout,
+CRC algorithm, alignment promises). A version bump requires
+a coordinated stop-redeploy across senders and receivers:
+upgrade all readers first, then flip senders.
+
+The legacy `V0` value (zero) is the pre-version-byte format
+and is accepted on read for back-compat with WALs written
+before this scheme landed; new writes never emit it.
+Receivers reject unknown versions outright.
 
 ### 10.3 Retransmit horizon: WAL retention
 

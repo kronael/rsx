@@ -520,6 +520,15 @@ impl WalReader {
                             "malformed header",
                         )
                     })?;
+            if !header.is_supported_version() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "unsupported wal header version v{}",
+                        header.version
+                    ),
+                ));
+            }
 
             // MAX_PAYLOAD check removed - header.len is u16, already bounded
 
@@ -739,6 +748,13 @@ fn scan_file_for_seq(
             Some(h) => h,
             None => return Ok(None),
         };
+        if !header.is_supported_version() {
+            // Mid-scan version mismatch — give up; this scan
+            // path is best-effort (NAK fallback) and a
+            // surrounding log line elsewhere will surface the
+            // bad file.
+            return Ok(None);
+        }
         let mut payload = vec![0u8; header.len as usize];
         match file.read_exact(&mut payload) {
             Ok(()) => {}

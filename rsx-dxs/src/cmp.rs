@@ -335,6 +335,11 @@ impl CmpSender {
                         Some(h) => h,
                         None => continue,
                     };
+                    if !hdr.is_supported_version() {
+                        // Sender's control reply uses
+                        // unknown wire version; drop.
+                        continue;
+                    }
                     let payload =
                         &cbuf[WalHeader::SIZE..n];
                     match hdr.record_type {
@@ -534,6 +539,25 @@ impl CmpReceiver {
                         Some(h) => h,
                         None => continue,
                     };
+                    if !hdr.is_supported_version() {
+                        // Unknown wire version; receiver
+                        // doesn't know how to interpret the
+                        // payload, drop. Throttled to avoid
+                        // log-flood under attack or bug.
+                        let now = Instant::now();
+                        if now
+                            .duration_since(self.last_drop_warn)
+                            >= Duration::from_secs(5)
+                        {
+                            warn!(
+                                "cmp: dropped datagram with \
+                                 unsupported version v{}",
+                                hdr.version
+                            );
+                            self.last_drop_warn = now;
+                        }
+                        continue;
+                    }
                     let payload_len = hdr.len as usize;
                     if payload_len > MAX_PAYLOAD {
                         continue;

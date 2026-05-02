@@ -281,6 +281,15 @@ impl DxsConsumer {
                             "bad header",
                         )
                     })?;
+            if !header.is_supported_version() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "dxs replay: unsupported wire version v{}",
+                        header.version
+                    ),
+                ));
+            }
 
             let payload_len = header.len as usize;
             let mut payload = vec![0u8; payload_len];
@@ -368,6 +377,15 @@ impl DxsConsumer {
                             "bad header",
                         )
                     })?;
+            if !header.is_supported_version() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "dxs replay: unsupported wire version v{}",
+                        header.version
+                    ),
+                ));
+            }
 
             let payload_len = header.len as usize;
             let mut payload = vec![0u8; payload_len];
