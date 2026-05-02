@@ -9,15 +9,31 @@ fn env_var<T: std::str::FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+/// CMP transport configuration.
+///
+/// All fields can be overridden via env vars (see
+/// [`CmpConfig::from_env`]); defaults are tuned for a trusted
+/// LAN with <1ms RTT.
 #[derive(Debug, Clone)]
 pub struct CmpConfig {
+    /// Receiver-side cap on out-of-order packets buffered
+    /// while waiting for a NAK to fill a gap. Overflow drops
+    /// the oldest gap and re-syncs. Env: `RSX_CMP_REORDER_BUF_LIMIT`.
     pub reorder_buf_limit: usize,
+    /// Sender heartbeat cadence in ms. Receivers use these
+    /// to detect gaps when no data is flowing.
+    /// Env: `RSX_CMP_HEARTBEAT_INTERVAL_MS`.
     pub heartbeat_interval_ms: u64,
+    /// Receiver -> sender StatusMessage cadence in ms.
+    /// Drives flow control. Env: `RSX_CMP_STATUS_INTERVAL_MS`.
     pub status_interval_ms: u64,
+    /// Initial sender flow-control window (records) before
+    /// the first StatusMessage updates it.
+    /// Env: `RSX_CMP_DEFAULT_WINDOW`.
     pub default_window: u64,
-    /// If set, CmpSender binds to this address
-    /// instead of a random ephemeral port. Allows
-    /// receivers to send NAKs to a known port.
+    /// If set, CmpSender binds to this address instead of a
+    /// random ephemeral port. Allows receivers to send NAKs
+    /// to a known port. Env: `RSX_CMP_SENDER_BIND_ADDR`.
     pub sender_bind_addr: Option<String>,
 }
 
@@ -50,10 +66,22 @@ impl CmpConfig {
     }
 }
 
+/// TLS configuration for the DXS replay TCP path.
+///
+/// Defaults disable TLS; the playground and tests run plain.
+/// Production deployments must enable and supply both paths
+/// (server) or `cert_path` for client trust roots.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
+    /// Enable TLS on the DXS replay socket.
+    /// Env: `RSX_REPL_TLS` (set to `"true"`).
     pub enabled: bool,
+    /// Path to the server certificate chain (PEM) — server
+    /// side; or trust roots (PEM) — client side.
+    /// Env: `RSX_REPL_CERT_PATH`.
     pub cert_path: Option<PathBuf>,
+    /// Path to the private key (PEM). Server-only.
+    /// Env: `RSX_REPL_KEY_PATH`.
     pub key_path: Option<PathBuf>,
 }
 
