@@ -67,6 +67,9 @@ impl CmpRecord for FillRecord {
     fn record_type() -> u16 { RECORD_FILL }
 }
 
+const _: () = assert!(mem::size_of::<FillRecord>() == 128);
+const _: () = assert!(mem::align_of::<FillRecord>() == 64);
+
 /// BboRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -90,6 +93,9 @@ impl CmpRecord for BboRecord {
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_BBO }
 }
+
+const _: () = assert!(mem::size_of::<BboRecord>() == 128);
+const _: () = assert!(mem::align_of::<BboRecord>() == 64);
 
 /// OrderInsertedRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -116,6 +122,9 @@ impl CmpRecord for OrderInsertedRecord {
     fn record_type() -> u16 { RECORD_ORDER_INSERTED }
 }
 
+const _: () = assert!(mem::size_of::<OrderInsertedRecord>() == 64);
+const _: () = assert!(mem::align_of::<OrderInsertedRecord>() == 64);
+
 /// OrderCancelledRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -139,6 +148,9 @@ impl CmpRecord for OrderCancelledRecord {
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_ORDER_CANCELLED }
 }
+
+const _: () = assert!(mem::size_of::<OrderCancelledRecord>() == 64);
+const _: () = assert!(mem::align_of::<OrderCancelledRecord>() == 64);
 
 /// OrderDoneRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -165,6 +177,9 @@ impl CmpRecord for OrderDoneRecord {
     fn record_type() -> u16 { RECORD_ORDER_DONE }
 }
 
+const _: () = assert!(mem::size_of::<OrderDoneRecord>() == 64);
+const _: () = assert!(mem::align_of::<OrderDoneRecord>() == 64);
+
 /// ConfigAppliedRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -183,6 +198,9 @@ impl CmpRecord for ConfigAppliedRecord {
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_CONFIG_APPLIED }
 }
+
+const _: () = assert!(mem::size_of::<ConfigAppliedRecord>() == 64);
+const _: () = assert!(mem::align_of::<ConfigAppliedRecord>() == 64);
 
 /// OrderAcceptedRecord (64-byte aligned)
 /// Dedup key is (user_id, order_id). Contains full order
@@ -212,6 +230,9 @@ impl CmpRecord for OrderAcceptedRecord {
     fn record_type() -> u16 { RECORD_ORDER_ACCEPTED }
 }
 
+const _: () = assert!(mem::size_of::<OrderAcceptedRecord>() == 128);
+const _: () = assert!(mem::align_of::<OrderAcceptedRecord>() == 64);
+
 /// MarkPriceRecord (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -231,6 +252,9 @@ impl CmpRecord for MarkPriceRecord {
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_MARK_PRICE }
 }
+
+const _: () = assert!(mem::size_of::<MarkPriceRecord>() == 64);
+const _: () = assert!(mem::align_of::<MarkPriceRecord>() == 64);
 
 /// OrderFailedRecord (64-byte aligned)
 /// Sent by Risk when pre-trade check rejects an order.
@@ -253,6 +277,9 @@ impl CmpRecord for OrderFailedRecord {
     fn record_type() -> u16 { RECORD_ORDER_FAILED }
 }
 
+const _: () = assert!(mem::size_of::<OrderFailedRecord>() == 64);
+const _: () = assert!(mem::align_of::<OrderFailedRecord>() == 64);
+
 /// CancelRequest (64-byte aligned)
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -271,6 +298,9 @@ impl CmpRecord for CancelRequest {
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_CANCEL_REQUEST }
 }
+
+const _: () = assert!(mem::size_of::<CancelRequest>() == 64);
+const _: () = assert!(mem::align_of::<CancelRequest>() == 64);
 
 /// Liquidation notification from risk to gateway.
 #[repr(C, align(64))]
@@ -294,6 +324,9 @@ impl CmpRecord for LiquidationRecord {
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_LIQUIDATION }
 }
+
+const _: () = assert!(mem::size_of::<LiquidationRecord>() == 64);
+const _: () = assert!(mem::align_of::<LiquidationRecord>() == 64);
 
 // Per-type encode helpers. Wrap the generic
 // `rsx_dxs::encode_record` with the matching record_type.
