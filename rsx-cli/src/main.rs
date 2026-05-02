@@ -720,6 +720,7 @@ fn install_ctrlc_handler() -> Arc<AtomicBool> {
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
     })
+    // SAFETY: fail-fast at startup
     .expect("failed to set ctrl-c handler");
     running
 }
@@ -737,6 +738,7 @@ fn wal_dump(
     let mut reader = WalReader::open_from_seq(
         stream_id, from_seq, &wal_dir,
     )
+    // SAFETY: fail-fast at startup (CLI subcommand)
     .expect("failed to open wal");
 
     if stats {
@@ -775,6 +777,7 @@ fn dump_follow_text(
     let mut reader = WalReader::open_from_seq(
         stream_id, next_seq, wal_dir,
     )
+    // SAFETY: fail-fast at startup (CLI subcommand)
     .expect("failed to open wal");
 
     loop {
@@ -844,6 +847,7 @@ fn dump_follow_json(
     let mut reader = WalReader::open_from_seq(
         stream_id, next_seq, wal_dir,
     )
+    // SAFETY: fail-fast at startup (CLI subcommand)
     .expect("failed to open wal");
 
     loop {
@@ -990,8 +994,10 @@ fn dump_file(file: PathBuf) {
     use std::fs::File;
     use std::io::Read;
 
+    // SAFETY: fail-fast at startup (CLI subcommand)
     let mut f = File::open(&file).expect("failed to open file");
     let mut buf = Vec::new();
+    // SAFETY: fail-fast at startup (CLI subcommand)
     f.read_to_end(&mut buf).expect("failed to read file");
 
     let mut offset = 0;

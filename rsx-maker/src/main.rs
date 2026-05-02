@@ -45,10 +45,12 @@ fn set_timeout(
 }
 
 fn build_request(addr: &str, user_id: u64) -> Request {
+    // SAFETY: addr is a static env-configured constant validated at startup
     let mut req = addr.into_client_request().expect("invalid ws url");
     req.headers_mut().insert(
         "x-user-id",
-        user_id.to_string().parse().expect("invalid header"),
+        // SAFETY: numeric u64 string is always a valid header value
+        user_id.to_string().parse().expect("INVARIANT: u64 decimal is valid HeaderValue"),
     );
     req
 }
