@@ -185,7 +185,7 @@ because the harness that would assert that doesn't exist yet.
 | 31 ns WAL append (in-memory)    | yes — `rsx-dxs` bench   |
 | 43 ns CMP encode, 9 ns decode   | yes — `rsx-gateway` bench |
 | 50–170 ns SPSC ring hop         | yes — `rsx-book` bench  |
-| <50 µs GW→ME→GW round trip      | **design budget**, no E2E harness yet |
+| <50 µs GW→ME→GW round trip      | **design budget**; harness shipped (commit `bded133` + `make latency-publish`); cluster-run number not yet in `bench-baseline.json` |
 | <500 ns ME match                | yes — sub-bench of 54 ns |
 | <5 µs risk pre-trade            | **design budget**       |
 
