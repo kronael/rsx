@@ -113,3 +113,59 @@ test.describe("Readiness pipeline", () => {
     expect(body).toHaveProperty("maker");
   });
 });
+
+// Five-minute soak: polls /api/processes every 5 s and FAILS
+// if any RSX process restarts (pid changes) or uptime drops.
+// Proves the F1 fix (CMP SO_REUSEPORT + graceful WAL drain on
+// SIGTERM) keeps a warm cluster green with no operator action.
+// Tagged @long so the fast lane can opt out via grep-invert.
+test.describe("@long warm-cluster soak", () => {
+  test.setTimeout(6 * 60 * 1000);
+
+  test("system_stays_green_for_5m", async ({ request }) => {
+    const DURATION_MS = 5 * 60 * 1000;
+    const POLL_MS = 5_000;
+    type Proc = { name: string; state: string; pid: number; uptime_s?: number };
+
+    const firstResp = await request.get("/api/processes");
+    expect(firstResp.ok()).toBe(true);
+    const first: Proc[] = await firstResp.json();
+    const baseline = new Map<string, Proc>();
+    for (const p of first) {
+      if (p.state === "running") baseline.set(p.name, p);
+    }
+    expect(baseline.size).toBeGreaterThanOrEqual(4);
+
+    const deadline = Date.now() + DURATION_MS;
+    let polls = 0;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      const r = await request.get("/api/processes");
+      expect(r.ok()).toBe(true);
+      const cur: Proc[] = await r.json();
+      for (const p of cur) {
+        const base = baseline.get(p.name);
+        if (!base) continue;
+        expect(
+          p.state,
+          `${p.name} flipped to ${p.state} during soak`,
+        ).toBe("running");
+        expect(
+          p.pid,
+          `${p.name} pid changed ${base.pid} -> ${p.pid} (restart)`,
+        ).toBe(base.pid);
+        if (
+          typeof p.uptime_s === "number" &&
+          typeof base.uptime_s === "number"
+        ) {
+          expect(
+            p.uptime_s,
+            `${p.name} uptime decreased ${base.uptime_s} -> ${p.uptime_s}`,
+          ).toBeGreaterThanOrEqual(base.uptime_s);
+        }
+      }
+      polls += 1;
+    }
+    expect(polls).toBeGreaterThanOrEqual(50);
+  });
+});

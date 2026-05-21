@@ -11,6 +11,10 @@ use crate::records::RECORD_STATUS_MESSAGE;
 use crate::records::StatusMessage;
 use crate::wal::extract_seq;
 use crate::wal::read_record_at_seq;
+use socket2::Domain;
+use socket2::Protocol;
+use socket2::Socket;
+use socket2::Type;
 use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
@@ -20,6 +24,27 @@ use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
 use tracing::warn;
+
+/// Bind a UDP socket with SO_REUSEADDR (+ SO_REUSEPORT on
+/// Linux) so a restarted process can claim the same port
+/// even while the dead parent's socket lingers in
+/// TIME_WAIT/half-open. Prevents the CMP restart loop that
+/// otherwise violates spec invariant 7 (WAL persistence):
+/// each AddrInUse panic truncates the active WAL file.
+fn bind_udp_reuse(addr: SocketAddr) -> io::Result<UdpSocket> {
+    let domain = if addr.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    #[cfg(target_os = "linux")]
+    socket.set_reuse_port(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    Ok(socket.into())
+}
 
 /// Wire payload ceiling. `WalHeader::len` is u16, so this is
 /// the protocol-level maximum — but the receiver enforces it
@@ -100,12 +125,17 @@ impl CmpSender {
         wal_dir: &std::path::Path,
         config: &CmpConfig,
     ) -> io::Result<Self> {
-        let bind = config
+        let bind_str = config
             .sender_bind_addr
             .as_deref()
             .unwrap_or("0.0.0.0:0");
-        let socket = UdpSocket::bind(bind)?;
-        socket.set_nonblocking(true)?;
+        let bind: SocketAddr = bind_str.parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid sender_bind_addr {bind_str}: {e}"),
+            )
+        })?;
+        let socket = bind_udp_reuse(bind)?;
         Ok(Self {
             socket,
             dest,
@@ -482,8 +512,7 @@ impl CmpReceiver {
         _stream_id: u32,
         config: &CmpConfig,
     ) -> io::Result<Self> {
-        let socket = UdpSocket::bind(bind_addr)?;
-        socket.set_nonblocking(true)?;
+        let socket = bind_udp_reuse(bind_addr)?;
         Ok(Self {
             socket,
             sender_addr,
