@@ -24,7 +24,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::lease::AdvisoryLease;
-use rsx_risk::persist::run_persist_worker;
+use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::replay::replay_from_wal;
@@ -299,9 +299,16 @@ fn run_main(
         .expect("failed to create replica tip sender")
     });
 
-    {
+    // Persist worker thread. We retain its `JoinHandle` and
+    // a shutdown flag so that a demote can stop the worker
+    // cleanly before returning — otherwise a Main → Replica
+    // → Main cycle leaks worker threads, each holding its
+    // own PG connection.
+    let persist_shutdown = Arc::new(AtomicBool::new(false));
+    let persist_handle = {
         let url = db_url.clone();
         let sid = shard_id;
+        let shutdown = persist_shutdown.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder
                 ::new_current_thread()
@@ -325,13 +332,16 @@ fn run_main(
                         );
                     }
                 });
-                run_persist_worker(
-                    persist_cons, client, sid,
+                run_persist_worker_with_shutdown(
+                    persist_cons,
+                    client,
+                    sid,
+                    Some(shutdown),
                 )
                 .await;
             });
-        });
-    }
+        })
+    };
 
     if let Ok(core_str) =
         env::var("RSX_RISK_CORE_ID")
@@ -362,6 +372,10 @@ fn run_main(
             .expect("invalid RSX_GW_CMP_ADDR");
     let me_addrs = rsx_risk::me_cmp_addrs_from_env();
     if me_addrs.is_empty() {
+        stop_persist_worker(
+            &persist_shutdown,
+            persist_handle,
+        );
         return Err("no ME CMP addresses configured".into());
     }
 
@@ -901,17 +915,67 @@ fn run_main(
         {
             last_lease_renew_secs = now_secs;
             {
-                let held = rt.block_on(async {
+                let renew_res = rt.block_on(async {
                     lease.renew(&pg_client).await
-                })?;
+                });
+                let held = match renew_res {
+                    Ok(h) => h,
+                    Err(e) => {
+                        stop_persist_worker(
+                            &persist_shutdown,
+                            persist_handle,
+                        );
+                        return Err(Box::new(e));
+                    }
+                };
                 if !held {
                     warn!(
                         "lease lost, demoting to replica"
+                    );
+                    stop_persist_worker(
+                        &persist_shutdown,
+                        persist_handle,
                     );
                     return Ok(MainTransition::Demote);
                 }
             }
         }
+    }
+}
+
+/// Signal the persist worker to shut down and wait for the
+/// thread to exit. Called from `run_main` before any
+/// successful transition out of the Main role so that the
+/// next promote spawns a fresh worker without doubling up
+/// on PG connections.
+fn stop_persist_worker(
+    shutdown: &Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
+) {
+    shutdown.store(true, Ordering::Relaxed);
+    // Bounded wait via a watchdog thread so a stuck worker
+    // can't hang the demote. The worker drains pending then
+    // returns; the typical exit window is FLUSH_INTERVAL_MS
+    // (10ms) + one final flush_batch. We give it 5s — well
+    // past the worst-case exponential backoff between
+    // failed flushes.
+    let watch = std::thread::spawn(move || handle.join());
+    let start = std::time::Instant::now();
+    loop {
+        if watch.is_finished() {
+            let _ = watch.join();
+            info!("persist worker stopped");
+            return;
+        }
+        if start.elapsed() > Duration::from_secs(5) {
+            warn!(
+                "persist worker did not exit within 5s; \
+                 abandoning thread (will be cleaned up on \
+                 process exit)",
+            );
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

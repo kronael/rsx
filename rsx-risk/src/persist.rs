@@ -2,9 +2,13 @@ use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use rtrb::Consumer;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use tokio_postgres::Client;
 use tokio_postgres::Error;
 use tracing::error;
+use tracing::info;
 use tracing::warn;
 
 #[derive(Clone, Debug)]
@@ -378,9 +382,32 @@ const BACKOFF_MAX_MS: u64 = 30_000;
 const CIRCUIT_AT: u32 = 8;
 
 pub async fn run_persist_worker(
+    consumer: Consumer<PersistEvent>,
+    client: Client,
+    shard_id: u32,
+) {
+    run_persist_worker_with_shutdown(
+        consumer,
+        client,
+        shard_id,
+        None,
+    )
+    .await
+}
+
+/// Same as `run_persist_worker` but polls a shutdown flag
+/// each flush cycle. When the flag flips to `true`, the
+/// worker drains any pending events with one final flush
+/// attempt and returns. Used by the risk Main role so that
+/// a demote can cleanly stop the worker before the next
+/// promote spawns a fresh one — otherwise a
+/// Main→Replica→Main cycle leaks worker threads, each
+/// holding its own PG connection.
+pub async fn run_persist_worker_with_shutdown(
     mut consumer: Consumer<PersistEvent>,
     mut client: Client,
     shard_id: u32,
+    shutdown: Option<Arc<AtomicBool>>,
 ) {
     let mut pending = Vec::with_capacity(1024);
     let mut consec_errors: u32 = 0;
@@ -394,6 +421,11 @@ pub async fn run_persist_worker(
         )
         .await;
 
+        let stopping = shutdown
+            .as_ref()
+            .map(|s| s.load(Ordering::Relaxed))
+            .unwrap_or(false);
+
         if pending.is_empty() {
             while let Ok(event) = consumer.pop() {
                 pending.push(event);
@@ -401,6 +433,13 @@ pub async fn run_persist_worker(
         }
 
         if pending.is_empty() {
+            if stopping {
+                info!(
+                    "persist worker shutdown signal received; \
+                     no pending events, exiting",
+                );
+                return;
+            }
             continue;
         }
 
@@ -413,6 +452,14 @@ pub async fn run_persist_worker(
                 consec_errors = 0;
                 backoff_ms = BACKOFF_INIT_MS;
                 pending.clear();
+                if stopping {
+                    info!(
+                        "persist worker shutdown signal \
+                         received; final flush succeeded, \
+                         exiting",
+                    );
+                    return;
+                }
             }
             Err(e) => {
                 consec_errors += 1;
@@ -423,6 +470,15 @@ pub async fn run_persist_worker(
                         consec_errors,
                     );
                     break;
+                }
+                if stopping {
+                    warn!(
+                        "persist worker shutdown signal \
+                         received during error retry; \
+                         dropping {} pending events: {e}",
+                        pending.len(),
+                    );
+                    return;
                 }
                 // ±20% jitter on exponential backoff
                 let jitter = backoff_ms as f64
