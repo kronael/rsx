@@ -91,8 +91,9 @@ against the actual code.
 ### Performance
 
 - Match single fill: **54 ns** (Criterion, `rsx-book`)
-- CMP encode / decode: **43 ns / 9 ns**
-- WAL append (in-memory): **31 ns**
+- Protocol-record encode / decode (StatusMessage / Nak /
+  Heartbeat): **43 ns / 9 ns**; `FillRecord` encode: **23 ns**
+- `WalWriter::append` (Vec extend, no disk I/O): **31 ns**
 - WAL flush + fsync 64 KB: **24 µs**
 - `make latency-publish` harness shipped — writes measured
   GW→ME→GW p50/p99 to `bench-baseline.json`. The <50µs
