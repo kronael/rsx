@@ -55,7 +55,36 @@ async function ensureMaker(request: any) {
 
 async function ensureAll(request: any) {
   await startAll(request);
-  await new Promise((r) => setTimeout(r, 2000));
+  // 2 s was insufficient when stopAll preceded — start_all
+  // can rebuild + spawn 6 processes (~5-10 s). Poll until
+  // gateway is back up so subsequent tests don't race the
+  // restart and see "gateway not running" errors.
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      const r = await request.get("/api/processes");
+      if (r.ok()) {
+        const procs = await r.json();
+        const up = Array.isArray(procs)
+          ? procs.filter(
+              (p: any) => p.state === "running"
+            )
+          : [];
+        const gwUp = up.some(
+          (p: any) =>
+            p.name === "gw-0" || p.name.startsWith("gateway")
+        );
+        if (gwUp && up.length >= 4) {
+          // brief settle for gateway to accept connections
+          await new Promise((r) => setTimeout(r, 1500));
+          return;
+        }
+      }
+    } catch {
+      // transient — retry
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
 
 async function pollUntil(
@@ -214,6 +243,8 @@ test.describe.serial("Safety: process crash & recovery",
 
     test("all-stop clears topology to red",
       async ({ page, request }) => {
+        // stopAll + page nav + ensureAll (polls re-spawn) — 60 s.
+        test.setTimeout(60_000);
         await stopAll(request);
         await page.goto("/topology");
         await page.waitForTimeout(2000);
@@ -235,6 +266,8 @@ test.describe.serial("Safety: process crash & recovery",
 
     test("all-start recovers from all-stop",
       async ({ request }) => {
+        // stopAll + startAll + pollUntil running — 60 s budget.
+        test.setTimeout(60_000);
         await stopAll(request);
         await new Promise((r) => setTimeout(r, 1000));
         await startAll(request);
@@ -408,6 +441,9 @@ test.describe("Safety: session safety", () => {
 test.describe("Safety: operational safety", () => {
   test("confirm=yes required for destructive actions",
     async ({ request }) => {
+      // ensureAll may poll up to 30 s waiting for re-spawn
+      // after stopAll; budget 60 s so the restore completes.
+      test.setTimeout(60_000);
       // without confirm
       const res = await request.post(
         "/api/processes/all/stop"
@@ -560,6 +596,11 @@ test.describe("Safety: operational safety", () => {
 
 test.describe.serial("Safety: graceful degradation",
   () => {
+    // ensureAll polls up to 30 s for re-spawn; each test body
+    // also waits 1-3 s after stopAll. Budget 60 s per test.
+    test.beforeEach(async () => {
+      test.setTimeout(60_000);
+    });
     test.afterEach(async ({ request }) => {
       await ensureAll(request);
     });

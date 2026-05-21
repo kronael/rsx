@@ -2411,6 +2411,66 @@ def _metric(label, value, color="slate-300"):
 
 # ── Health (overview) ────────────────────────────────────
 
+def render_health_score(h: dict) -> str:
+    """Render health bar from _compute_health() dict.
+
+    Replaces the previous render_health which counted only
+    "running" processes — that scheme returned 100 GREEN
+    while ME was in a restart loop. Now reflects restarts,
+    latency-vs-baseline, and log error count.
+    """
+    score = h.get("score")
+    label = h.get("label", "unknown")
+    reasons = h.get("reasons", [])
+    if score is None:
+        return (
+            '<div class="flex items-center gap-4">'
+            '<div class="flex-1 bg-slate-800 rounded h-4">'
+            '<div class="bg-slate-600 h-4 rounded flex'
+            ' items-center justify-center text-[10px]'
+            ' font-bold text-white" style="width:1%"></div>'
+            '</div>'
+            '<span class="text-xs font-semibold'
+            ' text-slate-400 uppercase">unknown</span>'
+            '</div>'
+        )
+    _BG = {
+        "green": "bg-emerald-500",
+        "yellow": "bg-amber-500",
+        "red": "bg-red-500",
+        "unknown": "bg-slate-600",
+    }
+    _TX = {
+        "green": "text-emerald-400",
+        "yellow": "text-amber-400",
+        "red": "text-red-400",
+        "unknown": "text-slate-400",
+    }
+    bg = _BG.get(label, "bg-slate-600")
+    tx = _TX.get(label, "text-slate-400")
+    bar_w = max(1, score)
+    reason_html = ""
+    if reasons:
+        reason_html = (
+            '<div class="text-[10px] text-slate-500 mt-1">'
+            + html.escape(" · ".join(reasons))
+            + '</div>'
+        )
+    return (
+        f'<div>'
+        f'<div class="flex items-center gap-4">'
+        f'<div class="flex-1 bg-slate-800 rounded h-4">'
+        f'<div class="{bg} h-4 rounded flex'
+        f' items-center justify-center text-[10px]'
+        f' font-bold text-white"'
+        f' style="width:{bar_w}%">{score}</div></div>'
+        f'<span class="text-xs font-semibold {tx}'
+        f' uppercase">{label}</span></div>'
+        f'{reason_html}'
+        f'</div>'
+    )
+
+
 def render_health(procs, pg_ok):
     running = sum(
         1 for p in procs if p.get("state") == "running")
@@ -2455,6 +2515,7 @@ def render_health(procs, pg_ok):
 def render_key_metrics(
     procs, wal_streams,
     active_orders=0, positions=0, msgs_sec=0,
+    error_count=0,
 ):
     running = sum(
         1 for p in procs if p.get("state") == "running")
@@ -2462,6 +2523,7 @@ def render_key_metrics(
     ao_color = "blue-400" if active_orders else "slate-500"
     pos_color = "amber-400" if positions else "slate-500"
     ms_color = "cyan-400" if msgs_sec else "slate-500"
+    err_color = "red-400" if error_count > 0 else "emerald-400"
     return (
         '<div class="grid grid-cols-2 sm:grid-cols-3 '
         'md:grid-cols-6 gap-4">'
@@ -2474,7 +2536,7 @@ def render_key_metrics(
         + _metric("Msgs/sec",
                   str(msgs_sec), ms_color)
         + _metric("WAL Files", str(wal_files), "blue-400")
-        + _metric("Errors", "0", "emerald-400")
+        + _metric("Errors", str(error_count), err_color)
         + '</div>'
     )
 
@@ -2618,17 +2680,25 @@ def render_core_affinity(processes):
 
 
 def render_cmp_flows(record_counts=None):
-    """CMP flow stats from WAL record counts."""
+    """CMP flow stats from WAL record counts.
+
+    ME publishes BOTH fills and BBOs to marketdata over the same
+    CMP channel; the audit observed marketdata visibly receiving
+    updates while ME→Mktdata stayed at Sent 0/Recv 0 because the
+    counter only summed BBO records. Use fills+bbos so the
+    counter tracks what marketdata is actually consuming.
+    """
     if record_counts:
         f = record_counts.get("fills", 0)
         b = record_counts.get("bbos", 0)
+        md = f + b
         flows = [
             ("Gateway -> Risk",
              str(f + b), str(f + b), "0", "0"),
             ("Risk -> ME",
              str(f), str(f), "0", "0"),
             ("ME -> Mktdata",
-             str(b), str(b), "0", "0"),
+             str(md), str(md), "0", "0"),
         ]
     else:
         flows = [
@@ -2809,11 +2879,18 @@ def render_wal_status(streams):
                 'no WAL streams found</span>')
     rows = ""
     for s in streams:
+        # Show raw bytes alongside human-formatted size; that
+        # way disagreement with Verify is impossible to hide.
+        size = s.get("total_size", "-")
+        raw = s.get("total_bytes")
+        size_cell = (
+            f"{size} ({raw}B)" if raw is not None else size
+        )
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{s.get("name", "-")}</td>'
             f'<td {_TD}>{s.get("files", "-")}</td>'
-            f'<td {_TD}>{s.get("total_size", "-")}</td></tr>'
+            f'<td {_TD}>{size_cell}</td></tr>'
         )
     return _table(["Stream", "Files", "Size"], rows)
 
