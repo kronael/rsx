@@ -217,11 +217,11 @@ shards-gated: shard-infra-smoke
 # Fan-out to product shards is unlocked only by make ci-full once
 # the infra-smoke streak reaches INFRA_SMOKE_STREAK_N.
 
-ci: check-progress gate-1-startup gate-2-partials gate-3-api shard-infra-smoke
-	@echo "==> [ci] PROGRESS ok + phases 1-3 + infra-smoke passed"
+ci: check-progress gate-1-startup gate-2-partials gate-3-api integration shard-infra-smoke
+	@echo "==> [ci] PROGRESS ok + phases 1-3 + integration + infra-smoke passed"
 	@echo "    Run 'make ci-full' to unlock product-shard fan-out."
 
-ci-full: check-progress gate-1-startup gate-2-partials gate-3-api shards-gated
+ci-full: check-progress gate-1-startup gate-2-partials gate-3-api integration shards-gated
 	@echo "==> [ci-full] all acceptance phases passed."
 
 # CI check: no root-absolute href/src in dist HTML or rendered pages.
@@ -255,10 +255,12 @@ check-links:
 check:
 	cargo check --workspace
 
-# Unit tests - ONLY isolated unit tests (no real processes, no real DB)
+# Unit tests - lib + integration test binaries (non-ignored).
+# Runs every Rust test that does not require Docker/Postgres.
+# Ignored tests (testcontainer-gated) run under `make integration`.
 test:
-	@echo "==> Running Rust unit tests..."
-	cargo test --workspace --lib
+	@echo "==> Running Rust unit + integration tests..."
+	cargo test --workspace --tests --lib
 	@echo ""
 	@echo "==> Python API tests skipped from 'make test'"
 	@echo "    (Use 'make e2e' to run full integration tests)"
@@ -278,9 +280,19 @@ e2e:
 	@echo "==> Running Playwright E2E tests..."
 	$(MAKE) play
 
-# Integration tests (1-5min) - testcontainers
+# Integration tests (1-5min) - testcontainers (Postgres).
+# Hard-fails if Docker is unavailable so CI cannot pretend
+# "0 failures" while skipping every testcontainer-gated test.
 integration:
-	cargo test --workspace --test '*' \
+	@echo "==> [integration] checking Docker daemon..."
+	@if ! docker info >/dev/null 2>&1 \
+		&& ! sudo -n docker info >/dev/null 2>&1; then \
+		echo "FAIL: Docker daemon unreachable; integration tests need testcontainers." >&2; \
+		echo "       Start Docker or run on a host with docker access." >&2; \
+		exit 1; \
+	fi
+	@echo "    Docker OK"
+	cargo test --workspace --tests \
 		-- --ignored --test-threads=1
 
 # WAL correctness tests (<10s)
