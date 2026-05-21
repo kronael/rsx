@@ -30,7 +30,11 @@ This document describes the shared WAL architecture for the risk engine and the 
 - WAL uses **fixed-size records** (no protobuf, no extra envelope).
 - Records are `#[repr(C, align(64))]` with explicit little-endian fields.
 - Each record starts with a 16-byte header:
-  `{record_type: u16, len: u16, crc32: u32, _reserved: [u8; 8]}`.
+  `{record_type: u16, len: u16, crc32: u32, version: u8, _reserved: [u8; 7]}`.
+  The `version` byte carries the wire-format version
+  (`V0` = legacy zero-reserved, `V1` = current). Adding
+  record types is additive and does NOT bump the version;
+  bumping is reserved for breaking framing changes.
 - Data payloads implement CmpRecord trait with `seq: u64` as
   first field. Sequence assigned by WalWriter::append or
   CmpSender::send.

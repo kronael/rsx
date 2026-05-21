@@ -108,12 +108,15 @@ diagrams.
 ### 3.1 Matching engine — `rsx-matching` (pinned single loop)
 
 ```
-rsx-matching/src/main.rs:145-155
-    if let Some(core_id) = env_core_id() {
-        let ids = core_affinity::get_core_ids() ...;
-        if let Some(id) = ids.iter().find(|c| c.id == core_id) {
-            core_affinity::set_for_current(*id);
-            info!("pinned to core {}", core_id);
+rsx-matching/src/main.rs:193-202
+    if let Ok(core_str) = env::var("RSX_ME_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let ids = core_affinity::get_core_ids()
+                .unwrap_or_default();
+            if let Some(id) = ids.get(core_id) {
+                core_affinity::set_for_current(*id);
+                info!("pinned to core {}", core_id);
+            }
         }
     }
 ```
@@ -144,14 +147,14 @@ state machine, plus 7 SPSC rings for input and output:
 | Ring                       | Capacity | File:line                       |
 |----------------------------|----------|---------------------------------|
 | `PersistEvent`             | 8 192    | `rsx-risk/src/main.rs:239`      |
-| `FillEvent`                | 4 096    | `rsx-risk/src/main.rs:403`      |
-| `OrderRequest` (primary)   | 2 048    | `rsx-risk/src/main.rs:405`      |
-| `MarkPriceUpdate`          | 256      | `rsx-risk/src/main.rs:407`      |
-| `BboUpdate`                | 256      | `rsx-risk/src/main.rs:409`      |
-| `OrderResponse`            | 2 048    | `rsx-risk/src/main.rs:411`      |
-| `OrderRequest` (replica)   | 2 048    | `rsx-risk/src/main.rs:413`      |
+| `FillEvent`                | 4 096    | `rsx-risk/src/main.rs:405`      |
+| `OrderRequest` (primary)   | 2 048    | `rsx-risk/src/main.rs:407`      |
+| `MarkPriceUpdate`          | 256      | `rsx-risk/src/main.rs:409`      |
+| `BboUpdate`                | 256      | `rsx-risk/src/main.rs:411`      |
+| `OrderResponse`            | 2 048    | `rsx-risk/src/main.rs:413`      |
+| `OrderRequest` (replica)   | 2 048    | `rsx-risk/src/main.rs:415`      |
 
-Core pinning at `rsx-risk/src/main.rs:297-301`. Postgres
+Core pinning at `rsx-risk/src/main.rs:291-304`. Postgres
 write-behind is a separate `tokio` runtime in a sidecar
 thread (it does blocking IO, can't live on the pinned
 core).
@@ -161,7 +164,7 @@ This is the canonical RSX tile arrangement.
 ### 3.3 Mark — `rsx-mark` (partial tile)
 
 ```
-rsx-mark/src/main.rs:117
+rsx-mark/src/main.rs:118
     rtrb::RingBuffer::<SourcePrice>::new(1024);
 ```
 
