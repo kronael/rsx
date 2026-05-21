@@ -35,7 +35,7 @@ lint gate, `rsx-dxs` production lib has zero `rsx-types` dep.
 These were called out but deliberately deferred — each carries
 its own load-bearing risk if landed without proper coverage:
 
-- **T3.2 — Replica → main promotion refactor.** `rsx-risk/src/main.rs:1052-1053` uses `std::env::set_var` (UB-adjacent on glibc since Rust 1.74's deprecation) and a recursive `run_main` call. Refactor to a state-machine loop. Needs the existing replication E2E test to grow first so the refactor lands safely.
+- **T3.2 — Replica → main promotion refactor.** ✅ **shipped.** New E2E coverage landed first (`rsx-risk/tests/promotion_e2e_test.rs`, 1 unit + 3 testcontainer tests pinning lock-poll, exclusivity-under-race, post-promotion fill processing, and lease-loss detection). Then `rsx-risk/src/main.rs::main` was refactored to a flat state-machine loop over a `Role` enum: `run_replica` returns `Ok(ReplicaTransition::Promote)`, `run_main` returns `Ok(MainTransition::Demote)`. No more `std::env::set_var` (UB-adjacent on glibc per `rust-lang#27970`) and no more recursive `run_main` call. Workspace tests: 878 → 879 passing.
 - **T5.2 — BLOG.md narrative reframe.** Currently a technical brag-doc. Founder-owned editorial work (the wedge picked in `WEDGE.md` should drive the framing).
 - **T5.3 — BUSINESS.md.** Pricing, licensing, GTM. Owned by founder; depends on `WEDGE.md` decision.
 

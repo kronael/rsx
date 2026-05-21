@@ -328,12 +328,16 @@ crash scenarios.
 4. Start write-behind worker
 5. Resume processing new orders
 
-**Implementation note (out of scope for this spec):** the current
-implementation flips `RSX_RISK_IS_REPLICA` via `std::env::set_var`
-and recursively calls `run_main` from `run_replica`. This is tracked
-as `.ship/13-A16Z-FIXES T3.2` and will be refactored to a flat
-state-machine loop once replication has E2E coverage; the spec
-above describes the intended steady state, not the env-var hack.
+**Implementation:** `main()` runs a flat state-machine loop over a
+`Role` enum (`Replica` / `Main`). `run_replica` returns
+`ReplicaTransition::Promote` on advisory-lock acquisition; `main()`
+flips the role and re-enters `run_main`. Conversely, `run_main`
+returns `MainTransition::Demote` on lease loss and `main()` flips
+back to `Replica`. The loop is non-recursive and does not mutate
+environment variables — `RSX_RISK_IS_REPLICA` is read exactly once
+at process start to seed the initial role. See
+`rsx-risk/src/main.rs::main` (shipped `.ship/13-A16Z-FIXES` T3.2).
+Observable contract pinned by `rsx-risk/tests/promotion_e2e_test.rs`.
 
 ### Recovery: Both Crash
 
