@@ -104,8 +104,7 @@ impl DxsConsumer {
                 Err(e) => {
                     consec_errors += 1;
                     if consec_errors > MAX_RETRIES {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
+                        return Err(io::Error::other(
                             format!(
                                 "BLOCKED: {} consecutive \
                                  stream errors exhausted \
