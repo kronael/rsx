@@ -51,6 +51,41 @@ is the light backlog — items not yet a ship project.
   "mark data requires mark process" while mark is running.
 - F11 `/stress` scenarios panel renders only "no data".
 
+## Oracle pass (codex, verified) — 7 more lies
+
+### F13 (critical): `/x/pulse` proc pill green if `running > 0`
+- `server.py:2961-2963`. 1/8 alive is painted "emerald".
+- Health pill must require ALL expected processes running.
+
+### F14 (important): Gateway "circuit breaker: closed" hardcoded
+- `server.py:2127` — literal `("circuit breaker", "closed")`.
+- Read real breaker state from gateway or remove the row.
+
+### F15 (important): Topology flow rates from Python process memory
+- `server.py:2370-2371`. `len(recent_orders)` / `len(recent_fills)`
+  / `len(_book_snap)` are dashboard-process state, not cluster
+  state. Reset on dashboard restart; can be fake.
+- Read from /api/processes counters or WAL.
+
+### F16 (important): Index price = mark × 1.0001 (synthetic)
+- `server.py:5697`. `/api/risk/funding` returns fabricated
+  index, premium, and rate.
+- Either query mark process's real index input or label the
+  panel "demo data."
+
+### F17 (important): Reconciliation Mark-vs-Index is "book has bid+ask"
+- `server.py:3354-3367`. No index loaded anywhere.
+- Either load an index or remove this check.
+
+### F18 (important): Reconciliation Shadow-vs-ME compares two WAL views
+- `server.py:3328-3352`. Both sides are downstream of ME.
+- Query ME's book over CMP query channel for engine truth.
+
+### F19 (important): `/x/stale-orders` requires numeric `ts`
+- `server.py:3419-3423`. UI batch helpers write `ts` as
+  `"%H:%M:%S"` strings; they are silently skipped.
+- Normalize `ts` to float at order entry, or parse strings.
+
 ## Carry from v0.2.0 (CHANGELOG)
 
 - **JtiTracker wire-through** — bounded replay set is built
