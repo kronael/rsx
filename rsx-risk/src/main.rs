@@ -154,77 +154,62 @@ fn main() {
     };
     let mut attempts: usize = 0;
 
+    // State-machine loop. Replaces the prior set_var +
+    // recursive run_main pattern (see .ship/13-A16Z-FIXES
+    // T3.2). On clean transitions we reset the restart
+    // budget — a successful promote/demote isn't a crash.
     loop {
-        let result: Result<(), Box<dyn std::error::Error>> =
-            match role {
-                Role::Replica => {
-                    match run_replica(shard_id, max_symbols) {
-                        Ok(ReplicaTransition::Promote) => {
-                            info!(
-                                "transition: Replica → Main"
-                            );
-                            role = Role::Main;
-                            attempts = 0;
-                            continue;
-                        }
-                        Err(e) => Err(e),
-                    }
+        let err: Box<dyn std::error::Error> = match role {
+            Role::Replica => match run_replica(
+                shard_id, max_symbols,
+            ) {
+                Ok(ReplicaTransition::Promote) => {
+                    info!("transition: Replica → Main");
+                    role = Role::Main;
+                    attempts = 0;
+                    continue;
                 }
-                Role::Main => {
-                    match run_main(shard_id, max_symbols) {
-                        Ok(MainTransition::Demote) => {
-                            info!(
-                                "transition: Main → Replica"
-                            );
-                            role = Role::Replica;
-                            attempts = 0;
-                            continue;
-                        }
-                        Err(e) => Err(e),
-                    }
+                Err(e) => e,
+            },
+            Role::Main => match run_main(
+                shard_id, max_symbols,
+            ) {
+                Ok(MainTransition::Demote) => {
+                    info!("transition: Main → Replica");
+                    role = Role::Replica;
+                    attempts = 0;
+                    continue;
                 }
-            };
+                Err(e) => e,
+            },
+        };
 
-        match result {
-            Ok(()) => break,
-            Err(e) => {
-                attempts += 1;
-                if attempts > MAX_RESTARTS {
-                    error!(
-                        "FATAL: shard {} restart \
-                         budget exhausted ({} \
-                         attempts); last error: {e}",
-                        shard_id, attempts,
-                    );
-                    std::process::exit(1);
-                }
-                let backoff_secs = RESTART_BACKOFF_SECS
-                    [attempts
-                        .saturating_sub(1)
-                        .min(RESTART_BACKOFF_SECS.len()
-                            - 1)];
-                // ±20% jitter
-                let jitter_ms = (backoff_secs as f64
-                    * 200.0
-                    * (rand_jitter() - 0.5))
-                    as i64;
-                let sleep_ms = (backoff_secs * 1000)
-                    as i64
-                    + jitter_ms;
-                error!(
-                    "crashed in role {:?} ({}/{} \
-                     attempts): {e}; restart in {sleep_ms}ms",
-                    role,
-                    attempts,
-                    MAX_RESTARTS,
-                );
-                std::thread::sleep(
-                    Duration::from_millis(
-                        sleep_ms.max(100) as u64,
-                    ),
-                );
-            }
+        attempts += 1;
+        if attempts > MAX_RESTARTS {
+            error!(
+                "FATAL: shard {} restart budget \
+                 exhausted ({} attempts); last error: {err}",
+                shard_id, attempts,
+            );
+            std::process::exit(1);
         }
+        let backoff_secs = RESTART_BACKOFF_SECS[attempts
+            .saturating_sub(1)
+            .min(RESTART_BACKOFF_SECS.len() - 1)];
+        // ±20% jitter
+        let jitter_ms = (backoff_secs as f64
+            * 200.0
+            * (rand_jitter() - 0.5)) as i64;
+        let sleep_ms =
+            (backoff_secs * 1000) as i64 + jitter_ms;
+        error!(
+            "crashed in role {:?} ({}/{} attempts): \
+             {err}; restart in {sleep_ms}ms",
+            role, attempts, MAX_RESTARTS,
+        );
+        std::thread::sleep(Duration::from_millis(
+            sleep_ms.max(100) as u64,
+        ));
     }
 }
 
