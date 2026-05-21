@@ -399,19 +399,20 @@ strictly worse than QUIC over the public internet.
 
 Measured by `rsx-dxs/benches/wal_bench.rs`:
 
-| Op                          | ns      |
-|-----------------------------|---------|
-| WAL append (in-memory)      | 31      |
-| WAL flush + fsync (64 KB)   | ~24 000 |
-| Sequential read (10 K recs) | TBD     |
-| Replay (100 K recs)         | TBD     |
+| Op                                          | ns      |
+|---------------------------------------------|---------|
+| `WalWriter::append` (Vec extend, no disk I/O) | 31    |
+| WAL flush + fsync (64 KB)                   | ~24 000 |
+| Sequential read (10 K recs)                 | TBD     |
+| Replay (100 K recs)                         | TBD     |
 
-`rsx-gateway/benches/gateway_bench.rs`:
+`rsx-dxs/benches/cmp_bench.rs` + `rsx-messages/benches/encode_bench.rs`:
 
-| Op                          | ns  |
-|-----------------------------|-----|
-| CMP encode (one record)     | 43  |
-| CMP decode (one record)     | 9   |
+| Op                                                       | ns  |
+|----------------------------------------------------------|-----|
+| Protocol-record encode (StatusMessage / Nak / Heartbeat) | 43  |
+| Protocol-record decode (one record)                      | 9   |
+| `FillRecord` encode                                      | 23  |
 
 These are the load-bearing measurements behind the
 sub-microsecond CPU cost of one CMP frame. They do **not**
