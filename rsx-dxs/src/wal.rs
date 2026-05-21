@@ -98,12 +98,12 @@ impl WalWriter {
             ));
         }
 
-        if self.flush_stalled {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "flush stalled, backpressure",
-            ));
-        }
+        // `flush_stalled` is now a stat only: a single slow fsync
+        // (>10 ms) used to wedge the next append into a panic, which
+        // restarted ME and truncated the active WAL — violating spec
+        // invariant 7 (WAL persistence, specs/2/6-consistency.md).
+        // True backpressure is the buffer-full check below; transient
+        // fsync hiccups don't warrant dropping records.
 
         // backpressure: stall if buf > 2x max_file_size
         let limit = (self.max_file_size as usize)

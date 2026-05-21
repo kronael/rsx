@@ -37,6 +37,8 @@ use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tokio_postgres::NoTls;
 use tracing::error;
@@ -398,9 +400,43 @@ fn main() {
     let mut order_index: FxHashMap<OrderKey, u32> =
         FxHashMap::default();
 
+    // Graceful shutdown: SIGTERM/SIGINT flips the flag,
+    // the main loop notices and drains the WAL writer
+    // before exiting. Required so a parent process leaves
+    // the active WAL persisted (spec invariant 7) — the
+    // panic handler is left untouched so real crashes
+    // still surface.
+    static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+    extern "C" fn on_signal(_: libc::c_int) {
+        SHUTDOWN.store(true, Ordering::SeqCst);
+    }
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            on_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            on_signal as *const () as libc::sighandler_t,
+        );
+    }
+
     info!("matching engine started");
 
     loop {
+        if SHUTDOWN.load(Ordering::SeqCst) {
+            info!("shutdown signal received, draining wal");
+            if let Err(e) = wal_writer.flush() {
+                error!("shutdown wal flush failed: {e}");
+            }
+            if let Err(e) = save_snapshot(
+                &book, &wal_dir, symbol_id,
+            ) {
+                warn!("shutdown snapshot save failed: {e}");
+            }
+            info!("matching engine shutdown complete");
+            std::process::exit(0);
+        }
         // Receive orders/cancels via CMP/UDP from Risk
         if let Some((hdr, payload)) =
             cmp_receiver.try_recv()

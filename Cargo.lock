@@ -1919,6 +1919,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
+ "socket2 0.5.10",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -2002,6 +2003,7 @@ version = "0.2.0"
 dependencies = [
  "core_affinity",
  "criterion",
+ "libc",
  "rsx-book",
  "rsx-dxs",
  "rsx-messages",
