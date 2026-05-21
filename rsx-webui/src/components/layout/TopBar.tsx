@@ -16,6 +16,9 @@ import { fetchPositions } from "../../hooks/useRestApi";
 import { fetchOrders } from "../../hooks/useRestApi";
 import { fetchFunding } from "../../hooks/useRestApi";
 import { AuthButton } from "../AuthButton";
+import { getToken } from "../../lib/auth";
+import { decodeClaims } from "../../lib/auth";
+import { isExpired } from "../../lib/auth";
 
 // ▲ up, ▼ down, — flat
 type TickDir = "up" | "down" | "flat";
@@ -68,6 +71,15 @@ export function TopBar() {
   const prevBidRef = useRef<number>(0);
   const [tickDir, setTickDir] = useState<TickDir>("flat");
   const [countdown, setCountdown] = useState("");
+  const [signedIn, setSignedIn] = useState(false);
+
+  // Pick up token from localStorage / cookie on mount. The
+  // status pill needs to know whether to require a private
+  // WS connection or treat public-only as "connected".
+  useEffect(() => {
+    const claims = decodeClaims(getToken());
+    setSignedIn(claims !== null && !isExpired(claims));
+  }, []);
 
   const symbols = useMarketStore((s) => s.symbols);
   const selectedSymbol = useMarketStore(
@@ -192,20 +204,27 @@ export function TopBar() {
     };
   }, []);
 
-  const bothConnected =
-    privStatus === WsStatus.CONNECTED &&
-    pubStatus === WsStatus.CONNECTED;
-  const anyOffline =
-    privStatus === WsStatus.OFFLINE ||
-    pubStatus === WsStatus.OFFLINE;
-  const anyReconnecting =
-    privStatus === WsStatus.RECONNECTING ||
-    pubStatus === WsStatus.RECONNECTING;
-  const anyConnecting =
-    privStatus === WsStatus.CONNECTING ||
-    pubStatus === WsStatus.CONNECTING;
+  // When not signed in, the private WS intentionally stays
+  // disconnected — that's "logged out", not a connectivity
+  // failure. The pill reflects public marketdata only.
+  const liveConnected = signedIn
+    ? privStatus === WsStatus.CONNECTED &&
+      pubStatus === WsStatus.CONNECTED
+    : pubStatus === WsStatus.CONNECTED;
+  const anyOffline = signedIn
+    ? privStatus === WsStatus.OFFLINE ||
+      pubStatus === WsStatus.OFFLINE
+    : pubStatus === WsStatus.OFFLINE;
+  const anyReconnecting = signedIn
+    ? privStatus === WsStatus.RECONNECTING ||
+      pubStatus === WsStatus.RECONNECTING
+    : pubStatus === WsStatus.RECONNECTING;
+  const anyConnecting = signedIn
+    ? privStatus === WsStatus.CONNECTING ||
+      pubStatus === WsStatus.CONNECTING
+    : pubStatus === WsStatus.CONNECTING;
 
-  const statusColor = bothConnected
+  const statusColor = liveConnected
     ? "bg-buy"
     : anyOffline
       ? "bg-sell"
@@ -213,8 +232,8 @@ export function TopBar() {
         ? "bg-accent"
         : "bg-sell";
 
-  const statusLabel = bothConnected
-    ? "live"
+  const statusLabel = liveConnected
+    ? signedIn ? "live" : "connected"
     : anyOffline
       ? "offline"
       : anyReconnecting
@@ -433,7 +452,7 @@ export function TopBar() {
         <span
           className={clsx(
             "font-mono text-2xs",
-            bothConnected
+            liveConnected
               ? "text-buy"
               : anyOffline
                 ? "text-sell"

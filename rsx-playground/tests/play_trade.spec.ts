@@ -1005,4 +1005,62 @@ test.describe("Trade UI", () => {
       await expect(posTab).toBeVisible();
     });
   });
+
+  // ── 15. Quiet First Paint (Audit F12) ──────────────
+  //
+  // The /trade/ page must NOT show a red "Authentication
+  // failed" toast on first load when the user has not yet
+  // signed in. Marketdata is public and should connect.
+
+  test.describe("Quiet First Paint (F12)", () => {
+    test(
+      "trade_initial_paint_has_no_error_toasts",
+      async ({ page }) => {
+        // Fresh context: no rsx_token in cookie or storage.
+        await page.context().clearCookies();
+        await page.addInitScript(() => {
+          try { localStorage.removeItem("rsx_token"); }
+          catch { /* ignore */ }
+        });
+        await page.goto("/trade/");
+        await page.waitForSelector("#root > div");
+        // Allow time for the private WS to open and close
+        // (4001 path) plus a couple of reconnect ticks.
+        await page.waitForTimeout(4000);
+        // No role=alert containing "failed" / "Authentication".
+        const failedAlert = page.locator(
+          '[role="alert"]', { hasText: /failed/i },
+        );
+        await expect(failedAlert).toHaveCount(0);
+        const authAlert = page.locator(
+          '[role="alert"]',
+          { hasText: /authentication failed/i },
+        );
+        await expect(authAlert).toHaveCount(0);
+        // Sanity: page body must not contain the toast copy.
+        const body = await page.textContent("body");
+        expect(body ?? "").not.toMatch(
+          /authentication failed/i,
+        );
+      },
+    );
+
+    test(
+      "trade_market_feed_connects_when_md_running",
+      async ({ page }) => {
+        await page.goto("/trade/");
+        await page.waitForSelector("#root > div");
+        // Status pill must reach "connected" (or "live"
+        // when private WS is also up via the dev guest JWT)
+        // within 10 s. Either label maps to the green pill.
+        const pill = page.locator(
+          '[data-testid="conn-status-label"]',
+        );
+        await expect(pill).toHaveText(
+          /^(connected|live)$/,
+          { timeout: 10000 },
+        );
+      },
+    );
+  });
 });
