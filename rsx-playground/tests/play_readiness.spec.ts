@@ -18,8 +18,35 @@
 import { test, expect } from "@playwright/test";
 
 const SYMBOL_ID = 10;
+const BASE = "http://localhost:49171";
 
 test.describe("Readiness pipeline", () => {
+  // Auto-heal: if an upstream shard (e.g. safety) left the
+  // topology degraded, readiness should self-restore rather
+  // than cascade-fail the 200+ downstream shards. Cheap when
+  // already-running (server responds "already running").
+  test.beforeAll(async () => {
+    try {
+      const r = await fetch(`${BASE}/api/processes`);
+      if (r.ok) {
+        const procs: Array<{ name: string; state: string }> =
+          await r.json();
+        const running = procs.filter((p) => p.state === "running");
+        const gatewayUp = running.some(
+          (p) => p.name.includes("gateway") || p.name.startsWith("gw"),
+        );
+        if (gatewayUp && running.length >= 4) return;
+      }
+    } catch {
+      // fall through to restore
+    }
+    await fetch(
+      `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+      { method: "POST" }
+    );
+    await new Promise((r) => setTimeout(r, 5000));
+  });
+
   // ── 1. Core processes ──────────────────────────────────────
 
   test("core processes: >=4 running including gateway",

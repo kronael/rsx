@@ -80,6 +80,18 @@ test.describe.serial("Safety: process crash & recovery",
       await ensureGateway(request);
       await ensureMaker(request);
     });
+    // Suite-level guard: even if individual tests time out and
+    // their afterEach is interrupted, restore the full topology
+    // so downstream shards (readiness, process-control, etc.)
+    // see a healthy system. Without this, a single safety
+    // failure cascades into 200+ "did not run" skips.
+    test.afterAll(async () => {
+      await fetch(
+        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+        { method: "POST" }
+      );
+      await new Promise((r) => setTimeout(r, 3000));
+    });
 
     test("gateway crash shows error state in topology",
       async ({ page, request }) => {
@@ -550,6 +562,16 @@ test.describe.serial("Safety: graceful degradation",
   () => {
     test.afterEach(async ({ request }) => {
       await ensureAll(request);
+    });
+    // Belt-and-braces: ensure full topology on suite exit so
+    // downstream shards see a seeded book regardless of which
+    // graceful-degradation test (potentially) interrupted.
+    test.afterAll(async () => {
+      await fetch(
+        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+        { method: "POST" }
+      );
+      await new Promise((r) => setTimeout(r, 3000));
     });
 
     test("book page works with no processes",
