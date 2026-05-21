@@ -1,7 +1,25 @@
-# WEDGE.md — pick one
+# WEDGE.md — picked
 
-Status: **draft for founder review.** Not auto-merged into
-public docs. Read, mark up, kill or promote.
+**Status: DECIDED (2026-05-21).**
+
+The wedge is **B + A**: exchange-in-a-box SDK on top of an
+open-source, orthogonal-parts library. Core thesis:
+
+> The interesting reusable pieces are the transport
+> (`rsx-dxs` = WAL + CMP + DXS) and possibly the orderbook
+> (`rsx-book` = slab + CompressionMap + matching). Open-source
+> those. Sell / support the full exchange-in-a-box on top.
+
+The architecture already supports this — `rsx-dxs` shipped in
+v0.2.0 with **zero `rsx-types` production dependency**
+(`cargo tree -p rsx-dxs --edges normal | grep rsx-` is empty).
+Any project that wants log-backed reliable UDP transport with
+a TCP cold-path replay can `cargo add rsx-dxs` and use it.
+
+The original draft below remains for context. The decision
+section that follows it (§"What B+A looks like") replaces it.
+
+---
 
 ## Why this exists
 
@@ -147,5 +165,105 @@ keeps the project at watch.
   picked)
 - Technical roadmap (defer to per-wedge plan)
 - Hiring (defer)
+
+---
+
+## What B+A looks like (decided)
+
+Picked: **B (exchange-in-a-box) on top of A (open-source
+orthogonal parts)**.
+
+### The orthogonal parts (open source, MIT/Apache-2)
+
+These ship as standalone reusable libraries. Each has its own
+crate, its own README, its own benchmark, and is provably
+usable without the rest of RSX:
+
+- **`rsx-dxs`** — the load-bearing one. Log-backed reliable
+  UDP transport (CMP) + TCP cold-path replay (DXS). Wire =
+  disk = stream. Zero heap on send path. Two-tier NAK
+  retransmit (ring → WAL). V0/V1 schema version byte. Already
+  proven domain-agnostic in v0.2.0. **This is the headline
+  artifact.**
+- **`rsx-book`** — slab-arena orderbook with `CompressionMap`
+  price-to-index. 54 ns single fill, FIFO within price level.
+  Generic over the order-id type — anyone building a matching
+  engine can `cargo add rsx-book`.
+- **`rsx-messages`** — the example domain layer on top of
+  `rsx-dxs`. Demonstrates how to ship a wire schema. Other
+  projects substitute their own.
+
+The transport (`rsx-dxs`) is the wedge artifact. It has the
+strongest "no one else has this" claim: nobody ships
+log-backed reliable UDP in Rust with the WAL-as-retransmit-
+source design. Aeron is JVM-only. kcp is C. QUIC has the
+wrong shape. This is the citeable thing.
+
+### The packaged product (proprietary or source-available)
+
+On top of the open libs, `rsx-exchange` is the deployable
+stack: matching, risk, gateway, marketdata, mark, recorder,
+maker, playground, web UI, ops. **This is what gets sold.**
+
+Three flavours, picked per design partner:
+- **Self-host SDK** — they run it on their infra. Helm chart
+  / Docker compose / single binary. Source-available so
+  they can read it; commercial license for production.
+- **Managed instance** — we run it for them (regional CEX
+  desk, prediction-market platform, basis-trade venue).
+- **Vendor mode** — they fork the wire format, run their
+  domain records, we license the transport + tooling.
+
+### What this unblocks NOW
+
+The decision unblocks a sequence of editorial + GTM moves
+that were all blocked on "what's the story?":
+
+1. **One-pager** (next deliverable). Two paragraphs +
+   architecture diagram + three bullets per persona
+   (engineer, exchange-operator, investor). Lives at
+   root, links here.
+2. **BLOG.md narrative reframe** (T5.2). Currently a
+   technical brag-doc. Now reframes as "log-backed
+   reliable UDP for Rust + the exchange that proves it
+   works at line rate." cmp.md becomes the lead post.
+3. **rsx-dxs/README.md polish** — already in good shape;
+   add a "When you should use this" section, a comparison
+   table vs. Aeron / kcp / QUIC (already in spec, port to
+   README), and a 30-second example.
+4. **BUSINESS.md draft** — pricing tiers (community free,
+   SDK paid, managed instance), license posture (MIT for
+   libs, source-available for `rsx-exchange`), support
+   tiers.
+5. **First-design-partner outreach** — 5 prospects this
+   month, friends of friends, ask: "would you pay $X to
+   run RSX as your internal exchange?" Goal: one signed
+   $25-50k POC by end of quarter.
+6. **Crates.io plan** — `rsx-dxs`, `rsx-book`, `rsx-types`,
+   `rsx-messages` publishable as v0.2.0 once docs are
+   library-quality (the rsx-dxs/README.md from v0.2.0 is
+   close).
+
+### What this still blocks
+
+- **Token / chain decision** — only relevant if Option C
+  (niche venue) ever gets picked up later as a second
+  product line. Not in scope for B+A.
+- **Regulatory perimeter** — depends on which design
+  partner signs first. Defer.
+- **Hiring** — depends on whether the first POC is signed
+  before $$ runs out.
+
+### The signal that B+A is working (6-month horizon)
+
+- 3+ external projects citing or depending on `rsx-dxs`
+  (open-source proof)
+- 1 signed design partner for `rsx-exchange` (paid proof)
+- 1 published-in-public technical artifact (paper, talk,
+  or blog post) with reach > 5k engineers
+
+If all three are missing at month 6, the bet wasn't right
+— revisit between A-only (reputation play, alt funding) or
+C (run a venue ourselves).
 
 — file end —
