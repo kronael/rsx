@@ -28,6 +28,15 @@ pub struct IncomingOrder {
     pub order_id_lo: u64,
 }
 
+/// Invariant #2 (exactly-one completion): each path through this
+/// function emits exactly one terminal event for the incoming order —
+/// `OrderFailed` (validation / FOK / reduce-only), `OrderCancelled`
+/// (post-only would cross), `OrderDone` (IOC residual or full fill),
+/// or `OrderInserted` (resting; terminal event fires later on
+/// fill/cancel). Invariant #6 (no crossed book): we match against
+/// `best_ask_tick` / `best_bid_tick` until the aggressor stops crossing,
+/// then insert any residual via `insert_resting`, so post-loop the
+/// book cannot be crossed.
 pub fn process_new_order(
     book: &mut Orderbook,
     order: &mut IncomingOrder,
@@ -251,6 +260,13 @@ fn emit_bbo(book: &mut Orderbook) {
     });
 }
 
+/// Match an aggressor against resting orders at a single price level.
+///
+/// Invariant #1 (Fills precede ORDER_DONE): `Event::Fill` is emitted
+/// inside the inner loop *before* the `Event::OrderDone` for any maker
+/// that fully fills, and before `process_new_order` emits the taker's
+/// terminal event. Invariant #3 (FIFO): walks the level from
+/// `level.head` set by `insert_resting`.
 pub fn match_at_level(
     book: &mut Orderbook,
     tick: u32,

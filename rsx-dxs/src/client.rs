@@ -303,6 +303,8 @@ impl DxsConsumer {
                 ));
             }
 
+            // Invariant #5 (tips monotonic): `.max(seq)` ensures
+            // `self.tip` never decreases even on out-of-order delivery.
             if let Some(seq) = extract_seq(&payload) {
                 self.tip = self.tip.max(seq);
             }
@@ -399,6 +401,8 @@ impl DxsConsumer {
                 ));
             }
 
+            // Invariant #5 (tips monotonic): `.max(seq)` ensures
+            // `self.tip` never decreases even on out-of-order delivery.
             if let Some(seq) = extract_seq(&payload) {
                 self.tip = self.tip.max(seq);
             }

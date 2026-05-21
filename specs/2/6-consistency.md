@@ -170,6 +170,63 @@ fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
 6. Risk engine persists positions
 7. Matching engine persists orderbook via snapshot + WAL
 
+### Cross-reference: CLAUDE.md system-wide invariants
+
+The 10 system-wide invariants in `CLAUDE.md` partially overlap with the
+seven above. The mapping (and enforcement point for those not covered
+here) is:
+
+- **#1 Fills precede ORDER_DONE.** Covered by §2 ordering rule and by
+  invariant 5 above. Enforced by:
+  `rsx-book/src/matching.rs::match_at_level` (emits `Event::Fill` before
+  any `Event::OrderDone` for the taker) and
+  `rsx-matching/src/main.rs::write_events_to_wal` (sequences both into
+  WAL in event-buffer order).
+- **#2 Exactly-one completion (ORDER_DONE xor ORDER_FAILED).** Not
+  covered here. Enforced by `rsx-book/src/matching.rs::process_new_order`
+  — every code path emits exactly one terminal event
+  (`OrderFailed` for validation/FOK/reduce-only rejects;
+  `OrderCancelled` for post-only crosses; `OrderDone` for IOC residual
+  or full fill). Resting orders complete later via cancel or fill.
+- **#3 FIFO within price level (time priority).** Not covered here.
+  Enforced by `rsx-book/src/book.rs::Orderbook::insert_resting` — new
+  orders are linked at `level.tail`; matching walks from `level.head`
+  in `match_at_level`.
+- **#4 Position = sum of fills.** Not covered here. Enforced by
+  `rsx-risk/src/shard.rs::RiskShard::process_fill` calling
+  `Position::apply_fill` for both taker and maker on every persisted
+  fill (with `seq <= tip` dedup to keep one-to-one with WAL fills).
+- **#5 Tips monotonic.** Not covered here. Enforced by
+  `rsx-dxs/src/client.rs::DxsClient::run_*` (`self.tip = self.tip.max(seq)`)
+  and `rsx-risk/src/shard.rs::process_fill` (writes seq after `seq > tip`
+  dedup gate). Implied by invariant 1 above on the producer side.
+- **#6 Best bid < best ask (no crossed book).** Not covered here.
+  Enforced by `rsx-book/src/matching.rs::process_new_order` — incoming
+  aggressors consume opposing levels in `match_at_level` until residual
+  no longer crosses; only then is the residual inserted via
+  `insert_resting`. Post-only orders that would cross are rejected
+  before insertion.
+- **#7 SPSC preserves event FIFO order.** Covered by invariant 3 above
+  (in-process variant). Enforced by `rtrb` (single producer/consumer,
+  FIFO ring) at all SPSC sites in `rsx-risk/src/main.rs` and
+  `rsx-mark/src/main.rs`.
+- **#8 Slab no-leak (allocated = free + active).** Not covered here.
+  Enforced by `rsx-book/src/slab.rs::Slab::{alloc,free}` — every
+  `alloc()` either pops `free_head` or bumps `bump_next`; every `free`
+  pushes back onto `free_head`. Callers (`insert_resting`,
+  `unlink_order`, OrderDone path) pair each alloc with one free.
+- **#9 Funding zero-sum across users per symbol per interval.** Not
+  covered here. Enforced by `rsx-risk/src/funding.rs::calculate_payment`
+  — same `(rate, mark)` applied to each user's signed `net_qty`; sum
+  over a symbol's users equals `rate * mark * Σ net_qty / 10_000`, and
+  `Σ net_qty = 0` by invariant #4 (every fill increments long by qty on
+  one side and short by qty on the other).
+- **#10 Advisory lock exclusive (one main per shard).** Not covered
+  here. Enforced by `rsx-risk/src/lease.rs::AdvisoryLease` using
+  Postgres `pg_try_advisory_lock(shard_id)`; replica path in
+  `rsx-risk/src/main.rs::run_replica` blocks on `pg_advisory_lock`
+  before promotion.
+
 ## Verification
 
 - Trace: order -> fill -> drain to 3 rings -> each consumer processes

@@ -110,6 +110,10 @@ impl Orderbook {
     }
 
     /// Insert a resting order into the book.
+    ///
+    /// Invariant #3 (FIFO within price level): new orders link at
+    /// `level.tail`; `match_at_level` walks from `level.head`, so
+    /// time priority is preserved per price level.
     #[allow(clippy::too_many_arguments)]
     pub fn insert_resting(
         &mut self,
