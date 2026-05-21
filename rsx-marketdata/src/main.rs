@@ -455,6 +455,10 @@ fn handle_fill(
         let clients = st.clients_for_symbol(rec.symbol_id);
         for client_id in clients {
             if st.has_trades(client_id, rec.symbol_id)
+                // HEAP: fan-out clone — push_to_client takes owned String
+                // (per-client VecDeque<String> outbound). One clone per
+                // subscriber per trade. JSON broadcast path, acceptable
+                // per spec; binary fan-out would replace this.
                 && !st.push_to_client(
                     client_id,
                     msg.clone(),
@@ -509,6 +513,9 @@ fn broadcast_updates(
     let clients = st.clients_for_symbol(symbol_id);
     for client_id in clients {
         if st.has_depth(client_id, symbol_id)
+            // HEAP: fan-out clone of L2 delta JSON per depth subscriber.
+            // push_to_client requires owned String. JSON broadcast path,
+            // acceptable per spec.
             && !st.push_to_client(
                 client_id,
                 delta_msg.clone(),
@@ -523,6 +530,8 @@ fn broadcast_updates(
             }
         if let Some(ref msg) = bbo_msg {
             if st.has_bbo(client_id, symbol_id) {
+                // HEAP: fan-out clone of BBO JSON per BBO subscriber.
+                // Same rationale as delta clone above.
                 let _ = st.push_to_client(
                     client_id,
                     msg.clone(),

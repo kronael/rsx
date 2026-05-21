@@ -56,6 +56,8 @@ pub async fn handle_connection(
             } else {
                 &payload
             };
+            // HEAP: per WS ping (keepalive, ~tens of seconds). Cold path
+            // relative to market data fan-out; not on the per-event critical path.
             let mut pong = vec![0x8A, pong_payload.len() as u8];
             pong.extend_from_slice(pong_payload);
             if let Err(e) = ws_write_raw(&mut stream, &pong).await {
