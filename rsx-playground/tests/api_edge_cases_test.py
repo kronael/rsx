@@ -1241,12 +1241,6 @@ def test_authorization_not_enforced(client):
     assert resp.status_code == 200
 
 
-def test_file_upload_not_supported(client):
-    """File upload not supported."""
-    # No file upload endpoints exist
-    assert True
-
-
 # ── Performance (10) ──────────────────────────────────────
 
 

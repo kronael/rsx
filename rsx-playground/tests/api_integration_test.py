@@ -835,17 +835,6 @@ def test_concurrent_api_requests(client):
         t.join()
 
 
-def test_mixed_operations(client, wal_dir_with_files):
-    """Mixed operations don't interfere."""
-    client.post("/api/orders/batch")
-    client.get("/api/processes")
-    client.post("/api/verify/run")
-    client.get("/api/logs")
-    client.get("/x/wal-status")
-
-    assert True
-
-
 def test_state_consistency_under_load(client):
     """State consistency under load."""
     for _ in range(20):

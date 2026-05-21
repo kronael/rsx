@@ -32,11 +32,7 @@ test.describe("Readiness pipeline", () => {
       const gatewayUp = running.some(
         (p) => p.name.includes("gateway") || p.name.startsWith("gw"),
       );
-      // skip when exchange binaries are not compiled/running
-      test.skip(
-        !gatewayUp,
-        "exchange processes not running (gateway offline)",
-      );
+      expect(gatewayUp, "gateway process not running").toBe(true);
       expect(running.length).toBeGreaterThanOrEqual(4);
     },
   );
@@ -57,10 +53,7 @@ test.describe("Readiness pipeline", () => {
     const r = await request.get("/api/maker/status");
     expect(r.ok()).toBe(true);
     const status = await r.json();
-    test.skip(
-      !status.running,
-      "maker not running (exchange offline)",
-    );
+    expect(status.running, "maker not running (exchange offline)").toBe(true);
     expect(typeof status.pid).toBe("number");
     expect(status.pid).toBeGreaterThan(0);
   });

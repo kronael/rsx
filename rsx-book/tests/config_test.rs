@@ -41,10 +41,6 @@ fn incoming(
     }
 }
 
-// NOTE: config_applied_emitted_on_update skipped --
-// no ConfigApplied event variant exists in the
-// current Event enum.
-
 #[test]
 fn config_tick_size_change_validates_new_orders() {
     let mut book = test_book();

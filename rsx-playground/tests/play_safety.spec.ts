@@ -418,11 +418,7 @@ test.describe("Safety: operational safety", () => {
         },
       });
       const res = await request.get("/api/audit-log");
-      if (res.status() === 404) {
-        // audit log endpoint not implemented yet
-        test.skip();
-        return;
-      }
+      expect(res.status(), "audit log endpoint missing").not.toBe(404);
       expect(res.ok()).toBe(true);
       const body = await res.json();
       const entries = Array.isArray(body)

@@ -387,7 +387,9 @@ def gateway():
     and unique ports. Kills process on teardown.
     """
     if not GW_BINARY.exists():
-        pytest.skip(f"gateway binary not found: {GW_BINARY}")
+        pytest.fail(
+            f"rsx-gateway not built ({GW_BINARY}); run `cargo build` first"
+        )
 
     env = {
         **os.environ,
@@ -456,7 +458,9 @@ def gateway():
 def gateway_small_pending():
     """Gateway with max_pending=1 for pending queue tests."""
     if not GW_BINARY.exists():
-        pytest.skip(f"gateway binary not found: {GW_BINARY}")
+        pytest.fail(
+            f"rsx-gateway not built ({GW_BINARY}); run `cargo build` first"
+        )
 
     ws_port = GW_WS_PORT + 1
     risk_port = GW_RISK_CMP_PORT + 1
