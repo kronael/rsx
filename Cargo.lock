@@ -1886,7 +1886,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-book"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "rsx-types",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-dxs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -1929,7 +1929,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-gateway"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-maker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "rsx-types",
@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-mark"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "futures-util",
@@ -1979,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-marketdata"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-matching"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "core_affinity",
  "criterion",
@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-messages"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "rsx-dxs",
@@ -2027,7 +2027,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-recorder"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "rsx-dxs",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-risk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "core_affinity",
  "criterion",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "rsx-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
 ]
