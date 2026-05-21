@@ -306,13 +306,28 @@ section 2 for the shared abstraction and BookObserver trait.
 ### Price Level Array
 
 Prices map to array indices via compressed zone lookup (see section 2.5).
-`PriceLevel` is 24 bytes (`head`, `tail`, `total_qty`, `order_count`).
+`PriceLevel` is 24 bytes (`head`, `tail`, `total_qty`, `order_count`) — no
+`align(64)`, the level array is walked linearly and the 24B layout is enforced
+by a compile-time `assert!(size_of::<PriceLevel>() == 24)`.
 ~617K slots * 24B = ~14.8 MB per array. Two arrays = ~30 MB.
-The order slab is the main memory consumer (~10 GB).
 
-See `rsx-book/src/` for `PriceLevel`, `OrderSlot` (128B, 2 cache lines, hot/cold
-split at 48B), and `Slab<T>` (Vec + free list chained through the slot's own
-`next` field — O(1) alloc/free, index IS the handle).
+`OrderSlot` is `#[repr(C, align(64))]` and exactly 128B (two cache lines,
+hot/cold split at 48B), both enforced by compile-time asserts on `size_of` and
+`align_of`. `CompressionMap` is read on every order and asserted `<= 128`
+bytes so it fits within two cache lines.
+
+`Slab<T>` is a `Vec` plus a free list chained through the slot's own `next`
+field — O(1) alloc/free, index IS the handle. The matching engine constructs
+`Orderbook::new(config, 65_536, mid_price)`: 65 536 order slots
+(~8 MiB) per symbol. Tests use smaller capacities (1 024 – 4 096).
+
+### FIFO Within Price Level (Invariant #3)
+
+`insert_resting` always appends to `level.tail`. `match_at_level` walks from
+`level.head`. Both operations preserve insertion order, which equals time
+priority within the level. Smooshed slots (zones 1–4) preserve FIFO across
+interleaved prices: `match_at_level` scans rather than skips so later orders
+at qualifying prices still match in arrival order.
 
 ### Best Bid/Ask Tracking
 
@@ -401,11 +416,15 @@ and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).
 
 ## 7. Memory Layout & Performance
 
-Pre-allocate everything. Roughly 15 MB for the two level arrays; the slab dominates
-(~10 GB for ~78M order slots). See bench results in `rsx-book/benches/`.
+Pre-allocate everything. Roughly 30 MB for the two level arrays; the slab
+adds ~8 MiB at the production capacity of 65 536 `OrderSlot`s. (The
+~10 GB / ~78M-slot figure is the aspirational upper bound, not the current
+default — bump the `Orderbook::new` capacity argument to scale.)
+See bench results in `rsx-book/benches/`.
 
-Hot path is zero-allocation: slab provides all storage, event buffer is fixed array
-reset by single store, no Vec growth, no String formatting.
+Hot path is zero-allocation: slab provides all storage, the event buffer is a
+fixed `[Event; 10_000]` (`MAX_EVENTS`) reset by a single `event_len = 0`
+store, no Vec growth, no String formatting.
 
 ---
 
