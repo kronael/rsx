@@ -34,13 +34,10 @@ fn set_timeout(
     ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
     dur: Duration,
 ) {
-    match ws.get_mut() {
-        MaybeTlsStream::Plain(s) => {
-            if let Err(e) = s.set_read_timeout(Some(dur)) {
-                warn!("maker: set_read_timeout failed: {e}");
-            }
+    if let MaybeTlsStream::Plain(s) = ws.get_mut() {
+        if let Err(e) = s.set_read_timeout(Some(dur)) {
+            warn!("maker: set_read_timeout failed: {e}");
         }
-        _ => {}
     }
 }
 
