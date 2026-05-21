@@ -13,6 +13,11 @@ pub struct CompressionMap {
     pub zone_slots: [u32; 5],
 }
 
+// Read on every order; keep it within ~2 cache lines.
+const _: () = assert!(
+    std::mem::size_of::<CompressionMap>() <= 128
+);
+
 impl CompressionMap {
     pub fn new(mid_price: i64, tick_size: i64) -> Self {
         // Zone boundaries as distance in ticks from mid
