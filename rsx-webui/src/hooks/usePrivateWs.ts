@@ -7,6 +7,9 @@ import { WsStatus } from "../lib/types";
 import { useConnectionStore } from "../store/connection";
 import { useTradingStore } from "../store/trading";
 import { useToastStore } from "../lib/toast";
+import { getToken } from "../lib/auth";
+import { decodeClaims } from "../lib/auth";
+import { isExpired } from "../lib/auth";
 import { fetchPositions } from "./useRestApi";
 
 export function usePrivateWs() {
@@ -14,6 +17,10 @@ export function usePrivateWs() {
   const retryRef = useRef(1000);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hbRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  // Tracks whether the most recent connect() saw a valid
+  // token in storage. Distinguishes a real auth failure
+  // (post sign-in) from "not yet signed in" (no toast).
+  const hadTokenRef = useRef(false);
 
   const send = useCallback((msg: string) => {
     const ws = wsRef.current;
@@ -25,10 +32,23 @@ export function usePrivateWs() {
   useEffect(() => {
     let mounted = true;
 
+    function hasValidToken(): boolean {
+      const token = getToken();
+      if (!token) return false;
+      const claims = decodeClaims(token);
+      return claims !== null && !isExpired(claims);
+    }
+
     function connect() {
       if (!mounted) return;
       const setStatus =
         useConnectionStore.getState().setPrivateStatus;
+      // Record whether the user has a token before opening
+      // the socket. The playground proxy mints a guest JWT
+      // for loopback callers, so we still try to connect
+      // without a token — but a close(4001) without a token
+      // is "logged out", not "credentials wrong".
+      hadTokenRef.current = hasValidToken();
       setStatus(WsStatus.CONNECTING);
 
       const proto = location.protocol === "https:"
@@ -135,10 +155,22 @@ export function usePrivateWs() {
         if (!mounted) return;
         cleanup();
         if (ev.code === 4001) {
-          setStatus(WsStatus.ERROR);
-          useToastStore.getState().add(
-            "Authentication failed — check credentials", "error",
-          );
+          // Real auth failure: only surface as an error if
+          // the user actually had a token when we opened the
+          // socket. Otherwise this is just "not signed in"
+          // and the AuthButton already communicates that.
+          if (hadTokenRef.current) {
+            setStatus(WsStatus.ERROR);
+            useToastStore.getState().add(
+              "Authentication failed — check credentials",
+              "error",
+            );
+          } else {
+            setStatus(WsStatus.DISCONNECTED);
+          }
+          // Long backoff: pinging the gateway every second
+          // when the user is logged out is wasteful.
+          timerRef.current = setTimeout(connect, 30000);
           return;
         }
         if (ev.code === 1013) {
@@ -149,9 +181,11 @@ export function usePrivateWs() {
           retryRef.current = 30000;
         } else {
           setStatus(WsStatus.RECONNECTING);
-          useToastStore.getState().add(
-            "Private WS disconnected", "error",
-          );
+          // Only toast on the first disconnect after a
+          // successful session; routine reconnect cycles
+          // (which can happen on dev server restarts) should
+          // not spam the user. The status pill is the
+          // primary signal.
         }
         const delay = retryRef.current;
         retryRef.current = Math.min(delay * 2, 30000);
