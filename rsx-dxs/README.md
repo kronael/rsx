@@ -63,6 +63,9 @@ first `u64` of every data record (per the [`CmpRecord`] trait).
 The hot send path (`CmpSender::send` / `send_raw`) does
 **zero heap allocations** — the in-memory `send_ring` is
 preallocated at construction and reused for every frame.
+The receive path (`CmpReceiver::try_recv`) currently
+allocates one `Vec<u8>` per in-order packet; a zero-copy
+variant (caller-supplied `&mut [u8]`) is future work.
 
 ## Quick start (sender)
 

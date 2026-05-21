@@ -59,14 +59,15 @@ serialization framework. C structs on the wire.
 
 Criterion benchmarks on the orderbook and transport layer:
 
-| Operation              | Latency  |
-|------------------------|----------|
-| Match single fill      | 54 ns    |
-| Insert resting order   | 857 ns   |
-| WAL append (in-memory) | 31 ns    |
-| WAL flush+fsync 64KB   | 24 us    |
-| CMP encode             | 43 ns    |
-| CMP decode             | 9 ns     |
+| Operation                                      | Latency  |
+|------------------------------------------------|----------|
+| Match single fill                              | 54 ns    |
+| Insert resting order                           | 857 ns   |
+| `WalWriter::append` (Vec extend, pre-fsync)    | 31 ns    |
+| WAL flush + fsync 64 KB                        | 24 us    |
+| Protocol-record encode (StatusMessage / Nak / Heartbeat) | 43 ns |
+| `FillRecord` encode                            | 23 ns    |
+| Protocol-record decode                         | 9 ns     |
 
 End-to-end on loopback (Gateway → ME → Gateway): not yet
 asserted by an automated harness. Summing the measured

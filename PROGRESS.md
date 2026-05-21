@@ -65,10 +65,11 @@ correctness batch.
 |-----------|---------|
 | match single fill | 54 ns |
 | insert resting order | 857 ns |
-| WAL append (in-memory) | 31 ns |
-| WAL flush+fsync 64KB | 24 µs |
-| CMP encode | 43 ns |
-| CMP decode | 9 ns |
+| `WalWriter::append` (Vec extend, pre-fsync) | 31 ns |
+| WAL flush + fsync 64 KB | 24 µs |
+| protocol-record encode (StatusMessage / Nak / Heartbeat) | 43 ns |
+| `FillRecord` encode | 23 ns |
+| protocol-record decode | 9 ns |
 
 ## Remaining Polish
 

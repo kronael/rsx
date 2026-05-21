@@ -5,7 +5,9 @@ i64 arithmetic, single-threaded matching per symbol, CMP/UDP
 between processes, WAL-based recovery. The design budget is
 **< 50 µs gateway → ME → gateway** and **< 500 ns ME match**;
 component microbenches are measured (54 ns match, 31 ns WAL
-append, 43 ns CMP encode, 9 ns CMP decode), an end-to-end
+buffer append (no disk I/O), 43 ns protocol-record encode
+(StatusMessage/Nak/Heartbeat; FillRecord encodes in 23 ns),
+9 ns protocol-record decode), an end-to-end
 harness is on the way (see
 [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md)).
 
@@ -199,8 +201,8 @@ because the harness that would assert that doesn't exist yet.
 | Number                          | Measured?               |
 |---------------------------------|-------------------------|
 | 54 ns match single fill         | yes — `rsx-book` bench  |
-| 31 ns WAL append (in-memory)    | yes — `rsx-dxs` bench   |
-| 43 ns CMP encode, 9 ns decode   | yes — `rsx-gateway` bench |
+| 31 ns WAL buffer append (no disk I/O; `WalWriter::append` is a `Vec` extend, pre-fsync) | yes — `rsx-dxs` bench   |
+| 43 ns protocol-record encode (StatusMessage / Nak / Heartbeat; 23 ns for `FillRecord`), 9 ns decode | yes — `rsx-dxs/cmp_bench` + `rsx-messages/encode_bench` |
 | 50–170 ns SPSC ring hop         | yes — `rsx-book` bench  |
 | <50 µs GW→ME→GW round trip      | **design budget**; F1 probe + dashboard shipped (commit `bded133`), `make latency-publish` writes p50/p99 to `bench-baseline.json` once cluster-run; WAL-backed NAK retransmit (`366d1b2`) closes the two-tier loss-recovery path |
 | <500 ns ME match                | yes — sub-bench of 54 ns |

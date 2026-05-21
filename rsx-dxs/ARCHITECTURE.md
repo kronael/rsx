@@ -64,11 +64,14 @@ ring_lens:   Box<[u16]>   capacity 4096   encoded frame length
 ring_frames: Box<[u8]>    capacity 4096 * 128 B
 ```
 
-Zero allocations on the hot path. On NAK, the sender checks
-`ring_seqs[slot] == seq` (cache hit) or falls back to
+Zero allocations on the hot **send** path. On NAK, the sender
+checks `ring_seqs[slot] == seq` (cache hit) or falls back to
 `read_record_at_seq` (cache miss). NAK counts are clamped to
 `SEND_RING_CAPACITY` so a malicious peer can't make the
-sender loop on `u64::MAX`.
+sender loop on `u64::MAX`. The receive path
+(`CmpReceiver::try_recv`) currently allocates one `Vec<u8>`
+per in-order packet; a caller-supplied `&mut [u8]` variant
+is future work.
 
 ## WAL record format
 
@@ -189,9 +192,10 @@ Consumers dedup by `seq`. Risk treats any record with
 
 | Operation | Measured |
 |-----------|----------|
-| CMP encode | 43 ns |
-| CMP decode | 9 ns |
-| WAL append (in-memory) | 31 ns |
+| Protocol-record encode (StatusMessage / Nak / Heartbeat) | 43 ns |
+| `FillRecord` encode | 23 ns |
+| Protocol-record decode | 9 ns |
+| `WalWriter::append` (Vec extend, no disk I/O) | 31 ns |
 | WAL flush + fsync (64 KB) | 24 µs |
 | WAL sequential read | >500 MB/s (target) |
 | UDP round-trip, same machine | <10 µs (target) |

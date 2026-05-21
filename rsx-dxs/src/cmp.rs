@@ -136,7 +136,14 @@ impl CmpSender {
     /// CmpRecord::set_seq. Returns false if flow
     /// control stalls.
     ///
-    /// Hot path: zero heap allocations.
+    /// Hot send path: zero heap allocations. The send-ring
+    /// retransmit cache, `buf`, and `ring_frames` are
+    /// preallocated; the only call sites that touch the
+    /// allocator are construction and NAK fallback (cold
+    /// path via `read_record_at_seq`). NB: the *receive*
+    /// path (`CmpReceiver::try_recv`) does heap-allocate
+    /// one `Vec<u8>` per in-order packet — the zero-heap
+    /// claim is for the send path only.
     pub fn send<T: CmpRecord>(
         &mut self,
         record: &mut T,
@@ -497,6 +504,17 @@ impl CmpReceiver {
         })
     }
 
+    /// Receive the next in-order CMP packet, if any. Returns
+    /// the parsed header plus an owned copy of the payload.
+    ///
+    /// NB: this allocates a `Vec<u8>` for the payload on every
+    /// in-order delivery — the receive path is NOT zero-heap.
+    /// The zero-heap claim in the project docs applies to
+    /// `CmpSender::send` only. A zero-copy receive variant
+    /// (caller-supplied `&mut [u8]`) is tracked as future work;
+    /// since all current consumers (risk, marketdata) do
+    /// further work proportional to the payload, the per-packet
+    /// alloc is not on the measured GW→ME→GW critical path.
     pub fn try_recv(
         &mut self,
     ) -> Option<(WalHeader, Vec<u8>)> {
