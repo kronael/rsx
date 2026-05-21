@@ -27,6 +27,14 @@ wire protocol is defined in WEBPROTO.md.
   an OVERLOADED error.
 - Gateway does not block on internal congestion.
 
+## Runtime Model
+
+- Single-threaded monoio (io_uring) reactor. `GatewayState`
+  lives behind `Rc<RefCell<...>>`; no locks, no cross-thread
+  sharing. One connection = one spawned task.
+- CMP/UDP send (to risk) and receive (responses) run on the
+  same reactor as WS handlers.
+
 ## Connection Lifecycle
 
 1. Client opens WebSocket with `Authorization: Bearer <JWT>`
@@ -44,6 +52,21 @@ wire protocol is defined in WEBPROTO.md.
    resumption -- query open orders via `{O:[]}` on WS or
    `GET /v1/orders` (see WEBPROTO.md, REST.md).
 
+## JWT
+
+- Algorithm: HS256. `RSX_GW_JWT_SECRET` must be set; the
+  gateway refuses to start if the secret is empty or
+  shorter than 32 bytes.
+- Required claims: `exp` (expiry), `aud == "rsx-gateway"`,
+  `iss == "rsx-auth"`. `sub` carries the user id (also
+  accepted as a `user_id` claim).
+- Optional claims: `nbf` (enforced when present), `jti`.
+- `jti` replay protection: a bounded in-process `JtiTracker`
+  exists but is not wired through the WS handshake in v1.
+  Short-lived `exp` is the v1 mitigation for replay; a
+  shared (Redis) tracker is the planned multi-replica
+  hardening.
+
 ## Rate Limits
 
 Per RPC.md:
@@ -53,6 +76,19 @@ Per RPC.md:
 
 Exceeded -> `{E:[1006, "rate limited"]}` or
 `ORDER_FAILED(RATE_LIMIT)` depending on stage.
+
+The per-IP limiter map is bounded (default 10,000 entries)
+and evicts the oldest IP (FIFO) when full. This caps memory
+under source-IP rotation while preserving rate-limit state
+for any single misbehaving IP long enough to be effective.
+
+## Overload / Circuit Breaker
+
+The gateway runs a fail-closed circuit breaker on the order
+path. After `circuit_threshold` consecutive failures it
+opens and rejects new orders with `OVERLOADED` until a
+cooldown elapses, then probes via a single half-open
+attempt. Success closes it; failure re-opens it.
 
 ## Limits
 
