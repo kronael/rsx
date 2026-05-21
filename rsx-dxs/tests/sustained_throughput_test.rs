@@ -6,9 +6,10 @@
 //! the steady-state path where ring caching, syscall pacing
 //! and any allocator hot spots would compound.
 //!
-//! Gated by RSX_BENCH_TESTS=1 — CI boxes with overloaded
-//! kernels can take longer than the 1s budget. On a typical
-//! dev box loopback completes in ~50–200ms.
+//! Delivery floor is set at 10% (not 90%) — UDP loopback drops
+//! under sustained burst pressure on smaller boxes, but if the
+//! receiver saw fewer than 10% of datagrams the receive path is
+//! silently broken and the throughput number is meaningless.
 
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
@@ -47,16 +48,6 @@ fn fill(seq: u64) -> FillRecord {
 
 #[test]
 fn cmp_send_50k_under_one_second() {
-    if std::env::var("RSX_BENCH_TESTS").ok().as_deref()
-        != Some("1")
-    {
-        eprintln!(
-            "skipping cmp_send_50k_under_one_second; \
-             set RSX_BENCH_TESTS=1 to enable",
-        );
-        return;
-    }
-
     let tmp = TempDir::new().unwrap();
     let wal_dir = tmp.path();
 
@@ -116,13 +107,20 @@ fn cmp_send_50k_under_one_second() {
     }
     let elapsed = t0.elapsed();
 
+    // Give the drainer a brief moment to absorb the tail of
+    // the burst that's still in flight on the loopback socket
+    // after the final send. Without this, the drain thread can
+    // race the stop flag and miss the last few datagrams,
+    // turning a healthy run into a delivery-floor failure.
+    thread::sleep(Duration::from_millis(100));
     drain_stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    let _seen = drainer.join().unwrap();
+    let seen = drainer.join().unwrap();
 
     let rate = (N as f64) / elapsed.as_secs_f64();
+    let total_sent = N + 64; // warmup + measured burst
     eprintln!(
         "cmp send: {N} msgs in {elapsed:?} \
-         ({rate:.0} msg/s)",
+         ({rate:.0} msg/s); receiver saw {seen}/{total_sent}",
     );
 
     assert!(
@@ -136,5 +134,20 @@ fn cmp_send_50k_under_one_second() {
     assert!(
         rate >= 50_000.0,
         "throughput {rate:.0} msg/s below 50_000 floor",
+    );
+
+    // Delivery floor: 10% of total. Loopback UDP drops under
+    // burst pressure on smaller boxes, but if the receiver
+    // saw less than 10% of datagrams the receive path is
+    // silently broken and the throughput number is just
+    // sendto-into-black-hole. 10% catches the catastrophic
+    // case without false-alarming on a kernel-buffer-bound
+    // host.
+    let floor = total_sent / 10;
+    assert!(
+        seen >= floor,
+        "receiver saw {seen}/{total_sent} datagrams \
+         (below {floor} delivery floor); throughput \
+         number is meaningless without proof of delivery",
     );
 }

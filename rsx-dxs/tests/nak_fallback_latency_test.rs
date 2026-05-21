@@ -5,7 +5,8 @@
 //! the ring no longer holds. The retransmit must come from
 //! disk via `read_record_at_seq`. Assert wall-clock budget.
 //!
-//! Gated by RSX_BENCH_TESTS=1 to keep `cargo test` lean.
+//! Completes in ~70ms on a typical dev box; runs as a normal
+//! test under `make test`.
 
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
@@ -57,16 +58,6 @@ fn as_bytes<T>(val: &T) -> &[u8] {
 
 #[test]
 fn nak_wal_fallback_under_5ms() {
-    if std::env::var("RSX_BENCH_TESTS").ok().as_deref()
-        != Some("1")
-    {
-        eprintln!(
-            "skipping nak_wal_fallback_under_5ms; set \
-             RSX_BENCH_TESTS=1 to enable",
-        );
-        return;
-    }
-
     let tmp = TempDir::new().unwrap();
     let wal_dir = tmp.path();
 
