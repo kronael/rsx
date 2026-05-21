@@ -46,10 +46,22 @@ For replica mode, add `RSX_RISK_IS_REPLICA=true`.
 ## Deployment
 
 - One instance per shard (user_id % shard_count == shard_id)
-- Pin to dedicated CPU core
+- Pin to dedicated CPU core (via `core_affinity` + `RSX_RISK_CORE_ID`)
 - Needs Postgres for state persistence and advisory lock
 - Connects to Gateway, ME(s), and Mark via CMP/UDP
 - Run a replica alongside for failover (~500ms detection)
+
+## Internal architecture
+
+- Single pinned hot thread driving `Shard::run_once`
+- 7 SPSC rings (rtrb) between hot thread and helpers:
+  fill, order, mark, bbo (consumers); response, accepted
+  (producers to gateway/ME); plus an 8192-slot persist ring
+  to the sidecar
+- **Persist sidecar:** dedicated tokio task with its own
+  Postgres client. Drains `PersistEvent` from the ring and
+  writes accounts/positions/fills behind the hot thread.
+  Ring full → hot path stalls (per WAL.md backpressure rule).
 
 ## Testing
 
@@ -60,10 +72,12 @@ cargo test -p rsx-risk -- --test-threads=1
 
 Use `--test-threads=1` for tests with global state.
 
-17 test files covering: account, fees, funding, insurance,
-liquidation, main loop, margin, order processing, persist,
-position, price, replica, replication e2e, shard, shard e2e,
-and more. See `specs/2/42-testing-risk.md`.
+20 test files covering: account, cmp_ingest, fees, funding,
+insurance, insurance_liquidation_e2e, insurance_persist,
+liquidation, liquidator_e2e, margin, margin_recalc,
+me_cmp_addrs, missing_integration, persist, position, price,
+replica, replication_e2e, shard, shard_e2e.
+See `specs/2/42-testing-risk.md`.
 
 ## Dependencies
 

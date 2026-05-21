@@ -37,6 +37,10 @@ cargo run -p rsx-mark
 - Needs outbound internet for exchange WebSocket feeds
 - Publishes to all Risk shards via CMP/UDP
 - DXS replay sidecar serves historical mark prices
+- Busy-spin aggregation loop, no `core_affinity` pinning
+  (separate process; not on the GW→ME→GW critical path)
+- One SPSC ring (`rtrb`, cap 1024, drop-newest on full)
+  per source feeding the aggregation loop
 
 ## Testing
 
@@ -51,13 +55,19 @@ See `specs/2/39-testing-mark.md`.
 
 - `rsx-types` -- shared types
 - `rsx-dxs` -- WAL writer, CMP sender, DXS replay service
-- tokio (for async WS source tasks)
+- `rsx-messages` -- MARK_PRICE record type
+- tokio + tokio-tungstenite (async WS source tasks)
+- rtrb (SPSC ring: WS sources → aggregation loop)
 
 ## Gotchas
 
 - Uses tokio for exchange WS feeds (async) but the
   aggregation loop is a single-threaded busy-spin. The two
-  communicate via SPSC rings.
+  communicate via one rtrb SPSC ring per source (cap 1024,
+  drop-newest on full).
+- WS reconnect: exponential backoff with ±20% jitter, hard
+  retry budget of 20 consecutive errors before giving up
+  on a source.
 - If all sources go stale (>10s), no mark price is published.
   Risk falls back to index price (BBO).
 - Staleness sweep runs every 1s. A source can be stale for

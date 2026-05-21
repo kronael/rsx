@@ -40,8 +40,22 @@ cargo run -p rsx-gateway
 - Stateless -- no durable state, crash recovery is <1s
 - Horizontal scaling by user_id hash with sticky sessions
 - Each instance connects to one Risk shard via CMP/UDP
-- Needs `RSX_GW_JWT_SECRET` set (shared with auth service)
+- Needs `RSX_GW_JWT_SECRET` set (shared with auth service);
+  minimum 32 bytes (`JWT_SECRET_MIN_LEN`) -- startup fails
+  on shorter secrets
 - Uses monoio (io_uring) -- requires Linux kernel 5.1+
+
+## Auth
+
+- HS256 signed JWT, secret ≥32 bytes enforced at startup
+- Validates `exp`, `nbf` (when present), `aud == "rsx-gateway"`,
+  `iss == "rsx-auth"`
+- `JtiTracker` (in-process bounded LRU) implemented to reject
+  jti replay; **dormant** — not yet wired through
+  `ws_handshake` (TODO 13-A16Z-FIXES T1.3)
+- IP rate limiters capped at `IP_LIMITER_MAX = 10_000`
+  entries with FIFO eviction (prevents memory blowup from
+  spray attacks)
 
 ## Testing
 

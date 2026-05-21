@@ -4,9 +4,12 @@
 
 ### Rust Unit Tests
 
-- `cargo test --workspace` (~1,200 tests, <5s)
+- `cargo test --workspace -- --test-threads=1`
+  → **878 passed, 0 failed** (<5s)
+- 912 `#[test]` + `#[tokio::test]` attributes total; the
+  delta is feature-gated and `#[ignore]` integration tests
 - Tests in dedicated `tests/` dir with `_test.rs` suffix
-- 88 test files across 12 crates
+- 88 test files across 12 Rust crates
 - Per-crate: `cargo test -p rsx-book -- test_name`
 - Per-file: `cargo test -p rsx-dxs --test wal_test`
 
@@ -20,9 +23,10 @@
 
 ### Playwright Browser Tests
 
-- 421 passing tests across 23 specs (~60s, 3 conditional skips)
+- Canonical: 421 / 424 passing across 23 specs
+  (3 conditional skips), ~60s
 - Requires running server + processes
-- `cd rsx-playground && bunx playwright test`
+- `make e2e` (or `cd rsx-playground && bunx playwright test`)
 
 ### Make Targets
 
@@ -30,21 +34,23 @@
 |--------|---------|------|------|
 | unit | `make test` | Rust unit tests | <5s |
 | WAL | `make wal` | WAL correctness | <10s |
-| e2e | `make e2e` | Rust E2E + Playwright | ~30s |
+| e2e | `make e2e` | Rust E2E + Playwright (421/424) | ~3min |
 | integration | `make integration` | testcontainers (PG) | 1-5min |
 | benchmarks | `make perf` | Criterion | varies |
 | bench gate | `make bench-gate` | regression gate (10%) | varies |
+| latency | `make latency-publish` | GW→ME→GW probe, publish histogram | varies |
 | Playwright | `make play` | all browser tests | ~60s |
+| release gate | `make release-gate` | blocks unless 421/421 + all green | varies |
 
 ## Test Coverage Summary
 
 | Suite | Files | Tests | Time |
 |-------|-------|-------|------|
-| Rust unit | 88 | ~1,200 | <5s |
+| Rust unit | 88 | 878 pass / 912 attrs | <5s |
 | Python (playground) | 19 | ~930 | ~10s |
 | Python (rsx-auth) | 2 | 13 | <1s |
-| Playwright | 23 | 421 | ~60s |
-| **Total** | **132** | **~2,565** | |
+| Playwright | 23 | 421 / 424 (3 skips) | ~60s |
+| **Total** | **132** | **~2,242 runnable** | |
 
 ## Playground Screen Verification (Feb 27)
 

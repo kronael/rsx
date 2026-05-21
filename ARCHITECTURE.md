@@ -58,22 +58,32 @@ consensus, no Raft, no cross-process coordination within a tier.
 
 ## Crate Layout
 
+12 cargo crates. `rsx-messages` was extracted from `rsx-dxs`
+so transport is now domain-agnostic (no rsx-types prod dep).
+
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, newtypes
 rsx-dxs/        Domain-agnostic transport: WalWriter, WalReader,
                 CmpSender, CmpReceiver, DxsReplayService,
-                DxsConsumer (no rsx-types dep)
+                DxsConsumer. Versioned wire header
+                (version: u8 at byte 8, V0=legacy, V1=current).
+                No rsx-types prod dep.
 rsx-messages/   Exchange wire records: FillRecord, BboRecord,
-                Order*, MarkPriceRecord, LiquidationRecord
+                Order*, MarkPriceRecord, LiquidationRecord.
+                22 size+align compile-time asserts.
 rsx-book/       Orderbook, Slab, CompressionMap, PriceLevel
-rsx-matching/   ME main loop, fanout, dedup, WAL integration
+rsx-matching/   ME main loop, fanout, dedup, WAL integration.
+                O(1) cancel via FxHashMap<OrderKey, slab_handle>.
 rsx-risk/       RiskShard, margin, positions, liquidation,
                 funding, persistence, replication
-rsx-gateway/    WS handler, JWT, rate limit, circuit breaker
+rsx-gateway/    WS handler, hardened JWT (min-32B secret + nbf
+                + JtiTracker), bounded per-IP rate limit with
+                FIFO eviction (cap 10 000), circuit breaker
 rsx-marketdata/ ShadowBook, L2/BBO/trades, subscriptions
 rsx-mark/       Aggregator, BinanceSource, CoinbaseSource
 rsx-recorder/   Daily WAL archival
 rsx-cli/        WAL dump tool
+rsx-maker/      Market-maker bot (two-sided quoting)
 ```
 
 ## Communication Patterns
@@ -98,10 +108,14 @@ Mark    --[DXS/TCP]--> Risk (mark prices)
 ```
 
 Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
-16-byte WalHeader + `#[repr(C, align(64))]` payload. Zero
-serialization. See `rsx-dxs/src/header.rs` (transport),
+16-byte WalHeader (with `version: u8` at byte 8) +
+`#[repr(C, align(64))]` payload. Zero serialization. See
+`rsx-dxs/src/header.rs` (transport + version),
 `rsx-dxs/src/protocol.rs` (CmpRecord trait + control messages),
-`rsx-messages/src/lib.rs` (domain wire records).
+`rsx-messages/src/lib.rs` (domain wire records). Trust
+boundaries: CMP is intentionally unauthenticated (auth lives
+at the gateway via JWT and at L3); see CLAUDE.md and
+specs/2/4-cmp.md §10.4.
 
 ## Order Lifecycle
 

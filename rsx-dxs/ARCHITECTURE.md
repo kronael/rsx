@@ -1,144 +1,212 @@
 # rsx-dxs Architecture
 
-WAL writer/reader, DXS replay server, DXS consumer client,
-and CMP (C Message Protocol) sender/receiver.
-See `specs/2/10-dxs.md`, `specs/2/48-wal.md`, `specs/2/4-cmp.md`.
+Domain-agnostic reliable transport. WAL writer/reader, DXS
+TCP replay server/client, and CMP (C Message Protocol)
+UDP sender/receiver.
 
-## Module Layout
+Specs: `specs/2/4-cmp.md`, `specs/2/10-dxs.md`,
+`specs/2/48-wal.md`.
+
+## Domain-agnostic transport
+
+rsx-dxs has zero workspace dependencies. The crate carries
+only the framing (`WalHeader`), the transport-level records
+(heartbeat, status, NAK, replay request, caught-up), and the
+[`CmpRecord`] trait that domain payloads must implement.
+
+```
+$ cargo tree -p rsx-dxs --edges normal | grep '^[├└]── rsx-'
+(empty — no rsx- crates in normal deps)
+```
+
+All RSX exchange wire records (`FillRecord`, `BboRecord`,
+`OrderInsertedRecord`, …) live in `rsx-messages`, which sits
+on top of rsx-dxs. Any consumer crate can define its own
+`#[repr(C, align(64))]` records that impl `CmpRecord` and
+ride the same transport.
+
+## Module layout (`rsx-dxs/src/`)
 
 | File | Purpose |
 |------|---------|
-| `header.rs` | `WalHeader` -- 16-byte manual encode/decode |
-| `records.rs` | All `#[repr(C, align(64))]` record structs, `CmpRecord` trait, `WalRecord` enum |
-| `encode_utils.rs` | CRC32, `as_bytes()`, encode/decode helpers per record type |
-| `wal.rs` | `WalWriter`, `WalReader`, `RawWalRecord`, file listing/rotation |
-| `server.rs` | `DxsReplayService` -- TCP replay server with TLS |
-| `client.rs` | `DxsConsumer` -- TCP replay client with tip persistence |
-| `cmp.rs` | `CmpSender`, `CmpReceiver` -- UDP transport with NACK |
-| `config.rs` | `DxsConfig`, `RecorderConfig`, `CmpConfig`, `TlsConfig` |
+| `header.rs` | 16-byte `WalHeader`. Version byte at offset 8 (`V0` = legacy zero, `V1` = current). Reserved bytes 9..16 must be zero. |
+| `protocol.rs` | `CmpRecord` trait + five protocol records (`CmpHeartbeat`, `StatusMessage`, `Nak`, `ReplayRequest`, `CaughtUpRecord`). Each has compile-time `size_of` + `align_of` asserts. Re-exported as `records` for back-compat. |
+| `encode_utils.rs` | Generic helpers: `compute_crc32`, `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
+| `cmp.rs` | `CmpSender` + `CmpReceiver` (UDP). Two-tier NAK retransmit: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
+| `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, retention GC) + `WalReader` + `read_record_at_seq` for random access. |
+| `server.rs` | `DxsReplayService` (TCP, optional TLS). Verifies version byte + CRC before any `unsafe` cast. |
+| `client.rs` | `DxsConsumer` (TCP replay) with exponential backoff 1/2/4/8/30s and ±20% jitter. |
+| `config.rs` | `CmpConfig`, `TlsConfig`. Every field documents its env var. |
 
-## Transport Paths
+## Transport paths
 
-- **CMP/UDP** (hot path): Aeron-inspired protocol with
-  NACK-based recovery. `CmpSender` sends sequenced records,
-  `CmpReceiver` detects gaps and sends NAK. Heartbeats every
-  10ms. Reorder buffer (BTreeMap) handles out-of-order packets.
-- **WAL/TCP** (cold path): `DxsReplayService` serves
-  historical replay + live tail over TCP (optionally TLS).
-  `DxsConsumer` connects, sends `ReplayRequest`, receives
-  records, persists tip every 10ms.
+- **CMP/UDP** (hot path): Aeron-inspired NAK recovery.
+  `CmpSender` assigns monotonic seq, broadcasts, and caches
+  the encoded frame in a preallocated ring. `CmpReceiver`
+  detects gaps from heartbeat or out-of-order delivery and
+  sends `Nak`. Sender retransmits from the ring; if the seq
+  has aged out, falls back to `read_record_at_seq` against
+  the WAL. Retransmit horizon = WAL retention, not buffer
+  size.
+- **DXS/TCP** (cold path): `DxsReplayService` streams
+  historical records from `WalReader` then transitions to a
+  live tail on `WalWriter::add_listener` notifications.
+  `DxsConsumer` resumes from a persisted tip with backoff
+  on disconnect.
 
-## Record Types
+## CMP sender ring (cmp.rs)
 
-| Const | Type |
-|-------|------|
-| `RECORD_FILL` (0) | Fill |
-| `RECORD_BBO` (1) | Best bid/ask |
-| `RECORD_ORDER_INSERTED` (2) | Order resting |
-| `RECORD_ORDER_CANCELLED` (3) | Order cancelled |
-| `RECORD_ORDER_DONE` (4) | Order completed |
-| `RECORD_CONFIG_APPLIED` (5) | Config change |
-| `RECORD_CAUGHT_UP` (6) | Replay caught up |
-| `RECORD_ORDER_ACCEPTED` (7) | Dedup acceptance |
-| `RECORD_MARK_PRICE` (8) | Mark price |
-| `RECORD_ORDER_FAILED` (12) | Pre-trade reject |
-| `RECORD_STATUS_MESSAGE` (0x10) | CMP flow control |
-| `RECORD_NAK` (0x11) | CMP gap NACK |
-| `RECORD_HEARTBEAT` (0x12) | CMP heartbeat |
+Three `Box<[T]>` slabs, indexed by `seq & SEND_RING_MASK`:
 
-All data records implement `CmpRecord` trait (seq get/set,
-record_type).
+```
+ring_seqs:   Box<[u64]>   capacity 4096   slot's current seq (0 = empty)
+ring_lens:   Box<[u16]>   capacity 4096   encoded frame length
+ring_frames: Box<[u8]>    capacity 4096 * 128 B
+```
 
-## WAL Record Format
+Zero allocations on the hot path. On NAK, the sender checks
+`ring_seqs[slot] == seq` (cache hit) or falls back to
+`read_record_at_seq` (cache miss). NAK counts are clamped to
+`SEND_RING_CAPACITY` so a malicious peer can't make the
+sender loop on `u64::MAX`.
 
-Every record: 16-byte header + fixed-size payload.
+## WAL record format
 
 ```
 struct WalHeader {       // 16 bytes
-    record_type: u16,    // message type enum
-    len: u16,            // payload length (<= 64KB)
-    crc32: u32,          // CRC32 of payload
-    _reserved: [u8; 8],
+    record_type: u16,    // offset 0..2
+    len:         u16,    // offset 2..4  (payload bytes)
+    crc32:       u32,    // offset 4..8  (CRC32 of payload)
+    version:     u8,     // offset 8     (V0 = 0, V1 = 1)
+    _reserved:   [u8; 7],// offset 9..16 (must be zero)
 }
 ```
 
-Payload: `#[repr(C, align(64))]`, little-endian. Data payloads
-implement CmpRecord trait with `seq: u64` as first 8 bytes.
+Payload is `#[repr(C, align(64))]`, little-endian. Data
+records carry `seq: u64` at offset 0 (enforced via
+`CmpRecord`).
 
-## WalWriter Internals
+**Version policy.** Adding a new record_type does NOT bump
+the wire version — record types are additive. Bumping V1 →
+V2 is reserved for changes that would break a V1 reader
+(re-layout, different CRC algorithm) and requires a
+coordinated stop-redeploy. V0 (legacy zero) is still
+accepted on read; never emitted on write.
 
-**Append:** assigns monotonic seq, serializes to buf. O(1)
-memcpy, <200ns.
+## WalWriter internals
 
-**Flush:** every 10ms, write buf to file + fsync. Called by
-producer's main loop (not a background thread).
+- **Append**: assigns monotonic seq, encodes into in-memory
+  buf. O(1) memcpy.
+- **Flush**: producer's tick calls `flush()` every 10ms;
+  writes buf to active file + fsync.
+- **Rotation**: on flush, if `file_size >= max_file_size`
+  (64MB default), close active file, rename with seq range,
+  open new active file, run GC.
+- **GC**: mtime-based; delete files older than retention
+  (10min default).
+- **Backpressure**: append blocks when buf > 2x
+  `max_file_size`.
 
-**Rotation:** on flush, if file_size > 64MB: rename active
-file with seq range, open new file, run GC.
-
-**GC:** scan dir, parse filenames, delete files older than
-retention (mtime-based). Runs on rotation.
-
-**Backpressure:** buf > 2x max_file_size -> append blocks.
-
-## File Layout
+File layout:
 
 ```
 wal/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal
-wal/{stream_id}/{stream_id}_active.wal  (current)
+wal/{stream_id}/{stream_id}_active.wal
 ```
 
-No file header, no index. Sequential read only. Filenames
-encode seq range for O(1) file selection.
+Filenames encode the seq range — O(1) file selection for
+`read_record_at_seq`. No file header, no index.
 
-## DxsReplayService Protocol
-
-```
-1. Consumer connects (optional TLS)
-2. Consumer sends ReplayRequest {stream_id, from_seq}
-3. Server opens WalReader at from_seq
-4. Server streams raw WAL bytes (header + payload)
-5. On caught-up: sends RECORD_CAUGHT_UP {live_seq}
-6. Transitions to live broadcast (notify on flush)
-```
-
-CaughtUp: `live_seq` is inclusive. Consumer resumes at
-`live_seq + 1`. Per-symbol stream.
-
-## Idempotent Replay
-
-Consumer dedup by seq. Risk: fill with
-`seq <= tips[symbol_id]` is a no-op.
-
-## Edge Cases
-
-- Crash mid-rotation: active file recovered by CRC
-- Partial record at EOF: detected, truncated
-- CRC mismatch: conservative truncation at first bad record
-- Unknown record type: returned as raw, consumer skips
-- Gap in seq: consumer must use archive fallback
-- Concurrent readers: filesystem provides read safety
-
-## CMP/UDP Flow Control (Aeron Model)
-
-- Receiver sends StatusMessage every 10ms:
-  `{consumption_seq, receiver_window}`
-- Sender tracks `consumption_seq + receiver_window`
-- Sender stalls if no room (returns false)
-
-Gap detection: receiver expects sequential seq. CmpHeartbeat
-tells receiver sender's highest_seq. Gap -> Nak immediately.
-Sender reads missing records from WAL, resends. Nak
-suppression: 1ms coalesce window.
-
-## Wire Format Invariant
+## DXS replay protocol (server.rs)
 
 ```
-WAL bytes = disk bytes = wire bytes = memory bytes
+1. Consumer connects (optional TLS).
+2. Consumer sends ReplayRequest { stream_id, from_seq }
+   as one framed record.
+3. Server validates header version, validates CRC, then
+   casts the payload (in that order — no unsafe before
+   the integrity check).
+4. Server opens WalReader at from_seq and streams raw
+   WAL bytes (header + payload, no transformation).
+5. On catch-up, emits CaughtUpRecord { live_seq }; consumer
+   resumes at live_seq + 1.
+6. Transitions to live broadcast driven by
+   WalWriter::add_listener notifications.
 ```
 
-Same `#[repr(C, align(64))]` structs everywhere. No
-serialization step. CRC32 in header covers payload.
+`DxsConsumer` retries disconnects with exponential backoff
+(1, 2, 4, 8, 30 seconds) and ±20% jitter (no `rand` dep —
+nanosecond mod 1000). Backoff index resets on a successful
+stream.
+
+## Trust model
+
+CMP is **intentionally unauthenticated**. See
+`specs/2/4-cmp.md` §10.4 ("Trusted internal network. No
+authentication, no encryption.").
+
+- External clients are authenticated at the **gateway**
+  (JWT + TLS).
+- Internal RSX peers are isolated at **L3** (firewall,
+  VPC, namespace).
+- A per-frame source-IP filter was prototyped and reverted
+  (commit `bde3211`). Do not reintroduce — it duplicates the
+  L3 owner and complicates the zero-copy ingress path.
+
+If cross-DC peer auth is ever needed, the right place is a
+sealed-frame extension under a new `WalHeader.version`, not
+a retrofit on the V1 ingress.
+
+## Wire-format invariant
+
+```
+WAL bytes = disk bytes = CMP/UDP bytes = DXS/TCP bytes
+         = struct bytes in memory
+```
+
+The same `#[repr(C, align(64))]` payload appears in all
+four contexts. CRC32 in the header covers the payload only.
+
+## Idempotent replay
+
+Consumers dedup by `seq`. Risk treats any record with
+`seq <= tips[stream_id]` as a no-op. Tips persist every
+10ms; recovery resumes from `tip + 1`.
+
+## Edge cases
+
+- Crash mid-rotation: active file recovered by CRC scan;
+  trailing partial record truncated.
+- Partial record at EOF: detected, truncated.
+- CRC mismatch: conservative truncation at first bad record.
+- Unknown record_type: returned raw, consumer skips.
+- Unknown header version: rejected on TCP ingress, dropped
+  on UDP control path.
+- Gap beyond send_ring + WAL retention: NAK fails;
+  consumer must use archive fallback.
+
+## Measured performance
+
+| Operation | Measured |
+|-----------|----------|
+| CMP encode | 43 ns |
+| CMP decode | 9 ns |
+| WAL append (in-memory) | 31 ns |
+| WAL flush + fsync (64 KB) | 24 µs |
+| WAL sequential read | >500 MB/s (target) |
+| UDP round-trip, same machine | <10 µs (target) |
+
+## Connection topology
+
+```
+Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
+Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
+                                      ME --[SPSC]--> WalWriter
+                              WalWriter --[notify]--> DxsReplay
+                                      ME --[CMP/UDP]--> Marketdata
+Mark --[DXS/TCP]------> Risk
+Recorder --[DXS/TCP]--> ME
+```
 
 ## Consumers
 
@@ -148,27 +216,3 @@ serialization step. CRC32 in header covers payload.
 | Risk | Mark WAL | Mark price feed |
 | Marketdata | ME WAL | Shadow book bootstrap |
 | Recorder | ME WAL | Daily archival |
-
-## Connection Topology
-
-```
-Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
-Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
-                       Risk --[SPSC]-----> PG write-behind
-                                    ME --[SPSC]--> WAL Writer
-                          WAL Writer --[notify]--> DxsReplay
-                                    ME --[CMP/UDP]--> Marketdata
-Mark --[DXS/TCP]------> Risk
-Recorder --[DXS/TCP]--> ME
-```
-
-## Performance Targets
-
-| Operation | Target |
-|-----------|--------|
-| WAL append | <200ns |
-| WAL flush (fsync) | <1ms per 64KB |
-| WAL sequential read | >500 MB/s |
-| Replay 100K records | <1s |
-| CMP encode/decode | <50ns |
-| UDP round-trip (same machine) | <10us |

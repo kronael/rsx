@@ -6,7 +6,11 @@ Matching engine binary. One instance per symbol.
 
 Receives orders from Risk via CMP/UDP, matches against the
 orderbook (rsx-book), writes events to WAL, fans out to Risk
-and Marketdata via CMP/UDP.
+and Marketdata via CMP/UDP. Maintains an `FxHashMap<(user_id,
+oid_hi, oid_lo), slab_handle>` so cancels are O(1) instead of
+a linear slab scan; the index is updated from `book.events()`
+after every match cycle (insert on `OrderInserted`, remove on
+`OrderDone`).
 
 ## Running
 
@@ -50,15 +54,29 @@ cargo run -p rsx-matching
 - Needs Postgres for config schedule polling
 - Connects to Risk and Marketdata via CMP/UDP
 
+## Invariants
+
+Hot-path `.expect()` messages cite named invariants from
+`specs/2/6-consistency.md` so panic messages map directly to
+the spec rule that was broken. Examples:
+
+- `wal append failed (order-accepted) — violates invariant 7
+  (WAL persistence) and breaks dedup on replay`
+- `wal append failed (event path) — violates invariant 1
+  (totally-ordered events) and 'Fills precede ORDER_DONE'`
+- `wal append failed (cancel path) — violates invariant 1
+  and invariant 5 (ORDER_DONE commit boundary)`
+
 ## Testing
 
 ```
 cargo test -p rsx-matching
 ```
 
-10 test files: config, config poll, dedup, fanout, main loop,
-order processing, WAL integration, wire, and more. Dedup
-boundary logic validated. See `specs/2/41-testing-matching.md`.
+10 test files: config, config_poll, event, invariant,
+lifecycle, order_processing, position, smooshed,
+wal_integration, wire. Dedup boundary logic validated.
+See `specs/2/41-testing-matching.md`.
 
 ## Dependencies
 

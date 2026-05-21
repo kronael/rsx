@@ -32,7 +32,10 @@ to make the interesting parts work.
   process in [specs/2/45-tiles.md](specs/2/45-tiles.md).
 - **WAL = wire = stream** — the same `repr(C)` bytes go to
   disk, over UDP, and over TCP for replay. No serialization
-  step. See [specs/2/48-wal.md](specs/2/48-wal.md) and
+  step. The 16-byte header carries a `version: u8` at byte 8
+  (V0=legacy, V1=current) so future format changes can be
+  rolled out without breaking replay. See
+  [specs/2/48-wal.md](specs/2/48-wal.md) and
   [specs/2/10-dxs.md](specs/2/10-dxs.md).
 - **Slab + CompressionMap orderbook** — pre-allocated 65 536
   OrderSlots per symbol, sparse-to-dense price compression
@@ -85,7 +88,7 @@ The 60-second clean-boot path is in [docs/DEMO.md](docs/DEMO.md).
 ```bash
 cargo check                # type check (fastest)
 cargo build --workspace    # debug build (~5 min cold)
-cargo test --workspace     # ~1 200 unit + integration tests
+cargo test --workspace     # 878 passing (unit + integration)
 make perf                  # Criterion benches
 make bench-gate            # local 10% regression gate
 ```
@@ -133,21 +136,35 @@ and [specs/2/20-network.md](specs/2/20-network.md).
 
 ## Crate layout
 
+12 Rust crates in the cargo workspace; rsx-messages was
+split out of rsx-dxs so transport is now domain-agnostic
+(zero rsx-types prod dep — only dev-deps).
+
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, macros
 rsx-dxs/        Domain-agnostic transport: WAL + CMP/UDP +
-                DXS/TCP replay (no rsx-types dep)
+                DXS/TCP replay; versioned wire header
+                (no rsx-types prod dep)
 rsx-messages/   Exchange wire records: Fill, BBO, Order*,
                 MarkPrice, Liquidation, ConfigApplied
+                (22 size+align compile-time asserts)
 rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
-rsx-matching/   ME (per-symbol, single-threaded, core-pinned)
+rsx-matching/   ME (per-symbol, single-threaded, core-pinned;
+                O(1) cancel via FxHashMap<OrderKey, slab>)
 rsx-risk/       Risk (per-shard, full tile arrangement)
-rsx-gateway/    Gateway (monoio WS + CMP bridge, JWT, RL)
+rsx-gateway/    Gateway (monoio WS + CMP bridge, hardened JWT
+                with min-32B secret + nbf + JtiTracker, bounded
+                per-IP rate limit with FIFO eviction)
 rsx-marketdata/ Marketdata (monoio shadow book, L2/BBO)
 rsx-mark/       Mark price (external feeds, CMP to risk)
 rsx-recorder/   Recorder (archival DXS consumer)
 rsx-cli/        WAL dump/inspect tool (JSON + parquet)
 rsx-maker/      Market-maker bot (two-sided quoting)
+```
+
+Non-cargo subprojects:
+
+```
 rsx-playground/ Dev dashboard (Python/FastAPI + Playwright)
 rsx-webui/      Frontend (Vite + React + Tailwind)
 rsx-auth/       Auth service (Python, GitHub OAuth)
@@ -185,7 +202,7 @@ because the harness that would assert that doesn't exist yet.
 | 31 ns WAL append (in-memory)    | yes — `rsx-dxs` bench   |
 | 43 ns CMP encode, 9 ns decode   | yes — `rsx-gateway` bench |
 | 50–170 ns SPSC ring hop         | yes — `rsx-book` bench  |
-| <50 µs GW→ME→GW round trip      | **design budget**; harness shipped (commit `bded133` + `make latency-publish`); cluster-run number not yet in `bench-baseline.json` |
+| <50 µs GW→ME→GW round trip      | **design budget**; F1 probe + dashboard shipped (commit `bded133`), `make latency-publish` writes p50/p99 to `bench-baseline.json` once cluster-run; WAL-backed NAK retransmit (`366d1b2`) closes the two-tier loss-recovery path |
 | <500 ns ME match                | yes — sub-bench of 54 ns |
 | <5 µs risk pre-trade            | **design budget**       |
 
@@ -201,7 +218,7 @@ the in-flight work.
 
 ```bash
 make check       # cargo check (fastest feedback)
-make test        # Rust unit tests (~1 200, <5s)
+make test        # Rust unit + integration (878 passing, <5s)
 make wal         # WAL correctness suite (<10s)
 make e2e         # Rust + API + Playwright (~3 min)
 make integration # testcontainers (1–5 min)
@@ -214,9 +231,9 @@ make clean       # cargo clean
 Single crate: `cargo test -p rsx-book`
 Single test: `cargo test -p rsx-book -- test_name`
 
-Test count, current truth: ~1 200 Rust unit + integration,
-~930 Python (rsx-playground), 421 Playwright (canonical).
-[PROGRESS.md](PROGRESS.md) is the source of truth.
+Test count, current truth: **878 passing** Rust unit +
+integration, ~930 Python (rsx-playground), 421 Playwright
+(canonical). [PROGRESS.md](PROGRESS.md) is the source of truth.
 
 ## Design principles
 
@@ -275,11 +292,15 @@ A short, honest list of the gaps a careful reader will hit:
 - **End-to-end latency harness.** The 50 µs / 500 ns numbers
   are budgets, not measurements. Plan in
   [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
-- **CMP NAK retransmit** uses a 4 096-slot in-memory ring,
-  not WAL random-access. Records older than ~400 ms of
-  history are unrecoverable on the UDP path; the receiver
-  falls back to TCP replay. Documented in
+- **CMP NAK retransmit** is now two-tier (commit `366d1b2`):
+  in-memory ring for recent records, WAL-backed for older
+  history. The send-ring uses preallocated `Box<[T]>` slabs
+  (`7befe76`) — zero heap on the send path. Documented in
   [specs/2/4-cmp.md §10.3](specs/2/4-cmp.md).
+- **JWT replay protection**: `JtiTracker` (`a6a92c3`) is
+  implemented but not yet wired through `ws_handshake` — the
+  type exists, the handshake doesn't consult it. Tracked as
+  TODO.
 - **`rsx-mark` and `rsx-marketdata` replay** still use tokio.
   Migrating mark to monoio is queued in
   `.ship/12-SHOWCASE-HONEST/`.

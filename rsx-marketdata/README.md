@@ -5,9 +5,13 @@ over WebSocket.
 
 ## What It Does
 
-Maintains shadow orderbooks from ME events received via
-CMP/UDP. Publishes real-time L2 snapshots, BBO updates,
-and trade messages to subscribed WebSocket clients.
+Maintains a shadow `Orderbook` per symbol (rsx-book) from
+ME events received via CMP/UDP. Aggregates streams from
+multiple matching engines via `RSX_ME_CMP_ADDRS` (comma-
+separated list, one CmpReceiver per ME). Publishes real-time
+L2 snapshots, BBO updates, and trade messages to subscribed
+WebSocket clients. On per-stream sequence gap, resends the
+full L2 snapshot to all subscribers of the affected symbol.
 
 ## Running
 
@@ -38,8 +42,10 @@ cargo run -p rsx-marketdata
 ## Deployment
 
 - No auth (public feed) -- separate process from gateway
-- Single-threaded, pinned core, busy-spin
-- One CMP/UDP input per matching engine
+- Single-threaded monoio runtime, busy-spin loop (no
+  `core_affinity`; not on the GW→ME→GW critical path)
+- One CMP/UDP receiver per matching engine
+  (`RSX_ME_CMP_ADDRS`, comma-separated)
 - No durable state (shadow book rebuilt from ME events)
 - Optional DXS replay bootstrap on startup for fast recovery
 - Uses monoio (io_uring) -- requires Linux kernel 5.1+
@@ -50,9 +56,10 @@ cargo run -p rsx-marketdata
 cargo test -p rsx-marketdata
 ```
 
-11 test files: config, heartbeat, main loop, protocol, replay,
-replay e2e, seq gap, shadow book, shadow, subscription, and
-more. Seq gap detection with automatic L2 snapshot resend.
+12 test files: config, event_routing, heartbeat,
+me_cmp_addrs, protocol, replay, replay_e2e, seq_gap,
+shadow, snapshot_consistency, state_resync, subscription.
+Seq gap detection with automatic L2 snapshot resend.
 See `specs/2/40-testing-marketdata.md`.
 
 ## Dependencies
