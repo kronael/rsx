@@ -101,7 +101,7 @@ pub fn try_reclaim(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn update_positions_on_fill(
+pub(crate) fn update_positions_on_fill(
     user_states: &mut Vec<UserState>,
     user_map: &mut FxHashMap<u32, u16>,
     user_free_list: &mut Vec<u16>,
