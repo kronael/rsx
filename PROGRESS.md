@@ -1,6 +1,6 @@
 # PROGRESS
 
-updated: May 01 2026
+updated: May 21 2026
 
 ## Status: core complete, productionisation in progress
 
@@ -20,26 +20,30 @@ verbs below describe what the crate currently delivers.
 |--------|-------|--------|
 | Crates | 12 | `Cargo.toml` workspace |
 | Rust `#[test]` + `#[tokio::test]` attributes | 912 | `grep -rn '^#\[test\]\|^#\[tokio::test\]'` |
-| Rust tests passing (`cargo test --workspace`) | 877 | `make test` |
+| Rust tests passing (`cargo test --workspace`) | 878 | `make test` |
 | Python tests (rsx-playground) | ~930 | `pytest -q` |
 | Playwright (gate-4) | 421 passing / 424 (3 conditional skips) | `make e2e` |
 | LOC (Rust) | ~21k | `tokei` |
 
-The attribute count (912) and runner-passing count (877) differ
+The attribute count (912) and runner-passing count (878) differ
 because some tests are gated by feature flags or marked
 `#[ignore]` for integration suites. Always quote whichever
 matches the question being asked.
+
+Refinement history: ~28 commits tagged `[refine]` since v0.1.0
+plus ~12 commits from the `.ship/13-A16Z-FIXES/` security and
+correctness batch.
 
 ## Crate Status
 
 | Crate | Status | Delivers | Open |
 |-------|--------|----------|------|
-| rsx-types | shipped | newtypes, config, validation | — |
+| rsx-types | shipped | newtypes, config, validation, invariant-named asserts | — |
 | rsx-book | shipped | snapshot, matching, compression | proptest harness |
-| rsx-matching | shipped | dedup, BBO, CONFIG_APPLIED | (T2.2) `(user,oid)` cancel index |
-| rsx-dxs | shipped | WAL, CMP/UDP, DXS/TCP — domain-agnostic transport | (T3.1) wire schema versioning |
-| rsx-messages | shipped | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | — |
-| rsx-gateway | shipped | JWT (HS256, exp/nbf, min-secret), rate limit, circuit breaker, REST, monoio WS | tile parity (pinning, ring) |
+| rsx-matching | shipped | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel index | — |
+| rsx-dxs | shipped | WAL, CMP/UDP, DXS/TCP, V0/V1 wire-format version byte, preallocated send_ring | — |
+| rsx-messages | shipped | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest (extracted from rsx-dxs) | — |
+| rsx-gateway | shipped | JWT (32B min, exp/nbf, JtiTracker dormant), per-IP rate limit (FIFO eviction), circuit breaker, REST, monoio WS | tile parity (pinning, ring) |
 | rsx-risk | shipped | replication, funding, liquidation, PG write-behind, full tile (7 SPSC rings) | (T3.2) replica → main promotion via state machine |
 | rsx-marketdata | shipped | shadow book, seq gap recovery, multi-ME | tile parity (pinning, ring) |
 | rsx-mark | shipped | Binance/Coinbase aggregation, 1 SPSC ring | core pinning |

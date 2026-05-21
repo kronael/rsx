@@ -47,11 +47,22 @@ Every CMP datagram and every WAL record is:
   record_type: u16
   len:         u16
   crc32c:      u32   (Castagnoli, payload only)
-  reserved:    8B    (zero on receive)
+  version:     u8    (wire-format version; legacy=0, current=1)
+  reserved:    7B    (zero on receive)
 ```
+
+A single `version` byte lives in the previously-reserved
+space. Adding a new record type does NOT bump the version
+(record types are an open set); the version is reserved for
+format-breaking changes that a v1 receiver could not safely
+parse. Receivers reject unknown versions.
 
 Payloads are `#[repr(C, align(64))]`. Sequence number is the
 first `u64` of every data record (per the [`CmpRecord`] trait).
+
+The hot send path (`CmpSender::send` / `send_raw`) does
+**zero heap allocations** — the in-memory `send_ring` is
+preallocated at construction and reused for every frame.
 
 ## Quick start (sender)
 

@@ -49,6 +49,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - WAL integration (write fills, done, BBO)
 - CONFIG_APPLIED handling
 - Message encoding for outbound CMP
+- O(1) `(user_id, oid)` cancel index (no linear book scan)
 
 ### rsx-dxs (transport, domain-agnostic)
 
@@ -60,11 +61,17 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Protocol records: StatusMessage, Nak, CmpHeartbeat,
   ReplayRequest, CaughtUpRecord (in `protocol.rs`)
 - TLS support, backpressure, tip persistence
+- Wire-format version byte in `WalHeader` (V0/V1); readers
+  reject unknown versions, writers stamp the current one
+- Preallocated `send_ring` on CMP sender (zero heap on the
+  send path)
 - No `rsx-types` dep — transport accepts any
   `CmpRecord` (repr(C) + seq at offset 0)
 
 ### rsx-messages (exchange wire records)
 
+- Extracted from `rsx-dxs` so the transport stays
+  domain-agnostic
 - 11 `#[repr(C, align(64))]` records on top of `rsx-dxs`
 - FillRecord, BboRecord, OrderInsertedRecord,
   OrderCancelledRecord, OrderDoneRecord,
@@ -72,14 +79,18 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
   MarkPriceRecord, LiquidationRecord,
   ConfigAppliedRecord, CancelRequest
 - Per-type encode/decode helpers
+- 22 compile-time size+align asserts pin the wire layout
 - New record types added without editing the transport
 
 ### rsx-gateway
 
 - WS server on monoio with io_uring (gateway and marketdata
   only — matching/risk/mark/recorder run on tokio)
-- JWT authentication
-- Rate limiting: per-user, per-IP, per-instance
+- JWT hardening: HS256, 32-byte minimum secret enforced at
+  boot, `exp` + `nbf` validated, `JtiTracker` dormant
+  (wired but disabled until reuse-detection is needed)
+- Rate limiting: per-user, per-IP (FIFO eviction at the
+  cap so the map is bounded), per-instance
 - Circuit breaker (open/half-open/closed)
 - Pending order tracking with timeout
 - CMP/UDP transport to Risk process
@@ -204,8 +215,8 @@ useSoundAlerts.
 
 | Suite      | Files | Count  | Time    |
 |------------|-------|--------|---------|
-| Rust unit  | 88    | ~1,200 | <5s     |
-| Playwright | 23    | 421    | ~60s    |
+| Rust unit  | 88    | 878 pass / 912 attrs | <5s     |
+| Playwright | 23    | 421 / 424 (3 skips)  | ~60s    |
 | Python     | 21    | ~930   | ~10s    |
 | WAL        | -     | -      | <10s    |
 | E2E        | -     | -      | ~30s    |
@@ -228,8 +239,19 @@ useSoundAlerts.
 | CI              | `make ci`         | phases 1-3             |
 | CI full         | `make ci-full`    | all phases + shard fan |
 
+## Invariants (named in code)
+
+All 10 invariants from `CLAUDE.md` "Correctness Invariants
+(system-wide)" carry a `// INVARIANT N:` comment at the
+enforcement site (fills-before-done, exactly-one
+completion, FIFO per level, position = Σ fills, monotonic
+tips, no crossed book, SPSC FIFO, slab no-leak, funding
+zero-sum, advisory-lock exclusivity).
+
 ## Stats
 
 - ~21k LOC Rust, ~25k LOC Python, ~5k LOC TypeScript
-- 12 crates, 8 binaries
+- 12 Rust crates (+ rsx-playground, rsx-webui, rsx-auth
+  outside the cargo workspace), 8 binaries
 - 50+ specs, 88 Rust test files, 22 Playwright specs
+- ~28 `[refine]` commits + ~12 a16z-fixes commits since v0.1.0

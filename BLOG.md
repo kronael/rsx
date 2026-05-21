@@ -161,10 +161,17 @@ events.
 
 ## What We Built
 
-12 Rust crates, roughly 21,000 lines of Rust. 877 Rust tests
-passing in `cargo test --workspace`, ~930 Python tests in the
-playground, 421 of 424 Playwright browser tests passing
-(3 conditional skips on optional gates).
+12 Rust crates, roughly 21,000 lines of Rust. 878 Rust tests
+passing, 0 failing, in `cargo test --workspace`. ~930 Python
+tests in the playground; 421 of 424 Playwright browser tests
+passing (3 conditional skips on optional gates).
+
+The twelfth crate is `rsx-messages` — exchange-specific wire
+records (Fill, BBO, Order*) that used to live inside the
+transport. Splitting them out leaves `rsx-dxs` as a
+domain-agnostic transport with zero `rsx-types` dependency in
+production builds. The "anyone could use this transport" claim
+is now provable rather than aspirational.
 
 All 12 crates build and run end-to-end. The spec corpus is
 catching up to the code — see PROGRESS.md for current status
@@ -204,6 +211,30 @@ from the stored baseline. Runs in CI.
 **Sim cleanup.** The simulator crate was split: fake matching
 engine code deleted (the real ME exists now), real WebSocket
 stress generator kept as stress.py in the playground.
+
+**Refine pass.** 28 commits across A/B/C/D rounds applying
+the project's own wisdom rules uniformly: one import per
+line, `.expect("INVARIANT: ...")` instead of bare `unwrap`,
+compile-time size/align asserts on every CMP record,
+narration comments deleted. The codebase now reads the same
+way in every crate.
+
+**Named invariants.** The 10 system-wide correctness
+invariants in CLAUDE.md (fills-precede-ORDER_DONE, FIFO
+within price level, position = sum of fills, slab no-leak,
+funding zero-sum, …) each carry a comment in code naming the
+invariant they enforce. `specs/2/6-consistency.md` is the
+cross-reference. Audit-by-grep works now.
+
+**Honesty pass.** A skeptical-reviewer audit (`.ship/13-A16Z-FIXES/`)
+produced a finding-by-finding resolution map. Things landed:
+JWT min-secret + `nbf` + `jti` replay tracker, gateway IP-limiter
+cap, zero-heap `send_ring`, WAL append errors propagated, wire
+schema version byte. One finding was **rejected on review** —
+the CMP source-IP filter contradicted the spec's documented
+trust model (CMP is intentionally unauthenticated; auth lives
+at the gateway and at L3). A new "Trust boundaries" rule in
+CLAUDE.md prevents the same misclassification next time.
 
 ## What's Next
 

@@ -32,7 +32,24 @@ paths, inspired by Aeron's reliability model.
 **Hot path (CMP/UDP):** One WAL record per UDP datagram.
 Aeron-style NACK + flow control for reliability. Sender
 sends Heartbeats, receiver sends StatusMessages and Naks.
-Retransmits are just normal records re-read from WAL.
+Retransmits are two-tier:
+
+1. **Hot tier — preallocated `send_ring`.** 4096 slots,
+   indexed by `seq & MASK` (capacity is a power of two, so
+   the modulo is a bitwise AND). Three `Box<[T]>` slabs
+   (`ring_seqs`, `ring_lens`, `ring_frames`) allocated once
+   at construction. Zero heap on the send path. A NAK that
+   falls inside the window is answered with one memcpy from
+   the slab. Frames larger than 128 bytes bypass the ring
+   and fall through to tier 2.
+
+2. **Cold tier — WAL random access.** If the NAK is older
+   than the ring window, the sender opens the WAL file that
+   contains that seq (filename encodes the base) and seeks
+   directly to the record. Same bytes as live, no replay
+   stream needed. Receiver only falls back to full TCP
+   replay if even the WAL no longer has the seq (older than
+   the 10-minute retention).
 
 **Cold path (WAL replication over TCP):** Plain TCP byte
 stream. `write_all(header)`, `write_all(payload)`, repeat.
@@ -100,8 +117,12 @@ These are real trade-offs. We accept all of them.
 
 **1. No schema evolution.** Can't add a field to FillRecord
 without breaking every reader. New features use new record
-types. Breaking changes bump the version in the header and
-require coordinated deployment. This is fine — all
+types. Breaking changes bump the `version` byte in
+`WalHeader` (byte 8, repurposed from the old reserved
+range); receivers reject unknown versions at every ingress
+(`CmpReceiver::try_recv`, `WalReader::next`, `DxsConsumer`,
+random-access reads). `V0` (legacy zero) is still accepted
+on read so old WAL files replay. This is fine — all
 components are compiled from the same repo.
 
 **2. No cross-language support.** The wire format is
@@ -131,7 +152,7 @@ implementation is small (~500 lines for sender + receiver).
 |---|---------|------------|
 | 1 | Endianness | x86-only, compile-time assert |
 | 2 | Alignment/padding | repr(C), explicit _pad, size asserts |
-| 3 | No versioning | version in header, additive types |
+| 3 | No versioning | `version: u8` at byte 8 of header (V0 legacy, V1 current), unknown rejected at every ingress |
 | 4 | Torn reads | CRC32 validation, TCP reliability |
 | 5 | Transmute UB | ptr::read on Copy types, no transmute |
 | 6 | Invalid enums | raw integers on wire, validate at boundary |
