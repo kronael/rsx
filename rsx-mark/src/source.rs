@@ -207,12 +207,14 @@ fn handle_binance_msg(
                 symbol, price,
             );
             // ring full = drop newest (intentional backpressure)
-            let _ = tx.push(SourcePrice {
+            if tx.push(SourcePrice {
                 source_id,
                 price,
                 timestamp_ns: time_ns(),
                 symbol_id,
-            });
+            }).is_err() {
+                tracing::trace!("binance ring full, dropping update");
+            }
         }
         _ => {}
     }
@@ -246,12 +248,14 @@ fn handle_coinbase_msg(
         None => return,
     };
     // ring full = drop newest (intentional backpressure)
-    let _ = tx.push(SourcePrice {
+    if tx.push(SourcePrice {
         source_id,
         price,
         timestamp_ns: time_ns(),
         symbol_id,
-    });
+    }).is_err() {
+        tracing::trace!("coinbase ring full, dropping update");
+    }
 }
 
 fn is_power_of_10(n: i64) -> bool {
