@@ -262,12 +262,21 @@ network is internal and loss is rare.
 When the sender receives a NAK, it walks `from_seq ..
 from_seq + count`. For each seq:
 
-1. **Hot tier — `send_ring`.** An in-memory
-   `BTreeMap<u64, Vec<u8>>` holding the most recent sent
-   frames (`cmp.rs:33-34`, limit 4096 entries,
-   `cmp.rs:75`). O(log n) lookup, O(1) re-send. Covers
-   the common case of a NAK arriving within ~400 ms of
-   the lost record at typical rates.
+1. **Hot tier — `send_ring`.** Three preallocated
+   `Box<[T]>` slabs indexed by `seq & MASK`:
+   `ring_seqs: Box<[u64; 4096]>`,
+   `ring_lens: Box<[u16; 4096]>`,
+   `ring_frames: Box<[u8; 4096 * 128]>`. Slot index is
+   `seq & SEND_RING_MASK` (capacity is a power of two —
+   bitwise AND, no modulo). One-shot allocation at
+   construction; **zero heap allocations on the send path**.
+   Lookup checks the slot's seq matches the requested seq
+   before re-sending; on mismatch the ring has wrapped past
+   that seq and the cold tier (WAL) is consulted.
+   Records larger than `SEND_RING_FRAME_BYTES = 128` bypass
+   the ring entirely and force NAK to fall through to WAL.
+   Covers the common case of a NAK arriving within ~400 ms
+   of the lost record at typical rates.
 
 2. **Cold tier — WAL random-access.** On ring miss, the
    sender calls `read_record_at_seq(stream_id, seq,
@@ -506,13 +515,14 @@ against datagram size (`cmp.rs:365-368`), and validates
 CRC. There is no `cargo-fuzz` target on it yet — tracked
 in `.ship/12-SHOWCASE-HONEST/` task E2.
 
-### 10.7 NAK count is unclamped
+### 10.7 NAK count is clamped (was: unclamped)
 
-A NAK with `count = u64::MAX` would loop in the sender's
-retransmit path. The receiver implementation in this
-repo never emits unbounded NAKs (it only NAKs gaps it
-has seen), but a malicious peer could. The fix is a
-per-NAK clamp at the sender (e.g., `count.min(4096)`).
+A NAK with `count = u64::MAX` would loop the sender's
+retransmit path. `CmpSender::handle_nak` clamps to
+`SEND_RING_CAPACITY` (4 096) — anything beyond is already
+unreachable on the hot tier and the cold tier (WAL) can
+be requested via TCP replay. The clamp is logged when it
+fires so a stuck or malicious peer is observable.
 Small and pending; not a documented vulnerability because
 the deploy assumes trusted peers.
 
