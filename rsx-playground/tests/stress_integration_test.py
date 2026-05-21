@@ -9,6 +9,7 @@ Run with: python -m pytest tests/stress_integration_test.py -v
 
 import asyncio
 import json
+import os
 import time
 
 import jwt as pyjwt
@@ -25,10 +26,56 @@ from stress_client import run_stress_test
 
 GW_HOST = "127.0.0.1"
 
+# Gateway test secret (matches conftest gateway fixture)
+GW_TEST_SECRET = "test-secret-at-least-32-bytes-long-please!"
+
+
+def jwt_for(user_id: int, secret: str = GW_TEST_SECRET) -> str:
+    """Mint a valid HS256 JWT for the gateway test fixture.
+
+    Spec: specs/2/11-gateway.md §JWT — required claims
+    `exp`, `aud=rsx-gateway`, `iss=rsx-auth`, with `sub` or
+    `user_id` carrying the numeric user id.
+    """
+    return pyjwt.encode(
+        {
+            "sub": str(user_id),
+            "user_id": user_id,
+            "exp": int(time.time()) + 3600,
+            "aud": "rsx-gateway",
+            "iss": "rsx-auth",
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+
+def auth_headers(user_id: int) -> dict:
+    return {"Authorization": f"Bearer {jwt_for(user_id)}"}
+
 
 def make_cid(label: str) -> str:
     """Create a 20-char zero-padded client order id."""
     return label[:20].ljust(20, "0")
+
+
+async def recv_non_heartbeat(ws, timeout: float = 2.0):
+    """Receive the next non-heartbeat frame from ws.
+
+    The gateway sends an initial server heartbeat right after
+    upgrade (spec specs/2/49-webproto.md), so tests that look
+    for a specific response need to skip {"H": [...]} frames.
+    """
+    import asyncio as _asyncio
+    deadline = _asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - _asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise _asyncio.TimeoutError()
+        data = await ws.recv_json(timeout=remaining)
+        if "H" in data:
+            continue
+        return data
 
 
 def new_order_frame(
@@ -215,11 +262,16 @@ def test_environment_check():
 
 # -- Gateway integration tests --------------------------------
 
-async def test_ws_connect_with_user_id(gateway):
-    """Connect with X-User-Id header, expect upgrade."""
+async def test_ws_connect_with_jwt(gateway):
+    """Connect with a valid JWT, expect upgrade (101).
+
+    Spec specs/2/11-gateway.md §JWT and specs/2/49-webproto.md
+    §Authentication: JWT in Authorization header is the only
+    accepted auth.
+    """
     ws, status = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     assert status == 101
     await ws.send('{"H":[12345]}')
@@ -228,48 +280,37 @@ async def test_ws_connect_with_user_id(gateway):
     await ws.close()
 
 
-async def test_ws_connect_with_jwt(gateway):
-    """JWT auth requires non-empty secret. With empty
-    secret (test env), JWT is rejected and only X-User-Id
-    works. Verify JWT with wrong secret gets 401.
-    """
-    # Gateway has RSX_GW_JWT_SECRET="" so JWT validation
-    # doesn't work (no secret to verify against). Instead,
-    # verify that a random JWT token is rejected (401).
+async def test_ws_connect_wrong_secret_jwt(gateway):
+    """JWT signed with the wrong secret is rejected (401)."""
     token = pyjwt.encode(
         {
             "sub": "42",
+            "user_id": 42,
             "exp": int(time.time()) + 3600,
             "aud": "rsx-gateway",
-            "iss": "rsx",
+            "iss": "rsx-auth",
         },
-        "wrong-secret",
+        "wrong-secret-32-bytes-aaaaaaaaaaa",
         algorithm="HS256",
     )
     status = await RawWsClient.try_connect(
         GW_HOST, GW_WS_PORT,
         headers={"Authorization": f"Bearer {token}"},
     )
-    # With empty jwt_secret, Authorization header goes
-    # through validate_jwt which fails (empty secret
-    # means no valid JWT possible), and X-User-Id fallback
-    # only activates if jwt_secret is empty AND no
-    # Authorization header. With Authorization present,
-    # it tries JWT first and fails -> 401.
     assert status == 401
 
 
 async def test_ws_connect_expired_jwt(gateway):
     """Expired JWT should get 401."""
-    secret = "dev-secret-change-in-production"
     token = pyjwt.encode(
         {
             "sub": "42",
+            "user_id": 42,
             "exp": int(time.time()) - 3600,
             "aud": "rsx-gateway",
-            "iss": "rsx",
+            "iss": "rsx-auth",
         },
-        secret,
+        GW_TEST_SECRET,
         algorithm="HS256",
     )
     status = await RawWsClient.try_connect(
@@ -291,7 +332,7 @@ async def test_heartbeat_echo(gateway):
     """Send heartbeat, expect heartbeat response."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     await ws.send('{"H":[12345]}')
     data = await ws.recv_json()
@@ -310,7 +351,7 @@ async def test_server_heartbeat(gateway):
     """
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     # Trigger read cycles by sending heartbeats periodically
     # so the connection handler gets a chance to drain
@@ -337,11 +378,11 @@ async def test_unknown_symbol(gateway):
     """Unknown symbol_id returns error 1007."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     frame = new_order_frame(symbol_id=999)
     await ws.send(frame)
-    data = await ws.recv_json()
+    data = await recv_non_heartbeat(ws)
     assert "E" in data
     assert data["E"][0] == 1007
     await ws.close()
@@ -351,10 +392,10 @@ async def test_parse_error_malformed_json(gateway):
     """Malformed JSON returns error 1002."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     await ws.send("{bad json")
-    data = await ws.recv_json()
+    data = await recv_non_heartbeat(ws)
     assert "E" in data
     assert data["E"][0] == 1002
     await ws.close()
@@ -364,10 +405,10 @@ async def test_unsupported_message_type(gateway):
     """Unknown message type returns parse error 1002."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     await ws.send('{"Z":[1]}')
-    data = await ws.recv_json()
+    data = await recv_non_heartbeat(ws)
     assert "E" in data
     assert data["E"][0] == 1002
     await ws.close()
@@ -377,11 +418,11 @@ async def test_cancel_unknown_order(gateway):
     """Cancel nonexistent order returns error 1005."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     cid = make_cid("nonexistent00000000")
     await ws.send(json.dumps({"C": [cid]}))
-    data = await ws.recv_json()
+    data = await recv_non_heartbeat(ws)
     assert "E" in data
     assert data["E"][0] == 1005
     await ws.close()
@@ -391,7 +432,7 @@ async def test_rate_limit_triggered(gateway):
     """Exceed per-user rate limit, expect error 1006."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "5"},
+        headers=auth_headers(5),
     )
     # Send all orders first, then drain responses.
     # Gateway processes sequentially: read -> validate ->
@@ -423,7 +464,7 @@ async def test_rate_limit_recovers(gateway):
     """After rate limit, waiting allows new requests."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "6"},
+        headers=auth_headers(6),
     )
     # Exhaust rate limit
     for i in range(15):
@@ -460,7 +501,7 @@ async def test_valid_order_no_error(gateway):
     """Valid order frame produces no immediate error."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     cid = make_cid("validorder00000000")
     frame = new_order_frame(
@@ -485,7 +526,7 @@ async def test_pending_queue_full(gateway_small_pending):
 
     ws, _ = await RawWsClient.connect(
         GW_HOST, port,
-        headers={"X-User-Id": "1"},
+        headers=auth_headers(1),
     )
     # First order fills the pending slot
     cid1 = make_cid("pending_full_1_0000")
@@ -501,7 +542,7 @@ async def test_pending_queue_full(gateway_small_pending):
         symbol_id=0, price=50001, qty=1, cid=cid2,
     )
     await ws.send(frame2)
-    data = await ws.recv_json(timeout=2.0)
+    data = await recv_non_heartbeat(ws, timeout=2.0)
     assert "E" in data
     assert data["E"][0] == 1003
     await ws.close()
@@ -511,7 +552,7 @@ async def test_stress_small_burst(gateway):
     """50 valid orders in ~1s, count errors vs accepted."""
     ws, _ = await RawWsClient.connect(
         GW_HOST, GW_WS_PORT,
-        headers={"X-User-Id": "10"},
+        headers=auth_headers(10),
     )
     errors = 0
     sent = 0
@@ -551,7 +592,7 @@ async def test_stress_concurrent_connections(gateway):
         try:
             ws, _ = await RawWsClient.connect(
                 GW_HOST, GW_WS_PORT,
-                headers={"X-User-Id": str(user_id)},
+                headers=auth_headers(user_id),
             )
         except (ConnectionRefusedError, OSError):
             return
