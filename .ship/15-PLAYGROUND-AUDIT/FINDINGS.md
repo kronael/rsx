@@ -326,3 +326,117 @@ do not exist in the current UI (the docs are stale).
 - `/x/topology/detail?component=gateway` (a guess at the
   endpoint shape) returns "unknown component: detail" --
   honest 400-equivalent, but the param shape is undocumented.
+
+---
+
+# Oracle pass (codex, 2026-05-21) -- 7 more lies
+
+Adversarial second pass via `codex exec` against
+`server.py` after the agent-browser audit landed.
+Each claim below was verified by direct read.
+
+## Finding 13: `/x/pulse` proc pill paints green on any running process
+
+- Where: `server.py:2961-2963`
+- Claim: `proc` pill goes green for a healthy estate.
+- Truth: `"emerald-400" if running > 0 else "red-400"`.
+  1/8 alive paints success; partial cluster death is
+  color-coded healthy.
+- Repro:
+  1. `curl -sX POST localhost:49171/api/processes/me-pengu/kill >/dev/null`
+  2. `curl -s localhost:49171/x/pulse | grep -o 'emerald-400[^>]*">[0-9]*/[0-9]*'`
+- Severity: critical.
+- Playwright: `play_health_truthful.spec.ts::pulse_proc_pill_not_green_on_partial_outage`
+
+## Finding 14: Gateway "circuit breaker: closed" is a hardcoded string
+
+- Where: `server.py:2127` -- `("circuit breaker", "closed")`
+- Claim: Detail panel reports the gateway's breaker state.
+- Truth: The row is a literal tuple. It never reads gateway
+  state, breaker state, logs, or any counter. Stays "closed"
+  while gateway is dead or refusing connections.
+- Repro:
+  1. `curl -sX POST localhost:49171/api/processes/gw-0/kill >/dev/null`
+  2. `curl -s localhost:49171/x/topology/gateway | grep -o 'circuit breaker.*closed'`
+- Severity: important.
+- Playwright: `play_topology.spec.ts::gateway_circuit_breaker_not_hardcoded`
+
+## Finding 15: `/x/topology/flow` rates come from Python in-process memory
+
+- Where: `server.py:2370-2371`
+- Claim: Node badges show live order/fill flow on the
+  cluster.
+- Truth: `client` rate is `len(recent_orders)`, `gateway`
+  rate is `len(recent_fills)`, `marketdata` is
+  `len(_book_snap) sym`. All three are FastAPI-process
+  dictionaries that reset on dashboard restart, ignore
+  traffic the dashboard did not witness, and can be moved
+  by UI helpers that never touch the cluster.
+- Repro:
+  1. `curl -sX POST localhost:49171/api/processes/all/stop?confirm=yes >/dev/null`
+  2. `curl -s localhost:49171/x/topology/flow | jq '.nodes[] | select(.key == "client") | .rate'`
+     -- still shows non-zero immediately after.
+- Severity: important.
+- Playwright: `play_topology.spec.ts::flow_counters_not_from_dashboard_memory`
+
+## Finding 16: Index price is synthesized from mark price
+
+- Where: `server.py:5697` -- `index_px = int(mid * 1.0001) if mid else 0`
+- Claim: `/api/risk/funding` returns each symbol's mark,
+  index, premium, and funding rate.
+- Truth: `index_px` is fabricated as `mark * 1.0001`,
+  `premium_bps` is derived from that fake index, and
+  `rate_bps` is just `(mid - index) / index`. Placeholder
+  math dressed up as market structure -- no external index
+  source is queried.
+- Repro:
+  1. `curl -s localhost:49171/api/risk/funding | jq '.funding[0] | {mark_px,index_px}'`
+  2. `# index_px / mark_px == 1.0001 exactly`
+- Severity: important.
+- Playwright: `play_risk.spec.ts::funding_uses_real_index_source_not_formula_stub`
+
+## Finding 17: Reconciliation "Mark vs Index" is "book has bid and ask"
+
+- Where: `server.py:3354-3367`
+- Claim: A PASS on the reconciliation panel means mark
+  pricing agrees with index pricing.
+- Truth: The check sets PASS if a symbol merely has
+  `bid > 0 and ask > 0` in `_book_snap`. No index is loaded
+  anywhere in the function. "Reconciliation" is just "book
+  not empty."
+- Repro:
+  1. `curl -sX POST localhost:49171/api/processes/mark/kill >/dev/null`
+  2. `curl -s localhost:49171/x/reconciliation | grep -o 'valid BBO mid'`
+     -- still PASS with mark dead.
+- Severity: important.
+- Playwright: `play_guarantees.spec.ts::reconciliation_mark_vs_index_loads_real_index`
+
+## Finding 18: Reconciliation "Shadow vs ME" compares two WAL views
+
+- Where: `server.py:3328-3352`
+- Claim: Shadow book agrees with the matching engine.
+- Truth: It compares `_book_snap` (which is parsed *from
+  the WAL*) against `parse_wal_bbo` (also from the WAL).
+  Both are downstream views. ME can be down or divergent
+  and this check can still PASS on stale copies of itself.
+- Repro:
+  1. `curl -sX POST localhost:49171/api/processes/me-pengu/kill >/dev/null`
+  2. `curl -s localhost:49171/x/reconciliation | grep -o 'symbols match'`
+     -- still PASS with ME dead.
+- Severity: important.
+- Playwright: `play_guarantees.spec.ts::reconciliation_shadow_vs_me_queries_engine_truth`
+
+## Finding 19: `/x/stale-orders` skips orders with string timestamps
+
+- Where: `server.py:3419-3423`
+- Claim: `0 stale orders` means there are no non-terminal
+  orders stuck.
+- Truth: The detector requires `isinstance(o.get("ts"),
+  (int, float))`. Orders submitted via UI batch helpers
+  write `ts` as `"%H:%M:%S"` strings, so they age forever
+  and never become stale. The badge is always 0.
+- Repro:
+  1. `curl -sX POST localhost:49171/api/orders/batch -d '{}' -H 'content-type: application/json'`
+  2. `sleep 65; curl -s localhost:49171/x/stale-orders`
+- Severity: important.
+- Playwright: `play_safety.spec.ts::stale_orders_counts_string_timestamp_orders`
