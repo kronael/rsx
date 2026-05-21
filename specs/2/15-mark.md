@@ -267,11 +267,17 @@ to the same SPSC ring, preserving the hot-path integration.
 ## 10. File Organization
 
 ```
-crates/rsx-mark/src/
-    main.rs        -- entrypoint, config, runtime setup
-    aggregator.rs  -- main loop, aggregation, staleness sweep
-    source.rs      -- PriceSource trait, SPSC setup
-    binance.rs     -- BinanceSource implementation
-    types.rs       -- MarkPriceEvent, SourcePrice, SymbolMarkState
+rsx-mark/src/
+    main.rs        -- entrypoint, runtime setup, main loop
+    aggregator.rs  -- aggregation, staleness sweep, median
+    source.rs      -- PriceSource trait, BinanceSource,
+                      CoinbaseSource, WS reconnect loop
+    types.rs       -- MarkPriceEvent, SourcePrice,
+                      SymbolMarkState, SymbolMap
     config.rs      -- env config parsing
+    lib.rs         -- re-exports
 ```
+
+No core pinning. Mark is not on the critical
+GW→ME→GW path, so the aggregator loop runs as a
+plain busy-spin thread without `core_affinity`.

@@ -120,6 +120,55 @@ Record layouts are defined in:
   Nak, CmpHeartbeat, ReplayRequest, CaughtUpRecord)
 - per-service wire types (Gateway/Risk/Matching)
 
+### Record Inventory
+
+Domain records (`rsx-messages`), all `#[repr(C, align(64))]`:
+
+| Record | Size | RECORD_* constant | Value |
+|--------|------|-------------------|-------|
+| `FillRecord` | 128 | `RECORD_FILL` | 0 |
+| `BboRecord` | 128 | `RECORD_BBO` | 1 |
+| `OrderInsertedRecord` | 64 | `RECORD_ORDER_INSERTED` | 2 |
+| `OrderCancelledRecord` | 64 | `RECORD_ORDER_CANCELLED` | 3 |
+| `OrderDoneRecord` | 64 | `RECORD_ORDER_DONE` | 4 |
+| `ConfigAppliedRecord` | 64 | `RECORD_CONFIG_APPLIED` | 5 |
+| `OrderAcceptedRecord` | 128 | `RECORD_ORDER_ACCEPTED` | 7 |
+| `MarkPriceRecord` | 64 | `RECORD_MARK_PRICE` | 8 |
+| (reserved: order request) | — | `RECORD_ORDER_REQUEST` | 9 |
+| (reserved: order response) | — | `RECORD_ORDER_RESPONSE` | 10 |
+| `CancelRequest` | 64 | `RECORD_CANCEL_REQUEST` | 11 |
+| `OrderFailedRecord` | 64 | `RECORD_ORDER_FAILED` | 12 |
+| `LiquidationRecord` | 64 | `RECORD_LIQUIDATION` | 13 |
+
+Transport records (`rsx-dxs::protocol`), all
+`#[repr(C, align(64))]`:
+
+| Record | Size | RECORD_* constant | Value |
+|--------|------|-------------------|-------|
+| `CaughtUpRecord` | 128 | `RECORD_CAUGHT_UP` | 6 |
+| `StatusMessage` | 64 | `RECORD_STATUS_MESSAGE` | 0x10 |
+| `Nak` | 64 | `RECORD_NAK` | 0x11 |
+| `CmpHeartbeat` | 64 | `RECORD_HEARTBEAT` | 0x12 |
+| `ReplayRequest` | 64 | `RECORD_REPLAY_REQUEST` | 0x13 |
+
+Sizes/alignments are enforced by `const _: () = assert!(...)`
+compile-time checks in each crate. Domain values 0–13 share
+the same numeric space as transport value 6 (`RECORD_CAUGHT_UP`);
+transport values ≥ 0x10 are disjoint from domain values.
+
+### CancelReason constants
+
+`OrderCancelledRecord.reason` is a `u8`:
+
+| Constant | Value |
+|----------|-------|
+| `CANCEL_REASON_USER_CANCEL` | 0 |
+| `CANCEL_REASON_REDUCE_ONLY` | 1 |
+| `CANCEL_REASON_EXPIRY` | 2 |
+| `CANCEL_REASON_SYSTEM` | 3 |
+| `CANCEL_REASON_POST_ONLY_REJECT` | 4 |
+| `CANCEL_REASON_OTHER` | 5 |
+
 ## Message Flow Sequences
 
 ### Fully Filled Order
