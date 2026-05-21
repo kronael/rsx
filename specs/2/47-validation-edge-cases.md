@@ -93,27 +93,31 @@ qty_raw = (0.0001 / 0.001) as i64; // = 0
 
 | Case | Input | Validation | Outcome |
 |------|-------|------------|---------|
-| Empty cid | "" | zero-padded array | ACCEPT: [0; 20] |
-| 20-char cid | "12345678901234567890" | exact fit | ACCEPT: full bytes |
-| >20 chars | "123...789" (25 chars) | truncate to 20 | ACCEPT: truncated |
-| UTF-8 multi-byte | "测试订单123" | byte count != char count | Truncation may split UTF-8 |
-| Non-ASCII | binary bytes, emoji | bytes copied as-is | ACCEPT: raw bytes |
+| Empty cid | "" | `cid.is_empty()` | REJECT: cid must be 1-20 chars |
+| 20-byte cid | "12345678901234567890" | exact fit | ACCEPT: full bytes |
+| >20 bytes | "123...789" (25 chars) | `cid.len() > 20` | REJECT: client_order_id too long |
+| UTF-8 multi-byte | "测试订单123" (15 bytes) | byte count, not char count | ACCEPT if ≤ 20 bytes |
+| Non-ASCII | binary bytes, emoji | bytes copied as-is | ACCEPT if ≤ 20 bytes |
 
-**UTF-8 truncation hazard:**
+**Implementation (rsx-gateway/src/protocol.rs and handler.rs):**
 ```rust
-let cid_str = "测试订单1234567890123"; // 3*3 + 13 = 22 bytes
-let mut cid_bytes = [0u8; 20];
-let src = cid_str.as_bytes(); // 22 bytes
-cid_bytes[..20].copy_from_slice(&src[..20]); // splits "3" mid-byte
-// Result: invalid UTF-8 in cid_bytes[18..20]
+// Parser: empty or oversize cid is rejected outright
+if cid.is_empty() || cid.len() > 20 {
+    return Err(ParseError::InvalidValue(
+        "cid must be 1-20 chars".to_string(),
+    ));
+}
+// Handler defence-in-depth:
+if client_order_id.len() > 20 {
+    send_error(&mut stream, 1010, "client_order_id too long").await;
+    continue;
+}
 ```
 
-**Impact:** Client order ID used for cancel-by-cid. If truncation
-splits UTF-8 sequence, cancel lookup may fail. Not critical (can
-use order_id), but violates user expectations.
-
-**Solution:** Gateway MAY reject cid if byte length >20, OR document
-that cid is byte-limited not char-limited.
+**Rationale:** cid is byte-limited (`[u8; 20]` on the wire). Rejecting
+oversize cid up-front avoids any UTF-8 truncation hazard; clients
+that need richer identifiers should rely on the server-assigned
+`order_id` (UUIDv7).
 
 ### 1.4 Time In Force Edge Cases
 
@@ -141,35 +145,82 @@ let tif = match raw_tif {
 | ro=1, no position | User has 0 position | ME checks position | REJECT: ReduceOnlyViolation |
 | ro=1, opposite side | Long position, ro SELL | OK | ACCEPT: reduces position |
 | ro=1, same side | Long position, ro BUY | ME checks direction | REJECT: ReduceOnlyViolation |
-| ro=1, qty > position | Long 10, ro SELL 20 | ME enforces qty ≤ pos | REJECT or PARTIAL: fill 10 only |
+| ro=1, qty > position | Long 10, ro SELL 20 | ME clamps qty to abs_pos | PARTIAL: remaining_qty := |position| |
 
-**Risk engine behavior (RISK.md §6):**
+**Risk engine behavior (rsx-risk margin.rs:110-112):**
 ```rust
 if order.reduce_only {
     return Ok(0); // No margin check, pass through to ME
 }
 ```
 
-Risk does NOT validate reduce-only semantics (no position state).
-Matching Engine enforces based on current fills.
+Risk does NOT validate reduce-only semantics (no orderbook state).
+Matching Engine enforces based on `user_states[idx].net_qty`
+(rsx-book matching.rs:51-85): if no position or same-side, emit
+`FAIL_REDUCE_ONLY`; if opposite side with `qty > |position|`,
+clamp `remaining_qty` down to `|position|` and continue matching.
 
-### 1.6 Symbol ID Edge Cases
+### 1.6 Post-Only Edge Cases
+
+| Case | Scenario | Validation | Outcome |
+|------|----------|------------|---------|
+| po=1, would not cross | Buy below best ask | OK | ACCEPT: rests as maker |
+| po=1, would cross (Buy) | Buy ≥ best ask | ME checks cross | CANCEL: CANCEL_POST_ONLY |
+| po=1, would cross (Sell) | Sell ≤ best bid | ME checks cross | CANCEL: CANCEL_POST_ONLY |
+| po=1, empty opposite side | Buy with no asks | no cross possible | ACCEPT: rests as maker |
+
+**Matching Engine behavior (rsx-book matching.rs:87-111):**
+```rust
+if order.post_only {
+    let would_cross = match order.side {
+        Side::Buy  => best_ask != NONE && order_tick >= best_ask,
+        Side::Sell => best_bid != NONE && order_tick <= best_bid,
+    };
+    if would_cross {
+        emit OrderCancelled { reason: CANCEL_POST_ONLY }; return;
+    }
+}
+```
+
+Post-only is enforced by ME (not Gateway/Risk) because it depends
+on live book state. Cancellation emits `OrderCancelled` (not
+`OrderFailed`) since the order was structurally valid.
+
+### 1.7 Symbol ID Edge Cases
 
 | Case | Input | Validation | Outcome |
 |------|----------|------------|---------|
 | symbol_id=0 | Valid if symbol 0 exists | Gateway cache lookup | ACCEPT or REJECT |
 | symbol_id=999 | Invalid, no such symbol | Gateway cache miss | REJECT: SymbolNotFound |
-| symbol_id=MAX_u32 | Out of bounds | Array access OOB | Panic or REJECT |
+| symbol_id=MAX_u32 | Out of bounds | Array access OOB | REJECT: SymbolNotFound |
 
-**Gateway config cache:**
+**Gateway config cache (rsx-gateway handler.rs:361-371):**
 ```rust
-// WRONG: unchecked array access
-let config = &self.symbol_configs[symbol_id];
-
-// CORRECT: bounds check
-let config = self.symbol_configs.get(symbol_id)
-    .ok_or(SYMBOL_NOT_FOUND)?;
+let sid = symbol_id as usize;
+if sid >= st.symbol_configs.len() {
+    send_error(&mut stream, 1007, "unknown symbol").await;
+    continue;
+}
+let cfg = &st.symbol_configs[sid];
 ```
+
+Risk shard repeats the bounds check against `taker_fee_bps.len()`
+(shard.rs:511-519) and returns `InsufficientMargin` if out of range
+(authoritative rejection on the hot path).
+
+### 1.8 Side / TIF Enum Edge Cases
+
+User-supplied integer enums are validated at the Gateway parser
+before any downstream conversion (rsx-gateway protocol.rs).
+
+| Field | Domain | Validation | Outcome |
+|-------|--------|------------|---------|
+| side  | {0=Buy, 1=Sell} | `side > 1` | REJECT: "side must be 0 or 1" |
+| tif   | {0=GTC, 1=IOC, 2=FOK} | `tif > 2` | REJECT: "tif must be 0, 1, or 2" |
+
+Out-of-range values never reach Risk/ME, so the C-repr enums in
+`rsx-types` (`Side`, `TimeInForce`) are always cast from a
+validated integer.
 
 ## 2. Margin & Risk Edge Cases (Risk Layer)
 
@@ -183,25 +234,25 @@ let config = self.symbol_configs.get(symbol_id)
 | 5000000 | 10^12 | 5 * 10^18 | Overflow (>2^63) |
 | 2^31 | 2^31 | 2^62 | Overflow (>2^63) |
 
-**Implementation (RISK.md §6, margin.rs:82):**
+**Implementation (rsx-risk margin.rs:115-125):**
 ```rust
-let order_notional = (order.price as i128
-    * order.qty as i128) as i64;
+let notional_128 = order.price as i128 * order.qty as i128;
+let order_notional = i64::try_from(notional_128)
+    .unwrap_or_else(|_| {
+        error!("order notional overflow: ...");
+        i64::MAX
+    });
 ```
 
-**Edge case: Downcast from i128 to i64**
-- If notional >2^63-1, cast truncates (wraps)
-- Result: negative notional or garbage value
-- Margin check passes with wrong value
+**Rationale:** Overflow saturates to `i64::MAX` (logged), not a
+silent wrap. The subsequent `order_im` calculation also saturates,
+so margin requirement becomes effectively infinite and the order
+fails the `available_margin < margin_needed` check — equivalent
+to an `OrderTooLarge` reject without adding a new failure reason.
 
-**Correct approach:**
-```rust
-let notional_i128 = order.price as i128 * order.qty as i128;
-if notional_i128 > i64::MAX as i128 {
-    return Err(RejectReason::OrderTooLarge);
-}
-let order_notional = notional_i128 as i64;
-```
+Per CLAUDE.md the gateway is the appropriate place to add a hard
+`price * qty` overflow pre-check at order entry; until then, the
+Risk-layer saturation is the authoritative safety net.
 
 ### 2.2 Available Margin Edge Cases
 
@@ -499,9 +550,9 @@ tick_size=0.01, only 2 decimal places honored.
 
 | Layer | Validates | Rejects | Notes |
 |-------|-----------|---------|-------|
-| Gateway | Field types, rate limits, basic sanity | Parse errors, rate limit, queue full | Fast path, no state |
-| Risk | Margin, position limits, reduce-only | InsufficientMargin, ReduceOnlyViolation | Stateful, user context |
-| ME | Tick/lot size, dedup, symbol existence | InvalidTickSize, InvalidLotSize, DuplicateOrderId | Authoritative, per-symbol |
+| Gateway | Field types, enum bounds, cid length, symbol bounds, tick/lot alignment, price/qty positivity, rate limits | Parse errors, unknown symbol, tick/lot misalignment, rate limit, queue full | Fast path, advisory tick/lot |
+| Risk | Shard ownership, liquidation state, margin (incl. saturating notional/IM) | NotInShard, UserInLiquidation, InsufficientMargin | Stateful, user context; reduce_only/is_liquidation bypass margin |
+| ME | Dedup, tick/lot (authoritative), reduce-only vs position, post-only cross, FOK liquidity | FAIL_VALIDATION, FAIL_REDUCE_ONLY, CANCEL_POST_ONLY, FAIL_FOK, DUPLICATE_ORDER_ID | Authoritative, per-symbol |
 
 ### Validation Sequence (Full Order Flow)
 
@@ -516,23 +567,30 @@ tick_size=0.01, only 2 decimal places honored.
    ├─ Per-user: 10/s → {E:[1006, "rate limited"]}
    └─ Per-instance: 1000/s → {E:[5, "overloaded"]}
 
-3. Gateway field validation (advisory)
-   ├─ price ≤ 0 → {E:[...]}
-   ├─ qty ≤ 0 → {E:[...]}
-   ├─ symbol cache miss → {E:[2, "symbol not found"]}
-   └─ (tick/lot validation SHOULD happen here, MAY skip to ME)
+3. Gateway field validation
+   ├─ side > 1 / tif > 2 → parse error
+   ├─ cid empty or > 20 bytes → parse error
+   ├─ symbol cache miss → {E:[1007, "unknown symbol"]}
+   ├─ price ≤ 0 or price % tick_size ≠ 0 → {E:[1008, ...]}
+   └─ qty ≤ 0 or qty % lot_size ≠ 0 → {E:[1009, ...]}
 
 4. Risk pre-trade check
    ├─ is_liquidation → skip margin, forward to ME
-   ├─ reduce_only → skip margin, forward to ME
-   ├─ calculate portfolio margin → if insufficient: {U:[...,FAILED,4]}
-   └─ freeze margin, forward to ME
+   ├─ reduce_only → skip margin (0), forward to ME
+   ├─ user not in shard → REJECT NotInShard
+   ├─ user in liquidation → REJECT UserInLiquidation
+   ├─ notional/IM saturates to i64::MAX on overflow
+   └─ available_margin < margin_needed → REJECT InsufficientMargin
 
 5. ME validation (authoritative)
-   ├─ symbol_id bounds check → ORDER_FAILED(SYMBOL_NOT_FOUND)
-   ├─ tick size: price % tick_size → ORDER_FAILED(INVALID_TICK_SIZE)
-   ├─ lot size: qty % lot_size → ORDER_FAILED(INVALID_LOT_SIZE)
-   ├─ dedup: order_id in map → ORDER_FAILED(DUPLICATE_ORDER_ID)
+   ├─ dedup: order_id in 5-min map → ORDER_FAILED(DUPLICATE_ORDER_ID)
+   ├─ validate_order: price/qty > 0 and tick/lot aligned
+   │    → OrderFailed(FAIL_VALIDATION)
+   ├─ reduce_only check vs net_qty
+   │    → OrderFailed(FAIL_REDUCE_ONLY) or clamp remaining_qty
+   ├─ post_only would-cross check
+   │    → OrderCancelled(CANCEL_POST_ONLY)
+   ├─ FOK insufficient liquidity → OrderFailed(FAIL_FOK)
    └─ match, emit fills + ORDER_DONE
 
 6. Risk fill processing
