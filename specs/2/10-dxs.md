@@ -38,9 +38,30 @@ struct WalHeader {
   u16 record_type;   // enum
   u16 len;           // payload bytes (<= 64KB)
   u32 crc32;         // checksum of payload bytes
-  u8  _reserved[8];  // reserved for future use
+  u8  version;       // wire-format version (V0=legacy, V1=current)
+  u8  _reserved[7];  // must be zero
 }
 ```
+
+**Header version byte:** byte 8 of the header carries a wire-format
+version (`WAL_HEADER_VERSION_V0 = 0` legacy, `WAL_HEADER_VERSION_V1 = 1`
+current). New writes always emit V1. Readers accept V0 (back-compat for
+files written before the version byte existed) and V1; any other version
+is rejected:
+
+- `WalReader::next` returns `Err(InvalidData)` on an unsupported version
+  (no skip-and-continue — the framing isn't trusted).
+- `DxsReplayService::handle_client` returns `Err(InvalidData)` on an
+  unsupported version on the inbound `ReplayRequest` header, before any
+  unsafe cast.
+- `DxsConsumer` returns `Err(InvalidData)` on an unsupported version on
+  any inbound header during streaming, terminating the connection (a
+  reconnect with backoff follows).
+
+Adding a new record type does NOT bump the version (record types are
+additive). The version is bumped only for changes that would break a V1
+reader (re-laid header, different CRC algorithm, etc.) and requires a
+coordinated stop-redeploy.
 
 The payload immediately follows the header and is a fixed-record
 struct for that `record_type` (`#[repr(C, align(64))]`, little-endian).
