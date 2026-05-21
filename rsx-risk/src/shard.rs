@@ -36,6 +36,12 @@ pub struct RiskShard {
 
     pub accounts: FxHashMap<u32, Account>,
     pub positions: FxHashMap<(u32, u32), Position>,
+    /// Per-user index over `positions`. user_id → set of
+    /// symbol_ids this user has a position in. Maintained on
+    /// every `ensure_position` and rebuilt on `load_state`.
+    /// Replaces O(all_positions) scans in `positions_for_user`
+    /// with O(this_user's_positions).
+    positions_by_user: FxHashMap<u32, rustc_hash::FxHashSet<u32>>,
     margin: PortfolioMargin,
     pub index_prices: Vec<IndexPrice>,
     pub mark_prices: Vec<i64>,
@@ -48,6 +54,12 @@ pub struct RiskShard {
     stashed_bbo: Vec<Option<BboUpdate>>,
     pub insurance_funds: FxHashMap<u32, InsuranceFund>,
     frozen_orders: FxHashMap<u128, (u32, i64)>,
+    /// Per-user index over `frozen_orders`. user_id →
+    /// {order_id → frozen_amount}. Maintained on every
+    /// frozen_orders insert/remove and rebuilt on `load_state`.
+    /// Replaces O(all_frozen) scans in `frozen_for_user` with
+    /// O(this_user's_open_orders).
+    frozen_by_user: FxHashMap<u32, FxHashMap<u128, i64>>,
 
     pub config_versions: Vec<u64>,
     pub fills_processed: u64,
@@ -80,6 +92,7 @@ impl RiskShard {
             max_symbols: max,
             accounts: FxHashMap::default(),
             positions: FxHashMap::default(),
+            positions_by_user: FxHashMap::default(),
             margin: PortfolioMargin {
                 symbol_params: config.symbol_params,
             },
@@ -97,6 +110,7 @@ impl RiskShard {
             stashed_bbo: vec![None; max],
             insurance_funds: FxHashMap::default(),
             frozen_orders: FxHashMap::default(),
+            frozen_by_user: FxHashMap::default(),
             config_versions: vec![0u64; max],
             fills_processed: 0,
             orders_processed: 0,
@@ -129,23 +143,43 @@ impl RiskShard {
         self.positions = state.positions;
         self.insurance_funds = state.insurance_funds;
         self.frozen_orders = state.frozen_orders;
+        // Rebuild secondary indexes from the loaded primaries.
+        // Without this, frozen_for_user / positions_for_user
+        // would see an empty index after cold-start and silently
+        // return zero on a populated state.
+        self.positions_by_user.clear();
+        for &(user_id, symbol_id) in self.positions.keys() {
+            self.positions_by_user
+                .entry(user_id)
+                .or_default()
+                .insert(symbol_id);
+        }
+        self.frozen_by_user.clear();
+        for (&order_id, &(user_id, amount)) in self.frozen_orders.iter() {
+            self.frozen_by_user
+                .entry(user_id)
+                .or_default()
+                .insert(order_id, amount);
+        }
         let len = self.tips.len().min(state.tips.len());
         self.tips[..len]
             .copy_from_slice(&state.tips[..len]);
     }
 
     /// Sum of margin reserved for the user's open orders.
-    /// Derived from `frozen_orders`; the only authoritative
-    /// view of frozen margin.
+    /// Derived from `frozen_orders` via the per-user index;
+    /// O(this user's open orders), not O(all open orders).
     pub fn frozen_for_user(&self, user_id: u32) -> i64 {
-        let mut total: i64 = 0;
-        for &(owner, amount) in self.frozen_orders.values()
-        {
-            if owner == user_id {
-                total = total.saturating_add(amount);
+        match self.frozen_by_user.get(&user_id) {
+            Some(per_user) => {
+                let mut total: i64 = 0;
+                for &amount in per_user.values() {
+                    total = total.saturating_add(amount);
+                }
+                total
             }
+            None => 0,
         }
-        total
     }
 
     fn push_persist(&mut self, event: PersistEvent) {
@@ -183,21 +217,42 @@ impl RiskShard {
         user_id: u32,
         symbol_id: u32,
     ) {
-        self.positions
-            .entry((user_id, symbol_id))
-            .or_insert_with(|| {
-                Position::new(user_id, symbol_id)
-            });
+        use std::collections::hash_map::Entry;
+        match self.positions.entry((user_id, symbol_id)) {
+            Entry::Occupied(_) => {
+                // Already present; index already has it
+                // (maintained at the same moment as the
+                // primary, no drift possible).
+            }
+            Entry::Vacant(v) => {
+                v.insert(Position::new(user_id, symbol_id));
+                self.positions_by_user
+                    .entry(user_id)
+                    .or_default()
+                    .insert(symbol_id);
+            }
+        }
     }
 
     fn positions_for_user(
         &self,
         user_id: u32,
     ) -> Vec<&Position> {
-        self.positions
-            .values()
-            .filter(|p| p.user_id == user_id)
-            .collect()
+        // O(this user's symbol count), not O(all positions).
+        // Per-user index built in `ensure_position` /
+        // `load_state` and maintained on every mutation.
+        match self.positions_by_user.get(&user_id) {
+            Some(symbols) => {
+                let mut out = Vec::with_capacity(symbols.len());
+                for &symbol_id in symbols {
+                    if let Some(p) = self.positions.get(&(user_id, symbol_id)) {
+                        out.push(p);
+                    }
+                }
+                out
+            }
+            None => Vec::new(),
+        }
     }
 
     /// RISK.md §1. Process a fill from ME ring.
@@ -532,13 +587,18 @@ impl RiskShard {
             frozen,
         ) {
             Ok(margin_needed) => {
+                let key = order_key(
+                    order.order_id_hi,
+                    order.order_id_lo,
+                );
                 self.frozen_orders.insert(
-                    order_key(
-                        order.order_id_hi,
-                        order.order_id_lo,
-                    ),
+                    key,
                     (order.user_id, margin_needed),
                 );
+                self.frozen_by_user
+                    .entry(order.user_id)
+                    .or_default()
+                    .insert(key, margin_needed);
                 self.orders_processed += 1;
                 self.push_persist(
                     PersistEvent::FrozenInsert(
@@ -583,7 +643,15 @@ impl RiskShard {
             return;
         };
         if owner != user_id {
+            // Owner mismatch: restore primary; the index never
+            // saw this row under user_id, so no index touch.
             return;
+        }
+        if let Some(per_user) = self.frozen_by_user.get_mut(&owner) {
+            per_user.remove(&key);
+            if per_user.is_empty() {
+                self.frozen_by_user.remove(&owner);
+            }
         }
         self.push_persist(PersistEvent::FrozenRemove {
             user_id,
@@ -639,10 +707,15 @@ impl RiskShard {
             );
             return;
         }
+        let key = order_key(order_id_hi, order_id_lo);
         self.frozen_orders.insert(
-            order_key(order_id_hi, order_id_lo),
+            key,
             (user_id, margin_needed),
         );
+        self.frozen_by_user
+            .entry(user_id)
+            .or_default()
+            .insert(key, margin_needed);
     }
 
     /// Rebuild fallback_mark_prices from mark_prices,
