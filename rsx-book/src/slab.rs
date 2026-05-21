@@ -5,6 +5,14 @@ pub trait SlabItem {
     fn set_next(&mut self, next: u32);
 }
 
+/// Fixed-capacity slab arena.
+///
+/// Invariant #8 (slab no-leak): `bump_next` counts ever-allocated
+/// slots; `free_head` is the head of the freelist. Live slots =
+/// `bump_next - |freelist|`. Every `alloc()` either pops `free_head`
+/// (reuse) or bumps `bump_next` (fresh); every `free()` pushes onto
+/// `free_head`. Callers must pair each `alloc` with at most one
+/// `free` for the same handle.
 pub struct Slab<T: SlabItem> {
     slots: Vec<T>,
     free_head: u32,

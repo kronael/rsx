@@ -201,6 +201,12 @@ impl RiskShard {
     }
 
     /// RISK.md §1. Process a fill from ME ring.
+    ///
+    /// Invariant #4 (Position = sum of fills): both taker and maker
+    /// positions are updated via `Position::apply_fill` on every fill
+    /// that passes the `seq <= tip` dedup gate. Invariant #5 (tips
+    /// monotonic): the dedup gate guarantees `tips[sid]` only ever
+    /// advances (set to `fill.seq` at the end on success).
     pub fn process_fill(&mut self, fill: &FillEvent) {
         let sid = fill.symbol_id as usize;
         if sid >= self.tips.len() {
@@ -775,6 +781,14 @@ impl RiskShard {
     }
 
     /// RISK.md §5. Settle funding if interval elapsed.
+    ///
+    /// Invariant #9 (funding zero-sum per symbol per interval): for
+    /// each symbol we compute one `(rate, mark)` and apply
+    /// `calculate_payment(net_qty, mark, rate)` to every user's signed
+    /// `net_qty`. Sum over users in a symbol equals
+    /// `rate * mark * Σ net_qty / 10_000`; `Σ net_qty = 0` follows from
+    /// invariant #4 (every fill adds +qty to one side, -qty to the
+    /// other), so total payment per symbol is zero.
     pub fn maybe_settle_funding(
         &mut self,
         now_secs: u64,
