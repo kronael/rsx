@@ -101,7 +101,7 @@ violations swept, spec ↔ code contradictions closed.
 4. **JtiTracker dormant** at `rsx-gateway/src/ws.rs:108` — replay-protection mechanism shipped but not wired through ws_handshake. Founder decision: per-process tracker vs shared Redis.
 5. **`encode_*_record` helpers in rsx-messages** — 8 of them have zero production callers.
 6. **`OrderStatus` / `FinalStatus` enums in rsx-types** — exercised only by repr tests.
-7. **Replica → main promotion** (`rsx-risk/src/main.rs:~1086`) — `std::env::set_var` + recursive call. T3.2 in 13-A16Z-FIXES.
+7. **Replica → main promotion** — ✅ **shipped** (T3.2 in 13-A16Z-FIXES). `rsx-risk/src/main.rs::main` is now a flat state-machine loop over a `Role` enum; `set_var` and recursive `run_main` are gone. Observable contract pinned by `rsx-risk/tests/promotion_e2e_test.rs` (1 unit + 3 testcontainer tests).
 8. **2 hot-path `eprintln!` in rsx-book** (book.rs:88 event-buffer-full, snapshot.rs:284) — rsx-book has no `tracing` dep; adding one is a cross-cutting decision.
 9. **6 remaining clippy warnings** — too-many-args refactors (matching:810, maker:77, risk:379 field-after-default).
 10. **Gateway-side `price*qty` overflow check** — CLAUDE.md suggests entry-side check; currently only Risk saturates.
