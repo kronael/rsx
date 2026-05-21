@@ -1433,6 +1433,12 @@ def scan_processes():
 
 
 def scan_wal_streams():
+    """Snapshot every WAL stream dir's file count and total size.
+
+    Single source of truth for both the WAL tab and the Verify
+    page. Both must call THIS function (don't reimplement disk
+    walking elsewhere) so the two surfaces never disagree.
+    """
     streams = []
     if not WAL_DIR.exists():
         return streams
@@ -1466,6 +1472,7 @@ def scan_wal_streams():
             "name": entry.name,
             "files": len(files),
             "total_size": human_size(total),
+            "total_bytes": total,
             "newest": newest,
         })
     return streams
@@ -2017,9 +2024,17 @@ def read_logs(process=None, level=None, search=None,
         sorted(LOG_DIR.glob("*.log"))
         if LOG_DIR.exists() else []
     )
+    # Map UI label (component) → log filename prefixes.
+    # Log files are shard-numbered (gw-0.log, risk-0.log,
+    # me-pengu.log); without this map "gateway" matched
+    # nothing, while "errors only" surfaced [gw-0] WARN lines.
+    proc_prefixes = (
+        PROC_HINTS.get(process, [process]) if process else None
+    )
     for lf in log_files:
         fname = lf.stem
-        if process and process not in fname:
+        if proc_prefixes and not any(
+                pref in fname for pref in proc_prefixes):
             continue
         try:
             tail = lf.read_text().splitlines()[-max_lines:]
@@ -2059,18 +2074,39 @@ async def topology():
 
 # ── Topology partials ────────────────────────────────────
 
+# Canonical component → process-name prefixes. Process names emitted
+# by `start` are shard-numbered (gw-0, risk-0, me-pengu, ...). Keep
+# legacy aliases ("gateway", "matching", "mktdata") so old paths keep
+# resolving, but list the canonical prefix first so a running process
+# always wins over a stopped plan-stub of the same component.
+PROC_HINTS: dict[str, list[str]] = {
+    "gateway": ["gw-", "gateway"],
+    "risk": ["risk-", "risk"],
+    "matching": ["me-", "matching"],
+    "marketdata": ["marketdata", "mktdata"],
+    "mark": ["mark"],
+    "recorder": ["recorder"],
+    "maker": ["maker"],
+    "stress": ["stress"],
+}
+
 
 def _topo_proc(hints: list[str]) -> dict:
+    """Return first running process matching any hint; else first match."""
     procs = scan_processes()
+    fallback = {}
     for hint in hints:
         for p in procs:
             if hint in p["name"]:
-                return p
-    return {}
+                if p.get("state") == "running":
+                    return p
+                if not fallback:
+                    fallback = p
+    return fallback
 
 
 def _topo_gateway() -> dict:
-    p = _topo_proc(["gateway"])
+    p = _topo_proc(PROC_HINTS["gateway"])
     book_stats = parse_wal_book_stats()
     wal_tips = (
         " ".join(
@@ -2094,7 +2130,7 @@ def _topo_gateway() -> dict:
 
 
 def _topo_risk() -> dict:
-    p = _topo_proc(["risk"])
+    p = _topo_proc(PROC_HINTS["risk"])
     now_s = int(time.time())
     next_s = 28800 - (now_s % 28800)
     h, rem = divmod(next_s, 3600)
@@ -2115,7 +2151,7 @@ def _topo_risk() -> dict:
 
 
 def _topo_matching() -> dict:
-    p = _topo_proc(["matching", "me-"])
+    p = _topo_proc(PROC_HINTS["matching"])
     book_stats = parse_wal_book_stats()
     rows = []
     for sid, bbo in sorted(book_stats.items()):
@@ -2144,7 +2180,7 @@ def _topo_matching() -> dict:
 
 
 def _topo_marketdata() -> dict:
-    p = _topo_proc(["marketdata", "mktdata"])
+    p = _topo_proc(PROC_HINTS["marketdata"])
     syms = sorted(_book_snap.keys())
     return {
         "name": "Marketdata",
@@ -2161,18 +2197,40 @@ def _topo_marketdata() -> dict:
 
 
 def _topo_mark() -> dict:
-    p = _topo_proc(["mark"])
+    p = _topo_proc(PROC_HINTS["mark"])
+    rows: list[tuple[str, object]] = []
+    # Current mark prices (BBO mid) per active symbol.
+    book_stats = parse_wal_book_stats()
+    if book_stats:
+        for sid, bbo in sorted(book_stats.items()):
+            bid = bbo.get("bid_px", 0)
+            ask = bbo.get("ask_px", 0)
+            if bid and ask:
+                mid = (bid + ask) // 2
+                rows.append((f"sym{sid} mark", str(mid)))
+    # Funding window remaining (8h settlement cadence).
+    now_s = int(time.time())
+    interval = 28800
+    next_s = interval - (now_s % interval)
+    h, rem = divmod(next_s, 3600)
+    m = rem // 60
+    rows.append((
+        "funding next settlement",
+        f"{h}h {m}m" if h else f"{m}m",
+    ))
+    rows.append(("sample interval", "1s"))
+    rows.append(("symbols tracked", len(book_stats)))
     return {
         "name": "Mark",
         "status": p.get("state", "stopped"),
         "pid": p.get("pid", "-"),
         "uptime": p.get("uptime", "-"),
-        "rows": [("mark data", "requires mark process")],
+        "rows": rows,
     }
 
 
 def _topo_recorder() -> dict:
-    p = _topo_proc(["recorder"])
+    p = _topo_proc(PROC_HINTS["recorder"])
     wal_files = 0
     for d in _wal_stream_dirs():
         try:
@@ -2204,7 +2262,7 @@ def _topo_maker() -> dict:
         )
         or "none"
     )
-    p = _topo_proc(["maker"])
+    p = _topo_proc(PROC_HINTS["maker"])
     return {
         "name": "Maker",
         "status": "running" if running else "stopped",
@@ -2236,7 +2294,7 @@ def _topo_stress() -> dict:
     running = _stress_running()
     info = managed.get(STRESS_NAME)
     pid = info["proc"].pid if running and info else "-"
-    p = _topo_proc(["stress"])
+    p = _topo_proc(PROC_HINTS["stress"])
     return {
         "name": "Stress",
         "status": "running" if running else "stopped",
@@ -2291,12 +2349,12 @@ async def x_topology_flow():
             else "bg-zinc-600"
         )
 
-    gw = _status(["gateway"])
-    risk_s = _status(["risk"])
-    me_s = _status(["matching", "me-"])
-    md_s = _status(["marketdata", "mktdata"])
-    mk_s = _status(["mark"])
-    rec_s = _status(["recorder"])
+    gw = _status(PROC_HINTS["gateway"])
+    risk_s = _status(PROC_HINTS["risk"])
+    me_s = _status(PROC_HINTS["matching"])
+    md_s = _status(PROC_HINTS["marketdata"])
+    mk_s = _status(PROC_HINTS["mark"])
+    rec_s = _status(PROC_HINTS["recorder"])
     maker_s = "running" if _maker_running() else "stopped"
 
     book_stats = parse_wal_book_stats()
@@ -2337,12 +2395,14 @@ async def x_topology_summary():
                if p.get("state") == "running"]
     names = ", ".join(p["name"] for p in running)
     gw_up = any(
-        "gateway" in p["name"] for p in running)
+        any(h in p["name"] for h in PROC_HINTS["gateway"])
+        for p in running)
     me_up = any(
-        "me-" in p["name"] or "matching" in p["name"]
+        any(h in p["name"] for h in PROC_HINTS["matching"])
         for p in running)
     md_up = any(
-        "marketdata" in p["name"] for p in running)
+        any(h in p["name"] for h in PROC_HINTS["marketdata"])
+        for p in running)
 
     def _dot(ok):
         c = "bg-emerald-400" if ok else "bg-red-500"
@@ -2856,11 +2916,126 @@ async def x_processes():
         pages.render_process_table(scan_processes()))
 
 
+_BENCH_BASELINE_FILE = ROOT / "bench-baseline.json"
+
+
+def _read_baseline_e2e_p99_us() -> float | None:
+    """Read e2e_us.p99 from bench-baseline.json, or None."""
+    try:
+        data = json.loads(_BENCH_BASELINE_FILE.read_text())
+        return float(data.get("e2e_us", {}).get("p99", 0)) or None
+    except Exception:
+        return None
+
+
+def _compute_health() -> dict:
+    """Compute truthful health score.
+
+    Signals (each subtracts from a starting 100):
+      - process restart count (any process restarted = -10/restart)
+      - latency p99 ≥ 2× baseline (-30)
+      - recent ERROR / panic lines in logs (-5 per up to 6)
+    Returns dict with score, label, reasons. Returns
+    {"score": None} when we genuinely don't know.
+    """
+    procs = scan_processes()
+    if not procs:
+        return {"score": None, "label": "unknown",
+                "reasons": ["no processes scanned"]}
+    score = 100
+    reasons: list[str] = []
+    # Restart counter (preserved across spawn cycles).
+    total_restarts = sum(
+        rs.get("restarts", 0) for rs in _restart_state.values()
+    )
+    if total_restarts > 0:
+        penalty = min(60, total_restarts * 10)
+        score -= penalty
+        reasons.append(f"-{penalty} ({total_restarts} restarts)")
+    # Stopped processes that the plan expected to be running.
+    expected_stopped = sum(
+        1 for p in procs
+        if p.get("state") in ("stopped", "blocked")
+    )
+    if expected_stopped > 0:
+        penalty = min(50, expected_stopped * 15)
+        score -= penalty
+        reasons.append(
+            f"-{penalty} ({expected_stopped} stopped)"
+        )
+    # Latency regression vs baseline.
+    base_p99 = _read_baseline_e2e_p99_us()
+    if base_p99 and e2e_latencies:
+        cur_p99 = _percentiles(e2e_latencies).get("p99", 0)
+        if cur_p99 > base_p99 * 2:
+            score -= 30
+            reasons.append(
+                f"-30 (p99 {int(cur_p99)}us "
+                f"> 2x baseline {int(base_p99)}us)"
+            )
+    # Recent error / panic lines across log files.
+    err_count = 0
+    panic_seen = False
+    if LOG_DIR.exists():
+        for lf in sorted(LOG_DIR.glob("*.log")):
+            try:
+                tail = lf.read_text().splitlines()[-200:]
+            except OSError:
+                continue
+            for line in tail:
+                low = line.lower()
+                if "panicked at" in low or "fatal" in low:
+                    panic_seen = True
+                    err_count += 1
+                elif " error " in low or " err " in low:
+                    err_count += 1
+    if panic_seen:
+        score -= 25
+        reasons.append("-25 (panic in logs)")
+    elif err_count > 0:
+        penalty = min(30, err_count)
+        score -= penalty
+        reasons.append(
+            f"-{penalty} ({err_count} error lines)"
+        )
+    score = max(0, score)
+    if score >= 80:
+        label = "green"
+    elif score >= 50:
+        label = "yellow"
+    else:
+        label = "red"
+    return {"score": score, "label": label, "reasons": reasons}
+
+
 @app.get("/x/health", response_class=HTMLResponse)
 async def x_health():
-    return HTMLResponse(
-        pages.render_health(scan_processes(),
-                            pg_pool is not None))
+    h = _compute_health()
+    return HTMLResponse(pages.render_health_score(h))
+
+
+def _count_recent_errors(max_lines: int = 200) -> int:
+    """Sum ERROR/WARN/panic lines across log tails.
+
+    Used for the Errors metric and the pulse Errors pill. Both
+    must agree with the Logs tab's "errors only" filter — when
+    that filter shows N lines, this returns ≥ N.
+    """
+    n = 0
+    if not LOG_DIR.exists():
+        return 0
+    for lf in LOG_DIR.glob("*.log"):
+        try:
+            tail = lf.read_text().splitlines()[-max_lines:]
+        except OSError:
+            continue
+        for line in tail:
+            low = line.lower()
+            if (" error " in low or " err " in low
+                    or " warn " in low
+                    or "panicked at" in low):
+                n += 1
+    return n
 
 
 @app.get("/x/key-metrics", response_class=HTMLResponse)
@@ -2885,11 +3060,12 @@ async def x_key_metrics():
     pos_count = len(pairs)
     elapsed = max(1, time.time() - SERVER_START)
     mps = int(len(recent_orders) / elapsed)
+    errs = _count_recent_errors()
     return HTMLResponse(
         pages.render_key_metrics(
             scan_processes(), scan_wal_streams(),
             active_orders=ao, positions=pos_count,
-            msgs_sec=mps))
+            msgs_sec=mps, error_count=errs))
 
 
 @app.get("/x/pulse", response_class=HTMLResponse)
@@ -2901,9 +3077,13 @@ async def x_pulse():
     wal_files = sum(s.get("files", 0) for s in streams)
     elapsed = max(1, time.time() - SERVER_START)
     ops = int(len(recent_orders) / elapsed)
+    # Errors: union of rejected-orders and log-derived errors so
+    # the pulse pill never says "errs 0" while the Logs tab is
+    # showing WARN/ERR lines.
     errs = sum(
         1 for o in recent_orders
         if o.get("status") in {"rejected", "failed"})
+    errs += _count_recent_errors()
 
     def _pill(label, value, color):
         return (
@@ -4123,15 +4303,33 @@ async def _run_invariant_checks() -> list[dict]:
         for r in parse_wal_records(sd, {RECORD_FILL}):
             fill_seqs.append(r["seq"])
     fill_seqs.sort()
-    if not fill_seqs:
+    # Cross-check WAL against the session counter the Book tab
+    # and /x/topology/gateway both read. If either says fills
+    # exist, run the real check; only SKIP when BOTH report
+    # zero fills (never PASS in that case — there's nothing to
+    # check). Previously this returned PASS with detail
+    # "no trades yet" while 135 fills were visible elsewhere.
+    session_fills = len(recent_fills)
+    if not fill_seqs and session_fills == 0:
         checks.append({
             "name": "Fills precede ORDER_DONE (per order)",
-            "status": "skip" if not running else "pass",
+            "status": "skip",
             "time": now,
             "detail": (
-                "no WAL fills recorded yet"
-                if not running
-                else "0 fills; system running, no trades yet"
+                "no WAL fills and no session fills"
+                if running
+                else "no processes running"
+            ),
+        })
+    elif not fill_seqs:
+        # WAL says zero but session counter disagrees — flag it.
+        checks.append({
+            "name": "Fills precede ORDER_DONE (per order)",
+            "status": "fail",
+            "time": now,
+            "detail": (
+                f"WAL fills=0 but session fills="
+                f"{session_fills} — sources disagree"
             ),
         })
     else:
@@ -4957,6 +5155,85 @@ async def api_stress_report(report_id: str):
         return JSONResponse(json.load(f))
 
 
+def _stress_scenario_desc(cfg: dict) -> str:
+    """Build a human-readable description of a stress scenario."""
+    load = cfg.get("load", {})
+    parts = [
+        f"{cfg.get('symbols', '?')}sym",
+        f"{cfg.get('gateways', '?')}gw",
+        f"rep={cfg.get('replication', '?')}",
+    ]
+    if load:
+        parts.append(
+            f"{load.get('rate', '?')}/s "
+            f"{load.get('duration', '?')}s "
+            f"{load.get('type', '?')}"
+        )
+    return ", ".join(parts)
+
+
+@app.post("/api/stress/scenario/{name}/start")
+async def api_stress_scenario_start(name: str, request: Request):
+    """Start RSX cluster with the named stress scenario, then
+    re-render the scenario panel so HTMX swaps the new state in."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    if name not in start_mod.SCENARIOS:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'unknown scenario: {html.escape(name)}</span>',
+            status_code=400,
+        )
+    global current_scenario
+    current_scenario = name
+    asyncio.create_task(_start_all_in_background(name))
+    return await x_stress_scenarios()
+
+
+@app.post("/api/stress/scenario/{name}/stop")
+async def api_stress_scenario_stop(name: str, request: Request):
+    """Stop the stress run (subprocess only); leave RSX up."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    if _stress_running():
+        await stop_process(STRESS_NAME)
+    return await x_stress_scenarios()
+
+
+async def _start_all_in_background(scenario: str):
+    """Fire-and-forget cluster start used by scenario buttons."""
+    try:
+        await start_all(scenario)
+    except Exception:
+        pass
+
+
+@app.get("/x/stress-scenarios", response_class=HTMLResponse)
+async def x_stress_scenarios():
+    """List named stress profiles (those with a `load` block).
+
+    Read the same SCENARIOS source the Control scenario selector
+    uses (start_mod.SCENARIOS) so the two surfaces never drift.
+    """
+    running = _stress_running()
+    states: dict[str, dict] = {}
+    for name, cfg in start_mod.SCENARIOS.items():
+        if "load" not in cfg:
+            continue
+        states[name] = {
+            "running": running and current_scenario == name,
+            "desc": _stress_scenario_desc(cfg),
+        }
+    if not states:
+        return HTMLResponse(
+            '<span class="text-slate-500 text-xs">'
+            'no stress profiles defined</span>'
+        )
+    return HTMLResponse(pages.render_stress_scenarios(states))
+
+
 @app.get("/x/stress-reports-list", response_class=HTMLResponse)
 async def x_stress_reports_list():
     """HTMX endpoint for stress reports table"""
@@ -5259,6 +5536,23 @@ async def api_risk_overview():
     all_short_notional = 0
     accounts_with_positions = 0
     accounts_near_liq = 0
+    # Track users that have ANY fill activity, even if their
+    # net position is zero. The Maker tab's "Positions N"
+    # counter is the same set; Risk page must not show 0
+    # while Maker shows 2.
+    accounts_with_fill_activity = len({
+        uid for uid, syms in positions.items()
+        for sid in syms
+        if positions[uid][sid]["fill_count"] > 0
+    })
+    # Gross OI = sum of abs(filled qty) per side. Computed
+    # from raw fills (not user-netted) so it stays non-zero
+    # even when buyers and sellers exactly offset.
+    gross_oi_qty: dict[int, int] = {}
+    for f in fills:
+        sid = f.get("symbol_id", 0)
+        qty = f.get("qty", 0)
+        gross_oi_qty[sid] = gross_oi_qty.get(sid, 0) + qty
 
     all_uids = sorted(
         set(list(accounts.keys()) + list(positions.keys()))
@@ -5345,6 +5639,28 @@ async def api_risk_overview():
         })
 
     total_oi = all_long_notional + all_short_notional
+    # If user-netted notionals are zero but fills exist (buyers
+    # = sellers, no open position from this slice), fall back
+    # to gross filled notional so the dashboard doesn't lie.
+    if total_oi == 0 and gross_oi_qty:
+        gross_notional = 0
+        for sid, qty in gross_oi_qty.items():
+            bbo = book_stats.get(sid, {})
+            bid = bbo.get("bid_px", 0)
+            ask = bbo.get("ask_px", 0)
+            mid = (bid + ask) // 2 if bid and ask else 0
+            if mid:
+                gross_notional += qty * mid
+        total_oi = gross_notional
+        # Split evenly between sides for display purposes when
+        # we can't infer direction from netting.
+        all_long_notional = gross_notional // 2
+        all_short_notional = gross_notional - all_long_notional
+    # Prefer the fill-activity count over net-non-zero, so this
+    # never falls below what the Maker tab shows.
+    accounts_with_positions = max(
+        accounts_with_positions, accounts_with_fill_activity
+    )
     return {
         "users": users_out,
         "system": {
