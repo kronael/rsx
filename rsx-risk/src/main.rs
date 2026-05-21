@@ -58,6 +58,32 @@ const RESTART_BACKOFF_SECS: &[u64] = &[
 /// Max consecutive crashes before the shard gives up.
 const MAX_RESTARTS: usize = 8;
 
+/// Role the shard process is currently playing. Driven by
+/// `main()`'s state-machine loop; `run_replica` returns when
+/// it has acquired the advisory lock (→ Main), `run_main`
+/// returns when it has lost the lease (→ Replica) or been
+/// asked to shut down. No recursion, no env mutation.
+#[derive(Clone, Copy, Debug)]
+enum Role {
+    Replica,
+    Main,
+}
+
+/// Transition signalled by `run_replica` on return.
+#[derive(Debug)]
+enum ReplicaTransition {
+    /// Advisory lock acquired; main() should switch to Main.
+    Promote,
+}
+
+/// Transition signalled by `run_main` on return.
+#[derive(Debug)]
+enum MainTransition {
+    /// Advisory lease lost; main() should switch to Replica
+    /// and resume polling.
+    Demote,
+}
+
 fn log_effective_risk_config(
     config: &rsx_risk::ShardConfig,
 ) {
@@ -112,21 +138,53 @@ fn main() {
     let shard_id = config.shard_id;
     let shard_count = config.shard_count;
     let max_symbols = config.max_symbols;
-    let is_replica = config.replication_config.is_replica;
+    let initial_is_replica =
+        config.replication_config.is_replica;
 
     info!(
         "risk shard {} starting ({} shards, {} symbols, replica={})",
-        shard_id, shard_count, max_symbols, is_replica,
+        shard_id, shard_count, max_symbols, initial_is_replica,
     );
     log_effective_risk_config(&config);
 
+    let mut role = if initial_is_replica {
+        Role::Replica
+    } else {
+        Role::Main
+    };
     let mut attempts: usize = 0;
+
     loop {
-        let result = if is_replica {
-            run_replica(shard_id, max_symbols)
-        } else {
-            run_main(shard_id, max_symbols)
-        };
+        let result: Result<(), Box<dyn std::error::Error>> =
+            match role {
+                Role::Replica => {
+                    match run_replica(shard_id, max_symbols) {
+                        Ok(ReplicaTransition::Promote) => {
+                            info!(
+                                "transition: Replica → Main"
+                            );
+                            role = Role::Main;
+                            attempts = 0;
+                            continue;
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Role::Main => {
+                    match run_main(shard_id, max_symbols) {
+                        Ok(MainTransition::Demote) => {
+                            info!(
+                                "transition: Main → Replica"
+                            );
+                            role = Role::Replica;
+                            attempts = 0;
+                            continue;
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+
         match result {
             Ok(()) => break,
             Err(e) => {
@@ -154,9 +212,11 @@ fn main() {
                     as i64
                     + jitter_ms;
                 error!(
-                    "crashed ({}/{} attempts): {e}; \
-                     restart in {sleep_ms}ms",
-                    attempts, MAX_RESTARTS,
+                    "crashed in role {:?} ({}/{} \
+                     attempts): {e}; restart in {sleep_ms}ms",
+                    role,
+                    attempts,
+                    MAX_RESTARTS,
                 );
                 std::thread::sleep(
                     Duration::from_millis(
@@ -181,7 +241,7 @@ fn rand_jitter() -> f64 {
 fn run_main(
     shard_id: u32,
     max_symbols: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<MainTransition, Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
     let shard_count = config.shard_count;
     let lease_renew_interval_ms = config.replication_config.lease_renew_interval_ms;
@@ -860,10 +920,10 @@ fn run_main(
                     lease.renew(&pg_client).await
                 })?;
                 if !held {
-                    error!(
-                        "lease lost, exiting for restart"
+                    warn!(
+                        "lease lost, demoting to replica"
                     );
-                    return Err("lease lost".into());
+                    return Ok(MainTransition::Demote);
                 }
             }
         }
@@ -880,7 +940,7 @@ struct TipSyncMessage {
 fn run_replica(
     shard_id: u32,
     max_symbols: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<ReplicaTransition, Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
     let shard_count = config.shard_count;
     let mut shard = RiskShard::new(config);
@@ -1069,25 +1129,27 @@ fn run_replica(
         tip_receiver.tick();
     }
 
-    // Promotion: apply buffered fills up to last tips
+    // Promotion: apply buffered fills up to last tips. The
+    // resulting shard state is discarded — run_main will
+    // rebuild from Postgres + WAL on the next state-machine
+    // tick. promote_from_replica is kept for its logging /
+    // future use; the buffered-fills drain it performs is
+    // belt-and-suspenders against persist-worker lag.
     info!(
         "promoting replica to main, buffered={}",
         shard.replica_buffered_count()
     );
     let fills = shard.promote_from_replica();
     info!(
-        "promotion applied {} fills, restarting as main",
+        "promotion applied {} fills, returning to main \
+         state-machine for re-entry as main",
         fills.len()
     );
 
-    // After promotion, restart as main
-    // lease released at scope end
+    // Release the replica's PG session (and thus its
+    // advisory lock) so run_main's blocking acquire on the
+    // next tick can re-grab it cleanly.
     drop(client);
-    // TODO(.ship/13-A16Z-FIXES T3.2): replica→main promotion uses
-    // std::env::set_var (UB-adjacent on glibc with concurrent reads
-    // — see rust-lang/rust#27970) and a recursive run_main call
-    // (stack growth on every promotion). Refactor to a state-machine
-    // loop. Deferred — needs replication E2E coverage to grow first.
-    std::env::set_var("RSX_RISK_IS_REPLICA", "false");
-    run_main(shard_id, max_symbols)
+
+    Ok(ReplicaTransition::Promote)
 }
