@@ -43,7 +43,7 @@ export default defineConfig({
       // mints a guest JWT). Production server.py must NOT have
       // this set.
       PLAYGROUND_ALLOW_INSECURE_USER_ID: "1",
-      RSX_GW_JWT_SECRET: "rsx-dev-secret-not-for-prod",
+      RSX_GW_JWT_SECRET: "rsx-dev-secret-not-for-prod-padpad",
     },
   },
   projects: [

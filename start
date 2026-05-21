@@ -329,7 +329,8 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_GW_WAL_DIR": "./tmp/wal",
                 # Dev secret. Production MUST override this env var
                 # with a real secret minted by the auth service.
-                "RSX_GW_JWT_SECRET": "rsx-dev-secret-not-for-prod",
+                "RSX_GW_JWT_SECRET":
+                    "rsx-dev-secret-not-for-prod-padpad",
                 # Dev: maker places ~20 ord/s; production
                 # default of 10/user/sec is too tight. Raise
                 # the per-user cap so the maker doesn't spam
