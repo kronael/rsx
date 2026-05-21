@@ -50,6 +50,32 @@ Gateway -[CMP/UDP]-> Risk Shard (main) -[CMP/UDP]-> Matching Engines
 - Hot path is single-threaded, busy-spin on dedicated core
 - Postgres write-behind on separate thread (10ms flush)
 
+### Tile arrangement
+
+One pinned thread runs the shard state machine. Seven SPSC rings
+(rtrb) feed it; one persist ring drains to the write-behind sidecar.
+See `rsx-risk/src/main.rs::run_main`.
+
+| Ring               | Direction              | Capacity | Item type        |
+|--------------------|------------------------|---------:|------------------|
+| `persist`          | shard → persist worker |     8192 | `PersistEvent`   |
+| `fill`             | ME ingress → shard     |     4096 | `FillEvent`      |
+| `order`            | gateway → shard        |     2048 | `OrderRequest`   |
+| `mark`             | mark ingress → shard   |      256 | `MarkPriceUpdate`|
+| `bbo`              | ME ingress → shard     |      256 | `BboUpdate`      |
+| `response`         | shard → gateway egress |     2048 | `OrderResponse`  |
+| `accepted`         | shard → ME egress      |     2048 | `OrderRequest`   |
+
+Ring-full policy: persist-full → stall hot path (backpressure flag).
+All other producers drop newest on full (telemetry warns) — the
+authoritative source (ME fill stream, gateway order stream) will
+retransmit or the next tick replaces stale state.
+
+The persist sidecar runs on its own `tokio::runtime::current_thread`
+in a dedicated `std::thread::spawn` (see `run_main` — separate from
+the lease/migration runtime). It owns its own Postgres client and
+shares no locks with the pinned tile.
+
 ## Components
 
 ### 1. Orderbook Event Ingestion
@@ -179,9 +205,27 @@ Logically part of risk engine, could be extracted later.
 
 ### 6. Pre-Trade Risk Check
 
-Liquidation orders bypass margin check entirely. All others: validate size limits,
-run full portfolio margin check with latest mark prices, reserve worst-case taker fee,
-freeze margin, route to matching engine.
+Order flow through `RiskShard::process_order`:
+
+1. Reject `NotInShard` if `user_id % shard_count != shard_id`
+2. Recompute fallback mark (mark with index backfill) on first
+   order after a price update
+3. Reject `UserInLiquidation` if `equity < maintenance_margin`
+   and the order is not itself a liquidation
+4. Liquidation orders (`is_liquidation == true`) bypass the
+   margin check (`Ok(0)`)
+5. Reduce-only orders skip margin reservation (`Ok(0)`) — the
+   eventual fill releases existing margin; no new margin needed.
+   Position-side enforcement (reduce-only must actually reduce)
+   lives in the matching engine, not here
+6. Otherwise compute `margin_needed = order_notional * im_rate /
+   10_000 + taker_fee`; reject `InsufficientMargin` if
+   `available_margin < margin_needed`; else freeze and emit
+   `OrderResponse::Accepted`
+
+The shard does **not** enforce max-position caps or a kill-switch.
+Those are not in scope for v1; if added, they belong upstream of
+the margin check.
 
 On fill: update position; margin recalculated on next price tick.
 On ORDER_DONE: release frozen margin for that order.
@@ -256,19 +300,24 @@ crash scenarios.
 4. Process replay fills (same code path as live)
 5. On `CaughtUp` for all streams: connect gateway, go live
 6. Main loop: poll ME rings -> poll gateway -> renew lease (~1s)
-7. Replica sync not implemented in v1
+7. Push per-symbol tip messages over CMP to the replica each tick
+   (record type `0x20`, `TipSyncMessage { symbol_id, tip }`),
+   gated on `RSX_RISK_REPLICA_ADDR`.
 
 ### Replica Behavior
 
 1. Try advisory lock (expected to fail, main holds it)
 2. Load same positions/tips from Postgres as baseline
 3. Connect CMP/UDP receivers to all matching engines (direct)
-4. Replica sync channel not implemented in v1
+4. Receive tip-sync messages (record type `0x20`) from main
+   on `RSX_RISK_REPLICA_ADDR`
 5. Replica loop:
-   - Buffer fills from MEs into `Vec<Fill>` per symbol
-     (already ordered)
-   - On tip from main: apply buffered fills up to that tip
-   - Poll `pg_try_advisory_lock(shard_id)` every ~500ms
+   - Buffer fills from MEs into a `FxHashMap<seq, Fill>` per
+     symbol (see `replica.rs::ReplicaState`)
+   - On tip from main: apply buffered fills with `seq <= tip`
+     in order, drop them from the buffer
+   - Poll `pg_try_advisory_lock(shard_id)` every
+     `RSX_RISK_LEASE_POLL_MS` (default 500ms)
    - If acquired: main is dead -> promote
 
 ### Promotion (Replica -> Main)
@@ -278,6 +327,13 @@ crash scenarios.
 3. Connect outbound to gateway
 4. Start write-behind worker
 5. Resume processing new orders
+
+**Implementation note (out of scope for this spec):** the current
+implementation flips `RSX_RISK_IS_REPLICA` via `std::env::set_var`
+and recursively calls `run_main` from `run_replica`. This is tracked
+as `.ship/13-A16Z-FIXES T3.2` and will be refactored to a flat
+state-machine loop once replication has E2E coverage; the spec
+above describes the intended steady state, not the env-var hack.
 
 ### Recovery: Both Crash
 
