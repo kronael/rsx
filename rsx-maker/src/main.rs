@@ -92,7 +92,7 @@ fn quote_cycle(
     set_timeout(&mut ws, Duration::from_millis(100));
     for cid in active_cids.iter() {
         let msg = serde_json::json!({"C": [cid]}).to_string();
-        ws.send(Message::Text(msg.into()))?;
+        ws.send(Message::Text(msg))?;
         drain(&mut ws, 1);
     }
     active_cids.clear();
@@ -110,8 +110,7 @@ fn quote_cycle(
             serde_json::json!({
                 "N": [symbol_id, 0, bid_px, qty, bid_cid, 0]
             })
-            .to_string()
-            .into(),
+            .to_string(),
         ))?;
         active_cids.insert(bid_cid);
 
@@ -122,8 +121,7 @@ fn quote_cycle(
             serde_json::json!({
                 "N": [symbol_id, 1, ask_px, qty, ask_cid, 0]
             })
-            .to_string()
-            .into(),
+            .to_string(),
         ))?;
         active_cids.insert(ask_cid);
 

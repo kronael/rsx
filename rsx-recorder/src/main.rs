@@ -69,7 +69,7 @@ impl RecorderState {
         self.buf.extend_from_slice(&record.payload);
         self.record_count += 1;
 
-        if self.record_count % 1000 == 0 {
+        if self.record_count.is_multiple_of(1000) {
             self.flush()?;
         }
 
