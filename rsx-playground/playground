@@ -110,7 +110,8 @@ def start_server():
     # any production deploy that forgets to override.
     env = os.environ.copy()
     env.setdefault(
-        "RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod"
+        "RSX_GW_JWT_SECRET",
+        "rsx-dev-secret-not-for-prod-padpad",
     )
     server_script = ROOT / "rsx-playground" / "server.py"
     with open(LOG_FILE, "a") as log:
