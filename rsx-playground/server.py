@@ -54,6 +54,10 @@ if os.environ.get("PLAYGROUND_MODE") == "production":
 WAL_DIR = TMP / "wal"
 LOG_DIR = ROOT / "log"
 PID_DIR = TMP / "pids"
+# The launcher (`./playground start`) writes this server's own PID file
+# into PID_DIR. Skip it everywhere we glob PID_DIR — the playground server
+# is not a managed RSX process and `stop_all` must never SIGTERM itself.
+SELF_PID_NAME = "playground-server"
 STRESS_REPORTS_DIR = TMP / "stress-reports"
 STRESS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1022,6 +1026,9 @@ async def stop_all():
     if PID_DIR.exists():
         for pid_file in sorted(PID_DIR.glob("*.pid")):
             name = pid_file.stem
+            if name == SELF_PID_NAME:
+                # never SIGTERM our own server process
+                continue
             if name in stopped:
                 continue
             try:
@@ -1070,8 +1077,8 @@ async def lifespan(app):
         await _await_output_task(info)
     # Clear managed dict
     managed.clear()
-    # cleanup server PID file
-    server_pid_file = PID_DIR.parent / "playground-server.pid"
+    # cleanup server PID file (launcher writes it into PID_DIR)
+    server_pid_file = PID_DIR / f"{SELF_PID_NAME}.pid"
     if server_pid_file.exists():
         server_pid_file.unlink()
     if pg_pool:
@@ -1385,6 +1392,8 @@ def scan_processes():
     if PID_DIR.exists():
         for pid_file in sorted(PID_DIR.glob("*.pid")):
             name = pid_file.stem
+            if name == SELF_PID_NAME:
+                continue
             if name in seen:
                 continue
             try:
@@ -2762,8 +2771,9 @@ tailwind.config = {{
     <div class="mt-6 pt-4 border-t border-slate-700">
       <a href="../" class="text-slate-400 text-xs
         hover:text-white block py-1">Dashboard</a>
-      <a href="../trade/" class="text-slate-400 text-xs
-        hover:text-white block py-1">Trade UI</a>
+      <a href="../trade/" target="_blank" rel="noopener"
+        class="text-slate-400 text-xs hover:text-white block py-1"
+        >Trade UI ↗</a>
     </div>
   </aside>
   <main class="flex-1 max-w-3xl p-8">
@@ -4421,6 +4431,8 @@ async def _run_invariant_checks() -> list[dict]:
     if PID_DIR.exists():
         for pf in PID_DIR.glob("*.pid"):
             n = pf.stem
+            if n == SELF_PID_NAME:
+                continue
             try:
                 pid = int(pf.read_text().strip())
                 ps_obj = psutil.Process(pid)
