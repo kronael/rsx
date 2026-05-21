@@ -347,22 +347,6 @@ async def test_unknown_symbol(gateway):
     await ws.close()
 
 
-async def test_price_not_tick_aligned(gateway):
-    """With tick_size=1, all integers align. Skip."""
-    pytest.skip(
-        "tick_size=1 in test env, "
-        "all integers are tick-aligned"
-    )
-
-
-async def test_qty_not_lot_aligned(gateway):
-    """With lot_size=1, all integers align. Skip."""
-    pytest.skip(
-        "lot_size=1 in test env, "
-        "all integers are lot-aligned"
-    )
-
-
 async def test_parse_error_malformed_json(gateway):
     """Malformed JSON returns error 1002."""
     ws, _ = await RawWsClient.connect(
