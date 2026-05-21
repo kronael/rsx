@@ -267,14 +267,15 @@ tiling it would make sense. Today it doesn't.
 Measured CPU costs of the tile primitives (from
 `rsx-book/benches`, `rsx-gateway/benches`):
 
-| Operation                      | ns      |
-|--------------------------------|---------|
-| SPSC `Producer::push` (rtrb)   | 50–170  |
-| SPSC `Consumer::pop` (rtrb)    | 50–170  |
-| Match single fill (orderbook)  | 54      |
-| CMP encode (one record)        | 43      |
-| CMP decode (one record)        | 9       |
-| WAL append (in-memory)         | 31      |
+| Operation                                                    | ns      |
+|--------------------------------------------------------------|---------|
+| SPSC `Producer::push` (rtrb)                                 | 50–170  |
+| SPSC `Consumer::pop` (rtrb)                                  | 50–170  |
+| Match single fill (orderbook)                                | 54      |
+| Protocol-record encode (StatusMessage / Nak / Heartbeat)     | 43      |
+| Protocol-record decode (one record)                          | 9       |
+| `FillRecord` encode                                          | 23      |
+| `WalWriter::append` (Vec extend, no disk I/O)                | 31      |
 
 These are the building blocks. End-to-end **GW → ME → GW**
 under load is **not currently gated** by an automated
