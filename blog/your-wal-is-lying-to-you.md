@@ -270,10 +270,10 @@ Every feature you don't build is a feature that can't break.
 ## Performance
 
 ```
-Operation                    Target        Actual
---------------------------------------------------
-WAL append (in-memory)       <200ns        ~50ns
-WAL flush (fsync, 64KB)      <1ms          ~300µs
+Operation                                       Target     Actual
+-----------------------------------------------------------------
+WalWriter::append (Vec extend, no disk I/O)     <200ns     ~50ns
+WAL flush (fsync, 64KB)                         <1ms       ~300µs
 WAL read (sequential)        >500 MB/s     ~800 MB/s
 Replay 100K records          <1s           ~200ms
 Recorder sustained write     >100K rec/s   ~500K rec/s
