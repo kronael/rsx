@@ -41,7 +41,7 @@ cd "$(dirname "$0")/.."
 echo "[latency-publish] endpoint=${ENDPOINT} symbol=${SYMBOL} N=${N} warmup=${WARMUP}"
 
 # Health check first — fail fast if the cluster isn't up.
-if ! curl -fsS -m 2 "${ENDPOINT}/api/health" >/dev/null 2>&1; then
+if ! curl -fsS -m 2 "${ENDPOINT}/healthz" >/dev/null 2>&1; then
     echo "[latency-publish] cluster not reachable at ${ENDPOINT}" >&2
     echo "[latency-publish] start it with: ./rsx-playground/playground start-all" >&2
     exit 2
