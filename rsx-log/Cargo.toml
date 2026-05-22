@@ -1,0 +1,8 @@
+[package]
+name = "rsx-log"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+rtrb = "0.3"
+tracing = "0.1"

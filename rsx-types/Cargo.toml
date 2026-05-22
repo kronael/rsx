@@ -3,10 +3,6 @@ name = "rsx-types"
 version = "0.2.0"
 edition = "2021"
 
-[dependencies]
-rtrb = "0.3"
-tracing = "0.1"
-
 [dev-dependencies]
 criterion = "0.5"
 
