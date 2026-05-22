@@ -24,8 +24,10 @@ fn test_book() -> Orderbook {
 #[test]
 fn event_buffer_fixed_array_no_heap() {
     let book = test_book();
-    // event_buf is [Event; MAX_EVENTS], stack-allocated
-    // in the Orderbook struct. Verify size.
+    // event_buf is Box<[Event; MAX_EVENTS]> -- heap-boxed
+    // so the inline array doesn't overflow the stack at
+    // construction. Still a fixed-size slab; no growth on
+    // the hot path.
     assert_eq!(book.event_buf.len(), MAX_EVENTS);
     assert_eq!(book.event_len, 0);
 }
@@ -57,8 +59,11 @@ fn emit_writes_sequential_slots() {
 }
 
 #[test]
-fn event_buffer_max_10000_events() {
-    assert_eq!(MAX_EVENTS, 10_000);
+fn event_buffer_max_capacity() {
+    // Sized to absorb a worst-case match cascade
+    // without dropping events (see invariant in
+    // rsx-book/src/event.rs).
+    assert_eq!(MAX_EVENTS, 65_536);
 }
 
 #[test]

@@ -29,7 +29,11 @@ pub struct Orderbook {
     pub state: BookState,
     pub config: SymbolConfig,
     pub sequence: u64,
-    pub event_buf: [Event; MAX_EVENTS],
+    /// Heap-boxed: at 65_536 events the inline array would
+    /// overflow the stack during `Orderbook::new`. Heap
+    /// allocation is fine since this happens once at
+    /// startup, not on the hot path.
+    pub event_buf: Box<[Event; MAX_EVENTS]>,
     pub event_len: u32,
     // User position tracking
     pub user_states: Vec<UserState>,
@@ -68,7 +72,13 @@ impl Orderbook {
             state: BookState::Normal,
             config,
             sequence: 0,
-            event_buf: [Event::default(); MAX_EVENTS],
+            event_buf: vec![Event::default(); MAX_EVENTS]
+                .into_boxed_slice()
+                .try_into()
+                .expect(
+                    "INVARIANT: event_buf must have \
+                     exactly MAX_EVENTS slots",
+                ),
             event_len: 0,
             user_states: Vec::with_capacity(256),
             user_map: FxHashMap::default(),
@@ -83,15 +93,19 @@ impl Orderbook {
         }
     }
 
+    /// Invariant: ME never drops events (see spec
+    /// `Correctness Invariants`). `MAX_EVENTS` is sized
+    /// to accommodate the worst-case cascade for one
+    /// order; overflow indicates a runaway cascade and
+    /// is treated as an unrecoverable bug.
     #[inline]
     pub fn emit(&mut self, event: Event) {
-        if (self.event_len as usize) >= MAX_EVENTS {
-            tracing::warn!(
-                MAX_EVENTS,
-                "event buffer full, dropping event",
-            );
-            return;
-        }
+        assert!(
+            (self.event_len as usize) < MAX_EVENTS,
+            "INVARIANT: ME event buffer overflow \
+             (MAX_EVENTS={}); runaway cascade",
+            MAX_EVENTS,
+        );
         self.event_buf[self.event_len as usize] = event;
         self.event_len += 1;
     }
