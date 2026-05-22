@@ -431,98 +431,111 @@ fn main() {
     let mut pending = pending;
 
     let bench_start = Instant::now();
-    let mut sent = 0u64;
-    let mut received_terminals = 0u64;
 
-    // We send one order at a time and wait for at least
-    // one terminal frame (Fill or OrderDone) referencing
-    // its order_id_lo before sending the next.
-    while received_terminals < total {
-        if sent < total {
-            let oid_lo = sent + 1;
-            let send_ts = time_ns();
-            let order = OrderMessage {
-                seq: 0,
-                price: 100_001,
-                qty: 1,
-                side: 0, // Buy
-                tif: 1,  // IOC — guarantees a Fill+OrderDone or OrderDone-only
-                reduce_only: 0,
-                post_only: 0,
-                _pad1: [0; 4],
-                user_id: 999,
-                _pad2: 0,
-                timestamp_ns: send_ts,
-                order_id_hi: 0,
-                order_id_lo: oid_lo,
-            };
-            let mut wire = OrderRequestWire { inner: order };
-            if to_me.send(&mut wire).is_ok() {
-                pending.insert(oid_lo, send_ts);
-                sent += 1;
+    // Strict request/reply: send one order, busy-poll until
+    // its terminal event arrives, then send the next. This
+    // measures sequential round-trip latency (the metric the
+    // production e2e_us figure also represents).
+    for i in 0..total {
+        let oid_lo = i + 1;
+        let send_ts = time_ns();
+        let order = OrderMessage {
+            seq: 0,
+            price: 100_001,
+            qty: 1,
+            side: 0, // Buy
+            tif: 1,  // IOC
+            reduce_only: 0,
+            post_only: 0,
+            _pad1: [0; 4],
+            user_id: 999,
+            _pad2: 0,
+            timestamp_ns: send_ts,
+            order_id_hi: 0,
+            order_id_lo: oid_lo,
+        };
+        let mut wire = OrderRequestWire { inner: order };
+        loop {
+            match to_me.send(&mut wire) {
+                Ok(_) => break,
+                Err(_) => continue,
             }
         }
-        let _ = to_me.tick();
-        to_me.recv_control();
+        pending.insert(oid_lo, send_ts);
 
-        // Drain echo until empty.
-        while let Some((hdr, payload)) = from_me.try_recv()
-        {
-            match hdr.record_type {
-                RECORD_FILL => {
-                    if payload.len()
-                        >= std::mem::size_of::<FillRecord>()
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const FillRecord,
-                            )
-                        };
-                        let now = time_ns();
-                        if let Some(t0) = pending.remove(
-                            &rec.taker_order_id_lo,
-                        ) {
-                            samples_us
-                                .push((now - t0) / 1000);
-                            received_terminals += 1;
+        // Busy-poll for terminal event referencing oid_lo.
+        let wait_start = Instant::now();
+        let mut terminal = false;
+        while !terminal {
+            let _ = to_me.tick();
+            to_me.recv_control();
+            while let Some((hdr, payload)) =
+                from_me.try_recv()
+            {
+                let mut got_term_oid: Option<u64> = None;
+                match hdr.record_type {
+                    RECORD_FILL => {
+                        if payload.len()
+                            >= std::mem::size_of::<
+                                FillRecord,
+                            >()
+                        {
+                            let rec = unsafe {
+                                std::ptr::read_unaligned(
+                                    payload.as_ptr()
+                                        as *const FillRecord,
+                                )
+                            };
+                            got_term_oid = Some(
+                                rec.taker_order_id_lo,
+                            );
                         }
                     }
-                }
-                RECORD_ORDER_DONE => {
-                    // Cancel/non-filled IOC: terminal w/o fill.
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            OrderDoneRecord,
-                        >()
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const OrderDoneRecord,
-                            )
-                        };
-                        let now = time_ns();
-                        if let Some(t0) = pending.remove(
-                            &rec.order_id_lo,
-                        ) {
-                            samples_us
-                                .push((now - t0) / 1000);
-                            received_terminals += 1;
+                    RECORD_ORDER_DONE => {
+                        if payload.len()
+                            >= std::mem::size_of::<
+                                OrderDoneRecord,
+                            >()
+                        {
+                            let rec = unsafe {
+                                std::ptr::read_unaligned(
+                                    payload.as_ptr()
+                                        as *const OrderDoneRecord,
+                                )
+                            };
+                            got_term_oid = Some(
+                                rec.order_id_lo,
+                            );
                         }
                     }
+                    _ => {}
                 }
-                RECORD_ORDER_INSERTED => {
-                    // Intermediate event; ignore.
+                if let Some(seen_oid) = got_term_oid {
+                    let now = time_ns();
+                    if let Some(t0) =
+                        pending.remove(&seen_oid)
+                    {
+                        samples_us
+                            .push((now - t0) / 1000);
+                    }
+                    if seen_oid == oid_lo {
+                        terminal = true;
+                    }
                 }
-                _ => {}
+            }
+            if wait_start.elapsed()
+                > Duration::from_millis(500)
+            {
+                eprintln!(
+                    "timeout waiting for oid={oid_lo}"
+                );
+                break;
             }
         }
 
-        if bench_start.elapsed() > Duration::from_secs(120) {
+        if bench_start.elapsed() > Duration::from_secs(60) {
             eprintln!(
-                "timeout: sent={} received={}",
-                sent, received_terminals,
+                "overall timeout at order {i}",
             );
             break;
         }
