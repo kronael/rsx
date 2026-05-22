@@ -509,6 +509,30 @@ fn run_main(
                                 as *const OrderRequest,
                         )
                     };
+                    // F4.3 — per-stage latency trace.
+                    // Stage `risk_in` = order arrived from
+                    // gateway. t_us measured against the
+                    // gateway's submit timestamp.
+                    {
+                        let now_ns = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos() as u64)
+                            .unwrap_or(0);
+                        let t_us = now_ns
+                            .saturating_sub(order.timestamp_ns)
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "risk_in",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                order.order_id_hi,
+                                order.order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = order.timestamp_ns,
+                        );
+                    }
                     if order_prod.push(order).is_err() {
                         warn!(
                             "order_prod ring full — \
@@ -597,6 +621,33 @@ fn run_main(
                                 as *const FillRecord,
                         )
                     };
+                    // F4.3 — per-stage latency trace.
+                    // Stage `risk_out` = fill received from
+                    // ME and about to be forwarded to gateway.
+                    // t_us measured against the ME emit ts.
+                    {
+                        let now_ns =
+                            std::time::SystemTime::now()
+                                .duration_since(
+                                    std::time::UNIX_EPOCH,
+                                )
+                                .map(|d| d.as_nanos() as u64)
+                                .unwrap_or(0);
+                        let t_us = now_ns
+                            .saturating_sub(fill.ts_ns)
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "risk_out",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                fill.taker_order_id_hi,
+                                fill.taker_order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = fill.ts_ns,
+                        );
+                    }
                     // ring full = drop newest (intentional backpressure)
                     let _ = fill_prod.push(FillEvent {
                         seq: fill.seq,

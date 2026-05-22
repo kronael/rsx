@@ -6326,6 +6326,150 @@ async def api_latency_probe_gw(request: Request):
     return JSONResponse(await _run_gw_only_probe())
 
 
+# ── F4.3: per-stage latency from tracing logs ───────────
+# Each tile on the GW→ME→GW path emits a line of shape
+#   <ts> INFO latency: stage="..." oid="..." t_us=N t0_ns=M
+# This helper tails log files for lines tagged
+# `latency:` (the tracing target), parses the structured
+# fields, joins by oid, and computes per-stage deltas.
+# Surfaced on /x/latency-stages and /api/latency-stages.
+
+_STAGE_ORDER = [
+    "gateway_in", "risk_in", "me_in",
+    "me_out", "risk_out", "gateway_out",
+]
+_LATENCY_LINE_RE = re.compile(
+    r"latency: stage[=:]\"?(?P<stage>\w+)\"?.*?"
+    r"oid[=:]\"?(?P<oid>[0-9a-f]+)\"?.*?"
+    r"t_us[=:](?P<t_us>\d+)",
+)
+
+
+def _parse_latency_lines(max_lines_per_file: int = 5000):
+    """Scan all log files, return list of dicts.
+
+    Each dict: {stage, oid, t_us, source}. The structured-
+    log filter happens here: only lines containing the
+    `latency:` target tag are kept."""
+    out = []
+    if not LOG_DIR.exists():
+        return out
+    for lf in sorted(LOG_DIR.glob("*.log")):
+        try:
+            tail = lf.read_text().splitlines()[
+                -max_lines_per_file:
+            ]
+        except OSError:
+            continue
+        src = lf.stem
+        for line in tail:
+            if "latency:" not in line:
+                continue
+            clean = strip_ansi(line)
+            m = _LATENCY_LINE_RE.search(clean)
+            if not m:
+                continue
+            try:
+                out.append({
+                    "stage": m.group("stage"),
+                    "oid": m.group("oid"),
+                    "t_us": int(m.group("t_us")),
+                    "source": src,
+                })
+            except (ValueError, KeyError):
+                continue
+    return out
+
+
+def _join_latency_by_oid(rows):
+    """Group rows by oid → {stage: t_us}."""
+    by_oid: dict[str, dict[str, int]] = {}
+    for r in rows:
+        by_oid.setdefault(r["oid"], {})[r["stage"]] = r["t_us"]
+    return by_oid
+
+
+def _stage_medians(by_oid):
+    """Compute median t_us per stage across all oids."""
+    per_stage: dict[str, list[int]] = {
+        s: [] for s in _STAGE_ORDER
+    }
+    for stages in by_oid.values():
+        for s, t in stages.items():
+            if s in per_stage:
+                per_stage[s].append(t)
+    out = {}
+    for s, vals in per_stage.items():
+        if not vals:
+            out[s] = None
+            continue
+        vs = sorted(vals)
+        mid = vs[len(vs) // 2]
+        out[s] = mid
+    return out
+
+
+@app.get("/api/latency-stages")
+async def api_latency_stages():
+    rows = _parse_latency_lines()
+    by_oid = _join_latency_by_oid(rows)
+    medians = _stage_medians(by_oid)
+    # Per-segment delta: stage_n - stage_{n-1} when both
+    # present in median snapshot.
+    deltas = {}
+    prev = 0
+    for s in _STAGE_ORDER:
+        v = medians.get(s)
+        if v is None:
+            deltas[s] = None
+            continue
+        deltas[s] = max(0, v - prev)
+        prev = v
+    return JSONResponse({
+        "oids": len(by_oid),
+        "lines": len(rows),
+        "medians_us": medians,
+        "deltas_us": deltas,
+        "stage_order": _STAGE_ORDER,
+    })
+
+
+@app.get("/x/latency-stages", response_class=HTMLResponse)
+async def x_latency_stages():
+    rows = _parse_latency_lines()
+    by_oid = _join_latency_by_oid(rows)
+    medians = _stage_medians(by_oid)
+    rows_html = []
+    prev = 0
+    for s in _STAGE_ORDER:
+        v = medians.get(s)
+        if v is None:
+            delta = "—"
+            cum = "—"
+        else:
+            delta = f"{max(0, v - prev)} µs"
+            cum = f"{v} µs"
+            prev = v
+        rows_html.append(
+            f"<tr><td>{s}</td><td>{cum}</td>"
+            f"<td>{delta}</td></tr>"
+        )
+    table = (
+        "<table class='w-full text-sm'>"
+        "<thead><tr>"
+        "<th class='text-left'>stage</th>"
+        "<th class='text-left'>cumulative</th>"
+        "<th class='text-left'>delta</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody>"
+        "</table>"
+        f"<p class='text-xs mt-2'>"
+        f"oids joined: {len(by_oid)} &middot; "
+        f"lines scanned: {len(rows)}</p>"
+    )
+    return HTMLResponse(table)
+
+
 @app.get("/api/mark/prices")
 async def api_mark_prices():
     prices = {}

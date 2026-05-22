@@ -424,6 +424,17 @@ pub async fn handle_connection(
                     oid[12], oid[13], oid[14], oid[15],
                 ]);
 
+                // F4.3 — per-stage latency trace. Stage
+                // `gateway_in` is the first time we see this
+                // order; t_us = 0 by definition.
+                tracing::info!(
+                    target: "latency",
+                    stage = "gateway_in",
+                    oid = format!("{:016x}{:016x}", oid_hi, oid_lo),
+                    t_us = 0u64,
+                    t0_ns = now_ns,
+                );
+
                 let seq =
                     cmp_sender.borrow().next_seq();
                 let order = OrderRequest {
@@ -502,7 +513,11 @@ pub async fn handle_connection(
                     .circuit
                     .record_success();
 
-                let _ = (oid, qty);
+                // SAFETY: oid/qty bound for log/trace
+                // in sibling branches; this branch has
+                // forwarded the order so they're
+                // intentionally unused here.
+                let _unused = (oid, qty);
             }
             WsFrame::Cancel { key } => {
                 let st = state.borrow();
