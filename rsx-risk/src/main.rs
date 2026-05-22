@@ -434,8 +434,10 @@ fn run_main(
     // One CmpSender per ME, keyed by symbol_id.
     let me_send_bind: Option<String> =
         env::var("RSX_RISK_ME_SEND_ADDR").ok();
-    let mut me_sender_cfg = CmpConfig::default();
-    me_sender_cfg.sender_bind_addr = me_send_bind;
+    let me_sender_cfg = CmpConfig {
+        sender_bind_addr: me_send_bind,
+        ..Default::default()
+    };
     let mut me_senders: HashMap<u32, CmpSender> =
         HashMap::new();
     for (&sid, &addr) in &me_addrs {
