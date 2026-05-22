@@ -49,7 +49,6 @@ use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_DONE;
-use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::time::time_ns;
 use rsx_types::Price;
