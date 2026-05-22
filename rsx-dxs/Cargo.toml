@@ -31,3 +31,23 @@ harness = false
 [[bench]]
 name = "cmp_bench"
 harness = false
+
+[[bench]]
+name = "udp_rtt_bench"
+harness = false
+
+[[bench]]
+name = "cmp_one_way_bench"
+harness = false
+
+[[bench]]
+name = "cmp_rtt_bench"
+harness = false
+
+[[bench]]
+name = "wal_fsync_bench"
+harness = false
+
+[[bench]]
+name = "wal_random_read_bench"
+harness = false
