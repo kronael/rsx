@@ -6,11 +6,26 @@ use monoio::net::TcpStream;
 use sha1::Digest;
 use sha1::Sha1;
 use std::io;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 
+use crate::jwt::JtiTracker;
+
 const WS_MAGIC: &str =
     "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Per-process JWT-ID replay tracker. Caps at 16 K live jtis
+/// with FIFO eviction. Tokens without a `jti` always pass
+/// (caller-responsibility — typically short `exp`).
+///
+/// Per-process is the deliberate choice — see WEDGE.md
+/// (B+A: open-source orthogonal parts). A multi-replica
+/// replay defence would need a centralized cache (Redis)
+/// keyed by jti and is intentionally out of scope.
+static JTI_TRACKER: LazyLock<Mutex<JtiTracker>> =
+    LazyLock::new(|| Mutex::new(JtiTracker::new(16_384)));
 
 /// Accept WebSocket connections on the given address.
 /// Calls `handler` for each accepted connection.
@@ -105,30 +120,28 @@ async fn ws_handshake_inner(
         },
     )?;
 
-    // Extract user_id from auth headers.
-    // TODO(13-A16Z-FIXES T1.3): wire JtiTracker through ws_handshake.
-    // Today validate_jwt only returns user_id; we need
-    // validate_jwt_with_claims plus a process-wide (or shared)
-    // JtiTracker to actually reject jti replay. Design discussion
-    // pending: per-process vs shared (Redis) replay state.
-    let user_id =
-        match extract_user_id(request, jwt_secret) {
-            Some(id) => id,
-            None => {
-                let resp = b"HTTP/1.1 401 Unauthorized\r\n\
+    // Validate JWT, extract user_id + claims, reject replay
+    // via the process-wide JtiTracker.
+    let user_id = match extract_user_and_record_jti(
+        request,
+        jwt_secret,
+    ) {
+        Ok(id) => id,
+        Err(reason) => {
+            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
 Connection: close\r\n\
 \r\n";
-                let (res, _) =
-                    stream.write_all(resp.to_vec()).await;
-                if let Err(e) = res {
-                    warn!("gateway: 401 response write failed: {e}");
-                }
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "missing or invalid auth",
-                ));
+            let (res, _) =
+                stream.write_all(resp.to_vec()).await;
+            if let Err(e) = res {
+                warn!("gateway: 401 response write failed: {e}");
             }
-        };
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                reason,
+            ));
+        }
+    };
 
     // Compute accept key
     let accept = compute_accept_key(&key);
@@ -149,29 +162,47 @@ Sec-WebSocket-Accept: {}\r\n\
     Ok((key, user_id))
 }
 
-/// Extract user_id from HTTP headers.
-/// Validates JWT token from Authorization header.
-fn extract_user_id(
+/// Extract user_id from HTTP headers, validate JWT, and
+/// record the `jti` in the process-wide replay tracker.
+/// Returns `Ok(user_id)` on success, `Err(static reason)`
+/// when auth is missing, invalid, or the jti has been seen
+/// before. Tokens without a `jti` claim pass through
+/// (short `exp` is the caller's defence).
+fn extract_user_and_record_jti(
     request: &str,
     jwt_secret: &str,
-) -> Option<u32> {
+) -> Result<u32, &'static str> {
     for line in request.lines() {
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("authorization:") {
             let val = line
                 .split_once(':')
-                .map(|(_, v)| v.trim())?;
+                .map(|(_, v)| v.trim())
+                .ok_or("malformed authorization header")?;
             let token = val
                 .strip_prefix("Bearer ")
-                .or_else(|| val.strip_prefix("bearer "))?;
-            return crate::jwt::validate_jwt(
-                token.trim(),
-                jwt_secret,
-            )
-            .ok();
+                .or_else(|| val.strip_prefix("bearer "))
+                .ok_or("bearer scheme missing")?;
+            let (user_id, claims) =
+                crate::jwt::validate_jwt_with_claims(
+                    token.trim(),
+                    jwt_secret,
+                )
+                .map_err(|_| "jwt invalid")?;
+            // SAFETY: tracker mutex is never held across an
+            // await; poisoning would imply a prior panic
+            // inside this critical section — fail-fast.
+            let fresh = JTI_TRACKER
+                .lock()
+                .expect("JtiTracker mutex poisoned")
+                .record(claims.jti.as_deref());
+            if !fresh {
+                return Err("jti replay");
+            }
+            return Ok(user_id);
         }
     }
-    None
+    Err("missing authorization header")
 }
 
 fn extract_ws_key(request: &str) -> Option<String> {
