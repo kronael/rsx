@@ -723,6 +723,7 @@ fn send_event_cmp(
             maker_order_id_lo,
             taker_order_id_hi,
             taker_order_id_lo,
+            taker_ts_ns,
             ..
         } => {
             let mut record = FillRecord {
@@ -743,6 +744,7 @@ fn send_event_cmp(
                 tif: 0,
                 post_only: 0,
                 _pad1: [0; 4],
+                taker_ts_ns,
             };
             // SAFETY: send() returns Ok(false) on
             // flow-control stall; receivers recover via

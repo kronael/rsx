@@ -39,21 +39,30 @@ pub fn route_fill(
         fee: 0, // v1: fee not in FillRecord, computed at risk layer
     });
     // F4.3 — per-stage latency trace. Stage `gateway_out`
-    // closes the GW→ME→GW loop. t_us = now - rec.ts_ns
-    // (ME's emit timestamp); the dashboard joins this with
-    // the matching `gateway_in` line by `oid` to recover the
-    // full submit→fill round-trip.
+    // closes the GW→ME→GW loop. Anchor t_us against the
+    // taker's gateway-ingress timestamp (rec.taker_ts_ns)
+    // so the closing delta composes with gateway_in /
+    // risk_in / me_in / me_out / risk_out on the same
+    // clock origin. Falls back to rec.ts_ns (ME emit) when
+    // the field is missing (legacy WAL records).
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let t_us = now_ns.saturating_sub(rec.ts_ns) / 1000;
+    let anchor_ns = if rec.taker_ts_ns
+        > 1_700_000_000_000_000_000
+    {
+        rec.taker_ts_ns
+    } else {
+        rec.ts_ns
+    };
+    let t_us = now_ns.saturating_sub(anchor_ns) / 1000;
     tracing::info!(
         target: "latency",
         stage = "gateway_out",
         oid = %taker_oid,
         t_us,
-        t0_ns = rec.ts_ns,
+        t0_ns = anchor_ns,
     );
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());

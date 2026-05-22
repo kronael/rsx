@@ -23,6 +23,7 @@ fn make_fill(seq: u64) -> FillRecord {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     }
 }
 

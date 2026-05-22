@@ -38,7 +38,14 @@ pub const CANCEL_REASON_SYSTEM: u8 = 3;
 pub const CANCEL_REASON_POST_ONLY_REJECT: u8 = 4;
 pub const CANCEL_REASON_OTHER: u8 = 5;
 
-/// FillRecord (64-byte aligned)
+/// FillRecord (64-byte aligned).
+///
+/// `taker_ts_ns` is the taker order's gateway-ingress
+/// timestamp (echoed from `OrderRequest.timestamp_ns`), used
+/// as the t0 anchor for `risk_out` / `gateway_out` per-stage
+/// latency tracing. Older WAL records may have this slot as
+/// uninitialized memory; consumers must validate (non-zero
+/// + plausible epoch) and fall back to `ts_ns` if invalid.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
@@ -59,6 +66,7 @@ pub struct FillRecord {
     pub tif: u8,
     pub post_only: u8,
     pub _pad1: [u8; 4],
+    pub taker_ts_ns: u64,
 }
 
 impl CmpRecord for FillRecord {

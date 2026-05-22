@@ -26,6 +26,7 @@ fn bench_fill_record_encode(c: &mut Criterion) {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     c.bench_function("fill_record_encode", |b| {
         b.iter(|| encode_fill_record(&record));
@@ -51,6 +52,7 @@ fn bench_fill_record_decode(c: &mut Criterion) {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     let encoded = encode_fill_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
