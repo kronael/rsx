@@ -16,7 +16,30 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Mint a JWT matching what rsx-auth ships (aud=rsx-gateway,
+/// iss=rsx-auth, unique jti). The gateway rejects tokens
+/// without a `jti` — see ws.rs::extract_user_and_record_jti
+/// and CTO-REPORT.md R3.
 fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
+    let jti = format!(
+        "ws-e2e-{}-{}-{}",
+        user_id,
+        exp,
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    );
+    make_jwt_with_jti(user_id, exp, &jti, secret)
+}
+
+/// Mint a token deliberately missing the `jti` claim — used
+/// to assert that the gateway rejects such tokens (F2.2).
+fn make_jwt_no_jti(
+    user_id: u32,
+    exp: u64,
+    secret: &str,
+) -> String {
     let claims = Claims {
         sub: format!("github:{user_id}"),
         user_id: Some(user_id),
@@ -327,5 +350,86 @@ Sec-WebSocket-Version: 13\r\n\
             std::time::Duration::from_millis(100),
         )
         .await;
+    });
+}
+
+/// F2.2: tokens without a `jti` claim must be rejected. The
+/// previous JtiTracker contract let them through, which made
+/// the replay defence null-defeated. See CTO-REPORT.md R3 and
+/// SYNTHESIS.md F2.2.
+#[test]
+fn test_ws_handshake_rejects_missing_jti() {
+    let secret = "test-secret-padded-to-32-bytes-minlen!";
+    let user_id = 88888u32;
+    let exp = now_secs() + 3600;
+    let token = make_jwt_no_jti(user_id, exp, secret);
+
+    let mut runtime = monoio::RuntimeBuilder::<
+        monoio::FusionDriver,
+    >::new()
+    .enable_timer()
+    .build()
+    .unwrap();
+
+    runtime.block_on(async move {
+        let listener = monoio::net::TcpListener::bind(
+            "127.0.0.1:0",
+        )
+        .unwrap();
+        let local_addr = listener.local_addr().unwrap();
+
+        monoio::spawn(async move {
+            let (mut stream, _) =
+                listener.accept().await.unwrap();
+            let result =
+                ws_handshake(&mut stream, secret).await;
+            assert!(
+                result.is_err(),
+                "token without jti must be rejected"
+            );
+            let err = result.unwrap_err();
+            assert!(
+                err.to_string().contains("missing jti"),
+                "expected 'missing jti', got: {err}"
+            );
+        });
+
+        monoio::time::sleep(
+            std::time::Duration::from_millis(10),
+        )
+        .await;
+
+        let mut client = TcpStream::connect(local_addr)
+            .await
+            .unwrap();
+
+        let request = format!(
+            "GET / HTTP/1.1\r\n\
+Host: localhost\r\n\
+Upgrade: websocket\r\n\
+Connection: Upgrade\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+Authorization: Bearer {}\r\n\
+Sec-WebSocket-Version: 13\r\n\
+\r\n",
+            token
+        );
+
+        use monoio::io::AsyncWriteRentExt;
+        let (res, _) =
+            client.write_all(request.into_bytes()).await;
+        res.unwrap();
+
+        // Read the 401 response to demonstrate the negative
+        // case ("token WITHOUT jti gets 401").
+        use monoio::io::AsyncReadRent;
+        let buf = vec![0u8; 128];
+        let (res, buf) = client.read(buf).await;
+        let n = res.unwrap();
+        let resp = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            resp.starts_with("HTTP/1.1 401"),
+            "expected 401, got: {resp}"
+        );
     });
 }

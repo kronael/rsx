@@ -17,8 +17,10 @@ const WS_MAGIC: &str =
     "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Per-process JWT-ID replay tracker. Caps at 16 K live jtis
-/// with FIFO eviction. Tokens without a `jti` always pass
-/// (caller-responsibility — typically short `exp`).
+/// with FIFO eviction. Tokens without a `jti` are rejected
+/// upstream in `extract_user_and_record_jti` — see
+/// CTO-REPORT.md R3 (a token missing jti would otherwise
+/// silently bypass replay defence).
 ///
 /// Per-process is the deliberate choice — see WEDGE.md
 /// (B+A: open-source orthogonal parts). A multi-replica
@@ -165,9 +167,15 @@ Sec-WebSocket-Accept: {}\r\n\
 /// Extract user_id from HTTP headers, validate JWT, and
 /// record the `jti` in the process-wide replay tracker.
 /// Returns `Ok(user_id)` on success, `Err(static reason)`
-/// when auth is missing, invalid, or the jti has been seen
-/// before. Tokens without a `jti` claim pass through
-/// (short `exp` is the caller's defence).
+/// when auth is missing, invalid, missing a `jti` claim, or
+/// the jti has been seen before.
+///
+/// Policy lives here, not in `JtiTracker::record` (which is
+/// the primitive). Tokens minted by rsx-auth always carry a
+/// `jti` claim (see `rsx-auth/src/rsx_auth/jwt_util.py`); a
+/// production token without one is treated as malformed and
+/// rejected — otherwise the replay defence is bypassable by
+/// stripping the claim. See CTO-REPORT.md R3.
 fn extract_user_and_record_jti(
     request: &str,
     jwt_secret: &str,
@@ -189,13 +197,20 @@ fn extract_user_and_record_jti(
                     jwt_secret,
                 )
                 .map_err(|_| "jwt invalid")?;
+            // Reject tokens without a jti BEFORE touching the
+            // tracker — without this guard, the replay
+            // defence is null-defeated for every legacy token.
+            let jti = claims
+                .jti
+                .as_deref()
+                .ok_or("missing jti")?;
             // SAFETY: tracker mutex is never held across an
             // await; poisoning would imply a prior panic
             // inside this critical section — fail-fast.
             let fresh = JTI_TRACKER
                 .lock()
                 .expect("JtiTracker mutex poisoned")
-                .record(claims.jti.as_deref());
+                .record(Some(jti));
             if !fresh {
                 return Err("jti replay");
             }

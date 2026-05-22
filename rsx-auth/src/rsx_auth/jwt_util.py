@@ -1,5 +1,6 @@
 """JWT issuance (HS256, same secret as gateway)."""
 import time
+import uuid
 import jwt as pyjwt
 
 
@@ -20,6 +21,10 @@ def issue(
         "iss": "rsx-auth",
         "iat": now,
         "exp": now + ttl_s,
+        # Per-token unique id, consumed by the gateway's
+        # JtiTracker to reject replay. See
+        # rsx-gateway/src/jwt.rs::JtiTracker.
+        "jti": uuid.uuid4().hex,
     }
     return pyjwt.encode(claims, secret, algorithm="HS256")
 
