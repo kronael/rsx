@@ -325,10 +325,10 @@ fn main() {
                 last_evict_ns = now;
             }
 
-            monoio::time::sleep(
-                std::time::Duration::from_micros(100),
-            )
-            .await;
+            // Cooperative yield, no fixed delay. See
+            // rsx_types::yield_now and the matching change
+            // in rsx-gateway/src/main.rs for the rationale.
+            rsx_types::yield_now().await;
         }
     });
 }
