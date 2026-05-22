@@ -402,4 +402,44 @@ test.describe("Latency", () => {
       Math.max(0, rows - 1)
     ).toBeLessThanOrEqual(500);
   });
+
+  // F22: /api/latency-probe must match the recorded fill to its
+  // own cid/oid, not return on the first stray fill on the shared
+  // user-1 WS. The response also exposes a non-negative
+  // skipped_fills counter so unrelated fills are surfaced.
+  test("probe_matches_fill_to_its_own_cid (F22)",
+    async ({ request }) => {
+      const r = await request.post(
+        "/api/latency-probe?symbol_id=10",
+      );
+      expect(r.ok()).toBe(true);
+      const body = await r.json() as {
+        ok: boolean; cid?: string; oid?: string;
+        skipped_fills?: number; error?: string;
+      };
+      // skipped_fills is always present (success or timeout).
+      expect(typeof body.skipped_fills).toBe("number");
+      expect((body.skipped_fills ?? -1)).toBeGreaterThanOrEqual(0);
+      if (body.ok) {
+        // Successful probe carries its own cid and the oid we
+        // matched against.
+        expect(body.cid).toBeTruthy();
+        expect(body.oid).toMatch(/^[0-9a-f]{32}$/);
+      }
+    },
+  );
+
+  // F23: latency-regression must label what it measures
+  // (gateway-response RTT), not pretend to be the engine
+  // round-trip "GW->ME->GW".
+  test("regression_label_matches_what_is_measured (F23)",
+    async ({ request }) => {
+      const r = await request.get("/x/latency-regression");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      expect(html).not.toContain("GW-&gt;ME-&gt;GW");
+      expect(html).not.toContain("GW->ME->GW");
+      expect(html).toContain("Order ack RTT");
+    },
+  );
 });

@@ -204,4 +204,56 @@ test.describe("Topology tab", () => {
       expect(rateOf("marketdata")).toContain("(session)");
     },
   );
+
+  // F21: /x/core-affinity must reflect real OS affinity instead
+  // of inventing a Core{i} label from list index. Running rows
+  // expose "cpus ..." or "no pinning"; non-running rows show "-".
+  test("core_affinity_backed_by_real_cpu_affinity (F21)",
+    async ({ request }) => {
+      const r = await request.get("/x/core-affinity");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // Must not invent ascending fake core ids.
+      expect(html).not.toMatch(/Core\s+\d+/);
+      // Real labels: either a cpu set, "no pinning", "-",
+      // or "no processes" when nothing is running.
+      const ok = /cpus\s|no pinning|>-<|no processes/.test(html);
+      expect(ok).toBe(true);
+    },
+  );
+
+  // F25: panel must not claim to show SPSC ring occupancy
+  // (intra-process rtrb is not visible from the dashboard).
+  test("ring_pressure_reads_real_telemetry_or_is_labeled_derived (F25)",
+    async ({ page, request }) => {
+      const r = await request.get("/x/ring-pressure");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // Honest row labels reference WAL lag, not "Ring".
+      expect(html.toLowerCase()).toContain("wal lag");
+      // Overview card uses the WAL-lag proxy heading.
+      await page.goto("/overview");
+      await expect(
+        page.getByText("WAL stream lag (proxy)"),
+      ).toBeVisible();
+    },
+  );
+
+  // F27: /api/maker/status must not echo stale
+  // tmp/maker-status.json after the maker dies.
+  test("maker_status_clears_stats_when_not_running (F27)",
+    async ({ request }) => {
+      const r = await request.get("/api/maker/status");
+      expect(r.ok()).toBe(true);
+      const body = await r.json() as {
+        running: boolean; levels: number;
+        errors: unknown; stale: boolean;
+      };
+      if (!body.running) {
+        expect(body.levels).toBe(0);
+        expect(body.errors).toBeNull();
+        expect(body.stale).toBe(true);
+      }
+    },
+  );
 });

@@ -5,6 +5,7 @@ Uses Tailwind Play CDN (script tag, JIT compiler in browser)
 """
 
 import html
+import os
 
 TABS = [
     ("Walkthrough", "./walkthrough"),
@@ -844,7 +845,7 @@ def overview_page():
         '</div>',
     )
     rings = _card(
-        "Ring Backpressure",
+        "WAL stream lag (proxy)",
         '<div hx-get="./x/ring-pressure" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
@@ -2542,12 +2543,17 @@ def render_key_metrics(
 
 
 def render_ring_pressure(streams=None):
-    """Derive ring fill % from WAL stream lag."""
+    """WAL stream lag as a proxy for backpressure.
+
+    The intra-process SPSC rings (rtrb) are not visible from
+    outside the Rust processes. This panel shows per-producer
+    WAL lag, which is the observable cold-path proxy.
+    """
     ring_map = {
-        "GW -> Risk": "gateway",
-        "Risk -> ME": "risk",
-        "ME -> Mktdata": "me",
-        "ME -> Recorder": "recorder",
+        "gateway WAL lag": "gateway",
+        "risk WAL lag": "risk",
+        "ME WAL lag": "me",
+        "recorder WAL lag": "recorder",
     }
     ring_pcts = {k: 0 for k in ring_map}
     if streams:
@@ -2577,19 +2583,32 @@ def render_ring_pressure(streams=None):
     return html
 
 
-def render_invariant_status(checks):
+def render_invariant_status(checks, last_run=None):
+    if last_run is None:
+        last_run_html = (
+            '<span class="text-slate-600 text-xs ml-2">'
+            '(never run)</span>')
+    else:
+        import datetime as _dt
+        ts = _dt.datetime.fromtimestamp(last_run).strftime(
+            "%H:%M:%S")
+        last_run_html = (
+            f'<span class="text-slate-600 text-xs ml-2">'
+            f'(last run {ts})</span>')
     if not checks:
-        return ('<span class="text-emerald-400 text-xs">'
-                'All passing</span>'
+        return ('<span class="text-slate-400 text-xs">'
+                'UNKNOWN</span>'
                 '<span class="text-slate-600 text-xs ml-2">'
                 '(run checks on Verify tab)</span>')
     fails = [c for c in checks if c["status"] == "fail"]
     if fails:
         return (
             f'<span class="text-red-400 text-xs">'
-            f'{len(fails)} violation(s)</span>')
+            f'{len(fails)} violation(s)</span>'
+            f'{last_run_html}')
     return ('<span class="text-emerald-400 text-xs">'
-            'All passing</span>')
+            'All passing</span>'
+            + last_run_html)
 
 
 # ── Process table ────────────────────────────────────────
@@ -2657,21 +2676,59 @@ def render_process_table(processes):
 
 # ── Core affinity (topology) ────────────────────────────
 
+def _fmt_cpu_set(cpus):
+    """Compact a sorted list of cpu ids into ranges like 4-7,12."""
+    if not cpus:
+        return ""
+    s = sorted(set(cpus))
+    parts = []
+    start = prev = s[0]
+    for c in s[1:]:
+        if c == prev + 1:
+            prev = c
+            continue
+        parts.append(
+            str(start) if start == prev else f"{start}-{prev}")
+        start = prev = c
+    parts.append(
+        str(start) if start == prev else f"{start}-{prev}")
+    return ",".join(parts)
+
+
 def render_core_affinity(processes):
     if not processes:
         return ('<span class="text-slate-600">'
                 'no processes</span>')
+    try:
+        total_cpus = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        total_cpus = 0
     html = '<div class="flex flex-wrap gap-2">'
-    for i, p in enumerate(processes):
+    for p in processes:
         state = p.get("state", "unknown")
         bg = ("bg-emerald-900/30 border-emerald-800"
               if state == "running"
               else "bg-slate-800 border-slate-700")
+        if state != "running":
+            label = "-"
+        else:
+            pid = p.get("pid")
+            label = "-"
+            if isinstance(pid, int):
+                try:
+                    mask = os.sched_getaffinity(pid)
+                    if total_cpus and len(mask) >= total_cpus:
+                        label = "no pinning"
+                    else:
+                        label = f"cpus {_fmt_cpu_set(mask)}"
+                except (AttributeError, OSError,
+                        ProcessLookupError, PermissionError):
+                    label = "-"
         html += (
             f'<div class="{bg} border rounded px-3 py-2 '
             f'text-center">'
             f'<div class="text-[10px] text-slate-500">'
-            f'Core {i}</div>'
+            f'{label}</div>'
             f'<div class="text-xs">{p["name"]}</div>'
             f'</div>'
         )
@@ -3224,7 +3281,7 @@ def render_latency_regression(latencies=None):
         return (
             '<div class="space-y-2">'
             '<div class="flex items-center gap-3">'
-            '<span class="text-xs w-40">GW->ME->GW p99</span>'
+            '<span class="text-xs w-40">Order ack RTT p99</span>'
             '<span class="text-slate-500 text-xs">--</span>'
             '<span class="text-[10px] text-slate-600">'
             f'(baseline {baseline_gw_p99}us)</span></div>'
@@ -3251,7 +3308,7 @@ def render_latency_regression(latencies=None):
     return (
         '<div class="space-y-2">'
         '<div class="flex items-center gap-3">'
-        '<span class="text-xs w-40">GW->ME->GW p99</span>'
+        '<span class="text-xs w-40">Order ack RTT p99</span>'
         f'<span class="text-slate-300 text-xs">{p99}us</span>'
         f'{delta_str}'
         '<span class="text-[10px] text-slate-600">'
