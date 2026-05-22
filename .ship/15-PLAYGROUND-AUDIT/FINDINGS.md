@@ -513,3 +513,146 @@ Each claim below was verified by direct read.
   estate -- that is environmental, not a gateway bug. Run the
   soak with no concurrent harness attached.
 - Severity: not a gateway bug; supervisor hardening shipped.
+
+---
+
+# Oracle pass 2 (codex, 2026-05-22) -- 8 perf/telemetry lies
+
+Second adversarial codex pass, targeting the latency,
+"hardware", cached-status, and rendering surfaces the first
+pass did not examine. Each verified by direct read.
+
+## Finding 21: `/x/core-affinity` invents core numbers from list index
+
+- Where: `server.py:3172` -> `pages.py:2660-2679`
+- Claim: panel shows real CPU pinning / core placement.
+- Truth: `for i, p in enumerate(processes): ... Core {i}`.
+  The "pinned core" is just the row index. No affinity mask,
+  cpuset, or `sched_getaffinity` is ever read. Pure fiction --
+  and damning on an exchange whose whole pitch (TILES.md,
+  `core_affinity`) is pinned hot threads.
+- Repro:
+  1. Pin two processes to the same physical CPU (or none).
+  2. `curl -s localhost:49171/x/core-affinity` -- still one
+     fake ascending core per row in dashboard order.
+- Severity: critical.
+- Playwright: `play_topology.spec.ts::core_affinity_backed_by_real_cpu_affinity`
+
+## Finding 22: `/api/latency-probe` accepts ANY fill frame as the probe result
+
+- Where: `server.py:5994` (the `if "F" in frame:` branch in
+  `_run_latency_probe`).
+- Claim: measures the probe order's real GW->ME->GW fill
+  round-trip and returns its `cid`.
+- Truth: it sends a probe order with a unique `cid`, then
+  returns on the FIRST frame containing an `"F"` key WITHOUT
+  checking the fill's cid matches the probe. It then echoes
+  the probe's own `cid` in the response, so the result LOOKS
+  matched. On the shared user-1 WS with the maker running, an
+  unrelated fill arriving first is timed and reported as
+  exchange latency. This is the headline latency number.
+- Repro:
+  1. Keep the maker filling on user 1.
+  2. `curl -sX POST 'localhost:49171/api/latency-probe?symbol_id=10'`
+     can return on a fill that is not the probe's order.
+- Severity: critical -- the <50us story rests on this probe.
+- Playwright: `play_latency.spec.ts::probe_matches_fill_to_its_own_cid`
+
+## Finding 23: `/x/latency-regression` labels gateway-response time as engine round-trip
+
+- Where: `server.py:3451` + `/api/latency` `server.py:5885`;
+  fed by `order_latencies` populated at `server.py:~4056`.
+- Claim: widget shows `GW->ME->GW p99` vs the 50us baseline.
+- Truth: `order_latencies` is "time until first non-heartbeat
+  gateway response or timeout" for ordinary order submits --
+  including rejects and resting orders that never match. Not
+  an engine round-trip, despite the label.
+- Repro:
+  1. Submit only resting/rejected orders.
+  2. `/x/latency-regression` shows those gateway-response
+     timings as `GW->ME->GW p99`.
+- Severity: important.
+- Playwright: `play_latency.spec.ts::regression_label_matches_what_is_measured`
+
+## Finding 24: `/x/invariant-status` paints green on an empty cache
+
+- Where: `server.py:3165` -> `pages.py:2580`. Renders the
+  cached global `verify_results`.
+- Claim: badge reflects live invariant health.
+- Truth: an empty/never-run cache renders green "All passing".
+  After a dashboard restart, before anyone runs
+  `/api/verify/run`, the badge claims all invariants pass
+  though zero checks have executed.
+- Repro:
+  1. Restart dashboard.
+  2. `curl -s localhost:49171/x/invariant-status` -- green
+     "All passing" with an empty cache.
+- Severity: important.
+- Playwright: `play_guarantees.spec.ts::invariant_status_not_green_when_cache_empty`
+
+## Finding 25: `/x/ring-pressure` fabricates SPSC ring occupancy from WAL lag
+
+- Where: `server.py:3159` -> `pages.py:2544-2562`.
+- Claim: bars represent real ring occupancy / backpressure.
+- Truth: `pct = min(100, int(lag_mb * 10))` (or `files * 5`).
+  No ring depth, capacity, or enqueue/dequeue counter is read
+  anywhere. The SPSC rings are an intra-process Rust concept
+  (rtrb) the dashboard has no visibility into; this is a WAL-
+  lag heuristic wearing a ring-pressure costume. The docstring
+  even admits "Derive ring fill % from WAL stream lag."
+- Repro:
+  1. Let a WAL stream accumulate lag.
+  2. `/x/ring-pressure` "pressure" jumps with no ring metric read.
+- Severity: important.
+- Playwright: `play_topology.spec.ts::ring_pressure_reads_real_telemetry_or_is_labeled_derived`
+
+## Finding 26: `/x/key-metrics` Msgs/sec is a lifetime dashboard average
+
+- Where: `server.py:3088` (`mps = len(recent_orders) / elapsed`,
+  `elapsed = time.time() - SERVER_START`).
+- Claim: `Msgs/sec` is current throughput.
+- Truth: numerator is an in-memory list capped at recent
+  orders; denominator is dashboard uptime. The rate decays
+  toward zero the longer the dashboard runs and never reflects
+  the live cluster message rate. (Distinct from F2: this is
+  the throughput tile, not the health score.)
+- Repro:
+  1. Burst orders, then idle several minutes (no restart).
+  2. `Msgs/sec` keeps falling though nothing changed.
+- Severity: important.
+- Playwright: `play_health_truthful.spec.ts::msgs_sec_uses_recent_window_not_uptime`
+
+## Finding 27: `/api/maker/status` serves stale file stats after the maker dies
+
+- Where: `server.py:6306`, always reads `tmp/maker-status.json`
+  via `_read_maker_stats()` regardless of `running`.
+- Claim: `levels` / `errors` describe the live maker subprocess.
+- Truth: when the maker stops or crashes without deleting the
+  file, the endpoint returns `running: false` alongside the
+  dead process's old `levels`/`errors` -- stale state
+  masquerading as current.
+- Repro:
+  1. Let maker write status, then kill it without removing
+     `tmp/maker-status.json`.
+  2. `curl -s localhost:49171/api/maker/status` -- old stats persist.
+- Severity: important.
+- Playwright: `play_topology.spec.ts::maker_status_clears_stats_when_not_running`
+
+## Finding 28: `/api/stress/reports` silently swallows corrupt reports
+
+- Where: `server.py:5223`, `except Exception: continue`.
+- Claim: lists all stress-test reports.
+- Truth: any malformed/partial `stress-*.json` is silently
+  dropped, so failed/corrupt runs vanish from history instead
+  of surfacing as corrupt artifacts -- making the run history
+  look cleaner than the filesystem.
+- Repro:
+  1. Drop a truncated `tmp/stress-reports/stress-bad.json`.
+  2. `curl -s localhost:49171/api/stress/reports` omits it.
+- Severity: nice-to-have.
+- Playwright: `play_stress.spec.ts::reports_endpoint_surfaces_corrupt_files`
+
+## Not a finding
+
+- `/x/resource-usage`: real `psutil` CPU/RSS for discovered
+  processes -- weak (not hardware telemetry) but not fabricated.
