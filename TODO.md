@@ -30,9 +30,11 @@ All 28 audit findings closed. v0.2.0 carry-over fully cleared.
 ## Open
 
 (empty — next up is a v0.3.0 release candidate. The natural
-v0.3 scope: publish `rsx-dxs` to crates.io with a non-exchange
-worked example, draft the SDK packaging that turns the 12
-crates into an embeddable "exchange-in-a-box" per WEDGE.md.)
+v0.3 scope: package `rsx-dxs` as a standalone library with a
+non-exchange worked example, draft the SDK that turns the 12
+crates into an embeddable "exchange-in-a-box" per WEDGE.md.
+Distribution is a founder decision — see CLAUDE.md
+"Publishing" — this repo does not publish externally.)
 
 ## Backlog
 

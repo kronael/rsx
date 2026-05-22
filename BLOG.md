@@ -271,8 +271,11 @@ that performs confidence.
 ## What's Next
 
 The exchange runs end-to-end. The libraries underneath it are
-the product. Next: publish `rsx-dxs` to crates.io with a
-worked example of a non-exchange consumer (a metrics ingest
-pipeline is the obvious one — same characteristics, no domain
-overlap). Then the SDK layer that wraps the matching engine +
-risk + gateway as an embeddable "exchange-in-a-box" service.
+the product. Next: package `rsx-dxs` as a standalone consumable
+with a worked example of a non-exchange consumer (a metrics
+ingest pipeline is the obvious one — same characteristics, no
+domain overlap). Then the SDK layer that wraps the matching
+engine + risk + gateway as an embeddable "exchange-in-a-box"
+service. Distribution channel is a founder decision (this
+repo's policy is no external publishing without explicit
+sign-off; see CLAUDE.md "Publishing").

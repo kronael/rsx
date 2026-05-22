@@ -122,6 +122,21 @@ The general rule: every concern has one owner. Adding a
 second owner adds complexity, contradicts the spec, and
 gives false confidence. Don't do it.
 
+## Publishing
+
+- **Do NOT publish anything externally.** No crates.io, no
+  npm, no PyPI, no blog posts, no tweets, no public talks, no
+  pushing to public registries. Even if a WEDGE.md, BLOG.md,
+  or "what's next" section mentions publishing, treat that as
+  internal-only narrative.
+- **GitHub IS okay.** Pushing to the project's GitHub
+  repository is allowed when explicitly requested. (Global
+  rule still applies: never `git push` without an explicit
+  ask.)
+- If a doc, plan, or commit message proposes publishing
+  externally, edit it to say "leave for the founder" or
+  remove the line. Don't act on it.
+
 ## Documentation
 - NEVER use "rollout" as a heading or section name
 
