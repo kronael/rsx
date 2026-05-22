@@ -202,6 +202,39 @@ fn main() {
                                         FillRecord,
                             )
                         };
+                        // Sub-stage: fill record arrived at
+                        // gateway's CMP recv loop, about to
+                        // route. Anchor on taker_ts_ns (with
+                        // the >2024 plausibility guard).
+                        {
+                            let now_ns = std::time::SystemTime::now()
+                                .duration_since(
+                                    std::time::UNIX_EPOCH,
+                                )
+                                .map(|d| d.as_nanos() as u64)
+                                .unwrap_or(0);
+                            let anchor_ns = if rec.taker_ts_ns
+                                > 1_700_000_000_000_000_000
+                            {
+                                rec.taker_ts_ns
+                            } else {
+                                rec.ts_ns
+                            };
+                            let t_us = now_ns
+                                .saturating_sub(anchor_ns)
+                                / 1000;
+                            tracing::info!(
+                                target: "latency",
+                                stage = "gateway_cmp_recv",
+                                oid = format!(
+                                    "{:016x}{:016x}",
+                                    rec.taker_order_id_hi,
+                                    rec.taker_order_id_lo,
+                                ),
+                                t_us,
+                                t0_ns = anchor_ns,
+                            );
+                        }
                         route_fill(&state, &rec);
                     }
                     RECORD_ORDER_DONE
