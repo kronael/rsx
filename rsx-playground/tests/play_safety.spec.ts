@@ -247,18 +247,20 @@ test.describe.serial("Safety: process crash & recovery",
         test.setTimeout(60_000);
         await stopAll(request);
         await page.goto("/topology");
-        await page.waitForTimeout(2000);
-        // check process list — all should be stopped
-        const res = await request.get("/api/processes");
-        const procs = await res.json();
-        if (Array.isArray(procs)) {
-          for (const p of procs) {
-            expect(
-              p.state === "stopped" ||
-                p.running === false
-            ).toBe(true);
-          }
-        }
+        // Poll for all-stopped rather than asserting after a
+        // fixed delay: SIGTERM has a grace window and a process
+        // mid-exit can still scan as "running" for a tick. Poll
+        // until every managed process reports stopped.
+        const allStopped = await pollUntil(async () => {
+          const res = await request.get("/api/processes");
+          const procs = await res.json();
+          if (!Array.isArray(procs)) return false;
+          return procs.every(
+            (p: any) =>
+              p.state === "stopped" || p.running === false
+          );
+        }, 20_000);
+        expect(allStopped, "not all processes stopped").toBe(true);
         // restore
         await ensureAll(request);
       }
