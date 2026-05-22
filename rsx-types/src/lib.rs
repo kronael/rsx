@@ -9,6 +9,9 @@
 
 pub mod macros;
 pub mod time;
+pub mod yield_now;
+
+pub use yield_now::yield_now;
 
 pub use macros::install_panic_handler;
 
