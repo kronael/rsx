@@ -1318,6 +1318,14 @@ order_latencies: list[int] = []
 # fill (F frame) received over the same WS. Populated by
 # /api/latency-probe; surfaced in /api/latency `e2e` block.
 e2e_latencies: list[int] = []
+# Gateway-only RTT in microseconds: order submit → error
+# frame received over the same WS. Populated by
+# /api/latency-probe-gw; surfaced in /api/latency `gw_only`.
+# The order intentionally fails gateway prevalidation
+# (unknown symbol_id) so risk + ME are never touched.
+# Isolates Python aiohttp + gateway parse from the rest of
+# the GW→ME→GW critical path.
+gw_only_latencies: list[int] = []
 gateway_ws = None
 _idempotency_keys: dict[str, float] = {}
 _IDEMPOTENCY_TTL = 300
@@ -5925,6 +5933,7 @@ def _percentiles(data: list[int]) -> dict:
 async def api_latency():
     body = _percentiles(order_latencies)
     body["e2e"] = _percentiles(e2e_latencies)
+    body["gw_only"] = _percentiles(gw_only_latencies)
     return JSONResponse(body)
 
 
@@ -6100,6 +6109,123 @@ async def api_latency_probe(
     token required since it operates as user 1)."""
     return JSONResponse(
         await _run_latency_probe(symbol_id))
+
+
+# ── Gateway-only RTT probe (no ME, no risk) ─────────────
+# Submits a deliberately-invalid order (symbol_id=999) that
+# the gateway prevalidates and rejects with an E (error)
+# frame on the same WS. The risk tile and ME are never
+# touched, so the RTT measures Python aiohttp + WS write +
+# gateway parse + gateway prevalidate + reverse path only.
+# Subtract this from the e2e probe to estimate the
+# risk+ME+CMP+WAL contribution.
+_GW_PROBE_INVALID_SYMBOL: int = 999_999
+_GW_PROBE_TIMEOUT_S = 2.0
+
+
+async def _run_gw_only_probe() -> dict:
+    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+    if not secret:
+        return {"ok": False,
+                "error": "RSX_GW_JWT_SECRET not configured"}
+    token = pyjwt.encode(
+        {
+            "sub": "playground:1",
+            "user_id": 1,
+            "aud": "rsx-gateway",
+            "iss": "rsx-auth",
+            "exp": int(time.time()) + 60,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    ws_url = GATEWAY_URL.rstrip("/")
+    headers = {"authorization": f"Bearer {token}"}
+    cid = f"gwprobe-{int(time.time() * 1e6) % 10_000_000}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                ws_url,
+                headers=headers,
+                heartbeat=None,
+                timeout=aiohttp.ClientWSTimeout(
+                    ws_close=_GW_PROBE_TIMEOUT_S),
+            ) as ws:
+                start_ns = time.perf_counter_ns()
+                # symbol_id = _GW_PROBE_INVALID_SYMBOL is well
+                # above any configured symbol → gateway rejects
+                # with "unknown symbol" (code 1007) before
+                # touching risk or ME.
+                await ws.send_json({
+                    "N": [_GW_PROBE_INVALID_SYMBOL, 0,
+                          100, 1, cid, 0],
+                })
+                deadline = (
+                    asyncio.get_event_loop().time()
+                    + _GW_PROBE_TIMEOUT_S
+                )
+                while True:
+                    remaining = (
+                        deadline
+                        - asyncio.get_event_loop().time()
+                    )
+                    if remaining <= 0:
+                        return {
+                            "ok": False,
+                            "error": "timeout waiting for E",
+                        }
+                    try:
+                        msg = await asyncio.wait_for(
+                            ws.receive(),
+                            timeout=remaining,
+                        )
+                    except asyncio.TimeoutError:
+                        return {
+                            "ok": False,
+                            "error": "timeout waiting for E",
+                        }
+                    if msg.type != aiohttp.WSMsgType.TEXT:
+                        continue
+                    try:
+                        frame = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        continue
+                    if "E" in frame:
+                        elapsed_ns = (
+                            time.perf_counter_ns() - start_ns
+                        )
+                        elapsed_us = max(1, elapsed_ns // 1000)
+                        gw_only_latencies.append(elapsed_us)
+                        if len(gw_only_latencies) > 1000:
+                            del gw_only_latencies[:500]
+                        err = frame["E"]
+                        return {
+                            "ok": True,
+                            "elapsed_us": elapsed_us,
+                            "error_code": (
+                                err[0] if isinstance(err, list)
+                                and err else None),
+                            "error_msg": (
+                                err[1] if isinstance(err, list)
+                                and len(err) > 1 else None),
+                        }
+    except aiohttp.ClientError as exc:
+        return {"ok": False,
+                "error": f"gateway unreachable: {exc}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"probe failed: {exc}"}
+
+
+@app.post("/api/latency-probe-gw")
+async def api_latency_probe_gw(request: Request):
+    """Submit an invalid order, wait for the error frame.
+
+    The order is shaped to fail gateway prevalidation
+    (symbol_id outside the configured range) so it never
+    reaches risk or the matching engine. Measures
+    Python + aiohttp + gateway parse + reverse path only.
+    Result feeds the `gw_only` block of /api/latency."""
+    return JSONResponse(await _run_gw_only_probe())
 
 
 @app.get("/api/mark/prices")
