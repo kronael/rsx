@@ -403,15 +403,11 @@ fn main() {
                 }
             }
 
-            // Cooperative yield with no fixed delay.
-            // The previous monoio::time::sleep(100us) here
-            // dominated the GW return leg at ~655us p50
-            // (SPEED-GRANULAR.md). yield_now lets the
-            // scheduler run sibling tasks (per-conn
-            // handlers, heartbeat, etc) and resumes us
-            // on the next scheduler tick — typically
-            // single-digit µs, no timer-wheel delay.
-            rsx_types::yield_now().await;
+            // Yield to monoio scheduler
+            monoio::time::sleep(
+                std::time::Duration::from_micros(100),
+            )
+            .await;
         }
     });
 }
