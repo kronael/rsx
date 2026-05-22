@@ -239,6 +239,42 @@ test.describe("Risk tab", () => {
     await expect(liquidateBtn).toHaveAttribute("hx-post", "./api/risk/liquidate");
   });
 
+  // F8: SYSTEM-WIDE RISK METRICS used to show "--" for OI and
+  // notional while the Maker tab reported "Positions 2". Now
+  // accounts_with_positions ≥ users with any fill activity and
+  // total_oi falls back to gross filled notional when nets
+  // cancel out. Verify via /api/risk/overview's system block.
+  test("system_metrics_populated_when_fills (F8)",
+    async ({ request }) => {
+      const r = await request.get("/api/risk/overview");
+      expect(r.ok()).toBe(true);
+      const body = await r.json();
+      expect(body).toHaveProperty("system");
+      const sys = body.system as {
+        total_oi: number;
+        long_notional: number;
+        short_notional: number;
+        accounts_with_positions: number;
+      };
+      // Cross-check against /x/key-metrics' Positions count.
+      const km = await request.get("/x/key-metrics");
+      const kmHtml = await km.text();
+      const posMatch = kmHtml.match(
+        /Positions[\s\S]*?>(\d+)</
+      );
+      if (posMatch) {
+        const keyMetricsPos = Number(posMatch[1]);
+        expect(
+          sys.accounts_with_positions,
+          "risk.system.accounts < key-metrics.Positions",
+        ).toBeGreaterThanOrEqual(keyMetricsPos);
+        if (keyMetricsPos > 0) {
+          expect(sys.total_oi).toBeGreaterThan(0);
+        }
+      }
+    },
+  );
+
   test("all risk cards load without errors", async ({ page }) => {
     await page.goto("/risk");
 

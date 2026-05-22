@@ -207,6 +207,33 @@ test.describe("Logs tab", () => {
     expect(afterFilter).toBe("risk");
   });
 
+  // F7: "gateway" quick filter used to match the literal name
+  // and miss every gw-0 log line, while "errors only" surfaced
+  // the same lines. PROC_HINTS now maps "gateway" → "gw-" so
+  // every quick-filter returns ≥ 1 line if the process is up.
+  test("filter_label_to_log_prefix (F7): gateway filter matches gw- lines",
+    async ({ request }) => {
+      // Hit /x/logs directly so we're not racing the polling
+      // refresh. We only assert non-emptiness when the gateway
+      // is actually emitting logs.
+      const proc = await request.get("/api/processes");
+      const procs = await proc.json() as Array<{
+        name: string; state: string;
+      }>;
+      const gwUp = procs.some(
+        (p) => /^gw-/.test(p.name) && p.state === "running",
+      );
+      const res = await request.get("/x/logs?log-process=gateway");
+      expect(res.ok()).toBe(true);
+      const html = await res.text();
+      if (gwUp) {
+        // At least one [gw-N] line must appear under the
+        // "gateway" component filter.
+        expect(html).toMatch(/\[gw-\d+\]/);
+      }
+    },
+  );
+
   test("log viewer loads without console errors", async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (msg) => {

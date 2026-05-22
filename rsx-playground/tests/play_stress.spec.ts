@@ -144,6 +144,20 @@ test.describe("Stress tab", () => {
     await expect(page.locator("text=Acceptance Rate")).toBeVisible();
   });
 
+  // F11: /x/stress-scenarios used to return the literal
+  // "no data" placeholder. Now it lists the named stress
+  // profiles (stress-low / stress-high / stress-ultra) sourced
+  // from the same start_mod.SCENARIOS the Control selector uses.
+  test("scenarios_panel_non_empty (F11)", async ({ request }) => {
+    const res = await request.get("/x/stress-scenarios");
+    expect(res.ok()).toBe(true);
+    const html = await res.text();
+    expect(html).not.toContain(">no data<");
+    for (const name of ["stress-low", "stress-high", "stress-ultra"]) {
+      expect(html, `missing scenario ${name}`).toContain(name);
+    }
+  });
+
   // Stress run produces result (success or error) within test timeout
   test("form submission shows result after running", async ({
     page,
