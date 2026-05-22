@@ -1900,10 +1900,15 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "ctrlc",
+ "futures-util",
+ "jsonwebtoken",
  "rsx-dxs",
  "rsx-messages",
  "rsx-types",
+ "serde",
  "serde_json",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
