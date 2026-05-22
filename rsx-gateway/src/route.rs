@@ -60,14 +60,14 @@ pub fn route_fill(
     // Sub-stage: serialize completed. Captured BEFORE the
     // gateway_out emission so we can attribute the serde_json
     // cost separately from the latency-ring emission itself.
-    rsx_types::latency::emit(
+    rsx_log::latency::sample(
         "gateway_route_serialize_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
         t_us,
         anchor_ns,
     );
-    rsx_types::latency::emit(
+    rsx_log::latency::sample(
         "gateway_out",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
@@ -85,7 +85,7 @@ pub fn route_fill(
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
     let t_us2 = now_ns2.saturating_sub(anchor_ns) / 1000;
-    rsx_types::latency::emit(
+    rsx_log::latency::sample(
         "gateway_route_push_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,

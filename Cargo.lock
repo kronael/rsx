@@ -1943,6 +1943,7 @@ dependencies = [
  "jsonwebtoken",
  "monoio",
  "rsx-dxs",
+ "rsx-log",
  "rsx-messages",
  "rsx-risk",
  "rsx-types",
@@ -1953,6 +1954,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "rsx-log"
+version = "0.2.0"
+dependencies = [
+ "rtrb",
+ "tracing",
 ]
 
 [[package]]
@@ -2000,6 +2009,7 @@ dependencies = [
  "libc",
  "rsx-book",
  "rsx-dxs",
+ "rsx-log",
  "rsx-messages",
  "rsx-types",
  "rustc-hash",
@@ -2042,6 +2052,7 @@ dependencies = [
  "core_affinity",
  "criterion",
  "rsx-dxs",
+ "rsx-log",
  "rsx-matching",
  "rsx-messages",
  "rsx-types",
@@ -2061,8 +2072,6 @@ name = "rsx-types"
 version = "0.2.0"
 dependencies = [
  "criterion",
- "rtrb",
- "tracing",
 ]
 
 [[package]]

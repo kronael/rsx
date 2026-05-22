@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rsx-types = { path = "../rsx-types" }
+rsx-log = { path = "../rsx-log" }
 rsx-book = { path = "../rsx-book" }
 rsx-dxs = { path = "../rsx-dxs" }
 rsx-messages = { path = "../rsx-messages" }

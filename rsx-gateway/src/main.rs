@@ -74,7 +74,7 @@ fn main() {
     // (see rsx-types/src/latency.rs). 100 ms is a
     // good compromise between dashboard freshness
     // and drain-thread CPU.
-    rsx_types::latency::start_drainer(100);
+    rsx_log::start_drainer(100);
 
     let config = load_gateway_config();
     log_effective_gateway_config(&config);
@@ -229,7 +229,7 @@ fn main() {
                             let t_us = now_ns
                                 .saturating_sub(anchor_ns)
                                 / 1000;
-                            rsx_types::latency::emit("gateway_cmp_recv", rec.taker_order_id_hi, rec.taker_order_id_lo, t_us, anchor_ns);
+                            rsx_log::latency::sample("gateway_cmp_recv", rec.taker_order_id_hi, rec.taker_order_id_lo, t_us, anchor_ns);
                         }
                         route_fill(&state, &rec);
                     }
