@@ -32,5 +32,22 @@ serde = { version = "1", features = ["derive"] }
 name = "gateway_bench"
 harness = false
 
+[[bench]]
+name = "ws_parse_bench"
+harness = false
+
+[[bench]]
+name = "ws_encode_bench"
+harness = false
+
+[[bench]]
+name = "jwt_validate_bench"
+harness = false
+
+[[bench]]
+name = "jti_tracker_bench"
+harness = false
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+jsonwebtoken = "9"
