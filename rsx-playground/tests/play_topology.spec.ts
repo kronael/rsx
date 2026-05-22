@@ -158,4 +158,50 @@ test.describe("Topology tab", () => {
       expect(html).toContain("Gateway -&gt; Risk");
     },
   );
+
+  // F14: the gateway detail panel used to print a hard-coded
+  // ("circuit breaker", "closed") row that never read real state
+  // — it stayed "closed" even with the gateway dead. The fake
+  // row is removed; there must be no comforting literal.
+  test("gateway_circuit_breaker_not_hardcoded (F14)",
+    async ({ request }) => {
+      // Kill the gateway: a real breaker reader would change or
+      // disappear; a hard-coded "closed" would persist.
+      await request.post("/api/processes/gw-0/kill", {
+        headers: { "x-confirm": "yes" },
+      });
+      await new Promise((r) => setTimeout(r, 2000));
+      const r = await request.get("/x/topology/gateway");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // The lie was a literal "circuit breaker ... closed" row.
+      // It is gone whether or not the gateway is up.
+      expect(html.toLowerCase()).not.toContain("circuit breaker");
+      // Restore for subsequent tests.
+      await request.post("/api/processes/gw-0/start", {
+        headers: { "x-confirm": "yes" },
+      });
+    },
+  );
+
+  // F15: /x/topology/flow node rates are dashboard-local session
+  // counters (recent_orders / recent_fills / _book_snap), not
+  // cluster truth. They must be labelled "(session)" so they
+  // don't masquerade as live cluster throughput.
+  test("flow_counters_not_from_dashboard_memory (F15)",
+    async ({ request }) => {
+      const r = await request.get("/x/topology/flow");
+      expect(r.ok()).toBe(true);
+      const body = await r.json() as {
+        nodes: Array<{ key: string; rate: string }>;
+      };
+      const rateOf = (k: string) =>
+        body.nodes.find((n) => n.key === k)?.rate ?? "";
+      // The three Python-memory-derived rates must carry the
+      // honest "(session)" disclaimer.
+      expect(rateOf("client")).toContain("(session)");
+      expect(rateOf("gateway")).toContain("(session)");
+      expect(rateOf("marketdata")).toContain("(session)");
+    },
+  );
 });

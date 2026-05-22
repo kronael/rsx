@@ -299,4 +299,46 @@ test.describe("Risk tab", () => {
     await page.waitForTimeout(1000);
     expect(errors.length).toBe(0);
   });
+
+  // F16: /api/risk/funding used to fabricate the index price as
+  // `mark * 1.0001`, then derive premium and rate from that fake.
+  // The index must now come from the real mark process
+  // (RECORD_MARK_PRICE on the mark WAL stream) or be honestly
+  // flagged (index_source != "formula"/synthetic, and never a
+  // fixed 1.0001 ratio).
+  test("funding_uses_real_index_source_not_formula_stub (F16)",
+    async ({ request }) => {
+      const r = await request.get("/api/risk/funding");
+      expect(r.ok()).toBe(true);
+      const body = await r.json() as {
+        funding: Array<{
+          mark_px: number;
+          index_px: number;
+          index_source?: string;
+        }>;
+      };
+      for (const f of body.funding) {
+        // Every entry must declare where its index came from.
+        expect(f.index_source).toBeDefined();
+        // "none" (mark process down / no external data) is the
+        // honest absence; "mark-process" is the real source. The
+        // forbidden state is a fabricated index.
+        expect(["mark-process", "none"]).toContain(
+          f.index_source
+        );
+        if (f.index_source === "none") {
+          // No fake index when there's no source.
+          expect(f.index_px).toBe(0);
+        }
+        // The old stub produced index_px == round(mark*1.0001),
+        // i.e. a fixed 1-bp premium on every symbol. Forbid that
+        // exact relationship for a non-zero index.
+        if (f.index_px > 0 && f.mark_px > 0) {
+          expect(f.index_px).not.toBe(
+            Math.trunc(f.mark_px * 1.0001)
+          );
+        }
+      }
+    },
+  );
 });

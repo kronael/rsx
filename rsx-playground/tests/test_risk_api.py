@@ -351,9 +351,15 @@ def test_render_reconciliation_has_three_checks():
 def test_render_reconciliation_check_names():
     from pages import render_reconciliation
     out = render_reconciliation()
-    assert "Frozen margin" in out or "frozen margin" in out.lower()
-    assert "Shadow book" in out or "shadow book" in out.lower()
-    assert "Mark price" in out or "mark price" in out.lower()
+    lower = out.lower()
+    assert "frozen margin" in lower
+    # F18: shadow-vs-ME is honestly relabelled as a WAL-internal
+    # consistency check (both sides derive from the WAL).
+    assert "wal self-consistency" in lower
+    assert "shadow" in lower
+    # F17: mark-vs-index honestly names the real index source
+    # (the mark process) instead of "Mark price vs index".
+    assert "mark-process index" in lower
 
 
 def test_render_risk_user_none():
