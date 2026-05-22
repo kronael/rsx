@@ -843,6 +843,7 @@ fn emit_config_applied(
 /// of a linear slab scan. The caller must call
 /// `update_order_index` after this returns so the OrderDone
 /// event removes the entry.
+#[allow(clippy::too_many_arguments)]
 fn process_cancel(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,

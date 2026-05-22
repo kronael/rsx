@@ -74,6 +74,7 @@ fn drain(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn quote_cycle(
     addr: &str,
     user_id: u64,
