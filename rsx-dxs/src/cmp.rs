@@ -42,6 +42,14 @@ fn bind_udp_reuse(addr: SocketAddr) -> io::Result<UdpSocket> {
     #[cfg(target_os = "linux")]
     socket.set_reuse_port(true)?;
     socket.set_nonblocking(true)?;
+    // Request 8 MB recv buffer. Linux silently clips to
+    // /proc/sys/net/core/rmem_max (commonly 208 KB) — that's
+    // fine; the call only fails on a broken socket. Larger
+    // buffer reduces UDP loopback drop under burst (50k msg
+    // in <500ms outpaces the default rmem on stock kernels).
+    if let Err(e) = socket.set_recv_buffer_size(8 * 1024 * 1024) {
+        tracing::debug!(?e, "set_recv_buffer_size failed");
+    }
     socket.bind(&addr.into())?;
     Ok(socket.into())
 }
