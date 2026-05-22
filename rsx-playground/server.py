@@ -2200,9 +2200,12 @@ def _topo_matching() -> dict:
         bid = bbo.get("bid_px", 0)
         ask = bbo.get("ask_px", 0)
         spd = ask - bid if bid and ask else 0
+        bid_str = pages.format_price(bid, sid) if bid else "--"
+        ask_str = pages.format_price(ask, sid) if ask else "--"
+        spd_str = pages.format_price(spd, sid) if spd else "0"
         rows.append((
             f"sym{sid} bbo",
-            f"bid={bid} ask={ask} spd={spd}",
+            f"bid={bid_str} ask={ask_str} spread={spd_str}",
         ))
     for sid, s in sorted(_book_snap.items()):
         rows.append((
@@ -2249,7 +2252,8 @@ def _topo_mark() -> dict:
             ask = bbo.get("ask_px", 0)
             if bid and ask:
                 mid = (bid + ask) // 2
-                rows.append((f"sym{sid} mark", str(mid)))
+                rows.append((f"sym{sid} mark",
+                             pages.format_price_fixed(mid, sid)))
     # Funding window remaining (8h settlement cadence).
     now_s = int(time.time())
     interval = 28800
@@ -2299,8 +2303,11 @@ def _topo_maker() -> dict:
     mid_prices = stats.get("mid_prices", {})
     mid_str = (
         " ".join(
-            f"sym{k}={v}"
-            for k, v in sorted(mid_prices.items())
+            f"sym{k}={pages.format_price_fixed(int(v), int(k))}"
+            for k, v in sorted(
+                mid_prices.items(),
+                key=lambda kv: int(kv[0]),
+            )
         )
         or "none"
     )

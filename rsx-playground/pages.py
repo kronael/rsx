@@ -3113,7 +3113,8 @@ def render_wal_timeline(records=None):
             f'<td {_TD} class="text-slate-400 text-xs">'
             f'{html.escape(detail)}</td></tr>'
         )
-    return _table(["Seq", "Type", "Symbol", "Detail"], rows)
+    return _table(
+        ["Seq", "Type", "Symbol", "Detail (px/qty raw)"], rows)
 
 
 # ── Logs ─────────────────────────────────────────────────
@@ -3559,13 +3560,13 @@ def render_risk_overview(data, funding_data,
     sys_panel = (
         '<div class="grid grid-cols-2 sm:grid-cols-5 gap-3">'
         + _metric("Total OI",
-                  f"{oi // 10**8:,}" if oi else "--",
+                  format_notional(oi) if oi else "--",
                   "blue-400")
         + _metric("Long Notional",
-                  f"{long_n // 10**8:,}" if long_n else "--",
+                  format_notional(long_n) if long_n else "--",
                   "emerald-400")
         + _metric("Short Notional",
-                  f"{short_n // 10**8:,}"
+                  format_notional(short_n)
                   if short_n else "--", "red-400")
         + _metric("Accounts w/ Positions",
                   str(accts_pos), "slate-300")
@@ -3602,20 +3603,20 @@ def render_risk_overview(data, funding_data,
             else "text-red-400"
         )
         upnl_sign = "+" if upnl >= 0 else "-"
-        upnl_str = format_price(abs(upnl), 1)
+        upnl_str = format_notional(abs(upnl))
 
         acct_strip = (
             '<div class="grid grid-cols-2 sm:grid-cols-4'
             ' gap-2 mb-2">'
             + _metric("Collateral",
-                      format_price(collateral, 1),
+                      format_notional(collateral),
                       "slate-300")
             + _metric("Available",
-                      format_price(available, 1),
+                      format_notional(available),
                       "emerald-400"
                       if available > 0 else "red-400")
             + _metric("Equity",
-                      format_price(abs(equity), 1),
+                      format_notional(abs(equity)),
                       "slate-300")
             + _metric("uPnL",
                       f"{upnl_sign}{upnl_str}",
@@ -3659,7 +3660,7 @@ def render_risk_overview(data, funding_data,
                     else "text-red-400"
                 )
                 pnl_sign = "+" if pnl >= 0 else "-"
-                pnl_str = format_price(abs(pnl), sid)
+                pnl_str = format_notional(abs(pnl))
                 row_cls = (
                     "bg-red-900/20 hover:bg-red-900/30"
                     if ratio < 1.2
@@ -3689,11 +3690,11 @@ def render_risk_overview(data, funding_data,
                     f'<span class="{pnl_color}">'
                     f'{pnl_sign}{pnl_str}</span></td>'
                     f'<td {_TD}>'
-                    f'{format_price(notional, sid)}</td>'
+                    f'{format_notional(notional)}</td>'
                     f'<td {_TD} class="text-slate-500">'
-                    f'{format_price(im, sid)}</td>'
+                    f'{format_notional(im)}</td>'
                     f'<td {_TD} class="text-slate-500">'
-                    f'{format_price(mm, sid)}</td>'
+                    f'{format_notional(mm)}</td>'
                     f'</tr>'
                 )
             pos_table = _table(
@@ -3710,9 +3711,9 @@ def render_risk_overview(data, funding_data,
         margin_summary = (
             '<div class="grid grid-cols-3 gap-2 mt-2">'
             + _metric("IM Required",
-                      format_price(im_req, 1), "slate-400")
+                      format_notional(im_req), "slate-400")
             + _metric("MM Required",
-                      format_price(mm_req, 1), "slate-400")
+                      format_notional(mm_req), "slate-400")
             + _metric("Margin Ratio",
                       f"{ratio:.2f}x" if ratio < 999 else "n/a",
                       "emerald-400" if ratio >= 2.0
@@ -3839,7 +3840,7 @@ def render_risk_overview(data, funding_data,
                 f'<tr class="hover:bg-slate-800/50">'
                 f'<td {_TD}>{sym}</td>'
                 f'<td {_TD} class="text-emerald-400">'
-                f'{format_price(bal, sid)}</td>'
+                f'{format_notional(bal)}</td>'
                 f'<td {_TD} class="text-slate-500">'
                 f'{ver}</td>'
                 f'</tr>'
@@ -3853,7 +3854,7 @@ def render_risk_overview(data, funding_data,
             _table(["Symbol", "Balance", "Version"], ins_rows)
             + f'<div class="mt-2 text-xs text-slate-400">'
             f'total: <span class="text-emerald-400">'
-            f'{format_price(total_ins, 1)}</span>'
+            f'{format_notional(total_ins)}</span>'
             + ins_sim_note
             + '</div>'
         )
@@ -4063,21 +4064,40 @@ SYMBOL_CONFIG = {
 
 
 def format_price(raw_price, symbol_id):
-    """Format raw i64 price for display."""
+    """Format raw i64 price for display.
+
+    Trims trailing zeros so "0.05" doesn't render as "0.050000".
+    """
     if raw_price == 0:
         return "0"
     cfg = SYMBOL_CONFIG.get(symbol_id, {"price_decimals": 2})
     decimals = cfg["price_decimals"]
-    # For tick_size=1, display as-is with decimal separator
     if decimals == 0:
         return str(raw_price)
-    # Add decimal point
     sign = "-" if raw_price < 0 else ""
     abs_val = abs(raw_price)
     scale = 10 ** decimals
     whole = abs_val // scale
     frac = abs_val % scale
     return f"{sign}{whole}.{frac:0{decimals}d}".rstrip('0').rstrip('.')
+
+
+def format_price_fixed(raw_price, symbol_id):
+    """Format raw i64 price; keep full price_decimals (no trim).
+
+    For BBO / matching surfaces where "0.0499 / 0.0501" must
+    show identical decimal places so spread alignment reads.
+    """
+    cfg = SYMBOL_CONFIG.get(symbol_id, {"price_decimals": 2})
+    decimals = cfg["price_decimals"]
+    if decimals == 0:
+        return str(raw_price)
+    sign = "-" if raw_price < 0 else ""
+    abs_val = abs(raw_price)
+    scale = 10 ** decimals
+    whole = abs_val // scale
+    frac = abs_val % scale
+    return f"{sign}{whole}.{frac:0{decimals}d}"
 
 
 def format_qty(raw_qty, symbol_id):
@@ -4094,6 +4114,27 @@ def format_qty(raw_qty, symbol_id):
     whole = abs_val // scale
     frac = abs_val % scale
     return f"{sign}{whole}.{frac:0{decimals}d}".rstrip('0').rstrip('.')
+
+
+# Account ledgers (collateral, equity, IM, MM, uPnL, notional)
+# are i64 in micro-cents — 1 USD = 1e9 raw units. The CEO
+# acceptance ("999999972019150 → $1,000,000.00") nails this
+# scale: divide by 1e9, render with thousands separator, two
+# fractional digits.
+USD_SCALE = 1_000_000_000
+
+
+def format_notional(raw_i64):
+    """Format raw i64 ledger value as USD with $ + commas."""
+    if raw_i64 == 0:
+        return "$0.00"
+    sign = "-" if raw_i64 < 0 else ""
+    abs_val = abs(int(raw_i64))
+    whole = abs_val // USD_SCALE
+    frac_units = abs_val % USD_SCALE
+    # Two-decimal USD: round micro-units down to cents.
+    cents = frac_units // (USD_SCALE // 100)
+    return f"{sign}${whole:,}.{cents:02d}"
 
 
 def render_book_ladder(symbol_id, snap):
@@ -4763,10 +4804,14 @@ def maker_status_html(stats: dict, pid) -> str:
     orders_placed = stats.get("orders_placed", "--")
     active_orders = stats.get("active_orders", "--")
     mid_prices = stats.get("mid_prices", {})
-    mid_price = (
-        next(iter(mid_prices.values()), "--")
-        if mid_prices else "--"
-    )
+    if mid_prices:
+        sid_k, raw_v = next(iter(mid_prices.items()))
+        try:
+            mid_price = format_price_fixed(int(raw_v), int(sid_k))
+        except (TypeError, ValueError):
+            mid_price = str(raw_v)
+    else:
+        mid_price = "--"
     return (
         f'<span class="text-emerald-400 text-xs">'
         f'running (pid {pid}) &mdash; '
@@ -4808,10 +4853,15 @@ def maker_live_html(
     orders_placed = stats.get("orders_placed", "--")
     active_orders = stats.get("active_orders", "--")
     mid_prices = stats.get("mid_prices", {})
-    mid_txt = (
-        html.escape(str(next(iter(mid_prices.values()), "--")))
-        if mid_prices else "--"
-    )
+    if mid_prices:
+        sid_k, raw_v = next(iter(mid_prices.items()))
+        try:
+            mid_txt = html.escape(
+                format_price_fixed(int(raw_v), int(sid_k)))
+        except (TypeError, ValueError):
+            mid_txt = html.escape(str(raw_v))
+    else:
+        mid_txt = "--"
     errors = stats.get("errors", [])
     last_err = (
         f'<span class="text-red-400">'
