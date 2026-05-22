@@ -453,6 +453,26 @@ fn main() {
                             as *const OrderMessage,
                     )
                 };
+                // F4.3 — per-stage latency trace. Stage
+                // `me_in` = order arrived at matching engine.
+                // t_us measured against gateway submit ts.
+                {
+                    let now_ns = time_ns();
+                    let t_us = now_ns
+                        .saturating_sub(order_msg.timestamp_ns)
+                        / 1000;
+                    tracing::info!(
+                        target: "latency",
+                        stage = "me_in",
+                        oid = format!(
+                            "{:016x}{:016x}",
+                            order_msg.order_id_hi,
+                            order_msg.order_id_lo,
+                        ),
+                        t_us,
+                        t0_ns = order_msg.timestamp_ns,
+                    );
+                }
                 // Dedup check
                 let is_dup = dedup.check_and_insert(
                     order_msg.user_id,
@@ -531,6 +551,31 @@ fn main() {
                         &mut order_index,
                     );
 
+                    // F4.3 — per-stage latency trace. Stage
+                    // `me_out` = ME finished matching and is
+                    // about to forward events to risk. t_us
+                    // measured against the order's gateway
+                    // submit timestamp. We only log once per
+                    // incoming order (against its oid).
+                    {
+                        let now_ns = time_ns();
+                        let t_us = now_ns
+                            .saturating_sub(
+                                order_msg.timestamp_ns,
+                            )
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "me_out",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                order_msg.order_id_hi,
+                                order_msg.order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = order_msg.timestamp_ns,
+                        );
+                    }
                     // CMP sends are best-effort: receivers
                     // recover via NAK / TCP replay.
                     for event in book.events() {
