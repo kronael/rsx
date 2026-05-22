@@ -70,6 +70,12 @@ fn main() {
 
     tracing_subscriber::fmt::init();
 
+    // Drain hot-path latency samples out-of-band
+    // (see rsx-types/src/latency.rs). 100 ms is a
+    // good compromise between dashboard freshness
+    // and drain-thread CPU.
+    rsx_types::latency::start_drainer(100);
+
     let config = load_gateway_config();
     log_effective_gateway_config(&config);
 
@@ -223,17 +229,7 @@ fn main() {
                             let t_us = now_ns
                                 .saturating_sub(anchor_ns)
                                 / 1000;
-                            tracing::info!(
-                                target: "latency",
-                                stage = "gateway_cmp_recv",
-                                oid = format!(
-                                    "{:016x}{:016x}",
-                                    rec.taker_order_id_hi,
-                                    rec.taker_order_id_lo,
-                                ),
-                                t_us,
-                                t0_ns = anchor_ns,
-                            );
+                            rsx_types::latency::emit("gateway_cmp_recv", rec.taker_order_id_hi, rec.taker_order_id_lo, t_us, anchor_ns);
                         }
                         route_fill(&state, &rec);
                     }

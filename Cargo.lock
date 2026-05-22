@@ -2061,6 +2061,8 @@ name = "rsx-types"
 version = "0.2.0"
 dependencies = [
  "criterion",
+ "rtrb",
+ "tracing",
 ]
 
 [[package]]
