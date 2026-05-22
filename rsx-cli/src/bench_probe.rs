@@ -91,6 +91,10 @@ struct Claims<'a> {
     aud: &'a str,
     iss: &'a str,
     exp: u64,
+    /// JWT ID — required by the gateway since the JtiTracker
+    /// wire-through (`rsx-gateway/src/ws.rs::extract_user_and_record_jti`).
+    /// A token without `jti` is rejected with `missing jti`.
+    jti: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -116,12 +120,23 @@ fn unix_now_secs() -> u64 {
 }
 
 fn mint_jwt(secret: &str, user_id: u32) -> String {
+    // Each probe call gets a fresh `jti`. Reusing a jti
+    // across handshakes would trip the JtiTracker on the
+    // second connection. Use perf_counter_ns to avoid
+    // sub-second collisions (warmup + measurement both
+    // run multiple probes per second).
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let jti = format!("bench-{}-{}", user_id, nonce);
     let claims = Claims {
         sub: format!("bench-probe:{}", user_id),
         user_id,
         aud: "rsx-gateway",
         iss: "rsx-auth",
         exp: unix_now_secs() + 300,
+        jti,
     };
     encode(
         &Header::default(),
@@ -350,12 +365,16 @@ async fn main() {
     let cross_px = best_ask * 101 / 100;
     println!("[bench-probe] best_ask={} cross_px={}", best_ask, cross_px);
 
-    let token = mint_jwt(&secret, args.user_id);
     let timeout = Duration::from_secs_f64(args.timeout_s);
+    // Mint a fresh JWT (with a fresh jti) per handshake. The
+    // gateway's JtiTracker rejects replayed jtis, so reusing a
+    // single token across N probes would fail every call but
+    // the first.
 
     // Warmup
     for i in 0..args.warmup {
         let cid = format!("warm-{}", i);
+        let token = mint_jwt(&secret, args.user_id);
         if let Err(e) = one_probe(
             &args.gateway,
             &token,
@@ -377,6 +396,7 @@ async fn main() {
     let mut failed: u64 = 0;
     for i in 0..args.n {
         let cid = format!("bp-{}-{}", i, unix_now_secs() % 1_000_000);
+        let token = mint_jwt(&secret, args.user_id);
         match one_probe(
             &args.gateway,
             &token,

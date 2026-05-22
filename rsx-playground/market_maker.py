@@ -214,6 +214,9 @@ class DummyMarketMaker:
                 "aud": "rsx-gateway",
                 "iss": "rsx-auth",
                 "exp": int(time.time()) + 3600,
+                # Fresh jti per handshake — the gateway's
+                # JtiTracker rejects replays + missing jti.
+                "jti": uuid.uuid4().hex,
             },
             secret,
             algorithm="HS256",
