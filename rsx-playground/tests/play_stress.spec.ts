@@ -569,4 +569,32 @@ test.describe("stress-down invalid-input contract", () => {
       );
     }
   );
+
+  // F28: /api/stress/reports must SURFACE corrupt JSON files
+  // as {id, corrupt: true, error} entries rather than silently
+  // dropping them with `except Exception: continue`.
+  test("reports_endpoint_surfaces_corrupt_files (F28)",
+    async ({ request }) => {
+      const CORRUPT_ID = "corrupt-test";
+      const corrupt = path.join(
+        STRESS_REPORTS_DIR, `stress-${CORRUPT_ID}.json`,
+      );
+      fs.mkdirSync(STRESS_REPORTS_DIR, { recursive: true });
+      // Truncated/invalid JSON: missing closing brace + fields.
+      fs.writeFileSync(corrupt, '{"timestamp": "x", "conf');
+      try {
+        const r = await request.get("/api/stress/reports");
+        expect(r.ok()).toBe(true);
+        const body = await r.json() as Array<{
+          id: string; corrupt?: boolean; error?: string;
+        }>;
+        const entry = body.find((e) => e.id === CORRUPT_ID);
+        expect(entry).toBeTruthy();
+        expect(entry!.corrupt).toBe(true);
+        expect(typeof entry!.error).toBe("string");
+      } finally {
+        fs.unlinkSync(corrupt);
+      }
+    },
+  );
 });

@@ -318,4 +318,22 @@ test.describe("Reconciliation", () => {
       expect(html).not.toContain("Shadow book vs ME book");
     },
   );
+
+  // F24: /x/invariant-status must not paint green on an empty
+  // cache. Before /api/verify/run has executed, the panel
+  // reports UNKNOWN. The last-run timestamp is surfaced when
+  // checks are present.
+  test("invariant_status_not_green_when_cache_empty (F24)",
+    async ({ request }) => {
+      const r = await request.get("/x/invariant-status");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // Either UNKNOWN (never run) or has a "last run" stamp
+      // once verify has executed. Never "All passing" without
+      // either evidence of a run or recorded checks.
+      const isUnknown = html.includes("UNKNOWN");
+      const hasLastRun = /last run \d\d:\d\d:\d\d/.test(html);
+      expect(isUnknown || hasLastRun).toBe(true);
+    },
+  );
 });

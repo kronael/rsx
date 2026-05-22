@@ -1306,7 +1306,13 @@ async def healthz():
 # ── in-memory state ─────────────────────────────────────
 
 recent_orders: list[dict] = []
+# Epoch-seconds timestamps of recent order submissions, used by
+# /x/key-metrics for a 30s sliding-window Msgs/sec (F26).
+recent_order_ts: list[float] = []
 verify_results: list[dict] = []
+# Epoch ms of the last /api/verify/run invocation; None until
+# the first run. Surfaced by /x/invariant-status (F24).
+verify_last_run: float | None = None
 order_latencies: list[int] = []
 # E2E round-trip in microseconds: order submit (WS send) →
 # fill (F frame) received over the same WS. Populated by
@@ -3103,8 +3109,15 @@ async def x_key_metrics():
         if maker:
             pairs.add((maker, sid))
     pos_count = len(pairs)
-    elapsed = max(1, time.time() - SERVER_START)
-    mps = int(len(recent_orders) / elapsed)
+    # Sliding 30s window: count order submission timestamps
+    # within the last 30 seconds. Avoids lifetime-average
+    # decay (F26).
+    window_s = 30
+    now = time.time()
+    cutoff = now - window_s
+    recent_in_window = sum(
+        1 for ts in recent_order_ts if ts >= cutoff)
+    mps = int(recent_in_window / window_s)
     errs = _count_recent_errors()
     return HTMLResponse(
         pages.render_key_metrics(
@@ -3166,7 +3179,8 @@ async def x_ring_pressure():
          response_class=HTMLResponse)
 async def x_invariant_status():
     return HTMLResponse(
-        pages.render_invariant_status(verify_results))
+        pages.render_invariant_status(
+            verify_results, last_run=verify_last_run))
 
 
 @app.get("/x/core-affinity", response_class=HTMLResponse)
@@ -4117,6 +4131,12 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
 
 
 def _trim_recent_orders():
+    # Record the submission timestamp (F26 sliding window) and
+    # cap the list. recent_order_ts is independent from
+    # recent_orders so the window survives recent_orders pruning.
+    recent_order_ts.append(time.time())
+    if len(recent_order_ts) > 2000:
+        del recent_order_ts[:1000]
     if len(recent_orders) > 200:
         del recent_orders[:100]
 
@@ -4765,6 +4785,8 @@ async def _run_invariant_checks() -> list[dict]:
 
     verify_results.clear()
     verify_results.extend(checks)
+    global verify_last_run
+    verify_last_run = time.time()
     return checks
 
 
@@ -5222,15 +5244,21 @@ async def api_stress_status():
 
 @app.get("/api/stress/reports")
 async def api_stress_reports():
-    """List all stress test reports"""
+    """List all stress test reports.
+
+    Corrupt or partial JSON files are surfaced as
+    {report_id, corrupt: True, error: ...} entries rather than
+    silently dropped (F28).
+    """
     reports = []
     if STRESS_REPORTS_DIR.exists():
         for f in sorted(STRESS_REPORTS_DIR.glob("stress-*.json"), reverse=True):
+            report_id = f.stem.replace("stress-", "")
             try:
                 with open(f) as fp:
                     data = json.load(fp)
                 reports.append({
-                    "id": f.stem.replace("stress-", ""),
+                    "id": report_id,
                     "timestamp": data.get("timestamp", "unknown"),
                     "rate": data["config"]["target_rate"],
                     "duration": data["config"]["duration"],
@@ -5239,8 +5267,12 @@ async def api_stress_reports():
                     "accept_rate": data["metrics"]["accept_rate"],
                     "p99_latency": data["latency_us"]["p99"],
                 })
-            except Exception:
-                continue
+            except Exception as e:
+                reports.append({
+                    "id": report_id,
+                    "corrupt": True,
+                    "error": f"{type(e).__name__}: {e}",
+                })
     return reports
 
 
@@ -5948,6 +5980,12 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
     headers = {"authorization": f"Bearer {token}"}
 
     start_ns = 0
+    # Track the probe's order id so we only time the fill
+    # whose taker_order_id == our oid (F22). The F frame has no
+    # cid; we learn the oid from the U (OrderUpdate) emitted
+    # for our submission. Non-matching frames are counted.
+    probe_oid: str | None = None
+    skipped_fills = 0
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
@@ -5972,23 +6010,53 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                         - asyncio.get_event_loop().time()
                     )
                     if remaining <= 0:
-                        return {"ok": False,
-                                "error": "timeout waiting for fill"}
+                        return {
+                            "ok": False,
+                            "error": "timeout waiting for fill",
+                            "skipped_fills": skipped_fills,
+                        }
                     try:
                         msg = await asyncio.wait_for(
                             ws.receive(),
                             timeout=remaining,
                         )
                     except asyncio.TimeoutError:
-                        return {"ok": False,
-                                "error": "timeout waiting for fill"}
+                        return {
+                            "ok": False,
+                            "error": "timeout waiting for fill",
+                            "skipped_fills": skipped_fills,
+                        }
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         continue
                     try:
                         frame = json.loads(msg.data)
                     except json.JSONDecodeError:
                         continue
+                    # U frame carries our oid in arr[0] when the
+                    # gateway acknowledges the order. We only
+                    # latch the first U we see post-submit, which
+                    # in the single-probe flow is our order.
+                    if "U" in frame and probe_oid is None:
+                        u = frame["U"]
+                        if isinstance(u, list) and u:
+                            oid = u[0]
+                            if (isinstance(oid, str)
+                                    and len(oid) == 32):
+                                probe_oid = oid
+                        continue
                     if "F" in frame:
+                        f = frame["F"]
+                        # F = [taker_oid, maker_oid, px, qty,
+                        # ts, fee] per rsx-gateway/src/protocol.rs
+                        taker_oid = (
+                            f[0] if isinstance(f, list)
+                            and f else None)
+                        # Without probe_oid we cannot match —
+                        # treat as unrelated and keep waiting.
+                        if (probe_oid is None
+                                or taker_oid != probe_oid):
+                            skipped_fills += 1
+                            continue
                         elapsed_ns = (
                             time.perf_counter_ns() - start_ns
                         )
@@ -6000,8 +6068,10 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                             "ok": True,
                             "elapsed_us": elapsed_us,
                             "cid": cid,
+                            "oid": probe_oid,
                             "cross_px": cross_px,
                             "best_ask": best_ask,
+                            "skipped_fills": skipped_fills,
                         }
     except aiohttp.ClientError as exc:
         return {"ok": False,
@@ -6308,15 +6378,25 @@ async def api_maker_status():
     running = _maker_running()
     info = managed.get(MAKER_NAME)
     pid = info["proc"].pid if running and info else None
+    # When the maker is not running, do NOT surface the stale
+    # tmp/maker-status.json from the dead process (F27).
+    if not running:
+        return {
+            "running": False,
+            "pid": None,
+            "name": MAKER_NAME,
+            "levels": 0,
+            "errors": None,
+            "stale": True,
+        }
     stats = _read_maker_stats()
-    levels = stats.get("levels", 0)
-    errors = stats.get("errors", [])
     return {
-        "running": running,
+        "running": True,
         "pid": pid,
         "name": MAKER_NAME,
-        "levels": levels,
-        "errors": errors,
+        "levels": stats.get("levels", 0),
+        "errors": stats.get("errors", []),
+        "stale": False,
     }
 
 
