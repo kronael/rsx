@@ -1956,18 +1956,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsx-maker"
-version = "0.2.0"
-dependencies = [
- "libc",
- "rsx-types",
- "serde_json",
- "tracing",
- "tracing-subscriber",
- "tungstenite",
-]
-
-[[package]]
 name = "rsx-mark"
 version = "0.2.0"
 dependencies = [
