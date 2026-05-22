@@ -5,7 +5,7 @@
        play-infra play-orders play-nav play-api \
        play-full \
        api-unit api-integration api-stress \
-       bench-webui bench-gate bench-save latency-publish help check-progress acceptance-bundle \
+       bench-webui bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help check-progress acceptance-bundle \
        gen-release-truth release-gate \
        lint-snapshot lint-snapshot-tests ci-guard publish-progress regen-progress exit-criteria task-report status-doctor \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
@@ -320,6 +320,21 @@ bench-save:
 # Default N=2000; override with N=10000 etc.
 latency-publish:
 	bash scripts/latency-publish.sh
+
+# E2E latency regression gate. Drives latency-publish under
+# a small N (default 200), compares the resulting e2e_us.p50
+# against a sealed reference (bench-reference.json), fails
+# if p50 regresses more than THRESHOLD% (default 10).
+# specs/2/22-perf-verification.md §4 specifies this gate.
+# Pre: cluster up via `./rsx-playground/playground start-all`.
+bench-gate-e2e:
+	bash scripts/bench-gate-e2e.sh
+
+# Snapshot the current measured e2e_us into bench-reference.json.
+# Use this only when intentionally accepting a new floor
+# (e.g. after a deliberate optimisation). Commit the result.
+bench-gate-e2e-save:
+	bash scripts/bench-gate-e2e.sh --save-reference
 
 # WebUI render benchmark: measures p50/p95/p99 React render latency
 # per orderbook delta update. Asserts p95 < 16ms (one rAF frame).

@@ -59,13 +59,36 @@ React render benchmark for orderbook deltas (asserts p95
 
 ## 2. Regression gate (shipped)
 
-`scripts/bench-gate.sh` parses Criterion estimates and
-fails on >10% slowdown vs a saved baseline.
+Two gates live in `scripts/`. Both fail on >10% slowdown
+against a saved reference, but they measure different
+things and have different operational requirements.
+
+**`scripts/bench-gate.sh` — Criterion microbench gate.**
+Parses Criterion estimates, compares against
+`bench-baseline.json`. No cluster required.
 
 ```
-make bench-save   # save current run as baseline
+make bench-save   # save current Criterion run as baseline
 make bench-gate   # diff current run against baseline
 ```
+
+**`scripts/bench-gate-e2e.sh` — E2E latency gate.**
+Drives `latency-publish.sh` under a small N, reads the
+resulting `e2e_us.p50` from `bench-baseline.json`, and
+compares against a **sealed** reference in
+`bench-reference.json`. Requires the cluster to be live
+(`./rsx-playground/playground start-all`).
+
+```
+make bench-gate-e2e-save  # snapshot current e2e_us as reference
+make bench-gate-e2e       # fail if p50 regresses >10%
+```
+
+`bench-baseline.json` is rolling — `make latency-publish`
+rewrites the `e2e_us` block on every run. `bench-reference.json`
+only changes when the operator explicitly accepts a new
+floor with `make bench-gate-e2e-save`. This split prevents
+the silent baseline-creep that would hide regressions.
 
 Implementation: pure bash + jq, no Python or npm. Reads
 `target/criterion/<name>/new/estimates.json`, extracts
