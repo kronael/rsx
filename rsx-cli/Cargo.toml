@@ -11,11 +11,19 @@ path = "src/main.rs"
 name = "bench-probe"
 path = "src/bench_probe.rs"
 
+[[bin]]
+name = "bench-e2e-pipeline"
+path = "src/bin/bench_e2e_pipeline.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
 rsx-dxs = { path = "../rsx-dxs" }
 rsx-messages = { path = "../rsx-messages" }
+rsx-book = { path = "../rsx-book" }
+rsx-matching = { path = "../rsx-matching" }
+rsx-types = { path = "../rsx-types" }
+rustc-hash = "2"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "io-util"] }
 tokio-tungstenite = "0.24"
@@ -24,4 +32,3 @@ jsonwebtoken = "9"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-rsx-types = { path = "../rsx-types" }
