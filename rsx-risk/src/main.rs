@@ -733,6 +733,41 @@ fn run_main(
                     ) {
                         warn!("risk: forward fill to gw failed: {e}");
                     }
+                    // Sub-stage: CMP send to gateway completed.
+                    // Anchor on the same taker_ts_ns used by
+                    // risk_out (with the >2024 plausibility
+                    // guard).
+                    {
+                        let now_ns =
+                            std::time::SystemTime::now()
+                                .duration_since(
+                                    std::time::UNIX_EPOCH,
+                                )
+                                .map(|d| d.as_nanos() as u64)
+                                .unwrap_or(0);
+                        let anchor_ns =
+                            if fill.taker_ts_ns
+                                > 1_700_000_000_000_000_000
+                            {
+                                fill.taker_ts_ns
+                            } else {
+                                fill.ts_ns
+                            };
+                        let t_us = now_ns
+                            .saturating_sub(anchor_ns)
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "risk_cmp_send_done",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                fill.taker_order_id_hi,
+                                fill.taker_order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = anchor_ns,
+                        );
+                    }
                 }
                 RECORD_ORDER_DONE
                     if payload.len()

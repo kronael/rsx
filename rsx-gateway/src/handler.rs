@@ -88,8 +88,25 @@ pub async fn handle_connection(
     info!("connection {} user {}", conn_id, user_id);
 
     loop {
+        // Sub-stage: top of the per-connection loop, about
+        // to drain outbound. Loop-level emission (no oid
+        // context yet); anchor t0_ns on the current wall
+        // clock so the gap between consecutive
+        // gateway_outbound_drain_start lines shows how long
+        // the loop blocks in readable() between iterations.
+        {
+            let now_ns = time_ns();
+            tracing::info!(
+                target: "latency",
+                stage = "gateway_outbound_drain_start",
+                conn_id,
+                t_us = 0u64,
+                t0_ns = now_ns,
+            );
+        }
         let msgs =
             state.borrow_mut().drain_outbound(conn_id);
+        let drained_n = msgs.len();
         for msg in msgs {
             if let Err(e) =
                 ws_write_text(&mut stream, msg.as_bytes())
@@ -101,6 +118,19 @@ pub async fn handle_connection(
                     .remove_connection(conn_id);
                 return;
             }
+        }
+        // Sub-stage: drain finished. t_us = wall-clock delta
+        // since drain_start (this iteration only).
+        {
+            let now_ns = time_ns();
+            tracing::info!(
+                target: "latency",
+                stage = "gateway_outbound_drain_done",
+                conn_id,
+                drained_n,
+                t_us = 0u64,
+                t0_ns = now_ns,
+            );
         }
 
         // Heartbeat: send if interval elapsed

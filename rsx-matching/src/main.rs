@@ -479,6 +479,25 @@ fn main() {
                     order_msg.order_id_hi,
                     order_msg.order_id_lo,
                 );
+                // Sub-stage: dedup completed (after FxHashMap
+                // insert). Anchored on the same t0 as me_in.
+                {
+                    let now_ns = time_ns();
+                    let t_us = now_ns
+                        .saturating_sub(order_msg.timestamp_ns)
+                        / 1000;
+                    tracing::info!(
+                        target: "latency",
+                        stage = "me_dedup_done",
+                        oid = format!(
+                            "{:016x}{:016x}",
+                            order_msg.order_id_hi,
+                            order_msg.order_id_lo,
+                        ),
+                        t_us,
+                        t0_ns = order_msg.timestamp_ns,
+                    );
+                }
 
                 if is_dup {
                     let ts = time_ns();
@@ -526,12 +545,52 @@ fn main() {
                     wal_writer
                         .append(&mut accepted)
                         .expect("wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay");
+                    // Sub-stage: OrderAcceptedRecord appended.
+                    {
+                        let now_ns = time_ns();
+                        let t_us = now_ns
+                            .saturating_sub(
+                                order_msg.timestamp_ns,
+                            )
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "me_wal_accepted_done",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                order_msg.order_id_hi,
+                                order_msg.order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = order_msg.timestamp_ns,
+                        );
+                    }
 
                     let mut incoming =
                         order_msg.to_incoming();
                     process_new_order(
                         &mut book, &mut incoming,
                     );
+                    // Sub-stage: match cycle finished.
+                    {
+                        let now_ns = time_ns();
+                        let t_us = now_ns
+                            .saturating_sub(
+                                order_msg.timestamp_ns,
+                            )
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "me_match_done",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                order_msg.order_id_hi,
+                                order_msg.order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = order_msg.timestamp_ns,
+                        );
+                    }
 
                     // Write events to WAL — authoritative,
                     // crash on failure rather than lose fills.
@@ -543,6 +602,26 @@ fn main() {
                         ts_ns,
                     )
                     .expect("wal append failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
+                    // Sub-stage: events flushed to WAL.
+                    {
+                        let now_ns = time_ns();
+                        let t_us = now_ns
+                            .saturating_sub(
+                                order_msg.timestamp_ns,
+                            )
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "me_wal_events_done",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                order_msg.order_id_hi,
+                                order_msg.order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = order_msg.timestamp_ns,
+                        );
+                    }
 
                     // Maintain the (user, oid) -> handle
                     // index so subsequent cancels are O(1).
@@ -550,6 +629,26 @@ fn main() {
                         book.events(),
                         &mut order_index,
                     );
+                    // Sub-stage: order index updated.
+                    {
+                        let now_ns = time_ns();
+                        let t_us = now_ns
+                            .saturating_sub(
+                                order_msg.timestamp_ns,
+                            )
+                            / 1000;
+                        tracing::info!(
+                            target: "latency",
+                            stage = "me_index_done",
+                            oid = format!(
+                                "{:016x}{:016x}",
+                                order_msg.order_id_hi,
+                                order_msg.order_id_lo,
+                            ),
+                            t_us,
+                            t0_ns = order_msg.timestamp_ns,
+                        );
+                    }
 
                     // F4.3 — per-stage latency trace. Stage
                     // `me_out` = ME finished matching and is

@@ -57,6 +57,16 @@ pub fn route_fill(
         rec.ts_ns
     };
     let t_us = now_ns.saturating_sub(anchor_ns) / 1000;
+    // Sub-stage: serialize completed. Captured BEFORE the
+    // gateway_out emission so we can attribute the serde_json
+    // cost separately from the tracing emission itself.
+    tracing::info!(
+        target: "latency",
+        stage = "gateway_route_serialize_done",
+        oid = %taker_oid,
+        t_us,
+        t0_ns = anchor_ns,
+    );
     tracing::info!(
         target: "latency",
         stage = "gateway_out",
@@ -67,6 +77,21 @@ pub fn route_fill(
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());
     st.push_to_user(rec.maker_user_id, msg);
+    drop(st);
+    // Sub-stage: both push_to_user calls completed (both
+    // outbound VecDeques now hold the fill frame).
+    let now_ns2 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let t_us2 = now_ns2.saturating_sub(anchor_ns) / 1000;
+    tracing::info!(
+        target: "latency",
+        stage = "gateway_route_push_done",
+        oid = %taker_oid,
+        t_us = t_us2,
+        t0_ns = anchor_ns,
+    );
 }
 
 pub fn route_order_inserted(
