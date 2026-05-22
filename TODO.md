@@ -86,6 +86,45 @@ is the light backlog — items not yet a ship project.
   `"%H:%M:%S"` strings; they are silently skipped.
 - Normalize `ts` to float at order entry, or parse strings.
 
+## Oracle pass 2 (codex, verified) — perf/telemetry lies
+
+### F21 (critical): `/x/core-affinity` invents core # from list index
+- `server.py:3172` → `pages.py:2665`. `Core {i}` = enumerate
+  index, no affinity mask read. Damning given the pinned-core
+  pitch. Read `sched_getaffinity` or remove the panel.
+
+### F22 (critical): latency-probe accepts ANY `"F"` frame
+- `server.py:5994`. Returns first frame with an `"F"` key
+  without matching the probe `cid`; echoes the probe cid so it
+  looks matched. Headline latency can be an unrelated fill.
+- Fix: match the fill's cid/oid to the probe's before timing.
+
+### F23 (important): latency-regression mislabels gateway RTT
+- `server.py:3451` + `/api/latency` 5885. `order_latencies` is
+  gateway-response time (incl. rejects/resting), labeled
+  `GW→ME→GW p99`. Relabel or measure the real round-trip.
+
+### F24 (important): invariant-status green on empty cache
+- `server.py:3165`. Empty `verify_results` renders "All
+  passing". Render UNKNOWN until a check has actually run.
+
+### F25 (important): ring-pressure faked from WAL lag
+- `server.py:3159` → `pages.py:2560`. `pct = lag_mb * 10`. No
+  ring telemetry exists (rtrb is intra-process Rust). Label
+  "derived from WAL lag" or remove.
+
+### F26 (important): key-metrics Msgs/sec = lifetime average
+- `server.py:3088`. `len(recent_orders) / (now - SERVER_START)`
+  decays toward zero. Use a recent sampling window.
+
+### F27 (important): maker/status serves stale file after exit
+- `server.py:6306`. Reads `tmp/maker-status.json` even when
+  `running` is false. Zero the stats (or mark stale) when down.
+
+### F28 (nice-to-have): stress/reports hides corrupt files
+- `server.py:5223`. `except Exception: continue` drops
+  malformed reports. Surface them as corrupt instead.
+
 ## Carry from v0.2.0 (CHANGELOG)
 
 - **JtiTracker wire-through** — bounded replay set is built
