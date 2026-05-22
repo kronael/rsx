@@ -469,6 +469,15 @@ fn ws_handshake_responds_101() {
     use std::time::UNIX_EPOCH;
 
     let secret = "test-secret-padded-to-32-bytes-minlen!";
+    // Unique jti per run — the process-wide JtiTracker is
+    // static and rejects replays across tests.
+    let jti = format!(
+        "rest-101-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
     let claims = Claims {
         sub: "github:1".to_string(),
         user_id: Some(1),
@@ -480,7 +489,7 @@ fn ws_handshake_responds_101() {
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
         nbf: None,
-        jti: None,
+        jti: Some(jti),
     };
     let token = encode(
         &Header::new(Algorithm::HS256),

@@ -52,3 +52,22 @@ def test_null_email_is_allowed():
         email=None, secret=SECRET, ttl_s=3600)
     claims = jwt_util.verify(token, SECRET)
     assert claims["email"] is None
+
+
+def test_issue_emits_unique_jti():
+    """Every minted token carries a unique `jti` claim so the
+    gateway's JtiTracker can reject replay (CTO-REPORT.md R3,
+    SYNTHESIS.md F2.1)."""
+    t1 = jwt_util.issue(
+        user_id=1, provider="github", provider_sub="1",
+        email=None, secret=SECRET, ttl_s=3600)
+    t2 = jwt_util.issue(
+        user_id=1, provider="github", provider_sub="1",
+        email=None, secret=SECRET, ttl_s=3600)
+    c1 = jwt_util.verify(t1, SECRET)
+    c2 = jwt_util.verify(t2, SECRET)
+    assert "jti" in c1 and isinstance(c1["jti"], str)
+    assert "jti" in c2 and isinstance(c2["jti"], str)
+    assert c1["jti"] != c2["jti"]
+    # uuid4().hex => 32 lowercase hex chars
+    assert len(c1["jti"]) == 32
