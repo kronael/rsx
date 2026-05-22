@@ -17,38 +17,22 @@ the light backlog — items not yet a ship project.
 - ✅ `rsx-book` eprintln → tracing (`bbb0f9f`)
 - ✅ `rsx-dxs` 8 MB UDP recv buffer (sustained_throughput stable) (`2fe18e8`)
 - ✅ clippy 1.93 gate cleared (`533ccf9`)
+- ✅ F21-F28 second oracle pass: real affinity, cid-matched
+     probe, honest labels (`596d24a`)
+- ✅ JtiTracker wire-through ws_handshake (process-wide,
+     16K cap, replay rejected with 401) (`72bd481`)
+- ✅ BLOG.md reframe + first reliable e2e baseline post-F22
+     (p50=11778 µs, p99=347755 µs — the previous capture's
+     p99 was undermeasured 7×) (`82f096d`)
+
+All 28 audit findings closed. v0.2.0 carry-over fully cleared.
 
 ## Open
 
-### F21-F28 — second oracle pass (agent in flight)
-
-See `.ship/15-PLAYGROUND-AUDIT/FINDINGS.md` "Oracle pass 2".
-The two critical ones for a latency-focused exchange:
-
-- **F21** `/x/core-affinity` invents `Core {i}` from list
-  index. Need `os.sched_getaffinity(pid)` or remove the panel.
-- **F22** `/api/latency-probe` returns the first frame with
-  an `"F"` key without matching the probe `cid`. THE headline
-  GW→ME→GW number; can be an unrelated maker fill.
-
-Plus F23-F28 (latency-regression relabel, invariant-status
-UNKNOWN-when-empty, ring-pressure relabel, msgs/sec sliding
-window, maker/status stale flag, stress/reports surface
-corrupt files).
-
-### Carry from v0.2.0
-
-- **JtiTracker wire-through** (`rsx-gateway/src/ws.rs:109`).
-  Decision pending: per-process tracker vs shared Redis.
-  Per WEDGE.md (B+A: SDK on open-source orthogonal parts),
-  per-process is the smaller scope.
-- **Measured E2E latency** in `bench-baseline.json`. First
-  capture at p50 = 11.7 ms (234× over <50 µs budget) is
-  unreliable until F22 lands — the probe was timing unrelated
-  fills. Re-capture after F1 + F22 + risk index (`3d151f1`).
-- **BLOG.md narrative reframe** per WEDGE.md (B+A: SDK on
-  open-source orthogonal parts). Editorial; blocked on
-  finishing F21-F28.
+(empty — next up is a v0.3.0 release candidate. The natural
+v0.3 scope: publish `rsx-dxs` to crates.io with a non-exchange
+worked example, draft the SDK packaging that turns the 12
+crates into an embeddable "exchange-in-a-box" per WEDGE.md.)
 
 ## Backlog
 
