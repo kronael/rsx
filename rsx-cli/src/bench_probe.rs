@@ -312,7 +312,10 @@ async fn one_probe(
                 if want == got {
                     let elapsed_ns = t0.elapsed().as_nanos();
                     let elapsed_us = (elapsed_ns / 1000).max(1) as u64;
-                    let _ = ws.close(None).await;
+                    // SAFETY: best-effort close; we have
+                    // the measurement and are returning
+                    // regardless of socket close outcome.
+                    let _close = ws.close(None).await;
                     return Ok((elapsed_us, skipped));
                 }
             }

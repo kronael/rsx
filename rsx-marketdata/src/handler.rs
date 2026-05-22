@@ -96,7 +96,11 @@ pub async fn handle_connection(
                         max_outbound,
                     );
                 }
-                let _ = is_new;
+                // SAFETY: is_new only matters for first-
+                // time subscribers; we already sent a
+                // snapshot above so the boolean is
+                // intentionally unused here.
+                let _new_subscriber = is_new;
             }
             Ok(MdFrame::Unsubscribe {
                 symbol_id,
@@ -112,7 +116,10 @@ pub async fn handle_connection(
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
                 let echo = format!("{{\"H\":[{}]}}", timestamp_ms);
-                let _ = st.push_to_client(
+                // SAFETY: heartbeat echo is best-effort;
+                // a slow client with full outbound has
+                // bigger problems than a missed pong.
+                let _accepted = st.push_to_client(
                     conn_id,
                     echo,
                     max_outbound,

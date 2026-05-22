@@ -532,7 +532,10 @@ fn broadcast_updates(
             if st.has_bbo(client_id, symbol_id) {
                 // HEAP: fan-out clone of BBO JSON per BBO subscriber.
                 // Same rationale as delta clone above.
-                let _ = st.push_to_client(
+                // SAFETY: BBO is "latest wins" state; if
+                // client outbound is full the next BBO
+                // update supersedes anyway.
+                let _accepted = st.push_to_client(
                     client_id,
                     msg.clone(),
                     max_outbound,

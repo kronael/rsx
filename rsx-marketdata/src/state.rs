@@ -275,7 +275,12 @@ impl MarketDataState {
             let clients = self.subs.clients_for_symbol(symbol_id);
             for client_id in clients {
                 if self.subs.has_depth(client_id, symbol_id) {
-                    let _ = self.push_to_client(
+                    // SAFETY: push_to_client returns
+                    // false when a slow client's outbound
+                    // is full. Snapshot resend is a
+                    // best-effort recovery hint -- the
+                    // next snapshot tick will retry.
+                    let _accepted = self.push_to_client(
                         client_id,
                         snapshot.clone(),
                         max_outbound,
@@ -298,7 +303,11 @@ impl MarketDataState {
         }
         if let Some(snapshot) = self.snapshot_msg(symbol_id, depth)
         {
-            let _ = self.push_to_client(
+            // SAFETY: returns false on full outbound;
+            // we just cleared the buffer above so this
+            // is only ever full for an explicitly
+            // disconnected client, which is acceptable.
+            let _accepted = self.push_to_client(
                 client_id,
                 snapshot,
                 max_outbound,
