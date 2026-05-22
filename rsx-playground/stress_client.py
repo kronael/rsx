@@ -4,6 +4,7 @@ Integrated with playground API for real load testing
 """
 
 import asyncio
+import uuid
 import json
 import os
 import time
@@ -65,6 +66,7 @@ class StressClient:
             "exp": int(time.time()) + 3600,
             "aud": "rsx-gateway",
             "iss": "rsx-auth",
+            "jti": uuid.uuid4().hex,
         }
         return pyjwt.encode(
             payload,
@@ -200,6 +202,7 @@ async def _probe_gateway(
             "exp": int(time.time()) + 3600,
             "aud": "rsx-gateway",
             "iss": "rsx-auth",
+            "jti": uuid.uuid4().hex,
         },
         secret,
         algorithm="HS256",

@@ -8,6 +8,7 @@ Run with: python -m pytest tests/stress_integration_test.py -v
 """
 
 import asyncio
+import uuid
 import json
 import os
 import time
@@ -44,6 +45,7 @@ def jwt_for(user_id: int, secret: str = GW_TEST_SECRET) -> str:
             "exp": int(time.time()) + 3600,
             "aud": "rsx-gateway",
             "iss": "rsx-auth",
+            "jti": uuid.uuid4().hex,
         },
         secret,
         algorithm="HS256",
@@ -289,6 +291,7 @@ async def test_ws_connect_wrong_secret_jwt(gateway):
             "exp": int(time.time()) + 3600,
             "aud": "rsx-gateway",
             "iss": "rsx-auth",
+            "jti": uuid.uuid4().hex,
         },
         "wrong-secret-32-bytes-aaaaaaaaaaa",
         algorithm="HS256",
@@ -309,6 +312,7 @@ async def test_ws_connect_expired_jwt(gateway):
             "exp": int(time.time()) - 3600,
             "aud": "rsx-gateway",
             "iss": "rsx-auth",
+            "jti": uuid.uuid4().hex,
         },
         GW_TEST_SECRET,
         algorithm="HS256",

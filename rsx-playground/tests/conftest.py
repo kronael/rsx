@@ -10,6 +10,7 @@ def pytest_configure(config):
     )
 
 import asyncio
+import uuid
 import base64
 import json
 import os
