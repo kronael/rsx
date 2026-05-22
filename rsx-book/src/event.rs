@@ -1,7 +1,22 @@
 use rsx_types::Price;
 use rsx_types::Qty;
 
-pub const MAX_EVENTS: usize = 10_000;
+/// Per-order event buffer capacity. Reset to zero at the
+/// start of every `process_new_order` / `process_cancel`,
+/// so this bounds events from a single matching cascade,
+/// not the lifetime of the book.
+///
+/// Worst-case cascade: a market order sweeps every resting
+/// order. Each match emits at most 3 events
+/// (Fill + maker OrderDone + final BBO), plus one taker
+/// OrderDone. With a 65_536-event ceiling that allows
+/// ~21k resting fills in one cascade -- well past the
+/// per-symbol depth we ever expect.
+///
+/// Invariant: ME never drops events. `Orderbook::emit`
+/// panics if this bound is exceeded (which would indicate
+/// a runaway cascade and is unrecoverable on the hot path).
+pub const MAX_EVENTS: usize = 65_536;
 
 pub const REASON_FILLED: u8 = 0;
 pub const REASON_CANCELLED: u8 = 1;
