@@ -103,8 +103,10 @@ fn make_book_with_liquidity() -> Orderbook {
         process_new_order(&mut book, &mut bid);
         let mut ask = IncomingOrder {
             price: 100_500 + i as i64,
-            qty: 100,
-            remaining_qty: 100,
+            // Big enough that 10M iter taker buys of qty=1
+            // don't fully drain this ask level.
+            qty: 1_000_000_000,
+            remaining_qty: 1_000_000_000,
             side: Side::Sell,
             tif: TimeInForce::GTC,
             user_id: 200 + i as u32,
@@ -143,12 +145,11 @@ fn bench_me_accept_path(c: &mut Criterion) {
 
         b.iter(|| {
             counter += 1;
-            // Fresh resting bid one tick under best ask;
-            // exercises insert path (no fills).
+            // IOC buy at best ask: one fill, no resting.
+            // Slab stays bounded across the criterion run.
             let user_id = 1_000 + (counter % 1024) as u32;
             let oid_lo = counter;
 
-            // Dedup: production code calls this first.
             let is_dup = dedup.check_and_insert(
                 user_id,
                 0,
@@ -156,7 +157,6 @@ fn bench_me_accept_path(c: &mut Criterion) {
             );
             black_box(is_dup);
 
-            // Append OrderAcceptedRecord — same as ME main.
             let mut accepted = OrderAcceptedRecord {
                 seq: 0,
                 ts_ns: 1_700_000_000_000_000_000,
@@ -164,23 +164,22 @@ fn bench_me_accept_path(c: &mut Criterion) {
                 symbol_id: SYMBOL_ID,
                 order_id_hi: 0,
                 order_id_lo: oid_lo,
-                price: 99_400,
-                qty: 10,
+                price: 100_500,
+                qty: 1,
                 side: 0,
-                tif: 0,
+                tif: 1, // IOC
                 reduce_only: 0,
                 post_only: 0,
                 cid: [0; 20],
             };
             wal.append(&mut accepted).unwrap();
 
-            // Match.
             let mut incoming = IncomingOrder {
-                price: 99_400,
-                qty: 10,
-                remaining_qty: 10,
+                price: 100_500,
+                qty: 1,
+                remaining_qty: 1,
                 side: Side::Buy,
-                tif: TimeInForce::GTC,
+                tif: TimeInForce::IOC,
                 user_id,
                 reduce_only: false,
                 post_only: false,
