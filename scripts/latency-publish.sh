@@ -8,8 +8,8 @@
 # Pre-conditions:
 #   - rsx-playground/playground start-all is up (gateway,
 #     risk, ME, marketdata, mark, recorder all healthy)
-#   - rsx-maker is running (so probe orders match against
-#     resting liquidity)
+#   - market_maker.py is running (so probe orders match
+#     against resting liquidity)
 #   - The local test JWT secret is set in env (the playground
 #     mints one on `start-all`)
 #

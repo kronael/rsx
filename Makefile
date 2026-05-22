@@ -316,7 +316,8 @@ bench-save:
 
 # Drive the F1 latency probe under load and write measured
 # E2E p50/p99 (GW->ME->GW round trip) into bench-baseline.json.
-# Pre: rsx-playground/playground start-all && rsx-maker running.
+# Pre: rsx-playground/playground start-all (which starts the
+# Python market_maker.py — there is no Rust maker).
 # Default N=2000; override with N=10000 etc.
 latency-publish:
 	bash scripts/latency-publish.sh
