@@ -26,3 +26,15 @@ testcontainers-modules = { version = "0.11", features = ["postgres"] }
 [[bench]]
 name = "matching_bench"
 harness = false
+
+[[bench]]
+name = "process_order_bench"
+harness = false
+
+[[bench]]
+name = "match_n_levels_bench"
+harness = false
+
+[[bench]]
+name = "wal_replay_bench"
+harness = false

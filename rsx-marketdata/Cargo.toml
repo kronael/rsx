@@ -31,3 +31,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "marketdata_bench"
 harness = false
+
+[[bench]]
+name = "shadow_book_apply_bench"
+harness = false
