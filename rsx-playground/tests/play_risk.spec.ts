@@ -341,4 +341,20 @@ test.describe("Risk tab", () => {
       }
     },
   );
+
+  // F3.1: collateral / equity / IM / MM / notional must render as
+  // USD with $ + commas (format_notional), never bare i64.
+  test("risk_collateral_formatted_as_currency",
+    async ({ request }) => {
+      const r = await request.get("/x/risk-overview");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // Forbid the raw i64 the CEO captured ("999999972019150"
+      // and friends — any 13+ digit run is the smoking gun).
+      expect(html).not.toMatch(/\b\d{13,}\b/);
+      // Currency-shaped: at least one "$<digits>(,<digits>)*.<dd>"
+      // somewhere in the panel.
+      expect(html).toMatch(/\$\d{1,3}(?:,\d{3})*\.\d{2}/);
+    },
+  );
 });

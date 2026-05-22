@@ -3274,15 +3274,45 @@ async def x_core_affinity():
 
 @app.get("/x/cmp-flows", response_class=HTMLResponse)
 async def x_cmp_flows():
-    fills = 0
-    bbos = 0
+    # Per-pipe counters wired to per-process WAL streams so the
+    # three rows show distinct numbers under load (F3.4). Each
+    # process writes its own outbound CMP frames to its own WAL
+    # stream, so counting records on the producer's stream is
+    # the closest proxy without adding cross-process telemetry.
+    counts = _cached_for("cmp_pipe_counts", 1.0, _cmp_pipe_counts)
+    return HTMLResponse(pages.render_cmp_flows(counts))
+
+
+def _cmp_pipe_counts() -> dict:
+    """Count outbound CMP records per producer WAL stream.
+
+    Gateway -> Risk: orders accepted on the gateway WAL stream.
+    Risk -> ME: orders forwarded (accepted+failed) on the risk WAL.
+    ME -> Mktdata: fills + BBOs on the ME WAL.
+    """
+    gw_to_risk = 0
+    risk_to_me = 0
+    me_to_mkt = 0
     for sd in _wal_stream_dirs():
-        for r in parse_wal_records(sd, {RECORD_FILL}):
-            fills += 1
-        for r in parse_wal_records(sd, {RECORD_BBO}):
-            bbos += 1
-    return HTMLResponse(pages.render_cmp_flows(
-        {"fills": fills, "bbos": bbos}))
+        name = sd.name
+        if name.startswith("gw-") or name == "gateway":
+            for _ in parse_wal_records(
+                    sd, {RECORD_ORDER_ACCEPTED}):
+                gw_to_risk += 1
+        elif name.startswith("risk-") or name == "risk":
+            for _ in parse_wal_records(
+                    sd, {RECORD_ORDER_ACCEPTED,
+                          RECORD_ORDER_FAILED}):
+                risk_to_me += 1
+        elif name.startswith("me-") or name == "matching":
+            for _ in parse_wal_records(
+                    sd, {RECORD_FILL, RECORD_BBO}):
+                me_to_mkt += 1
+    return {
+        "gw_to_risk": gw_to_risk,
+        "risk_to_me": risk_to_me,
+        "me_to_mkt": me_to_mkt,
+    }
 
 
 @app.get("/x/control-grid", response_class=HTMLResponse)

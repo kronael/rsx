@@ -2737,25 +2737,24 @@ def render_core_affinity(processes):
 
 
 def render_cmp_flows(record_counts=None):
-    """CMP flow stats from WAL record counts.
+    """CMP flow stats from per-pipe WAL record counts.
 
-    ME publishes BOTH fills and BBOs to marketdata over the same
-    CMP channel; the audit observed marketdata visibly receiving
-    updates while ME→Mktdata stayed at Sent 0/Recv 0 because the
-    counter only summed BBO records. Use fills+bbos so the
-    counter tracks what marketdata is actually consuming.
+    Each pipe reads its own producer's WAL stream (F3.4):
+      Gateway -> Risk : RECORD_ORDER_ACCEPTED on gw-* WAL
+      Risk -> ME      : RECORD_ORDER_ACCEPTED+FAILED on risk-* WAL
+      ME -> Mktdata   : RECORD_FILL+BBO on me-* WAL
+    The three numbers come from three distinct streams, so the
+    earlier "1117/1117/1117" ghost (same source, three rows) is
+    structurally impossible now.
     """
     if record_counts:
-        f = record_counts.get("fills", 0)
-        b = record_counts.get("bbos", 0)
-        md = f + b
+        gw_r = record_counts.get("gw_to_risk", 0)
+        r_me = record_counts.get("risk_to_me", 0)
+        me_md = record_counts.get("me_to_mkt", 0)
         flows = [
-            ("Gateway -> Risk",
-             str(f + b), str(f + b), "0", "0"),
-            ("Risk -> ME",
-             str(f), str(f), "0", "0"),
-            ("ME -> Mktdata",
-             str(md), str(md), "0", "0"),
+            ("Gateway -> Risk", str(gw_r), str(gw_r), "0", "0"),
+            ("Risk -> ME", str(r_me), str(r_me), "0", "0"),
+            ("ME -> Mktdata", str(me_md), str(me_md), "0", "0"),
         ]
     else:
         flows = [

@@ -239,6 +239,41 @@ test.describe("Topology tab", () => {
     },
   );
 
+  // F3.4: the three CMP pipes pulled from one source repeated
+  // the same number three times ("1117 / 1117 / 1117"). Per-pipe
+  // counters now come from per-process WAL streams. Under load
+  // (any maker traffic), the three should diverge. With a cold
+  // cluster every count is 0 — also acceptable. The forbidden
+  // shape is three identical non-zero numbers.
+  test("cmp_flow_counters_distinct_per_pipe",
+    async ({ request }) => {
+      const r = await request.get("/x/cmp-flows");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      const tds = [
+        ...html.matchAll(/<td[^>]*>([^<]*)<\/td>/g),
+      ].map((m) => m[1].trim());
+      // Layout: [name, sent, recv, nak, drop] × 3
+      const sentG = tds[1];
+      const sentR = tds[6];
+      const sentM = tds[11];
+      // If any pipe is non-zero, at least one must differ from
+      // the other two — otherwise we're back to the "1117"
+      // ghost. Three "0"s on a cold cluster is fine.
+      const nums = [sentG, sentR, sentM]
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (nums.length > 0) {
+        const allSame = nums.every((n) => n === nums[0])
+          && nums.length === 3;
+        expect(
+          allSame,
+          `cmp pipes all read ${nums[0]} — ghost is back`,
+        ).toBe(false);
+      }
+    },
+  );
+
   // F27: /api/maker/status must not echo stale
   // tmp/maker-status.json after the maker dies.
   test("maker_status_clears_stats_when_not_running (F27)",
