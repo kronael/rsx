@@ -132,6 +132,12 @@ fn main() {
 
     tracing_subscriber::fmt::init();
 
+    // Drain hot-path latency samples out-of-band
+    // (see rsx-types/src/latency.rs). 100 ms is a
+    // good compromise between dashboard freshness
+    // and drain-thread CPU.
+    rsx_types::latency::start_drainer(100);
+
     // SAFETY: fail-fast at startup
     let config = load_shard_config()
         .expect("failed to load shard config");
@@ -528,17 +534,7 @@ fn run_main(
                         let t_us = now_ns
                             .saturating_sub(order.timestamp_ns)
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "risk_in",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                order.order_id_hi,
-                                order.order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = order.timestamp_ns,
-                        );
+                        rsx_types::latency::emit("risk_in", order.order_id_hi, order.order_id_lo, t_us, order.timestamp_ns);
                     }
                     if order_prod.push(order).is_err() {
                         warn!(
@@ -671,17 +667,7 @@ fn run_main(
                         let t_us = now_ns
                             .saturating_sub(anchor_ns)
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "risk_out",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                fill.taker_order_id_hi,
-                                fill.taker_order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = anchor_ns,
-                        );
+                        rsx_types::latency::emit("risk_out", fill.taker_order_id_hi, fill.taker_order_id_lo, t_us, anchor_ns);
                     }
                     // Fills are correctness-critical:
                     // position == sum(fills). Stall and
@@ -756,17 +742,7 @@ fn run_main(
                         let t_us = now_ns
                             .saturating_sub(anchor_ns)
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "risk_cmp_send_done",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                fill.taker_order_id_hi,
-                                fill.taker_order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = anchor_ns,
-                        );
+                        rsx_types::latency::emit("risk_cmp_send_done", fill.taker_order_id_hi, fill.taker_order_id_lo, t_us, anchor_ns);
                     }
                 }
                 RECORD_ORDER_DONE

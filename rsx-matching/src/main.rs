@@ -183,6 +183,12 @@ fn main() {
 
     tracing_subscriber::fmt::init();
 
+    // Drain hot-path latency samples out-of-band
+    // (see rsx-types/src/latency.rs). 100 ms is a
+    // good compromise between dashboard freshness
+    // and drain-thread CPU.
+    rsx_types::latency::start_drainer(100);
+
     let initial_config = match load_config_from_env() {
         Ok(c) => c,
         Err(e) => {
@@ -461,17 +467,7 @@ fn main() {
                     let t_us = now_ns
                         .saturating_sub(order_msg.timestamp_ns)
                         / 1000;
-                    tracing::info!(
-                        target: "latency",
-                        stage = "me_in",
-                        oid = format!(
-                            "{:016x}{:016x}",
-                            order_msg.order_id_hi,
-                            order_msg.order_id_lo,
-                        ),
-                        t_us,
-                        t0_ns = order_msg.timestamp_ns,
-                    );
+                    rsx_types::latency::emit("me_in", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                 }
                 // Dedup check
                 let is_dup = dedup.check_and_insert(
@@ -486,17 +482,7 @@ fn main() {
                     let t_us = now_ns
                         .saturating_sub(order_msg.timestamp_ns)
                         / 1000;
-                    tracing::info!(
-                        target: "latency",
-                        stage = "me_dedup_done",
-                        oid = format!(
-                            "{:016x}{:016x}",
-                            order_msg.order_id_hi,
-                            order_msg.order_id_lo,
-                        ),
-                        t_us,
-                        t0_ns = order_msg.timestamp_ns,
-                    );
+                    rsx_types::latency::emit("me_dedup_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                 }
 
                 if is_dup {
@@ -553,17 +539,7 @@ fn main() {
                                 order_msg.timestamp_ns,
                             )
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "me_wal_accepted_done",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                order_msg.order_id_hi,
-                                order_msg.order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = order_msg.timestamp_ns,
-                        );
+                        rsx_types::latency::emit("me_wal_accepted_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                     }
 
                     let mut incoming =
@@ -579,17 +555,7 @@ fn main() {
                                 order_msg.timestamp_ns,
                             )
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "me_match_done",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                order_msg.order_id_hi,
-                                order_msg.order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = order_msg.timestamp_ns,
-                        );
+                        rsx_types::latency::emit("me_match_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                     }
 
                     // Write events to WAL — authoritative,
@@ -610,17 +576,7 @@ fn main() {
                                 order_msg.timestamp_ns,
                             )
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "me_wal_events_done",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                order_msg.order_id_hi,
-                                order_msg.order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = order_msg.timestamp_ns,
-                        );
+                        rsx_types::latency::emit("me_wal_events_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                     }
 
                     // Maintain the (user, oid) -> handle
@@ -637,17 +593,7 @@ fn main() {
                                 order_msg.timestamp_ns,
                             )
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "me_index_done",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                order_msg.order_id_hi,
-                                order_msg.order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = order_msg.timestamp_ns,
-                        );
+                        rsx_types::latency::emit("me_index_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                     }
 
                     // F4.3 — per-stage latency trace. Stage
@@ -663,17 +609,7 @@ fn main() {
                                 order_msg.timestamp_ns,
                             )
                             / 1000;
-                        tracing::info!(
-                            target: "latency",
-                            stage = "me_out",
-                            oid = format!(
-                                "{:016x}{:016x}",
-                                order_msg.order_id_hi,
-                                order_msg.order_id_lo,
-                            ),
-                            t_us,
-                            t0_ns = order_msg.timestamp_ns,
-                        );
+                        rsx_types::latency::emit("me_out", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                     }
                     // CMP sends are best-effort: receivers
                     // recover via NAK / TCP replay.

@@ -7,6 +7,7 @@
 //!
 //! Used by every other rsx-* crate.
 
+pub mod latency;
 pub mod macros;
 pub mod time;
 
