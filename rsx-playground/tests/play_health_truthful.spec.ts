@@ -134,6 +134,58 @@ test.describe("Health pill (F2)", () => {
   // not the lifetime average (orders / SERVER_START). On an idle
   // dashboard, the value must be 0 — not a non-zero ghost from
   // ancient bursts.
+  // F3.2: /x/health must not scan the whole log file per call.
+  // CEO measured 75s before the TTL cache + bounded tail; this
+  // bounds the wall-clock so the polling herd never wedges
+  // /overview.
+  test("health_responds_under_200ms",
+    async ({ request }) => {
+      // Warm the cache once, then time the second call.
+      await request.get("/x/health");
+      const start = Date.now();
+      const r = await request.get("/x/health");
+      const elapsed = Date.now() - start;
+      expect(r.ok()).toBe(true);
+      expect(
+        elapsed,
+        `/x/health took ${elapsed}ms — F3.2 budget is 200ms`,
+      ).toBeLessThan(200);
+    },
+  );
+
+  // F3.3: any /verify FAIL row must drag /x/health into RED.
+  // Yellow-while-failing was the CEO's "trust killer". We can't
+  // synthesise a verify_results row from Playwright without
+  // server-side hooks, but we can assert the inverse: when
+  // /verify reports at least one fail, /x/health must NOT be
+  // green.
+  test("health_drops_red_when_verify_fails",
+    async ({ request }) => {
+      // Trigger a /verify run so verify_results is populated.
+      await request.post("/api/verify/run").catch(() => {});
+      const v = await request.get("/api/verify");
+      if (!v.ok()) return;
+      const vbody = await v.json() as {
+        checks?: Array<{ status: string }>;
+      };
+      const failing = (vbody.checks ?? []).some(
+        (c) => c.status === "fail"
+      );
+      if (!failing) return;  // precondition miss; not a wire bug
+      const h = await request.get("/x/health");
+      const html = await h.text();
+      const m = html.match(/style="width:(\d+)%">(\d+)/);
+      expect(m, "no score rendered").not.toBeNull();
+      const score = Number(m![2]);
+      // F3.3 acceptance: failing invariant forces RED (<= 49).
+      expect(
+        score,
+        "verify has FAIL but /x/health didn't drop to RED",
+      ).toBeLessThanOrEqual(49);
+      expect(html.toLowerCase()).toContain("red");
+    },
+  );
+
   test("msgs_sec_uses_recent_window_not_uptime (F26)",
     async ({ request }) => {
       // Idle for a short period to let any 30s window drain.

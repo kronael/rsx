@@ -2978,8 +2978,8 @@ async def _htmx_500(request: Request, exc: Exception):
 
 @app.get("/x/processes", response_class=HTMLResponse)
 async def x_processes():
-    return HTMLResponse(
-        pages.render_process_table(scan_processes()))
+    procs = _cached_for("procs", 1.0, scan_processes)
+    return HTMLResponse(pages.render_process_table(procs))
 
 
 _BENCH_BASELINE_FILE = ROOT / "bench-baseline.json"
@@ -2994,6 +2994,29 @@ def _read_baseline_e2e_p99_us() -> float | None:
         return None
 
 
+# ── F3.2: TTL cache for thundering-herd HTMX polling ─────
+# HTMX panels poll every 2-5s; the playground's expensive
+# aggregates (scan_processes, parse_wal_*, log tails)
+# previously ran per-request, so 5-10 simultaneous panel polls
+# stacked head-to-tail and /x/health alone wedged for ~75s.
+# A 1-second TTL is invisible to the operator and collapses
+# the herd onto a single computation.
+_TTL_CACHE: dict[str, tuple[float, object]] = {}
+
+
+def _cached_for(key: str, ttl_seconds: float, compute_fn):
+    """Return cached value or recompute if older than ttl."""
+    now = time.time()
+    hit = _TTL_CACHE.get(key)
+    if hit is not None:
+        ts, val = hit
+        if now - ts < ttl_seconds:
+            return val
+    val = compute_fn()
+    _TTL_CACHE[key] = (now, val)
+    return val
+
+
 def _compute_health() -> dict:
     """Compute truthful health score.
 
@@ -3001,10 +3024,11 @@ def _compute_health() -> dict:
       - process restart count (any process restarted = -10/restart)
       - latency p99 ≥ 2× baseline (-30)
       - recent ERROR / panic lines in logs (-5 per up to 6)
+      - any /verify entry with status == "fail" forces RED (≤49)
     Returns dict with score, label, reasons. Returns
     {"score": None} when we genuinely don't know.
     """
-    procs = scan_processes()
+    procs = _cached_for("procs", 1.0, scan_processes)
     if not procs:
         return {"score": None, "label": "unknown",
                 "reasons": ["no processes scanned"]}
@@ -3039,16 +3063,14 @@ def _compute_health() -> dict:
                 f"-30 (p99 {int(cur_p99)}us "
                 f"> 2x baseline {int(base_p99)}us)"
             )
-    # Recent error / panic lines across log files.
+    # Recent error / panic lines across log files. Read only
+    # the trailing 64 KB of each log (not the entire file) so
+    # /x/health stays fast on multi-megabyte logs.
     err_count = 0
     panic_seen = False
     if LOG_DIR.exists():
         for lf in sorted(LOG_DIR.glob("*.log")):
-            try:
-                tail = lf.read_text().splitlines()[-200:]
-            except OSError:
-                continue
-            for line in tail:
+            for line in _tail_lines(lf, max_lines=200):
                 low = line.lower()
                 if "panicked at" in low or "fatal" in low:
                     panic_seen = True
@@ -3064,6 +3086,19 @@ def _compute_health() -> dict:
         reasons.append(
             f"-{penalty} ({err_count} error lines)"
         )
+    # F3.3: failing-invariant → RED. /verify FAIL rows are
+    # correctness violations; they must not coexist with a
+    # YELLOW score. Force the score to ≤49 (RED band) so the
+    # /x/health pill reflects the /verify truth on the next poll.
+    fail_count = sum(
+        1 for v in verify_results
+        if str(v.get("status", "")).lower() == "fail"
+    )
+    if fail_count > 0:
+        score = min(score, 49)
+        reasons.append(
+            f"RED ({fail_count} verify fail{'s' if fail_count != 1 else ''})"
+        )
     score = max(0, score)
     if score >= 80:
         label = "green"
@@ -3076,8 +3111,39 @@ def _compute_health() -> dict:
 
 @app.get("/x/health", response_class=HTMLResponse)
 async def x_health():
-    h = _compute_health()
+    h = _cached_for("health", 1.0, _compute_health)
     return HTMLResponse(pages.render_health_score(h))
+
+
+def _tail_lines(path: Path, max_lines: int = 200,
+                window_bytes: int = 65_536) -> list[str]:
+    """Return the last `max_lines` lines of `path`.
+
+    Reads at most `window_bytes` from the tail so log-scanning
+    stays bounded as files grow. Returns [] on any I/O error.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+    if size <= 0:
+        return []
+    start = max(0, size - window_bytes)
+    try:
+        with path.open("rb") as fh:
+            fh.seek(start)
+            data = fh.read()
+    except OSError:
+        return []
+    try:
+        text = data.decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    lines = text.splitlines()
+    if start > 0 and lines:
+        # First (possibly truncated) line may be a partial — drop it
+        lines = lines[1:]
+    return lines[-max_lines:]
 
 
 def _count_recent_errors(max_lines: int = 200) -> int:
@@ -3091,11 +3157,7 @@ def _count_recent_errors(max_lines: int = 200) -> int:
     if not LOG_DIR.exists():
         return 0
     for lf in LOG_DIR.glob("*.log"):
-        try:
-            tail = lf.read_text().splitlines()[-max_lines:]
-        except OSError:
-            continue
-        for line in tail:
+        for line in _tail_lines(lf, max_lines=max_lines):
             low = line.lower()
             if (" error " in low or " err " in low
                     or " warn " in low
@@ -3113,7 +3175,9 @@ async def x_key_metrics():
     ao = sum(
         1 for o in recent_orders
         if o.get("status", "") not in terminal)
-    fills = parse_wal_fills(max_fills=2000)
+    fills = _cached_for(
+        "wal_fills_2000", 1.0,
+        lambda: parse_wal_fills(max_fills=2000))
     pairs = set()
     for f in fills:
         taker = f.get("taker_uid", 0)
@@ -3133,23 +3197,26 @@ async def x_key_metrics():
     recent_in_window = sum(
         1 for ts in recent_order_ts if ts >= cutoff)
     mps = int(recent_in_window / window_s)
-    errs = _count_recent_errors()
+    errs = _cached_for(
+        "recent_errors", 1.0, _count_recent_errors)
+    procs = _cached_for("procs", 1.0, scan_processes)
+    streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
     return HTMLResponse(
         pages.render_key_metrics(
-            scan_processes(), scan_wal_streams(),
+            procs, streams,
             active_orders=ao, positions=pos_count,
             msgs_sec=mps, error_count=errs))
 
 
 @app.get("/x/pulse", response_class=HTMLResponse)
 async def x_pulse():
-    procs = scan_processes()
+    procs = _cached_for("procs", 1.0, scan_processes)
     running = sum(
         1 for p in procs if p.get("state") == "running")
     # scan_processes() appends every expected plan entry as
     # "stopped" if absent, so len(procs) is the expected count.
     expected = len(procs)
-    streams = scan_wal_streams()
+    streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
     wal_files = sum(s.get("files", 0) for s in streams)
     elapsed = max(1, time.time() - SERVER_START)
     ops = int(len(recent_orders) / elapsed)
@@ -3159,7 +3226,8 @@ async def x_pulse():
     errs = sum(
         1 for o in recent_orders
         if o.get("status") in {"rejected", "failed"})
-    errs += _count_recent_errors()
+    errs += _cached_for(
+        "recent_errors", 1.0, _count_recent_errors)
 
     def _pill(label, value, color):
         return (
