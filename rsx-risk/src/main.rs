@@ -489,6 +489,13 @@ fn run_main(
     let mut last_lease_renew_secs = time();
     let lease_renew_interval_secs = (lease_renew_interval_ms / 1000).max(1);
 
+    // Backpressure counters: spin-stall on full producer ring
+    // and surface a WARN each time we yield to shard.run_once
+    // so this never silently drops correctness-critical events.
+    let mut fill_stalls: u64 = 0;
+    let mut bbo_drops: u64 = 0;
+    let mut mark_drops: u64 = 0;
+
     loop {
         let now_secs = time();
 
@@ -591,15 +598,26 @@ fn run_main(
                                 as *const BboRecord,
                         )
                     };
-                    // ring full = drop newest (intentional backpressure)
-                    let _ = bbo_prod.push(BboUpdate {
+                    // BBO is a "latest wins" state snapshot;
+                    // drops are safe but counted so this is
+                    // never silent.
+                    if bbo_prod.push(BboUpdate {
                         seq: rec.seq,
                         symbol_id: rec.symbol_id,
                         bid_px: rec.bid_px.0,
                         bid_qty: rec.bid_qty.0,
                         ask_px: rec.ask_px.0,
                         ask_qty: rec.ask_qty.0,
-                    });
+                    }).is_err() {
+                        bbo_drops =
+                            bbo_drops.wrapping_add(1);
+                        if bbo_drops.is_power_of_two() {
+                            warn!(
+                                "bbo_prod ring full, drops={}",
+                                bbo_drops,
+                            );
+                        }
+                    }
                     // Forward to GW to maintain CMP seq
                     // continuity (GW ignores BBO content).
                     if let Err(e) = gw_sender.send_raw(
@@ -648,8 +666,13 @@ fn run_main(
                             t0_ns = fill.ts_ns,
                         );
                     }
-                    // ring full = drop newest (intentional backpressure)
-                    let _ = fill_prod.push(FillEvent {
+                    // Fills are correctness-critical:
+                    // position == sum(fills). Stall and
+                    // drain via shard.run_once rather than
+                    // drop. Bounded retry: SPSC consumer
+                    // is in-process so this resolves in a
+                    // few iterations.
+                    let mut event = FillEvent {
                         seq: fill.seq,
                         symbol_id: fill.symbol_id,
                         taker_user_id: fill
@@ -660,7 +683,32 @@ fn run_main(
                         qty: fill.qty.0,
                         taker_side: fill.taker_side,
                         timestamp_ns: fill.ts_ns,
-                    });
+                    };
+                    loop {
+                        match fill_prod.push(event) {
+                            Ok(()) => break,
+                            Err(rtrb::PushError::Full(
+                                ev,
+                            )) => {
+                                event = ev;
+                                fill_stalls = fill_stalls
+                                    .wrapping_add(1);
+                                if fill_stalls
+                                    .is_power_of_two()
+                                {
+                                    warn!(
+                                        "fill_prod full, \
+                                         stalling (count={})",
+                                        fill_stalls,
+                                    );
+                                }
+                                shard.run_once(
+                                    &mut rings,
+                                    now_secs,
+                                );
+                            }
+                        }
+                    }
                     // Forward fill to GW
                     if let Err(e) = gw_sender.send_raw(
                         RECORD_FILL,
@@ -806,12 +854,23 @@ fn run_main(
                             as *const MarkPriceRecord,
                     )
                 };
-                // ring full = drop newest (intentional backpressure)
-                let _ = mark_prod.push(MarkPriceUpdate {
+                // Mark price is "latest wins" state;
+                // drops are safe but counted so this is
+                // never silent.
+                if mark_prod.push(MarkPriceUpdate {
                     seq: rec.seq,
                     symbol_id: rec.symbol_id,
                     price: rec.mark_price.0,
-                });
+                }).is_err() {
+                    mark_drops =
+                        mark_drops.wrapping_add(1);
+                    if mark_drops.is_power_of_two() {
+                        warn!(
+                            "mark_prod ring full, drops={}",
+                            mark_drops,
+                        );
+                    }
+                }
             }
         }
 
@@ -1016,7 +1075,17 @@ fn stop_persist_worker(
     let start = std::time::Instant::now();
     loop {
         if watch.is_finished() {
-            let _ = watch.join();
+            // SAFETY: outer JoinHandle's payload is the
+            // inner thread's join Result; we already
+            // requested shutdown and only want to know
+            // the watchdog itself terminated. Any panic
+            // in the watchdog is logged via panic_handler.
+            if let Err(e) = watch.join() {
+                warn!(
+                    "persist watchdog thread panicked: {:?}",
+                    e,
+                );
+            }
             info!("persist worker stopped");
             return;
         }
