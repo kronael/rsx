@@ -58,13 +58,16 @@ fn populated_book(n_resting: usize) -> ShadowBook {
 }
 
 /// Insert path — fresh order ID each iter; mirrors the
-/// per-record cost when ME emits OrderInserted.
+/// per-record cost when ME emits OrderInserted. Insert is
+/// paired with cancel inside iter_batched so the slab
+/// doesn't exhaust over Criterion's many-iter campaigns.
 fn bench_apply_insert(c: &mut Criterion) {
     c.bench_function("shadow_apply_insert", |b| {
         let mut book = populated_book(50);
         let mut counter: u64 = 100_000;
         b.iter(|| {
             counter += 1;
+            let oid_lo = counter;
             book.apply_insert_by_id(
                 black_box(99_400),
                 black_box(10),
@@ -72,7 +75,14 @@ fn bench_apply_insert(c: &mut Criterion) {
                 black_box(1),
                 black_box(1_700_000_000_000),
                 black_box(0),
-                black_box(counter),
+                black_box(oid_lo),
+            );
+            // Drop the order so slab capacity stays bounded.
+            // Cancel cost is benched separately below.
+            book.apply_cancel_by_order_id(
+                0,
+                oid_lo,
+                1_700_000_000_001,
             );
         });
     });
@@ -151,12 +161,16 @@ fn bench_apply_insert_then_derive_bbo(
             let mut counter: u64 = 500_000;
             b.iter(|| {
                 counter += 1;
+                let oid_lo = counter;
                 book.apply_insert_by_id(
                     99_400, 10, 0, 1,
-                    1_700_000_000_000, 0, counter,
+                    1_700_000_000_000, 0, oid_lo,
                 );
                 let bbo = book.derive_bbo();
                 black_box(bbo);
+                book.apply_cancel_by_order_id(
+                    0, oid_lo, 1_700_000_000_001,
+                );
             });
         },
     );
