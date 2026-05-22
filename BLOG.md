@@ -2,19 +2,34 @@
 
 ## What RSX Is
 
-RSX is a spec-first perpetuals exchange. 50+ specification
-files written before any code. Separate processes -- Gateway,
-Risk, Matching Engine, Marketdata, Mark Price, Recorder --
-communicating over CMP (C structs over UDP) on the hot path
-and WAL replication over TCP on the cold path.
+Two artifacts in one repo:
+
+1. **`rsx-dxs` — an open-source, log-backed reliable UDP
+   transport.** WAL on disk, CMP on the wire, DXS for replay.
+   The WAL bytes, the wire bytes, and the replay stream bytes
+   are the same bytes. Domain-agnostic — `cargo tree -p
+   rsx-dxs --edges normal | grep rsx-` is empty. Any project
+   that wants 50-µs-class messaging without Kafka can use it.
+
+2. **A complete perpetuals exchange built on it.** Gateway,
+   Risk, Matching Engine, Marketdata, Mark Price, Recorder,
+   each a separate process. Spec-first: 50+ spec files
+   written before any code. The exchange is both a real
+   product and the load-bearing demo that proves `rsx-dxs`
+   handles a non-trivial workload.
+
+The wedge is "open-source the orthogonal libraries that
+already exist, sell the exchange-in-a-box on top." See
+`.ship/13-A16Z-FIXES/WEDGE.md` for the decision write-up.
 
 The design budget: under 50 microseconds from gateway ingress
 to gateway egress, under 500 nanoseconds for a match inside
 the matching engine. The match-engine number is measured
-(54 ns single fill, Criterion); the end-to-end number is a
-component-sum budget — the continuous E2E harness that
-asserts it is the next item on the punch list, not yet
-landed. See README "What's measured vs what's a budget."
+(54 ns single fill, Criterion). The end-to-end number is a
+component-sum budget — the continuous probe that asserts it
+is now wired (`make latency-publish` writes p50/p99 to
+`bench-baseline.json`), with the cid-matching fix from
+F22 making the first reliable number trustworthy.
 
 ## Architecture in 60 Seconds
 
@@ -162,22 +177,22 @@ events.
 
 ## What We Built
 
-12 Rust crates, roughly 21,000 lines of Rust. 878 Rust tests
-passing, 0 failing, in `cargo test --workspace`. ~930 Python
-tests in the playground; 421 of 424 Playwright browser tests
-passing (3 conditional skips on optional gates).
+12 Rust crates, roughly 22,000 lines of Rust. **883 Rust
+tests passing, 0 failing.** ~930 Python tests in the
+playground. **455 Playwright** browser tests across 24 spec
+files (up from 421/23 — the audit cleanup added regression
+coverage for every finding).
 
 The twelfth crate is `rsx-messages` — exchange-specific wire
-records (Fill, BBO, Order*) that used to live inside the
-transport. Splitting them out leaves `rsx-dxs` as a
-domain-agnostic transport with zero `rsx-types` dependency in
-production builds. The "anyone could use this transport" claim
-is now provable rather than aspirational.
+records (Fill, BBO, Order*) extracted from the transport so
+`rsx-dxs` stays domain-agnostic. The "anyone could use this
+transport" claim is provable: `cargo tree -p rsx-dxs --edges
+normal` has no `rsx-` entries.
 
-All 12 crates build and run end-to-end. The spec corpus is
-catching up to the code — see PROGRESS.md for current status
-and `.ship/12-SHOWCASE-HONEST/` for the in-flight tightening
-work.
+All 12 crates build and run end-to-end. See PROGRESS.md for
+current crate status and `.ship/15-PLAYGROUND-AUDIT/
+FINDINGS.md` for the full 28-finding dashboard-honesty audit
+(now closed).
 
 A Python/FastAPI playground dashboard with 14 tabs and 60+
 API endpoints: process control, order submission, WAL
@@ -229,17 +244,35 @@ cross-reference. Audit-by-grep works now.
 
 **Honesty pass.** A skeptical-reviewer audit (`.ship/13-A16Z-FIXES/`)
 produced a finding-by-finding resolution map. Things landed:
-JWT min-secret + `nbf` + `jti` replay tracker, gateway IP-limiter
-cap, zero-heap `send_ring`, WAL append errors propagated, wire
-schema version byte. One finding was **rejected on review** —
-the CMP source-IP filter contradicted the spec's documented
-trust model (CMP is intentionally unauthenticated; auth lives
-at the gateway and at L3). A new "Trust boundaries" rule in
+JWT min-secret + `nbf` + `jti` replay tracker (now fully wired
+through `ws_handshake`), gateway IP-limiter cap, zero-heap
+`send_ring`, WAL append errors propagated, wire schema version
+byte. One finding was **rejected on review** — the CMP
+source-IP filter contradicted the spec's documented trust
+model (CMP is intentionally unauthenticated; auth lives at
+the gateway and at L3). A new "Trust boundaries" rule in
 CLAUDE.md prevents the same misclassification next time.
+
+**Dashboard-honesty pass.** A two-step audit (agent-browser
+walked the live UI; codex adversarially read the endpoint
+handlers) catalogued **28 ways the playground was lying** —
+"100 GREEN" while the matching engine was crash-looping, a
+"circuit breaker: closed" string literal in the gateway
+topology card, `/x/core-affinity` rendering "Core {i}" from a
+list index with no `sched_getaffinity` call, a latency probe
+that returned on the first fill frame regardless of cid and
+then echoed the probe's own cid so it *looked* matched. All
+28 are now closed. Where a real data source existed, we
+compute correctly. Where one didn't, we removed the panel or
+labeled it honestly ("WAL stream lag (proxy)", "synthetic
+demo index"). A dashboard that admits ignorance beats one
+that performs confidence.
 
 ## What's Next
 
-Trade UI needs work: nginx WebSocket proxy configuration,
-position display, reconnect logic. After that, production
-hardening -- the exchange runs, the specs are implemented,
-the tests pass. What remains is operational maturity.
+The exchange runs end-to-end. The libraries underneath it are
+the product. Next: publish `rsx-dxs` to crates.io with a
+worked example of a non-exchange consumer (a metrics ingest
+pipeline is the obvious one — same characteristics, no domain
+overlap). Then the SDK layer that wraps the matching engine +
+risk + gateway as an embeddable "exchange-in-a-box" service.
