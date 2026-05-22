@@ -1,0 +1,9 @@
+{
+  "_comment": "Sealed E2E latency reference. Updated only with `make bench-gate-e2e-save`. The bench-gate-e2e script fails CI if e2e_us.p50 regresses >10% from this value. Current p50=11780us reflects the cluster as-measured 2026-05-22 — see .ship/17-REFINE-2 and specs/2/22-perf-verification.md §6. The gate catches regression from this floor; it does NOT certify the <50us design budget.",
+  "e2e_us": {
+    "n": 619,
+    "p50": 11780.0,
+    "p99": 233447.0,
+    "ts": 1779449990
+  }
+}
