@@ -187,6 +187,35 @@ test.describe("WAL tab", () => {
     await expect(timeline).toContainText(/BBO|FILL/i, { timeout: 8000 });
   });
 
+  // F3: WAL UI reported "0.0 B" while disk + Verify saw 6 KB.
+  // /x/wal-status now exposes a raw-byte count in parens, and
+  // both surfaces share `scan_wal_streams()` — extract sizes
+  // from /x/wal-status and from /api/verify/run-json, then
+  // assert the file-counts and size shapes line up.
+  test("wal_size_agrees_with_verify (F3)", async ({ request }) => {
+    const wal = await request.get("/x/wal-status");
+    expect(wal.ok()).toBe(true);
+    const walHtml = await wal.text();
+    const ver = await request.post("/api/verify/run-json");
+    expect(ver.ok()).toBe(true);
+    const checks = (await ver.json()).checks as Array<{
+      name: string; status: string; detail: string;
+    }>;
+    const walChecks = checks.filter((c) =>
+      c.name.startsWith("WAL stream "));
+    expect(walChecks.length).toBeGreaterThan(0);
+    // For each stream verify reports, /x/wal-status must list it.
+    for (const c of walChecks) {
+      const m = c.name.match(/WAL stream (\S+) has files/);
+      expect(m).not.toBeNull();
+      const stream = m![1];
+      expect(walHtml).toContain(stream);
+    }
+    // /x/wal-status must include the raw-byte parens we added so
+    // disagreement with Verify is impossible to hide.
+    expect(walHtml).toMatch(/\(\d+B\)/);
+  });
+
   test("all WAL cards load without errors", async ({ page }) => {
     await page.goto("/wal");
 

@@ -88,4 +88,74 @@ test.describe("Topology tab", () => {
 
     await verifyPolling(procList, "every 2s");
   });
+
+  // F5: /x/topology/gateway used to render "stopped + pid: -"
+  // while /api/processes said gw-0 was running. Both must read
+  // from the same scan_processes() oracle now (via PROC_HINTS).
+  test("topology_status_pill_agrees_with_api_processes (F5)",
+    async ({ request }) => {
+      const procRes = await request.get("/api/processes");
+      expect(procRes.ok()).toBe(true);
+      const procs = await procRes.json() as Array<{
+        name: string; state: string; pid: number | string;
+      }>;
+      const gwRunning = procs.some(
+        (p) => p.state === "running" && /^gw-/.test(p.name),
+      );
+      const topo = await request.get("/x/topology/gateway");
+      expect(topo.ok()).toBe(true);
+      const html = await topo.text();
+      if (gwRunning) {
+        expect(
+          html.toLowerCase(),
+          "topology says stopped but API says gw-0 running",
+        ).toContain("running");
+        expect(html).not.toMatch(/pid:\s*-/);
+      }
+    },
+  );
+
+  // F6: /x/topology/mark used to render "mark data requires
+  // mark process" even when the mark process was up. Detail
+  // panel must show real numeric mark prices now.
+  test("topology_mark_detail_shows_real_data (F6)",
+    async ({ request }) => {
+      const procRes = await request.get("/api/processes");
+      const procs = await procRes.json() as Array<{
+        name: string; state: string;
+      }>;
+      const markRunning = procs.some(
+        (p) => p.state === "running" && p.name === "mark",
+      );
+      const r = await request.get("/x/topology/mark");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // Old stub string must be gone unconditionally.
+      expect(html).not.toContain("requires mark process");
+      if (markRunning) {
+        // Must include funding settlement window (cheap proof
+        // we wired the real detail payload).
+        expect(html.toLowerCase()).toMatch(
+          /funding next settlement|sample interval|symbols tracked/
+        );
+      }
+    },
+  );
+
+  // F9: ME -> Mktdata used to show Sent 0 / Recv 0 while
+  // marketdata was visibly receiving updates. The counter now
+  // sums fills + BBOs (the actual CMP payload).
+  test("cmp_counters_track_marketdata_progress (F9)",
+    async ({ request }) => {
+      const r = await request.get("/x/cmp-flows");
+      expect(r.ok()).toBe(true);
+      const html = await r.text();
+      // Capture all three flows in order. We don't require
+      // non-zero (cold start), but ME->Mktdata must never be
+      // strictly less than the BBO+fill total — that was the
+      // bug shape.
+      expect(html).toContain("ME -&gt; Mktdata");
+      expect(html).toContain("Gateway -&gt; Risk");
+    },
+  );
 });

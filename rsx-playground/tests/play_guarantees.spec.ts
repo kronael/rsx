@@ -226,6 +226,35 @@ test.describe("Backpressure", () => {
   });
 });
 
+// F4: invariant 1 used to return PASS with detail "0 fills;
+// system running, no trades yet" even when 135 fills existed
+// in the Book tab and session counter. The fix: cross-check
+// against `recent_fills` (the same source /x/topology/gateway
+// reads from) — only SKIP when both sources agree on zero.
+test.describe("Verify invariant 1 cross-source (F4)", () => {
+  test("fills_observed_after_run: status never silently lies",
+    async ({ request }) => {
+      // Submit a probe order so the session sees a fill, then
+      // run verify. The "no trades yet" string must be gone.
+      await order(request);
+      // Allow propagation across WS + WAL.
+      await new Promise((r) => setTimeout(r, 800));
+      const checks = await runChecks(request);
+      const c = findCheck(checks,
+        "Fills precede ORDER_DONE");
+      expect(c.detail).not.toContain("no trades yet");
+      // Either real fills were observed (PASS/FAIL), or both
+      // sources agreed on zero (SKIP). Hard-coded PASS is gone.
+      expect(["pass", "fail", "skip"]).toContain(c.status);
+      if (c.status === "skip") {
+        expect(c.detail).toMatch(
+          /no WAL fills and no session fills|no processes running/
+        );
+      }
+    },
+  );
+});
+
 test.describe("Reconciliation", () => {
   test("returns valid check results", async ({
     request,
