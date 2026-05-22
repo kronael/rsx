@@ -640,3 +640,70 @@ fn order_while_user_being_liquidated_rejected() {
         }
     ));
 }
+
+// --- Backpressure: positions == sum(fills) under flood ---
+
+#[test]
+fn fill_flood_position_matches_sum_of_fills() {
+    // Simulates the main-loop pattern: push fills into
+    // the SPSC, drain via run_once, repeat. Verifies that
+    // the position state equals the sum of all qty fed in
+    // even when the producer would have stalled.
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+
+    // Tiny ring (size 4) so we hit the full case quickly.
+    let (mut fill_p, fill_c) =
+        rtrb::RingBuffer::<FillEvent>::new(4);
+    let (_, order_c) =
+        rtrb::RingBuffer::<OrderRequest>::new(4);
+    let (_, mark_c) = rtrb::RingBuffer::<
+        rsx_risk::rings::MarkPriceUpdate,
+    >::new(4);
+    let (_, bbo_c) =
+        rtrb::RingBuffer::<BboUpdate>::new(4);
+    let (resp_p, _) =
+        rtrb::RingBuffer::<OrderResponse>::new(4);
+    let (accepted_p, _accepted_c) =
+        rtrb::RingBuffer::<OrderRequest>::new(4);
+    let mut rings = rsx_risk::ShardRings {
+        fill_consumers: vec![fill_c],
+        order_consumer: order_c,
+        mark_consumer: mark_c,
+        bbo_consumers: vec![bbo_c],
+        response_producer: resp_p,
+        accepted_producer: accepted_p,
+    };
+
+    // 100 fills of 7 each = expected long_qty 700.
+    let mut delivered: i64 = 0;
+    let total_fills = 100u64;
+    for seq in 1..=total_fills {
+        // Mirror the main-loop stall pattern: spin until
+        // push succeeds, draining via run_once in between.
+        let mut pending = fill(0, 1, 0, 100, 7, seq);
+        loop {
+            match fill_p.push(pending) {
+                Ok(()) => break,
+                Err(rtrb::PushError::Full(ev)) => {
+                    pending = ev;
+                    s.run_once(&mut rings, 0);
+                }
+            }
+        }
+        delivered += 7;
+    }
+    // Final drain.
+    s.run_once(&mut rings, 0);
+
+    let pos = &s.positions[&(0, 0)];
+    assert_eq!(
+        pos.long_qty, delivered,
+        "INVARIANT: position == sum(fills); \
+         lost fills under backpressure"
+    );
+    assert_eq!(
+        s.fills_processed, total_fills,
+        "every fill must be processed exactly once",
+    );
+}

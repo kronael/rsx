@@ -1018,6 +1018,24 @@ impl RiskShard {
             }
         }
 
+        // Downstream backpressure: if the accepted-order
+        // or response ring is full, drained orders would
+        // have to be dropped to push. Stall instead so
+        // upstream (gateway/main-loop) sees the back-
+        // pressure and queues at the receiver side.
+        if rings.accepted_producer.is_full()
+            || rings.response_producer.is_full()
+        {
+            warn!(
+                "downstream ring full, stalling \
+                 (accepted_full={} response_full={})",
+                rings.accepted_producer.is_full(),
+                rings.response_producer.is_full(),
+            );
+            self.backpressured = true;
+            return;
+        }
+
         // 1. Drain all fills (highest priority)
         for consumer in &mut rings.fill_consumers {
             while let Ok(fill) = consumer.pop() {
@@ -1049,16 +1067,26 @@ impl RiskShard {
             )
         };
         for liq in &liq_orders {
+            if rings.accepted_producer.is_full() {
+                warn!(
+                    "accepted_producer full mid-liquidation; \
+                     stalling and retrying next tick",
+                );
+                self.backpressured = true;
+                return;
+            }
             let order = self.liq_to_order(liq, now_ns);
             let resp = self.process_order(&order);
             if matches!(
                 resp,
                 OrderResponse::Accepted { .. }
             ) {
-                // ring full = drop newest (intentional backpressure)
-                let _ = rings
-                    .accepted_producer
-                    .push(order);
+                rings.accepted_producer
+                    .push(order)
+                    .expect(
+                        "INVARIANT: accepted_producer \
+                         capacity checked above",
+                    );
                 info!(
                     "liquidation order sent: \
                      user={} symbol={} side={} qty={}",
@@ -1077,20 +1105,39 @@ impl RiskShard {
 
         self.liquidation.remove_done();
 
-        // 2. Drain orders
-        while let Ok(order) = rings.order_consumer.pop() {
+        // 2. Drain orders. Stop if either downstream ring
+        // fills up mid-batch: pop'd order's response would
+        // otherwise vanish silently. Stall until next tick.
+        while !rings.accepted_producer.is_full()
+            && !rings.response_producer.is_full()
+        {
+            let order = match rings.order_consumer.pop() {
+                Ok(o) => o,
+                Err(_) => break,
+            };
             let resp = self.process_order(&order);
             if matches!(
                 resp,
                 OrderResponse::Accepted { .. }
             ) {
-                // ring full = drop newest (intentional backpressure)
-                let _ = rings
-                    .accepted_producer
-                    .push(order.clone());
+                rings.accepted_producer
+                    .push(order.clone())
+                    .expect(
+                        "INVARIANT: accepted_producer \
+                         capacity checked at loop head",
+                    );
             }
-            // ring full = drop newest (intentional backpressure)
-            let _ = rings.response_producer.push(resp);
+            rings.response_producer
+                .push(resp)
+                .expect(
+                    "INVARIANT: response_producer \
+                     capacity checked at loop head",
+                );
+        }
+        if rings.accepted_producer.is_full()
+            || rings.response_producer.is_full()
+        {
+            self.backpressured = true;
         }
 
         // 3. Drain mark price updates
