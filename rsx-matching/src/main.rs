@@ -744,7 +744,11 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let _ = sender.send(&mut record)?;
+            // SAFETY: send() returns Ok(false) on
+            // flow-control stall; receivers recover via
+            // NAK / TCP replay so the bool is discarded
+            // by design. Errors still propagate.
+            sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderInserted {
             user_id,
@@ -770,7 +774,11 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let _ = sender.send(&mut record)?;
+            // SAFETY: send() returns Ok(false) on
+            // flow-control stall; receivers recover via
+            // NAK / TCP replay so the bool is discarded
+            // by design. Errors still propagate.
+            sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderCancelled {
             user_id,
@@ -794,7 +802,11 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let _ = sender.send(&mut record)?;
+            // SAFETY: send() returns Ok(false) on
+            // flow-control stall; receivers recover via
+            // NAK / TCP replay so the bool is discarded
+            // by design. Errors still propagate.
+            sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderDone {
             user_id,
@@ -820,7 +832,11 @@ fn send_event_cmp(
                 post_only: 0,
                 _pad1: [0; 4],
             };
-            let _ = sender.send(&mut record)?;
+            // SAFETY: send() returns Ok(false) on
+            // flow-control stall; receivers recover via
+            // NAK / TCP replay so the bool is discarded
+            // by design. Errors still propagate.
+            sender.send(&mut record)?;
         }
         rsx_book::event::Event::BBO {
             bid_px,
@@ -842,7 +858,11 @@ fn send_event_cmp(
                 ask_count: 0,
                 _pad2: 0,
             };
-            let _ = sender.send(&mut record)?;
+            // SAFETY: send() returns Ok(false) on
+            // flow-control stall; receivers recover via
+            // NAK / TCP replay so the bool is discarded
+            // by design. Errors still propagate.
+            sender.send(&mut record)?;
         }
         rsx_book::event::Event::OrderFailed { .. } => {}
     }

@@ -513,10 +513,10 @@ pub async fn handle_connection(
                     .circuit
                     .record_success();
 
-                // SAFETY: oid/qty bound for log/trace
+                // SAFETY: oid/qty are bound for logging
                 // in sibling branches; this branch has
-                // forwarded the order so they're
-                // intentionally unused here.
+                // already forwarded the order so the
+                // bindings are intentionally unused.
                 let _unused = (oid, qty);
             }
             WsFrame::Cancel { key } => {
