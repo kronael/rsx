@@ -6120,6 +6120,16 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                     asyncio.get_event_loop().time()
                     + _PROBE_TIMEOUT_S
                 )
+                # F frames keyed by taker_oid, buffered while
+                # probe_oid is not yet known. Risk-side ordering
+                # is asynchronous: U (order ack) and F (fill)
+                # take different code paths, so F can land before
+                # U. The original F22 fix skipped any F seen
+                # while probe_oid was None — including the
+                # probe's own F when U was delayed by the risk
+                # write-behind. Buffer instead, retro-match when
+                # U arrives.
+                pending_fills: list[tuple[str, int]] = []
                 while True:
                     remaining = (
                         deadline
@@ -6130,6 +6140,8 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                             "ok": False,
                             "error": "timeout waiting for fill",
                             "skipped_fills": skipped_fills,
+                            "probe_oid": probe_oid,
+                            "pending_fills": len(pending_fills),
                         }
                     try:
                         msg = await asyncio.wait_for(
@@ -6141,6 +6153,8 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                             "ok": False,
                             "error": "timeout waiting for fill",
                             "skipped_fills": skipped_fills,
+                            "probe_oid": probe_oid,
+                            "pending_fills": len(pending_fills),
                         }
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         continue
@@ -6148,10 +6162,18 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                         frame = json.loads(msg.data)
                     except json.JSONDecodeError:
                         continue
-                    # U frame carries our oid in arr[0] when the
-                    # gateway acknowledges the order. We only
-                    # latch the first U we see post-submit, which
-                    # in the single-probe flow is our order.
+                    # E = order rejected by gateway/risk. Surface
+                    # immediately so callers know it's not a
+                    # timeout — and stop the probe from sitting
+                    # for the full deadline waiting for a fill
+                    # that will never come.
+                    if "E" in frame:
+                        return {
+                            "ok": False,
+                            "error": "order rejected",
+                            "reject": frame["E"],
+                            "skipped_fills": skipped_fills,
+                        }
                     if "U" in frame and probe_oid is None:
                         u = frame["U"]
                         if isinstance(u, list) and u:
@@ -6159,6 +6181,28 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                             if (isinstance(oid, str)
                                     and len(oid) == 32):
                                 probe_oid = oid
+                        if probe_oid is not None:
+                            # Retro-match any buffered F.
+                            for taker_oid, t_us in pending_fills:
+                                if taker_oid == probe_oid:
+                                    e2e_latencies.append(t_us)
+                                    if len(e2e_latencies) > 1000:
+                                        del e2e_latencies[:500]
+                                    return {
+                                        "ok": True,
+                                        "elapsed_us": t_us,
+                                        "cid": cid,
+                                        "oid": probe_oid,
+                                        "cross_px": cross_px,
+                                        "best_ask": best_ask,
+                                        "skipped_fills": skipped_fills,
+                                        "u_arrived_after_f": True,
+                                    }
+                            # Non-matching buffered fills are now
+                            # confirmed unrelated — promote them
+                            # to skipped_fills count.
+                            skipped_fills += len(pending_fills)
+                            pending_fills = []
                         continue
                     if "F" in frame:
                         f = frame["F"]
@@ -6167,22 +6211,28 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                         taker_oid = (
                             f[0] if isinstance(f, list)
                             and f else None)
-                        # Without probe_oid we cannot match —
-                        # treat as unrelated and keep waiting.
-                        if (probe_oid is None
-                                or taker_oid != probe_oid):
+                        if not isinstance(taker_oid, str):
+                            continue
+                        now_us = max(
+                            1,
+                            (time.perf_counter_ns() - start_ns)
+                            // 1000,
+                        )
+                        if probe_oid is None:
+                            # Buffer — we'll know if it's ours
+                            # once U arrives.
+                            pending_fills.append(
+                                (taker_oid, now_us))
+                            continue
+                        if taker_oid != probe_oid:
                             skipped_fills += 1
                             continue
-                        elapsed_ns = (
-                            time.perf_counter_ns() - start_ns
-                        )
-                        elapsed_us = max(1, elapsed_ns // 1000)
-                        e2e_latencies.append(elapsed_us)
+                        e2e_latencies.append(now_us)
                         if len(e2e_latencies) > 1000:
                             del e2e_latencies[:500]
                         return {
                             "ok": True,
-                            "elapsed_us": elapsed_us,
+                            "elapsed_us": now_us,
                             "cid": cid,
                             "oid": probe_oid,
                             "cross_px": cross_px,
