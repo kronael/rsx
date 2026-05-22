@@ -86,10 +86,9 @@ impl Orderbook {
     #[inline]
     pub fn emit(&mut self, event: Event) {
         if (self.event_len as usize) >= MAX_EVENTS {
-            eprintln!(
-                "warn: event buffer full \
-                 (MAX_EVENTS={}), dropping event",
-                MAX_EVENTS
+            tracing::warn!(
+                MAX_EVENTS,
+                "event buffer full, dropping event",
             );
             return;
         }

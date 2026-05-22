@@ -281,10 +281,10 @@ pub fn load(
     for _ in 0..free_count {
         let fidx = read_u16(r)?;
         if (fidx as usize) >= user_bump as usize {
-            eprintln!(
-                "warn: snapshot user free-list \
-                 index {} out of range {}, skipping",
-                fidx, user_bump,
+            tracing::warn!(
+                fidx,
+                user_bump,
+                "snapshot user free-list index out of range, skipping",
             );
             continue;
         }
