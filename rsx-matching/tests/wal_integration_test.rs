@@ -132,6 +132,7 @@ fn flush_timer_fires_at_10ms() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     writer.append(&mut dummy_record).unwrap();
     flush_if_due(&mut writer, &mut last_flush).unwrap();

@@ -425,6 +425,7 @@ async fn replay_from_wal_rebuilds_positions() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
+taker_ts_ns: 0,
         };
         writer.append(&mut fill).unwrap();
     }

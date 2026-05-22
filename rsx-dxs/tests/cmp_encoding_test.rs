@@ -197,6 +197,7 @@ fn crc32_covers_payload_not_header() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     let payload = as_bytes(&fill);
     let crc = compute_crc32(payload);

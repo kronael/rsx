@@ -71,6 +71,7 @@ fn fills_precede_order_done_in_stream() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     route_fill(&state, &fill);
 

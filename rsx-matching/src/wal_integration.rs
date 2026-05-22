@@ -34,6 +34,7 @@ pub fn write_events_to_wal(
                 maker_order_id_lo,
                 taker_order_id_hi,
                 taker_order_id_lo,
+                taker_ts_ns,
             } => {
                 let (reduce_only, tif) =
                     if maker_handle != NONE {
@@ -62,6 +63,7 @@ pub fn write_events_to_wal(
                     tif,
                     post_only: 0,
                     _pad1: [0; 4],
+                    taker_ts_ns,
                 };
                 writer.append(&mut record)?;
             }

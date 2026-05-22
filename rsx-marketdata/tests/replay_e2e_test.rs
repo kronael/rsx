@@ -112,6 +112,7 @@ fn dxs_replay_rebuilds_shadow_book() {
                 tif: 0,
                 post_only: 0,
                 _pad1: [0; 4],
+taker_ts_ns: 0,
             };
 
             writer.append(&mut insert1).unwrap();

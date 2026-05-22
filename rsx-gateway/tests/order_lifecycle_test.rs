@@ -92,6 +92,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     route_fill(&state, &fill);
 

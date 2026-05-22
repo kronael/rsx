@@ -642,7 +642,13 @@ fn run_main(
                     // F4.3 — per-stage latency trace.
                     // Stage `risk_out` = fill received from
                     // ME and about to be forwarded to gateway.
-                    // t_us measured against the ME emit ts.
+                    // Anchor against the taker's gateway-ingress
+                    // timestamp (fill.taker_ts_ns) so this delta
+                    // composes with gateway_in / risk_in / me_in
+                    // on the same clock origin. Fall back to
+                    // ts_ns if the field is missing (legacy WAL
+                    // record predating the FillRecord layout
+                    // change).
                     {
                         let now_ns =
                             std::time::SystemTime::now()
@@ -651,8 +657,19 @@ fn run_main(
                                 )
                                 .map(|d| d.as_nanos() as u64)
                                 .unwrap_or(0);
+                        // Plausibility guard: a valid epoch ns
+                        // since 2024 exceeds ~1.7e18; anything
+                        // smaller is treated as missing.
+                        let anchor_ns =
+                            if fill.taker_ts_ns
+                                > 1_700_000_000_000_000_000
+                            {
+                                fill.taker_ts_ns
+                            } else {
+                                fill.ts_ns
+                            };
                         let t_us = now_ns
-                            .saturating_sub(fill.ts_ns)
+                            .saturating_sub(anchor_ns)
                             / 1000;
                         tracing::info!(
                             target: "latency",
@@ -663,7 +680,7 @@ fn run_main(
                                 fill.taker_order_id_lo,
                             ),
                             t_us,
-                            t0_ns = fill.ts_ns,
+                            t0_ns = anchor_ns,
                         );
                     }
                     // Fills are correctness-critical:

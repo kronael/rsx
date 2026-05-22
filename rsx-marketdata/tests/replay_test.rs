@@ -138,6 +138,7 @@ fn replay_events_fill_reduces_qty() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
+taker_ts_ns: 0,
         };
 
         if let Some(book) =

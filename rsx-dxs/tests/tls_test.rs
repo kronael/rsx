@@ -100,6 +100,7 @@ async fn tls_client_server_connection() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     wal.append(&mut fill).unwrap();
     wal.flush().unwrap();
@@ -210,6 +211,7 @@ async fn tls_disabled_falls_back_to_plain() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+taker_ts_ns: 0,
     };
     wal.append(&mut fill).unwrap();
     wal.flush().unwrap();
