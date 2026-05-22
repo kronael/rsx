@@ -929,20 +929,36 @@ async def start_all(scenario="minimal"):
         parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # kill stale RSX binaries by name first (handles UDP CMP ports too)
+    # Clear stale RSX binaries from a *previous* run before respawning.
+    # Match on the full build path (target/<profile>/rsx-<bin>) -- a bare
+    # "rsx-gateway" pattern also matches log tails, editors, agent sessions
+    # that merely mention the name, and sibling checkouts, so a stray
+    # start_all would SIGKILL unrelated processes (F20). Prefer SIGTERM so
+    # the F1 graceful WAL drain runs; escalate to SIGKILL only for survivors.
     _rsx_bins = [
         "rsx-gateway", "rsx-risk", "rsx-matching",
         "rsx-marketdata", "rsx-mark",
     ]
     for bin_name in _rsx_bins:
+        pat = f"target/debug/{bin_name}"
         try:
             subprocess.run(
-                ["pkill", "-9", "-f", bin_name],
+                ["pkill", "-TERM", "-f", pat],
                 capture_output=True, timeout=2,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
-    await asyncio.sleep(1.0)  # let OS release sockets
+    await asyncio.sleep(0.5)  # let SIGTERM handlers drain + release sockets
+    for bin_name in _rsx_bins:
+        pat = f"target/debug/{bin_name}"
+        try:
+            subprocess.run(
+                ["pkill", "-KILL", "-f", pat],
+                capture_output=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    await asyncio.sleep(0.5)  # let OS release sockets
 
     # kill stale processes on known ports (belt + suspenders)
     if shutil.which("fuser"):

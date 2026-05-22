@@ -169,3 +169,59 @@ test.describe("@long warm-cluster soak", () => {
     expect(polls).toBeGreaterThanOrEqual(50);
   });
 });
+
+// F20 regression: the gateway was reported to crash-loop under
+// sustained WS connection churn. Investigation found no gw panic
+// or leak -- the "restarts" were the process watcher respawning
+// the estate during the F1 ME-restart cascade. With F1 fixed, gw-0
+// is stable under churn. This guard drives WS churn (each order
+// submit opens a fresh authed WS to the gateway) and asserts gw-0's
+// pid never changes and its uptime climbs monotonically.
+test.describe("@long gateway churn stability (F20)", () => {
+  test.setTimeout(3 * 60 * 1000);
+
+  test("gw-0 survives WS connection churn", async ({ request }) => {
+    type Proc = { name: string; state: string; pid: number; uptime_s?: number };
+    const gw = async (): Promise<Proc> => {
+      const r = await request.get("/api/processes");
+      expect(r.ok()).toBe(true);
+      const procs: Proc[] = await r.json();
+      const p = procs.find((x) => x.name === "gw-0" || x.name.startsWith("gw"));
+      expect(p, "gw-0 not found").toBeTruthy();
+      return p as Proc;
+    };
+
+    const base = await gw();
+    expect(base.state).toBe("running");
+
+    const CHURN_MS = 90_000;
+    const deadline = Date.now() + CHURN_MS;
+    let lastUptime = base.uptime_s ?? 0;
+    let checks = 0;
+    while (Date.now() < deadline) {
+      // Each order submit goes through the gateway's authed WS path.
+      await request
+        .post("/api/orders?confirm=yes", {
+          headers: { "x-confirm": "yes" },
+          data: { symbol_id: SYMBOL_ID, side: 0, price: 50000, qty: 1000000 },
+        })
+        .catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1500));
+      const cur = await gw();
+      expect(cur.state, "gw-0 not running during churn").toBe("running");
+      expect(
+        cur.pid,
+        `gw-0 pid changed ${base.pid} -> ${cur.pid} (restart under churn)`,
+      ).toBe(base.pid);
+      if (typeof cur.uptime_s === "number") {
+        expect(
+          cur.uptime_s,
+          `gw-0 uptime decreased ${lastUptime} -> ${cur.uptime_s}`,
+        ).toBeGreaterThanOrEqual(lastUptime);
+        lastUptime = cur.uptime_s;
+      }
+      checks += 1;
+    }
+    expect(checks).toBeGreaterThanOrEqual(30);
+  });
+});

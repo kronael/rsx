@@ -440,3 +440,76 @@ Each claim below was verified by direct read.
   2. `sleep 65; curl -s localhost:49171/x/stale-orders`
 - Severity: important.
 - Playwright: `play_safety.spec.ts::stale_orders_counts_string_timestamp_orders`
+
+---
+
+# Soak pass (2026-05-22) -- gateway churn investigation
+
+## Finding 20: gw-0 "crash every 2-3 min under WS churn" is a SUPERVISOR footgun, not a gateway defect
+
+- Reported symptom (prior agent): gw-0 restarts every ~2-3 min
+  under sustained WS connection churn; uptime resets observed
+  2m42s -> 2m11s -> 35s while the watcher respawned it; maker
+  (user 99) opening ~2 conns/sec.
+- The gateway code is correct -- ruled out every code-bug hypothesis:
+  - **No panic / no fatal.** `log/gw-0.log` contains **zero**
+    `panic`/`FATAL`/`fatal:`/`aborting` lines across its entire
+    history (8h+ of runtime, 14k+ connections). The panic hook
+    (`rsx-types` `install_panic_handler`) prints `fatal: ...` and
+    `process::exit(1)`; that string never appears. The only
+    `expect()`s in `rsx-gateway/src` are startup fail-fast
+    (`main.rs`) or guarded invariants (`protocol.rs:150` after
+    `obj.len()==1`, `ws.rs` `try_into` after `read_exact`,
+    `state.rs:318` after insert). The accept/handshake path
+    returns `io::Result` and `warn!`s on every error.
+  - **No resource leak.** After 8h and ~14k connections, gw-0
+    held **8 fds (4 sockets), 8 MB RSS**. `connections` is
+    removed on close/timeout; `user_limiters` is keyed by a
+    bounded user set; `ip_limiters` is FIFO-capped at
+    `IP_LIMITER_MAX` (10 000). Nothing grows unbounded.
+  - **WS churn alone does not kill it.** An isolated gateway
+    on a private port (no risk/ME behind it) survived a 32-thread
+    flood -- 19 599 connections, mixed unauth + abrupt-close --
+    with zero panic and a stable pid. So handshake/accept churn
+    is handled correctly.
+- Actual root cause (evidence-backed): the "restarts" are
+  external SIGKILLs of the estate, with two contributing sources:
+  1. **A concurrent harness re-running the cluster.** During the
+     soak, `gw-0/me-pengu/marketdata/risk-0` restarted in lockstep
+     (all uptime == 6-10 s together). The killer was a
+     `uv run pytest tests/` process whose parent chain is a
+     *separate* `claude -c` session -- its fault-injection /
+     restart tests cycle the shared live cluster.
+  2. **`start_all` SIGKILLs by loose name match.** Every
+     `start_all` ran `pkill -9 -f rsx-gateway` (and peers) to
+     "clear stale binaries." `-9 -f rsx-gateway` matches *any*
+     command line containing the substring -- including an
+     isolated test gateway on another port, log tails, an editor,
+     or an agent session that merely names the binary -- and
+     SIGKILL bypasses the F1 graceful WAL drain. So any stray
+     `start_all` (e.g. from a parallel session or the readiness
+     auto-heal) kills the running estate with no log trace, which
+     is exactly the silent "restart with no panic" symptom.
+- Fix (minimal, supervisor-side): `server.py start_all` now
+  matches the full build path `target/debug/rsx-<bin>` instead
+  of the bare binary name, and sends **SIGTERM first** (so F1's
+  drain runs), escalating to SIGKILL only for survivors. This
+  stops `start_all` from collaterally killing unrelated
+  processes and preserves graceful shutdown. No `rsx-gateway`
+  code change -- the gateway is correct.
+- Proof: warm cluster restarted clean; with no fault-injector
+  attached, gw-0 ran 8h8m at a constant pid (8 fds, 8 MB). The
+  isolated-gateway flood (19 599 conns) left the process alive.
+  The lockstep estate restarts disappeared once the concurrent
+  pytest harness was identified as their source.
+- Regression test:
+  `play_readiness.spec.ts::@long gateway churn stability (F20)`
+  drives ~90 s of churn through the gateway WS path and asserts
+  gw-0's pid never changes and uptime is monotonic. The existing
+  `system_stays_green_for_5m` soak covers the whole estate.
+- Caveat / regression note: this test (and the cluster) is only
+  valid in isolation. If a second session runs `pytest tests/`
+  or `start_all` against the same machine, it WILL restart the
+  estate -- that is environmental, not a gateway bug. Run the
+  soak with no concurrent harness attached.
+- Severity: not a gateway bug; supervisor hardening shipped.
