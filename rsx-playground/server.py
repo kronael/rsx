@@ -1999,6 +1999,27 @@ def parse_wal_book_stats():
     return symbols
 
 
+def parse_wal_mark_prices():
+    """Latest real mark/index price per symbol from the mark stream.
+
+    The mark process aggregates external sources (Binance/Coinbase)
+    into RECORD_MARK_PRICE records on the `mark` WAL stream. This is
+    the only cluster-truth index/oracle price the dashboard can read
+    — distinct from the ME book mid. Returns {sid: {mark_price, ...}}.
+    """
+    latest = {}
+    recs = parse_wal_records(
+        WAL_DIR / "mark", record_types={RECORD_MARK_PRICE})
+    for r in recs:
+        if r.get("type") != "mark_price":
+            continue
+        sid = r["symbol_id"]
+        prev = latest.get(sid)
+        if prev is None or r["seq"] > prev["seq"]:
+            latest[sid] = r
+    return latest
+
+
 def parse_wal_fills_for_user_all(user_id: int):
     """Get fills for a user across all symbols from WAL."""
     result = []
@@ -2140,7 +2161,6 @@ def _topo_gateway() -> dict:
             ("orders (session)", len(recent_orders)),
             ("fills (session)", len(recent_fills)),
             ("WAL tips", wal_tips),
-            ("circuit breaker", "closed"),
         ],
     }
 
@@ -2333,22 +2353,13 @@ _TOPO_HANDLERS: dict = {
 }
 
 
-@app.get("/x/topology/{component}",
-         response_class=HTMLResponse)
-async def x_topology_component(component: str):
-    handler = _TOPO_HANDLERS.get(component)
-    if not handler:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            f"unknown component: {component}</span>"
-        )
-    return HTMLResponse(
-        pages.render_component_detail(component, handler()))
-
-
 @app.get("/x/topology/flow")
 async def x_topology_flow():
-    """JSON: per-node status dots and rate labels for live update."""
+    """JSON: per-node status dots and rate labels for live update.
+
+    Registered BEFORE the /x/topology/{component} catch-all so the
+    literal `flow` path is not swallowed as a component name.
+    """
     procs = scan_processes()
 
     def _status(hints: list[str]) -> str:
@@ -2382,17 +2393,22 @@ async def x_topology_flow():
             spd_label = f"spd={ask - bid}"
             break
 
+    # recent_orders/recent_fills/_book_snap are dashboard-local
+    # collections (reset on dashboard restart, only count traffic
+    # this process witnessed). Label them "(session)" so they
+    # don't masquerade as cluster throughput — matching the topo
+    # detail panels.
     nodes = [
         {"key": "client", "dot": "bg-zinc-600",
-         "rate": f"{len(recent_orders)} ord"},
+         "rate": f"{len(recent_orders)} ord (session)"},
         {"key": "gateway", "dot": _dot(gw),
-         "rate": f"{len(recent_fills)} fills"},
+         "rate": f"{len(recent_fills)} fills (session)"},
         {"key": "risk", "dot": _dot(risk_s),
          "rate": risk_s},
         {"key": "matching", "dot": _dot(me_s),
          "rate": spd_label},
         {"key": "marketdata", "dot": _dot(md_s),
-         "rate": f"{len(_book_snap)} sym"},
+         "rate": f"{len(_book_snap)} sym (session)"},
         {"key": "mark", "dot": _dot(mk_s),
          "rate": mk_s},
         {"key": "recorder", "dot": _dot(rec_s),
@@ -2401,6 +2417,19 @@ async def x_topology_flow():
          "rate": maker_s},
     ]
     return JSONResponse({"nodes": nodes})
+
+
+@app.get("/x/topology/{component}",
+         response_class=HTMLResponse)
+async def x_topology_component(component: str):
+    handler = _TOPO_HANDLERS.get(component)
+    if not handler:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            f"unknown component: {component}</span>"
+        )
+    return HTMLResponse(
+        pages.render_component_detail(component, handler()))
 
 
 @app.get("/x/topology/summary",
@@ -3089,6 +3118,9 @@ async def x_pulse():
     procs = scan_processes()
     running = sum(
         1 for p in procs if p.get("state") == "running")
+    # scan_processes() appends every expected plan entry as
+    # "stopped" if absent, so len(procs) is the expected count.
+    expected = len(procs)
     streams = scan_wal_streams()
     wal_files = sum(s.get("files", 0) for s in streams)
     elapsed = max(1, time.time() - SERVER_START)
@@ -3108,10 +3140,14 @@ async def x_pulse():
             f'{value}</span>'
         )
 
+    if expected and running == expected:
+        proc_color = "emerald-400"
+    elif running > 0:
+        proc_color = "amber-400"
+    else:
+        proc_color = "red-400"
     return HTMLResponse(
-        _pill("proc", f"{running}/{len(procs)}",
-              "emerald-400" if running > 0
-              else "red-400")
+        _pill("proc", f"{running}/{expected}", proc_color)
         + _pill("ord/s", str(ops), "blue-400")
         + _pill("wal", str(wal_files), "cyan-400")
         + _pill("errs", str(errs),
@@ -3341,6 +3377,10 @@ async def x_risk_latency():
 @app.get("/x/reconciliation",
          response_class=HTMLResponse)
 async def x_reconciliation():
+    # Both the in-memory shadow snap and parse_wal_bbo derive from
+    # the WAL, so this is a WAL-internal consistency check, not a
+    # shadow-vs-engine check (the ME book is not queryable from the
+    # dashboard). Labelled honestly in render_reconciliation.
     shadow_check = None
     if _book_snap:
         mismatches = 0
@@ -3361,26 +3401,47 @@ async def x_reconciliation():
         if checked > 0:
             if mismatches == 0:
                 shadow_check = (
-                    "pass", f"{checked} symbols match")
+                    "pass",
+                    f"{checked} symbols WAL-consistent")
             else:
                 shadow_check = (
                     "fail",
                     f"{mismatches}/{checked} mismatch")
 
+    # Compare book mid against the real index from the mark process
+    # (RECORD_MARK_PRICE, external Binance/Coinbase aggregate). SKIP
+    # when no index is loaded — a check that always passes is worse
+    # than no check. Tolerance band: 1% premium of perp over index.
     mark_check = None
-    if _book_snap:
+    mark_prices = parse_wal_mark_prices()
+    if _book_snap and mark_prices:
         checked = 0
+        mismatches = 0
         for sid, snap in _book_snap.items():
-            bid = snap.get(
-                "best_bid", snap.get("bid_px", 0))
-            ask = snap.get(
-                "best_ask", snap.get("ask_px", 0))
-            if bid > 0 and ask > 0:
-                checked += 1
+            mark_rec = mark_prices.get(sid)
+            if mark_rec is None:
+                continue
+            index_px = mark_rec.get("mark_price", 0)
+            if index_px <= 0:
+                continue
+            bid = snap.get("best_bid", snap.get("bid_px", 0))
+            ask = snap.get("best_ask", snap.get("ask_px", 0))
+            if bid <= 0 or ask <= 0:
+                continue
+            mid = (bid + ask) // 2
+            checked += 1
+            dev_bps = abs(mid - index_px) * 10000 // index_px
+            if dev_bps > 100:
+                mismatches += 1
         if checked > 0:
-            mark_check = (
-                "pass",
-                f"{checked} symbols have valid BBO mid")
+            if mismatches == 0:
+                mark_check = (
+                    "pass",
+                    f"{checked} symbols within 1% of index")
+            else:
+                mark_check = (
+                    "fail",
+                    f"{mismatches}/{checked} off-index >1%")
 
     return HTMLResponse(pages.render_reconciliation(
         shadow_vs_me=shadow_check,
@@ -3425,6 +3486,29 @@ async def x_order_trace(
         pages.render_order_trace(order, fills))
 
 
+def _order_age_s(ts, now: float):
+    """Age in seconds for a recent_orders ts (float epoch or
+    "%H:%M:%S" string). UI batch helpers write the string form, so
+    the stale detector must understand both or it always reads 0.
+    Returns None if ts is missing/unparseable."""
+    if isinstance(ts, (int, float)):
+        return now - ts
+    if isinstance(ts, str) and ts:
+        try:
+            t = datetime.strptime(ts, "%H:%M:%S").time()
+        except ValueError:
+            return None
+        today = datetime.fromtimestamp(now).date()
+        entry = datetime.combine(today, t)
+        age = now - entry.timestamp()
+        # Wall-clock string with no date: if it parses to the
+        # future (just after midnight), it was actually yesterday.
+        if age < 0:
+            age += 86400
+        return age
+    return None
+
+
 @app.get("/x/stale-orders", response_class=HTMLResponse)
 async def x_stale_orders():
     now = time.time()
@@ -3435,8 +3519,8 @@ async def x_stale_orders():
     stale = [
         o for o in recent_orders
         if o.get("status", "") not in terminal
-        and isinstance(o.get("ts"), (int, float))
-        and now - o["ts"] > 60]
+        and (age := _order_age_s(o.get("ts"), now)) is not None
+        and age > 60]
     if not stale:
         return HTMLResponse(
             '<span class="text-emerald-400 text-xs">'
@@ -5693,6 +5777,10 @@ async def api_risk_overview():
 async def api_risk_funding():
     """Funding rates per symbol from BBO data."""
     book_stats = parse_wal_book_stats()
+    # Real index source: the mark process aggregates external
+    # exchanges (Binance/Coinbase) into RECORD_MARK_PRICE on the
+    # `mark` WAL stream. Premium = (book mid - index) / index.
+    mark_prices = parse_wal_mark_prices()
     now_ns = int(time.time() * 1e9)
     # funding settles every 8 hours = 28800s
     settlement_interval_s = 28800
@@ -5705,20 +5793,21 @@ async def api_risk_funding():
         bid = bbo.get("bid_px", 0)
         ask = bbo.get("ask_px", 0)
         mid = (bid + ask) // 2 if bid and ask else 0
-        spread = ask - bid if bid and ask else 0
-        # Funding rate proxy: spread/mid in bps
-        rate_bps = (
-            spread * 10000 // mid if mid > 0 else 0
-        )
-        index_px = int(mid * 1.0001) if mid else 0
+        mark_rec = mark_prices.get(sid)
+        index_px = mark_rec["mark_price"] if mark_rec else 0
+        index_source = "mark-process" if mark_rec else "none"
+        # Premium of perp (book mid) over external index.
         premium_bps = (
             (mid - index_px) * 10000 // index_px
             if index_px else 0
         )
+        # Funding rate proxy: premium of perp over index in bps.
+        rate_bps = premium_bps
         entries.append({
             "symbol_id": sid,
             "mark_px": mid,
             "index_px": index_px,
+            "index_source": index_source,
             "bid_px": bid,
             "ask_px": ask,
             "rate_bps": rate_bps,

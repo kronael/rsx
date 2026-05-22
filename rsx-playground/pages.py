@@ -3163,16 +3163,16 @@ def render_reconciliation(
     shadow_vs_me=None, mark_vs_index=None,
 ):
     """Reconciliation checks with optional live data."""
-    shadow_item = ("Shadow book vs ME book",
+    shadow_item = ("WAL self-consistency (shadow vs WAL BBO)",
                    shadow_vs_me[0], shadow_vs_me[1]) \
         if shadow_vs_me else \
-        ("Shadow book vs ME book", "skip",
+        ("WAL self-consistency (shadow vs WAL BBO)", "skip",
          "requires live system")
-    mark_item = ("Mark price vs index",
+    mark_item = ("Book mid vs mark-process index",
                  mark_vs_index[0], mark_vs_index[1]) \
         if mark_vs_index else \
-        ("Mark price vs index", "skip",
-         "requires live system")
+        ("Book mid vs mark-process index", "skip",
+         "no index (mark process down)")
     items = [
         ("Frozen margin vs computed", "skip",
          "requires live system"),

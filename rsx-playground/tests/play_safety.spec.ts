@@ -592,6 +592,33 @@ test.describe("Safety: operational safety", () => {
       expect(res.status()).not.toBe(500);
     }
   );
+
+  // F19: /x/stale-orders required `isinstance(o["ts"], int|float)`
+  // but the UI batch helper writes `ts` as a "%H:%M:%S" string,
+  // so those orders aged forever and the badge was always 0. The
+  // detector now parses string timestamps too.
+  test("stale_orders_counts_string_timestamp_orders (F19)",
+    async ({ request }) => {
+      test.setTimeout(120_000);
+      // Submit a batch: these orders carry string `ts` and the
+      // non-terminal status "submitted".
+      const sub = await request.post("/api/orders/batch", {
+        headers: { "content-type": "application/json" },
+        data: {},
+      });
+      expect(sub.ok()).toBe(true);
+      // Age them past the 60s stale threshold.
+      await new Promise((r) => setTimeout(r, 65_000));
+      const res = await request.get("/x/stale-orders");
+      expect(res.ok()).toBe(true);
+      const html = await res.text();
+      // Before the fix this always read "0 stale orders". The
+      // string-ts batch orders must now be counted.
+      const m = html.match(/(\d+)\s+stale order/);
+      expect(m, "no stale-orders count rendered").not.toBeNull();
+      expect(Number(m![1])).toBeGreaterThan(0);
+    },
+  );
 });
 
 // ── 4. Graceful Degradation ──────────────────────────────

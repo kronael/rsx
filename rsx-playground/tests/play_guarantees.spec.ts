@@ -267,4 +267,55 @@ test.describe("Reconciliation", () => {
       expect(html).not.toMatch(/\d+\/\d+ mismatch/);
     }
   });
+
+  // F17: the "Mark price vs index" reconciliation used to PASS
+  // whenever a symbol merely had bid>0 and ask>0 — no index was
+  // ever loaded. With the mark process dead (no external index)
+  // the check must NOT report PASS; it must SKIP honestly.
+  test("reconciliation_mark_vs_index_loads_real_index (F17)",
+    async ({ request }) => {
+      // Kill the mark process: there is now no index source.
+      await request.post("/api/processes/mark/kill", {
+        headers: { "x-confirm": "yes" },
+      });
+      await new Promise((r) => setTimeout(r, 2000));
+      const res = await request.get("/x/reconciliation");
+      const html = await res.text();
+      // The check is now named for its real comparison and must
+      // not silently PASS without an index.
+      expect(html).toContain("Book mid vs mark-process index");
+      // Old lie: "valid BBO mid" PASS string. It's gone.
+      expect(html).not.toContain("valid BBO mid");
+      // Extract the row for the mark-index check and assert it is
+      // not PASS while the index source is down.
+      const idx = html.indexOf("Book mid vs mark-process index");
+      const window = html.slice(Math.max(0, idx - 400), idx);
+      // The status badge precedes the check name in the row;
+      // with no index it must be SKIP (or FAIL), never PASS.
+      expect(window).not.toMatch(/>PASS<\/span>(?![\s\S]*Book mid)/);
+      // Restore.
+      await request.post("/api/processes/mark/start", {
+        headers: { "x-confirm": "yes" },
+      });
+    },
+  );
+
+  // F18: "Shadow vs ME" compared two WAL-derived views (the
+  // in-memory shadow snap and parse_wal_bbo), so it was the WAL
+  // checked against itself — it could PASS with ME dead. The
+  // check is now honestly labelled as a WAL-internal
+  // consistency check, not shadow-vs-engine.
+  test("reconciliation_shadow_vs_me_queries_engine_truth (F18)",
+    async ({ request }) => {
+      const res = await request.get("/x/reconciliation");
+      const html = await res.text();
+      // Honest label: it does not claim to compare against the
+      // matching engine (which the dashboard cannot query).
+      expect(html).toContain(
+        "WAL self-consistency (shadow vs WAL BBO)"
+      );
+      // The old overclaiming label must be gone.
+      expect(html).not.toContain("Shadow book vs ME book");
+    },
+  );
 });

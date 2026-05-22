@@ -102,7 +102,10 @@ export default defineConfig({
     // Shard 2a-safety: safety, crash & handover (25 tests)
     {
       name: "safety",
-      testMatch: ["play_safety.spec.ts"],
+      testMatch: [
+        "play_safety.spec.ts",
+        "play_health_truthful.spec.ts",
+      ],
       dependencies: ["infra-smoke"],
     },
     // Shard 2b: verify — phase verification, single-worker lane (13 tests)
