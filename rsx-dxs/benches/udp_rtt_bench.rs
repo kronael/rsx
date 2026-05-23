@@ -2,65 +2,77 @@
 //!
 //! What this measures
 //! -----------------
-//! Two `std::net::UdpSocket`s bound to 127.0.0.1, no CMP, no
-//! framing, no CRC, no WAL — just send → recv → echo → recv.
-//! Payload is 64 bytes (one cache line), matching the
-//! `#[repr(C, align(64))]` records that flow through the
-//! real CMP path.
+//! Two `std::net::UdpSocket`s on 127.0.0.1, in non-blocking
+//! mode, both threads cache-hot and spinning. No CMP, no
+//! framing, no CRC, no WAL — just `send_to` → spin `recv_from`
+//! → `send_to` (echo) → spin `recv_from`. Payload is 64 bytes
+//! (one cache line).
+//!
+//! The harness matches the in-process `bench-e2e-pipeline`
+//! pattern: both threads pre-warmed, no per-iteration
+//! `setsockopt`, no blocking syscall wake-up, no stop-channel
+//! poll. The previous version called `set_read_timeout`
+//! inside the echo loop on every iteration — that added a
+//! setsockopt syscall (~µs) and a blocking-recv wake-up to
+//! every measured round-trip, overstating the true UDP RTT
+//! by ~3×.
 //!
 //! This is the absolute lower bound for any CMP-based RTT
-//! between two processes on the same host. Anything CMP adds
+//! between two endpoints on the same host. Anything CMP adds
 //! (framing, CRC32, send-ring caching, NAK/heartbeat ticks,
-//! reorder buffer) shows up as overhead above this number.
+//! reorder buffer, peer_consumption_seq flow control) shows
+//! up as overhead above this number.
 //!
 //! Assumptions / caveats
 //! --------------------
-//! - Loopback is faster than a real network: no PHY/MAC, no
-//!   driver tx/rx queue, no NIC IRQ. Real LAN RTT will be
-//!   higher even with the same protocol overhead.
-//! - Two threads, blocking `recv_from` on each. We use a
-//!   `Barrier` to keep the echoer ready before each send.
-//! - Both sockets are blocking. Non-blocking + busy-spin
-//!   would shave a few hundred nanoseconds but is not how
-//!   the production gateway is wired.
+//! - Loopback, not real net (no PHY/MAC, no driver, no NIC IRQ).
+//! - Non-blocking sockets + busy-spin. The production gateway
+//!   does NOT busy-spin; it does `try_recv` + a periodic yield.
+//!   So real production overhead per packet is higher than
+//!   this bench's RTT — that's the bench's point: this is
+//!   the floor.
 
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
 use std::net::UdpSocket;
-use std::sync::mpsc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::thread;
 
 fn bench_udp_rtt_loopback(c: &mut Criterion) {
-    // Bind both sockets up-front so the bench loop never
-    // touches the bind() syscall.
+    // Both sockets bound up-front; bind never on the hot path.
     let echoer = UdpSocket::bind("127.0.0.1:0").unwrap();
     let echoer_addr = echoer.local_addr().unwrap();
     let pinger = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let pinger_addr = pinger.local_addr().unwrap();
 
-    // Echoer thread: blocking recv_from, send_to back.
-    // Stop on a 1-byte "X" payload.
-    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    echoer.set_nonblocking(true).unwrap();
+    pinger.set_nonblocking(true).unwrap();
+
+    // Echoer thread: spin on non-blocking recv_from, echo
+    // straight back. Sentinel byte 0xFF exits the loop.
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = Arc::clone(&stop);
+
     let handle = thread::spawn(move || {
         let mut buf = [0u8; 128];
-        loop {
-            if stop_rx.try_recv().is_ok() {
-                return;
-            }
-            // Short timeout so we can poll the stop channel
-            // without leaving the recv blocked forever after
-            // the bench finishes.
-            echoer.set_read_timeout(Some(
-                std::time::Duration::from_millis(50),
-            ))
-            .unwrap();
+        while !stop_clone.load(Ordering::Relaxed) {
             match echoer.recv_from(&mut buf) {
                 Ok((n, src)) => {
-                    echoer.send_to(&buf[..n], src).unwrap();
+                    if n >= 1 && buf[0] == 0xFF {
+                        return;
+                    }
+                    let _ = echoer.send_to(&buf[..n], src);
                 }
-                Err(_) => continue,
+                Err(ref e)
+                    if e.kind()
+                        == std::io::ErrorKind::WouldBlock =>
+                {
+                    std::hint::spin_loop();
+                }
+                Err(_) => return,
             }
         }
     });
@@ -73,16 +85,29 @@ fn bench_udp_rtt_loopback(c: &mut Criterion) {
             pinger
                 .send_to(black_box(&payload), echoer_addr)
                 .unwrap();
-            let (n, _) = pinger.recv_from(&mut recv_buf).unwrap();
-            black_box(n);
+            // Spin until the echo arrives. Non-blocking
+            // recv_from + spin keeps both threads cache-hot.
+            loop {
+                match pinger.recv_from(&mut recv_buf) {
+                    Ok((n, _)) => {
+                        black_box(n);
+                        break;
+                    }
+                    Err(ref e)
+                        if e.kind()
+                            == std::io::ErrorKind::WouldBlock =>
+                    {
+                        std::hint::spin_loop();
+                    }
+                    Err(_) => break,
+                }
+            }
         });
     });
 
-    // Tell the echoer to exit, then ping it once so the
-    // pending recv_from returns immediately.
-    let _ = stop_tx.send(());
-    let _ = pinger.send_to(&[0u8; 1], echoer_addr);
-    let _ = pinger_addr;
+    // Signal exit + flush.
+    stop.store(true, Ordering::Release);
+    let _ = pinger.send_to(&[0xFFu8; 1], echoer_addr);
     let _ = handle.join();
 }
 
