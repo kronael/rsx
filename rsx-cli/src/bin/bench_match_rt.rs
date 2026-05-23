@@ -141,41 +141,46 @@ fn main() {
     std::fs::create_dir_all(&tmp_me).unwrap();
     std::fs::create_dir_all(&tmp_gw).unwrap();
 
-    let gw_bind = pick_port();
-    let me_bind = pick_port();
+    // Four distinct UDP ports — one per socket. CmpSender
+    // and CmpReceiver each own their own port; otherwise
+    // SO_REUSEPORT lets the kernel hash-distribute incoming
+    // packets between them and replies vanish.
+    let gw_send_bind = pick_port();
+    let gw_recv_bind = pick_port();
+    let me_send_bind = pick_port();
+    let me_recv_bind = pick_port();
 
-    // gw → me
+    // gw_sender → me_recv_bind
     let mut gw_sender = CmpSender::with_config(
-        me_bind,
+        me_recv_bind,
         1,
         tmp_gw.as_path(),
         &rsx_dxs::config::CmpConfig {
-            sender_bind_addr: Some(gw_bind.to_string()),
+            sender_bind_addr: Some(gw_send_bind.to_string()),
             ..Default::default()
         },
     )
     .unwrap();
-    let gw_send_addr = gw_sender.local_addr().unwrap();
-
+    // gw_receiver listens on gw_recv_bind; sender_addr is
+    // where it'd send NAKs (back at me_sender).
     let mut gw_receiver =
-        CmpReceiver::new(gw_bind, me_bind, 1).unwrap();
-    let _ = gw_send_addr;
+        CmpReceiver::new(gw_recv_bind, me_send_bind, 1).unwrap();
 
-    // me → gw  (separate CmpSender; binds its own port)
-    let me_reply_bind = pick_port();
+    // me_sender → gw_recv_bind
     let mut me_sender = CmpSender::with_config(
-        gw_bind,
+        gw_recv_bind,
         2,
         tmp_me.as_path(),
         &rsx_dxs::config::CmpConfig {
-            sender_bind_addr: Some(me_reply_bind.to_string()),
+            sender_bind_addr: Some(me_send_bind.to_string()),
             ..Default::default()
         },
     )
     .unwrap();
+    // me_receiver listens on me_recv_bind; sender_addr is
+    // where it'd send NAKs (back at gw_sender).
     let mut me_receiver =
-        CmpReceiver::new(me_bind, gw_send_addr, 2).unwrap();
-    let _ = me_sender.local_addr().unwrap();
+        CmpReceiver::new(me_recv_bind, gw_send_bind, 2).unwrap();
 
     // Pre-populate the orderbook with N+warmup ask orders so
     // every gateway order has a maker to fill against. One
