@@ -51,3 +51,8 @@ harness = false
 [[bench]]
 name = "wal_random_read_bench"
 harness = false
+
+[[bench]]
+name = "cmp_send_breakdown_bench"
+harness = false
+
