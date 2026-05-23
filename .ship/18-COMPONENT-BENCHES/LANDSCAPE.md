@@ -76,17 +76,25 @@ is closer to the `me_process_order_full_path` 3.5 µs.
 | `mark_binance_plus_coinbase` (2-source) | **78 ns** |
 | `mark_5_sources_steady_state` | 101 ns |
 
-### Transport (rsx-dxs, owned by parallel sub)
+### Transport (rsx-dxs)
 
-Numbers per `60c0b56 [bench] LANDSCAPE.md + bench harness fixes`:
+Numbers as of `245bd03` — three harnesses were lying and got
+fixed (per `.diary/20260523.md`):
 
 | Bench | p50 |
 |---|---:|
-| `udp_rtt_loopback_64b` | **29 µs** |
-| `wal_append_fsync_single` | **651 µs** |
+| `udp_rtt_loopback_64b` | **7.3 µs** (was 29 µs — harness was overstating 4× due to per-iter setsockopt) |
+| `cmp_one_way_fill` | **3.95 µs** (was: hung — flow control closed) |
+| `cmp_rtt_fill_echo` | **10.3 µs** (was: hung — same cause) |
+| `wal_append_fsync_single` | 651 µs |
 | `wal_random_read_10k` | 23.5 ms |
-| `cmp_one_way_bench` | _harness hang_ |
-| `cmp_rtt_bench` | _harness hang_ |
+
+Reconciliation:
+- `udp_rtt 7.3 µs ≈ 2 × cmp_one_way 3.95 µs` (UDP RTT = two
+  one-way trips; CMP adds ~0.3 µs framing + ring cache).
+- `cmp_rtt 10.3 µs ≈ 2 × cmp_one_way + receiver echo work`.
+- `bench-match-rt total p50 9.6 µs` (see below) ≈
+  `cmp_rtt 10.3 µs - one tick of overlap`.
 
 ### Risk (owned by parallel sub)
 
@@ -94,23 +102,31 @@ Numbers per `60c0b56 [bench] LANDSCAPE.md + bench harness fixes`:
 |---|---:|
 | `validate_bench` | **281 ns** |
 
-### In-process E2E pipeline
+### In-process matching round-trip (`bench-match-rt`)
 
-`bench-e2e-pipeline --n 10000 --warmup 500` — real
-`Orderbook` + `WalWriter` + `DedupTracker` + `FxHashMap`
-order index + real `CmpSender`/`CmpReceiver` over loopback
-UDP, all in one process. Two threads: "Gateway" sender +
-"ME" receiver. Strict request/reply (send order, await
-its terminal Fill/OrderDone, then send next).
+Renamed from `bench-e2e-pipeline` (it's not e2e — risk,
+gateway WS, marketdata are out of scope). Rewrote at
+~450 LOC with per-stage timing. Real Orderbook, WalWriter,
+DedupTracker, FxHashMap order index + real CmpSender /
+CmpReceiver over loopback. Two threads, strict request/reply.
 
-| Metric | Value |
-|---|---:|
-| Round-trip **p50** | **9 µs** |
-| Round-trip min | 7 µs |
-| Round-trip p95 | 14 µs |
-| Round-trip p99 | 207 µs |
-| Round-trip max | 32 ms |
-| Total elapsed (10k orders) | 782 ms |
+`bench-match-rt --n 10000 --warmup 500`:
+
+| Stage | p50 (ns) | p95 | p99 |
+|---|---:|---:|---:|
+| gw_send (CmpSender::send body) | **3 767** | 7 143 | 20 328 |
+| udp_to_me (loopback + try_recv) | 671 | 1 363 | 4 318 |
+| me_dedup | 71 | 180 | 1 683 |
+| me_wal_accept | 90 | 271 | 2 184 |
+| me_match (process_new_order) | 70 | 230 | 361 |
+| me_wal_events (write_events_to_wal) | 110 | 1 754 | 3 276 |
+| me_send (fill via CmpSender) | **3 757** | 6 131 | 8 767 |
+| udp_to_gw (loopback + try_recv) | 702 | 3 958 | 16 020 |
+| **TOTAL** | **9 578** | 19 908 | 31 600 |
+
+**The send path dominates.** CmpSender::send body × 2 =
+**7.5 µs out of 9.6 µs (78%)**. The ME algorithm itself is
+**341 ns** total (dedup + wal_accept + match + wal_events).
 
 Cross-process production p50 (from SPEED-OFFHOT.md): **1 128 µs**.
 
@@ -118,17 +134,26 @@ Cross-process production p50 (from SPEED-OFFHOT.md): **1 128 µs**.
 
 | | p50 (µs) |
 |---|---:|
-| In-process (this bench) | **9** |
-| Cross-process (SPEED-OFFHOT.md) | 1 128 |
-| Cross-process e2e (bench-baseline.json, includes Python probe) | 11 878 |
-| Ratio (cross/in-process) | **125×** |
+| Matching algorithm itself (sum of ME sub-stages) | **0.34** |
+| In-process round-trip (`bench-match-rt`) | **9.58** |
+| Cross-process matching p50 (SPEED-OFFHOT.md) | 1 128 |
+| Cross-process e2e with Python probe (bench-baseline.json) | 11 878 |
+| Ratio (cross-process / in-process) | **118×** |
 
-**The algorithm is two orders of magnitude faster than the
-production cross-process number.** The other 1 119 µs is
-plumbing: tokio reactor schedules, CMP framing overhead in
-separate processes, the `monoio::time::sleep(100us)` polls
-in gateway+md, fsync barriers, OS-level UDP loopback context
-switches between processes.
+**Three concentric circles of overhead:**
+
+1. **The matching algorithm is 340 ns p50.** Three orders of
+   magnitude below any user-visible number.
+2. **In-process round-trip is 9.58 µs.** Adds two sendto
+   syscalls + UDP loopback + CRC + the receiver-side
+   `try_recv` body — that's 9.2 µs of CMP+UDP overhead for
+   340 ns of useful work.
+3. **Cross-process p50 is 1 128 µs.** Adds the
+   `monoio::time::sleep(100us)` poll in gateway and
+   marketdata, tokio reactor schedules, real-process
+   context switches, gateway WS framing on both sides, risk
+   validation, and PG write-behind churn. **~1 118 µs** on
+   top of the in-process floor.
 
 ## 3. Attribution to the 1 128 µs production p50
 
