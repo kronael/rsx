@@ -125,48 +125,68 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     let stop_b = Arc::clone(&stop);
     let echoes_b = Arc::clone(&echoes);
 
+    // B-side echo: spin try_recv → send back. Periodic tick
+    // on both receiver and sender keeps the flow-control
+    // windows open across sustained Criterion measurement
+    // (~100k+ iterations) — without it the senders' windows
+    // close around iter 65536 and `send` returns Ok(false)
+    // forever.
     let handle = thread::spawn(move || {
+        let mut i: u64 = 0;
         while !stop_b.load(Ordering::Relaxed) {
-            if let Some((_hdr, _data)) = b_receiver.try_recv() {
+            if let Some(_) = b_receiver.try_recv() {
                 let mut echo = fill_record();
                 loop {
                     match b_sender.send(&mut echo) {
                         Ok(true) => break,
-                        Ok(false) => std::hint::spin_loop(),
-                        Err(e) => {
-                            panic!("b echo send failed: {e}")
+                        Ok(false) => {
+                            let _ = b_sender.tick();
+                            b_sender.recv_control();
+                            std::hint::spin_loop();
                         }
+                        Err(e) => panic!("b send: {e}"),
                     }
                 }
                 echoes_b.fetch_add(1, Ordering::Release);
             } else {
                 std::hint::spin_loop();
             }
+            i = i.wrapping_add(1);
+            if i & 0x3FF == 0 {
+                b_receiver.tick();
+                let _ = b_sender.tick();
+                b_sender.recv_control();
+            }
         }
     });
 
     c.bench_function("cmp_rtt_fill_echo", |b| {
+        let mut iter: u64 = 0;
         b.iter(|| {
+            iter = iter.wrapping_add(1);
+            if iter & 0x3FF == 0 {
+                a_receiver.tick();
+                let _ = a_sender.tick();
+                a_sender.recv_control();
+            }
             let mut req = fill_record();
-            let before_echo = echoes.load(Ordering::Acquire);
             loop {
                 match a_sender.send(black_box(&mut req)) {
                     Ok(true) => break,
-                    Ok(false) => std::hint::spin_loop(),
-                    Err(e) => panic!("a send failed: {e}"),
+                    Ok(false) => {
+                        let _ = a_sender.tick();
+                        a_sender.recv_control();
+                        std::hint::spin_loop();
+                    }
+                    Err(e) => panic!("a send: {e}"),
                 }
             }
-            // Wait for the echo to come back via a_receiver.
             loop {
                 if let Some(reply) = a_receiver.try_recv() {
                     black_box(reply);
                     break;
                 }
-                // Check echo counter as a liveness signal so
-                // we don't spin forever if B's recv missed it.
-                if echoes.load(Ordering::Acquire) < before_echo + 1 {
-                    std::hint::spin_loop();
-                }
+                std::hint::spin_loop();
             }
         });
     });

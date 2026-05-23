@@ -2,41 +2,34 @@
 //!
 //! What this measures
 //! -----------------
-//! End-to-end time from the sender's `send()` returning Ok
-//! to the receiver's `try_recv()` returning the in-order
-//! record, on the same host over UDP loopback. The receiver
-//! spins on `try_recv()` from a dedicated thread; the bench
-//! thread is the sender.
+//! `CmpSender::send` returns to `CmpReceiver::try_recv` returns
+//! the same record. Single direction, one CMP hop, in-order,
+//! no NAK. Both sides on 127.0.0.1, both threads spinning
+//! cache-hot.
 //!
-//! This is the protocol-level isolation of the legs
-//! `gateway_in → risk_in` and `risk_out → gateway_cmp_recv`
-//! (single CMP hop, in-order, no NAK).
+//! This is the protocol isolation of the production legs
+//! `gateway_in → risk_in` and `risk_out → gateway_cmp_recv`.
+//! Adds (over `udp_rtt_loopback_64b`): WalHeader build + CRC32
+//! over the 128-byte FillRecord, send-ring slot cache,
+//! receiver-side WalHeader parse + CRC32 verify + in-order
+//! seq accounting.
 //!
-//! Includes:
-//! - Header build + CRC32 over a 128-byte FillRecord payload
-//! - UDP send_to (loopback)
-//! - UDP recv_from (loopback)
-//! - WalHeader parse + CRC32 verify on receiver
-//! - Send-ring slot write (preallocated)
+//! Happy path only — no NAK injection, no socket failure, no
+//! sender restart. Producer/consumer flow control is kept
+//! open by periodic `sender.tick()` calls (every 1024 iters)
+//! which trigger peer status round-trips. Without that, the
+//! sender's window closes around iter 65536 and `send` returns
+//! `Ok(false)` forever. (The bench is exercising sustained
+//! throughput; production has the same heartbeat cadence
+//! built into the gateway's main loop.)
 //!
-//! Excludes:
-//! - Heartbeat / status / NAK traffic (`tick()` never called
-//!   in the hot loop)
-//! - WAL append (CmpSender does not write to WAL; WAL is the
-//!   recorder's job)
-//!
-//! Assumptions / caveats
-//! --------------------
-//! - Loopback, not real net (see udp_rtt_bench).
-//! - Receiver allocates a `Vec<u8>` per in-order delivery
-//!   (documented non-zero-heap on the recv path). On a real
-//!   GW→ME→GW hot path, the receiver thread would copy into
-//!   a typed slot or push into a SPSC ring; here we just
-//!   black_box the returned Vec, which is the same shape as
-//!   the current risk tile's CMP consumer.
-//! - Sender thread does NOT call `tick()`; in production
-//!   `tick()` is on a 10ms cadence and is not on the per-
-//!   packet critical path.
+//! Caveats
+//! -------
+//! - Both sides on the same host: real net adds NIC IRQ +
+//!   driver tx/rx + (sometimes) interrupt-coalescing delay.
+//! - The receiver allocates a `Vec<u8>` per in-order delivery
+//!   (CmpReceiver::try_recv is NOT zero-heap on recv; the
+//!   zero-heap claim applies to CmpSender::send only).
 
 use criterion::black_box;
 use criterion::criterion_group;
@@ -80,74 +73,86 @@ fn fill_record() -> FillRecord {
 }
 
 fn ephemeral_addr() -> SocketAddr {
-    let s = UdpSocket::bind("127.0.0.1:0").unwrap();
-    s.local_addr().unwrap()
+    UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
 }
 
 fn bench_cmp_one_way(c: &mut Criterion) {
     let tmp = TempDir::new().unwrap();
+    let send_bind = ephemeral_addr();
+    let recv_bind = ephemeral_addr();
 
-    // Pick two free ports up front.
-    let sender_bind = ephemeral_addr();
-    let receiver_bind = ephemeral_addr();
-
-    // Sender uses sender_bind, dest = receiver_bind.
     let mut sender = CmpSender::with_config(
-        receiver_bind,
+        recv_bind,
         1,
         tmp.path(),
         &rsx_dxs::config::CmpConfig {
-            sender_bind_addr: Some(sender_bind.to_string()),
-            ..rsx_dxs::config::CmpConfig::default()
+            sender_bind_addr: Some(send_bind.to_string()),
+            ..Default::default()
         },
     )
     .unwrap();
-
-    // Receiver bound to receiver_bind, sender_addr = where
-    // it sends NAKs/STATUS (back to the sender's bind).
     let sender_addr = sender.local_addr().unwrap();
     let mut receiver =
-        CmpReceiver::new(receiver_bind, sender_addr, 1)
-            .unwrap();
+        CmpReceiver::new(recv_bind, sender_addr, 1).unwrap();
 
-    // Recv side: tight spin in a worker thread. The worker
-    // counts every in-order record it sees; the sender
-    // bench iter publishes a seq and waits for the counter
-    // to advance past it.
     let stop = Arc::new(AtomicBool::new(false));
     let recv_count = Arc::new(AtomicU64::new(0));
-
     let stop_clone = Arc::clone(&stop);
     let recv_clone = Arc::clone(&recv_count);
 
+    // Receiver worker: spin try_recv + drive `tick()` so the
+    // peer status replies the sender needs to keep its window
+    // open get sent.
     let handle = thread::spawn(move || {
+        let mut i: u64 = 0;
         while !stop_clone.load(Ordering::Relaxed) {
-            if let Some((hdr, data)) = receiver.try_recv() {
-                black_box((hdr, data));
+            if let Some(frame) = receiver.try_recv() {
+                black_box(frame);
                 recv_clone.fetch_add(1, Ordering::Release);
             } else {
                 std::hint::spin_loop();
+            }
+            // Tick periodically: sends status messages that
+            // advance the sender's peer_consumption_seq, keeping
+            // the flow-control window open.
+            i = i.wrapping_add(1);
+            if i & 0x3FF == 0 {
+                receiver.tick();
             }
         }
     });
 
     c.bench_function("cmp_one_way_fill", |b| {
+        let mut iter: u64 = 0;
         b.iter(|| {
             let mut rec = fill_record();
             let before = recv_count.load(Ordering::Acquire);
-            // Loop until send succeeds (flow control / send
-            // ring should never stall in this setup but be
-            // safe).
+            // Send. Flow control closes around 64K iters
+            // without status round-trips — we drive
+            // `sender.tick()` once per 1024 sends so the
+            // sender can recv status from the receiver and
+            // advance peer_consumption_seq.
+            iter = iter.wrapping_add(1);
+            if iter & 0x3FF == 0 {
+                let _ = sender.tick();
+                sender.recv_control();
+            }
             loop {
                 match sender.send(black_box(&mut rec)) {
                     Ok(true) => break,
                     Ok(false) => {
+                        // Window closed — drive a tick to
+                        // pick up peer status, then retry.
+                        let _ = sender.tick();
+                        sender.recv_control();
                         std::hint::spin_loop();
                     }
-                    Err(e) => panic!("send failed: {e}"),
+                    Err(e) => panic!("send: {e}"),
                 }
             }
-            // Wait for receiver to pick this one up.
             while recv_count.load(Ordering::Acquire) == before {
                 std::hint::spin_loop();
             }
@@ -155,10 +160,6 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     });
 
     stop.store(true, Ordering::Release);
-    // Send one more frame to unstick the receiver in case
-    // it's spinning on an empty socket — actually try_recv
-    // is non-blocking so it just polls; the stop flag is
-    // enough.
     let _ = handle.join();
 }
 
