@@ -20,7 +20,7 @@ Two artifacts in one repo:
 
 The wedge is "open-source the orthogonal libraries that
 already exist, sell the exchange-in-a-box on top." See
-`.ship/13-A16Z-FIXES/WEDGE.md` for the decision write-up.
+`specs/2/50-wedge.md` for the decision write-up.
 
 The design budget: under 50 microseconds from gateway ingress
 to gateway egress, under 500 nanoseconds for a match inside
@@ -242,7 +242,7 @@ funding zero-sum, …) each carry a comment in code naming the
 invariant they enforce. `specs/2/6-consistency.md` is the
 cross-reference. Audit-by-grep works now.
 
-**Honesty pass.** A skeptical-reviewer audit (`.ship/13-A16Z-FIXES/`)
+**Honesty pass.** A skeptical-reviewer audit (see CHANGELOG v0.2.0)
 produced a finding-by-finding resolution map. Things landed:
 JWT min-secret + `nbf` + `jti` replay tracker (now fully wired
 through `ws_handshake`), gateway IP-limiter cap, zero-heap
