@@ -12,8 +12,8 @@ name = "bench-probe"
 path = "src/bench_probe.rs"
 
 [[bin]]
-name = "bench-e2e-pipeline"
-path = "src/bin/bench_e2e_pipeline.rs"
+name = "bench-match-rt"
+path = "src/bin/bench_match_rt.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
