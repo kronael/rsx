@@ -723,3 +723,7 @@ fn scan_file_for_seq(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "wal_test.rs"]
+mod wal_test;

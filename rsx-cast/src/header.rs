@@ -75,3 +75,7 @@ impl WalHeader {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "header_test.rs"]
+mod header_test;

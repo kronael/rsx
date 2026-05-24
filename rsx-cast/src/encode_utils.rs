@@ -54,3 +54,7 @@ pub fn decode_payload<T: Copy>(payload: &[u8]) -> Option<T> {
         std::ptr::read_unaligned(payload.as_ptr() as *const T)
     })
 }
+
+#[cfg(test)]
+#[path = "encode_utils_test.rs"]
+mod encode_utils_test;
