@@ -450,9 +450,10 @@ or pin a git rev.
 - **rtrb** (mgeier) — wait-free SPSC ring buffer that
   inspired our preallocated send-ring + the planned v4
   reorder-ring. https://github.com/mgeier/rtrb
-- **`crc32fast`** — what casting uses for header CRC. The
-  Castagnoli polynomial choice follows iSCSI / SCTP.
-  https://github.com/srijs/rust-crc32fast
+- **`crc32c`** — what casting uses for payload CRC. SSE4.2
+  hardware path (`_mm_crc32_u64`, ~1 cycle / 8 B); Castagnoli
+  polynomial, same as iSCSI / SCTP / btrfs.
+  https://github.com/zowens/crc32c
 
 ## Alternatives
 
