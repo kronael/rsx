@@ -340,6 +340,13 @@ pub fn replay_wal_after_snapshot(
     let mut cancelled = 0u64;
     while let Some(raw) = reader.next()? {
         let seq = extract_seq(&raw.payload).unwrap_or(0);
+        if seq < start_seq {
+            // `open_from_seq` picks the file containing
+            // `start_seq` but doesn't skip past records
+            // within that file. Filter here so we don't
+            // re-apply records the snapshot already contains.
+            continue;
+        }
         if seq > last_seq {
             last_seq = seq;
         }
