@@ -701,6 +701,12 @@ def mock_gateway_running(monkeypatch):
          "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
         {"name": "me-pengu", "pid": 99992, "state": "running",
          "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+        {"name": "me-btc",   "pid": 99993, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+        {"name": "me-eth",   "pid": 99994, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+        {"name": "me-sol",   "pid": 99995, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
     ]
     monkeypatch.setattr(server, "scan_processes", lambda: _fake)
     yield
