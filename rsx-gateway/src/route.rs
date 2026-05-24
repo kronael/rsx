@@ -49,12 +49,10 @@ pub fn route_fill(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let anchor_ns = if rec.taker_ts_ns
-        > 1_700_000_000_000_000_000
-    {
-        rec.taker_ts_ns
-    } else {
+    let anchor_ns = if rec.taker_ts_ns == 0 {
         rec.ts_ns
+    } else {
+        rec.taker_ts_ns
     };
     let t_us = now_ns.saturating_sub(anchor_ns) / 1000;
     // Sub-stage: serialize completed. Captured BEFORE the
