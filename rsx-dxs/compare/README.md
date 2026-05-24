@@ -1,8 +1,8 @@
 # rsx-dxs: Protocol Comparisons
 
 Five serious competitors, judged on **speed** and **features**.
-Supporting-cast protocols (TCP, raw UDP, KCP, SoupBinTCP, ITCH,
-OUCH, gossip / FEC / log) have their own benches and docs for
+Supporting-cast protocols (TCP, raw UDP, KCP, SoupBinTCP,
+gossip / FEC / log) have their own benches and docs for
 completeness — see the supporting-cast section at the bottom.
 
 ## What rsx-dxs is
@@ -93,8 +93,11 @@ These are benched for completeness; they're not the framing comparison:
 | TCP | [tcp.md](tcp.md) | `compare_tcp` | rsx-dxs uses TCP for cold-path replay, not live |
 | KCP | [kcp.md](kcp.md) | `compare_kcp` | Gaming RUDP; Quinn is the same family more credibly |
 | SoupBinTCP | [soupbintcp.md](soupbintcp.md) | `compare_soupbintcp` | TCP + 3-byte framing; cost is within TCP noise |
-| ITCH 5.0 | [itch5.md](itch5.md) | (payload format) | Application-layer message format over MoldUDP64 |
-| OUCH 5.0 | [ouch.md](ouch.md) | (payload format) | Application-layer message format over SoupBinTCP |
+
+Payload formats (ITCH 5.0, OUCH 5.0, SBE, FAST) belong to the
+`rsx-messages` comparison axis, not the transport axis. They are
+not in scope here. MoldUDP64 carries ITCH in production;
+SoupBinTCP carries OUCH — see those docs for context.
 
 ## Long-tail census
 
