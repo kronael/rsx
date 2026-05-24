@@ -127,6 +127,19 @@ pub struct CmpSender {
     ring_seqs: Box<[u64]>,
     ring_lens: Box<[u16]>,
     ring_frames: Box<[u8]>,
+    /// Per-slot last-retransmit timestamp (ns since
+    /// `start_instant`). Used to dedup NAK storms: a NAK
+    /// arriving for `seq` whose slot was retransmitted
+    /// within `retx_dedup_window_ns` is dropped. `0` means
+    /// "never retransmitted". Parallel to `ring_seqs`.
+    ring_last_retx_ns: Box<[u64]>,
+    /// Monotonic clock baseline. Subtracted from
+    /// `Instant::now()` to produce the u64 ns values stored
+    /// in `ring_last_retx_ns`. One per sender lifetime.
+    start_instant: Instant,
+    /// Retransmit dedup window, in ns. Cached from config so
+    /// the hot path avoids the u64 multiply on every NAK.
+    retx_dedup_window_ns: u64,
     /// Stream id used by the WAL filename layout. Needed
     /// for NAK retransmit when the requested seq has
     /// fallen out of `ring_seqs`.
@@ -188,6 +201,15 @@ impl CmpSender {
                     * SEND_RING_FRAME_BYTES
             ]
             .into_boxed_slice(),
+            ring_last_retx_ns: vec![
+                0u64;
+                SEND_RING_CAPACITY
+            ]
+            .into_boxed_slice(),
+            start_instant: Instant::now(),
+            retx_dedup_window_ns: config
+                .retx_dedup_window_us
+                .saturating_mul(1000),
             stream_id,
             wal_dir: wal_dir.to_path_buf(),
             buf: [0u8; PACKET_BUF_SIZE],
@@ -291,14 +313,27 @@ impl CmpSender {
                 nak.count, count
             );
         }
+        let now_ns =
+            self.start_instant.elapsed().as_nanos() as u64;
         for i in 0..count {
             let seq = nak.from_seq.saturating_add(i);
+            // Dedup: if this slot was retransmitted within
+            // the dedup window, skip. Receiver's own retry
+            // cadence is bounded by `nak_retry_us` (100 µs
+            // default) so legitimate retries fall through.
+            let slot = (seq & SEND_RING_MASK) as usize;
+            let last = self.ring_last_retx_ns[slot];
+            if last != 0
+                && now_ns.saturating_sub(last)
+                    < self.retx_dedup_window_ns
+            {
+                continue;
+            }
             // Hot tier: preallocated ring lookup. Slot may
             // hold either this seq (cache hit), an older
             // seq the ring has wrapped past (cache miss
             // via seq mismatch), or be unused
             // (ring_seqs[slot] == 0).
-            let slot = (seq & SEND_RING_MASK) as usize;
             if seq != 0
                 && self.ring_seqs[slot] == seq
                 && self.ring_lens[slot] > 0
@@ -313,6 +348,8 @@ impl CmpSender {
                         "nak retransmit send \
                          failed seq={seq}: {e}"
                     );
+                } else {
+                    self.ring_last_retx_ns[slot] = now_ns;
                 }
                 continue;
             }
@@ -353,6 +390,8 @@ impl CmpSender {
                             "nak wal-retransmit send \
                              failed seq={seq}: {e}"
                         );
+                    } else {
+                        self.ring_last_retx_ns[slot] = now_ns;
                     }
                 }
                 Ok(None) => {
