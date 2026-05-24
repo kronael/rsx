@@ -3970,11 +3970,18 @@ async def api_process_action(
                     except (ProcessLookupError, PermissionError,
                             OSError):
                         pass
-                result = await spawn_process(
-                    name, binary, env)
-                msg = (f"started {name} (pid {result['pid']})"
-                       if "pid" in result
-                       else result.get("error", "failed"))
+                # build first, same as the Start action
+                ok = await do_build()
+                if not ok:
+                    msg = "build failed"
+                else:
+                    result = await spawn_process(
+                        name, binary, env)
+                    msg = (
+                        f"restarted {name} (pid {result['pid']})"
+                        if "pid" in result
+                        else result.get("error", "failed")
+                    )
             else:
                 msg = f"unknown process: {name}"
         return HTMLResponse(
