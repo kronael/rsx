@@ -29,6 +29,10 @@ tempfile = "3"
 rcgen = "0.13"
 rsx-messages = { path = "../rsx-messages" }
 rsx-types = { path = "../rsx-types" }
+# protocol comparison benches (compare/*)
+kcp = "0.6"
+quinn = "0.11"
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
 
 [[bench]]
 name = "wal_bench"
@@ -62,3 +66,10 @@ harness = false
 name = "cmp_send_breakdown_bench"
 harness = false
 
+[[bench]]
+name = "compare_kcp"
+harness = false
+
+[[bench]]
+name = "compare_quinn"
+harness = false
