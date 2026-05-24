@@ -166,18 +166,8 @@ Sec-WebSocket-Accept: {}\r\n\
     Ok((key, user_id))
 }
 
-/// Extract user_id from HTTP headers, validate JWT, and
-/// record the `jti` in the process-wide replay tracker.
-/// Returns `Ok(user_id)` on success, `Err(static reason)`
-/// when auth is missing, invalid, missing a `jti` claim, or
-/// the jti has been seen before.
-///
-/// Policy lives here, not in `JtiTracker::record` (which is
-/// the primitive). Tokens minted by rsx-auth always carry a
-/// `jti` claim (see `rsx-auth/src/rsx_auth/jwt_util.py`); a
-/// production token without one is treated as malformed and
-/// rejected — otherwise the replay defence is bypassable by
-/// stripping the claim. See CTO-REPORT.md R3.
+/// Extract user_id from HTTP headers, validate JWT, record `jti` in the replay tracker.
+/// Tokens missing `jti` are rejected — without that gate, replay defence is bypassable.
 fn extract_user_and_record_jti(
     request: &str,
     jwt_secret: &str,
