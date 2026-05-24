@@ -56,7 +56,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - WalWriter: 10ms flush, 64MB rotate, 10min retain
 - WalReader with sequence extraction
 - DxsReplayService (TCP, from seq N)
-- CMP protocol: UDP flow control, NACK-based
+- Streaming protocol (CMP) over UDP: flow control, NACK-based
 - Two-tier NAK retransmit: in-mem ring + WAL random-access
 - Protocol records: StatusMessage, Nak, CmpHeartbeat,
   ReplayRequest, CaughtUpRecord (in `protocol.rs`)

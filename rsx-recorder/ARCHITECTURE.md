@@ -37,3 +37,19 @@ archive/{stream_id}_{YYYY-MM-DD}.wal
 
 Daily rotation at UTC midnight. Same binary WAL format as
 source (no transformation).
+
+## Architectural Decisions
+
+**Runtime: tokio.** The recorder is a TCP-only replay
+consumer — a single `DxsConsumer` covers historical catch-up
+and the live tail indefinitely, with built-in exponential
+backoff on disconnects. tokio is the right pick because the
+work is async file I/O plus one long-lived TCP connection;
+there is no hot loop to pin, no SPSC ring to drive.
+
+The recorder explicitly trades latency (TCP head-of-line
+blocking, kernel cwnd) for operational simplicity (one
+socket, no NAK state machine, no UDP rmem tuning). Archival
+runs offline of the GW→ME→GW critical path, so the tradeoff
+is the obvious one. See [`../notes/tiles.md`](../notes/tiles.md)
+for when each runtime applies.

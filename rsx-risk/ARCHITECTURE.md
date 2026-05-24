@@ -234,3 +234,20 @@ thread → `tokio_postgres`:
 | BBO → index price | <100ns |
 | Postgres flush | every 10ms |
 | Failover detection | ~500ms |
+
+## Architectural Decisions
+
+**Runtime: canonical full tile + tokio persist sidecar.** Risk
+is the reference example of the full tile arrangement (per
+[`../specs/2/45-tiles.md`](../specs/2/45-tiles.md) §3.2). The
+hot thread is pinned, busy-spinning, draining seven SPSC
+rings: fills, orders, mark prices, BBOs (consumers); order
+responses, accepteds (producers); plus one `PersistEvent` ring
+to the sidecar.
+
+The persist sidecar is a separate OS thread running a
+single-threaded tokio runtime so blocking `tokio_postgres`
+writes — accounts, positions, fills, tips — cannot stall the
+pinned core. The ring boundary is the chokepoint: full ring
+stalls the hot path per the WAL backpressure rule (see
+[`../notes/tiles.md`](../notes/tiles.md)).

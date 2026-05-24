@@ -154,3 +154,19 @@ The next subscribe re-materializes the book from incoming events
 - No durable state -- shadow books are ephemeral and rebuilt
   via DXS bootstrap + live CMP.
 - Heartbeat interval/timeout configurable via env.
+
+## Architectural Decisions
+
+**Runtime: monoio (io_uring).** Marketdata fans out L2 depth,
+BBO, and trade events to potentially thousands of WS
+subscribers. The dominant cost is socket multiplexing — the
+exact case io_uring's batched submission rings are designed
+for. The reactor also drains one `CmpReceiver` per matching
+engine on every tick, so I/O is the inner loop on both sides.
+
+Single-threaded reactor, no `core_affinity` pinning:
+marketdata is not on the GW→ME→GW critical path, so the
+extra core is better spent on gateway/risk. The shadow book
+is single-owner per-process state, but the surrounding loop
+is async (not a strict tile) because WS fan-out dominates.
+See [`../notes/tiles.md`](../notes/tiles.md).
