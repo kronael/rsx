@@ -39,8 +39,8 @@ fn main() {
         _pad1: [0; 4], taker_ts_ns: 0,
     };
     eprintln!("sending...");
-    let ok = sender.send(&mut rec).unwrap();
-    eprintln!("send returned {ok}");
+    sender.send(&mut rec).unwrap();
+    eprintln!("send returned");
 
     // Try to recv with retries
     for i in 0..100 {
