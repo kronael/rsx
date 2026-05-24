@@ -10,15 +10,15 @@ The wedge is **B + A**: exchange-in-a-box SDK on top of an
 open-source, orthogonal-parts library. Core thesis:
 
 > The interesting reusable pieces are the transport
-> (`rsx-dxs` = WAL + casting + replication) and possibly the orderbook
+> (`rsx-cast` = WAL + casting + replication) and possibly the orderbook
 > (`rsx-book` = slab + CompressionMap + matching). Open-source
 > those. Sell / support the full exchange-in-a-box on top.
 
-The architecture already supports this — `rsx-dxs` shipped in
+The architecture already supports this — `rsx-cast` shipped in
 v0.2.0 with **zero `rsx-types` production dependency**
-(`cargo tree -p rsx-dxs --edges normal | grep rsx-` is empty).
+(`cargo tree -p rsx-cast --edges normal | grep rsx-` is empty).
 Any project that wants log-backed reliable UDP transport with
-a TCP cold-path replay can `cargo add rsx-dxs` and use it.
+a TCP cold-path replay can `cargo add rsx-cast` and use it.
 
 The original draft below remains for context. The decision
 section that follows it (§"What B+A looks like") replaces it.
@@ -183,7 +183,7 @@ These ship as standalone reusable libraries. Each has its own
 crate, its own README, its own benchmark, and is provably
 usable without the rest of RSX:
 
-- **`rsx-dxs`** — the load-bearing one. Log-backed reliable
+- **`rsx-cast`** — the load-bearing one. Log-backed reliable
   UDP transport (casting) + TCP cold-path replay (replication). Wire =
   disk = stream. Zero heap on send path. Two-tier NAK
   retransmit (ring → WAL). V0/V1 schema version byte. Already
@@ -194,10 +194,10 @@ usable without the rest of RSX:
   Generic over the order-id type — anyone building a matching
   engine can `cargo add rsx-book`.
 - **`rsx-messages`** — the example domain layer on top of
-  `rsx-dxs`. Demonstrates how to ship a wire schema. Other
+  `rsx-cast`. Demonstrates how to ship a wire schema. Other
   projects substitute their own.
 
-The transport (`rsx-dxs`) is the wedge artifact. It has the
+The transport (`rsx-cast`) is the wedge artifact. It has the
 strongest "no one else has this" claim: nobody ships
 log-backed reliable UDP in Rust with the WAL-as-retransmit-
 source design. Aeron is JVM-only. kcp is C. QUIC has the
@@ -231,7 +231,7 @@ that were all blocked on "what's the story?":
    technical brag-doc. Now reframes as "log-backed
    reliable UDP for Rust + the exchange that proves it
    works at line rate." cmp.md becomes the lead post.
-3. **rsx-dxs/README.md polish** — already in good shape;
+3. **rsx-cast/README.md polish** — already in good shape;
    add a "When you should use this" section, a comparison
    table vs. Aeron / kcp / QUIC (already in spec, port to
    README), and a 30-second example.
@@ -243,9 +243,9 @@ that were all blocked on "what's the story?":
    month, friends of friends, ask: "would you pay $X to
    run RSX as your internal exchange?" Goal: one signed
    $25-50k POC by end of quarter.
-6. **Crates.io plan** — `rsx-dxs`, `rsx-book`, `rsx-types`,
+6. **Crates.io plan** — `rsx-cast`, `rsx-book`, `rsx-types`,
    `rsx-messages` publishable as v0.2.0 once docs are
-   library-quality (the rsx-dxs/README.md from v0.2.0 is
+   library-quality (the rsx-cast/README.md from v0.2.0 is
    close).
 
 ### What this still blocks
@@ -260,7 +260,7 @@ that were all blocked on "what's the story?":
 
 ### The signal that B+A is working (6-month horizon)
 
-- 3+ external projects citing or depending on `rsx-dxs`
+- 3+ external projects citing or depending on `rsx-cast`
   (open-source proof)
 - 1 signed design partner for `rsx-exchange` (paid proof)
 - 1 published-in-public technical artifact (paper, talk,

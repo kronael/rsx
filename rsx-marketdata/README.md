@@ -8,7 +8,7 @@ over WebSocket.
 Maintains a shadow `Orderbook` per symbol (rsx-book) from
 ME events received via casting/UDP. Aggregates streams from
 multiple matching engines via `RSX_ME_CAST_ADDRS` (comma-
-separated list, one CmpReceiver per ME). Publishes real-time
+separated list, one CastReceiver per ME). Publishes real-time
 L2 snapshots, BBO updates, and trade messages to subscribed
 WebSocket clients. On per-stream sequence gap, resends the
 full L2 snapshot to all subscribers of the affected symbol.
@@ -66,7 +66,7 @@ See `specs/2/40-testing-marketdata.md`.
 
 - `rsx-types` -- shared types
 - `rsx-book` -- orderbook (shadow book)
-- `rsx-dxs` -- casting receiver, replication consumer
+- `rsx-cast` -- casting receiver, replication consumer
 
 ## Gotchas
 

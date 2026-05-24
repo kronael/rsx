@@ -71,7 +71,7 @@ eliminated. See `specs/2/37-testing-gateway.md`.
 ## Dependencies
 
 - `rsx-types` -- shared types, validate_order
-- `rsx-dxs` -- casting sender/receiver
+- `rsx-cast` -- casting sender/receiver
 
 ## Gotchas
 

@@ -69,7 +69,7 @@ topology.
 | rsx-book | Shared orderbook: PriceLevel, OrderSlot, Slab, CompressionMap |
 | rsx-matching | ME tile logic, one instance per symbol, single-threaded |
 | rsx-risk | Risk tile logic, one per user shard, margin + funding + liquidation |
-| rsx-dxs | WAL writer/reader, DxsConsumer, DxsReplay server (transport-agnostic) |
+| rsx-cast | WAL writer/reader, ReplicationConsumer, DxsReplay server (transport-agnostic) |
 | rsx-mark | Mark price aggregator (separate process), external WS feeds, median |
 | rsx-gateway | Gateway tile, WS overlay + casting bridge, auth, rate limit |
 | rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |

@@ -11,7 +11,7 @@
 - Tests in dedicated `tests/` dir with `_test.rs` suffix
 - 88 test files across 12 Rust crates
 - Per-crate: `cargo test -p rsx-book -- test_name`
-- Per-file: `cargo test -p rsx-dxs --test wal_test`
+- Per-file: `cargo test -p rsx-cast --test wal_test`
 
 ### Python Tests
 

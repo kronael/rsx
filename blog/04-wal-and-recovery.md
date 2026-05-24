@@ -48,7 +48,7 @@ The `append` function writes a record to the buffer and assigns
 the next sequence number:
 
 ```rust
-pub fn append<T: CmpRecord>(
+pub fn append<T: CastRecord>(
     &mut self,
     record: &mut T,
 ) -> io::Result<u64> {
@@ -97,7 +97,7 @@ files for long-term storage (daily rotation, append-only).
 ## replication: Direct Exchange Streaming
 
 replication is how consumers read the WAL. Each producer (matching engine,
-mark aggregator) runs a DxsReplayService that serves WAL records
+mark aggregator) runs a ReplicationService that serves WAL records
 over TCP.
 
 The protocol:
@@ -264,7 +264,7 @@ That is a v2 problem.
 ## The fsync you forgot
 
 While writing about durability guarantees, we shipped a bug that
-violated them. The rotate function in `rsx-dxs/src/wal.rs` had
+violated them. The rotate function in `rsx-cast/src/wal.rs` had
 this sequence:
 
 ```rust

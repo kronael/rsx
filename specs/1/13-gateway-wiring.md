@@ -22,7 +22,7 @@ circuit.rs. Cancel is parsed but rejected as "unsupported".
 ### Stage 1: Cancel Order Handler
 
 **Goal**: Implement cancel order flow GW → Risk → ME
-**Files**: rsx-gateway/src/handler.rs, rsx-dxs/src/records.rs,
+**Files**: rsx-gateway/src/handler.rs, rsx-cast/src/records.rs,
   rsx-gateway/src/pending.rs, rsx-gateway/src/state.rs
 **Subagent**: improve
 **Dependencies**: []
@@ -34,9 +34,9 @@ circuit.rs. Cancel is parsed but rejected as "unsupported".
 
 **Details**:
 
-1. Add `RECORD_CANCEL_REQUEST: u16 = 11` to rsx-dxs/src/records.rs
+1. Add `RECORD_CANCEL_REQUEST: u16 = 11` to rsx-cast/src/records.rs
 
-2. Add `CancelRequest` record to rsx-dxs/src/records.rs:
+2. Add `CancelRequest` record to rsx-cast/src/records.rs:
 ```rust
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -50,7 +50,7 @@ pub struct CancelRequest {
     pub _pad: [u8; 24],
 }
 ```
-Implement CmpRecord for it.
+Implement CastRecord for it.
 
 3. Add `find_by_client_order_id(&self, cid: &[u8; 20])
    -> Option<&PendingOrder>` to PendingOrders in pending.rs
@@ -190,9 +190,9 @@ that requires a signing key and crypto dep we don't have yet):
      rejection, etc. Since handler.rs is async monoio, test
      the building blocks instead.
 
-3. Add to rsx-dxs/tests/records_test.rs:
+3. Add to rsx-cast/tests/records_test.rs:
    - test_cancel_request_record: verify CancelRequest
-     size/alignment, CmpRecord impl
+     size/alignment, CastRecord impl
 
 4. Run cargo test --workspace (skip docker-dependent tests)
 

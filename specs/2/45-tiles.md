@@ -186,7 +186,7 @@ per-core scaling in deployment, but a single thread in
 default dev config). Inside:
 
 - Accept loop spawns one task per WebSocket connection.
-- Each task `read_frame → validate → CmpSender::send` to
+- Each task `read_frame → validate → CastSender::send` to
   the risk shard.
 - Fill responses come back from risk via casting, route to
   the right WS task via a per-connection broker channel.
@@ -295,7 +295,7 @@ Tracked in `.ship/12-SHOWCASE-HONEST/`:
   TCP, add core pinning to the aggregator.
 - **17: monoio UDP for gateway.** Gateway owns the casting
   `UdpSocket`; replace with monoio io_uring SQEs for
-  batched send/recv. rsx-dxs itself stays runtime-free
+  batched send/recv. rsx-cast itself stays runtime-free
   (invert-ownership: caller passes bytes, not socket).
 - **userspace networking (DPDK / AF_XDP).** Long-horizon.
   The tile / async split above stays the same; only the

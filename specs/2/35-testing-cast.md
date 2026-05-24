@@ -68,7 +68,7 @@ tracks implementation progress.
 
 | ID | Requirement | Test(s) | Status |
 |----|-------------|---------|--------|
-| C25 | Client sends ReplayRequest as WAL record | `tcp_replay_request_encode_decode_roundtrip`, `tcp_replay_request_size_is_64_bytes` | ☐ |
+| C25 | Client sends ReplicationRequest as WAL record | `tcp_replay_request_encode_decode_roundtrip`, `tcp_replay_request_size_is_64_bytes` | ☐ |
 | C26 | Server streams write_all(header) + write_all(payload) | `tcp_server_streams_header_then_payload` | ☐ |
 | C27 | Client reads read_exact(16) + read_exact(len) | `tcp_client_reads_exact_header_then_payload` | ☐ |
 | C28 | RECORD_CAUGHT_UP sent when replay complete | `tcp_server_sends_caught_up_at_end_of_replay` | ☐ |
@@ -102,18 +102,18 @@ tracks implementation progress.
 
 ## 2. Unit Tests
 
-See `rsx-dxs/tests/cmp_encoding_test.rs` — covers control message
+See `rsx-cast/tests/cmp_encoding_test.rs` — covers control message
 encode/decode roundtrips, size asserts, little-endian field layout,
 record type constant values, padding zeroing, and CRC32 scope.
 
-See `rsx-dxs/tests/cmp_test.rs` — covers CmpSender (monotonic seq,
+See `rsx-cast/tests/cmp_test.rs` — covers CastSender (monotonic seq,
 heartbeat timing, flow control window, NAK handling, retransmit format,
-zero-heap send loop) and CmpReceiver (sequential delivery, gap detection,
+zero-heap send loop) and CastReceiver (sequential delivery, gap detection,
 NAK emission, StatusMessage timing, reorder buffer, duplicate/unknown
 record handling, CRC validation, zero-heap recv loop).
 
-See `rsx-dxs/tests/client_test.rs` and `rsx-dxs/tests/tls_test.rs` —
-covers TCP replication: ReplayRequest encode/decode, server streaming,
+See `rsx-cast/tests/client_test.rs` and `rsx-cast/tests/tls_test.rs` —
+covers TCP replication: ReplicationRequest encode/decode, server streaming,
 CaughtUp marker, live tail transition, reconnect backoff, resume from
 tip+1, TLS handshake, invalid CRC disconnect.
 
@@ -121,9 +121,9 @@ tip+1, TLS handshake, invalid CRC disconnect.
 
 Note: the e2e test files listed below (`cmp_e2e_test.rs`,
 `cmp_fault_test.rs`) are aspirational — not yet present in
-`rsx-dxs/tests/`. Scenarios below describe intended coverage.
+`rsx-cast/tests/`. Scenarios below describe intended coverage.
 
-See `rsx-dxs/tests/cmp_test.rs` for existing happy-path integration.
+See `rsx-cast/tests/cmp_test.rs` for existing happy-path integration.
 Remaining e2e scenarios (fault injection, flow control under real load,
 long-running stability) are planned for a future iteration.
 
@@ -145,7 +145,7 @@ long-running stability) are planned for a future iteration.
 
 ## 4. Benchmarks
 
-File: `rsx-dxs/benches/cmp_bench.rs`
+File: `rsx-cast/benches/cmp_bench.rs`
 
 All benchmarks use Criterion. monoio runtime for async
 benchmarks. Measure userspace time only.
@@ -169,12 +169,12 @@ From casting.md §9:
 
 | Integration | Spec Reference | Test Coverage |
 |-------------|----------------|---------------|
-| Gateway -> Risk (CmpSender) | NETWORK.md | `cmp_test.rs` |
-| Risk -> ME (CmpSender) | NETWORK.md | `cmp_test.rs` |
-| ME -> Risk (CmpSender) | NETWORK.md | `cmp_test.rs` |
-| Risk -> Gateway (CmpSender) | NETWORK.md | `cmp_test.rs` |
-| CmpSender reads WAL for retransmit | replication.md §3,4 | `cmp_test.rs` |
-| DxsConsumer uses TCP replication | replication.md §5,6 | `client_test.rs` |
+| Gateway -> Risk (CastSender) | NETWORK.md | `cmp_test.rs` |
+| Risk -> ME (CastSender) | NETWORK.md | `cmp_test.rs` |
+| ME -> Risk (CastSender) | NETWORK.md | `cmp_test.rs` |
+| Risk -> Gateway (CastSender) | NETWORK.md | `cmp_test.rs` |
+| CastSender reads WAL for retransmit | replication.md §3,4 | `cmp_test.rs` |
+| ReplicationConsumer uses TCP replication | replication.md §5,6 | `client_test.rs` |
 | Recorder uses TCP replication | replication.md §8 | `client_test.rs` |
 | Marketdata recovery via TCP | MARKETDATA.md §8 | `client_test.rs` |
 | SPSC intra-process, casting inter-process | TILES.md | architectural (no direct test) |
@@ -194,9 +194,9 @@ From casting.md §9:
 ## 7. Test File Organization
 
 ```
-rsx-dxs/tests/
+rsx-cast/tests/
     cmp_encoding_test.rs    control message encode/decode
-    cmp_test.rs             CmpSender + CmpReceiver unit tests
+    cmp_test.rs             CastSender + CastReceiver unit tests
     client_test.rs          TCP replication client tests
     header_test.rs          WAL header encoding tests
     records_test.rs         WAL record type tests
@@ -204,7 +204,7 @@ rsx-dxs/tests/
     wal_test.rs             WalWriter + WalReader tests
     common/mod.rs           shared test helpers
 
-rsx-dxs/benches/
+rsx-cast/benches/
     cmp_bench.rs            Criterion benchmarks
 ```
 

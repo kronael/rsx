@@ -68,7 +68,7 @@ serde_json = "1"
 ```
 
 Check exact version constraints by looking at what other
-crates in the workspace use (e.g., rsx-dxs/Cargo.toml
+crates in the workspace use (e.g., rsx-cast/Cargo.toml
 or rsx-risk/Cargo.toml for tokio version).
 
 Also check if source.rs has any other issues beyond deps.
@@ -93,7 +93,7 @@ Need a second casting sender to Marketdata.
 
 In main.rs:
 1. Add env var `RSX_MD_CAST_ADDR` (default "127.0.0.1:9103")
-2. Create second CmpSender to marketdata addr
+2. Create second CastSender to marketdata addr
 3. After the existing event send loop, add a second loop
    that sends to marketdata — but only Fill, OrderInserted,
    OrderCancelled (NOT OrderDone per MARKETDATA.md spec).
@@ -105,7 +105,7 @@ cmp_sender usage.
 Add a helper function:
 ```rust
 fn send_event_marketdata(
-    sender: &mut CmpSender,
+    sender: &mut CastSender,
     event: &rsx_book::event::Event,
     symbol_id: u32,
     ts_ns: u64,

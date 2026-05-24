@@ -3,7 +3,7 @@
 Stream baseline. TCP provides reliable, ordered, connection-oriented
 delivery over IP. RFC 9293 is the consolidated current spec.
 The benchmark answers two questions: how fast is a kernel TCP
-loopback round-trip, and why does rsx-dxs use TCP for the cold
+loopback round-trip, and why does rsx-cast use TCP for the cold
 WAL-replay path but not for live order flow.
 
 ## Wire model
@@ -15,7 +15,7 @@ two `read()`s of 32 bytes each, or a `read()` of 64 bytes
 followed by extra bytes from the next message. Receivers must
 loop until the expected count is satisfied.
 
-rsx-dxs's TCP cold path (DXS replay) reuses the exact same
+rsx-cast's TCP cold path (DXS replay) reuses the exact same
 16-byte `WalHeader` for framing that the UDP hot path uses.
 Wire = disk = stream — the header tells the receiver how many
 bytes the next record is.
@@ -35,7 +35,7 @@ by `TCP_NODELAY`. Without nodelay, the bench measures Nagle's
 
 ## Guarantees
 
-| Dimension | TCP | rsx-dxs CMP |
+| Dimension | TCP | rsx-cast CMP |
 |---|---|---|
 | Delivery | Reliable (ACK + retransmit) | Reliable (NAK + WAL retransmit) |
 | Ordering | In-order byte stream | Per-stream FIFO (seq monotonic) |
@@ -136,7 +136,7 @@ would race and break the round-trip count under load.
 | Transport | Loopback p50 (measured / expected) |
 |---|---|
 | Raw UDP | ~2 µs |
-| rsx-dxs CMP | ~10 µs |
+| rsx-cast CMP | ~10 µs |
 | TCP nodelay (this bench) | ~12–18 µs (measured) |
 | Tokio TCP (`compare_quinn.rs`) | ~100–1 000 µs |
 | Quinn QUIC | ~200–2 000 µs |

@@ -140,7 +140,7 @@ env vars from the full symbols list.
 
 ### Recorder
 Missing from `build_spawn_plan()`. Add one Recorder per
-scenario. Recorder is a DxsConsumer (TCP client), NOT a
+scenario. Recorder is a ReplicationConsumer (TCP client), NOT a
 casting subscriber. It connects to an ME's replication server
 to archive WAL records.
 

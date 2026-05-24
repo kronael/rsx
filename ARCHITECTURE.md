@@ -58,14 +58,14 @@ consensus, no Raft, no cross-process coordination within a tier.
 
 ## Crate Layout
 
-12 cargo crates. `rsx-messages` was extracted from `rsx-dxs`
+12 cargo crates. `rsx-messages` was extracted from `rsx-cast`
 so transport is now domain-agnostic (no rsx-types prod dep).
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, newtypes
-rsx-dxs/        Domain-agnostic transport: WalWriter, WalReader,
-                CmpSender, CmpReceiver, DxsReplayService,
-                DxsConsumer. Versioned wire header
+rsx-cast/        Domain-agnostic transport: WalWriter, WalReader,
+                CastSender, CastReceiver, ReplicationService,
+                ReplicationConsumer. Versioned wire header
                 (version: u8 at byte 8, V0=legacy, V1=current).
                 No rsx-types prod dep.
 rsx-messages/   Exchange wire records: FillRecord, BboRecord,
@@ -95,7 +95,7 @@ Risk, and ME. One WAL record per UDP datagram. Aeron-inspired
 NACK + flow control. Sub-10us same-machine latency.
 
 **Cold path -- WAL/TCP:** Replay, replication, archival. Plain
-TCP byte stream, optional TLS. Used by DxsConsumer/DxsReplay.
+TCP byte stream, optional TLS. Used by ReplicationConsumer/DxsReplay.
 
 ```
 Gateway --[casting/UDP]--> Risk --[casting/UDP]--> ME
@@ -110,8 +110,8 @@ Mark    --[replication/TCP]--> Risk (mark prices)
 Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
 16-byte WalHeader (with `version: u8` at byte 8) +
 `#[repr(C, align(64))]` payload. Zero serialization. See
-`rsx-dxs/src/header.rs` (transport + version),
-`rsx-dxs/src/protocol.rs` (CmpRecord trait + control messages),
+`rsx-cast/src/header.rs` (transport + version),
+`rsx-cast/src/protocol.rs` (CastRecord trait + control messages),
 `rsx-messages/src/lib.rs` (domain wire records). Trust
 boundaries: casting is intentionally unauthenticated (auth lives
 at the gateway via JWT and at L3); see CLAUDE.md and

@@ -157,7 +157,7 @@ No batching, no deferred processing.
 
 **Goal**: Add ORDER_FAILED routing and server-initiated heartbeats
 **Files**: rsx-gateway/src/main.rs, rsx-gateway/src/handler.rs,
-rsx-gateway/src/ws.rs, rsx-dxs/src/records.rs
+rsx-gateway/src/ws.rs, rsx-cast/src/records.rs
 **Subagent**: improve
 **Dependencies**: []
 **Verification**:
@@ -167,11 +167,11 @@ rsx-gateway/src/ws.rs, rsx-dxs/src/records.rs
 **Details**:
 
 Read rsx-gateway/src/main.rs, rsx-gateway/src/handler.rs,
-rsx-dxs/src/records.rs, specs/1/18-messages.md, specs/1/49-webproto.md.
+rsx-cast/src/records.rs, specs/1/18-messages.md, specs/1/49-webproto.md.
 
 **Part A: ORDER_FAILED routing**
 
-1. In rsx-dxs/src/records.rs, check if OrderFailedRecord exists.
+1. In rsx-cast/src/records.rs, check if OrderFailedRecord exists.
    If not, add it:
    ```rust
    pub const RECORD_ORDER_FAILED: u16 = 13;
@@ -187,7 +187,7 @@ rsx-dxs/src/records.rs, specs/1/18-messages.md, specs/1/49-webproto.md.
        pub _pad: [u8; 27],
    }
    ```
-   Implement CmpRecord for it. reason codes per MESSAGES.md:
+   Implement CastRecord for it. reason codes per MESSAGES.md:
    0=INVALID_TICK, 1=INVALID_LOT, 2=INSUFFICIENT_MARGIN,
    3=DUPLICATE_CID, 4=RATE_LIMITED, 5=SYSTEM.
 

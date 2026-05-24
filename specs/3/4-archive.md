@@ -24,7 +24,7 @@ Archive serves historical WAL records from flat files on disk. It is used when h
 ## API (WAL/TCP)
 
 - TCP byte stream of WAL records (header + payload).
-- `ReplayRequest` semantics match replication.md (from_seq).
+- `ReplicationRequest` semantics match replication.md (from_seq).
 
 ## Recovery Lookup Order
 

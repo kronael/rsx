@@ -5,7 +5,7 @@ status: shipped
 # RSX Crash Analysis (Value Flow + Failure Critique)
 
 Audit date: 2026-02-11
-Scope: current codepaths in `rsx-gateway`, `rsx-risk`, `rsx-matching`, `rsx-dxs`, `rsx-marketdata`.
+Scope: current codepaths in `rsx-gateway`, `rsx-risk`, `rsx-matching`, `rsx-cast`, `rsx-marketdata`.
 Intent: analyze crash safety of value flow, identify loss windows, and separate immediate/simple fixes from deeper design work.
 
 This document is an updated analysis for the evolved implementation. It complements `CRASH-SCENARIOS.md` (broad incident catalog) and focuses specifically on end-to-end value conservation and crash consistency.
@@ -48,7 +48,7 @@ This document is an updated analysis for the evolved implementation. It compleme
 
 ### 1.2 Durability boundaries
 
-- Durable source of truth for trade execution is ME WAL (`rsx-dxs/src/wal.rs`).
+- Durable source of truth for trade execution is ME WAL (`rsx-cast/src/wal.rs`).
 - Risk Postgres persistence is async/batched every 10ms (`rsx-risk/src/persist.rs`).
 - Risk cold start loads Postgres state then replays ME WAL (`rsx-risk/src/replay.rs`).
 - Frozen order ledger exists in Postgres (`order_freezes`) and is loaded on cold start.

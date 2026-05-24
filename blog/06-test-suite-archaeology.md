@@ -33,10 +33,10 @@ let addr = sock.local_addr()?;
 drop(sock);  // Release port
 
 // Now create real component
-let receiver = CmpReceiver::new(addr, ...)?;  // RACE HERE
+let receiver = CastReceiver::new(addr, ...)?;  // RACE HERE
 ```
 
-The bug: Between `drop(sock)` and `CmpReceiver::new()`, another test
+The bug: Between `drop(sock)` and `CastReceiver::new()`, another test
 (running in parallel) can steal port 8080. Classic Time-Of-Check-Time-
 Of-Use (TOCTOU).
 
@@ -248,7 +248,7 @@ The results:
   updates. A corrupt Postgres write could roll a symbol config
   backward, changing tick size mid-session. Five-line fix.
 
-- **rsx-dxs: 95%** -- `WalWriter` has a `should_flush()` method
+- **rsx-cast: 95%** -- `WalWriter` has a `should_flush()` method
   that returns true at 1000 records. Neither the matching engine
   nor the risk engine calls it. The 1000-record flush threshold
   exists in the writer but is dead at the call sites. Ten lines

@@ -9,7 +9,7 @@ heartbeats and session resumption.
 Spec: https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/soupbintcp.pdf
 
 Why we include it: a real exchange wire protocol that fills the
-same niche as `rsx-dxs` cold-path WAL replay. SoupBinTCP and DXS
+same niche as `rsx-cast` cold-path WAL replay. SoupBinTCP and DXS
 TCP both add length-prefix framing + sequencing to a TCP stream;
 benching them side-by-side answers "how much does the SoupBin
 framing layer cost on loopback?"
@@ -85,9 +85,9 @@ No application-level NAK. Loss within a session = TCP retransmit.
 Loss across a disconnect = client reconnects with
 `L{session, last_seq+1}` and the server replays.
 
-## Relation to rsx-dxs
+## Relation to rsx-cast
 
-| Dimension | SoupBinTCP | rsx-dxs DXS (TCP cold path) |
+| Dimension | SoupBinTCP | rsx-cast DXS (TCP cold path) |
 |---|---|---|
 | Transport | TCP (with `TCP_NODELAY` in practice) | TCP (with `TCP_NODELAY`) |
 | Byte order | Big-endian | Little-endian (native) |

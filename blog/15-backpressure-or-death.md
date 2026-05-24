@@ -39,8 +39,8 @@ Backpressure is visible:
 WAL writer has a buffer. When full, `append()` returns `WouldBlock`.
 
 ```rust
-// rsx-dxs/src/wal.rs
-pub fn append<T: CmpRecord>(
+// rsx-cast/src/wal.rs
+pub fn append<T: CastRecord>(
     &mut self,
     record: &mut T,
 ) -> io::Result<u64> {
@@ -170,7 +170,7 @@ fixes before users notice.
 ## Tests Prove It
 
 ```rust
-// rsx-dxs/tests/wal_test.rs
+// rsx-cast/tests/wal_test.rs
 #[test]
 fn writer_backpressure_stalls() {
     let tmp = TempDir::new().unwrap();
@@ -323,6 +323,6 @@ fills."
 
 - `specs/2/48-wal.md` - WAL backpressure rules
 - `specs/2/6-consistency.md` - Event ordering guarantees
-- `rsx-dxs/src/wal.rs` - WAL writer with backpressure
-- `rsx-dxs/tests/wal_test.rs` - Backpressure tests
+- `rsx-cast/src/wal.rs` - WAL writer with backpressure
+- `rsx-cast/tests/wal_test.rs` - Backpressure tests
 - `blog/04-wal-and-recovery.md` - WAL durability guarantees

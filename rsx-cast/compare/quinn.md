@@ -93,7 +93,7 @@ fully decouples packet number from stream offset.
 Contrast with CMP NAK-based recovery: receiver sees a gap in
 sequence numbers (CMP's seq lives in the record's payload, not
 the header) and sends a NAK frame. One RTT to retransmit. No
-ACK on success. See `rsx-dxs/src/protocol.rs` `Nak`.
+ACK on success. See `rsx-cast/src/protocol.rs` `Nak`.
 
 ### Retransmit horizon
 
@@ -141,7 +141,7 @@ data.
 None. Same as KCP. The application is responsible for any
 persistence; Quinn is purely a transport.
 
-## Relation to rsx-dxs
+## Relation to rsx-cast
 
 This is the answer to: *"why not QUIC for exchange IPC?"*
 
@@ -169,9 +169,9 @@ likely because we use a current-thread Tokio runtime, a
 pre-opened bidirectional stream, and `read_exact` instead of
 length-prefix framing. Still ~3.6× CMP's 10.3 µs RTT.
 
-## Guarantees comparison: Quinn (QUIC) vs rsx-dxs CMP
+## Guarantees comparison: Quinn (QUIC) vs rsx-cast CMP
 
-| Dimension | Quinn (QUIC) | rsx-dxs CMP |
+| Dimension | Quinn (QUIC) | rsx-cast CMP |
 |---|---|---|
 | Underlying transport | UDP unicast | UDP unicast |
 | Wire framing | Variable (varints, nested frames) | Fixed 16 B header + fixed payload |
@@ -246,7 +246,7 @@ What it does NOT measure:
 Loss simulation (separate run, requires root):
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
-cargo bench -p rsx-dxs --bench compare_quinn
+cargo bench -p rsx-cast --bench compare_quinn
 sudo tc qdisc del dev lo root
 ```
 The bench itself does not depend on root or `tc`.

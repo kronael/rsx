@@ -30,7 +30,7 @@ All little-endian. MTU default 1400 B → MSS = 1376 B. Messages
 larger than MSS are split into multiple segments with descending
 `frg`; all segments must arrive before delivery.
 
-Compare to CMP's `WalHeader` (`rsx-dxs/src/header.rs`):
+Compare to CMP's `WalHeader` (`rsx-cast/src/header.rs`):
 ```
 Offset  Size  Field
 0       2     record_type
@@ -64,7 +64,7 @@ Latency consequence on zero loss: KCP still sends one ACK per
 DATA, so every DATA frame triggers a control-plane round-trip.
 CMP on zero loss sends *zero* control traffic per record — only a
 periodic `StatusMessage` every 10 ms for flow control
-(`rsx-dxs/src/protocol.rs` — RECORD_STATUS_MESSAGE).
+(`rsx-cast/src/protocol.rs` — RECORD_STATUS_MESSAGE).
 
 ### Retransmit horizon
 
@@ -142,7 +142,7 @@ CMP is also connection-less (UDP unicast), identified by a
 matching pair of bind addresses on sender and receiver. Spec
 §10.4.
 
-## Relation to rsx-dxs
+## Relation to rsx-cast
 
 This is the answer to: *"why not just use KCP?"*
 
@@ -161,13 +161,13 @@ It has no business on an exchange critical path where:
    history; CMP's WAL survives.
 
 KCP also fundamentally lacks the audit-log property: every fill,
-order, and cancel in rsx-dxs is on disk before it's on the wire,
+order, and cancel in rsx-cast is on disk before it's on the wire,
 and the same bytes feed the recorder, the marketdata replay
 service, and the backtester. KCP would be just a transport.
 
-## Guarantees comparison: KCP turbo vs rsx-dxs CMP
+## Guarantees comparison: KCP turbo vs rsx-cast CMP
 
-| Dimension | KCP turbo (`nc=1`) | rsx-dxs CMP |
+| Dimension | KCP turbo (`nc=1`) | rsx-cast CMP |
 |---|---|---|
 | Underlying transport | UDP unicast | UDP unicast |
 | Wire header size | 24 B | 16 B |
@@ -213,7 +213,7 @@ nodelay=1, interval=1ms, resend=2, nc=1, wndsize=128/128, mtu=1400
 Loss simulation (separate run, requires root):
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
-cargo bench -p rsx-dxs --bench compare_kcp
+cargo bench -p rsx-cast --bench compare_kcp
 sudo tc qdisc del dev lo root
 ```
 The bench itself does not depend on root or `tc`.
@@ -279,7 +279,7 @@ even on zero-loss loopback.
   prove KCP works in production with 5–30% loss. CMP has
   never been tested on a public-internet path.
 - **No persistence requirement**: KCP works fine with no disk;
-  rsx-dxs CMP assumes a WAL.
+  rsx-cast CMP assumes a WAL.
 - **Multi-language reach**: if you need a client in C# or Swift,
   KCP wins by existing.
 

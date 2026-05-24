@@ -45,7 +45,7 @@ protocol.
 Producer runs a replay server:
 
 ```rust
-// rsx-dxs/src/server.rs (simplified)
+// rsx-cast/src/server.rs (simplified)
 pub struct DxsReplay {
     stream_id: u32,
     wal_dir: PathBuf,
@@ -60,7 +60,7 @@ impl DxsReplay {
         // Read replay request (16 bytes)
         let mut req_buf = [0u8; 16];
         stream.read_exact(&mut req_buf).await?;
-        let req: ReplayRequest = parse_request(&req_buf)?;
+        let req: ReplicationRequest = parse_request(&req_buf)?;
 
         // Find WAL file containing req.start_seq
         let files = list_wal_files(&self.wal_dir, self.stream_id)?;
@@ -87,19 +87,19 @@ impl DxsReplay {
 Consumer connects and reads:
 
 ```rust
-// rsx-dxs/src/client.rs (simplified)
-pub struct DxsConsumer {
+// rsx-cast/src/client.rs (simplified)
+pub struct ReplicationConsumer {
     stream_id: u32,
     producer_addr: String,
     tip: u64,  // Last seq processed
 }
 
-impl DxsConsumer {
+impl ReplicationConsumer {
     pub async fn poll(&mut self) -> io::Result<Option<RawWalRecord>> {
         // Connect if needed
         if self.stream.is_none() {
             let stream = TcpStream::connect(&self.producer_addr).await?;
-            let req = ReplayRequest {
+            let req = ReplicationRequest {
                 stream_id: self.stream_id,
                 start_seq: self.tip + 1,
             };
@@ -140,14 +140,14 @@ Matching engine (producer):
 
 Risk engine (consumer):
 1. Connects to ME's DxsReplay server
-2. Sends `ReplayRequest { stream_id: 1, start_seq: 1234 }`
+2. Sends `ReplicationRequest { stream_id: 1, start_seq: 1234 }`
 3. Reads records as they're produced
 4. Processes fills, updates positions
 5. Periodically persists tip (last seq processed)
 
 Marketdata (consumer):
 1. Connects to ME's DxsReplay server
-2. Sends `ReplayRequest { stream_id: 1, start_seq: 1 }`
+2. Sends `ReplicationRequest { stream_id: 1, start_seq: 1 }`
 3. Reads fills + BBO updates
 4. Builds shadow orderbook
 5. Publishes L2/BBO to public WebSocket
@@ -190,7 +190,7 @@ Consumer crashes:
 1. Restart consumer
 2. Load tip from disk
 3. Connect to producer
-4. Send `ReplayRequest { start_seq: tip+1 }`
+4. Send `ReplicationRequest { start_seq: tip+1 }`
 5. Replay all records since tip
 
 Both crash (dual failure):
@@ -201,7 +201,7 @@ Both crash (dual failure):
 ## Tests Prove It
 
 ```rust
-// rsx-dxs/tests/tls_test.rs
+// rsx-cast/tests/tls_test.rs
 #[tokio::test]
 async fn consumer_replays_from_tip() {
     let tmp = TempDir::new().unwrap();
@@ -221,7 +221,7 @@ async fn consumer_replays_from_tip() {
     let tip_file = tmp.path().join("tip.txt");
     std::fs::write(&tip_file, "50").unwrap();
 
-    let mut consumer = DxsConsumer::new(1, "127.0.0.1:9001".to_string(), tip_file, None).unwrap();
+    let mut consumer = ReplicationConsumer::new(1, "127.0.0.1:9001".to_string(), tip_file, None).unwrap();
 
     let first_record = consumer.poll().await.unwrap().unwrap();
     assert_eq!(first_record.header.seq, 51);  // tip+1
@@ -233,7 +233,7 @@ Gap detection:
 ```rust
 #[tokio::test]
 async fn consumer_detects_sequence_gap() {
-    let mut consumer = DxsConsumer::new(/* ... */);
+    let mut consumer = ReplicationConsumer::new(/* ... */);
 
     let rec1 = consumer.poll().await.unwrap().unwrap();
     let rec2 = consumer.poll().await.unwrap().unwrap();
@@ -288,7 +288,7 @@ replication is perfect for:
 - **50 lines of code**: TCP listener, not a distributed system
 
 Every producer in RSX is a DxsReplay server. Every consumer is a
-DxsConsumer client. No Kafka cluster. No ops burden.
+ReplicationConsumer client. No Kafka cluster. No ops burden.
 
 When the matching engine produces a fill, consumers see it 10μs later.
 Not 10ms. Not "eventually." 10 microseconds.
@@ -304,7 +304,7 @@ TCP."
 
 - `specs/2/10-replication.md` - replay protocol (replication) specification
 - `specs/2/48-wal.md` - WAL format (same as replication stream format)
-- `rsx-dxs/src/server.rs` - DxsReplay server implementation
-- `rsx-dxs/src/client.rs` - DxsConsumer client implementation
-- `rsx-dxs/tests/tls_test.rs` - End-to-end replication tests
+- `rsx-cast/src/server.rs` - DxsReplay server implementation
+- `rsx-cast/src/client.rs` - ReplicationConsumer client implementation
+- `rsx-cast/tests/tls_test.rs` - End-to-end replication tests
 - `blog/12-deleted-serialization.md` - Why disk = wire = memory format

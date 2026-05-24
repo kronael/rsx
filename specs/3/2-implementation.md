@@ -13,7 +13,7 @@ records v1 code reality for future alignment.
 - casting datagram = 16B `WalHeader` + payload.
 - `WalHeader`: `record_type: u16`, `len: u16`, `crc32: u32`, `_reserved[8]`.
 - Data payloads are `#[repr(C, align(64))]` and start with `seq: u64`.
-- `CmpSender::send` returns `false` if flow-control window is closed.
+- `CastSender::send` returns `false` if flow-control window is closed.
 - `send_raw` bypasses `seq` assignment (control or pre-framed payloads).
 
 ## Gateway (rsx-gateway)

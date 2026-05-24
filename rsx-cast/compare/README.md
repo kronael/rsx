@@ -1,11 +1,11 @@
-# rsx-dxs: Protocol Comparisons
+# rsx-cast: Protocol Comparisons
 
 Five serious competitors, judged on **speed** and **features**.
 Supporting-cast protocols (TCP, raw UDP, KCP, SoupBinTCP,
 gossip / FEC / log) have their own benches and docs for
 completeness — see the supporting-cast section at the bottom.
 
-## What rsx-dxs is
+## What rsx-cast is
 
 - NAK-based reliable UDP unicast (CMP), `#[repr(C)]` fixed-size
   frames, two-tier retransmit (in-memory ring → on-disk WAL).
@@ -19,7 +19,7 @@ completeness — see the supporting-cast section at the bottom.
 
 | Protocol | Measured here | Published / pinned |
 |---|---:|---|
-| **CMP (rsx-dxs)** | **~10 µs** | — |
+| **CMP (rsx-cast)** | **~10 µs** | — |
 | **MoldUDP64** | ~10 µs | matches CMP shape, NAK + separate request server |
 | **Aeron** (UDP) | ~305 µs | 21 µs (AWS c6in.16xlarge, pinned cores) |
 | **Aeron** (IPC) | 830 ns | sub-µs IPC, JVM warmup excluded |
@@ -51,7 +51,7 @@ for the attribution breakdown.
 
 - **Aeron** — direct design ancestor. Same NAK+UDP-unicast philosophy,
   decade-plus of HFT production. Separates archive (Aeron Archive) from
-  the transport; rsx-dxs fuses them.
+  the transport; rsx-cast fuses them.
 - **MoldUDP64** — Nasdaq's UDP wire protocol for ITCH market data,
   production-deployed at exchange scale. Public spec — anyone can
   implement and bench. Closest published peer to CMP's wire shape.
@@ -71,7 +71,7 @@ for the attribution breakdown.
 ## Running the benches
 
 ```bash
-cargo bench -p rsx-dxs --bench 'compare_*'
+cargo bench -p rsx-cast --bench 'compare_*'
 ```
 
 For loss-behavior testing (root required, exposes TCP head-of-line
@@ -79,7 +79,7 @@ blocking and CMP NAK recovery under realistic loss):
 
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
-cargo bench -p rsx-dxs --bench 'compare_*'
+cargo bench -p rsx-cast --bench 'compare_*'
 sudo tc qdisc del dev lo root
 ```
 
@@ -90,7 +90,7 @@ These are benched for completeness; they're not the framing comparison:
 | Protocol | Doc | Bench | Why it's not in the main five |
 |---|---|---|---|
 | raw UDP | [raw-udp.md](raw-udp.md) | `compare_udp` | Baseline floor, not a competitor |
-| TCP | [tcp.md](tcp.md) | `compare_tcp` | rsx-dxs uses TCP for cold-path replay, not live |
+| TCP | [tcp.md](tcp.md) | `compare_tcp` | rsx-cast uses TCP for cold-path replay, not live |
 | KCP | [kcp.md](kcp.md) | `compare_kcp` | Gaming RUDP; Quinn is the same family more credibly |
 | SoupBinTCP | [soupbintcp.md](soupbintcp.md) | `compare_soupbintcp` | TCP + 3-byte framing; cost is within TCP noise |
 

@@ -54,7 +54,7 @@ See `specs/2/39-testing-mark.md`.
 ## Dependencies
 
 - `rsx-types` -- shared types
-- `rsx-dxs` -- WAL writer, casting sender, replication service
+- `rsx-cast` -- WAL writer, casting sender, replication service
 - `rsx-messages` -- MARK_PRICE record type
 - tokio + tokio-tungstenite (async WS source tasks)
 - rtrb (SPSC ring: WS sources → aggregation loop)

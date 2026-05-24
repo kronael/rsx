@@ -82,7 +82,7 @@ See `specs/2/42-testing-risk.md`.
 ## Dependencies
 
 - `rsx-types` -- shared types
-- `rsx-dxs` -- WAL, casting, replication consumer
+- `rsx-cast` -- WAL, casting, replication consumer
 - Postgres (runtime)
 
 ## Gotchas

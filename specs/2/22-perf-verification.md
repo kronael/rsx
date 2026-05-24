@@ -42,10 +42,10 @@ specifies one.
 | Operation                                                    | ns    | Source                                  |
 |--------------------------------------------------------------|-------|-----------------------------------------|
 | Match single fill                                            | 54    | `rsx-book/benches/book_bench.rs`        |
-| `WalWriter::append` (Vec extend, no disk I/O)                | 31    | `rsx-dxs/benches/wal_bench.rs`          |
-| WAL flush + fsync 64 KB                                      | ~24 µs| `rsx-dxs/benches/wal_bench.rs`          |
-| Protocol-record encode (StatusMessage / Nak / Heartbeat)     | 43    | `rsx-dxs/benches/cmp_bench.rs`          |
-| Protocol-record decode (one record)                          | 9     | `rsx-dxs/benches/cmp_bench.rs`          |
+| `WalWriter::append` (Vec extend, no disk I/O)                | 31    | `rsx-cast/benches/wal_bench.rs`          |
+| WAL flush + fsync 64 KB                                      | ~24 µs| `rsx-cast/benches/wal_bench.rs`          |
+| Protocol-record encode (StatusMessage / Nak / Heartbeat)     | 43    | `rsx-cast/benches/cmp_bench.rs`          |
+| Protocol-record decode (one record)                          | 9     | `rsx-cast/benches/cmp_bench.rs`          |
 | `FillRecord` encode                                          | 23    | `rsx-messages/benches/encode_bench.rs`  |
 | SPSC `push` / `pop` (rtrb)                                   | 50–170| `rsx-book/benches/book_bench.rs`        |
 

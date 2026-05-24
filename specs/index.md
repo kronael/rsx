@@ -15,7 +15,7 @@ Completed ship projects, renamed from specs/done/.
 | [1/5-project.md](1/5-project.md) | shipped | Make the market maker a first-class component in the playground test |
 | [1/6-replication-impl.md](1/6-replication-impl.md) | shipped | Implementation of RISK.md §Replication & Failover for rsx-risk engine. |
 | [1/7-speedup.md](1/7-speedup.md) | shipped | Bottlenecks in current architecture, ordered by impact. |
-| [1/8-cmp-nak.md](1/8-cmp-nak.md) | shipped | `CmpSender::handle_nak` opens a `WalReader` to retransmit dropped |
+| [1/8-cmp-nak.md](1/8-cmp-nak.md) | shipped | `CastSender::handle_nak` opens a `WalReader` to retransmit dropped |
 | [1/9-eighty-percent.md](1/9-eighty-percent.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, casting/UDP) |
 | [1/10-exchange-e2e-fixes.md](1/10-exchange-e2e-fixes.md) | shipped | Five bugs block end-to-end exchange operation. Fix all five. Read |
 | [1/11-exchange-e2e.md](1/11-exchange-e2e.md) | shipped | The exchange works end-to-end: a market maker provides resting |

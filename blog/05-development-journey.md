@@ -56,7 +56,7 @@ The first code checkpoint:
 ```
 2026-02-09 06:58 [checkpoint] orderbook & matching engine
 2026-02-09 07:47 [refactor] fix all warnings, add #[inline]
-2026-02-09 07:54 [docs] Add PROGRESS.md, rsx-dxs, rsx-recorder
+2026-02-09 07:54 [docs] Add PROGRESS.md, rsx-cast, rsx-recorder
 ```
 
 By 8am on day 1, we had: the orderbook data structures (slab,
@@ -67,7 +67,7 @@ and the recorder.
 The afternoon brought risk:
 
 ```
-2026-02-09 11:32 [impl] Complete rsx-book modify, rsx-dxs tests
+2026-02-09 11:32 [impl] Complete rsx-book modify, rsx-cast tests
 2026-02-09 12:07 [impl] Add rsx-risk Phase 1: position, margin,
                         price, funding math
 2026-02-09 12:10 [impl] Harden rsx-risk: i128 overflow safety
@@ -92,12 +92,12 @@ Day 2 was about connecting the pieces:
 
 ```
 2026-02-10 11:50 [refactor] Standardize casting payload preamble
-2026-02-10 12:43 [impl] Phase 1: header simplification + CmpRecord
+2026-02-10 12:43 [impl] Phase 1: header simplification + CastRecord
 2026-02-10 13:20 [refined] Fix UB in decode, consolidate as_bytes
 2026-02-10 13:49 [feat] Wire ME->Risk->Gateway event forwarding
 ```
 
-The streaming protocol (casting) got its final form: a `CmpRecord` trait with
+The streaming protocol (casting) got its final form: a `CastRecord` trait with
 `seq: u64` as the first 8 bytes, shared across all data payloads.
 The matching engine, risk engine, and gateway were wired together
 through casting/UDP.
@@ -235,7 +235,7 @@ As of the last audit:
 | rsx-types | 15 | 100% |
 | rsx-book | 97 | 100% |
 | rsx-matching | 30 | 100% |
-| rsx-dxs | 83 | 100% |
+| rsx-cast | 83 | 100% |
 | rsx-risk | 201 | 100% |
 | rsx-gateway | 124 | 97% |
 | rsx-marketdata | 57 | 98% |

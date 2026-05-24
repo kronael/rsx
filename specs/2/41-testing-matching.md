@@ -129,7 +129,7 @@ See `rsx-matching/benches/` for Criterion benchmark implementations.
 
 - Imports `rsx-book` crate for orderbook data structures
   (ORDERBOOK.md §3)
-- Embeds `rsx-dxs` WalWriter + DxsReplay server
+- Embeds `rsx-cast` WalWriter + DxsReplay server
   (ORDERBOOK.md §2.8, replication.md §5)
 - casting/UDP fan-out to risk, gateway, mktdata
   (CONSISTENCY.md §1)
@@ -145,5 +145,5 @@ See `rsx-matching/benches/` for Criterion benchmark implementations.
   10min (ORDERBOOK.md §2.9)
 - Crash recovery: snapshot + WAL replay restores book
   (ORDERBOOK.md §2.8, NETWORK.md §matching engine failure)
-- Replica takeover via DxsConsumer tip + Postgres advisory
+- Replica takeover via ReplicationConsumer tip + Postgres advisory
   locks (ORDERBOOK.md §2.8)

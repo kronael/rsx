@@ -1,18 +1,18 @@
-# CLAUDE.md — rsx-dxs
+# CLAUDE.md — rsx-cast
 
-This file is local to the `rsx-dxs/` crate. It records the README +
+This file is local to the `rsx-cast/` crate. It records the README +
 docs conventions specific to this crate. Inherits everything from the
 repo-root `../CLAUDE.md`.
 
 ## Runtime — NEVER add one
 
-`rsx-dxs` has zero runtime deps and must stay that way. `CmpSender`,
-`CmpReceiver`, `WalWriter`, `WalReader`, `DxsReplayService`, and
-`DxsConsumer` are all synchronous. Do NOT add monoio, tokio, or any
+`rsx-cast` has zero runtime deps and must stay that way. `CastSender`,
+`CastReceiver`, `WalWriter`, `WalReader`, `ReplicationService`, and
+`ReplicationConsumer` are all synchronous. Do NOT add monoio, tokio, or any
 async executor as a dep — not as optional, not behind a feature flag.
 
-**Specifically: do NOT add `monoio::net::UdpSocket` to `CmpReceiver`.**
-The caller (gateway, marketdata) owns the socket. rsx-dxs takes bytes
+**Specifically: do NOT add `monoio::net::UdpSocket` to `CastReceiver`.**
+The caller (gateway, marketdata) owns the socket. rsx-cast takes bytes
 in and returns records out. There is no speedup to be had from
 integrating a runtime here — the async wakeup belongs in the caller's
 event loop, not in this library. This was explicitly decided and is
@@ -156,7 +156,7 @@ when ready; do not regress the README's overall depth.
 
 ## Standalone — no parent-relative paths
 
-`rsx-dxs` is positioned as the open-source extractable artifact.
+`rsx-cast` is positioned as the open-source extractable artifact.
 The crate's docs MUST stand alone — assume the reader has only this
 crate, not the parent `rsx` workspace.
 
@@ -167,14 +167,14 @@ crate, not the parent `rsx` workspace.
   `rsx-matching`, etc.) except as context: "part of the wider rsx
   exchange project" is fine; pointing at their source isn't.
 - **Specs (`specs/2/4-cast.md`, `48-wal.md`, `10-replication.md`, etc.)**:
-  copy locally into `rsx-dxs/specs/` if the README references them,
+  copy locally into `rsx-cast/specs/` if the README references them,
   OR drop the reference and inline the substance. Authoritative
   copy still lives in the parent repo's `specs/2/` for the
   exchange-wide story; the crate-local copy is for the standalone
   view. Sync drift is acceptable if either copy is dated.
 - **Project-level docs (`docs/benches.md`, `facts/syscall-latency.md`)**:
   if the README needs them, either copy into the crate (e.g. as
-  `rsx-dxs/BENCHES.md` or `rsx-dxs/facts/`) or inline the key
+  `rsx-cast/BENCHES.md` or `rsx-cast/facts/`) or inline the key
   numbers and drop the link. Don't `../`-link out.
 - **Cross-project references are fine as full GitHub URLs**:
   e.g. `https://github.com/kronael/rsx/...` is OK; `../specs/...`

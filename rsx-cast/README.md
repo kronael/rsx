@@ -1,4 +1,4 @@
-# rsx-dxs
+# rsx-cast
 
 Reliable UDP whose retransmit source IS the WAL the producer
 writes for audit and replay. One byte layout for live frames,
@@ -18,7 +18,7 @@ QUIC's job (see [When NOT to use this](#when-not-to-use-this)).
 | Operation | p50 | Bench / env |
 |---|---:|---|
 | `WalWriter::append` (in-memory) | **31 ns** | `wal_bench`, single thread |
-| `CmpSender::send` body | **~4.07 µs** (99% kernel UDP send path) | `cmp_send_breakdown_bench`, 128 B payload + 16 B header |
+| `CastSender::send` body | **~4.07 µs** (99% kernel UDP send path) | `cmp_send_breakdown_bench`, 128 B payload + 16 B header |
 | Raw UDP RTT (baseline) | **9.89 µs** | `compare_udp`, 128 B, two threads pinned to cores 2/3 |
 | casting RTT (sender → echo → sender) | **11.26 µs** | `cmp_rtt_bench`, 128 B, two threads pinned |
 | `WalWriter::flush + fsync`, single record | **651 µs** | `wal_fsync_bench`, sync per append |
@@ -71,7 +71,7 @@ the packaging difference is the point.
   preallocated ring. Receiver detects gaps from sequence skips
   or from heartbeat-driven idle-tail checks; sends a `Nak`;
   sender retransmits from the ring or, on miss, from the WAL.
-  An idle-only `CmpHeartbeat` (100 ms cadence; suppressed
+  An idle-only `CastHeartbeat` (100 ms cadence; suppressed
   while data is flowing) covers gaps that would otherwise sit
   undetected at the tail of an idle stream. **No flow control,
   no congestion control** — receivers stall their consumer or
@@ -85,11 +85,11 @@ the packaging difference is the point.
   ships as a separate Archive process; casting keeps the audit
   log and the retransmit cache in the same producer.
 - **replication/TCP** — same record bytes, reliable transport. Used
-  for cold-start replay (`DxsConsumer::run`) and
+  for cold-start replay (`ReplicationConsumer::run`) and
   archival/replication. Optional rustls TLS.
-- **Domain-agnostic.** `rsx-dxs` knows nothing about
+- **Domain-agnostic.** `rsx-cast` knows nothing about
   fills/orders/marks. It moves bytes that implement
-  [`CmpRecord`]. The wider rsx exchange project layers its
+  [`CastRecord`]. The wider rsx exchange project layers its
   domain records (`FillRecord`, `BboRecord`, …) on top in a
   separate crate; nothing in this crate depends on them.
 
@@ -115,12 +115,12 @@ format-breaking changes that a v1 receiver could not safely
 parse. Receivers reject unknown versions.
 
 Payloads are `#[repr(C, align(64))]`. Sequence number is the
-first `u64` of every data record (per the [`CmpRecord`] trait).
+first `u64` of every data record (per the [`CastRecord`] trait).
 
-The hot send path (`CmpSender::send` / `send_raw`) does
+The hot send path (`CastSender::send` / `send_raw`) does
 **zero heap allocations** — the in-memory `send_ring` is
 preallocated at construction and reused for every frame.
-The receive path (`CmpReceiver::try_recv`) currently
+The receive path (`CastReceiver::try_recv`) currently
 allocates one `Vec<u8>` per in-order packet; a zero-copy
 variant (caller-supplied `&mut [u8]`) is future work.
 
@@ -132,7 +132,7 @@ don't break your build:
 
 ```toml
 [dependencies]
-rsx-dxs = { git = "https://github.com/kronael/rsx", rev = "abc1234" }
+rsx-cast = { git = "https://github.com/kronael/rsx", rev = "abc1234" }
 ```
 
 A standalone working example lives in
@@ -145,10 +145,10 @@ cargo run --example cmp_smoke
 ## Quick start (sender)
 
 ```rust
-use rsx_dxs::CmpSender;
-use rsx_dxs::WalWriter;
+use rsx_cast::CastSender;
+use rsx_cast::WalWriter;
 
-// One WAL per stream. The CmpSender writes here itself; the
+// One WAL per stream. The CastSender writes here itself; the
 // outer process keeps a handle to read from it (for replay,
 // for archival).
 let mut wal = WalWriter::new(
@@ -157,12 +157,12 @@ let mut wal = WalWriter::new(
     /* max_file_size   */ 64 * 1024 * 1024,
     /* retention_ns    */ 48 * 60 * 60 * 1_000_000_000,
 )?;
-let mut sender = CmpSender::new(dest_addr, stream_id, &wal_dir)?;
+let mut sender = CastSender::new(dest_addr, stream_id, &wal_dir)?;
 
 let mut fill = my_crate::FillRecord { /* ... */ };
 sender.send(&mut fill)?;   // assigns seq, writes to WAL, sends UDP, caches
 wal.flush()?;              // call periodically (e.g. every 10 ms in a tick loop)
-sender.tick()?;            // emits CmpHeartbeat if the stream has been idle
+sender.tick()?;            // emits CastHeartbeat if the stream has been idle
 sender.recv_control();     // drains incoming NAKs and retransmits as needed
 ```
 
@@ -178,17 +178,17 @@ no-op, but call-site stable for forward compat).
 ## Quick start (receiver)
 
 ```rust
-use rsx_dxs::{CmpReceiver, CmpRecv};
+use rsx_cast::{CastReceiver, CastRecv};
 
-let mut rx = CmpReceiver::new(bind_addr, sender_addr, stream_id)?;
+let mut rx = CastReceiver::new(bind_addr, sender_addr, stream_id)?;
 loop {
     rx.tick();   // forward-compat hook; cheap, no-op today
     match rx.try_recv() {
-        CmpRecv::Data(hdr, payload) => {
+        CastRecv::Data(hdr, payload) => {
             // dispatch by hdr.record_type — transport doesn't care
         }
-        CmpRecv::Empty => {}
-        CmpRecv::Faulted { last_delivered_seq, .. } => {
+        CastRecv::Empty => {}
+        CastRecv::Faulted { last_delivered_seq, .. } => {
             // gap too big for in-band recovery; see Pattern A below
             // for the canonical replication-replay-then-reset response.
             break;
@@ -212,7 +212,7 @@ For consumers that need µs-class latency on the live tail
                                                 ▲
  ┌──────────────┐    ┌──────────────┐    ┌─────┴────────┐
  │ TCP catch-up │───►│ UDP live     │───►│ TCP catch-up │──► UDP live ─►
- │ (DxsConsumer)│    │ (CmpReceiver)│    │ from new tip │
+ │ (ReplicationConsumer)│    │ (CastReceiver)│    │ from new tip │
  └──────────────┘    └──────────────┘    └──────────────┘
    Phase 1, until        steady state         on FAULTED:
    CaughtUpRecord        — listen UDP         drain TCP to
@@ -220,25 +220,25 @@ For consumers that need µs-class latency on the live tail
 ```
 
 ```rust
-use rsx_dxs::{DxsConsumer, CmpReceiver, CmpRecv};
+use rsx_cast::{ReplicationConsumer, CastReceiver, CastRecv};
 
 // 1. Bootstrap: drain historical via TCP from last-persisted tip.
-let mut dxs = DxsConsumer::new(stream_id, dxs_addr.clone(),
+let mut dxs = ReplicationConsumer::new(stream_id, dxs_addr.clone(),
                                tip_file.clone(), None)?;
 dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
 // TCP closes here. Steady state has zero TCP per consumer.
 
 // 2. Live: listen UDP.
-let mut rx = CmpReceiver::new(bind_addr, sender_addr, stream_id)?;
+let mut rx = CastReceiver::new(bind_addr, sender_addr, stream_id)?;
 loop {
     rx.tick();
     match rx.try_recv() {
-        CmpRecv::Data(hdr, payload) => process(hdr, payload),
-        CmpRecv::Empty => continue,
-        CmpRecv::Faulted { last_delivered_seq, .. } => {
+        CastRecv::Data(hdr, payload) => process(hdr, payload),
+        CastRecv::Empty => continue,
+        CastRecv::Faulted { last_delivered_seq, .. } => {
             // 3. On FAULTED: reopen TCP from the persisted tip,
             //    drain to current, reset, resume UDP.
-            let mut dxs = DxsConsumer::new(stream_id, dxs_addr.clone(),
+            let mut dxs = ReplicationConsumer::new(stream_id, dxs_addr.clone(),
                                            tip_file.clone(), None)?;
             dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
             rx.reset_after_replay(dxs.tip);
@@ -255,13 +255,13 @@ and again only on the (rare) FAULTED escalation.
 
 For consumers that don't need µs latency (archivers, replay
 tools, analytics, cross-DC replication). replication Phase 2 supports
-a live tail over TCP, so a single `DxsConsumer` covers both
+a live tail over TCP, so a single `ReplicationConsumer` covers both
 historical catch-up and live streaming, indefinitely.
 
 ```rust
-use rsx_dxs::DxsConsumer;
+use rsx_cast::ReplicationConsumer;
 
-let mut dxs = DxsConsumer::new(stream_id, dxs_addr, tip_file, None)?;
+let mut dxs = ReplicationConsumer::new(stream_id, dxs_addr, tip_file, None)?;
 dxs.run(|record| {
     process(record.header, record.payload);
 }).await?;
@@ -369,7 +369,7 @@ latency measurements justify the extra moving parts.
   is O(N) within a WAL segment file (23.5 ms @ 10 K records).
   Acceptable for cold-start replay or stale NAKs; not for
   realtime tail-of-stream recovery.
-- **Per-packet zero-copy receive** — `CmpReceiver::try_recv`
+- **Per-packet zero-copy receive** — `CastReceiver::try_recv`
   currently allocates one `Vec<u8>` per in-order packet. A
   caller-supplied `&mut [u8]` variant is future work.
 - **No congestion control** — a sender that outpaces the
@@ -392,7 +392,7 @@ stable closely.
   inspecting WAL files lives in the wider rsx exchange repo
   (the `rsx-cli` crate). It uses this crate as a dependency
   and reads any WAL written here.
-- **Environment variables.** `CmpConfig::from_env` reads:
+- **Environment variables.** `CastConfig::from_env` reads:
   - `RSX_CAST_REORDER_BUF_LIMIT` (default 512) — cap on
     out-of-order packets buffered while waiting for a NAK
     fill. Overflow drops the oldest gap and re-syncs.
@@ -487,6 +487,6 @@ Licensed under either of:
 
 at your option. Unless you explicitly state otherwise, any
 contribution intentionally submitted for inclusion in
-rsx-dxs by you, as defined in the Apache-2.0 license, shall
+rsx-cast by you, as defined in the Apache-2.0 license, shall
 be dual licensed as above, without any additional terms or
 conditions.

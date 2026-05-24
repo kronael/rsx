@@ -44,7 +44,7 @@ exchange systems will immediately see what's unusual.
 | casting send body (UDP) | 3.87 µs |
 | Loopback RTT (GW→ME→GW) | ~10 µs (component sum) |
 
-Cite: `rsx-book/benches/book_bench.rs`, `rsx-dxs/compare/bench_report`,
+Cite: `rsx-book/benches/book_bench.rs`, `rsx-cast/compare/bench_report`,
 `facts/cmp-vs-udp-overhead.md`.
 
 ### 3. WAL = wire = stream (the interesting design decision)
@@ -63,7 +63,7 @@ which has the same disk=wire insight but no UDP/NAK path. Kafka separates the
 replication log from the wire format. Aeron separates term buffers (hot) from
 archive (cold). replication collapses all three.
 
-Cite: `specs/2/4-cast.md`, `specs/2/48-wal.md`, `rsx-dxs/README.md`.
+Cite: `specs/2/4-cast.md`, `specs/2/48-wal.md`, `rsx-cast/README.md`.
 
 ### 4. casting: NAK not ACK (why it matters for LAN)
 
@@ -80,8 +80,8 @@ Protocol overhead bench:
 - KCP spin: ~25–50 µs RTT (ACK round-trip even on loopback)
 - QUIC persistent: ~200–500 µs (TLS + congestion control)
 
-Cite: `rsx-dxs/compare/kcp.md`, `rsx-dxs/compare/quinn.md`,
-`facts/cmp-vs-udp-overhead.md`, `rsx-dxs/compare/compare_all.rs`.
+Cite: `rsx-cast/compare/kcp.md`, `rsx-cast/compare/quinn.md`,
+`facts/cmp-vs-udp-overhead.md`, `rsx-cast/compare/compare_all.rs`.
 
 Prior art acknowledgement: Aeron (Real Logic) is the direct design ancestor.
 [Todd Montgomery](https://github.com/tmont) designed the original PGM/multicast
@@ -117,23 +117,23 @@ interop with exchange-grade risk systems. The Hyperliquid architecture doc
 - Tile parity for gateway + marketdata (monoio reactors today, not pinned tiles)
 - Measured GW→ME→GW p50/p99 under load (component sum says <50 µs, harness not yet asserted)
 - casting v2 multicast (one ME → N consumers, no per-receiver copy) — spec at `specs/2/51-cmp-v2-multicast.md`
-- monoio io_uring UDP in gateway (caller owns socket; rsx-dxs is runtime-free by design)
+- monoio io_uring UDP in gateway (caller owns socket; rsx-cast is runtime-free by design)
 
-### 8. The rsx-dxs transport layer as a standalone crate
+### 8. The rsx-cast transport layer as a standalone crate
 
-`cargo tree -p rsx-dxs --edges normal | grep rsx-` returns empty.
+`cargo tree -p rsx-cast --edges normal | grep rsx-` returns empty.
 Domain-agnostic. Any project that needs log-backed reliable UDP with TCP
 cold-path replay can use it independently. Worked example for the blog post:
-a metrics ingest pipeline using rsx-dxs without any exchange domain knowledge.
+a metrics ingest pipeline using rsx-cast without any exchange domain knowledge.
 
 ---
 
 ## Benchmarks to run before publishing
 
 - [ ] `cargo bench -p rsx-book` — confirm 54 ns / 857 ns
-- [ ] `cargo bench -p rsx-dxs --bench compare_all` → run `rsx-dxs/compare/bench_report --md`
-- [ ] `cargo bench -p rsx-dxs --bench compare_kcp --bench compare_quinn`
-- [ ] `cargo bench -p rsx-dxs --bench cmp_send_breakdown_bench` — confirm 3.87 µs
+- [ ] `cargo bench -p rsx-cast --bench compare_all` → run `rsx-cast/compare/bench_report --md`
+- [ ] `cargo bench -p rsx-cast --bench compare_kcp --bench compare_quinn`
+- [ ] `cargo bench -p rsx-cast --bench cmp_send_breakdown_bench` — confirm 3.87 µs
 - [ ] End-to-end latency probe under sustained load (currently manual; needs automation)
 
 ---

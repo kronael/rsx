@@ -65,7 +65,7 @@ data, comparable to Aeron's term buffers.
 ```
 LBM/29West (Todd Montgomery)
   → Aeron (Todd Montgomery + Martin Thompson, Real Logic)
-  → CMP (rsx-dxs, NAK model + WAL cold tier)
+  → CMP (rsx-cast, NAK model + WAL cold tier)
 ```
 
 Todd Montgomery left 29West/Informatica and co-founded Real
@@ -77,7 +77,7 @@ separate paid product.
 
 ## Guarantees
 
-| Dimension | LBM (LBT-RM / LBT-RU) | rsx-dxs CMP |
+| Dimension | LBM (LBT-RM / LBT-RU) | rsx-cast CMP |
 |---|---|---|
 | Delivery | Reliable (NAK + retransmit) | Reliable (NAK + WAL retransmit) |
 | Loss detection | Receiver (NAK to source) | Receiver (seq gap → NAK) |
@@ -88,7 +88,7 @@ separate paid product.
 | Broker | None | None |
 | Durability | Separate paid Persistence layer | Built-in WAL |
 | Wire format | Proprietary | Public: 16-byte `WalHeader` + payload |
-| License | Commercial (Informatica) | Apache-2.0 / MIT (rsx-dxs) |
+| License | Commercial (Informatica) | Apache-2.0 / MIT (rsx-cast) |
 | Language | C, Java bindings | Rust |
 
 Many "unknown / proprietary" cells are honest — Informatica
@@ -96,13 +96,13 @@ publishes design overviews, not protocol details.
 
 ## Key difference: WAL as audit/ML log
 
-LBM has no equivalent to rsx-dxs's WAL serving as audit
+LBM has no equivalent to rsx-cast's WAL serving as audit
 trail and training data. LBM's in-memory window is sized for
 retransmit only (seconds of data). The Informatica Persistence
 add-on writes to disk but is a separate product and a
 separate format from the live wire stream.
 
-rsx-dxs's WAL retains 48 h of every exchange event in the
+rsx-cast's WAL retains 48 h of every exchange event in the
 same binary format as the wire — immediately usable for
 backtesting, regulatory replay, and ML training, without
 transformation.

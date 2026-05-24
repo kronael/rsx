@@ -99,7 +99,7 @@ Agent A found 3 port binding races:
 ```
 === PORT BINDING RACES ===
 
-1. rsx-dxs/tests/cmp_test.rs:45
+1. rsx-cast/tests/cmp_test.rs:45
    Risk: HIGH
 
    Current code:
@@ -107,17 +107,17 @@ Agent A found 3 port binding races:
    let sock = UdpSocket::bind("127.0.0.1:8080")?;
    let addr = sock.local_addr()?;
    drop(sock);
-   let receiver = CmpReceiver::new(addr, ...)?;
+   let receiver = CastReceiver::new(addr, ...)?;
    ```
 
-   Issue: TOCTOU race between drop() and CmpReceiver::new()
+   Issue: TOCTOU race between drop() and CastReceiver::new()
 
    Fix: Use ephemeral port
    ```rust
    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
    let addr = sock.local_addr().unwrap();
    drop(sock);
-   let receiver = CmpReceiver::new(addr, ...)?;
+   let receiver = CastReceiver::new(addr, ...)?;
    ```
 
 2. [similar entries for other 2 instances]

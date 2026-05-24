@@ -95,7 +95,7 @@ and only warn on failure.
 ## Event Fanout
 
 Fixed array `[Event; 10_000]` on the orderbook struct, reset
-per match cycle. Two independent `CmpSender`s:
+per match cycle. Two independent `CastSender`s:
 
 - ME → Risk: fills, BBO, order done/failed (all events)
 - ME → Marketdata: inserts, cancels, fills
@@ -123,8 +123,8 @@ changes live. On startup, the current version emits one
 matching loop is the lowest-latency stage of the system —
 ~340 ns p50 for dedup + WAL accept + match + WAL events.
 Network I/O multiplexing does not appear in the inner loop;
-the only sockets are one `CmpReceiver` (orders in) and two
-`CmpSender`s (events to risk and marketdata). With nothing
+the only sockets are one `CastReceiver` (orders in) and two
+`CastSender`s (events to risk and marketdata). With nothing
 to multiplex, the cheapest reactor is no reactor: one
 pinned thread, busy-spin, all work inline on the cache-warm
 core. This is the **degenerate tile** in

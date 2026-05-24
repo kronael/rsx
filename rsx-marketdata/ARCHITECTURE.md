@@ -49,7 +49,7 @@ order id) can locate the resting level.
 ## Multi-ME Aggregation
 
 The exchange runs one matching engine per symbol on its own
-casting port. Marketdata opens **one `CmpReceiver` per ME**:
+casting port. Marketdata opens **one `CastReceiver` per ME**:
 
 - ME addresses come from `RSX_ME_CAST_ADDRS` (comma-separated)
   or `RSX_ME_CAST_ADDR` (single)
@@ -161,7 +161,7 @@ The next subscribe re-materializes the book from incoming events
 BBO, and trade events to potentially thousands of WS
 subscribers. The dominant cost is socket multiplexing — the
 exact case io_uring's batched submission rings are designed
-for. The reactor also drains one `CmpReceiver` per matching
+for. The reactor also drains one `CastReceiver` per matching
 engine on every tick, so I/O is the inner loop on both sides.
 
 Single-threaded reactor, no `core_affinity` pinning:

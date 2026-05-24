@@ -16,15 +16,15 @@ the current implementation. Where the spec previously
 hand-waved or contradicted the code, this revision states
 the actual behaviour.
 
-Implementation: `rsx-dxs/src/cmp.rs`,
-`rsx-dxs/src/protocol.rs` (CmpRecord trait + control messages),
-`rsx-dxs/src/header.rs`. Domain wire records: `rsx-messages/`.
+Implementation: `rsx-cast/src/cmp.rs`,
+`rsx-cast/src/protocol.rs` (CastRecord trait + control messages),
+`rsx-cast/src/header.rs`. Domain wire records: `rsx-messages/`.
 
 ## Table of contents
 
 - [1. What casting is and isn't](#1-what-cmp-is-and-isnt)
 - [2. Wire format](#2-wire-format)
-- [3. Sequence numbers and CmpRecord](#3-sequence-numbers-and-cmprecord)
+- [3. Sequence numbers and CastRecord](#3-sequence-numbers-and-cmprecord)
 - [4. Control messages](#4-control-messages)
 - [5. Flow control](#5-flow-control)
 - [6. Loss recovery (NAK)](#6-loss-recovery-nak)
@@ -43,8 +43,8 @@ casting is **the C-struct wire format** plus **the UDP transport
 glue** (sequencing, flow control, gap recovery) that carries
 RSX's WAL records between processes on the hot path.
 
-The transport layer (`rsx-dxs`) is **domain-agnostic** — it
-moves any record that implements `CmpRecord` (a `repr(C)`
+The transport layer (`rsx-cast`) is **domain-agnostic** — it
+moves any record that implements `CastRecord` (a `repr(C)`
 type with a `seq: u64` at offset 0). RSX's exchange records
 (`FillRecord`, `BboRecord`, …) live in the `rsx-messages`
 crate and are not visible to the transport.
@@ -124,13 +124,13 @@ authentication.
 on `cfg(target_endian = "little")`. Big-endian is not
 supported.
 
-## 3. Sequence numbers and CmpRecord
+## 3. Sequence numbers and CastRecord
 
-Data records implement the `CmpRecord` trait
+Data records implement the `CastRecord` trait
 (`records.rs:15-28`):
 
 ```rust
-pub trait CmpRecord: Copy + Sized {
+pub trait CastRecord: Copy + Sized {
     const RECORD_TYPE: u16;
     fn seq(&self) -> u64;
     fn set_seq(&mut self, seq: u64);
@@ -139,13 +139,13 @@ pub trait CmpRecord: Copy + Sized {
 ```
 
 The first 8 bytes of every data payload are `seq: u64`,
-monotonic per stream, assigned by `CmpSender::send` at
+monotonic per stream, assigned by `CastSender::send` at
 transmission (`cmp.rs:94`). The receiver uses
 `extract_seq(payload: &[u8])` (`wal.rs::extract_seq`) to
 read it back without unpacking the rest.
 
-Control messages (StatusMessage, Nak, CmpHeartbeat) do
-**not** implement `CmpRecord` and have no `seq` field.
+Control messages (StatusMessage, Nak, CastHeartbeat) do
+**not** implement `CastRecord` and have no `seq` field.
 They're identified solely by `record_type` in the header.
 
 Sequence numbers start at 1 (`cmp.rs:67`) and are never
@@ -195,11 +195,11 @@ pub struct Nak {
 }
 ```
 
-### CmpHeartbeat (every 10 ms, sender → receiver)
+### CastHeartbeat (every 10 ms, sender → receiver)
 
 ```rust
 #[repr(C, align(64))]
-pub struct CmpHeartbeat {
+pub struct CastHeartbeat {
     pub highest_seq: u64,    // last seq sent
     pub _pad1: [u8; 56],
 }
@@ -259,7 +259,7 @@ FIFO contract, so re-NAKing later gaps before the head
 clears would be wasted work.
 
 NAKs are dedup-suppressed on the sender side too:
-`CmpSender` tracks `ring_last_retx_ns[slot]` and skips
+`CastSender` tracks `ring_last_retx_ns[slot]` and skips
 retransmits within `retx_dedup_window_us` (default 1 ms).
 The two windows compose — a receiver re-NAK and a sender
 re-retransmit can't pile up.
@@ -287,7 +287,7 @@ from_seq + count`. For each seq:
 
 2. **Cold tier — WAL random-access.** On ring miss, the
    sender calls `read_record_at_seq(stream_id, seq,
-   wal_dir, None)` (`rsx-dxs/src/wal.rs`). The function
+   wal_dir, None)` (`rsx-cast/src/wal.rs`). The function
    identifies the right file by its filename
    (`{stream_id}_{first_seq}_{last_seq}.wal`), opens it,
    and scans forward record-by-record until it hits the
@@ -307,7 +307,7 @@ missing records from WAL" without the two-tier story —
 that wording was actually correct in spirit but the code
 only had the in-memory ring. The two-tier path is now
 shipped and unit-tested
-(`rsx-dxs/tests/wal_test.rs::read_record_at_seq_*`).
+(`rsx-cast/tests/wal_test.rs::read_record_at_seq_*`).
 
 ### Reorder buffer + FAULTED escalation
 
@@ -349,7 +349,7 @@ skip** path. Loss recovery happens in three tiers:
    OR an arriving out-of-order packet would collide with a
    different seq already in its slot (gap >
    `REORDER_CAPACITY`), the receiver enters sticky FAULTED
-   state and surfaces `CmpRecv::Faulted { last_delivered_seq,
+   state and surfaces `CastRecv::Faulted { last_delivered_seq,
    gap_start, gap_end_inclusive }` to the consumer. No
    silent advance: the receiver keeps returning `Faulted`
    on every `try_recv` call until the consumer calls
@@ -357,8 +357,8 @@ skip** path. Loss recovery happens in three tiers:
 
 3. **replication (out-of-band).** The consumer handles
    `Faulted` by switching to TCP-based WAL replay from
-   `last_delivered_seq + 1` via `DxsConsumer`. Once caught
-   up, it calls `CmpReceiver::reset_after_replay(new_tip)`
+   `last_delivered_seq + 1` via `ReplicationConsumer`. Once caught
+   up, it calls `CastReceiver::reset_after_replay(new_tip)`
    to clear the FAULTED state and resume normal in-band
    delivery from `new_tip + 1`.
 
@@ -392,12 +392,12 @@ with optional rustls TLS. Used for replay (recover from
 crash), replication (warm replicas), and archival
 (rsx-recorder). Throughput-oriented, not latency-oriented.
 
-Implementation: `rsx-dxs/src/server.rs` (`DxsReplayService`),
-`rsx-dxs/src/client.rs` (`DxsConsumer`).
+Implementation: `rsx-cast/src/server.rs` (`ReplicationService`),
+`rsx-cast/src/client.rs` (`ReplicationConsumer`).
 
 ```
 Consumer                          Producer
-   |--[ReplayRequest]--TCP--------->|
+   |--[ReplicationRequest]--TCP--------->|
    |   {stream_id, from_seq}        |
    |<--[WalRecord]----TCP-----------|
    |<--[WalRecord]----TCP-----------|
@@ -406,11 +406,11 @@ Consumer                          Producer
    |<--[WalRecord]----TCP-----------|
 ```
 
-ReplayRequest is itself a WAL record:
+ReplicationRequest is itself a WAL record:
 
 ```rust
 #[repr(C, align(64))]
-struct ReplayRequest {
+struct ReplicationRequest {
     stream_id: u32,
     _pad0: u32,
     from_seq: u64,
@@ -471,7 +471,7 @@ strictly worse than QUIC over the public internet.
 
 ### Encode / decode
 
-Measured by `rsx-dxs/benches/wal_bench.rs`:
+Measured by `rsx-cast/benches/wal_bench.rs`:
 
 | Op                                          | ns      |
 |---------------------------------------------|---------|
@@ -480,7 +480,7 @@ Measured by `rsx-dxs/benches/wal_bench.rs`:
 | Sequential read (10 K recs)                 | TBD     |
 | Replay (100 K recs)                         | TBD     |
 
-`rsx-dxs/benches/cmp_bench.rs` + `rsx-messages/benches/encode_bench.rs`:
+`rsx-cast/benches/cmp_bench.rs` + `rsx-messages/benches/encode_bench.rs`:
 
 | Op                                                       | ns  |
 |----------------------------------------------------------|-----|
@@ -593,7 +593,7 @@ in `.ship/12-SHOWCASE-HONEST/` task E2.
 ### 10.7 NAK count is clamped (was: unclamped)
 
 A NAK with `count = u64::MAX` would loop the sender's
-retransmit path. `CmpSender::handle_nak` clamps to
+retransmit path. `CastSender::handle_nak` clamps to
 `SEND_RING_CAPACITY` (4 096) — anything beyond is already
 unreachable on the hot tier and the cold tier (WAL) can
 be requested via TCP replay. The clamp is logged when it
@@ -621,7 +621,7 @@ RSX_REPL_CERT_PATH=./certs/repl.pem
 RSX_REPL_KEY_PATH=./certs/repl.key
 ```
 
-CmpConfig (`rsx-dxs/src/config.rs`):
+CastConfig (`rsx-cast/src/config.rs`):
 
 | Field                    | Default   | Meaning                                                   |
 |--------------------------|-----------|-----------------------------------------------------------|

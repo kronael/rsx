@@ -36,7 +36,7 @@ Loopback path: user → `sendto` syscall → kernel socket buffer
 
 ## Guarantees
 
-| Dimension | Raw UDP | rsx-dxs CMP |
+| Dimension | Raw UDP | rsx-cast CMP |
 |---|---|---|
 | Delivery | Best-effort (may drop) | Reliable (NAK + WAL retransmit) |
 | Ordering | Unordered (may reorder) | Per-stream FIFO (seq monotonic) |
@@ -50,7 +50,7 @@ Loopback path: user → `sendto` syscall → kernel socket buffer
 Everything in the CMP column is layered above the kernel UDP
 socket. Each row is a cost measured against the raw-UDP floor.
 
-## Relation to rsx-dxs
+## Relation to rsx-cast
 
 CMP builds on raw UDP. The cost of CMP above this baseline is:
 
@@ -80,7 +80,7 @@ tighten once that lands.
 
 ## Benchmark
 
-`../benches/compare_udp.rs` — pre-existing, ships with rsx-dxs.
+`../benches/compare_udp.rs` — pre-existing, ships with rsx-cast.
 
 Two non-blocking sockets on 127.0.0.1, both threads
 busy-spinning. No per-iteration `setsockopt`. No blocking

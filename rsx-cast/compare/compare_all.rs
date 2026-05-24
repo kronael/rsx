@@ -23,7 +23,7 @@
 //!
 //! See compare/*.md for protocol analysis. Run all:
 //!
-//!   cargo bench -p rsx-dxs --bench compare_all
+//!   cargo bench -p rsx-cast --bench compare_all
 
 use core_affinity::CoreId;
 use criterion::black_box;

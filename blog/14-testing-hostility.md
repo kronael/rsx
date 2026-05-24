@@ -62,7 +62,7 @@ Found bugs:
 ### WAL Backpressure Stalls, Never Drops
 
 ```rust
-// rsx-dxs/tests/wal_test.rs
+// rsx-cast/tests/wal_test.rs
 #[test]
 fn writer_backpressure_stalls() {
     let tmp = TempDir::new().unwrap();
@@ -171,7 +171,7 @@ Found bugs:
 ### Unique Resources Per Test
 
 ```rust
-// rsx-dxs/tests/wal_test.rs
+// rsx-cast/tests/wal_test.rs
 #[test]
 fn writer_rotation_at_threshold() {
     let tmp = TempDir::new().unwrap();  // <-- unique dir
@@ -301,5 +301,5 @@ systems where correctness matters more than coverage percentage.
 - `blog/06-test-suite-archaeology.md` - Agent audit methodology
 - `blog/07-port-binding-toctou.md` - Port binding race conditions
 - `blog/08-tempdir-over-tmp.md` - Why TempDir eliminates a bug category
-- `rsx-dxs/tests/wal_test.rs` - WAL correctness tests
+- `rsx-cast/tests/wal_test.rs` - WAL correctness tests
 - `rsx-risk/tests/position_test.rs` - Position invariant tests

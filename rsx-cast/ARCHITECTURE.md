@@ -1,4 +1,4 @@
-# rsx-dxs Architecture
+# rsx-cast Architecture
 
 Domain-agnostic reliable transport. WAL writer/reader, replication
 TCP replay server/client, and casting (C Message Protocol)
@@ -10,52 +10,52 @@ Specs: [`specs/4-cast.md`](specs/4-cast.md),
 
 ## Domain-agnostic transport
 
-rsx-dxs has zero workspace dependencies. The crate carries
+rsx-cast has zero workspace dependencies. The crate carries
 only the framing (`WalHeader`), the transport-level records
 (heartbeat, status, NAK, replay request, caught-up), and the
-[`CmpRecord`] trait that domain payloads must implement.
+[`CastRecord`] trait that domain payloads must implement.
 
 ```
-$ cargo tree -p rsx-dxs --edges normal | grep '^[├└]── rsx-'
+$ cargo tree -p rsx-cast --edges normal | grep '^[├└]── rsx-'
 (empty — no rsx- crates in normal deps)
 ```
 
 The wider rsx exchange's domain records (`FillRecord`,
 `BboRecord`, `OrderInsertedRecord`, …) live in a separate
-crate that sits on top of rsx-dxs; nothing in this crate
+crate that sits on top of rsx-cast; nothing in this crate
 depends on them. Any consumer crate can define its own
-`#[repr(C, align(64))]` records that impl `CmpRecord` and
+`#[repr(C, align(64))]` records that impl `CastRecord` and
 ride the same transport.
 
-## Module layout (`rsx-dxs/src/`)
+## Module layout (`rsx-cast/src/`)
 
 | File | Purpose |
 |------|---------|
 | `header.rs` | 16-byte `WalHeader`. Version byte at offset 8 (`V0` = legacy zero, `V1` = current). Reserved bytes 9..16 must be zero. |
-| `protocol.rs` | `CmpRecord` trait + protocol records (`CmpHeartbeat`, `Nak`, `ReplayRequest`, `CaughtUpRecord`, `ReplayNotAvailable`). Compile-time size/align asserts on each. `StatusMessage` + flow-control removed in `87b223e`. |
+| `protocol.rs` | `CastRecord` trait + protocol records (`CastHeartbeat`, `Nak`, `ReplicationRequest`, `CaughtUpRecord`, `ReplicationNotAvailable`). Compile-time size/align asserts on each. `StatusMessage` + flow-control removed in `87b223e`. |
 | `encode_utils.rs` | Generic helpers: `compute_crc32`, `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
-| `cmp.rs` | `CmpSender` + `CmpReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
+| `cmp.rs` | `CastSender` + `CastReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
 | `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, 4h retention GC) + `WalReader` + `read_record_at_seq`. |
-| `server.rs` | `DxsReplayService` (TCP, optional TLS). Sends `ReplayNotAvailable` when `from_seq` precedes oldest WAL seq. |
-| `client.rs` | `DxsConsumer` (TCP replay, sync). Multi-endpoint: tries endpoints newest→oldest; advances on `ReplayNotAvailable`. Backoff 1/2/4/8/30s ±20% jitter. |
-| `config.rs` | `CmpConfig`, `TlsConfig`. Every field documents its env var. |
+| `server.rs` | `ReplicationService` (TCP, optional TLS). Sends `ReplicationNotAvailable` when `from_seq` precedes oldest WAL seq. |
+| `client.rs` | `ReplicationConsumer` (TCP replay, sync). Multi-endpoint: tries endpoints newest→oldest; advances on `ReplicationNotAvailable`. Backoff 1/2/4/8/30s ±20% jitter. |
+| `config.rs` | `CastConfig`, `TlsConfig`. Every field documents its env var. |
 
 ## Transport paths
 
 - **casting/UDP** (hot path): Aeron-inspired NAK recovery, but
-  without flow control. `CmpSender` assigns monotonic seq,
+  without flow control. `CastSender` assigns monotonic seq,
   sends, and caches the encoded frame in a preallocated ring.
-  `CmpReceiver` detects gaps from out-of-order delivery or
+  `CastReceiver` detects gaps from out-of-order delivery or
   from idle-tail heartbeat skew and sends `Nak`. Sender
   retransmits from the ring; if the seq has aged out, falls
   back to `read_record_at_seq` against the WAL. Retransmit
   horizon = WAL retention, not buffer size. Slow consumers do
   not pace the sender — receiver-side overflow drops, sender
   never stalls.
-- **replication/TCP** (cold path): `DxsReplayService` streams
+- **replication/TCP** (cold path): `ReplicationService` streams
   historical records from `WalReader` then transitions to a
   live tail on `WalWriter::add_listener` notifications.
-  `DxsConsumer` resumes from a persisted tip with backoff
+  `ReplicationConsumer` resumes from a persisted tip with backoff
   on disconnect.
 
 ## casting sender ring (cmp.rs)
@@ -73,7 +73,7 @@ checks `ring_seqs[slot] == seq` (cache hit) or falls back to
 `read_record_at_seq` (cache miss). NAK counts are clamped to
 `SEND_RING_CAPACITY` so a malicious peer can't make the
 sender loop on `u64::MAX`. The receive path
-(`CmpReceiver::try_recv`) currently allocates one `Vec<u8>`
+(`CastReceiver::try_recv`) currently allocates one `Vec<u8>`
 per in-order packet; a caller-supplied `&mut [u8]` variant
 is future work.
 
@@ -91,7 +91,7 @@ struct WalHeader {       // 16 bytes
 
 Payload is `#[repr(C, align(64))]`, little-endian. Data
 records carry `seq: u64` at offset 0 (enforced via
-`CmpRecord`).
+`CastRecord`).
 
 **Version policy.** Adding a new record_type does NOT bump
 the wire version — record types are additive. Bumping V1 →
@@ -128,7 +128,7 @@ Filenames encode the seq range — O(1) file selection for
 
 ```
 1. Consumer connects (optional TLS).
-2. Consumer sends ReplayRequest { stream_id, from_seq }
+2. Consumer sends ReplicationRequest { stream_id, from_seq }
    as one framed record.
 3. Server validates header version, validates CRC, then
    casts the payload (in that order — no unsafe before
@@ -141,7 +141,7 @@ Filenames encode the seq range — O(1) file selection for
    WalWriter::add_listener notifications.
 ```
 
-`DxsConsumer` retries disconnects with exponential backoff
+`ReplicationConsumer` retries disconnects with exponential backoff
 (1, 2, 4, 8, 30 seconds) and ±20% jitter (no `rand` dep —
 nanosecond mod 1000). Backoff index resets on a successful
 stream.
@@ -202,7 +202,7 @@ for the dated authoritative numbers.
 
 | Operation | Measured | Bench |
 |---|---:|---|
-| Protocol-record encode (`Nak` / `CmpHeartbeat`) | 43 ns | `cmp_bench` |
+| Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cmp_bench` |
 | `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
 | Protocol-record decode | 9 ns | `cmp_bench` |
 | `WalWriter::append` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
@@ -211,7 +211,7 @@ for the dated authoritative numbers.
 | WAL sequential read | ~700 MB/s | `wal_bench` |
 | casting RTT, loopback, 128 B | 11.26 µs | `cmp_rtt_bench` |
 | Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
-| `CmpSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cmp_send_breakdown_bench` |
+| `CastSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cmp_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`) | 23.5 ms @ 10 K records | `wal_random_read_bench` |
 
 ## Connection topology
@@ -237,19 +237,19 @@ Recorder --[replication/TCP]--> ME
 
 ## Architectural Decisions
 
-**Runtime: none — transport library.** `rsx-dxs` is
+**Runtime: none — transport library.** `rsx-cast` is
 domain-agnostic and runtime-agnostic. All types —
-`CmpSender`, `CmpReceiver`, `WalWriter`, `WalReader`,
-`DxsReplayService`, `DxsConsumer` — are synchronous.
+`CastSender`, `CastReceiver`, `WalWriter`, `WalReader`,
+`ReplicationService`, `ReplicationConsumer` — are synchronous.
 Callers drive them from whatever loop suits their needs:
 a pinned tile spin loop, a tokio task, or a monoio reactor.
 No async wrappers are shipped; the crate carries no runtime
 dependency.
 
 This is intentional: consumers pick the runtime that fits
-their stage. Matching engine drives `CmpSender` from a
+their stage. Matching engine drives `CastSender` from a
 pinned tile loop with no reactor at all. Gateway and
 marketdata own the UDP socket and pass raw bytes to
-`CmpReceiver` (invert-ownership pattern — see `cmp.rs`).
-Recorder drives `DxsConsumer` blocking from its own thread.
+`CastReceiver` (invert-ownership pattern — see `cmp.rs`).
+Recorder drives `ReplicationConsumer` blocking from its own thread.
 The transport sits under all of them without preference.

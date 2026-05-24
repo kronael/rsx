@@ -11,7 +11,7 @@ Repo: https://github.com/OpenHFT/Chronicle-Queue (Apache-2.0)
 ## Why we include it
 
 The other entries in this survey (Aeron, KCP, Quinn, raw UDP,
-TCP, LBM) compete with rsx-dxs on the **UDP transport** axis:
+TCP, LBM) compete with rsx-cast on the **UDP transport** axis:
 how do you move bytes reliably from one host to another?
 
 Chronicle Queue does not compete on that axis. It is a useful
@@ -21,7 +21,7 @@ and *is* the reader cursor space.
 
 - Chronicle: WAL on disk, mmap shared with reader processes.
   Persistence and IPC are the same artefact.
-- rsx-dxs: WAL on disk, identical bytes broadcast over CMP/UDP,
+- rsx-cast: WAL on disk, identical bytes broadcast over CMP/UDP,
   identical bytes streamed back via TCP for cold replay.
   Persistence, live transport, and replay are the same artefact.
 
@@ -33,7 +33,7 @@ is bit-identical to the original delivery.
 
 Aeron is the closest peer on the UDP-NAK axis. Chronicle is a
 useful comparator on the WAL-is-the-protocol axis. They sit on
-different sides of rsx-dxs's design.
+different sides of rsx-cast's design.
 
 ## Design
 
@@ -84,7 +84,7 @@ directory-cache refresh all still go through the kernel.
 
 ### Durability
 
-This is where the design diverges most from rsx-dxs.
+This is where the design diverges most from rsx-cast.
 
 OSS Chronicle Queue **defaults** to relying on the OS page
 cache. The FAQ:
@@ -109,21 +109,21 @@ queue product with its own performance / durability profile,
 plus replication), but that is a commercial product not
 represented in this comparison.
 
-rsx-dxs takes the opposite **default**: `WalWriter::flush()`
+rsx-cast takes the opposite **default**: `WalWriter::flush()`
 invokes `File::sync_all()` (fsync), and the producer loop
 calls flush every 10 ms. Worst-case data loss on power failure
 is bounded to ~10 ms of records. The cost is the 651 µs fsync
 on the flush path; that cost is amortised across however many
 records batched into one flush window. See
-`rsx-dxs/benches/wal_fsync_bench.rs`.
+`rsx-cast/benches/wal_fsync_bench.rs`.
 
 The comparison here is about **defaults**, not capabilities.
 A Chronicle deployment that calls `sync()` on every append
-can match rsx-dxs's durability bound; an rsx-dxs deployment
+can match rsx-cast's durability bound; an rsx-cast deployment
 that disables the 10 ms flush cadence can match Chronicle's
 throughput. The defaults match the systems' assumed
 deployment: Chronicle in a JVM with the OS managing the page
-cache; rsx-dxs in an exchange where the power-loss window
+cache; rsx-cast in an exchange where the power-loss window
 matters for audit.
 
 ### Multi-writer
@@ -140,7 +140,7 @@ mode" product is a separate buffered-queue implementation
 that lifts that contention for higher throughput; it isn't
 required just to have more than one writer.
 
-rsx-dxs is single-writer per stream by construction — there
+rsx-cast is single-writer per stream by construction — there
 is no shared write lock; each producing tile owns its own
 WAL stream. Multi-producer fan-in is modeled as multiple
 streams with consumers merging on `(stream_id, seq)`. This
@@ -152,19 +152,19 @@ OSS Chronicle Queue is single-host only. Cross-host replication
 ("Chronicle Queue Enterprise Replication") is a commercial
 product layered on Chronicle Network + TCP.
 
-rsx-dxs has cross-host built in: CMP/UDP unicast for the live
-path and TCP replay for the cold path are both in `rsx-dxs/`.
+rsx-cast has cross-host built in: CMP/UDP unicast for the live
+path and TCP replay for the cold path are both in `rsx-cast/`.
 There is no separate enterprise tier; the same WAL serves the
 local archival reader (`rsx-recorder`) and the cold-replay
 client.
 
 ## Guarantees comparison
 
-Comparing OSS Chronicle Queue against rsx-dxs included
+Comparing OSS Chronicle Queue against rsx-cast included
 features. "Default" means the out-of-the-box behaviour;
 where capability differs from default it's called out.
 
-| Property | Chronicle Queue (OSS) | rsx-dxs WAL + CMP |
+| Property | Chronicle Queue (OSS) | rsx-cast WAL + CMP |
 |---|---|---|
 | On-disk format | `.cq4` mmapped, Chronicle Wire (self-describing or fieldless) | `#[repr(C, align(64))]` fixed-layout records + 16 B header |
 | Disk format == wire format | yes (mmap IPC reads same bytes) | yes (CMP frames + TCP replay are identical to WAL records) |
@@ -200,9 +200,9 @@ sharing physical pages. In the steady-state read path the kernel
 is not on the critical path; setup, faults, and rollover still
 involve it.
 
-## rsx-dxs reference numbers
+## rsx-cast reference numbers
 
-From `rsx-dxs/benches/`, criterion p50 on the dev box. These
+From `rsx-cast/benches/`, criterion p50 on the dev box. These
 benches are pure WAL-side; the CMP and end-to-end RTT numbers
 live in the other compare/ docs.
 
@@ -220,13 +220,13 @@ The take-away when comparing:
 - **In-memory append** (31 ns) is in the same ballpark as the
   Chronicle "well under 1 µs" claim. Both are bounded by a
   handful of cache-line writes + one bounds check.
-- **Durable append** (651 µs unamortised) is the cost rsx-dxs
+- **Durable append** (651 µs unamortised) is the cost rsx-cast
   pays on every flush by default. OSS Chronicle does not pay
   it by default — the OS page cache is left to flush in
   background. Callers can opt in via `ExcerptCommon.sync()`
   or `SyncMode`, at which point similar fsync-class costs
   apply.
-- **Random read by seq** (23 ms over 10 K records) is rsx-dxs's
+- **Random read by seq** (23 ms over 10 K records) is rsx-cast's
   weakest leg — there is no per-file index. Chronicle's
   multi-level index makes the same operation O(log n) and would
   win on any large file. This is logged as a deferred feature.
@@ -234,7 +234,7 @@ The take-away when comparing:
 
 The honest summary: Chronicle wins on **steady-state IPC
 latency** (mmap > syscall) and on **random seek** (indexed >
-linear). rsx-dxs wins on **cross-host out of the box** and on
+linear). rsx-cast wins on **cross-host out of the box** and on
 **bounded durability** (10 ms vs unbounded).
 
 ## Why we did not write a direct benchmark
@@ -272,8 +272,8 @@ that **do** plug into the Rust harness (`compare_kcp.rs`,
 reasons above.
 
 If a future deployment needs an mmap intra-host IPC path in
-addition to CMP/UDP, the relevant comparison is not "rsx-dxs vs
-Chronicle" but "should rsx-dxs grow an mmap reader for the same
+addition to CMP/UDP, the relevant comparison is not "rsx-cast vs
+Chronicle" but "should rsx-cast grow an mmap reader for the same
 WAL the producer is already writing?" The WAL bytes are already
 on disk in the right layout; the missing piece is a tailer-side
 mmap helper. That's a feature gap, not a protocol gap.
@@ -291,8 +291,8 @@ mmap helper. That's a feature gap, not a protocol gap.
   https://chronicle.software/queue/
 
 Internal cross-references:
-- `rsx-dxs/benches/wal_bench.rs` — append + sequential read
-- `rsx-dxs/benches/wal_fsync_bench.rs` — durability cost
-- `rsx-dxs/benches/wal_random_read_bench.rs` — cold-tier seek
-- `rsx-dxs/src/wal.rs` — the actual WAL implementation
+- `rsx-cast/benches/wal_bench.rs` — append + sequential read
+- `rsx-cast/benches/wal_fsync_bench.rs` — durability cost
+- `rsx-cast/benches/wal_random_read_bench.rs` — cold-tier seek
+- `rsx-cast/src/wal.rs` — the actual WAL implementation
 - `docs/benches.md` — bench index + caveats

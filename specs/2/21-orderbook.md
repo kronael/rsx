@@ -257,7 +257,7 @@ Key rules:
 
 ### Replica Takeover (Same Mechanism as Risk)
 
-- Replica runs a DxsConsumer on the ME WAL stream.
+- Replica runs a ReplicationConsumer on the ME WAL stream.
 - Replica tracks a per-symbol tip (`seq`) and buffers ahead.
 - On main failure, replica promotes and continues from last tip.
 - Split-brain is avoided via Postgres advisory locks (same as risk).
