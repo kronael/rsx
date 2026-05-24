@@ -566,6 +566,16 @@ pub struct CmpReceiver {
     fault_last_delivered_seq: u64,
     fault_gap_start: u64,
     fault_gap_end_inclusive: u64,
+    /// NAK rate-limit state. Only the oldest gap matters
+    /// because every later one is gated behind it (FIFO).
+    /// `last_nak_at_ns` is ns since `start_instant`.
+    last_nak_at_ns: u64,
+    nak_retries_on_oldest: u16,
+    /// Cached from config to keep the hot path multiply-free.
+    nak_retry_ns: u64,
+    max_nak_retries: u16,
+    /// Monotonic clock baseline for `last_nak_at_ns`.
+    start_instant: Instant,
     /// Out-of-order packet buffer. Fixed-size ring mirroring
     /// the sender's send_ring discipline: three parallel
     /// arrays indexed by `seq & REORDER_MASK`. Empty slot iff
@@ -617,6 +627,13 @@ impl CmpReceiver {
             fault_last_delivered_seq: 0,
             fault_gap_start: 0,
             fault_gap_end_inclusive: 0,
+            last_nak_at_ns: 0,
+            nak_retries_on_oldest: 0,
+            nak_retry_ns: config
+                .nak_retry_us
+                .saturating_mul(1000),
+            max_nak_retries: config.max_nak_retries,
+            start_instant: Instant::now(),
             reorder_seqs: vec![0u64; REORDER_CAPACITY]
                 .into_boxed_slice(),
             reorder_lens: vec![0u16; REORDER_CAPACITY]
@@ -645,6 +662,8 @@ impl CmpReceiver {
         self.fault_last_delivered_seq = 0;
         self.fault_gap_start = 0;
         self.fault_gap_end_inclusive = 0;
+        self.last_nak_at_ns = 0;
+        self.nak_retries_on_oldest = 0;
         self.expected_seq = new_tip + 1;
         if self.highest_seen < new_tip + 1 {
             self.highest_seen = new_tip + 1;
@@ -663,6 +682,64 @@ impl CmpReceiver {
 
     pub fn is_faulted(&self) -> bool {
         self.faulted
+    }
+
+    /// Transition the receiver to FAULTED. Sticky: stays
+    /// here until reset_after_replay() is called. Subsequent
+    /// `try_recv` returns `CmpRecv::Faulted`.
+    fn fault(
+        &mut self,
+        gap_start: u64,
+        gap_end_inclusive: u64,
+    ) {
+        if self.faulted {
+            return;
+        }
+        self.faulted = true;
+        self.fault_last_delivered_seq =
+            self.expected_seq.saturating_sub(1);
+        self.fault_gap_start = gap_start;
+        self.fault_gap_end_inclusive = gap_end_inclusive;
+        warn!(
+            "cmp receiver FAULTED: last_delivered={} \
+             gap=[{}..={}]",
+            self.fault_last_delivered_seq,
+            gap_start,
+            gap_end_inclusive,
+        );
+    }
+
+    /// Bounded-rate NAK pump. Called inline from `try_recv`
+    /// and the heartbeat handler. Sends a NAK for the oldest
+    /// contiguous missing run no more frequently than
+    /// `nak_retry_ns`. After `max_nak_retries` retries on
+    /// the same oldest gap without progress, transitions to
+    /// FAULTED.
+    fn maybe_nak(&mut self, now_ns: u64) {
+        if self.faulted {
+            return;
+        }
+        if self.last_nak_at_ns != 0
+            && now_ns.saturating_sub(self.last_nak_at_ns)
+                < self.nak_retry_ns
+        {
+            return;
+        }
+        let Some((from, count)) = self.oldest_missing_run()
+        else {
+            return;
+        };
+        self.send_nak(from, count);
+        self.last_nak_at_ns = now_ns;
+        self.nak_retries_on_oldest =
+            self.nak_retries_on_oldest.saturating_add(1);
+        if self.nak_retries_on_oldest
+            > self.max_nak_retries
+        {
+            // 8 retries * 100 µs = 800 µs without progress —
+            // escalate to out-of-band recovery (DXS replay).
+            self.fault(from, from + count - 1);
+        }
     }
 
     /// Receive the next in-order CMP packet, if any. Returns
@@ -752,17 +829,12 @@ impl CmpReceiver {
                                     self.highest_seen =
                                         hb.highest_seq;
                                 }
-                                if self.expected_seq > 0
-                                    && self.highest_seen
-                                        > self.expected_seq
-                                {
-                                    self.send_nak(
-                                        self.expected_seq,
-                                        self.highest_seen
-                                            - self
-                                                .expected_seq,
-                                    );
-                                }
+                                let now_ns = self
+                                    .start_instant
+                                    .elapsed()
+                                    .as_nanos()
+                                    as u64;
+                                self.maybe_nak(now_ns);
                             }
                             continue;
                         }
@@ -818,19 +890,23 @@ impl CmpReceiver {
 
                     if seq == self.expected_seq {
                         self.expected_seq += 1;
+                        // Progress on the oldest gap — reset
+                        // the in-flight NAK retry budget.
+                        self.nak_retries_on_oldest = 0;
                         let data = payload.to_vec();
                         return CmpRecv::Data(hdr, data);
                     } else {
                         // Gap. Stage the out-of-order packet
                         // in the reorder ring (full framed
-                        // bytes: header + payload). On slot
-                        // conflict the gap exceeds our
-                        // in-flight window — log and drop
-                        // here; commit 4 escalates this to
-                        // FAULTED so the consumer can switch
-                        // to DXS replay.
+                        // bytes: header + payload). Slot
+                        // conflict = gap exceeds in-flight
+                        // window → transition to FAULTED so
+                        // the consumer can switch to DXS
+                        // replay (FIFO preserved, never
+                        // silent advance).
                         let total = WalHeader::SIZE
                             + payload.len();
+                        let mut conflict = false;
                         if total <= REORDER_FRAME_BYTES {
                             let slot = (seq & REORDER_MASK)
                                 as usize;
@@ -850,17 +926,7 @@ impl CmpReceiver {
                                         &self.buf[..total],
                                     );
                             } else {
-                                // Slot conflict — gap >
-                                // REORDER_CAPACITY. Commit 4
-                                // turns this into FAULTED.
-                                warn!(
-                                    "reorder slot conflict \
-                                     seq={} existing={} \
-                                     (gap > {})",
-                                    seq,
-                                    existing,
-                                    REORDER_CAPACITY,
-                                );
+                                conflict = true;
                             }
                         } else {
                             warn!(
@@ -869,10 +935,36 @@ impl CmpReceiver {
                                 seq, total,
                             );
                         }
-                        self.send_nak(
-                            self.expected_seq,
-                            seq - self.expected_seq,
-                        );
+                        if conflict {
+                            self.fault(
+                                self.expected_seq,
+                                seq.saturating_sub(1),
+                            );
+                            return CmpRecv::Faulted {
+                                last_delivered_seq: self
+                                    .fault_last_delivered_seq,
+                                gap_start: self
+                                    .fault_gap_start,
+                                gap_end_inclusive: self
+                                    .fault_gap_end_inclusive,
+                            };
+                        }
+                        let now_ns = self
+                            .start_instant
+                            .elapsed()
+                            .as_nanos()
+                            as u64;
+                        self.maybe_nak(now_ns);
+                        if self.faulted {
+                            return CmpRecv::Faulted {
+                                last_delivered_seq: self
+                                    .fault_last_delivered_seq,
+                                gap_start: self
+                                    .fault_gap_start,
+                                gap_end_inclusive: self
+                                    .fault_gap_end_inclusive,
+                            };
+                        }
                         continue;
                     }
                 }
@@ -919,6 +1011,9 @@ impl CmpReceiver {
             .to_vec();
         self.reorder_seqs[slot] = 0;
         self.expected_seq += 1;
+        // Oldest gap closed (or shifted forward) — reset
+        // the in-flight NAK retry budget.
+        self.nak_retries_on_oldest = 0;
         Some((hdr, payload))
     }
 
