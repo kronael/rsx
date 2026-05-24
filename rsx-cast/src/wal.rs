@@ -43,6 +43,12 @@ pub struct Framed {
 /// in-memory buffer past ~64 KB at typical record sizes.
 const FLUSH_RECORD_THRESHOLD: u32 = 1000;
 
+/// Default hot-tier retention: 4 hours. Segments older than this
+/// are deleted at rotation time. Long-term durability is the
+/// recorder's job (separate process; ARCHIVE tier). See
+/// `specs/2/48-wal.md` and `rsx-cast/ARCHITECTURE.md` "Retention".
+const RETENTION_NS: u64 = 4 * 60 * 60 * 1_000_000_000;
+
 // ── Path layout ──────────────────────────────────────────────
 //
 // File names encode (stream_id, first_seq, last_seq). The
@@ -238,7 +244,8 @@ impl WalWriter {
         Ok(())
     }
 
-    /// Rotate: rename active -> seq range, open new active.
+    /// Rotate: rename active -> seq range, open new active,
+    /// then prune segments older than `RETENTION_NS`.
     fn rotate(&mut self) -> io::Result<()> {
         let active_path = self.wal_dir
             .join(active_filename(self.stream_id));
@@ -274,6 +281,8 @@ impl WalWriter {
         self.file_size = 0;
         self.first_seq = self.next_seq;
 
+        prune_old_segments(&self.wal_dir, self.stream_id, RETENTION_NS);
+
         Ok(())
     }
 
@@ -283,6 +292,62 @@ impl WalWriter {
 
     pub fn last_seq(&self) -> u64 {
         self.last_seq
+    }
+}
+
+/// Delete rotated segments whose mtime is older than
+/// `retention_ns`. Best-effort: any individual unlink failure
+/// is logged and skipped, never propagated. The active file is
+/// never touched.
+fn prune_old_segments(
+    wal_dir: &Path,
+    stream_id: u32,
+    retention_ns: u64,
+) {
+    let now = std::time::SystemTime::now();
+    let entries = match fs::read_dir(wal_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("prune: read_dir {} failed: {}", wal_dir.display(), e);
+            return;
+        }
+    };
+    let active = active_filename(stream_id);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if name == active {
+            continue;
+        }
+        // only act on parseable segment files for this stream
+        match parse_wal_filename(name) {
+            Some(i) if i.stream_id == stream_id => {}
+            _ => continue,
+        };
+        let mtime = match entry.metadata().and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let age_ns = match now.duration_since(mtime) {
+            Ok(d) => d.as_nanos() as u64,
+            Err(_) => 0,
+        };
+        if age_ns >= retention_ns {
+            match fs::remove_file(&path) {
+                Ok(()) => info!(
+                    "pruned wal segment {} (age {}s)",
+                    name,
+                    age_ns / 1_000_000_000
+                ),
+                Err(e) => warn!(
+                    "prune: remove_file {} failed: {}",
+                    path.display(), e
+                ),
+            }
+        }
     }
 }
 

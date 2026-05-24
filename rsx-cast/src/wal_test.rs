@@ -548,3 +548,60 @@ fn read_record_at_seq_finds_in_rotated_file() {
         .expect("seq 195 should exist");
     assert_eq!(extract_seq(&late.payload), Some(195));
 }
+
+#[test]
+fn rotation_prunes_segments_older_than_retention() {
+    // Stream writes enough records to produce several segments,
+    // backdate the rotated ones to be >4h old, then trigger one
+    // more rotation. Backdated segments must be removed; the
+    // freshly-rotated one and the active file must remain.
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let dir = tmp.path().join("1");
+    let backdated_paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name();
+            let s = n.to_string_lossy().to_string();
+            s.ends_with(".wal") && !s.contains("active")
+        })
+        .map(|e| e.path())
+        .collect();
+    assert!(!backdated_paths.is_empty(), "expected rotated segments");
+
+    let old = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(5 * 60 * 60);
+    for path in &backdated_paths {
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap();
+        f.set_modified(old).unwrap();
+    }
+
+    // Trigger another rotation so prune runs.
+    for i in 30..60 {
+        let mut fill = make_fill(i);
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+
+    for path in &backdated_paths {
+        assert!(
+            !path.exists(),
+            "backdated segment {} should have been pruned",
+            path.display(),
+        );
+    }
+    let active = dir.join("1_active.wal");
+    assert!(active.exists(), "active file must survive prune");
+}
