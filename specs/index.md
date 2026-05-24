@@ -47,13 +47,13 @@ Active specs. Source of truth for system design.
 |------|--------|---------|
 | [2/1-architecture.md](2/1-architecture.md) | shipped | Perpetuals exchange. Fixed-point arithmetic, single-threaded |
 | [2/3-cli.md](2/3-cli.md) | shipped | `rsx-cli` is an offline WAL debugging tool. It reads WAL files written |
-| [2/4-cmp.md](2/4-cmp.md) | shipped | Fixed-size C structs over the network. One wire format for |
+| [2/4-cast.md](2/4-cast.md) | shipped | Fixed-size C structs over the network. One wire format for |
 | [2/5-codepaths.md](2/5-codepaths.md) | shipped | This document enumerates major end-to-end codepaths and maps them to |
 | [2/6-consistency.md](2/6-consistency.md) | shipped | Matching engine produces events into a fixed array buffer. Events fan out |
 | [2/7-dashboard.md](2/7-dashboard.md) | draft | Support-facing dashboard for user-level operations: |
 | [2/8-database.md](2/8-database.md) | reference | - [Recommendation](#recommendation) |
 | [2/9-deploy.md](2/9-deploy.md) | partial | - [Multi-Server Topology](#multi-server-topology) |
-| [2/10-dxs.md](2/10-dxs.md) | shipped | Brokerless WAL streaming. Each producer IS the server for its own |
+| [2/10-replication.md](2/10-replication.md) | shipped | Brokerless WAL streaming. Each producer IS the server for its own |
 | [2/11-gateway.md](2/11-gateway.md) | shipped | Gateway adapts external clients to internal casting. It owns |
 | [2/12-health-dashboard.md](2/12-health-dashboard.md) | draft | Systems operations dashboard for platform health: |
 | [2/13-liquidator.md](2/13-liquidator.md) | partial | - [Context](#context) |
@@ -76,8 +76,8 @@ Active specs. Source of truth for system design.
 | [2/30-scenarios.md](2/30-scenarios.md) | shipped | Deployment scenarios for the RSX exchange. Defines which |
 | [2/33-telemetry.md](2/33-telemetry.md) | partial | How RSX processes emit metrics and how they reach |
 | [2/34-testing-book.md](2/34-testing-book.md) | shipped | Source specs: [ORDERBOOK.md](ORDERBOOK.md), |
-| [2/35-testing-cmp.md](2/35-testing-cmp.md) | shipped | Version: 1.0 |
-| [2/36-testing-dxs.md](2/36-testing-dxs.md) | shipped | Source specs: [replication.md](replication.md), [WAL.md](WAL.md) |
+| [2/35-testing-cast.md](2/35-testing-cast.md) | shipped | Version: 1.0 |
+| [2/36-testing-replication.md](2/36-testing-replication.md) | shipped | Source specs: [10-replication.md](2/10-replication.md), [48-wal.md](2/48-wal.md) |
 | [2/37-testing-gateway.md](2/37-testing-gateway.md) | shipped | Source specs: [NETWORK.md](NETWORK.md), [WEBPROTO.md](WEBPROTO.md), |
 | [2/38-testing-liquidator.md](2/38-testing-liquidator.md) | shipped | Source spec: [LIQUIDATOR.md](LIQUIDATOR.md) |
 | [2/39-testing-mark.md](2/39-testing-mark.md) | shipped | Source spec: [MARK.md](MARK.md) |
