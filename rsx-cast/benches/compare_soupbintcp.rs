@@ -48,10 +48,20 @@ use std::thread;
 
 /// SoupBinTCP common header: 2-byte length + 1-byte type.
 const SOUP_HDR: usize = 3;
-/// Bench payload size matches every other compare_* harness.
-const PAYLOAD: usize = 64;
-/// Total wire = 2 (length) + 1 (type) + 64 (payload).
+/// Bench payload size matches every other compare_* harness
+/// (128 B = `size_of::<FillRecord>()`).
+const PAYLOAD: usize = 128;
+/// Total wire = 2 (length) + 1 (type) + 128 (payload).
 const WIRE_BYTES: usize = SOUP_HDR + PAYLOAD;
+
+/// Cores 2 (PING/timer) + 3 (echoer). Matches compare_all so
+/// numbers are comparable across the protocol survey.
+fn pick_cores() -> (core_affinity::CoreId, core_affinity::CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let p = ids.get(2).copied().unwrap_or(core_affinity::CoreId { id: 0 });
+    let e = ids.get(3).copied().unwrap_or(core_affinity::CoreId { id: 1 });
+    (p, e)
+}
 /// SoupBin `U` packet: client → server, unsequenced data (OUCH-side).
 const PKT_UNSEQUENCED: u8 = b'U';
 /// SoupBin `S` packet: server → client, sequenced data (ITCH-side).
@@ -115,6 +125,9 @@ fn parse_header(hdr: &[u8; SOUP_HDR]) -> (usize, u8) {
 }
 
 fn bench_soupbintcp_rtt(c: &mut Criterion) {
+    let (cli_core, srv_core) = pick_cores();
+    core_affinity::set_for_current(cli_core);
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let srv_addr = listener.local_addr().unwrap();
     let stop = Arc::new(AtomicBool::new(false));
@@ -122,7 +135,9 @@ fn bench_soupbintcp_rtt(c: &mut Criterion) {
 
     // Echoer thread: accept one connection, then loop on
     // (read header → read payload → frame echo → write echo).
+    // Pinned to core 3 to match compare_all's server placement.
     let handle = thread::spawn(move || {
+        core_affinity::set_for_current(srv_core);
         let (mut sock, _) = listener.accept().expect("accept");
         sock.set_nodelay(true).expect("server nodelay");
         sock.set_nonblocking(true).expect("server nonblocking");
@@ -160,7 +175,7 @@ fn bench_soupbintcp_rtt(c: &mut Criterion) {
     let mut rx_hdr = [0u8; SOUP_HDR];
     let mut rx_payload = [0u8; PAYLOAD];
 
-    c.bench_function("soupbintcp_rtt_loopback_64b", |b| {
+    c.bench_function("soupbintcp_rtt_loopback_128b", |b| {
         b.iter(|| {
             let n = frame_packet(
                 &mut tx,
