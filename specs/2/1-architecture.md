@@ -224,7 +224,7 @@ Key references:
 | 21-orderbook.md | Book data structures, matching algorithm, compression zones |
 | 28-risk.md | Margin, positions, funding, liquidation triggers, main loop |
 | 13-liquidator.md | Liquidation rounds, slippage, order generation |
-| 10-dxs.md | WAL format, writer/reader, replay server, consumer |
+| 10-replication.md | WAL format, writer/reader, replay server, consumer |
 | 48-wal.md | Shared WAL design, backpressure rules, flush bounds |
 | 15-mark.md | Mark price aggregator, external feeds, median, staleness |
 | 19-metadata.md | Symbol config scheduling, propagation, cold start |

@@ -44,7 +44,7 @@ name = "wal_bench"
 harness = false
 
 [[bench]]
-name = "cmp_bench"
+name = "cast_bench"
 harness = false
 
 [[bench]]
@@ -52,11 +52,11 @@ name = "compare_udp"
 harness = false
 
 [[bench]]
-name = "cmp_one_way_bench"
+name = "cast_one_way_bench"
 harness = false
 
 [[bench]]
-name = "cmp_rtt_bench"
+name = "cast_rtt_bench"
 harness = false
 
 [[bench]]
@@ -68,7 +68,7 @@ name = "wal_random_read_bench"
 harness = false
 
 [[bench]]
-name = "cmp_send_breakdown_bench"
+name = "cast_send_breakdown_bench"
 harness = false
 
 [[bench]]

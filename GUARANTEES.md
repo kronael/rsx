@@ -15,12 +15,12 @@ Cross-references: [specs/2/6-consistency.md](specs/2/6-consistency.md),
 [specs/2/48-wal.md](specs/2/48-wal.md),
 [specs/2/28-risk.md](specs/2/28-risk.md),
 [specs/2/8-database.md](specs/2/8-database.md),
-[specs/2/10-dxs.md](specs/2/10-dxs.md)
+[specs/2/10-replication.md](specs/2/10-replication.md)
 
-**Edge case handling:** See [specs/2/10-dxs.md](specs/2/10-dxs.md)
+**Edge case handling:** See [specs/2/10-replication.md](specs/2/10-replication.md)
 section 10 for comprehensive WAL replay edge cases (crash
 mid-rotation, CRC corruption, sequence gaps, tip lag, etc.) and
-[specs/2/36-testing-dxs.md](specs/2/36-testing-dxs.md) for test
+[specs/2/36-testing-replication.md](specs/2/36-testing-replication.md) for test
 coverage requirements.
 
 ---
@@ -651,7 +651,7 @@ Postgres lags, replay fills from matching engine WAL to catch up.
 **Data loss:** 0ms (fills buffered in matching engine WAL)
 
 **Partition duration limit:** 10min (matching engine WAL retention,
-see specs/2/10-dxs.md section 2). If partition lasts >10min, Risk must
+see specs/2/10-replication.md section 2). If partition lasts >10min, Risk must
 rebuild from snapshot + full WAL.
 
 **Verification:** After partition heals, position = sum(fills)

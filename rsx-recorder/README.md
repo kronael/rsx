@@ -37,7 +37,7 @@ cargo run -p rsx-recorder
 ## Testing
 
 No dedicated tests. Depends on rsx-dxs client/server tests.
-See `specs/2/36-testing-dxs.md`.
+See `specs/2/36-testing-replication.md`.
 
 ## Dependencies
 

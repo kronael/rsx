@@ -640,7 +640,7 @@ producer.
 
 ## Cross-references
 
-- `specs/2/10-dxs.md` — DXS streaming server (TCP) on top of CMP
+- `specs/2/10-replication.md` — DXS streaming server (TCP) on top of CMP
 - `specs/2/48-wal.md` — WAL flush rules, retention, rotation
 - `specs/2/20-network.md` — Process topology, port assignments
 - `specs/2/45-tiles.md` — Tile architecture (within-process IPC)

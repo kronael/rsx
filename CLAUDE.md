@@ -107,7 +107,7 @@ When the spec explicitly delegates a concern to a different
 layer, do NOT add code in the layer that's being delegated
 *from*. Cite the spec; trust the boundary. Concretely:
 
-- **CMP is intentionally unauthenticated.** specs/2/4-cmp.md
+- **CMP is intentionally unauthenticated.** specs/2/4-cast.md
   §10.4 states "Trusted internal network. No authentication,
   no encryption." Auth lives at the gateway (JWT, TLS) for
   external clients and at the L3 network (firewall, VPC,
@@ -282,7 +282,7 @@ for notional = price * qty at risk boundary.
 | Architecture | specs/2/45-tiles.md | - |
 | Shared orderbook | specs/2/21-orderbook.md | specs/2/34-testing-book.md |
 | Matching engine | specs/2/21-orderbook.md, specs/2/6-consistency.md | specs/2/41-testing-matching.md |
-| DXS (WAL + replay) | specs/2/10-dxs.md, specs/2/48-wal.md, specs/2/4-cmp.md | specs/2/36-testing-dxs.md |
+| DXS (WAL + replay) | specs/2/10-replication.md, specs/2/48-wal.md, specs/2/4-cast.md | specs/2/36-testing-replication.md |
 | Risk engine | specs/2/28-risk.md | specs/2/42-testing-risk.md |
 | Liquidator | specs/2/13-liquidator.md | specs/2/38-testing-liquidator.md |
 | Mark price | specs/2/15-mark.md | specs/2/39-testing-mark.md |

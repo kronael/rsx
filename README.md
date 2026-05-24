@@ -44,7 +44,7 @@ loops accounts for ~655 µs of it).
   records over UDP between Gateway, Risk, and ME. One wire
   format for disk, network, and memory. NAK + heartbeat for
   loss recovery, sequence-window flow control. See
-  [specs/2/4-cmp.md](specs/2/4-cmp.md) for byte layout,
+  [specs/2/4-cast.md](specs/2/4-cast.md) for byte layout,
   comparison vs Aeron / kcp / QUIC, and known limits.
 - **Tile architecture** — pinned threads + rtrb SPSC rings
   where it pays off (full tile arrangement in `rsx-risk`),
@@ -58,7 +58,7 @@ loops accounts for ~655 µs of it).
   (V0=legacy, V1=current) so future format changes can roll
   out without breaking replay. See
   [specs/2/48-wal.md](specs/2/48-wal.md) and
-  [specs/2/10-dxs.md](specs/2/10-dxs.md).
+  [specs/2/10-replication.md](specs/2/10-replication.md).
 - **Slab + CompressionMap orderbook** — pre-allocated 65 536
   OrderSlots per symbol, sparse-to-dense price compression
   via 5 distance-based zones (1:1 near-mid, up to 1000:1 far
@@ -276,9 +276,9 @@ unnumbered references (CMP.md, TILES.md, …) were retired.
 | Spec                                                            | Covers                                       |
 |-----------------------------------------------------------------|----------------------------------------------|
 | [specs/2/1-architecture.md](specs/2/1-architecture.md)          | System overview, principles                  |
-| [specs/2/4-cmp.md](specs/2/4-cmp.md)                            | C Message Protocol (UDP transport)           |
+| [specs/2/4-cast.md](specs/2/4-cast.md)                            | C Message Protocol (UDP transport)           |
 | [specs/2/6-consistency.md](specs/2/6-consistency.md)            | Event ordering, fan-out, FIFO                |
-| [specs/2/10-dxs.md](specs/2/10-dxs.md)                          | DXS replay server (TCP fan-out)              |
+| [specs/2/10-replication.md](specs/2/10-replication.md)                          | DXS replay server (TCP fan-out)              |
 | [specs/2/13-liquidator.md](specs/2/13-liquidator.md)            | Liquidation rounds, insurance fund           |
 | [specs/2/15-mark.md](specs/2/15-mark.md)                        | Mark price aggregation (external feeds)      |
 | [specs/2/16-marketdata.md](specs/2/16-marketdata.md)            | Shadow book, L2/BBO/trades                   |
@@ -318,7 +318,7 @@ A short, honest list of the gaps a careful reader will hit:
   in-memory ring for recent records, WAL-backed for older
   history. The send-ring uses preallocated `Box<[T]>` slabs
   (`7befe76`) — zero heap on the send path. Documented in
-  [specs/2/4-cmp.md §10.3](specs/2/4-cmp.md).
+  [specs/2/4-cast.md §10.3](specs/2/4-cast.md).
 - **JWT replay protection**: `JtiTracker` (`a6a92c3`) is
   implemented but not yet wired through `ws_handshake` — the
   type exists, the handshake doesn't consult it. Tracked as

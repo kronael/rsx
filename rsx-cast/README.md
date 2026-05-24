@@ -319,7 +319,7 @@ latency measurements justify the extra moving parts.
   explicit FAULTED state; until that lands the "Delivery"
   promise above has this hole.
 - **FAULTED escalation is not implemented.** Specced (see
-  `specs/4-cmp.md` §FAULTED) but the consumer side raises
+  `specs/4-cast.md` §FAULTED) but the consumer side raises
   no signal today.
 
 ## Requirements and assumptions
@@ -331,7 +331,7 @@ latency measurements justify the extra moving parts.
   internal network (VPC, namespace, or dedicated L2 segment).
   Trust is delegated upward (to a gateway with JWT + TLS for
   external clients) and downward (to L3 — firewall, VPC,
-  namespace — for internal peers). See `specs/4-cmp.md` §10.4.
+  namespace — for internal peers). See `specs/4-cast.md` §10.4.
   For public-internet transport, use QUIC.
 - **Stable network.** CMP is tuned for loss rate ≤ 0.01% and
   jitter ≤ 100 µs. On a lossy WAN, retransmit storms will
@@ -466,10 +466,10 @@ together with the v4 reliability rewrite.
   design
 - [BENCHES.md](BENCHES.md) — what each Criterion bench
   measures and how to run it
-- [`specs/4-cmp.md`](specs/4-cmp.md) — protocol spec, byte-exact
+- [`specs/4-cast.md`](specs/4-cast.md) — protocol spec, byte-exact
 - [`specs/48-wal.md`](specs/48-wal.md) — WAL flush rules,
   retention, rotation
-- [`specs/10-dxs.md`](specs/10-dxs.md) — TCP replay protocol
+- [`specs/10-replication.md`](specs/10-replication.md) — TCP replay protocol
   details
 - [`facts/syscall-latency.md`](facts/syscall-latency.md) —
   why the `sendto` floor is what it is

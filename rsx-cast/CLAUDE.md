@@ -166,7 +166,7 @@ crate, not the parent `rsx` workspace.
 - **NO references to sibling crates** (`rsx-messages`, `rsx-types`,
   `rsx-matching`, etc.) except as context: "part of the wider rsx
   exchange project" is fine; pointing at their source isn't.
-- **Specs (`specs/2/4-cmp.md`, `48-wal.md`, `10-dxs.md`, etc.)**:
+- **Specs (`specs/2/4-cast.md`, `48-wal.md`, `10-replication.md`, etc.)**:
   copy locally into `rsx-dxs/specs/` if the README references them,
   OR drop the reference and inline the substance. Authoritative
   copy still lives in the parent repo's `specs/2/` for the

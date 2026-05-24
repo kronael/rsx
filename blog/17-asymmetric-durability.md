@@ -346,7 +346,7 @@ goes through a durable queue.
 
 - `specs/2/48-wal.md` - Fill durability guarantees
 - `specs/2/28-risk.md` - Position replay from fills
-- `specs/2/10-dxs.md` - Replay protocol for recovery
+- `specs/2/10-replication.md` - Replay protocol for recovery
 - `blog/04-wal-and-recovery.md` - WAL-based recovery
 - `blog/16-dxs-no-broker.md` - DXS replay from producer WAL
 - `rsx-risk/tests/position_test.rs` - Position = sum(fills) tests
