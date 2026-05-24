@@ -608,7 +608,6 @@ CmpConfig (`rsx-dxs/src/config.rs`):
 | Field                    | Default   | Meaning                                                   |
 |--------------------------|-----------|-----------------------------------------------------------|
 | `heartbeat_interval_ms`  | 100       | max idle before heartbeat; data sends reset the timer (heartbeats fire only on idle streams) |
-| `reorder_buf_limit`      | 512       | legacy; reorder is now a fixed 2 048-slot ring in v4      |
 | `send_ring_limit`        | 4 096     | sender-side retransmit cache slots                        |
 | `sender_bind_addr`       | 0.0.0.0:0 | sender source addr for UDP socket                         |
 | `nak_retry_us`           | 100       | receiver NAK debounce interval (oldest gap)               |
