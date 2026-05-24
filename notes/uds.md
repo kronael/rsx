@@ -1,170 +1,37 @@
-# UDS vs Shared Memory
+# Unix domain sockets vs shared memory
 
-Two main IPC mechanisms for same-host communication. They sit at different points on the latency/complexity spectrum.
+Sources: [UNIX Network Programming vol.1 §15](https://www.informit.com/store/unix-network-programming-volume-1-9780131411555),
+[Linux man shm_open(3)](https://man7.org/linux/man-pages/man3/shm_open.3.html),
+[Aeron IPC transport](https://github.com/real-logic/aeron/wiki/IPC-Channel).
 
-## Overview
+## At a glance
 
-```
-                  UDS                          Shared Memory
-          ┌──────────────┐              ┌──────────────────────┐
- Process A│  write(sock)  │              │   mmap'd region       │
-          │       │       │              │  ┌────────────────┐  │
-          │       ▼       │              │  │  data written   │  │
-          │    kernel      │◄── copy ──► │  │  directly by A  │  │
-          │    buffer      │              │  │  read by B      │  │
-          │       │       │              │  └────────────────┘  │
-          │       ▼       │              │                      │
- Process B│  read(sock)   │              │  (no kernel transit) │
-          └──────────────┘              └──────────────────────┘
-```
-
-## Head-to-Head Comparison
-
-| Aspect | UDS (Unix Domain Socket) | Shared Memory (shmem) |
+| | UDS | Shared memory |
 |---|---|---|
-| **Mechanism** | Kernel-mediated stream/datagram socket | Memory-mapped region visible to both processes |
-| **Data path** | write → kernel buffer → read (2 copies) | Direct read/write to same physical pages (0 copies) |
-| **Typical latency** | ~2–10 µs | ~50–200 ns |
-| **Throughput** | ~2–6 GB/s | ~10–50+ GB/s (memory bandwidth bound) |
-| **Syscalls per message** | 2 (write + read), reducible with io_uring | 0 after setup (just memory loads/stores) |
-| **Synchronization** | Kernel handles it (socket is inherently ordered) | You handle it (atomics, futexes, spinlocks) |
-| **Backpressure** | Built-in (socket buffer full → write blocks) | You implement it (ring buffer full → spin/wait) |
-| **Framing** | SOCK_STREAM needs manual framing; SOCK_SEQPACKET gives message boundaries | You define the protocol entirely |
-| **Security** | Filesystem permissions + SO_PEERCRED | Filesystem permissions on shm_open / mmap |
-| **Failure isolation** | Clean — if one side crashes, the other gets EOF/error | Dangerous — if writer crashes mid-write, reader sees corrupt data |
-| **Complexity** | Low — standard socket API | High — manual sync, memory layout, crash recovery |
+| Data path | write → kernel buffer → read (2 copies) | direct R/W to mapped pages (0 copies) |
+| Latency | ~2–10 µs | ~50–200 ns |
+| Sync | kernel-provided | you implement (atomics, ring buffer) |
+| Backpressure | socket buffer full → write blocks | ring buffer full → spin/wait |
+| Crash safety | clean EOF on peer crash | corrupt shared region if writer crashes mid-write |
+| Complexity | low (standard socket API) | high (layout, sync, crash recovery) |
 
-## When to Use Each
+## When to use which
 
-### Use UDS when:
+**UDS**: sidecar IPC (Envoy, containerd), gRPC/HTTP over socket, anything where
+simplicity and debuggability (`socat`, `strace`) matter more than nanoseconds.
 
-- **Simplicity matters** — socket API is well-understood, debuggable with `socat`/`strace`
-- **Structured protocols** — gRPC/HTTP over UDS gives you serialization, streaming, deadlines for free
-- **Sidecar communication** — Envoy, Istio, and most service meshes use UDS
-- **Moderate throughput** — a few GB/s is sufficient (most microservices)
-- **You want crash safety** — kernel buffers mean a writer crash doesn't corrupt the reader
+**Shared memory**: market data feeds, matching engines, real-time audio — anywhere
+you need sub-microsecond hand-off and control both sides.
 
-### Use shared memory when:
+## Hybrid pattern
 
-- **Nanosecond latency is required** — market data feeds, matching engines, real-time audio/video
-- **High throughput** — moving large payloads (frames, tensors, buffers) without copying
-- **Tight loops** — busy-polling a shared ring buffer is faster than syscall-based notification
-- **You control both sides** — same team, same deploy, can handle the complexity
-- **Zero-copy is critical** — producer writes once, consumer reads in-place
+Data over shared memory ring (zero-copy), wakeup notification over UDS or eventfd.
+This is the approach used by [LMAX Disruptor](https://lmax-exchange.github.io/disruptor/disruptor.html),
+[Aeron IPC](https://github.com/real-logic/aeron/wiki/IPC-Channel), and
+[io_uring](https://unixism.net/loti/) (shared SQE/CQE rings + one `io_uring_enter` syscall).
 
-## Hybrid Pattern: Shared Memory + UDS Notification
+## RSX
 
-A common architecture combines both — shared memory for data, UDS for signaling:
-
-```
-Producer                                          Consumer
-   │                                                  │
-   ├── write payload to shmem ring buffer ──────────► │ (zero-copy)
-   │                                                  │
-   ├── write 1 byte to UDS ─── "data ready" ───────► │ (wake notification)
-   │                                                  │
-   │                                              read from shmem
-```
-
-This gives you:
-- **Zero-copy data transfer** via shared memory
-- **Efficient wakeup** via UDS (no busy-spinning, epoll-friendly)
-- **Backpressure** via the ring buffer being full
-
-This is essentially what high-performance systems like LMAX Disruptor, DPDK, and io_uring use conceptually — a shared data plane with a separate signaling mechanism.
-
-## Rust Examples
-
-### UDS (tokio)
-
-```rust
-use tokio::net::{UnixListener, UnixStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-// Server
-let listener = UnixListener::bind("/tmp/my.sock")?;
-let (mut stream, _) = listener.accept().await?;
-let mut buf = [0u8; 1024];
-let n = stream.read(&mut buf).await?;
-
-// Client
-let mut stream = UnixStream::connect("/tmp/my.sock").await?;
-stream.write_all(b"hello").await?;
-```
-
-### Shared Memory (POSIX shmem)
-
-```rust
-use std::ptr;
-use libc::{shm_open, ftruncate, mmap, PROT_READ, PROT_WRITE, MAP_SHARED, O_CREAT, O_RDWR};
-use std::ffi::CString;
-
-let name = CString::new("/my_shm").unwrap();
-let size = 4096;
-
-unsafe {
-    let fd = shm_open(name.as_ptr(), O_CREAT | O_RDWR, 0o600);
-    ftruncate(fd, size as i64);
-    let ptr = mmap(
-        ptr::null_mut(), size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0,
-    ) as *mut u8;
-
-    // Write
-    ptr::write_volatile(ptr, 42);
-
-    // Read (from another process mapping the same region)
-    let val = ptr::read_volatile(ptr);
-}
-```
-
-### Shared Memory Ring Buffer (lock-free SPSC)
-
-```rust
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[repr(C)]
-struct ShmRingBuffer {
-    head: AtomicUsize,  // written by producer
-    tail: AtomicUsize,  // written by consumer
-    capacity: usize,
-    // data follows in the mmap'd region
-}
-
-impl ShmRingBuffer {
-    fn push(&self, data: &[u8]) -> bool {
-        let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Acquire);
-        let next = (head + 1) % self.capacity;
-        if next == tail { return false; } // full
-
-        // write data at head offset...
-        self.head.store(next, Ordering::Release);
-        true
-    }
-
-    fn pop(&self, buf: &mut [u8]) -> bool {
-        let tail = self.tail.load(Ordering::Relaxed);
-        let head = self.head.load(Ordering::Acquire);
-        if tail == head { return false; } // empty
-
-        // read data at tail offset...
-        self.tail.store((tail + 1) % self.capacity, Ordering::Release);
-        true
-    }
-}
-```
-
-## Performance Spectrum (Same-Host IPC)
-
-```
-Fastest                                                    Simplest
-   │                                                          │
-   ▼                                                          ▼
-Shared Mem    Shared Mem     UDS          UDS + gRPC     TCP loopback
-(spin-poll)   + eventfd    (raw)         (protobuf)      + gRPC
- ~50 ns       ~200 ns      ~2-10 µs      ~10-50 µs       ~50-100 µs
-```
-
-## Related
-
-- [SMRB.md](SMRB.md) — SPSC ring buffer design for shared memory IPC
+Intra-process IPC uses `rtrb` SPSC rings (see `notes/smrb.md`), not UDS or shmem.
+Cross-process uses CMP/UDP hot path and DXS/TCP cold path — no shared memory
+across process boundaries.
