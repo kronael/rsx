@@ -367,6 +367,24 @@ absolutely. The old 512-slot `BTreeMap` reorder buffer
 silently advanced past the gap on overflow — a real
 correctness bug. v4 removed that path.
 
+### Reset semantics
+
+`reset_after_replay(new_tip)` sets `expected_seq = new_tip + 1`
+so live-tail delivery resumes from the right place. It also
+clears the FAULTED flag and drops stale reorder-ring entries.
+
+`highest_seen` is **monotonic**: if `new_tip` is below the
+current `highest_seen` (e.g. a heartbeat or stray OOO packet
+advanced `highest_seen` past the replay's stop point while
+the consumer was draining DXS), the method leaves
+`highest_seen` unchanged. Lowering it could re-arm the gap
+detector against seqs the consumer has already applied via
+replay and silently re-deliver them — a FIFO violation. The
+gap detector compares `expected_seq` against `highest_seen`,
+so keeping `highest_seen` ≥ `expected_seq` is what allows
+the receiver to detect and NAK forward gaps; only forward
+progress is observable to the consumer.
+
 ## 7. WAL replication over TCP (cold path)
 
 Same WAL records, different transport: TCP byte stream
@@ -608,7 +626,6 @@ CmpConfig (`rsx-dxs/src/config.rs`):
 | Field                    | Default   | Meaning                                                   |
 |--------------------------|-----------|-----------------------------------------------------------|
 | `heartbeat_interval_ms`  | 100       | max idle before heartbeat; data sends reset the timer (heartbeats fire only on idle streams) |
-| `reorder_buf_limit`      | 512       | legacy; reorder is now a fixed 2 048-slot ring in v4      |
 | `send_ring_limit`        | 4 096     | sender-side retransmit cache slots                        |
 | `sender_bind_addr`       | 0.0.0.0:0 | sender source addr for UDP socket                         |
 | `nak_retry_us`           | 100       | receiver NAK debounce interval (oldest gap)               |

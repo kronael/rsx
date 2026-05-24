@@ -117,7 +117,7 @@ interop with exchange-grade risk systems. The Hyperliquid architecture doc
 - Tile parity for gateway + marketdata (monoio reactors today, not pinned tiles)
 - Measured GW→ME→GW p50/p99 under load (component sum says <50 µs, harness not yet asserted)
 - CMP v2 multicast (one ME → N consumers, no per-receiver copy) — spec at `specs/2/51-cmp-v2-multicast.md`
-- monoio-native `UdpSocket` on CmpReceiver (~50 LOC, removes the sleep(100µs) floor on gateway)
+- monoio io_uring UDP in gateway (caller owns socket; rsx-dxs is runtime-free by design)
 
 ### 8. The rsx-dxs transport layer as a standalone crate
 

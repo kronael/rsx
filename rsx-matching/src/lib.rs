@@ -10,5 +10,6 @@
 
 pub mod config;
 pub mod dedup;
+pub mod replay;
 pub mod wal_integration;
 pub mod wire;

@@ -203,9 +203,10 @@ fn main() {
                         gap_start,
                         gap_end_inclusive,
                     } => panic!(
-                        "gateway cmp faulted: \
-                         last_delivered={} gap=[{}..={}] — \
-                         restart will replay via DXS",
+                        "FAULTED: DXS replay path not yet \
+                         wired here; see rsx-matching for \
+                         the POC reference impl \
+                         (last_delivered={} gap=[{}..={}])",
                         last_delivered_seq,
                         gap_start,
                         gap_end_inclusive,

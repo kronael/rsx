@@ -1,3 +1,4 @@
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_messages::BboRecord;
@@ -105,7 +106,12 @@ fn mark_cmp_updates_risk_mark_prices() {
     sender.send(&mut rec).unwrap();
 
     thread::sleep(Duration::from_millis(10));
-    while let rsx_dxs::cmp::CmpRecv::Data(hdr, payload) = receiver.try_recv() {
+    loop {
+        let (hdr, payload) = match receiver.try_recv() {
+            CmpRecv::Data(h, p) => (h, p),
+            CmpRecv::Empty => break,
+            CmpRecv::Faulted { .. } => panic!("unexpected fault"),
+        };
         if hdr.record_type == RECORD_MARK_PRICE
             && payload.len()
                 >= std::mem::size_of::<MarkPriceRecord>()
@@ -159,7 +165,12 @@ fn bbo_cmp_updates_risk_index_price() {
     sender.send(&mut rec).unwrap();
 
     thread::sleep(Duration::from_millis(10));
-    while let rsx_dxs::cmp::CmpRecv::Data(hdr, payload) = receiver.try_recv() {
+    loop {
+        let (hdr, payload) = match receiver.try_recv() {
+            CmpRecv::Data(h, p) => (h, p),
+            CmpRecv::Empty => break,
+            CmpRecv::Faulted { .. } => panic!("unexpected fault"),
+        };
         if hdr.record_type == RECORD_BBO
             && payload.len()
                 >= std::mem::size_of::<BboRecord>()

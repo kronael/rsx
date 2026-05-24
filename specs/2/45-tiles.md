@@ -293,9 +293,10 @@ Tracked in `.ship/12-SHOWCASE-HONEST/`:
   measurement.
 - **18: mark off tokio.** Move source scrapers to monoio
   TCP, add core pinning to the aggregator.
-- **17: monoio UDP for CMP.** Replace `std::net::UdpSocket`
-  with monoio io_uring SQEs. Removes one syscall per
-  send/recv on the hot path.
+- **17: monoio UDP for gateway.** Gateway owns the CMP
+  `UdpSocket`; replace with monoio io_uring SQEs for
+  batched send/recv. rsx-dxs itself stays runtime-free
+  (invert-ownership: caller passes bytes, not socket).
 - **userspace networking (DPDK / AF_XDP).** Long-horizon.
   The tile / async split above stays the same; only the
   network driver changes.
