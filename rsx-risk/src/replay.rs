@@ -152,7 +152,7 @@ pub fn replay_from_wal(
     use rsx_messages::OrderCancelledRecord;
     use rsx_messages::OrderDoneRecord;
     use rsx_messages::OrderFailedRecord;
-    use rsx_dxs::WalReader;
+    use rsx_cast::WalReader;
     use rsx_messages::RECORD_ORDER_ACCEPTED;
     use rsx_messages::RECORD_ORDER_FAILED;
     use rsx_messages::RECORD_ORDER_CANCELLED;

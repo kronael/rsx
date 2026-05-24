@@ -1,8 +1,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::BboRecord;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
@@ -14,7 +14,7 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::wal::WalWriter;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
@@ -430,7 +430,7 @@ fn main() {
                 // SAFETY: fail-fast at startup
                 .expect("tokio runtime for dxs");
             let service =
-                rsx_dxs::DxsReplayService::new(wal_path, None)
+                rsx_cast::DxsReplayService::new(wal_path, None)
                     // SAFETY: fail-fast at startup
                     .expect("failed to create dxs service");
             rt.block_on(async {

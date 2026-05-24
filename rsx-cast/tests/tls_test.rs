@@ -1,12 +1,12 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_dxs::config::TlsConfig;
+use rsx_cast::config::TlsConfig;
 use rsx_messages::FillRecord;
-use rsx_dxs::protocol::RECORD_CAUGHT_UP;
+use rsx_cast::protocol::RECORD_CAUGHT_UP;
 use rsx_messages::RECORD_FILL;
-use rsx_dxs::DxsConsumer;
-use rsx_dxs::DxsReplayService;
-use rsx_dxs::WalWriter;
+use rsx_cast::DxsConsumer;
+use rsx_cast::DxsReplayService;
+use rsx_cast::WalWriter;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;

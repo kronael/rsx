@@ -2,16 +2,16 @@
 //! FAULTED + sender-side retransmit dedup. See
 //! `.ship/26-CMP-RELIABILITY-V4/SPEC.md`.
 
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::config::CmpConfig;
-use rsx_dxs::encode_utils::compute_crc32;
-use rsx_dxs::header::WalHeader;
-use rsx_dxs::protocol::CmpHeartbeat;
-use rsx_dxs::protocol::Nak;
-use rsx_dxs::protocol::RECORD_HEARTBEAT;
-use rsx_dxs::protocol::RECORD_NAK;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
+use rsx_cast::config::CmpConfig;
+use rsx_cast::encode_utils::compute_crc32;
+use rsx_cast::header::WalHeader;
+use rsx_cast::protocol::CmpHeartbeat;
+use rsx_cast::protocol::Nak;
+use rsx_cast::protocol::RECORD_HEARTBEAT;
+use rsx_cast::protocol::RECORD_NAK;
 use rsx_messages::FillRecord;
 use rsx_messages::RECORD_FILL;
 use rsx_types::Price;
@@ -431,7 +431,7 @@ fn handle_nak_dedups_within_window() {
     // through to WAL. Populate the WAL so the fallback
     // path can serve the seq=1 retransmit.
     let stream_id = 1u32;
-    let mut writer = rsx_dxs::wal::WalWriter::new(
+    let mut writer = rsx_cast::wal::WalWriter::new(
         stream_id,
         tmp.path(),
         None,

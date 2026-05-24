@@ -1,7 +1,7 @@
-use rsx_dxs::WalHeader;
-use rsx_dxs::header::WAL_HEADER_VERSION_LATEST;
-use rsx_dxs::header::WAL_HEADER_VERSION_V0;
-use rsx_dxs::header::WAL_HEADER_VERSION_V1;
+use rsx_cast::WalHeader;
+use rsx_cast::header::WAL_HEADER_VERSION_LATEST;
+use rsx_cast::header::WAL_HEADER_VERSION_V0;
+use rsx_cast::header::WAL_HEADER_VERSION_V1;
 
 #[test]
 fn header_encode_decode_roundtrip() {
@@ -85,7 +85,7 @@ fn header_size_is_16() {
 
 #[test]
 fn wal_header_crc32_matches_payload() {
-    use rsx_dxs::compute_crc32;
+    use rsx_cast::compute_crc32;
     let payload = b"test payload data";
     let crc = compute_crc32(payload);
     let header = WalHeader::new(1, payload.len() as u16, crc);

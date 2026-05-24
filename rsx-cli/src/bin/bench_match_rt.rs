@@ -30,11 +30,11 @@ use clap::Parser;
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::protocol::CmpRecord;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
+use rsx_cast::protocol::CmpRecord;
+use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_matching::wire::OrderMessage;
@@ -154,7 +154,7 @@ fn main() {
         me_recv_bind,
         1,
         tmp_gw.as_path(),
-        &rsx_dxs::config::CmpConfig {
+        &rsx_cast::config::CmpConfig {
             sender_bind_addr: Some(gw_send_bind.to_string()),
             ..Default::default()
         },
@@ -170,7 +170,7 @@ fn main() {
         gw_recv_bind,
         2,
         tmp_me.as_path(),
-        &rsx_dxs::config::CmpConfig {
+        &rsx_cast::config::CmpConfig {
             sender_bind_addr: Some(me_send_bind.to_string()),
             ..Default::default()
         },

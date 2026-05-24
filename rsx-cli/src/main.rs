@@ -1,8 +1,8 @@
 use clap::Parser;
 use clap::Subcommand;
-use rsx_dxs::protocol::*;
-use rsx_dxs::wal::extract_seq;
-use rsx_dxs::wal::WalReader;
+use rsx_cast::protocol::*;
+use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::WalReader;
 use rsx_messages::*;
 use serde_json::json;
 use serde_json::Value;

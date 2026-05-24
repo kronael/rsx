@@ -23,7 +23,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_messages::OrderAcceptedRecord;

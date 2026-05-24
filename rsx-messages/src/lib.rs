@@ -3,19 +3,19 @@
 //! Application-level records that flow over CMP/UDP and DXS/TCP:
 //! order events, fills, BBO, marks, liquidations. All
 //! `#[repr(C, align(64))]`, all `Copy`, all carry a `seq: u64`
-//! at offset 0 (per the `rsx_dxs::CmpRecord` trait).
+//! at offset 0 (per the `rsx_cast::CmpRecord` trait).
 //!
 //! Disk bytes = wire bytes = stream bytes. No serialization step.
 
-use rsx_dxs::CmpRecord;
-use rsx_dxs::encode_record;
-use rsx_dxs::as_bytes;
+use rsx_cast::CmpRecord;
+use rsx_cast::encode_record;
+use rsx_cast::as_bytes;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
 
 /// Record type constants — domain layer (transport-level
-/// constants live in `rsx_dxs::protocol`).
+/// constants live in `rsx_cast::protocol`).
 pub const RECORD_FILL: u16 = 0;
 pub const RECORD_BBO: u16 = 1;
 pub const RECORD_ORDER_INSERTED: u16 = 2;
@@ -337,7 +337,7 @@ const _: () = assert!(mem::size_of::<LiquidationRecord>() == 64);
 const _: () = assert!(mem::align_of::<LiquidationRecord>() == 64);
 
 // Per-type encode helpers. Wrap the generic
-// `rsx_dxs::encode_record` with the matching record_type.
+// `rsx_cast::encode_record` with the matching record_type.
 
 pub fn encode_fill_record(record: &FillRecord) -> Vec<u8> {
     encode_record(RECORD_FILL, as_bytes(record))

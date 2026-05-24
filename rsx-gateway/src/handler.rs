@@ -18,7 +18,7 @@ use crate::ws::ws_read_frame_buf;
 use crate::ws::ws_write_frame;
 use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::CancelRequest;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;

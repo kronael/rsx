@@ -1,5 +1,5 @@
-use rsx_dxs::encode_utils::compute_crc32;
-use rsx_dxs::header::WalHeader;
+use rsx_cast::encode_utils::compute_crc32;
+use rsx_cast::header::WalHeader;
 use rsx_messages::BboRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
@@ -8,8 +8,8 @@ use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_LIQUIDATION;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use rsx_dxs::wal::extract_seq;
-use rsx_dxs::wal::WalReader;
+use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::WalReader;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::fs;
@@ -349,8 +349,8 @@ fn write_raw_record(
     rt: u16,
     payload: &[u8],
 ) {
-    use rsx_dxs::encode_utils::compute_crc32;
-    use rsx_dxs::header::WalHeader;
+    use rsx_cast::encode_utils::compute_crc32;
+    use rsx_cast::header::WalHeader;
     let crc = compute_crc32(payload);
     let header =
         WalHeader::new(rt, payload.len() as u16, crc);

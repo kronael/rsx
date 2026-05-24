@@ -1,6 +1,6 @@
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::BboRecord;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::RECORD_BBO;

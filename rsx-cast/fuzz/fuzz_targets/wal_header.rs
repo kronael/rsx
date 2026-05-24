@@ -1,6 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use rsx_dxs::WalHeader;
+use rsx_cast::WalHeader;
 
 fuzz_target!(|data: &[u8]| {
     // The decoder must not panic on any input.

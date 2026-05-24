@@ -1,13 +1,13 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
-use rsx_dxs::encode_utils::compute_crc32;
-use rsx_dxs::header::WalHeader;
-use rsx_dxs::protocol::Nak;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
+use rsx_cast::encode_utils::compute_crc32;
+use rsx_cast::header::WalHeader;
+use rsx_cast::protocol::Nak;
 use rsx_messages::FillRecord;
-use rsx_dxs::protocol::RECORD_NAK;
+use rsx_cast::protocol::RECORD_NAK;
 use rsx_messages::RECORD_FILL;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -252,7 +252,7 @@ fn cmp_heartbeat_sent_on_idle() {
     let recv_addr = tmp_recv.local_addr().unwrap();
     tmp_recv.set_nonblocking(true).unwrap();
 
-    let config = rsx_dxs::config::CmpConfig {
+    let config = rsx_cast::config::CmpConfig {
         heartbeat_interval_ms: 5,
         ..Default::default()
     };
@@ -273,6 +273,6 @@ fn cmp_heartbeat_sent_on_idle() {
     let (n, _) = result.unwrap();
     assert!(n >= WalHeader::SIZE);
     let hdr = WalHeader::from_bytes(&buf[..16]).unwrap();
-    assert_eq!(hdr.record_type, rsx_dxs::protocol::RECORD_HEARTBEAT);
+    assert_eq!(hdr.record_type, rsx_cast::protocol::RECORD_HEARTBEAT);
 }
 

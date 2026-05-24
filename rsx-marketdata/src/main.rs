@@ -1,5 +1,5 @@
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -7,7 +7,7 @@ use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use rsx_dxs::wal::extract_seq;
+use rsx_cast::wal::extract_seq;
 use rsx_marketdata::config::load_marketdata_config;
 use rsx_marketdata::handler::handle_connection;
 use rsx_marketdata::protocol::serialize_bbo;

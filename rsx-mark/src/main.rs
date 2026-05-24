@@ -1,7 +1,7 @@
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::RECORD_MARK_PRICE;
-use rsx_dxs::wal::WalWriter;
-use rsx_dxs::DxsReplayService;
+use rsx_cast::wal::WalWriter;
+use rsx_cast::DxsReplayService;
 use rsx_mark::aggregator::aggregate_with_staleness;
 use rsx_mark::aggregator::sweep_stale_with_staleness;
 use rsx_mark::config::load_mark_config;

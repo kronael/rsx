@@ -391,7 +391,7 @@ async fn advisory_lock_exclusive() {
 #[ignore]
 async fn replay_from_wal_rebuilds_positions() {
     use rsx_messages::FillRecord;
-    use rsx_dxs::WalWriter;
+    use rsx_cast::WalWriter;
 
     let wal_dir =
         tempfile::tempdir().unwrap();
@@ -481,7 +481,7 @@ taker_ts_ns: 0,
 #[ignore]
 async fn replay_from_wal_releases_frozen_on_order_done() {
     use rsx_messages::OrderDoneRecord;
-    use rsx_dxs::WalWriter;
+    use rsx_cast::WalWriter;
     use rsx_risk::types::OrderRequest;
 
     let wal_dir = tempfile::tempdir().unwrap();
