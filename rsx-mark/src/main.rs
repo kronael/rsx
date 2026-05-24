@@ -246,6 +246,15 @@ fn main() {
 
     tracing_subscriber::fmt::init();
 
+    // Rustls 0.23 requires an explicit default CryptoProvider when
+    // multiple are compiled in (we get both ring + aws-lc-rs via the
+    // tokio-tungstenite rustls-tls-native-roots feature + rsx-cast).
+    // Without this, the first TLS handshake panics. Install once,
+    // ignore the duplicate-install Err (returned when already set,
+    // e.g. when a test harness ran first).
+    let _ = rustls::crypto::aws_lc_rs::default_provider()
+        .install_default();
+
     let config = match load_mark_config() {
         Ok(c) => c,
         Err(e) => {
