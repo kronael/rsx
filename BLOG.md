@@ -12,8 +12,8 @@ Two artifacts in one repo:
    that wants 50-µs-class messaging without Kafka can use it.
 
 2. **A complete perpetuals exchange built on it.** Gateway,
-   Risk, Matching Engine, Marketdata, Mark Price, Recorder,
-   each a separate process. Spec-first: 50+ spec files
+   Risk, Matching Engine, Marketdata, Mark Price, Recorder —
+   each a separate process. Spec-first: 47+ spec files
    written before any code. The exchange is both a real
    product and the load-bearing demo that proves `rsx-cast`
    handles a non-trivial workload.
@@ -76,7 +76,7 @@ Criterion benchmarks on the orderbook and transport layer:
 | Insert resting order                           | 857 ns   |
 | `WalWriter::append` (Vec extend, pre-fsync)    | 31 ns    |
 | WAL flush + fsync 64 KB                        | 24 us    |
-| Protocol-record encode (StatusMessage / Nak / Heartbeat) | 43 ns |
+| Protocol-record encode (Nak / CastHeartbeat) | 43 ns |
 | `FillRecord` encode                            | 23 ns    |
 | Protocol-record decode                         | 9 ns     |
 
@@ -102,9 +102,10 @@ architectures, no precision loss across the entire pipeline.
 
 **casting/UDP, not Kafka.** A message broker adds milliseconds of
 latency and an operational dependency. casting is a custom
-protocol inspired by Aeron: C structs over UDP, NACK-based
-flow control, per-stream ordering. Each datagram is one
-message. No framing, no length prefix, no deserialization.
+protocol inspired by Aeron: C structs over UDP, NAK-based
+gap recovery, per-stream ordering, no congestion control.
+Each datagram is one message. No framing, no length prefix,
+no deserialization.
 
 **Slab arena allocation.** The matching engine pre-allocates
 all order slots at startup. O(1) alloc via free list, O(1)
@@ -159,11 +160,11 @@ payload_len) followed by a `#[repr(C, align(64))]` payload.
 The same bytes written to disk are the same bytes sent over
 UDP and the same bytes streamed to consumers over TCP.
 
-replication (the streaming layer) is brokerless. Each producer IS the
-replay server. Consumers connect directly to the matching
-engine's replication port and request replay from sequence N. No
-central broker, no topic partitions, no consumer groups. The
-WAL IS the log.
+replication (the cold-path layer) is brokerless. Each producer
+IS the replay server. Consumers connect directly to the
+matching engine's replication port and request replay from
+sequence N. No central broker, no topic partitions, no
+consumer groups. The WAL IS the log.
 
 WalWriter flushes every 10 milliseconds, rotates files at
 64MB, retains 48 hours. Backpressure: if the buffer fills
@@ -199,10 +200,6 @@ chart, order entry, positions, and funding history.
 A CLI tool that dumps WAL files to JSON with filters by
 record type, symbol, user, and time range. Stats mode for
 aggregate counts. Follow mode for tailing live WAL writes.
-
-A market maker bot that places two-sided quotes through the
-gateway WebSocket with configurable spread, levels, and
-refresh interval.
 
 ## Recent Work
 

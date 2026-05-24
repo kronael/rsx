@@ -49,7 +49,7 @@ correctness batch.
 | rsx-mark | shipped | Binance/Coinbase aggregation, 1 SPSC ring | core pinning |
 | rsx-recorder | shipped | daily rotation, buffered writes | — |
 | rsx-cli | shipped | WAL dump (filters, stats, follow, display scale) | — |
-| rsx-maker | shipped | two-sided quoting, reconnect | — |
+| rsx-log | shipped | per-thread SPSC ring → drain thread → tracing events | — |
 
 ## Playground
 
@@ -67,7 +67,7 @@ correctness batch.
 | insert resting order | 857 ns |
 | `WalWriter::append` (Vec extend, pre-fsync) | 31 ns |
 | WAL flush + fsync 64 KB | 24 µs |
-| protocol-record encode (StatusMessage / Nak / Heartbeat) | 43 ns |
+| protocol-record encode (Nak / CastHeartbeat) | 43 ns |
 | `FillRecord` encode | 23 ns |
 | protocol-record decode | 9 ns |
 

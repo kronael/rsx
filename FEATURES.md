@@ -18,7 +18,6 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 | Marketdata| 8180 | Shadow book, L2/BBO/trades broadcast    |
 | Mark      | 9201 | Binance/Coinbase aggregation, staleness |
 | Recorder  | replication  | Archival consumer, daily rotation       |
-| Maker     | WS   | Two-sided quoting, auto-reconnect       |
 
 ## Crate Features
 
@@ -53,18 +52,23 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 
 ### rsx-cast (transport, domain-agnostic)
 
-- WalWriter: 10ms flush, 64MB rotate, 10min retain
-- WalReader with sequence extraction
-- ReplicationService (TCP, from seq N)
-- Streaming protocol (casting) over UDP: flow control, NACK-based
-- Two-tier NAK retransmit: in-mem ring + WAL random-access
-- Protocol records: StatusMessage, Nak, CastHeartbeat,
-  ReplicationRequest, CaughtUpRecord (in `protocol.rs`)
-- TLS support, backpressure, tip persistence
-- Wire-format version byte in `WalHeader` (V0/V1); readers
-  reject unknown versions, writers stamp the current one
-- Preallocated `send_ring` on casting sender (zero heap on the
-  send path)
+- WalWriter: 10ms flush, 64MB rotate, 48h retention default
+- WalReader with sequence extraction; random-access
+  `read_record_at_seq` for cold-tier NAK retransmit
+- ReplicationService (TCP, from seq N), optional rustls TLS
+- casting (UDP): NAK-based loss recovery, idle-only heartbeats,
+  no flow control (slow consumers recover via replication)
+- Two-tier NAK retransmit: preallocated in-memory ring →
+  WAL random-access (horizon = WAL retention, not RAM)
+- Protocol records: Nak, CastHeartbeat, ReplicationRequest,
+  CaughtUpRecord, ReplicationNotAvailable (in `protocol.rs`)
+- `CastRecv::Faulted` surfaced to consumer when reorder
+  ring slot conflicts or NAK retry budget exhausts;
+  `reset_after_replay` resumes after replication-replay
+- Sender-side retransmit dedup, NAK debounce
+- Wire-format version byte in `WalHeader`; readers reject
+  unknown versions
+- Preallocated `send_ring` (zero heap on the send path)
 - No `rsx-types` dep — transport accepts any
   `CastRecord` (repr(C) + seq at offset 0)
 
@@ -152,15 +156,15 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - --follow: tail mode with ctrlc handler
 - --tick-size, --lot-size: display scale
 
-### rsx-maker
+### rsx-log
 
-- WS client to Gateway
-- Two-sided quoting: bid+ask ladder
-- Order cancellation cycle
-- Exponential backoff reconnect
-- SIGINT/SIGTERM shutdown
-- Env config: mid, spread_bps, levels, qty, tick,
-  lot, refresh_ms
+- Per-thread `rtrb::Producer<Record>` for off-hot-path
+  structured log emission
+- Bounded ring; full ring drops with a counter rather than
+  blocking the producer
+- Drain thread runs every `interval_ms`, dispatches to
+  `tracing::event!`
+- No `rsx-types` / runtime dep — opt-in for producers
 
 ## Playground Dashboard
 

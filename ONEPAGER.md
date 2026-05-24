@@ -14,14 +14,17 @@ a competing venue rebuilds the same pieces, badly.
 
 Two layers, one repo.
 
-1. **rsx-cast** — domain-agnostic transport: WAL + casting (C-struct UDP)
-   + TCP replay. Same bytes on disk, in UDP, on the wire. No
-   knowledge of orders, fills, or users. Reusable wherever you need
-   an audited stream of fixed-size records.
+1. **rsx-cast** — domain-agnostic transport: WAL + casting
+   (C-struct over UDP) + replication (TCP replay). Same bytes
+   on disk, in UDP, and on the wire. No knowledge of orders,
+   fills, or users. Reusable wherever you need an audited
+   stream of fixed-size records.
 
-2. **The rest** — orderbook, matching, risk, gateway, marketdata,
-   mark, recorder, maker. A working perp exchange on top of rsx-cast.
-   Separate processes, each pinned, each one tile per concern.
+2. **The rest** — orderbook, matching, risk, gateway,
+   marketdata, mark, recorder. A working perp exchange on top
+   of rsx-cast. Separate processes, each pinned where it
+   matters, with tiles for compute and monoio reactors for
+   I/O multiplexing.
 
 ## Why it's different (the wedge)
 
@@ -50,10 +53,11 @@ LANDSCAPE.md`, `docs/benches.md`):
 | Cross-process via Python WS probe | **11 878 µs** | end-to-end with client framing |
 
 99% of the in-process round-trip is the `sendto` syscall body
-(`rsx-cast/benches/cmp_send_breakdown_bench.rs`). Algorithm + framing
-add up to <0.7% of wall time. Optimisation targets are kernel-bypass
-shaped, not Rust-shaped, and `specs/2/4-cast.md` already documents the
-DPDK / AF_XDP "Later" path. Honest.
+(`rsx-cast/benches/cast_send_breakdown_bench.rs`). Algorithm +
+framing add up to <0.7% of wall time. Optimisation targets are
+kernel-bypass shaped, not Rust-shaped, and
+`specs/2/4-cast.md` already documents the DPDK / AF_XDP
+"Later" path. Honest.
 
 ## What's open
 
