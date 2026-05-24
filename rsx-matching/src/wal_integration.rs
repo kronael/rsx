@@ -505,13 +505,7 @@ pub fn load_snapshot(
     }
 }
 
-/// Save book snapshot to
-/// `{wal_dir}/{symbol_id}/snapshot.bin`, and the WAL seq at
-/// snapshot time to `wal_seq.txt` alongside.
-/// Uses atomic rename to avoid partial writes. The sidecar is
-/// the recovery anchor: `replay_wal_after_snapshot` resumes
-/// from `sidecar + 1` so we never re-execute records the
-/// snapshot already contains.
+/// Save snapshot + `wal_seq.txt` sidecar via atomic rename. See ARCHITECTURE.md.
 pub fn save_snapshot(
     book: &Orderbook,
     wal_dir: &str,
