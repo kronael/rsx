@@ -82,9 +82,11 @@ fn bench_wal_append_fsync_single(c: &mut Criterion) {
     )
     .unwrap();
 
+    // Pre-build the record outside the timed loop. seq gets
+    // overwritten by append, so reusing one instance is safe.
+    let mut rec = fill_record();
     c.bench_function("wal_append_fsync_single", |b| {
         b.iter(|| {
-            let mut rec = fill_record();
             writer.append(&mut rec).unwrap();
             writer.flush().unwrap();
         });
@@ -103,10 +105,11 @@ fn bench_wal_append_fsync_batch_100(c: &mut Criterion) {
     )
     .unwrap();
 
+    // Pre-build the record. Same rationale as the single-append bench.
+    let mut rec = fill_record();
     c.bench_function("wal_append_fsync_batch_100", |b| {
         b.iter(|| {
             for _ in 0..100 {
-                let mut rec = fill_record();
                 writer.append(&mut rec).unwrap();
             }
             writer.flush().unwrap();

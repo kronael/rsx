@@ -8,7 +8,8 @@
 //! `read` / `write` — matches the style of `udp_rtt_bench.rs`
 //! and the spin variant of `compare_kcp.rs`. **Pinger pinned to
 //! core 2, echoer to core 3** so the spinning threads never
-//! migrate or share a core. 64-byte payload (one cache line).
+//! migrate or share a core. **128-byte payload** to match
+//! `FillRecord` (CMP RTT bench).
 //!
 //! The 3-way handshake runs once in setup. The timed loop
 //! reuses the same connection for every iteration — same
@@ -55,7 +56,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
-const PAYLOAD: usize = 64;
+// 128 B = size_of::<FillRecord>() per rsx-messages/src/lib.rs:78,
+// the payload exercised by cmp_rtt_bench. Apples-to-apples.
+const PAYLOAD: usize = 128;
 
 /// Read exactly `buf.len()` bytes from a non-blocking TCP stream
 /// by spinning on `WouldBlock`. TCP is a stream — one `read`
@@ -140,7 +143,7 @@ fn bench_tcp_rtt_loopback(c: &mut Criterion) {
     let payload = [0xAAu8; PAYLOAD];
     let mut recv_buf = [0u8; PAYLOAD];
 
-    c.bench_function("tcp_rtt_loopback_64b", |b| {
+    c.bench_function("tcp_rtt_loopback_128b", |b| {
         b.iter(|| {
             // Panic on EOF / non-WouldBlock error — if the echo
             // thread dies mid-bench, Criterion would otherwise

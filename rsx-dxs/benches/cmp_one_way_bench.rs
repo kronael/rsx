@@ -142,10 +142,12 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     // Sender side runs the Criterion timer closure on this thread.
     core_affinity::set_for_current(sender_core);
 
+    // Pre-build the record outside the timed loop (seq is
+    // overwritten by sender.send).
+    let mut rec = fill_record();
     c.bench_function("cmp_one_way_fill", |b| {
         let mut iter: u64 = 0;
         b.iter(|| {
-            let mut rec = fill_record();
             let before = recv_count.load(Ordering::Acquire);
             // Send. Flow control closes around 64K iters
             // without status round-trips — we drive
@@ -180,5 +182,11 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     let _ = handle.join();
 }
 
-criterion_group!(benches, bench_cmp_one_way);
+criterion_group! {
+    name = benches;
+    // sample_size(50) matches the rest of the compare/CMP RTT bench
+    // family for cross-bench alignment.
+    config = Criterion::default().sample_size(50);
+    targets = bench_cmp_one_way
+}
 criterion_main!(benches);

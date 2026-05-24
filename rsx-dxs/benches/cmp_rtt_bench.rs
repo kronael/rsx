@@ -145,12 +145,16 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     // (~100k+ iterations) — without it the senders' windows
     // close around iter 65536 and `send` returns Ok(false)
     // forever.
+    //
+    // The echo record is pre-built outside the inner loop and
+    // re-used (seq is set by the sender). This shaves the
+    // per-iter struct construction (~10s ns) off the echo path.
     let handle = thread::spawn(move || {
         core_affinity::set_for_current(b_core);
+        let mut echo = fill_record();
         let mut i: u64 = 0;
         while !stop_b.load(Ordering::Relaxed) {
             if let Some(_) = b_receiver.try_recv() {
-                let mut echo = fill_record();
                 loop {
                     match b_sender.send(&mut echo) {
                         Ok(true) => break,
@@ -178,6 +182,9 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     // Sender side runs the Criterion timer closure on this thread.
     core_affinity::set_for_current(a_core);
 
+    // Pre-build the request record outside b.iter (seq is
+    // overwritten on send).
+    let mut req = fill_record();
     c.bench_function("cmp_rtt_fill_echo", |b| {
         let mut iter: u64 = 0;
         b.iter(|| {
@@ -187,7 +194,6 @@ fn bench_cmp_rtt(c: &mut Criterion) {
                 let _ = a_sender.tick();
                 a_sender.recv_control();
             }
-            let mut req = fill_record();
             loop {
                 match a_sender.send(black_box(&mut req)) {
                     Ok(true) => break,
@@ -213,5 +219,11 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     let _ = handle.join();
 }
 
-criterion_group!(benches, bench_cmp_rtt);
+criterion_group! {
+    name = benches;
+    // sample_size(50) matches compare_udp / compare_tcp / compare_aeron /
+    // compare_kcp so cross-bench tables align on sampling methodology.
+    config = Criterion::default().sample_size(50);
+    targets = bench_cmp_rtt
+}
 criterion_main!(benches);

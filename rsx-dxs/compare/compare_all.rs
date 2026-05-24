@@ -15,11 +15,11 @@
 //! Server setup, async runtimes, and framing are internal to each
 //! impl. The bench only sees: send 64 bytes, receive echo, measure RTT.
 //!
-//! Protocols:
+//! Protocols (all measure a 128-byte payload to match cmp_rtt_bench):
 //!   raw_udp          — baseline: sendto + recvfrom, no framing
 //!   kcp_spin         — KCP turbo: flush() immediately, spin echo
 //!   quinn_persistent — QUIC persistent stream + 4B length framing
-//!   tcp_nodelay      — TCP nodelay, persistent connection
+//!   tcp_nodelay      — TCP nodelay, persistent connection (read_exact)
 //!
 //! See compare/*.md for protocol analysis. Run all:
 //!
@@ -47,8 +47,12 @@ trait EchoClient {
     fn ping(&mut self, payload: &[u8], buf: &mut [u8]) -> usize;
 }
 
+// 128 B = size_of::<FillRecord>() per rsx-messages/src/lib.rs:78, so
+// every protocol here measures the same payload size as cmp_rtt_bench.
+const PAYLOAD_LEN: usize = 128;
+
 fn run_bench(c: &mut Criterion, name: &str, client: &mut dyn EchoClient) {
-    let payload = [0xAAu8; 64];
+    let payload = [0xAAu8; PAYLOAD_LEN];
     let mut buf = [0u8; 256];
     c.bench_function(name, |b| {
         b.iter(|| {
@@ -69,7 +73,20 @@ use std::thread;
 struct RawUdpClient {
     sock: UdpSocket,
     srv_addr: std::net::SocketAddr,
-    _stop: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for RawUdpClient {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        // Send a wake-up packet so the (nonblocking) server thread
+        // gets one final recv and notices the stop flag.
+        let _ = self.sock.send_to(&[0xFFu8; 1], self.srv_addr);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 impl RawUdpClient {
@@ -85,18 +102,21 @@ impl RawUdpClient {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             core_affinity::set_for_current(srv_core);
             let mut buf = [0u8; 256];
             while !stop2.load(Ordering::Relaxed) {
                 match srv.recv_from(&mut buf) {
-                    Ok((n, src)) => { let _ = srv.send_to(&buf[..n], src); }
+                    Ok((n, src)) => {
+                        if n >= 1 && buf[0] == 0xFF { return; }
+                        let _ = srv.send_to(&buf[..n], src);
+                    }
                     Err(_) => std::hint::spin_loop(),
                 }
             }
         });
 
-        Self { sock: cli, srv_addr, _stop: stop }
+        Self { sock: cli, srv_addr, stop, handle: Some(handle) }
     }
 }
 
@@ -150,7 +170,17 @@ struct KcpSpinClient {
     sock: UdpSocket,
     srv_addr: std::net::SocketAddr,
     out: OutQueue,
-    _stop: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for KcpSpinClient {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 impl KcpSpinClient {
@@ -172,7 +202,7 @@ impl KcpSpinClient {
         let stop2 = Arc::clone(&stop);
 
         let srv_sock2 = srv_sock.try_clone().unwrap();
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             core_affinity::set_for_current(srv_core);
             let mut kcp = make_kcp(1, srv_out2);
             let mut buf = [0u8; 2048];
@@ -195,8 +225,8 @@ impl KcpSpinClient {
 
         let mut kcp = make_kcp(1, Arc::clone(&cli_out));
 
-        // Warmup
-        kcp.send(&[0x42u8; 64]).unwrap();
+        // Warmup with the actual measured payload size.
+        kcp.send(&[0x42u8; PAYLOAD_LEN]).unwrap();
         kcp.flush().unwrap();
         drain(&cli_out, &cli_sock, srv_addr);
         let deadline = Instant::now() + std::time::Duration::from_millis(200);
@@ -209,7 +239,14 @@ impl KcpSpinClient {
             std::hint::spin_loop();
         }
 
-        Self { kcp, sock: cli_sock, srv_addr, out: cli_out, _stop: stop }
+        Self {
+            kcp,
+            sock: cli_sock,
+            srv_addr,
+            out: cli_out,
+            stop,
+            handle: Some(handle),
+        }
     }
 }
 
@@ -225,7 +262,9 @@ impl EchoClient for KcpSpinClient {
             while let Ok((n, _)) = self.sock.recv_from(buf) {
                 let _ = self.kcp.input(&buf[..n]);
             }
-            if self.kcp.recv(buf).is_ok() { return 64; }
+            // Return the actual decoded length so payload-size
+            // changes (e.g. 64 → 128) don't silently mis-measure.
+            if let Ok(n) = self.kcp.recv(buf) { return n; }
             std::hint::spin_loop();
         }
     }
@@ -368,12 +407,14 @@ impl TcpNodelay {
                 while let Ok((mut sock, _)) = listener.accept().await {
                     sock.set_nodelay(true).unwrap();
                     tokio::spawn(async move {
-                        let mut buf = [0u8; 256];
+                        // Read exactly PAYLOAD_LEN per iter and echo it.
+                        // TCP is a byte stream — a single read() can return
+                        // any partial length, so we read_exact for parity
+                        // with the framed PAYLOAD_LEN sends.
+                        let mut buf = [0u8; PAYLOAD_LEN];
                         loop {
-                            match sock.read(&mut buf).await {
-                                Ok(0) | Err(_) => break,
-                                Ok(n) => { if sock.write_all(&buf[..n]).await.is_err() { break; } }
-                            }
+                            if sock.read_exact(&mut buf).await.is_err() { break; }
+                            if sock.write_all(&buf).await.is_err() { break; }
                         }
                     });
                 }
@@ -390,7 +431,11 @@ impl EchoClient for TcpNodelay {
     fn ping(&mut self, payload: &[u8], buf: &mut [u8]) -> usize {
         self.rt.block_on(async {
             self.stream.write_all(payload).await.unwrap();
-            self.stream.read(buf).await.unwrap()
+            // read_exact: TCP is a byte stream, a single read() can
+            // return a short prefix, leaving trailing bytes for the
+            // next iter and under-measuring RTT.
+            self.stream.read_exact(&mut buf[..PAYLOAD_LEN]).await.unwrap();
+            PAYLOAD_LEN
         })
     }
 }
@@ -400,10 +445,10 @@ impl EchoClient for TcpNodelay {
 fn bench_all(c: &mut Criterion) {
     let (cli_core, _) = pick_cores();
     core_affinity::set_for_current(cli_core);
-    run_bench(c, "raw_udp_64b",            &mut RawUdpClient::new());
-    run_bench(c, "kcp_spin_flush_64b",     &mut KcpSpinClient::new());
-    run_bench(c, "quinn_persistent_64b",   &mut QuinnPersistentClient::new());
-    run_bench(c, "tcp_nodelay_64b",        &mut TcpNodelay::new());
+    run_bench(c, "raw_udp_128b",            &mut RawUdpClient::new());
+    run_bench(c, "kcp_spin_flush_128b",     &mut KcpSpinClient::new());
+    run_bench(c, "quinn_persistent_128b",   &mut QuinnPersistentClient::new());
+    run_bench(c, "tcp_nodelay_128b",        &mut TcpNodelay::new());
 }
 
 criterion_group! {

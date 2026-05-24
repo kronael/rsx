@@ -4,7 +4,7 @@
 //!   host. Two clients share one embedded media driver: PING publishes to
 //!   `ping_channel`, PONG subscribes to it and re-publishes on `pong_channel`.
 //!   PING subscribes to `pong_channel` and times the round-trip. Payload =
-//!   64 bytes (matches the CMP exchange-frame size used in cmp_rtt_bench).
+//!   128 bytes (matches `FillRecord` size used in cmp_rtt_bench).
 //!
 //! `aeron_rtt_ipc` — Aeron IPC (shared-memory broadcast), same shape but
 //!   bypasses the UDP socket entirely. Lower bound on Aeron's overhead;
@@ -47,9 +47,9 @@
 //!   process (`AeronDriver::launch_embedded`). Production deployments use
 //!   a separate driver process; the IPC hop between application and driver
 //!   over shared memory is the same in both cases.
-//! - 64-byte payload. Aeron prepends a 32-byte data frame header → ~96 B
-//!   on the wire. CMP's 64-byte payload + 16-byte WalHeader → 80 B on the
-//!   wire. Header overhead is ~20% higher for Aeron at this payload size.
+//! - 128-byte payload. Aeron prepends a 32-byte data frame header → ~160 B
+//!   on the wire. CMP's 128-byte payload + 16-byte WalHeader → 144 B on the
+//!   wire. Header overhead is ~11% higher for Aeron at this payload size.
 //! - **Not apples-to-apples vs CMP at the transport layer.** CMP RTT covers
 //!   `app → kernel UDP → app`. Aeron UDP RTT covers
 //!   `app → driver shm → kernel UDP → driver shm → app`, both directions.
@@ -95,9 +95,10 @@ fn pick_cores() -> (CoreId, CoreId) {
     let e = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
     (p, e)
 }
-/// 64-byte payload matches `cmp_rtt_bench` (one cache line, CMP exchange-
-/// frame size). First 8 bytes carry the timestamp; the rest is zeroed.
-const PAYLOAD_LEN: usize = 64;
+/// 128-byte payload matches `cmp_rtt_bench` (size_of::<FillRecord>() == 128
+/// per rsx-messages/src/lib.rs:78). First 8 bytes carry the timestamp; the
+/// rest is zeroed.
+const PAYLOAD_LEN: usize = 128;
 const WARMUP_ITERS: usize = 100;
 
 // ── echo handler used on the PONG side ──────────────────────────────────────
@@ -335,7 +336,7 @@ fn bench_aeron_udp(c: &mut Criterion) {
         let _ = record_rtt(&rig.ping_publication, &rig.pong_subscription, &mut buffer, &mut handler);
     }
 
-    c.bench_function("aeron_rtt_udp_loopback_64b", |b| {
+    c.bench_function("aeron_rtt_udp_loopback_128b", |b| {
         b.iter(|| {
             let rtt = record_rtt(
                 &rig.ping_publication,
@@ -375,7 +376,7 @@ fn bench_aeron_ipc(c: &mut Criterion) {
         let _ = record_rtt(&rig.ping_publication, &rig.pong_subscription, &mut buffer, &mut handler);
     }
 
-    c.bench_function("aeron_rtt_ipc_64b", |b| {
+    c.bench_function("aeron_rtt_ipc_128b", |b| {
         b.iter(|| {
             let rtt = record_rtt(
                 &rig.ping_publication,
