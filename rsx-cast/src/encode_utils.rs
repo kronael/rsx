@@ -1,9 +1,4 @@
-//! CRC + byte-conversion helpers shared across the cast and
-//! replication paths.
-//!
-//! `as_bytes` and `encode_record` are thin glue used by the
-//! wire encoders. `decode_payload` is a generic helper for
-//! consumers writing their own typed decoders.
+//! `as_bytes`, `compute_crc32`, `encode_record`, `decode_payload`: shared codec helpers.
 
 use crate::header::WalHeader;
 use std::mem;

@@ -1,23 +1,9 @@
-//! CMP/DXS protocol records.
+//! Transport protocol records + `CastRecord` trait. See `specs/4-cast.md`.
 //!
-//! Domain wire records (FillRecord, BboRecord, …) live in
-//! the `rsx-messages` crate. This module holds only the
-//! protocol-level records the transport itself emits and
-//! consumes.
-//!
-//! ## Wire-format discipline
-//!
-//! Every record is `#[repr(C, align(64))]` with explicit
-//! `_pad…` fields chosen so that `mem::size_of::<T>()` lands
-//! on the documented wire size (64 or 128 bytes). If you
-//! change a struct, **adjust the padding so the size stays
-//! exactly what the wire expects** — receivers on the other
-//! end parse a fixed number of bytes; a silent size drift
-//! breaks the protocol without breaking the build.
-//!
-//! The `align(64)` is compiler-enforced; size is not. Read
-//! the size annotation next to each struct before adding or
-//! changing fields.
+//! Wire-format discipline: every record is `#[repr(C, align(64))]` with explicit
+//! `_pad…` fields so `mem::size_of::<T>()` lands on the documented wire size.
+//! `align(64)` is compiler-enforced; size is not. Adjust padding when fields change
+//! — receivers parse a fixed number of bytes and size drift silently breaks the wire.
 
 /// Transport-level record type constants.
 ///

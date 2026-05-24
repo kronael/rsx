@@ -1,14 +1,4 @@
-//! Log-backed reliable UDP transport (casting) + TCP cold-path
-//! replication.
-//!
-//! Wire bytes = disk bytes = stream bytes. No serialization
-//! step. NAK retransmits read from the WAL itself, so the
-//! retransmit horizon is log retention, not buffer size.
-//!
-//! Transport-only; domain wire records live in `rsx-messages`
-//! (or any consumer-defined crate). The transport accepts any
-//! 16-byte-header + repr(C) payload that implements
-//! [`CastRecord`].
+//! rsx-cast: log-backed reliable UDP transport + TCP replication. See ARCHITECTURE.md.
 
 pub mod header;
 pub mod records;
