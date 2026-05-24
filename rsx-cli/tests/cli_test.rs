@@ -1,3 +1,4 @@
+use rsx_cast::as_bytes;
 use rsx_cast::decode_payload;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
@@ -31,12 +32,9 @@ fn write_record_bytes<T: Copy>(
     rt: u16,
     record: &T,
 ) {
-    let size = std::mem::size_of::<T>();
-    let header = WalHeader::new(rt, size as u16, 0xAABBCCDD);
+    let bytes = as_bytes(record);
+    let header = WalHeader::new(rt, bytes.len() as u16, 0xAABBCCDD);
     file.write_all(&header.to_bytes()).unwrap();
-    let ptr = record as *const T as *const u8;
-    let bytes =
-        unsafe { std::slice::from_raw_parts(ptr, size) };
     file.write_all(bytes).unwrap();
 }
 
