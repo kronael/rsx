@@ -356,16 +356,16 @@ fn main() {
     let mut last_config_poll = Instant::now();
 
     // CMP/UDP: receive orders from Risk
-    let me_addr: SocketAddr = env::var("RSX_ME_CMP_ADDR")
+    let me_addr: SocketAddr = env::var("RSX_ME_CAST_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9100".into())
         .parse()
         // SAFETY: fail-fast at startup
-        .expect("invalid RSX_ME_CMP_ADDR");
+        .expect("invalid RSX_ME_CAST_ADDR");
     // NAK destination: risk's ME sender bind addr
-    // (RSX_RISK_ME_SEND_ADDR), with RSX_RISK_CMP_ADDR as fallback.
+    // (RSX_RISK_ME_SEND_ADDR), with RSX_RISK_CAST_ADDR as fallback.
     let risk_nak_addr: SocketAddr =
         env::var("RSX_RISK_ME_SEND_ADDR")
-            .or_else(|_| env::var("RSX_RISK_CMP_ADDR"))
+            .or_else(|_| env::var("RSX_RISK_CAST_ADDR"))
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
             // SAFETY: fail-fast at startup
@@ -394,11 +394,11 @@ fn main() {
 
     // CMP/UDP: send events to Marketdata
     let mkt_addr: SocketAddr =
-        env::var("RSX_MD_CMP_ADDR")
+        env::var("RSX_MD_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9103".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_MD_CMP_ADDR");
+            .expect("invalid RSX_MD_CAST_ADDR");
     let mut mkt_sender = CastSender::new(
         mkt_addr,
         symbol_id,
@@ -416,11 +416,11 @@ fn main() {
     );
 
     // DXS sidecar
-    if let Ok(dxs_addr) = env::var("RSX_ME_DXS_ADDR") {
+    if let Ok(dxs_addr) = env::var("RSX_ME_REPLICATION_BIND_ADDR") {
         let addr: std::net::SocketAddr = dxs_addr
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_ME_DXS_ADDR");
+            .expect("invalid RSX_ME_REPLICATION_BIND_ADDR");
         let wal_path = PathBuf::from(&wal_dir);
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder
@@ -524,10 +524,10 @@ fn main() {
                 gap_end_inclusive,
             );
             let replay_addr = env::var(
-                "RSX_ME_REPLAY_DXS_ADDR",
+                "RSX_ME_REPLICATION_ADDR",
             )
             .expect(
-                "FAULTED requires RSX_ME_REPLAY_DXS_ADDR \
+                "FAULTED requires RSX_ME_REPLICATION_ADDR \
                  pointing at the risk producer's DXS server",
             );
             let tip_file = PathBuf::from(&wal_dir).join(

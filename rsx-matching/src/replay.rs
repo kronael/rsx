@@ -5,7 +5,7 @@
 //! orders. The recovery path:
 //!
 //!   1. Open a `ReplicationConsumer` against the risk producer's
-//!      DXS server (env: `RSX_ME_REPLAY_DXS_ADDR`).
+//!      DXS server (env: `RSX_ME_REPLICATION_ADDR`).
 //!   2. Drain Phase 1 records (seq > `last_delivered_seq`)
 //!      until `RECORD_CAUGHT_UP` arrives.
 //!   3. Apply each `OrderRequest` / `CancelRequest` to the

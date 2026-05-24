@@ -495,7 +495,7 @@ resend from DXS replay server. Shadow book is ephemeral
 -- full rebuild on restart.</p>
 <p><strong class="text-white">Multi-Symbol:</strong>
 Single marketdata process subscribes to all ME instances
-via RSX_ME_CMP_ADDRS (comma-separated). One shadow book
+via RSX_ME_CAST_ADDRS (comma-separated). One shadow book
 per symbol.</p>""")
 
     # ── Section 7: Mark Price ──

@@ -81,17 +81,17 @@ fn main() {
     log_effective_gateway_config(&config);
 
     let risk_addr: SocketAddr =
-        env::var("RSX_RISK_CMP_ADDR")
+        env::var("RSX_RISK_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CMP_ADDR");
+            .expect("invalid RSX_RISK_CAST_ADDR");
     let gw_addr: SocketAddr =
-        env::var("RSX_GW_CMP_ADDR")
+        env::var("RSX_GW_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9102".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_GW_CMP_ADDR");
+            .expect("invalid RSX_GW_CAST_ADDR");
     let wal_dir = env::var("RSX_GW_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".into());
 

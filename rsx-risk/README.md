@@ -16,10 +16,10 @@ RSX_RISK_SHARD_COUNT=4 \
 RSX_RISK_MAX_SYMBOLS=64 \
 RSX_RISK_CORE_ID=4 \
 RSX_RISK_WAL_DIR=./tmp/wal \
-RSX_RISK_CMP_ADDR=127.0.0.1:9000 \
-RSX_GW_CMP_ADDR=127.0.0.1:8000 \
-RSX_ME_CMP_ADDR=127.0.0.1:9100 \
-RSX_RISK_MARK_CMP_ADDR=127.0.0.1:9400 \
+RSX_RISK_CAST_ADDR=127.0.0.1:9000 \
+RSX_GW_CAST_ADDR=127.0.0.1:8000 \
+RSX_ME_CAST_ADDR=127.0.0.1:9100 \
+RSX_RISK_MARK_CAST_ADDR=127.0.0.1:9400 \
 DATABASE_URL=postgres://... \
 cargo run -p rsx-risk
 ```
@@ -36,10 +36,10 @@ For replica mode, add `RSX_RISK_IS_REPLICA=true`.
 | `RSX_RISK_IS_REPLICA` | `true` for replica mode |
 | `RSX_RISK_CORE_ID` | CPU core to pin to |
 | `RSX_RISK_WAL_DIR` | WAL directory |
-| `RSX_RISK_CMP_ADDR` | CMP bind address |
-| `RSX_GW_CMP_ADDR` | Gateway CMP address |
-| `RSX_ME_CMP_ADDR` | ME CMP address |
-| `RSX_RISK_MARK_CMP_ADDR` | Mark price CMP bind address |
+| `RSX_RISK_CAST_ADDR` | CMP bind address |
+| `RSX_GW_CAST_ADDR` | Gateway CMP address |
+| `RSX_ME_CAST_ADDR` | ME CMP address |
+| `RSX_RISK_MARK_CAST_ADDR` | Mark price CMP bind address |
 | `RSX_RISK_REPLICA_ADDR` | Replica tip sync address |
 | `DATABASE_URL` | Postgres connection string |
 

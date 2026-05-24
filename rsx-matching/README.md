@@ -22,9 +22,9 @@ RSX_ME_PRICE_DECIMALS=2 \
 RSX_ME_QTY_DECIMALS=3 \
 RSX_ME_CORE_ID=2 \
 RSX_ME_WAL_DIR=./tmp/wal \
-RSX_ME_CMP_ADDR=127.0.0.1:9100 \
-RSX_RISK_CMP_ADDR=127.0.0.1:9000 \
-RSX_MD_CMP_ADDR=127.0.0.1:9300 \
+RSX_ME_CAST_ADDR=127.0.0.1:9100 \
+RSX_RISK_CAST_ADDR=127.0.0.1:9000 \
+RSX_MD_CAST_ADDR=127.0.0.1:9300 \
 RSX_ME_DATABASE_URL=postgres://... \
 cargo run -p rsx-matching
 ```
@@ -40,11 +40,11 @@ cargo run -p rsx-matching
 | `RSX_ME_QTY_DECIMALS` | Qty decimal places |
 | `RSX_ME_CORE_ID` | CPU core to pin to |
 | `RSX_ME_WAL_DIR` | WAL directory |
-| `RSX_ME_CMP_ADDR` | CMP bind address |
-| `RSX_RISK_CMP_ADDR` | Risk CMP address |
-| `RSX_MD_CMP_ADDR` | Marketdata CMP address |
+| `RSX_ME_CAST_ADDR` | CMP bind address |
+| `RSX_RISK_CAST_ADDR` | Risk CMP address |
+| `RSX_MD_CAST_ADDR` | Marketdata CMP address |
 | `RSX_ME_DATABASE_URL` | Postgres URL for config polling |
-| `RSX_ME_DXS_ADDR` | DXS replay sidecar address |
+| `RSX_ME_REPLICATION_BIND_ADDR` | DXS replay sidecar address |
 
 ## Deployment
 

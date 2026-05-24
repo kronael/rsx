@@ -14,7 +14,7 @@ to Risk shards via CMP/UDP. Also writes to WAL for replay.
 RSX_MARK_LISTEN_ADDR=127.0.0.1:9500 \
 RSX_MARK_WAL_DIR=./tmp/wal \
 RSX_MARK_STREAM_ID=mark \
-RSX_RISK_MARK_CMP_ADDR=127.0.0.1:9400 \
+RSX_RISK_MARK_CAST_ADDR=127.0.0.1:9400 \
 RSX_MARK_STALENESS_NS=10000000000 \
 RSX_MARK_PRICE_SCALE=100 \
 cargo run -p rsx-mark
@@ -27,7 +27,7 @@ cargo run -p rsx-mark
 | `RSX_MARK_LISTEN_ADDR` | DXS replay listen address |
 | `RSX_MARK_WAL_DIR` | WAL directory |
 | `RSX_MARK_STREAM_ID` | WAL stream ID |
-| `RSX_RISK_MARK_CMP_ADDR` | Risk CMP address for mark prices |
+| `RSX_RISK_MARK_CAST_ADDR` | Risk CMP address for mark prices |
 | `RSX_MARK_STALENESS_NS` | Source staleness threshold (10s) |
 | `RSX_MARK_PRICE_SCALE` | Fixed-point price scale |
 

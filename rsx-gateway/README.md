@@ -12,8 +12,8 @@ fills and order updates back to clients.
 
 ```
 RSX_GW_LISTEN_ADDR=0.0.0.0:8080 \
-RSX_GW_CMP_ADDR=127.0.0.1:8000 \
-RSX_RISK_CMP_ADDR=127.0.0.1:9000 \
+RSX_GW_CAST_ADDR=127.0.0.1:8000 \
+RSX_RISK_CAST_ADDR=127.0.0.1:9000 \
 RSX_GW_WAL_DIR=./tmp/wal \
 RSX_GW_JWT_SECRET=your-secret-here \
 cargo run -p rsx-gateway
@@ -24,8 +24,8 @@ cargo run -p rsx-gateway
 | Env Var | Purpose |
 |---------|---------|
 | `RSX_GW_LISTEN_ADDR` | WebSocket listen address |
-| `RSX_GW_CMP_ADDR` | CMP bind address |
-| `RSX_RISK_CMP_ADDR` | Risk CMP address |
+| `RSX_GW_CAST_ADDR` | CMP bind address |
+| `RSX_RISK_CAST_ADDR` | Risk CMP address |
 | `RSX_GW_WAL_DIR` | WAL directory for CMP sender |
 | `RSX_GW_JWT_SECRET` | HS256 JWT signing secret |
 | `RSX_GW_MAX_PENDING` | Max pending orders |

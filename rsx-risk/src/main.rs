@@ -161,10 +161,9 @@ fn main() {
     };
     let mut attempts: usize = 0;
 
-    // State-machine loop. Replaces the prior set_var +
-    // recursive run_main pattern (see .ship/13-A16Z-FIXES
-    // T3.2). On clean transitions we reset the restart
-    // budget — a successful promote/demote isn't a crash.
+    // State-machine loop. On clean transitions we reset the
+    // restart budget — a successful promote/demote isn't a
+    // crash.
     loop {
         let err: Box<dyn std::error::Error> = match role {
             Role::Replica => match run_replica(
@@ -380,17 +379,17 @@ fn run_main(
     }
 
     let risk_addr: SocketAddr =
-        env::var("RSX_RISK_CMP_ADDR")
+        env::var("RSX_RISK_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CMP_ADDR");
+            .expect("invalid RSX_RISK_CAST_ADDR");
     let gw_addr: SocketAddr =
-        env::var("RSX_GW_CMP_ADDR")
+        env::var("RSX_GW_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9102".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_GW_CMP_ADDR");
+            .expect("invalid RSX_GW_CAST_ADDR");
     let me_addrs = rsx_risk::me_cmp_addrs_from_env();
     if me_addrs.is_empty() {
         stop_persist_worker(
@@ -429,21 +428,21 @@ fn run_main(
 
     // Receive mark prices from Mark process
     let mark_addr: SocketAddr =
-        env::var("RSX_RISK_MARK_CMP_ADDR")
+        env::var("RSX_RISK_MARK_CAST_ADDR")
             .unwrap_or_else(|_| {
                 "127.0.0.1:9105".into()
             })
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_MARK_CMP_ADDR");
+            .expect("invalid RSX_RISK_MARK_CAST_ADDR");
     let mark_sender_addr: SocketAddr =
-        env::var("RSX_MARK_CMP_ADDR")
+        env::var("RSX_MARK_CAST_ADDR")
             .unwrap_or_else(|_| {
                 "127.0.0.1:9106".into()
             })
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_MARK_CMP_ADDR");
+            .expect("invalid RSX_MARK_CAST_ADDR");
     let mut mark_receiver = CastReceiver::new(
         mark_addr,
         mark_sender_addr,
@@ -1342,11 +1341,11 @@ fn run_replica(
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_REPLICA_ADDR");
     let main_addr: SocketAddr =
-        env::var("RSX_RISK_CMP_ADDR")
+        env::var("RSX_RISK_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
             .parse()
             // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CMP_ADDR");
+            .expect("invalid RSX_RISK_CAST_ADDR");
     let mut tip_receiver = CastReceiver::new(
         replica_addr, main_addr, 0,
     )

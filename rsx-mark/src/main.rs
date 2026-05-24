@@ -86,14 +86,14 @@ fn run(config: &MarkConfig) -> io::Result<()> {
     )?;
 
     let mark_dest: std::net::SocketAddr = env::var(
-        "RSX_RISK_MARK_CMP_ADDR",
+        "RSX_RISK_MARK_CAST_ADDR",
     )
     .unwrap_or_else(|_| "127.0.0.1:9105".into())
     .parse()
     .map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            "invalid RSX_RISK_MARK_CMP_ADDR",
+            "invalid RSX_RISK_MARK_CAST_ADDR",
         )
     })?;
     let mut mark_sender = CastSender::new(

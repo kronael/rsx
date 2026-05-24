@@ -30,7 +30,7 @@ The `start` script is Python (`./start`, shebang
 ### What Is Broken
 - Marketdata hardcoded to `symbols[0]` — only connects to
   the first ME regardless of symbol count
-- Risk hardcoded to `symbols[0]` for `RSX_ME_CMP_ADDR` —
+- Risk hardcoded to `symbols[0]` for `RSX_ME_CAST_ADDR` —
   only forwards to first ME
 - Risk replicas also hardcode `symbols[0]`
 - Mark uses only first symbol for Binance WS URL
@@ -101,24 +101,24 @@ Already correct. Each ME gets its own CMP port and WAL
 dir. No changes needed.
 
 ### Risk (one per shard)
-`RSX_ME_CMP_ADDR` must become `RSX_ME_CMP_ADDRS` (comma-
+`RSX_ME_CAST_ADDR` must become `RSX_ME_CAST_ADDRS` (comma-
 separated). Risk routes outbound orders to the correct ME
 by `symbol_id`.
 
 ```
-RSX_ME_CMP_ADDRS = "127.0.0.1:9110,127.0.0.1:9103"
+RSX_ME_CAST_ADDRS = "127.0.0.1:9110,127.0.0.1:9103"
 ```
 
 Risk parses this into a `Vec<SocketAddr>`, routes by
 `symbol_id` to the matching ME address.
 
 ### Risk Replicas
-Same fix: `RSX_ME_CMP_ADDRS` comma-separated.
+Same fix: `RSX_ME_CAST_ADDRS` comma-separated.
 
 ### Marketdata (single process, multi-ME — Option B)
 
 Single marketdata process subscribes to all MEs via CMP.
-`RSX_ME_CMP_ADDRS` = comma-separated list of all ME CMP
+`RSX_ME_CAST_ADDRS` = comma-separated list of all ME CMP
 addresses. Single WS port (8180). Clients filter by
 symbol in subscription message.
 
@@ -161,14 +161,14 @@ primary symbol only (simpler, sufficient for dev).
 ## Implementation Tasks
 
 ### 1. Fix Risk multi-symbol routing (`rsx-risk`)
-- Read `RSX_ME_CMP_ADDRS` (comma-separated), fall back to
-  `RSX_ME_CMP_ADDR` for backwards compat
+- Read `RSX_ME_CAST_ADDRS` (comma-separated), fall back to
+  `RSX_ME_CAST_ADDR` for backwards compat
 - Build `HashMap<symbol_id, SocketAddr>` mapping
 - Route outbound orders to correct ME by symbol_id
 
 ### 2. Fix Marketdata multi-symbol (`rsx-marketdata`)
-- Read `RSX_ME_CMP_ADDRS` (comma-separated), fall back to
-  single `RSX_ME_CMP_ADDR`
+- Read `RSX_ME_CAST_ADDRS` (comma-separated), fall back to
+  single `RSX_ME_CAST_ADDR`
 - Subscribe to all MEs on startup via CMP
 
 ### 3. Fix Mark multi-symbol Binance URL (`start` script)
@@ -179,7 +179,7 @@ primary symbol only (simpler, sufficient for dev).
 ### 4. Fix `build_spawn_plan` env vars (`start` script)
 - Compute `me_cmp_addrs` as comma-joined list of all ME
   CMP addresses before the Risk/Marketdata entries
-- Pass as `RSX_ME_CMP_ADDRS` to Risk, Risk replicas, and
+- Pass as `RSX_ME_CAST_ADDRS` to Risk, Risk replicas, and
   Marketdata
 - Playground's `get_spawn_plan()` delegates to
   `build_spawn_plan()` and passes env dicts to subprocess

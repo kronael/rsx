@@ -92,7 +92,7 @@ Currently ME has one CMP sender (to Risk at risk_addr).
 Need a second CMP sender to Marketdata.
 
 In main.rs:
-1. Add env var `RSX_MD_CMP_ADDR` (default "127.0.0.1:9103")
+1. Add env var `RSX_MD_CAST_ADDR` (default "127.0.0.1:9103")
 2. Create second CmpSender to marketdata addr
 3. After the existing event send loop, add a second loop
    that sends to marketdata — but only Fill, OrderInserted,
