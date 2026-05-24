@@ -191,23 +191,23 @@ no-op, but call-site stable for forward compat).
 Use `poll` for zero-allocation delivery on the hot path:
 
 ```rust
-use rsx_cast::{CastReceiver, CastPoll};
+use rsx_cast::{CastReceiver, CastRecvWith};
 
 let mut rx = CastReceiver::new(bind_addr, sender_addr, stream_id)?;
 loop {
     rx.tick();   // forward-compat hook; cheap, no-op today
-    match rx.poll(|hdr, payload| {
+    match rx.try_recv_with(|hdr, payload| {
         // payload is &[u8] into rx's internal buffer — no alloc.
         // dispatch by hdr.record_type; read the record in place.
         let _ = (hdr, payload);
     }) {
-        CastPoll::Data => {}
-        CastPoll::Empty => {}
-        CastPoll::Faulted { last_delivered_seq, .. } => {
+        CastRecvWith::Data => {}
+        CastRecvWith::Empty => {}
+        CastRecvWith::Faulted { last_delivered_seq, .. } => {
             // gap too big for in-band recovery; see Pattern A below.
             break;
         }
-        CastPoll::Reconnect { last_delivered_seq, .. } => {
+        CastRecvWith::Reconnect { last_delivered_seq, .. } => {
             // ring overflow; full DXS/TCP cold-start required.
             break;
         }

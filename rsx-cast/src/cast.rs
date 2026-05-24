@@ -11,10 +11,10 @@
 //!
 //! No async runtime. Caller owns the socket. The send ring,
 //! reorder ring, and per-slot NAK state are all pre-allocated.
-//! Use [`CastReceiver::poll`] for zero-allocation receive delivery
+//! Use [`CastReceiver::try_recv_with`] for zero-allocation receive delivery
 //! — the callback receives `&[u8]` directly from the receiver's
 //! internal buffer. [`CastReceiver::try_recv`] is a shim that
-//! wraps `poll` with one `Vec<u8>` per in-order record.
+//! wraps `try_recv_with` with one `Vec<u8>` per in-order record.
 //!
 //! Wire-format details and FAULTED semantics live in
 //! `specs/4-cast.md`.
@@ -605,7 +605,7 @@ pub enum CastRecv {
 ///
 /// Use [`CastReceiver::try_recv`] if you need an owned `Vec<u8>`.
 #[derive(Debug)]
-pub enum CastPoll {
+pub enum CastRecvWith {
     Empty,
     Data,
     Faulted {
@@ -825,25 +825,25 @@ impl CastReceiver {
 
     /// Zero-copy receive. Calls `f` with the parsed header and
     /// a `&[u8]` pointing directly into the receiver's internal
-    /// buffer — no heap allocation. Returns [`CastPoll::Data`]
-    /// after calling `f`, [`CastPoll::Empty`] when the socket
+    /// buffer — no heap allocation. Returns [`CastRecvWith::Data`]
+    /// after invoking `f`, [`CastRecvWith::Empty`] when the socket
     /// would block with nothing ready in the reorder ring.
     ///
     /// `f` is dropped without being called on `Empty`, `Faulted`,
     /// and `Reconnect`. Both sticky states persist until
     /// `reset_after_replay` is called.
-    pub fn poll<F>(&mut self, f: F) -> CastPoll
+    pub fn try_recv_with<F>(&mut self, f: F) -> CastRecvWith
     where
         F: FnOnce(WalHeader, &[u8]),
     {
         if self.needs_reconnect {
-            return CastPoll::Reconnect {
+            return CastRecvWith::Reconnect {
                 last_delivered_seq: self
                     .reconnect_last_delivered_seq,
             };
         }
         if self.faulted {
-            return CastPoll::Faulted {
+            return CastRecvWith::Faulted {
                 last_delivered_seq: self
                     .fault_last_delivered_seq,
                 gap_start: self.fault_gap_start,
@@ -978,7 +978,7 @@ impl CastReceiver {
                         // Zero-copy: payload points into
                         // self.buf; f receives it directly.
                         f.take().unwrap()(hdr, payload);
-                        return CastPoll::Data;
+                        return CastRecvWith::Data;
                     } else {
                         let total = WalHeader::SIZE
                             + payload.len();
@@ -1027,7 +1027,7 @@ impl CastReceiver {
                                     REORDER_CAPACITY,
                                 );
                             }
-                            return CastPoll::Reconnect {
+                            return CastRecvWith::Reconnect {
                                 last_delivered_seq: self
                                     .reconnect_last_delivered_seq,
                             };
@@ -1039,7 +1039,7 @@ impl CastReceiver {
                             as u64;
                         self.maybe_nak(now_ns);
                         if self.faulted {
-                            return CastPoll::Faulted {
+                            return CastRecvWith::Faulted {
                                 last_delivered_seq: self
                                     .fault_last_delivered_seq,
                                 gap_start: self
@@ -1082,11 +1082,11 @@ impl CastReceiver {
                     self.nak_sent_at[slot] = 0;
                     self.expected_seq += 1;
                     self.nak_retries_on_oldest = 0;
-                    return CastPoll::Data;
+                    return CastRecvWith::Data;
                 }
             }
         }
-        CastPoll::Empty
+        CastRecvWith::Empty
     }
 
     /// Allocating shim over [`CastReceiver::poll`]. Allocates one
@@ -1094,17 +1094,17 @@ impl CastReceiver {
     /// path.
     pub fn try_recv(&mut self) -> CastRecv {
         let mut out: Option<(WalHeader, Vec<u8>)> = None;
-        match self.poll(|hdr, payload| {
+        match self.try_recv_with(|hdr, payload| {
             out = Some((hdr, payload.to_vec()));
         }) {
-            CastPoll::Empty => CastRecv::Empty,
-            CastPoll::Data => {
+            CastRecvWith::Empty => CastRecv::Empty,
+            CastRecvWith::Data => {
                 let (hdr, payload) = out
                     // INVARIANT: poll sets out before Data.
                     .expect("poll Data invariant");
                 CastRecv::Data(hdr, payload)
             }
-            CastPoll::Faulted {
+            CastRecvWith::Faulted {
                 last_delivered_seq,
                 gap_start,
                 gap_end_inclusive,
@@ -1113,7 +1113,7 @@ impl CastReceiver {
                 gap_start,
                 gap_end_inclusive,
             },
-            CastPoll::Reconnect { last_delivered_seq } => {
+            CastRecvWith::Reconnect { last_delivered_seq } => {
                 CastRecv::Reconnect { last_delivered_seq }
             }
         }

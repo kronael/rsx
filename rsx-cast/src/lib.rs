@@ -44,7 +44,7 @@ pub use wal::WalReader;
 pub use wal::WalWriter;
 pub use replication_server::ReplicationService;
 pub use replication_client::ReplicationConsumer;
-pub use cast::CastPoll;
+pub use cast::CastRecvWith;
 pub use cast::CastRecv;
 pub use cast::CastReceiver;
 pub use cast::CastSender;
