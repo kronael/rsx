@@ -35,19 +35,20 @@ Each record on disk is a **fixed-size** struct with a 16-byte header:
 
 ```
 struct WalHeader {
+  u8  version;       // wire-format version (V1 = current)
+  u8  _pad0;
   u16 record_type;   // enum
   u16 len;           // payload bytes (<= 64KB)
-  u32 crc32;         // checksum of payload bytes
-  u8  version;       // wire-format version (V0=legacy, V1=current)
-  u8  _reserved[7];  // must be zero
+  u16 _pad1;
+  u32 crc32;         // CRC32C (Castagnoli) over payload only
+  u8  _reserved[4];  // must be zero
 }
 ```
 
-**Header version byte:** byte 8 of the header carries a wire-format
-version (`WAL_HEADER_VERSION_V0 = 0` legacy, `WAL_HEADER_VERSION_V1 = 1`
-current). New writes always emit V1. Readers accept V0 (back-compat for
-files written before the version byte existed) and V1; any other version
-is rejected:
+**Header version byte:** byte 0 of the header carries a wire-format
+version (`WalVersion::V1 = 1`). New writes always emit V1; any other
+version is rejected. The legacy `V0` value was retired in `64dda88`
+(move version to byte 0) — readers no longer accept it.
 
 - `WalReader::next` returns `Err(InvalidData)` on an unsupported version
   (no skip-and-continue — the framing isn't trusted).
@@ -78,9 +79,12 @@ pub trait CastRecord: Copy {
 }
 ```
 
-Sequence numbers are assigned by WalWriter::append<T: CastRecord>
-or CastSender::send<T: CastRecord>. Control messages
-(StatusMessage, Nak, CastHeartbeat) do NOT implement CastRecord.
+Sequence numbers are assigned by `WalWriter::prepare<T: CastRecord>`
+(then `append_framed`) or `CastSender::prepare<T: CastRecord>`
+(then `send_framed`). For single-destination paths,
+`CastSender::send<T: CastRecord>` packages prepare + send_framed
+in one call. Control messages (Nak, CastHeartbeat) do NOT
+implement CastRecord; `StatusMessage` was retired in `87b223e`.
 
 Readers validate `crc32` and truncate the WAL on the first
 invalid record.

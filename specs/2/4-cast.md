@@ -506,18 +506,17 @@ Cannot remove or reorder fields in existing record types
 without breaking all readers. New record types are
 additive; readers ignore unknown `record_type`s.
 
-The header carries a `version: u8` at offset 8 (see §2).
+The header carries a `version: u8` at offset 0 (see §2).
 Adding a new record type does **not** bump the version —
 record types are additive. Bumping the version is reserved
-for changes that would break a v1 reader (header layout,
+for changes that would break a V1 reader (header layout,
 CRC algorithm, alignment promises). A version bump requires
 a coordinated stop-redeploy across senders and receivers:
 upgrade all readers first, then flip senders.
 
-The legacy `V0` value (zero) is the pre-version-byte format
-and is accepted on read for back-compat with WALs written
-before this scheme landed; new writes never emit it.
-Receivers reject unknown versions outright.
+The legacy `V0` value (zero) was retired in `64dda88` when
+the version byte moved to offset 0; receivers now reject
+any version other than V1.
 
 ### 10.3 Retransmit horizon: WAL retention
 

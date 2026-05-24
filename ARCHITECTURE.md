@@ -66,7 +66,7 @@ rsx-types/      Price, Qty, Side, SymbolConfig, newtypes
 rsx-cast/        Domain-agnostic transport: WalWriter, WalReader,
                 CastSender, CastReceiver, ReplicationService,
                 ReplicationConsumer. Versioned wire header
-                (version: u8 at byte 8, V0=legacy, V1=current).
+                (version: u8 at byte 0, V1=current).
                 No rsx-types prod dep.
 rsx-messages/   Exchange wire records: FillRecord, BboRecord,
                 Order*, MarkPriceRecord, LiquidationRecord.
@@ -111,10 +111,11 @@ Mark    --[replication/TCP]--> Risk (mark prices)
 ```
 
 Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
-16-byte WalHeader (with `version: u8` at byte 8) +
-`#[repr(C, align(64))]` payload. Zero serialization. See
+16-byte WalHeader (with `version: u8` at byte 0) +
+`#[repr(C, align(64))]` payload. Zero serialization. CRC32C
+(Castagnoli) over payload only. See
 `rsx-cast/src/header.rs` (transport + version),
-`rsx-cast/src/protocol.rs` (CastRecord trait + control messages),
+`rsx-cast/src/records.rs` (CastRecord trait + control messages),
 `rsx-messages/src/lib.rs` (domain wire records). Trust
 boundaries: casting is intentionally unauthenticated (auth lives
 at the gateway via JWT and at L3); see CLAUDE.md and

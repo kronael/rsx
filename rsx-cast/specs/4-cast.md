@@ -73,19 +73,21 @@ disk bytes = wire bytes = memory bytes.**
 
 ```
 struct WalHeader {        // 16 bytes, manual encode
+    version: u8,          // wire-format version (V1 = current)
+    _pad0: u8,
     record_type: u16,     // see RECORD_* constants
     len: u16,             // payload length in bytes
+    _pad1: u16,
     crc32: u32,           // CRC32C of payload
-    version: u8,          // wire-format version (V0 or V1)
-    _reserved: [u8; 7],   // reserved, must be zero
+    _reserved: [u8; 4],   // reserved, must be zero
 }
 ```
 
-All fields little-endian. `version` at offset 8 carries the
-wire-format version (`0` = legacy zero-reserved layout,
-accepted on read for back-compat; `1` = current, written by
-all new senders). Receivers reject unknown versions. The
-remaining 7 reserved bytes must be zero. See §10.2 for
+All fields little-endian. `version` at offset 0 carries the
+wire-format version (`V1 = 1`, written by all new senders).
+Receivers reject unknown versions. The legacy `V0` value
+(zero) was retired in `64dda88` (move version to byte 0).
+The remaining 4 reserved bytes must be zero. See §10.2 for
 schema-evolution semantics.
 
 ### Payload size
@@ -523,18 +525,17 @@ Cannot remove or reorder fields in existing record types
 without breaking all readers. New record types are
 additive; readers ignore unknown `record_type`s.
 
-The header carries a `version: u8` at offset 8 (see §2).
+The header carries a `version: u8` at offset 0 (see §2).
 Adding a new record type does **not** bump the version —
 record types are additive. Bumping the version is reserved
-for changes that would break a v1 reader (header layout,
+for changes that would break a V1 reader (header layout,
 CRC algorithm, alignment promises). A version bump requires
 a coordinated stop-redeploy across senders and receivers:
 upgrade all readers first, then flip senders.
 
-The legacy `V0` value (zero) is the pre-version-byte format
-and is accepted on read for back-compat with WALs written
-before this scheme landed; new writes never emit it.
-Receivers reject unknown versions outright.
+The legacy `V0` value (zero) was retired in `64dda88` when
+the version byte moved to offset 0; receivers now reject
+any version other than V1.
 
 ### 10.3 Retransmit horizon: WAL retention
 
