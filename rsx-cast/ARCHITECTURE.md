@@ -31,9 +31,9 @@ ride the same transport.
 
 | File | Purpose |
 |------|---------|
-| `header.rs` | 16-byte `WalHeader`. Version byte at offset 8 (`V0` = legacy zero, `V1` = current). Reserved bytes 9..16 must be zero. |
-| `protocol.rs` | `CastRecord` trait + protocol records (`CastHeartbeat`, `Nak`, `ReplicationRequest`, `CaughtUpRecord`, `ReplicationNotAvailable`). Compile-time size/align asserts on each. |
-| `encode_utils.rs` | Generic helpers: `compute_crc32`, `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
+| `header.rs` | 16-byte `WalHeader`. Version byte at offset 0 (`V1` = current; `V0` retired in `64dda88`). Reserved bytes per layout below; `_pad0`, `_pad1`, `_reserved` must be zero. |
+| `records.rs` | `CastRecord` trait + protocol records (`CastHeartbeat`, `Nak`, `ReplicationRequest`, `CaughtUpRecord`, `ReplicationNotAvailable`). Compile-time size/align asserts on each. |
+| `encode_utils.rs` | Generic helpers: `compute_crc32` (CRC32C / Castagnoli), `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
 | `cast.rs` | `CastSender` + `CastReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
 | `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, 4h retention GC) + `WalReader` + `read_record_at_seq`. |
 | `replication_server.rs` | `ReplicationService` (TCP, optional TLS). Sends `ReplicationNotAvailable` when `from_seq` precedes oldest WAL seq. |
@@ -81,11 +81,13 @@ is future work.
 
 ```
 struct WalHeader {       // 16 bytes
-    record_type: u16,    // offset 0..2
-    len:         u16,    // offset 2..4  (payload bytes)
-    crc32:       u32,    // offset 4..8  (CRC32 of payload)
-    version:     u8,     // offset 8     (V0 = 0, V1 = 1)
-    _reserved:   [u8; 7],// offset 9..16 (must be zero)
+    version:     u8,     // offset 0      (V1 = 1; V0 retired)
+    _pad0:       u8,     // offset 1
+    record_type: u16,    // offset 2..4
+    len:         u16,    // offset 4..6   (payload bytes)
+    _pad1:       u16,    // offset 6..8
+    crc32:       u32,    // offset 8..12  (CRC32C of payload)
+    _reserved:   [u8; 4],// offset 12..16 (must be zero)
 }
 ```
 
@@ -97,8 +99,9 @@ records carry `seq: u64` at offset 0 (enforced via
 the wire version — record types are additive. Bumping V1 →
 V2 is reserved for changes that would break a V1 reader
 (re-layout, different CRC algorithm) and requires a
-coordinated stop-redeploy. V0 (legacy zero) is still
-accepted on read; never emitted on write.
+coordinated stop-redeploy. V0 (legacy zero) was retired in
+`64dda88` when the version byte moved to offset 0; readers
+no longer accept it.
 
 ## WalWriter internals
 
@@ -172,7 +175,8 @@ WAL bytes = disk bytes = casting/UDP bytes = replication/TCP bytes
 ```
 
 The same `#[repr(C, align(64))]` payload appears in all
-four contexts. CRC32 in the header covers the payload only.
+four contexts. CRC32C (Castagnoli) in the header covers the
+payload only.
 
 ## Idempotent replay
 
@@ -205,7 +209,7 @@ for the dated authoritative numbers.
 | Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cast_bench` |
 | `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
 | Protocol-record decode | 9 ns | `cast_bench` |
-| `WalWriter::append` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
+| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
 | WAL flush + fsync (64 KB batch — production amortisation) | 24 µs | `wal_fsync_bench` batch variant |
 | WAL flush + fsync (single record — naive sync per append) | 651 µs | `wal_fsync_bench` single-record variant |
 | WAL sequential read | ~700 MB/s | `wal_bench` |

@@ -30,14 +30,16 @@ This document describes the shared WAL architecture for the risk engine and the 
 - WAL uses **fixed-size records** (no protobuf, no extra envelope).
 - Records are `#[repr(C, align(64))]` with explicit little-endian fields.
 - Each record starts with a 16-byte header:
-  `{record_type: u16, len: u16, crc32: u32, version: u8, _reserved: [u8; 7]}`.
-  The `version` byte carries the wire-format version
-  (`V0` = legacy zero-reserved, `V1` = current). Adding
-  record types is additive and does NOT bump the version;
-  bumping is reserved for breaking framing changes.
+  `{version: u8, _pad0: u8, record_type: u16, len: u16,
+  _pad1: u16, crc32: u32, _reserved: [u8; 4]}`. The
+  `version` byte (offset 0) carries the wire-format version
+  (`V1` = current). Adding record types is additive and
+  does NOT bump the version; bumping is reserved for
+  breaking framing changes. `crc32` is CRC32C (Castagnoli)
+  over the payload only.
 - Data payloads implement CastRecord trait with `seq: u64` as
-  first field. Sequence assigned by WalWriter::append or
-  CastSender::send.
+  first field. Sequence assigned by `WalWriter::prepare` /
+  `append_framed` or `CastSender::prepare` / `send_framed`.
 - Concrete record layouts are defined in **replication.md** and reused for storage + streaming.
 
 ### Version Policy
