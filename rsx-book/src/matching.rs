@@ -53,6 +53,8 @@ pub fn process_new_order(
         book.emit(Event::OrderFailed {
             user_id: order.user_id,
             reason: FAIL_VALIDATION,
+            order_id_hi: order.order_id_hi,
+            order_id_lo: order.order_id_lo,
         });
         return;
     }
@@ -69,6 +71,8 @@ pub fn process_new_order(
                 book.emit(Event::OrderFailed {
                     user_id: order.user_id,
                     reason: FAIL_REDUCE_ONLY,
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
                 });
                 return;
             }
@@ -81,6 +85,8 @@ pub fn process_new_order(
                     book.emit(Event::OrderFailed {
                         user_id: order.user_id,
                         reason: FAIL_REDUCE_ONLY,
+                        order_id_hi: order.order_id_hi,
+                        order_id_lo: order.order_id_lo,
                     });
                     return;
                 }
@@ -127,6 +133,8 @@ pub fn process_new_order(
             book.emit(Event::OrderFailed {
                 user_id: order.user_id,
                 reason: FAIL_FOK,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
             });
             return;
         }

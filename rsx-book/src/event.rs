@@ -77,6 +77,8 @@ pub enum Event {
     OrderFailed {
         user_id: u32,
         reason: u8,
+        order_id_hi: u64,
+        order_id_lo: u64,
     },
     BBO {
         bid_px: Price,
@@ -91,6 +93,8 @@ impl Default for Event {
         Event::OrderFailed {
             user_id: 0,
             reason: 0,
+            order_id_hi: 0,
+            order_id_lo: 0,
         }
     }
 }
