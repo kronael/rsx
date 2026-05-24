@@ -313,8 +313,6 @@ fn parse_wal_filename(name: &str) -> Option<WalFileInfo> {
 
 /// WalReader: sequential reading with CRC validation
 pub struct WalReader {
-    stream_id: u32,
-    wal_dir: PathBuf,
     file: Option<File>,
     files: Vec<WalFileInfo>,
     file_idx: usize,
@@ -340,8 +338,6 @@ impl WalReader {
         };
 
         Ok(Self {
-            stream_id,
-            wal_dir: hot_dir,
             file,
             files,
             file_idx,
@@ -411,14 +407,6 @@ impl WalReader {
                 payload,
             }));
         }
-    }
-
-    pub fn stream_id(&self) -> u32 {
-        self.stream_id
-    }
-
-    pub fn wal_dir(&self) -> &Path {
-        &self.wal_dir
     }
 
     fn advance_file(&mut self) -> io::Result<bool> {
