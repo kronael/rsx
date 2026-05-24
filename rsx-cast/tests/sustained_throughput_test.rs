@@ -1,6 +1,6 @@
 //! Sustained CMP send throughput.
 //!
-//! Send 50k records through a CmpSender and assert that the
+//! Send 50k records through a CastSender and assert that the
 //! wall-clock cost is well under one second. The criterion
 //! bench suite covers single-record latency; this test covers
 //! the steady-state path where ring caching, syscall pacing
@@ -11,9 +11,9 @@
 //! receiver saw fewer than 10% of datagrams the receive path is
 //! silently broken and the throughput number is meaningless.
 
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -61,7 +61,7 @@ fn cmp_send_50k_under_one_second() {
     drop(recv_sock);
 
     let mut sender =
-        CmpSender::new(recv_addr, 1, wal_dir).unwrap();
+        CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
     // Throughput-only test: the sender never calls
     // recv_control here, so receiver NAKs never close
@@ -69,11 +69,11 @@ fn cmp_send_50k_under_one_second() {
     // out-of-order tail doesn't stick the receiver. The
     // gap-recovery + FAULTED contract is exercised in
     // cmp_v4_test.rs.
-    let recv_cfg = rsx_cast::config::CmpConfig {
+    let recv_cfg = rsx_cast::config::CastConfig {
         max_nak_retries: u16::MAX,
         ..Default::default()
     };
-    let mut receiver = CmpReceiver::with_config(
+    let mut receiver = CastReceiver::with_config(
         recv_addr,
         sender_addr,
         1,
@@ -98,10 +98,10 @@ fn cmp_send_50k_under_one_second() {
         // expected at 50k burst).
         loop {
             match receiver.try_recv() {
-                CmpRecv::Data(_, _) => {
+                CastRecv::Data(_, _) => {
                     count += 1;
                 }
-                CmpRecv::Empty => {
+                CastRecv::Empty => {
                     if drain_flag.load(
                         std::sync::atomic::Ordering::Relaxed,
                     ) {
@@ -111,7 +111,7 @@ fn cmp_send_50k_under_one_second() {
                         Duration::from_micros(50),
                     );
                 }
-                CmpRecv::Faulted { gap_end_inclusive, .. } => {
+                CastRecv::Faulted { gap_end_inclusive, .. } => {
                     receiver.reset_after_replay(
                         gap_end_inclusive,
                     );

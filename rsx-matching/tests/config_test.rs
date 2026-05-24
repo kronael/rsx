@@ -1,6 +1,6 @@
 use rsx_messages::decode_config_applied_record;
 use rsx_messages::ConfigAppliedRecord;
-use rsx_cast::CmpRecord;
+use rsx_cast::CastRecord;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;

@@ -1,6 +1,6 @@
 //! CMP v4 FAULTED → DXS replay recovery (POC).
 //!
-//! When `CmpReceiver::try_recv` returns `CmpRecv::Faulted`,
+//! When `CastReceiver::try_recv` returns `CastRecv::Faulted`,
 //! the matching tile must NOT silently advance past lost
 //! orders. The recovery path:
 //!
@@ -60,7 +60,7 @@ const REASON_DUPLICATE: u8 = 3;
 /// Returns the highest seq applied (`new_tip`).
 ///
 /// Stops when `RECORD_CAUGHT_UP` arrives. The caller should
-/// pass the result to `CmpReceiver::reset_after_replay` to
+/// pass the result to `CastReceiver::reset_after_replay` to
 /// resume normal live UDP delivery.
 #[allow(clippy::too_many_arguments)]
 pub fn drain_dxs_replay_into_book(

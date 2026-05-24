@@ -8,9 +8,9 @@
 //! Completes in ~70ms on a typical dev box; runs as a normal
 //! test under `make test`.
 
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
 use rsx_cast::protocol::Nak;
@@ -86,10 +86,10 @@ fn nak_wal_fallback_under_5ms() {
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
     let mut sender =
-        CmpSender::new(recv_addr, stream_id, wal_dir).unwrap();
+        CastSender::new(recv_addr, stream_id, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
     let mut receiver =
-        CmpReceiver::new(recv_addr, sender_addr, stream_id)
+        CastReceiver::new(recv_addr, sender_addr, stream_id)
             .unwrap();
 
     // Push 5000 sends through the in-memory ring so the
@@ -104,14 +104,14 @@ fn nak_wal_fallback_under_5ms() {
         // Drain occasionally to avoid OS UDP buffer overruns.
         while matches!(
             receiver.try_recv(),
-            CmpRecv::Data(_, _)
+            CastRecv::Data(_, _)
         ) {}
     }
     // Final drain.
     thread::sleep(Duration::from_millis(20));
     while matches!(
         receiver.try_recv(),
-        CmpRecv::Data(_, _)
+        CastRecv::Data(_, _)
     ) {}
 
     // Issue a NAK from a third-party socket for seq=1 — the
@@ -146,7 +146,7 @@ fn nak_wal_fallback_under_5ms() {
     let mut got_seq: Option<u64> = None;
     let deadline = t0 + Duration::from_secs(2);
     while Instant::now() < deadline {
-        if let CmpRecv::Data(rhdr, rpayload) =
+        if let CastRecv::Data(rhdr, rpayload) =
             receiver.try_recv()
         {
             if rhdr.record_type == RECORD_FILL

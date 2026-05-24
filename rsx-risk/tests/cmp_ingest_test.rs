@@ -1,6 +1,6 @@
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::BboRecord;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::RECORD_BBO;
@@ -89,9 +89,9 @@ fn mark_cmp_updates_risk_mark_prices() {
     drop(tmp);
 
     let wal_dir = PathBuf::from("./tmp/cmp_mark_test");
-    let mut sender = CmpSender::new(recv_local, 0, &wal_dir).unwrap();
+    let mut sender = CastSender::new(recv_local, 0, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver = CmpReceiver::new(recv_local, sender_addr, 0).unwrap();
+    let mut receiver = CastReceiver::new(recv_local, sender_addr, 0).unwrap();
 
     let mut rec = MarkPriceRecord {
         seq: 0,
@@ -108,9 +108,9 @@ fn mark_cmp_updates_risk_mark_prices() {
     thread::sleep(Duration::from_millis(10));
     loop {
         let (hdr, payload) = match receiver.try_recv() {
-            CmpRecv::Data(h, p) => (h, p),
-            CmpRecv::Empty => break,
-            CmpRecv::Faulted { .. } => panic!("unexpected fault"),
+            CastRecv::Data(h, p) => (h, p),
+            CastRecv::Empty => break,
+            CastRecv::Faulted { .. } => panic!("unexpected fault"),
         };
         if hdr.record_type == RECORD_MARK_PRICE
             && payload.len()
@@ -144,9 +144,9 @@ fn bbo_cmp_updates_risk_index_price() {
     drop(tmp);
 
     let wal_dir = PathBuf::from("./tmp/cmp_bbo_test");
-    let mut sender = CmpSender::new(recv_local, 0, &wal_dir).unwrap();
+    let mut sender = CastSender::new(recv_local, 0, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver = CmpReceiver::new(recv_local, sender_addr, 0).unwrap();
+    let mut receiver = CastReceiver::new(recv_local, sender_addr, 0).unwrap();
 
     let mut rec = BboRecord {
         seq: 0,
@@ -167,9 +167,9 @@ fn bbo_cmp_updates_risk_index_price() {
     thread::sleep(Duration::from_millis(10));
     loop {
         let (hdr, payload) = match receiver.try_recv() {
-            CmpRecv::Data(h, p) => (h, p),
-            CmpRecv::Empty => break,
-            CmpRecv::Faulted { .. } => panic!("unexpected fault"),
+            CastRecv::Data(h, p) => (h, p),
+            CastRecv::Empty => break,
+            CastRecv::Faulted { .. } => panic!("unexpected fault"),
         };
         if hdr.record_type == RECORD_BBO
             && payload.len()

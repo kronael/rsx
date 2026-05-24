@@ -3,11 +3,11 @@
 //! Application-level records that flow over CMP/UDP and DXS/TCP:
 //! order events, fills, BBO, marks, liquidations. All
 //! `#[repr(C, align(64))]`, all `Copy`, all carry a `seq: u64`
-//! at offset 0 (per the `rsx_cast::CmpRecord` trait).
+//! at offset 0 (per the `rsx_cast::CastRecord` trait).
 //!
 //! Disk bytes = wire bytes = stream bytes. No serialization step.
 
-use rsx_cast::CmpRecord;
+use rsx_cast::CastRecord;
 use rsx_cast::encode_record;
 use rsx_cast::as_bytes;
 use rsx_types::Price;
@@ -69,7 +69,7 @@ pub struct FillRecord {
     pub taker_ts_ns: u64,
 }
 
-impl CmpRecord for FillRecord {
+impl CastRecord for FillRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_FILL }
@@ -96,7 +96,7 @@ pub struct BboRecord {
     pub _pad2: u32,
 }
 
-impl CmpRecord for BboRecord {
+impl CastRecord for BboRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_BBO }
@@ -124,7 +124,7 @@ pub struct OrderInsertedRecord {
     pub _pad1: [u8; 4],
 }
 
-impl CmpRecord for OrderInsertedRecord {
+impl CastRecord for OrderInsertedRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_ORDER_INSERTED }
@@ -151,7 +151,7 @@ pub struct OrderCancelledRecord {
     pub _pad1: [u8; 4],
 }
 
-impl CmpRecord for OrderCancelledRecord {
+impl CastRecord for OrderCancelledRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_ORDER_CANCELLED }
@@ -179,7 +179,7 @@ pub struct OrderDoneRecord {
     pub _pad1: [u8; 4],
 }
 
-impl CmpRecord for OrderDoneRecord {
+impl CastRecord for OrderDoneRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_ORDER_DONE }
@@ -201,7 +201,7 @@ pub struct ConfigAppliedRecord {
     pub applied_at_ns: u64,
 }
 
-impl CmpRecord for ConfigAppliedRecord {
+impl CastRecord for ConfigAppliedRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_CONFIG_APPLIED }
@@ -232,7 +232,7 @@ pub struct OrderAcceptedRecord {
     pub cid: [u8; 20],
 }
 
-impl CmpRecord for OrderAcceptedRecord {
+impl CastRecord for OrderAcceptedRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_ORDER_ACCEPTED }
@@ -255,7 +255,7 @@ pub struct MarkPriceRecord {
     pub _pad1: [u8; 24],
 }
 
-impl CmpRecord for MarkPriceRecord {
+impl CastRecord for MarkPriceRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_MARK_PRICE }
@@ -279,7 +279,7 @@ pub struct OrderFailedRecord {
     pub _pad: [u8; 23],
 }
 
-impl CmpRecord for OrderFailedRecord {
+impl CastRecord for OrderFailedRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_ORDER_FAILED }
@@ -301,7 +301,7 @@ pub struct CancelRequest {
     pub _pad: [u8; 24],
 }
 
-impl CmpRecord for CancelRequest {
+impl CastRecord for CancelRequest {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_CANCEL_REQUEST }
@@ -327,7 +327,7 @@ pub struct LiquidationRecord {
     pub slip_bps: i64,
 }
 
-impl CmpRecord for LiquidationRecord {
+impl CastRecord for LiquidationRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_LIQUIDATION }

@@ -13,7 +13,7 @@ use criterion::Criterion;
 use rsx_cast::as_bytes;
 use rsx_cast::compute_crc32;
 use rsx_cast::encode_record;
-use rsx_cast::CmpHeartbeat;
+use rsx_cast::CastHeartbeat;
 use rsx_cast::Nak;
 use rsx_cast::RECORD_HEARTBEAT;
 use rsx_cast::RECORD_NAK;
@@ -33,8 +33,8 @@ fn make_nak() -> Nak {
     }
 }
 
-fn make_heartbeat() -> CmpHeartbeat {
-    CmpHeartbeat {
+fn make_heartbeat() -> CastHeartbeat {
+    CastHeartbeat {
         highest_seq: 999,
         _pad1: [0u8; 56],
     }
@@ -109,7 +109,7 @@ fn bench_heartbeat_decode(c: &mut Criterion) {
             let decoded = unsafe {
                 std::ptr::read_unaligned(
                     p.as_ptr()
-                        as *const CmpHeartbeat,
+                        as *const CastHeartbeat,
                 )
             };
             black_box(decoded);
@@ -119,7 +119,7 @@ fn bench_heartbeat_decode(c: &mut Criterion) {
 
 /// Target: <100ns
 /// Reorder buffer is BTreeMap<u64, Vec<u8>> inside
-/// CmpReceiver. Bench standalone insert + lookup. Map
+/// CastReceiver. Bench standalone insert + lookup. Map
 /// allocated ONCE outside the timed closure; the inner
 /// loop swaps a pre-allocated Vec<u8> in and out so the
 /// per-iteration cost is BTreeMap ops only (no Vec alloc,

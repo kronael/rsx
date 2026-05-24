@@ -1,7 +1,7 @@
 use rsx_cast::encode_utils::as_bytes;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
-use rsx_cast::protocol::CmpHeartbeat;
+use rsx_cast::protocol::CastHeartbeat;
 use rsx_messages::FillRecord;
 use rsx_cast::protocol::Nak;
 use rsx_messages::RECORD_FILL;
@@ -52,18 +52,18 @@ fn nak_fields_little_endian() {
     assert_eq!(bytes[15], 0x09);
 }
 
-// --- CmpHeartbeat ---
+// --- CastHeartbeat ---
 
 #[test]
 fn heartbeat_encode_decode_roundtrip() {
-    let hb = CmpHeartbeat {
+    let hb = CastHeartbeat {
         highest_seq: 999,
         _pad1: [0u8; 56],
     };
     let bytes = as_bytes(&hb);
     let decoded = unsafe {
         std::ptr::read_unaligned(
-            bytes.as_ptr() as *const CmpHeartbeat,
+            bytes.as_ptr() as *const CastHeartbeat,
         )
     };
     assert_eq!(decoded.highest_seq, 999);
@@ -71,13 +71,13 @@ fn heartbeat_encode_decode_roundtrip() {
 
 #[test]
 fn heartbeat_size_is_64_bytes() {
-    assert_eq!(mem::size_of::<CmpHeartbeat>(), 64);
-    assert_eq!(mem::align_of::<CmpHeartbeat>(), 64);
+    assert_eq!(mem::size_of::<CastHeartbeat>(), 64);
+    assert_eq!(mem::align_of::<CastHeartbeat>(), 64);
 }
 
 #[test]
 fn heartbeat_fields_little_endian() {
-    let hb = CmpHeartbeat {
+    let hb = CastHeartbeat {
         highest_seq: 0x0102030405060708,
         _pad1: [0u8; 56],
     };
@@ -110,7 +110,7 @@ fn padding_bytes_zeroed_in_all_control_msgs() {
         assert_eq!(b, 0, "nak padding not zeroed");
     }
 
-    let hb = CmpHeartbeat {
+    let hb = CastHeartbeat {
         highest_seq: u64::MAX,
         _pad1: [0u8; 56],
     };

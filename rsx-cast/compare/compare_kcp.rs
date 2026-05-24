@@ -60,7 +60,7 @@
 //! instance and the drain are both touched only by the owning
 //! thread), then `drain_output()` pops and `sendto`s. The
 //! `Vec<u8>::from(buf)` allocation per frame is the dominant
-//! adapter cost (~50–100 ns). CMP's `CmpSender::send` writes
+//! adapter cost (~50–100 ns). CMP's `CastSender::send` writes
 //! directly to a pre-allocated ring slot (no alloc on send). This
 //! adapter cost is fundamental to using the `kcp` crate's
 //! callback-style API and not easy to eliminate without forking

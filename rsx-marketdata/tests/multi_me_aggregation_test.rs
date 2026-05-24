@@ -1,7 +1,7 @@
 //! Two CMP streams feeding a single MarketDataState.
 //!
 //! Models the production wiring: marketdata binds one
-//! CmpReceiver per matching engine (one ME per symbol) and
+//! CastReceiver per matching engine (one ME per symbol) and
 //! routes every record by `symbol_id` into a single shared
 //! shadow book. The test asserts:
 //!
@@ -9,9 +9,9 @@
 //!   * shadow books for ME-A and ME-B remain independent
 //!   * per-symbol seq tracking does not collide
 
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_marketdata::state::MarketDataState;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -25,12 +25,12 @@ use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// One ME endpoint: a CmpSender on an OS-assigned port, plus
+/// One ME endpoint: a CastSender on an OS-assigned port, plus
 /// the receiver bound to that pair. Mirrors `loopback_pair`
 /// in the dxs test suite.
 struct MeEndpoint {
-    sender: CmpSender,
-    receiver: CmpReceiver,
+    sender: CastSender,
+    receiver: CastReceiver,
 }
 
 fn make_endpoint(wal_dir: &std::path::Path) -> MeEndpoint {
@@ -40,10 +40,10 @@ fn make_endpoint(wal_dir: &std::path::Path) -> MeEndpoint {
     drop(recv_sock);
 
     let sender =
-        CmpSender::new(recv_addr, 1, wal_dir).unwrap();
+        CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
     let receiver =
-        CmpReceiver::new(recv_addr, sender_addr, 1).unwrap();
+        CastReceiver::new(recv_addr, sender_addr, 1).unwrap();
     MeEndpoint { sender, receiver }
 }
 
@@ -199,14 +199,14 @@ fn multi_me_streams_aggregate_per_symbol() {
 }
 
 fn drain_into(
-    receiver: &mut CmpReceiver,
+    receiver: &mut CastReceiver,
     state: &mut MarketDataState,
 ) {
     loop {
         let (hdr, payload) = match receiver.try_recv() {
-            CmpRecv::Data(h, p) => (h, p),
-            CmpRecv::Empty => break,
-            CmpRecv::Faulted { .. } => {
+            CastRecv::Data(h, p) => (h, p),
+            CastRecv::Empty => break,
+            CastRecv::Faulted { .. } => {
                 panic!("unexpected fault in test")
             }
         };

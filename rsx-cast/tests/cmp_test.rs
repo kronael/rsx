@@ -1,8 +1,8 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
 use rsx_cast::protocol::Nak;
@@ -15,18 +15,18 @@ use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
 
-fn loopback_pair(wal_dir: &std::path::Path) -> (CmpSender, CmpReceiver) {
+fn loopback_pair(wal_dir: &std::path::Path) -> (CastSender, CastReceiver) {
     // Use ephemeral port (0) for parallel test execution
     let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = recv_sock.local_addr().unwrap();
-    drop(recv_sock); // Release immediately for CmpReceiver to bind
+    drop(recv_sock); // Release immediately for CastReceiver to bind
 
     // Create sender first (it will bind to an OS-assigned port)
-    let sender = CmpSender::new(recv_addr, 1, wal_dir).unwrap();
+    let sender = CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
 
     // Create receiver with sender's actual address
-    let receiver = CmpReceiver::new(
+    let receiver = CastReceiver::new(
         recv_addr,
         sender_addr,
         1,
@@ -79,7 +79,7 @@ fn send_recv_roundtrip() {
 
     let result = receiver.try_recv();
     let (preamble, payload) = match result {
-        CmpRecv::Data(h, p) => (h, p),
+        CastRecv::Data(h, p) => (h, p),
         other => panic!("expected Data, got {other:?}"),
     };
     assert_eq!(preamble.record_type, RECORD_FILL);
@@ -140,7 +140,7 @@ fn multiple_records_in_order() {
     thread::sleep(Duration::from_millis(20));
 
     let mut seqs = Vec::new();
-    while let CmpRecv::Data(_, payload) =
+    while let CastRecv::Data(_, payload) =
         receiver.try_recv()
     {
         let decoded = unsafe {
@@ -160,7 +160,7 @@ fn crc_mismatch_rejected() {
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let sender_addr = sock.local_addr().unwrap();
 
-    let tmp = CmpReceiver::new(
+    let tmp = CastReceiver::new(
         recv_addr,
         sender_addr,
         1,
@@ -169,7 +169,7 @@ fn crc_mismatch_rejected() {
     let recv_local = tmp.local_addr().unwrap();
     drop(tmp);
 
-    let mut receiver = CmpReceiver::new(
+    let mut receiver = CastReceiver::new(
         recv_local,
         sender_addr,
         1,
@@ -192,7 +192,7 @@ fn crc_mismatch_rejected() {
 
     thread::sleep(Duration::from_millis(10));
     let result = receiver.try_recv();
-    assert!(matches!(result, CmpRecv::Empty));
+    assert!(matches!(result, CastRecv::Empty));
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn nak_retransmit_from_wal() {
     thread::sleep(Duration::from_millis(10));
     let result = receiver.try_recv();
     let (hdr, payload) = match result {
-        CmpRecv::Data(h, p) => (h, p),
+        CastRecv::Data(h, p) => (h, p),
         other => panic!("expected Data, got {other:?}"),
     };
     assert_eq!(hdr.record_type, RECORD_FILL);
@@ -252,11 +252,11 @@ fn cmp_heartbeat_sent_on_idle() {
     let recv_addr = tmp_recv.local_addr().unwrap();
     tmp_recv.set_nonblocking(true).unwrap();
 
-    let config = rsx_cast::config::CmpConfig {
+    let config = rsx_cast::config::CastConfig {
         heartbeat_interval_ms: 5,
         ..Default::default()
     };
-    let mut sender = CmpSender::with_config(
+    let mut sender = CastSender::with_config(
         recv_addr, 1, &wal_dir, &config,
     )
     .unwrap();
