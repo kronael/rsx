@@ -115,9 +115,7 @@ impl TlsConfig {
         }
         let cert_path = PathBuf::from(
             env::var("RSX_REPL_CERT_PATH")
-                .expect(
-                    "RSX_REPL_CERT_PATH required                      when RSX_REPL_TLS=true",
-                ),
+                .expect("RSX_REPL_CERT_PATH required when RSX_REPL_TLS=true"),
         );
         let server = env::var("RSX_REPL_KEY_PATH")
             .ok()
