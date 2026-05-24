@@ -183,8 +183,9 @@ becomes a test.
 - Spec-first development (35 docs before code)
 - Zero-heap hot paths (slab allocators, fixed-point math)
 - WAL-based recovery (crash-safe state machines)
-- UDP replication (CMP protocol)
-- Brokerless streaming (DXS: producers serve their own WAL)
+- UDP replication (streaming protocol, CMP)
+- Brokerless streaming (replay protocol, DXS: producers serve
+  their own WAL)
 - Asymmetric durability (fills sacred, orders ephemeral)
 - Compression maps (20M levels → 617K slots)
 - Test reliability (TempDir, polling, ephemeral ports)

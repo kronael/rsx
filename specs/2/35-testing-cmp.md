@@ -2,7 +2,7 @@
 status: shipped
 ---
 
-# TESTING-CMP: CMP Protocol Test Specification
+# TESTING-CMP: Streaming Protocol (CMP) Test Specification
 
 Version: 1.0
 Status: Draft
