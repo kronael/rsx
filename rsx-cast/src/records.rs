@@ -11,8 +11,8 @@
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
-pub const RECORD_REPLICATION_REQUEST: u16 = 0x13;
-pub const RECORD_REPLICATION_NOT_AVAILABLE: u16 = 0x15;
+pub(crate) const RECORD_REPLICATION_REQUEST: u16 = 0x13;
+pub(crate) const RECORD_REPLICATION_NOT_AVAILABLE: u16 = 0x15;
 
 /// Trait for all CMP data records. Guarantees seq is
 /// readable/writable at a known location in the payload.
@@ -47,7 +47,7 @@ pub struct Nak {
 /// (TCP routing).
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
-pub struct ReplicationRequest {
+pub(crate) struct ReplicationRequest {
     pub stream_id: u32,
     pub _pad0: u32,
     pub from_seq: u64,
@@ -89,7 +89,7 @@ impl CastRecord for CaughtUpRecord {
 /// to an archive that still holds it.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
-pub struct ReplicationNotAvailable {
+pub(crate) struct ReplicationNotAvailable {
     pub requested_from_seq: u64,
     /// Floor this endpoint can serve. 0 = endpoint is empty
     /// (no records on disk for this stream).
