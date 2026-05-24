@@ -4421,14 +4421,23 @@ async def api_orders_test(request: Request):
     result = await send_order_to_gateway(order_msg, user_id)
     err = result[1]
     if err:
-        # Timeout = order sent but no fill/reject within 2s → resting
+        # Timeout: gateway WS opened but no U/F/E frame in 2s. For IOC/FOK
+        # that's an unambiguous error (must respond with one of the three).
+        # For GTC it MAY be a legitimate resting order (spec 49-webproto.md
+        # §54: "no accepted ACK"), but we cannot distinguish "resting" from
+        # "lost in the pipeline" -- prior behaviour stamped both green and
+        # hid the F-N1 failure mode. Surface as amber + HTTP 504 so the
+        # caller sees the gap.
         if err == "timeout waiting for response":
-            order["status"] = "accepted"
+            order["status"] = "timeout"
             recent_orders.append(order)
             _trim_recent_orders()
             return HTMLResponse(
-                f'<span class="text-emerald-400 text-xs">'
-                f'order {cid} accepted</span>')
+                f'<span class="text-amber-400 text-xs">'
+                f'order {cid} timeout: no matching-engine response in 2s'
+                f'</span>',
+                status_code=504,
+            )
         if err == "gateway not running":
             order["status"] = "error"
             order["error"] = err
@@ -5136,12 +5145,13 @@ async def api_orders_quick(request: Request):
     label = f"{side_str.upper()} {human_qty:.0f}"
     if err:
         if err == "timeout waiting for response":
-            order["status"] = "accepted"
+            order["status"] = "timeout"
             recent_orders.append(order)
             _trim_recent_orders()
             return HTMLResponse(
-                f'<span class="text-emerald-400 text-xs font-medium">'
-                f'queued {label} ({cid})</span>'
+                f'<span class="text-amber-400 text-xs font-medium">'
+                f'{label} timeout ({cid})</span>',
+                status_code=504,
             )
         order["status"] = "error"
         order["error"] = err
