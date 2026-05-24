@@ -384,7 +384,7 @@ fn cmp_record_trait_set_seq_roundtrip() {
 #[test]
 fn header_reserved_bytes_zeroed() {
     let header = WalHeader::new(RECORD_FILL, 64, 0x12345678);
-    assert_eq!(header._reserved, [0u8; 7]);
+    assert_eq!(header._reserved, [0u8; 4]);
 }
 
 #[test]
