@@ -24,6 +24,7 @@ use rsx_matching::wal_integration::load_snapshot;
 use rsx_matching::wal_integration::load_wal_seq;
 use rsx_matching::wal_integration::replay_wal_after_snapshot;
 use rsx_matching::wal_integration::save_snapshot;
+use rsx_matching::wal_integration::publish_events;
 use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_book::event::CANCEL_USER;
 use rsx_book::event::REASON_CANCELLED;
@@ -670,17 +671,21 @@ fn main() {
                         rsx_log::latency::sample("me_match_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
                     }
 
-                    // Write events to WAL — authoritative,
-                    // crash on failure rather than lose fills.
+                    // Publish events: WAL append + CMP send to
+                    // risk + (selective) CMP send to marketdata,
+                    // each event prepared once (one CRC). Crash
+                    // on WAL failure rather than lose fills.
                     let ts_ns = time_ns();
-                    write_events_to_wal(
+                    publish_events(
                         &mut wal_writer,
+                        &mut cmp_sender,
+                        &mut mkt_sender,
                         &book,
                         symbol_id,
                         ts_ns,
                     )
-                    .expect("wal append failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
-                    // Sub-stage: events flushed to WAL.
+                    .expect("publish_events failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
+                    // Sub-stage: events flushed + sent.
                     {
                         let now_ns = time_ns();
                         let t_us = now_ns
@@ -722,30 +727,6 @@ fn main() {
                             )
                             / 1000;
                         rsx_log::latency::sample("me_out", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                    }
-                    // CMP sends are best-effort: receivers
-                    // recover via NAK / TCP replay.
-                    for event in book.events() {
-                        if let Err(e) = send_event_cmp(
-                            &mut cmp_sender,
-                            event,
-                            symbol_id,
-                            ts_ns,
-                        ) {
-                            warn!("cmp send event to risk failed: {e}");
-                        }
-                    }
-
-                    for event in book.events() {
-                        if let Err(e) =
-                            send_event_marketdata(
-                                &mut mkt_sender,
-                                event,
-                                symbol_id,
-                                ts_ns,
-                            ) {
-                            warn!("cmp send event to marketdata failed: {e}");
-                        }
                     }
                 }
             } // end if let Some(order_msg)
