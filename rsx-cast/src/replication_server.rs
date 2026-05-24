@@ -160,7 +160,7 @@ where
     };
     if !endpoint_can_serve {
         warn!(
-            "replay refused stream_id={} from_seq={}              my_oldest={} my_highest={}",
+            "replay refused stream_id={} from_seq={} my_oldest={} my_highest={}",
             stream_id, from_seq, my_oldest, my_highest
         );
         let na = ReplicationNotAvailable {
@@ -247,7 +247,7 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     error!(
-                        "wal open_from_seq failed                          stream_id={} seq={}: {}",
+                        "wal open_from_seq failed stream_id={} seq={}: {}",
                         stream_id,
                         last_seq + 1,
                         e

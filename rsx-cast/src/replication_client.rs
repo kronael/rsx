@@ -118,14 +118,10 @@ impl ReplicationConsumer {
                 Err(e) => {
                     consec_errors += 1;
                     if consec_errors > MAX_RETRIES {
-                        return Err(io::Error::other(
-                            format!(
-                                "BLOCKED: {} consecutive                                  stream errors exhausted                                  retry budget ({}): {}",
-                                consec_errors,
-                                MAX_RETRIES,
-                                e,
-                            ),
-                        ));
+                        return Err(io::Error::other(format!(
+                            "BLOCKED: {consec_errors} consecutive stream errors \
+                             exhausted retry budget ({MAX_RETRIES}): {e}",
+                        )));
                     }
                     let base_secs = BACKOFF_SECS[backoff_idx
                         .min(BACKOFF_SECS.len() - 1)];
@@ -133,7 +129,7 @@ impl ReplicationConsumer {
                         * 1000.0
                         * jitter_factor()) as u64;
                     warn!(
-                        "stream error ({}/{}): {},                          retry in {}ms",
+                        "stream error ({}/{}): {}, retry in {}ms",
                         consec_errors,
                         MAX_RETRIES,
                         e,
@@ -214,7 +210,7 @@ impl ReplicationConsumer {
                         == io::ErrorKind::NotFound =>
                 {
                     warn!(
-                        "dxs: {endpoint} cannot serve                          seq={}, trying next",
+                        "dxs: {endpoint} cannot serve seq={}, trying next",
                         self.tip + 1
                     );
                     last_err = Some(io::Error::new(
