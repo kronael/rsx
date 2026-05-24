@@ -1,3 +1,17 @@
+//! Replication — TCP catch-up consumer (the cold half of rsx-cast).
+//!
+//! `ReplicationConsumer` is the client side. It walks a
+//! prioritised list of endpoints (newest → oldest archive),
+//! sends a `ReplicationRequest`, and streams `WalRecord`s
+//! until either `RECORD_CAUGHT_UP` (transition to live tail)
+//! or `RECORD_REPLICATION_NOT_AVAILABLE` (try next endpoint
+//! with the same `from_seq`).
+//!
+//! Used at cold start (process bootstrap) and from
+//! `CastRecv::Faulted` / `Reconnect` (gap > NAK budget).
+//! See `notes/` and `specs/10-replication.md` for the
+//! lifecycle handoff to `CastReceiver`.
+
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;

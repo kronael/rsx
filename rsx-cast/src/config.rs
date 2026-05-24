@@ -1,3 +1,14 @@
+//! Runtime knobs for `CastSender` / `CastReceiver` and the TLS
+//! material shared by `ReplicationService` / `ReplicationConsumer`.
+//!
+//! `CastConfig` holds the NAK / heartbeat / retransmit-dedup
+//! tunables; every field has a sane default and an env-var
+//! override read by `CastConfig::from_env`. `TlsConfig` wraps
+//! optional server / client certificate paths.
+//!
+//! No code in this module is hot-path; reads happen once at
+//! process start.
+
 use std::env;
 use std::path::PathBuf;
 

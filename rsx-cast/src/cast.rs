@@ -1,3 +1,23 @@
+//! Casting — the live UDP half of rsx-cast.
+//!
+//! `CastSender` frames records with a 16-byte `WalHeader` and
+//! a `#[repr(C)]` payload, sends them by UDP, and keeps a
+//! preallocated send ring for NAK retransmits. `CastReceiver`
+//! reorders into a fixed 2048-slot ring, NAK-debounces the
+//! oldest contiguous gap, and surfaces `CastRecv::Faulted` when
+//! the retry budget is exhausted or `CastRecv::Reconnect` when
+//! the gap exceeds ring capacity (consumer must switch to
+//! `ReplicationConsumer` for a TCP cold-start in either case).
+//!
+//! No async runtime. Caller owns the socket. The reorder ring,
+//! send ring, and per-slot NAK rate-limit state are all
+//! pre-allocated; the hot path performs zero heap allocations
+//! aside from per-packet `Vec<u8>` payload delivery (future
+//! work: caller-supplied buffer variant).
+//!
+//! Wire-format details and FAULTED semantics live in
+//! `specs/4-cast.md`.
+
 use crate::config::CastConfig;
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
