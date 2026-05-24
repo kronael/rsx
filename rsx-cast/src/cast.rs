@@ -823,15 +823,27 @@ impl CastReceiver {
         }
     }
 
-    pub fn try_recv(&mut self) -> CastRecv {
+    /// Zero-copy receive. Calls `f` with the parsed header and
+    /// a `&[u8]` pointing directly into the receiver's internal
+    /// buffer — no heap allocation. Returns [`CastPoll::Data`]
+    /// after calling `f`, [`CastPoll::Empty`] when the socket
+    /// would block with nothing ready in the reorder ring.
+    ///
+    /// `f` is dropped without being called on `Empty`, `Faulted`,
+    /// and `Reconnect`. Both sticky states persist until
+    /// `reset_after_replay` is called.
+    pub fn poll<F>(&mut self, f: F) -> CastPoll
+    where
+        F: FnOnce(WalHeader, &[u8]),
+    {
         if self.needs_reconnect {
-            return CastRecv::Reconnect {
+            return CastPoll::Reconnect {
                 last_delivered_seq: self
                     .reconnect_last_delivered_seq,
             };
         }
         if self.faulted {
-            return CastRecv::Faulted {
+            return CastPoll::Faulted {
                 last_delivered_seq: self
                     .fault_last_delivered_seq,
                 gap_start: self.fault_gap_start,
@@ -839,6 +851,9 @@ impl CastReceiver {
                     .fault_gap_end_inclusive,
             };
         }
+        // Option<F> lets the compiler verify f is called at
+        // most once across the two delivery sites below.
+        let mut f = Some(f);
         loop {
             match self.socket.recv_from(&mut self.buf) {
                 Ok((n, _)) => {
@@ -916,8 +931,6 @@ impl CastReceiver {
                         _ => {}
                     }
 
-                    // Extract seq from payload
-                    // (CastRecord convention: first 8 bytes)
                     let seq = match extract_seq(payload) {
                         Some(s) => s,
                         None => continue,
@@ -926,7 +939,6 @@ impl CastReceiver {
                         continue;
                     }
 
-                    // First packet: sync to sender's seq
                     if self.expected_seq == 0 {
                         info!(
                             "cmp sync: first packet \
@@ -936,8 +948,6 @@ impl CastReceiver {
                         self.expected_seq = seq;
                     }
 
-                    // Sender restart: seq dropped below
-                    // expected by large margin — re-sync
                     if seq < self.expected_seq
                         && self.expected_seq - seq > 100
                     {
@@ -961,23 +971,15 @@ impl CastReceiver {
 
                     if seq == self.expected_seq {
                         self.expected_seq += 1;
-                        // Progress on gap — reset retry budget
-                        // and clear per-gap debounce slot.
                         self.nak_retries_on_oldest = 0;
                         let slot =
                             (seq & REORDER_MASK) as usize;
                         self.nak_sent_at[slot] = 0;
-                        let data = payload.to_vec();
-                        return CastRecv::Data(hdr, data);
+                        // Zero-copy: payload points into
+                        // self.buf; f receives it directly.
+                        f.take().unwrap()(hdr, payload);
+                        return CastPoll::Data;
                     } else {
-                        // Gap. Stage the out-of-order packet
-                        // in the reorder ring (full framed
-                        // bytes: header + payload). Slot
-                        // conflict = gap exceeds in-flight
-                        // window → transition to FAULTED so
-                        // the consumer can switch to DXS
-                        // replay (FIFO preserved, never
-                        // silent advance).
                         let total = WalHeader::SIZE
                             + payload.len();
                         let mut conflict = false;
@@ -1025,7 +1027,7 @@ impl CastReceiver {
                                     REORDER_CAPACITY,
                                 );
                             }
-                            return CastRecv::Reconnect {
+                            return CastPoll::Reconnect {
                                 last_delivered_seq: self
                                     .reconnect_last_delivered_seq,
                             };
@@ -1037,7 +1039,7 @@ impl CastReceiver {
                             as u64;
                         self.maybe_nak(now_ns);
                         if self.faulted {
-                            return CastRecv::Faulted {
+                            return CastPoll::Faulted {
                                 last_delivered_seq: self
                                     .fault_last_delivered_seq,
                                 gap_start: self
@@ -1058,43 +1060,63 @@ impl CastReceiver {
                 Err(_) => break,
             }
         }
-        match self.try_drain_reorder() {
-            Some((hdr, payload)) => {
-                CastRecv::Data(hdr, payload)
+        // Drain reorder ring: if the slot at expected_seq holds
+        // a buffered packet, deliver it zero-copy via callback.
+        if self.expected_seq != 0 {
+            let slot =
+                (self.expected_seq & REORDER_MASK) as usize;
+            if self.reorder_seqs[slot] == self.expected_seq {
+                let len =
+                    self.reorder_lens[slot] as usize;
+                let off = slot * REORDER_FRAME_BYTES;
+                if let Some(hdr) = WalHeader::from_bytes(
+                    &self.reorder_frames
+                        [off..off + WalHeader::SIZE],
+                ) {
+                    {
+                        let payload = &self.reorder_frames
+                            [off + WalHeader::SIZE..off + len];
+                        f.take().unwrap()(hdr, payload);
+                    }
+                    self.reorder_seqs[slot] = 0;
+                    self.nak_sent_at[slot] = 0;
+                    self.expected_seq += 1;
+                    self.nak_retries_on_oldest = 0;
+                    return CastPoll::Data;
+                }
             }
-            None => CastRecv::Empty,
         }
+        CastPoll::Empty
     }
 
-    /// If the slot at expected_seq holds a buffered packet,
-    /// pull it, advance expected_seq, and return. Otherwise
-    /// `None`.
-    fn try_drain_reorder(
-        &mut self,
-    ) -> Option<(WalHeader, Vec<u8>)> {
-        if self.expected_seq == 0 {
-            // Not yet synced to a sender. Empty-slot marker
-            // (`reorder_seqs[i] == 0`) would otherwise match.
-            return None;
+    /// Allocating shim over [`CastReceiver::poll`]. Allocates one
+    /// `Vec<u8>` per in-order record. Prefer `poll` on the hot
+    /// path.
+    pub fn try_recv(&mut self) -> CastRecv {
+        let mut out: Option<(WalHeader, Vec<u8>)> = None;
+        match self.poll(|hdr, payload| {
+            out = Some((hdr, payload.to_vec()));
+        }) {
+            CastPoll::Empty => CastRecv::Empty,
+            CastPoll::Data => {
+                let (hdr, payload) = out
+                    // INVARIANT: poll sets out before Data.
+                    .expect("poll Data invariant");
+                CastRecv::Data(hdr, payload)
+            }
+            CastPoll::Faulted {
+                last_delivered_seq,
+                gap_start,
+                gap_end_inclusive,
+            } => CastRecv::Faulted {
+                last_delivered_seq,
+                gap_start,
+                gap_end_inclusive,
+            },
+            CastPoll::Reconnect { last_delivered_seq } => {
+                CastRecv::Reconnect { last_delivered_seq }
+            }
         }
-        let slot =
-            (self.expected_seq & REORDER_MASK) as usize;
-        if self.reorder_seqs[slot] != self.expected_seq {
-            return None;
-        }
-        let len = self.reorder_lens[slot] as usize;
-        let off = slot * REORDER_FRAME_BYTES;
-        let hdr = WalHeader::from_bytes(
-            &self.reorder_frames[off..off + WalHeader::SIZE],
-        )?;
-        let payload = self.reorder_frames
-            [off + WalHeader::SIZE..off + len]
-            .to_vec();
-        self.reorder_seqs[slot] = 0;
-        self.nak_sent_at[slot] = 0;
-        self.expected_seq += 1;
-        self.nak_retries_on_oldest = 0;
-        Some((hdr, payload))
     }
 
     /// Locate the oldest contiguous run of missing seqs
