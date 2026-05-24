@@ -36,7 +36,7 @@ steps, and verification.
 | S14 | ME + Risk + Postgres | All crash in 10ms | Full system | **0ms** | 10ms | **100ms** | 60-180s | Full system verify |
 | S15 | Network partition: All | Full isolation 1min | No cross-component | **0ms** | 10ms | 0ms (buffered) | 1min + 60s | Full replay |
 | S16 | ME WAL rotation | During file rotation | Active file incomplete | **0ms** | 10ms | 0ms | 20-60s | Rename + restart |
-| S17 | replication buffer overflow | Consumer lag >10min | Hot WAL expired | **0ms** | 10ms | 0ms | 5-30min | ARCHIVE replay |
+| S17 | replication buffer overflow | Consumer lag >4h | Hot WAL expired | **0ms** | 10ms | 0ms | 5-30min | ARCHIVE replay |
 | S18 | Config update | Mid-crash | Config event lost | **0ms** | 10ms | 0ms | <5s | Reapply config |
 | S19 | Funding settlement | Mid-iteration | Partial funding | **0ms** | 10ms | 0ms | 30s | Resume from checkpoint |
 
@@ -416,7 +416,7 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 - Users' orders reach ME, fills emitted, but Risk doesn't see them
 
 ### Data at Risk
-- **Fills:** 0 at risk (ME WAL retains all fills for 10min)
+- **Fills:** 0 at risk (ME WAL retains all fills for 4h)
 - **Positions:** 0 at risk (Risk will replay from ME WAL after partition heals)
 - **Orders in flight:** Unbounded (if partition during order routing, lost)
 
@@ -528,7 +528,7 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 
 **Fills:**
 - ME wrote all fills to WAL during partition
-- replication buffer retained fills (10min retention)
+- replication buffer retained fills (4h retention)
 - Risk replayed all fills after partition healed
 - **Total:** 0 fills lost
 - **Proof:** Risk tips after replay = ME seq (all fills accounted for)
@@ -582,10 +582,10 @@ SELECT
 ```
 
 ### Lessons
-- **replication handles long partitions:** 10min retention covers most scenarios
+- **replication handles long partitions:** 4h retention covers most scenarios
 - **Positions always reconstructed from fills:** No drift even after 5min partition
 - **Stale positions during partition:** Risk calculations may be incorrect (liquidations?)
-- **Partition >10min:** Risk must rebuild from snapshot + full WAL (longer recovery)
+- **Partition >4h:** Risk must rebuild from snapshot + full WAL (longer recovery)
 - **Gateway backpressure:** If Risk stalls, Gateway rejects orders (prevents unbounded queue)
 
 ---
@@ -780,7 +780,7 @@ cargo run --bin rsx-position-reconcile -- --shard-id 0 || {
 ### Recovery Time
 
 **Manual intervention required:** 30min-2hr (depends on data size)
-**Automated rebuild:** 10min-30min (position rebuild from fills)
+**Automated rebuild:** 4h-30min (position rebuild from fills)
 
 ### Verification
 
@@ -860,7 +860,7 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 - Continues matching (has local WAL)
 - Writes fills to WAL (flushed every 10ms)
 - Cannot push fills to Risk (SPSC ring or network)
-- Fills accumulate in replication buffer (10min retention)
+- Fills accumulate in replication buffer (4h retention)
 - No data loss (WAL is local)
 
 **Postgres:**
@@ -958,7 +958,7 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 
 **Fills:**
 - ME wrote all fills to local WAL during partition
-- replication buffer retained fills (10min > 1min partition)
+- replication buffer retained fills (4h > 1min partition)
 - Risk replayed all fills after partition healed
 - **Total:** 0 fills lost
 - **Proof:** All fills in ME WAL, replayed to Risk
@@ -1014,7 +1014,7 @@ psql -c "SELECT objid, COUNT(*) FROM pg_locks WHERE locktype = 'advisory' GROUP 
 ### Lessons
 - **Graceful degradation:** Each component handles partition independently
 - **Eventual consistency:** After partition heals, all components converge
-- **replication critical:** Handles up to 10min partition (covers most scenarios)
+- **replication critical:** Handles up to4hpartition (covers most scenarios)
 - **User impact:** Orders rejected during partition (expected behavior)
 - **No silent data loss:** Fills always replayed, positions always consistent
 
@@ -1076,12 +1076,12 @@ cargo run --bin rsx-wal-check -- \
 
 ---
 
-## S17: replication Replay Buffer Overflow (Consumer Lag >10min)
+## S17: replication Replay Buffer Overflow (Consumer Lag >4h)
 
 ### Preconditions
 - Risk engine offline for 15 minutes (deploy, maintenance, long crash)
 - ME continues matching, writing to WAL
-- ME WAL retention = 10min, files older than 10min deleted
+- ME WAL retention = 4h, files older than4hdeleted
 
 ### Trigger
 - Risk restarts after 15min downtime
@@ -1116,7 +1116,7 @@ cargo run --bin rsx-archive-replay -- \
 systemctl restart rsx-risk@shard0
 
 # 5. Risk loads positions + tips from Postgres
-# 6. Requests replication from ME (now within 10min window)
+# 6. Requests replication from ME (now within4hwindow)
 # 7. Goes live
 ```
 
@@ -1126,7 +1126,7 @@ systemctl restart rsx-risk@shard0
 - **Recovery time:** 5-30min (depends on ARCHIVE replay duration)
 
 ### Lessons
-- replication hot retention (10min) is insufficient for long outages
+- replication hot retention 4h is insufficient for long outages
 - ARCHIVE provides cold storage for infinite history
 - Risk must support ARCHIVE fallback when replication unavailable
 - Consider extending hot retention to 1hr for faster recovery
