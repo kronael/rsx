@@ -35,8 +35,8 @@ Crate: `rsx-cast`
 | D9 | WalWriter: GC deletes files outside retention | replication.md §3 |
 | D10 | WalReader: open from seq via filename binary search | replication.md §4 |
 | D11 | WalReader: sequential iteration across files | replication.md §4 |
-| D12 | DxsReplay server: TCP stream from from_seq | replication.md §5 |
-| D13 | DxsReplay: CaughtUp marker then live tail | replication.md §5 |
+| D12 | ReplicationService: TCP stream from from_seq | replication.md §5 |
+| D13 | ReplicationService: CaughtUp marker then live tail | replication.md §5 |
 | D14 | ReplicationConsumer: tip persistence every 10ms | replication.md §6 |
 | D15 | ReplicationConsumer: reconnect with backoff 1/2/4/8/30s | replication.md §6 |
 | D16 | ReplicationConsumer: resume from tip+1 | replication.md §6 |
@@ -131,11 +131,11 @@ Targets from replication.md §10:
 
 - Matching engine embeds WalWriter for event persistence
   (ORDERBOOK.md §2.8)
-- Matching engine embeds DxsReplay server for downstream
+- Matching engine embeds ReplicationService for downstream
   consumers (replication.md §5)
 - Risk engine connects as ReplicationConsumer for replay on startup
   (RISK.md §replication)
-- Mark aggregator embeds WalWriter + DxsReplay for mark
+- Mark aggregator embeds WalWriter + ReplicationService for mark
   prices (MARK.md §1)
 - Recorder connects as ReplicationConsumer for archival (replication.md §8)
 - Market data connects as ReplicationConsumer for recovery

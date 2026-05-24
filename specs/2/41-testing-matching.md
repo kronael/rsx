@@ -37,7 +37,7 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M11 | BBO emitted after best bid/ask change | CONSISTENCY.md §1 |
 | M12 | WAL persistence via embedded WalWriter | ORDERBOOK.md §2.8 |
 | M13 | Online snapshot + WAL replay recovery | ORDERBOOK.md §2.8 |
-| M14 | DxsReplay server for downstream consumers | replication.md §5 |
+| M14 | ReplicationService for downstream consumers | replication.md §5 |
 | M15 | Config polling every 10min, CONFIG_APPLIED | ORDERBOOK.md §2.9 |
 | M16 | Position tracking per user (net_qty) | ORDERBOOK.md §6.5 |
 | M17 | Deferred user reclamation (60s, net_qty==0 && order_count==0) | ORDERBOOK.md §6.5 |
@@ -90,7 +90,7 @@ order), correctness invariants (fills-before-done, exactly-one completion,
 FIFO, no negative qty, coherent best bid/ask, slab no-leak, monotonic seq,
 fills final, ORDER_DONE as commit boundary, zero heap during matching), WAL +
 recovery (records written for all events, crash+snapshot recovery, book state
-match, seq continuity, rotation under load), DxsReplay (historical records,
+match, seq continuity, rotation under load), ReplicationService (historical records,
 CaughtUp then live tail, concurrent consumers, disconnect no crash), and
 fan-out under load (10k orders/s ring drain, per-ring backpressure, ring
 independence, ingress rejection at 10k buffer).
@@ -129,7 +129,7 @@ See `rsx-matching/benches/` for Criterion benchmark implementations.
 
 - Imports `rsx-book` crate for orderbook data structures
   (ORDERBOOK.md §3)
-- Embeds `rsx-cast` WalWriter + DxsReplay server
+- Embeds `rsx-cast` WalWriter + ReplicationService
   (ORDERBOOK.md §2.8, replication.md §5)
 - casting/UDP fan-out to risk, gateway, mktdata
   (CONSISTENCY.md §1)
