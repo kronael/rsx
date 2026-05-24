@@ -1,8 +1,7 @@
-# rsx-cast/notes
+# rsx-cast/notes — index
 
-Design rationale and tradeoff research for rsx-cast.
-"Why" docs — for "how" see ARCHITECTURE.md; for "what" see
-README.md and the specs.
+"Why" docs. See the crate-root README "How to read this crate"
+section for the broader docs map.
 
 | File | Question answered |
 |------|-------------------|
