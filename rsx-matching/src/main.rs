@@ -3,6 +3,7 @@ use rsx_book::matching::process_new_order;
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::decode_payload;
 use rsx_messages::BboRecord;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
@@ -558,18 +559,8 @@ fn main() {
             continue;
         }
         if let CastRecv::Data(hdr, payload) = recv {
-            if hdr.record_type == RECORD_ORDER_REQUEST
-                && payload.len()
-                    >= std::mem::size_of::<
-                        OrderMessage,
-                    >()
-            {
-                let order_msg = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const OrderMessage,
-                    )
-                };
+            if hdr.record_type == RECORD_ORDER_REQUEST {
+            if let Some(order_msg) = decode_payload::<OrderMessage>(&payload) {
                 // F4.3 — per-stage latency trace. Stage
                 // `me_in` = order arrived at matching engine.
                 // t_us measured against gateway submit ts.

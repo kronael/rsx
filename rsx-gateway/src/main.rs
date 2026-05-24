@@ -1,6 +1,7 @@
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::decode_payload;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
@@ -220,19 +221,7 @@ fn main() {
                 };
                 {
                 match hdr.record_type {
-                    RECORD_FILL
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                FillRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        FillRecord,
-                            )
-                        };
+                    RECORD_FILL => if let Some(rec) = decode_payload::<FillRecord>(&payload) {
                         // Sub-stage: fill record arrived at
                         // gateway's CMP recv loop, about to
                         // route. Anchor on taker_ts_ns (with
