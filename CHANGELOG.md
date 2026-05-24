@@ -1,5 +1,56 @@
 # Changelog
 
+## [rsx-dxs v0.4.0] — 2026-05-24
+
+Replay-endpoint federation: `DxsConsumer` accepts a prioritised
+list of replay endpoints and falls back across them on demand.
+Producers explicitly refuse out-of-range `from_seq` requests
+instead of silently entering live-tail at the wrong offset.
+
+### Breaking change
+
+- `DxsConsumer::new(stream_id, producer_addr: String, ...)` →
+  `DxsConsumer::new(stream_id, endpoints: Vec<String>, ...)`.
+  Endpoints are tried in order; on `ReplayNotAvailable` (see
+  below) or connect failure the consumer advances to the next.
+- Migration: pass `vec![addr]`, or use the convenience
+  constructor `DxsConsumer::from_single(stream_id, addr, ...)`
+  which is wire-equivalent to the old API.
+
+### Protocol additions
+
+- **`RECORD_REPLAY_NOT_AVAILABLE = 0x15`** — 64-byte transport
+  record. Server emits it when the requested `from_seq` is
+  below the oldest record it can serve on disk; consumer
+  treats the response as "wrong endpoint" and moves on. Carries
+  `requested_from_seq` / `my_oldest_seq` / `my_highest_seq` so
+  the consumer can log the gap.
+- Server pre-checks `from_seq >= my_oldest_seq` in
+  `DxsReplayService::handle_client` before opening the
+  `WalReader`. Closes the federation correctness bug where
+  an under-range request silently transitioned to live-tail at
+  the wrong sequence.
+
+### Federation pattern
+
+```
+DxsConsumer ──► tries endpoint list in order:
+                 1. live producer (recent ~48h hot WAL)
+                 2. recent archive (e.g. 30 days)
+                 3. cold archive (indefinite)
+                Whichever holds `from_seq` answers.
+```
+
+Each archive is a `DxsReplayService` populated by being a
+`DxsConsumer` of the upstream — `rsx-recorder` already
+implements this pattern; tiered archives compose from it.
+
+### Spec
+
+- `specs/2/10-dxs.md` and `rsx-dxs/specs/10-dxs.md` document
+  the record layout, the server-side floor check, and the
+  consumer's endpoint-list contract.
+
 ## [rsx-dxs v0.3.0] — 2026-05-24
 
 CMP reliability v4 — three real bugs in `rsx-dxs/src/cmp.rs`
