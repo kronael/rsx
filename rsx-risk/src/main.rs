@@ -536,6 +536,14 @@ fn run_main(
                     gap_start,
                     gap_end_inclusive,
                 ),
+                CastRecv::Reconnect {
+                    last_delivered_seq,
+                } => panic!(
+                    "RECONNECT: ring overflow, DXS \
+                     replay path not yet wired \
+                     (last_delivered={})",
+                    last_delivered_seq,
+                ),
             };
             {
             match hdr.record_type {
@@ -649,6 +657,14 @@ fn run_main(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
+                ),
+                CastRecv::Reconnect {
+                    last_delivered_seq,
+                } => panic!(
+                    "RECONNECT: ring overflow, DXS \
+                     replay path not yet wired \
+                     (last_delivered={})",
+                    last_delivered_seq,
                 ),
             };
             {
@@ -950,6 +966,14 @@ fn run_main(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
+                ),
+                CastRecv::Reconnect {
+                    last_delivered_seq,
+                } => panic!(
+                    "RECONNECT: ring overflow, DXS \
+                     replay path not yet wired \
+                     (last_delivered={})",
+                    last_delivered_seq,
                 ),
             };
             {
@@ -1391,6 +1415,14 @@ fn run_replica(
                     gap_start,
                     gap_end_inclusive,
                 ),
+                CastRecv::Reconnect {
+                    last_delivered_seq,
+                } => panic!(
+                    "RECONNECT: ring overflow, DXS \
+                     replay path not yet wired \
+                     (last_delivered={})",
+                    last_delivered_seq,
+                ),
             };
             if preamble.record_type == RECORD_FILL
                 && payload.len()
@@ -1435,6 +1467,14 @@ fn run_replica(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
+                ),
+                CastRecv::Reconnect {
+                    last_delivered_seq,
+                } => panic!(
+                    "RECONNECT: ring overflow, DXS \
+                     replay path not yet wired \
+                     (last_delivered={})",
+                    last_delivered_seq,
                 ),
             };
             if preamble.record_type == 0x20

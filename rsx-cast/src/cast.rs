@@ -494,23 +494,30 @@ impl CastSender {
 /// Receiver delivery outcome. Surfaces unrecoverable gaps
 /// to the consumer explicitly rather than silently advancing.
 ///
-/// `Faulted` is sticky: once returned, `try_recv` keeps
-/// returning `Empty` (or `Faulted` again on a fresh call)
-/// until `CastReceiver::reset_after_replay` is called with
-/// the new live tip.
+/// Both `Faulted` and `Reconnect` are sticky until
+/// `CastReceiver::reset_after_replay` is called. Both require
+/// DXS/TCP replay — they differ only in cause.
 #[derive(Debug)]
 pub enum CastRecv {
     /// No data ready right now (would-block or queue empty).
     Empty,
     /// Next in-order record with its parsed header.
     Data(WalHeader, Vec<u8>),
-    /// Unrecoverable gap. Consumer must switch to DXS/TCP
-    /// replay from `last_delivered_seq + 1`, then call
+    /// NAK retry budget exhausted: persistent gap. Consumer
+    /// must switch to DXS/TCP replay from
+    /// `last_delivered_seq + 1`, then call
     /// `reset_after_replay(new_tip)` to resume.
     Faulted {
         last_delivered_seq: u64,
         gap_start: u64,
         gap_end_inclusive: u64,
+    },
+    /// Reorder ring overflowed: gap > REORDER_CAPACITY (2048
+    /// slots). Consumer must do a full DXS/TCP cold-start from
+    /// `last_delivered_seq + 1`, then call
+    /// `reset_after_replay(new_tip)` to resume.
+    Reconnect {
+        last_delivered_seq: u64,
     },
 }
 
@@ -523,31 +530,31 @@ pub struct CastReceiver {
     last_drop_warn: Instant,
     expected_seq: u64,
     highest_seen: u64,
-    /// Sticky FAULTED state. Cleared by reset_after_replay.
+    /// Sticky FAULTED state (NAK retry exhaustion).
+    /// Cleared by reset_after_replay.
     faulted: bool,
-    /// FAULTED metadata. Set when entering FAULTED so the
-    /// consumer's replay request knows where to resume from.
     fault_last_delivered_seq: u64,
     fault_gap_start: u64,
     fault_gap_end_inclusive: u64,
-    /// NAK rate-limit state. Only the oldest gap matters
-    /// because every later one is gated behind it (FIFO).
-    /// `last_nak_at_ns` is ns since `start_instant`.
-    last_nak_at_ns: u64,
+    /// Sticky RECONNECT state (reorder ring overflow).
+    /// Cleared by reset_after_replay.
+    needs_reconnect: bool,
+    reconnect_last_delivered_seq: u64,
+    /// Per-gap NAK debounce ring. Indexed by
+    /// `seq & REORDER_MASK`. Value = ns since `start_instant`
+    /// of the last NAK sent for that `from_seq`. 0 = never
+    /// NAKed. Zeroed on in-order delivery and on reset.
+    nak_sent_at: Box<[u64]>,
     nak_retries_on_oldest: u16,
-    /// Cached from config to keep the hot path multiply-free.
-    nak_retry_ns: u64,
+    /// Cached from config.
+    nak_debounce_ns: u64,
     max_nak_retries: u16,
-    /// Monotonic clock baseline for `last_nak_at_ns`.
+    /// Monotonic clock baseline for `nak_sent_at` values.
     start_instant: Instant,
-    /// Out-of-order packet buffer. Fixed-size ring mirroring
-    /// the sender's send_ring discipline: three parallel
-    /// arrays indexed by `seq & REORDER_MASK`. Empty slot iff
-    /// `reorder_seqs[slot] == 0`; a non-matching `reorder_seqs`
-    /// value means the ring wrapped past an unfilled slot
-    /// (gap > REORDER_CAPACITY) — unrecoverable in-band.
-    /// One-time allocation at construction; **zero heap on
-    /// the hot receive path**.
+    /// Out-of-order packet buffer. Three parallel arrays
+    /// indexed by `seq & REORDER_MASK`. Empty slot iff
+    /// `reorder_seqs[slot] == 0`. Slot conflict (wrapped
+    /// ring) → `CastRecv::Reconnect`.
     reorder_seqs: Box<[u64]>,
     reorder_lens: Box<[u16]>,
     reorder_frames: Box<[u8]>,
@@ -587,10 +594,13 @@ impl CastReceiver {
             fault_last_delivered_seq: 0,
             fault_gap_start: 0,
             fault_gap_end_inclusive: 0,
-            last_nak_at_ns: 0,
+            needs_reconnect: false,
+            reconnect_last_delivered_seq: 0,
+            nak_sent_at: vec![0u64; REORDER_CAPACITY]
+                .into_boxed_slice(),
             nak_retries_on_oldest: 0,
-            nak_retry_ns: config
-                .nak_retry_us
+            nak_debounce_ns: config
+                .nak_debounce_us
                 .saturating_mul(1000),
             max_nak_retries: config.max_nak_retries,
             start_instant: Instant::now(),
@@ -629,17 +639,20 @@ impl CastReceiver {
         self.fault_last_delivered_seq = 0;
         self.fault_gap_start = 0;
         self.fault_gap_end_inclusive = 0;
-        self.last_nak_at_ns = 0;
+        self.needs_reconnect = false;
+        self.reconnect_last_delivered_seq = 0;
         self.nak_retries_on_oldest = 0;
         self.expected_seq = new_tip + 1;
         // Monotonic: only raise, never lower (see docstring).
         if self.highest_seen < new_tip + 1 {
             self.highest_seen = new_tip + 1;
         }
-        // Clear any stale buffered packets (their seqs are
-        // <= new_tip and now redundant).
+        // Clear stale reorder buffer and NAK debounce state.
         for s in self.reorder_seqs.iter_mut() {
             *s = 0;
+        }
+        for t in self.nak_sent_at.iter_mut() {
+            *t = 0;
         }
         info!(
             "cmp receiver reset_after_replay: \
@@ -652,9 +665,12 @@ impl CastReceiver {
         self.faulted
     }
 
-    /// Transition the receiver to FAULTED. Sticky: stays
-    /// here until reset_after_replay() is called. Subsequent
-    /// `try_recv` returns `CastRecv::Faulted`.
+    pub fn is_reconnect_pending(&self) -> bool {
+        self.needs_reconnect
+    }
+
+    /// Transition the receiver to FAULTED (NAK retry budget
+    /// exhausted). Sticky until reset_after_replay().
     fn fault(
         &mut self,
         gap_start: u64,
@@ -677,51 +693,46 @@ impl CastReceiver {
         );
     }
 
-    /// Bounded-rate NAK pump. Called inline from `try_recv`
-    /// and the heartbeat handler. Sends a NAK for the oldest
-    /// contiguous missing run no more frequently than
-    /// `nak_retry_ns`. After `max_nak_retries` retries on
-    /// the same oldest gap without progress, transitions to
-    /// FAULTED.
+    /// Per-gap NAK pump. Finds the oldest contiguous missing
+    /// run and sends a NAK only if `nak_debounce_ns` has
+    /// elapsed since the last NAK for that `from_seq`. After
+    /// `max_nak_retries` debounce-windows without progress on
+    /// the same gap, transitions to FAULTED.
     fn maybe_nak(&mut self, now_ns: u64) {
-        if self.faulted {
-            return;
-        }
-        if self.last_nak_at_ns != 0
-            && now_ns.saturating_sub(self.last_nak_at_ns)
-                < self.nak_retry_ns
-        {
+        if self.faulted || self.needs_reconnect {
             return;
         }
         let Some((from, count)) = self.oldest_missing_run()
         else {
             return;
         };
+        // Per-gap debounce: only re-NAK if debounce window
+        // has elapsed. First NAK for a new gap fires immediately
+        // (slot value == 0).
+        let slot = (from & REORDER_MASK) as usize;
+        let last = self.nak_sent_at[slot];
+        if last != 0
+            && now_ns.saturating_sub(last)
+                < self.nak_debounce_ns
+        {
+            return;
+        }
         self.send_nak(from, count);
-        self.last_nak_at_ns = now_ns;
+        self.nak_sent_at[slot] = now_ns;
         self.nak_retries_on_oldest =
             self.nak_retries_on_oldest.saturating_add(1);
-        if self.nak_retries_on_oldest
-            > self.max_nak_retries
-        {
-            // 8 retries * 100 µs = 800 µs without progress —
-            // escalate to out-of-band recovery (DXS replay).
+        if self.nak_retries_on_oldest > self.max_nak_retries {
             self.fault(from, from + count - 1);
         }
     }
 
-    /// Receive the next in-order CMP packet, if any. Returns
-    /// the parsed header plus an owned copy of the payload.
-    ///
-    /// NB: this allocates a `Vec<u8>` for the payload on every
-    /// in-order delivery — the receive path is NOT zero-heap.
-    /// The zero-heap claim in the project docs applies to
-    /// `CastSender::send` only. A zero-copy receive variant
-    /// (caller-supplied `&mut [u8]`) is tracked as future work;
-    /// since all current consumers (risk, marketdata) do
-    /// further work proportional to the payload, the per-packet
-    /// alloc is not on the measured GW→ME→GW critical path.
     pub fn try_recv(&mut self) -> CastRecv {
+        if self.needs_reconnect {
+            return CastRecv::Reconnect {
+                last_delivered_seq: self
+                    .reconnect_last_delivered_seq,
+            };
+        }
         if self.faulted {
             return CastRecv::Faulted {
                 last_delivered_seq: self
@@ -853,9 +864,12 @@ impl CastReceiver {
 
                     if seq == self.expected_seq {
                         self.expected_seq += 1;
-                        // Progress on the oldest gap — reset
-                        // the in-flight NAK retry budget.
+                        // Progress on gap — reset retry budget
+                        // and clear per-gap debounce slot.
                         self.nak_retries_on_oldest = 0;
+                        let slot =
+                            (seq & REORDER_MASK) as usize;
+                        self.nak_sent_at[slot] = 0;
                         let data = payload.to_vec();
                         return CastRecv::Data(hdr, data);
                     } else {
@@ -899,17 +913,24 @@ impl CastReceiver {
                             );
                         }
                         if conflict {
-                            self.fault(
-                                self.expected_seq,
-                                seq.saturating_sub(1),
-                            );
-                            return CastRecv::Faulted {
+                            if !self.needs_reconnect {
+                                self.needs_reconnect = true;
+                                self.reconnect_last_delivered_seq =
+                                    self.expected_seq
+                                        .saturating_sub(1);
+                                warn!(
+                                    "cmp reorder ring \
+                                     overflow: \
+                                     last_delivered={} \
+                                     seq={} gap>{}",
+                                    self.reconnect_last_delivered_seq,
+                                    seq,
+                                    REORDER_CAPACITY,
+                                );
+                            }
+                            return CastRecv::Reconnect {
                                 last_delivered_seq: self
-                                    .fault_last_delivered_seq,
-                                gap_start: self
-                                    .fault_gap_start,
-                                gap_end_inclusive: self
-                                    .fault_gap_end_inclusive,
+                                    .reconnect_last_delivered_seq,
                             };
                         }
                         let now_ns = self
@@ -973,9 +994,8 @@ impl CastReceiver {
             [off + WalHeader::SIZE..off + len]
             .to_vec();
         self.reorder_seqs[slot] = 0;
+        self.nak_sent_at[slot] = 0;
         self.expected_seq += 1;
-        // Oldest gap closed (or shifted forward) — reset
-        // the in-flight NAK retry budget.
         self.nak_retries_on_oldest = 0;
         Some((hdr, payload))
     }

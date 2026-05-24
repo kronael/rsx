@@ -232,6 +232,14 @@ fn main() {
                         gap_start,
                         gap_end_inclusive,
                     ),
+                    CastRecv::Reconnect {
+                        last_delivered_seq,
+                    } => panic!(
+                        "RECONNECT: ring overflow, DXS \
+                         replay path not yet wired \
+                         (last_delivered={})",
+                        last_delivered_seq,
+                    ),
                 };
                 {
                 // Seq gap detection: extract seq from payload
