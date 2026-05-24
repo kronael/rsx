@@ -180,7 +180,6 @@ fn main() {
             // Periodic tick → keep flow-control windows open.
             tick_count = tick_count.wrapping_add(1);
             if tick_count & 0x3FF == 0 {
-                me_receiver.tick();
                 let _ = me_sender.tick();
                 me_sender.recv_control();
             }
@@ -312,7 +311,6 @@ fn main() {
         let oid_lo = i as u64 + 1; // skip 0 (sentinel)
         gw_tick = gw_tick.wrapping_add(1);
         if gw_tick & 0x3FF == 0 {
-            gw_receiver.tick();
             let _ = gw_sender.tick();
             gw_sender.recv_control();
         }
@@ -356,7 +354,6 @@ fn main() {
                 CastRecv::Empty => {
                     wait_tick = wait_tick.wrapping_add(1);
                     if wait_tick & 0x3FF == 0 {
-                        gw_receiver.tick();
                         let _ = gw_sender.tick();
                         gw_sender.recv_control();
                         if wait_start.elapsed()

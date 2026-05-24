@@ -827,7 +827,6 @@ fn main() {
         if let Err(e) = mkt_sender.tick() {
             warn!("mkt_sender tick (heartbeat) failed: {e}");
         }
-        cmp_receiver.tick();
         cmp_sender.recv_control();
         mkt_sender.recv_control();
     }

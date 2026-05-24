@@ -294,7 +294,6 @@ fn main() {
             if let Err(e) = sender.borrow_mut().tick() {
                 tracing::warn!("gateway: cmp_sender tick failed: {e}");
             }
-            cmp_receiver.tick();
             sender.borrow_mut().recv_control();
 
             let now = time_ns();

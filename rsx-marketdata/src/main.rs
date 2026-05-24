@@ -307,7 +307,6 @@ fn main() {
                 }
             }
 
-            cmp_receiver.tick();
             } // for cmp_receiver
 
             let now = time_ns();

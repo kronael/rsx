@@ -11,9 +11,9 @@
 //! `gateway_in → risk_in → gateway_cmp_recv` triangle than a
 //! one-way bench: it includes two CMP send paths, two CMP
 //! recv paths, and the natural bidirectional traffic that the
-//! NAK/STATUS subsystem expects. We still do NOT call `tick()`
-//! on either side; heartbeat/status cost is not on the per-
-//! packet critical path.
+//! NAK subsystem expects. Senders call `tick()` every 1024
+//! iters to emit idle-stream heartbeats; the heartbeat path
+//! is off the per-packet critical path.
 //!
 //! Each side runs a fresh CastSender + CastReceiver pair:
 //!   A.sender → B.receiver
@@ -165,7 +165,6 @@ fn bench_cmp_rtt(c: &mut Criterion) {
             }
             i = i.wrapping_add(1);
             if i & 0x3FF == 0 {
-                b_receiver.tick();
                 let _ = b_sender.tick();
                 b_sender.recv_control();
             }
@@ -183,7 +182,6 @@ fn bench_cmp_rtt(c: &mut Criterion) {
         b.iter(|| {
             iter = iter.wrapping_add(1);
             if iter & 0x3FF == 0 {
-                a_receiver.tick();
                 let _ = a_sender.tick();
                 a_sender.recv_control();
             }
