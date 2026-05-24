@@ -66,3 +66,9 @@ sudo tc qdisc del dev lo root
   because Aeron's UDP path includes a driver-IPC hop CMP doesn't have;
   the doc spells out the methodology and published reference numbers.
 - **Chronicle Queue / LBM**: design comparisons only (Java / commercial).
+
+## Long-tail census
+
+See [niche.md](niche.md) for a deeper census of NAK/ACK reliable UDP,
+persistent-log-as-transport, kernel-bypass, multicast, and gossip
+projects that don't (yet) have their own deep doc.
