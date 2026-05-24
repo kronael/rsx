@@ -18,6 +18,7 @@ pub mod cmp;
 pub mod server;
 pub mod client;
 pub mod config;
+pub mod tls;
 
 pub use protocol as records;
 
