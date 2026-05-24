@@ -187,9 +187,9 @@ transport" claim is provable: `cargo tree -p rsx-cast --edges
 normal` has no `rsx-` entries.
 
 All 12 crates build and run end-to-end. See PROGRESS.md for
-current crate status and `.ship/15-PLAYGROUND-AUDIT/
-FINDINGS.md` for the full 28-finding dashboard-honesty audit
-(now closed).
+current crate status; the 28-finding dashboard-honesty audit
+shipped and the sprint dir was pruned on close-out (findings
+baked into the code + CHANGELOG.md).
 
 A Python/FastAPI playground dashboard with 14 tabs and 60+
 API endpoints: process control, order submission, WAL
