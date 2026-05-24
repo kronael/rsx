@@ -1,3 +1,4 @@
+use rsx_cast::as_bytes;
 use rsx_cast::cast::CastSender;
 use rsx_messages::RECORD_MARK_PRICE;
 use rsx_cast::wal::WalWriter;
@@ -178,15 +179,9 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                     )
                 {
                     if wal_writer.append(&mut evt).is_ok() {
-                        let bytes = unsafe {
-                            std::slice::from_raw_parts(
-                                &evt as *const _ as *const u8,
-                                std::mem::size_of_val(&evt),
-                            )
-                        };
                         if let Err(e) = mark_sender.send_raw(
                             RECORD_MARK_PRICE,
-                            bytes,
+                            as_bytes(&evt),
                         ) {
                             warn!("mark: cmp send (aggregate) failed: {e}");
                         }
@@ -213,15 +208,9 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                     )
                 {
                     if wal_writer.append(&mut evt).is_ok() {
-                        let bytes = unsafe {
-                            std::slice::from_raw_parts(
-                                &evt as *const _ as *const u8,
-                                std::mem::size_of_val(&evt),
-                            )
-                        };
                         if let Err(e) = mark_sender.send_raw(
                             RECORD_MARK_PRICE,
-                            bytes,
+                            as_bytes(&evt),
                         ) {
                             warn!("mark: cmp send (sweep) failed: {e}");
                         }
