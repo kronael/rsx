@@ -60,3 +60,9 @@ sudo tc qdisc del dev lo root
 - **Aeron**: the direct design ancestor of CMP. JVM media driver required;
   not directly benchmarkable here, but published numbers are included.
 - **Chronicle Queue / LBM**: design comparisons only (Java / commercial).
+
+## Long-tail census
+
+See [niche.md](niche.md) for a deeper census of NAK/ACK reliable UDP,
+persistent-log-as-transport, kernel-bypass, multicast, and gossip
+projects that don't (yet) have their own deep doc.
