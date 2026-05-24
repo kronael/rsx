@@ -4,15 +4,10 @@ use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
-use rsx_messages::BboRecord;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
-use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
-use rsx_messages::OrderCancelledRecord;
-use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
-use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_cast::wal::WalWriter;
@@ -25,7 +20,6 @@ use rsx_matching::wal_integration::load_wal_seq;
 use rsx_matching::wal_integration::replay_wal_after_snapshot;
 use rsx_matching::wal_integration::save_snapshot;
 use rsx_matching::wal_integration::publish_events;
-use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_book::event::CANCEL_USER;
 use rsx_book::event::REASON_CANCELLED;
 use rsx_matching::wire::OrderMessage;
@@ -832,171 +826,6 @@ fn main() {
     }
 }
 
-fn send_event_cmp(
-    sender: &mut CastSender,
-    event: &rsx_book::event::Event,
-    symbol_id: u32,
-    ts_ns: u64,
-) -> io::Result<()> {
-    match *event {
-        rsx_book::event::Event::Fill {
-            maker_user_id,
-            taker_user_id,
-            price,
-            qty,
-            side,
-            maker_order_id_hi,
-            maker_order_id_lo,
-            taker_order_id_hi,
-            taker_order_id_lo,
-            taker_ts_ns,
-            ..
-        } => {
-            let mut record = FillRecord {
-                seq: 0,
-                ts_ns,
-                symbol_id,
-                taker_user_id,
-                maker_user_id,
-                _pad0: 0,
-                taker_order_id_hi,
-                taker_order_id_lo,
-                maker_order_id_hi,
-                maker_order_id_lo,
-                price,
-                qty,
-                taker_side: side,
-                reduce_only: 0,
-                tif: 0,
-                post_only: 0,
-                _pad1: [0; 4],
-                taker_ts_ns,
-            };
-            // SAFETY: send() returns Ok(false) on
-            // flow-control stall; receivers recover via
-            // NAK / TCP replay so the bool is discarded
-            // by design. Errors still propagate.
-            sender.send(&mut record)?;
-        }
-        rsx_book::event::Event::OrderInserted {
-            user_id,
-            side,
-            price,
-            qty,
-            order_id_hi,
-            order_id_lo,
-            ..
-        } => {
-            let mut record = OrderInsertedRecord {
-                seq: 0,
-                ts_ns,
-                symbol_id,
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                price,
-                qty,
-                side,
-                reduce_only: 0,
-                tif: 0,
-                post_only: 0,
-                _pad1: [0; 4],
-            };
-            // SAFETY: send() returns Ok(false) on
-            // flow-control stall; receivers recover via
-            // NAK / TCP replay so the bool is discarded
-            // by design. Errors still propagate.
-            sender.send(&mut record)?;
-        }
-        rsx_book::event::Event::OrderCancelled {
-            user_id,
-            remaining_qty,
-            reason,
-            order_id_hi,
-            order_id_lo,
-            ..
-        } => {
-            let mut record = OrderCancelledRecord {
-                seq: 0,
-                ts_ns,
-                symbol_id,
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                remaining_qty,
-                reason,
-                reduce_only: 0,
-                tif: 0,
-                post_only: 0,
-                _pad1: [0; 4],
-            };
-            // SAFETY: send() returns Ok(false) on
-            // flow-control stall; receivers recover via
-            // NAK / TCP replay so the bool is discarded
-            // by design. Errors still propagate.
-            sender.send(&mut record)?;
-        }
-        rsx_book::event::Event::OrderDone {
-            user_id,
-            reason,
-            filled_qty,
-            remaining_qty,
-            order_id_hi,
-            order_id_lo,
-            ..
-        } => {
-            let mut record = OrderDoneRecord {
-                seq: 0,
-                ts_ns,
-                symbol_id,
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                filled_qty,
-                remaining_qty,
-                final_status: reason,
-                reduce_only: 0,
-                tif: 0,
-                post_only: 0,
-                _pad1: [0; 4],
-            };
-            // SAFETY: send() returns Ok(false) on
-            // flow-control stall; receivers recover via
-            // NAK / TCP replay so the bool is discarded
-            // by design. Errors still propagate.
-            sender.send(&mut record)?;
-        }
-        rsx_book::event::Event::BBO {
-            bid_px,
-            bid_qty,
-            ask_px,
-            ask_qty,
-        } => {
-            let mut record = BboRecord {
-                seq: 0,
-                ts_ns,
-                symbol_id,
-                _pad0: 0,
-                bid_px,
-                bid_qty,
-                bid_count: 0,
-                _pad1: 0,
-                ask_px,
-                ask_qty,
-                ask_count: 0,
-                _pad2: 0,
-            };
-            // SAFETY: send() returns Ok(false) on
-            // flow-control stall; receivers recover via
-            // NAK / TCP replay so the bool is discarded
-            // by design. Errors still propagate.
-            sender.send(&mut record)?;
-        }
-        rsx_book::event::Event::OrderFailed { .. } => {}
-    }
-    Ok(())
-}
-
 fn emit_config_applied(
     wal: &mut WalWriter,
     risk_sender: &mut CastSender,
@@ -1140,41 +969,8 @@ fn process_cancel(
     }
 
     let ts_ns = time_ns();
-    write_events_to_wal(
-        wal_writer, book, symbol_id, ts_ns,
+    publish_events(
+        wal_writer, cmp_sender, mkt_sender, book, symbol_id, ts_ns,
     )
-    .expect("wal append failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
-    for event in book.events() {
-        if let Err(e) = send_event_cmp(
-            cmp_sender, event, symbol_id, ts_ns,
-        ) {
-            warn!("cmp send cancel-event to risk failed: {e}");
-        }
-    }
-    for event in book.events() {
-        if let Err(e) = send_event_marketdata(
-            mkt_sender, event, symbol_id, ts_ns,
-        ) {
-            warn!("cmp send cancel-event to marketdata failed: {e}");
-        }
-    }
-}
-
-
-/// Send events to Marketdata -- Fill, OrderInserted,
-/// OrderCancelled only. OrderDone excluded per MD20.
-fn send_event_marketdata(
-    sender: &mut CastSender,
-    event: &rsx_book::event::Event,
-    symbol_id: u32,
-    ts_ns: u64,
-) -> io::Result<()> {
-    match *event {
-        rsx_book::event::Event::Fill { .. }
-        | rsx_book::event::Event::OrderInserted { .. }
-        | rsx_book::event::Event::OrderCancelled {
-            ..
-        } => send_event_cmp(sender, event, symbol_id, ts_ns),
-        _ => Ok(()),
-    }
+    .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
 }
