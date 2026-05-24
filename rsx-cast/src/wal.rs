@@ -17,7 +17,7 @@
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::protocol::CastRecord;
+use crate::records::CastRecord;
 use std::fs;
 
 /// A record framed exactly once for both persistence and
