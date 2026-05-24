@@ -43,8 +43,18 @@ fn writer_assigns_monotonic_seq() {
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill1 = make_fill(0);
     let mut fill2 = make_fill(0);
-    let seq1 = writer.append(&mut fill1).unwrap();
-    let seq2 = writer.append(&mut fill2).unwrap();
+    let seq1 = {
+        let framed = writer.prepare(&mut fill1).unwrap();
+        let s = framed.seq;
+        writer.append_framed(&framed).unwrap();
+        s
+    };
+    let seq2 = {
+        let framed = writer.prepare(&mut fill2).unwrap();
+        let s = framed.seq;
+        writer.append_framed(&framed).unwrap();
+        s
+    };
     assert_eq!(seq1, 1);
     assert_eq!(seq2, 2);
     assert!(seq2 > seq1);
@@ -56,7 +66,10 @@ fn writer_append_to_buffer_no_io() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     let active = tmp.path().join("1").join("1_active.wal");
     let size = std::fs::metadata(&active).unwrap().len();
     assert_eq!(size, 0);
@@ -68,7 +81,10 @@ fn writer_flush_writes_to_file() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let active = tmp.path().join("1").join("1_active.wal");
     let size = std::fs::metadata(&active).unwrap().len();
@@ -81,7 +97,10 @@ fn writer_rotation_at_threshold() {
     let mut writer = WalWriter::new(1, tmp.path(), 1024).unwrap();
     for i in 0..20 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let dir = tmp.path().join("1");
@@ -101,7 +120,11 @@ fn writer_backpressure_stalls() {
     let mut hit_backpressure = false;
     for i in 0..5000 {
         let mut fill = make_fill(i);
-        match writer.append(&mut fill) {
+        let res = match writer.prepare(&mut fill) {
+            Ok(framed) => writer.append_framed(&framed),
+            Err(e) => Err(e),
+        };
+        match res {
             Ok(_) => continue,
             Err(e) => {
                 assert_eq!(e.kind(), std::io::ErrorKind::WouldBlock);
@@ -120,7 +143,10 @@ fn reader_sequential_iteration_all_records() {
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     for i in 0..10 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
@@ -137,7 +163,10 @@ fn reader_returns_none_at_eof() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
     assert!(reader.next().unwrap().is_some());
@@ -150,7 +179,10 @@ fn reader_crc32_invalid_truncates_stream() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let active = tmp.path().join("1").join("1_active.wal");
     let mut data = std::fs::read(&active).unwrap();
@@ -168,7 +200,10 @@ fn reader_unknown_record_type_handled() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let active = tmp.path().join("1").join("1_active.wal");
     let mut data = std::fs::read(&active).unwrap();
@@ -189,7 +224,10 @@ fn write_rotate_read_across_files() {
     let n = 30;
     for i in 0..n {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
@@ -206,7 +244,10 @@ fn reader_open_from_seq_finds_correct_file() {
     let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
     for i in 0..50 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
@@ -224,7 +265,10 @@ fn reader_skips_to_target_seq_within_file() {
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     for i in 0..10 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 5, tmp.path()).unwrap();
@@ -241,7 +285,8 @@ fn record_max_payload_64kb() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    assert!(writer.append(&mut fill).is_ok());
+    let framed = writer.prepare(&mut fill).unwrap();
+    assert!(writer.append_framed(&framed).is_ok());
 }
 
 #[test]
@@ -262,7 +307,12 @@ fn writer_seq_starts_at_1() {
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     assert_eq!(writer.next_seq, 1);
     let mut fill = make_fill(0);
-    let seq = writer.append(&mut fill).unwrap();
+    let seq = {
+        let framed = writer.prepare(&mut fill).unwrap();
+        let s = framed.seq;
+        writer.append_framed(&framed).unwrap();
+        s
+    };
     assert_eq!(seq, 1);
 }
 
@@ -272,7 +322,10 @@ fn writer_flush_calls_fsync() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let active = tmp.path().join("1").join("1_active.wal");
     let size = std::fs::metadata(&active).unwrap().len();
@@ -285,7 +338,10 @@ fn writer_rotation_renames_with_seq_range() {
     let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
     for i in 0..30 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let dir = tmp.path().join("1");
@@ -317,7 +373,10 @@ fn reader_open_from_seq_0_starts_at_beginning() {
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     for i in 0..5 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
@@ -341,7 +400,10 @@ fn reader_handles_single_file() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
     let mut count = 0;
@@ -357,7 +419,10 @@ fn reader_handles_multiple_files_sorted() {
     let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
     for i in 0..50 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
@@ -374,7 +439,10 @@ fn reader_file_transition_seamless() {
     let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
     for i in 0..30 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
@@ -391,7 +459,10 @@ fn reader_returns_none_when_caught_up() {
     let mut writer =
         WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
-    writer.append(&mut fill).unwrap();
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
     reader.next().unwrap();
@@ -408,7 +479,10 @@ fn wal_rotate_at_64mb() {
     let count = (threshold as usize / record_size) + 10;
     for i in 0..count as u64 {
         let mut fill = make_fill(i);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     let dir = tmp.path().join("1");
@@ -427,7 +501,10 @@ fn read_record_at_seq_finds_active() {
     let mut writer = WalWriter::new(1, tmp.path(), 1024 * 1024).unwrap();
     for _ in 0..100 {
         let mut fill = make_fill(0);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     drop(writer);
@@ -443,7 +520,10 @@ fn read_record_at_seq_returns_none_for_missing() {
     let mut writer = WalWriter::new(1, tmp.path(), 1024 * 1024).unwrap();
     for _ in 0..10 {
         let mut fill = make_fill(0);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     drop(writer);
@@ -457,7 +537,10 @@ fn read_record_at_seq_finds_in_rotated_file() {
     let mut writer = WalWriter::new(1, tmp.path(), 256).unwrap();
     for _ in 0..200 {
         let mut fill = make_fill(0);
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     drop(writer);

@@ -73,7 +73,10 @@ fn nak_wal_fallback_under_5ms() {
     .unwrap();
     for i in 1..=5_000u64 {
         let mut rec = fill(i);
-        writer.append(&mut rec).unwrap();
+        {
+            let framed = writer.prepare(&mut rec).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 

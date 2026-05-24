@@ -101,7 +101,10 @@ async fn tls_client_server_connection() {
         _pad1: [0; 4],
         taker_ts_ns: 0,
     };
-    wal.append(&mut fill).unwrap();
+    {
+        let framed = wal.prepare(&mut fill).unwrap();
+        wal.append_framed(&framed).unwrap();
+    }
     wal.flush().unwrap();
 
     let tip_file = tmp.path().join("tip");
@@ -201,7 +204,10 @@ async fn tls_disabled_falls_back_to_plain() {
         _pad1: [0; 4],
         taker_ts_ns: 0,
     };
-    wal.append(&mut fill).unwrap();
+    {
+        let framed = wal.prepare(&mut fill).unwrap();
+        wal.append_framed(&framed).unwrap();
+    }
     wal.flush().unwrap();
 
     let tip_file = tmp.path().join("tip");
