@@ -42,7 +42,6 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-const MAX_PAYLOAD: u16 = 65535;
 
 /// WalWriter: append-only WAL with buffered flush + rotation
 pub struct WalWriter {
@@ -114,13 +113,6 @@ impl WalWriter {
         record: &'a mut T,
     ) -> io::Result<Framed<'a>> {
         let payload_len = std::mem::size_of::<T>();
-        if payload_len > MAX_PAYLOAD as usize {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "payload exceeds 64KB",
-            ));
-        }
-
         let seq = self.next_seq;
         self.next_seq += 1;
         record.set_seq(seq);
