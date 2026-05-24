@@ -19,6 +19,8 @@ use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::wal_integration::flush_if_due;
 use rsx_matching::wal_integration::load_snapshot;
+use rsx_matching::wal_integration::load_wal_seq;
+use rsx_matching::wal_integration::replay_wal_after_snapshot;
 use rsx_matching::wal_integration::save_snapshot;
 use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_book::event::CANCEL_USER;
@@ -282,15 +284,65 @@ fn main() {
     // SAFETY: fail-fast at startup
     .expect("failed to create wal writer");
 
-    // Restore book state from snapshot if available
-    if let Some(loaded) = load_snapshot(&wal_dir, symbol_id) {
+    let mut dedup = DedupTracker::new();
+    let mut order_index: FxHashMap<OrderKey, u32> =
+        FxHashMap::default();
+
+    // Restore book state from snapshot if available.
+    // Recovery strategy (R-N1):
+    //   1. Load snapshot.bin into `book` (if present).
+    //   2. Read wal_seq.txt sidecar — the WAL seq at the
+    //      moment the snapshot was taken.
+    //   3. Replay WAL records seq > sidecar into the book by
+    //      re-executing OrderAccepted via process_new_order;
+    //      this regenerates fills + emitted events deterministically.
+    //   4. Bump wal_writer.next_seq so subsequent live writes
+    //      don't collide with replayed seqs already on disk.
+    let snapshot_loaded =
+        load_snapshot(&wal_dir, symbol_id);
+    let replay_from = if let Some(loaded) = snapshot_loaded {
         book = *loaded;
+        let sidecar = load_wal_seq(&wal_dir, symbol_id);
         info!(
-            "book restored from snapshot: seq={}",
-            book.sequence,
+            "book restored from snapshot: book.seq={} wal_seq_sidecar={:?}",
+            book.sequence, sidecar,
         );
+        // If sidecar missing (legacy snapshot), full WAL replay
+        // would duplicate the orders the snapshot already
+        // contains. Safer to skip replay; that re-introduces
+        // R-N1 for legacy snapshots only, which die after the
+        // first new save_snapshot anyway.
+        sidecar.map(|s| s + 1)
     } else {
-        info!("no snapshot found, starting with empty book");
+        info!(
+            "no snapshot found — replaying WAL from seq 1"
+        );
+        Some(1)
+    };
+    if let Some(start_seq) = replay_from {
+        match replay_wal_after_snapshot(
+            &mut book,
+            &mut order_index,
+            &mut dedup,
+            &wal_dir,
+            symbol_id,
+            start_seq,
+        ) {
+            Ok(last_seq) if last_seq >= start_seq => {
+                wal_writer.set_next_seq(last_seq + 1);
+            }
+            Ok(_) => {
+                // No records replayed — leave next_seq=1
+                // (writer is fresh).
+            }
+            Err(e) => {
+                warn!(
+                    "wal replay failed: {} — \
+                     continuing with snapshot-only state",
+                    e,
+                );
+            }
+        }
     }
 
     let mut last_flush = Instant::now();
@@ -400,11 +452,9 @@ fn main() {
         );
     }
 
-    let mut dedup = DedupTracker::new();
-    // (user_id, oid_hi, oid_lo) -> slab handle. Maintained
-    // from book.events() after every match cycle for O(1) cancel.
-    let mut order_index: FxHashMap<OrderKey, u32> =
-        FxHashMap::default();
+    // `dedup` + `order_index` are populated above by
+    // replay_wal_after_snapshot when applicable. After this
+    // point only the live event loop mutates them.
 
     // Graceful shutdown: SIGTERM/SIGINT flips the flag,
     // the main loop notices and drains the WAL writer
@@ -436,7 +486,10 @@ fn main() {
                 error!("shutdown wal flush failed: {e}");
             }
             if let Err(e) = save_snapshot(
-                &book, &wal_dir, symbol_id,
+                &book,
+                &wal_dir,
+                symbol_id,
+                wal_writer.last_seq(),
             ) {
                 warn!("shutdown snapshot save failed: {e}");
             }
@@ -722,7 +775,10 @@ fn main() {
         // Save snapshot every 10s
         if last_snapshot.elapsed().as_secs() >= 10 {
             if let Err(e) = save_snapshot(
-                &book, &wal_dir, symbol_id,
+                &book,
+                &wal_dir,
+                symbol_id,
+                wal_writer.last_seq(),
             ) {
                 warn!("snapshot save: {}", e);
             }
