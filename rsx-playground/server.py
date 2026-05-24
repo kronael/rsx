@@ -1015,10 +1015,14 @@ async def start_all(scenario="minimal"):
     if started:
         current_scenario = scenario
 
-    # wait for processes to stabilize, then auto-start maker + auth
+    # wait for processes to stabilize, then auto-start auth.
+    # Maker is NOT auto-started: it generates ~40 ord/s which
+    # outpaces the default UDP rmem (208 KB on stock kernels)
+    # and triggers cmp FAULTED + risk-panic-restart loops, which
+    # then masks every other demo failure mode. Operators start
+    # it manually from /controls when they want depth.
     if started:
         await asyncio.sleep(3.0)
-        await do_maker_start()
         # rsx-auth is optional — silently skips if not configured
         await do_auth_start()
         # restart md WS subscriber if it exhausted retries while
