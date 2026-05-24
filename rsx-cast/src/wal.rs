@@ -1,3 +1,19 @@
+//! WAL — the substrate shared by casting and replication.
+//!
+//! Append-only sequence of `WalHeader` + payload records,
+//! rotated into fixed-size segment files (default 64 MiB),
+//! hot-retained on disk (default 4 h) and optionally archived
+//! beyond that. The bytes on disk are identical to the bytes
+//! sent over UDP by `CastSender` and over TCP by
+//! `ReplicationService` — there is no serialization step.
+//!
+//! `WalWriter` owns the active segment; `WalReader` iterates
+//! either forward (replay) or random-access by seq
+//! (`read_record_at_seq`, used for cold-tier NAK retransmits).
+//! `oldest_and_highest_seq` and `list_wal_files_across` let
+//! the replication server / archive consumers reason about
+//! coverage across multiple WAL directories.
+
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;

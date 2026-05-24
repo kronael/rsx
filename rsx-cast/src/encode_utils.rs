@@ -1,3 +1,14 @@
+//! CRC + byte-conversion helpers shared across the cast and
+//! replication paths.
+//!
+//! `compute_crc32` is the single point where the CRC algorithm
+//! choice is encoded; see `notes/crc.md` for why CRC32 IEEE
+//! (via `crc32fast`) and not CRC32C.
+//!
+//! `as_bytes` and `encode_record` are thin glue used by the
+//! wire encoders. `decode_payload` is a generic helper for
+//! consumers writing their own typed decoders.
+
 use crate::header::WalHeader;
 use crc32fast::Hasher;
 use std::mem;
