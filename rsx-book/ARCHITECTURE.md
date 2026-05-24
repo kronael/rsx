@@ -127,8 +127,10 @@ When mid drifts >50% of zone 0 width, migrate to new array:
 
 ## Event Buffer and Fanout
 
-Fixed array `[Event; 10_000]` on Orderbook struct. Reset per
-cycle. Two independent CastSenders:
+Fixed array `[Event; MAX_EVENTS]` (MAX_EVENTS = 65_536,
+heap-boxed) on Orderbook struct. Reset per cycle. `Orderbook::emit`
+asserts on overflow per the spec invariant "ME never drops events".
+Two independent CastSenders:
 - ME -> Risk: fills, BBO, order done/failed
 - ME -> Marketdata: inserts, cancels, fills
 
@@ -138,7 +140,7 @@ cycle. Two independent CastSenders:
 Component          Sizing                      Memory
 Order slab         78M slots * 128B            ~10 GB
 Price levels (x2)  617K slots * 24B * 2        ~30 MB
-Event buffer       [Event; 10K] fixed          ~1.3 MB
+Event buffer       [Event; 65K] heap-boxed     ~8.4 MB
 Total per book                                 ~10 GB
 ```
 

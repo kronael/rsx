@@ -26,7 +26,7 @@ eviction sweeps.
 | `state.rs` | `MarketDataState`, connection registry, subscription manager wrapper, per-symbol seq tracking, snapshot dispatch |
 | `shadow.rs` | `ShadowBook` -- wraps `rsx_book::Orderbook` with order-id index for `apply_*_by_order_id` |
 | `subscription.rs` | `SubscriptionManager` -- per-client channels (BBO/depth/trades) + depth pref |
-| `protocol.rs` | JSON envelopes (`BBO`/`B`/`D`/`T`/`H`) + client frame parser (`S`/`X`/`H`) |
+| `records.rs` | JSON envelope serializers (`BBO`/`B`/`D`/`T`/`H`) + client frame parser (`S`/`X`/`H`) |
 | `handler.rs` | Per-connection: handshake, subscribe/unsubscribe/heartbeat, outbound drain |
 | `ws.rs` | WebSocket handshake (no auth) + frame I/O |
 | `types.rs` | `BboUpdate`, `L2Snapshot`, `L2Delta`, `L2Level`, `TradeEvent` |

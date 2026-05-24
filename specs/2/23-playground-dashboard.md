@@ -83,7 +83,7 @@ Base path: `/api`
 - `GET /risk/users/{user_id}`
 - `GET /wal/{stream}/status`
 - `GET /wal/{stream}/events`
-- `GET /cmp/flows`
+- `GET /x/cmp-flows` (casting pipe counts; endpoint name predates the cast rename)
 - `GET /metrics`
 - `GET /logs`
 - `GET /events`

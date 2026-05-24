@@ -93,8 +93,9 @@ and only warn on failure.
 
 ## Event Fanout
 
-Fixed array `[Event; 10_000]` on the orderbook struct, reset
-per match cycle. Two independent `CastSender`s:
+Fixed array `[Event; MAX_EVENTS]` (MAX_EVENTS = 65_536,
+heap-boxed) on the orderbook struct, reset per match cycle.
+Two independent `CastSender`s:
 
 - ME → Risk: fills, BBO, order done/failed (all events)
 - ME → Marketdata: inserts, cancels, fills

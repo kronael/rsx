@@ -21,7 +21,7 @@ specification of consistency model, durability bounds, and recovery guarantees.
 - [4. Positions & Risk](#4-positions--risk)
 - [5. Crash Behavior](#5-crash-behavior)
 - [6. Deferred](#6-deferred)
-- [Drain Loop Pseudocode (casting)](#drain-loop-pseudocode-cmp)
+- [Drain Loop Pseudocode (casting)](#drain-loop-pseudocode-casting)
 - [Key Invariants](#key-invariants)
 - [Verification](#verification)
 

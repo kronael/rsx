@@ -375,9 +375,11 @@ See `rsx-book/src/matching.rs` for `process_new_order`, `match_at_level`,
 
 ## 6. Event Types
 
-Fixed-size array on the Orderbook struct (`[Event; 10_000]`). `event_len = 0` resets
-per cycle — single store, no clear, no heap. `emit()` writes `event_buf[event_len]`
-and bumps `event_len`.
+Fixed-size array on the Orderbook struct (`Box<[Event; MAX_EVENTS]>`,
+`MAX_EVENTS = 65_536`). `event_len = 0` resets per cycle — single
+store, no clear, no heap. `emit()` writes `event_buf[event_len]`,
+bumps `event_len`, and asserts before overflow per the spec invariant
+"ME never drops events".
 
 Variants: `Fill`, `OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`.
 `OrderDone` signals the risk engine and user that an order no longer exists (fully
@@ -423,8 +425,8 @@ default — bump the `Orderbook::new` capacity argument to scale.)
 See bench results in `rsx-book/benches/`.
 
 Hot path is zero-allocation: slab provides all storage, the event buffer is a
-fixed `[Event; 10_000]` (`MAX_EVENTS`) reset by a single `event_len = 0`
-store, no Vec growth, no String formatting.
+heap-boxed fixed `[Event; MAX_EVENTS]` (`MAX_EVENTS = 65_536`) reset by a
+single `event_len = 0` store, no Vec growth, no String formatting.
 
 ---
 
