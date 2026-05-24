@@ -1,6 +1,6 @@
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -17,9 +17,9 @@ fn main() {
     let send_bind = pick_port();
     eprintln!("recv on {recv_addr}, send from {send_bind}");
 
-    let mut sender = CmpSender::with_config(
+    let mut sender = CastSender::with_config(
         recv_addr, 1, tmp.path(),
-        &rsx_cast::config::CmpConfig {
+        &rsx_cast::config::CastConfig {
             sender_bind_addr: Some(send_bind.to_string()),
             ..Default::default()
         },
@@ -27,7 +27,7 @@ fn main() {
     let actual_send_addr = sender.local_addr().unwrap();
     eprintln!("sender bound at {actual_send_addr}");
 
-    let mut receiver = CmpReceiver::new(recv_addr, actual_send_addr, 1).unwrap();
+    let mut receiver = CastReceiver::new(recv_addr, actual_send_addr, 1).unwrap();
     eprintln!("receiver created");
 
     let mut rec = FillRecord {
@@ -44,7 +44,7 @@ fn main() {
 
     // Try to recv with retries
     for i in 0..100 {
-        if let CmpRecv::Data(hdr, data) = receiver.try_recv() {
+        if let CastRecv::Data(hdr, data) = receiver.try_recv() {
             eprintln!("recv ok after {i} attempts: type={} len={}", hdr.record_type, data.len());
             return;
         }

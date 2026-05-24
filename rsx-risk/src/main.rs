@@ -1,7 +1,7 @@
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
-use rsx_cast::config::CmpConfig;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
+use rsx_cast::config::CastConfig;
 use std::collections::HashMap;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::BboRecord;
@@ -297,7 +297,7 @@ fn run_main(
             .ok()
             .and_then(|s| s.parse().ok());
     let mut tip_sender = replica_addr.map(|addr| {
-        CmpSender::new(
+        CastSender::new(
             addr,
             0,
             Path::new(&wal_dir),
@@ -386,7 +386,7 @@ fn run_main(
         return Err("no ME CMP addresses configured".into());
     }
 
-    let mut gw_receiver = CmpReceiver::new(
+    let mut gw_receiver = CastReceiver::new(
         risk_addr, gw_addr, 0,
     )
     // SAFETY: fail-fast at startup
@@ -404,7 +404,7 @@ fn run_main(
     // SAFETY: me_addrs.is_empty() checked above
     let first_me_addr = *me_addrs.values().next()
         .expect("INVARIANT: me_addrs non-empty (checked above)");
-    let mut me_receiver = CmpReceiver::new(
+    let mut me_receiver = CastReceiver::new(
         risk_me_recv_addr,
         first_me_addr,
         0,
@@ -429,7 +429,7 @@ fn run_main(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_MARK_CMP_ADDR");
-    let mut mark_receiver = CmpReceiver::new(
+    let mut mark_receiver = CastReceiver::new(
         mark_addr,
         mark_sender_addr,
         0,
@@ -438,17 +438,17 @@ fn run_main(
     .expect("failed to bind mark CMP receiver");
 
     // Send validated orders to ME.
-    // One CmpSender per ME, keyed by symbol_id.
+    // One CastSender per ME, keyed by symbol_id.
     let me_send_bind: Option<String> =
         env::var("RSX_RISK_ME_SEND_ADDR").ok();
-    let me_sender_cfg = CmpConfig {
+    let me_sender_cfg = CastConfig {
         sender_bind_addr: me_send_bind,
         ..Default::default()
     };
-    let mut me_senders: HashMap<u32, CmpSender> =
+    let mut me_senders: HashMap<u32, CastSender> =
         HashMap::new();
     for (&sid, &addr) in &me_addrs {
-        let sender = CmpSender::with_config(
+        let sender = CastSender::with_config(
             addr,
             0,
             Path::new(&wal_dir),
@@ -460,7 +460,7 @@ fn run_main(
     }
 
     // Send responses to Gateway
-    let mut gw_sender = CmpSender::new(
+    let mut gw_sender = CastSender::new(
         gw_addr,
         0,
         Path::new(&wal_dir),
@@ -510,9 +510,9 @@ fn run_main(
         // Orders/cancels from Gateway.
         loop {
             let (hdr, payload) = match gw_receiver.try_recv() {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => break,
-                CmpRecv::Faulted {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => break,
+                CastRecv::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -624,9 +624,9 @@ fn run_main(
         // Events from ME (fills, BBO, order lifecycle).
         loop {
             let (hdr, payload) = match me_receiver.try_recv() {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => break,
-                CmpRecv::Faulted {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => break,
+                CastRecv::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -925,9 +925,9 @@ fn run_main(
             let (preamble, payload) = match mark_receiver
                 .try_recv()
             {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => break,
-                CmpRecv::Faulted {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => break,
+                CastRecv::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -1282,7 +1282,7 @@ fn run_replica(
     // SAFETY: me_addrs.is_empty() checked above
     let first_me_addr =
         *me_addrs.values().next().expect("INVARIANT: me_addrs non-empty (checked above)");
-    let mut me_receiver = CmpReceiver::new(
+    let mut me_receiver = CastReceiver::new(
         // SAFETY: literal addr is always valid
         "127.0.0.1:0".parse().expect("valid addr"),
         first_me_addr,
@@ -1304,7 +1304,7 @@ fn run_replica(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CMP_ADDR");
-    let mut tip_receiver = CmpReceiver::new(
+    let mut tip_receiver = CastReceiver::new(
         replica_addr, main_addr, 0,
     )
     // SAFETY: fail-fast at startup
@@ -1334,9 +1334,9 @@ fn run_replica(
             let (preamble, payload) = match me_receiver
                 .try_recv()
             {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => break,
-                CmpRecv::Faulted {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => break,
+                CastRecv::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -1379,9 +1379,9 @@ fn run_replica(
             let (preamble, payload) = match tip_receiver
                 .try_recv()
             {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => break,
-                CmpRecv::Faulted {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => break,
+                CastRecv::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,

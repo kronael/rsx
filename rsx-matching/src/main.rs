@@ -1,8 +1,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::BboRecord;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
@@ -378,13 +378,13 @@ fn main() {
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
-    let mut cmp_receiver = CmpReceiver::new(
+    let mut cmp_receiver = CastReceiver::new(
         me_addr, risk_nak_addr, symbol_id,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind CMP receiver");
 
-    let mut cmp_sender = CmpSender::new(
+    let mut cmp_sender = CastSender::new(
         risk_me_recv_addr,
         symbol_id,
         &PathBuf::from(&wal_dir),
@@ -399,7 +399,7 @@ fn main() {
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_MD_CMP_ADDR");
-    let mut mkt_sender = CmpSender::new(
+    let mut mkt_sender = CastSender::new(
         mkt_addr,
         symbol_id,
         &PathBuf::from(&wal_dir),
@@ -504,7 +504,7 @@ fn main() {
         }
         // Receive orders/cancels via CMP/UDP from Risk
         let recv = cmp_receiver.try_recv();
-        if let CmpRecv::Faulted {
+        if let CastRecv::Faulted {
             last_delivered_seq,
             gap_start,
             gap_end_inclusive,
@@ -559,7 +559,7 @@ fn main() {
             );
             continue;
         }
-        if let CmpRecv::Data(hdr, payload) = recv {
+        if let CastRecv::Data(hdr, payload) = recv {
             if hdr.record_type == RECORD_ORDER_REQUEST
                 && payload.len()
                     >= std::mem::size_of::<
@@ -858,7 +858,7 @@ fn main() {
 }
 
 fn send_event_cmp(
-    sender: &mut CmpSender,
+    sender: &mut CastSender,
     event: &rsx_book::event::Event,
     symbol_id: u32,
     ts_ns: u64,
@@ -1024,8 +1024,8 @@ fn send_event_cmp(
 
 fn emit_config_applied(
     wal: &mut WalWriter,
-    risk_sender: &mut CmpSender,
-    mkt_sender: &mut CmpSender,
+    risk_sender: &mut CastSender,
+    mkt_sender: &mut CastSender,
     symbol_id: u32,
     config_version: u64,
     effective_at_ms: u64,
@@ -1065,8 +1065,8 @@ fn emit_config_applied(
 fn process_cancel(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
-    cmp_sender: &mut CmpSender,
-    mkt_sender: &mut CmpSender,
+    cmp_sender: &mut CastSender,
+    mkt_sender: &mut CastSender,
     order_index: &FxHashMap<OrderKey, u32>,
     symbol_id: u32,
     user_id: u32,
@@ -1186,7 +1186,7 @@ fn process_cancel(
 /// Send events to Marketdata -- Fill, OrderInserted,
 /// OrderCancelled only. OrderDone excluded per MD20.
 fn send_event_marketdata(
-    sender: &mut CmpSender,
+    sender: &mut CastSender,
     event: &rsx_book::event::Event,
     symbol_id: u32,
     ts_ns: u64,

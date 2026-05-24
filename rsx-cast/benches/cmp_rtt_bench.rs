@@ -15,7 +15,7 @@
 //! on either side; heartbeat/status cost is not on the per-
 //! packet critical path.
 //!
-//! Each side runs a fresh CmpSender + CmpReceiver pair:
+//! Each side runs a fresh CastSender + CastReceiver pair:
 //!   A.sender → B.receiver
 //!   B.sender → A.receiver
 //!
@@ -31,7 +31,7 @@
 //!   immediately. No additional work between recv and send
 //!   (no risk validation, no WAL append).
 //! - We initialize two distinct WAL dirs (one per sender)
-//!   so the two CmpSenders don't share `wal_dir` and accidentally
+//!   so the two CastSenders don't share `wal_dir` and accidentally
 //!   alias their NAK-fallback paths.
 
 use core_affinity::CoreId;
@@ -39,8 +39,8 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -101,36 +101,36 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     let b_recv_bind = ephemeral_addr();
 
     // A.sender -> B.receiver
-    let mut a_sender = CmpSender::with_config(
+    let mut a_sender = CastSender::with_config(
         b_recv_bind,
         1,
         tmp_a.path(),
-        &rsx_cast::config::CmpConfig {
+        &rsx_cast::config::CastConfig {
             sender_bind_addr: Some(a_send_bind.to_string()),
-            ..rsx_cast::config::CmpConfig::default()
+            ..rsx_cast::config::CastConfig::default()
         },
     )
     .unwrap();
 
     // A.receiver expects traffic from B.sender
     let mut a_receiver =
-        CmpReceiver::new(a_recv_bind, b_send_bind, 1).unwrap();
+        CastReceiver::new(a_recv_bind, b_send_bind, 1).unwrap();
 
     // B.sender -> A.receiver
-    let mut b_sender = CmpSender::with_config(
+    let mut b_sender = CastSender::with_config(
         a_recv_bind,
         2,
         tmp_b.path(),
-        &rsx_cast::config::CmpConfig {
+        &rsx_cast::config::CastConfig {
             sender_bind_addr: Some(b_send_bind.to_string()),
-            ..rsx_cast::config::CmpConfig::default()
+            ..rsx_cast::config::CastConfig::default()
         },
     )
     .unwrap();
 
     // B.receiver expects traffic from A.sender
     let mut b_receiver =
-        CmpReceiver::new(b_recv_bind, a_send_bind, 2).unwrap();
+        CastReceiver::new(b_recv_bind, a_send_bind, 2).unwrap();
 
     // B-side echo thread: try_recv → b_sender.send back.
     let stop = Arc::new(AtomicBool::new(false));

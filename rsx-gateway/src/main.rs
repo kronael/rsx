@@ -1,6 +1,6 @@
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
@@ -96,7 +96,7 @@ fn main() {
         .unwrap_or_else(|_| "./tmp/wal".into());
 
     // CMP/UDP: send orders to Risk
-    let cmp_sender = CmpSender::new(
+    let cmp_sender = CastSender::new(
         risk_addr,
         0,
         &PathBuf::from(&wal_dir),
@@ -105,7 +105,7 @@ fn main() {
     .expect("failed to create CMP sender");
 
     // CMP/UDP: receive responses from Risk
-    let mut cmp_receiver = CmpReceiver::new(
+    let mut cmp_receiver = CastReceiver::new(
         gw_addr, risk_addr, 0,
     )
     // SAFETY: fail-fast at startup
@@ -196,9 +196,9 @@ fn main() {
                 let (hdr, payload) = match cmp_receiver
                     .try_recv()
                 {
-                    CmpRecv::Data(h, p) => (h, p),
-                    CmpRecv::Empty => break,
-                    CmpRecv::Faulted {
+                    CastRecv::Data(h, p) => (h, p),
+                    CastRecv::Empty => break,
+                    CastRecv::Faulted {
                         last_delivered_seq,
                         gap_start,
                         gap_end_inclusive,

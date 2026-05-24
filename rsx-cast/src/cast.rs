@@ -1,9 +1,9 @@
-use crate::config::CmpConfig;
+use crate::config::CastConfig;
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::protocol::CmpHeartbeat;
-use crate::protocol::CmpRecord;
+use crate::protocol::CastHeartbeat;
+use crate::protocol::CastRecord;
 use crate::protocol::Nak;
 use crate::protocol::RECORD_HEARTBEAT;
 use crate::protocol::RECORD_NAK;
@@ -116,7 +116,7 @@ fn frame_and_send(
     Ok(total)
 }
 
-pub struct CmpSender {
+pub struct CastSender {
     socket: UdpSocket,
     dest: SocketAddr,
     next_seq: u64,
@@ -161,7 +161,7 @@ pub struct CmpSender {
     buf: [u8; PACKET_BUF_SIZE],
 }
 
-impl CmpSender {
+impl CastSender {
     pub fn new(
         dest: SocketAddr,
         stream_id: u32,
@@ -171,7 +171,7 @@ impl CmpSender {
             dest,
             stream_id,
             wal_dir,
-            &CmpConfig::default(),
+            &CastConfig::default(),
         )
     }
 
@@ -179,7 +179,7 @@ impl CmpSender {
         dest: SocketAddr,
         stream_id: u32,
         wal_dir: &std::path::Path,
-        config: &CmpConfig,
+        config: &CastConfig,
     ) -> io::Result<Self> {
         let bind_str = config
             .sender_bind_addr
@@ -226,7 +226,7 @@ impl CmpSender {
     }
 
     /// Send a typed CMP record. Assigns seq via
-    /// CmpRecord::set_seq.
+    /// CastRecord::set_seq.
     ///
     /// No flow control: CMP has no backpressure. If the
     /// receiver can't keep up, recovery is via NAK (small
@@ -238,7 +238,7 @@ impl CmpSender {
     /// preallocated; the only call sites that touch the
     /// allocator are construction and NAK fallback (cold
     /// path via `read_record_at_seq`).
-    pub fn send<T: CmpRecord>(
+    pub fn send<T: CastRecord>(
         &mut self,
         record: &mut T,
     ) -> io::Result<()> {
@@ -289,7 +289,7 @@ impl CmpSender {
         if now.duration_since(self.last_heartbeat)
             >= self.heartbeat_interval
         {
-            let hb = CmpHeartbeat {
+            let hb = CastHeartbeat {
                 highest_seq: self.next_seq
                     .saturating_sub(1),
                 _pad1: [0u8; 56],
@@ -466,7 +466,7 @@ impl CmpSender {
     }
 
     /// Send raw bytes with explicit record_type.
-    /// Does NOT assign seq (for non-CmpRecord payloads).
+    /// Does NOT assign seq (for non-CastRecord payloads).
     pub fn send_raw(
         &mut self,
         record_type: u16,
@@ -505,10 +505,10 @@ impl CmpSender {
 ///
 /// `Faulted` is sticky: once returned, `try_recv` keeps
 /// returning `Empty` (or `Faulted` again on a fresh call)
-/// until `CmpReceiver::reset_after_replay` is called with
+/// until `CastReceiver::reset_after_replay` is called with
 /// the new live tip.
 #[derive(Debug)]
-pub enum CmpRecv {
+pub enum CastRecv {
     /// No data ready right now (would-block or queue empty).
     Empty,
     /// Next in-order record with its parsed header.
@@ -523,7 +523,7 @@ pub enum CmpRecv {
     },
 }
 
-pub struct CmpReceiver {
+pub struct CastReceiver {
     socket: UdpSocket,
     sender_addr: SocketAddr,
     /// Throttle: time of last "dropped" warning (e.g. on
@@ -564,7 +564,7 @@ pub struct CmpReceiver {
     buf: [u8; PACKET_BUF_SIZE],
 }
 
-impl CmpReceiver {
+impl CastReceiver {
     pub fn new(
         bind_addr: SocketAddr,
         sender_addr: SocketAddr,
@@ -574,7 +574,7 @@ impl CmpReceiver {
             bind_addr,
             sender_addr,
             _stream_id,
-            &CmpConfig::default(),
+            &CastConfig::default(),
         )
     }
 
@@ -582,7 +582,7 @@ impl CmpReceiver {
         bind_addr: SocketAddr,
         sender_addr: SocketAddr,
         _stream_id: u32,
-        config: &CmpConfig,
+        config: &CastConfig,
     ) -> io::Result<Self> {
         let socket = bind_udp_reuse(bind_addr)?;
         Ok(Self {
@@ -664,7 +664,7 @@ impl CmpReceiver {
 
     /// Transition the receiver to FAULTED. Sticky: stays
     /// here until reset_after_replay() is called. Subsequent
-    /// `try_recv` returns `CmpRecv::Faulted`.
+    /// `try_recv` returns `CastRecv::Faulted`.
     fn fault(
         &mut self,
         gap_start: u64,
@@ -726,14 +726,14 @@ impl CmpReceiver {
     /// NB: this allocates a `Vec<u8>` for the payload on every
     /// in-order delivery — the receive path is NOT zero-heap.
     /// The zero-heap claim in the project docs applies to
-    /// `CmpSender::send` only. A zero-copy receive variant
+    /// `CastSender::send` only. A zero-copy receive variant
     /// (caller-supplied `&mut [u8]`) is tracked as future work;
     /// since all current consumers (risk, marketdata) do
     /// further work proportional to the payload, the per-packet
     /// alloc is not on the measured GW→ME→GW critical path.
-    pub fn try_recv(&mut self) -> CmpRecv {
+    pub fn try_recv(&mut self) -> CastRecv {
         if self.faulted {
-            return CmpRecv::Faulted {
+            return CastRecv::Faulted {
                 last_delivered_seq: self
                     .fault_last_delivered_seq,
                 gap_start: self.fault_gap_start,
@@ -792,13 +792,13 @@ impl CmpReceiver {
                         RECORD_HEARTBEAT => {
                             if payload_len
                                 >= std::mem::size_of::<
-                                    CmpHeartbeat,
+                                    CastHeartbeat,
                                 >()
                             {
                                 let hb = unsafe {
                                     std::ptr::read_unaligned(
                                         payload.as_ptr()
-                                            as *const CmpHeartbeat,
+                                            as *const CastHeartbeat,
                                     )
                                 };
                                 if hb.highest_seq
@@ -823,7 +823,7 @@ impl CmpReceiver {
                     }
 
                     // Extract seq from payload
-                    // (CmpRecord convention: first 8 bytes)
+                    // (CastRecord convention: first 8 bytes)
                     let seq = match extract_seq(payload) {
                         Some(s) => s,
                         None => continue,
@@ -871,7 +871,7 @@ impl CmpReceiver {
                         // the in-flight NAK retry budget.
                         self.nak_retries_on_oldest = 0;
                         let data = payload.to_vec();
-                        return CmpRecv::Data(hdr, data);
+                        return CastRecv::Data(hdr, data);
                     } else {
                         // Gap. Stage the out-of-order packet
                         // in the reorder ring (full framed
@@ -917,7 +917,7 @@ impl CmpReceiver {
                                 self.expected_seq,
                                 seq.saturating_sub(1),
                             );
-                            return CmpRecv::Faulted {
+                            return CastRecv::Faulted {
                                 last_delivered_seq: self
                                     .fault_last_delivered_seq,
                                 gap_start: self
@@ -933,7 +933,7 @@ impl CmpReceiver {
                             as u64;
                         self.maybe_nak(now_ns);
                         if self.faulted {
-                            return CmpRecv::Faulted {
+                            return CastRecv::Faulted {
                                 last_delivered_seq: self
                                     .fault_last_delivered_seq,
                                 gap_start: self
@@ -956,9 +956,9 @@ impl CmpReceiver {
         }
         match self.try_drain_reorder() {
             Some((hdr, payload)) => {
-                CmpRecv::Data(hdr, payload)
+                CastRecv::Data(hdr, payload)
             }
-            None => CmpRecv::Empty,
+            None => CastRecv::Empty,
         }
     }
 

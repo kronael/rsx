@@ -18,7 +18,7 @@ use crate::ws::ws_read_frame_buf;
 use crate::ws::ws_write_frame;
 use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastSender;
 use rsx_messages::CancelRequest;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
@@ -35,7 +35,7 @@ pub async fn handle_connection(
     mut stream: TcpStream,
     peer: SocketAddr,
     state: Rc<RefCell<GatewayState>>,
-    cmp_sender: Rc<RefCell<CmpSender>>,
+    cmp_sender: Rc<RefCell<CastSender>>,
     jwt_secret: &str,
     heartbeat_interval_ms: u64,
     heartbeat_timeout_ms: u64,
@@ -690,7 +690,7 @@ fn build_cancel(
 }
 
 fn send_cancel(
-    cmp_sender: &Rc<RefCell<CmpSender>>,
+    cmp_sender: &Rc<RefCell<CastSender>>,
     cancel: &mut CancelRequest,
 ) {
     let mut sender = cmp_sender.borrow_mut();

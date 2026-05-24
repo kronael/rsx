@@ -1,6 +1,6 @@
 use rsx_messages::*;
 use rsx_cast::CaughtUpRecord;
-use rsx_cast::CmpRecord;
+use rsx_cast::CastRecord;
 use rsx_cast::WalHeader;
 use rsx_cast::compute_crc32;
 use rsx_cast::encode_record;

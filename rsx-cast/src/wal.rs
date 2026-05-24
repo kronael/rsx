@@ -1,7 +1,7 @@
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::protocol::CmpRecord;
+use crate::protocol::CastRecord;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -91,9 +91,9 @@ impl WalWriter {
     }
 
     /// Append typed CMP record to in-memory buffer.
-    /// Assigns seq via CmpRecord::set_seq. No I/O. O(1).
+    /// Assigns seq via CastRecord::set_seq. No I/O. O(1).
     /// Returns assigned seq.
-    pub fn append<T: CmpRecord>(
+    pub fn append<T: CastRecord>(
         &mut self,
         record: &mut T,
     ) -> io::Result<u64> {
@@ -576,7 +576,7 @@ fn list_wal_files(
 }
 
 /// Extract seq from first 8 bytes of payload
-/// (CmpRecord convention: seq at offset 0).
+/// (CastRecord convention: seq at offset 0).
 pub fn extract_seq(payload: &[u8]) -> Option<u64> {
     if payload.len() < 8 {
         return None;

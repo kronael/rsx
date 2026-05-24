@@ -6,12 +6,12 @@
 //!
 //!   Gateway (main thread)         ME (worker thread)
 //!   ----------------------        --------------------
-//!   CmpSender ─→ UDP loopback ─→  CmpReceiver
+//!   CastSender ─→ UDP loopback ─→  CastReceiver
 //!                                 dedup
 //!                                 WAL append (OrderAccepted)
 //!                                 process_new_order
 //!                                 write_events_to_wal
-//!                                 CmpSender ─→ UDP loopback ─→  CmpReceiver
+//!                                 CastSender ─→ UDP loopback ─→  CastReceiver
 //!
 //! Per-iteration we record 9 timestamps and produce a per-stage
 //! latency distribution. Risk validation, gateway WS framing,
@@ -30,10 +30,10 @@ use clap::Parser;
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
-use rsx_cast::protocol::CmpRecord;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
+use rsx_cast::protocol::CastRecord;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal_integration::write_events_to_wal;
@@ -47,15 +47,15 @@ use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
 
 /// Thin newtype that lets a raw `OrderMessage` ride the
-/// CmpSender path. Same memory layout — `repr(C)` —
-/// and `CmpRecord` lets CMP set the seq.
+/// CastSender path. Same memory layout — `repr(C)` —
+/// and `CastRecord` lets CMP set the seq.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct OrderRequestWire {
     inner: OrderMessage,
 }
 
-impl CmpRecord for OrderRequestWire {
+impl CastRecord for OrderRequestWire {
     fn seq(&self) -> u64 {
         self.inner.seq
     }
@@ -79,13 +79,13 @@ const MID_PRICE: i64 = 100_000;
 /// Stages, in order. `t[i+1] - t[i]` is the cost of the leg
 /// labelled by stage names below.
 const STAGE_NAMES: &[&str] = &[
-    "gw_send",       // 0 → 1: gateway-side CmpSender::send
+    "gw_send",       // 0 → 1: gateway-side CastSender::send
     "udp_to_me",     // 1 → 2: UDP loopback + ME try_recv body
     "me_dedup",      // 2 → 3: dedup hashmap check + insert
     "me_wal_accept", // 3 → 4: OrderAccepted WAL append
     "me_match",      // 4 → 5: process_new_order
     "me_wal_events", // 5 → 6: write_events_to_wal
-    "me_send",       // 6 → 7: ME-side CmpSender::send (fill)
+    "me_send",       // 6 → 7: ME-side CastSender::send (fill)
     "udp_to_gw",     // 7 → 8: UDP loopback + gw try_recv body
 ];
 
@@ -130,7 +130,7 @@ fn main() {
     let args = Args::parse();
     let total = args.n + args.warmup;
 
-    // Two WAL dirs, one per CmpSender (ME and gateway each
+    // Two WAL dirs, one per CastSender (ME and gateway each
     // keep their own NAK retransmit cache). Plain tmp dirs;
     // they leak after the bench exits — that's fine.
     let tmp_me = std::path::PathBuf::from("./tmp/bench_match_rt_me");
@@ -140,8 +140,8 @@ fn main() {
     std::fs::create_dir_all(&tmp_me).unwrap();
     std::fs::create_dir_all(&tmp_gw).unwrap();
 
-    // Four distinct UDP ports — one per socket. CmpSender
-    // and CmpReceiver each own their own port; otherwise
+    // Four distinct UDP ports — one per socket. CastSender
+    // and CastReceiver each own their own port; otherwise
     // SO_REUSEPORT lets the kernel hash-distribute incoming
     // packets between them and replies vanish.
     let gw_send_bind = pick_port();
@@ -150,11 +150,11 @@ fn main() {
     let me_recv_bind = pick_port();
 
     // gw_sender → me_recv_bind
-    let mut gw_sender = CmpSender::with_config(
+    let mut gw_sender = CastSender::with_config(
         me_recv_bind,
         1,
         tmp_gw.as_path(),
-        &rsx_cast::config::CmpConfig {
+        &rsx_cast::config::CastConfig {
             sender_bind_addr: Some(gw_send_bind.to_string()),
             ..Default::default()
         },
@@ -163,14 +163,14 @@ fn main() {
     // gw_receiver listens on gw_recv_bind; sender_addr is
     // where it'd send NAKs (back at me_sender).
     let mut gw_receiver =
-        CmpReceiver::new(gw_recv_bind, me_send_bind, 1).unwrap();
+        CastReceiver::new(gw_recv_bind, me_send_bind, 1).unwrap();
 
     // me_sender → gw_recv_bind
-    let mut me_sender = CmpSender::with_config(
+    let mut me_sender = CastSender::with_config(
         gw_recv_bind,
         2,
         tmp_me.as_path(),
-        &rsx_cast::config::CmpConfig {
+        &rsx_cast::config::CastConfig {
             sender_bind_addr: Some(me_send_bind.to_string()),
             ..Default::default()
         },
@@ -179,7 +179,7 @@ fn main() {
     // me_receiver listens on me_recv_bind; sender_addr is
     // where it'd send NAKs (back at gw_sender).
     let mut me_receiver =
-        CmpReceiver::new(me_recv_bind, gw_send_bind, 2).unwrap();
+        CastReceiver::new(me_recv_bind, gw_send_bind, 2).unwrap();
 
     // Pre-populate the orderbook with N+warmup ask orders so
     // every gateway order has a maker to fill against. One
@@ -213,12 +213,12 @@ fn main() {
             }
 
             let (hdr, payload) = match me_receiver.try_recv() {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => {
                     std::hint::spin_loop();
                     continue;
                 }
-                CmpRecv::Faulted { .. } => {
+                CastRecv::Faulted { .. } => {
                     // Bench harness: faulted cmp aborts the run.
                     return;
                 }
@@ -230,7 +230,7 @@ fn main() {
                 return;
             }
             // SAFETY: we control both ends; wire format is
-            // known + already CRC-checked by CmpReceiver.
+            // known + already CRC-checked by CastReceiver.
             let order_msg = unsafe {
                 std::ptr::read_unaligned(
                     payload.as_ptr() as *const OrderMessage,
@@ -379,8 +379,8 @@ fn main() {
         let mut wait_tick: u64 = 0;
         loop {
             let (hdr, payload) = match gw_receiver.try_recv() {
-                CmpRecv::Data(h, p) => (h, p),
-                CmpRecv::Empty => {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => {
                     wait_tick = wait_tick.wrapping_add(1);
                     if wait_tick & 0x3FF == 0 {
                         gw_receiver.tick();
@@ -396,7 +396,7 @@ fn main() {
                     std::hint::spin_loop();
                     continue;
                 }
-                CmpRecv::Faulted { .. } => {
+                CastRecv::Faulted { .. } => {
                     timed_out = true;
                     break;
                 }

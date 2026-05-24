@@ -2,13 +2,13 @@
 //! FAULTED + sender-side retransmit dedup. See
 //! `.ship/26-CMP-RELIABILITY-V4/SPEC.md`.
 
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
-use rsx_cast::config::CmpConfig;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
+use rsx_cast::config::CastConfig;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
-use rsx_cast::protocol::CmpHeartbeat;
+use rsx_cast::protocol::CastHeartbeat;
 use rsx_cast::protocol::Nak;
 use rsx_cast::protocol::RECORD_HEARTBEAT;
 use rsx_cast::protocol::RECORD_NAK;
@@ -58,13 +58,13 @@ fn as_bytes<T>(val: &T) -> &[u8] {
 /// without timing flakiness.
 fn loopback_with(
     wal_dir: &std::path::Path,
-    config: CmpConfig,
-) -> (CmpSender, CmpReceiver) {
+    config: CastConfig,
+) -> (CastSender, CastReceiver) {
     let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
 
-    let sender = CmpSender::with_config(
+    let sender = CastSender::with_config(
         recv_addr,
         1,
         wal_dir,
@@ -72,7 +72,7 @@ fn loopback_with(
     )
     .unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let receiver = CmpReceiver::with_config(
+    let receiver = CastReceiver::with_config(
         recv_addr,
         sender_addr,
         1,
@@ -162,9 +162,9 @@ fn count_retransmits_for_seq(
 #[test]
 fn nak_recovers_single_packet() {
     let tmp = TempDir::new().unwrap();
-    let cfg = CmpConfig {
+    let cfg = CastConfig {
         nak_retry_us: 50,
-        ..CmpConfig::default()
+        ..CastConfig::default()
     };
     let (mut sender, mut receiver) =
         loopback_with(tmp.path(), cfg);
@@ -174,7 +174,7 @@ fn nak_recovers_single_packet() {
     sender.send(&mut f1).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
-    assert!(matches!(r, CmpRecv::Data(_, _)));
+    assert!(matches!(r, CastRecv::Data(_, _)));
 
     // Send seq=2 then "lose" it: actually we send seq=3
     // directly which simulates seq=2 being dropped in
@@ -197,7 +197,7 @@ fn nak_recovers_single_packet() {
     let mut got = Vec::new();
     loop {
         match receiver.try_recv() {
-            CmpRecv::Data(_, p) => {
+            CastRecv::Data(_, p) => {
                 let rec = unsafe {
                     std::ptr::read_unaligned(
                         p.as_ptr() as *const FillRecord,
@@ -207,8 +207,8 @@ fn nak_recovers_single_packet() {
                 sender.recv_control();
                 thread::sleep(Duration::from_millis(2));
             }
-            CmpRecv::Empty => break,
-            CmpRecv::Faulted { .. } => {
+            CastRecv::Empty => break,
+            CastRecv::Faulted { .. } => {
                 panic!("unexpected fault")
             }
         }
@@ -232,14 +232,14 @@ fn nak_recovers_single_packet() {
 fn oldest_missing_run_naks_sequentially() {
     let tmp = TempDir::new().unwrap();
     let (mut sender, mut receiver) =
-        loopback_with(tmp.path(), CmpConfig::default());
+        loopback_with(tmp.path(), CastConfig::default());
 
     // Send seq=1 (delivered, sets expected_seq=2).
     let mut f1 = fill(1);
     sender.send(&mut f1).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
-    assert!(matches!(r, CmpRecv::Data(_, _)));
+    assert!(matches!(r, CastRecv::Data(_, _)));
 
     // Now stage two gaps in the ring via direct
     // out-of-order arrival. Inject seq=5 and seq=8 from
@@ -273,7 +273,7 @@ fn oldest_missing_run_naks_sequentially() {
 /// Returns (receiver, recv_addr, probe_socket). The probe
 /// is a generic UDP socket the test uses to inject framed
 /// records — the receiver does not filter source addrs.
-fn receiver_only() -> (CmpReceiver, std::net::SocketAddr, UdpSocket) {
+fn receiver_only() -> (CastReceiver, std::net::SocketAddr, UdpSocket) {
     let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
@@ -283,7 +283,7 @@ fn receiver_only() -> (CmpReceiver, std::net::SocketAddr, UdpSocket) {
     // observe outgoing NAKs.
     let sender_addr = probe.local_addr().unwrap();
     let receiver =
-        CmpReceiver::new(recv_addr, sender_addr, 1).unwrap();
+        CastReceiver::new(recv_addr, sender_addr, 1).unwrap();
     (receiver, recv_addr, probe)
 }
 
@@ -323,13 +323,13 @@ fn ring_overflow_faults() {
     thread::sleep(Duration::from_millis(10));
     // Drain in-order seq=1.
     let r = receiver.try_recv();
-    assert!(matches!(r, CmpRecv::Data(_, _)), "{r:?}");
+    assert!(matches!(r, CastRecv::Data(_, _)), "{r:?}");
 
     send_fill_at(&probe, recv_addr, 2050);
     thread::sleep(Duration::from_millis(10));
     let r = receiver.try_recv();
     assert!(
-        matches!(r, CmpRecv::Empty | CmpRecv::Data(_, _)),
+        matches!(r, CastRecv::Empty | CastRecv::Data(_, _)),
         "{r:?}"
     );
 
@@ -337,7 +337,7 @@ fn ring_overflow_faults() {
     thread::sleep(Duration::from_millis(10));
     let r = receiver.try_recv();
     match r {
-        CmpRecv::Faulted { .. } => {
+        CastRecv::Faulted { .. } => {
             // Expected.
         }
         other => panic!(
@@ -362,7 +362,7 @@ fn faulted_state_blocks_further_recv() {
     thread::sleep(Duration::from_millis(10));
     assert!(matches!(
         receiver.try_recv(),
-        CmpRecv::Faulted { .. }
+        CastRecv::Faulted { .. }
     ));
 
     // Subsequent calls keep returning Faulted, even
@@ -371,7 +371,7 @@ fn faulted_state_blocks_further_recv() {
     thread::sleep(Duration::from_millis(10));
     assert!(matches!(
         receiver.try_recv(),
-        CmpRecv::Faulted { .. }
+        CastRecv::Faulted { .. }
     ));
     assert!(receiver.is_faulted());
 }
@@ -391,7 +391,7 @@ fn reset_after_replay_clears_fault() {
     thread::sleep(Duration::from_millis(10));
     assert!(matches!(
         receiver.try_recv(),
-        CmpRecv::Faulted { .. }
+        CastRecv::Faulted { .. }
     ));
 
     // Simulate consumer doing a DXS replay up through
@@ -403,7 +403,7 @@ fn reset_after_replay_clears_fault() {
     thread::sleep(Duration::from_millis(10));
     let r = receiver.try_recv();
     match r {
-        CmpRecv::Data(_, p) => {
+        CastRecv::Data(_, p) => {
             let rec = unsafe {
                 std::ptr::read_unaligned(
                     p.as_ptr() as *const FillRecord,
@@ -443,11 +443,11 @@ fn handle_nak_dedups_within_window() {
     writer.append(&mut f_wal).unwrap();
     writer.flush().unwrap();
 
-    let cfg = CmpConfig {
+    let cfg = CastConfig {
         retx_dedup_window_us: 50_000, // 50 ms
-        ..CmpConfig::default()
+        ..CastConfig::default()
     };
-    let mut sender = CmpSender::with_config(
+    let mut sender = CastSender::with_config(
         listener_addr,
         stream_id,
         tmp.path(),
@@ -520,9 +520,9 @@ fn heartbeat_triggers_nak_on_idle_gap() {
     // Drain the in-order delivery.
     loop {
         match receiver.try_recv() {
-            CmpRecv::Empty => break,
-            CmpRecv::Data(_, _) => continue,
-            CmpRecv::Faulted { .. } => {
+            CastRecv::Empty => break,
+            CastRecv::Data(_, _) => continue,
+            CastRecv::Faulted { .. } => {
                 panic!("unexpected fault")
             }
         }
@@ -531,7 +531,7 @@ fn heartbeat_triggers_nak_on_idle_gap() {
     // Inject a heartbeat claiming highest_seq=5. The
     // receiver should detect the [2..5] gap and fire a
     // NAK via maybe_nak.
-    let hb = CmpHeartbeat {
+    let hb = CastHeartbeat {
         highest_seq: 5,
         _pad1: [0u8; 56],
     };
@@ -588,10 +588,10 @@ fn drain_reorder_resets_nak_retries() {
     // still recoverable. Then close the gap with the
     // missing seq and confirm we keep going.
     let tmp = TempDir::new().unwrap();
-    let cfg = CmpConfig {
+    let cfg = CastConfig {
         nak_retry_us: 100,
         max_nak_retries: 4,
-        ..CmpConfig::default()
+        ..CastConfig::default()
     };
     let (mut sender, mut receiver) =
         loopback_with(tmp.path(), cfg);
@@ -607,7 +607,7 @@ fn drain_reorder_resets_nak_retries() {
     sender.send(&mut f2).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
-    assert!(matches!(r, CmpRecv::Data(_, _)));
+    assert!(matches!(r, CastRecv::Data(_, _)));
 
     // Send a normal in-order seq=3 with the sender's
     // built-in retransmit machinery: we don't actually
@@ -619,6 +619,6 @@ fn drain_reorder_resets_nak_retries() {
     sender.send(&mut f3).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
-    assert!(matches!(r, CmpRecv::Data(_, _)));
+    assert!(matches!(r, CastRecv::Data(_, _)));
     assert!(!receiver.is_faulted());
 }

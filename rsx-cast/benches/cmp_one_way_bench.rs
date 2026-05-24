@@ -1,8 +1,8 @@
-//! CMP one-way latency: `CmpSender::send` → `CmpReceiver::try_recv`.
+//! CMP one-way latency: `CastSender::send` → `CastReceiver::try_recv`.
 //!
 //! What this measures
 //! -----------------
-//! `CmpSender::send` returns to `CmpReceiver::try_recv` returns
+//! `CastSender::send` returns to `CastReceiver::try_recv` returns
 //! the same record. Single direction, one CMP hop, in-order,
 //! no NAK. Both sides on 127.0.0.1, both threads spinning
 //! cache-hot.
@@ -32,16 +32,16 @@
 //! - Both sides on the same host: real net adds NIC IRQ +
 //!   driver tx/rx + (sometimes) interrupt-coalescing delay.
 //! - The receiver allocates a `Vec<u8>` per in-order delivery
-//!   (CmpReceiver::try_recv is NOT zero-heap on recv; the
-//!   zero-heap claim applies to CmpSender::send only).
+//!   (CastReceiver::try_recv is NOT zero-heap on recv; the
+//!   zero-heap claim applies to CastSender::send only).
 
 use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_cast::cmp::CmpReceiver;
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -97,11 +97,11 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     let send_bind = ephemeral_addr();
     let recv_bind = ephemeral_addr();
 
-    let mut sender = CmpSender::with_config(
+    let mut sender = CastSender::with_config(
         recv_bind,
         1,
         tmp.path(),
-        &rsx_cast::config::CmpConfig {
+        &rsx_cast::config::CastConfig {
             sender_bind_addr: Some(send_bind.to_string()),
             ..Default::default()
         },
@@ -109,7 +109,7 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     .unwrap();
     let sender_addr = sender.local_addr().unwrap();
     let mut receiver =
-        CmpReceiver::new(recv_bind, sender_addr, 1).unwrap();
+        CastReceiver::new(recv_bind, sender_addr, 1).unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let recv_count = Arc::new(AtomicU64::new(0));

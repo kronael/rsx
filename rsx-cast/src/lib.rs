@@ -1,5 +1,5 @@
-//! Log-backed reliable UDP transport (CMP) + TCP cold-path
-//! replay (DXS).
+//! Log-backed reliable UDP transport (casting) + TCP cold-path
+//! replication.
 //!
 //! Wire bytes = disk bytes = stream bytes. No serialization
 //! step. NAK retransmits read from the WAL itself, so the
@@ -8,21 +8,21 @@
 //! Transport-only; domain wire records live in `rsx-messages`
 //! (or any consumer-defined crate). The transport accepts any
 //! 16-byte-header + repr(C) payload that implements
-//! [`CmpRecord`].
+//! [`CastRecord`].
 
 pub mod header;
 pub mod protocol;
 pub mod encode_utils;
 pub mod wal;
-pub mod cmp;
+pub mod cast;
 pub mod server;
 pub mod client;
 pub mod config;
 pub mod tls;
 
 pub use header::WalHeader;
-pub use protocol::CmpHeartbeat;
-pub use protocol::CmpRecord;
+pub use protocol::CastHeartbeat;
+pub use protocol::CastRecord;
 pub use protocol::CaughtUpRecord;
 pub use protocol::Nak;
 pub use protocol::ReplayNotAvailable;
@@ -42,7 +42,7 @@ pub use wal::WalReader;
 pub use wal::WalWriter;
 pub use server::DxsReplayService;
 pub use client::DxsConsumer;
-pub use cmp::CmpRecv;
-pub use cmp::CmpReceiver;
-pub use cmp::CmpSender;
-pub use config::CmpConfig;
+pub use cast::CastRecv;
+pub use cast::CastReceiver;
+pub use cast::CastSender;
+pub use config::CastConfig;

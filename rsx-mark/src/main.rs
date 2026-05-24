@@ -1,4 +1,4 @@
-use rsx_cast::cmp::CmpSender;
+use rsx_cast::cast::CastSender;
 use rsx_messages::RECORD_MARK_PRICE;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::DxsReplayService;
@@ -96,7 +96,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
             "invalid RSX_RISK_MARK_CMP_ADDR",
         )
     })?;
-    let mut mark_sender = CmpSender::new(
+    let mut mark_sender = CastSender::new(
         mark_dest,
         config.stream_id,
         &wal_dir,

@@ -217,7 +217,7 @@ fn bench_source_to_publish_e2e(c: &mut Criterion) {
 // benchmarked in rsx-dxs/benches/wal_bench.rs already.
 
 // bench_main_loop_idle: requires full runtime setup with
-// SPSC rings, WalWriter, CmpSender. The main loop is in
+// SPSC rings, WalWriter, CastSender. The main loop is in
 // the binary, not exposed as a library function. Skipped.
 
 /// <50ns target

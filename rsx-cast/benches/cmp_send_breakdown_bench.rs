@@ -1,7 +1,7 @@
-//! Sub-stage breakdown of `CmpSender::send` body.
+//! Sub-stage breakdown of `CastSender::send` body.
 //!
 //! `bench-match-rt` showed the gateway-side
-//! `CmpSender::send` takes ~3.8 µs p50 — the dominant cost
+//! `CastSender::send` takes ~3.8 µs p50 — the dominant cost
 //! in the 9.6 µs in-process matching round-trip. This
 //! bench attributes that 3.8 µs to specific sub-steps so
 //! we know what's worth optimising.

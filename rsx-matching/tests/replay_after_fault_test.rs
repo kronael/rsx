@@ -91,19 +91,19 @@ fn write_risk_wal(
     )
     .unwrap();
     // The seq is assigned by WalWriter::append via set_seq
-    // (CmpRecord trait). OrderMessage isn't a CmpRecord, so
+    // (CastRecord trait). OrderMessage isn't a CastRecord, so
     // we wrap each as a raw record. Easier: just append the
     // OrderMessage bytes via the writer's raw API... but the
     // simplest path that exists is to manually call append
-    // on a struct that implements CmpRecord with type
+    // on a struct that implements CastRecord with type
     // RECORD_ORDER_REQUEST. OrderMessage doesn't impl
-    // CmpRecord; let's use a local newtype wrapper.
+    // CastRecord; let's use a local newtype wrapper.
     //
     // Easier still: we know seq is the first 8 bytes per
-    // CmpRecord convention. WalWriter::append_raw_payload
+    // CastRecord convention. WalWriter::append_raw_payload
     // doesn't exist — but the OrderMessage layout starts
     // with `pub seq: u64`. We can write via a thin shim
-    // type that implements CmpRecord.
+    // type that implements CastRecord.
     for (uid, oid, side, px, qty) in [
         (10u32, 1u64, 0u8, 100i64, 5i64),  // buy 5 @ 100
         (10u32, 2u64, 0u8, 101i64, 3i64),  // buy 3 @ 101
@@ -119,7 +119,7 @@ fn write_risk_wal(
     writer.last_seq()
 }
 
-/// CmpRecord shim so WalWriter::append can write
+/// CastRecord shim so WalWriter::append can write
 /// OrderMessage bytes with the right record_type. We keep
 /// this in the test (not main) so the prod path remains
 /// the canonical wire shape.
@@ -127,7 +127,7 @@ fn write_risk_wal(
 #[derive(Copy, Clone)]
 struct OrderMessageWire(OrderMessage);
 
-impl rsx_cast::protocol::CmpRecord for OrderMessageWire {
+impl rsx_cast::protocol::CastRecord for OrderMessageWire {
     fn seq(&self) -> u64 {
         self.0.seq
     }

@@ -36,17 +36,17 @@ pub const RECORD_REPLAY_NOT_AVAILABLE: u16 = 0x15;
 /// Trait for all CMP data records. Guarantees seq is
 /// readable/writable at a known location in the payload.
 /// All implementors are #[repr(C, align(64))], Copy.
-pub trait CmpRecord: Copy {
+pub trait CastRecord: Copy {
     fn seq(&self) -> u64;
     fn set_seq(&mut self, seq: u64);
     fn record_type() -> u16;
 }
 
-/// CmpHeartbeat — wire size 64 bytes.
+/// CastHeartbeat — wire size 64 bytes.
 /// Sender -> receiver, when stream is idle.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
-pub struct CmpHeartbeat {
+pub struct CastHeartbeat {
     pub highest_seq: u64,
     pub _pad1: [u8; 56],
 }
@@ -87,7 +87,7 @@ pub struct CaughtUpRecord {
     pub _pad1: [u8; 40],
 }
 
-impl CmpRecord for CaughtUpRecord {
+impl CastRecord for CaughtUpRecord {
     fn seq(&self) -> u64 { self.seq }
     fn set_seq(&mut self, seq: u64) { self.seq = seq; }
     fn record_type() -> u16 { RECORD_CAUGHT_UP }

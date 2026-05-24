@@ -1,5 +1,5 @@
-use rsx_cast::cmp::CmpRecv;
-use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastReceiver;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -140,9 +140,9 @@ fn main() {
 
     let me_addrs = rsx_marketdata::config::me_cmp_addrs_from_env();
 
-    // One CmpReceiver per ME. Local bind port derived from
+    // One CastReceiver per ME. Local bind port derived from
     // ME port: BASE_MD_CMP(9500) = BASE_ME_CMP(9100) + 400.
-    let mut cmp_receivers: Vec<CmpReceiver> = me_addrs
+    let mut cmp_receivers: Vec<CastReceiver> = me_addrs
         .iter()
         .map(|me_addr| {
             let md_port = me_addr.port() + 400;
@@ -151,7 +151,7 @@ fn main() {
                     .parse()
                     // SAFETY: fail-fast at startup
                     .expect("invalid MD CMP bind addr");
-            CmpReceiver::new(bind_addr, *me_addr, 0)
+            CastReceiver::new(bind_addr, *me_addr, 0)
                 // SAFETY: fail-fast at startup
                 .expect("failed to bind marketdata CMP")
         })
@@ -217,9 +217,9 @@ fn main() {
                 let (hdr, payload) = match cmp_receiver
                     .try_recv()
                 {
-                    CmpRecv::Data(h, p) => (h, p),
-                    CmpRecv::Empty => break,
-                    CmpRecv::Faulted {
+                    CastRecv::Data(h, p) => (h, p),
+                    CastRecv::Empty => break,
+                    CastRecv::Faulted {
                         last_delivered_seq,
                         gap_start,
                         gap_end_inclusive,

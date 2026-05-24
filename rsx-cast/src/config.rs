@@ -12,16 +12,16 @@ fn env_var<T: std::str::FromStr>(key: &str, default: T) -> T {
 /// CMP transport configuration.
 ///
 /// All fields can be overridden via env vars (see
-/// [`CmpConfig::from_env`]); defaults are tuned for a trusted
+/// [`CastConfig::from_env`]); defaults are tuned for a trusted
 /// LAN with <1ms RTT.
 #[derive(Debug, Clone)]
-pub struct CmpConfig {
+pub struct CastConfig {
     /// Sender heartbeat cadence in ms (idle-stream only —
     /// data sends reset the timer). Receivers use heartbeats
     /// to detect gaps when no data is flowing.
     /// Env: `RSX_CMP_HEARTBEAT_INTERVAL_MS`.
     pub heartbeat_interval_ms: u64,
-    /// If set, CmpSender binds to this address instead of a
+    /// If set, CastSender binds to this address instead of a
     /// random ephemeral port. Allows receivers to send NAKs
     /// to a known port. Env: `RSX_CMP_SENDER_BIND_ADDR`.
     pub sender_bind_addr: Option<String>,
@@ -31,7 +31,7 @@ pub struct CmpConfig {
     /// Env: `RSX_CMP_NAK_RETRY_US`.
     pub nak_retry_us: u64,
     /// Max retries on the oldest gap before the receiver
-    /// transitions to FAULTED and surfaces `CmpRecv::Faulted`
+    /// transitions to FAULTED and surfaces `CastRecv::Faulted`
     /// to its consumer. At 100 µs retry × 8 = 800 µs total
     /// in-band recovery budget. Env: `RSX_CMP_MAX_NAK_RETRIES`.
     pub max_nak_retries: u16,
@@ -43,7 +43,7 @@ pub struct CmpConfig {
     pub retx_dedup_window_us: u64,
 }
 
-impl Default for CmpConfig {
+impl Default for CastConfig {
     fn default() -> Self {
         Self {
             heartbeat_interval_ms: 100,
@@ -55,7 +55,7 @@ impl Default for CmpConfig {
     }
 }
 
-impl CmpConfig {
+impl CastConfig {
     pub fn from_env() -> Self {
         Self {
             heartbeat_interval_ms: env_var(
