@@ -115,7 +115,7 @@ Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
 `rsx-messages/src/lib.rs` (domain wire records). Trust
 boundaries: CMP is intentionally unauthenticated (auth lives
 at the gateway via JWT and at L3); see CLAUDE.md and
-specs/2/4-cmp.md §10.4.
+specs/2/4-cast.md §10.4.
 
 ## Order Lifecycle
 

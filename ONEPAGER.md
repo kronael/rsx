@@ -52,7 +52,7 @@ LANDSCAPE.md`, `docs/benches.md`):
 99% of the in-process round-trip is the `sendto` syscall body
 (`rsx-dxs/benches/cmp_send_breakdown_bench.rs`). Algorithm + framing
 add up to <0.7% of wall time. Optimisation targets are kernel-bypass
-shaped, not Rust-shaped, and `specs/2/4-cmp.md` already documents the
+shaped, not Rust-shaped, and `specs/2/4-cast.md` already documents the
 DPDK / AF_XDP "Later" path. Honest.
 
 ## What's open

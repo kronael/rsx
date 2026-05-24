@@ -195,7 +195,7 @@ There is no SPSC ring within gateway. The justification:
 WebSocket parsing dominates the per-frame cost, and
 io_uring batches the syscalls; a tile would have to do
 the same WS parsing. The flow-control buffer between
-gateway and risk is the CMP wire window (§5 of `4-cmp.md`),
+gateway and risk is the CMP wire window (§5 of `4-cast.md`),
 not a ring.
 
 ### 3.5 Marketdata — `rsx-marketdata` (monoio async, not tiled)
@@ -211,7 +211,7 @@ catch-up before going live); not on the hot path.
 
 Within a process, where rings exist, they're rtrb SPSC.
 Between processes, CMP/UDP for the hot path and TCP+WAL
-for the cold path. See `4-cmp.md` for the wire protocol.
+for the cold path. See `4-cast.md` for the wire protocol.
 
 ```
 Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
@@ -303,8 +303,8 @@ Tracked in `.ship/12-SHOWCASE-HONEST/`:
 
 ## Cross-references
 
-- `specs/2/4-cmp.md` — CMP wire protocol and flow control
-- `specs/2/10-dxs.md` — DXS replay (TCP fan-out)
+- `specs/2/4-cast.md` — CMP wire protocol and flow control
+- `specs/2/10-replication.md` — DXS replay (TCP fan-out)
 - `specs/2/20-network.md` — Process topology, ports
 - `specs/2/22-perf-verification.md` — Bench gate, harness plan
 - `specs/2/48-wal.md` — WAL flush, fsync, rotation

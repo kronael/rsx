@@ -63,7 +63,7 @@ which has the same disk=wire insight but no UDP/NAK path. Kafka separates the
 replication log from the wire format. Aeron separates term buffers (hot) from
 archive (cold). DXS collapses all three.
 
-Cite: `specs/2/4-cmp.md`, `specs/2/48-wal.md`, `rsx-dxs/README.md`.
+Cite: `specs/2/4-cast.md`, `specs/2/48-wal.md`, `rsx-dxs/README.md`.
 
 ### 4. CMP: NAK not ACK (why it matters for LAN)
 

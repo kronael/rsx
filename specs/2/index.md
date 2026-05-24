@@ -23,12 +23,12 @@ phase-1 historical specs.
 | 20 | [20-network.md](20-network.md) | shipped | System network topology |
 | 50 | [50-wedge.md](50-wedge.md) | shipped | **Wedge decision: open-source orthogonal libs + exchange-in-a-box** |
 
-## Wire + transport (rsx-dxs)
+## Wire + transport (rsx-cast)
 
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
-| 4 | [4-cmp.md](4-cmp.md) | shipped | C Message Protocol over UDP — WAL records on the wire |
-| 10 | [10-dxs.md](10-dxs.md) | shipped | DXS — brokerless WAL streaming over TCP |
+| 4 | [4-cast.md](4-cast.md) | shipped | C Message Protocol over UDP — WAL records on the wire |
+| 10 | [10-replication.md](10-replication.md) | shipped | DXS — brokerless WAL streaming over TCP |
 | 18 | [18-messages.md](18-messages.md) | shipped | Wire record definitions (FillRecord, BBO, OrderUpdate, ...) |
 | 48 | [48-wal.md](48-wal.md) | shipped | WAL infrastructure — header format, fsync cadence, rotation |
 | 6 | [6-consistency.md](6-consistency.md) | shipped | Event fan-out consistency (matching engine → consumers) |
@@ -91,8 +91,8 @@ One per implementation spec, cross-referenced.
 | # | Spec | Status | Source |
 |---|------|--------|--------|
 | 34 | [34-testing-book.md](34-testing-book.md) | shipped | [21-orderbook.md](21-orderbook.md) |
-| 35 | [35-testing-cmp.md](35-testing-cmp.md) | shipped | [4-cmp.md](4-cmp.md) |
-| 36 | [36-testing-dxs.md](36-testing-dxs.md) | shipped | [10-dxs.md](10-dxs.md), [48-wal.md](48-wal.md) |
+| 35 | [35-testing-cast.md](35-testing-cast.md) | shipped | [4-cast.md](4-cast.md) |
+| 36 | [36-testing-replication.md](36-testing-replication.md) | shipped | [10-replication.md](10-replication.md), [48-wal.md](48-wal.md) |
 | 37 | [37-testing-gateway.md](37-testing-gateway.md) | shipped | [20-network.md](20-network.md), [49-webproto.md](49-webproto.md), [29-rpc.md](29-rpc.md), [18-messages.md](18-messages.md) |
 | 38 | [38-testing-liquidator.md](38-testing-liquidator.md) | shipped | [13-liquidator.md](13-liquidator.md) |
 | 39 | [39-testing-mark.md](39-testing-mark.md) | shipped | [15-mark.md](15-mark.md) |

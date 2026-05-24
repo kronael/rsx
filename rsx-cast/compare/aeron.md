@@ -256,7 +256,7 @@ side-by-side:
 - **Rust-native.** No JVM, no GC pauses, no JNI / SBE
   layer.
 - **One trust model.** Trusted LAN. The system-spec
-  (specs/2/4-cmp.md §10.4) delegates auth to the gateway
+  (specs/2/4-cast.md §10.4) delegates auth to the gateway
   (JWT) and the L3 network (firewall, VPC). CMP is
   intentionally unauthenticated.
 

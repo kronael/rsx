@@ -4,8 +4,8 @@ Domain-agnostic reliable transport. WAL writer/reader, DXS
 TCP replay server/client, and CMP (C Message Protocol)
 UDP sender/receiver.
 
-Specs: [`specs/4-cmp.md`](specs/4-cmp.md),
-[`specs/10-dxs.md`](specs/10-dxs.md),
+Specs: [`specs/4-cast.md`](specs/4-cast.md),
+[`specs/10-replication.md`](specs/10-replication.md),
 [`specs/48-wal.md`](specs/48-wal.md).
 
 ## Domain-agnostic transport
@@ -149,7 +149,7 @@ stream.
 ## Trust model
 
 CMP is **intentionally unauthenticated**. See
-[`specs/4-cmp.md`](specs/4-cmp.md) §10.4 ("Trusted internal
+[`specs/4-cast.md`](specs/4-cast.md) §10.4 ("Trusted internal
 network. No authentication, no encryption.").
 
 - External clients are authenticated at the **gateway**
