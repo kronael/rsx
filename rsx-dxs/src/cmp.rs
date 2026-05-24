@@ -250,6 +250,11 @@ impl CmpSender {
         }
 
         self.next_seq += 1;
+        // Data send doubles as a liveness signal: the receiver
+        // sees seq via the data record, no separate heartbeat
+        // needed. Reset the timer; tick() will skip until the
+        // stream goes idle.
+        self.last_heartbeat = Instant::now();
         Ok(true)
     }
 
@@ -451,6 +456,7 @@ impl CmpSender {
             payload,
             self.dest,
         )?;
+        self.last_heartbeat = Instant::now();
         Ok(true)
     }
 

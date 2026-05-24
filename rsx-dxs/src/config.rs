@@ -41,7 +41,7 @@ impl Default for CmpConfig {
     fn default() -> Self {
         Self {
             reorder_buf_limit: 512,
-            heartbeat_interval_ms: 10,
+            heartbeat_interval_ms: 100,
             status_interval_ms: 10,
             default_window: 64 * 1024,
             sender_bind_addr: None,
@@ -55,7 +55,7 @@ impl CmpConfig {
             reorder_buf_limit: env_var(
                 "RSX_CMP_REORDER_BUF_LIMIT", 512),
             heartbeat_interval_ms: env_var(
-                "RSX_CMP_HEARTBEAT_INTERVAL_MS", 10),
+                "RSX_CMP_HEARTBEAT_INTERVAL_MS", 100),
             status_interval_ms: env_var(
                 "RSX_CMP_STATUS_INTERVAL_MS", 10),
             default_window: env_var(
