@@ -241,21 +241,28 @@ UDP has no retransmit. CMP layers a NAK loop on top.
 
 ### Detection
 
-The receiver tracks `expected_seq` (next seq it wants).
-A gap is detected two ways:
+The receiver tracks `expected_seq` (next seq it wants)
+and `highest_seen`. A gap is detected two ways:
 
 1. A **data record** arrives with `seq > expected_seq`.
-   The receiver buffers it in a bounded reorder buffer
-   (default 512 slots, `config.reorder_buf_limit`) and
-   sends a NAK for `[expected_seq, seq)`.
+   The receiver stages it in the reorder ring (see below)
+   and calls `maybe_nak()`.
 2. A **heartbeat** arrives with `highest_seq > expected_seq`
-   while no new data is arriving. The receiver NAKs the
-   tail.
+   while no new data is arriving. The heartbeat handler
+   calls `maybe_nak()`.
 
-NAKs are **not** dedup-suppressed in the current
-implementation — if loss recurs on the same range, multiple
-NAKs may fly. This is a deliberate simplification; the
-network is internal and loss is rare.
+`maybe_nak()` is the only NAK emitter. It sends a NAK for
+the **oldest contiguous missing run** starting at
+`expected_seq`, rate-limited by `nak_retry_us` (default
+100 µs). Every later gap is gated behind the oldest by the
+FIFO contract, so re-NAKing later gaps before the head
+clears would be wasted work.
+
+NAKs are dedup-suppressed on the sender side too:
+`CmpSender` tracks `ring_last_retx_ns[slot]` and skips
+retransmits within `retx_dedup_window_us` (default 1 ms).
+The two windows compose — a receiver re-NAK and a sender
+re-retransmit can't pile up.
 
 ### Retransmit source — two-tier
 
@@ -302,15 +309,63 @@ only had the in-memory ring. The two-tier path is now
 shipped and unit-tested
 (`rsx-dxs/tests/wal_test.rs::read_record_at_seq_*`).
 
-### Reorder buffer
+### Reorder buffer + FAULTED escalation
 
-The receiver buffers up to `reorder_buf_limit` (default
-512) out-of-order records while it waits for the NAK fill.
-On overflow, the receiver advances `expected_seq` past the
-gap, drops the missing records, and emits a structured-log
-warning. The shadow-book / risk consumers handle
-gap-advance via their own resync paths (CAUGHT_UP records
-on TCP replay).
+The receiver buffers out-of-order packets in a fixed-size
+ring mirroring the sender's `send_ring`:
+
+```rust
+const REORDER_CAPACITY: usize = 2048;  // power of 2
+const REORDER_MASK: u64 = (REORDER_CAPACITY - 1) as u64;
+const REORDER_FRAME_BYTES: usize = 256;
+
+reorder_seqs:   Box<[u64; 2048]>
+reorder_lens:   Box<[u16; 2048]>
+reorder_frames: Box<[u8; 2048 * 256]>
+```
+
+Slot index is `seq & REORDER_MASK`. Empty slot iff
+`reorder_seqs[slot] == 0`. Memory: 512 KB per receiver,
+pre-allocated at construction; **zero heap allocations on
+the hot receive path**.
+
+`REORDER_CAPACITY = 2048` sets the maximum in-flight gap
+window. At 10 k pps that's ~200 ms of burst tolerance; at
+1 k pps, 2 s — comfortable margin above realistic LAN
+hiccups. Bigger gaps escalate to FAULTED + DXS replay.
+
+### Three-tier delivery contract
+
+Within a stream, CMP guarantees **strict FIFO**: the
+application sees seqs in monotonic order with **no silent
+skip** path. Loss recovery happens in three tiers:
+
+1. **NAK (in-band).** Receiver detects the gap, fires NAK,
+   sender retransmits from `send_ring` (hot) or WAL (cold).
+   Bounded by `nak_retry_us × max_nak_retries`
+   (100 µs × 8 = 800 µs default total recovery budget).
+
+2. **FAULTED.** If the gap persists past the in-band budget,
+   OR an arriving out-of-order packet would collide with a
+   different seq already in its slot (gap >
+   `REORDER_CAPACITY`), the receiver enters sticky FAULTED
+   state and surfaces `CmpRecv::Faulted { last_delivered_seq,
+   gap_start, gap_end_inclusive }` to the consumer. No
+   silent advance: the receiver keeps returning `Faulted`
+   on every `try_recv` call until the consumer calls
+   `reset_after_replay(new_tip)`.
+
+3. **DXS replay (out-of-band).** The consumer handles
+   `Faulted` by switching to TCP-based WAL replay from
+   `last_delivered_seq + 1` via `DxsConsumer`. Once caught
+   up, it calls `CmpReceiver::reset_after_replay(new_tip)`
+   to clear the FAULTED state and resume normal in-band
+   delivery from `new_tip + 1`.
+
+This contract preserves invariant #1 (FIFO per stream)
+absolutely. The old 512-slot `BTreeMap` reorder buffer
+silently advanced past the gap on overflow — a real
+correctness bug. v4 removed that path.
 
 ## 7. WAL replication over TCP (cold path)
 
@@ -362,7 +417,7 @@ design space. The comparison clarifies what's different.
 | Wire format         | repr(C)        | length+type    | custom hdr     | varint frames  | HPACK+protobuf |
 | Per-record overhead | 16 B header    | 32 B header    | 24 B header    | 5–10 B varint  | 9 B + HPACK    |
 | Reliability         | NAK (4 K ring) | NAK (term log) | ARQ (sliding)  | ACK + retx     | TCP            |
-| Retransmit source   | in-mem ring    | term log file  | in-mem queue   | in-mem queue   | TCP buffer     |
+| Retransmit source   | ring + WAL     | term log file  | in-mem queue   | in-mem queue   | TCP buffer     |
 | Flow control        | seq window     | term position  | window         | per-stream cw  | per-stream cw  |
 | Congestion control  | none           | static rate    | BBR-like       | BBR/Cubic      | TCP CC         |
 | Multicast           | no             | yes            | no             | no             | no             |
@@ -381,12 +436,13 @@ What's actually borrowed:
   architecture decision (one slow consumer can't stall a
   fast one).
 
-What's **simplified vs Aeron**: CMP has no term/page log
-on disk for retransmit (in-memory ring only), no
-multi-destination multicast, no congestion control, no
-session setup, no encryption. The simplification is
-deliberate: less code, lower latency on the happy path,
-acceptable loss recovery for an internal LAN.
+What's **simplified vs Aeron**: CMP has no dedicated
+term/page log on disk for retransmit — the application
+WAL is reused (cold tier). No multi-destination multicast,
+no congestion control, no session setup, no encryption.
+The simplification is deliberate: less code, lower latency
+on the happy path, acceptable loss recovery for an
+internal LAN.
 
 What's **simpler than QUIC**: no TLS, no per-stream
 multiplexing, no head-of-line avoidance (we don't need
@@ -549,14 +605,17 @@ RSX_REPL_KEY_PATH=./certs/repl.key
 
 CmpConfig (`rsx-dxs/src/config.rs`):
 
-| Field                   | Default | Meaning                              |
-|-------------------------|---------|--------------------------------------|
-| `default_window`        | 65 536  | seq-delta flow-control window        |
-| `heartbeat_interval_ms` | 10      | sender → receiver heartbeat period   |
-| `status_interval_ms`    | 10      | receiver → sender status period      |
-| `reorder_buf_limit`     | 512     | receiver-side reorder buffer slots   |
-| `send_ring_limit`       | 4 096   | sender-side retransmit cache slots   |
-| `sender_bind_addr`      | 0.0.0.0:0 | sender source addr for UDP socket  |
+| Field                    | Default   | Meaning                                                   |
+|--------------------------|-----------|-----------------------------------------------------------|
+| `default_window`         | 65 536    | seq-delta flow-control window                             |
+| `heartbeat_interval_ms`  | 10        | sender → receiver heartbeat period                        |
+| `status_interval_ms`     | 10        | receiver → sender status period                           |
+| `reorder_buf_limit`      | 512       | legacy; reorder is now a fixed 2048-slot ring             |
+| `send_ring_limit`        | 4 096     | sender-side retransmit cache slots                        |
+| `sender_bind_addr`       | 0.0.0.0:0 | sender source addr for UDP socket                         |
+| `nak_retry_us`           | 100       | receiver NAK debounce interval (oldest gap)               |
+| `max_nak_retries`        | 8         | retries on oldest gap before FAULTED                      |
+| `retx_dedup_window_us`   | 1 000     | sender per-seq retransmit dedup window                    |
 
 ## Cross-references
 
