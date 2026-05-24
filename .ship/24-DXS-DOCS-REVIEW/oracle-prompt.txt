@@ -1,0 +1,50 @@
+You are reviewing two documentation files for a Rust crate `rsx-dxs` — a log-backed reliable UDP transport (CMP) + TCP cold-path replay (DXS) for fixed-format binary records, used inside a perpetuals exchange. The crate is internal-only (do NOT publish externally).
+
+Read these files directly from disk:
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/README.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/ARCHITECTURE.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/aeron.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/chronicle-queue.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/quinn.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/kcp.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/lbm.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/raw-udp.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/rsx-dxs/compare/tcp.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/facts/syscall-latency.md
+- /home/onvos/sandbox/rsx/.claude/worktrees/agent-a106a180aa32ea70d/specs/2/4-cmp.md
+
+Critique honesty, completeness, missing limits. Score each finding NIT / SUBSTANTIVE / CRITICAL. Be specific about what to change. No politeness.
+
+QUESTIONS:
+
+1. ARCHITECTURE.md "Measured performance" table cites "WAL flush + fsync (64 KB) | 24 µs" and "UDP round-trip <10 µs (target)". README cites "651 µs single-record + amortised over 10 ms batch" and "10.3 µs RTT (measured)". Are the two docs internally consistent? Is the ARCHITECTURE table out of date?
+
+2. README front matter — does it sell the right thing vs Chronicle Queue's opening ("broker-less, off-heap Java library for ultra-low-latency, persisted messaging at millions of events/sec") and Aeron's ("Efficient reliable UDP unicast, UDP multicast, and IPC message transport")? Does the "wire = disk = stream" claim land or feel buried?
+
+3. "How fast" table — apples-to-apples vs competitors? Chronicle Queue cites 0.78 µs p99 same-machine IPC. Aeron cites 21–22 µs p50 at 100 K msg/s AWS. Should we show p99 not just p50?
+
+4. "When NOT to use this" section — what's missing? Specifically:
+   (a) recv path still allocates per packet
+   (b) read_record_at_seq is O(N) scan, 23.5 ms at 10K records — should "high-volume cold NAK retransmit storm" be in NOT-to-use?
+   (c) Single producer per stream
+   (d) No multicast
+   (e) No congestion control — slow consumer can drown
+   (f) Architecture relies on L3 trust
+
+5. "Two-tier retransmit" vs Aeron Archive — overclaiming novelty? Aeron Archive is a separate sidecar; we embed it. Is "embedded WAL = retransmit source" novel enough to lead with, or just a packaging difference?
+
+6. Compare to Chronicle Queue's explicit "when NOT to use" completeness. Should we mirror?
+
+7. ARCHITECTURE.md "Module layout" — maintainer doc, not user doc. Should there be "How to use this from your own crate" in ARCHITECTURE or only in README?
+
+8. README's trust model — only "no TLS, no congestion control here" buried in NOT-to-use. Should README surface trust model more prominently?
+
+9. ARCHITECTURE.md ASCII Connection topology diagram — useful? Aeron/Chronicle have no README diagram. Differentiator?
+
+10. README claims CmpSender::send body is 3.87 µs "99% sendto syscall" — consistent with facts/syscall-latency.md (3.85 µs sendto, "near the floor")?
+
+11. Install section "rsx-dxs = { git = ... }" — should we pin a commit hash given crates.io is forbidden?
+
+12. Quick-start code — `recv_control()` / `tick()` calls aren't explained. Is this enough?
+
+Output: a numbered list of findings, each tagged [NIT] / [SUBSTANTIVE] / [CRITICAL], specific edits.
