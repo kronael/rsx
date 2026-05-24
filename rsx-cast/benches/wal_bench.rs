@@ -1,4 +1,4 @@
-//! WAL micro-ops: in-memory append (the 31 ns figure), ~115 KB flush+fsync, 10 K sequential read, 100 K replay.
+//! WAL micro-ops: in-memory append (~35 ns), ~115 KB flush+fsync (~1 ms), 10 K sequential read (~14 ms), 100 K replay (~138 ms).
 //!
 //! Worker thread pinned to core 2 for measurement stability.
 //!
@@ -47,21 +47,23 @@ taker_ts_ns: 0,
 fn bench_wal_append_in_memory(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
-    // max_file_size = 1 GiB. WalWriter::append returns WouldBlock
-    // once the in-memory buf exceeds 2 * max_file_size. At 144 B per
-    // append that's ~14.9M iters before backpressure, well above any
-    // Criterion sample. Previous 64 MiB cap (= ~880k iters) was
-    // marginal and the silent `let _ =` hid the failure.
+    // u64::MAX makes the backpressure ceiling usize::MAX (via
+    // saturating_mul) so warmup never hits WouldBlock regardless
+    // of iteration count.
     let mut writer = WalWriter::new(
-        1, tmp.path(), 1024 * 1024 * 1024,
+        1, tmp.path(), u64::MAX,
     )
     .unwrap();
 
     // Pre-build the record outside the timed loop; append mutates
     // its seq each call, so re-using one instance is fine.
+    // reset_write_buf() at the start of each iter discards the
+    // accumulated in-memory buffer so Criterion warmup (~100M
+    // iters × 144B) doesn't exhaust RAM.
     let mut record = fill_record();
     c.bench_function("wal_append_in_memory", |b| {
         b.iter(|| {
+            writer.reset_write_buf();
             let framed = writer
                 .prepare(&mut record)
                 .expect("INVARIANT: WAL prepare must not fail mid-bench");
@@ -75,9 +77,8 @@ fn bench_wal_append_in_memory(c: &mut Criterion) {
 fn bench_wal_flush_fsync(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
-    // 1 GiB cap so the writer never rotates inside the bench.
     let mut writer = WalWriter::new(
-        1, tmp.path(), 1024 * 1024 * 1024,
+        1, tmp.path(), u64::MAX,
     )
     .unwrap();
 

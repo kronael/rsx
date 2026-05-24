@@ -1,0 +1,550 @@
+use crate::*;
+use tempfile::TempDir;
+
+// Test-local record; avoids the FillRecord: CastRecord trait
+// mismatch when this file compiles as a unit-test submodule of
+// the crate that defines CastRecord.
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+struct TestFill {
+    seq: u64,
+    ts_ns: u64,
+    _pad: [u8; 48],
+}
+
+impl crate::records::CastRecord for TestFill {
+    fn seq(&self) -> u64 { self.seq }
+    fn set_seq(&mut self, s: u64) { self.seq = s; }
+    fn record_type() -> u16 { rsx_messages::RECORD_FILL }
+}
+
+fn make_fill(seq: u64) -> TestFill {
+    TestFill { seq: 0, ts_ns: seq * 1000, _pad: [0u8; 48] }
+}
+
+fn extract_seq(payload: &[u8]) -> Option<u64> {
+    if payload.len() >= 8 {
+        let bytes = payload[0..8].try_into().ok()?;
+        Some(u64::from_le_bytes(bytes))
+    } else {
+        None
+    }
+}
+
+#[test]
+fn writer_assigns_monotonic_seq() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill1 = make_fill(0);
+    let mut fill2 = make_fill(0);
+    let seq1 = {
+        let framed = writer.prepare(&mut fill1).unwrap();
+        let s = framed.seq;
+        writer.append_framed(&framed).unwrap();
+        s
+    };
+    let seq2 = {
+        let framed = writer.prepare(&mut fill2).unwrap();
+        let s = framed.seq;
+        writer.append_framed(&framed).unwrap();
+        s
+    };
+    assert_eq!(seq1, 1);
+    assert_eq!(seq2, 2);
+    assert!(seq2 > seq1);
+}
+
+#[test]
+fn writer_append_to_buffer_no_io() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    let active = tmp.path().join("1").join("1_active.wal");
+    let size = std::fs::metadata(&active).unwrap().len();
+    assert_eq!(size, 0);
+}
+
+#[test]
+fn writer_flush_writes_to_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let active = tmp.path().join("1").join("1_active.wal");
+    let size = std::fs::metadata(&active).unwrap().len();
+    assert!(size > 0);
+}
+
+#[test]
+fn writer_rotation_at_threshold() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1024).unwrap();
+    for i in 0..20 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let dir = tmp.path().join("1");
+    let files: Vec<_> =
+        std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
+    assert!(
+        files.len() >= 2,
+        "expected rotation, got {} files",
+        files.len()
+    );
+}
+
+#[test]
+fn writer_backpressure_stalls() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 4096).unwrap();
+    let mut hit_backpressure = false;
+    for i in 0..5000 {
+        let mut fill = make_fill(i);
+        let res = match writer.prepare(&mut fill) {
+            Ok(framed) => writer.append_framed(&framed),
+            Err(e) => Err(e),
+        };
+        match res {
+            Ok(_) => continue,
+            Err(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::WouldBlock);
+                hit_backpressure = true;
+                break;
+            }
+        }
+    }
+    assert!(hit_backpressure, "should have hit backpressure");
+}
+
+#[test]
+fn reader_sequential_iteration_all_records() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    for i in 0..10 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 10);
+}
+
+#[test]
+fn reader_returns_none_at_eof() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    assert!(reader.next().unwrap().is_some());
+    assert!(reader.next().unwrap().is_none());
+}
+
+#[test]
+fn reader_crc32_invalid_truncates_stream() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let active = tmp.path().join("1").join("1_active.wal");
+    let mut data = std::fs::read(&active).unwrap();
+    if data.len() > WalHeader::SIZE {
+        data[WalHeader::SIZE] ^= 0xFF;
+    }
+    std::fs::write(&active, &data).unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    assert!(reader.next().unwrap().is_none());
+}
+
+#[test]
+fn reader_unknown_record_type_handled() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let active = tmp.path().join("1").join("1_active.wal");
+    let mut data = std::fs::read(&active).unwrap();
+    // corrupt record_type field (bytes 2-3) to unknown type;
+    // keep byte 0 = WalVersion::V1 so the header still parses.
+    data[2] = 0xFF;
+    data[3] = 0xFF;
+    std::fs::write(&active, &data).unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let result = reader.next();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn write_rotate_read_across_files() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1024).unwrap();
+    let n = 30;
+    for i in 0..n {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, n);
+}
+
+#[test]
+fn reader_open_from_seq_finds_correct_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    for i in 0..50 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 50);
+}
+
+#[test]
+fn reader_skips_to_target_seq_within_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    for i in 0..10 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 5, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 10);
+}
+
+#[test]
+fn record_max_payload_64kb() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    let framed = writer.prepare(&mut fill).unwrap();
+    assert!(writer.append_framed(&framed).is_ok());
+}
+
+#[test]
+fn writer_empty_flush_no_io() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    writer.flush().unwrap();
+    let active = tmp.path().join("1").join("1_active.wal");
+    let size = std::fs::metadata(&active).unwrap().len();
+    assert_eq!(size, 0);
+}
+
+#[test]
+fn writer_seq_starts_at_1() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    assert_eq!(writer.next_seq, 1);
+    let mut fill = make_fill(0);
+    let seq = {
+        let framed = writer.prepare(&mut fill).unwrap();
+        let s = framed.seq;
+        writer.append_framed(&framed).unwrap();
+        s
+    };
+    assert_eq!(seq, 1);
+}
+
+#[test]
+fn writer_flush_calls_fsync() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let active = tmp.path().join("1").join("1_active.wal");
+    let size = std::fs::metadata(&active).unwrap().len();
+    assert!(size > 0);
+}
+
+#[test]
+fn writer_rotation_renames_with_seq_range() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let dir = tmp.path().join("1");
+    let entries: Vec<_> =
+        std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
+    let has_rotated = entries.iter().any(|e| {
+        let name = e.file_name();
+        let name_str = name.to_string_lossy();
+        name_str.contains('_')
+            && name_str.ends_with(".wal")
+            && !name_str.contains("active")
+    });
+    assert!(has_rotated);
+}
+
+#[test]
+fn writer_active_file_uses_temp_name() {
+    let tmp = TempDir::new().unwrap();
+    let _writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let active = tmp.path().join("1").join("1_active.wal");
+    assert!(active.exists());
+}
+
+#[test]
+fn reader_open_from_seq_0_starts_at_beginning() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    for i in 0..5 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 5);
+}
+
+#[test]
+fn reader_handles_empty_wal_directory() {
+    let tmp = TempDir::new().unwrap();
+    let reader = WalReader::open_from_seq(999, 0, tmp.path());
+    assert!(reader.is_ok());
+}
+
+#[test]
+fn reader_handles_single_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn reader_handles_multiple_files_sorted() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    for i in 0..50 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 50);
+}
+
+#[test]
+fn reader_file_transition_seamless() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut count = 0;
+    while let Ok(Some(_)) = reader.next() {
+        count += 1;
+    }
+    assert_eq!(count, 30);
+}
+
+#[test]
+fn reader_returns_none_when_caught_up() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer =
+        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut fill = make_fill(1);
+    {
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    reader.next().unwrap();
+    let result = reader.next().unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn wal_rotate_at_64mb() {
+    let tmp = TempDir::new().unwrap();
+    let threshold = 64 * 1024 * 1024;
+    let mut writer = WalWriter::new(1, tmp.path(), threshold).unwrap();
+    let record_size = 16 + std::mem::size_of::<TestFill>();
+    let count = (threshold as usize / record_size) + 10;
+    for i in 0..count as u64 {
+        let mut fill = make_fill(i);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let dir = tmp.path().join("1");
+    let files: Vec<_> =
+        std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
+    assert!(
+        files.len() >= 2,
+        "expected rotation at 64MB, got {} files",
+        files.len()
+    );
+}
+
+#[test]
+fn read_record_at_seq_finds_active() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1024 * 1024).unwrap();
+    for _ in 0..100 {
+        let mut fill = make_fill(0);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    let rec = read_record_at_seq(1, 42, tmp.path())
+        .unwrap()
+        .expect("seq 42 should exist");
+    assert_eq!(extract_seq(&rec.payload), Some(42));
+}
+
+#[test]
+fn read_record_at_seq_returns_none_for_missing() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1024 * 1024).unwrap();
+    for _ in 0..10 {
+        let mut fill = make_fill(0);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    let rec = read_record_at_seq(1, 999, tmp.path()).unwrap();
+    assert!(rec.is_none());
+}
+
+#[test]
+fn read_record_at_seq_finds_in_rotated_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 256).unwrap();
+    for _ in 0..200 {
+        let mut fill = make_fill(0);
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    let early = read_record_at_seq(1, 5, tmp.path())
+        .unwrap()
+        .expect("seq 5 should exist");
+    assert_eq!(extract_seq(&early.payload), Some(5));
+    let late = read_record_at_seq(1, 195, tmp.path())
+        .unwrap()
+        .expect("seq 195 should exist");
+    assert_eq!(extract_seq(&late.payload), Some(195));
+}
