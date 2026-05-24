@@ -193,8 +193,10 @@ service, and the backtester. KCP would be just a transport.
 
 ## Benchmark
 
-`../benches/compare_kcp.rs` — Criterion, loopback, 128 B payload
-(matched to CMP's `FillRecord`, which is `mem::size_of::<FillRecord>() == 128`).
+`benches/compare_kcp.rs` (run with `cargo bench --bench
+compare_kcp`) — Criterion, loopback, 128 B payload (matched
+to casting's `FillRecord`, which is
+`mem::size_of::<FillRecord>() == 128`).
 
 Two scenarios:
 - `kcp_rtt_naive_1ms_interval_128b` — timer-driven `update()` every

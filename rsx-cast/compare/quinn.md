@@ -197,8 +197,9 @@ length-prefix framing. Still ~3.6× CMP's 10.3 µs RTT.
 
 ## Benchmark
 
-`../benches/compare_quinn.rs` — Criterion, loopback, 128 B payload
-(matched to CMP's `FillRecord`).
+`benches/compare_quinn.rs` (run with `cargo bench --bench
+compare_quinn`) — Criterion, loopback, 128 B payload (matched
+to casting's `FillRecord`).
 
 Three scenarios:
 - `quinn_rtt_new_stream_128b` — open a fresh bidirectional

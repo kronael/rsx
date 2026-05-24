@@ -46,8 +46,9 @@ At our payload sizes (128 B Fill, ≤256 B WAL slot):
 
 2. **The 3 ns is invisible.** `CastSender::send` is ~4 µs;
    `sendto` itself accounts for 99% of it (see
-   [`cast_send_breakdown_bench`](../benches/)). `WalWriter::append`
-   is 31 ns p50 and CRC is roughly 6 of those. Saving 3 ns
+   `cast_send_breakdown_bench`, in `benches/`).
+   `WalWriter::append` is 31 ns p50 and CRC is roughly 6 of
+   those. Saving 3 ns
    inside a 31 ns operation, on a path that's not even the
    hot path (sendto dominates), is below measurement noise.
 

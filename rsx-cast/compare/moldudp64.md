@@ -137,8 +137,9 @@ WAL.
 
 ## Benchmark
 
-`../benches/compare_moldudp64.rs` — Criterion, loopback, 64 B
-payload, **unicast** UDP (not multicast).
+`benches/compare_moldudp64.rs` (run with `cargo bench --bench
+compare_moldudp64`) — Criterion, loopback, 64 B payload,
+**unicast** UDP (not multicast).
 
 We bench unicast for fair RTT comparison with the existing
 `udp_rtt_bench` / `compare_kcp` / `compare_tcp` set. Loopback

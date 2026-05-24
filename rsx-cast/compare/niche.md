@@ -3,7 +3,7 @@
 This file is the long-tail companion to the curated `compare/` set
 (raw-udp, tcp, kcp, quinn, aeron, chronicle-queue, lbm). Those each
 have a deep doc + a guarantees table + (where feasible) a Criterion
-benchmark in `../benches/`. They were chosen because they are the
+benchmark in `benches/`. They were chosen because they are the
 direct, well-known peers — every HFT/exchange architect reading
 about rsx-cast has already heard of them.
 
