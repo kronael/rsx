@@ -23,6 +23,10 @@ protocol; benchmark code lives in `../benches/compare_*.rs`.
 | [kcp](kcp.md) | UDP | ACK (sender) | in-memory snd_buf | ~17 µs spin / ~11 ms timer (`compare_kcp`, 128 B loopback); ~25–300 ms (WAN) | C / Rust |
 | [quinn](quinn.md) | QUIC/UDP | ACK (packet-number ranges) | in-memory | ~37 µs persistent loopback (`compare_quinn`, 128 B); 25–400 µs published | Rust |
 | [aeron](aeron.md) | UDP uni+multi+IPC | NAK (receiver) | in-memory term buffers | ~21 µs P50 (AWS c6in.16xlarge), ~305 µs (our 6-core box) | Java/C++ |
+| [moldudp64](moldudp64.md) | UDP multicast | NAK (receiver) | separate request server | ~10 µs loopback (this repo) | any |
+| [soupbintcp](soupbintcp.md) | TCP | ACK (cumulative, kernel TCP) | TCP retransmit + session replay | ~15 µs loopback (this repo) | any |
+| [itch5](itch5.md) | (payload format, runs over moldudp64 / soupbintcp) | n/a | n/a | n/a | any |
+| [ouch](ouch.md) | (payload format, runs over soupbintcp) | n/a | n/a | n/a | any |
 | [chronicle-queue](chronicle-queue.md) | mmapped files / TCP | n/a (durable log) | disk | sub-µs IPC | Java |
 | [lbm](lbm.md) | UDP multicast | NAK (receiver) | in-memory window | ~1–5 µs LAN | C (commercial) |
 
@@ -40,6 +44,8 @@ cargo bench -p rsx-dxs --bench compare_kcp
 cargo bench -p rsx-dxs --bench compare_quinn
 cargo bench -p rsx-dxs --bench compare_tcp
 cargo bench -p rsx-dxs --bench compare_aeron
+cargo bench -p rsx-dxs --bench compare_moldudp64
+cargo bench -p rsx-dxs --bench compare_soupbintcp
 
 # Raw UDP baseline (already exists)
 cargo bench -p rsx-dxs --bench compare_udp
@@ -65,6 +71,16 @@ sudo tc qdisc del dev lo root
   rusteron C media driver (no JVM needed). Apples-to-apples is hard
   because Aeron's UDP path includes a driver-IPC hop CMP doesn't have;
   the doc spells out the methodology and published reference numbers.
+- **MoldUDP64**: Nasdaq's UDP dissemination protocol for ITCH market data.
+  Closest published peer to CMP's wire shape — UDP + seq + receiver-side
+  NAK to a separate request server. Answers "how does a real exchange UDP
+  feed protocol frame data, and what does it cost on loopback?"
+- **SoupBinTCP**: Nasdaq's reliable TCP framing for OUCH order entry and
+  TCP-side ITCH. Closest peer to DXS TCP cold path. Answers "what does
+  the Nasdaq TCP framing cost vs raw TCP?"
+- **ITCH 5.0 / OUCH 5.0**: payload formats (not transports) carried over
+  MoldUDP64 and SoupBinTCP respectively. Doc-only entries that explain
+  the transport ↔ message split and size up the records against CMP.
 - **Chronicle Queue / LBM**: design comparisons only (Java / commercial).
 
 ## Long-tail census
