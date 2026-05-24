@@ -25,7 +25,7 @@ use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
 use rsx_types::install_panic_handler;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
 use std::env;
 use std::net::SocketAddr;

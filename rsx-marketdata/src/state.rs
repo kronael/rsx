@@ -3,7 +3,7 @@ use crate::shadow::ShadowBook;
 use crate::subscription::SubscriptionManager;
 use crate::types::BboUpdate;
 use rsx_types::SymbolConfig;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 

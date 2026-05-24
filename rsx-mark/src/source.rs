@@ -1,7 +1,7 @@
 use crate::types::SourcePrice;
 use crate::types::SymbolMap;
 use futures_util::StreamExt;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;

@@ -4,7 +4,7 @@ use rsx_cast::CastRecord;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 use tempfile::TempDir;
 
 #[test]
