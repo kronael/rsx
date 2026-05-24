@@ -32,12 +32,12 @@ ride the same transport.
 | File | Purpose |
 |------|---------|
 | `header.rs` | 16-byte `WalHeader`. Version byte at offset 8 (`V0` = legacy zero, `V1` = current). Reserved bytes 9..16 must be zero. |
-| `protocol.rs` | `CmpRecord` trait + four protocol records (`CmpHeartbeat`, `Nak`, `ReplayRequest`, `CaughtUpRecord`). Each has compile-time `size_of` + `align_of` asserts. Re-exported as `records` for back-compat. `StatusMessage` and the associated flow-control window were removed in `87b223e` — CMP has no per-receiver pacing now. |
+| `protocol.rs` | `CmpRecord` trait + protocol records (`CmpHeartbeat`, `Nak`, `ReplayRequest`, `CaughtUpRecord`, `ReplayNotAvailable`). Compile-time size/align asserts on each. `StatusMessage` + flow-control removed in `87b223e`. |
 | `encode_utils.rs` | Generic helpers: `compute_crc32`, `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
-| `cmp.rs` | `CmpSender` + `CmpReceiver` (UDP). Two-tier NAK retransmit: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
-| `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, retention GC) + `WalReader` + `read_record_at_seq` for random access. |
-| `server.rs` | `DxsReplayService` (TCP, optional TLS). Verifies version byte + CRC before any `unsafe` cast. |
-| `client.rs` | `DxsConsumer` (TCP replay) with exponential backoff 1/2/4/8/30s and ±20% jitter. |
+| `cmp.rs` | `CmpSender` + `CmpReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
+| `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, 4h retention GC) + `WalReader` + `read_record_at_seq`. |
+| `server.rs` | `DxsReplayService` (TCP, optional TLS). Sends `ReplayNotAvailable` when `from_seq` precedes oldest WAL seq. |
+| `client.rs` | `DxsConsumer` (TCP replay, sync). Multi-endpoint: tries endpoints newest→oldest; advances on `ReplayNotAvailable`. Backoff 1/2/4/8/30s ±20% jitter. |
 | `config.rs` | `CmpConfig`, `TlsConfig`. Every field documents its env var. |
 
 ## Transport paths
@@ -238,17 +238,18 @@ Recorder --[DXS/TCP]--> ME
 ## Architectural Decisions
 
 **Runtime: none — transport library.** `rsx-dxs` is
-domain-agnostic and runtime-agnostic. `CmpSender`,
-`CmpReceiver`, `WalWriter`, `WalReader` are synchronous types
-that the caller drives from whatever loop suits its needs.
-`DxsReplayService` and `DxsConsumer` expose blocking-style
-APIs and an async wrapper for callers on tokio.
+domain-agnostic and runtime-agnostic. All types —
+`CmpSender`, `CmpReceiver`, `WalWriter`, `WalReader`,
+`DxsReplayService`, `DxsConsumer` — are synchronous.
+Callers drive them from whatever loop suits their needs:
+a pinned tile spin loop, a tokio task, or a monoio reactor.
+No async wrappers are shipped; the crate carries no runtime
+dependency.
 
 This is intentional: consumers pick the runtime that fits
 their stage. Matching engine drives `CmpSender` from a
 pinned tile loop with no reactor at all. Gateway and
-marketdata drive `CmpReceiver` from a monoio reactor.
-Recorder uses `DxsConsumer` from tokio. The transport sits
-under all three without preference. See
-[`../notes/tiles.md`](../notes/tiles.md) for the broader
-runtime landscape.
+marketdata own the UDP socket and pass raw bytes to
+`CmpReceiver` (invert-ownership pattern — see `cmp.rs`).
+Recorder drives `DxsConsumer` blocking from its own thread.
+The transport sits under all of them without preference.
