@@ -34,6 +34,7 @@ pub use records::RECORD_NAK;
 pub use records::RECORD_REPLICATION_NOT_AVAILABLE;
 pub use encode_utils::as_bytes;
 pub use encode_utils::compute_crc32;
+pub use encode_utils::decode_payload;
 pub use encode_utils::encode_record;
 pub use wal::Framed;
 pub use wal::list_wal_files_across;
