@@ -1,9 +1,4 @@
-//! Market data service for RSX.
-//!
-//! Maintains a shadow orderbook from ME WAL events
-//! (INSERT/CANCEL/FILL). Broadcasts L2 depth, BBO, and
-//! trade tape to public WS subscribers. monoio (io_uring)
-//! for network I/O. Seq gap detection triggers resync.
+//! rsx-marketdata: market data service. See ARCHITECTURE.md and `specs/2/16-marketdata.md`.
 
 pub mod shadow;
 pub mod types;

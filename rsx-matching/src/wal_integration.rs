@@ -86,7 +86,10 @@ pub fn write_events_to_wal(
                     _pad1: [0; 4],
                     taker_ts_ns,
                 };
-                writer.append(&mut record)?;
+                {
+                    let framed = writer.prepare(&mut record)?;
+                    writer.append_framed(&framed)?;
+                }
             }
             Event::OrderInserted {
                 handle,
@@ -120,7 +123,10 @@ pub fn write_events_to_wal(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                writer.append(&mut record)?;
+                {
+                    let framed = writer.prepare(&mut record)?;
+                    writer.append_framed(&framed)?;
+                }
             }
             Event::OrderCancelled {
                 handle,
@@ -152,7 +158,10 @@ pub fn write_events_to_wal(
                     post_only,
                     _pad1: [0; 4],
                 };
-                writer.append(&mut record)?;
+                {
+                    let framed = writer.prepare(&mut record)?;
+                    writer.append_framed(&framed)?;
+                }
             }
             Event::OrderDone {
                 handle,
@@ -186,7 +195,10 @@ pub fn write_events_to_wal(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                writer.append(&mut record)?;
+                {
+                    let framed = writer.prepare(&mut record)?;
+                    writer.append_framed(&framed)?;
+                }
             }
             Event::OrderFailed {
                 user_id,
@@ -204,7 +216,10 @@ pub fn write_events_to_wal(
                     reason,
                     _pad: [0; 23],
                 };
-                writer.append(&mut record)?;
+                {
+                    let framed = writer.prepare(&mut record)?;
+                    writer.append_framed(&framed)?;
+                }
             }
             Event::BBO { .. } => {
                 // BBO not persisted to WAL (derived on replay)
@@ -214,20 +229,8 @@ pub fn write_events_to_wal(
     Ok(())
 }
 
-/// Publish each event in the book's event buffer once: prepared
-/// on the WAL (one CRC, one seq), then fanned out to WAL +
-/// risk-bound CastSender + (selectively) marketdata-bound
-/// CastSender. Eliminates the double / triple CRC that the
-/// separate `write_events_to_wal` + `send_event_cmp` +
-/// `send_event_marketdata` path used to pay per record.
-///
-/// Routing per event type:
-/// - `Fill / OrderInserted / OrderCancelled` → WAL + cmp + mkt
-/// - `OrderDone` → WAL + cmp
-/// - `OrderFailed` → WAL only
-/// - `BBO` → cmp only (not persisted to WAL; derived on replay).
-///   BBO uses the sender's own seq counter via `CastSender::send`
-///   because the WAL isn't framing it.
+/// Publish each event once (WAL prepare = single CRC + seq), then fan out to WAL +
+/// risk-bound + (selectively) marketdata-bound `CastSender`. See ARCHITECTURE.md.
 pub fn publish_events(
     writer: &mut WalWriter,
     cmp: &mut CastSender,
@@ -396,7 +399,10 @@ pub fn publish_events(
                     _pad: [0; 23],
                 };
                 // WAL-only — solo `append` keeps one CRC.
-                writer.append(&mut record)?;
+                {
+                    let framed = writer.prepare(&mut record)?;
+                    writer.append_framed(&framed)?;
+                }
             }
             Event::BBO {
                 bid_px,

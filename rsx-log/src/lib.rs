@@ -1,38 +1,4 @@
-//! Off-hot-path logging primitive.
-//!
-//! Hot path produces a [`Record`] into a per-thread
-//! [`rtrb`] SPSC ring; a dedicated drain thread consumes
-//! from every registered ring and emits structured
-//! `tracing::*` events. Cost on the hot path is a single
-//! atomic store + index bump (~20-30 ns) — orders of
-//! magnitude cheaper than calling `tracing::info!` inline.
-//!
-//! Scope: any log event that fires on a latency-sensitive
-//! code path. Currently used by per-stage latency samples
-//! (see [`latency`]); the same primitive backs warn/error
-//! emissions when they're added.
-//!
-//! Architecture:
-//!
-//! - Each emitting thread keeps a [`rtrb::Producer<Record>`]
-//!   in a `thread_local!` cell. First push on a new thread
-//!   allocates the ring (`RING_CAP` slots) and registers
-//!   the consumer half in a process-wide `Vec`. The
-//!   registry mutex is touched **once per thread-lifetime**
-//!   and never on the hot path.
-//! - One side thread ([`start_drainer`]) iterates the
-//!   registered consumers every `interval_ms`, drains
-//!   each, and dispatches the records to the appropriate
-//!   `tracing::event!` macro. Drops are counted globally
-//!   and surfaced once per drain cycle.
-//! - Bounded ring (drop on full); never blocks real work
-//!   for the sake of telemetry.
-//!
-//! Why this lives in its own crate (not `rsx-types`):
-//! `rsx-types` is the foundation crate; it must not pull
-//! tokio/tracing/rtrb into every downstream component.
-//! `rsx-log` is opt-in — only the components that emit
-//! depend on it.
+//! rsx-log: off-hot-path logging primitive. See README.md.
 
 use rtrb::Consumer;
 use rtrb::Producer;

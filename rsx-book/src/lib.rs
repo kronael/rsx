@@ -1,13 +1,4 @@
-//! Shared orderbook for the RSX matching engine.
-//!
-//! Slab-allocated price-time FIFO book with compressed
-//! price indexing. Zero heap on the hot path. Each ME
-//! instance owns one [`Orderbook`] per symbol.
-//!
-//! Key types: [`Slab`] (arena allocator), [`CompressionMap`]
-//! (sparse price→index), [`PriceLevel`] (linked list per
-//! price), [`OrderSlot`] (128B, cache-line aligned),
-//! [`Event`] (fill/done/cancel output buffer).
+//! rsx-book: shared orderbook. See ARCHITECTURE.md and `specs/2/21-orderbook.md`.
 
 pub mod slab;
 pub mod compression;

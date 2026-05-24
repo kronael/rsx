@@ -111,9 +111,18 @@ fn dxs_replay_rebuilds_shadow_book() {
 taker_ts_ns: 0,
             };
 
-            writer.append(&mut insert1).unwrap();
-            writer.append(&mut insert2).unwrap();
-            writer.append(&mut fill).unwrap();
+            {
+                let framed = writer.prepare(&mut insert1).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
+            {
+                let framed = writer.prepare(&mut insert2).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
+            {
+                let framed = writer.prepare(&mut fill).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
             writer.flush().unwrap();
 
             let server =
@@ -234,7 +243,10 @@ fn recovery_from_me_wal_then_live() {
                 _pad1: [0; 4],
             };
 
-            writer.append(&mut insert).unwrap();
+            {
+                let framed = writer.prepare(&mut insert).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
             writer.flush().unwrap();
 
             let server =
@@ -295,7 +307,10 @@ fn recovery_snapshot_sent_after_catchup() {
                 _pad1: [0; 4],
             };
 
-            writer.append(&mut insert).unwrap();
+            {
+                let framed = writer.prepare(&mut insert).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
             writer.flush().unwrap();
 
             let server =

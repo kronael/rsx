@@ -49,7 +49,10 @@ fn populate_wal(dir: &PathBuf) {
             post_only: 0,
             cid: [0; 20],
         };
-        writer.append(&mut accepted).unwrap();
+        {
+            let framed = writer.prepare(&mut accepted).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
 
         let mut fill = FillRecord {
             seq: 0,
@@ -71,7 +74,10 @@ fn populate_wal(dir: &PathBuf) {
             _pad1: [0; 4],
             taker_ts_ns: 1_700_000_000_000 + i,
         };
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
 
         let mut bbo = BboRecord {
             seq: 0,
@@ -87,7 +93,10 @@ fn populate_wal(dir: &PathBuf) {
             ask_count: 5,
             _pad2: 0,
         };
-        writer.append(&mut bbo).unwrap();
+        {
+            let framed = writer.prepare(&mut bbo).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().expect("flush");
 }

@@ -251,3 +251,14 @@ writes — accounts, positions, fills, tips — cannot stall the
 pinned core. The ring boundary is the chokepoint: full ring
 stalls the hot path per the WAL backpressure rule (see
 [`../notes/tiles.md`](../notes/tiles.md)).
+
+## Lock Order
+
+None. The hot-path tile is single-threaded (one pinned thread
+owns `RiskShard`); cross-thread state handoff is exclusively
+through SPSC rings. The persist sidecar uses its own Postgres
+client — no shared locks between tiles. Only postgres-side
+row/advisory locks exist (see `lease.rs`: `AdvisoryLease`),
+held solely by the main-thread tokio runtime, never by the
+pinned tile. Adding a `Mutex`/`RwLock`/`DashMap` requires
+documenting the acquisition order here.

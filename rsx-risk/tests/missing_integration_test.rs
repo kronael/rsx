@@ -215,7 +215,10 @@ fn wal_replay_rebuilds_positions_from_tip() {
             _pad1: [0; 4],
 taker_ts_ns: 0,
         };
-        writer.append(&mut rec).unwrap();
+        {
+            let framed = writer.prepare(&mut rec).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 
@@ -273,7 +276,10 @@ fn wal_replay_resumes_from_tip_skips_already_applied() {
             _pad1: [0; 4],
 taker_ts_ns: 0,
         };
-        writer.append(&mut rec).unwrap();
+        {
+            let framed = writer.prepare(&mut rec).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 

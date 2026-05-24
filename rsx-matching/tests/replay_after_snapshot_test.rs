@@ -63,7 +63,10 @@ fn submit(
         post_only: 0,
         cid: [0; 20],
     };
-    writer.append(&mut accepted).unwrap();
+    {
+        let framed = writer.prepare(&mut accepted).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     let mut incoming = IncomingOrder {
         price: px,
         qty,

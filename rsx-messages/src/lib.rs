@@ -1,11 +1,4 @@
-//! RSX exchange wire messages on top of `rsx-cast` transport.
-//!
-//! Application-level records that flow over CMP/UDP and DXS/TCP:
-//! order events, fills, BBO, marks, liquidations. All
-//! `#[repr(C, align(64))]`, all `Copy`, all carry a `seq: u64`
-//! at offset 0 (per the `rsx_cast::CastRecord` trait).
-//!
-//! Disk bytes = wire bytes = stream bytes. No serialization step.
+//! rsx-messages: domain wire records on top of `rsx-cast`. See `specs/2/18-messages.md`.
 
 use rsx_cast::CastRecord;
 use rsx_cast::encode_record;
