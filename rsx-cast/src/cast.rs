@@ -310,19 +310,17 @@ impl CastSender {
         framed: &Framed,
     ) -> io::Result<()> {
         let seq = framed.seq;
-        let total =
-            WalHeader::SIZE + framed.payload.len();
+        let total = framed.total as usize;
+        let wire = &framed.wire[..total];
 
         if total <= SEND_RING_FRAME_BYTES {
-            // Write directly into the ring slot; send from
-            // there (same single-copy pattern as send()).
+            // Single copy: framed.wire → ring slot; send from
+            // there. The copy in prepare() already paid for
+            // header+payload packing.
             let slot = (seq & SEND_RING_MASK) as usize;
             let off = slot * SEND_RING_FRAME_BYTES;
-            self.ring_frames[off..off + WalHeader::SIZE]
-                .copy_from_slice(framed.header.to_bytes());
-            self.ring_frames
-                [off + WalHeader::SIZE..off + total]
-                .copy_from_slice(framed.payload);
+            self.ring_frames[off..off + total]
+                .copy_from_slice(wire);
             self.ring_seqs[slot] = seq;
             self.ring_lens[slot] = total as u16;
             self.socket.send_to(
@@ -330,21 +328,12 @@ impl CastSender {
                 self.dest,
             )?;
         } else {
-            if self.buf.len() < total {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "send buffer too small for record",
-                ));
-            }
+            // Large record: send directly from framed.wire;
+            // mark ring slot dirty (NAK falls to WAL).
             let slot = (seq & SEND_RING_MASK) as usize;
             self.ring_seqs[slot] = 0;
             self.ring_lens[slot] = 0;
-            self.buf[..WalHeader::SIZE]
-                .copy_from_slice(framed.header.to_bytes());
-            self.buf[WalHeader::SIZE..total]
-                .copy_from_slice(framed.payload);
-            self.socket
-                .send_to(&self.buf[..total], self.dest)?;
+            self.socket.send_to(wire, self.dest)?;
         }
 
         // Keep sender's counter in lockstep with the WAL.
