@@ -159,18 +159,8 @@ fn bench_cmp_one_way(c: &mut Criterion) {
                 let _ = sender.tick();
                 sender.recv_control();
             }
-            loop {
-                match sender.send(black_box(&mut rec)) {
-                    Ok(true) => break,
-                    Ok(false) => {
-                        // Window closed — drive a tick to
-                        // pick up peer status, then retry.
-                        let _ = sender.tick();
-                        sender.recv_control();
-                        std::hint::spin_loop();
-                    }
-                    Err(e) => panic!("send: {e}"),
-                }
+            if let Err(e) = sender.send(black_box(&mut rec)) {
+                panic!("send: {e}");
             }
             while recv_count.load(Ordering::Acquire) == before {
                 std::hint::spin_loop();

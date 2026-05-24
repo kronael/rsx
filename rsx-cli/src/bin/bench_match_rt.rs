@@ -307,15 +307,8 @@ fn main() {
                 _pad1: [0; 4],
                 taker_ts_ns: order_msg.timestamp_ns,
             };
-            loop {
-                match me_sender.send(&mut fill) {
-                    Ok(true) => break,
-                    Ok(false) => {
-                        let _ = me_sender.tick();
-                        me_sender.recv_control();
-                    }
-                    Err(e) => panic!("me_sender: {e}"),
-                }
+            if let Err(e) = me_sender.send(&mut fill) {
+                panic!("me_sender: {e}");
             }
             let t5 = now_ns();
 
@@ -363,15 +356,8 @@ fn main() {
         let mut wire = OrderRequestWire { inner: order };
 
         let s0 = now_ns(); // gw_send_start
-        loop {
-            match gw_sender.send(&mut wire) {
-                Ok(true) => break,
-                Ok(false) => {
-                    let _ = gw_sender.tick();
-                    gw_sender.recv_control();
-                }
-                Err(e) => panic!("gw_sender: {e}"),
-            }
+        if let Err(e) = gw_sender.send(&mut wire) {
+            panic!("gw_sender: {e}");
         }
         let s1 = now_ns(); // gw_send_done
 

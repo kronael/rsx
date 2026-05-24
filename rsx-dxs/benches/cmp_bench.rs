@@ -15,24 +15,14 @@ use rsx_dxs::compute_crc32;
 use rsx_dxs::encode_record;
 use rsx_dxs::CmpHeartbeat;
 use rsx_dxs::Nak;
-use rsx_dxs::StatusMessage;
 use rsx_dxs::RECORD_HEARTBEAT;
 use rsx_dxs::RECORD_NAK;
-use rsx_dxs::RECORD_STATUS_MESSAGE;
 use std::collections::BTreeMap;
 
 fn pin_worker() {
     let ids = core_affinity::get_core_ids().unwrap_or_default();
     let core = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
     core_affinity::set_for_current(core);
-}
-
-fn make_status_message() -> StatusMessage {
-    StatusMessage {
-        consumption_seq: 42,
-        receiver_window: 512,
-        _pad1: [0u8; 48],
-    }
 }
 
 fn make_nak() -> Nak {
@@ -48,53 +38,6 @@ fn make_heartbeat() -> CmpHeartbeat {
         highest_seq: 999,
         _pad1: [0u8; 56],
     }
-}
-
-/// Target: <50ns
-fn bench_status_message_encode(c: &mut Criterion) {
-    pin_worker();
-    let msg = make_status_message();
-    c.bench_function(
-        "status_message_encode",
-        |b| {
-            b.iter(|| {
-                let bytes = as_bytes(black_box(&msg));
-                let crc = compute_crc32(bytes);
-                black_box(encode_record(
-                    RECORD_STATUS_MESSAGE,
-                    bytes,
-                ));
-                black_box(crc);
-            })
-        },
-    );
-}
-
-/// Target: <50ns
-fn bench_status_message_decode(c: &mut Criterion) {
-    pin_worker();
-    let msg = make_status_message();
-    let bytes = as_bytes(&msg);
-    let encoded = encode_record(
-        RECORD_STATUS_MESSAGE,
-        bytes,
-    );
-    let payload = &encoded[16..]; // skip header
-    c.bench_function(
-        "status_message_decode",
-        |b| {
-            b.iter(|| {
-                let p = black_box(payload);
-                let decoded = unsafe {
-                    std::ptr::read_unaligned(
-                        p.as_ptr()
-                            as *const StatusMessage,
-                    )
-                };
-                black_box(decoded);
-            })
-        },
-    );
 }
 
 /// Target: <50ns
@@ -229,8 +172,6 @@ fn bench_reorder_buf_insert_lookup(
 
 criterion_group!(
     benches,
-    bench_status_message_encode,
-    bench_status_message_decode,
     bench_nak_encode,
     bench_nak_decode,
     bench_heartbeat_encode,

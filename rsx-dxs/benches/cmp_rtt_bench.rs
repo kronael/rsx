@@ -155,16 +155,8 @@ fn bench_cmp_rtt(c: &mut Criterion) {
         let mut i: u64 = 0;
         while !stop_b.load(Ordering::Relaxed) {
             if let Some(_) = b_receiver.try_recv() {
-                loop {
-                    match b_sender.send(&mut echo) {
-                        Ok(true) => break,
-                        Ok(false) => {
-                            let _ = b_sender.tick();
-                            b_sender.recv_control();
-                            std::hint::spin_loop();
-                        }
-                        Err(e) => panic!("b send: {e}"),
-                    }
+                if let Err(e) = b_sender.send(&mut echo) {
+                    panic!("b send: {e}");
                 }
                 echoes_b.fetch_add(1, Ordering::Release);
             } else {
@@ -194,16 +186,8 @@ fn bench_cmp_rtt(c: &mut Criterion) {
                 let _ = a_sender.tick();
                 a_sender.recv_control();
             }
-            loop {
-                match a_sender.send(black_box(&mut req)) {
-                    Ok(true) => break,
-                    Ok(false) => {
-                        let _ = a_sender.tick();
-                        a_sender.recv_control();
-                        std::hint::spin_loop();
-                    }
-                    Err(e) => panic!("a send: {e}"),
-                }
+            if let Err(e) = a_sender.send(black_box(&mut req)) {
+                panic!("a send: {e}");
             }
             loop {
                 if let Some(reply) = a_receiver.try_recv() {

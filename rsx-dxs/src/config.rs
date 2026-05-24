@@ -20,17 +20,11 @@ pub struct CmpConfig {
     /// while waiting for a NAK to fill a gap. Overflow drops
     /// the oldest gap and re-syncs. Env: `RSX_CMP_REORDER_BUF_LIMIT`.
     pub reorder_buf_limit: usize,
-    /// Sender heartbeat cadence in ms. Receivers use these
+    /// Sender heartbeat cadence in ms (idle-stream only —
+    /// data sends reset the timer). Receivers use heartbeats
     /// to detect gaps when no data is flowing.
     /// Env: `RSX_CMP_HEARTBEAT_INTERVAL_MS`.
     pub heartbeat_interval_ms: u64,
-    /// Receiver -> sender StatusMessage cadence in ms.
-    /// Drives flow control. Env: `RSX_CMP_STATUS_INTERVAL_MS`.
-    pub status_interval_ms: u64,
-    /// Initial sender flow-control window (records) before
-    /// the first StatusMessage updates it.
-    /// Env: `RSX_CMP_DEFAULT_WINDOW`.
-    pub default_window: u64,
     /// If set, CmpSender binds to this address instead of a
     /// random ephemeral port. Allows receivers to send NAKs
     /// to a known port. Env: `RSX_CMP_SENDER_BIND_ADDR`.
@@ -42,8 +36,6 @@ impl Default for CmpConfig {
         Self {
             reorder_buf_limit: 512,
             heartbeat_interval_ms: 100,
-            status_interval_ms: 10,
-            default_window: 64 * 1024,
             sender_bind_addr: None,
         }
     }
@@ -56,10 +48,6 @@ impl CmpConfig {
                 "RSX_CMP_REORDER_BUF_LIMIT", 512),
             heartbeat_interval_ms: env_var(
                 "RSX_CMP_HEARTBEAT_INTERVAL_MS", 100),
-            status_interval_ms: env_var(
-                "RSX_CMP_STATUS_INTERVAL_MS", 10),
-            default_window: env_var(
-                "RSX_CMP_DEFAULT_WINDOW", 64 * 1024),
             sender_bind_addr: env::var(
                 "RSX_CMP_SENDER_BIND_ADDR").ok(),
         }
