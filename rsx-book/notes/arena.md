@@ -16,8 +16,19 @@ Allocate by bumping a pointer forward; free everything by resetting to zero.
 Good for: AST nodes, per-request scratch memory, parse trees — anything with a
 single shared lifetime.
 
-Rust: [`bumpalo`](https://docs.rs/bumpalo) — `Bump::alloc(val)` is a pointer bump;
-compatible with `allocator_api` for standard collections.
+```
+[ alloc A ][ alloc B ][ alloc C ][   free   ]
+                                  ^ bump ptr
+```
+
+Rust: [`bumpalo`](https://docs.rs/bumpalo):
+
+```rust
+let arena = bumpalo::Bump::new();
+let x: &mut i32 = arena.alloc(42);
+let s: &str     = arena.alloc_str("hello");
+// everything freed when arena is dropped
+```
 
 ## Slab allocator
 

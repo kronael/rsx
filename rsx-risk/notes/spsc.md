@@ -14,11 +14,20 @@ Sources: [rtrb crate](https://docs.rs/rtrb), [Dmitry Vyukov — SPSC queue](http
 | MPSC (crossbeam) | ~100–300 ns | CAS on write side |
 | Unix domain socket | ~2–10 µs | kernel round-trip |
 
-## Why SPSC is lock-free
+## How it works
 
-Single producer owns `write_idx`; single consumer owns `read_idx`. Neither
-ever contends a write with the other side — one atomic load + one atomic store
-per operation, no CAS loops.
+A circular array with two pointers, each owned by exactly one side:
+
+```
+        write_idx (only producer writes this)
+            |
+  [ ][ ][D][E][F][ ][ ][ ]
+         |
+     read_idx (only consumer writes this)
+```
+
+Producer checks `read_idx` to detect full; consumer checks `write_idx` to detect empty.
+No thread ever writes the other side's index — no CAS loops, no locks.
 
 ```
 producer: read read_idx (Acquire) → write slot → store write_idx+1 (Release)
