@@ -7440,7 +7440,11 @@ async def v1_symbols():
             "qty_decimals": cfg.get("qty_dec", 4),
         })
     rows.sort(key=lambda r: r["id"])
-    return JSONResponse({"symbols": rows})
+    m_tuples = [
+        [r["id"], r["tick_size"], r["lot_size"], r["symbol"]]
+        for r in rows
+    ]
+    return JSONResponse({"symbols": rows, "M": m_tuples})
 
 
 TF_SECONDS = {
