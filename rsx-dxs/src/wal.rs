@@ -35,7 +35,6 @@ pub struct WalWriter {
     max_file_size: u64,
     retention_ns: u64,
     listeners: Vec<Arc<Notify>>,
-    flush_stalled: bool,
     records_since_flush: u32,
 }
 
@@ -78,9 +77,17 @@ impl WalWriter {
             max_file_size,
             retention_ns,
             listeners: Vec::new(),
-            flush_stalled: false,
             records_since_flush: 0,
         })
+    }
+
+    /// Set the next seq to assign. Used post-replay so live
+    /// writes don't re-use a seq already on disk. R-N1.
+    pub fn set_next_seq(&mut self, seq: u64) {
+        self.next_seq = seq;
+        if self.last_seq < seq.saturating_sub(1) {
+            self.last_seq = seq.saturating_sub(1);
+        }
     }
 
     /// Append typed CMP record to in-memory buffer.
@@ -97,13 +104,6 @@ impl WalWriter {
                 "payload exceeds 64KB",
             ));
         }
-
-        // `flush_stalled` is now a stat only: a single slow fsync
-        // (>10 ms) used to wedge the next append into a panic, which
-        // restarted ME and truncated the active WAL — violating spec
-        // invariant 7 (WAL persistence, specs/2/6-consistency.md).
-        // True backpressure is the buffer-full check below; transient
-        // fsync hiccups don't warrant dropping records.
 
         // backpressure: stall if buf > 2x max_file_size
         let limit = (self.max_file_size as usize)
@@ -141,9 +141,6 @@ impl WalWriter {
         if self.buf.is_empty() {
             return Ok(());
         }
-        // Reset stall at start of each flush cycle so a
-        // previous slow flush doesn't block the next batch.
-        self.flush_stalled = false;
 
         // rotate before writing if file has data and adding
         // the buffer would exceed the size limit
@@ -164,9 +161,6 @@ impl WalWriter {
 
         if elapsed > Duration::from_millis(10) {
             warn!("flush took {}ms", elapsed.as_millis());
-            self.flush_stalled = true;
-        } else {
-            self.flush_stalled = false;
         }
 
         // notify live consumers
@@ -306,10 +300,6 @@ impl WalWriter {
 
     pub fn should_flush(&self) -> bool {
         self.records_since_flush >= 1000
-    }
-
-    pub fn flush_stalled(&self) -> bool {
-        self.flush_stalled
     }
 
     pub fn last_seq(&self) -> u64 {
