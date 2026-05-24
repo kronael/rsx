@@ -27,8 +27,9 @@ fn test_wal_record_serialization() {
 
     let bytes = header.to_bytes();
     assert_eq!(bytes.len(), 16);
-    assert_eq!(bytes[0..2], RECORD_BBO.to_le_bytes());
-    assert_eq!(bytes[2..4], 32u16.to_le_bytes());
+    assert_eq!(bytes[0], 1, "WalVersion::V1");
+    assert_eq!(bytes[2..4], RECORD_BBO.to_le_bytes());
+    assert_eq!(bytes[4..6], 32u16.to_le_bytes());
 }
 
 #[test]

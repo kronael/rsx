@@ -234,9 +234,10 @@ fn reader_unknown_record_type_handled() {
         .join("1")
         .join("1_active.wal");
     let mut data = std::fs::read(&active).unwrap();
-    // corrupt record_type field (bytes 0-1) to unknown type
-    data[0] = 0xFF;
-    data[1] = 0xFF;
+    // corrupt record_type field (bytes 2-3) to unknown type;
+    // keep byte 0 = WalVersion::V1 so the header still parses.
+    data[2] = 0xFF;
+    data[3] = 0xFF;
     std::fs::write(&active, &data).unwrap();
 
     let mut reader =

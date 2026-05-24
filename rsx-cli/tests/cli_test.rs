@@ -72,13 +72,15 @@ fn test_wal_header_format() {
     let bytes = header.to_bytes();
     assert_eq!(bytes.len(), 16);
 
+    let version = bytes[0];
     let record_type =
-        u16::from_le_bytes([bytes[0], bytes[1]]);
-    let len = u16::from_le_bytes([bytes[2], bytes[3]]);
+        u16::from_le_bytes([bytes[2], bytes[3]]);
+    let len = u16::from_le_bytes([bytes[4], bytes[5]]);
     let crc32 = u32::from_le_bytes([
-        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
     ]);
 
+    assert_eq!(version, 1, "WalVersion::V1");
     assert_eq!(record_type, RECORD_FILL);
     assert_eq!(len, 100);
     assert_eq!(crc32, 0xDEADBEEF);
@@ -160,9 +162,9 @@ taker_ts_ns: 0,
 
     // parse manually like dump_file does
     let buf = fs::read(&file_path).unwrap();
-    let rt = u16::from_le_bytes([buf[0], buf[1]]);
+    let rt = u16::from_le_bytes([buf[2], buf[3]]);
     let len =
-        u16::from_le_bytes([buf[2], buf[3]]) as usize;
+        u16::from_le_bytes([buf[4], buf[5]]) as usize;
     let payload = &buf[16..16 + len];
 
     assert_eq!(rt, RECORD_FILL);
@@ -204,7 +206,7 @@ fn test_dump_file_decodes_bbo_fields() {
 
     let buf = fs::read(&file_path).unwrap();
     let len =
-        u16::from_le_bytes([buf[2], buf[3]]) as usize;
+        u16::from_le_bytes([buf[4], buf[5]]) as usize;
     let payload = &buf[16..16 + len];
     let decoded: BboRecord = unsafe {
         std::ptr::read(payload.as_ptr() as *const _)
@@ -248,7 +250,7 @@ fn test_dump_file_decodes_order_inserted_fields() {
 
     let buf = fs::read(&file_path).unwrap();
     let len =
-        u16::from_le_bytes([buf[2], buf[3]]) as usize;
+        u16::from_le_bytes([buf[4], buf[5]]) as usize;
     let payload = &buf[16..16 + len];
     let decoded: OrderInsertedRecord = unsafe {
         std::ptr::read(payload.as_ptr() as *const _)
@@ -288,7 +290,7 @@ fn test_dump_file_decodes_liquidation_fields() {
 
     let buf = fs::read(&file_path).unwrap();
     let len =
-        u16::from_le_bytes([buf[2], buf[3]]) as usize;
+        u16::from_le_bytes([buf[4], buf[5]]) as usize;
     let payload = &buf[16..16 + len];
     let decoded: LiquidationRecord = unsafe {
         std::ptr::read(payload.as_ptr() as *const _)
