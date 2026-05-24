@@ -32,7 +32,7 @@ pub fn encode_record(
     let mut buf = Vec::with_capacity(
         WalHeader::SIZE + payload.len(),
     );
-    buf.extend_from_slice(&header.to_bytes());
+    buf.extend_from_slice(header.to_bytes());
     buf.extend_from_slice(payload);
     buf
 }

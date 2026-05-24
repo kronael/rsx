@@ -127,14 +127,13 @@ fn frame_and_send(
     dest: SocketAddr,
 ) -> io::Result<usize> {
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(
+    let header = WalHeader::new(
         record_type,
         payload.len() as u16,
         crc,
-    )
-    .to_bytes();
+    );
     let total = WalHeader::SIZE + payload.len();
-    buf[..WalHeader::SIZE].copy_from_slice(&hdr);
+    buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..total].copy_from_slice(payload);
     socket.send_to(&buf[..total], dest)?;
     Ok(total)
@@ -329,7 +328,7 @@ impl CastSender {
             ));
         }
         self.buf[..WalHeader::SIZE]
-            .copy_from_slice(&framed.header.to_bytes());
+            .copy_from_slice(framed.header.to_bytes());
         self.buf[WalHeader::SIZE..total]
             .copy_from_slice(framed.payload);
         self.socket
@@ -454,9 +453,8 @@ impl CastSender {
                         );
                         continue;
                     }
-                    let hdr = rec.header.to_bytes();
                     self.buf[..WalHeader::SIZE]
-                        .copy_from_slice(&hdr);
+                        .copy_from_slice(rec.header.to_bytes());
                     self.buf
                         [WalHeader::SIZE..total]
                         .copy_from_slice(&rec.payload);
