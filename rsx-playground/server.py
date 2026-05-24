@@ -4536,12 +4536,17 @@ async def _run_invariant_checks() -> list[dict]:
 
     procs = scan_processes()
     running = [p for p in procs if p.get("state") == "running"]
+    expected = get_spawn_plan(current_scenario)
+    expected_count = len(expected)
+    all_running = (
+        len(running) >= expected_count > 0
+    )
     checks.append({
         "name": "RSX processes running",
-        "status": "pass" if running else "fail",
+        "status": "pass" if all_running else "fail",
         "time": now,
-        "detail": (f"{len(running)}/{len(procs)} running"
-                   if running else "no processes running"),
+        "detail": (f"{len(running)}/{expected_count} running"
+                   if procs else "no processes running"),
     })
 
     # postgres connectivity
