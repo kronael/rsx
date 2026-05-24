@@ -70,19 +70,6 @@ fn active_file_path(wal_dir: &Path, stream_id: u32) -> PathBuf {
     stream_dir(wal_dir, stream_id).join(active_filename(stream_id))
 }
 
-/// Full path: `<wal_dir>/<stream_id>/<stream_id>_<first>_<last>.wal`.
-#[allow(dead_code)]
-fn segment_file_path(
-    wal_dir: &Path,
-    stream_id: u32,
-    first_seq: u64,
-    last_seq: u64,
-) -> PathBuf {
-    stream_dir(wal_dir, stream_id)
-        .join(segment_filename(stream_id, first_seq, last_seq))
-}
-
-
 /// WalWriter: append-only WAL with buffered flush + rotation
 pub struct WalWriter {
     pub stream_id: u32,
