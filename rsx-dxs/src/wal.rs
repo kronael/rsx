@@ -587,6 +587,108 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
     ]))
 }
 
+/// Return the (oldest, highest) seq range currently on disk
+/// for `stream_id` across the given directories (typically
+/// hot + optional archive). `None` if no records are present.
+///
+/// Used by the replay server to pre-check whether the
+/// requested `from_seq` is in-range before opening a reader.
+/// If the request is below `oldest`, the server emits a
+/// `ReplayNotAvailable` and closes the connection so the
+/// consumer can try the next endpoint.
+///
+/// The active file's first/last seq aren't encoded in its
+/// filename (sentinel `u64::MAX`); we discover its real
+/// range by scanning it. Rotated files use the filename
+/// directly. Returns `None` when the active file is empty
+/// AND no rotated files exist.
+pub fn oldest_and_highest_seq(
+    stream_id: u32,
+    wal_dir: &Path,
+    archive_dir: Option<&Path>,
+) -> io::Result<Option<(u64, u64)>> {
+    let hot_dir = wal_dir.join(stream_id.to_string());
+    let arc_dir =
+        archive_dir.map(|p| p.join(stream_id.to_string()));
+
+    let mut dirs: Vec<&Path> = Vec::with_capacity(2);
+    if let Some(ref a) = arc_dir {
+        dirs.push(a.as_path());
+    }
+    dirs.push(hot_dir.as_path());
+
+    let files = list_wal_files_across(stream_id, &dirs)?;
+    let mut oldest: Option<u64> = None;
+    let mut highest: Option<u64> = None;
+
+    for f in &files {
+        if f.is_active {
+            // Scan the active file end-to-end to discover its
+            // seq range. Active files are bounded by
+            // max_file_size (64 MB default).
+            if let Some((lo, hi)) = scan_file_seq_range(&f.path)? {
+                oldest = Some(oldest.map_or(lo, |o| o.min(lo)));
+                highest = Some(highest.map_or(hi, |h| h.max(hi)));
+            }
+        } else {
+            oldest = Some(oldest.map_or(f.first_seq, |o| o.min(f.first_seq)));
+            highest = Some(highest.map_or(f.last_seq, |h| h.max(f.last_seq)));
+        }
+    }
+
+    match (oldest, highest) {
+        (Some(o), Some(h)) => Ok(Some((o, h))),
+        _ => Ok(None),
+    }
+}
+
+fn scan_file_seq_range(
+    path: &Path,
+) -> io::Result<Option<(u64, u64)>> {
+    let mut file = File::open(path)?;
+    let mut hdr_buf = [0u8; WalHeader::SIZE];
+    let mut lo: Option<u64> = None;
+    let mut hi: Option<u64> = None;
+    loop {
+        match file.read_exact(&mut hdr_buf) {
+            Ok(()) => {}
+            Err(e)
+                if e.kind()
+                    == io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(e) => return Err(e),
+        }
+        let header = match WalHeader::from_bytes(&hdr_buf) {
+            Some(h) if h.is_supported_version() => h,
+            _ => break,
+        };
+        let mut payload = vec![0u8; header.len as usize];
+        match file.read_exact(&mut payload) {
+            Ok(()) => {}
+            Err(e)
+                if e.kind()
+                    == io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(e) => return Err(e),
+        }
+        if compute_crc32(&payload) != header.crc32 {
+            break;
+        }
+        if let Some(seq) = extract_seq(&payload) {
+            lo = Some(lo.map_or(seq, |l| l.min(seq)));
+            hi = Some(hi.map_or(seq, |h| h.max(seq)));
+        }
+    }
+    match (lo, hi) {
+        (Some(l), Some(h)) => Ok(Some((l, h))),
+        _ => Ok(None),
+    }
+}
+
 /// Random-access read of a single WAL record by seq.
 ///
 /// Used by CMP NAK retransmit when the requested seq has
