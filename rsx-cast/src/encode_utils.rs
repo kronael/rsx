@@ -1,22 +1,21 @@
 //! CRC + byte-conversion helpers shared across the cast and
 //! replication paths.
 //!
-//! `compute_crc32` is the single point where the CRC algorithm
-//! choice is encoded; see `notes/crc.md` for why CRC32 IEEE
-//! (via `crc32fast`) and not CRC32C.
-//!
 //! `as_bytes` and `encode_record` are thin glue used by the
 //! wire encoders. `decode_payload` is a generic helper for
 //! consumers writing their own typed decoders.
 
 use crate::header::WalHeader;
-use crc32fast::Hasher;
 use std::mem;
 
+/// CRC32C (Castagnoli polynomial) over the payload. Uses
+/// SSE4.2's `crc32` instruction on x86_64 (≈1 cycle per 8 B,
+/// ~30–50 GB/s) — roughly 3× faster than CRC32 IEEE on the
+/// same hardware. Polynomial choice is wire-format-defining;
+/// changing it invalidates every on-disk WAL.
+#[inline]
 pub fn compute_crc32(payload: &[u8]) -> u32 {
-    let mut hasher = Hasher::new();
-    hasher.update(payload);
-    hasher.finalize()
+    crc32c::crc32c(payload)
 }
 
 pub fn encode_record(
