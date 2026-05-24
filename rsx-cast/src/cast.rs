@@ -1097,6 +1097,15 @@ impl CastReceiver {
     /// ring, or until `highest_seen` — whichever is sooner.
     /// Worst case walks `REORDER_CAPACITY` slots; typical
     /// case (one missing seq) is one slot read.
+    ///
+    /// Clamps the upper bound to `expected_seq + REORDER_CAPACITY`
+    /// to defend against a spoofed heartbeat with `highest_seq`
+    /// near u64::MAX -- without the clamp, a single bad frame
+    /// would walk ~2^64 slots and wedge the receiver thread.
+    /// CMP trust model (specs/2/4-cast.md §10.4) delegates frame
+    /// authentication to L3; it does NOT delegate "don't loop
+    /// forever on attacker-controllable input." See CTO audit
+    /// .ship/27 attack scenario A.
     pub(crate) fn oldest_missing_run(&self) -> Option<(u64, u64)> {
         if self.expected_seq == 0
             || self.expected_seq >= self.highest_seen + 1
@@ -1104,8 +1113,11 @@ impl CastReceiver {
             return None;
         }
         let from = self.expected_seq;
+        let upper = self
+            .highest_seen
+            .min(from.saturating_add(REORDER_CAPACITY as u64));
         let mut seq = from;
-        while seq <= self.highest_seen {
+        while seq <= upper {
             let slot = (seq & REORDER_MASK) as usize;
             if self.reorder_seqs[slot] == seq {
                 break;
