@@ -56,9 +56,11 @@ Sender (ME)
   dedicated repair unicast address (not the multicast group). This
   avoids NAK implosion — receivers can't trigger each other's
   retransmit storms.
-- **Status messages**: each receiver still sends a `StatusMessage`
-  (flow-control window) to the sender via unicast every 10 ms,
-  same as v1.
+- **No status messages, no flow control**: v1 retired the
+  `StatusMessage` window in `87b223e`, and v2 keeps that decision.
+  Receivers do not throttle the sender; multicast amplifies the
+  problem (one slow receiver freezing the whole group). Recovery
+  is NAK (in-band) or TCP replication (out-of-band).
 
 ---
 
@@ -83,17 +85,14 @@ Expected NAK load: O(1) per gap regardless of receiver count.
 
 ## Flow control
 
-v1 flow control: sender reads the receiver's `StatusMessage` window
-and does not advance past it.
-
-v2 with N receivers: sender tracks one window per receiver. It
-advances only when the **slowest live receiver** has acknowledged
-up to that point. Receivers that fall behind by more than one WAL
-segment are declared stale and dropped from the live set; they can
-reconnect via the replication/TCP cold path (same as today).
-
-This is "receiver-paced multicast" — the sender runs at the speed
-of the slowest receiver that hasn't yet been evicted.
+**Not in v2.** v1 retired `StatusMessage`/flow-control in
+`87b223e`; v2 inherits that decision. In a multicast topology,
+pacing the sender to the slowest receiver would freeze the whole
+group on a single laggard — exactly the failure mode multicast is
+supposed to amortise away. Receivers that fall behind drop their
+multicast subscription and reconnect via the replication/TCP cold
+path (same as today). The sender's clock is set by the matching
+engine, not by consumers.
 
 ---
 
@@ -184,9 +183,11 @@ both sources in sequence order.
 1. `socket2`-based multicast socket helpers (join/leave/TTL) — `rsx-cast/src/mcast.rs` (~60 LOC)
 2. `CastSender::new_multicast` — thin wrapper, changes destination socket only
 3. NAK backoff timer in `CastReceiver` — ~20 LOC addition to `recv_control`
-4. Per-receiver window tracking in `CastSender` — replace single `peer_window` with `HashMap<SocketAddr, u64>`
-5. Stale eviction + cold-reconnect handoff
-6. `compare/multicast.md` — bench: loopback multicast with 2, 4, 8 receivers
-7. Config surface + docs
+4. Stale-receiver detection in `CastSender` — track per-receiver liveness
+   (last NAK / connect time), evict receivers that fall behind by more than
+   one WAL segment, hand them off to TCP replication
+5. `compare/multicast.md` — bench: loopback multicast with 2, 4, 8 receivers
+6. Config surface + docs
 
-Estimated: ~300 LOC net new, ~50 LOC modified in existing sender/receiver.
+Estimated: ~250 LOC net new, ~30 LOC modified in existing sender/receiver
+(no flow-control / per-receiver-window state to add — v1 dropped that path).

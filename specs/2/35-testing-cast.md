@@ -8,6 +8,14 @@ Version: 1.0
 Status: Draft
 Depends on: casting.md, replication.md, TILES.md, NETWORK.md
 
+**Drift notice:** rows below referencing `StatusMessage`,
+`RECORD_STATUS_MESSAGE`, `consumption_seq`, `receiver_window`,
+or "flow control" describe a v3 control path that was retired
+in `87b223e`. They are kept here as audit history; modern
+test coverage is in `rsx-cast/src/cast_test.rs`,
+`cast_v4_test.rs`, and `nak_fallback_latency_test.rs`. NAK /
+heartbeat / reorder rows are still current.
+
 ## Table of Contents
 
 - [1. Requirements Checklist](#1-requirements-checklist)
