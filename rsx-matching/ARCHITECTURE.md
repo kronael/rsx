@@ -135,3 +135,25 @@ queries Postgres every 10 minutes for symbol config updates.
 That is blocking I/O and explicitly off the hot loop. See
 [`../notes/tiles.md`](../notes/tiles.md) for the broader
 pattern.
+
+## FAULTED → replay recovery (replay.rs)
+
+When `CastReceiver::try_recv` returns `CastRecv::Faulted`, the
+matching tile must NOT silently advance past lost orders. The
+recovery path:
+
+1. Open a `ReplicationConsumer` against the risk producer's
+   replication server (env: `RSX_ME_REPLICATION_ADDR`).
+2. Drain Phase 1 records (seq > `last_delivered_seq`) until
+   `RECORD_CAUGHT_UP` arrives.
+3. Apply each `OrderRequest` / `CancelRequest` to the in-tile
+   state via `apply_replayed_record`.
+4. Call `cmp_receiver.reset_after_replay(new_tip)` to resume
+   live UDP delivery from `new_tip + 1`.
+
+Downstream re-emit is intentionally skipped — risk and marketdata
+recover their own streams via their own replay paths. The matching
+tile is internally consistent after `drain_dxs_replay_into_book`
+returns. Live ingestion samples `me_in` / `me_dedup_done` /
+`me_wal_*` / `me_match_done`; replay skips these probes (they
+target live tail latency).

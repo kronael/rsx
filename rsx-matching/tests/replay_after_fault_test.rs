@@ -109,7 +109,10 @@ fn write_risk_wal(
     ] {
         let mut wrapped =
             OrderMessageWire(order_msg(uid, oid, side, px, qty));
-        writer.append(&mut wrapped).unwrap();
+        {
+            let framed = writer.prepare(&mut wrapped).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
     writer.last_seq()

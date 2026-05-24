@@ -1,26 +1,4 @@
-//! bench-probe — native Rust E2E latency probe.
-//!
-//! Connects to the gateway WebSocket directly with
-//! tokio-tungstenite, mints a JWT inline, sends N order
-//! frames, waits for the matching `F` (fill) frame whose
-//! `taker_oid` == our oid, and records `perf_counter`-style
-//! deltas. Prints p50/p95/p99 and a side-by-side comparison
-//! with the Python `make latency-publish` numbers held in
-//! `bench-baseline.json`.
-//!
-//! Goal: isolate the Python aiohttp overhead in the existing
-//! `/api/latency-probe` flow. The Python probe holds ~12 ms
-//! p50; we expect this native client to be substantially
-//! lower if Python is the floor, or roughly equal if the
-//! cost lives downstream (risk/ME/PG).
-//!
-//! Usage:
-//!   bench-probe \
-//!     --gateway ws://127.0.0.1:8080 \
-//!     --playground http://127.0.0.1:49171 \
-//!     --symbol-id 10 \
-//!     --jwt-secret $RSX_GW_JWT_SECRET \
-//!     --n 2000
+//! bench-probe binary: native Rust E2E latency probe. See `--help` for usage.
 
 use clap::Parser;
 use futures_util::SinkExt;

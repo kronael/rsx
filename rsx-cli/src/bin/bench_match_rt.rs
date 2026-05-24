@@ -1,30 +1,4 @@
-//! `bench-match-rt` — minimal in-process matching round-trip with
-//! per-stage timing.
-//!
-//! Wires the smallest possible "gateway sends an order, ME matches,
-//! ME sends the fill back" pipeline in a single process:
-//!
-//!   Gateway (main thread)         ME (worker thread)
-//!   ----------------------        --------------------
-//!   CastSender ─→ UDP loopback ─→  CastReceiver
-//!                                 dedup
-//!                                 WAL append (OrderAccepted)
-//!                                 process_new_order
-//!                                 write_events_to_wal
-//!                                 CastSender ─→ UDP loopback ─→  CastReceiver
-//!
-//! Per-iteration we record 9 timestamps and produce a per-stage
-//! latency distribution. Risk validation, gateway WS framing,
-//! marketdata, and the rest of the live cluster are deliberately
-//! out of scope; this measures the matching round-trip floor.
-//!
-//! Educational, not production:
-//! - Happy path only. Errors panic; no retries or backoff.
-//! - Both threads spin on non-blocking sockets, cache-hot. Real
-//!   gateway uses monoio + readable-await; this bench is purely
-//!   "what's the lower bound".
-//! - No flow control (we drive `tick()` periodically; same trick
-//!   the dxs benches use).
+//! `bench-match-rt` binary: in-process matching round-trip with per-stage timing.
 
 use clap::Parser;
 use rsx_book::book::Orderbook;
@@ -260,7 +234,10 @@ fn main() {
                 post_only: order_msg.post_only,
                 cid: [0; 20],
             };
-            wal.append(&mut accepted).unwrap();
+            {
+                let framed = wal.prepare(&mut accepted).unwrap();
+                wal.append_framed(&framed).unwrap();
+            }
             let t2 = now_ns();
 
             let mut incoming = order_msg.to_incoming();

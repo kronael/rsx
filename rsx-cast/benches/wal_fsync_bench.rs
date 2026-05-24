@@ -83,7 +83,10 @@ fn bench_wal_append_fsync_single(c: &mut Criterion) {
     let mut rec = fill_record();
     c.bench_function("wal_append_fsync_single", |b| {
         b.iter(|| {
-            writer.append(&mut rec).unwrap();
+            {
+                let framed = writer.prepare(&mut rec).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
             writer.flush().unwrap();
         });
     });
@@ -102,7 +105,10 @@ fn bench_wal_append_fsync_batch_100(c: &mut Criterion) {
     c.bench_function("wal_append_fsync_batch_100", |b| {
         b.iter(|| {
             for _ in 0..100 {
-                writer.append(&mut rec).unwrap();
+                {
+                    let framed = writer.prepare(&mut rec).unwrap();
+                    writer.append_framed(&framed).unwrap();
+                }
             }
             writer.flush().unwrap();
         });

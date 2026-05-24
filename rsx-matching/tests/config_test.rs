@@ -44,7 +44,10 @@ fn config_applied_can_be_written_to_wal() {
         applied_at_ns: ts,
     };
 
-    wal.append(&mut record).expect("append");
+    {
+        let framed = wal.prepare(&mut record).expect("prepare");
+        wal.append_framed(&framed).expect("append");
+    }
     wal.flush().expect("flush");
 
     // Verify active WAL file exists
@@ -91,7 +94,10 @@ fn config_applied_emits_event() {
         applied_at_ns: ts,
     };
 
-    wal.append(&mut record).expect("append");
+    {
+        let framed = wal.prepare(&mut record).expect("prepare");
+        wal.append_framed(&framed).expect("append");
+    }
     wal.flush().expect("flush");
 
     // Read back the record
@@ -129,7 +135,10 @@ fn config_version_monotonic() {
             effective_at_ms: 0,
             applied_at_ns: ts + version * 1000,
         };
-        wal.append(&mut record).expect("append");
+        {
+        let framed = wal.prepare(&mut record).expect("prepare");
+        wal.append_framed(&framed).expect("append");
+    }
     }
     wal.flush().expect("flush");
 

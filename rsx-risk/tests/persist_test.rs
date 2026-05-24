@@ -423,7 +423,10 @@ async fn replay_from_wal_rebuilds_positions() {
             _pad1: [0; 4],
 taker_ts_ns: 0,
         };
-        writer.append(&mut fill).unwrap();
+        {
+            let framed = writer.prepare(&mut fill).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 
@@ -546,7 +549,10 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    writer.append(&mut done).unwrap();
+    {
+        let framed = writer.prepare(&mut done).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
 
     let _ = replay_from_wal(&mut shard, wal_path, &[0]).unwrap();

@@ -96,7 +96,10 @@ fn bench_wal_random_read_10k(c: &mut Criterion) {
     .unwrap();
     for _ in 0..10_000u64 {
         let mut rec = fill_record();
-        writer.append(&mut rec).unwrap();
+        {
+            let framed = writer.prepare(&mut rec).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 
@@ -121,7 +124,10 @@ fn bench_wal_random_read_100k(c: &mut Criterion) {
     .unwrap();
     for _ in 0..100_000u64 {
         let mut rec = fill_record();
-        writer.append(&mut rec).unwrap();
+        {
+            let framed = writer.prepare(&mut rec).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 

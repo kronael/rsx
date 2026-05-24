@@ -62,8 +62,11 @@ fn bench_wal_append_in_memory(c: &mut Criterion) {
     let mut record = fill_record();
     c.bench_function("wal_append_in_memory", |b| {
         b.iter(|| {
+            let framed = writer
+                .prepare(&mut record)
+                .expect("INVARIANT: WAL prepare must not fail mid-bench");
             writer
-                .append(&mut record)
+                .append_framed(&framed)
                 .expect("INVARIANT: WAL append must not fail mid-bench");
         });
     });
@@ -86,8 +89,11 @@ fn bench_wal_flush_fsync(c: &mut Criterion) {
     c.bench_function("wal_flush_fsync_115kb", |b| {
         b.iter(|| {
             for _ in 0..800 {
+                let framed = writer
+                    .prepare(&mut record)
+                    .expect("WAL prepare must not fail mid-bench");
                 writer
-                    .append(&mut record)
+                    .append_framed(&framed)
                     .expect("WAL append must not fail mid-bench");
             }
             writer.flush().expect("WAL flush must not fail mid-bench");
@@ -106,7 +112,10 @@ fn bench_wal_read_sequential(c: &mut Criterion) {
     // write 10k records
     for _ in 0..10_000 {
         let mut record = fill_record();
-        writer.append(&mut record).unwrap();
+        {
+            let framed = writer.prepare(&mut record).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 
@@ -137,7 +146,10 @@ fn bench_replay_100k_records(c: &mut Criterion) {
 
     for _ in 0..100_000 {
         let mut record = fill_record();
-        writer.append(&mut record).unwrap();
+        {
+            let framed = writer.prepare(&mut record).unwrap();
+            writer.append_framed(&framed).unwrap();
+        }
     }
     writer.flush().unwrap();
 

@@ -140,19 +140,6 @@ impl WalWriter {
         Ok(())
     }
 
-    /// Convenience for solo-WAL callers (write to disk without
-    /// also publishing over UDP). Wraps `prepare` +
-    /// `append_framed` so the CRC is still computed exactly
-    /// once.
-    pub fn append<T: CastRecord>(
-        &mut self,
-        record: &mut T,
-    ) -> io::Result<u64> {
-        let framed = self.prepare(record)?;
-        let seq = framed.seq;
-        self.append_framed(&framed)?;
-        Ok(seq)
-    }
 
     /// Flush buffer to disk with fsync.
     pub fn flush(&mut self) -> io::Result<()> {

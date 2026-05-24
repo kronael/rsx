@@ -1,10 +1,4 @@
-//! Mark price aggregator for RSX.
-//!
-//! Connects to external feeds (Binance, Coinbase WS),
-//! computes weighted median, publishes MARK_PRICE records
-//! to WAL. Risk engine consumes these for margin/liquidation
-//! calculations. Staleness filter drops stale sources after
-//! configurable timeout.
+//! rsx-mark: mark price aggregator. See ARCHITECTURE.md and `specs/2/15-mark.md`.
 
 pub mod aggregator;
 pub mod config;

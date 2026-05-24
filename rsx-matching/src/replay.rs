@@ -1,31 +1,4 @@
-//! CMP v4 FAULTED → DXS replay recovery (POC).
-//!
-//! When `CastReceiver::try_recv` returns `CastRecv::Faulted`,
-//! the matching tile must NOT silently advance past lost
-//! orders. The recovery path:
-//!
-//!   1. Open a `ReplicationConsumer` against the risk producer's
-//!      DXS server (env: `RSX_ME_REPLICATION_ADDR`).
-//!   2. Drain Phase 1 records (seq > `last_delivered_seq`)
-//!      until `RECORD_CAUGHT_UP` arrives.
-//!   3. Apply each `OrderRequest` / `CancelRequest` to the
-//!      in-tile state via [`apply_replayed_record`].
-//!   4. Call `cmp_receiver.reset_after_replay(new_tip)` to
-//!      resume normal live UDP delivery from `new_tip + 1`.
-//!
-//! **TODO (downstream re-emit).** Live processing also
-//! broadcasts fills + lifecycle events back to risk and
-//! marketdata via CMP. This POC intentionally skips that
-//! step — downstream consumers must recover their own
-//! streams via their own DXS replay paths (per-consumer,
-//! future work). The matching tile is internally consistent
-//! after `drain_dxs_replay_into_book` returns.
-//!
-//! **TODO (latency probes).** Live ingestion samples
-//! `me_in` / `me_dedup_done` / `me_wal_*` / `me_match_done`.
-//! Replay skips these — those probes target live tail
-//! latency. Production wiring may want a separate
-//! `me_replay` probe set.
+//! `apply_replayed_record` + `drain_dxs_replay_into_book`: FAULTED recovery. See ARCHITECTURE.md.
 
 use crate::dedup::DedupTracker;
 use crate::wal_integration::OrderKey;
@@ -161,9 +134,14 @@ pub fn apply_replayed_record(
                     reason: REASON_DUPLICATE,
                     _pad: [0; 23],
                 };
-                wal_writer
-                    .append(&mut fail)
-                    .expect("wal append failed (replay duplicate)");
+                {
+                    let framed = wal_writer
+                        .prepare(&mut fail)
+                        .expect("wal prepare failed (replay duplicate)");
+                    wal_writer
+                        .append_framed(&framed)
+                        .expect("wal append failed (replay duplicate)");
+                }
                 return;
             }
             let ts = time_ns();
@@ -182,9 +160,14 @@ pub fn apply_replayed_record(
                 post_only: order_msg.post_only,
                 cid: [0; 20],
             };
-            wal_writer
-                .append(&mut accepted)
-                .expect("wal append failed (replay order-accepted)");
+            {
+                let framed = wal_writer
+                    .prepare(&mut accepted)
+                    .expect("wal prepare failed (replay order-accepted)");
+                wal_writer
+                    .append_framed(&framed)
+                    .expect("wal append failed (replay order-accepted)");
+            }
             let mut incoming = order_msg.to_incoming();
             process_new_order(book, &mut incoming);
             let ts_ns = time_ns();

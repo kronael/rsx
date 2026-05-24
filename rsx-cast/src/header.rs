@@ -1,26 +1,4 @@
-/// WAL record header (16 bytes, `#[repr(C)]`).
-///
-/// Layout (LE on the wire, x86 host — same byte order):
-/// ```text
-/// offset 0      version:     u8    (1 = V1; 0 or unknown → reject)
-/// offset 1      _pad0:       u8
-/// offset 2..4   record_type: u16
-/// offset 4..6   len:         u16   (payload length, bytes)
-/// offset 6..8   _pad1:       u16
-/// offset 8..12  crc32:       u32   (CRC32 of payload)
-/// offset 12..16 _reserved:   [u8; 4]
-/// ```
-///
-/// `#[repr(C)]` makes the in-memory layout identical to the wire
-/// format, so `from_bytes` / `to_bytes` are single unsafe casts —
-/// no field-by-field encode/decode.
-///
-/// Version is first so receivers can gate on it before
-/// interpreting any other field. `from_bytes` returns `None`
-/// for unrecognised versions.
-///
-/// Adding a new record type does NOT bump the version (additive).
-/// Bump only for header-layout or CRC-algorithm changes.
+/// 16-byte WAL record header. See `specs/48-wal.md` for field layout and version policy.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct WalHeader {

@@ -168,7 +168,10 @@ fn bench_me_accept_path(c: &mut Criterion) {
                 post_only: 0,
                 cid: [0; 20],
             };
-            wal.append(&mut accepted).unwrap();
+            {
+                let framed = wal.prepare(&mut accepted).unwrap();
+                wal.append_framed(&framed).unwrap();
+            }
 
             let mut incoming = IncomingOrder {
                 price: 100_500,

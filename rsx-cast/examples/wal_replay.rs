@@ -50,7 +50,11 @@ fn main() {
         .unwrap();
         for i in 1..=5 {
             let mut rec = fill(1000 + i, 50_000 + i as i64, 100);
-            let seq = wal.append(&mut rec).unwrap();
+            {
+                let framed = wal.prepare(&mut rec).unwrap();
+                let seq = framed.seq;
+                wal.append_framed(&framed).unwrap();
+            }
             eprintln!("wrote seq={seq} taker_oid={}", rec.taker_order_id_lo);
         }
         wal.flush().unwrap();

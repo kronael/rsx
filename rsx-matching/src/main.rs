@@ -641,9 +641,14 @@ fn main() {
                                 .post_only,
                             cid: [0; 20],
                         };
-                    wal_writer
-                        .append(&mut accepted)
-                        .expect("wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay");
+                    {
+                        let framed = wal_writer
+                            .prepare(&mut accepted)
+                            .expect("wal prepare failed (order-accepted)");
+                        wal_writer
+                            .append_framed(&framed)
+                            .expect("wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay");
+                    }
                     // Sub-stage: OrderAcceptedRecord appended.
                     {
                         let now_ns = time_ns();

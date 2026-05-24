@@ -126,7 +126,10 @@ fn flush_timer_fires_at_10ms() {
         _pad1: [0; 4],
 taker_ts_ns: 0,
     };
-    writer.append(&mut dummy_record).unwrap();
+    {
+        let framed = writer.prepare(&mut dummy_record).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     flush_if_due(&mut writer, &mut last_flush).unwrap();
 
     let active = tmp

@@ -178,7 +178,13 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
-                    if wal_writer.append(&mut evt).is_ok() {
+                    let wal_ok = match wal_writer.prepare(&mut evt) {
+                        Ok(framed) => wal_writer
+                            .append_framed(&framed)
+                            .is_ok(),
+                        Err(_) => false,
+                    };
+                    if wal_ok {
                         if let Err(e) = mark_sender.send_raw(
                             RECORD_MARK_PRICE,
                             as_bytes(&evt),
@@ -207,7 +213,13 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
-                    if wal_writer.append(&mut evt).is_ok() {
+                    let wal_ok = match wal_writer.prepare(&mut evt) {
+                        Ok(framed) => wal_writer
+                            .append_framed(&framed)
+                            .is_ok(),
+                        Err(_) => false,
+                    };
+                    if wal_ok {
                         if let Err(e) = mark_sender.send_raw(
                             RECORD_MARK_PRICE,
                             as_bytes(&evt),

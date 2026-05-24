@@ -1,9 +1,4 @@
-//! WebSocket gateway for RSX perpetuals exchange.
-//!
-//! Bridges external WS clients to the internal CMP/UDP
-//! transport. monoio (io_uring) for network I/O. JWT auth,
-//! per-user rate limiting, circuit breaker, pending order
-//! tracking with timeout. Stateless — crash and restart.
+//! rsx-gateway: WebSocket gateway. See ARCHITECTURE.md and `specs/2/20-network.md`.
 
 pub mod records;
 pub mod convert;
