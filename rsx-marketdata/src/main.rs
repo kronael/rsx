@@ -152,7 +152,7 @@ fn main() {
                     .parse()
                     // SAFETY: fail-fast at startup
                     .expect("invalid MD CMP bind addr");
-            CastReceiver::new(bind_addr, *me_addr, 0)
+            CastReceiver::new(bind_addr, *me_addr)
                 // SAFETY: fail-fast at startup
                 .expect("failed to bind marketdata CMP")
         })

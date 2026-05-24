@@ -138,7 +138,7 @@ fn main() {
     // gw_receiver listens on gw_recv_bind; sender_addr is
     // where it'd send NAKs (back at me_sender).
     let mut gw_receiver =
-        CastReceiver::new(gw_recv_bind, me_send_bind, 1).unwrap();
+        CastReceiver::new(gw_recv_bind, me_send_bind).unwrap();
 
     // me_sender → gw_recv_bind
     let mut me_sender = CastSender::with_config(
@@ -154,7 +154,7 @@ fn main() {
     // me_receiver listens on me_recv_bind; sender_addr is
     // where it'd send NAKs (back at gw_sender).
     let mut me_receiver =
-        CastReceiver::new(me_recv_bind, gw_send_bind, 2).unwrap();
+        CastReceiver::new(me_recv_bind, gw_send_bind).unwrap();
 
     // Pre-populate the orderbook with N+warmup ask orders so
     // every gateway order has a maker to fill against. One

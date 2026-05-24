@@ -43,7 +43,7 @@ fn make_endpoint(wal_dir: &std::path::Path) -> MeEndpoint {
         CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
     let receiver =
-        CastReceiver::new(recv_addr, sender_addr, 1).unwrap();
+        CastReceiver::new(recv_addr, sender_addr).unwrap();
     MeEndpoint { sender, receiver }
 }
 

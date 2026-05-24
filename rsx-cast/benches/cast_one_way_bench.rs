@@ -110,7 +110,7 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     .unwrap();
     let sender_addr = sender.local_addr().unwrap();
     let mut receiver =
-        CastReceiver::new(recv_bind, sender_addr, 1).unwrap();
+        CastReceiver::new(recv_bind, sender_addr).unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let recv_count = Arc::new(AtomicU64::new(0));

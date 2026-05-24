@@ -115,7 +115,7 @@ fn bench_cmp_rtt(c: &mut Criterion) {
 
     // A.receiver expects traffic from B.sender
     let mut a_receiver =
-        CastReceiver::new(a_recv_bind, b_send_bind, 1).unwrap();
+        CastReceiver::new(a_recv_bind, b_send_bind).unwrap();
 
     // B.sender -> A.receiver
     let mut b_sender = CastSender::with_config(
@@ -131,7 +131,7 @@ fn bench_cmp_rtt(c: &mut Criterion) {
 
     // B.receiver expects traffic from A.sender
     let mut b_receiver =
-        CastReceiver::new(b_recv_bind, a_send_bind, 2).unwrap();
+        CastReceiver::new(b_recv_bind, a_send_bind).unwrap();
 
     // B-side echo thread: try_recv → b_sender.send back.
     let stop = Arc::new(AtomicBool::new(false));
