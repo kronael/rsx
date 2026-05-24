@@ -7,8 +7,6 @@ use crate::records::CmpRecord;
 use crate::records::Nak;
 use crate::records::RECORD_HEARTBEAT;
 use crate::records::RECORD_NAK;
-use crate::records::RECORD_STATUS_MESSAGE;
-use crate::records::StatusMessage;
 use crate::wal::extract_seq;
 use crate::wal::read_record_at_seq;
 use socket2::Domain;
@@ -107,8 +105,6 @@ pub struct CmpSender {
     socket: UdpSocket,
     dest: SocketAddr,
     next_seq: u64,
-    peer_consumption_seq: u64,
-    peer_window: u64,
     last_heartbeat: Instant,
     heartbeat_interval: Duration,
     /// Preallocated retransmit cache. Three parallel arrays
@@ -172,8 +168,6 @@ impl CmpSender {
             socket,
             dest,
             next_seq: 1,
-            peer_consumption_seq: 0,
-            peer_window: config.default_window,
             last_heartbeat: Instant::now(),
             heartbeat_interval: Duration::from_millis(
                 config.heartbeat_interval_ms,
@@ -195,28 +189,23 @@ impl CmpSender {
     }
 
     /// Send a typed CMP record. Assigns seq via
-    /// CmpRecord::set_seq. Returns false if flow
-    /// control stalls.
+    /// CmpRecord::set_seq.
+    ///
+    /// No flow control: CMP has no backpressure. If the
+    /// receiver can't keep up, recovery is via NAK (small
+    /// gaps) or DXS replay (large gaps), not by stalling
+    /// the producer.
     ///
     /// Hot send path: zero heap allocations. The send-ring
     /// retransmit cache, `buf`, and `ring_frames` are
     /// preallocated; the only call sites that touch the
     /// allocator are construction and NAK fallback (cold
-    /// path via `read_record_at_seq`). NB: the *receive*
-    /// path (`CmpReceiver::try_recv`) does heap-allocate
-    /// one `Vec<u8>` per in-order packet — the zero-heap
-    /// claim is for the send path only.
+    /// path via `read_record_at_seq`).
     pub fn send<T: CmpRecord>(
         &mut self,
         record: &mut T,
-    ) -> io::Result<bool> {
+    ) -> io::Result<()> {
         let seq = self.next_seq;
-        let limit = self.peer_consumption_seq
-            + self.peer_window;
-        if seq > limit && limit > 0 {
-            return Ok(false);
-        }
-
         record.set_seq(seq);
 
         let payload = as_bytes(record);
@@ -255,7 +244,7 @@ impl CmpSender {
         // needed. Reset the timer; tick() will skip until the
         // stream goes idle.
         self.last_heartbeat = Instant::now();
-        Ok(true)
+        Ok(())
     }
 
     pub fn tick(&mut self) -> io::Result<()> {
@@ -278,11 +267,6 @@ impl CmpSender {
             self.last_heartbeat = now;
         }
         Ok(())
-    }
-
-    pub fn handle_status(&mut self, msg: &StatusMessage) {
-        self.peer_consumption_seq = msg.consumption_seq;
-        self.peer_window = msg.receiver_window;
     }
 
     pub fn handle_nak(&mut self, nak: &Nak) {
@@ -398,21 +382,6 @@ impl CmpSender {
                     let payload =
                         &cbuf[WalHeader::SIZE..n];
                     match hdr.record_type {
-                        RECORD_STATUS_MESSAGE => {
-                            if payload.len()
-                                >= std::mem::size_of::<
-                                    StatusMessage,
-                                >()
-                            {
-                                let msg = unsafe {
-                                    std::ptr::read_unaligned(
-                                        payload.as_ptr()
-                                            as *const StatusMessage,
-                                    )
-                                };
-                                self.handle_status(&msg);
-                            }
-                        }
                         RECORD_NAK => {
                             if payload.len()
                                 >= std::mem::size_of::<
@@ -448,7 +417,7 @@ impl CmpSender {
         &mut self,
         record_type: u16,
         payload: &[u8],
-    ) -> io::Result<bool> {
+    ) -> io::Result<()> {
         frame_and_send(
             &self.socket,
             &mut self.buf,
@@ -457,7 +426,7 @@ impl CmpSender {
             self.dest,
         )?;
         self.last_heartbeat = Instant::now();
-        Ok(true)
+        Ok(())
     }
 
     pub fn next_seq(&self) -> u64 {
@@ -468,10 +437,6 @@ impl CmpSender {
     /// set seq manually in the payload).
     pub fn advance_seq(&mut self) {
         self.next_seq += 1;
-    }
-
-    pub fn peer_consumption_seq(&self) -> u64 {
-        self.peer_consumption_seq
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -499,9 +464,6 @@ pub struct CmpReceiver {
     /// the path it guards is cold.
     reorder_buf: BTreeMap<u64, Vec<u8>>,
     reorder_buf_limit: usize,
-    last_status: Instant,
-    status_interval: Duration,
-    window: u64,
     buf: [u8; PACKET_BUF_SIZE],
 }
 
@@ -537,11 +499,6 @@ impl CmpReceiver {
             reorder_buf: BTreeMap::new(),
             reorder_buf_limit: config
                 .reorder_buf_limit,
-            last_status: Instant::now(),
-            status_interval: Duration::from_millis(
-                config.status_interval_ms,
-            ),
-            window: config.default_window,
             buf: [0u8; PACKET_BUF_SIZE],
         })
     }
@@ -640,8 +597,7 @@ impl CmpReceiver {
                             }
                             continue;
                         }
-                        RECORD_STATUS_MESSAGE
-                        | RECORD_NAK => {
+                        RECORD_NAK => {
                             continue;
                         }
                         _ => {}
@@ -788,31 +744,12 @@ impl CmpReceiver {
         }
     }
 
-    pub fn tick(&mut self) {
-        let now = Instant::now();
-        if now.duration_since(self.last_status)
-            >= self.status_interval
-        {
-            let msg = StatusMessage {
-                consumption_seq: self
-                    .expected_seq
-                    .saturating_sub(1),
-                receiver_window: self.window,
-                _pad1: [0u8; 48],
-            };
-            let mut buf = [0u8; WalHeader::SIZE + 64];
-            if let Err(e) = frame_and_send(
-                &self.socket,
-                &mut buf,
-                RECORD_STATUS_MESSAGE,
-                as_bytes(&msg),
-                self.sender_addr,
-            ) {
-                warn!("cmp: status send failed: {e}");
-            }
-            self.last_status = now;
-        }
-    }
+    /// No-op for now. Reserved for the consumer-local NAK
+    /// strategy (TODO — see in-flight design). Callers in
+    /// the workspace pre-date that work and still invoke it
+    /// periodically; keeping the symbol avoids touching every
+    /// consumer until the new strategy lands.
+    pub fn tick(&mut self) {}
 
     pub fn expected_seq(&self) -> u64 {
         self.expected_seq

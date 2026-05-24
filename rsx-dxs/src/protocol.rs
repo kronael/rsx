@@ -8,8 +8,14 @@
 use std::mem;
 
 /// Transport-level record type constants.
+///
+/// NOTE: `0x10` was previously `RECORD_STATUS_MESSAGE`
+/// (receiver → sender flow control). It was removed when
+/// backpressure was deemed an anti-pattern for exchange-grade
+/// NAK+UDP transports. Do NOT reuse `0x10` — keep it
+/// reserved so older receivers that decode it silently
+/// don't get confused.
 pub const RECORD_CAUGHT_UP: u16 = 6;
-pub const RECORD_STATUS_MESSAGE: u16 = 0x10;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
 pub const RECORD_REPLAY_REQUEST: u16 = 0x13;
@@ -33,18 +39,6 @@ pub struct CmpHeartbeat {
 }
 const _: () = assert!(mem::size_of::<CmpHeartbeat>() == 64);
 const _: () = assert!(mem::align_of::<CmpHeartbeat>() == 64);
-
-/// CMP StatusMessage (64-byte aligned)
-/// Receiver -> sender, every 10ms.
-#[repr(C, align(64))]
-#[derive(Debug, Clone, Copy)]
-pub struct StatusMessage {
-    pub consumption_seq: u64,
-    pub receiver_window: u64,
-    pub _pad1: [u8; 48],
-}
-const _: () = assert!(mem::size_of::<StatusMessage>() == 64);
-const _: () = assert!(mem::align_of::<StatusMessage>() == 64);
 
 /// CMP Nak (64-byte aligned)
 /// Receiver -> sender, on gap detection.
