@@ -1,5 +1,6 @@
 use rsx_types::Price;
 use rsx_types::Qty;
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::encode_utils::compute_crc32;
@@ -77,8 +78,10 @@ fn send_recv_roundtrip() {
     thread::sleep(Duration::from_millis(10));
 
     let result = receiver.try_recv();
-    assert!(result.is_some());
-    let (preamble, payload) = result.unwrap();
+    let (preamble, payload) = match result {
+        CmpRecv::Data(h, p) => (h, p),
+        other => panic!("expected Data, got {other:?}"),
+    };
     assert_eq!(preamble.record_type, RECORD_FILL);
     assert_eq!(
         payload.len(),
@@ -137,7 +140,9 @@ fn multiple_records_in_order() {
     thread::sleep(Duration::from_millis(20));
 
     let mut seqs = Vec::new();
-    while let Some((_, payload)) = receiver.try_recv() {
+    while let CmpRecv::Data(_, payload) =
+        receiver.try_recv()
+    {
         let decoded = unsafe {
             std::ptr::read_unaligned(
                 payload.as_ptr() as *const FillRecord,
@@ -187,7 +192,7 @@ fn crc_mismatch_rejected() {
 
     thread::sleep(Duration::from_millis(10));
     let result = receiver.try_recv();
-    assert!(result.is_none());
+    assert!(matches!(result, CmpRecv::Empty));
 }
 
 #[test]
@@ -222,8 +227,10 @@ fn nak_retransmit_from_wal() {
     sender.recv_control();
     thread::sleep(Duration::from_millis(10));
     let result = receiver.try_recv();
-    assert!(result.is_some());
-    let (hdr, payload) = result.unwrap();
+    let (hdr, payload) = match result {
+        CmpRecv::Data(h, p) => (h, p),
+        other => panic!("expected Data, got {other:?}"),
+    };
     assert_eq!(hdr.record_type, RECORD_FILL);
     let decoded = unsafe {
         std::ptr::read_unaligned(

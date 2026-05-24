@@ -1,3 +1,4 @@
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_messages::FillRecord;
@@ -43,7 +44,7 @@ fn main() {
 
     // Try to recv with retries
     for i in 0..100 {
-        if let Some((hdr, data)) = receiver.try_recv() {
+        if let CmpRecv::Data(hdr, data) = receiver.try_recv() {
             eprintln!("recv ok after {i} attempts: type={} len={}", hdr.record_type, data.len());
             return;
         }

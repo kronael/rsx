@@ -1,5 +1,67 @@
 # Changelog
 
+## [rsx-dxs v0.3.0] — 2026-05-24
+
+CMP reliability v4 — three real bugs in `rsx-dxs/src/cmp.rs`
+fixed in one consolidated change. Wire format unchanged
+(no `WalHeader.version` bump). See
+`.ship/26-CMP-RELIABILITY-V4/SPEC.md`.
+
+### Bugs fixed
+
+- **Silent reorder-buffer overflow (FIFO violation).** The
+  receiver's bounded `BTreeMap` reorder buffer silently
+  advanced `expected_seq` past the gap on overflow (512
+  default), violating the per-stream FIFO invariant. Replaced
+  with a fixed 2048-slot ring; slot conflict (gap >
+  capacity) now triggers sticky `FAULTED` and surfaces
+  `CmpRecv::Faulted` to the consumer. No silent skip path.
+- **NAK storm under sustained loss.** Every out-of-order
+  packet arrival fired a fresh NAK over the whole gap; the
+  heartbeat handler re-fired unconditionally every 10 ms.
+  O(N^2) retransmit traffic. Replaced with `maybe_nak()`
+  rate-limited per `nak_retry_us` (default 100 us) emitting
+  only the oldest contiguous missing run. After
+  `max_nak_retries = 8` retries without progress, the
+  receiver escalates to `FAULTED`.
+- **No sender-side retransmit dedup.** Duplicate NAKs
+  caused the same seq to be retransmitted N times. Added
+  per-slot `ring_last_retx_ns` parallel to `ring_seqs`;
+  `handle_nak` skips slots retransmitted within
+  `retx_dedup_window_us` (default 1 ms).
+
+### Receiver API change
+
+`CmpReceiver::try_recv` returns the new `CmpRecv` enum:
+
+```rust
+pub enum CmpRecv {
+    Empty,
+    Data(WalHeader, Vec<u8>),
+    Faulted { last_delivered_seq, gap_start, gap_end_inclusive },
+}
+```
+
+`Faulted` is sticky until `reset_after_replay(new_tip)` is
+called. Consumers handle `Faulted` by replaying through
+`DxsConsumer` (TCP/WAL), then resuming in-band delivery.
+
+### Tests
+
+Eight new tests in `rsx-dxs/tests/cmp_v4_test.rs` cover
+the contract (single-packet recovery, multi-gap NAK order,
+slot conflict -> FAULTED, sticky FAULTED, reset-after-
+replay, sender dedup window, heartbeat-driven gap
+detection, progress resets retry counter).
+
+### Config additions
+
+| Env var                          | Default | Meaning                                             |
+|----------------------------------|---------|-----------------------------------------------------|
+| `RSX_CMP_NAK_RETRY_US`           | 100     | receiver NAK debounce interval (oldest gap)         |
+| `RSX_CMP_MAX_NAK_RETRIES`        | 8       | retries on oldest gap before FAULTED                |
+| `RSX_CMP_RETX_DEDUP_WINDOW_US`   | 1000    | sender per-seq retransmit dedup window              |
+
 ## [v0.2.0] — 2026-05-21
 
 Workspace expands from 11 to 12 Rust crates; transport
