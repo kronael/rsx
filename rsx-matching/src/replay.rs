@@ -48,9 +48,9 @@ pub fn drain_dxs_replay_into_book(
     last_delivered_seq: u64,
     tip_file: PathBuf,
 ) -> io::Result<u64> {
-    let mut consumer = ReplicationConsumer::from_single(
+    let mut consumer = ReplicationConsumer::new(
         symbol_id,
-        replay_addr,
+        vec![replay_addr],
         tip_file,
         None,
     )?;

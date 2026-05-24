@@ -76,22 +76,6 @@ impl ReplicationConsumer {
         })
     }
 
-    /// Convenience constructor for callers with a single
-    /// replay endpoint.
-    pub fn from_single(
-        stream_id: u32,
-        producer_addr: String,
-        tip_file: PathBuf,
-        tls: Option<TlsConfig>,
-    ) -> io::Result<Self> {
-        Self::new(
-            stream_id,
-            vec![producer_addr],
-            tip_file,
-            tls,
-        )
-    }
-
     /// Connect with reconnect + backoff. Callback receives
     /// every record; never returns.
     pub async fn run<F>(
