@@ -2,8 +2,8 @@
 
 Reliable UDP whose retransmit source IS the WAL the producer
 writes for audit and replay. One byte layout for live frames,
-disk records, and TCP replay streams — no serialization step
-between them.
+disk records, and TCP replay streams — **no serialization step,
+no copy between layers**.
 
 **casting** (C Message Protocol) is the UDP path: NAK-based,
 sender-side retransmit, fixed `#[repr(C)]` frames. **replication** is
@@ -76,6 +76,9 @@ the packaging difference is the point.
   undetected at the tail of an idle stream. **No flow control,
   no congestion control** — receivers stall their consumer or
   drop reordered packets on overflow; senders never pause.
+  **Zero heap allocation on the hot path**: `CastReceiver::poll`
+  delivers a `&[u8]` directly from the reorder buffer; no
+  serialization, no copy, no `Vec`.
 - **Two-tier retransmit (embedded, not sidecar).** First the
   in-memory `send_ring` (4 K most-recent frames, ~µs to
   re-send). On miss, fall back to
@@ -117,12 +120,20 @@ parse. Receivers reject unknown versions.
 Payloads are `#[repr(C, align(64))]`. Sequence number is the
 first `u64` of every data record (per the [`CastRecord`] trait).
 
-The hot send path (`CastSender::send` / `send_raw`) does
-**zero heap allocations** — the in-memory `send_ring` is
-preallocated at construction and reused for every frame.
-The receive path (`CastReceiver::try_recv`) currently
-allocates one `Vec<u8>` per in-order packet; a zero-copy
-variant (caller-supplied `&mut [u8]`) is future work.
+**The entire hot path is zero-allocation.**
+
+- **Send path** (`CastSender::send`): the preallocated `send_ring`
+  holds the 4 K most-recent frames; every send is a copy into an
+  already-owned slot + one `sendto` syscall. No heap traffic.
+- **Receive path** (`CastReceiver::poll`): the callback receives a
+  `&[u8]` pointing directly into the receiver's internal reorder
+  buffer — the caller reads the struct in place, no `Vec` is
+  allocated. `try_recv` is a backwards-compat shim that wraps
+  `poll` with one `Vec<u8>` per record; use `poll` on the hot path.
+- **Wire = disk = stream**: the 16-byte header + `#[repr(C)]`
+  payload written to WAL is bitwise identical to what goes on the
+  wire and what the TCP replay stream delivers. There is no
+  serialization step anywhere in the stack.
 
 ## Install
 
@@ -177,25 +188,36 @@ no-op, but call-site stable for forward compat).
 
 ## Quick start (receiver)
 
+Use `poll` for zero-allocation delivery on the hot path:
+
 ```rust
-use rsx_cast::{CastReceiver, CastRecv};
+use rsx_cast::{CastReceiver, CastPoll};
 
 let mut rx = CastReceiver::new(bind_addr, sender_addr, stream_id)?;
 loop {
     rx.tick();   // forward-compat hook; cheap, no-op today
-    match rx.try_recv() {
-        CastRecv::Data(hdr, payload) => {
-            // dispatch by hdr.record_type — transport doesn't care
+    match rx.poll(|hdr, payload| {
+        // payload is &[u8] into rx's internal buffer — no alloc.
+        // dispatch by hdr.record_type; read the record in place.
+        let _ = (hdr, payload);
+    }) {
+        CastPoll::Data => {}
+        CastPoll::Empty => {}
+        CastPoll::Faulted { last_delivered_seq, .. } => {
+            // gap too big for in-band recovery; see Pattern A below.
+            break;
         }
-        CastRecv::Empty => {}
-        CastRecv::Faulted { last_delivered_seq, .. } => {
-            // gap too big for in-band recovery; see Pattern A below
-            // for the canonical replication-replay-then-reset response.
+        CastPoll::Reconnect { last_delivered_seq, .. } => {
+            // ring overflow; full DXS/TCP cold-start required.
             break;
         }
     }
 }
 ```
+
+`try_recv` returns an owned `Vec<u8>` and is a compatibility shim
+over `poll`; use it only when you need to store the payload beyond
+the callback's lifetime.
 
 ## Consumer patterns
 
