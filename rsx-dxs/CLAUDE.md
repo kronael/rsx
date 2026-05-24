@@ -4,6 +4,20 @@ This file is local to the `rsx-dxs/` crate. It records the README +
 docs conventions specific to this crate. Inherits everything from the
 repo-root `../CLAUDE.md`.
 
+## Runtime — NEVER add one
+
+`rsx-dxs` has zero runtime deps and must stay that way. `CmpSender`,
+`CmpReceiver`, `WalWriter`, `WalReader`, `DxsReplayService`, and
+`DxsConsumer` are all synchronous. Do NOT add monoio, tokio, or any
+async executor as a dep — not as optional, not behind a feature flag.
+
+**Specifically: do NOT add `monoio::net::UdpSocket` to `CmpReceiver`.**
+The caller (gateway, marketdata) owns the socket. rsx-dxs takes bytes
+in and returns records out. There is no speedup to be had from
+integrating a runtime here — the async wakeup belongs in the caller's
+event loop, not in this library. This was explicitly decided and is
+not up for reconsideration.
+
 ## README style — patterns from rtrb
 
 `rtrb` (https://github.com/mgeier/rtrb) is the reference for how a

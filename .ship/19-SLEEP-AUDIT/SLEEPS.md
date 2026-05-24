@@ -8,15 +8,15 @@ Scope: every `sleep`, `Duration::from_*`, `timeout`, `wait_for`,
 Two known prod bugs in this category are the entry point:
 - `rsx-gateway/src/main.rs:407` — `monoio::time::sleep(100µs)` added
   ~655 µs to GW→ME→GW p50. The earlier patch was reverted; the real
-  fix is monoio-native UDP.
+  fix is monoio `UdpSocket` in gateway (caller owns the socket —
+  rsx-dxs stays runtime-free).
 - `rsx-marketdata/src/main.rs:328` — identical pattern.
 
 Oracle (codex) was consulted on the monoio sleep-as-yield class: the
 monoio timer wheel has 1 ms granularity, so `sleep(Duration::from_micros(100))`
 **rounds up to ~1 ms**. The cheapest tactical fix is
-`monoio::task::yield_now()` (or whatever monoio exposes equivalent
-to it); the right end state is `monoio::net::UdpSocket` so the
-loop awaits readiness instead of polling.
+`monoio::task::yield_now()`; the right end state is gateway/marketdata
+owning `monoio::net::UdpSocket` and awaiting readiness.
 
 ---
 
@@ -28,7 +28,7 @@ background bookkeeping.
 
 | file:line | path | classification | impact | proposed fix |
 |---|---|---|---|---|
-| rsx-gateway/src/main.rs:407 | HOT | QUESTIONABLE | ~655 µs / cycle on GW→ME→GW p50 (timer wheel rounds 100 µs up to ~1 ms) | `monoio::task::yield_now()` short-term; `monoio::net::UdpSocket` + `readable()` long-term |
+| rsx-gateway/src/main.rs:407 | HOT | QUESTIONABLE | ~655 µs / cycle on GW→ME→GW p50 (timer wheel rounds 100 µs up to ~1 ms) | `monoio::task::yield_now()` short-term; gateway owns `monoio::net::UdpSocket` long-term (rsx-dxs stays runtime-free) |
 | rsx-marketdata/src/main.rs:328 | WARM | QUESTIONABLE | identical pattern; mostly off the order critical path but on BBO/fill propagation to subscribers (~1 ms staleness) | same as above |
 | rsx-gateway/src/handler.rs:166 | WARM | NEEDED | per-WS-connection; 10 ms upper bound on outbound-drain wakeup. Not on order ingress (which is read-driven). | leave — explicit cap on outbound drain latency, comment cites io_uring cancel-safety |
 | rsx-dxs/src/cmp.rs:154 (CmpSender heartbeat_interval) | WARM | NEEDED | timer-driven heartbeat; default 10 ms cadence per `CmpConfig`. One small UDP send per tick. | leave — needed for liveness |
@@ -128,10 +128,12 @@ Fix path:
   Removes the timer-wheel tax. Loop becomes a cooperative
   busy-poll: idle CPU goes up but order-path latency drops by ~the
   full sleep cost.
-- **Right answer (~50 lines):** migrate `CmpReceiver` to
-  `monoio::net::UdpSocket`. The loop `select!`s over (a) socket
-  readable, (b) a 1 ms heartbeat/sweep timer. Zero idle CPU; no
-  polling loop.
+- **Right answer (~50 lines):** gateway owns the `UdpSocket`
+  (rsx-dxs is runtime-free by design). Replace
+  `std::net::UdpSocket` with `monoio::net::UdpSocket` in
+  gateway's main loop and `select!` over (a) socket readable,
+  (b) a 1 ms heartbeat/sweep timer. rsx-dxs itself never gains
+  a runtime dep — caller passes bytes in, gets records out.
 
 Caveat: the tactical fix needs the dedicated-core picture to be
 already true for the gateway tile (CLAUDE.md says gateway is on
@@ -221,10 +223,9 @@ impact. Both share the exact same shape: the loop polls a sync
 sleeps 100 µs. Oracle (codex, 2026-05-23) confirms the monoio
 timer wheel granularity is the root cause — at 1 ms slots, a
 100 µs sleep is a 10× overrun in expectation. Tactical fix
-(`yield_now`) is one line each. Strategic fix is monoio-native
-UDP, ~50 LOC each, plus matching changes to `CmpReceiver` /
-`CmpSender` in `rsx-dxs/src/cmp.rs` if we want async wakeup
-inside the receiver.
+(`yield_now`) is one line each. Strategic fix is monoio
+`UdpSocket` in gateway/marketdata callers (~50 LOC each) —
+rsx-dxs is runtime-free; no changes to `CmpReceiver`/`CmpSender`.
 
 **Backoff-based retry (correctly designed): 5 sites.**
 - `rsx-mark/src/main.rs:279` (restart)
