@@ -38,10 +38,14 @@ fn emit_writes_sequential_slots() {
     book.emit(Event::OrderFailed {
         user_id: 1,
         reason: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     });
     book.emit(Event::OrderFailed {
         user_id: 2,
         reason: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     });
     assert_eq!(book.event_len, 2);
     match book.events()[0] {
@@ -72,6 +76,8 @@ fn event_len_reset_per_cycle_single_store() {
     book.emit(Event::OrderFailed {
         user_id: 1,
         reason: 0,
+        order_id_hi: 0,
+        order_id_lo: 0,
     });
     assert_eq!(book.event_len, 1);
 
