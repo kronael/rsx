@@ -110,9 +110,9 @@ async fn tls_client_server_connection() {
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("localhost:{}", service_addr.port());
-    let mut consumer = ReplicationConsumer::from_single(
+    let mut consumer = ReplicationConsumer::new(
         stream_id,
-        consumer_addr,
+        vec![consumer_addr],
         tip_file,
         Some(client_tls),
     )
@@ -213,9 +213,9 @@ async fn tls_disabled_falls_back_to_plain() {
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("127.0.0.1:{}", service_addr.port());
-    let mut consumer = ReplicationConsumer::from_single(
+    let mut consumer = ReplicationConsumer::new(
         stream_id,
-        consumer_addr,
+        vec![consumer_addr],
         tip_file,
         None,
     )
