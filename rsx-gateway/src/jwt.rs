@@ -76,15 +76,8 @@ pub fn validate_jwt_with_claims(
     Ok((user_id, token_data.claims))
 }
 
-/// Bounded jti replay tracker. Remembers the last `cap` jti
-/// values; rejecting any token whose jti is already in the
-/// set. FIFO eviction once full.
-///
-/// This is a lightweight defence against token replay within
-/// a single gateway process. It does **not** survive restarts
-/// (token replay across a restart is allowed) and is not
-/// shared across gateway replicas. For multi-replica replay
-/// protection use a centralized cache (Redis) keyed by jti.
+/// Bounded jti replay tracker. Remembers the last `cap` jti values, FIFO eviction.
+/// Per-process only — does not survive restarts, not shared across replicas.
 pub struct JtiTracker {
     seen: HashSet<String>,
     order: VecDeque<String>,
