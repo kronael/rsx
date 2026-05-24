@@ -498,10 +498,10 @@ pub struct RawWalRecord {
     pub payload: Vec<u8>,
 }
 
-/// Merge WAL files across multiple directories (e.g. hot
-/// + archive) into one list sorted by `first_seq`. The
-/// active file (sentinel `first_seq=u64::MAX`) sorts last.
-/// Missing directories are treated as empty.
+/// Merge WAL files across multiple directories (e.g.
+/// hot and archive) into one list sorted by `first_seq`.
+/// The active file (sentinel `first_seq=u64::MAX`) sorts
+/// last. Missing directories are treated as empty.
 pub fn list_wal_files_across(
     stream_id: u32,
     dirs: &[&Path],
