@@ -210,20 +210,22 @@ Estimated breakdown of our 3.85 µs:
 
 Options ordered by effort × payoff for this codebase:
 
-### 1. Move CmpSender/Receiver to monoio::net::UdpSocket
+### 1. monoio io_uring UDP in gateway/marketdata
 
-Effort: ~50-100 LOC. Replaces `socket.send_to` with monoio's
-io_uring-backed equivalent. Gateway and marketdata already
-have monoio runtimes; risk and matching would need it added.
+rsx-dxs is runtime-free by design — `CmpReceiver` takes
+bytes, not a socket. The caller (gateway, marketdata) owns
+the `UdpSocket`. Replacing `std::net::UdpSocket` with
+`monoio::net::UdpSocket` in the caller is the correct path;
+rsx-dxs itself never gains a runtime dep.
+
+Effort: ~50-100 LOC in gateway + marketdata only.
 
 Expected gain: **~1.5-2 µs** off each leg by amortizing the
-syscall across batched SQEs. Risk + matching still use
-tokio's epoll-based reactor — porting all four binaries is
-heavier work.
+syscall across batched SQEs.
 
 ### 2. SQPOLL for the gateway's CMP loop
 
-Effort: ~20 LOC once on monoio::net::UdpSocket. Sets
+Effort: ~20 LOC in gateway on `monoio::net::UdpSocket`. Sets
 `IORING_SETUP_SQPOLL` on the gateway's io_uring instance.
 
 Expected gain: another **~500 ns** by avoiding the
