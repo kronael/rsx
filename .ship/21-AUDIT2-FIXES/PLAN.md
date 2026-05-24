@@ -8,20 +8,31 @@ Source reports: `../20-CTO-CEO-REVIEW-2/CTO-REPORT.md`,
 | # | Finding | LOC | Status |
 |---|---|---:|---|
 | 1 | R-N3 — `make lint` broken | 12 | ✅ 6e4c6e2 |
-| 2 | R-N6 — Gateway advances CMP seq even after `send_raw` fails | ~5 | pending |
-| 3 | R-N5 — JtiTracker burns token before 101 response | ~30 | pending |
-| 4 | R-N2 — Order ring overflow silently dropped | ~25 | pending |
-| 5 | R-N1 — ME has no WAL replay on startup | ~80 | pending |
-| 6 | R-N4 — FillRecord wire-format silently extended | ~10 | pending |
-| 7 | R-N7 — `Event::OrderFailed` not persisted to WAL | ~25 | pending |
-| 8 | CEO #1 — `/trade/` schema mismatch (bundle vs server) | ~20 | pending |
-| 9 | CEO #2 — `/x/order` returns 200 OK with engines dead | ~30 | pending |
-| 10 | CEO #3 — `/x/*` wildcard 200 sinkhole | ~10 | pending |
-| 11 | CEO #4 — `/verify` PASS when 4/7 processes running | ~15 | pending |
-| 12 | CEO #5 — `/faults` Restart silent no-op | ~10 | pending |
+| 2 | R-N6 — Gateway advances CMP seq even after `send_raw` fails | 7 | ✅ d5162c1 |
+| 3 | R-N5 — JtiTracker burns token before 101 response | 49 | ✅ bbf0912 |
+| 4 | R-N2 — Order ring overflow silently dropped | 26 | ✅ 8707611 |
+| 5 | R-N1 — ME has no WAL replay on startup | ba11365 + 90f0e61 | ✅ |
+| 6 | R-N4 — FillRecord wire-format silently extended | — | ✅ d63c224 |
+| 7 | R-N7 — `Event::OrderFailed` not persisted to WAL | — | ✅ 09a395b |
+| 8 | CEO #1 — `/trade/` schema mismatch (bundle vs server) | — | ✅ 6356158 |
+| 9 | CEO #2 — `/x/order` returns 200 OK with engines dead | — | ✅ aac9e18 |
+| 10 | CEO #3 — `/x/*` wildcard 200 sinkhole | — | ✅ 267e5eb |
+| 11 | CEO #4 — `/verify` PASS when 4/7 processes running | — | ✅ f8df05d |
+| 12 | CEO #5 — `/faults` Restart silent no-op | — | ✅ 707ec08 |
 | 13 | R-N9 — heap alloc per CMP frame | def | deferred (perf, not correctness) |
 | 14 | R-N10 — `bench-reference.json` re-seal | def | deferred (CI policy, not code) |
 | 15 | R-N8 — 48h WAL retention disk burn | def | deferred (ops, not code) |
+
+## Close-out state (post-sprint)
+
+- **12 of 12 actionable findings shipped.** 3 explicitly deferred
+  with rationale.
+- `make lint` → exit 0. `cargo test --workspace --lib --tests` → 891
+  pass / 0 fail / 46 ignored at HEAD `44081a1`.
+- Every fix has a regression test (where applicable) or a
+  surrogate behaviour test on the playground side.
+- A follow-up sprint should re-run the CTO + CEO audits round 3
+  to confirm the grades move.
 
 ## Per-fix plan (minimal-correct, with acceptance test)
 
