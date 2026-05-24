@@ -99,7 +99,7 @@ shared queue between them.
 `../benches/compare_tcp.rs` — Criterion, loopback, 64-byte
 payload, std `TcpListener` / `TcpStream` with `TCP_NODELAY`
 on both ends. Non-blocking sockets + spin-loop on the
-receiver, matching the style of `udp_rtt_bench.rs` and
+receiver, matching the style of `compare_udp.rs` and
 `compare_kcp.rs`'s spin variant.
 
 The connection is established once in setup, before the

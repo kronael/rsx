@@ -62,7 +62,7 @@ CMP builds on raw UDP. The cost of CMP above this baseline is:
 Measured overhead (loopback, 64 B payload):
 
 ```
-raw UDP RTT      ~2.0 µs  (baseline, udp_rtt_bench)
+raw UDP RTT      ~2.0 µs  (baseline, compare_udp)
 CMP send body    ~3.87 µs  (one-way; cmp_send_breakdown_bench)
 CMP RTT          ~10.3 µs  (round-trip; cmp_rtt_bench)
 ```
@@ -73,7 +73,7 @@ dfe2ef4), not CMP protocol overhead.
 
 ## Benchmark
 
-`../benches/udp_rtt_bench.rs` — pre-existing, ships with rsx-dxs.
+`../benches/compare_udp.rs` — pre-existing, ships with rsx-dxs.
 
 Two non-blocking sockets on 127.0.0.1, both threads
 busy-spinning. No per-iteration `setsockopt`. No blocking

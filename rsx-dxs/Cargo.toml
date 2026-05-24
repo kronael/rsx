@@ -47,7 +47,7 @@ name = "cmp_bench"
 harness = false
 
 [[bench]]
-name = "udp_rtt_bench"
+name = "compare_udp"
 harness = false
 
 [[bench]]

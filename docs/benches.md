@@ -61,7 +61,7 @@ don't compose to a production p50 on their own.
 
 | Bench | Measures | Production leg it isolates |
 |---|---|---|
-| `udp_rtt_bench` | Raw UDP loopback round-trip, 64-byte payload, two non-blocking sockets spinning. **Absolute floor.** | none — baseline |
+| `compare_udp` | Raw UDP loopback round-trip, 64-byte payload, two non-blocking sockets spinning. **Absolute floor.** | none — baseline |
 | `cmp_one_way_bench` | `CmpSender::send` → `CmpReceiver::try_recv` one direction | `gateway_in → risk_in`, `risk_out → gateway_cmp_recv` |
 | `cmp_rtt_bench` | CMP echo round-trip (A → B → A) with two pairs | the full `risk → ME → risk` triangle |
 | `cmp_send_breakdown_bench` | Each step inside `CmpSender::send` separately: CRC, header build, buf pack, sendto, NAK ring copy | Attributes the 3.9 µs `send` body — **99 % is sendto** |
