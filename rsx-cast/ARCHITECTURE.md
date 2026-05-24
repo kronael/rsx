@@ -12,8 +12,9 @@ Specs: [`specs/4-cast.md`](specs/4-cast.md),
 
 rsx-cast has zero workspace dependencies. The crate carries
 only the framing (`WalHeader`), the transport-level records
-(heartbeat, status, NAK, replay request, caught-up), and the
-[`CastRecord`] trait that domain payloads must implement.
+(heartbeat, NAK, replay request, caught-up,
+replication-not-available), and the [`CastRecord`] trait that
+domain payloads must implement.
 
 ```
 $ cargo tree -p rsx-cast --edges normal | grep '^[├└]── rsx-'
@@ -113,7 +114,8 @@ no longer accept it.
   (64MB default), close active file, rename with seq range,
   open new active file, run GC.
 - **GC**: mtime-based; delete files older than retention
-  (10min default).
+  (4h default per CLAUDE.md; no time-based GC wired in
+  `wal.rs` today — rotation alone bounds disk use).
 - **Backpressure**: append blocks when buf > 2x
   `max_file_size`.
 
