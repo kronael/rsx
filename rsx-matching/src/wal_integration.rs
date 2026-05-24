@@ -440,10 +440,7 @@ pub fn publish_events(
     Ok(())
 }
 
-/// Inner helper: prepare the record once on the WAL (one CRC,
-/// one seq), then fan out the resulting `Framed` to WAL +
-/// cmp + (optionally) mkt with `send_framed` / `append_framed`
-/// (no further CRC compute).
+/// Frame once via `WalWriter::prepare`, then fan to WAL + cmp + optional mkt.
 #[inline]
 fn fan_out<T: rsx_cast::CastRecord>(
     writer: &mut WalWriter,
@@ -554,24 +551,8 @@ pub fn load_wal_seq(
     s.trim().parse::<u64>().ok()
 }
 
-/// Replay WAL records after a snapshot to bring the book to
-/// the current state. R-N1: snapshot is taken every 10 s but
-/// fills are forwarded to clients immediately, so a SIGKILL
-/// between snapshots loses every fill in that window unless
-/// the WAL is replayed.
-///
-/// Re-executes RECORD_ORDER_ACCEPTED records via
-/// `process_new_order`, which deterministically regenerates
-/// the same fills + side-effect events that the matching
-/// engine produced live. RECORD_ORDER_CANCELLED records are
-/// applied as `book.cancel_order(handle)` against the
-/// reconstructed `order_index`. Other record types (Fill,
-/// OrderInserted, OrderDone, BBO) are skipped — they are
-/// side effects of the accepted-order replay above.
-///
-/// Returns the highest WAL seq applied (caller seeds
-/// `WalWriter::next_seq = ret + 1` so subsequent live writes
-/// never reuse a replayed seq).
+/// Replay WAL records after a snapshot to bring the book to current state.
+/// Returns the highest WAL seq applied. See ARCHITECTURE.md.
 pub fn replay_wal_after_snapshot(
     book: &mut Orderbook,
     order_index: &mut FxHashMap<OrderKey, u32>,
