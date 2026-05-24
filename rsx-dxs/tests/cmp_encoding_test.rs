@@ -8,55 +8,10 @@ use rsx_messages::RECORD_FILL;
 use rsx_dxs::records::RECORD_HEARTBEAT;
 use rsx_dxs::records::RECORD_NAK;
 use rsx_dxs::records::RECORD_REPLAY_REQUEST;
-use rsx_dxs::records::RECORD_STATUS_MESSAGE;
 use rsx_dxs::records::ReplayRequest;
-use rsx_dxs::records::StatusMessage;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
-
-// --- StatusMessage ---
-
-#[test]
-fn status_message_encode_decode_roundtrip() {
-    let msg = StatusMessage {
-        consumption_seq: 42,
-        receiver_window: 1024,
-        _pad1: [0u8; 48],
-    };
-    let bytes = as_bytes(&msg);
-    let decoded = unsafe {
-        std::ptr::read_unaligned(
-            bytes.as_ptr() as *const StatusMessage,
-        )
-    };
-    assert_eq!(decoded.consumption_seq, 42);
-    assert_eq!(decoded.receiver_window, 1024);
-}
-
-#[test]
-fn status_message_size_is_64_bytes() {
-    assert_eq!(mem::size_of::<StatusMessage>(), 64);
-    assert_eq!(mem::align_of::<StatusMessage>(), 64);
-}
-
-#[test]
-fn status_message_fields_little_endian() {
-    let msg = StatusMessage {
-        consumption_seq: 0x0102030405060708,
-        receiver_window: 0x090A0B0C0D0E0F10,
-        _pad1: [0u8; 48],
-    };
-    let bytes = as_bytes(&msg);
-    // consumption_seq at offset 0, little-endian
-    assert_eq!(bytes[0], 0x08);
-    assert_eq!(bytes[1], 0x07);
-    assert_eq!(bytes[7], 0x01);
-    // receiver_window at offset 8
-    assert_eq!(bytes[8], 0x10);
-    assert_eq!(bytes[9], 0x0F);
-    assert_eq!(bytes[15], 0x09);
-}
 
 // --- Nak ---
 
@@ -135,7 +90,7 @@ fn heartbeat_fields_little_endian() {
 
 #[test]
 fn control_record_type_values_match_spec() {
-    assert_eq!(RECORD_STATUS_MESSAGE, 0x10);
+    // 0x10 is reserved (was RECORD_STATUS_MESSAGE, removed).
     assert_eq!(RECORD_NAK, 0x11);
     assert_eq!(RECORD_HEARTBEAT, 0x12);
     assert_eq!(RECORD_REPLAY_REQUEST, 0x13);
@@ -145,16 +100,6 @@ fn control_record_type_values_match_spec() {
 
 #[test]
 fn padding_bytes_zeroed_in_all_control_msgs() {
-    let msg = StatusMessage {
-        consumption_seq: u64::MAX,
-        receiver_window: u64::MAX,
-        _pad1: [0u8; 48],
-    };
-    let bytes = as_bytes(&msg);
-    for &b in &bytes[16..64] {
-        assert_eq!(b, 0, "status padding not zeroed");
-    }
-
     let nak = Nak {
         from_seq: u64::MAX,
         count: u64::MAX,

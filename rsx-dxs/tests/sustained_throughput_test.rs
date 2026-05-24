@@ -101,10 +101,7 @@ fn cmp_send_50k_under_one_second() {
     let t0 = Instant::now();
     for _ in 0..N {
         let mut rec = fill(0);
-        // The send returns `false` only under flow-control;
-        // we never set a window so we always get `true`.
-        let ok = sender.send(&mut rec).unwrap();
-        assert!(ok, "send refused without flow control set");
+        sender.send(&mut rec).unwrap();
     }
     let elapsed = t0.elapsed();
 
