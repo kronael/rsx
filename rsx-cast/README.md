@@ -18,9 +18,9 @@ QUIC's job (see [When NOT to use this](#when-not-to-use-this)).
 | Operation | p50 | Bench / env |
 |---|---:|---|
 | `WalWriter::append` (in-memory) | **31 ns** | `wal_bench`, single thread |
-| `CastSender::send` body | **~4.07 µs** (99% kernel UDP send path) | `cmp_send_breakdown_bench`, 128 B payload + 16 B header |
+| `CastSender::send` body | **~4.07 µs** (99% kernel UDP send path) | `cast_send_breakdown_bench`, 128 B payload + 16 B header |
 | Raw UDP RTT (baseline) | **9.89 µs** | `compare_udp`, 128 B, two threads pinned to cores 2/3 |
-| casting RTT (sender → echo → sender) | **11.26 µs** | `cmp_rtt_bench`, 128 B, two threads pinned |
+| casting RTT (sender → echo → sender) | **11.26 µs** | `cast_rtt_bench`, 128 B, two threads pinned |
 | `WalWriter::flush + fsync`, single record | **651 µs** | `wal_fsync_bench`, sync per append |
 | `WalWriter::flush + fsync`, 64 KB batch | **24 µs** | `wal_fsync_bench`, amortised |
 | Cold-tier NAK retransmit (`read_record_at_seq`) | **23.5 ms @ 10 K records** | `wal_random_read_bench`, scans backwards |
@@ -136,10 +136,10 @@ rsx-cast = { git = "https://github.com/kronael/rsx", rev = "abc1234" }
 ```
 
 A standalone working example lives in
-[examples/cmp_smoke.rs](examples/cmp_smoke.rs). Run it:
+[examples/cast_smoke.rs](examples/cast_smoke.rs). Run it:
 
 ```bash
-cargo run --example cmp_smoke
+cargo run --example cast_smoke
 ```
 
 ## Quick start (sender)
@@ -310,17 +310,21 @@ latency measurements justify the extra moving parts.
 
 ### Known caveats
 
-- **Reorder-buffer overflow silently advances.** When the
-  receiver's reorder buffer (default 512 entries) overflows
-  while waiting for a gap to be NAK-filled, it currently
-  clears the buffer and advances past the gap rather than
-  surfacing a hard error to the consumer. The pending v4
-  reliability spec replaces this with a bounded ring +
-  explicit FAULTED state; until that lands the "Delivery"
-  promise above has this hole.
-- **FAULTED escalation is not implemented.** Specced (see
-  `specs/4-cast.md` §FAULTED) but the consumer side raises
-  no signal today.
+- **Cold-tier retransmit is O(N) inside one WAL segment.**
+  `read_record_at_seq` scans the file to locate the requested
+  seq; ~23.5 ms at 10 K records on commodity SSD. Hot retransmits
+  (within the 4 K-slot send ring) are µs-scale; the cold tier
+  is acceptable for cold-start replay and stale NAKs, not for
+  realtime tail-of-stream recovery.
+- **Receive path allocates one `Vec<u8>` per in-order packet.**
+  `CastReceiver::try_recv` allocates the payload buffer per
+  call. A caller-supplied `&mut [u8]` variant is future work.
+- **Not all consumers handle `CastRecv::Faulted` yet.** The
+  receiver surfaces FAULTED to the caller; the matching tile
+  recovers via `ReplicationConsumer` replay (POC reference),
+  but risk, marketdata, and gateway still panic on FAULTED
+  with a unified message pointing at matching. Per-consumer
+  recovery is tracked work.
 
 ## Requirements and assumptions
 
@@ -381,10 +385,12 @@ latency measurements justify the extra moving parts.
 
 ## MSRV
 
-Edition 2021. No `rust-version` declared in `Cargo.toml`;
-the crate builds against any current stable rustc. Internal
-policy: MSRV follows the workspace's compiler, which tracks
-stable closely.
+Rust 1.78+ on stable. Edition 2021. No nightly features
+used. `rust-version` is not pinned in `Cargo.toml` —
+internal policy tracks current stable, and a future MSRV
+floor bump will land in a minor version (`0.x`) of the
+crate. If you need a stricter contract, vendor the crate
+or pin a git rev.
 
 ## Tooling
 
@@ -453,12 +459,12 @@ Subscribe, ZeroMQ patterns, …).
 
 ## Breaking Changes
 
-This crate has no public stable API yet. The wider rsx
-exchange's
+This crate has no public stable API yet. The
 [CHANGELOG](https://github.com/kronael/rsx/blob/master/CHANGELOG.md)
-covers cross-crate breaking changes; the current crate
-version is **0.2.0** and the next bump (0.3) will land
-together with the v4 reliability rewrite.
+in the wider rsx exchange repo is the source of truth for
+rename maps, env-var changes, and wire-format bumps. The
+current crate version is **0.5.0** (rename from `rsx-dxs`
+in v0.5.0; v4 reliability shipped in v0.3.0).
 
 ## See also
 

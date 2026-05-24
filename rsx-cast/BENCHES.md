@@ -28,13 +28,13 @@ Criterion writes per-bench results to
 | Bench | Measures | What it isolates |
 |---|---|---|
 | `compare_udp` | Raw UDP loopback RTT, 128 B payload, two non-blocking sockets spinning. **Absolute floor.** | Baseline: no protocol work |
-| `cmp_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | Hot send → hot recv |
-| `cmp_rtt_bench` | casting echo RTT (A → B → A), two paired senders + receivers | Full sender → echo → sender triangle |
-| `cmp_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs `send` body — 99 % is `sendto` |
+| `cast_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | Hot send → hot recv |
+| `cast_rtt_bench` | casting echo RTT (A → B → A), two paired senders + receivers | Full sender → echo → sender triangle |
+| `cast_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs `send` body — 99 % is `sendto` |
 | `wal_bench` | `WalWriter::append` in-memory, flush + fsync 64 KB, sequential read 10 K records | Append (31 ns) + sequential reader throughput |
 | `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost: 651 µs p50 single-record |
 | `wal_random_read_bench` | `read_record_at_seq(random)` over a pre-populated WAL | Cold-tier NAK retransmit path; O(n) at 23.5 ms @ 10 K records |
-| `cmp_bench` | Protocol record encode/decode (NAK, Heartbeat) | Wire-level primitives only — not on the per-packet send path |
+| `cast_bench` | Protocol record encode/decode (NAK, Heartbeat) | Wire-level primitives only — not on the per-packet send path |
 | `compare_kcp` / `compare_quinn` / `compare_tcp` / `compare_all` | Same RTT harness against KCP, Quinn (QUIC), raw TCP, all-in-one | Apples-to-apples comparisons; see `compare/README.md` |
 | `compare_aeron` / `compare_moldudp64` / `compare_soupbintcp` | Same RTT harness against Aeron, MoldUDP64, SoupBinTCP | Vendor-protocol comparisons |
 
@@ -44,7 +44,7 @@ benches pin their worker to core 2. See
 [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
 § "The pinning gap" for the before/after distributions.
 
-## CastSender::send sub-attribution (`cmp_send_breakdown_bench`)
+## CastSender::send sub-attribution (`cast_send_breakdown_bench`)
 
 Per-stage median, 128 B payload + 16 B header, post-pinning:
 
