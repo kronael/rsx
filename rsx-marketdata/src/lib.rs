@@ -8,7 +8,7 @@
 pub mod shadow;
 pub mod types;
 pub mod subscription;
-pub mod protocol;
+pub mod records;
 pub mod config;
 pub mod handler;
 pub mod state;
