@@ -1,4 +1,4 @@
-use crate::protocol::serialize_l2_snapshot;
+use crate::records::serialize_l2_snapshot;
 use crate::shadow::ShadowBook;
 use crate::subscription::SubscriptionManager;
 use crate::types::BboUpdate;
