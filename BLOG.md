@@ -74,7 +74,7 @@ Criterion benchmarks on the orderbook and transport layer:
 |------------------------------------------------|----------|
 | Match single fill                              | 54 ns    |
 | Insert resting order                           | 857 ns   |
-| `WalWriter::append` (Vec extend, pre-fsync)    | 31 ns    |
+| `WalWriter::prepare` + `append_framed` (Vec extend, pre-fsync) | 31 ns |
 | WAL flush + fsync 64 KB                        | 24 us    |
 | Protocol-record encode (Nak / CastHeartbeat) | 43 ns |
 | `FillRecord` encode                            | 23 ns    |
@@ -167,7 +167,7 @@ sequence N. No central broker, no topic partitions, no
 consumer groups. The WAL IS the log.
 
 WalWriter flushes every 10 milliseconds, rotates files at
-64MB, retains 48 hours. Backpressure: if the buffer fills
+64MB, retains 4 hours. Backpressure: if the buffer fills
 or flush lag exceeds 10ms, the producer stalls. This is
 deliberate -- the matching engine waits rather than dropping
 events.
