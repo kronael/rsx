@@ -18,6 +18,7 @@
 
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
+use crate::encode_utils::decode_payload;
 use crate::encode_utils::encode_record;
 use crate::header::WalHeader;
 use crate::records::CaughtUpRecord;
@@ -148,20 +149,15 @@ where
             "replay request crc mismatch",
         ));
     }
-    if payload_buf.len()
-        < std::mem::size_of::<ReplicationRequest>()
-    {
-        return Err(std::io::Error::new(
+    let req = decode_payload::<ReplicationRequest>(
+        &payload_buf,
+    )
+    .ok_or_else(|| {
+        std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "replay request too short",
-        ));
-    }
-    let req = unsafe {
-        std::ptr::read_unaligned(
-            payload_buf.as_ptr()
-                as *const ReplicationRequest,
         )
-    };
+    })?;
     let stream_id = req.stream_id;
     let from_seq = req.from_seq;
 
