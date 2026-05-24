@@ -214,9 +214,9 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_ME_TICK_SIZE": str(sym["tick"]),
             "RSX_ME_LOT_SIZE": str(sym["lot"]),
             "RSX_ME_WAL_DIR": f"./tmp/wal/{sym['name'].lower()}",
-            "RSX_ME_CMP_ADDR": me_cmp,
-            "RSX_RISK_CMP_ADDR": risk_cmp,
-            "RSX_MD_CMP_ADDR": md_cmp,
+            "RSX_ME_CAST_ADDR": me_cmp,
+            "RSX_RISK_CAST_ADDR": risk_cmp,
+            "RSX_MD_CAST_ADDR": md_cmp,
             "RSX_ME_DATABASE_URL": pg_url,
             "RUST_LOG": "info",
         }
@@ -236,7 +236,7 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MARK_WAL_DIR": "./tmp/wal/mark",
             "RSX_MARK_STREAM_ID": "100",
             "RSX_MARK_SYMBOL_MAP": mark_symbol_map,
-            "RSX_RISK_MARK_CMP_ADDR":
+            "RSX_RISK_MARK_CAST_ADDR":
                 f"127.0.0.1:{BASE_RISK_MARK_CMP}",
             "RSX_MARK_SOURCE_BINANCE_ENABLED": "1",
             "RSX_MARK_SOURCE_BINANCE_WS_URL":
@@ -264,15 +264,15 @@ def build_spawn_plan(config, pg_url, release=False):
                 # ME book instead.
                 "RSX_RISK_RESET_FROZEN_ON_START": "1",
                 "RSX_RISK_MAX_SYMBOLS": str(max(s["id"] for s in symbols) + 1),
-                "RSX_RISK_CMP_ADDR":
+                "RSX_RISK_CAST_ADDR":
                     f"127.0.0.1:{BASE_RISK_CMP + shard}",
-                "RSX_GW_CMP_ADDR":
+                "RSX_GW_CAST_ADDR":
                     f"127.0.0.1:{BASE_GW_CMP}",
-                "RSX_ME_CMP_ADDRS": me_cmp_addrs,
+                "RSX_ME_CAST_ADDRS": me_cmp_addrs,
                 "RSX_RISK_WAL_DIR": "./tmp/wal",
-                "RSX_RISK_MARK_CMP_ADDR":
+                "RSX_RISK_MARK_CAST_ADDR":
                     f"127.0.0.1:{BASE_RISK_MARK_CMP}",
-                "RSX_MARK_CMP_ADDR":
+                "RSX_MARK_CAST_ADDR":
                     f"127.0.0.1:{BASE_MARK_CMP}",
                 "DATABASE_URL": pg_url,
                 "RUST_LOG": "info",
@@ -293,11 +293,11 @@ def build_spawn_plan(config, pg_url, release=False):
                         "RSX_RISK_MAX_SYMBOLS":
                             str(len(symbols)),
                         "RSX_RISK_IS_REPLICA": "true",
-                        "RSX_RISK_CMP_ADDR":
+                        "RSX_RISK_CAST_ADDR":
                             f"127.0.0.1:{BASE_RISK_CMP + 10 + shard * 2 + r}",
-                        "RSX_GW_CMP_ADDR":
+                        "RSX_GW_CAST_ADDR":
                             f"127.0.0.1:{BASE_GW_CMP}",
-                        "RSX_ME_CMP_ADDRS": me_cmp_addrs,
+                        "RSX_ME_CAST_ADDRS": me_cmp_addrs,
                         "RSX_RISK_WAL_DIR": "./tmp/wal",
                         "DATABASE_URL": pg_url,
                         "RUST_LOG": "info",
@@ -322,9 +322,9 @@ def build_spawn_plan(config, pg_url, release=False):
             {
                 "RSX_GW_LISTEN":
                     f"0.0.0.0:{BASE_GW_WS + gw}",
-                "RSX_GW_CMP_ADDR":
+                "RSX_GW_CAST_ADDR":
                     f"127.0.0.1:{BASE_GW_CMP + gw}",
-                "RSX_RISK_CMP_ADDR":
+                "RSX_RISK_CAST_ADDR":
                     f"127.0.0.1:{BASE_RISK_CMP}",
                 "RSX_GW_WAL_DIR": "./tmp/wal",
                 # Dev secret. Production MUST override this env var
@@ -350,7 +350,7 @@ def build_spawn_plan(config, pg_url, release=False):
         {
             "RSX_MD_LISTEN":
                 f"0.0.0.0:{BASE_MD_WS}",
-            "RSX_ME_CMP_ADDRS": me_cmp_addrs,
+            "RSX_ME_CAST_ADDRS": me_cmp_addrs,
             "RSX_MD_STREAM_ID": "1",
             "RUST_LOG": "info",
         },
