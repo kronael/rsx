@@ -5,6 +5,18 @@ use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::CastRecord;
 use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io;
+use std::io::Read;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
+use std::time::Instant;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 /// Capacity of the inline wire buffer in `Framed`. Sized to
 /// hold the 16-byte WAL header plus the largest current record
@@ -23,18 +35,13 @@ pub struct Framed {
     pub total: u16,
     pub seq: u64,
 }
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io;
-use std::io::Read;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
-use std::time::Duration;
-use std::time::Instant;
-use tracing::error;
-use tracing::info;
-use tracing::warn;
+
+/// Records buffered between flushes before `should_flush` returns
+/// `true`. Producers call `should_flush` after each `append_framed`
+/// to decide when to drain the buffer to disk. Sized to amortise
+/// fsync cost across a meaningful batch without growing the
+/// in-memory buffer past ~64 KB at typical record sizes.
+const FLUSH_RECORD_THRESHOLD: u32 = 1000;
 
 // ── Path layout ──────────────────────────────────────────────
 //
@@ -271,7 +278,7 @@ impl WalWriter {
     }
 
     pub fn should_flush(&self) -> bool {
-        self.records_since_flush >= 1000
+        self.records_since_flush >= FLUSH_RECORD_THRESHOLD
     }
 
     pub fn last_seq(&self) -> u64 {
