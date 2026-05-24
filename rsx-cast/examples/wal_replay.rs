@@ -46,12 +46,8 @@ fn main() {
 
     {
         let mut wal = WalWriter::new(
-            STREAM_ID,
-            dir,
-            None,
-            ROTATE_BYTES,
-            RETENTION_NS,
-        )
+        STREAM_ID, dir, ROTATE_BYTES,
+    )
         .unwrap();
         for i in 1..=5 {
             let mut rec = fill(1000 + i, 50_000 + i as i64, 100);

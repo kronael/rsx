@@ -109,11 +109,7 @@ fn replay_restores_orders_appended_after_snapshot() {
 
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
     let mut writer = WalWriter::new(
-        SYM,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        SYM, tmp.path(), 64 * 1024 * 1024,
     )
     .unwrap();
 
@@ -177,11 +173,7 @@ fn replay_with_no_snapshot_replays_from_seq_1() {
 
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
     let mut writer = WalWriter::new(
-        SYM,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        SYM, tmp.path(), 64 * 1024 * 1024,
     )
     .unwrap();
 

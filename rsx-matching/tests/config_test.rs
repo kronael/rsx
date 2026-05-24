@@ -29,11 +29,7 @@ fn config_applied_can_be_written_to_wal() {
     let tmp = TempDir::new().unwrap();
     let wal_dir = tmp.path().to_path_buf();
     let mut wal = WalWriter::new(
-        1,
-        &wal_dir,
-        None,
-        64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        1, &wal_dir, 64 * 1024 * 1024,
     )
     .expect("wal");
 
@@ -80,11 +76,7 @@ fn config_applied_record_type() {
 fn config_applied_emits_event() {
     let tmp = TempDir::new().unwrap();
     let mut wal = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        1, tmp.path(), 64 * 1024 * 1024,
     )
     .expect("wal");
 
@@ -120,11 +112,7 @@ fn config_applied_emits_event() {
 fn config_version_monotonic() {
     let tmp = TempDir::new().unwrap();
     let mut wal = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        1, tmp.path(), 64 * 1024 * 1024,
     )
     .expect("wal");
 

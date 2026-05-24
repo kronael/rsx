@@ -68,11 +68,7 @@ fn nak_wal_fallback_under_5ms() {
     // them. SEND_RING_CAPACITY is 4096.
     let stream_id = 1u32;
     let mut writer = WalWriter::new(
-        stream_id,
-        wal_dir,
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        stream_id, wal_dir, 64 * 1024 * 1024,
     )
     .unwrap();
     for i in 1..=5_000u64 {

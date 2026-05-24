@@ -54,12 +54,8 @@ fn dxs_replay_rebuilds_shadow_book() {
 
             let stream_id = 1u32;
             let mut writer = WalWriter::new(
-                stream_id,
-                &wal_dir,
-                None,
-                64 * 1024 * 1024,
-                600_000_000_000,
-            )
+        stream_id, &wal_dir, 64 * 1024 * 1024,
+    )
             .unwrap();
 
             let mut insert1 = OrderInsertedRecord {
@@ -218,12 +214,8 @@ fn recovery_from_me_wal_then_live() {
 
             let stream_id = 1u32;
             let mut writer = WalWriter::new(
-                stream_id,
-                &wal_dir,
-                None,
-                64 * 1024 * 1024,
-                600_000_000_000,
-            )
+        stream_id, &wal_dir, 64 * 1024 * 1024,
+    )
             .unwrap();
 
             let mut insert = OrderInsertedRecord {
@@ -283,12 +275,8 @@ fn recovery_snapshot_sent_after_catchup() {
 
             let stream_id = 1u32;
             let mut writer = WalWriter::new(
-                stream_id,
-                &wal_dir,
-                None,
-                64 * 1024 * 1024,
-                600_000_000_000,
-            )
+        stream_id, &wal_dir, 64 * 1024 * 1024,
+    )
             .unwrap();
 
             let mut insert = OrderInsertedRecord {

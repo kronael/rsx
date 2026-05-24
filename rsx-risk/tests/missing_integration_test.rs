@@ -190,11 +190,7 @@ fn wal_replay_rebuilds_positions_from_tip() {
 
     // Write fills for symbol 0: seqs 1-5
     let mut writer = WalWriter::new(
-        0,
-        wal_dir.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        0, wal_dir.path(), 64 * 1024 * 1024,
     )
     .unwrap();
 
@@ -253,11 +249,7 @@ fn wal_replay_resumes_from_tip_skips_already_applied() {
 
     // Write fills seqs 1-10
     let mut writer = WalWriter::new(
-        0,
-        wal_dir.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        0, wal_dir.path(), 64 * 1024 * 1024,
     )
     .unwrap();
     for i in 1..=10u64 {

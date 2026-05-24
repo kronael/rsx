@@ -28,11 +28,7 @@ fn populate_wal(dir: &PathBuf) {
     std::fs::create_dir_all(dir).unwrap();
 
     let mut writer = WalWriter::new(
-        SYMBOL_ID,
-        dir,
-        None,
-        64 * 1024 * 1024,
-        0,
+        SYMBOL_ID, dir, 64 * 1024 * 1024,
     )
     .expect("wal writer");
 

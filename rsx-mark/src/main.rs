@@ -80,9 +80,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
     let mut wal_writer = WalWriter::new(
         config.stream_id,
         &wal_dir,
-        None,
         64 * 1024 * 1024,
-        4 * 60 * 60 * 1_000_000_000,
     )?;
 
     let mark_dest: std::net::SocketAddr = env::var(

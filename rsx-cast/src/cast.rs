@@ -440,7 +440,6 @@ impl CastSender {
                 self.stream_id,
                 seq,
                 &self.wal_dir,
-                None,
             ) {
                 Ok(Some(rec)) => {
                     let total = WalHeader::SIZE
