@@ -1015,9 +1015,6 @@ fn run_main(
         if let Err(e) = gw_sender.tick() {
             warn!("risk: gw_sender tick failed: {e}");
         }
-        gw_receiver.tick();
-        me_receiver.tick();
-        mark_receiver.tick();
         gw_sender.recv_control();
 
         // Send tips to replica if configured
@@ -1380,8 +1377,6 @@ fn run_replica(
             }
         }
 
-        me_receiver.tick();
-        tip_receiver.tick();
     }
 
     // Promotion: apply buffered fills up to last tips. The

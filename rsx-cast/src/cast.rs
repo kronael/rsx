@@ -1135,13 +1135,6 @@ impl CastReceiver {
         }
     }
 
-    /// No-op for now. Reserved for the consumer-local NAK
-    /// strategy (TODO — see in-flight design). Callers in
-    /// the workspace pre-date that work and still invoke it
-    /// periodically; keeping the symbol avoids touching every
-    /// consumer until the new strategy lands.
-    pub fn tick(&mut self) {}
-
     pub fn expected_seq(&self) -> u64 {
         self.expected_seq
     }

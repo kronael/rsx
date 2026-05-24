@@ -19,13 +19,9 @@
 //! seq accounting.
 //!
 //! Happy path only — no NAK injection, no socket failure, no
-//! sender restart. Producer/consumer flow control is kept
-//! open by periodic `sender.tick()` calls (every 1024 iters)
-//! which trigger peer status round-trips. Without that, the
-//! sender's window closes around iter 65536 and `send` returns
-//! `Ok(false)` forever. (The bench is exercising sustained
-//! throughput; production has the same heartbeat cadence
-//! built into the gateway's main loop.)
+//! sender restart. `sender.tick()` is invoked every 1024 iters
+//! to emit idle-stream heartbeats (the sender's send() also
+//! resets the heartbeat timer; the explicit tick is defensive).
 //!
 //! Caveats
 //! -------
@@ -117,25 +113,15 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     let stop_clone = Arc::clone(&stop);
     let recv_clone = Arc::clone(&recv_count);
 
-    // Receiver worker: spin try_recv + drive `tick()` so the
-    // peer status replies the sender needs to keep its window
-    // open get sent.
+    // Receiver worker: spin try_recv.
     let handle = thread::spawn(move || {
         core_affinity::set_for_current(recv_core);
-        let mut i: u64 = 0;
         while !stop_clone.load(Ordering::Relaxed) {
             if let CastRecv::Data(_, payload) = receiver.try_recv() {
                 black_box(payload);
                 recv_clone.fetch_add(1, Ordering::Release);
             } else {
                 std::hint::spin_loop();
-            }
-            // Tick periodically: sends status messages that
-            // advance the sender's peer_consumption_seq, keeping
-            // the flow-control window open.
-            i = i.wrapping_add(1);
-            if i & 0x3FF == 0 {
-                receiver.tick();
             }
         }
     });
