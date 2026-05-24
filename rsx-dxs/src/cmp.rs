@@ -79,6 +79,30 @@ const SEND_RING_CAPACITY: usize = 4096;
 const SEND_RING_MASK: u64 =
     SEND_RING_CAPACITY as u64 - 1;
 
+/// Frame a record (header + payload) into `buf` and send it.
+/// Returns the total wire length (`WalHeader::SIZE + payload.len()`)
+/// so the caller can read back the framed bytes (e.g. send-ring cache).
+fn frame_and_send(
+    socket: &UdpSocket,
+    buf: &mut [u8],
+    record_type: u16,
+    payload: &[u8],
+    dest: SocketAddr,
+) -> io::Result<usize> {
+    let crc = compute_crc32(payload);
+    let hdr = WalHeader::new(
+        record_type,
+        payload.len() as u16,
+        crc,
+    )
+    .to_bytes();
+    let total = WalHeader::SIZE + payload.len();
+    buf[..WalHeader::SIZE].copy_from_slice(&hdr);
+    buf[WalHeader::SIZE..total].copy_from_slice(payload);
+    socket.send_to(&buf[..total], dest)?;
+    Ok(total)
+}
+
 pub struct CmpSender {
     socket: UdpSocket,
     dest: SocketAddr,
@@ -196,20 +220,13 @@ impl CmpSender {
         record.set_seq(seq);
 
         let payload = as_bytes(record);
-        let crc = compute_crc32(payload);
-        let header = WalHeader::new(
+        let total = frame_and_send(
+            &self.socket,
+            &mut self.buf,
             T::record_type(),
-            payload.len() as u16,
-            crc,
-        );
-        let hdr_bytes = header.to_bytes();
-        let total = WalHeader::SIZE + payload.len();
-        self.buf[..WalHeader::SIZE]
-            .copy_from_slice(&hdr_bytes);
-        self.buf[WalHeader::SIZE..total]
-            .copy_from_slice(payload);
-        self.socket
-            .send_to(&self.buf[..total], self.dest)?;
+            payload,
+            self.dest,
+        )?;
 
         // Cache the frame in the preallocated ring for
         // NAK retransmit. Skip frames larger than the
@@ -246,22 +263,11 @@ impl CmpSender {
                     .saturating_sub(1),
                 _pad1: [0u8; 56],
             };
-            let payload = as_bytes(&hb);
-            let crc = compute_crc32(payload);
-            let header = WalHeader::new(
+            frame_and_send(
+                &self.socket,
+                &mut self.buf,
                 RECORD_HEARTBEAT,
-                payload.len() as u16,
-                crc,
-            );
-            let hdr_bytes = header.to_bytes();
-            let total =
-                WalHeader::SIZE + payload.len();
-            self.buf[..WalHeader::SIZE]
-                .copy_from_slice(&hdr_bytes);
-            self.buf[WalHeader::SIZE..total]
-                .copy_from_slice(payload);
-            self.socket.send_to(
-                &self.buf[..total],
+                as_bytes(&hb),
                 self.dest,
             )?;
             self.last_heartbeat = now;
@@ -438,20 +444,13 @@ impl CmpSender {
         record_type: u16,
         payload: &[u8],
     ) -> io::Result<bool> {
-        let crc = compute_crc32(payload);
-        let header = WalHeader::new(
+        frame_and_send(
+            &self.socket,
+            &mut self.buf,
             record_type,
-            payload.len() as u16,
-            crc,
-        );
-        let hdr_bytes = header.to_bytes();
-        let total = WalHeader::SIZE + payload.len();
-        self.buf[..WalHeader::SIZE]
-            .copy_from_slice(&hdr_bytes);
-        self.buf[WalHeader::SIZE..total]
-            .copy_from_slice(payload);
-        self.socket
-            .send_to(&self.buf[..total], self.dest)?;
+            payload,
+            self.dest,
+        )?;
         Ok(true)
     }
 
@@ -771,25 +770,12 @@ impl CmpReceiver {
             count,
             _pad1: [0u8; 48],
         };
-        let payload = as_bytes(&nak);
-        let crc = compute_crc32(payload);
-        let header = WalHeader::new(
+        let mut buf = [0u8; WalHeader::SIZE + 64];
+        if let Err(e) = frame_and_send(
+            &self.socket,
+            &mut buf,
             RECORD_NAK,
-            payload.len() as u16,
-            crc,
-        );
-        let hdr_bytes = header.to_bytes();
-        let mut buf =
-            [0u8; WalHeader::SIZE + 64];
-        buf[..WalHeader::SIZE]
-            .copy_from_slice(&hdr_bytes);
-        buf[WalHeader::SIZE
-            ..WalHeader::SIZE + payload.len()]
-            .copy_from_slice(payload);
-        let total =
-            WalHeader::SIZE + payload.len();
-        if let Err(e) = self.socket.send_to(
-            &buf[..total],
+            as_bytes(&nak),
             self.sender_addr,
         ) {
             warn!("cmp: send_nak failed: {e}");
@@ -808,25 +794,12 @@ impl CmpReceiver {
                 receiver_window: self.window,
                 _pad1: [0u8; 48],
             };
-            let payload = as_bytes(&msg);
-            let crc = compute_crc32(payload);
-            let header = WalHeader::new(
+            let mut buf = [0u8; WalHeader::SIZE + 64];
+            if let Err(e) = frame_and_send(
+                &self.socket,
+                &mut buf,
                 RECORD_STATUS_MESSAGE,
-                payload.len() as u16,
-                crc,
-            );
-            let hdr_bytes = header.to_bytes();
-            let mut buf =
-                [0u8; WalHeader::SIZE + 64];
-            buf[..WalHeader::SIZE]
-                .copy_from_slice(&hdr_bytes);
-            buf[WalHeader::SIZE
-                ..WalHeader::SIZE + payload.len()]
-                .copy_from_slice(payload);
-            let total =
-                WalHeader::SIZE + payload.len();
-            if let Err(e) = self.socket.send_to(
-                &buf[..total],
+                as_bytes(&msg),
                 self.sender_addr,
             ) {
                 warn!("cmp: status send failed: {e}");
