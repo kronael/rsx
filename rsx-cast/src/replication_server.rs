@@ -212,10 +212,8 @@ where
     loop {
         match reader.next() {
             Ok(Some(record)) => {
-                let hdr_bytes =
-                    record.header.to_bytes();
                 stream
-                    .write_all(&hdr_bytes)
+                    .write_all(record.header.to_bytes())
                     .await?;
                 stream
                     .write_all(&record.payload)
@@ -277,10 +275,8 @@ where
         loop {
             match reader.next() {
                 Ok(Some(record)) => {
-                    let hdr_bytes =
-                        record.header.to_bytes();
                     stream
-                        .write_all(&hdr_bytes)
+                        .write_all(record.header.to_bytes())
                         .await?;
                     stream
                         .write_all(&record.payload)

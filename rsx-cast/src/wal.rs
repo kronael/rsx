@@ -146,7 +146,7 @@ impl WalWriter {
             ));
         }
         self.last_seq = framed.seq;
-        self.buf.extend_from_slice(&framed.header.to_bytes());
+        self.buf.extend_from_slice(framed.header.to_bytes());
         self.buf.extend_from_slice(framed.payload);
         self.records_since_flush += 1;
         Ok(())

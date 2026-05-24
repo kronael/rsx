@@ -88,7 +88,12 @@ impl WalHeader {
         })
     }
 
-    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        unsafe { std::mem::transmute(*self) }
+    pub fn to_bytes(&self) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self as *const Self as *const u8,
+                Self::SIZE,
+            )
+        }
     }
 }

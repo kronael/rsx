@@ -276,7 +276,7 @@ impl ReplicationConsumer {
             payload.len() as u16,
             crc,
         );
-        stream.write_all(&hdr.to_bytes()).await?;
+        stream.write_all(hdr.to_bytes()).await?;
         stream.write_all(payload).await?;
 
         let mut hdr_buf = [0u8; WalHeader::SIZE];
