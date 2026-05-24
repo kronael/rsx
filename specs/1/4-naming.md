@@ -27,7 +27,7 @@ and Rust types. One name per concept. No aliases.
 - **No `Persist` prefix on DB structs.** `PersistFill` → `FillRecord`.
 - **No `Record` suffix on ring types.** `FillEvent` stays `FillEvent`
   (it's a hot-path repr(C) ring message, not a DB row).
-- **`Event` suffix only on ring/CMP messages**: `FillEvent`, `OrderDoneEvent`,
+- **`Event` suffix only on ring/casting messages**: `FillEvent`, `OrderDoneEvent`,
   `BboUpdate`. Not on DB structs, not on tables.
 - **Endpoint = table name** where there's a 1:1 mapping.
 

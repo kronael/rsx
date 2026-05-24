@@ -29,7 +29,7 @@ Criterion writes per-bench results to
 |---|---|---|
 | `compare_udp` | Raw UDP loopback RTT, 128 B payload, two non-blocking sockets spinning. **Absolute floor.** | Baseline: no protocol work |
 | `cmp_one_way_bench` | `CmpSender::send` → `CmpReceiver::try_recv` one direction | Hot send → hot recv |
-| `cmp_rtt_bench` | CMP echo RTT (A → B → A), two paired senders + receivers | Full sender → echo → sender triangle |
+| `cmp_rtt_bench` | casting echo RTT (A → B → A), two paired senders + receivers | Full sender → echo → sender triangle |
 | `cmp_send_breakdown_bench` | Each step inside `CmpSender::send` separately: CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs `send` body — 99 % is `sendto` |
 | `wal_bench` | `WalWriter::append` in-memory, flush + fsync 64 KB, sequential read 10 K records | Append (31 ns) + sequential reader throughput |
 | `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost: 651 µs p50 single-record |

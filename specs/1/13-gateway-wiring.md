@@ -6,13 +6,13 @@ status: shipped
 
 ## Context
 
-Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP)
-Framework: Rust + monoio + CMP/UDP transport
+Project: RSX perpetuals exchange (Rust, monoio, casting/UDP)
+Framework: Rust + monoio + casting/UDP transport
 Goal: Complete gateway wiring — cancel handler, heartbeat,
 rate limiting, circuit breaker, auth extraction
 
 **Current state:** Gateway already has working order submission
-(NewOrder → CMP → Risk), response routing (fills, done,
+(NewOrder → casting → Risk), response routing (fills, done,
 cancelled back to user), pending tracking, and WS I/O.
 Building blocks exist but aren't wired: rate_limit.rs,
 circuit.rs. Cancel is parsed but rejected as "unsupported".
@@ -27,7 +27,7 @@ circuit.rs. Cancel is parsed but rejected as "unsupported".
 **Subagent**: improve
 **Dependencies**: []
 **Verification**:
-- [ ] Cancel by oid (32-char hex) sends CMP cancel to Risk
+- [ ] Cancel by oid (32-char hex) sends casting cancel to Risk
 - [ ] Cancel by cid (20-char) looks up pending, sends cancel
 - [ ] Cancel of unknown order returns error
 - [ ] cargo check --workspace passes
@@ -59,9 +59,9 @@ Implement CmpRecord for it.
 4. In handler.rs, add `WsFrame::Cancel { key }` match arm:
    - `CancelKey::OrderId(hex)`: convert hex to [u8;16] via
      `hex_to_order_id`, split into hi/lo u64, find in
-     pending by order_id, build CancelRequest, send via CMP
+     pending by order_id, build CancelRequest, send via casting
    - `CancelKey::ClientOrderId(cid)`: find in pending by cid,
-     extract order_id hi/lo, build CancelRequest, send via CMP
+     extract order_id hi/lo, build CancelRequest, send via casting
    - If not found in pending: send E[1005, "order not found"]
    - On success: send U[oid, 2, 0, 0, 0] (status=2 cancelled,
      optimistic — real cancel confirmation comes from ME)
@@ -69,7 +69,7 @@ Implement CmpRecord for it.
 5. The cancel flows: GW → Risk (passthrough) → ME. Risk
    doesn't need to do anything special for cancels (no margin
    change). ME processes cancel via book.cancel_order().
-   For now, just send the CancelRequest to Risk's CMP addr.
+   For now, just send the CancelRequest to Risk's casting addr.
    Risk main.rs already has a `_ => {}` catch-all that
    drops unknown record types — that's fine for v1; cancel
    passthrough in Risk is Phase 2b.
@@ -85,7 +85,7 @@ Implement CmpRecord for it.
 **Verification**:
 - [ ] H frame echoed with server timestamp
 - [ ] Rate limiter rejects when tokens exhausted
-- [ ] Circuit breaker checked before sending to CMP
+- [ ] Circuit breaker checked before sending to casting
 - [ ] cargo check --workspace passes
 
 **Details**:
@@ -110,10 +110,10 @@ Implement CmpRecord for it.
    Also rate-limit Cancel requests same way.
 
 3. **Circuit breaker**: Add `circuit: CircuitBreaker` to
-   GatewayState. Before sending any CMP message in handler.rs,
+   GatewayState. Before sending any casting message in handler.rs,
    check `st.circuit.allow()`. If not allowed, send
-   E[5, "overloaded"]. On successful CMP send, call
-   `record_success()`. On CMP error, call `record_failure()`.
+   E[5, "overloaded"]. On successful casting send, call
+   `record_success()`. On casting error, call `record_failure()`.
    Initialize with config values from GatewayConfig.
 
 ---

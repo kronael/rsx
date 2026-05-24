@@ -137,7 +137,7 @@ See [docs/scenarios.md](docs/scenarios.md) for details.
 ## Tabs
 
 - **Overview:** System health, processes, metrics, logs
-- **Topology:** Process graph, core affinity, CMP flows
+- **Topology:** Process graph, core affinity, casting flows
 - **Book:** Orderbook ladder, fills, trades
 - **Risk:** Positions, margin, funding, liquidations
 - **WAL:** Write-ahead log status, lag, events
@@ -292,7 +292,7 @@ rsx-playground/
 - Troubleshooting UI issues
 
 **Project docs (../specs/2/, ../architecture/):** How the SYSTEM works
-- Architecture (CMP/UDP, WAL, tiles)
+- Architecture (casting/UDP, WAL, tiles)
 - Orderbook algorithm
 - Risk engine logic
 - Matching engine semantics

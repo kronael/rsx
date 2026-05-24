@@ -6,7 +6,7 @@ status: shipped
 
 ## Context
 
-Project: RSX perpetuals exchange (Rust, CMP/UDP)
+Project: RSX perpetuals exchange (Rust, casting/UDP)
 Goal: Wire existing liquidation engine into risk shard's
 main loop so underwater positions get liquidated.
 
@@ -28,4 +28,4 @@ to ME via accepted_producer.
 - [ ] cargo check -p rsx-risk passes
 - [ ] cargo test -p rsx-risk passes
 - [ ] Liquidation check called after process_fill
-- [ ] Generated liquidation orders sent to ME via CMP
+- [ ] Generated liquidation orders sent to ME via casting

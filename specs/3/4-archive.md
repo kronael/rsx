@@ -9,7 +9,7 @@ server and consumer fallback are not implemented. Recorder
 writes archive files (`rsx-recorder`) but no replay service
 reads them back. See `.ship/07-SPEC-CLEANUP/findings.md`.
 
-Archive serves historical WAL records from flat files on disk. It is used when hot DXS retention is insufficient.
+Archive serves historical WAL records from flat files on disk. It is used when hot replication retention is insufficient.
 
 ## Purpose
 
@@ -24,20 +24,20 @@ Archive serves historical WAL records from flat files on disk. It is used when h
 ## API (WAL/TCP)
 
 - TCP byte stream of WAL records (header + payload).
-- `ReplayRequest` semantics match DXS.md (from_seq).
+- `ReplayRequest` semantics match replication.md (from_seq).
 
 ## Recovery Lookup Order
 
 When recovering from `from_seq_no`:
 
 1. **Authoritative archive** for that WAL stream.
-2. **Primary producer DXS** (hot WAL tail).
+2. **Primary producer replication** (hot WAL tail).
 
 The consumer continues from the last received `seq` when switching sources.
 
 ## File Layout
 
-Same format as DXS WAL files:
+Same format as replication WAL files:
 
 ```
 archive/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal

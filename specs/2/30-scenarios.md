@@ -67,12 +67,12 @@ primary risk shard. "2×risk" = 2 replicas (spare mode).
 ## Port Allocation
 
 ```
-BASE_ME_CMP      = 9100   ME CMP: 9100 + symbol_id
+BASE_ME_CMP      = 9100   ME casting: 9100 + symbol_id
 BASE_RISK_CMP    = 9200   Risk primary: 9200 + shard_id
                            Risk replicas: 9210+shard*2+replica
-BASE_GW_CMP      = 9300   GW CMP: 9300 + gw_index
+BASE_GW_CMP      = 9300   GW casting: 9300 + gw_index
 BASE_MARK_CMP    = 9400   Mark aggregator (single)
-BASE_MD_CMP      = 9500   Marketdata CMP: 9500 + symbol_id
+BASE_MD_CMP      = 9500   Marketdata casting: 9500 + symbol_id
 BASE_RISK_MARK   = 9600   Mark→Risk push (single)
 BASE_GW_WS       = 8080   GW WebSocket: 8080 + gw_index
 BASE_MD_WS       = 8180   Marketdata WebSocket (single)
@@ -83,12 +83,12 @@ PENGU=10, SOL=3, BTC=1, ETH=2.
 
 Example — `duo` (PENGU id=10, SOL id=3):
 ```
-me-pengu     CMP 9110   (9100 + 10)
-me-sol       CMP 9103   (9100 + 3)
-risk-0       CMP 9200
-gw-0         CMP 9300, WS 8080
-marketdata   WS  8180   (subscribes to both MEs via CMP)
-mark         CMP 9400
+me-pengu     casting 9110   (9100 + 10)
+me-sol       casting 9103   (9100 + 3)
+risk-0       casting 9200
+gw-0         casting 9300, WS 8080
+marketdata   WS  8180   (subscribes to both MEs via casting)
+mark         casting 9400
 recorder     TCP connects to ME replay servers
 ```
 
@@ -97,7 +97,7 @@ recorder     TCP connects to ME replay servers
 ## Process Spawn Rules
 
 ### ME (one per symbol)
-Already correct. Each ME gets its own CMP port and WAL
+Already correct. Each ME gets its own casting port and WAL
 dir. No changes needed.
 
 ### Risk (one per shard)
@@ -117,8 +117,8 @@ Same fix: `RSX_ME_CAST_ADDRS` comma-separated.
 
 ### Marketdata (single process, multi-ME — Option B)
 
-Single marketdata process subscribes to all MEs via CMP.
-`RSX_ME_CAST_ADDRS` = comma-separated list of all ME CMP
+Single marketdata process subscribes to all MEs via casting.
+`RSX_ME_CAST_ADDRS` = comma-separated list of all ME casting
 addresses. Single WS port (8180). Clients filter by
 symbol in subscription message.
 
@@ -141,7 +141,7 @@ env vars from the full symbols list.
 ### Recorder
 Missing from `build_spawn_plan()`. Add one Recorder per
 scenario. Recorder is a DxsConsumer (TCP client), NOT a
-CMP subscriber. It connects to an ME's DXS replay server
+casting subscriber. It connects to an ME's replication server
 to archive WAL records.
 
 Env vars (from `RecorderConfig::from_env()`):
@@ -169,7 +169,7 @@ primary symbol only (simpler, sufficient for dev).
 ### 2. Fix Marketdata multi-symbol (`rsx-marketdata`)
 - Read `RSX_ME_CAST_ADDRS` (comma-separated), fall back to
   single `RSX_ME_CAST_ADDR`
-- Subscribe to all MEs on startup via CMP
+- Subscribe to all MEs on startup via casting
 
 ### 3. Fix Mark multi-symbol Binance URL (`start` script)
 - In `build_spawn_plan()`, build combined stream URL from
@@ -178,7 +178,7 @@ primary symbol only (simpler, sufficient for dev).
 
 ### 4. Fix `build_spawn_plan` env vars (`start` script)
 - Compute `me_cmp_addrs` as comma-joined list of all ME
-  CMP addresses before the Risk/Marketdata entries
+  casting addresses before the Risk/Marketdata entries
 - Pass as `RSX_ME_CAST_ADDRS` to Risk, Risk replicas, and
   Marketdata
 - Playground's `get_spawn_plan()` delegates to

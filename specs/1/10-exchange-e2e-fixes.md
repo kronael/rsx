@@ -18,7 +18,7 @@ then calls `ws_read_frame` with a 10ms timeout. If the client sends no
 frame for >10ms, the loop retries immediately (timeout returns
 `Err(_elapsed)` → `continue`). This is already correct: the 10ms
 timeout lets the loop drain outbound periodically even with no client
-traffic. **Verify** by checking if fills queued by the CMP task are
+traffic. **Verify** by checking if fills queued by the casting task are
 actually drained and sent within one loop iteration. If the drain at
 lines 70-83 already runs before every read attempt, the bug is already
 fixed. If not, confirm the loop structure is:
@@ -38,19 +38,19 @@ order.
 
 ## Bug 2 — ME drops cancels silently
 
-**File:** `rsx-matching/src/main.rs` (CMP receive loop)
+**File:** `rsx-matching/src/main.rs` (casting receive loop)
 
-**Problem:** `RECORD_CANCEL_REQUEST` is never matched in the CMP recv
+**Problem:** `RECORD_CANCEL_REQUEST` is never matched in the casting recv
 loop. Find the match arm that handles `RECORD_ORDER_REQUEST` and add a
 parallel arm for `RECORD_CANCEL_REQUEST`.
 
-**Fix:** In the CMP receive dispatch (wherever `RECORD_ORDER_REQUEST`
+**Fix:** In the casting receive dispatch (wherever `RECORD_ORDER_REQUEST`
 is matched), add:
 
 ```rust
 RECORD_CANCEL_REQUEST => {
     // parse CancelRequest from payload, call book.cancel()
-    // emit OrderDone/OrderFailed back via CMP to risk
+    // emit OrderDone/OrderFailed back via casting to risk
 }
 ```
 
@@ -65,7 +65,7 @@ Read `rsx-types/src/` for the `CancelRequest` record type and
 **Problem:** `rsx-book` has snapshot restore logic but `main.rs` never
 calls it at startup. After any restart, all resting orders are lost.
 
-**Fix:** Before the CMP receive loop, call the snapshot restore
+**Fix:** Before the casting receive loop, call the snapshot restore
 function. Check `rsx-book/src/snapshot.rs` for the restore API. Then
 load the WAL tip and replay any records after the snapshot seq.
 Follow the existing `WalReader` pattern in the codebase.

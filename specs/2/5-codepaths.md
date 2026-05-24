@@ -16,7 +16,7 @@ Spec intent:
 
 Implementation path:
 - WS parse/validate/rate-limit: `rsx-gateway/src/handler.rs`
-- CMP send to Risk: `rsx-gateway/src/handler.rs` (`RECORD_ORDER_REQUEST`)
+- casting send to Risk: `rsx-gateway/src/handler.rs` (`RECORD_ORDER_REQUEST`)
 - Risk pre-trade check & freeze: `rsx-risk/src/shard.rs::process_order`
 - Risk -> ME: `rsx-risk/src/main.rs` (`OrderMessage`)
 - ME match + emit events: `rsx-matching/src/main.rs`
@@ -28,7 +28,7 @@ Tests:
 - Risk pre-trade checks/margin: `rsx-risk/tests/margin_test.rs`, `rsx-risk/tests/shard_test.rs`
 - Matching lifecycle/unit: `rsx-matching/tests/lifecycle_test.rs`, `rsx-matching/tests/order_processing_test.rs`
 - Gateway order lifecycle routing: `rsx-gateway/tests/order_lifecycle_test.rs`
-- No full WS->CMP->ME->WS e2e test present.
+- No full WS->casting->ME->WS e2e test present.
 
 ## 2) Cancel Order (WS -> Gateway -> Risk -> ME -> Cancel/Done)
 
@@ -38,7 +38,7 @@ Spec intent:
 
 Implementation path:
 - Cancel parse + pending lookup: `rsx-gateway/src/handler.rs`
-- CMP cancel request: `rsx-gateway/src/handler.rs` (`RECORD_CANCEL_REQUEST`)
+- casting cancel request: `rsx-gateway/src/handler.rs` (`RECORD_CANCEL_REQUEST`)
 - ME cancel handling: `rsx-matching/src/main.rs` (via order flow)
 - Risk forwards cancel/done: `rsx-risk/src/main.rs`
 - Gateway routes cancel/done: `rsx-gateway/src/main.rs`
@@ -98,12 +98,12 @@ Spec intent:
 
 Implementation path:
 - Connectors: `rsx-mark/src/source.rs`
-- Aggregation + WAL + CMP send: `rsx-mark/src/main.rs`
-- Risk CMP receiver: `rsx-risk/src/main.rs`
+- Aggregation + WAL + casting send: `rsx-mark/src/main.rs`
+- Risk casting receiver: `rsx-risk/src/main.rs`
 
 Tests:
 - Mark aggregation: `rsx-mark/tests/aggregator_test.rs`
-- Mark->risk CMP ingest: `rsx-risk/tests/cmp_ingest_test.rs`
+- Mark->risk casting ingest: `rsx-risk/tests/cmp_ingest_test.rs`
 
 ## 7) BBO / Index Price Feed (ME -> Risk)
 
@@ -117,7 +117,7 @@ Implementation path:
 
 Tests:
 - Index price unit tests: `rsx-risk/tests/price_test.rs`
-- ME BBO->risk CMP ingest: `rsx-risk/tests/cmp_ingest_test.rs`
+- ME BBO->risk casting ingest: `rsx-risk/tests/cmp_ingest_test.rs`
 
 ## 8) Marketdata (ME -> Marketdata -> WS)
 
@@ -126,7 +126,7 @@ Spec intent:
 - Seq gaps trigger snapshot resend; replay bootstrap supported.
 
 Implementation path:
-- CMP ingest & seq-gap: `rsx-marketdata/src/main.rs`
+- casting ingest & seq-gap: `rsx-marketdata/src/main.rs`
 - Shadow book: `rsx-marketdata/src/shadow.rs`
 - WS protocol: `rsx-marketdata/src/protocol.rs`, `rsx-marketdata/src/handler.rs`
 
@@ -136,21 +136,21 @@ Tests:
 - Replay: `rsx-marketdata/tests/replay_test.rs`, `replay_e2e_test.rs`
 - Empty-book snapshot/backpressure: `rsx-marketdata/tests/state_resync_test.rs`
 
-## 9) DXS Replay (WAL -> TCP -> Consumers)
+## 9) replication Replay (WAL -> TCP -> Consumers)
 
 Spec intent:
-- WAL records replayed via DXS server; consumers bootstrap state.
+- WAL records replayed via replication server; consumers bootstrap state.
 
 Implementation path:
 - WAL: `rsx-dxs/src/wal.rs`
-- DXS server: `rsx-dxs/src/server.rs`
+- replication server: `rsx-dxs/src/server.rs`
 - Marketdata replay bootstrap: `rsx-marketdata/src/replay.rs`
 
 Tests:
 - WAL tests: `rsx-dxs/tests/wal_test.rs`
-- DXS client tests: `rsx-dxs/tests/client_test.rs`
+- replication client tests: `rsx-dxs/tests/client_test.rs`
 - Marketdata replay tests: `rsx-marketdata/tests/replay_test.rs`
-- CMP flow control/NAK: `rsx-dxs/tests/cmp_test.rs`
+- casting flow control/NAK: `rsx-dxs/tests/cmp_test.rs`
 
 ## 10) Risk Replica Sync
 
@@ -158,7 +158,7 @@ Spec intent:
 - Replica keeps up with tips, can promote on lease loss.
 
 Implementation path:
-- Tip sync CMP record_type 0x20: `rsx-risk/src/main.rs`
+- Tip sync casting record_type 0x20: `rsx-risk/src/main.rs`
 - Replica buffers fills: `rsx-risk/src/main.rs` (replica loop)
 
 Tests:

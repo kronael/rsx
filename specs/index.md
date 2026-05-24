@@ -16,22 +16,22 @@ Completed ship projects, renamed from specs/done/.
 | [1/6-replication-impl.md](1/6-replication-impl.md) | shipped | Implementation of RISK.md §Replication & Failover for rsx-risk engine. |
 | [1/7-speedup.md](1/7-speedup.md) | shipped | Bottlenecks in current architecture, ordered by impact. |
 | [1/8-cmp-nak.md](1/8-cmp-nak.md) | shipped | `CmpSender::handle_nak` opens a `WalReader` to retransmit dropped |
-| [1/9-eighty-percent.md](1/9-eighty-percent.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP) |
+| [1/9-eighty-percent.md](1/9-eighty-percent.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, casting/UDP) |
 | [1/10-exchange-e2e-fixes.md](1/10-exchange-e2e-fixes.md) | shipped | Five bugs block end-to-end exchange operation. Fix all five. Read |
 | [1/11-exchange-e2e.md](1/11-exchange-e2e.md) | shipped | The exchange works end-to-end: a market maker provides resting |
 | [1/12-gateway-heartbeat.md](1/12-gateway-heartbeat.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, WebSocket) |
-| [1/13-gateway-wiring.md](1/13-gateway-wiring.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP) |
+| [1/13-gateway-wiring.md](1/13-gateway-wiring.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, casting/UDP) |
 | [1/14-maker-index-feed.md](1/14-maker-index-feed.md) | shipped | Market maker should quote around the RSX mark/index |
 | [1/15-maker-integration.md](1/15-maker-integration.md) | shipped | Make the market maker a first-class part of the playground server and |
-| [1/16-marketdata-mark.md](1/16-marketdata-mark.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP) |
-| [1/17-marketdata-ws-broadcast.md](1/17-marketdata-ws-broadcast.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP) |
-| [1/18-me-fanout-marketdata.md](1/18-me-fanout-marketdata.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP) |
+| [1/16-marketdata-mark.md](1/16-marketdata-mark.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, casting/UDP) |
+| [1/17-marketdata-ws-broadcast.md](1/17-marketdata-ws-broadcast.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, casting/UDP) |
+| [1/18-me-fanout-marketdata.md](1/18-me-fanout-marketdata.md) | shipped | Project: RSX perpetuals exchange (Rust, monoio, casting/UDP) |
 | [1/19-play-latency-tests.md](1/19-play-latency-tests.md) | shipped | Playwright tests that verify the playground server |
 | [1/20-play-safety-tests.md](1/20-play-safety-tests.md) | shipped | Comprehensive Playwright tests covering process crash |
 | [1/21-playground-audit.md](1/21-playground-audit.md) | shipped | Comprehensive audit of rsx-playground as a minimal viable |
 | [1/22-post-only.md](1/22-post-only.md) | shipped | Project: RSX perpetuals exchange (Rust) |
-| [1/23-risk-liquidation-wiring.md](1/23-risk-liquidation-wiring.md) | shipped | Project: RSX perpetuals exchange (Rust, CMP/UDP) |
-| [1/24-risk-mark-consumer.md](1/24-risk-mark-consumer.md) | shipped | Project: RSX perpetuals exchange (Rust, CMP/UDP) |
+| [1/23-risk-liquidation-wiring.md](1/23-risk-liquidation-wiring.md) | shipped | Project: RSX perpetuals exchange (Rust, casting/UDP) |
+| [1/24-risk-mark-consumer.md](1/24-risk-mark-consumer.md) | shipped | Project: RSX perpetuals exchange (Rust, casting/UDP) |
 | [1/25-rust-maker.md](1/25-rust-maker.md) | shipped | Implement `rsx-maker` as a working market maker that connects to the |
 | [1/26-todos-readme.md](1/26-todos-readme.md) | shipped | Bug hunt 2026-02-14: 59 bugs + 33 spec test gaps + 7 future items. |
 | [1/27-todos-refinement.md](1/27-todos-refinement.md) | shipped | date: 2026-02-22 (updated) |
@@ -54,7 +54,7 @@ Active specs. Source of truth for system design.
 | [2/8-database.md](2/8-database.md) | reference | - [Recommendation](#recommendation) |
 | [2/9-deploy.md](2/9-deploy.md) | partial | - [Multi-Server Topology](#multi-server-topology) |
 | [2/10-dxs.md](2/10-dxs.md) | shipped | Brokerless WAL streaming. Each producer IS the server for its own |
-| [2/11-gateway.md](2/11-gateway.md) | shipped | Gateway adapts external clients to internal CMP. It owns |
+| [2/11-gateway.md](2/11-gateway.md) | shipped | Gateway adapts external clients to internal casting. It owns |
 | [2/12-health-dashboard.md](2/12-health-dashboard.md) | draft | Systems operations dashboard for platform health: |
 | [2/13-liquidator.md](2/13-liquidator.md) | partial | - [Context](#context) |
 | [2/14-management-dashboard.md](2/14-management-dashboard.md) | draft | This spec is intentionally split into four separate dashboards: |
@@ -77,7 +77,7 @@ Active specs. Source of truth for system design.
 | [2/33-telemetry.md](2/33-telemetry.md) | partial | How RSX processes emit metrics and how they reach |
 | [2/34-testing-book.md](2/34-testing-book.md) | shipped | Source specs: [ORDERBOOK.md](ORDERBOOK.md), |
 | [2/35-testing-cmp.md](2/35-testing-cmp.md) | shipped | Version: 1.0 |
-| [2/36-testing-dxs.md](2/36-testing-dxs.md) | shipped | Source specs: [DXS.md](DXS.md), [WAL.md](WAL.md) |
+| [2/36-testing-dxs.md](2/36-testing-dxs.md) | shipped | Source specs: [replication.md](replication.md), [WAL.md](WAL.md) |
 | [2/37-testing-gateway.md](2/37-testing-gateway.md) | shipped | Source specs: [NETWORK.md](NETWORK.md), [WEBPROTO.md](WEBPROTO.md), |
 | [2/38-testing-liquidator.md](2/38-testing-liquidator.md) | shipped | Source spec: [LIQUIDATOR.md](LIQUIDATOR.md) |
 | [2/39-testing-mark.md](2/39-testing-mark.md) | shipped | Source spec: [MARK.md](MARK.md) |

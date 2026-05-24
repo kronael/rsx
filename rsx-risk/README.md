@@ -36,10 +36,10 @@ For replica mode, add `RSX_RISK_IS_REPLICA=true`.
 | `RSX_RISK_IS_REPLICA` | `true` for replica mode |
 | `RSX_RISK_CORE_ID` | CPU core to pin to |
 | `RSX_RISK_WAL_DIR` | WAL directory |
-| `RSX_RISK_CAST_ADDR` | CMP bind address |
-| `RSX_GW_CAST_ADDR` | Gateway CMP address |
-| `RSX_ME_CAST_ADDR` | ME CMP address |
-| `RSX_RISK_MARK_CAST_ADDR` | Mark price CMP bind address |
+| `RSX_RISK_CAST_ADDR` | casting bind address |
+| `RSX_GW_CAST_ADDR` | Gateway casting address |
+| `RSX_ME_CAST_ADDR` | ME casting address |
+| `RSX_RISK_MARK_CAST_ADDR` | Mark price casting bind address |
 | `RSX_RISK_REPLICA_ADDR` | Replica tip sync address |
 | `DATABASE_URL` | Postgres connection string |
 
@@ -48,7 +48,7 @@ For replica mode, add `RSX_RISK_IS_REPLICA=true`.
 - One instance per shard (user_id % shard_count == shard_id)
 - Pin to dedicated CPU core (via `core_affinity` + `RSX_RISK_CORE_ID`)
 - Needs Postgres for state persistence and advisory lock
-- Connects to Gateway, ME(s), and Mark via CMP/UDP
+- Connects to Gateway, ME(s), and Mark via casting/UDP
 - Run a replica alongside for failover (~500ms detection)
 
 ## Internal architecture
@@ -82,7 +82,7 @@ See `specs/2/42-testing-risk.md`.
 ## Dependencies
 
 - `rsx-types` -- shared types
-- `rsx-dxs` -- WAL, CMP, DXS consumer
+- `rsx-dxs` -- WAL, casting, replication consumer
 - Postgres (runtime)
 
 ## Gotchas

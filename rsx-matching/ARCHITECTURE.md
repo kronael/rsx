@@ -1,7 +1,7 @@
 # rsx-matching Architecture
 
 Matching engine process. One instance per symbol. Receives
-orders from Risk via CMP/UDP, matches against the orderbook,
+orders from Risk via casting/UDP, matches against the orderbook,
 fans out events to Risk and Marketdata. Authoritative writer
 of fills, accepts, cancels, order-failed, and config-applied
 records to the WAL.
@@ -12,8 +12,8 @@ Specs: `specs/2/17-matching.md`, `specs/2/45-tiles.md` §3.1.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: CMP setup, WAL init, match loop, event routing, cancel index |
-| `wire.rs` | `OrderMessage` — `#[repr(C)]` CMP wire type for inbound orders |
+| `main.rs` | Binary: casting setup, WAL init, match loop, event routing, cancel index |
+| `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 5-minute sliding-window duplicate detection |
 | `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` — Postgres config polling |
 | `wal_integration.rs` | `write_events_to_wal()`, `flush_if_due()` |
@@ -22,8 +22,8 @@ Specs: `specs/2/17-matching.md`, `specs/2/45-tiles.md` §3.1.
 
 Per `specs/2/45-tiles.md` §3.1, matching is a **degenerate
 tile**: one core-pinned thread, no SPSC rings. The whole
-process is one tile. All work — CMP I/O, dedup, matching,
-WAL append, CMP fan-out — happens on the pinned core. No
+process is one tile. All work — casting I/O, dedup, matching,
+WAL append, casting fan-out — happens on the pinned core. No
 intra-process IPC, no cross-thread queues on the hot path.
 
 Pinning: `RSX_ME_CORE_ID` selects the core
@@ -84,11 +84,11 @@ WAL append uses `.expect(...)` with a named-invariant message
   (ORDER_DONE commit boundary)"
 - `ORDER_FAILED` (duplicate-reject) — "violates invariant 7"
 - `CONFIG_APPLIED` — "violates invariant 7; CONFIG_APPLIED
-  must precede CMP fan-out"
+  must precede casting fan-out"
 
 Design choice: matching engine is authoritative; silently
 losing a fill violates Invariants #1 and #2. Crash, let the
-replica take over, replay from WAL tip. CMP fan-out sends
+replica take over, replay from WAL tip. casting fan-out sends
 remain best-effort (receivers recover via NAK / TCP replay)
 and only warn on failure.
 
@@ -113,7 +113,7 @@ guard.
 `poll_scheduled_configs()` queries `symbol_config_schedule`
 every 10 minutes (`main.rs:559`, `600` seconds). When a new
 version is due, the matcher writes `CONFIG_APPLIED` to WAL
-**before** fanning out to CMP, then applies tick/lot
+**before** fanning out to casting, then applies tick/lot
 changes live. On startup, the current version emits one
 `CONFIG_APPLIED` record too.
 

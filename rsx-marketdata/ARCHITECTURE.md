@@ -11,7 +11,7 @@ envelope conventions of `specs/2/49-webproto.md`.
 
 Single monoio (io_uring) reactor on one thread. All state lives
 in `Rc<RefCell<MarketDataState>>`; no locks, no cross-thread
-sharing. The main loop iterates over one CMP receiver per
+sharing. The main loop iterates over one casting receiver per
 matching engine, dispatches records to the shadow book,
 broadcasts deltas/BBO/trades, and runs heartbeat + stale-book
 eviction sweeps.
@@ -20,7 +20,7 @@ eviction sweeps.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: monoio runtime, replay bootstrap, per-ME CMP loop, dispatch, heartbeat, book eviction |
+| `main.rs` | Binary: monoio runtime, replay bootstrap, per-ME casting loop, dispatch, heartbeat, book eviction |
 | `lib.rs` | Re-exports |
 | `config.rs` | `MarketDataConfig` from env; `me_cmp_addrs_from_env` parses multi-ME list |
 | `state.rs` | `MarketDataState`, connection registry, subscription manager wrapper, per-symbol seq tracking, snapshot dispatch |
@@ -30,7 +30,7 @@ eviction sweeps.
 | `handler.rs` | Per-connection: handshake, subscribe/unsubscribe/heartbeat, outbound drain |
 | `ws.rs` | WebSocket handshake (no auth) + frame I/O |
 | `types.rs` | `BboUpdate`, `L2Snapshot`, `L2Delta`, `L2Level`, `TradeEvent` |
-| `replay.rs` | DXS cold-path bootstrap (TCP) before going live |
+| `replay.rs` | replication cold-path bootstrap (TCP) before going live |
 
 ## Derived-From-Events Approach
 
@@ -49,7 +49,7 @@ order id) can locate the resting level.
 ## Multi-ME Aggregation
 
 The exchange runs one matching engine per symbol on its own
-CMP port. Marketdata opens **one `CmpReceiver` per ME**:
+casting port. Marketdata opens **one `CmpReceiver` per ME**:
 
 - ME addresses come from `RSX_ME_CAST_ADDRS` (comma-separated)
   or `RSX_ME_CAST_ADDR` (single)
@@ -77,12 +77,12 @@ seq)` compares against the per-symbol `expected_seq`:
 overflows (`max_outbound`) -- drop deltas, send a snapshot,
 let the client resync.
 
-## Cold-Path Bootstrap (DXS/TCP)
+## Cold-Path Bootstrap (replication/TCP)
 
 When `RSX_MD_REPLAY_ADDR` is set, `replay::run_replay_bootstrap_blocking`
-connects to the DXS endpoint, drains `OrderInserted` /
+connects to the replication endpoint, drains `OrderInserted` /
 `OrderCancelled` / `Fill` records up to `CaughtUp`, and replays
-them into the shadow books before the live CMP loop starts.
+them into the shadow books before the live casting loop starts.
 Persisted tip at `RSX_MD_TIP_FILE` makes restart idempotent.
 
 The blocking wrapper uses a single-threaded tokio runtime
@@ -150,9 +150,9 @@ The next subscribe re-materializes the book from incoming events
 - Single-threaded monoio reactor; no shared mutability across
   threads.
 - Separate process from gateway. Public WS; no auth required.
-- N CMP/UDP inputs (one per ME) feed into one shadow-book set.
+- N casting/UDP inputs (one per ME) feed into one shadow-book set.
 - No durable state -- shadow books are ephemeral and rebuilt
-  via DXS bootstrap + live CMP.
+  via replication bootstrap + live casting.
 - Heartbeat interval/timeout configurable via env.
 
 ## Architectural Decisions

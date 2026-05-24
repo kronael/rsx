@@ -45,7 +45,7 @@ Module: `crates/rsx-risk/src/liquidation.rs`
 | L22 | Order failed (other): treat as unfilled, escalate | §4 |
 | L23 | Status transitions: Active -> Cancelled or Completed | §1 |
 | L24 | ME clamps qty to position size (reduce_only) | §3 |
-| L25 | Orders routed via same CMP/UDP link as normal orders | §3 |
+| L25 | Orders routed via same casting/UDP link as normal orders | §3 |
 | L26 | Persisted via same write-behind worker as fills | §8 |
 | L27 | First order fires immediately (last_order_ns=0) | §10.1 |
 | L28 | Mark price=0 pauses round, no increment | §10.2 |
@@ -105,7 +105,7 @@ See `rsx-risk/tests/liquidation_test.rs` and
 - Embedded in risk engine main loop (RISK.md §main loop step 5.5)
 - Triggered by per-tick margin recalc (RISK.md §7)
 - Generates reduce_only + is_liquidation orders to ME via same
-  CMP/UDP link as normal orders (LIQUIDATOR.md §3)
+  casting/UDP link as normal orders (LIQUIDATOR.md §3)
 - ME clamps qty to position size via position tracking
   (ORDERBOOK.md §6.5)
 - Fills processed by normal fill path in risk engine (RISK.md §1)

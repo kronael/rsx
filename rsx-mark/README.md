@@ -6,7 +6,7 @@ Mark price aggregator binary. Feeds mark prices to Risk.
 
 Connects to external exchange WebSocket feeds (Binance,
 Coinbase), computes median mark prices per symbol, publishes
-to Risk shards via CMP/UDP. Also writes to WAL for replay.
+to Risk shards via casting/UDP. Also writes to WAL for replay.
 
 ## Running
 
@@ -24,10 +24,10 @@ cargo run -p rsx-mark
 
 | Env Var | Purpose |
 |---------|---------|
-| `RSX_MARK_LISTEN_ADDR` | DXS replay listen address |
+| `RSX_MARK_LISTEN_ADDR` | replication listen address |
 | `RSX_MARK_WAL_DIR` | WAL directory |
 | `RSX_MARK_STREAM_ID` | WAL stream ID |
-| `RSX_RISK_MARK_CAST_ADDR` | Risk CMP address for mark prices |
+| `RSX_RISK_MARK_CAST_ADDR` | Risk casting address for mark prices |
 | `RSX_MARK_STALENESS_NS` | Source staleness threshold (10s) |
 | `RSX_MARK_PRICE_SCALE` | Fixed-point price scale |
 
@@ -35,8 +35,8 @@ cargo run -p rsx-mark
 
 - Single instance (not sharded)
 - Needs outbound internet for exchange WebSocket feeds
-- Publishes to all Risk shards via CMP/UDP
-- DXS replay sidecar serves historical mark prices
+- Publishes to all Risk shards via casting/UDP
+- replication sidecar serves historical mark prices
 - Busy-spin aggregation loop, no `core_affinity` pinning
   (separate process; not on the GW→ME→GW critical path)
 - One SPSC ring (`rtrb`, cap 1024, drop-newest on full)
@@ -54,7 +54,7 @@ See `specs/2/39-testing-mark.md`.
 ## Dependencies
 
 - `rsx-types` -- shared types
-- `rsx-dxs` -- WAL writer, CMP sender, DXS replay service
+- `rsx-dxs` -- WAL writer, casting sender, replication service
 - `rsx-messages` -- MARK_PRICE record type
 - tokio + tokio-tungstenite (async WS source tasks)
 - rtrb (SPSC ring: WS sources → aggregation loop)

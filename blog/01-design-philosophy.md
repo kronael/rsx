@@ -11,7 +11,7 @@ This post explains the design decisions that shaped the system.
 
 We wrote 35 specification documents before writing a single line of
 Rust. The specs directory (`specs/2/`) contains everything: orderbook
-data structures, matching algorithm, risk formulas, WAL format, CMP
+data structures, matching algorithm, risk formulas, WAL format, casting
 wire protocol, deployment topology, testing strategy, and edge case
 catalogs.
 
@@ -153,7 +153,7 @@ Matching Engine process:
 |  |(monoio|  fills |         | events | tile | |
 |  +-------+        +---------+        +------+ |
 +===============================================+
-     CMP/UDP                    TCP
+     casting/UDP                    TCP
    Risk Engine              Recorder
 ```
 
@@ -162,7 +162,7 @@ zero syscall overhead, 50-170ns per hop. Each consumer gets its
 own ring, so a slow market data consumer cannot stall the risk
 engine feed.
 
-Between processes: CMP/UDP for the hot path, WAL replication over
+Between processes: casting/UDP for the hot path, WAL replication over
 TCP for the cold path.
 
 Why SPSC instead of MPSC or a lock-free queue? Because each tile
@@ -176,9 +176,9 @@ tile is a single-threaded loop. No shared mutable state, no locks,
 no data races. The SPSC ring is the only communication channel,
 and it preserves FIFO ordering.
 
-## CMP: One Wire Format for Everything
+## casting: One Wire Format for Everything
 
-CMP (C Message Protocol) is our wire format. A CMP message is a
+casting (C Message Protocol) is our wire format. A casting message is a
 16-byte WAL header followed by a `#[repr(C, align(64))]` payload:
 
 ```

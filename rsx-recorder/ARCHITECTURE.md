@@ -1,6 +1,6 @@
 # rsx-recorder Architecture
 
-Archival DXS consumer process. Connects to a DXS replay
+Archival replication consumer process. Connects to a replication
 server, receives all WAL records, writes to date-partitioned
 archive files.
 
@@ -23,7 +23,7 @@ ME WAL --> DxsReplayService --> [TCP] --> DxsConsumer
 
 ## Record Processing
 
-1. Connects to DXS producer (replay server) using `DxsConsumer`
+1. Connects to replication producer (replay server) using `DxsConsumer`
 2. Receives `RawWalRecord` via callback
 3. Buffers records, flushes to disk every 1000 records
 4. Rotates output file daily (`{stream_id}_{date}.wal`)

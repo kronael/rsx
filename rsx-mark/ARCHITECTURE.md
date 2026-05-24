@@ -2,13 +2,13 @@
 
 Mark price aggregator process. Consumes real-time prices from
 exchange WebSocket feeds, computes median mark prices, publishes
-to Risk via CMP/UDP. See `specs/2/15-mark.md`.
+to Risk via casting/UDP. See `specs/2/15-mark.md`.
 
 ## Module Layout
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: source setup, aggregation loop, WAL + CMP output |
+| `main.rs` | Binary: source setup, aggregation loop, WAL + casting output |
 | `aggregator.rs` | `aggregate()`, `median()`, `sweep_stale()`, `compute_mask()` |
 | `source.rs` | `BinanceSource`, `CoinbaseSource`, WebSocket parsing |
 | `types.rs` | `SourcePrice`, `SymbolMarkState`, `SymbolMap` |

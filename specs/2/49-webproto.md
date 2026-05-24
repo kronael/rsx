@@ -5,7 +5,7 @@ status: shipped
 # WebSocket Wire Protocol (WS Overlay)
 
 Gateway exposes a compact WebSocket protocol and translates
-messages to CMP/WAL wire format for the risk engine. The
+messages to casting/WAL wire format for the risk engine. The
 goal is minimal parsing cost and small payloads.
 
 ## Table of Contents
@@ -88,7 +88,7 @@ ACK semantics:
 - 2 = CANCELLED
 - 3 = FAILED
 
-OrderDone.final_status mapping (CMP -> WS):
+OrderDone.final_status mapping (casting -> WS):
 - 0 -> FILLED
 - 1 -> RESTING (unexpected for done, but forwarded)
 - 2 -> CANCELLED
@@ -108,7 +108,7 @@ OrderDone.final_status mapping (CMP -> WS):
 - 11 = USER_IN_LIQUIDATION
 - 12 = WRONG_SHARD
 
-Risk reject mapping (CMP -> WS):
+Risk reject mapping (casting -> WS):
 - InsufficientMargin -> INSUFFICIENT_MARGIN
 - UserInLiquidation -> USER_IN_LIQUIDATION
 - NotInShard -> WRONG_SHARD
@@ -430,7 +430,7 @@ Server sends `B` snapshot on subscribe before any `D` deltas.
 //         3=cancelled, 4=completed
 ```
 
-Risk engine sends to gateway over CMP/UDP. Gateway routes to user
+Risk engine sends to gateway over casting/UDP. Gateway routes to user
 by user_id. Fire-and-forget delivery.
 
 ### T: Trade (Public WS)
@@ -476,9 +476,9 @@ to obtain tick/lot sizes for order formatting.
 
 ## Notes
 
-- Gateway multiplexes many users over a single CMP/UDP link to
+- Gateway multiplexes many users over a single casting/UDP link to
   the risk engine.
-- Risk engine multiplexes orders over a single CMP/UDP link to
+- Risk engine multiplexes orders over a single casting/UDP link to
   each matching engine.
 - Backpressure is enforced at ingress. If the gateway buffer
   is full, it rejects new orders with OVERLOADED.

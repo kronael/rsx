@@ -122,7 +122,7 @@ Appends to `_liquidation_log` list. Never triggers
 real liquidation engine.
 
 **Fix**: Same approach — if risk process running, send
-CMP message or WS command. Otherwise keep simulated
+casting message or WS command. Otherwise keep simulated
 with clear label.
 
 ---

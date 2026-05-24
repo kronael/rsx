@@ -3,7 +3,7 @@
 Two artifacts in one repo:
 
 1. **`rsx-dxs` — an open-source, log-backed reliable UDP
-   transport.** WAL on disk, CMP on the wire, DXS for replay.
+   transport.** WAL on disk, casting on the wire, replication for replay.
    The WAL bytes, the UDP bytes, and the replay-stream bytes
    are the same bytes. Domain-agnostic: `cargo tree -p rsx-dxs
    --edges normal | grep rsx-` is empty. Drop it into any
@@ -26,7 +26,7 @@ is in [BLOG.md](BLOG.md).
 | Layer | p50 |
 |---|---:|
 | Match algorithm only (dedup + WAL + match) | **340 ns** |
-| In-process round-trip (real CMP + Orderbook + WAL) | **9.58 µs** |
+| In-process round-trip (real casting + Orderbook + WAL) | **9.58 µs** |
 | Cross-process production (GW→ME→GW) | **1 128 µs** |
 
 99% of the in-process round-trip is the `sendto` syscall.
@@ -35,12 +35,12 @@ Framing + algorithm together are <0.7%. Optimisation paths
 [facts/syscall-latency.md](facts/syscall-latency.md) and
 [docs/benches.md](docs/benches.md). Design budget for the
 production path is **<50 µs**; current p50 is 22× over and
-we know why (`monoio::time::sleep(100µs)` in two CMP poll
+we know why (`monoio::time::sleep(100µs)` in two casting poll
 loops accounts for ~655 µs of it).
 
 ## What's interesting here
 
-- **CMP, the C Message Protocol** — fixed-size `repr(C)` WAL
+- **casting, the C Message Protocol** — fixed-size `repr(C)` WAL
   records over UDP between Gateway, Risk, and ME. One wire
   format for disk, network, and memory. NAK + heartbeat for
   loss recovery, sequence-window flow control. See
@@ -123,16 +123,16 @@ make bench-gate            # local 10% regression gate
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS + CMP bridge
+                    |  Gateway   |  WS + casting bridge
                     |  (monoio,  |  JWT, rate limit
                     |   async)   |
                     +-----+------+
-                          | CMP/UDP
+                          | casting/UDP
                     +-----v------+            +----------+
-                    |   Risk     |  CMP/UDP   | Matching |
+                    |   Risk     |  casting/UDP   | Matching |
                     | (1 pinned  +----------->| (1 pinned|
                     |  thread,   |<-----------+  thread, |
-                    |  7 rings)  |  CMP fills | per-sym) |
+                    |  7 rings)  |  casting fills | per-sym) |
                     +--+---+--+-+              +----+-----+
                        |   |  |                     |
               +--------+   |  +------+        +-----v-----+
@@ -145,7 +145,7 @@ make bench-gate            # local 10% regression gate
 ```
 
 Transports:
-- **Hot path** between processes: CMP/UDP (sequence-window
+- **Hot path** between processes: casting/UDP (sequence-window
   flow control, NAK gap recovery)
 - **Cold path** between processes: WAL replication over TCP
   with optional rustls TLS (replay, replication, archival)
@@ -164,8 +164,8 @@ split out of rsx-dxs so transport is now domain-agnostic
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, macros
-rsx-dxs/        Domain-agnostic transport: WAL + CMP/UDP +
-                DXS/TCP replay; versioned wire header
+rsx-dxs/        Domain-agnostic transport: WAL + casting/UDP +
+                replication/TCP replay; versioned wire header
                 (no rsx-types prod dep)
 rsx-messages/   Exchange wire records: Fill, BBO, Order*,
                 MarkPrice, Liquidation, ConfigApplied
@@ -174,12 +174,12 @@ rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
 rsx-matching/   ME (per-symbol, single-threaded, core-pinned;
                 O(1) cancel via FxHashMap<OrderKey, slab>)
 rsx-risk/       Risk (per-shard, full tile arrangement)
-rsx-gateway/    Gateway (monoio WS + CMP bridge, hardened JWT
+rsx-gateway/    Gateway (monoio WS + casting bridge, hardened JWT
                 with min-32B secret + nbf + JtiTracker, bounded
                 per-IP rate limit with FIFO eviction)
 rsx-marketdata/ Marketdata (monoio shadow book, L2/BBO)
-rsx-mark/       Mark price (external feeds, CMP to risk)
-rsx-recorder/   Recorder (archival DXS consumer)
+rsx-mark/       Mark price (external feeds, casting to risk)
+rsx-recorder/   Recorder (archival replication consumer)
 rsx-cli/        WAL dump/inspect tool (JSON + parquet)
 rsx-maker/      Market-maker bot (two-sided quoting)
 ```
@@ -265,20 +265,20 @@ integration, ~930 Python (rsx-playground), 421 Playwright
 - **WAL-based recovery** — idempotent replay from tip + 1
 - **Slab arena** — pre-allocated, zero heap on hot path
 - **WAL = wire = stream** — no format transformation
-- **CMP/UDP for inter-process hot path** — direct, no Kafka, no NATS
+- **casting/UDP for inter-process hot path** — direct, no Kafka, no NATS
 - **SIGTERM = crash** — one recovery code path
 
 ## Specs
 
 All in `specs/2/`. The numbered names are stable; old
-unnumbered references (CMP.md, TILES.md, …) were retired.
+unnumbered references (casting.md, TILES.md, …) were retired.
 
 | Spec                                                            | Covers                                       |
 |-----------------------------------------------------------------|----------------------------------------------|
 | [specs/2/1-architecture.md](specs/2/1-architecture.md)          | System overview, principles                  |
 | [specs/2/4-cast.md](specs/2/4-cast.md)                            | C Message Protocol (UDP transport)           |
 | [specs/2/6-consistency.md](specs/2/6-consistency.md)            | Event ordering, fan-out, FIFO                |
-| [specs/2/10-replication.md](specs/2/10-replication.md)                          | DXS replay server (TCP fan-out)              |
+| [specs/2/10-replication.md](specs/2/10-replication.md)                          | replication server (TCP fan-out)              |
 | [specs/2/13-liquidator.md](specs/2/13-liquidator.md)            | Liquidation rounds, insurance fund           |
 | [specs/2/15-mark.md](specs/2/15-mark.md)                        | Mark price aggregation (external feeds)      |
 | [specs/2/16-marketdata.md](specs/2/16-marketdata.md)            | Shadow book, L2/BBO/trades                   |
@@ -314,7 +314,7 @@ A short, honest list of the gaps a careful reader will hit:
 - **End-to-end latency harness.** The 50 µs / 500 ns numbers
   are budgets, not measurements. Plan in
   [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
-- **CMP NAK retransmit** is now two-tier (commit `366d1b2`):
+- **casting NAK retransmit** is now two-tier (commit `366d1b2`):
   in-memory ring for recent records, WAL-backed for older
   history. The send-ring uses preallocated `Box<[T]>` slabs
   (`7befe76`) — zero heap on the send path. Documented in
@@ -326,7 +326,7 @@ A short, honest list of the gaps a careful reader will hit:
 - **`rsx-mark` and `rsx-marketdata` replay** still use tokio.
   Migrating mark to monoio is queued in
   `.ship/12-SHOWCASE-HONEST/`.
-- **CMP transport** uses `std::net::UdpSocket`, not monoio
+- **casting transport** uses `std::net::UdpSocket`, not monoio
   io_uring. One syscall per `sendto` / `recvfrom` on the
   hot path.
 - **rsx-maker** uses blocking `tungstenite`. Fine for a demo;

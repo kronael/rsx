@@ -6,9 +6,9 @@ status: shipped
 
 ## Context
 
-Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP)
+Project: RSX perpetuals exchange (Rust, monoio, casting/UDP)
 Goal: Fix compile errors in rsx-marketdata and rsx-mark,
-add ME→Marketdata CMP fanout, wire mark price deps.
+add ME→Marketdata casting fanout, wire mark price deps.
 
 Both crates have substantial implementations (1300+ LOC
 each, 58 tests each) but don't compile due to missing
@@ -75,9 +75,9 @@ Also check if source.rs has any other issues beyond deps.
 
 ---
 
-### Stage 3: ME → Marketdata CMP fanout
+### Stage 3: ME → Marketdata casting fanout
 
-**Goal**: Add second CMP sender in ME for marketdata events
+**Goal**: Add second casting sender in ME for marketdata events
 **Files**: rsx-matching/src/main.rs
 **Subagent**: improve
 **Dependencies**: [1]
@@ -88,8 +88,8 @@ Also check if source.rs has any other issues beyond deps.
 
 **Details**:
 
-Currently ME has one CMP sender (to Risk at risk_addr).
-Need a second CMP sender to Marketdata.
+Currently ME has one casting sender (to Risk at risk_addr).
+Need a second casting sender to Marketdata.
 
 In main.rs:
 1. Add env var `RSX_MD_CAST_ADDR` (default "127.0.0.1:9103")

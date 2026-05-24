@@ -144,7 +144,7 @@ mark prices update. It computes:
 - **Equity**: collateral + unrealized PnL across all positions.
 
 Unrealized PnL uses mark prices from the Mark aggregator, received
-via CMP. If the mark price feed is stale, margin checks use the
+via casting. If the mark price feed is stale, margin checks use the
 last known price -- a deliberate choice that trades safety (stale
 prices may not reflect reality) for availability (the system keeps
 running).
@@ -255,7 +255,7 @@ On crash recovery:
 
 1. Acquire a Postgres advisory lock (exclusive per shard).
 2. Load positions, accounts, and tips from Postgres.
-3. Request DXS replay from each matching engine starting at
+3. Request replication from each matching engine starting at
    `tips[symbol_id] + 1`.
 4. Process replay fills (same code path as live -- no separate
    recovery logic).
@@ -274,7 +274,7 @@ fill events from the same matching engines and maintains shadow
 state. On master failure, the replica acquires the advisory lock
 and promotes itself.
 
-The replica syncs tips with the master via CMP. If the replica's
+The replica syncs tips with the master via casting. If the replica's
 tips lag behind the master's, it replays from the matching engine
 WAL to catch up. The promotion path is the same as the cold-start
 recovery path -- load from Postgres, replay from WAL, go live.

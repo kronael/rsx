@@ -113,7 +113,7 @@ format!("m{:019}", counter)  // 20-char string
 
 ## Constraints
 
-- Connect to GATEWAY via WS (not directly to ME via CMP — that
+- Connect to GATEWAY via WS (not directly to ME via casting — that
   bypasses risk).
 - All prices must be tick-aligned, all qtys must be lot-aligned.
 - No heap allocation in the quote loop after initial setup.

@@ -36,7 +36,7 @@ WAL within 10ms and can be replayed indefinitely. Fills are NEVER lost.
 - ME writes fill to WAL buffer (in-memory)
 - WAL flush every 10ms OR 1000 records (whichever comes first)
 - fsync enforced (synchronous disk write)
-- DXS replay server retains WAL for 10min minimum
+- replication server retains WAL for 10min minimum
 - Risk deduplicates fills by `(symbol_id, seq)` on replay
 - Fills are idempotent (replaying same fill = no position change)
 
@@ -48,7 +48,7 @@ WAL within 10ms and can be replayed indefinitely. Fills are NEVER lost.
 
 **Guarantee:** Positions are eventually consistent with fills, bounded by 10ms
 flush interval. After any crash, positions can be reconstructed from ME fills
-via DXS replay.
+via replication.
 
 **Mechanism:**
 - Risk applies fills immediately to in-memory positions
@@ -118,7 +118,7 @@ No critical state depends on market data delivery.
 - Replay from `snapshot.last_seq + 1` to current WAL tip
 
 **Data loss bound:**
-- **Fills:** 0ms (WAL flushed, DXS replay available)
+- **Fills:** 0ms (WAL flushed, replication available)
 - **In-flight orders:** 10ms window (orders accepted but not yet
   flushed to WAL)
 
@@ -128,7 +128,7 @@ error sent to user. This is acceptable because fills are the source
 of truth.
 
 **Fills never lost:** Once emitted to event buffer and flushed to WAL
-(within 10ms), fills are durable. Risk can replay from DXS even if
+(within 10ms), fills are durable. Risk can replay from replication even if
 Risk was offline when fill occurred.
 
 **Backpressure triggers:**
@@ -145,13 +145,13 @@ Risk was offline when fill occurred.
 
 ### 2.2 Risk Engine
 
-**WAL consumption:** DXS consumer of ME WAL, tracks tip per symbol
+**WAL consumption:** replication consumer of ME WAL, tracks tip per symbol
 
 **Postgres flush interval:** 10ms OR 1000 records
 
 **On crash:**
 - Load positions + tips from Postgres
-- Request DXS replay from each ME: `from_seq = tips[symbol_id] + 1`
+- Request replication from each ME: `from_seq = tips[symbol_id] + 1`
 - Process replay fills (same code path as live)
 - On `CaughtUp` for all streams: connect gateway, go live
 
@@ -159,14 +159,14 @@ Risk was offline when fill occurred.
 - **Fills:** 0ms (ME WAL has replay path, Risk re-applies on startup)
 - **Positions:** 10ms (fills received but not yet flushed to Postgres)
 
-**Fills have replay path:** ME retains fills in WAL/DXS for 10min. Risk can
+**Fills have replay path:** ME retains fills in WAL/replication for 10min. Risk can
 replay from last persisted tip even if Risk was offline for minutes.
 
 **Backpressure triggers:**
 - Postgres write-behind lag > 100ms -> stall fill processing
 - ME -> Risk SPSC ring full -> stall ME event drain
 
-**Recovery time:** 2-5s (Postgres load + DXS replay)
+**Recovery time:** 2-5s (Postgres load + replication)
 
 **Verification:**
 - Position = sum of fills (after replay)
@@ -194,7 +194,7 @@ replay from last persisted tip even if Risk was offline for minutes.
 
 **On crash:**
 - Shadow orderbook lost (ephemeral)
-- Rebuild from ME WAL via DXS replay
+- Rebuild from ME WAL via replication
 
 **Data loss:** 0ms (shadow state, not source of truth)
 
@@ -264,19 +264,19 @@ restart.
 2. ME restarts from snapshot
 3. ME replays WAL from `snapshot.last_seq + 1`
 4. ME resumes live processing
-5. Risk replays any missed fills via DXS
+5. Risk replays any missed fills via replication
 
 **Guarantees:**
 - All fills in WAL preserved (flushed within 10ms)
 - In-flight orders accepted but not flushed may be lost (10ms window)
-- Risk can replay fills from DXS (10min retention)
+- Risk can replay fills from replication (10min retention)
 
 #### Risk Engine Master Crash
 
 | Property | Value |
 |----------|-------|
 | Data loss | 10ms positions |
-| Recovery time | 2-5s (Postgres load + DXS replay) |
+| Recovery time | 2-5s (Postgres load + replication) |
 | Effect | Order submission halts, resumes after recovery |
 | Verification | Postgres positions vs ME fills |
 
@@ -284,7 +284,7 @@ restart.
 1. Risk heartbeat timeout detected (>5s)
 2. New Risk instance acquires advisory lock
 3. Load positions + tips from Postgres
-4. Request DXS replay from each ME: `from_seq = tips[symbol_id] + 1`
+4. Request replication from each ME: `from_seq = tips[symbol_id] + 1`
 5. Process replay fills (up to 10min history available)
 6. On `CaughtUp`: connect Gateway, go live
 
@@ -324,7 +324,7 @@ restart.
 |----------|-------|
 | Data loss | 10ms in-flight orders, **0ms fills** (WAL on both) |
 | Recovery time | 10-20s (cold start from snapshot) |
-| Effect | Symbol trading halts, DXS replay buffer redundancy |
+| Effect | Symbol trading halts, replication buffer redundancy |
 | Verification | WAL has no gaps, Risk received all fills |
 
 **Scenario:** Both matching engine instances crash within 10ms window
@@ -335,12 +335,12 @@ restart.
 2. New matching engine instance starts from last snapshot
 3. Replays WAL from `snapshot.last_seq + 1`
 4. Resumes live processing
-5. Risk replays from DXS (matching engine WAL available for 10min)
+5. Risk replays from replication (matching engine WAL available for 10min)
 
 **Guarantees:**
 - Fills in WAL never lost (both instances flush same WAL)
 - In-flight orders in last 10ms may be lost
-- DXS consumers (Risk, market data) replay from last tip
+- replication consumers (Risk, market data) replay from last tip
 
 **Data loss bound:** 10ms in-flight orders (not yet in WAL), 0ms fills
 (WAL flushed)
@@ -351,7 +351,7 @@ restart.
 |----------|-------|
 | Data loss | **100ms positions** (both crashed before flush) |
 | Recovery time | 30-60s (Postgres load) |
-| Effect | Fills replayed from matching engine WAL via DXS |
+| Effect | Fills replayed from matching engine WAL via replication |
 | Verification | Full position reconciliation |
 
 **Scenario:** Both Risk instances crash within 10ms window (worse: if
@@ -361,7 +361,7 @@ Postgres also slow to commit, loss can extend to 100ms)
 1. Both Risk instances offline
 2. New Risk instance acquires advisory lock
 3. Loads positions from Postgres (up to 10ms stale)
-4. Requests DXS replay from matching engine:
+4. Requests replication from matching engine:
    `from_seq = tips[symbol_id] + 1`
 5. Matching engine serves from 10min WAL buffer
 6. Risk replays fills, reconstructs positions
@@ -388,7 +388,7 @@ not committed + both Risk instances crashed)
 1. Both matching engine and Risk crash (datacenter power loss)
 2. Matching engine recovers from snapshot + WAL
 3. Risk recovers from Postgres
-4. Risk requests DXS replay from matching engine
+4. Risk requests replication from matching engine
 5. Matching engine serves from WAL (10min retention)
 6. Risk catches up, resumes live
 
@@ -411,7 +411,7 @@ not committed + both Risk instances crashed)
 2. Postgres recovers first (or concurrently)
 3. Matching engine recovers from snapshot + WAL
 4. Risk loads from Postgres (stale positions)
-5. Risk requests DXS replay from matching engine
+5. Risk requests replication from matching engine
 6. Risk catches up, resumes
 
 **Guarantees:**
@@ -489,18 +489,18 @@ commit)
 |----------|-------|
 | Data loss | 10ms in-flight orders, **0ms fills** (replica WAL) |
 | Recovery time | 20-60s (replica promotion) |
-| Effect | Replica becomes master, DXS consumers switch |
-| Verification | Replica promotion, DXS switch |
+| Effect | Replica becomes master, replication consumers switch |
+| Verification | Replica promotion, replication switch |
 
 **Procedure:**
 1. Matching engine master disk fails (total loss)
 2. Matching engine replica promoted to master
-3. DXS consumers (Risk, market data) connect to new master
+3. replication consumers (Risk, market data) connect to new master
 4. New replica started from promoted master's snapshot
 
 **Guarantees:**
 - Replica has identical WAL (replicated in real-time)
-- DXS consumers replay from tip (no gap)
+- replication consumers replay from tip (no gap)
 - Fills never lost
 
 #### Risk Master Disk Total Failure
@@ -564,14 +564,14 @@ both at max)
 2. Risk checks margin (in-memory)
 3. Risk routes to ME (ephemeral)
 4. ME matches, emits fill (durable in WAL within 10ms)
-5. Fill drains to Risk via SPSC (or DXS if cross-host)
+5. Fill drains to Risk via SPSC (or replication if cross-host)
 6. Risk applies fill to position (in-memory)
 7. Risk writes position to Postgres (batched 10ms)
 
 **Failure points:**
 - Gateway -> Risk: in-flight order lost if gateway crashes
 - Risk -> Matching engine: in-flight order lost if risk crashes
-- Matching engine -> Risk (fill): never lost (WAL + DXS replay)
+- Matching engine -> Risk (fill): never lost (WAL + replication)
 - Risk -> Postgres: lost if risk crashes before flush, replayed from
   matching engine fills
 
@@ -591,7 +591,7 @@ times.
 
 **On crash:**
 - Risk/Gateway may miss fills in rings (ephemeral)
-- Consumers replay from matching engine WAL via DXS
+- Consumers replay from matching engine WAL via replication
 - Matching engine retains WAL for 10min (replay window)
 
 **Verification:**
@@ -638,12 +638,12 @@ Postgres lags, replay fills from matching engine WAL to catch up.
 
 **Effect:**
 - Risk cannot receive fills from matching engine
-- Matching engine continues matching (buffers fills in WAL/DXS)
+- Matching engine continues matching (buffers fills in WAL/replication)
 - Risk detects via heartbeat timeout
 
 **Recovery:**
 - Partition heals
-- Risk replays fills from matching engine WAL via DXS
+- Risk replays fills from matching engine WAL via replication
 - Risk catches up from `tips[symbol_id] + 1`
 
 **Guarantee:** Fills not lost, but positions lag during partition.
@@ -664,7 +664,7 @@ rebuild from snapshot + full WAL.
 - Risk write-behind to Postgres stalls
 
 **Risk:**
-- If partition lasts >10min AND Risk crashes: DXS replay buffer expires
+- If partition lasts >10min AND Risk crashes: replication buffer expires
 - Risk must rebuild from matching engine snapshot + full WAL replay
 
 **Recovery:**
@@ -760,7 +760,7 @@ with UUIDv7).
 
 **Risk fill dedup:** Tracks `tips[symbol_id]` in-memory. Any fill with
 `seq <= tips[symbol_id]` is a duplicate (already applied). On replay
-from DXS, dedup prevents double-counting.
+from replication, dedup prevents double-counting.
 
 **Postgres position dedup:** Version field increments on every update.
 UPSERT with version check detects concurrent updates (should never
@@ -949,7 +949,7 @@ Postgres vacuum/checkpoint in progress.
 | Position delta | 0 | Crit: any delta | Detect mismatch |
 | Advisory lock | 1/shard | Crit: 0 or 2 | Detect split-brain |
 | SPSC ring full | 0 stalls/s | Warn: >10/s | Detect backpressure |
-| DXS replay lag | <1s | Warn: >10s | Detect slow consumer |
+| replication lag | <1s | Warn: >10s | Detect slow consumer |
 | Funding delta | 0 | Crit: >1bps | Detect funding bug |
 
 ### 10.2 Alert Severity
@@ -969,7 +969,7 @@ Postgres vacuum/checkpoint in progress.
 **P2 (email):** Shadow component down
 - Replica offline
 - Market data offline
-- DXS recorder offline
+- replication recorder offline
 
 ### 10.3 Reconciliation Checks
 
@@ -1012,7 +1012,7 @@ Postgres vacuum/checkpoint in progress.
 
 **Key takeaways:**
 - **Fills: 0ms loss guarantee** in ALL scenarios (matching engine WAL
-  + DXS replay)
+  + replication)
 - **Orders: 10ms loss acceptable** (ephemeral, users resubmit)
 - **Positions: 0-100ms loss** depending on scenario (reconstructed
   from fills)
@@ -1031,7 +1031,7 @@ Each guarantee in this document has corresponding tests:
 
 **E2E tests:** Verify fill processing, position updates, WAL replay
 
-**Integration tests:** Verify Postgres persistence, advisory locks, DXS replay
+**Integration tests:** Verify Postgres persistence, advisory locks, replication
 
 **Chaos tests:** Verify crash scenarios, partition scenarios, backpressure
 
@@ -1082,7 +1082,7 @@ budgets is queued. Specifically:
   WAL flush cadence
 - Risk sustaining 1 M fills/sec with the 10 ms Postgres
   flush cadence
-- DXS replay serving 100 K fills/sec to 10 concurrent
+- replication serving 100 K fills/sec to 10 concurrent
   consumers
 - Postgres handling 100 K position updates/sec in batches
 
@@ -1113,7 +1113,7 @@ numbers should accompany the §13.1 stress validation.
 
 **Fills: 0ms loss guarantee**
 - Matching engine WAL flushed within 10ms, retained for 10min
-- DXS replay available to all consumers
+- replication available to all consumers
 - Idempotent replay prevents double-counting
 
 **Orders: Loose guarantee**

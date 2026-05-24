@@ -124,15 +124,15 @@ rsx-matching/src/main.rs:193-202
 Matching is **one core-pinned thread**, no SPSC rings
 within the process. Inside that loop:
 
-1. Drain CMP UDP recv (orders from risk).
+1. Drain casting UDP recv (orders from risk).
 2. Run matching algorithm against the orderbook.
 3. Append events to WAL writer (inline call, not a ring).
-4. Send fills via CMP UDP to risk (and to marketdata).
+4. Send fills via casting UDP to risk (and to marketdata).
 
 Why no rings: there's only one thread doing computational
 work, so there's nothing to send across a ring to. The
 WAL writer is an inline data structure with periodic
-fsync; the DXS replay TCP server runs on a separate
+fsync; the replication TCP server runs on a separate
 `std::thread::spawn` (not pinned) and reads from the
 already-flushed WAL files.
 
@@ -172,7 +172,7 @@ The aggregator main loop is a synchronous busy-spin that
 drains one SPSC ring per external price source (Binance,
 Coinbase, …). The sources themselves are async tasks on
 a `tokio` runtime that scrape WebSockets and push into
-the rings. Aggregator → CMP/UDP send is inline.
+the rings. Aggregator → casting/UDP send is inline.
 
 The aggregator is not currently core-pinned. The next
 ship cycle migrates the source tasks off `tokio` and
@@ -188,20 +188,20 @@ default dev config). Inside:
 - Accept loop spawns one task per WebSocket connection.
 - Each task `read_frame → validate → CmpSender::send` to
   the risk shard.
-- Fill responses come back from risk via CMP, route to
+- Fill responses come back from risk via casting, route to
   the right WS task via a per-connection broker channel.
 
 There is no SPSC ring within gateway. The justification:
 WebSocket parsing dominates the per-frame cost, and
 io_uring batches the syscalls; a tile would have to do
 the same WS parsing. The flow-control buffer between
-gateway and risk is the CMP wire window (§5 of `4-cast.md`),
+gateway and risk is the casting wire window (§5 of `4-cast.md`),
 not a ring.
 
 ### 3.5 Marketdata — `rsx-marketdata` (monoio async, not tiled)
 
 Same pattern as gateway: `monoio` runtime, async WS
-broadcast tasks, CMP UDP recv for fill/insert/cancel
+broadcast tasks, casting UDP recv for fill/insert/cancel
 events from ME. No SPSC rings, no core pinning.
 
 The `replay.rs` startup path is on `tokio` (one-shot
@@ -210,17 +210,17 @@ catch-up before going live); not on the hot path.
 ## 4. Inter-process communication
 
 Within a process, where rings exist, they're rtrb SPSC.
-Between processes, CMP/UDP for the hot path and TCP+WAL
+Between processes, casting/UDP for the hot path and TCP+WAL
 for the cold path. See `4-cast.md` for the wire protocol.
 
 ```
-Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
-Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
+Gateway --[casting/UDP]--> Risk --[casting/UDP]--> ME
+Gateway <--[casting/UDP]-- Risk <--[casting/UDP]-- ME
                        Risk --[SPSC]-----> PG write-behind
                                     ME --[fsync+notify]--> WAL files
                           WAL files --[TCP fan-out]--> {recorder, mktdata}
-                          ME --[CMP/UDP]--> Marketdata
-                          Mark --[CMP/UDP]--> Risk
+                          ME --[casting/UDP]--> Marketdata
+                          Mark --[casting/UDP]--> Risk
 ```
 
 ## 5. Threading inventory
@@ -229,7 +229,7 @@ A complete count of OS threads by process, default config:
 
 | Process       | Pinned | Async (tokio/monoio) | SPSC rings |
 |---------------|--------|----------------------|------------|
-| rsx-matching  | 1      | 1 (DXS replay TCP)   | 0          |
+| rsx-matching  | 1      | 1 (replication TCP)   | 0          |
 | rsx-risk      | 1      | 1 (tokio: PG)        | 7          |
 | rsx-gateway   | 0      | 1 (monoio)           | 0          |
 | rsx-marketdata| 0      | 1 (monoio)           | 0          |
@@ -293,7 +293,7 @@ Tracked in `.ship/12-SHOWCASE-HONEST/`:
   measurement.
 - **18: mark off tokio.** Move source scrapers to monoio
   TCP, add core pinning to the aggregator.
-- **17: monoio UDP for gateway.** Gateway owns the CMP
+- **17: monoio UDP for gateway.** Gateway owns the casting
   `UdpSocket`; replace with monoio io_uring SQEs for
   batched send/recv. rsx-dxs itself stays runtime-free
   (invert-ownership: caller passes bytes, not socket).
@@ -303,8 +303,8 @@ Tracked in `.ship/12-SHOWCASE-HONEST/`:
 
 ## Cross-references
 
-- `specs/2/4-cast.md` — CMP wire protocol and flow control
-- `specs/2/10-replication.md` — DXS replay (TCP fan-out)
+- `specs/2/4-cast.md` — casting wire protocol and flow control
+- `specs/2/10-replication.md` — replication (TCP fan-out)
 - `specs/2/20-network.md` — Process topology, ports
 - `specs/2/22-perf-verification.md` — Bench gate, harness plan
 - `specs/2/48-wal.md` — WAL flush, fsync, rotation

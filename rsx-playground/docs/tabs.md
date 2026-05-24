@@ -17,7 +17,7 @@ Refreshes every 2 seconds via HTMX polling.
 
 ## Topology
 
-Process graph, core affinity map, and CMP flow diagram.
+Process graph, core affinity map, and casting flow diagram.
 Shows which CPU cores each process is pinned to.
 
 ## Book

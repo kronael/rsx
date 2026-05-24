@@ -4,7 +4,7 @@ status: shipped
 
 # Gateway Service
 
-Gateway adapts external clients to internal CMP. It owns
+Gateway adapts external clients to internal casting. It owns
 sessions, auth, rate limits, and ingress backpressure. The
 wire protocol is defined in WEBPROTO.md.
 
@@ -14,7 +14,7 @@ wire protocol is defined in WEBPROTO.md.
 - Auth and session tracking
 - Rate limiting and overload rejection
 - Basic field validation
-- CMP/UDP forwarding to Risk and responses back to clients
+- casting/UDP forwarding to Risk and responses back to clients
 
 ## Protocol
 
@@ -32,7 +32,7 @@ wire protocol is defined in WEBPROTO.md.
 - Single-threaded monoio (io_uring) reactor. `GatewayState`
   lives behind `Rc<RefCell<...>>`; no locks, no cross-thread
   sharing. One connection = one spawned task.
-- CMP/UDP send (to risk) and receive (responses) run on the
+- casting/UDP send (to risk) and receive (responses) run on the
   same reactor as WS handlers.
 
 ## Connection Lifecycle
@@ -120,7 +120,7 @@ tracked separately from WebSocket order rate limits.
 
 Gateway contains no risk logic and no matching logic. It is
 purely an adaptation layer between external clients and
-internal CMP links.
+internal casting links.
 
 - Cancel by `cid` requires gateway to keep a pending map
   of client_order_id -> order_id. Cancels by order_id are

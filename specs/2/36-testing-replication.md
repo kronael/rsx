@@ -2,9 +2,9 @@
 status: shipped
 ---
 
-# TESTING-DXS.md — DXS (WAL + Streaming) Tests
+# TESTING-replication.md — replication (WAL + Streaming) Tests
 
-Source specs: [DXS.md](DXS.md), [WAL.md](WAL.md)
+Source specs: [replication.md](replication.md), [WAL.md](WAL.md)
 
 Crate: `rsx-dxs`
 
@@ -23,32 +23,32 @@ Crate: `rsx-dxs`
 
 | # | Requirement | Source |
 |---|-------------|--------|
-| D1 | Fixed-record format: 16B header + repr(C) payload | DXS.md §1 |
-| D1a | Payload begins with CMP prefix | CMP.md |
-| D2 | CRC32 validation on read, truncate on invalid | DXS.md §1 |
-| D3 | Little-endian encoding for all fields | DXS.md §1 |
-| D4 | File layout: `wal/{stream_id}/{stream_id}_{first}_{last}.wal` | DXS.md §2 |
-| D5 | Rotate at 64MB, retain 10min | DXS.md §2 |
-| D6 | WalWriter: monotonic seq, O(1) append | DXS.md §3 |
-| D7 | WalWriter: flush every 10ms + fsync | DXS.md §3 |
-| D8 | WalWriter: backpressure stall at 2x max_file_size | DXS.md §3 |
-| D9 | WalWriter: GC deletes files outside retention | DXS.md §3 |
-| D10 | WalReader: open from seq via filename binary search | DXS.md §4 |
-| D11 | WalReader: sequential iteration across files | DXS.md §4 |
-| D12 | DxsReplay server: TCP stream from from_seq | DXS.md §5 |
-| D13 | DxsReplay: CaughtUp marker then live tail | DXS.md §5 |
-| D14 | DxsConsumer: tip persistence every 10ms | DXS.md §6 |
-| D15 | DxsConsumer: reconnect with backoff 1/2/4/8/30s | DXS.md §6 |
-| D16 | DxsConsumer: resume from tip+1 | DXS.md §6 |
-| D17 | Recorder: daily rotation, same fixed-record format | DXS.md §8 |
+| D1 | Fixed-record format: 16B header + repr(C) payload | replication.md §1 |
+| D1a | Payload begins with casting prefix | casting.md |
+| D2 | CRC32 validation on read, truncate on invalid | replication.md §1 |
+| D3 | Little-endian encoding for all fields | replication.md §1 |
+| D4 | File layout: `wal/{stream_id}/{stream_id}_{first}_{last}.wal` | replication.md §2 |
+| D5 | Rotate at 64MB, retain 10min | replication.md §2 |
+| D6 | WalWriter: monotonic seq, O(1) append | replication.md §3 |
+| D7 | WalWriter: flush every 10ms + fsync | replication.md §3 |
+| D8 | WalWriter: backpressure stall at 2x max_file_size | replication.md §3 |
+| D9 | WalWriter: GC deletes files outside retention | replication.md §3 |
+| D10 | WalReader: open from seq via filename binary search | replication.md §4 |
+| D11 | WalReader: sequential iteration across files | replication.md §4 |
+| D12 | DxsReplay server: TCP stream from from_seq | replication.md §5 |
+| D13 | DxsReplay: CaughtUp marker then live tail | replication.md §5 |
+| D14 | DxsConsumer: tip persistence every 10ms | replication.md §6 |
+| D15 | DxsConsumer: reconnect with backoff 1/2/4/8/30s | replication.md §6 |
+| D16 | DxsConsumer: resume from tip+1 | replication.md §6 |
+| D17 | Recorder: daily rotation, same fixed-record format | replication.md §8 |
 | D18 | Bounded loss window: 10ms (WAL.md) | WAL.md |
 | D19 | Replica lag bound: 100ms, stall if exceeded | WAL.md |
-| D20 | Unknown version: stop replay and fail fast (no skip) | DXS.md §1 |
-| D21 | CancelReason enum: 6 values (0-5) | DXS.md §1 |
-| D22 | No file header, no index, sequential read only | DXS.md §2 |
-| D23 | Active file uses temp name `{stream_id}_active.wal` | DXS.md §2 |
-| D24 | GC runs on rotation, not on timer | DXS.md §2,3 |
-| D25 | Archive fallback when from_seq older than hot retention | DXS.md §2 |
+| D20 | Unknown version: stop replay and fail fast (no skip) | replication.md §1 |
+| D21 | CancelReason enum: 6 values (0-5) | replication.md §1 |
+| D22 | No file header, no index, sequential read only | replication.md §2 |
+| D23 | Active file uses temp name `{stream_id}_active.wal` | replication.md §2 |
+| D24 | GC runs on rotation, not on timer | replication.md §2,3 |
+| D25 | Archive fallback when from_seq older than hot retention | replication.md §2 |
 | D26 | Local WAL full: stall producer | WAL.md |
 | D27 | Flush lag >10ms: stall producer | WAL.md |
 | D28 | Flush on size threshold (1000 records) in addition to 10ms | WAL.md |
@@ -114,7 +114,7 @@ not yet implemented:
 
 ## Benchmarks
 
-Targets from DXS.md §10:
+Targets from replication.md §10:
 
 | Operation | Target |
 |-----------|--------|
@@ -132,20 +132,20 @@ Targets from DXS.md §10:
 - Matching engine embeds WalWriter for event persistence
   (ORDERBOOK.md §2.8)
 - Matching engine embeds DxsReplay server for downstream
-  consumers (DXS.md §5)
+  consumers (replication.md §5)
 - Risk engine connects as DxsConsumer for replay on startup
   (RISK.md §replication)
 - Mark aggregator embeds WalWriter + DxsReplay for mark
   prices (MARK.md §1)
-- Recorder connects as DxsConsumer for archival (DXS.md §8)
+- Recorder connects as DxsConsumer for archival (replication.md §8)
 - Market data connects as DxsConsumer for recovery
   (MARKETDATA.md §8)
 - WAL backpressure rules propagate to matching engine stall
   (WAL.md, CONSISTENCY.md §3)
 - Archive fallback when hot WAL retention exceeded
-  (DXS.md §2)
+  (replication.md §2)
 - Cross-host live streaming via WAL/TCP + WAL wire format
-  (DXS.md §7)
-- CMP/UDP for hot-path between processes (ME -> risk, risk ->
-  gateway), DXS for cross-host and replay (DXS.md §7,
+  (replication.md §7)
+- casting/UDP for hot-path between processes (ME -> risk, risk ->
+  gateway), replication for cross-host and replay (replication.md §7,
   NETWORK.md §internal)

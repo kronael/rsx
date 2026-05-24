@@ -2,11 +2,11 @@
 status: shipped
 ---
 
-# CMP — C Message Protocol
+# casting — C Message Protocol
 
-CMP carries WAL records over UDP between Gateway, Risk, and
+casting carries WAL records over UDP between Gateway, Risk, and
 Matching Engine. The same bytes go to disk (WAL), to the
-network (CMP/UDP), and into shared memory. No serialization
+network (casting/UDP), and into shared memory. No serialization
 step. Sequence numbers, NAK-based gap recovery, sender-stall
 flow control.
 
@@ -22,7 +22,7 @@ Implementation: `rsx-dxs/src/cmp.rs`,
 
 ## Table of contents
 
-- [1. What CMP is and isn't](#1-what-cmp-is-and-isnt)
+- [1. What casting is and isn't](#1-what-cmp-is-and-isnt)
 - [2. Wire format](#2-wire-format)
 - [3. Sequence numbers and CmpRecord](#3-sequence-numbers-and-cmprecord)
 - [4. Control messages](#4-control-messages)
@@ -37,9 +37,9 @@ Implementation: `rsx-dxs/src/cmp.rs`,
 
 ---
 
-## 1. What CMP is and isn't
+## 1. What casting is and isn't
 
-CMP is **the C-struct wire format** plus **the UDP transport
+casting is **the C-struct wire format** plus **the UDP transport
 glue** (sequencing, flow control, gap recovery) that carries
 RSX's WAL records between processes on the hot path.
 
@@ -49,7 +49,7 @@ type with a `seq: u64` at offset 0). RSX's exchange records
 (`FillRecord`, `BboRecord`, …) live in the `rsx-messages`
 crate and are not visible to the transport.
 
-CMP is **not** a general-purpose framework. It assumes:
+casting is **not** a general-purpose framework. It assumes:
 - One sender per stream, one receiver per stream
   (point-to-point, not multicast). For fan-out, run multiple
   senders.
@@ -58,7 +58,7 @@ CMP is **not** a general-purpose framework. It assumes:
 - Little-endian x86_64 (or aarch64 LE). Compile-time check.
 - All endpoints are RSX processes built from the same repo.
 
-What CMP gives up to be fast:
+What casting gives up to be fast:
 - No connection handshake (just `bind` + `sendto`).
 - No congestion control. The dedicated network is sized for
   peak load; senders stall on flow-control window only.
@@ -67,7 +67,7 @@ What CMP gives up to be fast:
 
 ## 2. Wire format
 
-Every CMP datagram is a 16-byte WAL header followed by a
+Every casting datagram is a 16-byte WAL header followed by a
 fixed-size, `#[repr(C, align(64))]` payload. **WAL bytes =
 disk bytes = wire bytes = memory bytes.**
 
@@ -97,7 +97,7 @@ bytes cannot be parsed because `len` cannot represent it.
 The send buffer is sized at 65 536 bytes (`PACKET_BUF_SIZE`,
 `cmp.rs:23`).
 
-In **practice**, every CMP record currently in use is
+In **practice**, every casting record currently in use is
 ≤ 64 bytes (one cache line) — `OrderRequest`, `Fill`,
 `OrderInsertedRecord`, etc. are all
 `#[repr(C, align(64))]` with explicit padding to 64 bytes.
@@ -115,7 +115,7 @@ cache-line-sized.
 `crc32` is CRC32C (Castagnoli) over the payload only —
 **not** over the header. Receivers recompute and discard
 mismatches silently (`cmp.rs:373-376`). This catches bit
-errors on the wire, not malicious tampering; CMP has no
+errors on the wire, not malicious tampering; casting has no
 authentication.
 
 ### Endianness and platform
@@ -237,7 +237,7 @@ up, the sender backpressure stops the matching engine.
 
 ## 6. Loss recovery (NAK)
 
-UDP has no retransmit. CMP layers a NAK loop on top.
+UDP has no retransmit. casting layers a NAK loop on top.
 
 ### Detection
 
@@ -326,11 +326,11 @@ the hot receive path**.
 `REORDER_CAPACITY = 2048` sets the maximum in-flight gap
 window. At 10 k pps that's ~200 ms of burst tolerance; at
 1 k pps, 2 s — comfortable margin above realistic LAN
-hiccups. Bigger gaps escalate to FAULTED + DXS replay.
+hiccups. Bigger gaps escalate to FAULTED + replication.
 
 ### Three-tier delivery contract
 
-Within a stream, CMP guarantees **strict FIFO**: the
+Within a stream, casting guarantees **strict FIFO**: the
 application sees seqs in monotonic order with **no silent
 skip** path. Loss recovery happens in three tiers:
 
@@ -349,7 +349,7 @@ skip** path. Loss recovery happens in three tiers:
    on every `try_recv` call until the consumer calls
    `reset_after_replay(new_tip)`.
 
-3. **DXS replay (out-of-band).** The consumer handles
+3. **replication (out-of-band).** The consumer handles
    `Faulted` by switching to TCP-based WAL replay from
    `last_delivered_seq + 1` via `DxsConsumer`. Once caught
    up, it calls `CmpReceiver::reset_after_replay(new_tip)`
@@ -365,7 +365,7 @@ clears the FAULTED flag and drops stale reorder-ring entries.
 `highest_seen` is **monotonic**: if `new_tip` is below the
 current `highest_seen` (e.g. a heartbeat or stray OOO packet
 advanced `highest_seen` past the replay's stop point while
-the consumer was draining DXS), the method leaves
+the consumer was draining replication), the method leaves
 `highest_seen` unchanged. Lowering it could re-arm the gap
 detector against seqs the consumer has already applied via
 replay and silently re-deliver them — a FIFO violation. The
@@ -415,10 +415,10 @@ based on the last-persisted tip.
 
 ## 8. Comparison with related protocols
 
-CMP isn't novel; it's a particular fixed-point in the
+casting isn't novel; it's a particular fixed-point in the
 design space. The comparison clarifies what's different.
 
-| Property            | CMP/UDP        | Aeron          | kcp            | QUIC           | gRPC/HTTP2     |
+| Property            | casting/UDP        | Aeron          | kcp            | QUIC           | gRPC/HTTP2     |
 |---------------------|----------------|----------------|----------------|----------------|----------------|
 | Connection setup    | none (sendto)  | session SETUP  | none           | TLS handshake  | TLS+SETTINGS   |
 | Wire format         | repr(C)        | length+type    | custom hdr     | varint frames  | HPACK+protobuf |
@@ -443,7 +443,7 @@ What's actually borrowed:
   architecture decision (one slow consumer can't stall a
   fast one).
 
-What's **simplified vs Aeron**: CMP has no term/page log
+What's **simplified vs Aeron**: casting has no term/page log
 on disk for retransmit (in-memory ring only), no
 multi-destination multicast, no congestion control, no
 session setup, no encryption. The simplification is
@@ -452,7 +452,7 @@ acceptable loss recovery for an internal LAN.
 
 What's **simpler than QUIC**: no TLS, no per-stream
 multiplexing, no head-of-line avoidance (we don't need
-it — one sender, one receiver per stream). CMP would be
+it — one sender, one receiver per stream). casting would be
 strictly worse than QUIC over the public internet.
 
 ## 9. Performance
@@ -477,7 +477,7 @@ Measured by `rsx-dxs/benches/wal_bench.rs`:
 | `FillRecord` encode                                      | 23  |
 
 These are the load-bearing measurements behind the
-sub-microsecond CPU cost of one CMP frame. They do **not**
+sub-microsecond CPU cost of one casting frame. They do **not**
 include the syscall overhead of `sendto` / `recvfrom`
 (typically 500–1 000 ns on modern Linux), so the on-the-
 wire round trip per packet is dominated by the syscall +
@@ -498,9 +498,9 @@ not a measurement.
 
 ### Future: monoio UDP transport
 
-CMP currently uses `std::net::UdpSocket` (non-blocking,
+casting currently uses `std::net::UdpSocket` (non-blocking,
 `cmp.rs:16,62`). The rest of the gateway and marketdata
-stacks use `monoio` for io_uring. Replacing CMP's UDP
+stacks use `monoio` for io_uring. Replacing casting's UDP
 sockets with monoio io_uring SQEs would eliminate one
 syscall per send/recv on the hot path. This is tracked
 as future work; the wire format and protocol semantics
@@ -509,7 +509,7 @@ would not change.
 ## 10. Known limits and design tradeoffs
 
 These are the rough edges. They're documented so a
-reader can decide whether CMP fits their use case.
+reader can decide whether casting fits their use case.
 
 ### 10.1 Endianness
 
@@ -557,7 +557,7 @@ so the index hasn't been built yet.
 
 ### 10.4 No encryption, no auth
 
-CMP is for trusted intra-datacenter traffic. External
+casting is for trusted intra-datacenter traffic. External
 clients hit the WebSocket JSON gateway, which terminates
 TLS and validates JWT.
 
@@ -598,7 +598,7 @@ WAL files, not packet captures.
 ## 11. Configuration
 
 ```bash
-# CMP/UDP (hot path)
+# casting/UDP (hot path)
 RSX_CAST_UDP_ADDR=127.0.0.1:9100   # receiver bind addr
                                   # sender derives dest
 
@@ -628,7 +628,7 @@ ring (compile-time constant) in commit `c89d164`.
 
 ## Cross-references
 
-- `specs/2/10-replication.md` — DXS streaming server (TCP) on top of CMP
+- `specs/2/10-replication.md` — replication streaming server (TCP) on top of casting
 - `specs/2/48-wal.md` — WAL flush rules, retention, rotation
 - `specs/2/20-network.md` — Process topology, port assignments
 - `specs/2/45-tiles.md` — Tile architecture (within-process IPC)

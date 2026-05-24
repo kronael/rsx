@@ -1,7 +1,7 @@
 # rsx-gateway Architecture
 
 WebSocket gateway process. Accepts client connections,
-validates orders, routes to Risk via CMP/UDP, pushes
+validates orders, routes to Risk via casting/UDP, pushes
 fills/updates back to clients. Same listening port also
 serves REST.
 
@@ -12,8 +12,8 @@ Specs: `specs/2/11-gateway.md`, `specs/2/49-webproto.md`.
 Single monoio (io_uring) reactor on one thread. All gateway
 state lives in `Rc<RefCell<GatewayState>>`; no locks, no
 cross-thread sharing. Each connection runs as a monoio task
-spawned from the accept loop. The main loop polls the CMP/UDP
-receiver, ticks the CMP sender, sweeps the pending tracker,
+spawned from the accept loop. The main loop polls the casting/UDP
+receiver, ticks the casting sender, sweeps the pending tracker,
 broadcasts heartbeats, and reaps idle connections.
 
 tokio is NOT used on the gateway hot path. The reference
@@ -24,11 +24,11 @@ pattern for client-side WS.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: monoio runtime, CMP recv loop, sweeps, heartbeat |
+| `main.rs` | Binary: monoio runtime, casting recv loop, sweeps, heartbeat |
 | `lib.rs` | Re-exports |
 | `config.rs` | `GatewayConfig` + `load_gateway_config` from env, JWT secret enforcement |
 | `state.rs` | `GatewayState`, `ConnectionState`, bounded IP limiter, symbol configs |
-| `handler.rs` | Per-connection: HTTP read, REST/WS branch, handshake, frame loop, validation, CMP forward |
+| `handler.rs` | Per-connection: HTTP read, REST/WS branch, handshake, frame loop, validation, casting forward |
 | `ws.rs` | WS handshake, JWT extract, frame read/write, 4KB frame cap |
 | `rest.rs` | REST endpoints (`/health`, `/v1/symbols`) on the same listener |
 | `protocol.rs` | `WsFrame` enum + JSON serialize/parse |
@@ -38,7 +38,7 @@ pattern for client-side WS.
 | `pending.rs` | `PendingOrders` with VecDeque + maps, stale sweep |
 | `order_id.rs` | UUIDv7 generation + hex codec |
 | `convert.rs` | Tick/lot alignment checks |
-| `route.rs` | CMP -> WS fan-out (Fill, OrderInserted, OrderDone, OrderCancelled, OrderFailed, Liquidation) |
+| `route.rs` | casting -> WS fan-out (Fill, OrderInserted, OrderDone, OrderCancelled, OrderFailed, Liquidation) |
 
 ## REST + WS on One Port
 
@@ -139,11 +139,11 @@ Client (WS JSON)
 |     (binary forward path; alloc-free)          |
 +-------------------------------------------------+
     |
-    v [CMP/UDP -> Risk]
+    v [casting/UDP -> Risk]
   Risk -> Matching -> Risk
     |
-    v [CMP/UDP -> Gateway]
-+-- main.rs CMP loop ----------------------------+
+    v [casting/UDP -> Gateway]
++-- main.rs casting loop ----------------------------+
 |  Decode FillRecord/OrderInsertedRecord/...     |
 |  Dispatch to route.rs                          |
 +-- route.rs ------------------------------------+
@@ -206,7 +206,7 @@ Gateway holds no durable state. On crash:
 ## Scaling
 
 Horizontal by `user_id` hash. Load balancer routes sticky
-sessions. Each gateway connects to its Risk shard via CMP/UDP.
+sessions. Each gateway connects to its Risk shard via casting/UDP.
 No cross-instance coordination.
 
 ## Networking (monoio / io_uring)

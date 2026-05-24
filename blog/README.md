@@ -56,7 +56,7 @@ FlatBuffers adds 150ns per message. For <50us end-to-end latency, that's
 Comparison of serialization formats for ultra-low-latency systems.
 Benchmark results and why we chose raw structs.
 
-**[CMP: A UDP Protocol for Financial Data](cmp.md)**
+**[casting: A UDP Protocol for Financial Data](cmp.md)**
 
 Our UDP-based replication protocol. Sequence numbers, NACKs, flow
 control, and how we achieve reliable delivery over unreliable transport.
@@ -130,7 +130,7 @@ When the buffer fills, the system stalls. Never drop data silently.
 WouldBlock > silent loss. Small buffers fail fast. Why visible failures
 are better than invisible data loss.
 
-**[DXS: Every Producer Is the Broker](16-dxs-no-broker.md)**
+**[replication: Every Producer Is the Broker](16-dxs-no-broker.md)**
 
 No Kafka. No NATS. Producers serve their own WAL over TCP. Consumers
 connect directly, replay from sequence number. 10μs latency vs 10ms.
@@ -183,8 +183,8 @@ becomes a test.
 - Spec-first development (35 docs before code)
 - Zero-heap hot paths (slab allocators, fixed-point math)
 - WAL-based recovery (crash-safe state machines)
-- UDP replication (streaming protocol, CMP)
-- Brokerless streaming (replay protocol, DXS: producers serve
+- UDP replication (streaming protocol, casting)
+- Brokerless streaming (replay protocol, replication: producers serve
   their own WAL)
 - Asymmetric durability (fills sacred, orders ephemeral)
 - Compression maps (20M levels → 617K slots)
@@ -203,7 +203,7 @@ then [Development Journey](05-development-journey.md).
 
 **Core innovations first:** Read [We Deleted the Serialization Layer](12-deleted-serialization.md),
 [The Matching Engine That Runs at 100ns](18-100ns-matching.md),
-[DXS: Every Producer Is the Broker](16-dxs-no-broker.md).
+[replication: Every Producer Is the Broker](16-dxs-no-broker.md).
 
 **Architecture deep-dive:** [Matching Engine](02-matching-engine.md),
 [Risk Engine](03-risk-engine.md), [WAL and Recovery](04-wal-and-recovery.md),

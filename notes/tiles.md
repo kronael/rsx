@@ -60,8 +60,8 @@ lines to avoid false sharing.
 ## Where RSX uses tiles
 
 - **Matching engine** (`rsx-matching`) — degenerate tile: the
-  whole process is one pinned loop. CMP I/O, dedup, matching,
-  WAL append, CMP fan-out all happen on the same core.
+  whole process is one pinned loop. casting I/O, dedup, matching,
+  WAL append, casting fan-out all happen on the same core.
 - **Risk engine** (`rsx-risk`) — canonical full tile. One pinned
   hot thread plus a tokio persist sidecar over a `PersistEvent`
   ring. Seven SPSC rings carry fills, orders, mark prices, BBOs,

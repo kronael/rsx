@@ -139,7 +139,7 @@ local_measurement: null
 | Aeron Premium (Real Logic) | NAK over UDP + DPDK kernel bypass + ATS encryption + Cluster Standby | OSS Aeron protocol is public on github | OSS Aeron is Apache-2.0; Premium is commercial | Real Logic commercial-license terms not public | OSS Aeron benched already (`compare/aeron.md`); Premium adds ef_vi/DPDK transport — private eval only |
 | Chronicle FIX | TCP FIX session with Chronicle Queue persistence | FIX is open; Chronicle's engine internals are not | Commercial only ("transparent licensing model") | Chronicle commercial-license terms not public | Vendor-published: <4 µs round-trip up to p99.9 — citable |
 | STAC Research (org, not a product) | n/a — third-party benchmark auditor | STAC-M2 methodology is members-only; published reports are public | Reading published reports is free | n/a | **Cite STAC-audited reports freely**; that's the publication carve-out |
-| Endace (out of scope) | Not messaging; nanosecond packet capture | n/a | Hardware appliance, no software-only tier | n/a | Not relevant to a CMP comparison; included only to disambiguate |
+| Endace (out of scope) | Not messaging; nanosecond packet capture | n/a | Hardware appliance, no software-only tier | n/a | Not relevant to a casting comparison; included only to disambiguate |
 
 ## The DeWitt clause: history + current state
 
@@ -273,10 +273,10 @@ joined as senior architect in 2004 and the same year delivered the
 first LBM release. Informatica acquired 29West in 2010. The product
 is still sold as **Informatica Ultra Messaging** as of 2026.
 
-This is the closest commercial peer to CMP — same family lineage
+This is the closest commercial peer to casting — same family lineage
 (Montgomery later co-created Aeron with Martin Thompson at Real
 Logic). LBM was the production benchmark that Aeron, and via Aeron
-our CMP NAK design, descended from.
+our casting NAK design, descended from.
 
 #### Reliability mechanism
 
@@ -290,7 +290,7 @@ NAK-based reliable transport over UDP. Two primary modes:
 - **SMX** (Shared Memory Transport): sub-100-ns latency between
   processes on the same host.
 
-Same primitive as Aeron and CMP.
+Same primitive as Aeron and casting.
 
 #### Wire format
 
@@ -490,7 +490,7 @@ searching `stacresearch.com` results 2026-05-24).
 
 #### What we can do
 
-- **Bench Community Edition privately** to compare our CMP send
+- **Bench Community Edition privately** to compare our casting send
   latency vs FTL UDP unicast on the same hardware. Do not publish.
 - **Cite the vendor's own published 210 ns / 6M msg/s number** with
   attribution + caveat that it's vendor-marketing-grade methodology.
@@ -520,7 +520,7 @@ Broker-based event mesh. Three form factors:
   hardware with FPGA datapath and network processors. No OS in
   the data path.
 
-Unlike Aeron / LBM / CMP, Solace is **broker-centric** — publishers
+Unlike Aeron / LBM / casting, Solace is **broker-centric** — publishers
 and subscribers connect to a central broker rather than peering.
 That's a different design point but worth including as the most
 commonly benchmarked commercial event broker.
@@ -571,7 +571,7 @@ appliance-only.
 
 - **Bench PubSub+ Standard locally**, free, no time limit. Most
   faithful comparison would be Solace SMF over loopback vs our
-  CMP over loopback. Internal use only.
+  casting over loopback. Internal use only.
 - **Cite the appliance whitepaper numbers** with attribution.
 - **Read the AMQP/MQTT support docs** for free interoperability
   testing if we ever needed a third-party client to drive Solace.
@@ -711,7 +711,7 @@ STAC site as of 2026-05-24.
 #### What we can do
 
 - **Implement venue clients ourselves** from the public spec.
-  This is what `rsx-messages` already does for CMP framing —
+  This is what `rsx-messages` already does for casting framing —
   we can do the same for CME MDP3 or Nasdaq ITCH if we ever
   need to compare wire-format encoding/decoding cost.
 - **Don't pay OnixS unless we need certification** — a venue
@@ -800,7 +800,7 @@ show sub-microsecond encode/decode for typical message sizes
 
 - **Implement an MDP3 decoder** from the public spec. Bench
   our decoder against our encoder. Compare to `rsx-messages`
-  CMP framing.
+  casting framing.
 - **Compare wire formats**: MDP3 SBE message layout vs our
   16B header + repr(C, align(64)) payload. Both are zero-copy
   binary; the comparison is informative.
@@ -912,7 +912,7 @@ ITCH 5.0 PDF, and the SoupBinTCP overview is on the Wireshark
 wiki + several third-party guides.
 
 The MoldUDP64 spec is also public — that's an interesting
-comparison point for CMP since it's UDP-multicast-with-sequence-
+comparison point for casting since it's UDP-multicast-with-sequence-
 numbers-and-NAK, conceptually the same primitive.
 
 #### License + cost
@@ -941,10 +941,10 @@ implementations).
 - **Implement an ITCH 5.0 decoder** in Rust. The protocol is small
   (a few dozen message types, all fixed-layout binary). Compare
   encode/decode cost with `rsx-messages`.
-- **Implement MoldUDP64** as a CMP analog — same wire shape
+- **Implement MoldUDP64** as a casting analog — same wire shape
   (UDP multicast + sequence numbers + NAK) but with a published
   spec. Useful as a reference implementation we can bench against
-  our own CMP.
+  our own casting.
 
 #### Sources
 
@@ -1011,7 +1011,7 @@ page:
 #### What we can do
 
 - **OSS Aeron is already benched** in `rsx-dxs/compare/aeron.md`.
-- **Aeron Premium**: acquire eval, bench DPDK vs our own CMP-over-
+- **Aeron Premium**: acquire eval, bench DPDK vs our own casting-over-
   DPDK path if we ever build one. Don't publish numbers.
 - **Cite the AWS blog's 2M msg/s** figure with attribution.
 
@@ -1206,7 +1206,7 @@ Re-validate this document when:
 - STAC publishes a new STAC-M2 audit for any vendor currently in
   the "unconfirmed" column above.
 - A new commercial messaging entrant appears with NAK + DPDK +
-  open spec — the design space we'd genuinely want to compare CMP
+  open spec — the design space we'd genuinely want to compare casting
   against.
 
 The underlying business model — closed-source commercial messaging

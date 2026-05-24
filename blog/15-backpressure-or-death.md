@@ -268,7 +268,7 @@ or rejects cleanly. No phantom orders.
 - Fix: kill slow consumer, restart, replay from WAL
 
 **Scenario 3: Network Partition**
-- Risk engine unreachable (CMP/UDP packets dropped)
+- Risk engine unreachable (casting/UDP packets dropped)
 - Gateway buffers fills waiting for risk ACK
 - Buffer full after 100ms
 - Gateway stops accepting orders
@@ -306,7 +306,7 @@ Backpressure enforces that promise.
   messages alert... eventually
 - **Test backpressure**: Assert `WouldBlock` happens when buffer fills
 
-Every queue in RSX has bounded capacity. WAL buffer, SPSC rings, CMP
+Every queue in RSX has bounded capacity. WAL buffer, SPSC rings, casting
 send queue, gateway ingress queue. All bounded. All return WouldBlock
 when full.
 

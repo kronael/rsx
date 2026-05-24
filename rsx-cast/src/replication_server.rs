@@ -50,7 +50,7 @@ impl ReplicationService {
     ) -> io::Result<Self> {
         let tls_acceptor = if let Some(cfg) = tls_config {
             if cfg.enabled {
-                cfg.validate(true)?;
+                cfg.validate_server()?;
                 Some(build_acceptor(&cfg)?)
             } else {
                 None

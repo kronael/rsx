@@ -13,17 +13,17 @@ Risk and emits fills and order lifecycle events.
 - Maintain orderbook (ORDERBOOK.md)
 - Execute matches deterministically
 - Emit fills, order inserted/cancelled/done events
-- Append events to WAL (DXS.md/WAL.md)
+- Append events to WAL (replication.md/WAL.md)
 
 ## Inputs / Outputs
 
 Inputs:
-- CMP/UDP from Risk: validated orders (`RECORD_ORDER_REQUEST`)
+- casting/UDP from Risk: validated orders (`RECORD_ORDER_REQUEST`)
   and cancels (`RECORD_CANCEL_REQUEST`)
 
 Outputs:
-- CMP/UDP to Risk: fills and order lifecycle events
-- CMP/UDP to Marketdata: Fill, OrderInserted, OrderCancelled, BBO
+- casting/UDP to Risk: fills and order lifecycle events
+- casting/UDP to Marketdata: Fill, OrderInserted, OrderCancelled, BBO
   (no OrderDone — see MARKETDATA.md)
 - WAL records for replay/marketdata
 
@@ -35,11 +35,11 @@ loop. `RSX_ME_CORE_ID` pins to a core (a degenerate one-tile
 
 ## Order Acceptance Flow
 
-For every CMP/UDP order frame:
+For every casting/UDP order frame:
 
 1. **Dedup** — `DedupTracker::check_and_insert(user_id, oid_hi,
    oid_lo)`. On duplicate, write `OrderFailedRecord{reason=
-   REASON_DUPLICATE}` to WAL and CMP to Risk; skip the rest.
+   REASON_DUPLICATE}` to WAL and casting to Risk; skip the rest.
 2. **Accept** — write `OrderAcceptedRecord` to WAL. WAL append
    failures panic with a named invariant (see consistency
    invariant 7).
@@ -50,9 +50,9 @@ For every CMP/UDP order frame:
    OrderDone, BBO). WAL is authoritative; failure panics.
 5. **Maintain cancel index** — walk `book.events()` and update
    the O(1) cancel index (see below).
-6. **Fan out** — best-effort CMP send of each event to Risk
+6. **Fan out** — best-effort casting send of each event to Risk
    and to Marketdata (with the MD filter above). Drops are
-   recovered by NAK / DXS-TCP replay; CMP send errors log
+   recovered by NAK / replication-TCP replay; casting send errors log
    and continue.
 
 Cancel frames follow steps 3–6 with `cancel_order` (no
@@ -126,4 +126,4 @@ Every order reaches exactly one terminal event:
 
 This spec describes behavior; tile composition lives in
 PROCESS.md. Implementation details live in ORDERBOOK.md and
-WAL/DXS docs.
+WAL/replication docs.

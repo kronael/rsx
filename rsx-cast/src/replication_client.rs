@@ -65,7 +65,7 @@ impl ReplicationConsumer {
 
         let tls_connector = if let Some(cfg) = tls_config {
             if cfg.enabled {
-                cfg.validate(false)?;
+                cfg.validate_client()?;
                 Some(build_connector(&cfg)?)
             } else {
                 None

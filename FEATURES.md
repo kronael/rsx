@@ -5,7 +5,7 @@ Feature inventory for the RSX perpetuals exchange.
 ## System Overview
 
 Spec-first perpetuals exchange with separate processes
-communicating via CMP (C structs over UDP) and WAL
+communicating via casting (C structs over UDP) and WAL
 replication (TCP). Target: <50us GW->ME->GW round trip.
 
 ## Process Architecture
@@ -17,7 +17,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 | Matching  | SPSC | Per-symbol, slab alloc, price-time FIFO |
 | Marketdata| 8180 | Shadow book, L2/BBO/trades broadcast    |
 | Mark      | 9201 | Binance/Coinbase aggregation, staleness |
-| Recorder  | DXS  | Archival consumer, daily rotation       |
+| Recorder  | replication  | Archival consumer, daily rotation       |
 | Maker     | WS   | Two-sided quoting, auto-reconnect       |
 
 ## Crate Features
@@ -48,7 +48,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - BBO derivation after each match cycle
 - WAL integration (write fills, done, BBO)
 - CONFIG_APPLIED handling
-- Message encoding for outbound CMP
+- Message encoding for outbound casting
 - O(1) `(user_id, oid)` cancel index (no linear book scan)
 
 ### rsx-dxs (transport, domain-agnostic)
@@ -56,14 +56,14 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - WalWriter: 10ms flush, 64MB rotate, 10min retain
 - WalReader with sequence extraction
 - DxsReplayService (TCP, from seq N)
-- Streaming protocol (CMP) over UDP: flow control, NACK-based
+- Streaming protocol (casting) over UDP: flow control, NACK-based
 - Two-tier NAK retransmit: in-mem ring + WAL random-access
 - Protocol records: StatusMessage, Nak, CmpHeartbeat,
   ReplayRequest, CaughtUpRecord (in `protocol.rs`)
 - TLS support, backpressure, tip persistence
 - Wire-format version byte in `WalHeader` (V0/V1); readers
   reject unknown versions, writers stamp the current one
-- Preallocated `send_ring` on CMP sender (zero heap on the
+- Preallocated `send_ring` on casting sender (zero heap on the
   send path)
 - No `rsx-types` dep — transport accepts any
   `CmpRecord` (repr(C) + seq at offset 0)
@@ -93,7 +93,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
   cap so the map is bounded), per-instance
 - Circuit breaker (open/half-open/closed)
 - Pending order tracking with timeout
-- CMP/UDP transport to Risk process
+- casting/UDP transport to Risk process
 - Heartbeat timer, order dedup
 - Stream ordering, pre-validation (tick/lot)
 - REST contract endpoints
@@ -109,7 +109,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Funding accumulation and settlement
 - Advisory lease (main/replica promotion)
 - WAL persistence, Postgres replay
-- CMP/UDP router, multi-symbol ME addressing
+- casting/UDP router, multi-symbol ME addressing
 - Shard routing (user_id % N)
 - SPSC rings per symbol (fan-out)
 - Crash-restart with exponential backoff
@@ -123,7 +123,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - WS broadcast to subscribers
 - Seq gap detection, snapshot bootstrap
 - Heartbeat, per-symbol subscriptions
-- Multi-ME CMP subscription
+- Multi-ME casting subscription
 
 ### rsx-mark
 
@@ -131,12 +131,12 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Weighted mean aggregation
 - Staleness filter, fallback logic
 - WAL writer for MARK_PRICE records
-- DXS replay for consumers
+- replication for consumers
 - Periodic sweep (1s), reconnect with backoff
 
 ### rsx-recorder
 
-- DXS consumer (subscribes to WAL stream)
+- replication consumer (subscribes to WAL stream)
 - Daily WAL rotation
 - Buffered writes (flush every 1000 records)
 - Graceful shutdown on SIGINT/SIGTERM
@@ -200,7 +200,7 @@ useSoundAlerts.
 |----------------|----------------------------------------|
 | Architecture   | ARCHITECTURE, TILES, NETWORK, PROCESS  |
 | Matching       | MATCHING, ORDERBOOK, CONSISTENCY       |
-| Transport      | DXS, WAL, CMP                         |
+| Transport      | replication, WAL, casting                         |
 | Risk           | RISK, LIQUIDATOR                       |
 | Market data    | MARKETDATA, MARK                       |
 | Gateway        | GATEWAY, MESSAGES, WEBPROTO, RPC, REST |

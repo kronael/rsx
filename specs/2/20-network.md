@@ -37,7 +37,7 @@ Web Users (WS)
 Native Clients     ──→  Gateway (WS overlay)  ──→  Risk Engine  ──→  Matching Engine
 (WebSocket)            (monolithic process)        (monolithic)     (one per symbol)
                   ↗                                                       |
-Mobile Apps (WS)                                                     [CMP/UDP events]
+Mobile Apps (WS)                                                     [casting/UDP events]
                                                                           |
                                                                      MARKETDATA
 Web Users (WS) ──────────────────────────────────────────────────→  (public WS)
@@ -73,7 +73,7 @@ Web Users (WS) ─────────────────────�
 - Monolithic process
 - Async runtime (monoio with io_uring) for concurrent client sessions
 - One WebSocket connection per client app
-- CMP/UDP to Risk Engine (live orders/fills)
+- casting/UDP to Risk Engine (live orders/fills)
 - Horizontal scaling: shard by user ID hash (load balancer routes by user_id)
 - No cross-instance coordination (each instance owns its users)
 
@@ -84,13 +84,13 @@ Web Users (WS) ─────────────────────�
 - Margin calculation (initial margin, maintenance margin)
 - Risk checks BEFORE sending orders to matching engine
 - Fill ingestion and position update after matching
- - Mark price ingestion via CMP/UDP from Mark process
+ - Mark price ingestion via casting/UDP from Mark process
 
 **Architecture:**
 - Monolithic process
-- CMP/UDP from Gateway (live orders)
-- CMP/UDP to each Matching Engine (live orders/fills)
- - CMP/UDP from Mark (mark price updates)
+- casting/UDP from Gateway (live orders)
+- casting/UDP to each Matching Engine (live orders/fills)
+ - casting/UDP from Mark (mark price updates)
 
 **Design Note:**
 Risk engine internals (margin models, position tracking, liquidation logic)
@@ -113,7 +113,7 @@ focuses on network topology and communication patterns.
 - Monolithic per symbol (NOT distributed across machines)
 - Single-threaded event loop (no locks, no mutexes)
 - Pre-allocated orderbook array (reference ORDERBOOK.md section 7)
-- Event emission to Risk via CMP/UDP
+- Event emission to Risk via casting/UDP
 
 **Scaling:**
 - Horizontal by symbol: one process per symbol or symbol group
@@ -133,7 +133,7 @@ focuses on network topology and communication patterns.
           users      users       users
           0-999      1000-1999   2000-2999
             ↓           ↓           ↓
-         [all matching engines accessible via CMP/UDP from all gateways]
+         [all matching engines accessible via casting/UDP from all gateways]
 ```
 
 **Why user sharding:**
@@ -187,17 +187,17 @@ Gateway3 ────┘
 ### Internal: Gateway ↔ Risk ↔ Matching Engine
 
 **Transport:**
-- CMP/UDP for live order/fill path (lowest latency)
+- casting/UDP for live order/fill path (lowest latency)
 - WAL replication over TCP for replay (reliable streaming)
 - WAL stores fixed-record payloads (raw #[repr(C)] structs)
 - Same wire format on disk, UDP, and TCP — no transformation
-- See CMP.md for full transport specification
+- See casting.md for full transport specification
 
 **Connection lifecycle:**
 1. User opens WebSocket connection to Gateway
 2. User sends order for BTC-PERP
-3. Gateway forwards order over CMP/UDP to Risk
-4. Risk validates and forwards over CMP/UDP to Matching Engine
+3. Gateway forwards order over casting/UDP to Risk
+4. Risk validates and forwards over casting/UDP to Matching Engine
 5. Matching engine processes, sends FILL messages back to Risk
 6. Risk updates user positions, forwards fills to Gateway
 7. Gateway forwards fills to user
@@ -220,13 +220,13 @@ Gateway3 ────┘
 - Closed only on process shutdown or reconnect
 
 **Transport:**
-- v1: CMP/UDP for live path, TCP for replay/replication
-- See CMP.md for full specification
+- v1: casting/UDP for live path, TCP for replay/replication
+- See casting.md for full specification
 
 **Replication transport:** ME and Risk replicas receive event
-streams via DXS WAL replication over TCP (see CMP.md and
-DXS.md section 5). No special replication protocol —
-replicas are DXS consumers with the same replay/live-tail
+streams via replication WAL replication over TCP (see casting.md and
+replication.md section 5). No special replication protocol —
+replicas are replication consumers with the same replay/live-tail
 mechanism used by all consumers.
 
 ## Data Flow
@@ -308,7 +308,7 @@ Risk checks happen BOTH:
 
 **Protocols:**
 - WebSocket (compact JSON, WEBPROTO.md)
-- CMP/UDP (native clients, raw fixed records)
+- casting/UDP (native clients, raw fixed records)
 
 **Security:**
 - TLS 1.3 encryption
@@ -323,12 +323,12 @@ Risk checks happen BOTH:
 ### Internal (Same Data Center)
 
 **Same machine:**
-- CMP/UDP over localhost (hot path)
+- casting/UDP over localhost (hot path)
 - TCP over localhost (cold path / replay)
 - Lowest latency (~10us UDP, ~100us TCP)
 
 **Cross-machine (same private VLAN):**
-- CMP/UDP (hot path, no encryption)
+- casting/UDP (hot path, no encryption)
 - TCP + optional TLS (cold path)
 
 **Cross-machine (untrusted network):**
@@ -341,7 +341,7 @@ Risk checks happen BOTH:
 **Latency:**
 - Internet → TLS handshake: ~50-200ms (initial)
 - JSON WebSocket message: ~1-10ms (after handshake)
-- CMP/UDP message: ~1-5ms (lower serialization overhead)
+- casting/UDP message: ~1-5ms (lower serialization overhead)
 
 **Bottleneck:**
 - Network latency (internet → data center)
@@ -349,11 +349,11 @@ Risk checks happen BOTH:
 
 ### Gateway → Risk → Matching Engine
 
-**Latency (same machine, CMP/UDP):**
+**Latency (same machine, casting/UDP):**
 - <10us per message
 - Includes: sendto, fixed record memcpy, recvfrom
 
-**Latency (same datacenter, CMP/UDP):**
+**Latency (same datacenter, casting/UDP):**
 - <50us per message
 - Includes: sendto, fixed record, network switch, recvfrom
 
@@ -443,9 +443,9 @@ connecting to its dependencies with exponential backoff
 (1s/2s/4s/8s, max 30s).
 
 - **Matching engine:** starts independently, begins WAL
-  replay. Serves DXS replay once ready.
+  replay. Serves replication once ready.
 - **Risk engine:** retries ME connections with backoff.
-  Replays from DXS on each successful connect.
+  Replays from replication on each successful connect.
 - **Gateway:** retries Risk connection with backoff. Rejects
   all user orders with `OVERLOADED` until Risk stream is
   established and Risk reports ready (CaughtUp on all
@@ -523,12 +523,12 @@ converges to ready state as components come online.
 - Maintains shadow orderbook per symbol (shared `rsx-book` crate)
 - Derives L2 depth, BBO, and trades from ME events
 - Serves public WebSocket endpoint for market data subscriptions
-- Recovery via DXS replay from ME WAL
+- Recovery via replication from ME WAL
 
 **Architecture:**
 - Single-threaded, dedicated core, busy-spin
 - Non-blocking epoll for WS I/O (no Tokio)
-- One CMP/UDP input per matching engine
+- One casting/UDP input per matching engine
 - Separate process from gateway (public, no auth)
 
 See [MARKETDATA.md](MARKETDATA.md) for full specification.

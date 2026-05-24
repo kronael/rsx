@@ -89,7 +89,7 @@ Order properties:
 - `is_liquidation = true` (RiskNewOrder field 11, risk skips
   margin check)
 - ME clamps qty to position size via position tracking
-- Routed to ME via same CMP/UDP link as normal orders
+- Routed to ME via same casting/UDP link as normal orders
 
 ## 4. Lifecycle
 

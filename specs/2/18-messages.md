@@ -27,7 +27,7 @@ communication. Messages are raw `#[repr(C)]` fixed records
 for prices and quantities. Streams are multiplexed by
 user_id and symbol (no per-user streams).
 
-Transport: CMP/UDP (see NETWORK.md). Flow control via
+Transport: casting/UDP (see NETWORK.md). Flow control via
 StatusMessage window + application backpressure.
 
 ## Order States
@@ -111,8 +111,8 @@ FILLED or CANCELLED (if user cancels)
 ## Message Schema
 
 Messages are fixed-size `#[repr(C, align(64))]` records sent over
-CMP/UDP. All data payloads start with the CMP prefix:
-`seq:u64, ver:u16, kind:u8, _pad:u8, len:u32` (CMP.md).
+casting/UDP. All data payloads start with the casting prefix:
+`seq:u64, ver:u16, kind:u8, _pad:u8, len:u32` (casting.md).
 
 Record layouts are defined in:
 - `rsx-messages` (domain wire records: Fill/BBO/Order*/Mark/Liquidation)
@@ -649,7 +649,7 @@ enum Event {
 
 ### Zero-Allocation Principle
 
-**v1 (raw #[repr(C)] over CMP/UDP):**
+**v1 (raw #[repr(C)] over casting/UDP):**
 - Minimal allocation (UDP send buffers only)
 - WAL wire format: zero-copy on read path
 

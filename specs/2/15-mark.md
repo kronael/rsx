@@ -5,8 +5,8 @@ status: shipped
 # Mark Price Aggregator
 
 Standalone network service. Aggregates mark prices from external
-exchange WebSocket feeds, publishes to risk engines via CMP/UDP,
-and also writes a WAL for DXS replay/recorder consumers.
+exchange WebSocket feeds, publishes to risk engines via casting/UDP,
+and also writes a WAL for replication/recorder consumers.
 
 Single process. Replaces the per-shard Binance async task that was
 embedded in each risk engine (RISK.md section 4).
@@ -32,7 +32,7 @@ embedded in each risk engine (RISK.md section 4).
 Binance WS ──┐
               ├──[SPSC]──> Aggregation Loop ──> WalWriter ──> DxsReplay
 Coinbase WS ──┘            (single thread)        |
-                                                  └──> CMP/UDP -> Risk
+                                                  └──> casting/UDP -> Risk
 ```
 
 - Exchange WS connectors run as async tasks, push to aggregation
@@ -40,7 +40,7 @@ Coinbase WS ──┘            (single thread)        |
 - Aggregation loop is single-threaded, computes median mark price
   per symbol.
 - WalWriter appends `MarkPriceRecord` records.
-- CMP/UDP sends `MarkPriceRecord` to Risk.
+- casting/UDP sends `MarkPriceRecord` to Risk.
 - DxsReplay server (from `rsx-dxs`) broadcasts to replay consumers.
 - Recorder archives mark price stream to daily files.
 
@@ -48,7 +48,7 @@ Coinbase WS ──┘            (single thread)        |
 
 ## 2. Data Structures
 
-### WAL/CMP wire format
+### WAL/casting wire format
 
 ```rust
 #[repr(C, align(64))]
@@ -64,7 +64,7 @@ struct MarkPriceRecord {
 }
 ```
 
-This record is emitted to both WAL and CMP/UDP.
+This record is emitted to both WAL and casting/UDP.
 
 ### In-memory
 
@@ -148,7 +148,7 @@ fn aggregate(state: &mut SymbolMarkState, update: SourcePrice):
         }
     }
 
-    // Append MarkPriceRecord to WAL and send over CMP/UDP
+    // Append MarkPriceRecord to WAL and send over casting/UDP
     wal.append(MarkPriceRecord { ... })
     cmp.send(MarkPriceRecord { ... })
 ```
@@ -175,10 +175,10 @@ stops publishing. Consumers handle the absence.
 The aggregator embeds a DxsReplay server from `rsx-dxs`.
 
 - Single `stream_id` for the mark price stream.
-- Recorder connects as a DXS consumer for archival.
-- Risk engines consume mark prices via CMP/UDP, not DXS.
+- Recorder connects as a replication consumer for archival.
+- Risk engines consume mark prices via casting/UDP, not replication.
 
-See [DXS.md](DXS.md) sections 5-6 for replay and consumer
+See [replication.md](replication.md) sections 5-6 for replay and consumer
 protocol.
 
 ---
@@ -241,14 +241,14 @@ Section 4 "Price Feeds" subsection "From Binance" is replaced:
 **Before:** async tokio task in risk process connects to Binance
 mark price WS, pushes via SPSC ring.
 
-**After:** risk engine connects as a DXS consumer to the mark
+**After:** risk engine connects as a replication consumer to the mark
 price aggregator (this service). Receives `MarkPriceEvent` records
-via DXS streaming. No Binance dependency in the risk crate.
+via replication streaming. No Binance dependency in the risk crate.
 
 `binance.rs` is removed from `crates/rsx-risk/src/`.
 
 The `binance_ring` in the risk main loop (RISK.md "Main Loop
-Pseudocode" step 3) becomes a DXS consumer callback that writes
+Pseudocode" step 3) becomes a replication consumer callback that writes
 to the same SPSC ring, preserving the hot-path integration.
 
 ---

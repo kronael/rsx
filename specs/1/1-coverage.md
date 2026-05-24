@@ -92,7 +92,7 @@ maker quotes. This is the entire objective.
 **Required live state:**
 - Process status shows running/stopped per process
 - Uptime counters increment
-- CMP message rates show non-zero values
+- casting message rates show non-zero values
 - Key metrics panel shows order count, fill count, book depth
 
 **Current state:** Placeholders. All counters zero or dashes.
@@ -103,7 +103,7 @@ maker quotes. This is the entire objective.
 
 **Required live state:**
 - Process boxes show green (running) or red (stopped)
-- CMP flow arrows show message rates between boxes
+- casting flow arrows show message rates between boxes
 - Ring pressure gauges show queue depths
 
 **Current state:** Static diagram. No live process data.

@@ -66,7 +66,7 @@ if !validate_basic(order) {
     return Err("invalid order");
 }
 
-// Send to risk engine via CMP/UDP (NOT WAL'd)
+// Send to risk engine via casting/UDP (NOT WAL'd)
 cmp_tx.send_order(order)?;
 
 // NO FSYNC
@@ -96,13 +96,13 @@ let pg_write = PgWriteBehind {
 pg_queue.push(pg_write);  // Batched flush every 10ms
 
 // Position update NOT immediately durable
-// Crash in next 10ms = replay from Postgres tip + DXS fills
+// Crash in next 10ms = replay from Postgres tip + replication fills
 ```
 
 Guarantees:
 - **10ms loss**: single crash loses max 10ms of fills
 - **100ms loss**: dual crash (risk + DB) loses max 100ms
-- **Recoverable**: replay DXS from Postgres tip on restart
+- **Recoverable**: replay replication from Postgres tip on restart
 - **Eventually consistent**: Postgres lags in-memory by 10-100ms
 
 ## Failure Scenarios
@@ -150,7 +150,7 @@ not broken.
 Recovery:
 1. Restart risk engine
 2. Load positions + tips from Postgres (last flushed state)
-3. Connect to ME's DXS replay
+3. Connect to ME's replication
 4. Request fills from tip+1
 5. Replay all fills since last Postgres flush
 6. Resume live processing
@@ -168,7 +168,7 @@ Recovery:
 1. Restart Postgres (crash recovery, last checkpoint)
 2. Restart risk engine
 3. Load positions from Postgres (100ms stale)
-4. Replay DXS fills from tip+1 (100ms of fills)
+4. Replay replication fills from tip+1 (100ms of fills)
 5. Rebuild exact position state
 
 **Max data loss: 100ms** (bounded by Postgres sync_commit interval).
@@ -348,5 +348,5 @@ goes through a durable queue.
 - `specs/2/28-risk.md` - Position replay from fills
 - `specs/2/10-replication.md` - Replay protocol for recovery
 - `blog/04-wal-and-recovery.md` - WAL-based recovery
-- `blog/16-dxs-no-broker.md` - DXS replay from producer WAL
+- `blog/16-dxs-no-broker.md` - replication from producer WAL
 - `rsx-risk/tests/position_test.rs` - Position = sum(fills) tests

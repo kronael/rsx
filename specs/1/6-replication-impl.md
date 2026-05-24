@@ -23,7 +23,7 @@ Two modes per shard:
 Postgres advisory lock key = shard_id (i64)
 
 ### Replica State (replica.rs)
-- `ReplicaState::buffer_fill(fill)` - buffer from ME CMP stream
+- `ReplicaState::buffer_fill(fill)` - buffer from ME casting stream
 - `ReplicaState::apply_tip(symbol_id, tip)` - update last known tip from main
 - `ReplicaState::drain_fills_up_to_tip(symbol_id)` - apply buffered fills ≤ tip
 - `ReplicaState::drain_all_up_to_tips()` - promotion: apply all buffered fills
@@ -38,18 +38,18 @@ Buffering strategy:
 #### Main Mode (run_main)
 1. Acquire advisory lock (blocking)
 2. Load positions/tips from Postgres
-3. Replay from ME WAL via DXS consumer (tips[symbol_id] + 1)
+3. Replay from ME WAL via replication consumer (tips[symbol_id] + 1)
 4. Start persist worker (write-behind to Postgres)
 5. Main loop:
    - Process fills/orders/BBO (standard risk logic)
-   - Send tip sync to replica via CMP/UDP (record type 0x20)
+   - Send tip sync to replica via casting/UDP (record type 0x20)
    - Renew lease periodically (~1s)
 
 #### Replica Mode (run_replica)
 1. Try advisory lock (expected to fail, main holds it)
 2. Load baseline from Postgres
-3. Connect CMP receivers to MEs (same as main)
-4. Connect CMP receiver for tip sync from main
+3. Connect casting receivers to MEs (same as main)
+4. Connect casting receiver for tip sync from main
 5. Replica loop:
    - Buffer fills from MEs into `ReplicaState`
    - Receive tip sync from main, apply buffered fills up to tip
@@ -71,7 +71,7 @@ struct TipSyncMessage {
 }
 ```
 
-Sent via CMP/UDP from main to replica on every fill.
+Sent via casting/UDP from main to replica on every fill.
 
 ## Configuration
 
@@ -101,7 +101,7 @@ Environment variables:
 ### Both Crash
 1. New instance acquires advisory lock
 2. Loads positions/tips from Postgres (up to 10ms stale)
-3. Requests replay via DXS consumer from tips[symbol_id] + 1
+3. Requests replay via replication consumer from tips[symbol_id] + 1
 4. MEs serve from 10min WAL retention
 5. Catches up to live, starts new replica
 
@@ -134,7 +134,7 @@ DATABASE_URL=postgresql://... cargo test -p rsx-risk --test replica_test -- --ig
 | Operation | Target | Notes |
 |-----------|--------|-------|
 | Replica fill buffer | <100ns | HashMap insert |
-| Tip sync receive | <1us | CMP/UDP + HashMap lookup |
+| Tip sync receive | <1us | casting/UDP + HashMap lookup |
 | Promotion | <1s | Apply buffered fills, depends on buffer size |
 | Failover detection | ~500ms | Advisory lock poll interval |
 

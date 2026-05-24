@@ -29,15 +29,15 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M3 | Tick/lot validation before matching | ORDERBOOK.md §5 |
 | M4 | Reduce-only enforcement before matching | ORDERBOOK.md §5 |
 | M5 | UUIDv7 dedup via FxHashMap, 5min window | RPC.md, MESSAGES.md §7 |
-| M6 | Event fan-out to risk/gateway/mktdata via CMP/UDP | CONSISTENCY.md §1 |
-| M7 | CMP flow control via Status/Nak (no silent drop) | CONSISTENCY.md §3 |
+| M6 | Event fan-out to risk/gateway/mktdata via casting/UDP | CONSISTENCY.md §1 |
+| M7 | casting flow control via Status/Nak (no silent drop) | CONSISTENCY.md §3 |
 | M8 | Fills precede ORDER_DONE | MESSAGES.md §fills |
 | M9 | Exactly-one completion per order | MESSAGES.md §completion |
 | M10 | Fill price = maker price | ORDERBOOK.md §5 |
 | M11 | BBO emitted after best bid/ask change | CONSISTENCY.md §1 |
 | M12 | WAL persistence via embedded WalWriter | ORDERBOOK.md §2.8 |
 | M13 | Online snapshot + WAL replay recovery | ORDERBOOK.md §2.8 |
-| M14 | DxsReplay server for downstream consumers | DXS.md §5 |
+| M14 | DxsReplay server for downstream consumers | replication.md §5 |
 | M15 | Config polling every 10min, CONFIG_APPLIED | ORDERBOOK.md §2.9 |
 | M16 | Position tracking per user (net_qty) | ORDERBOOK.md §6.5 |
 | M17 | Deferred user reclamation (60s, net_qty==0 && order_count==0) | ORDERBOOK.md §6.5 |
@@ -48,7 +48,7 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M22 | Slab allocator: O(1) alloc/free, free list, no shrink | ORDERBOOK.md §3 |
 | M23 | Zero heap allocation on hot path | ORDERBOOK.md §7 |
 | M24 | Event buffer: fixed array [Event; 10_000], no heap | ORDERBOOK.md §6 |
-| M25 | Per-consumer CMP/UDP links (slow mktdata doesn't stall risk) | CONSISTENCY.md §3 |
+| M25 | Per-consumer casting/UDP links (slow mktdata doesn't stall risk) | CONSISTENCY.md §3 |
 | M26 | Total order within symbol (monotonic seq), no cross-symbol | CONSISTENCY.md §2 |
 | M27 | ORDER_DONE is commit boundary for multi-fill sequences | CONSISTENCY.md §key invariants |
 | M28 | Fills are final, no rollback | CONSISTENCY.md §4 |
@@ -112,7 +112,7 @@ Targets from TESTING.md §6:
 | Insert | 100-500ns (p50/p99/p99.9) |
 | Match | 100-500ns |
 | Cancel | 100-300ns |
-| E2E latency (same machine, CMP/UDP) | <50us |
+| E2E latency (same machine, casting/UDP) | <50us |
 | Normal load | 10K orders/sec sustained 10min |
 | Burst load | 100K orders/sec spike 10s |
 | Recentering (lazy) | ~1-3us per level |
@@ -130,10 +130,10 @@ See `rsx-matching/benches/` for Criterion benchmark implementations.
 - Imports `rsx-book` crate for orderbook data structures
   (ORDERBOOK.md §3)
 - Embeds `rsx-dxs` WalWriter + DxsReplay server
-  (ORDERBOOK.md §2.8, DXS.md §5)
-- CMP/UDP fan-out to risk, gateway, mktdata
+  (ORDERBOOK.md §2.8, replication.md §5)
+- casting/UDP fan-out to risk, gateway, mktdata
   (CONSISTENCY.md §1)
-- Receives orders from risk engine via CMP/UDP
+- Receives orders from risk engine via casting/UDP
   (NETWORK.md, RISK.md §6)
 - System-level: participates in full order lifecycle tests
   (TESTING.md §2 e2e, §3 integration)

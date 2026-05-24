@@ -147,7 +147,7 @@ round-trip and surfaces the result in `/api/latency`.
 2. The round-trip is `time.perf_counter_ns()` from the
    instant before `ws.send_json` to the instant after
    the F frame is received. Includes Python overhead +
-   gateway WS handler + JWT decode + CMP encode +
+   gateway WS handler + JWT decode + casting encode +
    risk pre-trade + ME match + reverse path.
 3. The result is appended to the `e2e_latencies` ring
    (capped at 1 000) and exposed as an `e2e` block in
@@ -229,7 +229,7 @@ experiences in production.
 
 **End-to-end design budgets** (<50 µs GW→ME→GW). These
 are aspirational targets derived from summing component
-budgets (gateway parse + CMP encode + UDP roundtrip +
+budgets (gateway parse + casting encode + UDP roundtrip +
 risk + match + WAL append + reverse path). The total
 fits inside 50 µs by component math, but until the §4
 harness lands, the system has not been measured under

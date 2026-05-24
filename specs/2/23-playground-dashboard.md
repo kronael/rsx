@@ -10,7 +10,7 @@ Developer/testing dashboard for local and staging playground workflows.
 
 This module is for rapid observe/act/verify loops:
 
-- observe process/book/risk/WAL/CMP state
+- observe process/book/risk/WAL/casting state
 - act: run scenarios, inject faults, submit scripted flows
 - verify invariants and replay outcomes
 
@@ -52,7 +52,7 @@ Default: local enabled, staging disabled until explicitly enabled.
 - book snapshots and BBO
 - risk user/symbol state summaries
 - WAL/tip/replay lag and file status
-- CMP flow and gap/NAK statistics
+- casting flow and gap/NAK statistics
 - logs and event timeline
 
 ## 3.2 Act
@@ -116,9 +116,9 @@ Base path: `/api`
 ## 6. Data Sources
 
 - process manager (`start` script state)
-- service HTTP/CMP health endpoints
+- service HTTP/casting health endpoints
 - Postgres read queries for state checks
-- WAL files and DXS endpoints
+- WAL files and replication endpoints
 - in-process metrics exporters
 
 ---
@@ -132,7 +132,7 @@ Required screens (initial):
 3. Book
 4. Risk
 5. WAL
-6. CMP
+6. casting
 7. Logs
 8. Invariants
 9. Scenarios

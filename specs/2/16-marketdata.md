@@ -9,8 +9,8 @@ events and exposes public marketdata over WebSocket (see WEBPROTO.md).
 
 ## Inputs
 
-- CMP/UDP from Matching (orderbook events and BBO).
-- WAL/TCP replay from Matching (DXS replay bootstrap).
+- casting/UDP from Matching (orderbook events and BBO).
+- WAL/TCP replay from Matching (replication bootstrap).
 
 ## Outputs
 
@@ -44,7 +44,7 @@ is a bitmask (e.g. 3 = bbo + depth, 7 = all three). See WEBPROTO.md.
   lives behind `Rc<RefCell<MarketDataState>>`; no locks,
   no cross-thread sharing.
 - Shadow book reuses `rsx-book` `Orderbook` per symbol.
-  Each ingress CMP record (`OrderInserted`, `OrderCancelled`,
+  Each ingress casting record (`OrderInserted`, `OrderCancelled`,
   `Fill`) applies to the shadow book; deltas + BBO are
   derived and broadcast to subscribers of that symbol.
 - L2 snapshot is sent on subscribe (channel bit 2 = depth)
@@ -66,7 +66,7 @@ into its own shadow book independently.
 ## Seq Gaps and Cold Path
 
 - Marketdata tracks an expected next `seq` per symbol on
-  the CMP/UDP live path. A jump (`got > expected`) is a
+  the casting/UDP live path. A jump (`got > expected`) is a
   gap: marketdata broadcasts a fresh L2 snapshot to all
   depth subscribers for that symbol and resumes from the
   new `seq + 1`. Duplicates (`got < expected`) are ignored.
@@ -74,6 +74,6 @@ into its own shadow book independently.
   (`DxsConsumer`) from a configured `replay_addr` and tip
   file. It replays `OrderInserted`, `OrderCancelled`, and
   `Fill` records into the shadow books until receiving
-  `CaughtUp`, then switches to live CMP/UDP ingest. This
+  `CaughtUp`, then switches to live casting/UDP ingest. This
   is the only cold-path recovery; deeper gaps require
   client re-subscription.

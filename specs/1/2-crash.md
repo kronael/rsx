@@ -34,12 +34,12 @@ This document is an updated analysis for the evolved implementation. It compleme
 ### 1.1 Primary value pipeline
 
 1. Client submits order to Gateway WS (`rsx-gateway/src/handler.rs`).
-2. Gateway emits `RECORD_ORDER_REQUEST` to Risk CMP.
+2. Gateway emits `RECORD_ORDER_REQUEST` to Risk casting.
 3. Risk validates and reserves margin in-memory (`process_order`) and emits:
 - `OrderFreezeUpsert`
 - updated `Account`
 4. Accepted order is forwarded to Matching (`rsx-risk/src/main.rs` -> `OrderMessage`).
-5. Matching emits lifecycle records and fills to WAL/CMP.
+5. Matching emits lifecycle records and fills to WAL/casting.
 6. Risk ingests ME records:
 - `FILL`: updates positions/accounts/tips, persists snapshots
 - `ORDER_DONE` / `ORDER_CANCELLED` / `ORDER_FAILED`: releases frozen margin, persists freeze delete + account
