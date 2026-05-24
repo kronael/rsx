@@ -22,6 +22,7 @@
 use crate::config::CastConfig;
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
+use crate::encode_utils::decode_payload;
 use crate::header::WalHeader;
 use crate::records::CastHeartbeat;
 use crate::records::CastRecord;
@@ -506,17 +507,9 @@ impl CastSender {
                         &cbuf[WalHeader::SIZE..n];
                     match hdr.record_type {
                         RECORD_NAK => {
-                            if payload.len()
-                                >= std::mem::size_of::<
-                                    Nak,
-                                >()
+                            if let Some(nak) =
+                                decode_payload::<Nak>(payload)
                             {
-                                let nak = unsafe {
-                                    std::ptr::read_unaligned(
-                                        payload.as_ptr()
-                                            as *const Nak,
-                                    )
-                                };
                                 self.handle_nak(&nak);
                             }
                         }
@@ -898,17 +891,11 @@ impl CastReceiver {
 
                     match hdr.record_type {
                         RECORD_HEARTBEAT => {
-                            if payload_len
-                                >= std::mem::size_of::<
-                                    CastHeartbeat,
-                                >()
+                            if let Some(hb) =
+                                decode_payload::<CastHeartbeat>(
+                                    payload,
+                                )
                             {
-                                let hb = unsafe {
-                                    std::ptr::read_unaligned(
-                                        payload.as_ptr()
-                                            as *const CastHeartbeat,
-                                    )
-                                };
                                 if hb.highest_seq
                                     > self.highest_seen
                                 {
