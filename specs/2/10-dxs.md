@@ -115,6 +115,7 @@ invalid record.
 - `RECORD_ORDER_FAILED`
 - `RECORD_LIQUIDATION`
 - `RECORD_REPLAY_REQUEST`
+- `RECORD_REPLAY_NOT_AVAILABLE` (server cannot serve from_seq; consumer tries next endpoint)
 
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
@@ -252,11 +253,13 @@ over a TCP stream.
 
 1. Consumer opens TCP connection to producer (optional TLS).
 2. Consumer sends `ReplayRequest` as a WAL record.
-3. Server opens WalReader at `from_seq`.
-4. Server streams WalRecords over the TCP stream.
+3. If `from_seq` is older than server's WAL retention, server
+   responds with `RECORD_REPLAY_NOT_AVAILABLE` and closes.
+   Consumer tries next endpoint in its list.
+4. Server opens WalReader at `from_seq` and streams WalRecords.
 5. When reader exhausts all files (caught up to live): server
-   sends a WalRecord with a `CaughtUp` marker payload, then
-   transitions to broadcasting new records as they are appended.
+   sends `RECORD_CAUGHT_UP`, then transitions to broadcasting
+   new records as they are appended.
 6. Live broadcast: server registers as a listener on WalWriter.
    Each flush notifies listeners. Server reads new records and
    streams them.
@@ -297,14 +300,37 @@ Embedded in each consumer process. Manages connection to a
 producer's DxsReplay service, tracks processing tips.
 See `rsx-dxs/src/client.rs`
 
+**Endpoint list (ordered newest → oldest):**
+
+```
+[local_wal, archive_1, archive_2, ...]
+```
+
+Each reconnect attempt starts from `endpoints[0]`. On
+`RECORD_REPLAY_NOT_AVAILABLE`, the consumer closes that
+connection and tries the next endpoint with the same
+`from_seq`. This naturally cascades through archives and
+"moves back up" — once the consumer's tip is within local
+WAL retention, local wins and stays live permanently.
+
 **Startup sequence:**
 
 1. Load tip from `tip_file` (0 if missing).
-2. Connect to producer's TCP endpoint (optional TLS).
-3. Send `ReplayRequest { stream_id, from_seq: tip + 1 }`.
+2. Open `CmpReceiver` in parallel (starts buffering live packets
+   in its reorder ring immediately).
+3. Connect to first DXS endpoint; try each in order on
+   `RECORD_REPLAY_NOT_AVAILABLE`.
 4. Process replayed records via callback, advancing tip.
-5. On `CaughtUp`: transition to live processing.
-6. Continue processing live records via callback.
+5. On `RECORD_CAUGHT_UP` or TCP close: switch to `CmpReceiver`
+   as the delivery source. Set `expected_seq = tip + 1`.
+   CmpReceiver's NAK mechanism fills any remaining gap from the
+   sender's in-memory ring (≤ `SEND_RING_CAPACITY` records, µs).
+6. Deliver live records from `CmpReceiver` going forward.
+
+No special handoff record needed. Archive servers close on
+exhaust; local WAL server closes when gap ≤ `SEND_RING_CAPACITY`
+(or stays open in tail-follow mode for pure DXS consumers that
+don't use CMP).
 
 **Tip persistence:** flush tip to `tip_file` every 10ms (batched
 with other I/O). On crash, replay from last persisted tip. Records
@@ -320,11 +346,23 @@ max 30s). Resume from `tip + 1`.
 Two transport modes, same WAL records:
 
 - **Live path** (Gateway <-> Risk <-> ME): CMP/UDP. One
-  WAL record per UDP datagram. Aeron-style NACK + flow
-  control. See [CMP.md](CMP.md) section 3.
+  WAL record per UDP datagram. NAK-based gap recovery.
+  See [CMP.md](CMP.md) section 3.
 - **Replay/replication path**: WAL replication over TCP.
   Plain byte stream, optional TLS. See [CMP.md](CMP.md)
   section 4.
+
+**Recovery handoff (DXS → CMP):**
+
+Consumers that will ultimately receive live CMP open their
+`CmpReceiver` in parallel with DXS replay from the start.
+DXS bulk-replays history (archive → local WAL). When DXS
+closes, the consumer switches delivery to `CmpReceiver`.
+Any remaining gap (DXS tip → CMP head) is filled by NAK
+retransmit from the sender's in-memory ring. No explicit
+handshake between DXS and CMP — the gap is always
+≤ `SEND_RING_CAPACITY` by design (local WAL closes when
+within that threshold).
 
 ---
 
@@ -486,10 +524,9 @@ requested `from_seq`. If gap detected, consumer must:
 2. Resume from hot WAL after archive replay completes
 3. Fail if archive unavailable and gap is unacceptable
 
-**Implementation:** Archive fallback not yet implemented (DXS.md
-requirement D25). Current behavior: consumer replays from first
-available seq, effectively skipping gap. Risk engine would have
-inconsistent state.
+**Implementation:** Archive fallback implemented via multi-endpoint
+`DxsConsumer`. Consumer receives `RECORD_REPLAY_NOT_AVAILABLE` from
+local WAL, falls through to archive endpoints in order. See §6.
 
 **Mitigation:** Set retention window > max expected consumer
 offline duration (default 4h). Consumers offline longer fall back
