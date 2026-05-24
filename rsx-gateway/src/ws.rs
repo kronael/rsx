@@ -124,26 +124,24 @@ async fn ws_handshake_inner(
 
     // Validate JWT, extract user_id + claims, reject replay
     // via the process-wide JtiTracker.
-    let user_id = match extract_user_and_record_jti(
-        request,
-        jwt_secret,
-    ) {
-        Ok(id) => id,
-        Err(reason) => {
-            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
+    let (user_id, jti) =
+        match extract_user_and_record_jti(request, jwt_secret) {
+            Ok(pair) => pair,
+            Err(reason) => {
+                let resp = b"HTTP/1.1 401 Unauthorized\r\n\
 Connection: close\r\n\
 \r\n";
-            let (res, _) =
-                stream.write_all(resp.to_vec()).await;
-            if let Err(e) = res {
-                warn!("gateway: 401 response write failed: {e}");
+                let (res, _) =
+                    stream.write_all(resp.to_vec()).await;
+                if let Err(e) = res {
+                    warn!("gateway: 401 response write failed: {e}");
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    reason,
+                ));
             }
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                reason,
-            ));
-        }
-    };
+        };
 
     // Compute accept key
     let accept = compute_accept_key(&key);
@@ -159,7 +157,17 @@ Sec-WebSocket-Accept: {}\r\n\
     );
     let resp_bytes = response.into_bytes();
     let (res, _) = stream.write_all(resp_bytes).await;
-    res?;
+    if let Err(e) = res {
+        // 101 never reached the client; roll back the jti so
+        // the client can retry with the same JWT. R-N5.
+        if let Some(jti) = jti.as_deref() {
+            JTI_TRACKER
+                .lock()
+                .expect("JtiTracker mutex poisoned")
+                .rollback(jti);
+        }
+        return Err(e);
+    }
 
     Ok((key, user_id))
 }
@@ -179,7 +187,7 @@ Sec-WebSocket-Accept: {}\r\n\
 fn extract_user_and_record_jti(
     request: &str,
     jwt_secret: &str,
-) -> Result<u32, &'static str> {
+) -> Result<(u32, Option<String>), &'static str> {
     for line in request.lines() {
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("authorization:") {
@@ -214,7 +222,7 @@ fn extract_user_and_record_jti(
             if !fresh {
                 return Err("jti replay");
             }
-            return Ok(user_id);
+            return Ok((user_id, Some(jti.to_string())));
         }
     }
     Err("missing authorization header")
