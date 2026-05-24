@@ -1,6 +1,6 @@
 use crate::order_id::order_id_to_hex;
-use crate::protocol::serialize;
-use crate::protocol::WsFrame;
+use crate::records::serialize;
+use crate::records::WsFrame;
 use crate::state::GatewayState;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
