@@ -28,7 +28,7 @@ to Risk via casting/UDP. See `specs/2/15-mark.md`.
 ```
 Binance WS --[async task]--> SPSC --> Aggregation Loop --> WalWriter
 Coinbase WS -[async task]--> SPSC /   (single thread)       |
-                                                        DxsReplay
+                                                     ReplicationService
                                                        /    |
                                                 Risk-0  Risk-1  Recorder
 ```
