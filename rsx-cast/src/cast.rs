@@ -731,11 +731,11 @@ impl CastReceiver {
         );
     }
 
-    pub fn is_faulted(&self) -> bool {
+    pub(crate) fn is_faulted(&self) -> bool {
         self.faulted
     }
 
-    pub fn is_reconnect_pending(&self) -> bool {
+    pub(crate) fn is_reconnect_pending(&self) -> bool {
         self.needs_reconnect
     }
 
