@@ -30,6 +30,61 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+// ── Path layout ──────────────────────────────────────────────
+//
+// File names encode (stream_id, first_seq, last_seq). The
+// active (still-being-written) file uses a separate name with
+// `_active` instead of seqs so the rotation code never has to
+// rename while writers can be in flight. These helpers are the
+// ONLY place path strings are constructed; everything else
+// goes through them.
+
+/// `wal_dir/<stream_id>/` — one segment directory per stream.
+fn stream_dir(wal_dir: &Path, stream_id: u32) -> PathBuf {
+    wal_dir.join(stream_id.to_string())
+}
+
+/// `wal_dir/<stream_id>/<stream_id>_active.wal` — the file the
+/// writer appends to until rotation.
+fn active_file_path(wal_dir: &Path, stream_id: u32) -> PathBuf {
+    stream_dir(wal_dir, stream_id)
+        .join(format!("{}_active.wal", stream_id))
+}
+
+/// `wal_dir/<stream_id>/<stream_id>_<first>_<last>.wal` — a
+/// rotated, frozen segment carrying seqs `first..=last`.
+fn segment_file_path(
+    wal_dir: &Path,
+    stream_id: u32,
+    first_seq: u64,
+    last_seq: u64,
+) -> PathBuf {
+    stream_dir(wal_dir, stream_id).join(format!(
+        "{}_{}_{}.wal",
+        stream_id, first_seq, last_seq,
+    ))
+}
+
+/// `<id>_active.wal` — the writer's open file.
+fn is_active_filename(name: &str) -> bool {
+    name.ends_with("_active.wal")
+}
+
+/// Parse `<stream_id>_<first_seq>_<last_seq>.wal`. Returns
+/// `None` for any name that doesn't fit the rotated-segment
+/// shape — including `_active.wal`.
+fn parse_segment_filename(name: &str) -> Option<(u32, u64, u64)> {
+    let stem = name.strip_suffix(".wal")?;
+    let parts: Vec<&str> = stem.split('_').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    Some((
+        parts[0].parse().ok()?,
+        parts[1].parse().ok()?,
+        parts[2].parse().ok()?,
+    ))
+}
 
 /// WalWriter: append-only WAL with buffered flush + rotation
 pub struct WalWriter {
