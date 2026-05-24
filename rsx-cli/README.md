@@ -57,6 +57,15 @@ cargo build -p rsx-cli
 - `rsx-cast` -- WAL reader, header decoding
 - `rsx-messages` -- record type constants and payload structs
 
+## How to read this crate
+
+- **What** — this README: commands, exit codes, examples.
+- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): command
+  internals and the bench-probe binary.
+- **Why** — [`notes/`](notes/): design rationale for the
+  one non-obvious data structure choice (priority queue in
+  the bench probe).
+
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- command internals

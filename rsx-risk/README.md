@@ -98,6 +98,17 @@ See `specs/2/42-testing-risk.md`.
 - `--test-threads=1` is required for some tests due to
   shared DashMap/RwLock global state.
 
+## How to read this crate
+
+- **What** — this README (running, env vars, deployment) +
+  `specs/2/28-risk.md` (formal spec).
+- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): main loop,
+  margin calculation, position tracking, funding,
+  liquidation, persistence, replication.
+- **Why** — [`notes/`](notes/): design rationale for
+  non-obvious choices (SPSC ring usage, UDS sidecar
+  boundary). Read when a decision looks arbitrary.
+
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- main loop, margin

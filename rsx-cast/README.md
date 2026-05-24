@@ -493,29 +493,29 @@ NAK debounce, retransmit dedup) shipped in v0.3.0.
 
 The docs are split by question, not by file size:
 
-- **What** — this README, plus the byte-exact specs:
-  [`specs/4-cast.md`](specs/4-cast.md) (UDP / NAK protocol),
-  [`specs/10-replication.md`](specs/10-replication.md) (TCP catch-up),
-  [`specs/48-wal.md`](specs/48-wal.md) (on-disk format).
-- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): the internal
-  module structure, threading model, the WAL flush loop, NAK
-  retransmit two-tier behaviour. Read this before changing
-  cast.rs or wal.rs.
-- **Why** — [notes/](notes/): the tradeoff research and
-  derivations behind specific choices (which polynomial,
-  why no flow control, etc.). Read this when a design
-  decision looks arbitrary and you want the argument.
-- **Numbers** — [BENCHES.md](BENCHES.md) lists every
-  Criterion bench, what it isolates, and how to run it.
-  Raw numbers live in
-  [`facts/`](facts/syscall-latency.md) with
-  date + source so they don't silently rot.
-- **Survey** — [compare/](compare/) compares casting +
-  replication against Aeron, MoldUDP64, SoupBinTCP, Quinn,
+- **What** — this README, plus the byte-exact specs in
+  [`specs/`](specs/):
+  [`4-cast.md`](specs/4-cast.md) (UDP / NAK protocol),
+  [`10-replication.md`](specs/10-replication.md) (TCP catch-up),
+  [`48-wal.md`](specs/48-wal.md) (on-disk format).
+- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): internal
+  module layout, threading model, WAL flush loop, NAK
+  two-tier behaviour. Read this before changing `cast.rs`
+  or `wal.rs`.
+- **Why + Numbers** — [`facts/`](facts/): dated measurements
+  and the tradeoff research that justifies specific design
+  choices (which CRC polynomial, why no flow control, the
+  syscall-latency breakdown, etc.). Each file carries a
+  YAML frontmatter with `sources:` / `date:` / `status:` so
+  numbers don't silently rot. This is where the
+  evidence-backed answers to "why is it like this" live.
+- **What each Criterion bench measures** — [BENCHES.md](BENCHES.md).
+- **Survey** — [`compare/`](compare/) puts casting +
+  replication next to Aeron, MoldUDP64, SoupBinTCP, Quinn,
   Chronicle Queue, LBM. One `.md` per protocol with
-  one-line lineage, plus the comparison table in
-  [compare/README.md](compare/README.md). The benches that
-  produce those numbers live in `benches/compare_*.rs`.
+  one-line lineage; the table in
+  [compare/README.md](compare/README.md) cites which bench
+  in `benches/compare_*.rs` produces each row.
 
 ## See also
 

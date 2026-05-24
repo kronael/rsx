@@ -66,6 +66,17 @@ See `specs/2/34-testing-book.md`.
 - Event buffer is `[Event; 10_000]`, reset per matching cycle.
   If a single order generates >10K events, it will panic.
 
+## How to read this crate
+
+- **What** — this README (current state) + `specs/2/21-orderbook.md`
+  (formal spec).
+- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): slab internals,
+  compression zones, matching algorithm, memory layout.
+- **Why** — [`notes/`](notes/): design rationale and tradeoff
+  research for specific choices (slab over malloc, hot/cold
+  field splitting, cache-line alignment). Read when a decision
+  looks arbitrary and you want the argument.
+
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- slab internals,
