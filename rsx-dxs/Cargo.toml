@@ -33,6 +33,10 @@ rsx-types = { path = "../rsx-types" }
 kcp = "0.6"
 quinn = "0.11"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
+# Aeron: precompile+static avoids cmake 3.30+ requirement (Debian 12 has 3.25)
+# and downloads prebuilt C driver instead of building from source.
+rusteron-client = { version = "0.1.163", default-features = false, features = ["precompile", "static"] }
+rusteron-media-driver = { version = "0.1.163", default-features = false, features = ["precompile", "static"] }
 
 [[bench]]
 name = "wal_bench"
@@ -80,4 +84,8 @@ harness = false
 
 [[bench]]
 name = "compare_tcp"
+harness = false
+
+[[bench]]
+name = "compare_aeron"
 harness = false
