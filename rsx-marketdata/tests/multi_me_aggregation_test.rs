@@ -201,7 +201,7 @@ fn drain_into(
     receiver: &mut CmpReceiver,
     state: &mut MarketDataState,
 ) {
-    while let Some((hdr, payload)) = receiver.try_recv() {
+    while let rsx_dxs::cmp::CmpRecv::Data(hdr, payload) = receiver.try_recv() {
         match hdr.record_type {
             RECORD_ORDER_INSERTED => {
                 if payload.len()
