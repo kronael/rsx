@@ -46,7 +46,7 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::Qty;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 use rustc_hash::FxHashMap;
 use std::io;
 use std::path::PathBuf;

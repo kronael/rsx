@@ -8,7 +8,7 @@
 //! Used by every other rsx-* crate.
 
 pub mod macros;
-pub mod time;
+pub mod time_utils;
 
 pub use macros::install_panic_handler;
 

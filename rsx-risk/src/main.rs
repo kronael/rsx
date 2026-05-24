@@ -39,7 +39,7 @@ use rsx_risk::OrderResponse;
 use rsx_risk::persist::PersistEvent;
 use rsx_types::install_panic_handler;
 use rsx_types::FailureReason;
-use rsx_types::time::time;
+use rsx_types::time_utils::time;
 use std::env;
 use std::net::SocketAddr;
 use std::path::Path;

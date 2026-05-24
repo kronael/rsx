@@ -11,7 +11,7 @@ use rsx_mark::source::CoinbaseSource;
 use rsx_mark::source::PriceSource;
 use rsx_mark::types::SourcePrice;
 use rsx_mark::types::SymbolMarkState;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 use rsx_types::install_panic_handler;
 use std::io;
 use std::env;

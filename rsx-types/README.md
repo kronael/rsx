@@ -22,7 +22,7 @@ use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::validate_order;
 use rsx_types::install_panic_handler;
-use rsx_types::time::time_ns;
+use rsx_types::time_utils::time_ns;
 ```
 
 ## Building
