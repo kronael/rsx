@@ -235,13 +235,26 @@ connection-oriented framing.
 
 ### Other Rust / niche RUDP
 - **rust-raknet** — <https://github.com/b23r0/rust-raknet>,
-  ~225 stars. RakNet protocol in Rust; Minecraft Bedrock compat.
+  ~225 stars. RakNet protocol in Rust; Minecraft Bedroad compat.
 - **laminar** — <https://github.com/TimonPost/laminar>, 870
   stars, last commit 2023-10. Was the Amethyst engine's transport;
   Amethyst is dead, laminar effectively abandoned.
 - **enet-rs** — <https://github.com/spearman/enet-rs>, FFI
   wrapper around C ENet. Old; new Rust gamedev prefers `renet`.
 - **reliudp** — <https://github.com/Cobrand/reliudp>, ~50 stars.
+- **uflow** — <https://github.com/lowquark/uflow>, ~40 stars.
+  ACK-based, congestion-controlled (RFC 5348 TCP-friendly CC),
+  64 virtual channels per connection with ordered delivery per
+  channel. Aimed at internet game use. Not NAK-based; no
+  persistent log or disk retransmit.
+- **rudp** — <https://crates.io/crates/rudp>, ~10 stars. Thin
+  state-wrapper over `UdpSocket` letting callers select per-message
+  reliability (unreliable / reliable-unordered / reliable-ordered)
+  at call time. Not evaluated in depth; low activity.
+- **bytes-cast, reliable-udp, rkyv-net** — names suggested as
+  Rust reliable-UDP candidates. Not found on crates.io as of
+  May 2026. If they exist under different names, they are below
+  the 10-star triage threshold.
 - **naia** — <https://github.com/naia-lib/naia>, 1 127 stars,
   active. Cross-platform (incl. WASM) game networking;
   WebRTC + UDP transports under one API.
