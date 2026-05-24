@@ -20,7 +20,7 @@ Touches: RISK.md, CONSISTENCY.md, MESSAGES.md (telemetry)
 ### [mark] Binance feed reconnect details missing from RISK.md
 Missing: backoff (1s,2s,4s,8s,max 30s), staleness 10s, stale behavior
 
-### [dxs] CMP protocol: symbol_id sent per-message; should be per-stream
+### [dxs] streaming protocol (CMP): symbol_id sent per-message; should be per-stream
 Saves 4 bytes per record; simplifies wire format (handshake/setup frame)
 
 ### [dxs] CMP pipeline type layers: Book Event → 4 transform steps

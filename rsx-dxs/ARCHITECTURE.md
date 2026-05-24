@@ -120,7 +120,7 @@ wal/{stream_id}/{stream_id}_active.wal
 Filenames encode the seq range — O(1) file selection for
 `read_record_at_seq`. No file header, no index.
 
-## DXS replay protocol (server.rs)
+## Replay Protocol (DXS) — server.rs
 
 ```
 1. Consumer connects (optional TLS).

@@ -37,9 +37,10 @@ Producer (WAL on disk) ← TCP ← Consumer
 No broker. No middleman. Consumer connects to producer, requests
 `seq=1234`, producer seeks WAL file and streams records.
 
-## DXS Protocol
+## Replay Protocol (DXS)
 
-DXS = **D**ata e**X**change **S**treaming. Not a broker. A protocol.
+DXS = **D**ata e**X**change **S**treaming. Not a broker. A replay
+protocol.
 
 Producer runs a replay server:
 
@@ -301,7 +302,7 @@ TCP."
 
 ## See Also
 
-- `specs/2/10-dxs.md` - DXS protocol specification
+- `specs/2/10-dxs.md` - replay protocol (DXS) specification
 - `specs/2/48-wal.md` - WAL format (same as DXS stream format)
 - `rsx-dxs/src/server.rs` - DxsReplay server implementation
 - `rsx-dxs/src/client.rs` - DxsConsumer client implementation

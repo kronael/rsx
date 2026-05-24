@@ -198,7 +198,7 @@ See `rsx-types/src/lib.rs`.
 | Risk pre-trade check | <5us |
 | Risk post-trade (apply fill) | <1us |
 | End-to-end GW->ME->GW | <50us (same machine) |
-| CMP protocol-record encode/decode | <50ns (memcpy + CRC) |
+| Streaming protocol (CMP) record encode/decode | <50ns (memcpy + CRC) |
 | `WalWriter::append` (Vec extend, no disk I/O) | <200ns |
 | WAL flush (fsync) | <1ms per 64KB batch |
 
