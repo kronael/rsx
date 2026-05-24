@@ -271,7 +271,12 @@ fn main() {
 
     let mut book = Orderbook::new(initial_config, 65_536, 50_000);
 
-    // WAL writer
+    // WAL writer.
+    // Hot retention is 4 h. Long-term durability is the
+    // archive's job (see ARCHIVE setup in 48-wal.md); hot
+    // WAL just needs enough window to absorb a crash and
+    // a snapshot-to-replay gap. 4 h ≫ 10 s snapshot
+    // cadence with margin for a multi-hour ops outage.
     let wal_dir = env::var("RSX_ME_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".to_string());
     let mut wal_writer = WalWriter::new(
@@ -279,7 +284,7 @@ fn main() {
         &PathBuf::from(&wal_dir),
         None,
         64 * 1024 * 1024,
-        48 * 60 * 60 * 1_000_000_000,
+        4 * 60 * 60 * 1_000_000_000,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to create wal writer");

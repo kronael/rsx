@@ -223,7 +223,8 @@ for notional = price * qty at risk boundary.
 
 - Fixed-record format: 16B header + `#[repr(C, align(64))]` payload
 - WAL disk format = wire format = DXS stream format (no transformation)
-- WalWriter flush every 10ms, rotate at 64MB, retain 48h
+- WalWriter flush every 10ms, rotate at 64MB, retain 4h
+  (hot tier only; ARCHIVE handles long-term durability)
 - Backpressure: buffer full or flush lag > 10ms -> stall producer
 - Tip persistence: every 10ms, idempotent replay from tip+1
 
@@ -286,8 +287,16 @@ for notional = price * qty at risk boundary.
 | BLOG.md | Publishable narrative (not internal docs) |
 | TODO.md | Open work |
 
-`.ship/` is gitignored, ephemeral; `.diary/` is the long-lived
-shipping log (date-named YYYYMMDD.md).
+`.diary/` is the long-lived shipping log (date-named YYYYMMDD.md).
+
+**RSX exception: `.ship/` is checked in.** The global `/ship`
+skill defaults to gitignored + prune-on-close, but RSX keeps
+sprint dirs in git as a build log — the audit reports,
+benchmark sprints, and meta-reviews are useful "how this got
+built" artifacts for reviewers. Do NOT add `.ship/` to
+`.gitignore`. Do NOT `git rm -rf .ship/NN-NAME/` on close-out.
+Distillation to durable homes (diary / specs / CHANGELOG)
+still happens, but the source dir stays.
 
 ## Correctness Invariants (system-wide)
 
