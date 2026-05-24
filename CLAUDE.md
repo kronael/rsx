@@ -16,10 +16,11 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
   - Cold path: WAL replication over TCP (replay, replication)
 - Within each process: tile architecture (pinned threads
   + SPSC rings for intra-process IPC, see TILES.md)
-- Hot path I/O: monoio (io_uring) on Gateway + Marketdata.
-  Matching, Risk, Mark, Recorder run on `tokio` for ergonomic
-  reasons (single-threaded reactor, blocking PG write-behind);
-  none of them sit on the GW→ME→GW critical path.
+- Hot path I/O: monoio (io_uring) on Gateway, Risk, and Marketdata
+  (all on the GW→ME→GW critical path). Mark, Recorder run on tokio
+  (off critical path; blocking PG write-behind, ergonomics fine).
+  Risk tile: monoio CMP/UDP hot loop + tokio task for PG write-behind;
+  handoff via SPSC ring between the two (same tile pattern as Gateway).
 - Later: DPDK/AF_XDP swaps I/O layer, same interfaces
 - Target: <50us GW→ME→GW, <500ns ME match
 - Zero heap on hot path, i64 fixed-point, no floats
@@ -237,14 +238,19 @@ for notional = price * qty at risk boundary.
 
 ## Networking Stack
 
-- **Gateway + Market Data:** monoio with io_uring. These are
-  on the critical path (<50us end-to-end GW→ME→GW). Every
+- **Gateway, Risk, Market Data:** monoio with io_uring. All three
+  are on the critical path (<50us end-to-end GW→ME→GW). Every
   epoll syscall adds latency. io_uring batches submissions
   in shared kernel/userspace rings -- fewer syscalls, lower
   tail latency. Each tile is a dedicated pinned thread with
   one SPSC downqueue (orders in) and one SPSC upqueue
   (fills out). The I/O multiplexing inside the tile is the
   only part that touches the network stack.
+- **Risk tile specifically:** monoio CMP/UDP loop handles the
+  hot path (order recv → margin check → forward to ME). A
+  separate tokio task owns PG write-behind; SPSC ring hands
+  off position updates from monoio → tokio without blocking
+  the hot loop. Same handoff pattern as Gateway's WS→CMP split.
 - **Later:** userspace networking (DPDK, AF_XDP) swaps the
   I/O layer inside the same tile. No changes to SPSC rings
   or ME.
