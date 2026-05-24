@@ -68,7 +68,6 @@ impl CmpRecord for OrderRequestWire {
 use rustc_hash::FxHashMap;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
@@ -90,7 +89,6 @@ const STAGE_NAMES: &[&str] = &[
 ];
 
 const N_STAGES: usize = 9; // 8 deltas
-const ME_STAGES_START: usize = 2; // me_recv = idx 2
 
 #[derive(Parser)]
 #[command(about = "in-process matching round-trip latency + per-stage breakdown")]
@@ -461,20 +459,11 @@ fn main() {
     // Production binaries would set a flag.
     let _ = me;
 
-    // Join ME stages.
+    // Join ME stages by oid_lo (index 1..=total monotonic).
     let me_stages: FxHashMap<u64, MeStages> = me_rx
         .try_iter()
         .map(|m| (m.oid_lo, m))
         .collect();
-    for s in samples.iter_mut() {
-        if let Some(me) = me_stages.get(&(s[8] - s[0] /* unused */ * 0 + 0)) {
-            // (no-op placeholder; we'll join below using
-            // the index, not the timestamp)
-            let _ = me;
-        }
-    }
-    // Real join: by index, since both threads see iterations
-    // in the same order (gateway sends 1..=total monotonic).
     for (i, s) in samples.iter_mut().enumerate() {
         let oid_lo = i as u64 + 1;
         if let Some(me) = me_stages.get(&oid_lo) {
