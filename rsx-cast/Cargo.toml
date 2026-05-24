@@ -15,7 +15,7 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 rustls-pemfile = "2"
 webpki-roots = "0.26"
-crc32fast = "1.4"
+crc32c = "0.6"
 bytes = "1"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -48,10 +48,6 @@ name = "cast_bench"
 harness = false
 
 [[bench]]
-name = "compare_udp"
-harness = false
-
-[[bench]]
 name = "cast_one_way_bench"
 harness = false
 
@@ -72,22 +68,7 @@ name = "cast_send_breakdown_bench"
 harness = false
 
 [[bench]]
-name = "compare_kcp"
-path = "compare/compare_kcp.rs"
-harness = false
-
-[[bench]]
-name = "compare_quinn"
-path = "compare/compare_quinn.rs"
-harness = false
-
-[[bench]]
 name = "compare_all"
-path = "compare/compare_all.rs"
-harness = false
-
-[[bench]]
-name = "compare_tcp"
 harness = false
 
 [[bench]]

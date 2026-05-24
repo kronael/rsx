@@ -6,4 +6,3 @@ README.md and the specs.
 
 | File | Question answered |
 |------|-------------------|
-| [crc.md](crc.md) | Why CRC32 IEEE via crc32fast, not CRC32C with hardware intrinsics |
