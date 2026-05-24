@@ -38,8 +38,8 @@ This document describes the shared WAL architecture for the risk engine and the 
   breaking framing changes. `crc32` is CRC32C (Castagnoli)
   over the payload only.
 - Data payloads implement CastRecord trait with `seq: u64` as
-  first field. Sequence assigned by WalWriter::append or
-  CastSender::send.
+  first field. Sequence assigned by `WalWriter::prepare` /
+  `append_framed` or `CastSender::prepare` / `send_framed`.
 - Concrete record layouts are defined in **replication.md** and reused for storage + streaming.
 
 ### Version Policy

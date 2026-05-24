@@ -42,10 +42,10 @@ specifies one.
 | Operation                                                    | ns    | Source                                  |
 |--------------------------------------------------------------|-------|-----------------------------------------|
 | Match single fill                                            | 54    | `rsx-book/benches/book_bench.rs`        |
-| `WalWriter::append` (Vec extend, no disk I/O)                | 31    | `rsx-cast/benches/wal_bench.rs`          |
-| WAL flush + fsync 64 KB                                      | ~24 µs| `rsx-cast/benches/wal_bench.rs`          |
-| Protocol-record encode (StatusMessage / Nak / Heartbeat)     | 43    | `rsx-cast/benches/cmp_bench.rs`          |
-| Protocol-record decode (one record)                          | 9     | `rsx-cast/benches/cmp_bench.rs`          |
+| `WalWriter::prepare` + `append_framed` (Vec extend, no disk I/O) | 31    | `rsx-cast/benches/wal_bench.rs`          |
+| WAL flush + fsync 64 KB                                      | ~24 µs| `rsx-cast/benches/wal_fsync_bench.rs`    |
+| Protocol-record encode (Nak / CastHeartbeat)                 | 43    | `rsx-cast/benches/cast_bench.rs`         |
+| Protocol-record decode (one record)                          | 9     | `rsx-cast/benches/cast_bench.rs`         |
 | `FillRecord` encode                                          | 23    | `rsx-messages/benches/encode_bench.rs`  |
 | SPSC `push` / `pop` (rtrb)                                   | 50–170| `rsx-book/benches/book_bench.rs`        |
 
@@ -220,8 +220,8 @@ Three classes of numbers appear in this repo. Be careful
 not to confuse them.
 
 **Microbench numbers** (54 ns match, 31 ns
-`WalWriter::append` to an in-memory `Vec` before fsync,
-…). These are the CPU cost of the operation **in
+`WalWriter::prepare` + `append_framed` to an in-memory
+`Vec` before fsync, …). These are the CPU cost of the operation **in
 isolation** with warm caches and no contention. They
 are real, reproducible, and useful for catching
 regressions, but they are not the latency a packet

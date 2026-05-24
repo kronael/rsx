@@ -148,9 +148,10 @@ fn aggregate(state: &mut SymbolMarkState, update: SourcePrice):
         }
     }
 
-    // Append MarkPriceRecord to WAL and send over casting/UDP
-    wal.append(MarkPriceRecord { ... })
-    cmp.send(MarkPriceRecord { ... })
+    // Single-CRC fan-out: WAL + casting/UDP from one Framed
+    let framed = wal.prepare(MarkPriceRecord { ... });
+    wal.append_framed(&framed);
+    cast.send_framed(&framed);
 ```
 
 **Staleness sweep:** every 1s, iterate all symbols. If a source

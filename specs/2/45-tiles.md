@@ -272,10 +272,10 @@ Measured CPU costs of the tile primitives (from
 | SPSC `Producer::push` (rtrb)                                 | 50–170  |
 | SPSC `Consumer::pop` (rtrb)                                  | 50–170  |
 | Match single fill (orderbook)                                | 54      |
-| Protocol-record encode (StatusMessage / Nak / Heartbeat)     | 43      |
+| Protocol-record encode (Nak / CastHeartbeat)                 | 43      |
 | Protocol-record decode (one record)                          | 9       |
 | `FillRecord` encode                                          | 23      |
-| `WalWriter::append` (Vec extend, no disk I/O)                | 31      |
+| `WalWriter::prepare` + `append_framed` (Vec extend, no disk I/O) | 31  |
 
 These are the building blocks. End-to-end **GW → ME → GW**
 under load is **not currently gated** by an automated
