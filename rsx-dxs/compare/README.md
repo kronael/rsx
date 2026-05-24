@@ -42,7 +42,7 @@ cargo bench -p rsx-dxs --bench compare_tcp
 cargo bench -p rsx-dxs --bench compare_aeron
 
 # Raw UDP baseline (already exists)
-cargo bench -p rsx-dxs --bench udp_rtt_bench
+cargo bench -p rsx-dxs --bench compare_udp
 ```
 
 Loss simulation (requires root):

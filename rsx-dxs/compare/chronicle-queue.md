@@ -240,7 +240,7 @@ linear). rsx-dxs wins on **cross-host out of the box** and on
 ## Why we did not write a direct benchmark
 
 The benches in this directory (`compare_kcp.rs`, `compare_quinn.rs`,
-`udp_rtt_bench.rs`) all share one harness: spin up two endpoints
+`compare_udp.rs`) all share one harness: spin up two endpoints
 in the same Rust process, measure echo RTT for a 64-byte CMP
 frame.
 
