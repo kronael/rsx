@@ -20,8 +20,6 @@ pub mod client;
 pub mod config;
 pub mod tls;
 
-pub use protocol as records;
-
 pub use header::WalHeader;
 pub use protocol::CmpHeartbeat;
 pub use protocol::CmpRecord;

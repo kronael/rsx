@@ -1,7 +1,7 @@
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::records::CmpRecord;
+use crate::protocol::CmpRecord;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;

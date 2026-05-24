@@ -4,9 +4,9 @@ use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::encode_utils::compute_crc32;
 use rsx_dxs::header::WalHeader;
-use rsx_dxs::records::Nak;
+use rsx_dxs::protocol::Nak;
 use rsx_messages::FillRecord;
-use rsx_dxs::records::RECORD_NAK;
+use rsx_dxs::protocol::RECORD_NAK;
 use rsx_messages::RECORD_FILL;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -266,6 +266,6 @@ fn cmp_heartbeat_sent_on_idle() {
     let (n, _) = result.unwrap();
     assert!(n >= WalHeader::SIZE);
     let hdr = WalHeader::from_bytes(&buf[..16]).unwrap();
-    assert_eq!(hdr.record_type, rsx_dxs::records::RECORD_HEARTBEAT);
+    assert_eq!(hdr.record_type, rsx_dxs::protocol::RECORD_HEARTBEAT);
 }
 

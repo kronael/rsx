@@ -2,7 +2,7 @@ use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_dxs::config::TlsConfig;
 use rsx_messages::FillRecord;
-use rsx_dxs::records::RECORD_CAUGHT_UP;
+use rsx_dxs::protocol::RECORD_CAUGHT_UP;
 use rsx_messages::RECORD_FILL;
 use rsx_dxs::DxsConsumer;
 use rsx_dxs::DxsReplayService;

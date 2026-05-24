@@ -1,8 +1,8 @@
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::records::ReplayRequest;
-use crate::records::RECORD_REPLAY_REQUEST;
+use crate::protocol::ReplayRequest;
+use crate::protocol::RECORD_REPLAY_REQUEST;
 use crate::tls::build_connector;
 use crate::tls::extract_server_name;
 use crate::wal::RawWalRecord;
