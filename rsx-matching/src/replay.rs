@@ -74,7 +74,7 @@ pub fn drain_dxs_replay_into_book(
     last_delivered_seq: u64,
     tip_file: PathBuf,
 ) -> io::Result<u64> {
-    let mut consumer = DxsConsumer::new(
+    let mut consumer = DxsConsumer::from_single(
         symbol_id,
         replay_addr,
         tip_file,
