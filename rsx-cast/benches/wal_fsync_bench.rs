@@ -1,40 +1,40 @@
-//! WAL flush+fsync cost per single record.
+//! WAL flush+fsync amortization sweep: per-record cost vs batch size.
 //!
 //! Worker thread pinned to core 2 so the fsync work doesn't bounce
 //! between cores mid-sample.
 //!
 //! What this measures
 //! -----------------
-//! `WalWriter::append(&mut record)` followed by an explicit
-//! `flush()` (which calls `sync_all()` under the hood) per
-//! iteration. The existing `wal_bench::bench_wal_append_in_memory`
-//! only times the `Vec::extend_from_slice` cost (~31 ns); this
-//! bench captures what it actually takes to durably persist
-//! one record.
+//! Sweeps batch sizes [1, 10, 100, 1 000, 10 000] records per flush.
+//! For each size, Criterion reports both wall-clock time per flush AND
+//! per-record throughput (Throughput::Elements). This surfaces the
+//! amortization curve: how does per-record cost fall as the batch grows?
 //!
-//! Use case: this is the durability floor for any "Recorder
-//! flushed N records" or "WAL fsync took X ms" claim. In
-//! production WalWriter batches via a 10ms flush cadence,
-//! so the per-record amortized cost is much lower; this
-//! number is the *unamortized* cost.
+//! The "knee" — where doubling the batch no longer halves the per-record
+//! cost — is the optimal flush interval for a given fsync budget.
+//!
+//! In production, WalWriter is flushed on a 10 ms timer. This bench
+//! shows whether the batch size at that cadence is on the flat part of
+//! the curve (fsync amortized, append-dominated) or still on the slope
+//! (fsync still dominates per-record cost).
 //!
 //! Assumptions / caveats
 //! --------------------
-//! - `TempDir` on a Linux box can land on tmpfs (no real
-//!   fsync) or on a real disk (ext4/xfs, real fsync). Print
-//!   the tempdir mount once with `df -T $(mktemp -d)` to
-//!   know which kernel cache lives below. On a real SSD,
-//!   expect 20-200µs per fsync; on tmpfs, ~µs.
-//! - We use a FillRecord (128 bytes payload + 16-byte header
-//!   = 144 bytes per record). Not 64 bytes — this is the
-//!   realistic per-record cost.
-//! - We do NOT exercise rotation; max_file_size is set high
-//!   so the bench stays in a single file.
+//! - TempDir on Linux can land on tmpfs (no real I/O) or on a real disk.
+//!   On tmpfs, fsync is near-zero and per-record costs will look flat.
+//!   On a real SSD, expect 20–200 µs fsync latency and a visible knee
+//!   between batch=100 and batch=1000.
+//! - FillRecord: 128 B payload + 16 B header = 144 B per record.
+//! - Each iteration appends to a growing WAL file without rotation
+//!   (max_file_size = u64::MAX). File growth per iter is bounded by
+//!   batch * 144 B, which is small enough not to affect fsync timing.
 
 use core_affinity::CoreId;
 use criterion::criterion_group;
 use criterion::criterion_main;
+use criterion::BenchmarkId;
 use criterion::Criterion;
+use criterion::Throughput;
 use rsx_cast::WalWriter;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
@@ -70,54 +70,46 @@ fn fill_record() -> FillRecord {
     }
 }
 
-fn bench_wal_append_fsync_single(c: &mut Criterion) {
+fn bench_flush_interval(c: &mut Criterion) {
     pin_worker();
-    let tmp = TempDir::new().unwrap();
-    let mut writer = WalWriter::new(
-        1, tmp.path(), 1024 * 1024 * 1024,
-    )
-    .unwrap();
 
-    // Pre-build the record outside the timed loop. seq gets
-    // overwritten by append, so reusing one instance is safe.
-    let mut rec = fill_record();
-    c.bench_function("wal_append_fsync_single", |b| {
-        b.iter(|| {
-            {
-                let framed = writer.prepare(&mut rec).unwrap();
-                writer.append_framed(&framed).unwrap();
-            }
-            writer.flush().unwrap();
-        });
-    });
+    let batches: &[(u64, &str)] = &[
+        (1, "1rec"),
+        (10, "10rec"),
+        (100, "100rec"),
+        (1_000, "1k_rec"),
+        (10_000, "10k_rec"),
+    ];
+
+    let mut group = c.benchmark_group("wal_flush_interval");
+
+    for &(batch, label) in batches {
+        let tmp = TempDir::new().unwrap();
+        let mut writer = WalWriter::new(1, tmp.path(), u64::MAX).unwrap();
+        let mut rec = fill_record();
+
+        group.throughput(Throughput::Elements(batch));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &batch,
+            |b, &batch| {
+                b.iter(|| {
+                    for _ in 0..batch {
+                        let framed = writer
+                            .prepare(&mut rec)
+                            .expect("WAL prepare must not fail mid-bench");
+                        writer
+                            .append_framed(&framed)
+                            .expect("WAL append must not fail mid-bench");
+                    }
+                    writer.flush().expect("WAL flush must not fail mid-bench");
+                });
+            },
+        );
+    }
+
+    group.finish();
 }
 
-fn bench_wal_append_fsync_batch_100(c: &mut Criterion) {
-    pin_worker();
-    let tmp = TempDir::new().unwrap();
-    let mut writer = WalWriter::new(
-        1, tmp.path(), 1024 * 1024 * 1024,
-    )
-    .unwrap();
-
-    // Pre-build the record. Same rationale as the single-append bench.
-    let mut rec = fill_record();
-    c.bench_function("wal_append_fsync_batch_100", |b| {
-        b.iter(|| {
-            for _ in 0..100 {
-                {
-                    let framed = writer.prepare(&mut rec).unwrap();
-                    writer.append_framed(&framed).unwrap();
-                }
-            }
-            writer.flush().unwrap();
-        });
-    });
-}
-
-criterion_group!(
-    benches,
-    bench_wal_append_fsync_single,
-    bench_wal_append_fsync_batch_100,
-);
+criterion_group!(benches, bench_flush_interval);
 criterion_main!(benches);
