@@ -30,7 +30,7 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M4 | Reduce-only enforcement before matching | ORDERBOOK.md §5 |
 | M5 | UUIDv7 dedup via FxHashMap, 5min window | RPC.md, MESSAGES.md §7 |
 | M6 | Event fan-out to risk/gateway/mktdata via casting/UDP | CONSISTENCY.md §1 |
-| M7 | casting flow control via Status/Nak (no silent drop) | CONSISTENCY.md §3 |
+| M7 | casting gap recovery via Nak; no flow control (slow consumers recover via replication) | CONSISTENCY.md §3 |
 | M8 | Fills precede ORDER_DONE | MESSAGES.md §fills |
 | M9 | Exactly-one completion per order | MESSAGES.md §completion |
 | M10 | Fill price = maker price | ORDERBOOK.md §5 |
@@ -74,8 +74,8 @@ user state lifecycle including 60s deferred reclaim and free-list reuse).
 See `rsx-book/tests/` — covers compression map (all 5 zones, bisection 2-3
 comparisons, bid/ask sides, recompute on recenter), slab allocator (sequential
 alloc, free list, reuse, no-shrink, no cycles, 1M-op leak check), best bid/ask
-tracking (insert/scan/exhaustion/empty), and event buffer (fixed array, no heap,
-len reset per cycle, sequential slot emission, 10k max).
+tracking (insert/scan/exhaustion/empty), and event buffer (heap-boxed fixed
+array, len reset per cycle, sequential slot emission, 65_536 max).
 
 See `rsx-matching/tests/` — covers config application (event emission, version
 monotonicity, effective_at, tick/lot update, 10min poll, metadata store source).
