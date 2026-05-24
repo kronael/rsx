@@ -87,10 +87,12 @@ const SEND_RING_MASK: u64 =
 const REORDER_CAPACITY: usize = 2048;
 const REORDER_MASK: u64 =
     REORDER_CAPACITY as u64 - 1;
-/// Per-slot frame size, matching SEND_RING_FRAME_BYTES so
-/// payload-size limits are uniform across sender and
-/// receiver. 16 B WalHeader + <= 112 B payload.
-const REORDER_FRAME_BYTES: usize = 128;
+/// Per-slot frame size. Sized to hold every current CMP
+/// record (FillRecord, BboRecord, OrderAcceptedRecord and
+/// CaughtUpRecord are 128 B payload; everything else is
+/// 64 B). 16 B header + 128 B payload + headroom = 256.
+/// Memory cost: 2048 * 256 = 512 KB per receiver.
+const REORDER_FRAME_BYTES: usize = 256;
 
 /// Frame a record (header + payload) into `buf` and send it.
 /// Returns the total wire length (`WalHeader::SIZE + payload.len()`)
