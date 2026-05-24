@@ -462,9 +462,9 @@ Subscribe, ZeroMQ patterns, …).
 This crate has no public stable API yet. The
 [CHANGELOG](https://github.com/kronael/rsx/blob/master/CHANGELOG.md)
 in the wider rsx exchange repo is the source of truth for
-rename maps, env-var changes, and wire-format bumps. The
-current crate version is **0.5.0** (rename from `rsx-dxs`
-in v0.5.0; v4 reliability shipped in v0.3.0).
+rename maps, env-var changes, and wire-format bumps.
+Current crate version is **0.5.0**; v4 reliability (FAULTED,
+NAK debounce, retransmit dedup) shipped in v0.3.0.
 
 ## See also
 
