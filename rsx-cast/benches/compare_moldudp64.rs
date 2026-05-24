@@ -34,6 +34,7 @@
 //! the bench suite — this thread spawn picks up pinning in the
 //! follow-up merge.
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -48,10 +49,20 @@ use std::thread;
 const MOLD_HDR: usize = 20;
 /// Per-message length prefix.
 const MSG_LEN_PREFIX: usize = 2;
-/// Bench payload size matches every other compare_* harness.
-const PAYLOAD: usize = 64;
-/// One packet, one message: 20 + 2 + 64 = 86 bytes.
+/// Bench payload size matches every other compare_* harness
+/// (128 B = `size_of::<FillRecord>()`).
+const PAYLOAD: usize = 128;
+/// One packet, one message: 20 + 2 + 128 = 150 bytes.
 const WIRE_BYTES: usize = MOLD_HDR + MSG_LEN_PREFIX + PAYLOAD;
+
+/// Cores 2 (PING/timer) + 3 (echoer). Matches compare_all so
+/// numbers are comparable across the protocol survey.
+fn pick_cores() -> (CoreId, CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let p = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    let e = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
+    (p, e)
+}
 /// Receive buffer ceiling. Generous so a malformed peer can't
 /// overflow the parse path during the bench.
 const RECV_BUF: usize = 256;
@@ -105,6 +116,9 @@ fn parse_packet(buf: &[u8]) -> (u64, u16, &[u8]) {
 }
 
 fn bench_moldudp64_rtt(c: &mut Criterion) {
+    let (cli_core, srv_core) = pick_cores();
+    core_affinity::set_for_current(cli_core);
+
     let echoer = UdpSocket::bind("127.0.0.1:0").unwrap();
     let echoer_addr = echoer.local_addr().unwrap();
     let pinger = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -120,8 +134,10 @@ fn bench_moldudp64_rtt(c: &mut Criterion) {
 
     // Echoer thread: parse every packet, build a fresh
     // MoldUDP64 packet back with the echoer's own seq counter
-    // so we measure full framing on both sides.
+    // so we measure full framing on both sides. Pinned to
+    // core 3 to match compare_all's server-thread placement.
     let handle = thread::spawn(move || {
+        core_affinity::set_for_current(srv_core);
         let mut rx = [0u8; RECV_BUF];
         let mut tx = [0u8; RECV_BUF];
         let mut echo_seq: u64 = 1;
@@ -169,7 +185,7 @@ fn bench_moldudp64_rtt(c: &mut Criterion) {
     let mut rx = [0u8; RECV_BUF];
     let mut ping_seq: u64 = 1;
 
-    c.bench_function("moldudp64_rtt_loopback_64b", |b| {
+    c.bench_function("moldudp64_rtt_loopback_128b", |b| {
         b.iter(|| {
             let len = frame_packet(
                 &mut tx,
