@@ -4,7 +4,7 @@
 //! the matching tile must NOT silently advance past lost
 //! orders. The recovery path:
 //!
-//!   1. Open a `DxsConsumer` against the risk producer's
+//!   1. Open a `ReplicationConsumer` against the risk producer's
 //!      DXS server (env: `RSX_ME_REPLAY_DXS_ADDR`).
 //!   2. Drain Phase 1 records (seq > `last_delivered_seq`)
 //!      until `RECORD_CAUGHT_UP` arrives.
@@ -35,7 +35,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::CANCEL_USER;
 use rsx_book::event::REASON_CANCELLED;
 use rsx_book::matching::process_new_order;
-use rsx_cast::DxsConsumer;
+use rsx_cast::ReplicationConsumer;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_cast::wal::RawWalRecord;
 use rsx_cast::wal::WalWriter;
@@ -74,7 +74,7 @@ pub fn drain_dxs_replay_into_book(
     last_delivered_seq: u64,
     tip_file: PathBuf,
 ) -> io::Result<u64> {
-    let mut consumer = DxsConsumer::from_single(
+    let mut consumer = ReplicationConsumer::from_single(
         symbol_id,
         replay_addr,
         tip_file,

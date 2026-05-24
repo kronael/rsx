@@ -40,7 +40,7 @@ fn consumer_sends_tip_plus_1() {
 
 #[test]
 fn consumer_callback_invoked_per_record() {
-    // Simulate what DxsConsumer does: for each raw record
+    // Simulate what ReplicationConsumer does: for each raw record
     // received, the callback is invoked once.
     use rsx_cast::header::WalHeader;
     use rsx_cast::wal::RawWalRecord;

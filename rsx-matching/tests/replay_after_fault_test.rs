@@ -3,7 +3,7 @@
 //! Simulates: risk process has WAL-persisted OrderRequest
 //! records that matching never saw (some were dropped on
 //! the UDP wire — far enough to escape NAK and trip
-//! FAULTED). The matching tile opens a DxsConsumer against
+//! FAULTED). The matching tile opens a ReplicationConsumer against
 //! risk's DXS server, drains Phase 1 until CAUGHT_UP, and
 //! applies each record. We assert the resulting book state
 //! matches what a live session of the same records would
@@ -12,7 +12,7 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
-use rsx_cast::DxsReplayService;
+use rsx_cast::ReplicationService;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::replay::drain_dxs_replay_into_book;
@@ -77,7 +77,7 @@ fn order_msg(
 
 /// Populate a "risk" WAL with N order requests. Returns the
 /// last seq written. The DXS server stands these up over
-/// TCP via [`DxsReplayService`].
+/// TCP via [`ReplicationService`].
 fn write_risk_wal(
     wal_dir: &Path,
     stream_id: u32,
@@ -211,7 +211,7 @@ fn faulted_recovers_via_dxs_replay() {
             .enable_all()
             .build()
             .unwrap();
-        let service = DxsReplayService::new(
+        let service = ReplicationService::new(
             risk_wal_for_server, None,
         )
         .unwrap();

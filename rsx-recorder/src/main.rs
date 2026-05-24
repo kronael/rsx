@@ -3,7 +3,7 @@ mod config;
 use chrono::NaiveDate;
 use chrono::Utc;
 use config::RecorderConfig;
-use rsx_cast::DxsConsumer;
+use rsx_cast::ReplicationConsumer;
 use rsx_cast::RawWalRecord;
 use rsx_types::install_panic_handler;
 use std::fs;
@@ -119,7 +119,7 @@ async fn main() -> io::Result<()> {
         config.stream_id,
     )?));
 
-    let mut consumer = DxsConsumer::from_single(
+    let mut consumer = ReplicationConsumer::from_single(
         config.stream_id,
         config.producer_addr,
         config.tip_file,

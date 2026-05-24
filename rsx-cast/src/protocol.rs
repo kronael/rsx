@@ -30,8 +30,8 @@
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;
-pub const RECORD_REPLAY_REQUEST: u16 = 0x13;
-pub const RECORD_REPLAY_NOT_AVAILABLE: u16 = 0x15;
+pub const RECORD_REPLICATION_REQUEST: u16 = 0x13;
+pub const RECORD_REPLICATION_NOT_AVAILABLE: u16 = 0x15;
 
 /// Trait for all CMP data records. Guarantees seq is
 /// readable/writable at a known location in the payload.
@@ -61,12 +61,12 @@ pub struct Nak {
     pub _pad1: [u8; 48],
 }
 
-/// ReplayRequest — wire size 64 bytes.
+/// ReplicationRequest — wire size 64 bytes.
 /// Client -> server for WAL/TCP replay. Keeps stream_id
 /// (TCP routing).
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
-pub struct ReplayRequest {
+pub struct ReplicationRequest {
     pub stream_id: u32,
     pub _pad0: u32,
     pub from_seq: u64,
@@ -93,7 +93,7 @@ impl CastRecord for CaughtUpRecord {
     fn record_type() -> u16 { RECORD_CAUGHT_UP }
 }
 
-/// ReplayNotAvailable — wire size 64 bytes.
+/// ReplicationNotAvailable — wire size 64 bytes.
 ///
 /// Server -> client when the requested `from_seq` is outside
 /// the range this endpoint can serve (below the oldest seq on
@@ -108,7 +108,7 @@ impl CastRecord for CaughtUpRecord {
 /// to an archive that still holds it.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
-pub struct ReplayNotAvailable {
+pub struct ReplicationNotAvailable {
     pub requested_from_seq: u64,
     /// Floor this endpoint can serve. 0 = endpoint is empty
     /// (no records on disk for this stream).

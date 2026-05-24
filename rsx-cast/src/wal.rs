@@ -594,7 +594,7 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
 /// Used by the replay server to pre-check whether the
 /// requested `from_seq` is in-range before opening a reader.
 /// If the request is below `oldest`, the server emits a
-/// `ReplayNotAvailable` and closes the connection so the
+/// `ReplicationNotAvailable` and closes the connection so the
 /// consumer can try the next endpoint.
 ///
 /// The active file's first/last seq aren't encoded in its
