@@ -622,6 +622,18 @@ impl CmpReceiver {
     /// after DXS/TCP replay has caught up the application
     /// state to `new_tip`. Drops any stale reorder-buffered
     /// packets whose seqs are <= new_tip.
+    ///
+    /// `highest_seen` is **monotonic**. If `new_tip` is
+    /// already below the current `highest_seen` (e.g. a
+    /// heartbeat or out-of-order packet advanced
+    /// `highest_seen` past the replay's stopping point),
+    /// this method leaves `highest_seen` untouched. Lowering
+    /// it would re-arm the gap detector against seqs the
+    /// reorder ring may still hold and could cause the
+    /// receiver to re-deliver records the consumer has
+    /// already applied via replay. `expected_seq` always
+    /// jumps to `new_tip + 1` regardless — that's the
+    /// resume point for live-tail delivery.
     pub fn reset_after_replay(&mut self, new_tip: u64) {
         self.faulted = false;
         self.fault_last_delivered_seq = 0;
@@ -630,6 +642,7 @@ impl CmpReceiver {
         self.last_nak_at_ns = 0;
         self.nak_retries_on_oldest = 0;
         self.expected_seq = new_tip + 1;
+        // Monotonic: only raise, never lower (see docstring).
         if self.highest_seen < new_tip + 1 {
             self.highest_seen = new_tip + 1;
         }
