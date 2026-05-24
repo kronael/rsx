@@ -100,6 +100,21 @@ per match cycle. Two independent `CastSender`s:
 - ME → Risk: fills, BBO, order done/failed (all events)
 - ME → Marketdata: inserts, cancels, fills
 
+`publish_events` (`wal_integration.rs`) prepares each record once
+(single CRC + seq) and fans the resulting `Framed` to WAL + cmp
++ (optionally) mkt with `send_framed` / `append_framed` — no
+re-CRC per destination. Routing per event type:
+
+| Event | WAL | cmp (risk) | mkt |
+|---|---|---|---|
+| `Fill` / `OrderInserted` / `OrderCancelled` | yes | yes | yes |
+| `OrderDone` | yes | yes | no |
+| `OrderFailed` | yes | no | no |
+| `BBO` | no (derived on replay) | yes | yes |
+
+`BBO` is the one event not framed by the WAL; both senders use
+their own seq counter via `CastSender::send` for that record.
+
 ## Deduplication
 
 `DedupTracker` keeps `(user_id, oid_hi, oid_lo)` for a
