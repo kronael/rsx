@@ -92,3 +92,11 @@ harness = false
 [[bench]]
 name = "compare_aeron"
 harness = false
+
+[[bench]]
+name = "compare_moldudp64"
+harness = false
+
+[[bench]]
+name = "compare_soupbintcp"
+harness = false
