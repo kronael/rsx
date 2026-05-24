@@ -1,6 +1,8 @@
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_cast::config::TlsConfig;
+use rsx_cast::config::TlsServer;
+use rsx_cast::config::TlsClient;
 use rsx_messages::FillRecord;
 use rsx_cast::protocol::RECORD_CAUGHT_UP;
 use rsx_messages::RECORD_FILL;
@@ -44,25 +46,27 @@ async fn tls_client_server_connection() {
     let (cert_path, key_path) =
         generate_test_certs(tmp.path());
 
-    let server_tls_config = TlsConfig {
-        enabled: true,
-        cert_path: Some(cert_path.clone()),
-        key_path: Some(key_path.clone()),
+    let server_tls = TlsConfig {
+        server: Some(TlsServer {
+            cert_path: cert_path.clone(),
+            key_path: key_path.clone(),
+        }),
+        client: None,
     };
 
-    let client_tls_config = TlsConfig {
-        enabled: true,
-        cert_path: Some(cert_path.clone()),
-        key_path: None,
+    let client_tls = TlsConfig {
+        server: None,
+        client: Some(TlsClient {
+            cert_path: cert_path.clone(),
+        }),
     };
 
     let service = ReplicationService::new(
         wal_dir.clone(),
-        Some(server_tls_config),
+        Some(server_tls),
     )
     .unwrap();
 
-    // Use fixed test port to avoid bind-drop-rebind race
     let service_addr: SocketAddr =
         "127.0.0.1:19300".parse().unwrap();
     let service_clone = service.clone();
@@ -100,7 +104,7 @@ async fn tls_client_server_connection() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     wal.append(&mut fill).unwrap();
     wal.flush().unwrap();
@@ -114,7 +118,7 @@ taker_ts_ns: 0,
         stream_id,
         consumer_addr,
         tip_file,
-        Some(client_tls_config),
+        Some(client_tls),
     )
     .unwrap();
 
@@ -173,7 +177,6 @@ async fn tls_disabled_falls_back_to_plain() {
         ReplicationService::new(wal_dir.clone(), None)
             .unwrap();
 
-    // Use fixed test port to avoid bind-drop-rebind race
     let service_addr: SocketAddr =
         "127.0.0.1:19301".parse().unwrap();
     let service_clone = service.clone();
@@ -211,7 +214,7 @@ async fn tls_disabled_falls_back_to_plain() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     wal.append(&mut fill).unwrap();
     wal.flush().unwrap();
@@ -266,28 +269,4 @@ taker_ts_ns: 0,
 
     let first = &recs[0];
     assert_eq!(first.header.record_type, RECORD_FILL);
-}
-
-#[test]
-fn tls_config_validation_requires_cert_and_key() {
-    let config = TlsConfig {
-        enabled: true,
-        cert_path: None,
-        key_path: None,
-    };
-
-    let result = config.validate_server();
-    assert!(result.is_err());
-}
-
-#[test]
-fn tls_config_disabled_skips_validation() {
-    let config = TlsConfig {
-        enabled: false,
-        cert_path: None,
-        key_path: None,
-    };
-
-    let result = config.validate_server();
-    assert!(result.is_ok());
 }

@@ -46,18 +46,12 @@ pub struct ReplicationService {
 impl ReplicationService {
     pub fn new(
         wal_dir: PathBuf,
-        tls_config: Option<TlsConfig>,
+        tls: Option<TlsConfig>,
     ) -> io::Result<Self> {
-        let tls_acceptor = if let Some(cfg) = tls_config {
-            if cfg.enabled {
-                cfg.validate_server()?;
-                Some(build_acceptor(&cfg)?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let tls_acceptor = tls
+            .and_then(|c| c.server)
+            .map(|s| build_acceptor(&s))
+            .transpose()?;
 
         Ok(Self {
             wal_dir,
@@ -129,7 +123,6 @@ async fn handle_client<S>(
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
-    // Read ReplicationRequest: WalHeader(16) + payload(64)
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     stream.read_exact(&mut hdr_buf).await?;
     let hdr = WalHeader::from_bytes(&hdr_buf)
@@ -149,8 +142,6 @@ where
     let mut payload_buf = vec![0u8; payload_len];
     stream.read_exact(&mut payload_buf).await?;
 
-    // CRC must validate before any unsafe cast — same rule as
-    // CMP/UDP ingress (cmp.rs::try_recv).
     let crc = compute_crc32(&payload_buf);
     if crc != hdr.crc32 {
         return Err(std::io::Error::new(
@@ -180,26 +171,17 @@ where
         stream_id, from_seq
     );
 
-    // Federation pre-check: if the requested from_seq is below
-    // the oldest seq this endpoint can serve, signal explicitly
-    // so the consumer falls back to the next endpoint in its
-    // list. Without this, the consumer would silently land at
-    // the wrong seq (replay starts at first available > from_seq,
-    // creating a hidden gap).
     let range = oldest_and_highest_seq(
         stream_id, &svc.wal_dir, None,
     )?;
     let (my_oldest, my_highest) = range.unwrap_or((0, 0));
     let endpoint_can_serve = match range {
-        // 0 means "from the beginning, whatever I have" — always OK.
         Some((oldest, _)) => from_seq == 0 || from_seq >= oldest,
-        // Endpoint empty: only "from the beginning" is OK.
         None => from_seq == 0,
     };
     if !endpoint_can_serve {
         warn!(
-            "replay refused stream_id={} from_seq={} \
-             my_oldest={} my_highest={}",
+            "replay refused stream_id={} from_seq={}              my_oldest={} my_highest={}",
             stream_id, from_seq, my_oldest, my_highest
         );
         let na = ReplicationNotAvailable {
@@ -228,7 +210,6 @@ where
     let notify =
         svc.add_listener(stream_id).await;
 
-    // Phase 1: historical replay
     let mut reader = WalReader::open_from_seq(
         stream_id,
         from_seq,
@@ -259,7 +240,6 @@ where
         }
     }
 
-    // Send CaughtUp marker
     let caught_up = CaughtUpRecord {
         seq: 0,
         ts_ns: time_ns(),
@@ -281,7 +261,6 @@ where
     );
     stream.write_all(&encoded).await?;
 
-    // Phase 2: live tail
     loop {
         notify.notified().await;
 
@@ -294,8 +273,7 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     error!(
-                        "wal open_from_seq failed \
-                         stream_id={} seq={}: {}",
+                        "wal open_from_seq failed                          stream_id={} seq={}: {}",
                         stream_id,
                         last_seq + 1,
                         e
@@ -325,4 +303,3 @@ where
         }
     }
 }
-

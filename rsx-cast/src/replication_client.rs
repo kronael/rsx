@@ -26,11 +26,6 @@ use tracing::warn;
 
 pub struct ReplicationConsumer {
     pub stream_id: u32,
-    /// Replay endpoints, tried in order on each connect
-    /// attempt. The first endpoint that can serve the
-    /// requested from_seq wins; the rest are fallback (e.g.
-    /// archive endpoints holding cold history that the
-    /// producer has GC'd).
     pub endpoints: Vec<String>,
     pub tip: u64,
     pub tip_file: PathBuf,
@@ -49,7 +44,7 @@ impl ReplicationConsumer {
         stream_id: u32,
         endpoints: Vec<String>,
         tip_file: PathBuf,
-        tls_config: Option<TlsConfig>,
+        tls: Option<TlsConfig>,
     ) -> io::Result<Self> {
         if endpoints.is_empty() {
             return Err(io::Error::new(
@@ -63,16 +58,10 @@ impl ReplicationConsumer {
             stream_id, tip, endpoints
         );
 
-        let tls_connector = if let Some(cfg) = tls_config {
-            if cfg.enabled {
-                cfg.validate_client()?;
-                Some(build_connector(&cfg)?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let tls_connector = tls
+            .and_then(|c| c.client)
+            .map(|cl| build_connector(&cl))
+            .transpose()?;
 
         Ok(Self {
             stream_id,
@@ -91,13 +80,13 @@ impl ReplicationConsumer {
         stream_id: u32,
         producer_addr: String,
         tip_file: PathBuf,
-        tls_config: Option<TlsConfig>,
+        tls: Option<TlsConfig>,
     ) -> io::Result<Self> {
         Self::new(
             stream_id,
             vec![producer_addr],
             tip_file,
-            tls_config,
+            tls,
         )
     }
 
@@ -110,9 +99,7 @@ impl ReplicationConsumer {
     where
         F: FnMut(RawWalRecord),
     {
-        // Backoff schedule in seconds; capped at last entry.
         const BACKOFF_SECS: [u64; 5] = [1, 2, 4, 8, 30];
-        // Hard retry budget per task; reset on successful stream.
         const MAX_RETRIES: u32 = 20;
 
         let mut backoff_idx = 0usize;
@@ -131,9 +118,7 @@ impl ReplicationConsumer {
                     if consec_errors > MAX_RETRIES {
                         return Err(io::Error::other(
                             format!(
-                                "BLOCKED: {} consecutive \
-                                 stream errors exhausted \
-                                 retry budget ({}): {}",
+                                "BLOCKED: {} consecutive                                  stream errors exhausted                                  retry budget ({}): {}",
                                 consec_errors,
                                 MAX_RETRIES,
                                 e,
@@ -146,8 +131,7 @@ impl ReplicationConsumer {
                         * 1000.0
                         * jitter_factor()) as u64;
                     warn!(
-                        "stream error ({}/{}): {}, \
-                         retry in {}ms",
+                        "stream error ({}/{}): {},                          retry in {}ms",
                         consec_errors,
                         MAX_RETRIES,
                         e,
@@ -223,14 +207,12 @@ impl ReplicationConsumer {
                 self.handle_stream(tcp_stream, callback).await
             };
             match result {
-                // ReplicationNotAvailable: try next endpoint
                 Err(ref e)
                     if e.kind()
                         == io::ErrorKind::NotFound =>
                 {
                     warn!(
-                        "dxs: {endpoint} cannot serve \
-                         seq={}, trying next",
+                        "dxs: {endpoint} cannot serve                          seq={}, trying next",
                         self.tip + 1
                     );
                     last_err = Some(io::Error::new(
@@ -326,8 +308,6 @@ impl ReplicationConsumer {
                 ));
             }
 
-            // Invariant #5 (tips monotonic): `.max(seq)` ensures
-            // `self.tip` never decreases even on out-of-order delivery.
             if let Some(seq) = extract_seq(&payload) {
                 self.tip = self.tip.max(seq);
             }
@@ -354,7 +334,6 @@ impl ReplicationConsumer {
     }
 }
 
-/// ±20% jitter multiplier — avoids adding a rand dep.
 fn jitter_factor() -> f64 {
     let ns = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -388,4 +367,3 @@ fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
     }
     Ok(())
 }
-

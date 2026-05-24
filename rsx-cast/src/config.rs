@@ -1,5 +1,4 @@
 use std::env;
-use std::io;
 use std::path::PathBuf;
 
 fn env_var<T: std::str::FromStr>(key: &str, default: T) -> T {
@@ -41,6 +40,12 @@ pub struct CastConfig {
     /// 1 ms — larger than `nak_retry_us` so the layers compose.
     /// Env: `RSX_CAST_RETX_DEDUP_WINDOW_US`.
     pub retx_dedup_window_us: u64,
+    /// Receiver per-gap NAK debounce window. Once a NAK has
+    /// been sent for a given gap (`from_seq`), the receiver
+    /// won't re-NAK that same gap for this many µs. Prevents
+    /// NAK storms on persistent gaps. Default 50 ms.
+    /// Env: `RSX_CAST_NAK_DEBOUNCE_US`.
+    pub nak_debounce_us: u64,
 }
 
 impl Default for CastConfig {
@@ -51,6 +56,7 @@ impl Default for CastConfig {
             nak_retry_us: 100,
             max_nak_retries: 8,
             retx_dedup_window_us: 1000,
+            nak_debounce_us: 50_000,
         }
     }
 }
@@ -68,71 +74,58 @@ impl CastConfig {
                 "RSX_CAST_MAX_NAK_RETRIES", 8),
             retx_dedup_window_us: env_var(
                 "RSX_CAST_RETX_DEDUP_WINDOW_US", 1000),
+            nak_debounce_us: env_var(
+                "RSX_CAST_NAK_DEBOUNCE_US", 50_000),
         }
     }
 }
 
-/// TLS configuration for the DXS replay TCP path.
+/// TLS for the replication server (cert chain + private key).
+#[derive(Debug, Clone)]
+pub struct TlsServer {
+    pub cert_path: PathBuf,
+    pub key_path: PathBuf,
+}
+
+/// TLS for the replication client (trust root / CA cert).
+#[derive(Debug, Clone)]
+pub struct TlsClient {
+    pub cert_path: PathBuf,
+}
+
+/// Combined TLS configuration — `Some` means TLS is active.
 ///
-/// Defaults disable TLS; the playground and tests run plain.
-/// Production deployments must enable and supply both paths
-/// (server) or `cert_path` for client trust roots.
+/// `.server` is set when `RSX_REPL_KEY_PATH` is present;
+/// `.client` is set whenever `RSX_REPL_CERT_PATH` is present.
+/// Pass `Option<TlsConfig>` to both `ReplicationService::new`
+/// and `ReplicationConsumer::new`; each side picks its field.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
-    /// Enable TLS on the DXS replay socket.
-    /// Env: `RSX_REPL_TLS` (set to `"true"`).
-    pub enabled: bool,
-    /// Path to the server certificate chain (PEM) — server
-    /// side; or trust roots (PEM) — client side.
-    /// Env: `RSX_REPL_CERT_PATH`.
-    pub cert_path: Option<PathBuf>,
-    /// Path to the private key (PEM). Server-only.
-    /// Env: `RSX_REPL_KEY_PATH`.
-    pub key_path: Option<PathBuf>,
+    pub server: Option<TlsServer>,
+    pub client: Option<TlsClient>,
 }
 
 impl TlsConfig {
-    pub fn from_env() -> Self {
-        let enabled = env::var("RSX_REPL_TLS")
-            .map(|v| v == "true")
-            .unwrap_or(false);
-        let cert_path = env::var("RSX_REPL_CERT_PATH")
+    /// Returns `None` if `RSX_REPL_TLS != "true"`.
+    pub fn from_env() -> Option<Self> {
+        if env::var("RSX_REPL_TLS").as_deref() != Ok("true") {
+            return None;
+        }
+        let cert_path = PathBuf::from(
+            env::var("RSX_REPL_CERT_PATH")
+                .expect(
+                    "RSX_REPL_CERT_PATH required                      when RSX_REPL_TLS=true",
+                ),
+        );
+        let server = env::var("RSX_REPL_KEY_PATH")
             .ok()
-            .map(PathBuf::from);
-        let key_path = env::var("RSX_REPL_KEY_PATH")
-            .ok()
-            .map(PathBuf::from);
-        Self {
-            enabled,
-            cert_path,
-            key_path,
-        }
-    }
-
-    pub fn validate_server(&self) -> io::Result<()> {
-        if !self.enabled { return Ok(()); }
-        self.require_cert()?;
-        if self.key_path.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "RSX_REPL_KEY_PATH required when TLS enabled",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn validate_client(&self) -> io::Result<()> {
-        if !self.enabled { return Ok(()); }
-        self.require_cert()
-    }
-
-    fn require_cert(&self) -> io::Result<()> {
-        if self.cert_path.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "RSX_REPL_CERT_PATH required when TLS enabled",
-            ));
-        }
-        Ok(())
+            .map(|kp| TlsServer {
+                cert_path: cert_path.clone(),
+                key_path: PathBuf::from(kp),
+            });
+        Some(Self {
+            server,
+            client: Some(TlsClient { cert_path }),
+        })
     }
 }

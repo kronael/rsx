@@ -1,6 +1,7 @@
-//! TLS plumbing shared by the DXS replay client + server.
+//! TLS plumbing shared by the replication client + server.
 
-use crate::config::TlsConfig;
+use crate::config::TlsClient;
+use crate::config::TlsServer;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::pki_types::ServerName;
@@ -14,26 +15,17 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::TlsConnector;
 
 pub fn build_connector(
-    cfg: &TlsConfig,
+    cfg: &TlsClient,
 ) -> io::Result<TlsConnector> {
     let mut root_store = RootCertStore::empty();
-
-    if let Some(ca_path) = &cfg.cert_path {
-        let ca_pem = fs::read(ca_path)?;
-        for cert in load_certs(&ca_pem)? {
-            root_store.add(cert).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("failed to add cert: {}", e),
-                )
-            })?;
-        }
-    } else {
-        // TODO(TODO.md 10-DEPLOY): add webpki_roots fallback for public TLS
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "TLS requires cert_path in config",
-        ));
+    let ca_pem = fs::read(&cfg.cert_path)?;
+    for cert in load_certs(&ca_pem)? {
+        root_store.add(cert).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to add cert: {}", e),
+            )
+        })?;
     }
 
     let config = ClientConfig::builder()
@@ -43,25 +35,10 @@ pub fn build_connector(
 }
 
 pub fn build_acceptor(
-    cfg: &TlsConfig,
+    cfg: &TlsServer,
 ) -> io::Result<TlsAcceptor> {
-    let cert_path =
-        cfg.cert_path.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "cert_path required",
-            )
-        })?;
-    let key_path =
-        cfg.key_path.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "key_path required",
-            )
-        })?;
-
-    let certs = load_certs(&fs::read(cert_path)?)?;
-    let key = load_private_key(&fs::read(key_path)?)?;
+    let certs = load_certs(&fs::read(&cfg.cert_path)?)?;
+    let key = load_private_key(&fs::read(&cfg.key_path)?)?;
 
     let config = ServerConfig::builder()
         .with_no_client_auth()
