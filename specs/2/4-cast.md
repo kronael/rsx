@@ -7,17 +7,18 @@ status: shipped
 casting carries WAL records over UDP between Gateway, Risk, and
 Matching Engine. The same bytes go to disk (WAL), to the
 network (casting/UDP), and into shared memory. No serialization
-step. Sequence numbers, NAK-based gap recovery, sender-stall
-flow control.
+step. Sequence numbers, NAK-based gap recovery, no flow control
+(removed in commit `87b223e`; exchange-grade transports can't
+afford to slow the producer down — see §4).
 
 This document specifies the wire format byte-by-byte, the
-reliability and flow-control semantics, and the limits of
-the current implementation. Where the spec previously
-hand-waved or contradicted the code, this revision states
-the actual behaviour.
+reliability semantics, and the limits of the current
+implementation. Where the spec previously hand-waved or
+contradicted the code, this revision states the actual
+behaviour.
 
-Implementation: `rsx-cast/src/cmp.rs`,
-`rsx-cast/src/protocol.rs` (CastRecord trait + control messages),
+Implementation: `rsx-cast/src/cast.rs`,
+`rsx-cast/src/records.rs` (CastRecord trait + control messages),
 `rsx-cast/src/header.rs`. Domain wire records: `rsx-messages/`.
 
 ## Table of contents
@@ -26,13 +27,12 @@ Implementation: `rsx-cast/src/cmp.rs`,
 - [2. Wire format](#2-wire-format)
 - [3. Sequence numbers and CastRecord](#3-sequence-numbers-and-castrecord)
 - [4. Control messages](#4-control-messages)
-- [5. Flow control](#5-flow-control)
-- [6. Loss recovery (NAK)](#6-loss-recovery-nak)
-- [7. WAL replication over TCP (cold path)](#7-wal-replication-over-tcp-cold-path)
-- [8. Comparison with related protocols](#8-comparison-with-related-protocols)
-- [9. Performance](#9-performance)
-- [10. Known limits and design tradeoffs](#10-known-limits-and-design-tradeoffs)
-- [11. Configuration](#11-configuration)
+- [5. Loss recovery (NAK)](#5-loss-recovery-nak)
+- [6. WAL replication over TCP (cold path)](#6-wal-replication-over-tcp-cold-path)
+- [7. Comparison with related protocols](#7-comparison-with-related-protocols)
+- [8. Performance](#8-performance)
+- [9. Known limits and design tradeoffs](#9-known-limits-and-design-tradeoffs)
+- [10. Configuration](#10-configuration)
 - [Cross-references](#cross-references)
 
 ---
@@ -40,7 +40,7 @@ Implementation: `rsx-cast/src/cmp.rs`,
 ## 1. What casting is and isn't
 
 casting is **the C-struct wire format** plus **the UDP transport
-glue** (sequencing, flow control, gap recovery) that carries
+glue** (sequencing, NAK-driven gap recovery) that carries
 RSX's WAL records between processes on the hot path.
 
 The transport layer (`rsx-cast`) is **domain-agnostic** — it
@@ -60,8 +60,11 @@ casting is **not** a general-purpose framework. It assumes:
 
 What casting gives up to be fast:
 - No connection handshake (just `bind` + `sendto`).
-- No congestion control. The dedicated network is sized for
-  peak load; senders stall on flow-control window only.
+- No congestion control, no backpressure. The producer can't
+  stall — its clock is external (market events, time priority,
+  multi-receiver coupling). The dedicated network is sized
+  for peak load; receivers that fall behind recover via NAK or
+  TCP replication, not by slowing the sender.
 - No fragmentation. Each WAL record is one UDP datagram.
 - No schema evolution beyond appending new record types.
 
@@ -73,20 +76,22 @@ disk bytes = wire bytes = memory bytes.**
 
 ```
 struct WalHeader {        // 16 bytes, manual encode
+    version: u8,          // wire-format version (V1)
+    _pad0: u8,            // reserved, must be zero
     record_type: u16,     // see RECORD_* constants
     len: u16,             // payload length in bytes
-    crc32: u32,           // CRC32C of payload
-    version: u8,          // wire-format version (V0 or V1)
-    _reserved: [u8; 7],   // reserved, must be zero
+    _pad1: u16,           // reserved, must be zero
+    crc32: u32,           // CRC32 IEEE of payload
+    _reserved: [u8; 4],   // reserved, must be zero
 }
 ```
 
-All fields little-endian. `version` at offset 8 carries the
-wire-format version (`0` = legacy zero-reserved layout,
-accepted on read for back-compat; `1` = current, written by
-all new senders). Receivers reject unknown versions. The
-remaining 7 reserved bytes must be zero. See §10.2 for
-schema-evolution semantics.
+All fields little-endian. `version` lives at byte 0
+(commit `64dda88`) so the receiver can gate on version
+before parsing any other field. V0 back-compat was
+dropped when the byte moved; only V1 is read. Adding a
+new record type does NOT bump the version (additive).
+See §9.2 for schema-evolution semantics.
 
 ### Payload size
 
@@ -95,7 +100,7 @@ per datagram. The receiver enforces this implicitly: any
 datagram larger than `WalHeader::SIZE + 65 535 = 65 551`
 bytes cannot be parsed because `len` cannot represent it.
 The send buffer is sized at 65 536 bytes (`PACKET_BUF_SIZE`,
-`cmp.rs:23`).
+`cast.rs:23`).
 
 In **practice**, every casting record currently in use is
 ≤ 64 bytes (one cache line) — `OrderRequest`, `Fill`,
@@ -112,11 +117,12 @@ cache-line-sized.
 
 ### CRC
 
-`crc32` is CRC32C (Castagnoli) over the payload only —
-**not** over the header. Receivers recompute and discard
-mismatches silently (`cmp.rs:373-376`). This catches bit
-errors on the wire, not malicious tampering; casting has no
-authentication.
+`crc32` is CRC32 IEEE (zlib polynomial, via the `crc32fast`
+crate) over the payload only — **not** over the header.
+Receivers recompute and discard mismatches silently. This
+catches bit errors on the wire, not malicious tampering;
+casting has no authentication. See `rsx-cast/notes/crc.md`
+for why IEEE rather than CRC32C.
 
 ### Endianness and platform
 
@@ -140,49 +146,37 @@ pub trait CastRecord: Copy + Sized {
 
 The first 8 bytes of every data payload are `seq: u64`,
 monotonic per stream, assigned by `CastSender::send` at
-transmission (`cmp.rs:94`). The receiver uses
+transmission (`cast.rs:94`). The receiver uses
 `extract_seq(payload: &[u8])` (`wal.rs::extract_seq`) to
 read it back without unpacking the rest.
 
-Control messages (StatusMessage, Nak, CastHeartbeat) do
-**not** implement `CastRecord` and have no `seq` field.
-They're identified solely by `record_type` in the header.
+Control messages (`Nak`, `CastHeartbeat`) do **not**
+implement `CastRecord` and have no `seq` field. They're
+identified solely by `record_type` in the header.
 
-Sequence numbers start at 1 (`cmp.rs:67`) and are never
+Sequence numbers start at 1 (`cast.rs:67`) and are never
 reused within a stream. On sender restart with the same
 `stream_id`, a fresh sequence space starts at 1; receivers
 detect this from heartbeats and resync.
 
 ## 4. Control messages
 
-Three control record types, fixed-size, 64-byte aligned:
+Two control record types, fixed-size, 64-byte aligned. (A
+third, `RECORD_STATUS_MESSAGE = 0x10`, was removed in commit
+`87b223e`; the constant stays reserved.)
 
 ```
-RECORD_STATUS_MESSAGE = 0x10  // receiver -> sender
-RECORD_NAK            = 0x11  // receiver -> sender
-RECORD_HEARTBEAT      = 0x12  // sender -> receiver
+RECORD_NAK       = 0x11  // receiver -> sender
+RECORD_HEARTBEAT = 0x12  // sender -> receiver
 ```
 
-### StatusMessage (every 10 ms, receiver → sender)
-
-```rust
-#[repr(C, align(64))]
-pub struct StatusMessage {
-    pub consumption_seq: u64,    // last fully-received seq
-    pub receiver_window: u64,    // seq delta receiver allows
-    pub _pad1: [u8; 48],
-}
-```
-
-`receiver_window` is a **count of records** (a sequence-
-number delta), not bytes. The sender stalls when
-`next_seq > consumption_seq + receiver_window`
-(`cmp.rs:88-91`). With the default window of 65 536
-(`config.rs::default_window`), at the live record size
-of ~64 B that's about 4 MB of in-flight data.
-
-The previous spec said "bytes" — that was wrong. The code
-has always treated this field as a record count.
+There is **no flow control**. Exchange-grade transports
+can't slow the producer down: market events drive its
+clock, time priority forbids reordering, and multi-receiver
+coupling means stalling for the slowest peer would freeze
+the whole exchange. Receivers that fall behind recover via
+NAK (in-band) or TCP replication (out-of-band); they never
+push back on the sender.
 
 ### Nak (on gap detection, receiver → sender)
 
@@ -195,7 +189,7 @@ pub struct Nak {
 }
 ```
 
-### CastHeartbeat (every 10 ms, sender → receiver)
+### CastHeartbeat (idle-only, sender → receiver)
 
 ```rust
 #[repr(C, align(64))]
@@ -205,37 +199,16 @@ pub struct CastHeartbeat {
 }
 ```
 
-Heartbeats let an idle receiver detect a gap that ends
-the stream (no new data records arrive to expose the
-missing tail).
+Heartbeats are **suppressed by data sends** (commit
+`d094dc4`): each `send` resets the heartbeat timer, so a
+busy stream emits zero heartbeats and the data record's seq
+doubles as the liveness signal. Heartbeats fire only when
+the stream has been idle for `heartbeat_interval_ms`
+(default 100 ms) — long enough to let an idle receiver
+detect a stream-ending gap (no new data records arrive to
+expose the missing tail).
 
-## 5. Flow control
-
-Sender keeps a window of `receiver_window` records ahead
-of `consumption_seq`. On `send`:
-
-```
-limit = peer_consumption_seq + peer_window
-if next_seq > limit && limit > 0 {
-    return Ok(false);  // caller must retry or drop
-}
-```
-
-`limit > 0` means "until we get the first StatusMessage,
-don't stall" — bootstrap path so the very first records
-flow before the receiver has a chance to advertise a
-window.
-
-The receiver advertises its window in every StatusMessage
-(every 10 ms). It can shrink the window by advertising a
-smaller value; the sender will stall until the window
-reopens.
-
-There is no congestion control beyond this. The deployed
-network is dimensioned for peak; if receivers can't keep
-up, the sender backpressure stops the matching engine.
-
-## 6. Loss recovery (NAK)
+## 5. Loss recovery (NAK)
 
 UDP has no retransmit. casting layers a NAK loop on top.
 
@@ -385,7 +358,7 @@ so keeping `highest_seen` ≥ `expected_seq` is what allows
 the receiver to detect and NAK forward gaps; only forward
 progress is observable to the consumer.
 
-## 7. WAL replication over TCP (cold path)
+## 6. WAL replication over TCP (cold path)
 
 Same WAL records, different transport: TCP byte stream
 with optional rustls TLS. Used for replay (recover from
@@ -424,7 +397,7 @@ length-prefix. Read-side: `read_exact(16)` →
 (1 / 2 / 4 / 8 / max 30 s) and resumes from `tip + 1`
 based on the last-persisted tip.
 
-## 8. Comparison with related protocols
+## 7. Comparison with related protocols
 
 casting isn't novel; it's a particular fixed-point in the
 design space. The comparison clarifies what's different.
@@ -446,9 +419,6 @@ design space. The comparison clarifies what's different.
 What's actually borrowed:
 - **NAK-based recovery + heartbeat-driven gap exposure**
   is the Aeron protocol pattern.
-- **Sequence-window flow control** is Aeron-style as well
-  (Aeron uses a position field; same idea expressed in seq
-  numbers).
 - **`#[repr(C)]` zero-copy wire** is standard HFT practice.
 - **Per-consumer streams** instead of pub/sub is a tile-
   architecture decision (one slow consumer can't stall a
@@ -467,7 +437,7 @@ multiplexing, no head-of-line avoidance (we don't need
 it — one sender, one receiver per stream). casting would be
 strictly worse than QUIC over the public internet.
 
-## 9. Performance
+## 8. Performance
 
 ### Encode / decode
 
@@ -484,7 +454,7 @@ Measured by `rsx-cast/benches/wal_bench.rs`:
 
 | Op                                                       | ns  |
 |----------------------------------------------------------|-----|
-| Protocol-record encode (StatusMessage / Nak / Heartbeat) | 43  |
+| Protocol-record encode (Nak / Heartbeat)                 | 43  |
 | Protocol-record decode (one record)                      | 9   |
 | `FillRecord` encode                                      | 23  |
 
@@ -511,14 +481,14 @@ not a measurement.
 ### Future: monoio UDP transport
 
 casting currently uses `std::net::UdpSocket` (non-blocking,
-`cmp.rs:16,62`). The rest of the gateway and marketdata
+`cast.rs:16,62`). The rest of the gateway and marketdata
 stacks use `monoio` for io_uring. Replacing casting's UDP
 sockets with monoio io_uring SQEs would eliminate one
 syscall per send/recv on the hot path. This is tracked
 as future work; the wire format and protocol semantics
 would not change.
 
-## 10. Known limits and design tradeoffs
+## 9. Known limits and design tradeoffs
 
 These are the rough edges. They're documented so a
 reader can decide whether casting fits their use case.
@@ -586,7 +556,7 @@ marketdata path.
 The `WalHeader::from_bytes` decoder is the obvious attack
 surface for a malicious or buggy peer. The receiver
 discards datagrams smaller than 16 B, validates `len`
-against datagram size (`cmp.rs:365-368`), and validates
+against datagram size (`cast.rs:365-368`), and validates
 CRC. There is no `cargo-fuzz` target on it yet — tracked
 in `.ship/12-SHOWCASE-HONEST/` task E2.
 
@@ -607,7 +577,7 @@ Binary on the wire. The `rsx-cli wal dump` tool decodes
 records to JSON for offline inspection. We debug from
 WAL files, not packet captures.
 
-## 11. Configuration
+## 10. Configuration
 
 ```bash
 # casting/UDP (hot path)
