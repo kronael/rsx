@@ -223,7 +223,7 @@ for notional = price * qty at risk boundary.
 
 - Fixed-record format: 16B header + `#[repr(C, align(64))]` payload
 - WAL disk format = wire format = DXS stream format (no transformation)
-- WalWriter flush every 10ms, rotate at 64MB, retain 10min
+- WalWriter flush every 10ms, rotate at 64MB, retain 48h
 - Backpressure: buffer full or flush lag > 10ms -> stall producer
 - Tip persistence: every 10ms, idempotent replay from tip+1
 

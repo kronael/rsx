@@ -168,7 +168,7 @@ wal/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal
 ```
 
 - Rotate by size: 64MB default.
-- Retention: 10min for hot replay (in-memory). Offload to ARCHIVE for infinite retention.
+- Retention: 48h for hot replay (on-disk WAL). Offload to ARCHIVE for infinite retention.
 - No file header, no index. Sequential read only.
 - Filenames encode seq range for O(1) file selection.
 
@@ -492,7 +492,7 @@ available seq, effectively skipping gap. Risk engine would have
 inconsistent state.
 
 **Mitigation:** Set retention window > max expected consumer
-offline duration (default 10min). Monitor consumer lag.
+offline duration (default 48h). Monitor consumer lag.
 
 ### 10.6 Replay from Future Sequence
 
