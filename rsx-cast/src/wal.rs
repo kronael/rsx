@@ -6,15 +6,21 @@ use crate::header::WalHeader;
 use crate::records::CastRecord;
 use std::fs;
 
+/// Capacity of the inline wire buffer in `Framed`. Sized to
+/// hold the 16-byte WAL header plus the largest current record
+/// payload (128 B: FillRecord, BboRecord, OrderAcceptedRecord)
+/// with headroom. A compile-time assert in `prepare` guards
+/// this against future record growth.
+pub const FRAMED_WIRE_BYTES: usize = 256;
+
 /// A record framed exactly once for both persistence and
-/// publication. Returned by `WalWriter::prepare`. The borrow
-/// of `payload` keeps the source record locked against
-/// mutation until `Framed` is dropped, so the bytes the WAL
-/// writes and the bytes the sender publishes are byte-equal
-/// by construction.
-pub struct Framed<'a> {
-    pub header: WalHeader,
-    pub payload: &'a [u8],
+/// publication. Returned by `WalWriter::prepare`.
+///
+/// `wire[..total]` contains `[header (16 B) | payload]` ready
+/// to pass directly to `send_to` or `extend_from_slice`.
+pub struct Framed {
+    pub wire: [u8; FRAMED_WIRE_BYTES],
+    pub total: u16,
     pub seq: u64,
 }
 use std::fs::File;
@@ -150,20 +156,28 @@ impl WalWriter {
         }
     }
 
-    /// Assign seq, compute CRC, build header. The single point
-    /// at which a record is "framed" for both WAL persistence
-    /// and live UDP send.
+    /// Assign seq, compute CRC, pack `[header | payload]` into
+    /// the returned `Framed`. The single point at which a record
+    /// is encoded for both WAL persistence and live UDP send.
     ///
     /// Paired callers (those that both persist AND publish the
     /// same record) MUST use this entry point — calling
     /// `append` and `CastSender::send` separately on the same
     /// record recomputes CRC and the seq counters can drift.
     /// See `notes/crc.md`.
-    pub fn prepare<'a, T: CastRecord>(
+    pub fn prepare<T: CastRecord>(
         &mut self,
-        record: &'a mut T,
-    ) -> io::Result<Framed<'a>> {
+        record: &mut T,
+    ) -> io::Result<Framed> {
         let payload_len = std::mem::size_of::<T>();
+        let total = WalHeader::SIZE + payload_len;
+        assert!(
+            total <= FRAMED_WIRE_BYTES,
+            "record too large for Framed wire buffer: {} > {}",
+            total,
+            FRAMED_WIRE_BYTES,
+        );
+
         let seq = self.next_seq;
         self.next_seq += 1;
         record.set_seq(seq);
@@ -176,7 +190,11 @@ impl WalWriter {
             crc,
         );
 
-        Ok(Framed { header, payload, seq })
+        let mut wire = [0u8; FRAMED_WIRE_BYTES];
+        wire[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
+        wire[WalHeader::SIZE..total].copy_from_slice(payload);
+
+        Ok(Framed { wire, total: total as u16, seq })
     }
 
     /// Append a pre-framed record to the in-memory buffer.
@@ -197,8 +215,7 @@ impl WalWriter {
             ));
         }
         self.last_seq = framed.seq;
-        self.buf.extend_from_slice(framed.header.to_bytes());
-        self.buf.extend_from_slice(framed.payload);
+        self.buf.extend_from_slice(&framed.wire[..framed.total as usize]);
         self.records_since_flush += 1;
         Ok(())
     }
