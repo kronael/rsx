@@ -45,22 +45,23 @@ use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
-/// Bind a UDP socket with SO_REUSEADDR (+ SO_REUSEPORT on
-/// Linux) so a restarted process can claim the same port
-/// even while the dead parent's socket lingers in
-/// TIME_WAIT/half-open. Prevents the CMP restart loop that
-/// otherwise violates spec invariant 7 (WAL persistence):
-/// each AddrInUse panic truncates the active WAL file.
-fn bind_udp_reuse(addr: SocketAddr) -> io::Result<UdpSocket> {
+/// Bind a non-blocking UDP socket with an 8 MB recv buffer.
+///
+/// Deliberately does NOT set SO_REUSEADDR / SO_REUSEPORT: an
+/// exchange port has exactly one owner; SO_REUSEPORT would
+/// load-balance datagrams across multiple binders and
+/// silently shred the stream. If a dead parent is still
+/// holding the port, that's a supervisor / system-level
+/// problem (kill the stuck PID; configure the unit file to
+/// fail fast), not something the transport should paper
+/// over by allowing co-bind.
+fn bind_udp(addr: SocketAddr) -> io::Result<UdpSocket> {
     let domain = if addr.is_ipv4() {
         Domain::IPV4
     } else {
         Domain::IPV6
     };
     let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_reuse_address(true)?;
-    #[cfg(target_os = "linux")]
-    socket.set_reuse_port(true)?;
     socket.set_nonblocking(true)?;
     // Request 8 MB recv buffer. Linux silently clips to
     // /proc/sys/net/core/rmem_max (commonly 208 KB) — that's
@@ -212,7 +213,7 @@ impl CastSender {
                 format!("invalid sender_bind_addr {bind_str}: {e}"),
             )
         })?;
-        let socket = bind_udp_reuse(bind)?;
+        let socket = bind_udp(bind)?;
         Ok(Self {
             socket,
             dest,
@@ -670,7 +671,7 @@ impl CastReceiver {
         _stream_id: u32,
         config: &CastConfig,
     ) -> io::Result<Self> {
-        let socket = bind_udp_reuse(bind_addr)?;
+        let socket = bind_udp(bind_addr)?;
         Ok(Self {
             socket,
             sender_addr,
