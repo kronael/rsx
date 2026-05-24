@@ -1,24 +1,44 @@
-# RSX Exchange
+# RSX
 
-A spec-first perpetuals exchange written in Rust. Fixed-point
-i64 arithmetic, single-threaded matching per symbol, CMP/UDP
-between processes, WAL-based recovery. The design budget is
-**< 50 µs gateway → ME → gateway** and **< 500 ns ME match**;
-component microbenches are measured (54 ns match, 31 ns WAL
-buffer append (no disk I/O), 43 ns protocol-record encode
-(StatusMessage/Nak/Heartbeat; FillRecord encodes in 23 ns),
-9 ns protocol-record decode), an end-to-end
-harness is on the way (see
-[specs/2/22-perf-verification.md](specs/2/22-perf-verification.md)).
+Two artifacts in one repo:
 
-This repo exists because most public exchange code is either
-toy-grade or behind walls. The interesting parts here are
-the protocol design, the tile architecture, and the WAL = wire
-= stream invariant — everything else (margin, funding,
-liquidation, marketdata fan-out) is the boring price you pay
-to make the interesting parts work.
+1. **`rsx-dxs` — an open-source, log-backed reliable UDP
+   transport.** WAL on disk, CMP on the wire, DXS for replay.
+   The WAL bytes, the UDP bytes, and the replay-stream bytes
+   are the same bytes. Domain-agnostic: `cargo tree -p rsx-dxs
+   --edges normal | grep rsx-` is empty. Drop it into any
+   project that needs 50-µs-class messaging without Kafka.
+2. **A complete perpetuals exchange built on it.** Gateway,
+   Risk, Matching Engine, Marketdata, Mark, Recorder, Maker —
+   each a separate process. Spec-first: 47 spec files in
+   `specs/2/` written before the code. The exchange is both a
+   real product and the load-bearing demo that proves `rsx-dxs`
+   handles a non-trivial workload.
 
-## What's novel here
+The wedge — "open-source the orthogonal libs that already
+exist, sell the exchange-in-a-box on top" — is written up in
+[specs/2/50-wedge.md](specs/2/50-wedge.md). The one-screen
+pitch is in [ONEPAGER.md](ONEPAGER.md). The longer narrative
+is in [BLOG.md](BLOG.md).
+
+## How fast
+
+| Layer | p50 |
+|---|---:|
+| Match algorithm only (dedup + WAL + match) | **340 ns** |
+| In-process round-trip (real CMP + Orderbook + WAL) | **9.58 µs** |
+| Cross-process production (GW→ME→GW) | **1 128 µs** |
+
+99% of the in-process round-trip is the `sendto` syscall.
+Framing + algorithm together are <0.7%. Optimisation paths
+(io_uring SQPOLL, sendmmsg, DPDK/AF_XDP) are documented in
+[facts/syscall-latency.md](facts/syscall-latency.md) and
+[docs/benches.md](docs/benches.md). Design budget for the
+production path is **<50 µs**; current p50 is 22× over and
+we know why (`monoio::time::sleep(100µs)` in two CMP poll
+loops accounts for ~655 µs of it).
+
+## What's interesting here
 
 - **CMP, the C Message Protocol** — fixed-size `repr(C)` WAL
   records over UDP between Gateway, Risk, and ME. One wire
@@ -30,13 +50,13 @@ to make the interesting parts work.
   where it pays off (full tile arrangement in `rsx-risk`),
   monoio io_uring async where I/O multiplexing dominates
   (`rsx-gateway`, `rsx-marketdata`), single core-pinned loop
-  for compute (`rsx-matching`). The split is documented per
-  process in [specs/2/45-tiles.md](specs/2/45-tiles.md).
+  for compute (`rsx-matching`). Per-process split in
+  [specs/2/45-tiles.md](specs/2/45-tiles.md).
 - **WAL = wire = stream** — the same `repr(C)` bytes go to
-  disk, over UDP, and over TCP for replay. No serialization
+  disk, over UDP, and over TCP for replay. No serialisation
   step. The 16-byte header carries a `version: u8` at byte 8
-  (V0=legacy, V1=current) so future format changes can be
-  rolled out without breaking replay. See
+  (V0=legacy, V1=current) so future format changes can roll
+  out without breaking replay. See
   [specs/2/48-wal.md](specs/2/48-wal.md) and
   [specs/2/10-dxs.md](specs/2/10-dxs.md).
 - **Slab + CompressionMap orderbook** — pre-allocated 65 536
@@ -90,7 +110,7 @@ The 60-second clean-boot path is in [docs/DEMO.md](docs/DEMO.md).
 ```bash
 cargo check                # type check (fastest)
 cargo build --workspace    # debug build (~5 min cold)
-cargo test --workspace     # 878 passing (unit + integration)
+cargo test --workspace     # 887 passing (unit + integration)
 make perf                  # Criterion benches
 make bench-gate            # local 10% regression gate
 ```
