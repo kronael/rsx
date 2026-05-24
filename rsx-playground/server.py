@@ -2951,6 +2951,9 @@ async def _htmx_422(request: Request, exc: Exception):
 @app.exception_handler(_StarletteHTTPException)
 async def _htmx_http(request: Request, exc):
     if request.url.path.startswith("/x/"):
+        if exc.status_code == 404:
+            return JSONResponse(
+                {"error": "not found"}, status_code=404)
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
             'no data</span>',
