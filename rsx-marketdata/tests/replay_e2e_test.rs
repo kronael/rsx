@@ -1,9 +1,9 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_dxs::DxsReplayService;
+use rsx_cast::DxsReplayService;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderInsertedRecord;
-use rsx_dxs::WalWriter;
+use rsx_cast::WalWriter;
 use rsx_marketdata::replay::run_replay_bootstrap;
 use rsx_marketdata::state::MarketDataState;
 use rsx_types::SymbolConfig;

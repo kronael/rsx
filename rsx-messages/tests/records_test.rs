@@ -1,10 +1,10 @@
 use rsx_messages::*;
-use rsx_dxs::CaughtUpRecord;
-use rsx_dxs::CmpRecord;
-use rsx_dxs::WalHeader;
-use rsx_dxs::compute_crc32;
-use rsx_dxs::encode_record;
-use rsx_dxs::as_bytes;
+use rsx_cast::CaughtUpRecord;
+use rsx_cast::CmpRecord;
+use rsx_cast::WalHeader;
+use rsx_cast::compute_crc32;
+use rsx_cast::encode_record;
+use rsx_cast::as_bytes;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
@@ -217,7 +217,7 @@ fn caught_up_encode_decode_roundtrip() {
         live_seq: 100,
         _pad1: [0; 40],
     };
-    let encoded = encode_record(rsx_dxs::RECORD_CAUGHT_UP, as_bytes(&record));
+    let encoded = encode_record(rsx_cast::RECORD_CAUGHT_UP, as_bytes(&record));
     let payload = &encoded[WalHeader::SIZE..];
     let decoded = unsafe {
         std::ptr::read_unaligned(payload.as_ptr() as *const CaughtUpRecord)
@@ -349,7 +349,7 @@ fn record_truncated_payload_detected() {
 
 #[test]
 fn record_zero_length_payload_valid() {
-    use rsx_dxs::WalHeader;
+    use rsx_cast::WalHeader;
     let header = WalHeader::new(RECORD_FILL, 0, 0);
     assert_eq!(header.len, 0);
 }

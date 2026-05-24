@@ -1,10 +1,10 @@
-use rsx_dxs::CaughtUpRecord;
-use rsx_dxs::DxsConsumer;
+use rsx_cast::CaughtUpRecord;
+use rsx_cast::DxsConsumer;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
-use rsx_dxs::RawWalRecord;
-use rsx_dxs::RECORD_CAUGHT_UP;
+use rsx_cast::RawWalRecord;
+use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_INSERTED;

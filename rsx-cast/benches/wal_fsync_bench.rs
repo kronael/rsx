@@ -35,7 +35,7 @@ use core_affinity::CoreId;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_dxs::WalWriter;
+use rsx_cast::WalWriter;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;

@@ -39,8 +39,8 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -105,9 +105,9 @@ fn bench_cmp_rtt(c: &mut Criterion) {
         b_recv_bind,
         1,
         tmp_a.path(),
-        &rsx_dxs::config::CmpConfig {
+        &rsx_cast::config::CmpConfig {
             sender_bind_addr: Some(a_send_bind.to_string()),
-            ..rsx_dxs::config::CmpConfig::default()
+            ..rsx_cast::config::CmpConfig::default()
         },
     )
     .unwrap();
@@ -121,9 +121,9 @@ fn bench_cmp_rtt(c: &mut Criterion) {
         a_recv_bind,
         2,
         tmp_b.path(),
-        &rsx_dxs::config::CmpConfig {
+        &rsx_cast::config::CmpConfig {
             sender_bind_addr: Some(b_send_bind.to_string()),
-            ..rsx_dxs::config::CmpConfig::default()
+            ..rsx_cast::config::CmpConfig::default()
         },
     )
     .unwrap();

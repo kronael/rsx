@@ -1,4 +1,4 @@
-use rsx_dxs::encode_utils::as_bytes;
+use rsx_cast::encode_utils::as_bytes;
 use rsx_messages::decode_config_applied_record;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_matching::wire::OrderMessage;

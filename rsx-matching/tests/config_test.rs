@@ -1,9 +1,9 @@
 use rsx_messages::decode_config_applied_record;
 use rsx_messages::ConfigAppliedRecord;
-use rsx_dxs::CmpRecord;
+use rsx_cast::CmpRecord;
 use rsx_messages::RECORD_CONFIG_APPLIED;
-use rsx_dxs::wal::WalReader;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::wal::WalReader;
+use rsx_cast::wal::WalWriter;
 use rsx_types::time::time_ns;
 use tempfile::TempDir;
 

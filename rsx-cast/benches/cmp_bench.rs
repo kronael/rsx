@@ -10,13 +10,13 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_dxs::as_bytes;
-use rsx_dxs::compute_crc32;
-use rsx_dxs::encode_record;
-use rsx_dxs::CmpHeartbeat;
-use rsx_dxs::Nak;
-use rsx_dxs::RECORD_HEARTBEAT;
-use rsx_dxs::RECORD_NAK;
+use rsx_cast::as_bytes;
+use rsx_cast::compute_crc32;
+use rsx_cast::encode_record;
+use rsx_cast::CmpHeartbeat;
+use rsx_cast::Nak;
+use rsx_cast::RECORD_HEARTBEAT;
+use rsx_cast::RECORD_NAK;
 use std::collections::BTreeMap;
 
 fn pin_worker() {

@@ -42,8 +42,8 @@ fn consumer_sends_tip_plus_1() {
 fn consumer_callback_invoked_per_record() {
     // Simulate what DxsConsumer does: for each raw record
     // received, the callback is invoked once.
-    use rsx_dxs::header::WalHeader;
-    use rsx_dxs::wal::RawWalRecord;
+    use rsx_cast::header::WalHeader;
+    use rsx_cast::wal::RawWalRecord;
 
     let mut count = 0u32;
     let mut callback = |_record: RawWalRecord| {
@@ -157,9 +157,9 @@ fn consumer_reconnect_resets_on_success() {
 
 #[test]
 fn consumer_skips_unknown_record_types() {
-    use rsx_dxs::header::WalHeader;
+    use rsx_cast::header::WalHeader;
     use rsx_messages::RECORD_FILL;
-    use rsx_dxs::wal::RawWalRecord;
+    use rsx_cast::wal::RawWalRecord;
 
     let mut known_count = 0u32;
     let mut callback = |_record: RawWalRecord| {

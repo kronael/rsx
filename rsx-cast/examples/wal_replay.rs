@@ -6,8 +6,8 @@
 //! Run:
 //!   cargo run --example wal_replay -p rsx-dxs
 
-use rsx_dxs::WalReader;
-use rsx_dxs::WalWriter;
+use rsx_cast::WalReader;
+use rsx_cast::WalWriter;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -68,7 +68,7 @@ fn main() {
     let mut n = 0;
     while let Some(raw) = reader.next().unwrap() {
         // Headers + payload bytes are identical to what would go over CMP.
-        let seq = rsx_dxs::wal::extract_seq(&raw.payload).unwrap_or(0);
+        let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
         eprintln!(
             "read  seq={seq} type={} len={}",
             raw.header.record_type, raw.header.len

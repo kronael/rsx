@@ -13,7 +13,7 @@ use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
 use rsx_book::slab::Slab;
 use rsx_book::OrderSlot;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_types::Side;

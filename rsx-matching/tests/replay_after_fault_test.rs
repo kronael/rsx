@@ -12,8 +12,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
-use rsx_dxs::DxsReplayService;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::DxsReplayService;
+use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::replay::drain_dxs_replay_into_book;
 use rsx_matching::wal_integration::OrderKey;
@@ -127,7 +127,7 @@ fn write_risk_wal(
 #[derive(Copy, Clone)]
 struct OrderMessageWire(OrderMessage);
 
-impl rsx_dxs::protocol::CmpRecord for OrderMessageWire {
+impl rsx_cast::protocol::CmpRecord for OrderMessageWire {
     fn seq(&self) -> u64 {
         self.0.seq
     }

@@ -40,8 +40,8 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -101,7 +101,7 @@ fn bench_cmp_one_way(c: &mut Criterion) {
         recv_bind,
         1,
         tmp.path(),
-        &rsx_dxs::config::CmpConfig {
+        &rsx_cast::config::CmpConfig {
             sender_bind_addr: Some(send_bind.to_string()),
             ..Default::default()
         },

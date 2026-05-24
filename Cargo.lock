@@ -2301,28 +2301,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsx-cli"
-version = "0.2.0"
-dependencies = [
- "clap",
- "ctrlc",
- "futures-util",
- "jsonwebtoken",
- "rsx-book",
- "rsx-dxs",
- "rsx-matching",
- "rsx-messages",
- "rsx-types",
- "rustc-hash",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
-name = "rsx-dxs"
-version = "0.4.0"
+name = "rsx-cast"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -2349,6 +2329,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsx-cli"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "ctrlc",
+ "futures-util",
+ "jsonwebtoken",
+ "rsx-book",
+ "rsx-cast",
+ "rsx-matching",
+ "rsx-messages",
+ "rsx-types",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "rsx-gateway"
 version = "0.2.0"
 dependencies = [
@@ -2356,7 +2356,7 @@ dependencies = [
  "criterion",
  "jsonwebtoken",
  "monoio",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-log",
  "rsx-messages",
  "rsx-risk",
@@ -2384,7 +2384,7 @@ version = "0.2.0"
 dependencies = [
  "criterion",
  "futures-util",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-messages",
  "rsx-types",
  "rtrb",
@@ -2403,7 +2403,7 @@ dependencies = [
  "criterion",
  "monoio",
  "rsx-book",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-messages",
  "rsx-types",
  "serde_json",
@@ -2422,7 +2422,7 @@ dependencies = [
  "criterion",
  "libc",
  "rsx-book",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-log",
  "rsx-messages",
  "rsx-types",
@@ -2441,7 +2441,7 @@ name = "rsx-messages"
 version = "0.2.0"
 dependencies = [
  "criterion",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-types",
 ]
 
@@ -2450,7 +2450,7 @@ name = "rsx-recorder"
 version = "0.2.0"
 dependencies = [
  "chrono",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-messages",
  "rsx-types",
  "serde",
@@ -2465,7 +2465,7 @@ version = "0.2.0"
 dependencies = [
  "core_affinity",
  "criterion",
- "rsx-dxs",
+ "rsx-cast",
  "rsx-log",
  "rsx-matching",
  "rsx-messages",

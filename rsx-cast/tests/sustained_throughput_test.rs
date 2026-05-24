@@ -11,9 +11,9 @@
 //! receiver saw fewer than 10% of datagrams the receive path is
 //! silently broken and the throughput number is meaningless.
 
-use rsx_dxs::cmp::CmpRecv;
-use rsx_dxs::cmp::CmpReceiver;
-use rsx_dxs::cmp::CmpSender;
+use rsx_cast::cmp::CmpRecv;
+use rsx_cast::cmp::CmpReceiver;
+use rsx_cast::cmp::CmpSender;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -69,7 +69,7 @@ fn cmp_send_50k_under_one_second() {
     // out-of-order tail doesn't stick the receiver. The
     // gap-recovery + FAULTED contract is exercised in
     // cmp_v4_test.rs.
-    let recv_cfg = rsx_dxs::config::CmpConfig {
+    let recv_cfg = rsx_cast::config::CmpConfig {
         max_nak_retries: u16::MAX,
         ..Default::default()
     };

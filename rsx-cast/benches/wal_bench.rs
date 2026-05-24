@@ -9,7 +9,7 @@ use core_affinity::CoreId;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_dxs::*;
+use rsx_cast::*;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;

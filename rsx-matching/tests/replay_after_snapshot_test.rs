@@ -9,7 +9,7 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
-use rsx_dxs::wal::WalWriter;
+use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal_integration::load_snapshot;
 use rsx_matching::wal_integration::load_wal_seq;
