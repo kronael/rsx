@@ -11,6 +11,7 @@
 //! receiver saw fewer than 10% of datagrams the receive path is
 //! silently broken and the throughput number is meaningless.
 
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_messages::FillRecord;
@@ -79,14 +80,20 @@ fn cmp_send_50k_under_one_second() {
         while !drain_flag
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            while receiver.try_recv().is_some() {
+            while matches!(
+                receiver.try_recv(),
+                CmpRecv::Data(_, _)
+            ) {
                 count += 1;
             }
             thread::sleep(Duration::from_micros(50));
         }
         // Final flush so we report what the receiver actually
         // saw, not just what was sent.
-        while receiver.try_recv().is_some() {
+        while matches!(
+            receiver.try_recv(),
+            CmpRecv::Data(_, _)
+        ) {
             count += 1;
         }
         count

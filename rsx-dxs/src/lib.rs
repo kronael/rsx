@@ -40,6 +40,7 @@ pub use wal::WalReader;
 pub use wal::WalWriter;
 pub use server::DxsReplayService;
 pub use client::DxsConsumer;
+pub use cmp::CmpRecv;
 pub use cmp::CmpReceiver;
 pub use cmp::CmpSender;
 pub use config::CmpConfig;

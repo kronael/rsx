@@ -1,5 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_messages::BboRecord;
@@ -444,9 +445,28 @@ fn main() {
             std::process::exit(0);
         }
         // Receive orders/cancels via CMP/UDP from Risk
-        if let Some((hdr, payload)) =
-            cmp_receiver.try_recv()
+        let recv = cmp_receiver.try_recv();
+        if let CmpRecv::Faulted {
+            last_delivered_seq,
+            gap_start,
+            gap_end_inclusive,
+        } = recv
         {
+            // Per CMP v4 contract: FAULTED means an
+            // unrecoverable gap inside the in-band recovery
+            // horizon. Matching must NOT silently advance
+            // past lost orders. Crash so the supervisor
+            // restarts us and we replay via WAL/DXS.
+            panic!(
+                "cmp faulted: last_delivered={} gap=[{}..={}] \
+                 — matching engine cannot proceed; restart \
+                 will recover via WAL replay",
+                last_delivered_seq,
+                gap_start,
+                gap_end_inclusive,
+            );
+        }
+        if let CmpRecv::Data(hdr, payload) = recv {
             if hdr.record_type == RECORD_ORDER_REQUEST
                 && payload.len()
                     >= std::mem::size_of::<

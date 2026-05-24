@@ -512,6 +512,31 @@ impl CmpSender {
     }
 }
 
+/// Receiver delivery outcome. Replaces the prior
+/// `Option<(WalHeader, Vec<u8>)>` return so that the
+/// receiver can explicitly surface unrecoverable gaps to
+/// its consumer instead of silently advancing past them.
+///
+/// `Faulted` is sticky: once returned, `try_recv` keeps
+/// returning `Empty` (or `Faulted` again on a fresh call)
+/// until `CmpReceiver::reset_after_replay` is called with
+/// the new live tip.
+#[derive(Debug)]
+pub enum CmpRecv {
+    /// No data ready right now (would-block or queue empty).
+    Empty,
+    /// Next in-order record with its parsed header.
+    Data(WalHeader, Vec<u8>),
+    /// Unrecoverable gap. Consumer must switch to DXS/TCP
+    /// replay from `last_delivered_seq + 1`, then call
+    /// `reset_after_replay(new_tip)` to resume.
+    Faulted {
+        last_delivered_seq: u64,
+        gap_start: u64,
+        gap_end_inclusive: u64,
+    },
+}
+
 pub struct CmpReceiver {
     socket: UdpSocket,
     sender_addr: SocketAddr,
@@ -521,6 +546,13 @@ pub struct CmpReceiver {
     last_drop_warn: Instant,
     expected_seq: u64,
     highest_seen: u64,
+    /// Sticky FAULTED state. Cleared by reset_after_replay.
+    faulted: bool,
+    /// FAULTED metadata. Set when entering FAULTED so the
+    /// consumer's replay request knows where to resume from.
+    fault_last_delivered_seq: u64,
+    fault_gap_start: u64,
+    fault_gap_end_inclusive: u64,
     /// Out-of-order packet buffer. Heap-allocates per inserted
     /// packet. Acceptable because: (1) bounded at
     /// `reorder_buf_limit` (default 512) — overflow drops the
@@ -567,6 +599,10 @@ impl CmpReceiver {
                 .unwrap_or_else(Instant::now),
             expected_seq: 0,
             highest_seen: 0,
+            faulted: false,
+            fault_last_delivered_seq: 0,
+            fault_gap_start: 0,
+            fault_gap_end_inclusive: 0,
             reorder_buf: BTreeMap::new(),
             reorder_buf_limit: config
                 .reorder_buf_limit,
@@ -577,6 +613,32 @@ impl CmpReceiver {
             window: config.default_window,
             buf: [0u8; PACKET_BUF_SIZE],
         })
+    }
+
+    /// Clear FAULTED state and resume normal in-order
+    /// delivery from `new_tip + 1`. Called by the consumer
+    /// after DXS/TCP replay has caught up the application
+    /// state to `new_tip`. Drops any stale reorder-buffered
+    /// packets whose seqs are <= new_tip.
+    pub fn reset_after_replay(&mut self, new_tip: u64) {
+        self.faulted = false;
+        self.fault_last_delivered_seq = 0;
+        self.fault_gap_start = 0;
+        self.fault_gap_end_inclusive = 0;
+        self.expected_seq = new_tip + 1;
+        if self.highest_seen < new_tip + 1 {
+            self.highest_seen = new_tip + 1;
+        }
+        self.reorder_buf.clear();
+        info!(
+            "cmp receiver reset_after_replay: \
+             expected_seq={}",
+            self.expected_seq,
+        );
+    }
+
+    pub fn is_faulted(&self) -> bool {
+        self.faulted
     }
 
     /// Receive the next in-order CMP packet, if any. Returns
@@ -590,9 +652,16 @@ impl CmpReceiver {
     /// since all current consumers (risk, marketdata) do
     /// further work proportional to the payload, the per-packet
     /// alloc is not on the measured GW→ME→GW critical path.
-    pub fn try_recv(
-        &mut self,
-    ) -> Option<(WalHeader, Vec<u8>)> {
+    pub fn try_recv(&mut self) -> CmpRecv {
+        if self.faulted {
+            return CmpRecv::Faulted {
+                last_delivered_seq: self
+                    .fault_last_delivered_seq,
+                gap_start: self.fault_gap_start,
+                gap_end_inclusive: self
+                    .fault_gap_end_inclusive,
+            };
+        }
         loop {
             match self.socket.recv_from(&mut self.buf) {
                 Ok((n, _)) => {
@@ -726,7 +795,7 @@ impl CmpReceiver {
                         let data =
                             payload.to_vec();
                         self.drain_reorder();
-                        return Some((hdr, data));
+                        return CmpRecv::Data(hdr, data);
                     } else if self.reorder_buf.len()
                         < self.reorder_buf_limit
                     {
@@ -751,10 +820,10 @@ impl CmpReceiver {
                         );
                         self.reorder_buf.clear();
                         self.expected_seq = seq + 1;
-                        return Some((
+                        return CmpRecv::Data(
                             hdr,
                             payload.to_vec(),
-                        ));
+                        );
                     }
                 }
                 Err(ref e)
@@ -766,7 +835,12 @@ impl CmpReceiver {
                 Err(_) => break,
             }
         }
-        self.try_drain_reorder()
+        match self.try_drain_reorder() {
+            Some((hdr, payload)) => {
+                CmpRecv::Data(hdr, payload)
+            }
+            None => CmpRecv::Empty,
+        }
     }
 
     fn drain_reorder(&mut self) {
