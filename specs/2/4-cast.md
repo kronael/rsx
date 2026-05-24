@@ -227,8 +227,8 @@ and `highest_seen`. A gap is detected two ways:
 
 `maybe_nak()` is the only NAK emitter. It sends a NAK for
 the **oldest contiguous missing run** starting at
-`expected_seq`, rate-limited by `nak_retry_us` (default
-100 µs). Every later gap is gated behind the oldest by the
+`expected_seq`, rate-limited by `nak_debounce_us` (default
+50 ms). Every later gap is gated behind the oldest by the
 FIFO contract, so re-NAKing later gaps before the head
 clears would be wasted work.
 
@@ -316,8 +316,8 @@ skip** path. Loss recovery happens in three tiers:
 
 1. **NAK (in-band).** Receiver detects the gap, fires NAK,
    sender retransmits from `send_ring` (hot) or WAL (cold).
-   Bounded by `nak_retry_us × max_nak_retries`
-   (100 µs × 8 = 800 µs default total recovery budget).
+   Bounded by `nak_debounce_us × max_nak_retries`
+   (50 ms × 8 = 400 ms default total recovery budget).
 
 2. **FAULTED.** If the gap persists past the in-band budget,
    OR an arriving out-of-order packet would collide with a
@@ -597,11 +597,15 @@ CastConfig (`rsx-cast/src/config.rs`):
 | Field                    | Default   | Meaning                                                   |
 |--------------------------|-----------|-----------------------------------------------------------|
 | `heartbeat_interval_ms`  | 100       | max idle before heartbeat; data sends reset the timer (heartbeats fire only on idle streams) |
-| `send_ring_limit`        | 4 096     | sender-side retransmit cache slots                        |
-| `sender_bind_addr`       | 0.0.0.0:0 | sender source addr for UDP socket                         |
-| `nak_retry_us`           | 100       | receiver NAK debounce interval (oldest gap)               |
+| `sender_bind_addr`       | None      | optional source addr for UDP socket (random ephemeral when unset) |
+| `nak_debounce_us`        | 50 000    | receiver per-gap NAK debounce interval (oldest gap)       |
 | `max_nak_retries`        | 8         | retries on oldest gap before FAULTED                      |
 | `retx_dedup_window_us`   | 1 000     | sender per-seq retransmit dedup window                    |
+
+`SEND_RING_CAPACITY` (4 096 slots) and `REORDER_CAPACITY`
+(2 048 slots) are compile-time constants in
+`rsx-cast/src/cast.rs`, not config fields — sizing is part
+of the protocol contract, not runtime tuning.
 
 `default_window` and `status_interval_ms` were removed when
 StatusMessage / flow-control was dropped (commit `87b223e`).
