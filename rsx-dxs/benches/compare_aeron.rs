@@ -35,11 +35,14 @@
 //!
 //! Caveats
 //! -------
-//! - The PONG thread + media driver agent(s) all busy-spin. Without core
-//!   pinning, oversubscription on a small box (<8 cores) inflates the UDP
-//!   RTT by an order of magnitude vs. published numbers. Pin to dedicated
-//!   cores or run on ≥8 vCPUs for results comparable to Real Logic's AWS
-//!   benchmark (~21 µs P50 on c6in.16xlarge). See compare/aeron.md.
+//! - The PING thread (Criterion timer) is pinned to core 2 and the PONG
+//!   echo thread to core 3. Media-driver agents are NOT pinned — Aeron
+//!   spawns its conductor + sender + receiver agents internally and we
+//!   don't have hooks to pin them. On a 6-core slice the agents float
+//!   on cores 0/1/4/5; PING and PONG are isolated from them. Without
+//!   pinning, oversubscription on a small box (<8 cores) inflates the
+//!   UDP RTT by an order of magnitude vs. published numbers (~21 µs P50
+//!   on c6in.16xlarge per Real Logic). See compare/aeron.md.
 //! - Aeron's media driver runs as a background agent thread inside this
 //!   process (`AeronDriver::launch_embedded`). Production deployments use
 //!   a separate driver process; the IPC hop between application and driver
@@ -55,6 +58,7 @@
 //!
 //! See compare/aeron.md for full protocol analysis and published numbers.
 
+use core_affinity::CoreId;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
@@ -81,6 +85,16 @@ use std::time::Instant;
 const PING_STREAM_ID: i32 = 1002;
 const PONG_STREAM_ID: i32 = 1003;
 const FRAGMENT_LIMIT: usize = 10;
+
+/// Cores 2 (PING/timer) + 3 (PONG/echo). Aeron's internal agents
+/// (conductor / sender / receiver) are NOT pinned by this — they
+/// run wherever the C-side `idle_strategy` thread spawning lands.
+fn pick_cores() -> (CoreId, CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let p = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    let e = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
+    (p, e)
+}
 /// 64-byte payload matches `cmp_rtt_bench` (one cache line, CMP exchange-
 /// frame size). First 8 bytes carry the timestamp; the rest is zeroed.
 const PAYLOAD_LEN: usize = 64;
@@ -165,7 +179,7 @@ impl Drop for AeronRig {
     }
 }
 
-fn setup(ping_channel: &str, pong_channel: &str) -> AeronRig {
+fn setup(ping_channel: &str, pong_channel: &str, pong_core: CoreId) -> AeronRig {
     // Unique driver directory per bench so concurrent runs (and CI) don't
     // collide on /dev/shm/aeron-$USER.
     let ctx = AeronDriverContext::new().expect("driver context");
@@ -212,6 +226,7 @@ fn setup(ping_channel: &str, pong_channel: &str) -> AeronRig {
     let pong_handle = thread::Builder::new()
         .name("aeron-pong".into())
         .spawn(move || {
+            core_affinity::set_for_current(pong_core);
             let ctx = AeronContext::new().expect("pong context");
             ctx.set_dir(&pong_dir.into_c_string()).expect("pong set_dir");
             ctx.set_idle_sleep_duration_ns(0).expect("pong zero idle");
@@ -302,10 +317,15 @@ fn record_rtt(
 // ── UDP loopback bench ──────────────────────────────────────────────────────
 
 fn bench_aeron_udp(c: &mut Criterion) {
+    let (ping_core, pong_core) = pick_cores();
     let rig = setup(
         "aeron:udp?endpoint=127.0.0.1:40123",
         "aeron:udp?endpoint=127.0.0.1:40124",
+        pong_core,
     );
+
+    // Pin the PING thread (Criterion's timer thread).
+    core_affinity::set_for_current(ping_core);
 
     let mut buffer = vec![0u8; PAYLOAD_LEN];
     let mut handler = Handler::leak(PingHandler { last_rtt_ns: 0 });
@@ -341,10 +361,12 @@ fn bench_aeron_udp(c: &mut Criterion) {
 // standalone (delete `bench_aeron_udp` from `targets`).
 #[allow(dead_code)]
 fn bench_aeron_ipc(c: &mut Criterion) {
+    let (ping_core, pong_core) = pick_cores();
     // aeron:ipc bypasses the UDP socket — pure shared-memory broadcast.
     // Useful baseline: isolates Aeron's protocol overhead from the UDP
     // sendto/recvfrom cost.
-    let rig = setup("aeron:ipc", "aeron:ipc");
+    let rig = setup("aeron:ipc", "aeron:ipc", pong_core);
+    core_affinity::set_for_current(ping_core);
 
     let mut buffer = vec![0u8; PAYLOAD_LEN];
     let mut handler = Handler::leak(PingHandler { last_rtt_ns: 0 });

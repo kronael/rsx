@@ -1,8 +1,11 @@
 //! WAL micro-ops: in-memory append (the 31 ns figure), 64 KB flush+fsync, 10 K sequential read, 100 K replay.
 //!
+//! Worker thread pinned to core 2 for measurement stability.
+//!
 //! See `docs/benches.md` for the full bench index +
 //! production-leg attribution.
 
+use core_affinity::CoreId;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
@@ -11,6 +14,12 @@ use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
 use tempfile::TempDir;
+
+fn pin_worker() {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let core = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    core_affinity::set_for_current(core);
+}
 
 fn fill_record() -> FillRecord {
     FillRecord {
@@ -36,6 +45,7 @@ taker_ts_ns: 0,
 }
 
 fn bench_wal_append_in_memory(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,
@@ -55,6 +65,7 @@ fn bench_wal_append_in_memory(c: &mut Criterion) {
 }
 
 fn bench_wal_flush_fsync(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,
@@ -78,6 +89,7 @@ fn bench_wal_flush_fsync(c: &mut Criterion) {
 }
 
 fn bench_wal_read_sequential(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,
@@ -113,6 +125,7 @@ fn bench_wal_read_sequential(c: &mut Criterion) {
 }
 
 fn bench_replay_100k_records(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,

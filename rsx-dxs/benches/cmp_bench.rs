@@ -1,8 +1,11 @@
 //! CMP protocol-record encode/decode (NAK, Heartbeat). Wire-level primitives; not on the per-packet send path.
 //!
+//! Worker thread pinned to core 2 for measurement stability.
+//!
 //! See `docs/benches.md` for the full bench index +
 //! production-leg attribution.
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -17,6 +20,12 @@ use rsx_dxs::RECORD_HEARTBEAT;
 use rsx_dxs::RECORD_NAK;
 use rsx_dxs::RECORD_STATUS_MESSAGE;
 use std::collections::BTreeMap;
+
+fn pin_worker() {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let core = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    core_affinity::set_for_current(core);
+}
 
 fn make_status_message() -> StatusMessage {
     StatusMessage {
@@ -43,6 +52,7 @@ fn make_heartbeat() -> CmpHeartbeat {
 
 /// Target: <50ns
 fn bench_status_message_encode(c: &mut Criterion) {
+    pin_worker();
     let msg = make_status_message();
     c.bench_function(
         "status_message_encode",
@@ -62,6 +72,7 @@ fn bench_status_message_encode(c: &mut Criterion) {
 
 /// Target: <50ns
 fn bench_status_message_decode(c: &mut Criterion) {
+    pin_worker();
     let msg = make_status_message();
     let bytes = as_bytes(&msg);
     let encoded = encode_record(
@@ -88,6 +99,7 @@ fn bench_status_message_decode(c: &mut Criterion) {
 
 /// Target: <50ns
 fn bench_nak_encode(c: &mut Criterion) {
+    pin_worker();
     let nak = make_nak();
     c.bench_function("nak_encode", |b| {
         b.iter(|| {
@@ -104,6 +116,7 @@ fn bench_nak_encode(c: &mut Criterion) {
 
 /// Target: <50ns
 fn bench_nak_decode(c: &mut Criterion) {
+    pin_worker();
     let nak = make_nak();
     let bytes = as_bytes(&nak);
     let encoded =
@@ -124,6 +137,7 @@ fn bench_nak_decode(c: &mut Criterion) {
 
 /// Target: <50ns
 fn bench_heartbeat_encode(c: &mut Criterion) {
+    pin_worker();
     let hb = make_heartbeat();
     c.bench_function("heartbeat_encode", |b| {
         b.iter(|| {
@@ -140,6 +154,7 @@ fn bench_heartbeat_encode(c: &mut Criterion) {
 
 /// Target: <50ns
 fn bench_heartbeat_decode(c: &mut Criterion) {
+    pin_worker();
     let hb = make_heartbeat();
     let bytes = as_bytes(&hb);
     let encoded =
@@ -165,6 +180,7 @@ fn bench_heartbeat_decode(c: &mut Criterion) {
 fn bench_reorder_buf_insert_lookup(
     c: &mut Criterion,
 ) {
+    pin_worker();
     c.bench_function(
         "reorder_buf_insert_lookup",
         |b| {

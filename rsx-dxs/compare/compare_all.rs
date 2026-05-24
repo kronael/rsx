@@ -3,6 +3,11 @@
 //! All protocols implement `EchoClient`: one method, `ping()`.
 //! The benchmark harness is identical for all of them:
 //!
+//! Client (Criterion timer) thread pinned to core 2. Server echo
+//! threads (where applicable: raw UDP, KCP) pinned to core 3.
+//! Quinn + TCP run on single-threaded current_thread Tokio runtimes,
+//! so server tasks share the client's core (no extra OS thread).
+//!
 //!   fn run_bench(c, name, client) {
 //!       b.iter(|| client.ping(&payload, &mut buf));
 //!   }
@@ -20,10 +25,18 @@
 //!
 //!   cargo bench -p rsx-dxs --bench compare_all
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
+
+fn pick_cores() -> (CoreId, CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let c = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    let s = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
+    (c, s)
+}
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -61,6 +74,7 @@ struct RawUdpClient {
 
 impl RawUdpClient {
     fn new() -> Self {
+        let (_, srv_core) = pick_cores();
         let srv = UdpSocket::bind("127.0.0.1:0").unwrap();
         srv.set_nonblocking(true).unwrap();
         let srv_addr = srv.local_addr().unwrap();
@@ -72,6 +86,7 @@ impl RawUdpClient {
         let stop2 = Arc::clone(&stop);
 
         thread::spawn(move || {
+            core_affinity::set_for_current(srv_core);
             let mut buf = [0u8; 256];
             while !stop2.load(Ordering::Relaxed) {
                 match srv.recv_from(&mut buf) {
@@ -140,6 +155,7 @@ struct KcpSpinClient {
 
 impl KcpSpinClient {
     fn new() -> Self {
+        let (_, srv_core) = pick_cores();
         let srv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
         srv_sock.set_nonblocking(true).unwrap();
         let srv_addr = srv_sock.local_addr().unwrap();
@@ -157,6 +173,7 @@ impl KcpSpinClient {
 
         let srv_sock2 = srv_sock.try_clone().unwrap();
         thread::spawn(move || {
+            core_affinity::set_for_current(srv_core);
             let mut kcp = make_kcp(1, srv_out2);
             let mut buf = [0u8; 2048];
             let mut msg = [0u8; 2048];
@@ -381,6 +398,8 @@ impl EchoClient for TcpNodelay {
 // ── Harness ───────────────────────────────────────────────────────────────────
 
 fn bench_all(c: &mut Criterion) {
+    let (cli_core, _) = pick_cores();
+    core_affinity::set_for_current(cli_core);
     run_bench(c, "raw_udp_64b",            &mut RawUdpClient::new());
     run_bench(c, "kcp_spin_flush_64b",     &mut KcpSpinClient::new());
     run_bench(c, "quinn_persistent_64b",   &mut QuinnPersistentClient::new());
