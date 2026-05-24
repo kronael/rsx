@@ -6,19 +6,10 @@ use crate::records::CaughtUpRecord;
 use crate::records::ReplayRequest;
 use crate::records::RECORD_CAUGHT_UP;
 use crate::records::RECORD_REPLAY_REQUEST;
+use crate::tls::build_acceptor;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
-use rustls::pki_types::CertificateDer;
-use rustls::pki_types::PrivateKeyDer;
-use rustls::ServerConfig;
-fn time_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
-}
 use std::collections::HashMap;
-use std::fs;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -32,6 +23,13 @@ use tokio_rustls::TlsAcceptor;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+
+fn time_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
 
 #[derive(Clone)]
 pub struct DxsReplayService {
@@ -50,7 +48,7 @@ impl DxsReplayService {
         let tls_acceptor = if let Some(cfg) = tls_config {
             if cfg.enabled {
                 cfg.validate_server()?;
-                Some(build_tls_acceptor(&cfg)?)
+                Some(build_acceptor(&cfg)?)
             } else {
                 None
             }
@@ -289,74 +287,3 @@ where
     }
 }
 
-fn build_tls_acceptor(
-    cfg: &TlsConfig,
-) -> io::Result<TlsAcceptor> {
-    let cert_path =
-        cfg.cert_path.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "cert_path required",
-            )
-        })?;
-    let key_path =
-        cfg.key_path.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "key_path required",
-            )
-        })?;
-
-    let cert_pem = fs::read(cert_path)?;
-    let key_pem = fs::read(key_path)?;
-
-    let certs = load_certs(&cert_pem)?;
-    let key = load_private_key(&key_pem)?;
-
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("tls config error: {}", e),
-            )
-        })?;
-
-    Ok(TlsAcceptor::from(Arc::new(config)))
-}
-
-fn load_certs(
-    pem: &[u8],
-) -> io::Result<Vec<CertificateDer<'static>>> {
-    let mut cursor = io::Cursor::new(pem);
-    rustls_pemfile::certs(&mut cursor)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("bad cert pem: {}", e),
-            )
-        })
-}
-
-fn load_private_key(
-    pem: &[u8],
-) -> io::Result<PrivateKeyDer<'static>> {
-    let mut cursor = io::Cursor::new(pem);
-    let keys =
-        rustls_pemfile::private_key(&mut cursor)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("bad key pem: {}", e),
-                )
-            })?;
-
-    keys.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "no private key found",
-        )
-    })
-}

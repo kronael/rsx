@@ -3,18 +3,16 @@ use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::ReplayRequest;
 use crate::records::RECORD_REPLAY_REQUEST;
+use crate::tls::build_connector;
+use crate::tls::extract_server_name;
 use crate::wal::RawWalRecord;
 use crate::wal::extract_seq;
-use rustls::pki_types::CertificateDer;
 use rustls::pki_types::ServerName;
-use rustls::ClientConfig;
-use rustls::RootCertStore;
 use std::fs;
 use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -53,7 +51,7 @@ impl DxsConsumer {
         let (tls_connector, server_name) = if let Some(cfg) = tls_config {
             if cfg.enabled {
                 cfg.validate_client()?;
-                let connector = build_tls_connector(&cfg)?;
+                let connector = build_connector(&cfg)?;
                 let name = extract_server_name(&producer_addr)?;
                 (Some(connector), Some(name))
             } else {
@@ -462,71 +460,3 @@ fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
     Ok(())
 }
 
-fn build_tls_connector(
-    cfg: &TlsConfig,
-) -> io::Result<TlsConnector> {
-    let mut root_store = RootCertStore::empty();
-
-    if let Some(ca_path) = &cfg.cert_path {
-        let ca_pem = fs::read(ca_path)?;
-        let certs = load_certs(&ca_pem)?;
-        for cert in certs {
-            root_store.add(cert).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("failed to add cert: {}", e),
-                )
-            })?;
-        }
-    } else {
-        // TODO(TODO.md 10-DEPLOY): add webpki_roots fallback for public TLS
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "TLS requires cert_path in config",
-        ));
-    }
-
-    let config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-
-    Ok(TlsConnector::from(Arc::new(config)))
-}
-
-fn load_certs(
-    pem: &[u8],
-) -> io::Result<Vec<CertificateDer<'static>>> {
-    let mut cursor = io::Cursor::new(pem);
-    rustls_pemfile::certs(&mut cursor)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("bad cert pem: {}", e),
-            )
-        })
-}
-
-fn extract_server_name(
-    addr: &str,
-) -> io::Result<ServerName<'static>> {
-    let host = addr
-        .split(':')
-        .next()
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid address format",
-            )
-        })?
-        .to_string();
-
-    ServerName::try_from(host)
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("invalid server name: {}", e),
-            )
-        })
-        .map(|name| name.to_owned())
-}
