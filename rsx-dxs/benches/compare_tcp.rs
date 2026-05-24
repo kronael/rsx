@@ -6,8 +6,9 @@
 //! persistent connection, `TCP_NODELAY` on both ends. Both
 //! sockets non-blocking, both threads busy-spinning on
 //! `read` / `write` — matches the style of `udp_rtt_bench.rs`
-//! and the spin variant of `compare_kcp.rs`. 64-byte payload
-//! (one cache line).
+//! and the spin variant of `compare_kcp.rs`. **Pinger pinned to
+//! core 2, echoer to core 3** so the spinning threads never
+//! migrate or share a core. 64-byte payload (one cache line).
 //!
 //! The 3-way handshake runs once in setup. The timed loop
 //! reuses the same connection for every iteration — same
@@ -39,6 +40,7 @@
 //!   (see `compare_quinn.rs::tcp_rtt_nodelay`) is ~10–100×
 //!   slower because of the tokio reactor.
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -91,7 +93,16 @@ fn write_all_spin(sock: &mut TcpStream, buf: &[u8]) -> bool {
     true
 }
 
+fn pick_cores() -> (CoreId, CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let p = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    let e = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
+    (p, e)
+}
+
 fn bench_tcp_rtt_loopback(c: &mut Criterion) {
+    let (pinger_core, echoer_core) = pick_cores();
+
     // Establish the listener + connection once. The 3-way
     // handshake cost is OUT of the timed loop.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -103,6 +114,7 @@ fn bench_tcp_rtt_loopback(c: &mut Criterion) {
     let stop_clone = Arc::clone(&stop);
 
     let handle = thread::spawn(move || {
+        core_affinity::set_for_current(echoer_core);
         let (mut sock, _) = listener.accept().unwrap();
         sock.set_nodelay(true).unwrap();
         sock.set_nonblocking(true).unwrap();
@@ -121,6 +133,9 @@ fn bench_tcp_rtt_loopback(c: &mut Criterion) {
     let mut pinger = TcpStream::connect(listener_addr).unwrap();
     pinger.set_nodelay(true).unwrap();
     pinger.set_nonblocking(true).unwrap();
+
+    // Pinger runs the Criterion timer closure on this thread.
+    core_affinity::set_for_current(pinger_core);
 
     let payload = [0xAAu8; PAYLOAD];
     let mut recv_buf = [0u8; PAYLOAD];

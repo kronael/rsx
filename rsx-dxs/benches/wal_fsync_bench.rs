@@ -1,5 +1,8 @@
 //! WAL flush+fsync cost per single record.
 //!
+//! Worker thread pinned to core 2 so the fsync work doesn't bounce
+//! between cores mid-sample.
+//!
 //! What this measures
 //! -----------------
 //! `WalWriter::append(&mut record)` followed by an explicit
@@ -28,6 +31,7 @@
 //! - We do NOT exercise rotation; max_file_size is set high
 //!   so the bench stays in a single file.
 
+use core_affinity::CoreId;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
@@ -36,6 +40,12 @@ use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
 use tempfile::TempDir;
+
+fn pin_worker() {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let core = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    core_affinity::set_for_current(core);
+}
 
 fn fill_record() -> FillRecord {
     FillRecord {
@@ -61,6 +71,7 @@ fn fill_record() -> FillRecord {
 }
 
 fn bench_wal_append_fsync_single(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,
@@ -81,6 +92,7 @@ fn bench_wal_append_fsync_single(c: &mut Criterion) {
 }
 
 fn bench_wal_append_fsync_batch_100(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,

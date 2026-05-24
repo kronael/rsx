@@ -22,6 +22,13 @@
 //! `tcp_rtt_nodelay_128b` — Tokio TCP with `set_nodelay(true)`,
 //!   persistent connection, same 128 B `read_exact` framing.
 //!
+//! Client (Criterion timer) pinned to core 2. The single-threaded
+//! Tokio runtime + server tasks run on the same thread (current_thread
+//! runtime, no work-stealing), so they share core 2 with the client.
+//! For QUIC/TCP this is fine because the timed iteration consists of
+//! `rt.block_on(...)` which drives both sides before returning. We do
+//! NOT pin to a second core — there is no second OS thread to pin.
+//!
 //! What is NOT measured
 //! --------------------
 //! - TLS handshake (excluded by design; happens once in
@@ -52,6 +59,7 @@
 //!   sudo tc qdisc del dev lo root
 //! The bench itself does not require root or tc.
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -73,6 +81,14 @@ use tokio::runtime::Builder;
 // Match FillRecord (128 B, rsx-messages/src/lib.rs:78) so the
 // QUIC/TCP numbers are size-comparable to cmp_rtt_bench.rs.
 const PAYLOAD_LEN: usize = 128;
+
+/// Pin this thread (the only OS thread used by these single-threaded
+/// runtime benches) to core 2 so it doesn't migrate.
+fn pin_self() {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let core = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    core_affinity::set_for_current(core);
+}
 
 fn make_connected_pair(
     rt: &tokio::runtime::Runtime,
@@ -125,6 +141,7 @@ fn make_connected_pair(
 // ── QUIC: new stream per iteration ───────────────────────────────────────────
 
 fn bench_quinn_new_stream(c: &mut Criterion) {
+    pin_self();
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let rt = Builder::new_current_thread().enable_all().build()
         .expect("tokio runtime");
@@ -193,6 +210,7 @@ async fn write_payload(send: &mut SendStream, data: &[u8]) {
 }
 
 fn bench_quinn_persistent(c: &mut Criterion) {
+    pin_self();
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let rt = Builder::new_current_thread().enable_all().build()
         .expect("tokio runtime");
@@ -248,6 +266,7 @@ fn bench_quinn_persistent(c: &mut Criterion) {
 // ── TCP nodelay baseline ─────────────────────────────────────────────────────
 
 fn bench_tcp_rtt(c: &mut Criterion) {
+    pin_self();
     let rt = Builder::new_current_thread().enable_all().build()
         .expect("tokio runtime");
 

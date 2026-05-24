@@ -1,5 +1,7 @@
 //! WAL random-access read (NAK cold-tier fallback path).
 //!
+//! Worker thread pinned to core 2 for measurement stability.
+//!
 //! What this measures
 //! -----------------
 //! `wal::read_record_at_seq(stream_id, target_seq, wal_dir, None)`
@@ -30,6 +32,7 @@
 //! - The scan reads from byte 0 every call (no resume cursor).
 //!   Mean seek depth = N/2.
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -40,6 +43,12 @@ use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
 use tempfile::TempDir;
+
+fn pin_worker() {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let core = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    core_affinity::set_for_current(core);
+}
 
 fn fill_record() -> FillRecord {
     FillRecord {
@@ -79,6 +88,7 @@ impl XorShift64 {
 }
 
 fn bench_wal_random_read_10k(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,
@@ -112,6 +122,7 @@ fn bench_wal_random_read_10k(c: &mut Criterion) {
 }
 
 fn bench_wal_random_read_100k(c: &mut Criterion) {
+    pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
         1,
