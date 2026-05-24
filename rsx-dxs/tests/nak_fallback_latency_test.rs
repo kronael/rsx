@@ -8,6 +8,7 @@
 //! Completes in ~70ms on a typical dev box; runs as a normal
 //! test under `make test`.
 
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::encode_utils::compute_crc32;
@@ -101,11 +102,17 @@ fn nak_wal_fallback_under_5ms() {
         let mut rec = fill(0);
         sender.send(&mut rec).unwrap();
         // Drain occasionally to avoid OS UDP buffer overruns.
-        while receiver.try_recv().is_some() {}
+        while matches!(
+            receiver.try_recv(),
+            CmpRecv::Data(_, _)
+        ) {}
     }
     // Final drain.
     thread::sleep(Duration::from_millis(20));
-    while receiver.try_recv().is_some() {}
+    while matches!(
+        receiver.try_recv(),
+        CmpRecv::Data(_, _)
+    ) {}
 
     // Issue a NAK from a third-party socket for seq=1 — the
     // ring's slot for seq=1 has been overwritten by seq=4097
@@ -139,7 +146,9 @@ fn nak_wal_fallback_under_5ms() {
     let mut got_seq: Option<u64> = None;
     let deadline = t0 + Duration::from_secs(2);
     while Instant::now() < deadline {
-        if let Some((rhdr, rpayload)) = receiver.try_recv() {
+        if let CmpRecv::Data(rhdr, rpayload) =
+            receiver.try_recv()
+        {
             if rhdr.record_type == RECORD_FILL
                 && rpayload.len()
                     >= std::mem::size_of::<FillRecord>()
