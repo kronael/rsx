@@ -1,9 +1,9 @@
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::protocol::ReplayRequest;
-use crate::protocol::RECORD_REPLAY_NOT_AVAILABLE;
-use crate::protocol::RECORD_REPLAY_REQUEST;
+use crate::protocol::ReplicationRequest;
+use crate::protocol::RECORD_REPLICATION_NOT_AVAILABLE;
+use crate::protocol::RECORD_REPLICATION_REQUEST;
 use crate::tls::build_connector;
 use crate::tls::extract_server_name;
 use crate::wal::RawWalRecord;
@@ -24,7 +24,7 @@ use tokio_rustls::TlsConnector;
 use tracing::info;
 use tracing::warn;
 
-pub struct DxsConsumer {
+pub struct ReplicationConsumer {
     pub stream_id: u32,
     /// Replay endpoints, tried in order on each connect
     /// attempt. The first endpoint that can serve the
@@ -39,10 +39,10 @@ pub struct DxsConsumer {
     tls_connector: Option<TlsConnector>,
 }
 
-impl DxsConsumer {
+impl ReplicationConsumer {
     /// Create a consumer that tries `endpoints` in order on
     /// each connect attempt. The first endpoint that can
-    /// serve the current tip wins; on a `ReplayNotAvailable`
+    /// serve the current tip wins; on a `ReplicationNotAvailable`
     /// reply the consumer closes that connection and tries
     /// the next endpoint with the same from_seq.
     pub fn new(
@@ -54,7 +54,7 @@ impl DxsConsumer {
         if endpoints.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "DxsConsumer requires at least one endpoint",
+                "ReplicationConsumer requires at least one endpoint",
             ));
         }
         let tip = load_tip(&tip_file).unwrap_or(0);
@@ -65,7 +65,7 @@ impl DxsConsumer {
 
         let tls_connector = if let Some(cfg) = tls_config {
             if cfg.enabled {
-                cfg.validate_client()?;
+                cfg.validate(false)?;
                 Some(build_connector(&cfg)?)
             } else {
                 None
@@ -223,7 +223,7 @@ impl DxsConsumer {
                 self.handle_stream(tcp_stream, callback).await
             };
             match result {
-                // ReplayNotAvailable: try next endpoint
+                // ReplicationNotAvailable: try next endpoint
                 Err(ref e)
                     if e.kind()
                         == io::ErrorKind::NotFound =>
@@ -259,24 +259,24 @@ impl DxsConsumer {
         S: AsyncReadExt + AsyncWriteExt + Unpin,
         F: FnMut(RawWalRecord) -> bool,
     {
-        let req = ReplayRequest {
+        let req = ReplicationRequest {
             stream_id: self.stream_id,
             _pad0: 0,
             from_seq: self.tip + 1,
             _pad1: [0u8; 48],
         };
         let req_size =
-            std::mem::size_of::<ReplayRequest>();
+            std::mem::size_of::<ReplicationRequest>();
         let payload = unsafe {
             std::slice::from_raw_parts(
-                &req as *const ReplayRequest
+                &req as *const ReplicationRequest
                     as *const u8,
                 req_size,
             )
         };
         let crc = compute_crc32(payload);
         let hdr = WalHeader::new(
-            RECORD_REPLAY_REQUEST,
+            RECORD_REPLICATION_REQUEST,
             payload.len() as u16,
             crc,
         );
@@ -314,7 +314,7 @@ impl DxsConsumer {
                 ));
             }
 
-            if header.record_type == RECORD_REPLAY_NOT_AVAILABLE {
+            if header.record_type == RECORD_REPLICATION_NOT_AVAILABLE {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!(

@@ -4,8 +4,8 @@ use rsx_cast::config::TlsConfig;
 use rsx_messages::FillRecord;
 use rsx_cast::protocol::RECORD_CAUGHT_UP;
 use rsx_messages::RECORD_FILL;
-use rsx_cast::DxsConsumer;
-use rsx_cast::DxsReplayService;
+use rsx_cast::ReplicationConsumer;
+use rsx_cast::ReplicationService;
 use rsx_cast::WalWriter;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ async fn tls_client_server_connection() {
         key_path: None,
     };
 
-    let service = DxsReplayService::new(
+    let service = ReplicationService::new(
         wal_dir.clone(),
         Some(server_tls_config),
     )
@@ -110,7 +110,7 @@ taker_ts_ns: 0,
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("localhost:{}", service_addr.port());
-    let mut consumer = DxsConsumer::from_single(
+    let mut consumer = ReplicationConsumer::from_single(
         stream_id,
         consumer_addr,
         tip_file,
@@ -170,7 +170,7 @@ async fn tls_disabled_falls_back_to_plain() {
     std::fs::create_dir(&wal_dir).unwrap();
 
     let service =
-        DxsReplayService::new(wal_dir.clone(), None)
+        ReplicationService::new(wal_dir.clone(), None)
             .unwrap();
 
     // Use fixed test port to avoid bind-drop-rebind race
@@ -222,7 +222,7 @@ taker_ts_ns: 0,
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("127.0.0.1:{}", service_addr.port());
-    let mut consumer = DxsConsumer::from_single(
+    let mut consumer = ReplicationConsumer::from_single(
         stream_id,
         consumer_addr,
         tip_file,
@@ -276,7 +276,7 @@ fn tls_config_validation_requires_cert_and_key() {
         key_path: None,
     };
 
-    let result = config.validate_server();
+    let result = config.validate(true);
     assert!(result.is_err());
 }
 
@@ -288,6 +288,6 @@ fn tls_config_disabled_skips_validation() {
         key_path: None,
     };
 
-    let result = config.validate_server();
+    let result = config.validate(true);
     assert!(result.is_ok());
 }

@@ -3,11 +3,11 @@ use crate::encode_utils::compute_crc32;
 use crate::encode_utils::encode_record;
 use crate::header::WalHeader;
 use crate::protocol::CaughtUpRecord;
-use crate::protocol::ReplayNotAvailable;
-use crate::protocol::ReplayRequest;
+use crate::protocol::ReplicationNotAvailable;
+use crate::protocol::ReplicationRequest;
 use crate::protocol::RECORD_CAUGHT_UP;
-use crate::protocol::RECORD_REPLAY_NOT_AVAILABLE;
-use crate::protocol::RECORD_REPLAY_REQUEST;
+use crate::protocol::RECORD_REPLICATION_NOT_AVAILABLE;
+use crate::protocol::RECORD_REPLICATION_REQUEST;
 use crate::tls::build_acceptor;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
@@ -35,7 +35,7 @@ fn time_ns() -> u64 {
 }
 
 #[derive(Clone)]
-pub struct DxsReplayService {
+pub struct ReplicationService {
     pub wal_dir: PathBuf,
     pub listeners: Arc<
         RwLock<HashMap<u32, Vec<Arc<Notify>>>>,
@@ -43,14 +43,14 @@ pub struct DxsReplayService {
     pub tls_acceptor: Option<TlsAcceptor>,
 }
 
-impl DxsReplayService {
+impl ReplicationService {
     pub fn new(
         wal_dir: PathBuf,
         tls_config: Option<TlsConfig>,
     ) -> io::Result<Self> {
         let tls_acceptor = if let Some(cfg) = tls_config {
             if cfg.enabled {
-                cfg.validate_server()?;
+                cfg.validate(true)?;
                 Some(build_acceptor(&cfg)?)
             } else {
                 None
@@ -123,13 +123,13 @@ impl DxsReplayService {
 }
 
 async fn handle_client<S>(
-    svc: Arc<DxsReplayService>,
+    svc: Arc<ReplicationService>,
     mut stream: S,
 ) -> io::Result<()>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
-    // Read ReplayRequest: WalHeader(16) + payload(64)
+    // Read ReplicationRequest: WalHeader(16) + payload(64)
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     stream.read_exact(&mut hdr_buf).await?;
     let hdr = WalHeader::from_bytes(&hdr_buf)
@@ -148,7 +148,7 @@ where
             ),
         ));
     }
-    if hdr.record_type != RECORD_REPLAY_REQUEST {
+    if hdr.record_type != RECORD_REPLICATION_REQUEST {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "expected replay request",
@@ -168,7 +168,7 @@ where
         ));
     }
     if payload_buf.len()
-        < std::mem::size_of::<ReplayRequest>()
+        < std::mem::size_of::<ReplicationRequest>()
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -178,7 +178,7 @@ where
     let req = unsafe {
         std::ptr::read_unaligned(
             payload_buf.as_ptr()
-                as *const ReplayRequest,
+                as *const ReplicationRequest,
         )
     };
     let stream_id = req.stream_id;
@@ -211,7 +211,7 @@ where
              my_oldest={} my_highest={}",
             stream_id, from_seq, my_oldest, my_highest
         );
-        let na = ReplayNotAvailable {
+        let na = ReplicationNotAvailable {
             requested_from_seq: from_seq,
             my_oldest_seq: my_oldest,
             my_highest_seq: my_highest,
@@ -220,13 +220,13 @@ where
         };
         let payload = unsafe {
             std::slice::from_raw_parts(
-                &na as *const ReplayNotAvailable
+                &na as *const ReplicationNotAvailable
                     as *const u8,
-                std::mem::size_of::<ReplayNotAvailable>(),
+                std::mem::size_of::<ReplicationNotAvailable>(),
             )
         };
         let encoded = encode_record(
-            RECORD_REPLAY_NOT_AVAILABLE,
+            RECORD_REPLICATION_NOT_AVAILABLE,
             payload,
         );
         stream.write_all(&encoded).await?;
