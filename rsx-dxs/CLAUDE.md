@@ -140,6 +140,39 @@ when ready; do not regress the README's overall depth.
 - **README:85-104** Install section: clarify "internal crate, not on
   crates.io, pin commit when used as a git dep."
 
+## Standalone — no parent-relative paths
+
+`rsx-dxs` is positioned as the open-source extractable artifact.
+The crate's docs MUST stand alone — assume the reader has only this
+crate, not the parent `rsx` workspace.
+
+- **NO `../foo` paths in `README.md`, `ARCHITECTURE.md`, or this
+  `CLAUDE.md`.** A reader who clones the eventual standalone repo
+  must not see broken links.
+- **NO references to sibling crates** (`rsx-messages`, `rsx-types`,
+  `rsx-matching`, etc.) except as context: "part of the wider rsx
+  exchange project" is fine; pointing at their source isn't.
+- **Specs (`specs/2/4-cmp.md`, `48-wal.md`, `10-dxs.md`, etc.)**:
+  copy locally into `rsx-dxs/specs/` if the README references them,
+  OR drop the reference and inline the substance. Authoritative
+  copy still lives in the parent repo's `specs/2/` for the
+  exchange-wide story; the crate-local copy is for the standalone
+  view. Sync drift is acceptable if either copy is dated.
+- **Project-level docs (`docs/benches.md`, `facts/syscall-latency.md`)**:
+  if the README needs them, either copy into the crate (e.g. as
+  `rsx-dxs/BENCHES.md` or `rsx-dxs/facts/`) or inline the key
+  numbers and drop the link. Don't `../`-link out.
+- **Cross-project references are fine as full GitHub URLs**:
+  e.g. `https://github.com/kronael/rsx/...` is OK; `../specs/...`
+  is not.
+- **The README's "See also" can list parent-repo files by name and
+  describe them**: "the rsx exchange's matching engine consumes
+  these records (separate concern; not bundled here)" — but no
+  `../`-style link.
+
+When you find a `../` link in any crate-local doc, replace or
+remove it as part of the same change set.
+
 ## Numbers source-of-truth
 
 When a README number disagrees with measurement, the chain is:
