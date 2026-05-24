@@ -105,7 +105,7 @@ fn mark_cmp_updates_risk_mark_prices() {
     sender.send(&mut rec).unwrap();
 
     thread::sleep(Duration::from_millis(10));
-    while let Some((hdr, payload)) = receiver.try_recv() {
+    while let rsx_dxs::cmp::CmpRecv::Data(hdr, payload) = receiver.try_recv() {
         if hdr.record_type == RECORD_MARK_PRICE
             && payload.len()
                 >= std::mem::size_of::<MarkPriceRecord>()
@@ -159,7 +159,7 @@ fn bbo_cmp_updates_risk_index_price() {
     sender.send(&mut rec).unwrap();
 
     thread::sleep(Duration::from_millis(10));
-    while let Some((hdr, payload)) = receiver.try_recv() {
+    while let rsx_dxs::cmp::CmpRecv::Data(hdr, payload) = receiver.try_recv() {
         if hdr.record_type == RECORD_BBO
             && payload.len()
                 >= std::mem::size_of::<BboRecord>()
