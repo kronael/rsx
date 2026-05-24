@@ -1,3 +1,8 @@
+//! Gateway micro-ops: WS parse/serialize (N/F/C/A frames), UUIDv7, rate-limit check, backpressure reject, fill fee extraction.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;

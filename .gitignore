@@ -25,3 +25,4 @@ playwright-report/
 # MkDocs build output
 docs/site/
 .mkdocs-venv/
+refs/

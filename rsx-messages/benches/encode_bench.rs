@@ -1,3 +1,8 @@
+//! Wire-record encode/decode: FillRecord (23 ns), WalHeader, CRC32 over 128 B. Same numbers appear under different names in cmp_send_breakdown_bench.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;

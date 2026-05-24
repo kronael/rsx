@@ -1,3 +1,8 @@
+//! Risk broader coverage: index price calc, pre-trade check latency, BBO processing, liquidation enqueue, round escalation.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;

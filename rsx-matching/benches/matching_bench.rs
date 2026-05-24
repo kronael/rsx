@@ -1,3 +1,8 @@
+//! Matching micro-ops: dedup duplicate check, single-slot alloc/free, cancel.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::black_box;
