@@ -517,9 +517,10 @@ fn run_main(
                     gap_start,
                     gap_end_inclusive,
                 } => panic!(
-                    "gw cmp faulted: last_delivered={} \
-                     gap=[{}..={}] — risk shard cannot \
-                     proceed; restart will replay via DXS",
+                    "FAULTED: DXS replay path not yet \
+                     wired here; see rsx-matching for the \
+                     POC reference impl \
+                     (last_delivered={} gap=[{}..={}])",
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -630,9 +631,10 @@ fn run_main(
                     gap_start,
                     gap_end_inclusive,
                 } => panic!(
-                    "me cmp faulted: last_delivered={} \
-                     gap=[{}..={}] — risk shard cannot \
-                     proceed; restart will replay via DXS",
+                    "FAULTED: DXS replay path not yet \
+                     wired here; see rsx-matching for the \
+                     POC reference impl \
+                     (last_delivered={} gap=[{}..={}])",
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -930,9 +932,10 @@ fn run_main(
                     gap_start,
                     gap_end_inclusive,
                 } => panic!(
-                    "mark cmp faulted: last_delivered={} \
-                     gap=[{}..={}] — risk shard cannot \
-                     proceed; restart will replay via DXS",
+                    "FAULTED: DXS replay path not yet \
+                     wired here; see rsx-matching for the \
+                     POC reference impl \
+                     (last_delivered={} gap=[{}..={}])",
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -1338,9 +1341,10 @@ fn run_replica(
                     gap_start,
                     gap_end_inclusive,
                 } => panic!(
-                    "me cmp faulted (replica): \
-                     last_delivered={} gap=[{}..={}] — \
-                     restart will replay via DXS",
+                    "FAULTED: DXS replay path not yet \
+                     wired here; see rsx-matching for the \
+                     POC reference impl \
+                     (last_delivered={} gap=[{}..={}])",
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -1382,9 +1386,10 @@ fn run_replica(
                     gap_start,
                     gap_end_inclusive,
                 } => panic!(
-                    "tip cmp faulted (replica): \
-                     last_delivered={} gap=[{}..={}] — \
-                     restart will replay via DXS",
+                    "FAULTED: DXS replay path not yet \
+                     wired here; see rsx-matching for the \
+                     POC reference impl \
+                     (last_delivered={} gap=[{}..={}])",
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
