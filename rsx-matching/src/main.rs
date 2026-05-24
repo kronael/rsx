@@ -748,19 +748,9 @@ fn main() {
                         }
                     }
                 }
-            } else if hdr.record_type
-                == RECORD_CANCEL_REQUEST
-                && payload.len()
-                    >= std::mem::size_of::<
-                        CancelRequest,
-                    >()
-            {
-                let req = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const CancelRequest,
-                    )
-                };
+            } // end if let Some(order_msg)
+            } else if hdr.record_type == RECORD_CANCEL_REQUEST {
+            if let Some(req) = decode_payload::<CancelRequest>(&payload) {
                 process_cancel(
                     &mut book,
                     &mut wal_writer,
@@ -776,6 +766,7 @@ fn main() {
                     book.events(),
                     &mut order_index,
                 );
+            } // end if let Some(req)
             }
         } else if book.is_migrating() {
             book.migrate_batch(100);

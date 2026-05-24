@@ -219,9 +219,7 @@ fn caught_up_encode_decode_roundtrip() {
     };
     let encoded = encode_record(rsx_cast::RECORD_CAUGHT_UP, as_bytes(&record));
     let payload = &encoded[WalHeader::SIZE..];
-    let decoded = unsafe {
-        std::ptr::read_unaligned(payload.as_ptr() as *const CaughtUpRecord)
-    };
+    let decoded = rsx_cast::decode_payload::<CaughtUpRecord>(payload).unwrap();
     assert_eq!(decoded.live_seq, 100);
 }
 
@@ -337,12 +335,7 @@ fn record_truncated_payload_detected() {
         _pad1: [0; 4],
             taker_ts_ns: 0,
     };
-    let payload_bytes = unsafe {
-        std::slice::from_raw_parts(
-            &record as *const FillRecord as *const u8,
-            std::mem::size_of::<FillRecord>(),
-        )
-    };
+    let payload_bytes = as_bytes(&record);
     let truncated = &payload_bytes[..10];
     assert!(decode_fill_record(truncated).is_none());
 }

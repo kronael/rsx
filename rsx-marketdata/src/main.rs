@@ -1,5 +1,6 @@
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::decode_payload;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -272,15 +273,7 @@ fn main() {
 
                 match hdr.record_type {
                     RECORD_ORDER_INSERTED => {
-                        if payload.len()
-                            >= std::mem::size_of::<OrderInsertedRecord>()
-                        {
-                            let rec = unsafe {
-                                std::ptr::read_unaligned(
-                                    payload.as_ptr()
-                                        as *const OrderInsertedRecord,
-                                )
-                            };
+                        if let Some(rec) = decode_payload::<OrderInsertedRecord>(&payload) {
                             handle_insert(
                                 &state,
                                 &rec,
@@ -289,15 +282,7 @@ fn main() {
                         }
                     }
                     RECORD_ORDER_CANCELLED => {
-                        if payload.len()
-                            >= std::mem::size_of::<OrderCancelledRecord>()
-                        {
-                            let rec = unsafe {
-                                std::ptr::read_unaligned(
-                                    payload.as_ptr()
-                                        as *const OrderCancelledRecord,
-                                )
-                            };
+                        if let Some(rec) = decode_payload::<OrderCancelledRecord>(&payload) {
                             handle_cancel(
                                 &state,
                                 &rec,
@@ -306,15 +291,7 @@ fn main() {
                         }
                     }
                     RECORD_FILL => {
-                        if payload.len()
-                            >= std::mem::size_of::<FillRecord>()
-                        {
-                            let rec = unsafe {
-                                std::ptr::read_unaligned(
-                                    payload.as_ptr()
-                                        as *const FillRecord,
-                                )
-                            };
+                        if let Some(rec) = decode_payload::<FillRecord>(&payload) {
                             handle_fill(
                                 &state,
                                 &rec,

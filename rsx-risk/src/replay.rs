@@ -147,6 +147,7 @@ pub fn replay_from_wal(
     wal_dir: &Path,
     symbol_ids: &[u32],
 ) -> std::io::Result<u64> {
+    use rsx_cast::decode_payload;
     use rsx_messages::decode_fill_record;
     use rsx_messages::OrderAcceptedRecord;
     use rsx_messages::OrderCancelledRecord;
@@ -193,86 +194,47 @@ pub fn replay_from_wal(
                     });
                     replayed += 1;
                 }
-                RECORD_ORDER_DONE
-                    if raw.payload.len()
-                        >= std::mem::size_of::<
-                            OrderDoneRecord,
-                        >() =>
-                {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            raw.payload.as_ptr()
-                                as *const OrderDoneRecord,
-                        )
-                    };
-                    shard.release_frozen_for_order(
-                        rec.user_id,
-                        rec.order_id_hi,
-                        rec.order_id_lo,
-                    );
-                }
-                RECORD_ORDER_CANCELLED
-                    if raw.payload.len()
-                        >= std::mem::size_of::<
-                            OrderCancelledRecord,
-                        >() =>
-                {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            raw.payload.as_ptr()
-                                as *const
-                                    OrderCancelledRecord,
-                        )
-                    };
-                    shard.release_frozen_for_order(
-                        rec.user_id,
-                        rec.order_id_hi,
-                        rec.order_id_lo,
-                    );
-                }
-                RECORD_ORDER_FAILED
-                    if raw.payload.len()
-                        >= std::mem::size_of::<
-                            OrderFailedRecord,
-                        >() =>
-                {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            raw.payload.as_ptr()
-                                as *const
-                                    OrderFailedRecord,
-                        )
-                    };
-                    shard.release_frozen_for_order(
-                        rec.user_id,
-                        rec.order_id_hi,
-                        rec.order_id_lo,
-                    );
-                }
-                RECORD_ORDER_ACCEPTED
-                    if raw.payload.len()
-                        >= std::mem::size_of::<
-                            OrderAcceptedRecord,
-                        >() =>
-                {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            raw.payload.as_ptr()
-                                as *const
-                                    OrderAcceptedRecord,
-                        )
-                    };
-                    if shard.user_in_shard(rec.user_id)
-                        && rec.reduce_only == 0
-                    {
-                        shard.replay_freeze_order(
+                RECORD_ORDER_DONE => {
+                    if let Some(rec) = decode_payload::<OrderDoneRecord>(&raw.payload) {
+                        shard.release_frozen_for_order(
                             rec.user_id,
                             rec.order_id_hi,
                             rec.order_id_lo,
-                            rec.price,
-                            rec.qty,
-                            rec.symbol_id,
                         );
+                    }
+                }
+                RECORD_ORDER_CANCELLED => {
+                    if let Some(rec) = decode_payload::<OrderCancelledRecord>(&raw.payload) {
+                        shard.release_frozen_for_order(
+                            rec.user_id,
+                            rec.order_id_hi,
+                            rec.order_id_lo,
+                        );
+                    }
+                }
+                RECORD_ORDER_FAILED => {
+                    if let Some(rec) = decode_payload::<OrderFailedRecord>(&raw.payload) {
+                        shard.release_frozen_for_order(
+                            rec.user_id,
+                            rec.order_id_hi,
+                            rec.order_id_lo,
+                        );
+                    }
+                }
+                RECORD_ORDER_ACCEPTED => {
+                    if let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) {
+                        if shard.user_in_shard(rec.user_id)
+                            && rec.reduce_only == 0
+                        {
+                            shard.replay_freeze_order(
+                                rec.user_id,
+                                rec.order_id_hi,
+                                rec.order_id_lo,
+                                rec.price,
+                                rec.qty,
+                                rec.symbol_id,
+                            );
+                        }
                     }
                 }
                 _ => {}

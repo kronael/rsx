@@ -13,7 +13,7 @@ pub struct FillEvent {
 }
 
 /// From Gateway SPSC ring. RISK.md §6.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C, align(64))]
 pub struct OrderRequest {
     pub seq: u64,

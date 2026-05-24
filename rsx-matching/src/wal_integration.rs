@@ -6,6 +6,7 @@ use rsx_types::NONE;
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 use rsx_book::snapshot;
+use rsx_cast::decode_payload;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::wal::extract_seq;
@@ -351,16 +352,8 @@ pub fn replay_wal_after_snapshot(
             last_seq = seq;
         }
         match raw.header.record_type {
-            t if t == RECORD_ORDER_ACCEPTED
-                && raw.payload.len()
-                    >= std::mem::size_of::<OrderAcceptedRecord>() =>
-            {
-                let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        raw.payload.as_ptr()
-                            as *const OrderAcceptedRecord,
-                    )
-                };
+            t if t == RECORD_ORDER_ACCEPTED => {
+                let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) else { continue; };
                 // Re-record dedup so a duplicate that arrives
                 // post-restart is still rejected.
                 let _ = dedup.check_and_insert(
@@ -396,16 +389,8 @@ pub fn replay_wal_after_snapshot(
                 );
                 accepted += 1;
             }
-            t if t == RECORD_ORDER_CANCELLED
-                && raw.payload.len()
-                    >= std::mem::size_of::<OrderCancelledRecord>() =>
-            {
-                let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        raw.payload.as_ptr()
-                            as *const OrderCancelledRecord,
-                    )
-                };
+            t if t == RECORD_ORDER_CANCELLED => {
+                let Some(rec) = decode_payload::<OrderCancelledRecord>(&raw.payload) else { continue; };
                 let key: OrderKey = (
                     rec.user_id,
                     rec.order_id_hi,
