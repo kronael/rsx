@@ -235,11 +235,11 @@ impl CastSender {
     /// gaps) or DXS replay (large gaps), not by stalling
     /// the producer.
     ///
-    /// Hot send path: zero heap allocations. The send-ring
-    /// retransmit cache, `buf`, and `ring_frames` are
-    /// preallocated; the only call sites that touch the
-    /// allocator are construction and NAK fallback (cold
-    /// path via `read_record_at_seq`).
+    /// Hot send path: zero heap allocations. For small records
+    /// (≤ SEND_RING_FRAME_BYTES) the frame is written directly
+    /// into the ring slot, then sent from there — single
+    /// intermediate user-space copy, no self.buf on the hot
+    /// path.
     pub fn send<T: CastRecord>(
         &mut self,
         record: &mut T,
@@ -248,33 +248,43 @@ impl CastSender {
         record.set_seq(seq);
 
         let payload = as_bytes(record);
-        let total = frame_and_send(
-            &self.socket,
-            &mut self.buf,
+        let total = WalHeader::SIZE + payload.len();
+        let crc = compute_crc32(payload);
+        let header = WalHeader::new(
             T::record_type(),
-            payload,
-            self.dest,
-        )?;
+            payload.len() as u16,
+            crc,
+        );
 
-        // Cache the frame in the preallocated ring for
-        // NAK retransmit. Skip frames larger than the
-        // slot — those are recoverable via WAL fallback.
         if total <= SEND_RING_FRAME_BYTES {
-            let slot =
-                (seq & SEND_RING_MASK) as usize;
+            // Write directly into the ring slot; send from
+            // there. Populates the NAK cache in the same
+            // pass — no extra buf→ring copy.
+            let slot = (seq & SEND_RING_MASK) as usize;
+            let off = slot * SEND_RING_FRAME_BYTES;
+            self.ring_frames[off..off + WalHeader::SIZE]
+                .copy_from_slice(header.to_bytes());
+            self.ring_frames
+                [off + WalHeader::SIZE..off + total]
+                .copy_from_slice(payload);
             self.ring_seqs[slot] = seq;
             self.ring_lens[slot] = total as u16;
-            let off = slot * SEND_RING_FRAME_BYTES;
-            self.ring_frames[off..off + total]
-                .copy_from_slice(&self.buf[..total]);
+            self.socket.send_to(
+                &self.ring_frames[off..off + total],
+                self.dest,
+            )?;
         } else {
-            // Mark slot dirty: if a NAK targets this seq,
-            // the seq mismatch fall-through pushes it to
-            // WAL, which is correct.
-            let slot =
-                (seq & SEND_RING_MASK) as usize;
+            // Large record: fall back to self.buf; mark
+            // slot dirty so NAK falls through to WAL.
+            let slot = (seq & SEND_RING_MASK) as usize;
             self.ring_seqs[slot] = 0;
             self.ring_lens[slot] = 0;
+            self.buf[..WalHeader::SIZE]
+                .copy_from_slice(header.to_bytes());
+            self.buf[WalHeader::SIZE..total]
+                .copy_from_slice(payload);
+            self.socket
+                .send_to(&self.buf[..total], self.dest)?;
         }
 
         self.next_seq += 1;
@@ -302,34 +312,39 @@ impl CastSender {
         let seq = framed.seq;
         let total =
             WalHeader::SIZE + framed.payload.len();
-        if self.buf.len() < total {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "send buffer too small for record",
-            ));
-        }
-        self.buf[..WalHeader::SIZE]
-            .copy_from_slice(framed.header.to_bytes());
-        self.buf[WalHeader::SIZE..total]
-            .copy_from_slice(framed.payload);
-        self.socket
-            .send_to(&self.buf[..total], self.dest)?;
 
-        // Cache the frame for NAK retransmit, same policy as
-        // `send`.
         if total <= SEND_RING_FRAME_BYTES {
-            let slot =
-                (seq & SEND_RING_MASK) as usize;
+            // Write directly into the ring slot; send from
+            // there (same single-copy pattern as send()).
+            let slot = (seq & SEND_RING_MASK) as usize;
+            let off = slot * SEND_RING_FRAME_BYTES;
+            self.ring_frames[off..off + WalHeader::SIZE]
+                .copy_from_slice(framed.header.to_bytes());
+            self.ring_frames
+                [off + WalHeader::SIZE..off + total]
+                .copy_from_slice(framed.payload);
             self.ring_seqs[slot] = seq;
             self.ring_lens[slot] = total as u16;
-            let off = slot * SEND_RING_FRAME_BYTES;
-            self.ring_frames[off..off + total]
-                .copy_from_slice(&self.buf[..total]);
+            self.socket.send_to(
+                &self.ring_frames[off..off + total],
+                self.dest,
+            )?;
         } else {
-            let slot =
-                (seq & SEND_RING_MASK) as usize;
+            if self.buf.len() < total {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "send buffer too small for record",
+                ));
+            }
+            let slot = (seq & SEND_RING_MASK) as usize;
             self.ring_seqs[slot] = 0;
             self.ring_lens[slot] = 0;
+            self.buf[..WalHeader::SIZE]
+                .copy_from_slice(framed.header.to_bytes());
+            self.buf[WalHeader::SIZE..total]
+                .copy_from_slice(framed.payload);
+            self.socket
+                .send_to(&self.buf[..total], self.dest)?;
         }
 
         // Keep sender's counter in lockstep with the WAL.
