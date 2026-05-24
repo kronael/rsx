@@ -606,30 +606,22 @@ pub fn read_record_at_seq(
     archive_dir: Option<&Path>,
 ) -> io::Result<Option<RawWalRecord>> {
     let hot_dir = wal_dir.join(stream_id.to_string());
-    let mut files = list_wal_files(stream_id, &hot_dir)?;
-    files.sort_by_key(|f| f.first_seq);
+    let arc_dir =
+        archive_dir.map(|p| p.join(stream_id.to_string()));
+
+    let mut dirs: Vec<&Path> = Vec::with_capacity(2);
+    if let Some(ref a) = arc_dir {
+        dirs.push(a.as_path());
+    }
+    dirs.push(hot_dir.as_path());
+
+    let files = list_wal_files_across(stream_id, &dirs)?;
     if let Some(target) = pick_file_for_seq(&files, target_seq)
     {
         if let Some(rec) = scan_file_for_seq(
             &target.path, target_seq,
         )? {
             return Ok(Some(rec));
-        }
-    }
-    // Fall back to archive if configured.
-    if let Some(arc) = archive_dir {
-        let arc_dir = arc.join(stream_id.to_string());
-        let mut arc_files =
-            list_wal_files(stream_id, &arc_dir)?;
-        arc_files.sort_by_key(|f| f.first_seq);
-        if let Some(target) =
-            pick_file_for_seq(&arc_files, target_seq)
-        {
-            if let Some(rec) = scan_file_for_seq(
-                &target.path, target_seq,
-            )? {
-                return Ok(Some(rec));
-            }
         }
     }
     Ok(None)
