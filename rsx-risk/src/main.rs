@@ -679,16 +679,11 @@ fn run_main(
                                 )
                                 .map(|d| d.as_nanos() as u64)
                                 .unwrap_or(0);
-                        // Plausibility guard: a valid epoch ns
-                        // since 2024 exceeds ~1.7e18; anything
-                        // smaller is treated as missing.
                         let anchor_ns =
-                            if fill.taker_ts_ns
-                                > 1_700_000_000_000_000_000
-                            {
-                                fill.taker_ts_ns
-                            } else {
+                            if fill.taker_ts_ns == 0 {
                                 fill.ts_ns
+                            } else {
+                                fill.taker_ts_ns
                             };
                         let t_us = now_ns
                             .saturating_sub(anchor_ns)
@@ -758,12 +753,10 @@ fn run_main(
                                 .map(|d| d.as_nanos() as u64)
                                 .unwrap_or(0);
                         let anchor_ns =
-                            if fill.taker_ts_ns
-                                > 1_700_000_000_000_000_000
-                            {
-                                fill.taker_ts_ns
-                            } else {
+                            if fill.taker_ts_ns == 0 {
                                 fill.ts_ns
+                            } else {
+                                fill.taker_ts_ns
                             };
                         let t_us = now_ns
                             .saturating_sub(anchor_ns)
