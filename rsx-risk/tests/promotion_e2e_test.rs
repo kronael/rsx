@@ -1,23 +1,19 @@
-//! E2E coverage for the replica → main promotion path
-//! (T3.2 in `.ship/13-A16Z-FIXES/PLAN.md`). These tests pin
-//! the observable contract that any future refactor of
-//! `main.rs::run_replica` / `run_main` must preserve:
+//! E2E coverage for the replica → main promotion path.
+//! These tests pin the observable contract for
+//! `main.rs::run_replica` / `run_main`:
 //!
 //! 1. A replica polling `pg_try_advisory_lock` flips to
 //!    "promoted" the first poll after the main session
 //!    releases the lock.
 //! 2. After promotion, the new main can re-acquire the lock
 //!    (blocking-acquire path used in `run_main`) and reload
-//!    its state from Postgres without resurrecting the prior
-//!    main's in-memory shard. Fills processed after that
-//!    update positions correctly.
+//!    its state from Postgres with a fresh in-memory shard.
+//!    Fills processed after that update positions correctly.
 //! 3. A second replica racing the first cannot grab the lock
 //!    while the new main holds it (advisory-lock exclusivity).
 //!
 //! Tests use a testcontainer Postgres and a polling loop that
-//! mirrors `run_replica`'s lock-poll cadence (500ms) without
-//! depending on the binary's private `set_var` + recursion
-//! shape — so the coverage outlives the planned refactor.
+//! mirrors `run_replica`'s lock-poll cadence (500ms).
 
 use rsx_risk::account::Account;
 use rsx_risk::config::LiquidationConfig;

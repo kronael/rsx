@@ -93,10 +93,10 @@ No TOML config files. API keys via env vars.
 | RSX_ME_TICK_SIZE | yes | - | Tick size (i64) |
 | RSX_ME_LOT_SIZE | yes | - | Lot size (i64) |
 | RSX_ME_WAL_DIR | no | ./tmp/wal | WAL directory |
-| RSX_ME_CMP_ADDR | no | 127.0.0.1:9100 | ME CMP listen |
-| RSX_RISK_CMP_ADDR | no | 127.0.0.1:9101 | Risk CMP addr |
-| RSX_MD_CMP_ADDR | no | 127.0.0.1:9103 | Marketdata CMP |
-| RSX_ME_DXS_ADDR | no | - | DXS sidecar addr |
+| RSX_ME_CAST_ADDR | no | 127.0.0.1:9100 | ME CMP listen |
+| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk CMP addr |
+| RSX_MD_CAST_ADDR | no | 127.0.0.1:9103 | Marketdata CMP |
+| RSX_ME_REPLICATION_BIND_ADDR | no | - | DXS sidecar addr |
 | RSX_ME_DATABASE_URL | no | - | Postgres URL |
 | RSX_ME_CORE_ID | no | - | CPU core to pin |
 
@@ -107,13 +107,13 @@ No TOML config files. API keys via env vars.
 | RSX_RISK_SHARD_ID | no | 0 | Shard ID |
 | RSX_RISK_SHARD_COUNT | no | 1 | Total shards |
 | RSX_RISK_MAX_SYMBOLS | no | 64 | Max symbols |
-| RSX_RISK_CMP_ADDR | no | 127.0.0.1:9101 | Risk CMP |
-| RSX_GW_CMP_ADDR | no | 127.0.0.1:9102 | Gateway CMP |
-| RSX_ME_CMP_ADDR | no | 127.0.0.1:9100 | ME CMP addr |
+| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk CMP |
+| RSX_GW_CAST_ADDR | no | 127.0.0.1:9102 | Gateway CMP |
+| RSX_ME_CAST_ADDR | no | 127.0.0.1:9100 | ME CMP addr |
 | RSX_RISK_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_RISK_REPLICA_ADDR | no | - | Replica addr |
-| RSX_RISK_MARK_CMP_ADDR | no | 127.0.0.1:9105 | Mark CMP |
-| RSX_MARK_CMP_ADDR | no | - | Mark sender |
+| RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9105 | Mark CMP |
+| RSX_MARK_CAST_ADDR | no | - | Mark sender |
 | RSX_RISK_CORE_ID | no | - | CPU core to pin |
 | DATABASE_URL | no | - | Postgres URL |
 
@@ -122,8 +122,8 @@ No TOML config files. API keys via env vars.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | RSX_GW_LISTEN | no | 0.0.0.0:8080 | WS listen addr |
-| RSX_GW_CMP_ADDR | no | 127.0.0.1:9102 | GW CMP addr |
-| RSX_RISK_CMP_ADDR | no | 127.0.0.1:9101 | Risk CMP addr |
+| RSX_GW_CAST_ADDR | no | 127.0.0.1:9102 | GW CMP addr |
+| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk CMP addr |
 | RSX_GW_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_GW_JWT_SECRET | yes | (panic) | HMAC-SHA256 JWT signing secret. Production must override the dev secret used by `start`. |
 | RSX_GW_RL_USER | no | 10 | Rate limit/user |
@@ -134,8 +134,8 @@ No TOML config files. API keys via env vars.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | RSX_MD_LISTEN | no | 0.0.0.0:8180 | WS listen addr |
-| RSX_MKT_CMP_ADDR | no | 127.0.0.1:9103 | MKT CMP addr |
-| RSX_ME_CMP_ADDR | no | 127.0.0.1:9100 | ME CMP addr |
+| RSX_MKT_CAST_ADDR | no | 127.0.0.1:9103 | MKT CMP addr |
+| RSX_ME_CAST_ADDR | no | 127.0.0.1:9100 | ME CMP addr |
 | RSX_MD_STREAM_ID | no | 1 | Stream ID |
 
 ### Mark Aggregator
@@ -146,7 +146,7 @@ No TOML config files. API keys via env vars.
 | RSX_MARK_WAL_DIR | no | ./tmp/wal/mark | WAL dir |
 | RSX_MARK_STREAM_ID | no | 100 | Stream ID |
 | RSX_MARK_SYMBOL_MAP | no | "" | symbol=id,... |
-| RSX_RISK_MARK_CMP_ADDR | no | 127.0.0.1:9105 | Risk mark |
+| RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9105 | Risk mark |
 
 ### Recorder
 

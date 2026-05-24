@@ -132,9 +132,7 @@ pub struct CastSender {
     /// and force NAK to fall through to WAL.
     ///
     /// One-time allocation at construction; **zero heap
-    /// allocations on the hot send path** (the prior
-    /// `BTreeMap<u64, Vec<u8>>` heap-allocated per send and
-    /// per cleanup).
+    /// allocations on the hot send path**.
     ring_seqs: Box<[u64]>,
     ring_lens: Box<[u16]>,
     ring_frames: Box<[u8]>,
@@ -498,10 +496,8 @@ impl CastSender {
     }
 }
 
-/// Receiver delivery outcome. Replaces the prior
-/// `Option<(WalHeader, Vec<u8>)>` return so that the
-/// receiver can explicitly surface unrecoverable gaps to
-/// its consumer instead of silently advancing past them.
+/// Receiver delivery outcome. Surfaces unrecoverable gaps
+/// to the consumer explicitly rather than silently advancing.
 ///
 /// `Faulted` is sticky: once returned, `try_recv` keeps
 /// returning `Empty` (or `Faulted` again on a fresh call)
@@ -556,8 +552,7 @@ pub struct CastReceiver {
     /// value means the ring wrapped past an unfilled slot
     /// (gap > REORDER_CAPACITY) — unrecoverable in-band.
     /// One-time allocation at construction; **zero heap on
-    /// the hot receive path** (the prior `BTreeMap` allocated
-    /// per inserted packet).
+    /// the hot receive path**.
     reorder_seqs: Box<[u64]>,
     reorder_lens: Box<[u16]>,
     reorder_frames: Box<[u8]>,

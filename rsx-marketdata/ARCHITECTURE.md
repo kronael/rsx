@@ -51,8 +51,8 @@ order id) can locate the resting level.
 The exchange runs one matching engine per symbol on its own
 CMP port. Marketdata opens **one `CmpReceiver` per ME**:
 
-- ME addresses come from `RSX_ME_CMP_ADDRS` (comma-separated)
-  or `RSX_ME_CMP_ADDR` (single)
+- ME addresses come from `RSX_ME_CAST_ADDRS` (comma-separated)
+  or `RSX_ME_CAST_ADDR` (single)
 - For each ME at port P, marketdata binds its local recv side
   at port **P + 400** (e.g. ME 9100 -> MD 9500)
 - The main loop iterates over the receiver vector each tick,

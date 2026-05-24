@@ -7,7 +7,7 @@ over WebSocket.
 
 Maintains a shadow `Orderbook` per symbol (rsx-book) from
 ME events received via CMP/UDP. Aggregates streams from
-multiple matching engines via `RSX_ME_CMP_ADDRS` (comma-
+multiple matching engines via `RSX_ME_CAST_ADDRS` (comma-
 separated list, one CmpReceiver per ME). Publishes real-time
 L2 snapshots, BBO updates, and trade messages to subscribed
 WebSocket clients. On per-stream sequence gap, resends the
@@ -17,8 +17,8 @@ full L2 snapshot to all subscribers of the affected symbol.
 
 ```
 RSX_MKT_LISTEN_ADDR=0.0.0.0:8081 \
-RSX_MKT_CMP_ADDR=127.0.0.1:9300 \
-RSX_ME_CMP_ADDR=127.0.0.1:9100 \
+RSX_MKT_CAST_ADDR=127.0.0.1:9300 \
+RSX_ME_CAST_ADDR=127.0.0.1:9100 \
 RSX_MKT_MAX_SYMBOLS=64 \
 RSX_MKT_SNAPSHOT_DEPTH=20 \
 cargo run -p rsx-marketdata
@@ -29,8 +29,8 @@ cargo run -p rsx-marketdata
 | Env Var | Purpose |
 |---------|---------|
 | `RSX_MKT_LISTEN_ADDR` | WebSocket listen address |
-| `RSX_MKT_CMP_ADDR` | CMP bind address |
-| `RSX_ME_CMP_ADDR` | ME CMP address |
+| `RSX_MKT_CAST_ADDR` | CMP bind address |
+| `RSX_ME_CAST_ADDR` | ME CMP address |
 | `RSX_MKT_MAX_SYMBOLS` | Max symbol count |
 | `RSX_MKT_SNAPSHOT_DEPTH` | L2 snapshot depth |
 | `RSX_MKT_MAX_OUTBOUND` | Max queued messages per client |
@@ -45,7 +45,7 @@ cargo run -p rsx-marketdata
 - Single-threaded monoio runtime, busy-spin loop (no
   `core_affinity`; not on the GW→ME→GW critical path)
 - One CMP/UDP receiver per matching engine
-  (`RSX_ME_CMP_ADDRS`, comma-separated)
+  (`RSX_ME_CAST_ADDRS`, comma-separated)
 - No durable state (shadow book rebuilt from ME events)
 - Optional DXS replay bootstrap on startup for fast recovery
 - Uses monoio (io_uring) -- requires Linux kernel 5.1+

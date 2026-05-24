@@ -143,8 +143,8 @@ def stack(tmp_path_factory):
         "RSX_GW_RL_USER": "10000",
         "RSX_GW_RL_IP": "100000",
         "RSX_GW_HEARTBEAT_INTERVAL_S": "30",
-        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
-        "RSX_GW_CMP_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
         "RSX_GW_WAL_DIR": wal_gw,
         "RSX_MAX_SYMBOLS": "16",
         "RSX_DEFAULT_TICK_SIZE": "1",
@@ -154,16 +154,16 @@ def stack(tmp_path_factory):
     env_risk = {
         **env_base,
         "DATABASE_URL": PG_URL,
-        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
-        "RSX_GW_CMP_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
-        "RSX_ME_CMP_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
+        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
         "RSX_RISK_WAL_DIR": wal_risk,
         "RSX_RISK_SHARD_ID": "0",
         "RSX_RISK_SHARD_COUNT": "1",
         "RSX_RISK_IS_REPLICA": "false",
         # Mark not started; risk binds these but no data arrives.
-        "RSX_RISK_MARK_CMP_ADDR": "127.0.0.1:28105",
-        "RSX_MARK_CMP_ADDR": "127.0.0.1:28106",
+        "RSX_RISK_MARK_CAST_ADDR": "127.0.0.1:28105",
+        "RSX_MARK_CAST_ADDR": "127.0.0.1:28106",
     }
 
     env_me = {
@@ -173,17 +173,17 @@ def stack(tmp_path_factory):
         "RSX_ME_QTY_DECIMALS": "0",
         "RSX_ME_TICK_SIZE": "1",
         "RSX_ME_LOT_SIZE": "1",
-        "RSX_ME_CMP_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
-        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
-        "RSX_MD_CMP_ADDR": f"127.0.0.1:{MD_CMP_PORT}",
+        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
+        "RSX_MD_CAST_ADDR": f"127.0.0.1:{MD_CMP_PORT}",
         "RSX_ME_WAL_DIR": wal_me,
     }
 
     env_md = {
         **env_base,
         "RSX_MD_LISTEN": f"0.0.0.0:{MD_WS_PORT}",
-        "RSX_MKT_CMP_ADDR": f"127.0.0.1:{MD_CMP_PORT}",
-        "RSX_ME_CMP_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
+        "RSX_MKT_CAST_ADDR": f"127.0.0.1:{MD_CMP_PORT}",
+        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
         "RSX_MD_TIP_FILE": str(tmp / "md.tip"),
     }
 

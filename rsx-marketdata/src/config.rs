@@ -124,12 +124,12 @@ pub fn parse_me_cmp_addrs(raw: &str) -> Vec<SocketAddr> {
         .collect()
 }
 
-/// Read ME CMP addresses from env. Prefers `RSX_ME_CMP_ADDRS`
-/// (comma-separated), falls back to `RSX_ME_CMP_ADDR` (single),
+/// Read ME CMP addresses from env. Prefers `RSX_ME_CAST_ADDRS`
+/// (comma-separated), falls back to `RSX_ME_CAST_ADDR` (single),
 /// then defaults to `127.0.0.1:9100`.
 pub fn me_cmp_addrs_from_env() -> Vec<SocketAddr> {
-    let raw = std::env::var("RSX_ME_CMP_ADDRS")
-        .or_else(|_| std::env::var("RSX_ME_CMP_ADDR"))
+    let raw = std::env::var("RSX_ME_CAST_ADDRS")
+        .or_else(|_| std::env::var("RSX_ME_CAST_ADDR"))
         .unwrap_or_else(|_| "127.0.0.1:9100".to_owned());
     parse_me_cmp_addrs(&raw)
 }

@@ -19,27 +19,27 @@ pub struct CastConfig {
     /// Sender heartbeat cadence in ms (idle-stream only —
     /// data sends reset the timer). Receivers use heartbeats
     /// to detect gaps when no data is flowing.
-    /// Env: `RSX_CMP_HEARTBEAT_INTERVAL_MS`.
+    /// Env: `RSX_CAST_HEARTBEAT_INTERVAL_MS`.
     pub heartbeat_interval_ms: u64,
     /// If set, CastSender binds to this address instead of a
     /// random ephemeral port. Allows receivers to send NAKs
-    /// to a known port. Env: `RSX_CMP_SENDER_BIND_ADDR`.
+    /// to a known port. Env: `RSX_CAST_SENDER_BIND_ADDR`.
     pub sender_bind_addr: Option<String>,
     /// Receiver NAK debounce interval. The receiver re-NAKs
     /// the oldest contiguous missing run no more frequently
     /// than this. Default 100 µs, matching typical LAN RTT.
-    /// Env: `RSX_CMP_NAK_RETRY_US`.
+    /// Env: `RSX_CAST_NAK_RETRY_US`.
     pub nak_retry_us: u64,
     /// Max retries on the oldest gap before the receiver
     /// transitions to FAULTED and surfaces `CastRecv::Faulted`
     /// to its consumer. At 100 µs retry × 8 = 800 µs total
-    /// in-band recovery budget. Env: `RSX_CMP_MAX_NAK_RETRIES`.
+    /// in-band recovery budget. Env: `RSX_CAST_MAX_NAK_RETRIES`.
     pub max_nak_retries: u16,
     /// Sender per-seq retransmit-dedup window. If a NAK arrives
     /// requesting a seq that was retransmitted within this
     /// window, the duplicate retransmit is skipped. Default
     /// 1 ms — larger than `nak_retry_us` so the layers compose.
-    /// Env: `RSX_CMP_RETX_DEDUP_WINDOW_US`.
+    /// Env: `RSX_CAST_RETX_DEDUP_WINDOW_US`.
     pub retx_dedup_window_us: u64,
 }
 
@@ -59,15 +59,15 @@ impl CastConfig {
     pub fn from_env() -> Self {
         Self {
             heartbeat_interval_ms: env_var(
-                "RSX_CMP_HEARTBEAT_INTERVAL_MS", 100),
+                "RSX_CAST_HEARTBEAT_INTERVAL_MS", 100),
             sender_bind_addr: env::var(
-                "RSX_CMP_SENDER_BIND_ADDR").ok(),
+                "RSX_CAST_SENDER_BIND_ADDR").ok(),
             nak_retry_us: env_var(
-                "RSX_CMP_NAK_RETRY_US", 100),
+                "RSX_CAST_NAK_RETRY_US", 100),
             max_nak_retries: env_var(
-                "RSX_CMP_MAX_NAK_RETRIES", 8),
+                "RSX_CAST_MAX_NAK_RETRIES", 8),
             retx_dedup_window_us: env_var(
-                "RSX_CMP_RETX_DEDUP_WINDOW_US", 1000),
+                "RSX_CAST_RETX_DEDUP_WINDOW_US", 1000),
         }
     }
 }

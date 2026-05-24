@@ -403,8 +403,8 @@ def gateway():
         "RSX_GW_RL_IP": "100",
         "RSX_GW_RL_INSTANCE": "1000",
         "RSX_GW_HEARTBEAT_INTERVAL_S": "5",
-        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{GW_RISK_CMP_PORT}",
-        "RSX_GW_CMP_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{GW_RISK_CMP_PORT}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
         "RSX_GW_WAL_DIR": str(RSX_ROOT / "tmp" / "wal_test"),
         "RSX_MAX_SYMBOLS": "16",
         "RSX_DEFAULT_TICK_SIZE": "1",
@@ -478,8 +478,8 @@ def gateway_small_pending():
         "RSX_GW_RL_IP": "1000",
         "RSX_GW_RL_INSTANCE": "10000",
         "RSX_GW_HEARTBEAT_INTERVAL_S": "60",
-        "RSX_RISK_CMP_ADDR": f"127.0.0.1:{risk_port}",
-        "RSX_GW_CMP_ADDR": f"127.0.0.1:{cmp_port}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{risk_port}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{cmp_port}",
         "RSX_GW_WAL_DIR": str(
             RSX_ROOT / "tmp" / "wal_test_pending"
         ),

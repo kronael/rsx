@@ -21,12 +21,7 @@
 
 /// Transport-level record type constants.
 ///
-/// NOTE: `0x10` was previously `RECORD_STATUS_MESSAGE`
-/// (receiver → sender flow control). It was removed when
-/// backpressure was deemed an anti-pattern for exchange-grade
-/// NAK+UDP transports. Do NOT reuse `0x10` — keep it
-/// reserved so older receivers that decode it silently
-/// don't get confused.
+/// `0x10` is a reserved gap; do not assign a record type to it.
 pub const RECORD_CAUGHT_UP: u16 = 6;
 pub const RECORD_NAK: u16 = 0x11;
 pub const RECORD_HEARTBEAT: u16 = 0x12;

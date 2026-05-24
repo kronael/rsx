@@ -599,7 +599,7 @@ WAL files, not packet captures.
 
 ```bash
 # CMP/UDP (hot path)
-RSX_CMP_UDP_ADDR=127.0.0.1:9100   # receiver bind addr
+RSX_CAST_UDP_ADDR=127.0.0.1:9100   # receiver bind addr
                                   # sender derives dest
 
 # WAL replication over TCP (cold path)

@@ -37,7 +37,7 @@ records v1 code reality for future alignment.
 - Forwards ME events to Gateway via CMP: Fill, OrderInserted, Cancelled,
   Done, ConfigApplied.
 - Tracks frozen margin per order_id; releases on Cancel/Done.
-- Mark price input: listens on CMP (`RSX_RISK_MARK_CMP_ADDR`) and updates
+- Mark price input: listens on CMP (`RSX_RISK_MARK_CAST_ADDR`) and updates
   `mark_prices` from `MarkPriceRecord`.
 - BBO input: accepts `BboRecord` via CMP and updates index prices.
 - Replica mode exists:

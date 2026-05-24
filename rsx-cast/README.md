@@ -393,13 +393,13 @@ stable closely.
   (the `rsx-cli` crate). It uses this crate as a dependency
   and reads any WAL written here.
 - **Environment variables.** `CmpConfig::from_env` reads:
-  - `RSX_CMP_REORDER_BUF_LIMIT` (default 512) — cap on
+  - `RSX_CAST_REORDER_BUF_LIMIT` (default 512) — cap on
     out-of-order packets buffered while waiting for a NAK
     fill. Overflow drops the oldest gap and re-syncs.
-  - `RSX_CMP_HEARTBEAT_INTERVAL_MS` (default 100) — sender
+  - `RSX_CAST_HEARTBEAT_INTERVAL_MS` (default 100) — sender
     heartbeat cadence; idle-stream only (data sends reset
     the timer).
-  - `RSX_CMP_SENDER_BIND_ADDR` (unset by default) — pins the
+  - `RSX_CAST_SENDER_BIND_ADDR` (unset by default) — pins the
     sender to a known port so receivers know where to send
     NAKs.
   - `RSX_REPL_TLS`, `RSX_REPL_CERT_PATH`, `RSX_REPL_KEY_PATH`

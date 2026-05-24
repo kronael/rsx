@@ -78,7 +78,7 @@ Sent via CMP/UDP from main to replica on every fill.
 Environment variables:
 - `RSX_RISK_IS_REPLICA=true` - start in replica mode
 - `RSX_RISK_REPLICA_ADDR=127.0.0.1:9111` - replica tip sync receiver addr
-- `RSX_RISK_CMP_ADDR=127.0.0.1:9101` - main tip sync sender addr
+- `RSX_RISK_CAST_ADDR=127.0.0.1:9101` - main tip sync sender addr
 - `RSX_RISK_LEASE_POLL_MS=500` - replica lock poll interval
 - `RSX_RISK_LEASE_RENEW_MS=1000` - main lease renewal interval
 - `DATABASE_URL` - Postgres connection (required)
