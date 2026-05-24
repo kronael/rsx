@@ -488,19 +488,36 @@ rename maps, env-var changes, and wire-format bumps.
 Current crate version is **0.5.0**; v4 reliability (FAULTED,
 NAK debounce, retransmit dedup) shipped in v0.3.0.
 
+## How to read this crate
+
+The docs are split by question, not by file size:
+
+- **What** — this README, plus the byte-exact specs:
+  [`specs/4-cast.md`](specs/4-cast.md) (UDP / NAK protocol),
+  [`specs/10-replication.md`](specs/10-replication.md) (TCP catch-up),
+  [`specs/48-wal.md`](specs/48-wal.md) (on-disk format).
+- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): the internal
+  module structure, threading model, the WAL flush loop, NAK
+  retransmit two-tier behaviour. Read this before changing
+  cast.rs or wal.rs.
+- **Why** — [notes/](notes/): the tradeoff research and
+  derivations behind specific choices (which polynomial,
+  why no flow control, etc.). Read this when a design
+  decision looks arbitrary and you want the argument.
+- **Numbers** — [BENCHES.md](BENCHES.md) lists every
+  Criterion bench, what it isolates, and how to run it.
+  Raw numbers live in
+  [`facts/`](facts/syscall-latency.md) with
+  date + source so they don't silently rot.
+- **Survey** — [compare/](compare/) compares casting +
+  replication against Aeron, MoldUDP64, SoupBinTCP, Quinn,
+  Chronicle Queue, LBM. One `.md` per protocol with
+  one-line lineage, plus the comparison table in
+  [compare/README.md](compare/README.md). The benches that
+  produce those numbers live in `benches/compare_*.rs`.
+
 ## See also
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — this crate's internal
-  design
-- [BENCHES.md](BENCHES.md) — what each Criterion bench
-  measures and how to run it
-- [`specs/4-cast.md`](specs/4-cast.md) — protocol spec, byte-exact
-- [`specs/48-wal.md`](specs/48-wal.md) — WAL flush rules,
-  retention, rotation
-- [`specs/10-replication.md`](specs/10-replication.md) — TCP replay protocol
-  details
-- [`facts/syscall-latency.md`](facts/syscall-latency.md) —
-  why the `sendto` floor is what it is
 - The wider [rsx exchange project](https://github.com/kronael/rsx)
   layers domain records (Fill, BBO, OrderInserted, …) on top
   in a separate crate — not bundled here.
