@@ -367,7 +367,7 @@ impl CastSender {
         Ok(())
     }
 
-    pub fn handle_nak(&mut self, nak: &Nak) {
+    pub(crate) fn handle_nak(&mut self, nak: &Nak) {
         // Clamp count so a malicious or buggy peer can't
         // make us loop on u64::MAX. Beyond ring capacity
         // we'd be reading WAL anyway; cap at capacity.
@@ -1098,7 +1098,7 @@ impl CastReceiver {
     /// ring, or until `highest_seen` — whichever is sooner.
     /// Worst case walks `REORDER_CAPACITY` slots; typical
     /// case (one missing seq) is one slot read.
-    pub fn oldest_missing_run(&self) -> Option<(u64, u64)> {
+    pub(crate) fn oldest_missing_run(&self) -> Option<(u64, u64)> {
         if self.expected_seq == 0
             || self.expected_seq >= self.highest_seen + 1
         {
@@ -1147,10 +1147,6 @@ impl CastReceiver {
 
     pub fn expected_seq(&self) -> u64 {
         self.expected_seq
-    }
-
-    pub fn highest_seen(&self) -> u64 {
-        self.highest_seen
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
