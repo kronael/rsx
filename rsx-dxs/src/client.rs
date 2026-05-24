@@ -73,6 +73,8 @@ impl DxsConsumer {
         })
     }
 
+    /// Connect with reconnect + backoff. Callback receives
+    /// every record; never returns.
     pub async fn run<F>(
         &mut self,
         mut callback: F,
@@ -89,13 +91,10 @@ impl DxsConsumer {
         let mut consec_errors: u32 = 0;
 
         loop {
-            match self
-                .connect_and_stream(&mut callback)
-                .await
-            {
+            let mut wrap = |r| { callback(r); true };
+            match self.connect_and_stream(&mut wrap).await {
                 Ok(()) => {
                     info!("stream ended, reconnecting");
-                    // Clean reconnect resets error budget.
                     backoff_idx = 0;
                     consec_errors = 0;
                 }
@@ -115,11 +114,9 @@ impl DxsConsumer {
                     }
                     let base_secs = BACKOFF_SECS[backoff_idx
                         .min(BACKOFF_SECS.len() - 1)];
-                    // ±20% jitter
-                    let jitter = jitter_factor();
                     let sleep_ms = (base_secs as f64
                         * 1000.0
-                        * jitter) as u64;
+                        * jitter_factor()) as u64;
                     warn!(
                         "stream error ({}/{}): {}, \
                          retry in {}ms",
@@ -140,61 +137,16 @@ impl DxsConsumer {
         }
     }
 
-    /// Connect once and stream until the connection ends.
-    /// Unlike `run`, does not reconnect -- returns when
-    /// the stream closes or the callback returns `false`.
-    pub fn run_once<F>(
+    /// Connect once and stream until the connection ends
+    /// or the callback returns `false`. No reconnect.
+    pub async fn run_once<F>(
         &mut self,
         mut callback: F,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = io::Result<()>> + '_>,
-    >
-    where
-        F: FnMut(RawWalRecord) -> bool + 'static,
-    {
-        Box::pin(async move {
-            self.connect_and_stream_stoppable(
-                &mut callback,
-            )
-            .await
-        })
-    }
-
-    async fn connect_and_stream_stoppable<F>(
-        &mut self,
-        callback: &mut F,
     ) -> io::Result<()>
     where
         F: FnMut(RawWalRecord) -> bool,
     {
-        let tcp_stream =
-            TcpStream::connect(&self.producer_addr)
-                .await?;
-
-        if let (Some(connector), Some(server_name)) =
-            (&self.tls_connector, &self.server_name)
-        {
-            let tls_stream = connector
-                .connect(server_name.clone(), tcp_stream)
-                .await
-                .map_err(|e| {
-                    io::Error::other(
-                        format!(
-                            "tls handshake failed: {}",
-                            e
-                        ),
-                    )
-                })?;
-            self.handle_stream_stoppable(
-                tls_stream, callback,
-            )
-            .await
-        } else {
-            self.handle_stream_stoppable(
-                tcp_stream, callback,
-            )
-            .await
-        }
+        self.connect_and_stream(&mut callback).await
     }
 
     async fn connect_and_stream<F>(
@@ -202,7 +154,7 @@ impl DxsConsumer {
         callback: &mut F,
     ) -> io::Result<()>
     where
-        F: FnMut(RawWalRecord),
+        F: FnMut(RawWalRecord) -> bool,
     {
         let tcp_stream =
             TcpStream::connect(&self.producer_addr)
@@ -225,104 +177,7 @@ impl DxsConsumer {
         }
     }
 
-    async fn handle_stream<S>(
-        &mut self,
-        mut stream: S,
-        callback: &mut impl FnMut(RawWalRecord),
-    ) -> io::Result<()>
-    where
-        S: AsyncReadExt + AsyncWriteExt + Unpin,
-    {
-        let req = ReplayRequest {
-            stream_id: self.stream_id,
-            _pad0: 0,
-            from_seq: self.tip + 1,
-            _pad1: [0u8; 48],
-        };
-        let req_size =
-            std::mem::size_of::<ReplayRequest>();
-        let payload = unsafe {
-            std::slice::from_raw_parts(
-                &req as *const ReplayRequest
-                    as *const u8,
-                req_size,
-            )
-        };
-        let crc = compute_crc32(payload);
-        let hdr = WalHeader::new(
-            RECORD_REPLAY_REQUEST,
-            payload.len() as u16,
-            crc,
-        );
-        stream.write_all(&hdr.to_bytes()).await?;
-        stream.write_all(payload).await?;
-
-        let mut hdr_buf = [0u8; WalHeader::SIZE];
-        loop {
-            match stream.read_exact(&mut hdr_buf).await {
-                Ok(_) => {}
-                Err(ref e)
-                    if e.kind()
-                        == io::ErrorKind::UnexpectedEof =>
-                {
-                    break;
-                }
-                Err(e) => return Err(e),
-            }
-
-            let header =
-                WalHeader::from_bytes(&hdr_buf)
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "bad header",
-                        )
-                    })?;
-            if !header.is_supported_version() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "dxs replay: unsupported wire version v{}",
-                        header.version
-                    ),
-                ));
-            }
-
-            let payload_len = header.len as usize;
-            let mut payload = vec![0u8; payload_len];
-            stream.read_exact(&mut payload).await?;
-
-            let computed = compute_crc32(&payload);
-            if computed != header.crc32 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "crc mismatch",
-                ));
-            }
-
-            // Invariant #5 (tips monotonic): `.max(seq)` ensures
-            // `self.tip` never decreases even on out-of-order delivery.
-            if let Some(seq) = extract_seq(&payload) {
-                self.tip = self.tip.max(seq);
-            }
-
-            let record =
-                RawWalRecord { header, payload };
-            callback(record);
-
-            if self.last_tip_persist.elapsed()
-                >= self.tip_persist_interval
-            {
-                persist_tip(&self.tip_file, self.tip)?;
-                self.last_tip_persist = Instant::now();
-            }
-        }
-
-        persist_tip(&self.tip_file, self.tip)?;
-        Ok(())
-    }
-
-    async fn handle_stream_stoppable<S, F>(
+    async fn handle_stream<S, F>(
         &mut self,
         mut stream: S,
         callback: &mut F,
@@ -404,9 +259,10 @@ impl DxsConsumer {
                 self.tip = self.tip.max(seq);
             }
 
-            let record =
-                RawWalRecord { header, payload };
-            let keep_going = callback(record);
+            let keep_going = callback(RawWalRecord {
+                header,
+                payload,
+            });
 
             if self.last_tip_persist.elapsed()
                 >= self.tip_persist_interval
