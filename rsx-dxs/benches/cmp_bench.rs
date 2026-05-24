@@ -1,3 +1,8 @@
+//! CMP protocol-record encode/decode (NAK, Heartbeat). Wire-level primitives; not on the per-packet send path.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;

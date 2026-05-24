@@ -1,3 +1,8 @@
+//! WAL micro-ops: in-memory append (the 31 ns figure), 64 KB flush+fsync, 10 K sequential read, 100 K replay.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;

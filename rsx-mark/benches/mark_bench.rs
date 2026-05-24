@@ -1,3 +1,8 @@
+//! Mark aggregator e2e (source → publish), source-mask computation.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;

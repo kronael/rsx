@@ -1,3 +1,8 @@
+//! Orderbook micro-ops: slab alloc/free, CompressionMap lookup, single resting insert + match + cancel. The famed '54 ns single fill' lives here.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;

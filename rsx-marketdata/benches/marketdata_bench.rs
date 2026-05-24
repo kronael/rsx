@@ -1,3 +1,8 @@
+//! Marketdata broader coverage: shadow book insert/fill, BBO derivation, L2 snapshot at 10/50 levels, L2 delta gen, WS serialize, sustained event throughput.
+//!
+//! See `docs/benches.md` for the full bench index +
+//! production-leg attribution.
+
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
