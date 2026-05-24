@@ -124,7 +124,10 @@ fn replay_restores_orders_appended_after_snapshot() {
         .unwrap();
     let pre_snap = book_state(&book);
 
-    // 2. More orders that the snapshot doesn't contain.
+    // 2. Two further orders: one rests at a new price, one
+    //    crosses the snapshot's resting order. Replay must
+    //    reproduce the partial-fill effect on the snapshot's
+    //    resting order.
     submit(&mut book, &mut writer, 10, 2, Side::Buy, 99, 3);
     submit(&mut book, &mut writer, 20, 3, Side::Sell, 99, 2);
     writer.flush().unwrap();
