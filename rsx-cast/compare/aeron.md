@@ -87,7 +87,7 @@ service with its own SUBSCRIBE / REPLAY protocol.
 **CMP/DXS**: retransmit is two-tier in the same component.
 
 1. **Hot tier**: a 4096-slot pre-allocated send ring inside
-   `CmpSender`. NAKs for recent sequences are served from
+   `CastSender`. NAKs for recent sequences are served from
    this ring with zero allocation, zero disk I/O.
 2. **Cold tier**: a NAK whose `from_seq` predates the hot
    ring falls through to `read_record_at_seq` on the WAL
@@ -116,7 +116,7 @@ stream, single window equation. Configurable window size.
 
 | | Aeron | CMP/DXS |
 |---|---|---|
-| Durability | Aeron Archive (separate process / API) | WAL embedded in CmpSender |
+| Durability | Aeron Archive (separate process / API) | WAL embedded in CastSender |
 | Sender startup | Connect to driver, no disk | Open WAL file (mmap'd) |
 | Crash recovery | Replay from archive | Replay WAL from last tip |
 | Wire = disk? | No (term buffer vs archive recording format) | Yes (WalHeader + payload, identical bytes) |
@@ -141,7 +141,7 @@ gives:
 - An extra IPC hop on every send and every receive
   (app → driver shm → kernel UDP → driver shm → app).
 
-**CMP has no driver**. `CmpSender::send()` calls `sendto()`
+**CMP has no driver**. `CastSender::send()` calls `sendto()`
 directly from the application thread. Cost: no IPC hop, but
 each process owns its own UDP socket and WAL file. Suits
 RSX's tile architecture (one process per role, pinned
@@ -177,7 +177,7 @@ process, no core pinning.
 |---|---:|---:|---|
 | Aeron UDP loopback (this bench, 6-core box, no pinning) | ~305 µs | ~570 µs | criterion total closure time |
 | Aeron IPC (shared memory, this bench) | ~830 ns | ~1 µs | non-default; see source for caveat |
-| CMP RTT (`cmp_rtt_bench`, same box) | ~10 µs | n/a | two CmpSender/Receiver pairs, loopback |
+| CMP RTT (`cmp_rtt_bench`, same box) | ~10 µs | n/a | two CastSender/Receiver pairs, loopback |
 | CMP send body (`cmp_send_breakdown_bench`) | 3.87 µs | n/a | sendto-side only |
 | Aeron AWS open source (c6in.16xlarge) | 21–22 µs | 32–43 µs | published, pinned cores |
 
