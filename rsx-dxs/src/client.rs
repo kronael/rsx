@@ -2,12 +2,12 @@ use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::protocol::ReplayRequest;
+use crate::protocol::RECORD_REPLAY_NOT_AVAILABLE;
 use crate::protocol::RECORD_REPLAY_REQUEST;
 use crate::tls::build_connector;
 use crate::tls::extract_server_name;
 use crate::wal::RawWalRecord;
 use crate::wal::extract_seq;
-use rustls::pki_types::ServerName;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -26,51 +26,79 @@ use tracing::warn;
 
 pub struct DxsConsumer {
     pub stream_id: u32,
-    pub producer_addr: String,
+    /// Replay endpoints, tried in order on each connect
+    /// attempt. The first endpoint that can serve the
+    /// requested from_seq wins; the rest are fallback (e.g.
+    /// archive endpoints holding cold history that the
+    /// producer has GC'd).
+    pub endpoints: Vec<String>,
     pub tip: u64,
     pub tip_file: PathBuf,
     last_tip_persist: Instant,
     tip_persist_interval: Duration,
     tls_connector: Option<TlsConnector>,
-    server_name: Option<ServerName<'static>>,
 }
 
 impl DxsConsumer {
+    /// Create a consumer that tries `endpoints` in order on
+    /// each connect attempt. The first endpoint that can
+    /// serve the current tip wins; on a `ReplayNotAvailable`
+    /// reply the consumer closes that connection and tries
+    /// the next endpoint with the same from_seq.
     pub fn new(
         stream_id: u32,
-        producer_addr: String,
+        endpoints: Vec<String>,
         tip_file: PathBuf,
         tls_config: Option<TlsConfig>,
     ) -> io::Result<Self> {
+        if endpoints.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "DxsConsumer requires at least one endpoint",
+            ));
+        }
         let tip = load_tip(&tip_file).unwrap_or(0);
         info!(
-            "dxs consumer stream_id={} tip={} addr={}",
-            stream_id, tip, producer_addr
+            "dxs consumer stream_id={} tip={} endpoints={:?}",
+            stream_id, tip, endpoints
         );
 
-        let (tls_connector, server_name) = if let Some(cfg) = tls_config {
+        let tls_connector = if let Some(cfg) = tls_config {
             if cfg.enabled {
                 cfg.validate_client()?;
-                let connector = build_connector(&cfg)?;
-                let name = extract_server_name(&producer_addr)?;
-                (Some(connector), Some(name))
+                Some(build_connector(&cfg)?)
             } else {
-                (None, None)
+                None
             }
         } else {
-            (None, None)
+            None
         };
 
         Ok(Self {
             stream_id,
-            producer_addr,
+            endpoints,
             tip,
             tip_file,
             last_tip_persist: Instant::now(),
             tip_persist_interval: Duration::from_millis(10),
             tls_connector,
-            server_name,
         })
+    }
+
+    /// Convenience constructor for callers with a single
+    /// replay endpoint.
+    pub fn from_single(
+        stream_id: u32,
+        producer_addr: String,
+        tip_file: PathBuf,
+        tls_config: Option<TlsConfig>,
+    ) -> io::Result<Self> {
+        Self::new(
+            stream_id,
+            vec![producer_addr],
+            tip_file,
+            tls_config,
+        )
     }
 
     /// Connect with reconnect + backoff. Callback receives
@@ -156,25 +184,70 @@ impl DxsConsumer {
     where
         F: FnMut(RawWalRecord) -> bool,
     {
-        let tcp_stream =
-            TcpStream::connect(&self.producer_addr)
-                .await?;
-
-        if let (Some(connector), Some(server_name)) =
-            (&self.tls_connector, &self.server_name)
-        {
-            let tls_stream = connector
-                .connect(server_name.clone(), tcp_stream)
-                .await
-                .map_err(|e| {
-                    io::Error::other(
-                        format!("tls handshake failed: {}", e),
-                    )
-                })?;
-            self.handle_stream(tls_stream, callback).await
-        } else {
-            self.handle_stream(tcp_stream, callback).await
+        let mut last_err: Option<io::Error> = None;
+        for endpoint in &self.endpoints.clone() {
+            let tcp_stream =
+                match TcpStream::connect(endpoint).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("dxs: connect to {endpoint} failed: {e}");
+                        last_err = Some(e);
+                        continue;
+                    }
+                };
+            let result = if let Some(connector) =
+                &self.tls_connector
+            {
+                match extract_server_name(endpoint) {
+                    Ok(server_name) => {
+                        match connector
+                            .connect(server_name, tcp_stream)
+                            .await
+                        {
+                            Ok(tls) => {
+                                self.handle_stream(
+                                    tls, callback,
+                                )
+                                .await
+                            }
+                            Err(e) => Err(io::Error::other(
+                                format!(
+                                    "tls handshake failed: {e}"
+                                ),
+                            )),
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            } else {
+                self.handle_stream(tcp_stream, callback).await
+            };
+            match result {
+                // ReplayNotAvailable: try next endpoint
+                Err(ref e)
+                    if e.kind()
+                        == io::ErrorKind::NotFound =>
+                {
+                    warn!(
+                        "dxs: {endpoint} cannot serve \
+                         seq={}, trying next",
+                        self.tip + 1
+                    );
+                    last_err = Some(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        e.to_string(),
+                    ));
+                    continue;
+                }
+                other => return other,
+            }
         }
+        Err(last_err.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotConnected,
+                "all dxs endpoints exhausted",
+            )
+        }))
     }
 
     async fn handle_stream<S, F>(
@@ -237,6 +310,16 @@ impl DxsConsumer {
                     format!(
                         "dxs replay: unsupported wire version v{}",
                         header.version
+                    ),
+                ));
+            }
+
+            if header.record_type == RECORD_REPLAY_NOT_AVAILABLE {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "replay not available from seq={}",
+                        self.tip + 1
                     ),
                 ));
             }
