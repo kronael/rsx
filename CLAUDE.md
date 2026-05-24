@@ -8,8 +8,14 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
 
 ## Architecture (see specs/2/20-network.md, TILES.md)
 
-- Separate processes: Gateway, Risk, ME (per symbol),
-  Marketdata, Recorder, Mark
+- Separate processes: Gateway, Risk (per user shard),
+  ME (per symbol), Marketdata, Recorder, Mark
+- Scale-out axes: Risk shards by user_id (each shard owns a
+  range of users, holds their positions + margin in RAM);
+  ME shards by symbol (one instance per tradeable instrument).
+  An order from user U on symbol S routes GW → Risk[U] → ME[S]
+  → Risk[U] → GW. Adding symbols = add ME instances; adding
+  users = add Risk shards. The two axes are independent.
 - Between processes: CMP (C structs over UDP) + WAL
   replication (TCP)
   - Live path: CMP/UDP (order flow, fills)
