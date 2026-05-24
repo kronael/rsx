@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-rsx-dxs = { path = "../rsx-dxs" }
+rsx-cast = { path = "../rsx-cast" }
 rsx-types = { path = "../rsx-types" }
 rsx-messages = { path = "../rsx-messages" }
 tokio = { version = "1", features = ["full"] }

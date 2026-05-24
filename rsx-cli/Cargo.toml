@@ -18,7 +18,7 @@ path = "src/bin/bench_match_rt.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
-rsx-dxs = { path = "../rsx-dxs" }
+rsx-cast = { path = "../rsx-cast" }
 rsx-messages = { path = "../rsx-messages" }
 rsx-book = { path = "../rsx-book" }
 rsx-matching = { path = "../rsx-matching" }

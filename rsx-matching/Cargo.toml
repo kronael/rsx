@@ -7,7 +7,7 @@ edition = "2021"
 rsx-types = { path = "../rsx-types" }
 rsx-log = { path = "../rsx-log" }
 rsx-book = { path = "../rsx-book" }
-rsx-dxs = { path = "../rsx-dxs" }
+rsx-cast = { path = "../rsx-cast" }
 rsx-messages = { path = "../rsx-messages" }
 core_affinity = "0.8"
 rustc-hash = "2"

@@ -14,7 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 rsx-types = { path = "../rsx-types" }
 rsx-log = { path = "../rsx-log" }
-rsx-dxs = { path = "../rsx-dxs" }
+rsx-cast = { path = "../rsx-cast" }
 rsx-messages = { path = "../rsx-messages" }
 rsx-risk = { path = "../rsx-risk" }
 tracing = "0.1"

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 rsx-types = { path = "../rsx-types" }
-rsx-dxs = { path = "../rsx-dxs" }
+rsx-cast = { path = "../rsx-cast" }
 
 [dev-dependencies]
 criterion = "0.5"

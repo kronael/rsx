@@ -1,15 +1,15 @@
 [package]
-name = "rsx-dxs-fuzz"
+name = "rsx-cast-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 # This package is a cargo-fuzz target collection. Run with:
 #   cargo install cargo-fuzz   (one-time, requires nightly)
-#   cd rsx-dxs && cargo +nightly fuzz run wal_header
+#   cd rsx-cast && cargo +nightly fuzz run wal_header
 #
 # A deterministic regression test in
-# rsx-dxs/tests/header_test.rs covers the same surface on
+# rsx-cast/tests/header_test.rs covers the same surface on
 # every `cargo test`; this exists for longer-soak runs.
 
 [package.metadata]
@@ -17,7 +17,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-rsx-dxs = { path = ".." }
+rsx-cast = { path = ".." }
 
 [[bin]]
 name = "wal_header"
