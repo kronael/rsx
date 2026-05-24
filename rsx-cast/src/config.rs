@@ -26,20 +26,15 @@ pub struct CastConfig {
     /// random ephemeral port. Allows receivers to send NAKs
     /// to a known port. Env: `RSX_CAST_SENDER_BIND_ADDR`.
     pub sender_bind_addr: Option<String>,
-    /// Receiver NAK debounce interval. The receiver re-NAKs
-    /// the oldest contiguous missing run no more frequently
-    /// than this. Default 100 µs, matching typical LAN RTT.
-    /// Env: `RSX_CAST_NAK_RETRY_US`.
-    pub nak_retry_us: u64,
     /// Max retries on the oldest gap before the receiver
     /// transitions to FAULTED and surfaces `CastRecv::Faulted`
-    /// to its consumer. At 100 µs retry × 8 = 800 µs total
+    /// to its consumer. At 50 ms debounce × 8 = 400 ms total
     /// in-band recovery budget. Env: `RSX_CAST_MAX_NAK_RETRIES`.
     pub max_nak_retries: u16,
     /// Sender per-seq retransmit-dedup window. If a NAK arrives
     /// requesting a seq that was retransmitted within this
     /// window, the duplicate retransmit is skipped. Default
-    /// 1 ms — larger than `nak_retry_us` so the layers compose.
+    /// 1 ms — bounds duplicate retransmits on the wire.
     /// Env: `RSX_CAST_RETX_DEDUP_WINDOW_US`.
     pub retx_dedup_window_us: u64,
     /// Receiver per-gap NAK debounce window. Once a NAK has
@@ -55,7 +50,6 @@ impl Default for CastConfig {
         Self {
             heartbeat_interval_ms: 100,
             sender_bind_addr: None,
-            nak_retry_us: 100,
             max_nak_retries: 8,
             retx_dedup_window_us: 1000,
             nak_debounce_us: 50_000,
@@ -70,8 +64,6 @@ impl CastConfig {
                 "RSX_CAST_HEARTBEAT_INTERVAL_MS", 100),
             sender_bind_addr: env::var(
                 "RSX_CAST_SENDER_BIND_ADDR").ok(),
-            nak_retry_us: env_var(
-                "RSX_CAST_NAK_RETRY_US", 100),
             max_nak_retries: env_var(
                 "RSX_CAST_MAX_NAK_RETRIES", 8),
             retx_dedup_window_us: env_var(

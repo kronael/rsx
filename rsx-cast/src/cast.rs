@@ -384,8 +384,8 @@ impl CastSender {
             let seq = nak.from_seq.saturating_add(i);
             // Dedup: if this slot was retransmitted within
             // the dedup window, skip. Receiver's own retry
-            // cadence is bounded by `nak_retry_us` (100 µs
-            // default) so legitimate retries fall through.
+            // cadence is bounded by `nak_debounce_us` so
+            // legitimate retries fall through.
             let slot = (seq & SEND_RING_MASK) as usize;
             let last = self.ring_last_retx_ns[slot];
             if last != 0
