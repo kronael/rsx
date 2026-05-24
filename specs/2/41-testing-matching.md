@@ -47,7 +47,7 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M21 | Incremental CoW recentering (no stop-the-world) | ORDERBOOK.md §2.7 |
 | M22 | Slab allocator: O(1) alloc/free, free list, no shrink | ORDERBOOK.md §3 |
 | M23 | Zero heap allocation on hot path | ORDERBOOK.md §7 |
-| M24 | Event buffer: fixed array [Event; 10_000], no heap | ORDERBOOK.md §6 |
+| M24 | Event buffer: heap-boxed `[Event; MAX_EVENTS]` (65_536), zero re-alloc on hot path | ORDERBOOK.md §6 |
 | M25 | Per-consumer casting/UDP links (slow mktdata doesn't stall risk) | CONSISTENCY.md §3 |
 | M26 | Total order within symbol (monotonic seq), no cross-symbol | CONSISTENCY.md §2 |
 | M27 | ORDER_DONE is commit boundary for multi-fill sequences | CONSISTENCY.md §key invariants |

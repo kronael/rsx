@@ -188,7 +188,8 @@ See `rsx-types/src/lib.rs`.
 ## Zero-Heap Hot Path
 
 - Slab arena allocator for orders (pre-allocated Vec)
-- Fixed-size event buffer (`[Event; 10_000]`, reset by
+- Fixed-size event buffer (`[Event; MAX_EVENTS]` with
+  `MAX_EVENTS = 65_536`, heap-boxed, reset by
   setting `event_len = 0`)
 - No String, no Vec growth, no Box during matching
 - `#[repr(C, align(64))]` on all wire structs (cache line)

@@ -8,7 +8,7 @@ CLI tools for RSX exchange operations.
 
 Reads WAL files via `WalReader::open_from_seq()` from rsx-cast.
 Iterates all records sequentially, printing sequence number,
-record type name, payload length, and CRC32.
+record type name, payload length, and CRC32C.
 
 Uses clap for argument parsing. Recognizes all standard record
 types: FILL, BBO, ORDER_INSERTED, ORDER_CANCELLED, ORDER_DONE,
