@@ -176,25 +176,34 @@ fn bench_heartbeat_decode(c: &mut Criterion) {
 
 /// Target: <100ns
 /// Reorder buffer is BTreeMap<u64, Vec<u8>> inside
-/// CmpReceiver. Bench standalone insert + lookup.
+/// CmpReceiver. Bench standalone insert + lookup. Map
+/// allocated ONCE outside the timed closure; the inner
+/// loop swaps a pre-allocated Vec<u8> in and out so the
+/// per-iteration cost is BTreeMap ops only (no Vec alloc,
+/// no map alloc). Previous version reallocated both per
+/// iteration which buried the BTreeMap cost we want.
 fn bench_reorder_buf_insert_lookup(
     c: &mut Criterion,
 ) {
     pin_worker();
+    let mut buf: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
+    let mut stash: Vec<u8> = vec![0u8; 80];
+    let mut key: u64 = 0;
     c.bench_function(
         "reorder_buf_insert_lookup",
         |b| {
             b.iter(|| {
-                let mut buf: BTreeMap<u64, Vec<u8>> =
-                    BTreeMap::new();
-                let data = vec![0u8; 80];
-                buf.insert(
-                    black_box(42),
-                    data,
-                );
-                let entry =
-                    buf.first_entry();
-                black_box(entry);
+                key = key.wrapping_add(1);
+                // Move the pre-allocated Vec into the map.
+                let payload = std::mem::take(&mut stash);
+                buf.insert(black_box(key), payload);
+                let entry = buf.first_entry();
+                black_box(&entry);
+                drop(entry);
+                // Reclaim the Vec so the next iter doesn't alloc.
+                if let Some(v) = buf.remove(&key) {
+                    stash = v;
+                }
             })
         },
     );

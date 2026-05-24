@@ -170,17 +170,19 @@ fn bench_sendto_loopback(c: &mut Criterion) {
 }
 
 /// Sub-step 5: NAK send-ring slot copy. cmp.rs:223-224 —
-/// a third memcpy of 144 bytes into a preallocated ring.
+/// a memcpy of 128 bytes into a preallocated ring slot. Note: the
+/// production code only stages the first SEND_RING_FRAME_BYTES=128
+/// of the 144-byte frame; longer headers are marked dirty
+/// (cmp.rs:225). So this bench correctly mirrors a 128-byte copy
+/// even though the framed payload is 144 bytes on the wire.
 fn bench_ring_cache_copy(c: &mut Criterion) {
     pin_worker();
     let mut ring = vec![0u8; 4096 * 128];
     let frame = vec![0xAAu8; 144];
     let mut slot: usize = 0;
-    c.bench_function("send.ring_cache_copy_144b", |b| {
+    c.bench_function("send.ring_cache_copy_128b", |b| {
         b.iter(|| {
             let off = (slot & 4095) * 128;
-            // Only copies SEND_RING_FRAME_BYTES=128 of the 144;
-            // headers over 128 are marked dirty (cmp.rs:225).
             ring[off..off + 128]
                 .copy_from_slice(&frame[..128]);
             slot = slot.wrapping_add(1);

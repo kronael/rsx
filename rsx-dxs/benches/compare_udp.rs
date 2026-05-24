@@ -7,7 +7,9 @@
 //! cores 2 (sender) and 3 (echoer)** so neither thread migrates
 //! mid-iteration. No CMP, no framing, no CRC, no WAL — just
 //! `send_to` → spin `recv_from` → `send_to` (echo) → spin
-//! `recv_from`. Payload is 64 bytes (one cache line).
+//! `recv_from`. Payload is **128 bytes** to match `FillRecord` (the
+//! CMP record exercised by `cmp_rtt_bench`). Earlier versions used
+//! 64 bytes, which was apples-to-oranges against CMP RTT.
 //!
 //! The harness matches the in-process `bench-e2e-pipeline`
 //! pattern: both threads pre-warmed, no per-iteration
@@ -96,16 +98,18 @@ fn bench_udp_rtt_loopback(c: &mut Criterion) {
     // Sender (this thread runs the Criterion measurement closure).
     core_affinity::set_for_current(sender_core);
 
-    let payload = [0xAAu8; 64];
-    let mut recv_buf = [0u8; 128];
+    let payload = [0xAAu8; 128];
+    let mut recv_buf = [0u8; 256];
 
-    c.bench_function("udp_rtt_loopback_64b", |b| {
+    c.bench_function("udp_rtt_loopback_128b", |b| {
         b.iter(|| {
             pinger
                 .send_to(black_box(&payload), echoer_addr)
                 .unwrap();
             // Spin until the echo arrives. Non-blocking
             // recv_from + spin keeps both threads cache-hot.
+            // Panic on non-WouldBlock so a dead echoer can't
+            // silently record near-zero iterations.
             loop {
                 match pinger.recv_from(&mut recv_buf) {
                     Ok((n, _)) => {
@@ -118,7 +122,7 @@ fn bench_udp_rtt_loopback(c: &mut Criterion) {
                     {
                         std::hint::spin_loop();
                     }
-                    Err(_) => break,
+                    Err(e) => panic!("pinger recv: {e}"),
                 }
             }
         });
@@ -130,5 +134,10 @@ fn bench_udp_rtt_loopback(c: &mut Criterion) {
     let _ = handle.join();
 }
 
-criterion_group!(benches, bench_udp_rtt_loopback);
+criterion_group! {
+    name = benches;
+    // sample_size(50) matches compare_tcp / compare_aeron / compare_kcp.
+    config = Criterion::default().sample_size(50);
+    targets = bench_udp_rtt_loopback
+}
 criterion_main!(benches);
