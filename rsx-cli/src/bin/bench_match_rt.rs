@@ -218,8 +218,8 @@ fn main() {
                     std::hint::spin_loop();
                     continue;
                 }
-                CastRecv::Faulted { .. } => {
-                    // Bench harness: faulted cmp aborts the run.
+                CastRecv::Faulted { .. } | CastRecv::Reconnect { .. } => {
+                    // Bench harness: faulted/reconnect aborts the run.
                     return;
                 }
             };
@@ -396,7 +396,7 @@ fn main() {
                     std::hint::spin_loop();
                     continue;
                 }
-                CastRecv::Faulted { .. } => {
+                CastRecv::Faulted { .. } | CastRecv::Reconnect { .. } => {
                     timed_out = true;
                     break;
                 }

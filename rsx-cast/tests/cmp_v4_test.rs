@@ -208,8 +208,8 @@ fn nak_recovers_single_packet() {
                 thread::sleep(Duration::from_millis(2));
             }
             CastRecv::Empty => break,
-            CastRecv::Faulted { .. } => {
-                panic!("unexpected fault")
+            CastRecv::Faulted { .. } | CastRecv::Reconnect { .. } => {
+                panic!("unexpected fault/reconnect")
             }
         }
     }
@@ -337,19 +337,19 @@ fn ring_overflow_faults() {
     thread::sleep(Duration::from_millis(10));
     let r = receiver.try_recv();
     match r {
-        CastRecv::Faulted { .. } => {
-            // Expected.
+        CastRecv::Reconnect { .. } => {
+            // Expected: ring overflow triggers Reconnect.
         }
         other => panic!(
-            "expected Faulted on slot conflict, \
+            "expected Reconnect on slot conflict, \
              got {other:?}"
         ),
     }
 }
 
-// 4. FAULTED sticky until reset.
+// 4. RECONNECT sticky until reset.
 #[test]
-fn faulted_state_blocks_further_recv() {
+fn reconnect_state_blocks_further_recv() {
     let (mut receiver, recv_addr, probe) = receiver_only();
 
     send_fill_at(&probe, recv_addr, 1);
@@ -362,23 +362,24 @@ fn faulted_state_blocks_further_recv() {
     thread::sleep(Duration::from_millis(10));
     assert!(matches!(
         receiver.try_recv(),
-        CastRecv::Faulted { .. }
+        CastRecv::Reconnect { .. }
     ));
 
-    // Subsequent calls keep returning Faulted, even
+    // Subsequent calls keep returning Reconnect, even
     // after a brand new in-order packet arrives.
     send_fill_at(&probe, recv_addr, 2);
     thread::sleep(Duration::from_millis(10));
     assert!(matches!(
         receiver.try_recv(),
-        CastRecv::Faulted { .. }
+        CastRecv::Reconnect { .. }
     ));
-    assert!(receiver.is_faulted());
+    assert!(receiver.is_reconnect_pending());
+    assert!(!receiver.is_faulted());
 }
 
 // 5. reset_after_replay resumes normal delivery.
 #[test]
-fn reset_after_replay_clears_fault() {
+fn reset_after_replay_clears_reconnect() {
     let (mut receiver, recv_addr, probe) = receiver_only();
 
     send_fill_at(&probe, recv_addr, 1);
@@ -391,12 +392,13 @@ fn reset_after_replay_clears_fault() {
     thread::sleep(Duration::from_millis(10));
     assert!(matches!(
         receiver.try_recv(),
-        CastRecv::Faulted { .. }
+        CastRecv::Reconnect { .. }
     ));
 
     // Simulate consumer doing a DXS replay up through
     // seq=4097; reset and resume.
     receiver.reset_after_replay(4097);
+    assert!(!receiver.is_reconnect_pending());
     assert!(!receiver.is_faulted());
 
     send_fill_at(&probe, recv_addr, 4098);
@@ -522,8 +524,8 @@ fn heartbeat_triggers_nak_on_idle_gap() {
         match receiver.try_recv() {
             CastRecv::Empty => break,
             CastRecv::Data(_, _) => continue,
-            CastRecv::Faulted { .. } => {
-                panic!("unexpected fault")
+            CastRecv::Faulted { .. } | CastRecv::Reconnect { .. } => {
+                panic!("unexpected fault/reconnect")
             }
         }
     }

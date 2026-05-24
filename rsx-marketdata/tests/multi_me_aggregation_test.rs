@@ -206,8 +206,8 @@ fn drain_into(
         let (hdr, payload) = match receiver.try_recv() {
             CastRecv::Data(h, p) => (h, p),
             CastRecv::Empty => break,
-            CastRecv::Faulted { .. } => {
-                panic!("unexpected fault in test")
+            CastRecv::Faulted { .. } | CastRecv::Reconnect { .. } => {
+                panic!("unexpected fault/reconnect in test")
             }
         };
         match hdr.record_type {

@@ -116,6 +116,11 @@ fn cmp_send_50k_under_one_second() {
                         gap_end_inclusive,
                     );
                 }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    receiver.reset_after_replay(
+                        last_delivered_seq,
+                    );
+                }
             }
         }
         count
