@@ -2,7 +2,7 @@
 ///
 /// Layout (LE on the wire):
 /// ```text
-/// offset 0      version:     u8    (wire-format version)
+/// offset 0      version:     u8    (WalVersion as u8)
 /// offset 1      _pad:        u8
 /// offset 2..4   record_type: u16
 /// offset 4..6   len:         u16   (payload length, bytes)
@@ -12,14 +12,16 @@
 /// ```
 ///
 /// Version is first so receivers can gate on it before
-/// interpreting any other field.
+/// interpreting any other field. `from_bytes` returns `None`
+/// for unrecognised versions; callers never see an invalid
+/// `WalHeader`.
 ///
 /// Adding a new record type does NOT bump the version
 /// (additive). Bump only for header-layout or CRC-algorithm
 /// changes; those require a coordinated stop-redeploy.
 #[derive(Debug, Clone, Copy)]
 pub struct WalHeader {
-    pub version: u8,
+    pub version: WalVersion,
     pub record_type: u16,
     pub len: u16,
     pub crc32: u32,
@@ -27,12 +29,22 @@ pub struct WalHeader {
     pub _reserved: [u8; 7],
 }
 
-/// Current wire format.
-pub const WAL_HEADER_VERSION_V1: u8 = 1;
+/// Known wire-format versions.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalVersion {
+    V1 = 1,
+}
 
-/// The version this binary writes. Single source of truth.
-pub const WAL_HEADER_VERSION_LATEST: u8 =
-    WAL_HEADER_VERSION_V1;
+impl TryFrom<u8> for WalVersion {
+    type Error = ();
+    fn try_from(v: u8) -> Result<Self, ()> {
+        match v {
+            1 => Ok(WalVersion::V1),
+            _ => Err(()),
+        }
+    }
+}
 
 impl WalHeader {
     pub const SIZE: usize = 16;
@@ -43,7 +55,7 @@ impl WalHeader {
         crc32: u32,
     ) -> Self {
         Self {
-            version: WAL_HEADER_VERSION_LATEST,
+            version: WalVersion::V1,
             record_type,
             len,
             crc32,
@@ -51,30 +63,15 @@ impl WalHeader {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        let mut buf = [0u8; Self::SIZE];
-        buf[0] = self.version;
-        // buf[1] = 0 (pad)
-        buf[2..4].copy_from_slice(
-            &self.record_type.to_le_bytes(),
-        );
-        buf[4..6].copy_from_slice(
-            &self.len.to_le_bytes(),
-        );
-        // buf[6..8] = 0 (pad)
-        buf[8..12].copy_from_slice(
-            &self.crc32.to_le_bytes(),
-        );
-        // buf[12..16] stay zeroed
-        buf
-    }
-
+    /// Returns `None` for too-short input or unrecognised
+    /// version byte.
     pub fn from_bytes(buf: &[u8]) -> Option<Self> {
         if buf.len() < Self::SIZE {
             return None;
         }
+        let version = WalVersion::try_from(buf[0]).ok()?;
         Some(Self {
-            version: buf[0],
+            version,
             record_type: u16::from_le_bytes(
                 [buf[2], buf[3]],
             ),
@@ -91,9 +88,18 @@ impl WalHeader {
         })
     }
 
-    /// Returns true if this binary can decode the payload
-    /// behind a header with this version.
-    pub fn is_supported_version(&self) -> bool {
-        self.version == WAL_HEADER_VERSION_V1
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        buf[0] = self.version as u8;
+        buf[2..4].copy_from_slice(
+            &self.record_type.to_le_bytes(),
+        );
+        buf[4..6].copy_from_slice(
+            &self.len.to_le_bytes(),
+        );
+        buf[8..12].copy_from_slice(
+            &self.crc32.to_le_bytes(),
+        );
+        buf
     }
 }
