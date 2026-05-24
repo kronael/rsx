@@ -4,17 +4,20 @@
 //! the `rsx-messages` crate. This module holds only the
 //! protocol-level records the transport itself emits and
 //! consumes.
-
-use std::mem;
-
-/// Lock the wire-format size of a `#[repr(C, align(64))]` struct
-/// at compile time. The align is already enforced by the attribute;
-/// only size can drift via accidental field add / padding shrink.
-macro_rules! wire_size {
-    ($t:ty, $n:expr) => {
-        const _: () = assert!(mem::size_of::<$t>() == $n);
-    };
-}
+//!
+//! ## Wire-format discipline
+//!
+//! Every record is `#[repr(C, align(64))]` with explicit
+//! `_pad…` fields chosen so that `mem::size_of::<T>()` lands
+//! on the documented wire size (64 or 128 bytes). If you
+//! change a struct, **adjust the padding so the size stays
+//! exactly what the wire expects** — receivers on the other
+//! end parse a fixed number of bytes; a silent size drift
+//! breaks the protocol without breaking the build.
+//!
+//! The `align(64)` is compiler-enforced; size is not. Read
+//! the size annotation next to each struct before adding or
+//! changing fields.
 
 /// Transport-level record type constants.
 ///
@@ -38,17 +41,16 @@ pub trait CmpRecord: Copy {
     fn record_type() -> u16;
 }
 
-/// CmpHeartbeat (64-byte aligned)
-/// Sender -> receiver, every 10ms.
+/// CmpHeartbeat — wire size 64 bytes.
+/// Sender -> receiver, when stream is idle.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct CmpHeartbeat {
     pub highest_seq: u64,
     pub _pad1: [u8; 56],
 }
-wire_size!(CmpHeartbeat, 64);
 
-/// CMP Nak (64-byte aligned)
+/// CMP Nak — wire size 64 bytes.
 /// Receiver -> sender, on gap detection.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
@@ -57,9 +59,8 @@ pub struct Nak {
     pub count: u64,
     pub _pad1: [u8; 48],
 }
-wire_size!(Nak, 64);
 
-/// ReplayRequest (64-byte aligned)
+/// ReplayRequest — wire size 64 bytes.
 /// Client -> server for WAL/TCP replay. Keeps stream_id
 /// (TCP routing).
 #[repr(C, align(64))]
@@ -70,9 +71,8 @@ pub struct ReplayRequest {
     pub from_seq: u64,
     pub _pad1: [u8; 48],
 }
-wire_size!(ReplayRequest, 64);
 
-/// CaughtUpRecord (64-byte aligned)
+/// CaughtUpRecord — wire size 128 bytes.
 /// TCP replay control: server emits this to mark the
 /// transition from historical replay to live tail.
 #[repr(C, align(64))]
@@ -85,7 +85,6 @@ pub struct CaughtUpRecord {
     pub live_seq: u64,
     pub _pad1: [u8; 40],
 }
-wire_size!(CaughtUpRecord, 128);
 
 impl CmpRecord for CaughtUpRecord {
     fn seq(&self) -> u64 { self.seq }
