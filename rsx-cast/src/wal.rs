@@ -10,8 +10,7 @@
 //! either forward (replay) or random-access by seq
 //! (`read_record_at_seq`, used for cold-tier NAK retransmits).
 //! `oldest_and_highest_seq` and `list_wal_files_across` let
-//! the replication server / archive consumers reason about
-//! coverage across multiple WAL directories.
+//! the replication server reason about WAL coverage.
 
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
@@ -413,10 +412,10 @@ pub struct RawWalRecord {
     pub payload: Vec<u8>,
 }
 
-/// Merge WAL files across multiple directories (e.g.
-/// hot and archive) into one list sorted by `first_seq`.
-/// The active file (sentinel `first_seq=u64::MAX`) sorts
-/// last. Missing directories are treated as empty.
+/// Merge WAL files across one or more directories into a
+/// single list sorted by `first_seq`. The active file
+/// (sentinel `first_seq=u64::MAX`) sorts last. Missing
+/// directories are treated as empty.
 pub fn list_wal_files_across(
     stream_id: u32,
     dirs: &[&Path],
@@ -503,8 +502,7 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
 }
 
 /// Return the (oldest, highest) seq range currently on disk
-/// for `stream_id` across the given directories (typically
-/// hot + optional archive). `None` if no records are present.
+/// for `stream_id`. `None` if no records are present.
 ///
 /// Used by the replay server to pre-check whether the
 /// requested `from_seq` is in-range before opening a reader.
@@ -604,9 +602,8 @@ fn scan_file_seq_range(
 /// for a 1-hour-old record becomes "open one file + scan
 /// it" rather than impossible.
 ///
-/// Returns Ok(Some(_)) if found, Ok(None) if the seq
-/// isn't present in any visible WAL file (already GC'd
-/// past the retention window), Err(_) on IO failures.
+/// Returns Ok(Some(_)) if found, Ok(None) if not present
+/// in any visible WAL file, Err(_) on IO failures.
 pub fn read_record_at_seq(
     stream_id: u32,
     target_seq: u64,
