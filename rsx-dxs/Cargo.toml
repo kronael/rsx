@@ -72,14 +72,17 @@ harness = false
 
 [[bench]]
 name = "compare_kcp"
+path = "compare/compare_kcp.rs"
 harness = false
 
 [[bench]]
 name = "compare_quinn"
+path = "compare/compare_quinn.rs"
 harness = false
 
 [[bench]]
 name = "compare_all"
+path = "compare/compare_all.rs"
 harness = false
 
 [[bench]]
