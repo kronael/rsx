@@ -1,5 +1,100 @@
 # Changelog
 
+## [rsx-cast v0.5.0] — 2026-05-24
+
+Rename `rsx-dxs` → `rsx-cast`. The unified primitive is now
+`rsx-cast`, with two protocol halves named in verb form:
+
+- **casting** = the live UDP half (was "CMP / streaming
+  protocol")
+- **replication** = the catch-up TCP half (was "DXS / replay
+  protocol")
+
+Wire format and behavior unchanged. Numerical record-type
+constants unchanged (`0x11` NAK, `0x12` HEARTBEAT, `0x13`
+`RECORD_REPLICATION_REQUEST` (was `RECORD_REPLAY_REQUEST`),
+`0x15` `RECORD_REPLICATION_NOT_AVAILABLE` (was
+`RECORD_REPLAY_NOT_AVAILABLE`)). Wire byte layouts of all
+structs unchanged.
+
+### Breaking — Rust symbol names
+
+| Old                          | New                          |
+|------------------------------|------------------------------|
+| `rsx-dxs` (crate)            | `rsx-cast`                   |
+| `rsx_dxs::cmp::*`            | `rsx_cast::cast::*`          |
+| `CmpSender`                  | `CastSender`                 |
+| `CmpReceiver`                | `CastReceiver`               |
+| `CmpRecv` (enum)             | `CastRecv`                   |
+| `CmpConfig`                  | `CastConfig`                 |
+| `CmpRecord` (trait)          | `CastRecord`                 |
+| `CmpHeartbeat`               | `CastHeartbeat`              |
+| `DxsConsumer`                | `ReplicationConsumer`        |
+| `DxsReplayService`           | `ReplicationService`         |
+| `ReplayRequest`              | `ReplicationRequest`         |
+| `ReplayNotAvailable`         | `ReplicationNotAvailable`    |
+| `RECORD_REPLAY_REQUEST`      | `RECORD_REPLICATION_REQUEST` |
+| `RECORD_REPLAY_NOT_AVAILABLE`| `RECORD_REPLICATION_NOT_AVAILABLE` |
+
+Module renames inside the crate:
+
+- `src/cmp.rs` → `src/cast.rs`
+- `src/client.rs` → `src/replication_client.rs`
+- `src/server.rs` → `src/replication_server.rs`
+
+Unchanged: `WalWriter`, `WalReader`, `WalHeader`, the
+`#[repr(C, align(64))]` layouts, `RECORD_CAUGHT_UP`,
+`RECORD_NAK`, `RECORD_HEARTBEAT`, `.wal` file extension,
+all on-disk and on-wire bytes.
+
+### Breaking — env vars
+
+| Old                            | New                             |
+|--------------------------------|---------------------------------|
+| `RSX_CMP_HEARTBEAT_INTERVAL_MS`| `RSX_CAST_HEARTBEAT_INTERVAL_MS`|
+| `RSX_CMP_SENDER_BIND_ADDR`     | `RSX_CAST_SENDER_BIND_ADDR`     |
+| `RSX_CMP_NAK_RETRY_US`         | `RSX_CAST_NAK_RETRY_US`         |
+| `RSX_CMP_MAX_NAK_RETRIES`      | `RSX_CAST_MAX_NAK_RETRIES`      |
+| `RSX_CMP_RETX_DEDUP_WINDOW_US` | `RSX_CAST_RETX_DEDUP_WINDOW_US` |
+| `RSX_CMP_REORDER_BUF_LIMIT`    | `RSX_CAST_REORDER_BUF_LIMIT`    |
+| `RSX_CMP_UDP_ADDR`             | `RSX_CAST_UDP_ADDR`             |
+| `RSX_*_CMP_ADDR` / `_ADDRS`    | `RSX_*_CAST_ADDR` / `_ADDRS`    |
+| `RSX_ME_REPLAY_DXS_ADDR`       | `RSX_ME_REPLICATION_ADDR`       |
+| `RSX_ME_DXS_ADDR`              | `RSX_ME_REPLICATION_BIND_ADDR`  |
+
+Default values unchanged.
+
+### Spec + bench renames
+
+- `specs/2/4-cmp.md` → `specs/2/4-cast.md`
+- `specs/2/10-dxs.md` → `specs/2/10-replication.md`
+- `specs/2/35-testing-cmp.md` → `specs/2/35-testing-cast.md`
+- `specs/2/36-testing-dxs.md` → `specs/2/36-testing-replication.md`
+- `benches/cmp_*_bench.rs` → `benches/cast_*_bench.rs`
+- `examples/cmp_smoke.rs` → `examples/cast_smoke.rs`
+
+### Migration
+
+Cargo.toml:
+
+```toml
+# old
+rsx-dxs = { path = "../rsx-dxs" }
+# new
+rsx-cast = { path = "../rsx-cast" }
+```
+
+Rust:
+
+```rust
+// old
+use rsx_dxs::cmp::CmpSender;
+use rsx_dxs::DxsConsumer;
+// new
+use rsx_cast::cast::CastSender;
+use rsx_cast::ReplicationConsumer;
+```
+
 ## [rsx-dxs v0.4.0] — 2026-05-24
 
 Replay-endpoint federation (breaking) bundled with the
