@@ -14,7 +14,6 @@ use rsx_types::Qty;
 
 const STREAM_ID: u32 = 42;
 const ROTATE_BYTES: u64 = 64 * 1024 * 1024;
-const RETENTION_NS: u64 = 10 * 60 * 1_000_000_000;
 
 fn fill(taker_oid: u64, price: i64, qty: i64) -> FillRecord {
     FillRecord {

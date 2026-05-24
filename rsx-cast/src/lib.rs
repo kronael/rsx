@@ -19,6 +19,7 @@ pub mod replication_server;
 pub mod replication_client;
 pub mod config;
 pub mod tls;
+pub mod time_utils;
 
 pub use header::WalHeader;
 pub use header::WalVersion;

@@ -27,6 +27,7 @@ use crate::records::ReplicationRequest;
 use crate::records::RECORD_CAUGHT_UP;
 use crate::records::RECORD_REPLICATION_NOT_AVAILABLE;
 use crate::records::RECORD_REPLICATION_REQUEST;
+use crate::time_utils::time_ns;
 use crate::tls::build_acceptor;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
@@ -44,13 +45,6 @@ use tokio_rustls::TlsAcceptor;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-fn time_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
-}
 
 #[derive(Clone)]
 pub struct ReplicationService {
