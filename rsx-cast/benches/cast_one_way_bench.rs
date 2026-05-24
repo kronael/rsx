@@ -40,6 +40,7 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_messages::FillRecord;
@@ -123,8 +124,8 @@ fn bench_cmp_one_way(c: &mut Criterion) {
         core_affinity::set_for_current(recv_core);
         let mut i: u64 = 0;
         while !stop_clone.load(Ordering::Relaxed) {
-            if let Some(frame) = receiver.try_recv() {
-                black_box(frame);
+            if let CastRecv::Data(_, payload) = receiver.try_recv() {
+                black_box(payload);
                 recv_clone.fetch_add(1, Ordering::Release);
             } else {
                 std::hint::spin_loop();

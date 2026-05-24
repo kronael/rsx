@@ -39,6 +39,7 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_messages::FillRecord;
@@ -154,7 +155,7 @@ fn bench_cmp_rtt(c: &mut Criterion) {
         let mut echo = fill_record();
         let mut i: u64 = 0;
         while !stop_b.load(Ordering::Relaxed) {
-            if let Some(_) = b_receiver.try_recv() {
+            if let CastRecv::Data(_, _) = b_receiver.try_recv() {
                 if let Err(e) = b_sender.send(&mut echo) {
                     panic!("b send: {e}");
                 }
@@ -190,7 +191,7 @@ fn bench_cmp_rtt(c: &mut Criterion) {
                 panic!("a send: {e}");
             }
             loop {
-                if let Some(reply) = a_receiver.try_recv() {
+                if let CastRecv::Data(_, reply) = a_receiver.try_recv() {
                     black_box(reply);
                     break;
                 }
