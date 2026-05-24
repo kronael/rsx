@@ -1,33 +1,42 @@
-/// WAL record header (16 bytes exactly).
+/// WAL record header (16 bytes, `#[repr(C)]`).
 ///
-/// Layout (LE on the wire):
+/// Layout (LE on the wire, x86 host — same byte order):
 /// ```text
-/// offset 0      version:     u8    (WalVersion as u8)
-/// offset 1      _pad:        u8
+/// offset 0      version:     u8    (1 = V1; 0 or unknown → reject)
+/// offset 1      _pad0:       u8
 /// offset 2..4   record_type: u16
 /// offset 4..6   len:         u16   (payload length, bytes)
-/// offset 6..8   _pad:        u16
-/// offset 8..12  crc32:       u32   (CRC32C of payload)
+/// offset 6..8   _pad1:       u16
+/// offset 8..12  crc32:       u32   (CRC32 of payload)
 /// offset 12..16 _reserved:   [u8; 4]
 /// ```
 ///
+/// `#[repr(C)]` makes the in-memory layout identical to the wire
+/// format, so `from_bytes` / `to_bytes` are single unsafe casts —
+/// no field-by-field encode/decode.
+///
 /// Version is first so receivers can gate on it before
 /// interpreting any other field. `from_bytes` returns `None`
-/// for unrecognised versions; callers never see an invalid
-/// `WalHeader`.
+/// for unrecognised versions.
 ///
-/// Adding a new record type does NOT bump the version
-/// (additive). Bump only for header-layout or CRC-algorithm
-/// changes; those require a coordinated stop-redeploy.
+/// Adding a new record type does NOT bump the version (additive).
+/// Bump only for header-layout or CRC-algorithm changes.
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct WalHeader {
-    pub version: WalVersion,
+    pub version: u8,
+    pub _pad0: u8,
     pub record_type: u16,
     pub len: u16,
+    pub _pad1: u16,
     pub crc32: u32,
-    /// Absorbs: pad@1, pad@6..8, reserved@12..16.
-    pub _reserved: [u8; 7],
+    pub _reserved: [u8; 4],
 }
+
+const _: () = assert!(
+    std::mem::size_of::<WalHeader>() == 16,
+    "WalHeader must be exactly 16 bytes",
+);
 
 /// Known wire-format versions.
 #[repr(u8)]
@@ -55,11 +64,13 @@ impl WalHeader {
         crc32: u32,
     ) -> Self {
         Self {
-            version: WalVersion::V1,
+            version: WalVersion::V1 as u8,
+            _pad0: 0,
             record_type,
             len,
+            _pad1: 0,
             crc32,
-            _reserved: [0u8; 7],
+            _reserved: [0u8; 4],
         }
     }
 
@@ -69,37 +80,15 @@ impl WalHeader {
         if buf.len() < Self::SIZE {
             return None;
         }
-        let version = WalVersion::try_from(buf[0]).ok()?;
-        Some(Self {
-            version,
-            record_type: u16::from_le_bytes(
-                [buf[2], buf[3]],
-            ),
-            len: u16::from_le_bytes(
-                [buf[4], buf[5]],
-            ),
-            crc32: u32::from_le_bytes([
-                buf[8], buf[9], buf[10], buf[11],
-            ]),
-            _reserved: [
-                buf[1], buf[6], buf[7],
-                buf[12], buf[13], buf[14], buf[15],
-            ],
+        WalVersion::try_from(buf[0]).ok()?;
+        Some(unsafe {
+            std::ptr::read_unaligned(
+                buf.as_ptr() as *const Self,
+            )
         })
     }
 
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        let mut buf = [0u8; Self::SIZE];
-        buf[0] = self.version as u8;
-        buf[2..4].copy_from_slice(
-            &self.record_type.to_le_bytes(),
-        );
-        buf[4..6].copy_from_slice(
-            &self.len.to_le_bytes(),
-        );
-        buf[8..12].copy_from_slice(
-            &self.crc32.to_le_bytes(),
-        );
-        buf
+        unsafe { std::mem::transmute(*self) }
     }
 }
