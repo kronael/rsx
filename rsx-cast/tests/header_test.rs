@@ -1,6 +1,5 @@
 use rsx_cast::WalHeader;
 use rsx_cast::header::WAL_HEADER_VERSION_LATEST;
-use rsx_cast::header::WAL_HEADER_VERSION_V0;
 use rsx_cast::header::WAL_HEADER_VERSION_V1;
 
 #[test]
@@ -8,29 +7,32 @@ fn header_encode_decode_roundtrip() {
     let header = WalHeader::new(1, 64, 0xDEADBEEF);
     let bytes = header.to_bytes();
     let decoded = WalHeader::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.version, WAL_HEADER_VERSION_LATEST);
     assert_eq!(decoded.record_type, 1);
     assert_eq!(decoded.len, 64);
     assert_eq!(decoded.crc32, 0xDEADBEEF);
-    assert_eq!(decoded.version, WAL_HEADER_VERSION_LATEST);
     assert_eq!(decoded._reserved, [0u8; 7]);
 }
 
 #[test]
 fn header_little_endian_verified() {
-    // Wire format: bytes 0-7 = record_type(2)+len(2)+crc(4),
-    // byte 8 = version, bytes 9-15 = reserved (zero).
+    // Wire format: byte 0 = version, byte 1 = pad,
+    // bytes 2..4 = record_type, bytes 4..6 = len,
+    // bytes 6..8 = pad, bytes 8..12 = crc32, 12..16 = reserved.
     let raw: [u8; 16] = [
-        0x02, 0x01, // record_type = 0x0102 LE
-        0x03, 0x04, // len = 0x0403 LE
-        0x05, 0x06, 0x07, 0x08, // crc32 LE
         WAL_HEADER_VERSION_V1, // version
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
+        0x00,                  // pad
+        0x02, 0x01,            // record_type = 0x0102 LE
+        0x03, 0x04,            // len = 0x0403 LE
+        0x00, 0x00,            // pad
+        0x05, 0x06, 0x07, 0x08, // crc32 LE
+        0x00, 0x00, 0x00, 0x00, // reserved
     ];
     let h = WalHeader::from_bytes(&raw).unwrap();
+    assert_eq!(h.version, WAL_HEADER_VERSION_V1);
     assert_eq!(h.record_type, 0x0102);
     assert_eq!(h.len, 0x0403);
     assert_eq!(h.crc32, 0x08070605);
-    assert_eq!(h.version, WAL_HEADER_VERSION_V1);
     assert_eq!(h._reserved, [0u8; 7]);
 }
 
@@ -42,27 +44,34 @@ fn header_new_writes_latest_version() {
 }
 
 #[test]
-fn header_v0_legacy_zero_is_supported() {
-    // Pre-version-byte WALs had bytes 8-15 all zero. They
-    // must still decode to a supported version (back-compat).
+fn header_version_zero_rejected() {
+    // version=0 at byte 0 is not a known version.
     let raw: [u8; 16] = [
-        0x01, 0x00, 0x40, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        0x01, 0x00,
+        0x40, 0x00,
+        0x00, 0x00,
+        0xAA, 0xBB, 0xCC, 0xDD,
+        0x00, 0x00, 0x00, 0x00,
     ];
     let h = WalHeader::from_bytes(&raw).unwrap();
-    assert_eq!(h.version, WAL_HEADER_VERSION_V0);
+    assert_eq!(h.version, 0);
     assert!(
-        h.is_supported_version(),
-        "v0 must remain readable for back-compat"
+        !h.is_supported_version(),
+        "version 0 must be rejected"
     );
 }
 
 #[test]
 fn header_unknown_version_rejected() {
     let raw: [u8; 16] = [
-        0x01, 0x00, 0x40, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
         0xFF, // unknown version
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, // pad
+        0x01, 0x00, // record_type = 1
+        0x40, 0x00, // len = 64
+        0x00, 0x00, // pad
+        0xAA, 0xBB, 0xCC, 0xDD, // crc32
+        0x00, 0x00, 0x00, 0x00, // reserved
     ];
     let h = WalHeader::from_bytes(&raw).unwrap();
     assert_eq!(h.version, 0xFF);
@@ -92,13 +101,9 @@ fn wal_header_crc32_matches_payload() {
     assert_eq!(header.crc32, crc);
 }
 
-/// Stress the decoder with random byte sequences. Goal is
-/// not to verify correctness — random bytes don't have a
-/// known expected output — but to catch any panic, OOB
-/// access, or arithmetic overflow in `from_bytes`. This is
-/// a deterministic property-style test (seeded LCG) that
-/// runs on every `cargo test`. The dedicated cargo-fuzz
-/// target in `rsx-dxs/fuzz/` exists for longer runs.
+/// Stress the decoder with random byte sequences to catch
+/// any panic, OOB access, or arithmetic overflow in
+/// `from_bytes`. Deterministic seeded LCG.
 #[test]
 fn header_from_bytes_no_panic_on_random_input() {
     let mut state: u64 = 0xCAFEBABEu64;
@@ -114,14 +119,12 @@ fn header_from_bytes_no_panic_on_random_input() {
                 .wrapping_mul(0x94D049BB133111EB);
             *b = (z ^ (z >> 31)) as u8;
         }
-        // Must not panic for any 16-byte input. We don't
-        // care about the result, only that the call returns.
         let _ = WalHeader::from_bytes(&buf);
     }
 }
 
-/// Same idea but for short slices: from_bytes must return
-/// None for any slice shorter than 16, never panic.
+/// from_bytes must return None for any slice shorter than
+/// 16, never panic.
 #[test]
 fn header_from_bytes_no_panic_on_short_input() {
     for len in 0..16 {
