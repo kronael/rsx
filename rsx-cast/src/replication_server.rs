@@ -89,30 +89,36 @@ impl ReplicationService {
             let (stream, peer) =
                 listener.accept().await?;
             info!("dxs client connected from {}", peer);
-            let svc = svc.clone();
-            tokio::spawn(async move {
-                let result = if let Some(ref acceptor) =
-                    svc.tls_acceptor
-                {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => {
-                            handle_client(svc, tls_stream).await
-                        }
-                        Err(e) => Err(io::Error::other(
-                            format!("tls handshake failed: {}", e),
-                        )),
-                    }
-                } else {
-                    handle_client(svc, stream).await
-                };
-                if let Err(e) = result {
-                    warn!(
-                        "dxs client {} error: {}",
-                        peer, e
-                    );
-                }
-            });
+            tokio::spawn(dispatch_client(
+                svc.clone(),
+                peer,
+                stream,
+            ));
         }
+    }
+}
+
+/// Per-connection handler. Pulled out of `serve` so the spawn
+/// site stays a one-liner — see CLAUDE.md "tokio::spawn rule".
+async fn dispatch_client(
+    svc: Arc<ReplicationService>,
+    peer: SocketAddr,
+    stream: tokio::net::TcpStream,
+) {
+    let result = if let Some(ref acceptor) = svc.tls_acceptor {
+        match acceptor.accept(stream).await {
+            Ok(tls_stream) => {
+                handle_client(svc, tls_stream).await
+            }
+            Err(e) => Err(io::Error::other(format!(
+                "tls handshake failed: {}", e,
+            ))),
+        }
+    } else {
+        handle_client(svc, stream).await
+    };
+    if let Err(e) = result {
+        warn!("dxs client {} error: {}", peer, e);
     }
 }
 
