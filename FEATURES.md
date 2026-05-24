@@ -52,7 +52,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 
 ### rsx-cast (transport, domain-agnostic)
 
-- WalWriter: 10ms flush, 64MB rotate, 48h retention default
+- WalWriter: 10ms flush, 64MB rotate, 4h retention default
 - WalReader with sequence extraction; random-access
   `read_record_at_seq` for cold-tier NAK retransmit
 - ReplicationService (TCP, from seq N), optional rustls TLS
@@ -61,7 +61,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Two-tier NAK retransmit: preallocated in-memory ring →
   WAL random-access (horizon = WAL retention, not RAM)
 - Protocol records: Nak, CastHeartbeat, ReplicationRequest,
-  CaughtUpRecord, ReplicationNotAvailable (in `protocol.rs`)
+  CaughtUpRecord, ReplicationNotAvailable (in `records.rs`)
 - `CastRecv::Faulted` surfaced to consumer when reorder
   ring slot conflicts or NAK retry budget exhausts;
   `reset_after_replay` resumes after replication-replay
