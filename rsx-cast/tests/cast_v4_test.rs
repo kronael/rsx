@@ -95,15 +95,14 @@ fn send_nak_from(
     };
     let payload = as_bytes(&nak);
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(
+    let header = WalHeader::new(
         RECORD_NAK,
         payload.len() as u16,
         crc,
-    )
-    .to_bytes();
+    );
     let mut buf =
         vec![0u8; WalHeader::SIZE + payload.len()];
-    buf[..WalHeader::SIZE].copy_from_slice(&hdr);
+    buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     src.send_to(&buf, dest).unwrap();
 }
@@ -296,15 +295,14 @@ fn send_fill_at(
     f.seq = seq;
     let payload = as_bytes(&f);
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(
+    let header = WalHeader::new(
         RECORD_FILL,
         payload.len() as u16,
         crc,
-    )
-    .to_bytes();
+    );
     let mut buf =
         vec![0u8; WalHeader::SIZE + payload.len()];
-    buf[..WalHeader::SIZE].copy_from_slice(&hdr);
+    buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     probe.send_to(&buf, recv_addr).unwrap();
 }
@@ -438,7 +436,10 @@ fn handle_nak_dedups_within_window() {
     )
     .unwrap();
     let mut f_wal = fill(1);
-    writer.append(&mut f_wal).unwrap();
+    {
+        let framed = writer.prepare(&mut f_wal).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
     writer.flush().unwrap();
 
     let cfg = CastConfig {
@@ -535,15 +536,14 @@ fn heartbeat_triggers_nak_on_idle_gap() {
     };
     let payload = as_bytes(&hb);
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(
+    let header = WalHeader::new(
         RECORD_HEARTBEAT,
         payload.len() as u16,
         crc,
-    )
-    .to_bytes();
+    );
     let mut buf =
         vec![0u8; WalHeader::SIZE + payload.len()];
-    buf[..WalHeader::SIZE].copy_from_slice(&hdr);
+    buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     probe.send_to(&buf, recv_addr).unwrap();
     thread::sleep(Duration::from_millis(10));

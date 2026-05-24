@@ -154,9 +154,9 @@ taker_ts_ns: 0,
     assert_eq!(header.crc32, crc);
 
     // Mutate header bytes -- CRC unchanged
-    let mut hdr_bytes = header.to_bytes();
-    hdr_bytes[8] ^= 0xFF; // reserved field
-    let _ = hdr_bytes; // suppress unused warning
+    let mut hdr_bytes: [u8; 16] = header.to_bytes().try_into().unwrap();
+    hdr_bytes[8] ^= 0xFF;
+    let _ = hdr_bytes;
     let crc_after = compute_crc32(payload);
     assert_eq!(crc_after, crc);
 
