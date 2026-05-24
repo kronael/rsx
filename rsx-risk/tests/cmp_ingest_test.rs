@@ -111,6 +111,7 @@ fn mark_cmp_updates_risk_mark_prices() {
             CastRecv::Data(h, p) => (h, p),
             CastRecv::Empty => break,
             CastRecv::Faulted { .. } => panic!("unexpected fault"),
+            CastRecv::Reconnect { .. } => panic!("unexpected reconnect"),
         };
         if hdr.record_type == RECORD_MARK_PRICE
             && payload.len()
@@ -170,6 +171,7 @@ fn bbo_cmp_updates_risk_index_price() {
             CastRecv::Data(h, p) => (h, p),
             CastRecv::Empty => break,
             CastRecv::Faulted { .. } => panic!("unexpected fault"),
+            CastRecv::Reconnect { .. } => panic!("unexpected reconnect"),
         };
         if hdr.record_type == RECORD_BBO
             && payload.len()
