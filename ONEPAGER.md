@@ -14,7 +14,7 @@ a competing venue rebuilds the same pieces, badly.
 
 Two layers, one repo.
 
-1. **rsx-dxs** — domain-agnostic transport: WAL + CMP (C-struct UDP)
+1. **rsx-dxs** — domain-agnostic transport: WAL + casting (C-struct UDP)
    + TCP replay. Same bytes on disk, in UDP, on the wire. No
    knowledge of orders, fills, or users. Reusable wherever you need
    an audited stream of fixed-size records.
@@ -45,7 +45,7 @@ LANDSCAPE.md`, `docs/benches.md`):
 | Layer | p50 | What it is |
 |---|---:|---|
 | Match algorithm | **340 ns** | dedup + WAL accept + match + WAL events |
-| In-process round-trip | **9.58 µs** | real CMP/UDP + Orderbook + WAL, one binary |
+| In-process round-trip | **9.58 µs** | real casting/UDP + Orderbook + WAL, one binary |
 | Cross-process production | **1 128 µs** | GW→ME→GW, separate processes |
 | Cross-process via Python WS probe | **11 878 µs** | end-to-end with client framing |
 

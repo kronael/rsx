@@ -5,8 +5,8 @@ writes for audit and replay. One byte layout for live frames,
 disk records, and TCP replay streams — no serialization step
 between them.
 
-**CMP** (C Message Protocol) is the UDP path: NAK-based,
-sender-side retransmit, fixed `#[repr(C)]` frames. **DXS** is
+**casting** (C Message Protocol) is the UDP path: NAK-based,
+sender-side retransmit, fixed `#[repr(C)]` frames. **replication** is
 the TCP cold-path replay protocol over the same record bytes.
 The NAK retransmit horizon equals **log retention** (default
 48 h), not RAM. Trust model: trusted LAN only, single sender
@@ -20,7 +20,7 @@ QUIC's job (see [When NOT to use this](#when-not-to-use-this)).
 | `WalWriter::append` (in-memory) | **31 ns** | `wal_bench`, single thread |
 | `CmpSender::send` body | **~4.07 µs** (99% kernel UDP send path) | `cmp_send_breakdown_bench`, 128 B payload + 16 B header |
 | Raw UDP RTT (baseline) | **9.89 µs** | `compare_udp`, 128 B, two threads pinned to cores 2/3 |
-| CMP RTT (sender → echo → sender) | **11.26 µs** | `cmp_rtt_bench`, 128 B, two threads pinned |
+| casting RTT (sender → echo → sender) | **11.26 µs** | `cmp_rtt_bench`, 128 B, two threads pinned |
 | `WalWriter::flush + fsync`, single record | **651 µs** | `wal_fsync_bench`, sync per append |
 | `WalWriter::flush + fsync`, 64 KB batch | **24 µs** | `wal_fsync_bench`, amortised |
 | Cold-tier NAK retransmit (`read_record_at_seq`) | **23.5 ms @ 10 K records** | `wal_random_read_bench`, scans backwards |
@@ -52,7 +52,7 @@ TCP replay stream carries, and the same 16 bytes the audit
 archive holds. No serialize step, no encode step, no
 length-prefix wrapper. Existing options put a framing layer
 on top of records that are *already* framed (gRPC over
-HTTP/2, QUIC frames, Aeron sessions, Chronicle wire); CMP
+HTTP/2, QUIC frames, Aeron sessions, Chronicle wire); casting
 skips it.
 
 The retransmit story falls out of this. When the receiver
@@ -66,7 +66,7 @@ the packaging difference is the point.
 
 ## What it gives you
 
-- **CMP/UDP** — point-to-point reliable UDP. Sender assigns
+- **casting/UDP** — point-to-point reliable UDP. Sender assigns
   monotonic `seq`, sends, and caches the encoded frame in a
   preallocated ring. Receiver detects gaps from sequence skips
   or from heartbeat-driven idle-tail checks; sends a `Nak`;
@@ -82,9 +82,9 @@ the packaging difference is the point.
   `wal::read_record_at_seq` — a random-access read from the
   WAL file that holds that seq. Retransmit horizon = **WAL
   retention** (default 48 h), not RAM. Aeron's equivalent
-  ships as a separate Archive process; CMP keeps the audit
+  ships as a separate Archive process; casting keeps the audit
   log and the retransmit cache in the same producer.
-- **DXS/TCP** — same record bytes, reliable transport. Used
+- **replication/TCP** — same record bytes, reliable transport. Used
   for cold-start replay (`DxsConsumer::run`) and
   archival/replication. Optional rustls TLS.
 - **Domain-agnostic.** `rsx-dxs` knows nothing about
@@ -95,7 +95,7 @@ the packaging difference is the point.
 
 ## Wire format
 
-Every CMP datagram and every WAL record is:
+Every casting datagram and every WAL record is:
 
 ```
 +------------------+-------------------------------+
@@ -190,7 +190,7 @@ loop {
         CmpRecv::Empty => {}
         CmpRecv::Faulted { last_delivered_seq, .. } => {
             // gap too big for in-band recovery; see Pattern A below
-            // for the canonical DXS-replay-then-reset response.
+            // for the canonical replication-replay-then-reset response.
             break;
         }
     }
@@ -254,7 +254,7 @@ and again only on the (rare) FAULTED escalation.
 ### Pattern B — TCP-only consumer
 
 For consumers that don't need µs latency (archivers, replay
-tools, analytics, cross-DC replication). DXS Phase 2 supports
+tools, analytics, cross-DC replication). replication Phase 2 supports
 a live tail over TCP, so a single `DxsConsumer` covers both
 historical catch-up and live streaming, indefinitely.
 
@@ -304,8 +304,8 @@ latency measurements justify the extra moving parts.
 - **Idempotent replay**: consumers dedup by `seq`. Records
   with `seq ≤ tips[stream_id]` are a no-op. Tips persist
   every 10 ms; recovery resumes from `tip + 1`.
-- **At-least-once delivery over CMP/UDP**, deduplicated at
-  the consumer via `seq` + tips. Replay over DXS/TCP is
+- **At-least-once delivery over casting/UDP**, deduplicated at
+  the consumer via `seq` + tips. Replay over replication/TCP is
   deterministic and resumes from `tip + 1`.
 
 ### Known caveats
@@ -327,13 +327,13 @@ latency measurements justify the extra moving parts.
 **These are non-negotiable; violate them and all bets are off.**
 
 - **Trusted LAN only.** No authentication, no encryption on
-  the CMP/UDP path. Peers are assumed to be on a firewalled
+  the casting/UDP path. Peers are assumed to be on a firewalled
   internal network (VPC, namespace, or dedicated L2 segment).
   Trust is delegated upward (to a gateway with JWT + TLS for
   external clients) and downward (to L3 — firewall, VPC,
   namespace — for internal peers). See `specs/4-cast.md` §10.4.
   For public-internet transport, use QUIC.
-- **Stable network.** CMP is tuned for loss rate ≤ 0.01% and
+- **Stable network.** casting is tuned for loss rate ≤ 0.01% and
   jitter ≤ 100 µs. On a lossy WAN, retransmit storms will
   dominate; throughput collapses. Use KCP or QUIC there.
 - **Fixed-size, stable `repr(C)` payloads.** Wire format =
@@ -352,7 +352,7 @@ latency measurements justify the extra moving parts.
 
 ## When NOT to use this
 
-- **Public internet** — no TLS on CMP, no congestion control.
+- **Public internet** — no TLS on casting, no congestion control.
   Use QUIC (Quinn) or HTTP/2.
 - **Lossy or high-jitter paths** — NAK retransmit assumes
   ≤ 0.01% loss. WAN paths cause retransmit storms. Use KCP.
@@ -403,7 +403,7 @@ stable closely.
     sender to a known port so receivers know where to send
     NAKs.
   - `RSX_REPL_TLS`, `RSX_REPL_CERT_PATH`, `RSX_REPL_KEY_PATH`
-    — TLS on the DXS replay TCP socket.
+    — TLS on the replication TCP socket.
 - **Metrics.** No Prometheus. Counters (drops, NAK retransmits,
   reorder overflows) emit as structured `tracing` log lines;
   a separate shipper turns them into metrics out-of-band.
@@ -422,13 +422,13 @@ stable closely.
 - **rtrb** (mgeier) — wait-free SPSC ring buffer that
   inspired our preallocated send-ring + the planned v4
   reorder-ring. https://github.com/mgeier/rtrb
-- **`crc32fast`** — what CMP uses for header CRC. The
+- **`crc32fast`** — what casting uses for header CRC. The
   Castagnoli polynomial choice follows iSCSI / SCTP.
   https://github.com/srijs/rust-crc32fast
 
 ## Alternatives
 
-If CMP doesn't fit, the directly-relevant peers (with deeper
+If casting doesn't fit, the directly-relevant peers (with deeper
 notes + reproducible benches in [`compare/`](compare/)):
 
 - [**Aeron**](compare/aeron.md) — the design ancestor; UDP

@@ -2,11 +2,11 @@
 status: shipped
 ---
 
-# TESTING-CMP: Streaming Protocol (CMP) Test Specification
+# TESTING-casting: Streaming Protocol (casting) Test Specification
 
 Version: 1.0
 Status: Draft
-Depends on: CMP.md, DXS.md, TILES.md, NETWORK.md
+Depends on: casting.md, replication.md, TILES.md, NETWORK.md
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@ tracks implementation progress.
 | C4 | MAX_PAYLOAD = 64KB, reject before allocating | `sender_rejects_payload_exceeding_max`, `receiver_rejects_len_exceeding_max_payload` | ☐ |
 | C5 | size_of asserts for all wire types (StatusMessage, Nak, Heartbeat = 64B each) | `status_message_size_is_64_bytes`, `nak_size_is_64_bytes`, `heartbeat_size_is_64_bytes` | ☐ |
 
-### CMP/UDP Sender
+### casting/UDP Sender
 
 | ID | Requirement | Test(s) | Status |
 |----|-------------|---------|--------|
@@ -49,7 +49,7 @@ tracks implementation progress.
 | C13 | Sender stalls when flow control window exhausted | `sender_stalls_when_window_exhausted`, `zero_window_sender_fully_stalled` | ☐ |
 | C14 | Sender updates peer state on StatusMessage receipt | `sender_updates_peer_state_on_status_msg`, `sender_resumes_after_status_msg_opens_window` | ☐ |
 
-### CMP/UDP Receiver
+### casting/UDP Receiver
 
 | ID | Requirement | Test(s) | Status |
 |----|-------------|---------|--------|
@@ -152,12 +152,12 @@ benchmarks. Measure userspace time only.
 
 ### Performance Target Summary
 
-From CMP.md §9:
+From casting.md §9:
 
 | Operation | Target |
 |-----------|--------|
-| CMP message encode | <50ns (memcpy) |
-| CMP message decode | <50ns (ptr::read) |
+| casting message encode | <50ns (memcpy) |
+| casting message decode | <50ns (ptr::read) |
 | UDP round-trip (same machine) | <10us |
 | UDP round-trip (same datacenter) | <50us |
 | TCP round-trip (same machine) | <100us |
@@ -173,11 +173,11 @@ From CMP.md §9:
 | Risk -> ME (CmpSender) | NETWORK.md | `cmp_test.rs` |
 | ME -> Risk (CmpSender) | NETWORK.md | `cmp_test.rs` |
 | Risk -> Gateway (CmpSender) | NETWORK.md | `cmp_test.rs` |
-| CmpSender reads WAL for retransmit | DXS.md §3,4 | `cmp_test.rs` |
-| DxsConsumer uses TCP replication | DXS.md §5,6 | `client_test.rs` |
-| Recorder uses TCP replication | DXS.md §8 | `client_test.rs` |
+| CmpSender reads WAL for retransmit | replication.md §3,4 | `cmp_test.rs` |
+| DxsConsumer uses TCP replication | replication.md §5,6 | `client_test.rs` |
+| Recorder uses TCP replication | replication.md §8 | `client_test.rs` |
 | Marketdata recovery via TCP | MARKETDATA.md §8 | `client_test.rs` |
-| SPSC intra-process, CMP inter-process | TILES.md | architectural (no direct test) |
+| SPSC intra-process, casting inter-process | TILES.md | architectural (no direct test) |
 
 ## 6. monoio / io_uring Test Considerations
 
@@ -211,7 +211,7 @@ rsx-dxs/benches/
 ## 8. Coverage Matrix
 
 Every requirement C1-C45 maps to at least one test.
-Every CMP.md section has corresponding test coverage.
-Benchmarks cover all 8 performance targets from CMP.md §9.
+Every casting.md section has corresponding test coverage.
+Benchmarks cover all 8 performance targets from casting.md §9.
 Fault injection covers 5 categories: loss, burst loss,
 reorder, corruption, duplication (per Aeron/RFC 8085).

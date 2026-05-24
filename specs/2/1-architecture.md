@@ -5,7 +5,7 @@ status: shipped
 # Architecture
 
 Perpetuals exchange. Fixed-point arithmetic, single-threaded
-matching per symbol, CMP/UDP between processes, WAL-based
+matching per symbol, casting/UDP between processes, WAL-based
 recovery.
 
 ## Table of Contents
@@ -29,17 +29,17 @@ recovery.
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS overlay + CMP bridge
+                    |  Gateway   |  WS overlay + casting bridge
                     | (monoio)   |  auth, rate limit, ingress bp
                     +-----+------+
-                          | CMP/UDP
-                    +-----v------+   CMP/UDP   +---------------+
+                          | casting/UDP
+                    +-----v------+   casting/UDP   +---------------+
                     |   Risk     +------------>| Matching Eng  |
                     |  Engine    |<------------+ (1 per symbol) |
-                    | (1 shard)  |  CMP fills  +-------+-------+
+                    | (1 shard)  |  casting fills  +-------+-------+
                     +--+---+--+-+              |       |
                        |   |  |          +-----+  +----+-----+
-              CMP/UDP  |   |  | CMP/UDP  |WAL     |CMP/UDP   |CMP/UDP
+              casting/UDP  |   |  | casting/UDP  |WAL     |casting/UDP   |casting/UDP
               +--------+   |  +------+   |        |          |
               v            |         v   v        v          v
          +--------+  +----+---+ +--------+  +---------+ +--------+
@@ -48,15 +48,15 @@ recovery.
          | commit)|  | Agg    | | WAL    |  | book,    | | back   |
          +--------+  |(Binance| | files) |  | L2/BBO)  | | to usr)|
                       | + N)  | +--------+  +---------+ +--------+
-                      +-------+    DXS          DXS
+                      +-------+    replication          replication
 ```
 
 Transports:
-- **Between processes:** CMP/UDP for hot path; WAL/TCP for cold path
+- **Between processes:** casting/UDP for hot path; WAL/TCP for cold path
   (Gateway↔Risk↔ME). One record per datagram or TCP byte stream.
 - **Within each process:** tiles (pinned threads) + SPSC
   rings (rtrb, 50-170ns) for internal handoff only.
-- **DXS:** WAL streaming to consumers (recorder, marketdata).
+- **replication:** WAL streaming to consumers (recorder, marketdata).
   Transport is WAL/TCP on the cold path.
 
 See `45-tiles.md` for tile pattern, `20-network.md` for process
@@ -71,9 +71,9 @@ topology.
 | rsx-risk | Risk tile logic, one per user shard, margin + funding + liquidation |
 | rsx-dxs | WAL writer/reader, DxsConsumer, DxsReplay server (transport-agnostic) |
 | rsx-mark | Mark price aggregator (separate process), external WS feeds, median |
-| rsx-gateway | Gateway tile, WS overlay + CMP bridge, auth, rate limit |
+| rsx-gateway | Gateway tile, WS overlay + casting bridge, auth, rate limit |
 | rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |
-| rsx-recorder | Archival DXS consumer (separate process), daily WAL files |
+| rsx-recorder | Archival replication consumer (separate process), daily WAL files |
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
 | rsx-maker | Market maker bot (separate process) |
@@ -95,19 +95,19 @@ their respective process binaries.
 User                Gateway          Risk           ME (BTC-PERP)
  |                    |                |                |
 |--WS order--------->|                |                |
-|                    |--CMP/UDP order>|                |
+|                    |--casting/UDP order>|                |
 |                    |                |--margin chk--->|
-|                    |                |--CMP/UDP order>|
+|                    |                |--casting/UDP order>|
 |                    |                |                |--match book
 |                    |                |                |--WAL append
-|                    |                |<-CMP/UDP fills-|
+|                    |                |<-casting/UDP fills-|
 |                    |                |--apply fill--->|
 |                    |                |  position upd  |
 |                    |                |--PG write-behind
-|                    |<-CMP/UDP fills-|                |
+|                    |<-casting/UDP fills-|                |
 |<--WS fill(s)-------|                |                |
 |                    |                |                |
-|                    |<-CMP/UDP done--|<-CMP/UDP done--|
+|                    |<-casting/UDP done--|<-casting/UDP done--|
 |<--WS done----------|                |                |
 ```
 
@@ -169,7 +169,7 @@ Latency targets (same machine, intra-process SPSC):
         |
   +-----v------+
   | Recorder   |  daily archive files
-  | (DXS cons) |  infinite retention
+  | (replication cons) |  infinite retention
   +------------+
 ```
 
@@ -180,12 +180,12 @@ full or flush lag >10ms stalls the producer.
 
 Recovery:
 - ME: load snapshot, replay WAL from snapshot_seq+1
-- Risk: load positions+tips from Postgres, DXS replay from
+- Risk: load positions+tips from Postgres, replication from
   tips[symbol]+1, go live on CaughtUp for all streams
-- MARKETDATA: rebuild shadow book from ME WAL via DXS
+- MARKETDATA: rebuild shadow book from ME WAL via replication
 
 Durability guarantees:
-- Fills: 0ms loss (WAL, DXS replay, 10min retention)
+- Fills: 0ms loss (WAL, replication, 10min retention)
 - Orders in flight: can be lost (not WAL'd)
 - Positions: 10ms loss (single crash), 100ms (dual crash)
 
@@ -193,7 +193,7 @@ Durability guarantees:
 
 - **Fixed-point i64**: deterministic arithmetic, no float
   rounding across architectures
-- **CMP/UDP over broker**: direct UDP between processes,
+- **casting/UDP over broker**: direct UDP between processes,
   no Kafka/NATS; per-stream ordering and flow control
 - **Slab arena**: pre-allocated 78M slots (~10GB), O(1)
   alloc/free, no malloc on hot path
@@ -203,7 +203,7 @@ Durability guarantees:
   invalidation, cache-line-aligned structs
 - **Portfolio margin**: all positions across all symbols
   recalculated per price tick per exposed user
-- **DXS brokerless streaming**: each producer IS the replay
+- **replication brokerless streaming**: each producer IS the replay
   server; consumers connect directly, no central broker
 - **Write-behind Postgres**: 10ms batched flush, COPY for
   fills, UPSERT for positions; backpressure at 100ms lag
@@ -228,9 +228,9 @@ Key references:
 | 48-wal.md | Shared WAL design, backpressure rules, flush bounds |
 | 15-mark.md | Mark price aggregator, external feeds, median, staleness |
 | 19-metadata.md | Symbol config scheduling, propagation, cold start |
-| 6-consistency.md | Event fan-out, CMP/UDP routing, ordering guarantees |
+| 6-consistency.md | Event fan-out, casting/UDP routing, ordering guarantees |
 | 20-network.md | Topology, transport, service discovery, startup ordering |
-| 18-messages.md | Message semantics (transport is CMP/UDP) |
+| 18-messages.md | Message semantics (transport is casting/UDP) |
 | 49-webproto.md | WS compact JSON protocol, frame types |
 | 29-rpc.md | Async order handling, UUIDv7, pending tracking |
 | 16-marketdata.md | Shadow book, L2/BBO/trades, public WS |

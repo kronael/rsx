@@ -5,7 +5,7 @@ WebSocket gateway binary. Client-facing order entry point.
 ## What It Does
 
 Accepts WebSocket connections with JWT auth, validates and
-rate-limits orders, routes to Risk via CMP/UDP, pushes
+rate-limits orders, routes to Risk via casting/UDP, pushes
 fills and order updates back to clients.
 
 ## Running
@@ -24,9 +24,9 @@ cargo run -p rsx-gateway
 | Env Var | Purpose |
 |---------|---------|
 | `RSX_GW_LISTEN_ADDR` | WebSocket listen address |
-| `RSX_GW_CAST_ADDR` | CMP bind address |
-| `RSX_RISK_CAST_ADDR` | Risk CMP address |
-| `RSX_GW_WAL_DIR` | WAL directory for CMP sender |
+| `RSX_GW_CAST_ADDR` | casting bind address |
+| `RSX_RISK_CAST_ADDR` | Risk casting address |
+| `RSX_GW_WAL_DIR` | WAL directory for casting sender |
 | `RSX_GW_JWT_SECRET` | HS256 JWT signing secret |
 | `RSX_GW_MAX_PENDING` | Max pending orders |
 | `RSX_GW_ORDER_TIMEOUT_MS` | Order timeout |
@@ -39,7 +39,7 @@ cargo run -p rsx-gateway
 
 - Stateless -- no durable state, crash recovery is <1s
 - Horizontal scaling by user_id hash with sticky sessions
-- Each instance connects to one Risk shard via CMP/UDP
+- Each instance connects to one Risk shard via casting/UDP
 - Needs `RSX_GW_JWT_SECRET` set (shared with auth service);
   minimum 32 bytes (`JWT_SECRET_MIN_LEN`) -- startup fails
   on shorter secrets
@@ -71,7 +71,7 @@ eliminated. See `specs/2/37-testing-gateway.md`.
 ## Dependencies
 
 - `rsx-types` -- shared types, validate_order
-- `rsx-dxs` -- CMP sender/receiver
+- `rsx-dxs` -- casting sender/receiver
 
 ## Gotchas
 

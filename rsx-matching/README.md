@@ -4,9 +4,9 @@ Matching engine binary. One instance per symbol.
 
 ## What It Does
 
-Receives orders from Risk via CMP/UDP, matches against the
+Receives orders from Risk via casting/UDP, matches against the
 orderbook (rsx-book), writes events to WAL, fans out to Risk
-and Marketdata via CMP/UDP. Maintains an `FxHashMap<(user_id,
+and Marketdata via casting/UDP. Maintains an `FxHashMap<(user_id,
 oid_hi, oid_lo), slab_handle>` so cancels are O(1) instead of
 a linear slab scan; the index is updated from `book.events()`
 after every match cycle (insert on `OrderInserted`, remove on
@@ -40,11 +40,11 @@ cargo run -p rsx-matching
 | `RSX_ME_QTY_DECIMALS` | Qty decimal places |
 | `RSX_ME_CORE_ID` | CPU core to pin to |
 | `RSX_ME_WAL_DIR` | WAL directory |
-| `RSX_ME_CAST_ADDR` | CMP bind address |
-| `RSX_RISK_CAST_ADDR` | Risk CMP address |
-| `RSX_MD_CAST_ADDR` | Marketdata CMP address |
+| `RSX_ME_CAST_ADDR` | casting bind address |
+| `RSX_RISK_CAST_ADDR` | Risk casting address |
+| `RSX_MD_CAST_ADDR` | Marketdata casting address |
 | `RSX_ME_DATABASE_URL` | Postgres URL for config polling |
-| `RSX_ME_REPLICATION_BIND_ADDR` | DXS replay sidecar address |
+| `RSX_ME_REPLICATION_BIND_ADDR` | replication sidecar address |
 
 ## Deployment
 
@@ -52,7 +52,7 @@ cargo run -p rsx-matching
 - Pin to dedicated CPU core (`RSX_ME_CORE_ID`)
 - Needs WAL directory with write access
 - Needs Postgres for config schedule polling
-- Connects to Risk and Marketdata via CMP/UDP
+- Connects to Risk and Marketdata via casting/UDP
 
 ## Invariants
 
@@ -81,7 +81,7 @@ See `specs/2/41-testing-matching.md`.
 ## Dependencies
 
 - `rsx-book` -- orderbook and matching algorithm
-- `rsx-dxs` -- WAL writer, CMP sender/receiver
+- `rsx-dxs` -- WAL writer, casting sender/receiver
 - `rsx-types` -- shared types
 - Postgres (runtime, for config polling)
 

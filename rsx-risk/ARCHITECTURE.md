@@ -11,7 +11,7 @@ Specs: `specs/2/28-risk.md`, `specs/2/45-tiles.md` §3.2.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: ring construction, CMP pump, replica mode, promotion |
+| `main.rs` | Binary: ring construction, casting pump, replica mode, promotion |
 | `shard.rs` | `RiskShard` — core state machine, `process_order()`, fill apply |
 | `types.rs` | `FillEvent`, `OrderRequest`, `BboUpdate`, `RejectReason` |
 | `account.rs` | `Account` struct and balance operations |
@@ -42,12 +42,12 @@ only intra-process IPC.
 | Ring | Capacity | Direction | Site |
 |------|----------|-----------|------|
 | `PersistEvent` | 8192 | shard → persist sidecar | `main.rs:239` |
-| `FillEvent` | 4096 | CMP pump → shard | `main.rs:405` |
-| `OrderRequest` (primary) | 2048 | CMP pump → shard | `main.rs:407` |
-| `MarkPriceUpdate` | 256 | CMP pump → shard | `main.rs:409` |
-| `BboUpdate` | 256 | CMP pump → shard | `main.rs:411` |
-| `OrderResponse` | 2048 | shard → CMP sender | `main.rs:413` |
-| `OrderRequest` (replica) | 2048 | CMP pump → shard | `main.rs:415` |
+| `FillEvent` | 4096 | casting pump → shard | `main.rs:405` |
+| `OrderRequest` (primary) | 2048 | casting pump → shard | `main.rs:407` |
+| `MarkPriceUpdate` | 256 | casting pump → shard | `main.rs:409` |
+| `BboUpdate` | 256 | casting pump → shard | `main.rs:411` |
+| `OrderResponse` | 2048 | shard → casting sender | `main.rs:413` |
+| `OrderRequest` (replica) | 2048 | casting pump → shard | `main.rs:415` |
 
 `PersistEvent` is sized largest because Postgres write-behind
 absorbs bursts of fills and position updates. The two
@@ -57,7 +57,7 @@ replica handoff cannot corrupt the live order stream.
 ### Threading
 
 - **Pinned core** (`RSX_RISK_CORE_ID`, `main.rs:291-303`):
-  runs `RiskShard` plus the CMP receive pump. Busy-spin
+  runs `RiskShard` plus the casting receive pump. Busy-spin
   reactor, no blocking allowed.
 - **Persist sidecar** (`std::thread::spawn`, `main.rs:260`):
   separate `tokio::runtime::Builder::new_current_thread`
@@ -74,7 +74,7 @@ order:
 
 ```
 loop {
-    1. Fills from all MEs        (highest — RECORD_FILL via CMP)
+    1. Fills from all MEs        (highest — RECORD_FILL via casting)
     2. Order requests            (gateway → primary OrderRequest ring)
     3. Mark price updates        (RECORD_MARK_PRICE, main.rs:685)
     4. BBO updates               (trigger margin recalc)
@@ -99,7 +99,7 @@ loop {
    initial_margin_rate`, reject if
    `available < order_im + worst_case_taker_fee`.
 4. **Freeze**: `account.frozen_margin += order_im`.
-5. **Route**: forward to ME via CMP/UDP.
+5. **Route**: forward to ME via casting/UDP.
 
 On `ORDER_DONE` the frozen amount is released. Frozen state
 is in-memory only (not persisted; lost on restart, rebuilt
@@ -166,13 +166,13 @@ When `equity < maint_margin`:
 
 ## Replication & Failover
 
-CMP record type `0x20` carries `TipSyncMessage` between
+casting record type `0x20` carries `TipSyncMessage` between
 main and replica (`main.rs:830-844` emit; `main.rs:1032`
-ingest). Live path is CMP/UDP; cold replay is DXS/TCP from
+ingest). Live path is casting/UDP; cold replay is replication/TCP from
 WAL tip+1.
 
 - **Main** (`run_main`, `main.rs:181`): acquire advisory
-  lock → load from PG → DXS replay from tip+1 → `CaughtUp`
+  lock → load from PG → replication from tip+1 → `CaughtUp`
   on all streams → live. Emits tip-sync to replica.
 - **Replica** (`run_replica`, `main.rs:880`): `pg_try_advisory_lock`
   fails → buffer fills from all MEs → poll lock every

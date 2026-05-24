@@ -33,5 +33,5 @@ This is the approach used by [LMAX Disruptor](https://lmax-exchange.github.io/di
 ## RSX
 
 Intra-process IPC uses `rtrb` SPSC rings (see `notes/smrb.md`), not UDS or shmem.
-Cross-process uses CMP/UDP hot path and DXS/TCP cold path — no shared memory
+Cross-process uses casting/UDP hot path and replication/TCP cold path — no shared memory
 across process boundaries.

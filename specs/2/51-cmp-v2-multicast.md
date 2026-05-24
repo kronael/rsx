@@ -1,6 +1,6 @@
-# CMP v2 — Multicast Streaming
+# casting v2 — Multicast Streaming
 
-Status: **planned**. CMP v1 is unicast (one sender → one receiver).
+Status: **planned**. casting v1 is unicast (one sender → one receiver).
 V2 extends the same wire format to one-to-many fan-out over UDP
 multicast without a broker, without copying per-receiver.
 
@@ -8,7 +8,7 @@ multicast without a broker, without copying per-receiver.
 
 ## Motivation
 
-v1 CMP is a point-to-point pipe. One ME → one mktdata receiver works.
+v1 casting is a point-to-point pipe. One ME → one mktdata receiver works.
 One ME → N consumers (recorder, risk, N marketdata shards, archiver,
 ML feeder) requires N separate `CmpSender` instances and N separate
 WAL writes of the same bytes. That is O(N) syscalls and O(N) memory
@@ -90,7 +90,7 @@ v2 with N receivers: sender tracks one window per receiver. It
 advances only when the **slowest live receiver** has acknowledged
 up to that point. Receivers that fall behind by more than one WAL
 segment are declared stale and dropped from the live set; they can
-reconnect via the DXS/TCP cold path (same as today).
+reconnect via the replication/TCP cold path (same as today).
 
 This is "receiver-paced multicast" — the sender runs at the speed
 of the slowest receiver that hasn't yet been evicted.
@@ -172,7 +172,7 @@ both sources in sequence order.
   layer if the multicast segment is not fully trusted.
 - **Congestion control**: multicast is not TCP. If receivers are
   slower than the sender's rate, they get evicted and reconnect via
-  DXS cold path. There is no AIMD.
+  replication cold path. There is no AIMD.
 - **Partial fan-out / topic routing**: all receivers on a group
   receive all records. Topic filtering is the application's job.
   If you need selective delivery, run separate groups per stream.

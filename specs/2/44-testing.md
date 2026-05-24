@@ -66,7 +66,7 @@ appropriate. Run on every PR.
 **Scope:**
 - Single user, single symbol scenarios
 - Full order lifecycle: submit → match → fills → completion
-- Mocked transports for isolation (real orderbook + mocked CMP where needed)
+- Mocked transports for isolation (real orderbook + mocked casting where needed)
 - Edge cases:
   - Pre-trade margin check failure
   - Duplicate order_id (5min dedup window)
@@ -92,7 +92,7 @@ PR or on-demand.
 
 **Scope:**
 - Full system stack running (gateway, matching, risk, mktdata)
-- Real CMP/UDP links (not mocked)
+- Real casting/UDP links (not mocked)
 - Multi-symbol, multi-user scenarios
 - Tail event handling:
   - 50% crash/rally triggers recentering
@@ -106,12 +106,12 @@ PR or on-demand.
 - Failure mode testing:
   - Matching engine crash/restart (book starts empty)
   - Risk engine crash/restart (positions persisted)
-  - CMP flow control/backpressure verification
+  - casting flow control/backpressure verification
   - Network partition (circuit breaker behavior)
 
 **Characteristics:**
 - Testcontainers for services
-- Real CMP/UDP links
+- Real casting/UDP links
 - Multi-process scenarios
 - Runs in variable time (typically 1-5min)
 - CI: every PR or on-demand
@@ -212,13 +212,13 @@ nightly or on-demand.
 
 ### E2E Latency Measurement
 
-**Target: <50us end-to-end (same machine, CMP/UDP)**
+**Target: <50us end-to-end (same machine, casting/UDP)**
 
 **Breakdown:**
 - Gateway: receive order → send to matching (~5-10us)
-- CMP/UDP: send → recv (kernel bound)
+- casting/UDP: send → recv (kernel bound)
 - Matching: insert + match + event gen (~100-500ns)
-- CMP/UDP: event send → recv (kernel bound)
+- casting/UDP: event send → recv (kernel bound)
 - Risk: update position (~1-5us)
 - Total: <50us (same machine, dedicated cores)
 
@@ -249,7 +249,7 @@ nightly or on-demand.
 **Metrics (Prometheus + Grafana):**
 - Orders/sec (throughput)
 - Match latency histogram
-- CMP flow control counters (backpressure indicator)
+- casting flow control counters (backpressure indicator)
 - Slab utilization (allocated vs free)
 - Recentering frequency
 
@@ -320,7 +320,7 @@ Verified across all test levels:
    - best_bid < best_ask (no crossed book)
    - best_bid/ask point to populated levels
 
-7. **Event ordering preserved per CMP stream**
+7. **Event ordering preserved per casting stream**
    - Events arrive at consumers in FIFO order
    - seq monotonic within symbol
 
@@ -338,15 +338,15 @@ Verified across all test levels:
 - Run with `make test`
 
 ### E2E Tests
-- Mock CMP for isolation
-- Real CMP for full stack
+- Mock casting for isolation
+- Real casting for full stack
 - Custom test harness (order submission helpers)
 - Run with `make e2e`
 
 ### Integration Tests
 - `tests/` directory (separate from `src/`)
 - testcontainers-rs for services
-- Real CMP/UDP links
+- Real casting/UDP links
 - Run with `make integration`
 
 ### Benchmarks
@@ -419,7 +419,7 @@ points.
 |-----------|-----------|-------------|
 | SPSC ring buffer | [TESTING-SMRB.md](TESTING-SMRB.md) | notes/SMRB.md |
 | Shared orderbook | [TESTING-BOOK.md](TESTING-BOOK.md) | ORDERBOOK.md |
-| DXS (WAL + replay) | [TESTING-DXS.md](TESTING-DXS.md) | DXS.md, WAL.md |
+| replication (WAL + replay) | [TESTING-replication.md](TESTING-replication.md) | replication.md, WAL.md |
 | Matching engine | [TESTING-MATCHING.md](TESTING-MATCHING.md) | ORDERBOOK.md, CONSISTENCY.md |
 | Risk engine | [TESTING-RISK.md](TESTING-RISK.md) | RISK.md |
 | Liquidator | [TESTING-LIQUIDATOR.md](TESTING-LIQUIDATOR.md) | LIQUIDATOR.md |
@@ -432,7 +432,7 @@ points.
 ## References
 
 - [ORDERBOOK.md](ORDERBOOK.md) - Matching internals, data structures
-- [MESSAGES.md](MESSAGES.md) - CMP/WAL wire format, message definitions
+- [MESSAGES.md](MESSAGES.md) - casting/WAL wire format, message definitions
 - [CONSISTENCY.md](CONSISTENCY.md) - Event fan-out, ordering guarantees
 - [SMRB.md](../../notes/SMRB.md) - SPSC ring buffer design
 - [NETWORK.md](NETWORK.md) - System topology, component communication

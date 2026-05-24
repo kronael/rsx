@@ -41,7 +41,7 @@ exchange systems will immediately see what's unusual.
 |---|---|
 | Match single fill | 54 ns |
 | WAL append (pre-fsync) | 31 ns |
-| CMP send body (UDP) | 3.87 µs |
+| casting send body (UDP) | 3.87 µs |
 | Loopback RTT (GW→ME→GW) | ~10 µs (component sum) |
 
 Cite: `rsx-book/benches/book_bench.rs`, `rsx-dxs/compare/bench_report`,
@@ -50,7 +50,7 @@ Cite: `rsx-book/benches/book_bench.rs`, `rsx-dxs/compare/bench_report`,
 ### 3. WAL = wire = stream (the interesting design decision)
 
 The key claim. Every record: 16B header + `repr(C, align(64))` payload.
-Same bytes: WAL file, CMP/UDP datagram, DXS/TCP replay stream.
+Same bytes: WAL file, casting/UDP datagram, replication/TCP replay stream.
 
 What this enables:
 - Retransmit reads from the WAL file directly (horizon = retention, not RAM)
@@ -61,11 +61,11 @@ What this enables:
 Compare to: Chronicle Queue ([github](https://github.com/OpenHFT/Chronicle-Queue))
 which has the same disk=wire insight but no UDP/NAK path. Kafka separates the
 replication log from the wire format. Aeron separates term buffers (hot) from
-archive (cold). DXS collapses all three.
+archive (cold). replication collapses all three.
 
 Cite: `specs/2/4-cast.md`, `specs/2/48-wal.md`, `rsx-dxs/README.md`.
 
-### 4. CMP: NAK not ACK (why it matters for LAN)
+### 4. casting: NAK not ACK (why it matters for LAN)
 
 ACK-based: sender infers loss from silence. ~1.5–2 RTTs to retransmit.
 NAK-based: receiver detects gap immediately. ~1 RTT to retransmit.
@@ -76,7 +76,7 @@ TCP, QUIC) burns bandwidth for work that isn't needed.
 
 Protocol overhead bench:
 - raw UDP: 9.89 µs RTT
-- CMP: 11.26 µs RTT  (+14% — framing + NAK bookkeeping)
+- casting: 11.26 µs RTT  (+14% — framing + NAK bookkeeping)
 - KCP spin: ~25–50 µs RTT (ACK round-trip even on loopback)
 - QUIC persistent: ~200–500 µs (TLS + congestion control)
 
@@ -85,7 +85,7 @@ Cite: `rsx-dxs/compare/kcp.md`, `rsx-dxs/compare/quinn.md`,
 
 Prior art acknowledgement: Aeron (Real Logic) is the direct design ancestor.
 [Todd Montgomery](https://github.com/tmont) designed the original PGM/multicast
-stack at Informatica/29West that became LBM, then Aeron. CMP is a Rust
+stack at Informatica/29West that became LBM, then Aeron. casting is a Rust
 re-implementation of the same ideas with the WAL as the retransmit source.
 
 ### 5. The matching engine: what 54 ns is made of
@@ -116,7 +116,7 @@ interop with exchange-grade risk systems. The Hyperliquid architecture doc
 
 - Tile parity for gateway + marketdata (monoio reactors today, not pinned tiles)
 - Measured GW→ME→GW p50/p99 under load (component sum says <50 µs, harness not yet asserted)
-- CMP v2 multicast (one ME → N consumers, no per-receiver copy) — spec at `specs/2/51-cmp-v2-multicast.md`
+- casting v2 multicast (one ME → N consumers, no per-receiver copy) — spec at `specs/2/51-cmp-v2-multicast.md`
 - monoio io_uring UDP in gateway (caller owns socket; rsx-dxs is runtime-free by design)
 
 ### 8. The rsx-dxs transport layer as a standalone crate

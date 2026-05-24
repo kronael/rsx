@@ -8,7 +8,7 @@ the light backlog — items not yet a ship project.
 
 ## Shipped this round (28 audit findings, agent + manual)
 
-- ✅ F1   CMP `SO_REUSEPORT` + SIGTERM drain (`0120806`)
+- ✅ F1   casting `SO_REUSEPORT` + SIGTERM drain (`0120806`)
 - ✅ F2-F11   server.py truthful health/verify/WAL/topology (`c190aea`)
 - ✅ F12   Trade UI quiet first-paint (`37f6edf`)
 - ✅ F13-F19  pulse, hardcoded breaker removed, honest labels (`47b6fce`)

@@ -223,7 +223,7 @@ Effort: ~50-100 LOC in gateway + marketdata only.
 Expected gain: **~1.5-2 µs** off each leg by amortizing the
 syscall across batched SQEs.
 
-### 2. SQPOLL for the gateway's CMP loop
+### 2. SQPOLL for the gateway's casting loop
 
 Effort: ~20 LOC in gateway on `monoio::net::UdpSocket`. Sets
 `IORING_SETUP_SQPOLL` on the gateway's io_uring instance.

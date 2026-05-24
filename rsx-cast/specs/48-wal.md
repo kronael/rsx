@@ -6,7 +6,7 @@ status: shipped
 
 > **Note:** The concrete WAL implementation (file format, writer,
 > reader, replay server, consumer) is specified in
-> [DXS.md](DXS.md). This document describes the shared design
+> [replication.md](replication.md). This document describes the shared design
 > principles and backpressure rules.
 
 This document describes the shared WAL architecture for the risk engine and the matching engine. It is optimized for latency by accepting a bounded loss window and enforcing backpressure when persistence falls behind.
@@ -38,7 +38,7 @@ This document describes the shared WAL architecture for the risk engine and the 
 - Data payloads implement CmpRecord trait with `seq: u64` as
   first field. Sequence assigned by WalWriter::append or
   CmpSender::send.
-- Concrete record layouts are defined in **DXS.md** and reused for storage + streaming.
+- Concrete record layouts are defined in **replication.md** and reused for storage + streaming.
 
 ### Version Policy
 
@@ -47,7 +47,7 @@ This document describes the shared WAL architecture for the risk engine and the 
 - **Breaking changes** (field reorder, type change): require
   coordinated deployment (stop all producers, upgrade all
   readers, restart).
-- See DXS.md section 1 for full version handling
+- See replication.md section 1 for full version handling
   specification.
 
 **Scope (v1):** WAL is written by the **matching engine** and contains all
@@ -171,7 +171,7 @@ These rules keep the loss window bounded and prevent silent latency inflation.
 
 ## Replay Edge Cases and Recovery
 
-**Comprehensive edge case documentation:** See [DXS.md](DXS.md)
+**Comprehensive edge case documentation:** See [replication.md](replication.md)
 section 10 for detailed edge case handling during WAL replay,
 including:
 
@@ -224,5 +224,5 @@ including:
 - CRC errors (indicates disk corruption or software bug)
 - Sequence gaps in consumer replay (indicates GC or configuration issue)
 
-**Testing requirements:** See [TESTING-DXS.md](TESTING-DXS.md)
+**Testing requirements:** See [TESTING-replication.md](TESTING-replication.md)
 for comprehensive edge case test coverage.

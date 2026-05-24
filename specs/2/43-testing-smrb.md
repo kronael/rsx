@@ -37,15 +37,15 @@ the requirements and integration contracts RSX relies on.
 ## Integration Points
 
 - SPSC rings are used for in-process handoff only; matching
-  fan-out uses CMP/UDP in v1 (CONSISTENCY.md §1)
+  fan-out uses casting/UDP in v1 (CONSISTENCY.md §1)
 - Mirrored stream to hot spare ME via SPSC is not implemented in v1
-- Recorder connects as DXS consumer for archival (CONSISTENCY.md §1, DXS.md §8)
+- Recorder connects as replication consumer for archival (CONSISTENCY.md §1, replication.md §8)
 - Event routing per consumer matches CONSISTENCY.md §1 table:
   Fill to risk/gateway/mktdata, BBO to risk, OrderInserted to
   mktdata, OrderCancelled to gateway/mktdata, OrderDone to
   risk/gateway
 - Mark price aggregator pushes SourcePrice via SPSC (MARK.md §1)
-- WAL writer backpressure: buf full triggers stall (DXS.md §3)
+- WAL writer backpressure: buf full triggers stall (replication.md §3)
 - System-level: verify no data loss across component boundaries
   under sustained 100K msg/sec load (TESTING.md §6 load tests)
 

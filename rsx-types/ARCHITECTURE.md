@@ -32,7 +32,7 @@ and utility macros used across the exchange.
 ## Design Decisions
 
 - `#[repr(transparent)]` on Price/Qty: zero-cost newtypes,
-  same layout as i64 for FFI/CMP wire compatibility
+  same layout as i64 for FFI/casting wire compatibility
 - All enums use explicit discriminants for wire stability
 - `validate_order()` checks price > 0, qty > 0, tick
   alignment, lot alignment -- called at order entry boundary

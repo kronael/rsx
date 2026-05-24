@@ -29,7 +29,7 @@ Binary: `rsx-risk` (one process per user shard)
 | R5 | Portfolio margin across all symbols per user | §3 |
 | R6 | Exposure index: users with open positions per symbol | §3 |
 | R7 | Index price: size-weighted mid from BBO | §4 |
-| R8 | Mark price from DXS consumer (MARK.md) | §4 |
+| R8 | Mark price from replication consumer (MARK.md) | §4 |
 | R9 | Funding rate: f(mark, index), clamped, 8h interval | §5 |
 | R10 | Pre-trade risk check before order to ME | §6 |
 | R11 | Frozen margin reserved on order, released on done | §6 |
@@ -45,7 +45,7 @@ Binary: `rsx-risk` (one process per user shard)
 | R21 | Forward CONFIG_APPLIED to gateway for cache sync | §1 |
 | R22 | Backpressure: stall on ring full / flush lag / replica lag | §persistence |
 | R23 | Promotion invariant: apply fills up to last tip only | §replication |
-| R24 | Replay via DXS consumer from tips + 1, CaughtUp signal | §replication |
+| R24 | Replay via replication consumer from tips + 1, CaughtUp signal | §replication |
 | R25 | Missed funding intervals settled on next startup | §5 |
 | R26 | ME failover: dedup by (symbol_id, seq), no restart | §ME failover |
 | R27 | Account persistence: collateral, frozen_margin to Postgres | §persistence |
@@ -106,12 +106,12 @@ Targets from RISK.md §performance:
 
 ## Integration Points
 
-- Receives fills/BBO/OrderDone from matching engine via CMP/UDP
+- Receives fills/BBO/OrderDone from matching engine via casting/UDP
   (CONSISTENCY.md §1, event routing table)
-- Receives orders from gateway via CMP/UDP (NETWORK.md §data flow)
-- Mark prices arrive via CMP/UDP from rsx-mark (RECORD_MARK_PRICE, main.rs)
-- Sends orders to matching engine via CMP/UDP (RISK.md §6)
-- Sends fills/done to gateway via CMP/UDP (CONSISTENCY.md §1)
+- Receives orders from gateway via casting/UDP (NETWORK.md §data flow)
+- Mark prices arrive via casting/UDP from rsx-mark (RECORD_MARK_PRICE, main.rs)
+- Sends orders to matching engine via casting/UDP (RISK.md §6)
+- Sends fills/done to gateway via casting/UDP (CONSISTENCY.md §1)
 - Forwards CONFIG_APPLIED to gateway (RISK.md §1)
 - Persists positions/accounts/fills/tips to Postgres via
   write-behind worker (RISK.md §persistence)
@@ -120,5 +120,5 @@ Targets from RISK.md §performance:
 - Liquidation via embedded liquidator (LIQUIDATOR.md)
 - Funding via embedded funding engine (RISK.md §5)
 - ME failover: dedup by (symbol_id, seq) (RISK.md §ME failover)
-- Backpressure: CMP flow control (CONSISTENCY.md §3)
+- Backpressure: casting flow control (CONSISTENCY.md §3)
 - System-level: full crash/recovery tests (TESTING.md §3)

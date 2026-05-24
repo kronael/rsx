@@ -138,7 +138,7 @@ Gateway (monoio)    4-8     10K WS connections
 WAL Writer          2       2 streams
 Marketdata          4       50 symbols fan-out
 Postgres write-behind 2     batched flushes
-DXS Replay          2       external consumers
+replication Replay          2       external consumers
 Spare               ~20
 ─────────────────────────────────────
 Total               ~96 cores

@@ -57,13 +57,13 @@ don't compose to a production p50 on their own.
 |---|---|---|
 | `encode_bench` | `FillRecord` encode/decode, CRC32 over 128 B, `WalHeader` encode/decode | The `fill_record_encode` (23 ns) + `header_encode` (3 ns) appear in CHANGELOG; also see `cmp_send_breakdown_bench` for the same numbers in send-path context |
 
-### rsx-dxs (transport: WAL + CMP + UDP)
+### rsx-dxs (transport: WAL + casting + UDP)
 
 | Bench | Measures | Production leg it isolates |
 |---|---|---|
 | `compare_udp` | Raw UDP loopback round-trip, 64-byte payload, two non-blocking sockets spinning. **Absolute floor.** | none — baseline |
 | `cmp_one_way_bench` | `CmpSender::send` → `CmpReceiver::try_recv` one direction | `gateway_in → risk_in`, `risk_out → gateway_cmp_recv` |
-| `cmp_rtt_bench` | CMP echo round-trip (A → B → A) with two pairs | the full `risk → ME → risk` triangle |
+| `cmp_rtt_bench` | casting echo round-trip (A → B → A) with two pairs | the full `risk → ME → risk` triangle |
 | `cmp_send_breakdown_bench` | Each step inside `CmpSender::send` separately: CRC, header build, buf pack, sendto, NAK ring copy | Attributes the 3.9 µs `send` body — **99 % is sendto** |
 | `wal_bench` | `WalWriter::append` in-memory, flush+fsync 64 KB, sequential read 10 K, replay 100 K | Pre-fsync append is 31 ns; fsync is in the fsync-specific bench below |
 | `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost — **651 µs p50**, 20 000× higher than the in-memory append |
@@ -121,7 +121,7 @@ don't compose to a production p50 on their own.
 | Program | Measures | How to run |
 |---|---|---|
 | `bench-probe` | E2E probe via Python aiohttp WS — measures the full GW→ME→GW round-trip from outside | `./target/release/bench-probe` (needs live cluster) |
-| `bench-match-rt` | **In-process matching round-trip** with per-stage timing. Single binary, two threads, real CMP + Orderbook + WAL. The algorithmic floor. | `./target/release/bench-match-rt --n 10000 --warmup 500` |
+| `bench-match-rt` | **In-process matching round-trip** with per-stage timing. Single binary, two threads, real casting + Orderbook + WAL. The algorithmic floor. | `./target/release/bench-match-rt --n 10000 --warmup 500` |
 
 ## Most informative single number
 
@@ -163,7 +163,7 @@ sendmmsg batching, or kernel bypass (DPDK/AF_XDP).
 
 ## Caveats and gotchas
 
-- **CMP flow control closes around iter 65 536 without
+- **casting flow control closes around iter 65 536 without
   periodic `tick()`.** `cmp_one_way` and `cmp_rtt` were
   silently hanging for the first iteration of these benches
   until we added `tick()` every 1024 sends. The bench source

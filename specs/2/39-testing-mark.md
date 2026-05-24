@@ -33,7 +33,7 @@ Binary: `rsx-mark` (standalone service)
 | K10 | Reconnect backoff: 1/2/4/8s, cap 30s | §3 |
 | K11 | Source connectors push via SPSC to aggregation | §1 |
 | K12 | Main loop single-threaded, busy-spin | §6 |
-| K13 | Recorder archives mark price stream | §1, DXS.md §8 |
+| K13 | Recorder archives mark price stream | §1, replication.md §8 |
 | K14 | MarkPriceEvent: symbol_id, mark_price, ts, mask, count | §2 |
 | K15 | Env config: staleness_ns, per-source enabled flag | §7 |
 | K16 | Main loop: drain rings -> staleness sweep -> wal flush | §6 |
@@ -72,10 +72,10 @@ Targets from MARK.md §9:
 
 ## Integration Points
 
-- Risk engines receive MarkPriceRecord via CMP/UDP.
-- Recorder connects as DXS consumer for archival (DXS.md §8).
-- WalWriter from rsx-dxs crate (DXS.md §3).
-- DxsReplay server from rsx-dxs crate (DXS.md §5).
+- Risk engines receive MarkPriceRecord via casting/UDP.
+- Recorder connects as replication consumer for archival (replication.md §8).
+- WalWriter from rsx-dxs crate (replication.md §3).
+- DxsReplay server from rsx-dxs crate (replication.md §5).
 - SPSC rings from source connectors to aggregation loop
 - System-level: mark price stale -> risk falls back to
   index price (RISK.md §4)

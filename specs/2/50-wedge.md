@@ -10,7 +10,7 @@ The wedge is **B + A**: exchange-in-a-box SDK on top of an
 open-source, orthogonal-parts library. Core thesis:
 
 > The interesting reusable pieces are the transport
-> (`rsx-dxs` = WAL + CMP + DXS) and possibly the orderbook
+> (`rsx-dxs` = WAL + casting + replication) and possibly the orderbook
 > (`rsx-book` = slab + CompressionMap + matching). Open-source
 > those. Sell / support the full exchange-in-a-box on top.
 
@@ -68,7 +68,7 @@ and possibly a paid support tier in year 2+.
   with the founder.
 
 ### Option B — exchange-in-a-box SDK (paid design partner)
-**Goal**: package CMP + WAL + matching + risk + recorder as
+**Goal**: package casting + WAL + matching + risk + recorder as
 a deployable stack with operator tooling. Sell to one
 design partner this quarter — a regional venue, a perps
 sleeve inside an existing CEX, an institutional desk that
@@ -113,7 +113,7 @@ Niches that look open:
 ## What this quarter's work could include
 
 For Option A:
-- Submit the CMP design as a paper to a perf-engineering
+- Submit the casting design as a paper to a perf-engineering
   venue (USENIX ATC, Sigmetrics, OSR).
 - Polish the BLOG.md from technical brag-doc to narrative
   ("What we learned writing an exchange from scratch in
@@ -184,7 +184,7 @@ crate, its own README, its own benchmark, and is provably
 usable without the rest of RSX:
 
 - **`rsx-dxs`** — the load-bearing one. Log-backed reliable
-  UDP transport (CMP) + TCP cold-path replay (DXS). Wire =
+  UDP transport (casting) + TCP cold-path replay (replication). Wire =
   disk = stream. Zero heap on send path. Two-tier NAK
   retransmit (ring → WAL). V0/V1 schema version byte. Already
   proven domain-agnostic in v0.2.0. **This is the headline

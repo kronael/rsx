@@ -2,7 +2,7 @@
 status: shipped
 ---
 
-# DXS — Direct Exchange Streaming
+# replication — Direct Exchange Streaming
 
 Brokerless WAL streaming. Each producer IS the server for its own
 stream. Consumers connect directly to producers. No central broker.
@@ -22,7 +22,7 @@ Crate: `rsx-dxs`. Embedded by all producers and consumers.
 - [6. Consumer](#6-consumer)
 - [7. Transport](#7-transport)
 - [8. Recorder Pattern](#8-recorder-pattern)
-- [9. How DXS Replaces Existing Specs](#9-how-dxs-replaces-existing-specs)
+- [9. How replication Replaces Existing Specs](#9-how-dxs-replaces-existing-specs)
 - [10. WAL Replay Edge Cases](#10-wal-replay-edge-cases)
 - [11. Performance Targets](#11-performance-targets)
 - [12. File Organization](#12-file-organization)
@@ -105,9 +105,9 @@ invalid record.
 - `RECORD_CONFIG_APPLIED`
 - `RECORD_CAUGHT_UP` (replay marker)
 - `RECORD_ORDER_ACCEPTED` (dedup record)
-- `RECORD_STATUS_MESSAGE` (CMP control: flow control)
-- `RECORD_NAK` (CMP control: gap detection)
-- `RECORD_HEARTBEAT` (CMP control: liveness)
+- `RECORD_STATUS_MESSAGE` (casting control: flow control)
+- `RECORD_NAK` (casting control: gap detection)
+- `RECORD_HEARTBEAT` (casting control: liveness)
 - `RECORD_MARK_PRICE`
 - `RECORD_ORDER_REQUEST`
 - `RECORD_ORDER_RESPONSE`
@@ -154,8 +154,8 @@ All fields are encoded little-endian on disk/wire.
 
 On disk: `[header][payload][header][payload]...`
 
-Over CMP/UDP (hot path) and TCP (cold path): the same fixed
-records are streamed as raw bytes. See [CMP.md](CMP.md) for
+Over casting/UDP (hot path) and TCP (cold path): the same fixed
+records are streamed as raw bytes. See [casting.md](casting.md) for
 the transport specification.
 
 Maximum record size is 64KB.
@@ -181,7 +181,7 @@ uses a temporary name `{stream_id}_active.wal` until rotation.
 retention window *after offload*. GC runs on rotation (no timer needed).
 
 **Archive fallback:** if `from_seq_no` is older than hot retention, consumers
-request replay from ARCHIVE (see ARCHIVE.md), then resume from DXS hot tail.
+request replay from ARCHIVE (see ARCHIVE.md), then resume from replication hot tail.
 
 ---
 
@@ -229,7 +229,7 @@ file in sorted order. Returns `None` when all files exhausted
 ## 5. Replay Server (DxsReplayService)
 
 DxsReplayService embedded in each producer. Serves WAL records
-to consumers over TCP. See [CMP.md](CMP.md).
+to consumers over TCP. See [casting.md](casting.md).
 
 **Request format (WAL record):**
 ```
@@ -289,7 +289,7 @@ notify mechanism (e.g., eventfd or channel).
 
 **Transport:** WAL replication over TCP (optional TLS via
 rustls). Same WAL record format on wire as on disk. Zero
-serialization overhead. See [CMP.md](CMP.md) for full
+serialization overhead. See [casting.md](casting.md) for full
 transport specification.
 
 ---
@@ -318,7 +318,7 @@ WAL retention, local wins and stays live permanently.
 1. Load tip from `tip_file` (0 if missing).
 2. Open `CmpReceiver` in parallel (starts buffering live packets
    in its reorder ring immediately).
-3. Connect to first DXS endpoint; try each in order on
+3. Connect to first replication endpoint; try each in order on
    `RECORD_REPLAY_NOT_AVAILABLE`.
 4. Process replayed records via callback, advancing tip.
 5. On `RECORD_CAUGHT_UP` or TCP close: switch to `CmpReceiver`
@@ -329,8 +329,8 @@ WAL retention, local wins and stays live permanently.
 
 No special handoff record needed. Archive servers close on
 exhaust; local WAL server closes when gap ≤ `SEND_RING_CAPACITY`
-(or stays open in tail-follow mode for pure DXS consumers that
-don't use CMP).
+(or stays open in tail-follow mode for pure replication consumers that
+don't use casting).
 
 **Tip persistence:** flush tip to `tip_file` every 10ms (batched
 with other I/O). On crash, replay from last persisted tip. Records
@@ -345,22 +345,22 @@ max 30s). Resume from `tip + 1`.
 
 Two transport modes, same WAL records:
 
-- **Live path** (Gateway <-> Risk <-> ME): CMP/UDP. One
+- **Live path** (Gateway <-> Risk <-> ME): casting/UDP. One
   WAL record per UDP datagram. NAK-based gap recovery.
-  See [CMP.md](CMP.md) section 3.
+  See [casting.md](casting.md) section 3.
 - **Replay/replication path**: WAL replication over TCP.
-  Plain byte stream, optional TLS. See [CMP.md](CMP.md)
+  Plain byte stream, optional TLS. See [casting.md](casting.md)
   section 4.
 
-**Recovery handoff (DXS → CMP):**
+**Recovery handoff (replication → casting):**
 
-Consumers that will ultimately receive live CMP open their
-`CmpReceiver` in parallel with DXS replay from the start.
-DXS bulk-replays history (archive → local WAL). When DXS
+Consumers that will ultimately receive live casting open their
+`CmpReceiver` in parallel with replication from the start.
+replication bulk-replays history (archive → local WAL). When replication
 closes, the consumer switches delivery to `CmpReceiver`.
-Any remaining gap (DXS tip → CMP head) is filled by NAK
+Any remaining gap (replication tip → casting head) is filled by NAK
 retransmit from the sender's in-memory ring. No explicit
-handshake between DXS and CMP — the gap is always
+handshake between replication and casting — the gap is always
 ≤ `SEND_RING_CAPACITY` by design (local WAL closes when
 within that threshold).
 
@@ -368,7 +368,7 @@ within that threshold).
 
 ## 8. Recorder Pattern
 
-Generic archival consumer. Same binary as any DXS consumer, with
+Generic archival consumer. Same binary as any replication consumer, with
 different config. Subscribes to a producer's stream and writes to
 daily archive files.
 
@@ -390,7 +390,7 @@ sections):
 | Mark prices | MarkPriceEvent stream | Mark price aggregator |
 | MARKETDATA | ME events (recovery/replay) | Matching engine |
 
-MARKETDATA also connects as a DXS consumer for recovery (replay
+MARKETDATA also connects as a replication consumer for recovery (replay
 from ME WAL on startup). See [MARKETDATA.md](MARKETDATA.md)
 section 8.
 
@@ -419,13 +419,13 @@ The callback writes records to the daily archive file.
 
 ---
 
-## 9. How DXS Replaces Existing Specs
+## 9. How replication Replaces Existing Specs
 
-| Current | DXS replacement |
+| Current | replication replacement |
 |---------|----------------|
 | ORDERBOOK.md WAL (section 2.8) | ME embeds WalWriter |
 | ORDERBOOK.md recovery | ME embeds DxsReplay server |
-| RISK.md replay from ME | Risk is DXS consumer of ME stream |
+| RISK.md replay from ME | Risk is replication consumer of ME stream |
 | RISK.md tip persistence | Consumer.tip persistence |
 | WAL.md local buffer | WalWriter with 10ms flush |
 | WAL.md replica sync | DxsReplay live tail mode |
@@ -450,7 +450,7 @@ file. CRC validation truncates at first invalid record. No data
 loss — rotation is atomic (rename) or recoverable (partial write
 detected by CRC).
 
-**Test:** `write_flush_crash_recover_from_last_fsync` (TESTING-DXS.md)
+**Test:** `write_flush_crash_recover_from_last_fsync` (TESTING-replication.md)
 
 ### 10.2 Partial Record at EOF
 
@@ -652,7 +652,7 @@ immediately.
 
 ### 10.13 Network Partition During Live Tail
 
-**Scenario:** DXS consumer in live tail mode. Network partition
+**Scenario:** replication consumer in live tail mode. Network partition
 or server restart causes TCP disconnect.
 
 **State:** Consumer loses connection mid-stream. Records may have

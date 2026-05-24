@@ -20,12 +20,12 @@ Touches: RISK.md, CONSISTENCY.md, MESSAGES.md (telemetry)
 ### [mark] Binance feed reconnect details missing from RISK.md
 Missing: backoff (1s,2s,4s,8s,max 30s), staleness 10s, stale behavior
 
-### [dxs] streaming protocol (CMP): symbol_id sent per-message; should be per-stream
+### [dxs] streaming protocol (casting): symbol_id sent per-message; should be per-stream
 Saves 4 bytes per record; simplifies wire format (handshake/setup frame)
 
-### [dxs] CMP pipeline type layers: Book Event → 4 transform steps
+### [dxs] casting pipeline type layers: Book Event → 4 transform steps
 Should be single WAL record. Emit WAL once from book, flow unchanged
-to CMP/WAL/consumers.
+to casting/WAL/consumers.
 
 ### [gateway] monoio single-threaded per core; needs work-stealing
 Evaluate tokio-uring or glommio; keep io_uring, add work stealing for
@@ -36,7 +36,7 @@ Source: specs/1/13-liquidator.md:347. When liquidation fails repeatedly,
 halt symbol trading (spec TODO).
 
 ### [future] Stress test targets not validated
-1M fills/sec ME, 100K fills/sec DXS replay — run Criterion benchmarks
+1M fills/sec ME, 100K fills/sec replication — run Criterion benchmarks
 to confirm or revise GUARANTEES.md numbers.
 
 ### [future] Multi-datacenter replication unspecified

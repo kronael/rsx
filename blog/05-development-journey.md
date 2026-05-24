@@ -19,7 +19,7 @@ are all `[docs]`:
 ```
 
 By the end of day 0, we had 35 spec files in `specs/2/` covering
-every component: ORDERBOOK.md, RISK.md, DXS.md, MARK.md,
+every component: ORDERBOOK.md, RISK.md, replication.md, MARK.md,
 CONSISTENCY.md, LIQUIDATOR.md, MARKETDATA.md, GATEWAY.md,
 and their corresponding TESTING-*.md files.
 
@@ -38,7 +38,7 @@ corpus was roughly 5,000 lines of markdown.
 ### Why This Matters
 
 Writing specs first forced us to think about interfaces before
-implementations. The CMP wire format, for example, went through
+implementations. The casting wire format, for example, went through
 three iterations in the specs (gRPC, then QUIC, then raw C structs
 over UDP) before we wrote any networking code. Each iteration was
 a 20-minute discussion; changing it in code would have been days
@@ -61,7 +61,7 @@ The first code checkpoint:
 
 By 8am on day 1, we had: the orderbook data structures (slab,
 compression map, price levels), the matching algorithm (FIFO,
-price-time priority), the WAL writer/reader, DXS replay service,
+price-time priority), the WAL writer/reader, replication service,
 and the recorder.
 
 The afternoon brought risk:
@@ -78,7 +78,7 @@ And then a spec compliance audit:
 ```
 2026-02-09 14:22 [impl] Spec compliance audit: align all 6 crates
 2026-02-09 20:07 [checkpoint] CRITIQUE fixes: order IDs, risk
-                              binary, DXS sidecar, panic handlers
+                              binary, replication sidecar, panic handlers
 ```
 
 By end of day 1: 6 crates implemented, ~400 tests, spec compliance
@@ -91,16 +91,16 @@ values.
 Day 2 was about connecting the pieces:
 
 ```
-2026-02-10 11:50 [refactor] Standardize CMP payload preamble
+2026-02-10 11:50 [refactor] Standardize casting payload preamble
 2026-02-10 12:43 [impl] Phase 1: header simplification + CmpRecord
 2026-02-10 13:20 [refined] Fix UB in decode, consolidate as_bytes
 2026-02-10 13:49 [feat] Wire ME->Risk->Gateway event forwarding
 ```
 
-The streaming protocol (CMP) got its final form: a `CmpRecord` trait with
+The streaming protocol (casting) got its final form: a `CmpRecord` trait with
 `seq: u64` as the first 8 bytes, shared across all data payloads.
 The matching engine, risk engine, and gateway were wired together
-through CMP/UDP.
+through casting/UDP.
 
 Then the user-facing components:
 
@@ -108,7 +108,7 @@ Then the user-facing components:
 2026-02-10 13:51 [feat] Gateway connection handler impl
 2026-02-10 14:03 [feat] Gateway wiring: cancel, heartbeat,
                         rate limit, circuit breaker, auth
-2026-02-10 14:03 [feat] Marketdata CMP decode + shadow book
+2026-02-10 14:03 [feat] Marketdata casting decode + shadow book
 ```
 
 Gateway got JWT authentication (HS256), per-user and per-IP rate
@@ -125,7 +125,7 @@ The afternoon was feature work:
                         generate_liquidation_order, tests
 2026-02-10 15:30 [feat] Wire liquidation engine into risk shard
 2026-02-10 15:50 [feat] ORDER_FAILED routing + server heartbeats
-2026-02-10 15:53 [feat] Risk receives mark prices via CMP
+2026-02-10 15:53 [feat] Risk receives mark prices via casting
 2026-02-10 16:26 [feat] BBO emission from matching engine
 ```
 
@@ -137,7 +137,7 @@ The evening push:
 ```
 2026-02-10 20:23 [feat] Insurance fund accounting, tick/lot
                         validation, backpressure
-2026-02-10 20:52 [feat] CMP config env vars, seq gap detection
+2026-02-10 20:52 [feat] casting config env vars, seq gap detection
 2026-02-10 21:01 [feat] ME order dedup with 5min pruning
 2026-02-10 21:09 [feat] Orderbook snapshot save/load
 ```
@@ -153,7 +153,7 @@ The final CRITIQUE.md (post-implementation) found 7 remaining
 issues, down from 36 in the spec-only phase:
 
 **Critical:**
-- Mark price feed has no integration test (mark -> risk CMP path)
+- Mark price feed has no integration test (mark -> risk casting path)
 - Frozen margin per-order map is memory-only (not persisted)
 - OrderDone status mapping is code-defined, not spec-defined
 
@@ -163,7 +163,7 @@ issues, down from 36 in the spec-only phase:
 
 **Medium:**
 - Risk reject reason mapping is policy without spec backing
-- Matching fan-out tests model SPSC, not CMP
+- Matching fan-out tests model SPSC, not casting
 
 These are all integration-level issues -- the individual
 components work correctly, but the seams between them have gaps.
@@ -175,7 +175,7 @@ design issues, code-level review catches integration issues.
 ### Same code path for live and recovery
 
 Risk processes fills identically whether they come from a live
-SPSC ring or a DXS replay stream. There is no "recovery mode."
+SPSC ring or a replication stream. There is no "recovery mode."
 The dedup check (`seq <= tip`) handles both cases. This
 eliminates an entire class of bugs where recovery logic diverges
 from live logic.
@@ -192,7 +192,7 @@ it without any network or persistence infrastructure.
 Each spec file has a corresponding TESTING-*.md that lists
 required test cases. We wrote tests to match the spec, not to
 match the implementation. When the implementation changed (e.g.,
-CMP header simplification), the tests did not need updating
+casting header simplification), the tests did not need updating
 because they tested behavior, not wire format.
 
 ### Fixed-point everywhere
@@ -254,8 +254,8 @@ Gateway -> Risk -> ME -> Risk -> Gateway -> WS client) has not
 been exercised as a single test.
 
 **Integration test gaps.** The CRITIQUE.md identifies specific
-missing tests: mark -> risk CMP integration, ME BBO -> risk
-integration, cancel/done margin release through the full CMP flow.
+missing tests: mark -> risk casting integration, ME BBO -> risk
+integration, cancel/done margin release through the full casting flow.
 
 **Stress testing.** The system is designed for 1M fills/sec.
 We have not measured actual throughput. Criterion benchmarks

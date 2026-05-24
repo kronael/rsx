@@ -4,7 +4,7 @@ Archival consumer binary. Stores WAL records to daily files.
 
 ## What It Does
 
-Connects to a DXS replay server, receives all WAL records,
+Connects to a replication server, receives all WAL records,
 writes them to date-partitioned archive files for historical
 storage.
 
@@ -23,14 +23,14 @@ cargo run -p rsx-recorder
 | Env Var | Purpose |
 |---------|---------|
 | `RSX_RECORDER_STREAM_ID` | Stream ID to consume |
-| `RSX_RECORDER_PRODUCER_ADDR` | DXS replay server address |
+| `RSX_RECORDER_PRODUCER_ADDR` | replication server address |
 | `RSX_RECORDER_ARCHIVE_DIR` | Archive output directory |
 | `RSX_RECORDER_TIP_FILE` | Tip persistence file path |
 
 ## Deployment
 
 - One instance per stream (typically one per ME)
-- Needs network access to DXS replay server
+- Needs network access to replication server
 - Archive directory needs write access and sufficient disk
 - Tip file enables idempotent restart (resumes from last seq)
 

@@ -218,19 +218,19 @@ each stores its exact price, mapping to potentially different new indices.
 
 ## 2.8 Durability: WAL + Online Snapshot
 
-The matching engine persists orderbook state using DXS WalWriter
-([DXS.md](DXS.md)) plus online snapshots. Recovery restores the
+The matching engine persists orderbook state using replication WalWriter
+([replication.md](replication.md)) plus online snapshots. Recovery restores the
 latest snapshot and replays the WAL. The ME also embeds a DxsReplay
 server so downstream consumers (risk engines, recorders) can
 subscribe to its event stream.
 
 ### WAL
 
-- ME embeds DXS WalWriter ([DXS.md](DXS.md) section 3).
-- Append every order, cancel, and fill as DXS WalRecords.
+- ME embeds replication WalWriter ([replication.md](replication.md) section 3).
+- Append every order, cancel, and fill as replication WalRecords.
 - WAL is per-symbol (`stream_id` = `symbol_id`), local disk.
 - Same raw bytes on disk and over the wire — no transformation.
-- DxsReplay server ([DXS.md](DXS.md) section 5) serves replay and
+- DxsReplay server ([replication.md](replication.md) section 5) serves replay and
   live tail to risk engines and other consumers.
 
 ### Online Snapshot (Shared Algorithm)
@@ -385,12 +385,12 @@ filled or cancelled). Emitted after the last fill or after a cancel.
 
 See `rsx-book/src/event.rs`.
 
-Events are drained after each order is processed. CMP/UDP fan-out to
+Events are drained after each order is processed. casting/UDP fan-out to
 downstream consumers:
 - Risk engine (position updates from fills, OrderDone for margin release)
 - Persistence layer (trade log)
 - Market data dissemination (shadow orderbook, see [MARKETDATA.md](MARKETDATA.md))
-- Recorder (archival via DXS consumer, see [DXS.md](DXS.md) section 8)
+- Recorder (archival via replication consumer, see [replication.md](replication.md) section 8)
 
 ### 6.5 User Position Tracking
 

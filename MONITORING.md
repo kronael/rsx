@@ -39,7 +39,7 @@ enables proactive detection of failures before user impact.
 | `me_snapshot_duration_ms` | Histogram | Snapshot save duration | p99 <100 | ms |
 | `me_replica_heartbeat_last_seen_sec` | Gauge | Seconds since replica heartbeat | <5 | seconds |
 | `me_replay_duration_ms` | Histogram | WAL replay duration | p99 <5000 | ms |
-| `me_dxs_consumers` | Gauge | Active DXS consumers | - | count |
+| `me_dxs_consumers` | Gauge | Active replication consumers | - | count |
 
 ### 1.2 Risk Engine
 
@@ -67,7 +67,7 @@ enables proactive detection of failures before user impact.
 | `risk_advisory_lock_count` | Gauge | Advisory lock count per shard | 1 | count |
 | `risk_position_reconciliation_mismatch_total` | Counter | Position reconciliation mismatches | 0 | count |
 | `risk_funding_zero_sum_violations_total` | Counter | Funding zero-sum violations | 0 | count |
-| `risk_dxs_replay_duration_ms` | Histogram | DXS replay duration | p99 <5000 | ms |
+| `risk_dxs_replay_duration_ms` | Histogram | replication duration | p99 <5000 | ms |
 | `risk_replica_heartbeat_last_seen_sec` | Gauge | Seconds since replica heartbeat | <5 | seconds |
 | `risk_spsc_ordering_violation_total` | Counter | SPSC ordering violations | 0 | count |
 | `risk_margin_drift_total` | Counter | Margin drift (scratch != incremental) | 0 | count |
@@ -180,7 +180,7 @@ enables proactive detection of failures before user impact.
 6. SPSC ring full events (rate, 1min window)
 7. Orderbook state (active orders, levels)
 8. Slab allocator (allocated, free, utilization %)
-9. DXS consumers (count, per-consumer lag)
+9. replication consumers (count, per-consumer lag)
 
 **Refresh:** 1s
 

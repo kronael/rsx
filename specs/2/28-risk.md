@@ -31,13 +31,13 @@ orderbook WAL replay.
 ## Architecture Overview
 
 ```
-Mark Aggregator -+  (DXS producer, see MARK.md)
+Mark Aggregator -+  (replication producer, see MARK.md)
                   |
            [not wired to risk in v1]
                   |
-Gateway -[CMP/UDP]-> Risk Shard (main) -[CMP/UDP]-> Matching Engines
+Gateway -[casting/UDP]-> Risk Shard (main) -[casting/UDP]-> Matching Engines
                        |        ^                     |
-                       |        | [CMP/UDP: BBO + fills]|
+                       |        | [casting/UDP: BBO + fills]|
                        |        +---------------------+
                        |
                   [replica sync TBD]
@@ -80,7 +80,7 @@ shares no locks with the pinned tile.
 
 ### 1. Orderbook Event Ingestion
 
-- CMP/UDP receiver from each matching engine
+- casting/UDP receiver from each matching engine
 - Each fill contains `taker_user_id`, `maker_user_id`, `symbol_id`,
   `seq`
 - Filter: `user_in_shard(user_id)` via range or bitmask check
@@ -104,7 +104,7 @@ shares no locks with the pinned tile.
 - Apply config updates from matcher `CONFIG_APPLIED` events.
   On cold start, Risk bootstraps current config from Postgres
   (ME writes applied config to `symbol_config_applied` table
-  on each CONFIG_APPLIED event). CONFIG_APPLIED on the DXS
+  on each CONFIG_APPLIED event). CONFIG_APPLIED on the replication
   stream is an optimization for live sync; Postgres is source
   of truth for cold start. See METADATA.md.
 - Forward `CONFIG_APPLIED` to Gateway for cache sync
@@ -153,7 +153,7 @@ See `rsx-risk/src/margin.rs` for `PortfolioMargin`, `SymbolRiskParams`, and
 
 ### 4. Price Feeds
 
-**From matching engines** (CMP/UDP, same as fills):
+**From matching engines** (casting/UDP, same as fills):
 - BBO updates: `(symbol_id, best_bid, best_bid_qty, best_ask,
   best_ask_qty)`
 - BBO is also derived by MARKETDATA from its shadow orderbook
@@ -166,8 +166,8 @@ See `rsx-risk/src/margin.rs` for `PortfolioMargin`, `SymbolRiskParams`, and
 - If no BBO ever received: use mark price
 - O(1) per BBO update, stored in `Vec<IndexPrice>`
 
-**From Mark Price Aggregator** (CMP/UDP, see [MARK.md](MARK.md)):
-- Risk engine receives `MarkPriceRecord` over CMP/UDP
+**From Mark Price Aggregator** (casting/UDP, see [MARK.md](MARK.md)):
+- Risk engine receives `MarkPriceRecord` over casting/UDP
   from the mark process.
 - Risk engine stores mark prices in `Vec<i64>`.
 - Used for margin/risk calculations (unrealized PnL, liquidation).
@@ -295,12 +295,12 @@ crash scenarios.
 
 1. Acquire Postgres advisory lock: `pg_advisory_lock(shard_id)`
 2. Load positions, accounts, tips from Postgres
-3. Request replay from each ME via DXS consumer
-   ([DXS.md](DXS.md) section 6): `from_seq = tips[symbol_id] + 1`
+3. Request replay from each ME via replication consumer
+   ([replication.md](replication.md) section 6): `from_seq = tips[symbol_id] + 1`
 4. Process replay fills (same code path as live)
 5. On `CaughtUp` for all streams: connect gateway, go live
 6. Main loop: poll ME rings -> poll gateway -> renew lease (~1s)
-7. Push per-symbol tip messages over CMP to the replica each tick
+7. Push per-symbol tip messages over casting to the replica each tick
    (record type `0x20`, `TipSyncMessage { symbol_id, tip }`),
    gated on `RSX_RISK_REPLICA_ADDR`.
 
@@ -308,7 +308,7 @@ crash scenarios.
 
 1. Try advisory lock (expected to fail, main holds it)
 2. Load same positions/tips from Postgres as baseline
-3. Connect CMP/UDP receivers to all matching engines (direct)
+3. Connect casting/UDP receivers to all matching engines (direct)
 4. Receive tip-sync messages (record type `0x20`) from main
    on `RSX_RISK_REPLICA_ADDR`
 5. Replica loop:
@@ -347,9 +347,9 @@ from `tips[symbol_id] + 1`.
 
 1. New instance acquires advisory lock
 2. Reads positions + tips from Postgres (up to 10ms stale)
-3. Requests replay via DXS consumer ([DXS.md](DXS.md)):
+3. Requests replay via replication consumer ([replication.md](replication.md)):
    `from_seq = tips[symbol_id] + 1`
-4. MEs serve from 10min WAL retention (DXS.md section 2)
+4. MEs serve from 10min WAL retention (replication.md section 2)
 5. Replays to current, goes live, starts new replica
 
 **Idempotent replay:** Fill processing is idempotent — replaying
@@ -396,7 +396,7 @@ crates/rsx-risk/src/
     replica.rs        -- Replica loop, fill buffer, promotion
     persist.rs        -- Write-behind worker, Postgres batching
     replay.rs         -- Replay request/response, cold start
-    rings.rs          -- CMP ring setup and I/O helpers
+    rings.rs          -- casting ring setup and I/O helpers
     insurance.rs      -- Insurance fund logic
     schema.rs         -- Postgres schema / migration helpers
     config.rs         -- env config parsing
@@ -434,7 +434,7 @@ prints position state and margin after each fill.
 ### Phase 2: Fill Ingestion + Main Loop (mocked rings)
 
 RiskShard with main loop processing fills, orders, and BBO from
-mocked CMP/UDP links. No Postgres. State in-memory only.
+mocked casting/UDP links. No Postgres. State in-memory only.
 
 **Demo:** Binary that creates a shard with mocked ME producers.
 Producers generate random fills. Shard processes, prints stats

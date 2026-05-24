@@ -53,7 +53,7 @@ where applicable. Concrete principles:
    subset in README.
 
 7. **Acknowledge lineage.** rtrb has an "Origin Story" crediting
-   crossbeam. We have one too: CMP descends from LBM → Aeron → MoldUDP64.
+   crossbeam. We have one too: casting descends from LBM → Aeron → MoldUDP64.
    Should be a "Lineage" or "Acknowledgments" section.
 
 8. **MSRV is explicit.** rtrb states "minimum supported rustc version
@@ -81,9 +81,9 @@ Cut fluff (marketing prose, redundant sections); keep substance.
 Keeper sections — DO NOT remove or shrink these chasing rtrb-style
 brevity:
 
-- **"Why this exists"** — readers need to know what gap CMP fills
+- **"Why this exists"** — readers need to know what gap casting fills
   vs. the alternatives. rtrb skips this because everyone knows what
-  a ring buffer is. CMP needs the framing.
+  a ring buffer is. casting needs the framing.
 - **"Wire format"** — we're a protocol. The 16-byte header layout is
   load-bearing. rtrb has none because in-process structs need no
   wire spec.
@@ -91,14 +91,14 @@ brevity:
   stream, durability via WAL). Reader must know what they're getting.
 - **"When NOT to use this"** — misuse on a lossy WAN would fail
   catastrophically. rtrb's failure mode (`Full` / `Empty`) is
-  self-explanatory; CMP's isn't.
+  self-explanatory; casting's isn't.
 - **"Requirements and assumptions"** — trust model is load-bearing.
   rtrb has no trust model to declare.
 - **Specific bench numbers** — keep. rtrb is shorter because ring-
   buffer perf is well-understood; ours isn't.
 - **Quick-start examples** — keep. The minimal-snippet-only approach
   rtrb uses only works because the API is two methods (`push`,
-  `pop`). CMP's send loop is non-obvious.
+  `pop`). casting's send loop is non-obvious.
 
 What to actually cut (from the punch list below): redundant
 verbosity, stale claims, broken examples. NOT entire sections.
@@ -117,7 +117,7 @@ Run through this checklist:
 
 ## Outstanding punch list (as of 2026-05-24)
 
-From the docs review at `.ship/24-DXS-DOCS-REVIEW/REPORT.md` — taken
+From the docs review at `.ship/24-replication-DOCS-REVIEW/REPORT.md` — taken
 from the oracle critique. **Each item is a sharpen, not a cut.** Apply
 when ready; do not regress the README's overall depth.
 

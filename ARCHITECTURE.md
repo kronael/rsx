@@ -14,14 +14,14 @@ All specifications in `specs/2/`.
                   | Gateway  |  auth, rate limit, validation
                   +----+-----+
                        |
-                  [CMP/UDP]
+                  [casting/UDP]
                        |
                   +----------+
                   |   Risk   |  margin, positions, liquidation
                   |  (shard) |  per user_id hash
                   +----+-----+
                        |
-                  [CMP/UDP]
+                  [casting/UDP]
                        |
           +------------+------------+
           |            |            |
@@ -29,7 +29,7 @@ All specifications in `specs/2/`.
      | ME: BTC |  | ME: ETH |  | ME: ... |
      +---------+  +---------+  +---------+
           |            |            |
-     [CMP/UDP]    [CMP/UDP]    [CMP/UDP]
+     [casting/UDP]    [casting/UDP]    [casting/UDP]
           |            |            |
      +----+----+  +----+----+  +---+-----+
      |Marketdata|  |Recorder |  |  Mark   |
@@ -90,7 +90,7 @@ rsx-maker/      Market-maker bot (two-sided quoting)
 
 Two transport modes carry identical WAL records:
 
-**Hot path -- CMP/UDP:** Live order/fill flow between Gateway,
+**Hot path -- casting/UDP:** Live order/fill flow between Gateway,
 Risk, and ME. One WAL record per UDP datagram. Aeron-inspired
 NACK + flow control. Sub-10us same-machine latency.
 
@@ -98,13 +98,13 @@ NACK + flow control. Sub-10us same-machine latency.
 TCP byte stream, optional TLS. Used by DxsConsumer/DxsReplay.
 
 ```
-Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
-Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
+Gateway --[casting/UDP]--> Risk --[casting/UDP]--> ME
+Gateway <--[casting/UDP]-- Risk <--[casting/UDP]-- ME
                        Risk --[SPSC]-----> PG write-behind
                                     ME --[SPSC]--> WAL Writer
                           WAL Writer --[notify]--> DxsReplay
-                                    ME --[CMP/UDP]--> Marketdata
-Mark    --[DXS/TCP]--> Risk (mark prices)
+                                    ME --[casting/UDP]--> Marketdata
+Mark    --[replication/TCP]--> Risk (mark prices)
 ```
 
 Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
@@ -113,7 +113,7 @@ Wire format: `WAL bytes = disk bytes = wire bytes = memory bytes`.
 `rsx-dxs/src/header.rs` (transport + version),
 `rsx-dxs/src/protocol.rs` (CmpRecord trait + control messages),
 `rsx-messages/src/lib.rs` (domain wire records). Trust
-boundaries: CMP is intentionally unauthenticated (auth lives
+boundaries: casting is intentionally unauthenticated (auth lives
 at the gateway via JWT and at L3); see CLAUDE.md and
 specs/2/4-cast.md §10.4.
 
@@ -123,14 +123,14 @@ specs/2/4-cast.md §10.4.
 1. User sends order via WebSocket JSON
 2. Gateway: authenticate (JWT), rate limit, validate tick/lot
 3. Gateway: assign UUIDv7 order_id, track in pending map
-4. Gateway -> Risk: CMP/UDP NewOrder
+4. Gateway -> Risk: casting/UDP NewOrder
 5. Risk: portfolio margin check, freeze margin
-6. Risk -> ME: CMP/UDP NewOrder
+6. Risk -> ME: casting/UDP NewOrder
 7. ME: dedup check, match against book (FIFO)
-8. ME: emit Fill(s) + OrderDone/OrderFailed to WAL + CMP
-9. ME -> Risk: CMP/UDP Fill(s), OrderDone
+8. ME: emit Fill(s) + OrderDone/OrderFailed to WAL + casting
+9. ME -> Risk: casting/UDP Fill(s), OrderDone
 10. Risk: apply fills to positions, release frozen margin
-11. Risk -> Gateway: CMP/UDP Fill(s), OrderDone
+11. Risk -> Gateway: casting/UDP Fill(s), OrderDone
 12. Gateway: pop from pending, send to user via WebSocket
 ```
 
@@ -146,7 +146,7 @@ connected by SPSC rings (rtrb, 50-170ns per hop):
 Matching Engine process:
 +===============================================+
 |  +-------+  SPSC  +---------+  SPSC  +------+ |
-|  |  CMP  |------->| Matching|------->| WAL  | |
+|  |  casting  |------->| Matching|------->| WAL  | |
 |  |Receiver|<------| tile    |------->|Writer| |
 |  +-------+  fills |         | events +--+---+ |
 |                    +---------+     +----v----+ |
@@ -157,7 +157,7 @@ Matching Engine process:
 ```
 
 Within process: SPSC rings (zero syscall, 50-170ns).
-Between processes: CMP/UDP (hot) or WAL/TCP (cold).
+Between processes: casting/UDP (hot) or WAL/TCP (cold).
 Per-consumer rings: slow marketdata does not stall risk.
 Ring full = producer stalls (backpressure, never drop).
 
@@ -198,7 +198,7 @@ See `rsx-types/src/lib.rs`.
 | Risk pre-trade check | <5us |
 | Risk post-trade (apply fill) | <1us |
 | End-to-end GW->ME->GW | <50us (same machine) |
-| Streaming protocol (CMP) record encode/decode | <50ns (memcpy + CRC) |
+| Streaming protocol (casting) record encode/decode | <50ns (memcpy + CRC) |
 | `WalWriter::append` (Vec extend, no disk I/O) | <200ns |
 | WAL flush (fsync) | <1ms per 64KB batch |
 
@@ -226,7 +226,7 @@ specifications. See CRITIQUE.md for known gaps.
 - Backpressure enforced: never drop data silently
 
 Recovery: each component replays from its tip. ME from
-snapshot + WAL. Risk from Postgres + DXS replay. Gateway
+snapshot + WAL. Risk from Postgres + replication. Gateway
 is stateless. Marketdata rebuilds shadow book from ME WAL.
 
 ## Configuration

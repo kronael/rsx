@@ -1,7 +1,7 @@
 # rsx-dxs Architecture
 
-Domain-agnostic reliable transport. WAL writer/reader, DXS
-TCP replay server/client, and CMP (C Message Protocol)
+Domain-agnostic reliable transport. WAL writer/reader, replication
+TCP replay server/client, and casting (C Message Protocol)
 UDP sender/receiver.
 
 Specs: [`specs/4-cast.md`](specs/4-cast.md),
@@ -42,7 +42,7 @@ ride the same transport.
 
 ## Transport paths
 
-- **CMP/UDP** (hot path): Aeron-inspired NAK recovery, but
+- **casting/UDP** (hot path): Aeron-inspired NAK recovery, but
   without flow control. `CmpSender` assigns monotonic seq,
   sends, and caches the encoded frame in a preallocated ring.
   `CmpReceiver` detects gaps from out-of-order delivery or
@@ -52,13 +52,13 @@ ride the same transport.
   horizon = WAL retention, not buffer size. Slow consumers do
   not pace the sender — receiver-side overflow drops, sender
   never stalls.
-- **DXS/TCP** (cold path): `DxsReplayService` streams
+- **replication/TCP** (cold path): `DxsReplayService` streams
   historical records from `WalReader` then transitions to a
   live tail on `WalWriter::add_listener` notifications.
   `DxsConsumer` resumes from a persisted tip with backoff
   on disconnect.
 
-## CMP sender ring (cmp.rs)
+## casting sender ring (cmp.rs)
 
 Three `Box<[T]>` slabs, indexed by `seq & SEND_RING_MASK`:
 
@@ -124,7 +124,7 @@ wal/{stream_id}/{stream_id}_active.wal
 Filenames encode the seq range — O(1) file selection for
 `read_record_at_seq`. No file header, no index.
 
-## Replay Protocol (DXS) — server.rs
+## Replay Protocol (replication) — server.rs
 
 ```
 1. Consumer connects (optional TLS).
@@ -148,7 +148,7 @@ stream.
 
 ## Trust model
 
-CMP is **intentionally unauthenticated**. See
+casting is **intentionally unauthenticated**. See
 [`specs/4-cast.md`](specs/4-cast.md) §10.4 ("Trusted internal
 network. No authentication, no encryption.").
 
@@ -167,7 +167,7 @@ a retrofit on the V1 ingress.
 ## Wire-format invariant
 
 ```
-WAL bytes = disk bytes = CMP/UDP bytes = DXS/TCP bytes
+WAL bytes = disk bytes = casting/UDP bytes = replication/TCP bytes
          = struct bytes in memory
 ```
 
@@ -209,7 +209,7 @@ for the dated authoritative numbers.
 | WAL flush + fsync (64 KB batch — production amortisation) | 24 µs | `wal_fsync_bench` batch variant |
 | WAL flush + fsync (single record — naive sync per append) | 651 µs | `wal_fsync_bench` single-record variant |
 | WAL sequential read | ~700 MB/s | `wal_bench` |
-| CMP RTT, loopback, 128 B | 11.26 µs | `cmp_rtt_bench` |
+| casting RTT, loopback, 128 B | 11.26 µs | `cmp_rtt_bench` |
 | Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
 | `CmpSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cmp_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`) | 23.5 ms @ 10 K records | `wal_random_read_bench` |
@@ -217,13 +217,13 @@ for the dated authoritative numbers.
 ## Connection topology
 
 ```
-Gateway --[CMP/UDP]--> Risk --[CMP/UDP]--> ME
-Gateway <--[CMP/UDP]-- Risk <--[CMP/UDP]-- ME
+Gateway --[casting/UDP]--> Risk --[casting/UDP]--> ME
+Gateway <--[casting/UDP]-- Risk <--[casting/UDP]-- ME
                                       ME --[SPSC]--> WalWriter
                               WalWriter --[notify]--> DxsReplay
-                                      ME --[CMP/UDP]--> Marketdata
-Mark --[DXS/TCP]------> Risk
-Recorder --[DXS/TCP]--> ME
+                                      ME --[casting/UDP]--> Marketdata
+Mark --[replication/TCP]------> Risk
+Recorder --[replication/TCP]--> ME
 ```
 
 ## Consumers

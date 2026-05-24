@@ -6,20 +6,20 @@ status: shipped
 
 ## Context
 
-Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP)
+Project: RSX perpetuals exchange (Rust, monoio, casting/UDP)
 Goal: Wire SubscriptionManager into marketdata main loop so
-CMP events from ME get broadcast to WS subscribers.
+casting events from ME get broadcast to WS subscribers.
 
 rsx-marketdata already has: ShadowBook, L2/BBO/Trade
-serialization, SubscriptionManager, CMP decode loop,
+serialization, SubscriptionManager, casting decode loop,
 handle_insert/cancel/fill. Missing: actually broadcasting
-updates to WS clients after processing CMP events.
+updates to WS clients after processing casting events.
 
 ---
 
-### Stage 1: Wire WS broadcast after CMP event processing
+### Stage 1: Wire WS broadcast after casting event processing
 
-**Goal**: After each CMP event updates the shadow book,
+**Goal**: After each casting event updates the shadow book,
 broadcast L2/BBO/trade updates to subscribed WS clients.
 **Files**: rsx-marketdata/src/main.rs, rsx-marketdata/src/state.rs
 **Subagent**: improve

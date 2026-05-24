@@ -6,11 +6,11 @@ status: shipped
 
 ## Context
 
-Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP)
+Project: RSX perpetuals exchange (Rust, monoio, casting/UDP)
 Goal: ME sends events to Marketdata in addition to Risk
 
-**Current state:** ME only sends CMP events to Risk. Marketdata
-main.rs already handles CMP decode, shadow book, WS broadcast —
+**Current state:** ME only sends casting events to Risk. Marketdata
+main.rs already handles casting decode, shadow book, WS broadcast —
 just needs events. One CmpSender addition.
 
 ---

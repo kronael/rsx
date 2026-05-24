@@ -5,7 +5,7 @@
 Two artifacts in one repo:
 
 1. **`rsx-dxs` — an open-source, log-backed reliable UDP
-   transport.** WAL on disk, CMP on the wire, DXS for replay.
+   transport.** WAL on disk, casting on the wire, replication for replay.
    The WAL bytes, the wire bytes, and the replay stream bytes
    are the same bytes. Domain-agnostic — `cargo tree -p
    rsx-dxs --edges normal | grep rsx-` is empty. Any project
@@ -35,15 +35,15 @@ F22 making the first reliable number trustworthy.
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS + CMP bridge
+                    |  Gateway   |  WS + casting bridge
                     | (monoio)   |  JWT, rate limit
                     +-----+------+
-                          | CMP/UDP
+                          | casting/UDP
                     +-----v------+            +----------+
-                    |   Risk     |  CMP/UDP   | Matching |
+                    |   Risk     |  casting/UDP   | Matching |
                     |  Engine    +----------->| Engine   |
                     | (1 shard)  |<-----------+ (1/sym)  |
-                    +--+---+--+-+  CMP fills  +----+-----+
+                    +--+---+--+-+  casting fills  +----+-----+
                        |   |  |                    |
               +--------+   |  +------+        +----+----+
               v            v         v        v         v
@@ -55,11 +55,11 @@ F22 making the first reliable number trustworthy.
 ```
 
 An order arrives via WebSocket at the Gateway. Gateway
-validates (JWT, rate limit, tick/lot size), encodes to CMP,
+validates (JWT, rate limit, tick/lot size), encodes to casting,
 sends UDP to Risk. Risk checks portfolio margin across all
-positions for that user, then forwards CMP/UDP to the
+positions for that user, then forwards casting/UDP to the
 Matching Engine for that symbol. ME matches price-time FIFO,
-appends fills to WAL, sends CMP/UDP fills back to Risk. Risk
+appends fills to WAL, sends casting/UDP fills back to Risk. Risk
 updates positions, writes behind to Postgres, forwards fills
 to Gateway. Gateway pushes WS to the user. Done.
 
@@ -82,7 +82,7 @@ Criterion benchmarks on the orderbook and transport layer:
 
 End-to-end on loopback (Gateway → ME → Gateway): not yet
 asserted by an automated harness. Summing the measured
-components (gateway parse, CMP encode, UDP send, risk
+components (gateway parse, casting encode, UDP send, risk
 pre-trade, match, WAL append, reverse path) puts the
 budget comfortably inside the 50 µs design target, but
 treat that as a budget until the harness in
@@ -100,8 +100,8 @@ i64 in smallest units. `Price(pub i64)`, `Qty(pub i64)` as
 the API boundary. No IEEE 754 rounding, deterministic across
 architectures, no precision loss across the entire pipeline.
 
-**CMP/UDP, not Kafka.** A message broker adds milliseconds of
-latency and an operational dependency. CMP is a custom
+**casting/UDP, not Kafka.** A message broker adds milliseconds of
+latency and an operational dependency. casting is a custom
 protocol inspired by Aeron: C structs over UDP, NACK-based
 flow control, per-stream ordering. Each datagram is one
 message. No framing, no length prefix, no deserialization.
@@ -151,7 +151,7 @@ fill orders front to back, advance to next level if needed.
 
 ## WAL = Wire = Stream
 
-The WAL disk format, the CMP wire format, and the DXS stream
+The WAL disk format, the casting wire format, and the replication stream
 format are identical. No transformation between them.
 
 Each record: 16-byte header (stream_id, seq, record_type,
@@ -159,9 +159,9 @@ payload_len) followed by a `#[repr(C, align(64))]` payload.
 The same bytes written to disk are the same bytes sent over
 UDP and the same bytes streamed to consumers over TCP.
 
-DXS (the streaming layer) is brokerless. Each producer IS the
+replication (the streaming layer) is brokerless. Each producer IS the
 replay server. Consumers connect directly to the matching
-engine's DXS port and request replay from sequence N. No
+engine's replication port and request replay from sequence N. No
 central broker, no topic partitions, no consumer groups. The
 WAL IS the log.
 
@@ -227,7 +227,7 @@ stress generator kept as stress.py in the playground.
 **Refine pass.** 28 commits across A/B/C/D rounds applying
 the project's own wisdom rules uniformly: one import per
 line, `.expect("INVARIANT: ...")` instead of bare `unwrap`,
-compile-time size/align asserts on every CMP record,
+compile-time size/align asserts on every casting record,
 narration comments deleted. The codebase now reads the same
 way in every crate.
 
@@ -243,9 +243,9 @@ produced a finding-by-finding resolution map. Things landed:
 JWT min-secret + `nbf` + `jti` replay tracker (now fully wired
 through `ws_handshake`), gateway IP-limiter cap, zero-heap
 `send_ring`, WAL append errors propagated, wire schema version
-byte. One finding was **rejected on review** — the CMP
+byte. One finding was **rejected on review** — the casting
 source-IP filter contradicted the spec's documented trust
-model (CMP is intentionally unauthenticated; auth lives at
+model (casting is intentionally unauthenticated; auth lives at
 the gateway and at L3). A new "Trust boundaries" rule in
 CLAUDE.md prevents the same misclassification next time.
 
@@ -269,7 +269,7 @@ that performs confidence.
 The exchange runs end-to-end. The open questions we're actively
 working through: tile-architecture parity for gateway and
 marketdata (currently monoio reactors, not pinned cores);
-multicast fan-out for CMP v2 (one ME → N consumers, no
+multicast fan-out for casting v2 (one ME → N consumers, no
 per-receiver copy); measured GW→ME→GW p50/p99 under sustained
 load rather than the current component-sum estimate. The
 `rsx-dxs` transport layer is already domain-agnostic — the

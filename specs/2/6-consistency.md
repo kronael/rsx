@@ -5,7 +5,7 @@ status: shipped
 # Consistency — Event Fan-Out
 
 Matching engine produces events into a fixed array buffer. Events fan out
-directly to consumers via CMP/UDP between processes (SPSC optional in-process).
+directly to consumers via casting/UDP between processes (SPSC optional in-process).
 Matching engine persists its state via WAL + online snapshot, so orderbook
 state is recoverable after crash. Positions are persisted at the risk engine
 (see [WAL.md](WAL.md)).
@@ -15,37 +15,37 @@ specification of consistency model, durability bounds, and recovery guarantees.
 
 ## Table of Contents
 
-- [1. Fan-Out: CMP/UDP Between Processes](#1-fan-out-cmpudp-between-processes-spsc-optional-in-process)
+- [1. Fan-Out: casting/UDP Between Processes](#1-fan-out-cmpudp-between-processes-spsc-optional-in-process)
 - [2. Ordering Guarantees](#2-ordering-guarantees)
 - [3. Backpressure](#3-backpressure)
 - [4. Positions & Risk](#4-positions--risk)
 - [5. Crash Behavior](#5-crash-behavior)
 - [6. Deferred](#6-deferred)
-- [Drain Loop Pseudocode (CMP)](#drain-loop-pseudocode-cmp)
+- [Drain Loop Pseudocode (casting)](#drain-loop-pseudocode-cmp)
 - [Key Invariants](#key-invariants)
 - [Verification](#verification)
 
 ---
 
-## 1. Fan-Out: CMP/UDP Between Processes (SPSC Optional In-Process)
+## 1. Fan-Out: casting/UDP Between Processes (SPSC Optional In-Process)
 
 ```
         Matching Engine
              |
         drain_events()
          /    |    \       \
-     [CMP]  [CMP]  [CMP]   [DXS]
+     [casting]  [casting]  [casting]   [replication]
        |      |      |       |
      Risk  Gateway  MktData    Recorder
 ```
 
 Matching engine drains `event_buf[0..event_len]` and emits per-consumer
-CMP/UDP datagrams to Risk, Gateway, and Marketdata. When co-located, an
-SPSC ring MAY be used instead, but CMP is the default for inter-process
+casting/UDP datagrams to Risk, Gateway, and Marketdata. When co-located, an
+SPSC ring MAY be used instead, but casting is the default for inter-process
 fan-out. A mirrored stream is also emitted to a hot spare matching engine.
 
-Additionally, Recorder instances connect as DXS consumers
-([DXS.md](DXS.md) section 8) to archive event streams to daily
+Additionally, Recorder instances connect as replication consumers
+([replication.md](replication.md) section 8) to archive event streams to daily
 files. Recorders are asynchronous — they do not affect the hot path.
 
 Event routing (transport-agnostic):
@@ -85,7 +85,7 @@ L2 depth, BBO, and trade derivation from these events.
 - **ME SPSC rings** (optional, internal): ring full = matching engine
   **must stall** (bare busy-spin, no `spin_loop()`). This is
   internal backpressure between co-located components.
-- **CMP/UDP consumers** (default): UDP may drop under load; consumers
+- **casting/UDP consumers** (default): UDP may drop under load; consumers
   are responsible for gap detection and resubscribe/replay where needed.
 - These two layers are independent. Gateway rejection protects
   against external overload; ME stall protects against slow
@@ -128,7 +128,7 @@ for step-by-step operational recovery procedures.
 
 ---
 
-## Drain Loop Pseudocode (CMP)
+## Drain Loop Pseudocode (casting)
 
 ```rust
 fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
@@ -164,7 +164,7 @@ fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
 
 1. Events within a symbol are totally ordered (`seq` monotonic)
 2. No cross-symbol ordering
-3. All consumers see same event order (CMP/UDP preserves order per stream)
+3. All consumers see same event order (casting/UDP preserves order per stream)
 4. Matching engine never drops events (ring full = stall)
 5. ORDER_DONE is the commit boundary for multi-fill sequences
 6. Risk engine persists positions

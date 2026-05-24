@@ -16,16 +16,16 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
   An order from user U on symbol S routes GW → Risk[U] → ME[S]
   → Risk[U] → GW. Adding symbols = add ME instances; adding
   users = add Risk shards. The two axes are independent.
-- Between processes: CMP (C structs over UDP) + WAL
+- Between processes: casting (C structs over UDP) + WAL
   replication (TCP)
-  - Live path: CMP/UDP (order flow, fills)
+  - Live path: casting/UDP (order flow, fills)
   - Cold path: WAL replication over TCP (replay, replication)
 - Within each process: tile architecture (pinned threads
   + SPSC rings for intra-process IPC, see TILES.md)
 - Hot path I/O: monoio (io_uring) on Gateway, Risk, and Marketdata
   (all on the GW→ME→GW critical path). Mark, Recorder run on tokio
   (off critical path; blocking PG write-behind, ergonomics fine).
-  Risk tile: monoio CMP/UDP hot loop + tokio task for PG write-behind;
+  Risk tile: monoio casting/UDP hot loop + tokio task for PG write-behind;
   handoff via SPSC ring between the two (same tile pattern as Gateway).
 - Later: DPDK/AF_XDP swaps I/O layer, same interfaces
 - Target: <50us GW→ME→GW, <500ns ME match
@@ -37,18 +37,18 @@ Rust workspace (12 crates, see Cargo.toml):
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
-rsx-dxs/        Domain-agnostic transport: CMP/UDP + WAL +
-                DXS/TCP replay (no rsx-types dep)
+rsx-dxs/        Domain-agnostic transport: casting/UDP + WAL +
+                replication/TCP replay (no rsx-types dep)
 rsx-messages/   RSX exchange wire records (Fill/BBO/Order*/...)
                 on top of rsx-dxs
 rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab,
                 CompressionMap)
 rsx-matching/   ME tile logic (one instance per symbol)
 rsx-risk/       Risk tile logic (one per user shard)
-rsx-gateway/    Gateway tile, WS ingress + CMP/UDP to risk
+rsx-gateway/    Gateway tile, WS ingress + casting/UDP to risk
 rsx-marketdata/ Marketdata tile, shadow book, L2/BBO/trades
 rsx-mark/       Mark price aggregator (separate process)
-rsx-recorder/   Archival DXS consumer (separate process)
+rsx-recorder/   Archival replication consumer (separate process)
 rsx-cli/        WAL dump/inspect tool (clap CLI)
 rsx-log/        Off-hot-path logging primitive (per-thread
                 SPSC ring → drain thread → tracing events)
@@ -107,7 +107,7 @@ When the spec explicitly delegates a concern to a different
 layer, do NOT add code in the layer that's being delegated
 *from*. Cite the spec; trust the boundary. Concretely:
 
-- **CMP is intentionally unauthenticated.** specs/2/4-cast.md
+- **casting is intentionally unauthenticated.** specs/2/4-cast.md
   §10.4 states "Trusted internal network. No authentication,
   no encryption." Auth lives at the gateway (JWT, TLS) for
   external clients and at the L3 network (firewall, VPC,
@@ -233,10 +233,10 @@ qty_raw   = (human_qty / lot_size) as i64
 Overflow: check at order entry, not on hot path. Use checked_mul
 for notional = price * qty at risk boundary.
 
-## WAL / DXS
+## WAL / replication
 
 - Fixed-record format: 16B header + `#[repr(C, align(64))]` payload
-- WAL disk format = wire format = DXS stream format (no transformation)
+- WAL disk format = wire format = replication stream format (no transformation)
 - WalWriter flush every 10ms, rotate at 64MB, retain 4h
   (hot tier only; ARCHIVE handles long-term durability)
 - Backpressure: buffer full or flush lag > 10ms -> stall producer
@@ -252,16 +252,16 @@ for notional = price * qty at risk boundary.
   one SPSC downqueue (orders in) and one SPSC upqueue
   (fills out). The I/O multiplexing inside the tile is the
   only part that touches the network stack.
-- **Risk tile specifically:** monoio CMP/UDP loop handles the
+- **Risk tile specifically:** monoio casting/UDP loop handles the
   hot path (order recv → margin check → forward to ME). A
   separate tokio task owns PG write-behind; SPSC ring hands
   off position updates from monoio → tokio without blocking
-  the hot loop. Same handoff pattern as Gateway's WS→CMP split.
+  the hot loop. Same handoff pattern as Gateway's WS→casting split.
 - **Later:** userspace networking (DPDK, AF_XDP) swaps the
   I/O layer inside the same tile. No changes to SPSC rings
   or ME.
-- **DXS:** CMP/UDP for hot path, WAL replication over TCP
-  for cold path. Same wire format as disk. See CMP.md.
+- **replication:** casting/UDP for hot path, WAL replication over TCP
+  for cold path. Same wire format as disk. See casting.md.
 - Reference impl: sibling `trader/monoio-client/` (set
   `RSX_TRADER_REF_DIR` to the absolute path locally)
   - `ws_monoio.rs`: WebSocket client/server on monoio
@@ -282,7 +282,7 @@ for notional = price * qty at risk boundary.
 | Architecture | specs/2/45-tiles.md | - |
 | Shared orderbook | specs/2/21-orderbook.md | specs/2/34-testing-book.md |
 | Matching engine | specs/2/21-orderbook.md, specs/2/6-consistency.md | specs/2/41-testing-matching.md |
-| DXS (WAL + replay) | specs/2/10-replication.md, specs/2/48-wal.md, specs/2/4-cast.md | specs/2/36-testing-replication.md |
+| replication (WAL + replay) | specs/2/10-replication.md, specs/2/48-wal.md, specs/2/4-cast.md | specs/2/36-testing-replication.md |
 | Risk engine | specs/2/28-risk.md | specs/2/42-testing-risk.md |
 | Liquidator | specs/2/13-liquidator.md | specs/2/38-testing-liquidator.md |
 | Mark price | specs/2/15-mark.md | specs/2/39-testing-mark.md |

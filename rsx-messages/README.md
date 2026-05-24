@@ -5,7 +5,7 @@ RSX exchange application-level wire records on top of the
 
 Eleven `#[repr(C, align(64))]` records covering order events,
 fills, BBO, marks, liquidations. Each implements
-`rsx_dxs::CmpRecord` so it can flow over CMP/UDP and DXS/TCP
+`rsx_dxs::CmpRecord` so it can flow over casting/UDP and replication/TCP
 without serialization.
 
 ```
@@ -34,7 +34,7 @@ implement `CmpRecord`. No edit to `rsx-dxs` required.
 library of `#[repr(C, align(64))]` structs and the
 `CmpRecord` impl for each. No runtime, no I/O, no threading.
 The records travel through `rsx-dxs` transport (streaming
-protocol CMP over UDP, replay protocol DXS over TCP, WAL on
+protocol casting over UDP, replay protocol replication over TCP, WAL on
 disk) without being aware of which path they're on. See
 [`../notes/tiles.md`](../notes/tiles.md) for the runtime
 choices made by the producers and consumers of these records.

@@ -308,7 +308,7 @@ on the book.
 - Emits single FILL with `taker_user_id = maker_user_id`
 
 **Risk engine processing:**
-- Receives fill via CMP/UDP from ME
+- Receives fill via casting/UDP from ME
 - Applies fill TWICE to same user's position:
   - Once as taker (one side)
   - Once as maker (opposite side)
@@ -355,7 +355,7 @@ Fees: collateral -= (taker_fee + maker_rebate)
 
 **Scenario:** User has positions in BTC-PERP and ETH-PERP.
 Fills arrive in same ME event batch (or near-simultaneously
-via CMP/UDP from different MEs).
+via casting/UDP from different MEs).
 
 **Risk engine processing (single-threaded per shard):**
 - Processes fills sequentially (FIFO order)
@@ -432,7 +432,7 @@ Order B: needs 500 margin -> REJECTED (available = 400)
 **Recovery flow (RISK.md §9, GUARANTEES.md §2.2):**
 1. New risk instance starts
 2. Loads positions + tips from Postgres (stale by up to 10ms)
-3. Requests DXS replay from ME: `from_seq = tips[symbol_id] + 1`
+3. Requests replication from ME: `from_seq = tips[symbol_id] + 1`
 4. ME serves fills from last 10min WAL retention
 5. Risk replays fills, updates positions in-memory
 6. When caught up: persists new tips, goes live
@@ -683,7 +683,7 @@ on pending orders)
 ### 6.1 Mark Price Unavailable
 
 **Fallback chain (RISK.md §4, LIQUIDATOR.md §3):**
-1. **Mark price** from aggregator (DXS consumer)
+1. **Mark price** from aggregator (replication consumer)
 2. **Index price** from BBO (risk engine calculates)
 3. **Last known mark price** (cached)
 
@@ -887,10 +887,10 @@ ORDER_DONE { order_id=A, total_filled=8, seq=102 }
 - seq=102: release frozen margin for order A
 
 **Edge case: ORDER_DONE arrives out-of-order (UDP):**
-- CMP/UDP may deliver out-of-order
+- casting/UDP may deliver out-of-order
 - Risk dedup by seq: processes in seq order even if arrival
   out-of-order
-- CMP NACK + resend ensures no gaps
+- casting NACK + resend ensures no gaps
 
 **Test coverage:** CONSISTENCY.md verification
 
@@ -899,7 +899,7 @@ ORDER_DONE { order_id=A, total_filled=8, seq=102 }
 ### 8.2 BBO Delayed (Stale Index Price)
 
 **Scenario:** Risk engine receives fills, but BBO updates lag
-(ME -> Risk CMP/UDP congestion).
+(ME -> Risk casting/UDP congestion).
 
 **Impact:**
 - Index price stale (last BBO from 100ms ago)
@@ -910,7 +910,7 @@ ORDER_DONE { order_id=A, total_filled=8, seq=102 }
 - Mark price is primary (not index)
 - BBO staleness affects index only
 - Per-tick margin recalc catches up when BBO arrives
-- Liquidation based on mark (DXS consumer, separate channel)
+- Liquidation based on mark (replication consumer, separate channel)
 
 **Worst case:**
 - Both mark AND BBO stale
@@ -945,7 +945,7 @@ to Postgres (write-behind lag).
 - In-memory tip updated on each fill, Postgres tip lags
 
 **Tip as optimization:**
-- Reduces replay window (smaller DXS request)
+- Reduces replay window (smaller replication request)
 - NOT source of truth (position = sum(fills) is truth)
 
 **Test coverage:** GUARANTEES.md §8.2
@@ -961,7 +961,7 @@ maintenance margin rate changes).
 
 **Config propagation (RISK.md §1):**
 - ME emits `CONFIG_APPLIED` event on config update
-- Risk consumes CONFIG_APPLIED via CMP/UDP
+- Risk consumes CONFIG_APPLIED via casting/UDP
 - Risk updates in-memory symbol config
 - Risk forwards CONFIG_APPLIED to Gateway (cache sync)
 
@@ -1015,7 +1015,7 @@ existing position exceeds new limit.
 
 ### 10.1 Gap in Fill Sequence
 
-**Scenario:** Risk replays fills from DXS. Detects gap in seq.
+**Scenario:** Risk replays fills from replication. Detects gap in seq.
 
 **Example:**
 ```
@@ -1023,7 +1023,7 @@ Expected seq: 1001
 Received: 1001, 1002, 1004 (1003 missing)
 ```
 
-**Streaming protocol (CMP) handling (CMP.md):**
+**Streaming protocol (casting) handling (casting.md):**
 - Consumer detects gap via seq comparison
 - Sends NACK to producer (ME)
 - ME resends missing fill (from WAL buffer)
@@ -1031,16 +1031,16 @@ Received: 1001, 1002, 1004 (1003 missing)
 
 **Risk behavior:**
 - If gap detected: pause processing for that symbol
-- Request resend via CMP NACK
+- Request resend via casting NACK
 - Wait for missing fill(s)
 - Resume when gap filled
 
 **Edge case: fill lost in WAL (critical bug):**
 - If ME WAL is corrupt or lost: cannot replay
 - Violates GUARANTEES.md (0ms fill loss guarantee)
-- Recovery: restore from snapshot + DXS Recorder archive
+- Recovery: restore from snapshot + replication Recorder archive
 
-**Test coverage:** CMP gap detection (TESTING-CMP.md)
+**Test coverage:** casting gap detection (TESTING-casting.md)
 
 ---
 
@@ -1118,10 +1118,10 @@ continues processing fills, Risk offline.
 **ME behavior:**
 - Continues matching orders
 - Writes fills to WAL (local disk, no network needed)
-- DXS server retains fills in WAL (10min retention)
+- replication server retains fills in WAL (10min retention)
 
 **Risk recovery when partition heals:**
-- Risk reconnects to ME DXS server
+- Risk reconnects to ME replication server
 - Requests replay from `tips[symbol_id] + 1`
 - ME serves fills from WAL (up to 10min backlog)
 - Risk catches up, goes live
@@ -1202,5 +1202,5 @@ Risk continues processing fills, but cannot persist.
 - LIQUIDATOR.md: Liquidation lifecycle and edge cases
 - ORDERBOOK.md: Reduce-only enforcement, position tracking in ME
 - TESTING-RISK.md: Comprehensive unit/e2e/integration tests
-- CMP.md: Gap detection and NACK/resend protocol
-- DXS.md: WAL replay and retention guarantees
+- casting.md: Gap detection and NACK/resend protocol
+- replication.md: WAL replay and retention guarantees

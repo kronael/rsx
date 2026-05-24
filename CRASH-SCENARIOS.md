@@ -36,7 +36,7 @@ steps, and verification.
 | S14 | ME + Risk + Postgres | All crash in 10ms | Full system | **0ms** | 10ms | **100ms** | 60-180s | Full system verify |
 | S15 | Network partition: All | Full isolation 1min | No cross-component | **0ms** | 10ms | 0ms (buffered) | 1min + 60s | Full replay |
 | S16 | ME WAL rotation | During file rotation | Active file incomplete | **0ms** | 10ms | 0ms | 20-60s | Rename + restart |
-| S17 | DXS buffer overflow | Consumer lag >10min | Hot WAL expired | **0ms** | 10ms | 0ms | 5-30min | ARCHIVE replay |
+| S17 | replication buffer overflow | Consumer lag >10min | Hot WAL expired | **0ms** | 10ms | 0ms | 5-30min | ARCHIVE replay |
 | S18 | Config update | Mid-crash | Config event lost | **0ms** | 10ms | 0ms | <5s | Reapply config |
 | S19 | Funding settlement | Mid-iteration | Partial funding | **0ms** | 10ms | 0ms | 30s | Resume from checkpoint |
 
@@ -148,10 +148,10 @@ consul kv put matching/BTCUSD/status active
 - On crash: unflushed fills in buffer are LOST from this ME instance
 - BUT: ME replica receives same fills via SPSC ring and has flushed to its own WAL
 - **Total:** 0 fills lost system-wide (replica WAL has all fills)
-- **Proof:** Risk replays from surviving ME replica WAL via DXS. All fills with seq <= last_flushed_seq on replica are durable.
+- **Proof:** Risk replays from surviving ME replica WAL via replication. All fills with seq <= last_flushed_seq on replica are durable.
 
 **Positions:**
-- Risk applies fills from ME WAL via DXS replay
+- Risk applies fills from ME WAL via replication
 - Any fills Risk missed (during ME downtime) are replayed from WAL
 - **Total:** 0 position drift
 - **Proof:** Position = sum(fills where seq <= tips[symbol_id])
@@ -274,9 +274,9 @@ psql -c "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 0
 journalctl -u rsx-risk@shard0 -n 100 | grep "Loaded"
 # "Loaded 10000 positions from Postgres"
 
-# 5. Check master requested DXS replay from ME
-journalctl -u rsx-risk@shard0 -n 100 | grep "DXS"
-# "Requesting DXS replay for symbol 1 from seq=12345670"
+# 5. Check master requested replication from ME
+journalctl -u rsx-risk@shard0 -n 100 | grep "replication"
+# "Requesting replication for symbol 1 from seq=12345670"
 # (seq from tips table in Postgres)
 
 # 6. Wait for CaughtUp from all symbols
@@ -308,9 +308,9 @@ cargo run --bin rsx-position-reconcile -- --shard-id 0 --verbose
 
 **Fills:**
 - ME has all fills in WAL (ME replica flushed within 10ms)
-- Risk replays from ME WAL via DXS
+- Risk replays from ME WAL via replication
 - **Total:** 0 fills lost
-- **Proof:** DXS replay serves fills from ME replica WAL. ME replica flushed to disk before both Risk instances crashed. Risk deduplicates by seq on replay.
+- **Proof:** replication serves fills from ME replica WAL. ME replica flushed to disk before both Risk instances crashed. Risk deduplicates by seq on replay.
 
 **Positions:**
 - Master's in-memory buffer had ~80 fills (8ms of processing at 100 fills/sec)
@@ -388,7 +388,7 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 
 ### Lessons
 - **100ms loss bound holds:** Dual crash = max 100ms position updates lost
-- **Fills never lost:** ME WAL + DXS replay provides complete history
+- **Fills never lost:** ME WAL + replication provides complete history
 - **Advisory lock prevents split-brain:** Only 1 instance acquires lock
 - **Replay is deterministic:** Replaying fills produces identical positions
 - **Verification is critical:** Must run reconciliation after dual crash
@@ -411,7 +411,7 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 - Risk detects ME connection timeout after 5s
 - Risk stops receiving fills (in-flight fills lost in SPSC ring)
 - ME continues matching, writes fills to WAL
-- ME's DXS replay buffer accumulates 5min of fills
+- ME's replication buffer accumulates 5min of fills
 - Gateway continues accepting orders (unaware of partition)
 - Users' orders reach ME, fills emitted, but Risk doesn't see them
 
@@ -446,7 +446,7 @@ ME continues normally:
 - Accepts orders from Gateway (if Gateway → ME link intact)
 - Matches orders, emits fills
 - Writes fills to WAL (flushed every 10ms)
-- DXS replay buffer accumulates fills (in-memory ring)
+- replication buffer accumulates fills (in-memory ring)
 - If Risk's SPSC ring full (cannot push): ME stalls
   - But if partition = no connection, ring push fails immediately
   - ME logs error, continues (fill is in WAL, can replay)
@@ -471,13 +471,13 @@ ping me-host
 journalctl -u rsx-risk@shard0 -f | grep "Reconnected"
 # "Reconnected to ME for symbol BTCUSD"
 
-# Risk requests DXS replay from last tip
-journalctl -u rsx-risk@shard0 -f | grep "DXS"
-# "Requesting DXS replay for symbol 1 from seq=12345678"
+# Risk requests replication from last tip
+journalctl -u rsx-risk@shard0 -f | grep "replication"
+# "Requesting replication for symbol 1 from seq=12345678"
 
 # ME serves replay from WAL
-journalctl -u rsx-matching@BTCUSD -f | grep "DXS"
-# "Serving DXS replay for symbol 1 from seq=12345678 to seq=12375678"
+journalctl -u rsx-matching@BTCUSD -f | grep "replication"
+# "Serving replication for symbol 1 from seq=12345678 to seq=12375678"
 # (30,000 fills = 5min at 100 fills/sec)
 
 # Risk processes replay
@@ -504,7 +504,7 @@ systemctl status rsx-risk@shard0
 journalctl -u rsx-risk@shard0 -n 20 | grep "ME"
 # "Reconnected to ME for symbol BTCUSD"
 
-# 3. Check DXS replay completed
+# 3. Check replication completed
 journalctl -u rsx-risk@shard0 -n 100 | grep "CaughtUp"
 # "CaughtUp for symbol 1"
 
@@ -528,7 +528,7 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 
 **Fills:**
 - ME wrote all fills to WAL during partition
-- DXS replay buffer retained fills (10min retention)
+- replication buffer retained fills (10min retention)
 - Risk replayed all fills after partition healed
 - **Total:** 0 fills lost
 - **Proof:** Risk tips after replay = ME seq (all fills accounted for)
@@ -582,7 +582,7 @@ SELECT
 ```
 
 ### Lessons
-- **DXS replay handles long partitions:** 10min retention covers most scenarios
+- **replication handles long partitions:** 10min retention covers most scenarios
 - **Positions always reconstructed from fills:** No drift even after 5min partition
 - **Stale positions during partition:** Risk calculations may be incorrect (liquidations?)
 - **Partition >10min:** Risk must rebuild from snapshot + full WAL (longer recovery)
@@ -860,7 +860,7 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 - Continues matching (has local WAL)
 - Writes fills to WAL (flushed every 10ms)
 - Cannot push fills to Risk (SPSC ring or network)
-- Fills accumulate in DXS replay buffer (10min retention)
+- Fills accumulate in replication buffer (10min retention)
 - No data loss (WAL is local)
 
 **Postgres:**
@@ -889,13 +889,13 @@ journalctl -u rsx-risk@shard0 -f | grep "ME"
 journalctl -u rsx-risk@shard0 -f | grep "Postgres"
 # "Reconnected to Postgres"
 
-# Risk requests DXS replay from ME
-journalctl -u rsx-risk@shard0 -f | grep "DXS"
-# "Requesting DXS replay for symbol 1 from seq=12345678"
+# Risk requests replication from ME
+journalctl -u rsx-risk@shard0 -f | grep "replication"
+# "Requesting replication for symbol 1 from seq=12345678"
 
 # ME serves replay (1min of fills at 100/sec = 6000 fills)
-journalctl -u rsx-matching@BTCUSD -f | grep "DXS"
-# "Serving DXS replay for symbol 1 from seq=12345678 to seq=12351678"
+journalctl -u rsx-matching@BTCUSD -f | grep "replication"
+# "Serving replication for symbol 1 from seq=12345678 to seq=12351678"
 
 # Risk processes replay
 journalctl -u rsx-risk@shard0 -f | grep "Replay"
@@ -958,7 +958,7 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 
 **Fills:**
 - ME wrote all fills to local WAL during partition
-- DXS replay buffer retained fills (10min > 1min partition)
+- replication buffer retained fills (10min > 1min partition)
 - Risk replayed all fills after partition healed
 - **Total:** 0 fills lost
 - **Proof:** All fills in ME WAL, replayed to Risk
@@ -966,7 +966,7 @@ psql -c "SELECT * FROM liquidation_events WHERE timestamp_ns > extract(epoch fro
 **Positions:**
 - Risk buffered position updates in memory during partition
 - After reconnect: flushed buffered updates to Postgres
-- After DXS replay: applied 1min of fills from ME
+- After replication: applied 1min of fills from ME
 - **Total:** 0 position drift
 - **Proof:** Position = sum(fills where seq <= tips[symbol_id])
 
@@ -1014,7 +1014,7 @@ psql -c "SELECT objid, COUNT(*) FROM pg_locks WHERE locktype = 'advisory' GROUP 
 ### Lessons
 - **Graceful degradation:** Each component handles partition independently
 - **Eventual consistency:** After partition heals, all components converge
-- **DXS replay critical:** Handles up to 10min partition (covers most scenarios)
+- **replication critical:** Handles up to 10min partition (covers most scenarios)
 - **User impact:** Orders rejected during partition (expected behavior)
 - **No silent data loss:** Fills always replayed, positions always consistent
 
@@ -1076,7 +1076,7 @@ cargo run --bin rsx-wal-check -- \
 
 ---
 
-## S17: DXS Replay Buffer Overflow (Consumer Lag >10min)
+## S17: replication Replay Buffer Overflow (Consumer Lag >10min)
 
 ### Preconditions
 - Risk engine offline for 15 minutes (deploy, maintenance, long crash)
@@ -1085,15 +1085,15 @@ cargo run --bin rsx-wal-check -- \
 
 ### Trigger
 - Risk restarts after 15min downtime
-- Requests DXS replay from `tips[symbol_id] + 1`
+- Requests replication from `tips[symbol_id] + 1`
 - ME cannot serve: requested seq is in files already deleted
 
 ### Recovery Steps
 
 ```bash
-# 1. Risk detects DXS replay unavailable
-journalctl -u rsx-risk@shard0 -n 20 | grep "DXS"
-# "DXS replay unavailable: seq 12300000 not in hot WAL"
+# 1. Risk detects replication unavailable
+journalctl -u rsx-risk@shard0 -n 20 | grep "replication"
+# "replication unavailable: seq 12300000 not in hot WAL"
 
 # 2. Check ARCHIVE for older WAL files
 ls -lh /srv/data/rsx/archive/1/
@@ -1116,7 +1116,7 @@ cargo run --bin rsx-archive-replay -- \
 systemctl restart rsx-risk@shard0
 
 # 5. Risk loads positions + tips from Postgres
-# 6. Requests DXS replay from ME (now within 10min window)
+# 6. Requests replication from ME (now within 10min window)
 # 7. Goes live
 ```
 
@@ -1126,9 +1126,9 @@ systemctl restart rsx-risk@shard0
 - **Recovery time:** 5-30min (depends on ARCHIVE replay duration)
 
 ### Lessons
-- DXS hot retention (10min) is insufficient for long outages
+- replication hot retention (10min) is insufficient for long outages
 - ARCHIVE provides cold storage for infinite history
-- Risk must support ARCHIVE fallback when DXS unavailable
+- Risk must support ARCHIVE fallback when replication unavailable
 - Consider extending hot retention to 1hr for faster recovery
 
 ---

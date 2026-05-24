@@ -87,16 +87,16 @@ but no data is lost.
 
 WAL files rotate at 64MB. Old files are retained for 10 minutes,
 then garbage collected (based on file mtime). The 10-minute window
-is the DXS replay buffer -- any consumer that falls behind by more
+is the replication buffer -- any consumer that falls behind by more
 than 10 minutes must rebuild from a snapshot.
 
 When an archive directory is configured, rotated files are moved
 there before deletion. The Recorder process consumes these archived
 files for long-term storage (daily rotation, append-only).
 
-## DXS: Direct Exchange Streaming
+## replication: Direct Exchange Streaming
 
-DXS is how consumers read the WAL. Each producer (matching engine,
+replication is how consumers read the WAL. Each producer (matching engine,
 mark aggregator) runs a DxsReplayService that serves WAL records
 over TCP.
 
@@ -116,7 +116,7 @@ left off.
 
 ### TLS Support
 
-DXS supports optional TLS for WAL replication. This matters when
+replication supports optional TLS for WAL replication. This matters when
 risk engines and matching engines run on different hosts. The TLS
 handshake adds latency to the initial connection but not to
 subsequent record streaming.
@@ -129,13 +129,13 @@ bytes). This enables rolling upgrades: deploy consumers first
 (they ignore new record types), then deploy producers that emit
 them.
 
-## CMP: The Hot Path Transport
+## casting: The Hot Path Transport
 
 WAL replication over TCP is the cold path -- suitable for replay
 and archival, but too slow for live order flow. The hot path uses
-CMP over UDP.
+casting over UDP.
 
-CMP (C Message Protocol) uses the same wire format as the WAL.
+casting (C Message Protocol) uses the same wire format as the WAL.
 One WAL record per UDP datagram. No fragmentation -- all payloads
 fit in a single datagram (max 64KB, typical payloads are <256
 bytes).
@@ -145,7 +145,7 @@ bytes).
   [16B WalHeader][payload]
 ```
 
-The CMP sender assigns sequence numbers just like the WalWriter.
+The casting sender assigns sequence numbers just like the WalWriter.
 The receiver tracks the expected sequence and sends NAK (negative
 acknowledgment) for gaps. The sender retransmits from a ring
 buffer.
@@ -156,9 +156,9 @@ TCP adds head-of-line blocking and Nagle's algorithm (even with
 TCP_NODELAY, the kernel still batches ACKs). UDP with application-
 level reliability gives us control over retransmission timing.
 
-### CMP Configuration
+### casting Configuration
 
-CMP parameters are configurable via environment variables:
+casting parameters are configurable via environment variables:
 
 - Buffer sizes for send/receive rings
 - Heartbeat interval
@@ -184,16 +184,16 @@ Recovery time: 5-10s typical (snapshot load + WAL replay).
 
 1. Acquire Postgres advisory lock.
 2. Load positions, accounts, tips from Postgres.
-3. For each symbol, request DXS replay from the matching engine
+3. For each symbol, request replication from the matching engine
    at `tips[symbol_id] + 1`.
 4. Process replay fills through the same code path as live.
 5. On `CaughtUp` for all streams: connect gateway, go live.
 
-Recovery time: 2-5s typical (Postgres load + DXS replay).
+Recovery time: 2-5s typical (Postgres load + replication).
 
 ### Market Data Recovery
 
-1. Request DXS replay from each matching engine.
+1. Request replication from each matching engine.
 2. Rebuild shadow orderbook from fill/insert/cancel events.
 3. Resume broadcasting to WebSocket clients.
 

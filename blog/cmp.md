@@ -1,4 +1,4 @@
-# CMP: why we dropped gRPC for C structs over UDP
+# casting: why we dropped gRPC for C structs over UDP
 
 We had gRPC. It worked. We dropped it.
 
@@ -9,7 +9,7 @@ align(64))]` structs with a 16-byte header. Same bytes on
 disk (WAL), in memory (SPSC rings), and over the network.
 No serialization, no transformation, no copies.
 
-Except for one place: DXS streaming. There we wrapped those
+Except for one place: replication streaming. There we wrapped those
 same bytes in protobuf, inside HTTP/2 frames, inside TCP.
 Three layers of framing for bytes that were already framed.
 
@@ -26,10 +26,10 @@ head-of-line blocking. For bytes that need zero processing.
 
 ## the fix
 
-We designed CMP: C Message Protocol. Two transports for two
+We designed casting: C Message Protocol. Two transports for two
 paths, inspired by Aeron's reliability model.
 
-**Hot path (CMP/UDP):** One WAL record per UDP datagram.
+**Hot path (casting/UDP):** One WAL record per UDP datagram.
 Aeron-style NACK + flow control for reliability. Sender
 sends Heartbeats, receiver sends StatusMessages and Naks.
 Retransmits are two-tier:
@@ -57,7 +57,7 @@ Optional TLS via rustls. No protocol name — just streaming
 WAL bytes over a reliable transport.
 
 ```
-CMP/UDP:  [16B header][64B payload]
+casting/UDP:  [16B header][64B payload]
            inside UDP datagram
 
 WAL/TCP:  [16B header][64B payload]
@@ -129,7 +129,7 @@ components are compiled from the same repo.
 `#[repr(C)]` Rust structs. A Python client would need to
 manually define the same struct layout with ctypes. But
 external clients use the WebSocket JSON API (WEBPROTO.md),
-not CMP. Internal is Rust-only.
+not casting. Internal is Rust-only.
 
 **3. No human readability.** Can't `curl` the endpoint.
 Can't read the wire with `jq`. We have a WAL dump tool
@@ -172,7 +172,7 @@ Every one of these is documented, mitigated, and accepted.
 - Systems that need to run on arbitrary hardware (endianness)
 - Teams that debug by reading wire captures (use JSON)
 
-CMP is for: single-team, single-language, latency-sensitive
+casting is for: single-team, single-language, latency-sensitive
 internal systems where you control every endpoint. That's an
 exchange.
 

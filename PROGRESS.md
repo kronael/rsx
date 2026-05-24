@@ -41,7 +41,7 @@ correctness batch.
 | rsx-types | shipped | newtypes, config, validation, invariant-named asserts | — |
 | rsx-book | shipped | snapshot, matching, compression | proptest harness |
 | rsx-matching | shipped | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel index | — |
-| rsx-dxs | shipped | WAL, CMP/UDP, DXS/TCP, V0/V1 wire-format version byte, preallocated send_ring | — |
+| rsx-dxs | shipped | WAL, casting/UDP, replication/TCP, V0/V1 wire-format version byte, preallocated send_ring | — |
 | rsx-messages | shipped | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest (extracted from rsx-dxs) | — |
 | rsx-gateway | shipped | JWT (32B min, exp/nbf, JtiTracker dormant), per-IP rate limit (FIFO eviction), circuit breaker, REST, monoio WS | tile parity (pinning, ring) |
 | rsx-risk | shipped | replication, funding, liquidation, PG write-behind, full tile (7 SPSC rings) | (T3.2) replica → main promotion via state machine |

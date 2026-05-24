@@ -276,7 +276,7 @@ fn tls_config_validation_requires_cert_and_key() {
         key_path: None,
     };
 
-    let result = config.validate(true);
+    let result = config.validate_server();
     assert!(result.is_err());
 }
 
@@ -288,6 +288,6 @@ fn tls_config_disabled_skips_validation() {
         key_path: None,
     };
 
-    let result = config.validate(true);
+    let result = config.validate_server();
     assert!(result.is_ok());
 }

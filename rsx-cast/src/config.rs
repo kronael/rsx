@@ -109,23 +109,28 @@ impl TlsConfig {
         }
     }
 
-    /// Validate TLS config. Pass `is_server = true` when the
-    /// caller holds a private key (server); `false` for clients
-    /// that only need trust roots.
-    pub fn validate(&self, is_server: bool) -> io::Result<()> {
-        if !self.enabled {
-            return Ok(());
+    pub fn validate_server(&self) -> io::Result<()> {
+        if !self.enabled { return Ok(()); }
+        self.require_cert()?;
+        if self.key_path.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "RSX_REPL_KEY_PATH required when TLS enabled",
+            ));
         }
+        Ok(())
+    }
+
+    pub fn validate_client(&self) -> io::Result<()> {
+        if !self.enabled { return Ok(()); }
+        self.require_cert()
+    }
+
+    fn require_cert(&self) -> io::Result<()> {
         if self.cert_path.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "RSX_REPL_CERT_PATH required when TLS enabled",
-            ));
-        }
-        if is_server && self.key_path.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "RSX_REPL_KEY_PATH required when TLS enabled (server)",
             ));
         }
         Ok(())

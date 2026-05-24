@@ -6,7 +6,7 @@ status: shipped
 
 ## Context
 
-Project: RSX perpetuals exchange (Rust, monoio, CMP/UDP)
+Project: RSX perpetuals exchange (Rust, monoio, casting/UDP)
 Goal: Get all crates to 80%+ spec compliance. Main gap is
 rsx-risk at 54% (missing liquidation, margin recalc, failover
 basics). Gateway at 79% (missing ORDER_FAILED, heartbeats).
@@ -192,11 +192,11 @@ rsx-dxs/src/records.rs, specs/1/18-messages.md, specs/1/49-webproto.md.
    3=DUPLICATE_CID, 4=RATE_LIMITED, 5=SYSTEM.
 
 2. In rsx-gateway/src/main.rs, add RECORD_ORDER_FAILED to the
-   CMP receive loop. Route to user as WsFrame::OrderUpdate with
+   casting receive loop. Route to user as WsFrame::OrderUpdate with
    status=3 (failed) and the reason code.
 
 3. In rsx-risk/src/main.rs or shard.rs, when process_order rejects
-   (insufficient margin), send OrderFailedRecord via CMP to gateway.
+   (insufficient margin), send OrderFailedRecord via casting to gateway.
 
 **Part B: Server-initiated heartbeats**
 

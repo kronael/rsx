@@ -100,15 +100,15 @@ Targets from ORDERBOOK.md §4 and TESTING.md:
 - Market data service imports `rsx-book` for shadow orderbook
   (MARKETDATA.md §2, NETWORK.md §MARKETDATA)
 - BookObserver trait allows different event handling per consumer
-- Event buffer drained into CMP/UDP fan-out (CONSISTENCY.md §1)
+- Event buffer drained into casting/UDP fan-out (CONSISTENCY.md §1)
 - Event routing per consumer: Fill to risk/gateway/mktdata,
   BBO to risk, OrderInserted to mktdata, OrderCancelled to
   gateway/mktdata, OrderDone to risk/gateway
   (CONSISTENCY.md §1)
 - Mirrored stream to hot spare ME (CONSISTENCY.md §1)
 - WAL + online snapshot for book persistence and recovery
-  (ORDERBOOK.md §2.8, DXS.md §3)
-- Replica takeover via DXS consumer on ME WAL stream
+  (ORDERBOOK.md §2.8, replication.md §3)
+- Replica takeover via replication consumer on ME WAL stream
   (ORDERBOOK.md §2.8)
 - SymbolConfig distributed from metadata store, CONFIG_APPLIED
   syncs risk and gateway caches (ORDERBOOK.md §2.9)

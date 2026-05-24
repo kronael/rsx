@@ -1,4 +1,4 @@
-# DXS: Every Producer Is the Broker
+# replication: Every Producer Is the Broker
 
 No Kafka. No NATS. Producers serve their own WAL over TCP.
 
@@ -37,9 +37,9 @@ Producer (WAL on disk) ← TCP ← Consumer
 No broker. No middleman. Consumer connects to producer, requests
 `seq=1234`, producer seeks WAL file and streams records.
 
-## Replay Protocol (DXS)
+## Replay Protocol (replication)
 
-DXS = **D**ata e**X**change **S**treaming. Not a broker. A replay
+replication = **D**ata e**X**change **S**treaming. Not a broker. A replay
 protocol.
 
 Producer runs a replay server:
@@ -248,30 +248,30 @@ async fn consumer_detects_sequence_gap() {
 
 Kafka cluster: 3 brokers, 3 ZooKeeper nodes, ops team, 6 VMs.
 
-DXS: TCP listener on existing process, 50 lines of code.
+replication: TCP listener on existing process, 50 lines of code.
 
 Latency:
 - Kafka: 5-10ms producer → consumer
-- DXS: 10-100μs producer → consumer (same machine), 1-5ms (cross-rack)
+- replication: 10-100μs producer → consumer (same machine), 1-5ms (cross-rack)
 
 Complexity:
 - Kafka: partition assignment, rebalancing, offset commits, consumer
   groups, schema registry
-- DXS: connect, read, persist tip
+- replication: connect, read, persist tip
 
 Failure modes:
 - Kafka: broker down, ZK split-brain, rebalance storm, offset loss
-- DXS: producer down (consumers wait), consumer down (reconnect), TCP
+- replication: producer down (consumers wait), consumer down (reconnect), TCP
   disconnect (reconnect)
 
 ## The Trade-off
 
-DXS is not a general-purpose message broker:
+replication is not a general-purpose message broker:
 - No fan-out optimization (each consumer reads WAL independently)
 - No retention policy (producer decides when to rotate/delete)
 - No exactly-once delivery (consumer must deduplicate)
 
-DXS is perfect for:
+replication is perfect for:
 - Event sourcing (single producer, multiple consumers)
 - Audit logs (immutable append-only stream)
 - State replication (matching engine → risk engine)
@@ -302,9 +302,9 @@ TCP."
 
 ## See Also
 
-- `specs/2/10-replication.md` - replay protocol (DXS) specification
-- `specs/2/48-wal.md` - WAL format (same as DXS stream format)
+- `specs/2/10-replication.md` - replay protocol (replication) specification
+- `specs/2/48-wal.md` - WAL format (same as replication stream format)
 - `rsx-dxs/src/server.rs` - DxsReplay server implementation
 - `rsx-dxs/src/client.rs` - DxsConsumer client implementation
-- `rsx-dxs/tests/tls_test.rs` - End-to-end DXS tests
+- `rsx-dxs/tests/tls_test.rs` - End-to-end replication tests
 - `blog/12-deleted-serialization.md` - Why disk = wire = memory format

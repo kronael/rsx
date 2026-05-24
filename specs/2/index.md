@@ -17,7 +17,7 @@ phase-1 historical specs.
 
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
-| 1 | [1-architecture.md](1-architecture.md) | shipped | Perpetuals exchange: fixed-point i64, single-threaded ME, CMP/UDP, WAL recovery |
+| 1 | [1-architecture.md](1-architecture.md) | shipped | Perpetuals exchange: fixed-point i64, single-threaded ME, casting/UDP, WAL recovery |
 | 25 | [25-process.md](25-process.md) | shipped | Process + tile composition per binary |
 | 45 | [45-tiles.md](45-tiles.md) | partial | Pinned-thread tile architecture |
 | 20 | [20-network.md](20-network.md) | shipped | System network topology |
@@ -28,7 +28,7 @@ phase-1 historical specs.
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
 | 4 | [4-cast.md](4-cast.md) | shipped | C Message Protocol over UDP — WAL records on the wire |
-| 10 | [10-replication.md](10-replication.md) | shipped | DXS — brokerless WAL streaming over TCP |
+| 10 | [10-replication.md](10-replication.md) | shipped | replication — brokerless WAL streaming over TCP |
 | 18 | [18-messages.md](18-messages.md) | shipped | Wire record definitions (FillRecord, BBO, OrderUpdate, ...) |
 | 48 | [48-wal.md](48-wal.md) | shipped | WAL infrastructure — header format, fsync cadence, rotation |
 | 6 | [6-consistency.md](6-consistency.md) | shipped | Event fan-out consistency (matching engine → consumers) |
@@ -39,7 +39,7 @@ phase-1 historical specs.
 
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
-| 11 | [11-gateway.md](11-gateway.md) | shipped | Gateway service — WS ingress + CMP bridge + JWT |
+| 11 | [11-gateway.md](11-gateway.md) | shipped | Gateway service — WS ingress + casting bridge + JWT |
 | 17 | [17-matching.md](17-matching.md) | shipped | Matching engine — per-symbol, single-threaded |
 | 21 | [21-orderbook.md](21-orderbook.md) | shipped | Orderbook data structures + matching algorithm |
 | 28 | [28-risk.md](28-risk.md) | shipped | Risk engine — portfolio margin per user shard |

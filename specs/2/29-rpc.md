@@ -29,7 +29,7 @@ without blocking on individual order execution.
 **Key design points:**
 - UUIDv7 order IDs generated at Gateway entry (globally unique, timeline-sortable)
 - LIFO VecDeque for pending order tracking (optimized for typical response ordering)
-- Bidirectional CMP/UDP links (Gateway ↔ Risk ↔ Matching Engine)
+- Bidirectional casting/UDP links (Gateway ↔ Risk ↔ Matching Engine)
 - NO automatic retry (failed orders fail, user must manually retry)
 - Ingress backpressure: Gateway rejects new orders when its buffer exceeds 10k
 
@@ -279,7 +279,7 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 - Error response uses ORDER_FAILED(OVERLOADED).
 - Goal: fail fast rather than allow latency to explode.
 
-### CMP Flow Control (Secondary)
+### casting Flow Control (Secondary)
 
 - Receiver sends StatusMessage window every 10ms.
 - Sender stalls when `next_seq > consumption_seq + window`.
@@ -304,7 +304,7 @@ See `rsx-gateway/src/circuit.rs`.
 ### Gateway: Async Runtime (Tokio)
 
 One Tokio task per user session; thousands of tasks multiplexed on thread pool;
-single CMP/UDP link to Risk. See `rsx-gateway/src/`.
+single casting/UDP link to Risk. See `rsx-gateway/src/`.
 
 ### Matching Engine: Single-Threaded Event Loop
 
@@ -319,7 +319,7 @@ VecDeque linear scan (~5-10ns/entry) beats FxHashMap lookup for <10 pending orde
 
 ## Cross-References
 
-- **MESSAGES.md**: Message semantics (transport is CMP/UDP)
+- **MESSAGES.md**: Message semantics (transport is casting/UDP)
 - **ORDERBOOK.md**: Single-threaded matching model, O(1) operations
 - **NETWORK.md**: Component topology, stream lifecycle
 - **SMRB.md**: Low-latency IPC, SPSC queue design

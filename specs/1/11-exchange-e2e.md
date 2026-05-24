@@ -16,7 +16,7 @@ breach without waiting for the next fill.
 - Rust binaries: `rsx-gateway`, `rsx-risk`, `rsx-matching` (one per
   symbol), `rsx-marketdata`, `rsx-mark`
 - Python maker: `rsx-playground/market_maker.py`
-- Wire: CMP/UDP (hot path), WAL replication over TCP (cold path)
+- Wire: casting/UDP (hot path), WAL replication over TCP (cold path)
 - Client API: WEBPROTO WS + REST (see specs/1/49-webproto.md,
   RPC.md, MESSAGES.md)
 
@@ -26,19 +26,19 @@ Five concrete bugs block acceptance criteria:
 
 1. **Gateway WS push blocked on read** (`rsx-gateway/src/handler.rs:69-98`)
    The per-connection loop drains the outbound queue then blocks on
-   `ws_read_frame` indefinitely. Fills queued by the CMP task sit
+   `ws_read_frame` indefinitely. Fills queued by the casting task sit
    unsent until the client next sends a frame. Fix: interleave WS
    read and outbound drain (monoio select or join).
 
-2. **ME drops cancels silently** (`rsx-matching/src/main.rs` CMP recv loop)
+2. **ME drops cancels silently** (`rsx-matching/src/main.rs` casting recv loop)
    Only `RECORD_ORDER_REQUEST` is matched; `RECORD_CANCEL_REQUEST` is
    never handled. Cancels from GW→risk→ME are silently discarded.
-   Fix: add cancel dispatch in the CMP receive loop.
+   Fix: add cancel dispatch in the casting receive loop.
 
 3. **ME starts with empty book** (`rsx-matching/src/main.rs`)
    `rsx-book` has snapshot restore logic but `main.rs` never calls it.
    After any restart, all resting orders are lost. Fix: load WAL
-   snapshot on startup before accepting new CMP messages.
+   snapshot on startup before accepting new casting messages.
 
 4. **Per-tick liquidation missing** (`rsx-risk/src/shard.rs:drain_stashed_bbos`)
    `process_bbo` updates index price only. No liquidation scan runs
@@ -115,7 +115,7 @@ A risk shard E2E test:
 3. Drop the BBO mark price below the liquidation threshold
    (without any new fill).
 4. Assert: within one BBO processing cycle the shard emits a
-   liquidation CMP message for that user.
+   liquidation casting message for that user.
 
 ### 7. Maker integration
 

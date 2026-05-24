@@ -228,7 +228,7 @@ psql -h postgres-master -U rsx -d rsx -c \
 # Expected: Row count matching number of users in shard 0
 # (Assuming 16 shards, shard 0 owns user_id % 16 = 0)
 
-# 6. Check Risk requested DXS replay from ME
+# 6. Check Risk requested replication from ME
 journalctl -u rsx-risk@shard0 -n 100 --no-pager | grep "requesting dxs replay"
 # Expected to see line like: "requesting dxs replay from seq=12345678"
 
@@ -748,7 +748,7 @@ xxd -l 512 /srv/data/rsx/wal/1/$(ls -t /srv/data/rsx/wal/1/ | head -1)
 # Look for record structure: 16B header + payload
 # Seq field is in header at offset 8 (i64 little-endian)
 
-# 5. Check if DXS replay server can serve missing seq
+# 5. Check if replication server can serve missing seq
 curl -X POST http://me:9100/dxs/replay \
   -H "Content-Type: application/json" \
   -d '{"stream_id":1,"from_seq":12345678}' | head -c 200
