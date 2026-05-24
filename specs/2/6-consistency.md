@@ -180,8 +180,12 @@ here) is:
   invariant 5 above. Enforced by:
   `rsx-book/src/matching.rs::match_at_level` (emits `Event::Fill` before
   any `Event::OrderDone` for the taker) and
-  `rsx-matching/src/main.rs::write_events_to_wal` (sequences both into
-  WAL in event-buffer order).
+  `rsx-matching/src/wal_integration.rs::publish_events` (iterates
+  `book.events()` in event-buffer order; each iteration calls
+  `wal.append_framed` before fanning the same `Framed` to cast
+  destinations, so on-disk and on-wire sequencing matches buffer
+  order one-to-one — Fills land in the WAL before the trailing
+  ORDER_DONE).
 - **#2 Exactly-one completion (ORDER_DONE xor ORDER_FAILED).** Not
   covered here. Enforced by `rsx-book/src/matching.rs::process_new_order`
   — every code path emits exactly one terminal event

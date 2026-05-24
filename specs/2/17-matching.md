@@ -45,18 +45,21 @@ For every casting/UDP order frame:
    invariant 7).
 3. **Process** — call `process_new_order` on the book; events
    land in the book's fixed event buffer.
-4. **Persist events** — `write_events_to_wal` appends every
-   emitted event (Fill, OrderInserted, OrderCancelled,
-   OrderDone, BBO). WAL is authoritative; failure panics.
+4. **Publish events** — `publish_events` (`wal_integration.rs`)
+   prepares each emitted record once (one CRC + seq) and fans the
+   resulting `Framed` to WAL + cast(risk) + cast(mkt) via
+   `append_framed` / `send_framed`. WAL is authoritative; WAL
+   failure panics. Cast sends are best-effort and only warn on
+   failure (receivers recover via NAK / replication-TCP replay).
+   `BBO` is the one event not framed by the WAL; both senders
+   use their own seq counter via `CastSender::send` for that
+   record.
 5. **Maintain cancel index** — walk `book.events()` and update
    the O(1) cancel index (see below).
-6. **Fan out** — best-effort casting send of each event to Risk
-   and to Marketdata (with the MD filter above). Drops are
-   recovered by NAK / replication-TCP replay; casting send errors log
-   and continue.
 
-Cancel frames follow steps 3–6 with `cancel_order` (no
-dedup/accept records).
+Cancel frames follow steps 3–5 with `cancel_order` (no
+dedup/accept records); the same `publish_events` fan-out
+runs in step 4.
 
 ## O(1) Cancel Index
 
