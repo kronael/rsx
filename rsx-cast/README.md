@@ -76,9 +76,12 @@ the packaging difference is the point.
   undetected at the tail of an idle stream. **No flow control,
   no congestion control** — receivers stall their consumer or
   drop reordered packets on overflow; senders never pause.
-  **Zero heap allocation on the hot path**: `CastReceiver::poll`
-  delivers a `&[u8]` directly from the reorder buffer; no
-  serialization, no copy, no `Vec`.
+  **Zero heap allocation on the send path**: `CastSender::send`
+  and `send_framed` write into a preallocated ring and call
+  `sendto` without any `Vec`. The receive path's
+  `try_recv_with` callback delivers a `&[u8]` directly from the
+  receiver's internal buffer; the convenience `try_recv` (which
+  returns owned bytes) does allocate one `Vec<u8>` per packet.
 - **Two-tier retransmit (embedded, not sidecar).** First the
   in-memory `send_ring` (4 K most-recent frames, ~µs to
   re-send). On miss, fall back to
@@ -159,14 +162,17 @@ cargo run --example cast_smoke
 use rsx_cast::CastSender;
 use rsx_cast::WalWriter;
 
-// One WAL per stream. The CastSender writes here itself; the
-// outer process keeps a handle to read from it (for replay,
-// for archival).
+// One WAL per stream. `CastSender` opens its own WAL handle
+// internally; the explicit `WalWriter` shown here is for
+// callers that prepare a record once and fan it out
+// (prepare → append_framed → send_framed; see `notes/crc.md`).
+// Hot-tier retention is fixed at 4h: segments older than that
+// are pruned on rotation. Long-term durability lives in the
+// recorder/ARCHIVE tier.
 let mut wal = WalWriter::new(
-    stream_id, &wal_dir,
-    /* tip_persist_path */ None,
-    /* max_file_size   */ 64 * 1024 * 1024,
-    /* retention_ns    */ 48 * 60 * 60 * 1_000_000_000,
+    stream_id,
+    &wal_dir,
+    /* max_file_size */ 64 * 1024 * 1024,
 )?;
 let mut sender = CastSender::new(dest_addr, stream_id, &wal_dir)?;
 
@@ -188,14 +194,14 @@ no-op, but call-site stable for forward compat).
 
 ## Quick start (receiver)
 
-Use `poll` for zero-allocation delivery on the hot path:
+Use `try_recv_with` for zero-allocation delivery on the hot path:
 
 ```rust
-use rsx_cast::{CastReceiver, CastRecvWith};
+use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecvWith;
 
-let mut rx = CastReceiver::new(bind_addr, sender_addr, stream_id)?;
+let mut rx = CastReceiver::new(bind_addr, sender_addr)?;
 loop {
-    rx.tick();   // forward-compat hook; cheap, no-op today
     match rx.try_recv_with(|hdr, payload| {
         // payload is &[u8] into rx's internal buffer — no alloc.
         // dispatch by hdr.record_type; read the record in place.
@@ -215,9 +221,9 @@ loop {
 }
 ```
 
-`try_recv` returns an owned `Vec<u8>` and is a compatibility shim
-over `poll`; use it only when you need to store the payload beyond
-the callback's lifetime.
+`try_recv` returns an owned `Vec<u8>` per packet — use it only
+when you need to store the payload beyond the callback's
+lifetime; it allocates one `Vec` per delivery.
 
 ## Consumer patterns
 

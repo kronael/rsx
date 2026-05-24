@@ -50,9 +50,10 @@ cargo run -p rsx-gateway
 - HS256 signed JWT, secret ≥32 bytes enforced at startup
 - Validates `exp`, `nbf` (when present), `aud == "rsx-gateway"`,
   `iss == "rsx-auth"`
-- `JtiTracker` (in-process bounded LRU) implemented to reject
-  jti replay; **dormant** — not yet wired through
-  `ws_handshake` (TODO 13-A16Z-FIXES T1.3)
+- `JtiTracker` (in-process bounded FIFO, cap 16 384) is wired
+  into `ws_handshake` (`src/ws.rs`): tokens without `jti` are
+  rejected, replayed `jti` are rejected, and the entry is
+  rolled back if the upgrade fails before reaching the client
 - IP rate limiters capped at `IP_LIMITER_MAX = 10_000`
   entries with FIFO eviction (prevents memory blowup from
   spray attacks)
