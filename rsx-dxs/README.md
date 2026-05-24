@@ -111,7 +111,7 @@ use rsx_messages::FillRecord;  // or your own CmpRecord
 
 let mut wal = WalWriter::new(stream_id, &wal_dir, None,
                              64 * 1024 * 1024,
-                             10 * 60 * 1_000_000_000)?;
+                             48 * 60 * 60 * 1_000_000_000)?;
 let mut sender = CmpSender::new(dest_addr, stream_id, &wal_dir)?;
 
 let mut fill = FillRecord { /* ... */ };
@@ -134,12 +134,44 @@ loop {
 }
 ```
 
+## Guarantees
+
+- **Delivery**: every record is delivered in sequence to every receiver
+  that stays connected, or the sender is notified it can't (gap timeout).
+- **Order**: strict sequence number monotonicity; receiver blocks until
+  gaps are filled via NAK retransmit.
+- **Durability** (with DXS/TCP path): records are fsync'd to WAL on the
+  sender before any downstream consumer can consider them committed.
+  Default batch flush: every 10 ms; configurable.
+- **Retransmit horizon**: bounded by WAL retention (default 48 h), not
+  by the sender's RAM. Cold retransmits read directly from log files.
+- **No phantom acks**: the send path does not acknowledge a record to the
+  application until it is in the WAL and on the wire ring.
+
+## Requirements and assumptions
+
+**These are non-negotiable; violate them and all bets are off.**
+
+- **Trusted LAN only.** No authentication, no encryption on the CMP/UDP
+  path. Peers are assumed to be on a firewalled internal network (VPC,
+  namespace, or dedicated L2 segment). For public internet, use QUIC.
+- **Stable network.** CMP is tuned for a loss rate ≤ 0.01% and jitter
+  ≤ 100 µs. On a WAN with real loss, retransmit storms will dominate
+  and throughput collapses. Use KCP or QUIC for lossy paths.
+- **Fixed-size, stable `repr(C)` payloads.** Wire format = disk format.
+  Fields cannot be added without bumping `WalHeader.version`. If your
+  schema changes often, use a self-describing format.
+- **Little-endian host.** Compile-time assertion; will not build on BE.
+- **Point-to-point (v1).** One sender → one receiver per stream.
+  Multicast fan-out is v2 (see `specs/2/51-cmp-v2-multicast.md`).
+
 ## When NOT to use this
 
 - Multi-language consumers (use protobuf/FlatBuffers/JSON)
 - Public internet (use QUIC; no TLS, no congestion control here)
 - Schema that changes often (zero-copy = field-stable structs)
 - Big-endian targets (compile-time enforced LE)
+- One-to-many fan-out today (v2 multicast is planned, not shipped)
 
 ## See also
 
