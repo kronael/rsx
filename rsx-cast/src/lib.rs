@@ -47,3 +47,6 @@ pub use cast::CastRecv;
 pub use cast::CastReceiver;
 pub use cast::CastSender;
 pub use config::CastConfig;
+pub use config::TlsConfig;
+pub use config::TlsServer;
+pub use config::TlsClient;
