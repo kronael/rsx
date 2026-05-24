@@ -336,13 +336,10 @@ fn parse_wal_filename(name: &str) -> Option<WalFileInfo> {
 pub struct WalReader {
     stream_id: u32,
     wal_dir: PathBuf,
-    hot_wal_dir: PathBuf,
-    archive_dir: Option<PathBuf>,
     file: Option<File>,
     files: Vec<WalFileInfo>,
     file_idx: usize,
     header_buf: [u8; WalHeader::SIZE],
-    in_archive: bool,
 }
 
 impl WalReader {
@@ -358,6 +355,12 @@ impl WalReader {
     }
 
     /// Open reader with archive fallback support.
+    ///
+    /// Discovery merges hot + archive (when present) into a
+    /// single list sorted by `first_seq`. The active file
+    /// sorts last (sentinel `first_seq=u64::MAX`). Iteration
+    /// is then just `file_idx += 1` across the merged list;
+    /// there is no hot/archive transition state.
     pub fn open_from_seq_with_archive(
         stream_id: u32,
         target_seq: u64,
@@ -365,79 +368,17 @@ impl WalReader {
         archive_dir: Option<&Path>,
     ) -> io::Result<Self> {
         let hot_dir = wal_dir.join(stream_id.to_string());
-        let mut files = list_wal_files(stream_id, &hot_dir)?;
-        files.sort_by_key(|f| f.first_seq);
+        let arc_dir =
+            archive_dir.map(|p| p.join(stream_id.to_string()));
 
-        // check if target_seq is in hot WAL range
-        let in_hot_range = if files.is_empty() {
-            // if hot WAL is empty and we have archive,
-            // fallback to archive (in_hot_range = false)
-            // if no archive, treat as in_hot_range (will
-            // return empty)
-            archive_dir.is_none()
-        } else {
-            // find first non-active file's first_seq
-            let first_available = files
-                .iter()
-                .find(|f| !f.is_active)
-                .map(|f| f.first_seq)
-                .unwrap_or(u64::MAX);
+        let mut dirs: Vec<&Path> = Vec::with_capacity(2);
+        if let Some(ref a) = arc_dir {
+            dirs.push(a.as_path());
+        }
+        dirs.push(hot_dir.as_path());
 
-            // if target_seq is 0 (start from beginning) and we
-            // have an archive, check archive first
-            if target_seq == 0 && archive_dir.is_some() {
-                false // fallback to archive
-            } else {
-                target_seq >= first_available
-                    || (target_seq == 0
-                        && first_available == u64::MAX)
-            }
-        };
-
-        // if not in hot range, try archive fallback
-        let (files, current_dir, in_archive) =
-            if !in_hot_range {
-                if let Some(archive_path) = archive_dir.as_ref() {
-                    debug!(
-                        "target_seq {} not in hot WAL, falling back to archive",
-                        target_seq
-                    );
-                    let archive = archive_path.join(stream_id.to_string());
-                    let mut archive_files =
-                        list_wal_files(stream_id, &archive)?;
-                    archive_files.sort_by_key(|f| f.first_seq);
-                    if !archive_files.is_empty() {
-                        (archive_files, archive, true)
-                    } else {
-                        (files, hot_dir.clone(), false)
-                    }
-                } else {
-                    (files, hot_dir.clone(), false)
-                }
-            } else {
-                (files, hot_dir.clone(), false)
-            };
-
-        // start from first file if target_seq is 0
-        let file_idx = if files.is_empty() || target_seq == 0 {
-            0
-        } else {
-            // find file containing target_seq
-            let mut idx = 0;
-            for (i, f) in files.iter().enumerate() {
-                if !f.is_active
-                    && target_seq >= f.first_seq
-                    && target_seq <= f.last_seq
-                {
-                    idx = i;
-                    break;
-                }
-                // for active file or if target is beyond
-                // all rotated, use last
-                idx = i;
-            }
-            idx
-        };
+        let files = list_wal_files_across(stream_id, &dirs)?;
+        let file_idx = pick_start_idx(&files, target_seq);
 
         let file = if file_idx < files.len() {
             Some(File::open(&files[file_idx].path)?)
@@ -445,35 +386,13 @@ impl WalReader {
             None
         };
 
-        // if archive was empty, immediately transition to hot
-        let (file, files, file_idx, wal_dir, in_archive) =
-            if in_archive && file.is_none() {
-                debug!(
-                    "archive is empty, transitioning to hot WAL"
-                );
-                let mut hot_files =
-                    list_wal_files(stream_id, &hot_dir)?;
-                hot_files.sort_by_key(|f| f.first_seq);
-                let f = if !hot_files.is_empty() {
-                    Some(File::open(&hot_files[0].path)?)
-                } else {
-                    None
-                };
-                (f, hot_files, 0, hot_dir.clone(), false)
-            } else {
-                (file, files, file_idx, current_dir, in_archive)
-            };
-
         Ok(Self {
             stream_id,
-            wal_dir,
-            hot_wal_dir: hot_dir,
-            archive_dir: archive_dir.map(|p| p.to_path_buf()),
+            wal_dir: hot_dir,
             file,
             files,
             file_idx,
             header_buf: [0u8; WalHeader::SIZE],
-            in_archive,
         })
     }
 
@@ -567,29 +486,6 @@ impl WalReader {
             )?);
             return Ok(true);
         }
-
-        // if we exhausted archive files, transition to hot WAL
-        if self.in_archive && self.archive_dir.is_some() {
-            debug!(
-                "archive exhausted, transitioning to hot WAL"
-            );
-            self.in_archive = false;
-            self.wal_dir = self.hot_wal_dir.clone();
-            let mut hot_files = list_wal_files(
-                self.stream_id,
-                &self.hot_wal_dir,
-            )?;
-            hot_files.sort_by_key(|f| f.first_seq);
-            self.files = hot_files;
-            self.file_idx = 0;
-            if !self.files.is_empty() {
-                self.file = Some(File::open(
-                    &self.files[0].path,
-                )?);
-                return Ok(true);
-            }
-        }
-
         self.file = None;
         Ok(false)
     }
@@ -600,6 +496,48 @@ impl WalReader {
 pub struct RawWalRecord {
     pub header: WalHeader,
     pub payload: Vec<u8>,
+}
+
+/// Merge WAL files across multiple directories (e.g. hot
+/// + archive) into one list sorted by `first_seq`. The
+/// active file (sentinel `first_seq=u64::MAX`) sorts last.
+/// Missing directories are treated as empty.
+pub fn list_wal_files_across(
+    stream_id: u32,
+    dirs: &[&Path],
+) -> io::Result<Vec<WalFileInfo>> {
+    let mut files = Vec::new();
+    for dir in dirs {
+        for f in list_wal_files(stream_id, dir)? {
+            files.push(f);
+        }
+    }
+    files.sort_by_key(|f| f.first_seq);
+    Ok(files)
+}
+
+/// Pick the index in `files` (sorted by `first_seq`) where
+/// iteration should start for `target_seq`. Active file
+/// uses `u64::MAX` sentinels and is treated as the last
+/// entry.
+fn pick_start_idx(
+    files: &[WalFileInfo],
+    target_seq: u64,
+) -> usize {
+    if files.is_empty() || target_seq == 0 {
+        return 0;
+    }
+    let mut idx = 0;
+    for (i, f) in files.iter().enumerate() {
+        if !f.is_active
+            && target_seq >= f.first_seq
+            && target_seq <= f.last_seq
+        {
+            return i;
+        }
+        idx = i;
+    }
+    idx
 }
 
 fn list_wal_files(
