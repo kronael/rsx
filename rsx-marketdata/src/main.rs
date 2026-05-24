@@ -1,3 +1,4 @@
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
@@ -212,9 +213,27 @@ fn main() {
 
         loop {
             for cmp_receiver in &mut cmp_receivers {
-            while let Some((hdr, payload)) =
-                cmp_receiver.try_recv()
-            {
+            loop {
+                let (hdr, payload) = match cmp_receiver
+                    .try_recv()
+                {
+                    CmpRecv::Data(h, p) => (h, p),
+                    CmpRecv::Empty => break,
+                    CmpRecv::Faulted {
+                        last_delivered_seq,
+                        gap_start,
+                        gap_end_inclusive,
+                    } => panic!(
+                        "marketdata cmp faulted: \
+                         last_delivered={} gap=[{}..={}] — \
+                         shadow book cannot proceed; restart \
+                         will replay via DXS",
+                        last_delivered_seq,
+                        gap_start,
+                        gap_end_inclusive,
+                    ),
+                };
+                {
                 // Seq gap detection: extract seq from payload
                 // and check for gaps. On gap, resend snapshot.
                 if let Some(seq) = extract_seq(&payload) {
@@ -299,6 +318,7 @@ fn main() {
                         // Not routed to marketdata per spec.
                     }
                     _ => {}
+                }
                 }
             }
 

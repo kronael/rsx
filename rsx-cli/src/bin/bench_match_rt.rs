@@ -30,6 +30,7 @@ use clap::Parser;
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::protocol::CmpRecord;
@@ -211,10 +212,16 @@ fn main() {
                 me_sender.recv_control();
             }
 
-            let Some((hdr, payload)) = me_receiver.try_recv()
-            else {
-                std::hint::spin_loop();
-                continue;
+            let (hdr, payload) = match me_receiver.try_recv() {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                CmpRecv::Faulted { .. } => {
+                    // Bench harness: faulted cmp aborts the run.
+                    return;
+                }
             };
             let t0 = now_ns();
             // Exit sentinel: any payload of size 0 (we never
@@ -371,22 +378,28 @@ fn main() {
         let mut timed_out = false;
         let mut wait_tick: u64 = 0;
         loop {
-            let Some((hdr, payload)) = gw_receiver.try_recv()
-            else {
-                wait_tick = wait_tick.wrapping_add(1);
-                if wait_tick & 0x3FF == 0 {
-                    gw_receiver.tick();
-                    let _ = gw_sender.tick();
-                    gw_sender.recv_control();
-                    if wait_start.elapsed()
-                        > std::time::Duration::from_millis(50)
-                    {
-                        timed_out = true;
-                        break;
+            let (hdr, payload) = match gw_receiver.try_recv() {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => {
+                    wait_tick = wait_tick.wrapping_add(1);
+                    if wait_tick & 0x3FF == 0 {
+                        gw_receiver.tick();
+                        let _ = gw_sender.tick();
+                        gw_sender.recv_control();
+                        if wait_start.elapsed()
+                            > std::time::Duration::from_millis(50)
+                        {
+                            timed_out = true;
+                            break;
+                        }
                     }
+                    std::hint::spin_loop();
+                    continue;
                 }
-                std::hint::spin_loop();
-                continue;
+                CmpRecv::Faulted { .. } => {
+                    timed_out = true;
+                    break;
+                }
             };
             if hdr.record_type != RECORD_FILL {
                 continue;

@@ -29,6 +29,22 @@ pub struct CmpConfig {
     /// random ephemeral port. Allows receivers to send NAKs
     /// to a known port. Env: `RSX_CMP_SENDER_BIND_ADDR`.
     pub sender_bind_addr: Option<String>,
+    /// Receiver NAK debounce interval. The receiver re-NAKs
+    /// the oldest contiguous missing run no more frequently
+    /// than this. Default 100 µs, matching typical LAN RTT.
+    /// Env: `RSX_CMP_NAK_RETRY_US`.
+    pub nak_retry_us: u64,
+    /// Max retries on the oldest gap before the receiver
+    /// transitions to FAULTED and surfaces `CmpRecv::Faulted`
+    /// to its consumer. At 100 µs retry × 8 = 800 µs total
+    /// in-band recovery budget. Env: `RSX_CMP_MAX_NAK_RETRIES`.
+    pub max_nak_retries: u16,
+    /// Sender per-seq retransmit-dedup window. If a NAK arrives
+    /// requesting a seq that was retransmitted within this
+    /// window, the duplicate retransmit is skipped. Default
+    /// 1 ms — larger than `nak_retry_us` so the layers compose.
+    /// Env: `RSX_CMP_RETX_DEDUP_WINDOW_US`.
+    pub retx_dedup_window_us: u64,
 }
 
 impl Default for CmpConfig {
@@ -37,6 +53,9 @@ impl Default for CmpConfig {
             reorder_buf_limit: 512,
             heartbeat_interval_ms: 100,
             sender_bind_addr: None,
+            nak_retry_us: 100,
+            max_nak_retries: 8,
+            retx_dedup_window_us: 1000,
         }
     }
 }
@@ -50,6 +69,12 @@ impl CmpConfig {
                 "RSX_CMP_HEARTBEAT_INTERVAL_MS", 100),
             sender_bind_addr: env::var(
                 "RSX_CMP_SENDER_BIND_ADDR").ok(),
+            nak_retry_us: env_var(
+                "RSX_CMP_NAK_RETRY_US", 100),
+            max_nak_retries: env_var(
+                "RSX_CMP_MAX_NAK_RETRIES", 8),
+            retx_dedup_window_us: env_var(
+                "RSX_CMP_RETX_DEDUP_WINDOW_US", 1000),
         }
     }
 }

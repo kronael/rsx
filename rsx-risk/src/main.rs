@@ -1,3 +1,4 @@
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_dxs::config::CmpConfig;
@@ -507,9 +508,24 @@ fn run_main(
         let now_secs = time();
 
         // Orders/cancels from Gateway.
-        while let Some((hdr, payload)) =
-            gw_receiver.try_recv()
-        {
+        loop {
+            let (hdr, payload) = match gw_receiver.try_recv() {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => break,
+                CmpRecv::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => panic!(
+                    "gw cmp faulted: last_delivered={} \
+                     gap=[{}..={}] — risk shard cannot \
+                     proceed; restart will replay via DXS",
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                ),
+            };
+            {
             match hdr.record_type {
                 RECORD_ORDER_REQUEST
                     if payload.len()
@@ -601,12 +617,28 @@ fn run_main(
                 }
                 _ => {}
             }
+            }
         }
 
         // Events from ME (fills, BBO, order lifecycle).
-        while let Some((hdr, payload)) =
-            me_receiver.try_recv()
-        {
+        loop {
+            let (hdr, payload) = match me_receiver.try_recv() {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => break,
+                CmpRecv::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => panic!(
+                    "me cmp faulted: last_delivered={} \
+                     gap=[{}..={}] — risk shard cannot \
+                     proceed; restart will replay via DXS",
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                ),
+            };
+            {
             match hdr.record_type {
                 RECORD_BBO
                     if payload.len()
@@ -883,12 +915,30 @@ fn run_main(
                 }
                 _ => {}
             }
+            }
         }
 
         // Mark prices from Mark process
-        while let Some((preamble, payload)) =
-            mark_receiver.try_recv()
-        {
+        loop {
+            let (preamble, payload) = match mark_receiver
+                .try_recv()
+            {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => break,
+                CmpRecv::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => panic!(
+                    "mark cmp faulted: last_delivered={} \
+                     gap=[{}..={}] — risk shard cannot \
+                     proceed; restart will replay via DXS",
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                ),
+            };
+            {
             if preamble.record_type == RECORD_MARK_PRICE
                 && payload.len()
                     >= std::mem::size_of::<
@@ -918,6 +968,7 @@ fn run_main(
                         );
                     }
                 }
+            }
             }
         }
 
@@ -1276,9 +1327,25 @@ fn run_replica(
         let now_ms = now_secs * 1000;
 
         // Buffer fills from ME
-        while let Some((preamble, payload)) =
-            me_receiver.try_recv()
-        {
+        loop {
+            let (preamble, payload) = match me_receiver
+                .try_recv()
+            {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => break,
+                CmpRecv::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => panic!(
+                    "me cmp faulted (replica): \
+                     last_delivered={} gap=[{}..={}] — \
+                     restart will replay via DXS",
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                ),
+            };
             if preamble.record_type == RECORD_FILL
                 && payload.len()
                     >= std::mem::size_of::<FillRecord>()
@@ -1304,9 +1371,25 @@ fn run_replica(
         }
 
         // Receive tip sync from main
-        while let Some((preamble, payload)) =
-            tip_receiver.try_recv()
-        {
+        loop {
+            let (preamble, payload) = match tip_receiver
+                .try_recv()
+            {
+                CmpRecv::Data(h, p) => (h, p),
+                CmpRecv::Empty => break,
+                CmpRecv::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => panic!(
+                    "tip cmp faulted (replica): \
+                     last_delivered={} gap=[{}..={}] — \
+                     restart will replay via DXS",
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                ),
+            };
             if preamble.record_type == 0x20
                 && payload.len()
                     >= std::mem::size_of::<

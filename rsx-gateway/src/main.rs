@@ -1,3 +1,4 @@
+use rsx_dxs::cmp::CmpRecv;
 use rsx_dxs::cmp::CmpReceiver;
 use rsx_dxs::cmp::CmpSender;
 use rsx_messages::ConfigAppliedRecord;
@@ -191,9 +192,26 @@ fn main() {
 
         // CMP polling loop (yields to monoio)
         loop {
-            while let Some((hdr, payload)) =
-                cmp_receiver.try_recv()
-            {
+            loop {
+                let (hdr, payload) = match cmp_receiver
+                    .try_recv()
+                {
+                    CmpRecv::Data(h, p) => (h, p),
+                    CmpRecv::Empty => break,
+                    CmpRecv::Faulted {
+                        last_delivered_seq,
+                        gap_start,
+                        gap_end_inclusive,
+                    } => panic!(
+                        "gateway cmp faulted: \
+                         last_delivered={} gap=[{}..={}] — \
+                         restart will replay via DXS",
+                        last_delivered_seq,
+                        gap_start,
+                        gap_end_inclusive,
+                    ),
+                };
+                {
                 match hdr.record_type {
                     RECORD_FILL
                         if payload.len()
@@ -400,6 +418,7 @@ fn main() {
                         }
                         st.remove_connection(*id);
                     }
+                }
                 }
             }
 
