@@ -1,7 +1,9 @@
+use rsx_cast::as_bytes;
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
+use rsx_cast::decode_payload;
 use std::collections::HashMap;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::BboRecord;
@@ -547,18 +549,9 @@ fn run_main(
             };
             {
             match hdr.record_type {
-                RECORD_ORDER_REQUEST
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            OrderRequest,
-                        >() =>
+                RECORD_ORDER_REQUEST => if let Some(order) =
+                    decode_payload::<OrderRequest>(&payload)
                 {
-                    let order = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const OrderRequest,
-                        )
-                    };
                     // F4.3 — per-stage latency trace.
                     // Stage `risk_in` = order arrived from
                     // gateway. t_us measured against the
@@ -605,19 +598,10 @@ fn run_main(
                         }
                     }
                 }
-                RECORD_CANCEL_REQUEST
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            CancelRequest,
-                        >() =>
+                RECORD_CANCEL_REQUEST => if let Some(cancel) =
+                    decode_payload::<CancelRequest>(&payload)
                 {
                     // Forward cancel to correct ME.
-                    let cancel = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const CancelRequest,
-                        )
-                    };
                     if let Some(s) = me_senders
                         .get_mut(&cancel.symbol_id)
                     {
@@ -669,18 +653,9 @@ fn run_main(
             };
             {
             match hdr.record_type {
-                RECORD_BBO
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            BboRecord,
-                        >() =>
+                RECORD_BBO => if let Some(rec) =
+                    decode_payload::<BboRecord>(&payload)
                 {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const BboRecord,
-                        )
-                    };
                     // BBO is a "latest wins" state snapshot;
                     // drops are safe but counted so this is
                     // never silent.
@@ -710,18 +685,9 @@ fn run_main(
                         warn!("risk: forward bbo to gw failed: {e}");
                     }
                 }
-                RECORD_FILL
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            FillRecord,
-                        >() =>
+                RECORD_FILL => if let Some(fill) =
+                    decode_payload::<FillRecord>(&payload)
                 {
-                    let fill = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const FillRecord,
-                        )
-                    };
                     // F4.3 — per-stage latency trace.
                     // Stage `risk_out` = fill received from
                     // ME and about to be forwarded to gateway.
@@ -825,19 +791,9 @@ fn run_main(
                         rsx_log::latency::sample("risk_cmp_send_done", fill.taker_order_id_hi, fill.taker_order_id_lo, t_us, anchor_ns);
                     }
                 }
-                RECORD_ORDER_DONE
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            OrderDoneRecord,
-                        >() =>
+                RECORD_ORDER_DONE => if let Some(rec) =
+                    decode_payload::<OrderDoneRecord>(&payload)
                 {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const
-                                    OrderDoneRecord,
-                        )
-                    };
                     shard.release_frozen_for_order(
                         rec.user_id,
                         rec.order_id_hi,
@@ -850,19 +806,9 @@ fn run_main(
                         warn!("risk: forward order_done to gw failed: {e}");
                     }
                 }
-                RECORD_ORDER_CANCELLED
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            OrderCancelledRecord,
-                        >() =>
+                RECORD_ORDER_CANCELLED => if let Some(rec) =
+                    decode_payload::<OrderCancelledRecord>(&payload)
                 {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const
-                                    OrderCancelledRecord,
-                        )
-                    };
                     shard.release_frozen_for_order(
                         rec.user_id,
                         rec.order_id_hi,
@@ -875,12 +821,7 @@ fn run_main(
                         warn!("risk: forward order_cancelled to gw failed: {e}");
                     }
                 }
-                RECORD_ORDER_INSERTED
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            OrderInsertedRecord,
-                        >() =>
-                {
+                RECORD_ORDER_INSERTED => if decode_payload::<OrderInsertedRecord>(&payload).is_some() {
                     if let Err(e) = gw_sender.send_raw(
                         RECORD_ORDER_INSERTED,
                         &payload,
@@ -888,19 +829,9 @@ fn run_main(
                         warn!("risk: forward order_inserted to gw failed: {e}");
                     }
                 }
-                RECORD_ORDER_FAILED
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            OrderFailedRecord,
-                        >() =>
+                RECORD_ORDER_FAILED => if let Some(rec) =
+                    decode_payload::<OrderFailedRecord>(&payload)
                 {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const
-                                    OrderFailedRecord,
-                        )
-                    };
                     shard.release_frozen_for_order(
                         rec.user_id,
                         rec.order_id_hi,
@@ -913,19 +844,9 @@ fn run_main(
                         warn!("risk: forward order_failed to gw failed: {e}");
                     }
                 }
-                RECORD_CONFIG_APPLIED
-                    if payload.len()
-                        >= std::mem::size_of::<
-                            ConfigAppliedRecord,
-                        >() =>
+                RECORD_CONFIG_APPLIED => if let Some(rec) =
+                    decode_payload::<ConfigAppliedRecord>(&payload)
                 {
-                    let rec = unsafe {
-                        std::ptr::read_unaligned(
-                            payload.as_ptr()
-                                as *const
-                                    ConfigAppliedRecord,
-                        )
-                    };
                     shard.process_config_applied(
                         rec.symbol_id,
                         rec.config_version,
@@ -977,33 +898,24 @@ fn run_main(
                 ),
             };
             {
-            if preamble.record_type == RECORD_MARK_PRICE
-                && payload.len()
-                    >= std::mem::size_of::<
-                        MarkPriceRecord,
-                    >()
-            {
-                let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const MarkPriceRecord,
-                    )
-                };
-                // Mark price is "latest wins" state;
-                // drops are safe but counted so this is
-                // never silent.
-                if mark_prod.push(MarkPriceUpdate {
-                    seq: rec.seq,
-                    symbol_id: rec.symbol_id,
-                    price: rec.mark_price.0,
-                }).is_err() {
-                    mark_drops =
-                        mark_drops.wrapping_add(1);
-                    if mark_drops.is_power_of_two() {
-                        warn!(
-                            "mark_prod ring full, drops={}",
-                            mark_drops,
-                        );
+            if preamble.record_type == RECORD_MARK_PRICE {
+                if let Some(rec) = decode_payload::<MarkPriceRecord>(&payload) {
+                    // Mark price is "latest wins" state;
+                    // drops are safe but counted so this is
+                    // never silent.
+                    if mark_prod.push(MarkPriceUpdate {
+                        seq: rec.seq,
+                        symbol_id: rec.symbol_id,
+                        price: rec.mark_price.0,
+                    }).is_err() {
+                        mark_drops =
+                            mark_drops.wrapping_add(1);
+                        if mark_drops.is_power_of_two() {
+                            warn!(
+                                "mark_prod ring full, drops={}",
+                                mark_drops,
+                            );
+                        }
                     }
                 }
             }
@@ -1044,18 +956,9 @@ fn run_main(
                     reason: reason_u8,
                     _pad: [0; 23],
                 };
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        &rec as *const OrderFailedRecord
-                            as *const u8,
-                        std::mem::size_of::<
-                            OrderFailedRecord,
-                        >(),
-                    )
-                };
                 if let Err(e) = gw_sender.send_raw(
                     RECORD_ORDER_FAILED,
-                    bytes,
+                    as_bytes(&rec),
                 ) {
                     warn!("risk: send order_failed to gw failed: {e}");
                 }
@@ -1087,21 +990,12 @@ fn run_main(
                 order_id_hi: order.order_id_hi,
                 order_id_lo: order.order_id_lo,
             };
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    &msg as *const OrderMessage
-                        as *const u8,
-                    std::mem::size_of::<
-                        OrderMessage,
-                    >(),
-                )
-            };
             if let Some(s) = me_senders
                 .get_mut(&order.symbol_id)
             {
                 if let Err(e) = s.send_raw(
                     RECORD_ORDER_REQUEST,
-                    bytes,
+                    as_bytes(&msg),
                 ) {
                     warn!("risk: forward order to me failed: {e}");
                 }
@@ -1139,16 +1033,7 @@ fn run_main(
                     tip,
                     _pad: [0; 48],
                 };
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        &tip_msg as *const TipSyncMessage
-                            as *const u8,
-                        std::mem::size_of::<
-                            TipSyncMessage,
-                        >(),
-                    )
-                };
-                if let Err(e) = sender.send_raw(0x20, bytes) {
+                if let Err(e) = sender.send_raw(0x20, as_bytes(&tip_msg)) {
                     warn!("risk: tip send to replica failed: {e}");
                 }
             }
@@ -1269,6 +1154,7 @@ fn stop_lease_thread(
 }
 
 #[repr(C, align(64))]
+#[derive(Copy, Clone)]
 struct TipSyncMessage {
     symbol_id: u32,
     tip: u64,
@@ -1424,27 +1310,20 @@ fn run_replica(
                     last_delivered_seq,
                 ),
             };
-            if preamble.record_type == RECORD_FILL
-                && payload.len()
-                    >= std::mem::size_of::<FillRecord>()
-            {
-                let fill = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const FillRecord,
-                    )
-                };
-                let fill_event = FillEvent {
-                    seq: fill.seq,
-                    symbol_id: fill.symbol_id,
-                    taker_user_id: fill.taker_user_id,
-                    maker_user_id: fill.maker_user_id,
-                    price: fill.price.0,
-                    qty: fill.qty.0,
-                    taker_side: fill.taker_side,
-                    timestamp_ns: fill.ts_ns,
-                };
-                shard.buffer_fill_for_replica(fill_event);
+            if preamble.record_type == RECORD_FILL {
+                if let Some(fill) = decode_payload::<FillRecord>(&payload) {
+                    let fill_event = FillEvent {
+                        seq: fill.seq,
+                        symbol_id: fill.symbol_id,
+                        taker_user_id: fill.taker_user_id,
+                        maker_user_id: fill.maker_user_id,
+                        price: fill.price.0,
+                        qty: fill.qty.0,
+                        taker_side: fill.taker_side,
+                        timestamp_ns: fill.ts_ns,
+                    };
+                    shard.buffer_fill_for_replica(fill_event);
+                }
             }
         }
 
@@ -1477,22 +1356,13 @@ fn run_replica(
                     last_delivered_seq,
                 ),
             };
-            if preamble.record_type == 0x20
-                && payload.len()
-                    >= std::mem::size_of::<
-                        TipSyncMessage,
-                    >()
-            {
-                let msg = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const TipSyncMessage,
-                    )
-                };
-                shard.apply_tip_from_main(
-                    msg.symbol_id,
-                    msg.tip,
-                );
+            if preamble.record_type == 0x20 {
+                if let Some(msg) = decode_payload::<TipSyncMessage>(&payload) {
+                    shard.apply_tip_from_main(
+                        msg.symbol_id,
+                        msg.tip,
+                    );
+                }
             }
         }
 

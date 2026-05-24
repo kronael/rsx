@@ -18,6 +18,7 @@ use crate::ws::ws_read_frame_buf;
 use crate::ws::ws_write_frame;
 use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
+use rsx_cast::as_bytes;
 use rsx_cast::cast::CastSender;
 use rsx_messages::CancelRequest;
 use rsx_messages::RECORD_CANCEL_REQUEST;
@@ -482,15 +483,7 @@ pub async fn handle_connection(
                     }
                 }
 
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        &order as *const OrderRequest
-                            as *const u8,
-                        std::mem::size_of::<
-                            OrderRequest,
-                        >(),
-                    )
-                };
+                let bytes = as_bytes(&order);
                 {
                     let mut sender =
                         cmp_sender.borrow_mut();
@@ -695,12 +688,7 @@ fn send_cancel(
 ) {
     let mut sender = cmp_sender.borrow_mut();
     cancel.seq = sender.next_seq();
-    let bytes = unsafe {
-        std::slice::from_raw_parts(
-            cancel as *const CancelRequest as *const u8,
-            std::mem::size_of::<CancelRequest>(),
-        )
-    };
+    let bytes = as_bytes(cancel);
     if let Err(e) = sender.send_raw(RECORD_CANCEL_REQUEST, bytes) {
         warn!("gateway: forward cancel to risk failed: {e}");
     }

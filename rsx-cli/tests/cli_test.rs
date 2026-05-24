@@ -1,3 +1,4 @@
+use rsx_cast::decode_payload;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
 use rsx_messages::BboRecord;
@@ -160,17 +161,12 @@ taker_ts_ns: 0,
     file.sync_all().unwrap();
     drop(file);
 
-    // parse manually like dump_file does
     let buf = fs::read(&file_path).unwrap();
-    let rt = u16::from_le_bytes([buf[2], buf[3]]);
-    let len =
-        u16::from_le_bytes([buf[4], buf[5]]) as usize;
-    let payload = &buf[16..16 + len];
+    let hdr = WalHeader::from_bytes(&buf).unwrap();
+    let payload = &buf[WalHeader::SIZE..WalHeader::SIZE + hdr.len as usize];
 
-    assert_eq!(rt, RECORD_FILL);
-    let decoded: FillRecord = unsafe {
-        std::ptr::read(payload.as_ptr() as *const _)
-    };
+    assert_eq!(hdr.record_type, RECORD_FILL);
+    let decoded = decode_payload::<FillRecord>(payload).unwrap();
     assert_eq!(decoded.seq, 42);
     assert_eq!(decoded.symbol_id, 7);
     assert_eq!(decoded.taker_user_id, 100);
@@ -205,12 +201,9 @@ fn test_dump_file_decodes_bbo_fields() {
     drop(file);
 
     let buf = fs::read(&file_path).unwrap();
-    let len =
-        u16::from_le_bytes([buf[4], buf[5]]) as usize;
-    let payload = &buf[16..16 + len];
-    let decoded: BboRecord = unsafe {
-        std::ptr::read(payload.as_ptr() as *const _)
-    };
+    let hdr = WalHeader::from_bytes(&buf).unwrap();
+    let payload = &buf[WalHeader::SIZE..WalHeader::SIZE + hdr.len as usize];
+    let decoded = decode_payload::<BboRecord>(payload).unwrap();
     assert_eq!(decoded.seq, 99);
     assert_eq!(decoded.symbol_id, 3);
     assert_eq!(decoded.bid_px.0, 4900);
@@ -249,12 +242,9 @@ fn test_dump_file_decodes_order_inserted_fields() {
     drop(file);
 
     let buf = fs::read(&file_path).unwrap();
-    let len =
-        u16::from_le_bytes([buf[4], buf[5]]) as usize;
-    let payload = &buf[16..16 + len];
-    let decoded: OrderInsertedRecord = unsafe {
-        std::ptr::read(payload.as_ptr() as *const _)
-    };
+    let hdr = WalHeader::from_bytes(&buf).unwrap();
+    let payload = &buf[WalHeader::SIZE..WalHeader::SIZE + hdr.len as usize];
+    let decoded = decode_payload::<OrderInsertedRecord>(payload).unwrap();
     assert_eq!(decoded.user_id, 42);
     assert_eq!(decoded.price.0, 6000);
     assert_eq!(decoded.qty.0, 25);
@@ -289,12 +279,9 @@ fn test_dump_file_decodes_liquidation_fields() {
     drop(file);
 
     let buf = fs::read(&file_path).unwrap();
-    let len =
-        u16::from_le_bytes([buf[4], buf[5]]) as usize;
-    let payload = &buf[16..16 + len];
-    let decoded: LiquidationRecord = unsafe {
-        std::ptr::read(payload.as_ptr() as *const _)
-    };
+    let hdr = WalHeader::from_bytes(&buf).unwrap();
+    let payload = &buf[WalHeader::SIZE..WalHeader::SIZE + hdr.len as usize];
+    let decoded = decode_payload::<LiquidationRecord>(payload).unwrap();
     assert_eq!(decoded.seq, 77);
     assert_eq!(decoded.user_id, 300);
     assert_eq!(decoded.symbol_id, 5);

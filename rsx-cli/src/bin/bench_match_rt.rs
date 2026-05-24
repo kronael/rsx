@@ -33,6 +33,7 @@ use rsx_book::matching::IncomingOrder;
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::decode_payload;
 use rsx_cast::records::CastRecord;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
@@ -227,12 +228,9 @@ fn main() {
             if payload.is_empty() {
                 return;
             }
-            // SAFETY: we control both ends; wire format is
-            // known + already CRC-checked by CastReceiver.
-            let order_msg = unsafe {
-                std::ptr::read_unaligned(
-                    payload.as_ptr() as *const OrderMessage,
-                )
+            let order_msg = match decode_payload::<OrderMessage>(&payload) {
+                Some(v) => v,
+                None => continue,
             };
             let _ = hdr;
             let oid_lo = order_msg.order_id_lo;
@@ -402,10 +400,9 @@ fn main() {
             if hdr.record_type != RECORD_FILL {
                 continue;
             }
-            let fill = unsafe {
-                std::ptr::read_unaligned(
-                    payload.as_ptr() as *const FillRecord,
-                )
+            let fill = match decode_payload::<FillRecord>(&payload) {
+                Some(v) => v,
+                None => continue,
             };
             if fill.taker_order_id_lo != oid_lo {
                 continue;

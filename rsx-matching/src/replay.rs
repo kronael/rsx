@@ -35,6 +35,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::CANCEL_USER;
 use rsx_book::event::REASON_CANCELLED;
 use rsx_book::matching::process_new_order;
+use rsx_cast::decode_payload;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_cast::wal::RawWalRecord;
@@ -140,16 +141,9 @@ pub fn apply_replayed_record(
     raw: &RawWalRecord,
 ) {
     match raw.header.record_type {
-        RECORD_ORDER_REQUEST
-            if raw.payload.len()
-                >= std::mem::size_of::<OrderMessage>() =>
-        {
-            let order_msg = unsafe {
-                std::ptr::read_unaligned(
-                    raw.payload.as_ptr()
-                        as *const OrderMessage,
-                )
-            };
+        RECORD_ORDER_REQUEST => {
+            let Some(order_msg) = decode_payload::<OrderMessage>(&raw.payload) else { return; };
+            {
             let is_dup = dedup.check_and_insert(
                 order_msg.user_id,
                 order_msg.order_id_hi,
@@ -199,17 +193,10 @@ pub fn apply_replayed_record(
             )
             .expect("wal append failed (replay event path)");
             update_order_index(book.events(), order_index);
+            } // end extra block
         }
-        RECORD_CANCEL_REQUEST
-            if raw.payload.len()
-                >= std::mem::size_of::<CancelRequest>() =>
-        {
-            let req = unsafe {
-                std::ptr::read_unaligned(
-                    raw.payload.as_ptr()
-                        as *const CancelRequest,
-                )
-            };
+        RECORD_CANCEL_REQUEST => {
+            let Some(req) = decode_payload::<CancelRequest>(&raw.payload) else { return; };
             // Mirrors process_cancel in main.rs minus
             // downstream CMP sends. Same WAL/event shape.
             let key: OrderKey = (

@@ -247,104 +247,32 @@ fn main() {
                         }
                         route_fill(&state, &rec);
                     }
-                    RECORD_ORDER_DONE
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                OrderDoneRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        OrderDoneRecord,
-                            )
-                        };
+                    RECORD_ORDER_DONE => if let Some(rec) = decode_payload::<OrderDoneRecord>(&payload) {
                         route_order_done(
                             &state, &rec,
                         );
                     }
-                    RECORD_ORDER_CANCELLED
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                OrderCancelledRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        OrderCancelledRecord,
-                            )
-                        };
+                    RECORD_ORDER_CANCELLED => if let Some(rec) = decode_payload::<OrderCancelledRecord>(&payload) {
                         route_order_cancelled(
                             &state, &rec,
                         );
                     }
-                    RECORD_ORDER_INSERTED
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                OrderInsertedRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        OrderInsertedRecord,
-                            )
-                        };
+                    RECORD_ORDER_INSERTED => if let Some(rec) = decode_payload::<OrderInsertedRecord>(&payload) {
                         route_order_inserted(
                             &state, &rec,
                         );
                     }
-                    RECORD_ORDER_FAILED
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                OrderFailedRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        OrderFailedRecord,
-                            )
-                        };
+                    RECORD_ORDER_FAILED => if let Some(rec) = decode_payload::<OrderFailedRecord>(&payload) {
                         route_order_failed(
                             &state, &rec,
                         );
                     }
-                    RECORD_LIQUIDATION
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                LiquidationRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        LiquidationRecord,
-                            )
-                        };
+                    RECORD_LIQUIDATION => if let Some(rec) = decode_payload::<LiquidationRecord>(&payload) {
                         route_liquidation(
                             &state, &rec,
                         );
                     }
-                    RECORD_CONFIG_APPLIED
-                        if payload.len()
-                            >= std::mem::size_of::<
-                                ConfigAppliedRecord,
-                            >() =>
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                payload.as_ptr()
-                                    as *const
-                                        ConfigAppliedRecord,
-                            )
-                        };
+                    RECORD_CONFIG_APPLIED => if let Some(rec) = decode_payload::<ConfigAppliedRecord>(&payload) {
                         let applied = state
                             .borrow_mut()
                             .apply_config_applied(

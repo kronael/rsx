@@ -1,4 +1,5 @@
 use rsx_cast::CaughtUpRecord;
+use rsx_cast::decode_payload;
 use rsx_cast::ReplicationConsumer;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
@@ -79,17 +80,7 @@ pub async fn run_replay_bootstrap(
 
             match record.header.record_type {
                 RECORD_ORDER_INSERTED => {
-                    if record.payload.len()
-                        >= std::mem::size_of::<
-                            OrderInsertedRecord,
-                        >()
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                record.payload.as_ptr()
-                                    as *const OrderInsertedRecord,
-                            )
-                        };
+                    if let Some(rec) = decode_payload::<OrderInsertedRecord>(&record.payload) {
                         evs.push(ReplayEvent {
                             record_type:
                                 RECORD_ORDER_INSERTED,
@@ -101,17 +92,7 @@ pub async fn run_replay_bootstrap(
                     }
                 }
                 RECORD_ORDER_CANCELLED => {
-                    if record.payload.len()
-                        >= std::mem::size_of::<
-                            OrderCancelledRecord,
-                        >()
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                record.payload.as_ptr()
-                                    as *const OrderCancelledRecord,
-                            )
-                        };
+                    if let Some(rec) = decode_payload::<OrderCancelledRecord>(&record.payload) {
                         evs.push(ReplayEvent {
                             record_type:
                                 RECORD_ORDER_CANCELLED,
@@ -123,17 +104,7 @@ pub async fn run_replay_bootstrap(
                     }
                 }
                 RECORD_FILL => {
-                    if record.payload.len()
-                        >= std::mem::size_of::<
-                            FillRecord,
-                        >()
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                record.payload.as_ptr()
-                                    as *const FillRecord,
-                            )
-                        };
+                    if let Some(rec) = decode_payload::<FillRecord>(&record.payload) {
                         evs.push(ReplayEvent {
                             record_type: RECORD_FILL,
                             insert: None,
@@ -144,17 +115,7 @@ pub async fn run_replay_bootstrap(
                     }
                 }
                 RECORD_CAUGHT_UP => {
-                    if record.payload.len()
-                        >= std::mem::size_of::<
-                            CaughtUpRecord,
-                        >()
-                    {
-                        let rec = unsafe {
-                            std::ptr::read_unaligned(
-                                record.payload.as_ptr()
-                                    as *const CaughtUpRecord,
-                            )
-                        };
+                    if let Some(rec) = decode_payload::<CaughtUpRecord>(&record.payload) {
                         *cu = true;
                         *ls = rec.live_seq;
                         info!(
