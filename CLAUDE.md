@@ -140,6 +140,13 @@ gives false confidence. Don't do it.
 
 ## Documentation
 - NEVER use "rollout" as a heading or section name
+- `notes/` inside a crate or component is the canonical place for
+  **why** documentation: design rationale, tradeoff research,
+  derivations, prior art, measurements that justify a choice.
+  Not "how it is" (that's ARCHITECTURE.md) — "why is it like that".
+  Examples: `rsx-book/notes/slab.md`, `rsx-risk/notes/spsc.md`.
+  `rsx-dxs/compare/` follows the same principle but is named after
+  its theme (protocol comparisons); new research notes go in `notes/`.
 
 ## Naming
 
