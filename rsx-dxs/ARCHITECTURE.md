@@ -4,8 +4,9 @@ Domain-agnostic reliable transport. WAL writer/reader, DXS
 TCP replay server/client, and CMP (C Message Protocol)
 UDP sender/receiver.
 
-Specs: `specs/2/4-cmp.md`, `specs/2/10-dxs.md`,
-`specs/2/48-wal.md`.
+Specs: [`specs/4-cmp.md`](specs/4-cmp.md),
+[`specs/10-dxs.md`](specs/10-dxs.md),
+[`specs/48-wal.md`](specs/48-wal.md).
 
 ## Domain-agnostic transport
 
@@ -19,9 +20,10 @@ $ cargo tree -p rsx-dxs --edges normal | grep '^[├└]── rsx-'
 (empty — no rsx- crates in normal deps)
 ```
 
-All RSX exchange wire records (`FillRecord`, `BboRecord`,
-`OrderInsertedRecord`, …) live in `rsx-messages`, which sits
-on top of rsx-dxs. Any consumer crate can define its own
+The wider rsx exchange's domain records (`FillRecord`,
+`BboRecord`, `OrderInsertedRecord`, …) live in a separate
+crate that sits on top of rsx-dxs; nothing in this crate
+depends on them. Any consumer crate can define its own
 `#[repr(C, align(64))]` records that impl `CmpRecord` and
 ride the same transport.
 
@@ -30,7 +32,7 @@ ride the same transport.
 | File | Purpose |
 |------|---------|
 | `header.rs` | 16-byte `WalHeader`. Version byte at offset 8 (`V0` = legacy zero, `V1` = current). Reserved bytes 9..16 must be zero. |
-| `protocol.rs` | `CmpRecord` trait + five protocol records (`CmpHeartbeat`, `StatusMessage`, `Nak`, `ReplayRequest`, `CaughtUpRecord`). Each has compile-time `size_of` + `align_of` asserts. Re-exported as `records` for back-compat. |
+| `protocol.rs` | `CmpRecord` trait + four protocol records (`CmpHeartbeat`, `Nak`, `ReplayRequest`, `CaughtUpRecord`). Each has compile-time `size_of` + `align_of` asserts. Re-exported as `records` for back-compat. `StatusMessage` and the associated flow-control window were removed in `87b223e` — CMP has no per-receiver pacing now. |
 | `encode_utils.rs` | Generic helpers: `compute_crc32`, `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
 | `cmp.rs` | `CmpSender` + `CmpReceiver` (UDP). Two-tier NAK retransmit: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
 | `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, retention GC) + `WalReader` + `read_record_at_seq` for random access. |
@@ -40,14 +42,16 @@ ride the same transport.
 
 ## Transport paths
 
-- **CMP/UDP** (hot path): Aeron-inspired NAK recovery.
-  `CmpSender` assigns monotonic seq, broadcasts, and caches
-  the encoded frame in a preallocated ring. `CmpReceiver`
-  detects gaps from heartbeat or out-of-order delivery and
-  sends `Nak`. Sender retransmits from the ring; if the seq
-  has aged out, falls back to `read_record_at_seq` against
-  the WAL. Retransmit horizon = WAL retention, not buffer
-  size.
+- **CMP/UDP** (hot path): Aeron-inspired NAK recovery, but
+  without flow control. `CmpSender` assigns monotonic seq,
+  sends, and caches the encoded frame in a preallocated ring.
+  `CmpReceiver` detects gaps from out-of-order delivery or
+  from idle-tail heartbeat skew and sends `Nak`. Sender
+  retransmits from the ring; if the seq has aged out, falls
+  back to `read_record_at_seq` against the WAL. Retransmit
+  horizon = WAL retention, not buffer size. Slow consumers do
+  not pace the sender — receiver-side overflow drops, sender
+  never stalls.
 - **DXS/TCP** (cold path): `DxsReplayService` streams
   historical records from `WalReader` then transitions to a
   live tail on `WalWriter::add_listener` notifications.
@@ -145,8 +149,8 @@ stream.
 ## Trust model
 
 CMP is **intentionally unauthenticated**. See
-`specs/2/4-cmp.md` §10.4 ("Trusted internal network. No
-authentication, no encryption.").
+[`specs/4-cmp.md`](specs/4-cmp.md) §10.4 ("Trusted internal
+network. No authentication, no encryption.").
 
 - External clients are authenticated at the **gateway**
   (JWT + TLS).
@@ -190,15 +194,25 @@ Consumers dedup by `seq`. Risk treats any record with
 
 ## Measured performance
 
-| Operation | Measured |
-|-----------|----------|
-| Protocol-record encode (StatusMessage / Nak / Heartbeat) | 43 ns |
-| `FillRecord` encode | 23 ns |
-| Protocol-record decode | 9 ns |
-| `WalWriter::append` (Vec extend, no disk I/O) | 31 ns |
-| WAL flush + fsync (64 KB) | 24 µs |
-| WAL sequential read | >500 MB/s (target) |
-| UDP round-trip, same machine | <10 µs (target) |
+All p50 unless noted. Host: AMD Ryzen 9 5950X (6-core
+slice), Linux 6.1, Rust release, threads pinned. See
+[BENCHES.md](BENCHES.md) for per-bench attribution and
+[`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
+for the dated authoritative numbers.
+
+| Operation | Measured | Bench |
+|---|---:|---|
+| Protocol-record encode (`Nak` / `CmpHeartbeat`) | 43 ns | `cmp_bench` |
+| `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
+| Protocol-record decode | 9 ns | `cmp_bench` |
+| `WalWriter::append` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
+| WAL flush + fsync (64 KB batch — production amortisation) | 24 µs | `wal_fsync_bench` batch variant |
+| WAL flush + fsync (single record — naive sync per append) | 651 µs | `wal_fsync_bench` single-record variant |
+| WAL sequential read | ~700 MB/s | `wal_bench` |
+| CMP RTT, loopback, 128 B | 11.26 µs | `cmp_rtt_bench` |
+| Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
+| `CmpSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cmp_send_breakdown_bench` |
+| Cold-tier NAK retransmit (`read_record_at_seq`) | 23.5 ms @ 10 K records | `wal_random_read_bench` |
 
 ## Connection topology
 
