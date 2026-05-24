@@ -54,9 +54,8 @@ fn as_bytes<T>(val: &T) -> &[u8] {
     }
 }
 
-/// Build sender + receiver bound to loopback, with explicit
-/// nak_retry_us so tests can exercise debounce behavior
-/// without timing flakiness.
+/// Build sender + receiver bound to loopback for tests
+/// that exercise debounce + retransmit behavior.
 fn loopback_with(
     wal_dir: &std::path::Path,
     config: CastConfig,
@@ -162,10 +161,7 @@ fn count_retransmits_for_seq(
 #[test]
 fn nak_recovers_single_packet() {
     let tmp = TempDir::new().unwrap();
-    let cfg = CastConfig {
-        nak_retry_us: 50,
-        ..CastConfig::default()
-    };
+    let cfg = CastConfig::default();
     let (mut sender, mut receiver) =
         loopback_with(tmp.path(), cfg);
 
@@ -581,14 +577,13 @@ fn drain_reorder_resets_nak_retries() {
     // progress, receiver enters FAULTED. After progress,
     // the retry counter resets and FAULTED is delayed.
     //
-    // Approach: small nak_retry_us, small max_nak_retries.
+    // Approach: small max_nak_retries.
     // Inject an OOO seq, let multiple NAK retries fire,
     // confirm we do NOT enter FAULTED while the gap is
     // still recoverable. Then close the gap with the
     // missing seq and confirm we keep going.
     let tmp = TempDir::new().unwrap();
     let cfg = CastConfig {
-        nak_retry_us: 100,
         max_nak_retries: 4,
         ..CastConfig::default()
     };
