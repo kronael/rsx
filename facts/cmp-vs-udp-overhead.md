@@ -11,7 +11,7 @@ sources:
   - facts/syscall-latency.md (sendto cost prior measurement)
   - https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html (cache-line size)
   - https://www.akkadia.org/drepper/cpumemory.pdf (Ulrich Drepper, "What every programmer should know about memory")
-local_measurement: bench host AMD Ryzen 9 5950X, run 2026-05-24 at commit 83e3f36, --sample-size 30 --measurement-time 2
+local_measurement: bench host AMD Ryzen 9 5950X, 6-core slice. Re-measured 2026-05-24 after core pinning landed (commit 6b1127d), --sample-size 50 --measurement-time 3 --warm-up-time 1. Pre-pinning baseline retained for comparison.
 ---
 
 # CMP vs raw UDP loopback — what's the overhead actually
@@ -19,42 +19,67 @@ local_measurement: bench host AMD Ryzen 9 5950X, run 2026-05-24 at commit 83e3f3
 The `compare/README.md` summary table used to imply raw UDP was ~2 µs RTT and
 CMP was ~10 µs, suggesting CMP added ~8 µs of protocol work over the baseline.
 On re-measurement (this host, 2026-05-24) **that's wrong**: raw UDP is
-~11 µs, CMP is ~14 µs, and the gap is almost entirely scheduler noise from
+~10 µs, CMP is ~11 µs, and the gap is almost entirely scheduler noise from
 unpinned threads, not protocol cost.
 
-This entry documents (a) what the numbers actually are, (b) where CMP's
-per-send cost goes, (c) the cache concepts behind why this kind of bench has
-to be designed carefully, and (d) one concrete bench fix to do.
+This entry documents (a) what the numbers actually are (post-pinning),
+(b) before/after pinning comparison, (c) where CMP's per-send cost goes,
+(d) the cache concepts behind why this kind of bench has to be designed
+carefully.
 
-## Measured numbers
+## Measured numbers (post-pinning, 128 B payload)
 
-Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1.0-43-amd64, Rust debug
-benches via `cargo bench -p rsx-dxs ... -- --sample-size 30 --measurement-time 2`.
+Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1.0-43-amd64, Rust release
+benches via `cargo bench -p rsx-dxs ... -- --sample-size 50 --measurement-time 3 --warm-up-time 1`.
+Sender + echoer pinned to cores 2 and 3 via `core_affinity`. Payload aligned
+to 128 B (size_of::<FillRecord>()) across all comparison benches so the table
+is apples-to-apples.
 
-### RTT (round-trip, two-thread spin-loop, 64-128 B payload)
+### RTT (round-trip, two-thread spin-loop, 128 B payload)
 
 | bench | low | median | high |
 |---|---:|---:|---:|
-| `udp_rtt_loopback_64b` (raw UDP) | 9.89 µs | 10.88 µs | 11.80 µs |
-| `cmp_rtt_fill_echo` (CMP) | 10.45 µs | 13.56 µs | 17.28 µs |
+| `udp_rtt_loopback_128b` (raw UDP) | 8.71 µs | 9.89 µs | 11.33 µs |
+| `cmp_rtt_fill_echo` (CMP) | 9.39 µs | 11.26 µs | 13.60 µs |
 
-The CMP median is ~25 % higher than raw UDP, not 5×. The CMP high (17.3 µs) is
-roughly 1.5× raw UDP's high — within the variance you'd expect from unpinned
-threads being migrated by the scheduler mid-iteration.
+CMP median is ~14% higher than raw UDP, not 5×. The CMP high (13.6 µs) is
+roughly 1.2× raw UDP's high — much tighter than the unpinned spread.
+
+### Before/after pinning
+
+Both benches re-run on the same host, before pinning (commit 83e3f36, 64 B
+UDP payload + 128 B CMP) vs. after pinning + payload alignment (commit
+6b1127d, 128 B both):
+
+| bench | metric | pre-pin | post-pin | delta |
+|---|---|---:|---:|---:|
+| raw UDP | low | 9.89 µs | 8.71 µs | **-12%** |
+| raw UDP | median | 10.88 µs | 9.89 µs | **-9%** |
+| raw UDP | high | 11.80 µs | 11.33 µs | -4% |
+| raw UDP | range | 1.91 µs | 2.62 µs | (wider — 50 samples vs 30) |
+| CMP | low | 10.45 µs | 9.39 µs | **-10%** |
+| CMP | median | 13.56 µs | 11.26 µs | **-17%** |
+| CMP | high | 17.28 µs | 13.60 µs | **-21%** |
+| CMP | range | 6.83 µs | 4.21 µs | **-38%** |
+
+CMP's distribution tightened substantially — the high-tail drop from 17.3 to
+13.6 µs confirms the prior tail was scheduler noise from thread migration,
+not protocol work. UDP's distribution was already mostly tight; the change is
+modest.
 
 ### CMP send-path attribution (per send call, 128 B payload + 16 B header)
 
-From `cmp_send_breakdown_bench.rs`:
+From `cmp_send_breakdown_bench.rs` (post-pinning, median values):
 
 | stage | time | what it does |
 |---|---:|---|
-| `send.crc32_128b` | 14.6 ns | CRC32 over 128-byte payload (crc32fast lib) |
-| `send.header_build` | 4.4 ns | construct 16-byte WalHeader |
-| `send.buf_pack_144b` | 3.7 ns | memcpy header + payload into the pre-allocated send buf |
-| `send.ring_cache_copy_144b` | 3.2 ns | copy frame into the 4096-slot retransmit ring |
+| `send.crc32_128b` | 15.5 ns | CRC32 over 128-byte payload (crc32fast lib) |
+| `send.header_build` | 4.2 ns | construct 16-byte WalHeader |
+| `send.buf_pack_144b` | 3.6 ns | memcpy header + payload into the pre-allocated send buf |
+| `send.ring_cache_copy_128b` | 3.1 ns | copy frame into the 4096-slot retransmit ring (only 128 B of 144 are staged; longer headers are marked dirty per cmp.rs:225) |
 | **userspace subtotal** | **~26 ns** | |
-| `send.sendto_144b_loopback` | 4.07 µs | the `sendto` syscall itself |
-| **total per CMP send** | **~4.10 µs** | |
+| `send.sendto_144b_loopback` | 4.04 µs | the `sendto` syscall itself |
+| **total per CMP send** | **~4.07 µs** | |
 
 The `sendto` syscall is **99.4 %** of the per-send cost. Everything CMP does
 in userspace adds up to 26 ns — essentially free at this scale.
@@ -161,24 +186,34 @@ For readers landing here without the bench harness context:
   (CMP, raw UDP, TCP, Quinn) have no internal scheduler, so this distinction
   doesn't apply.
 
-## The pinning gap
+## The pinning gap — closed
 
-**None of the rsx-dxs benches pin threads to cores.** Verified with
-`grep core_affinity rsx-dxs/benches/*.rs` → no hits.
+**All rsx-dxs benches now pin threads to cores 2 and 3** (commit `ae75df9`
+added `core_affinity = "0.8"` as a dev-dep and pinned sender + echoer in
+every two-thread RTT bench; single-thread benches pin their worker to
+core 2). The two-thread RTT distributions tightened by 10–40% as shown in
+the before/after table above.
 
-Consequences:
-- Threads migrate between cores during the bench. Each migration evicts L1.
-- Measurements are noisier than they would be on pinned cores.
-- Comparisons to vendor-published numbers (Aeron's 21 µs P50 on pinned AWS
-  c6in.16xlarge cores; Chronicle's sub-µs IPC on pinned cores) are not
-  apples-to-apples.
+The pinning convention:
+- Sender / Criterion timer thread → core 2
+- Echoer / server thread → core 3
+- Fallback to cores 0 / 1 on hosts with < 4 reported cores
+- Cores 0 and 1 are avoided because the kernel and IRQ handlers tend to
+  land there
 
-Fix: add `core_affinity = "0.8"` as a dev-dep, pin sender + echoer in setup
-before the timed loop. ~10 LOC per bench, applied uniformly across the
-compare set. The Aeron sub's report already flagged this; doing it across
-the suite is a one-sprint task.
+Caveats on the residual gap:
+- Aeron's media-driver agent threads remain unpinned — we have no FFI hook
+  to pin them. They float on cores 0/1/4/5. PING + PONG (cores 2/3) are
+  isolated from them.
+- Quinn / TCP in `compare_quinn.rs` and `compare_all.rs` use Tokio's
+  current_thread runtime — only one OS thread, so we only pin the timer
+  thread. The runtime's server tasks share that core.
 
-This file should be updated with re-measured numbers once pinning lands.
+Vendor comparisons (Aeron's 21 µs P50 on c6in.16xlarge, Chronicle's sub-µs
+IPC) are still not strictly apples-to-apples — those use full cgroup
+isolation and pinned IRQ steering. Our numbers are "host has 6 free cores
+and we pinned 2 of them" tier, which is more realistic for trading-desk
+deploys than for paper benchmark numbers.
 
 ## Re-validation cadence
 

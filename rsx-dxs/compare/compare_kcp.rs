@@ -25,6 +25,13 @@
 //!   apples with CMP's `cmp_rtt_fill_echo` (no per-frame ACK on
 //!   CMP — see `compare/kcp.md` for the asymmetry).
 //!
+//! TODO(oracle): the client flushes the standalone ACK AFTER `recv()`
+//! inside the timed loop, so the reported RTT includes ACK emission
+//! cost from the previous iter's echo (documented intentional). If we
+//! want a "wire-only" RTT companion bench, add a sibling
+//! `kcp_rtt_spin_no_ack_128b` that batches the ACK into the next
+//! send() instead of flushing immediately.
+//!
 //! What is NOT measured
 //! --------------------
 //! - Loss recovery. To bench under loss:
