@@ -9,8 +9,10 @@ from a clean boot, and Playwright gate-4 is green. What's not
 done: a measured GW→ME→GW p50/p99 under sustained load (the
 probe is shipped — see commit `bded133`), schema versioning on
 the wire, and tile-architecture parity for gateway and
-marketdata (currently monoio reactors, not pinned tiles). See
-`.ship/12-SHOWCASE-HONEST/` and `.ship/13-A16Z-FIXES/`.
+marketdata (currently monoio reactors, not pinned tiles).
+Sprint history baked into `CHANGELOG.md` + `.diary/`; the
+ad-hoc `.ship/12-*` and `.ship/13-*` audit dirs were pruned
+on close-out.
 
 The "% complete" framing was retired in this revision — every
 crate has open work and stating otherwise is misleading. Status
@@ -31,8 +33,8 @@ because some tests are gated by feature flags or marked
 matches the question being asked.
 
 Refinement history: ~28 commits tagged `[refine]` since v0.1.0
-plus ~12 commits from the `.ship/13-A16Z-FIXES/` security and
-correctness batch.
+plus ~12 commits from the a16z-fixes security and correctness
+batch (sprint dir pruned; commits in `git log`).
 
 ## Crate Status
 
