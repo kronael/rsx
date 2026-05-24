@@ -19,7 +19,7 @@ protocol; benchmark code lives in `../benches/compare_*.rs`.
 |---|---|---|---|---|---|
 | [raw-udp](raw-udp.md) | UDP | app-layer | — | ~2 µs loopback | any |
 | [rsx-dxs CMP](../README.md) | UDP unicast | NAK (receiver) | hot ring + cold WAL | ~4 µs send body, ~10 µs RTT | Rust |
-| [tcp](tcp.md) | TCP | ACK (cumulative) | in-flight window | ~100–1 000 µs loopback | any |
+| [tcp](tcp.md) | TCP | ACK (cumulative) | in-flight window | ~12–18 µs loopback (std spin), ~100–1 000 µs (tokio) | any |
 | [kcp](kcp.md) | UDP | ACK (sender) | in-memory snd_buf | ~25–300 ms (WAN) | C / Rust |
 | [quinn](quinn.md) | QUIC/UDP | ACK (QUIC streams) | in-memory | ~200–2 000 µs loopback | Rust |
 | [aeron](aeron.md) | UDP uni+multi+IPC | NAK (receiver) | in-memory term buffers | ~21 µs P50 | Java/C++ |
@@ -36,6 +36,7 @@ All benchmarks: loopback on the same host, payload = 64 bytes
 # Run all comparisons
 cargo bench -p rsx-dxs --bench compare_kcp
 cargo bench -p rsx-dxs --bench compare_quinn
+cargo bench -p rsx-dxs --bench compare_tcp
 
 # Raw UDP baseline (already exists)
 cargo bench -p rsx-dxs --bench udp_rtt_bench
