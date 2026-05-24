@@ -1,6 +1,4 @@
-use rsx_cast::as_bytes;
 use rsx_cast::cast::CastSender;
-use rsx_messages::RECORD_MARK_PRICE;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::ReplicationService;
 use rsx_mark::aggregator::aggregate_with_staleness;
@@ -178,18 +176,14 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
-                    let wal_ok = match wal_writer.prepare(&mut evt) {
-                        Ok(framed) => wal_writer
+                    if let Ok(framed) = wal_writer.prepare(&mut evt) {
+                        if wal_writer
                             .append_framed(&framed)
-                            .is_ok(),
-                        Err(_) => false,
-                    };
-                    if wal_ok {
-                        if let Err(e) = mark_sender.send_raw(
-                            RECORD_MARK_PRICE,
-                            as_bytes(&evt),
-                        ) {
-                            warn!("mark: cmp send (aggregate) failed: {e}");
+                            .is_ok()
+                        {
+                            if let Err(e) = mark_sender.send_framed(&framed) {
+                                warn!("mark: cmp send (aggregate) failed: {e}");
+                            }
                         }
                     }
                 }
@@ -213,18 +207,14 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
-                    let wal_ok = match wal_writer.prepare(&mut evt) {
-                        Ok(framed) => wal_writer
+                    if let Ok(framed) = wal_writer.prepare(&mut evt) {
+                        if wal_writer
                             .append_framed(&framed)
-                            .is_ok(),
-                        Err(_) => false,
-                    };
-                    if wal_ok {
-                        if let Err(e) = mark_sender.send_raw(
-                            RECORD_MARK_PRICE,
-                            as_bytes(&evt),
-                        ) {
-                            warn!("mark: cmp send (sweep) failed: {e}");
+                            .is_ok()
+                        {
+                            if let Err(e) = mark_sender.send_framed(&framed) {
+                                warn!("mark: cmp send (sweep) failed: {e}");
+                            }
                         }
                     }
                 }
