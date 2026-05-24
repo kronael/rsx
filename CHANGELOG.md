@@ -1,5 +1,75 @@
 # Changelog
 
+## [rsx-cast v0.5.1] — 2026-05-25
+
+Internal-API trims from the `.ship/27-REFINE-AUDIT` Round 1+2
+hygiene pass. Wire format and on-disk WAL bytes unchanged.
+
+### Breaking — public API
+
+- `WalWriter::append` removed (`496ae48`). All callers go
+  through the two-step `prepare(...) → append_framed(framed)`
+  path. Single-CRC fan-out across WAL + cast destinations
+  uses the same `Framed` value, so an event is CRC'd once
+  regardless of how many sinks consume it.
+- `ReplicationConsumer::from_single(addr, ...)` removed
+  (`b519ac9`). The single-endpoint constructor was a thin
+  wrapper around `vec![addr]` — six callers inlined directly.
+- `CastReceiver::new(socket, stream_id, _stream_id)` lost its
+  vestigial third arg (`60faeb7`); signature is now
+  `new(socket, stream_id)`. 23 call sites updated.
+- `CastReceiver::tick()` removed (`dc2a6a6`) — was a no-op
+  for the entire v4 reliability lifetime. `CastSender::tick()`
+  stays (emits idle-stream heartbeats).
+- `CastReceiver::is_faulted` / `is_reconnect_pending` demoted
+  to `#[cfg(test)] pub(crate)` (`54f0a56`). Production
+  consumers branch on the `CastRecv` enum returned by
+  `try_recv`, not on the receiver's internal flags.
+- `CastConfig::nak_retry_us` field removed (`f8d1c13`). The
+  field had been dead for the whole of v4 — `maybe_nak()` is
+  gated by `nak_debounce_us` (the per-gap debounce window),
+  not by a separate retry timer. Env var `RSX_CAST_NAK_RETRY_US`
+  also removed. No migration: the value was unread.
+- `WalReader::stream_id()` / `wal_dir()` accessors removed
+  (`ca7adba`); `WalReader::segment_file_path()` removed
+  (`c528668`); `WalWriter::stream_id` / `next_seq` field
+  visibility tightened to `pub(crate)` (`9bdce56`).
+- `CastReceiver::highest_seen()` accessor removed (`e4b2333`).
+
+### Internal — path-layout helpers
+
+Path construction in `wal.rs` factored into six pure
+helpers (`8efa326`, `2a3c87b`):
+
+- `stream_dir(wal_dir, stream_id)`
+- `active_filename(stream_id)`
+- `segment_filename(stream_id, first_seq, last_seq)`
+- `active_file_path(wal_dir, stream_id)`
+- `is_active_filename(name)`
+- `parse_segment_filename(name) -> Option<(stream_id, first, last)>`
+
+No behavior change; replaces ad-hoc `format!` calls scattered
+across writer + reader + GC.
+
+### Internal — consumer wiring
+
+- `rsx-matching/src/main.rs::process_cancel` now uses
+  `publish_events` (`d009266`), matching the order-acceptance
+  path. Eliminates a paired
+  `write_events_to_wal + send_event_cmp + send_event_marketdata`
+  loop that CRC'd each event three times. -207 LOC.
+- `rsx-mark` aggregate + sweep emits use `send_framed` instead
+  of `prepare + append_framed + send_raw` (`1415b7e`); the
+  paired path double-CRC'd each record.
+
+### Replication protocol visibility
+
+- `ReplicationRequest`, `ReplicationNotAvailable`,
+  `RECORD_REPLICATION_*` constants scoped to `pub(crate)`
+  (`bf099e2`). The protocol is implementation detail of
+  `ReplicationService` / `ReplicationConsumer`; consumers
+  don't construct these directly.
+
 ## [rsx-cast v0.5.0] — 2026-05-24
 
 Rename `rsx-dxs` → `rsx-cast`. The unified primitive is now
