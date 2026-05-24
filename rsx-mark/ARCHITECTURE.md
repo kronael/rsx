@@ -77,3 +77,21 @@ loop {
 | Publish to risk receipt | <1ms |
 | Aggregation per symbol | <500ns |
 | Staleness sweep (100 symbols) | <50us |
+
+## Architectural Decisions
+
+**Runtime: tokio (with internal SPSC rings to a single-thread
+aggregation loop).** The dominant work is external exchange
+WebSocket feeds (Binance, Coinbase) — TLS, reconnect/backoff,
+JSON parsing. tokio + `tokio-tungstenite` is the boring,
+correct choice for that. Mark prices are downstream of order
+flow, not on the GW→ME→GW critical path; latency budget is
+milliseconds, not microseconds, so an async reactor pays its
+way.
+
+The aggregation loop itself is a single busy-spin thread fed
+by one `rtrb` SPSC ring per source (drop-newest on full,
+capacity 1024). That is the tile pattern in miniature; see
+[`../notes/tiles.md`](../notes/tiles.md). No `core_affinity`
+pinning — mark price aggregation does not warrant a dedicated
+core when its consumers (risk shards) already have one each.

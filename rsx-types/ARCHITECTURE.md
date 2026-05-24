@@ -38,3 +38,13 @@ and utility macros used across the exchange.
   alignment, lot alignment -- called at order entry boundary
 - `install_panic_handler()` replaces default panic hook to
   `exit(1)` on any thread panic -- called in every binary
+
+## Architectural Decisions
+
+**Runtime: none — newtypes and helpers only.** `rsx-types` is
+the leaf crate; everything depends on it and it depends on
+nothing. No async runtime, no threading, no I/O. The crate
+defines wire-stable primitives that travel unchanged through
+tiles, monoio reactors, and tokio sidecars alike. See
+[`../notes/tiles.md`](../notes/tiles.md) for the runtime
+choices made downstream.

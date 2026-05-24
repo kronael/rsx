@@ -217,3 +217,20 @@ Gateway uses monoio (io_uring) for all client-facing I/O:
 - For 100K+ connections, epoll syscall overhead is too high
 - Future: DPDK/AF_XDP swaps the I/O layer without touching
   the connection model
+
+## Architectural Decisions
+
+**Runtime: monoio (io_uring).** The gateway sits on the
+GW→ME→GW critical path and multiplexes many concurrent WS
+clients. Every epoll syscall is a tail-latency contributor;
+io_uring batches submissions in shared kernel/userspace
+rings and pays a fraction of the per-event cost. The
+single-threaded monoio reactor keeps gateway state in
+`Rc<RefCell<_>>` — no locks, no cross-thread hand-off.
+
+The gateway is NOT a tile in the strict sense: the inner
+loop is `select!` over many sockets, not a busy-spin on
+one SPSC ring. Tiles are for compute-bound stages; monoio
+is for I/O-multiplex-bound stages. See
+[`../notes/tiles.md`](../notes/tiles.md) for when each is
+appropriate.

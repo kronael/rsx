@@ -116,3 +116,22 @@ version is due, the matcher writes `CONFIG_APPLIED` to WAL
 **before** fanning out to CMP, then applies tick/lot
 changes live. On startup, the current version emits one
 `CONFIG_APPLIED` record too.
+
+## Architectural Decisions
+
+**Runtime: tile (pinned thread) + tokio sidecar.** The
+matching loop is the lowest-latency stage of the system —
+~340 ns p50 for dedup + WAL accept + match + WAL events.
+Network I/O multiplexing does not appear in the inner loop;
+the only sockets are one `CmpReceiver` (orders in) and two
+`CmpSender`s (events to risk and marketdata). With nothing
+to multiplex, the cheapest reactor is no reactor: one
+pinned thread, busy-spin, all work inline on the cache-warm
+core. This is the **degenerate tile** in
+[`../specs/2/45-tiles.md`](../specs/2/45-tiles.md) §3.1.
+
+A tokio sidecar handles the cold path — `poll_scheduled_configs()`
+queries Postgres every 10 minutes for symbol config updates.
+That is blocking I/O and explicitly off the hot loop. See
+[`../notes/tiles.md`](../notes/tiles.md) for the broader
+pattern.
