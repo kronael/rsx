@@ -82,26 +82,6 @@ fn segment_file_path(
         .join(segment_filename(stream_id, first_seq, last_seq))
 }
 
-/// `<id>_active.wal` — the writer's open file.
-fn is_active_filename(name: &str) -> bool {
-    name.ends_with("_active.wal")
-}
-
-/// Parse `<stream_id>_<first_seq>_<last_seq>.wal`. Returns
-/// `None` for any name that doesn't fit the rotated-segment
-/// shape — including `_active.wal`.
-fn parse_segment_filename(name: &str) -> Option<(u32, u64, u64)> {
-    let stem = name.strip_suffix(".wal")?;
-    let parts: Vec<&str> = stem.split('_').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    Some((
-        parts[0].parse().ok()?,
-        parts[1].parse().ok()?,
-        parts[2].parse().ok()?,
-    ))
-}
 
 /// WalWriter: append-only WAL with buffered flush + rotation
 pub struct WalWriter {
@@ -220,6 +200,14 @@ impl WalWriter {
         Ok(())
     }
 
+
+    /// Discard the in-memory write buffer without flushing.
+    /// Used in benchmarks to prevent unbounded allocation across
+    /// Criterion warmup iterations.
+    pub fn reset_write_buf(&mut self) {
+        self.buf.clear();
+        self.records_since_flush = 0;
+    }
 
     /// Flush buffer to disk with fsync.
     pub fn flush(&mut self) -> io::Result<()> {
