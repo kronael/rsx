@@ -80,7 +80,8 @@ tighten once that lands.
 
 ## Benchmark
 
-`../benches/compare_udp.rs` — pre-existing, ships with rsx-cast.
+`benches/compare_udp.rs` (run with `cargo bench --bench compare_udp`)
+— pre-existing, ships with rsx-cast.
 
 Two non-blocking sockets on 127.0.0.1, both threads
 busy-spinning. No per-iteration `setsockopt`. No blocking

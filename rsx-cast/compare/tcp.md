@@ -115,11 +115,12 @@ shared queue between them.
 
 ## Benchmark
 
-`../benches/compare_tcp.rs` — Criterion, loopback, 64-byte
-payload, std `TcpListener` / `TcpStream` with `TCP_NODELAY`
-on both ends. Non-blocking sockets + spin-loop on the
-receiver, matching the style of `compare_udp.rs` and
-`compare_kcp.rs`'s spin variant.
+`benches/compare_tcp.rs` (run with `cargo bench --bench
+compare_tcp`) — Criterion, loopback, 64-byte payload, std
+`TcpListener` / `TcpStream` with `TCP_NODELAY` on both ends.
+Non-blocking sockets + spin-loop on the receiver, matching
+the style of `compare_udp.rs` and `compare_kcp.rs`'s spin
+variant.
 
 The connection is established once in setup, before the
 timed loop. The 3-way handshake is not measured — this is

@@ -130,8 +130,9 @@ Loss across a disconnect = client reconnects with
 
 ## Benchmark
 
-`../benches/compare_soupbintcp.rs` — Criterion, loopback, 64 B
-payload over std `TcpStream` with `TCP_NODELAY`.
+`benches/compare_soupbintcp.rs` (run with `cargo bench --bench
+compare_soupbintcp`) — Criterion, loopback, 64 B payload over
+std `TcpStream` with `TCP_NODELAY`.
 
 Frames each direction as `length:u16 (BE) | type:u8 ('U' or 'S')
 | payload`. Sender writes the framed packet, echoer reads
