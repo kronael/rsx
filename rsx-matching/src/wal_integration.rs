@@ -6,7 +6,9 @@ use rsx_types::NONE;
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 use rsx_book::snapshot;
+use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
+use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::wal::extract_seq;
@@ -208,6 +210,246 @@ pub fn write_events_to_wal(
                 // BBO not persisted to WAL (derived on replay)
             }
         }
+    }
+    Ok(())
+}
+
+/// Publish each event in the book's event buffer once: prepared
+/// on the WAL (one CRC, one seq), then fanned out to WAL +
+/// risk-bound CastSender + (selectively) marketdata-bound
+/// CastSender. Eliminates the double / triple CRC that the
+/// separate `write_events_to_wal` + `send_event_cmp` +
+/// `send_event_marketdata` path used to pay per record.
+///
+/// Routing per event type:
+/// - `Fill / OrderInserted / OrderCancelled` → WAL + cmp + mkt
+/// - `OrderDone` → WAL + cmp
+/// - `OrderFailed` → WAL only
+/// - `BBO` → cmp only (not persisted to WAL; derived on replay).
+///   BBO uses the sender's own seq counter via `CastSender::send`
+///   because the WAL isn't framing it.
+pub fn publish_events(
+    writer: &mut WalWriter,
+    cmp: &mut CastSender,
+    mkt: &mut CastSender,
+    book: &Orderbook,
+    symbol_id: u32,
+    ts_ns: u64,
+) -> io::Result<()> {
+    for event in book.events() {
+        match *event {
+            Event::Fill {
+                maker_handle,
+                maker_user_id,
+                taker_user_id,
+                price,
+                qty,
+                side,
+                maker_order_id_hi,
+                maker_order_id_lo,
+                taker_order_id_hi,
+                taker_order_id_lo,
+                taker_ts_ns,
+            } => {
+                let (reduce_only, tif) =
+                    if maker_handle != NONE {
+                        let slot =
+                            book.orders.get(maker_handle);
+                        (slot.is_reduce_only() as u8, slot.tif)
+                    } else {
+                        (0, 0)
+                    };
+                let mut record = FillRecord {
+                    seq: 0,
+                    ts_ns,
+                    symbol_id,
+                    taker_user_id,
+                    maker_user_id,
+                    _pad0: 0,
+                    taker_order_id_hi,
+                    taker_order_id_lo,
+                    maker_order_id_hi,
+                    maker_order_id_lo,
+                    price,
+                    qty,
+                    taker_side: side,
+                    reduce_only,
+                    tif,
+                    post_only: 0,
+                    _pad1: [0; 4],
+                    taker_ts_ns,
+                };
+                fan_out(writer, cmp, Some(mkt), &mut record)?;
+            }
+            Event::OrderInserted {
+                handle,
+                user_id,
+                side,
+                price,
+                qty,
+                order_id_hi,
+                order_id_lo,
+            } => {
+                let (reduce_only, tif) =
+                    if handle != NONE {
+                        let slot = book.orders.get(handle);
+                        (slot.is_reduce_only() as u8, slot.tif)
+                    } else {
+                        (0, 0)
+                    };
+                let mut record = OrderInsertedRecord {
+                    seq: 0,
+                    ts_ns,
+                    symbol_id,
+                    user_id,
+                    order_id_hi,
+                    order_id_lo,
+                    price,
+                    qty,
+                    side,
+                    reduce_only,
+                    tif,
+                    post_only: 0,
+                    _pad1: [0; 4],
+                };
+                fan_out(writer, cmp, Some(mkt), &mut record)?;
+            }
+            Event::OrderCancelled {
+                handle,
+                user_id,
+                remaining_qty,
+                reason,
+                order_id_hi,
+                order_id_lo,
+            } => {
+                let (reduce_only, tif, post_only) =
+                    if handle != NONE {
+                        let slot = book.orders.get(handle);
+                        (slot.is_reduce_only() as u8,
+                         slot.tif, 0u8)
+                    } else {
+                        (0, 0, 0)
+                    };
+                let mut record = OrderCancelledRecord {
+                    seq: 0,
+                    ts_ns,
+                    symbol_id,
+                    user_id,
+                    order_id_hi,
+                    order_id_lo,
+                    remaining_qty,
+                    reason,
+                    reduce_only,
+                    tif,
+                    post_only,
+                    _pad1: [0; 4],
+                };
+                fan_out(writer, cmp, Some(mkt), &mut record)?;
+            }
+            Event::OrderDone {
+                handle,
+                user_id,
+                reason,
+                filled_qty,
+                remaining_qty,
+                order_id_hi,
+                order_id_lo,
+            } => {
+                let (reduce_only, tif) =
+                    if handle != NONE {
+                        let slot = book.orders.get(handle);
+                        (slot.is_reduce_only() as u8, slot.tif)
+                    } else {
+                        (0, 0)
+                    };
+                let mut record = OrderDoneRecord {
+                    seq: 0,
+                    ts_ns,
+                    symbol_id,
+                    user_id,
+                    order_id_hi,
+                    order_id_lo,
+                    filled_qty,
+                    remaining_qty,
+                    final_status: reason,
+                    reduce_only,
+                    tif,
+                    post_only: 0,
+                    _pad1: [0; 4],
+                };
+                fan_out(writer, cmp, None, &mut record)?;
+            }
+            Event::OrderFailed {
+                user_id,
+                reason,
+                order_id_hi,
+                order_id_lo,
+            } => {
+                let mut record = OrderFailedRecord {
+                    seq: 0,
+                    ts_ns,
+                    user_id,
+                    _pad0: 0,
+                    order_id_hi,
+                    order_id_lo,
+                    reason,
+                    _pad: [0; 23],
+                };
+                // WAL-only — solo `append` keeps one CRC.
+                writer.append(&mut record)?;
+            }
+            Event::BBO {
+                bid_px,
+                bid_qty,
+                ask_px,
+                ask_qty,
+            } => {
+                // BBO is not persisted to WAL (derived on
+                // replay). Sent only over cmp + mkt via the
+                // sender's own seq counter; one CRC per
+                // destination.
+                let mut record = rsx_messages::BboRecord {
+                    seq: 0,
+                    ts_ns,
+                    symbol_id,
+                    _pad0: 0,
+                    bid_px,
+                    bid_qty,
+                    bid_count: 0,
+                    _pad1: 0,
+                    ask_px,
+                    ask_qty,
+                    ask_count: 0,
+                    _pad2: 0,
+                };
+                if let Err(e) = cmp.send(&mut record) {
+                    warn!("cmp send BBO failed: {e}");
+                }
+                if let Err(e) = mkt.send(&mut record) {
+                    warn!("mkt send BBO failed: {e}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Inner helper: prepare the record once on the WAL (one CRC,
+/// one seq), then fan out the resulting `Framed` to WAL +
+/// cmp + (optionally) mkt with `send_framed` / `append_framed`
+/// (no further CRC compute).
+#[inline]
+fn fan_out<T: rsx_cast::CastRecord>(
+    writer: &mut WalWriter,
+    cmp: &mut CastSender,
+    mkt: Option<&mut CastSender>,
+    record: &mut T,
+) -> io::Result<()> {
+    let framed: Framed = writer.prepare(record)?;
+    writer.append_framed(&framed)?;
+    cmp.send_framed(&framed)?;
+    if let Some(s) = mkt {
+        s.send_framed(&framed)?;
     }
     Ok(())
 }
