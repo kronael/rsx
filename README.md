@@ -207,8 +207,13 @@ The gaps a careful reader will hit:
 - **End-to-end latency harness.** The 50 µs / 500 ns numbers
   are budgets, not measurements. Plan in
   [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
-- **JWT replay protection.** `JtiTracker` exists in
-  `rsx-gateway` but isn't yet consulted by the WS handshake.
+- **JWT replay protection — long-window.** `JtiTracker` is
+  wired into the WS handshake (`rsx-gateway/src/ws.rs`) and
+  rejects replayed jti within the last 16 384 tokens (in-memory
+  FIFO). A determined attacker who can mint that many fresh
+  tokens faster than the legitimate jti is rotated could still
+  evict it; long-window dedup needs a TTL ring or persistent
+  table.
 - **`rsx-cast` UDP** uses `std::net::UdpSocket`, not monoio
   io_uring. One syscall per `sendto`/`recvfrom`. The
   io_uring move is gated on gateway/marketdata owning the
