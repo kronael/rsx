@@ -1,346 +1,5 @@
 # RSX
 
-Two artifacts in one repo:
-
-1. **`rsx-cast` — an open-source, log-backed reliable UDP
-   transport.** WAL on disk, casting on the wire, replication for replay.
-   The WAL bytes, the UDP bytes, and the replay-stream bytes
-   are the same bytes. Domain-agnostic: `cargo tree -p rsx-cast
-   --edges normal | grep rsx-` is empty. Drop it into any
-   project that needs 50-µs-class messaging without Kafka.
-2. **A complete perpetuals exchange built on it.** Gateway,
-   Risk, Matching Engine, Marketdata, Mark, Recorder, Maker —
-   each a separate process. Spec-first: 47 spec files in
-   `specs/2/` written before the code. The exchange is both a
-   real product and the load-bearing demo that proves `rsx-cast`
-   handles a non-trivial workload.
-
-The wedge — "open-source the orthogonal libs that already
-exist, sell the exchange-in-a-box on top" — is written up in
-[specs/2/50-wedge.md](specs/2/50-wedge.md). The one-screen
-pitch is in [ONEPAGER.md](ONEPAGER.md). The longer narrative
-is in [BLOG.md](BLOG.md).
-
-## How fast
-
-| Layer | p50 |
-|---|---:|
-| Match algorithm only (dedup + WAL + match) | **340 ns** |
-| In-process round-trip (real casting + Orderbook + WAL) | **9.58 µs** |
-| Cross-process production (GW→ME→GW) | **1 128 µs** |
-
-99% of the in-process round-trip is the `sendto` syscall.
-Framing + algorithm together are <0.7%. Optimisation paths
-(io_uring SQPOLL, sendmmsg, DPDK/AF_XDP) are documented in
-[facts/syscall-latency.md](facts/syscall-latency.md) and
-[docs/benches.md](docs/benches.md). Design budget for the
-production path is **<50 µs**; current p50 is 22× over and
-we know why (`monoio::time::sleep(100µs)` in two casting poll
-loops accounts for ~655 µs of it).
-
-## What's interesting here
-
-- **casting, the C Message Protocol** — fixed-size `repr(C)` WAL
-  records over UDP between Gateway, Risk, and ME. One wire
-  format for disk, network, and memory. NAK + heartbeat for
-  loss recovery; no flow control (slow consumers recover via
-  replication, not by stalling the producer). See
-  [specs/2/4-cast.md](specs/2/4-cast.md) for byte layout,
-  comparison vs Aeron / kcp / QUIC, and known limits.
-- **Tile architecture** — pinned threads + rtrb SPSC rings
-  where it pays off (full tile arrangement in `rsx-risk`),
-  monoio io_uring async where I/O multiplexing dominates
-  (`rsx-gateway`, `rsx-marketdata`), single core-pinned loop
-  for compute (`rsx-matching`). Per-process split in
-  [specs/2/45-tiles.md](specs/2/45-tiles.md).
-- **WAL = wire = stream** — the same `repr(C)` bytes go to
-  disk, over UDP, and over TCP for replay. No serialisation
-  step. The 16-byte header carries a `version: u8` at byte 8
-  (V0=legacy, V1=current) so future format changes can roll
-  out without breaking replay. See
-  [specs/2/48-wal.md](specs/2/48-wal.md) and
-  [specs/2/10-replication.md](specs/2/10-replication.md).
-- **Slab + CompressionMap orderbook** — pre-allocated 65 536
-  OrderSlots per symbol, sparse-to-dense price compression
-  via 5 distance-based zones (1:1 near-mid, up to 1000:1 far
-  prices). Zero malloc on the hot path. See
-  [specs/2/21-orderbook.md](specs/2/21-orderbook.md).
-
-## Quick start
-
-**Prerequisites** (the part previous READMEs didn't tell you):
-
-| Tool          | Why                                                |
-|---------------|----------------------------------------------------|
-| Linux 5.6+    | io_uring (gateway, marketdata)                     |
-| Rust stable   | `cargo build --workspace` (rust-toolchain.toml)    |
-| Postgres 14+  | Risk write-behind, accounts, frozen_orders         |
-| Python 3.14+  | rsx-playground server (managed via `uv`)           |
-| `uv`          | Python dep manager (https://github.com/astral-sh/uv)|
-| `bun`         | rsx-webui Trade UI build + Playwright runner       |
-
-Postgres needs role `rsx`, db `rsx`, password `rsx` for the
-default dev URL. Override with `PG_URL=…` if you have a
-different setup. The `rsx-auth` service additionally needs
-GitHub OAuth credentials, but the playground runs without
-the auth service — it mints dev JWTs from
-`RSX_GW_JWT_SECRET`. Copy [`.env.example`](.env.example)
-to `.env` for the full list of variables.
-
-```bash
-git clone <repo-url> && cd rsx
-
-# One-time: prepare Python venv + Playwright browsers
-make prepare
-
-# Start the playground (FastAPI dashboard on :49171)
-./rsx-playground/playground start
-
-# Visit http://localhost:49171, click "Start All" to launch
-# the 7 RSX processes (gateway, risk, ME, marketdata, mark,
-# recorder, maker), submit orders, view fills, inspect WAL
-
-# Stop when done
-./rsx-playground/playground stop
-```
-
-The 60-second clean-boot path is in [docs/DEMO.md](docs/DEMO.md).
-
-**Build and test from source:**
-
-```bash
-cargo check                # type check (fastest)
-cargo build --workspace    # debug build (~5 min cold)
-cargo test --workspace     # 887 passing (unit + integration)
-make perf                  # Criterion benches
-make bench-gate            # local 10% regression gate
-```
-
-## Architecture
-
-```
-                    +------------+
-                    |  Web (WS)  |
-                    +-----+------+
-                          |
-                    +-----v------+
-                    |  Gateway   |  WS + casting bridge
-                    |  (monoio,  |  JWT, rate limit
-                    |   async)   |
-                    +-----+------+
-                          | casting/UDP
-                    +-----v------+            +----------+
-                    |   Risk     |  casting/UDP   | Matching |
-                    | (1 pinned  +----------->| (1 pinned|
-                    |  thread,   |<-----------+  thread, |
-                    |  7 rings)  |  casting fills | per-sym) |
-                    +--+---+--+-+              +----+-----+
-                       |   |  |                     |
-              +--------+   |  +------+        +-----v-----+
-              v            v         v        v           v
-         +--------+ +--------+ +--------+ +-------+ +-------+
-         |Postgres| | Mark   | |Recorder| |Mktdata| | Trade |
-         | (write | |(monoio | |(daily  | |(monoio| | UI    |
-         | behind)| | HTTP)  | | WAL    | |  WS)  | |(React)|
-         +--------+ +--------+ +--------+ +-------+ +-------+
-```
-
-Transports:
-- **Hot path** between processes: casting/UDP (NAK gap
-  recovery, idle-only heartbeats, no flow control)
-- **Cold path** between processes: WAL replication over TCP
-  with optional rustls TLS (replay, replication, archival)
-- **Within a tile-architected process**: rtrb SPSC rings,
-  50–170 ns per hop
-- **External**: WebSocket JSON for the public API
-
-See [specs/2/1-architecture.md](specs/2/1-architecture.md)
-and [specs/2/20-network.md](specs/2/20-network.md).
-
-## Crate layout
-
-12 Rust crates in the cargo workspace; rsx-messages was
-split out of rsx-cast so transport is now domain-agnostic
-(zero rsx-types prod dep — only dev-deps).
-
-```
-rsx-types/      Price, Qty, Side, SymbolConfig, macros
-rsx-cast/        Domain-agnostic transport: WAL + casting/UDP +
-                replication/TCP replay; versioned wire header
-                (no rsx-types prod dep)
-rsx-messages/   Exchange wire records: Fill, BBO, Order*,
-                MarkPrice, Liquidation, ConfigApplied
-                (22 size+align compile-time asserts)
-rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
-rsx-matching/   ME (per-symbol, single-threaded, core-pinned;
-                O(1) cancel via FxHashMap<OrderKey, slab>)
-rsx-risk/       Risk (per-shard, full tile arrangement)
-rsx-gateway/    Gateway (monoio WS + casting bridge, hardened JWT
-                with min-32B secret + nbf + JtiTracker, bounded
-                per-IP rate limit with FIFO eviction)
-rsx-marketdata/ Marketdata (monoio shadow book, L2/BBO)
-rsx-mark/       Mark price (external feeds, casting to risk)
-rsx-recorder/   Recorder (archival replication consumer)
-rsx-cli/        WAL dump/inspect tool (JSON output)
-rsx-log/        Off-hot-path logging primitive (SPSC ring →
-                drain thread → tracing events)
-```
-
-Non-cargo subprojects:
-
-```
-rsx-playground/ Dev dashboard (Python/FastAPI + Playwright)
-rsx-webui/      Frontend (Vite + React + Tailwind)
-rsx-auth/       Auth service (Python, GitHub OAuth)
-```
-
-## Playground
-
-Web dashboard for development. Process control, order
-submission, WAL inspection, fault injection, invariant
-verification.
-
-```bash
-./rsx-playground/playground start     # start FastAPI server
-./rsx-playground/playground stop      # stop server
-./rsx-playground/playground ps        # list rsx-* processes
-./rsx-playground/playground start-all # build + launch
-./rsx-playground/playground stop-all  # stop processes
-./rsx-playground/playground reset     # stop + clean state
-```
-
-Trade UI lives at `/trade/`, all URLs relative — works behind
-any reverse-proxy prefix. Detailed docs in
-[rsx-playground/README.md](rsx-playground/README.md).
-
-## What's measured vs what's a budget
-
-It's worth being explicit about which numbers in this repo
-are measurements and which are design budgets. RSX is not
-yet ready to ship "we measured 4 µs end-to-end at line rate"
-because the harness that would assert that doesn't exist yet.
-
-| Number                          | Measured?               |
-|---------------------------------|-------------------------|
-| 54 ns match single fill         | yes — `rsx-book` bench  |
-| 31 ns WAL buffer append (no disk I/O; `WalWriter::append` is a `Vec` extend, pre-fsync) | yes — `rsx-cast` bench   |
-| 43 ns protocol-record encode (Nak / CastHeartbeat; 23 ns for `FillRecord`), 9 ns decode | yes — `rsx-cast/cast_bench` + `rsx-messages/encode_bench` |
-| 50–170 ns SPSC ring hop         | yes — `rsx-book` bench  |
-| <50 µs GW→ME→GW round trip      | **design budget**; F1 probe + dashboard shipped (commit `bded133`), `make latency-publish` writes p50/p99 to `bench-baseline.json` once cluster-run; WAL-backed NAK retransmit (`366d1b2`) closes the two-tier loss-recovery path |
-| <500 ns ME match                | yes — sub-bench of 54 ns |
-| <5 µs risk pre-trade            | **design budget**       |
-
-The microbench numbers are single-thread, no-contention
-costs. The E2E budget is derived from summing them but
-hasn't been gated by a continuous test under load. See
-[specs/2/22-perf-verification.md](specs/2/22-perf-verification.md)
-for the harness plan and
-[`.ship/12-SHOWCASE-HONEST/`](.ship/12-SHOWCASE-HONEST/) for
-the in-flight work.
-
-## Build and test
-
-```bash
-make check       # cargo check (fastest feedback)
-make test        # Rust unit + integration (878 passing, <5s)
-make wal         # WAL correctness suite (<10s)
-make e2e         # Rust + API + Playwright (~3 min)
-make integration # testcontainers (1–5 min)
-make lint        # clippy with -D warnings
-make perf        # Criterion benches
-make bench-gate  # local 10% regression gate
-make clean       # cargo clean
-```
-
-Single crate: `cargo test -p rsx-book`
-Single test: `cargo test -p rsx-book -- test_name`
-
-Test count, current truth: **878 passing** Rust unit +
-integration, ~930 Python (rsx-playground), 421 Playwright
-(canonical). [PROGRESS.md](PROGRESS.md) is the source of truth.
-
-## Design principles
-
-- **Fixed-point i64** — no float rounding, no NaN
-- **One thread per symbol for matching** — no locks
-- **SPSC rings between tiles** — rtrb, single producer, single consumer, ~50–170 ns
-- **WAL-based recovery** — idempotent replay from tip + 1
-- **Slab arena** — pre-allocated, zero heap on hot path
-- **WAL = wire = stream** — no format transformation
-- **casting/UDP for inter-process hot path** — direct, no Kafka, no NATS
-- **SIGTERM = crash** — one recovery code path
-
-## Specs
-
-All in `specs/2/`. The numbered names are stable; old
-unnumbered references (casting.md, TILES.md, …) were retired.
-
-| Spec                                                            | Covers                                       |
-|-----------------------------------------------------------------|----------------------------------------------|
-| [specs/2/1-architecture.md](specs/2/1-architecture.md)          | System overview, principles                  |
-| [specs/2/4-cast.md](specs/2/4-cast.md)                            | C Message Protocol (UDP transport)           |
-| [specs/2/6-consistency.md](specs/2/6-consistency.md)            | Event ordering, fan-out, FIFO                |
-| [specs/2/10-replication.md](specs/2/10-replication.md)                          | replication server (TCP fan-out)              |
-| [specs/2/13-liquidator.md](specs/2/13-liquidator.md)            | Liquidation rounds, insurance fund           |
-| [specs/2/15-mark.md](specs/2/15-mark.md)                        | Mark price aggregation (external feeds)      |
-| [specs/2/16-marketdata.md](specs/2/16-marketdata.md)            | Shadow book, L2/BBO/trades                   |
-| [specs/2/18-messages.md](specs/2/18-messages.md)                | Wire record-type catalogue                   |
-| [specs/2/20-network.md](specs/2/20-network.md)                  | Process topology, ports                      |
-| [specs/2/21-orderbook.md](specs/2/21-orderbook.md)              | Slab + CompressionMap, matching algorithm    |
-| [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md) | Bench gate, latency harness plan          |
-| [specs/2/28-risk.md](specs/2/28-risk.md)                        | Margin, positions, funding                   |
-| [specs/2/45-tiles.md](specs/2/45-tiles.md)                      | Tile architecture, per-process status        |
-| [specs/2/48-wal.md](specs/2/48-wal.md)                          | WAL flush rules, rotation, retention         |
-| [specs/2/49-webproto.md](specs/2/49-webproto.md)                | Public WebSocket compact JSON protocol       |
-
-[specs/index.md](specs/index.md) is the full table.
-
-## Documentation
-
-| Document                                       | Purpose                              |
-|------------------------------------------------|--------------------------------------|
-| [PROGRESS.md](PROGRESS.md)                     | Per-crate status, current state      |
-| [GUARANTEES.md](GUARANTEES.md)                 | Consistency, durability, ordering    |
-| [BLOG.md](BLOG.md)                             | Long-form narrative                  |
-| [FEATURES.md](FEATURES.md)                     | Feature matrix                       |
-| [TESTING.md](TESTING.md)                       | Test taxonomy and how to run         |
-| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md)       | Failure mode catalogue               |
-| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md)     | Operator recovery procedures         |
-| [docs/DEMO.md](docs/DEMO.md)                   | 60-second clean-boot demo            |
-| [.ship/12-SHOWCASE-HONEST/](.ship/12-SHOWCASE-HONEST/) | In-flight work to surface novelty |
-
-## What's not done
-
-A short, honest list of the gaps a careful reader will hit:
-
-- **End-to-end latency harness.** The 50 µs / 500 ns numbers
-  are budgets, not measurements. Plan in
-  [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
-- **casting NAK retransmit** is two-tier: in-memory ring for
-  recent records, WAL-backed for older history. The send-ring
-  uses preallocated `Box<[T]>` slabs — zero heap on the send
-  path. Documented in
-  [specs/2/4-cast.md](specs/2/4-cast.md).
-- **JWT replay protection**: `JtiTracker` (`a6a92c3`) is
-  implemented but not yet wired through `ws_handshake` — the
-  type exists, the handshake doesn't consult it. Tracked as
-  TODO.
-- **`rsx-mark` and `rsx-marketdata` replay** still use tokio.
-  Migrating mark to monoio is queued in
-  `.ship/12-SHOWCASE-HONEST/`.
-- **casting transport** uses `std::net::UdpSocket`, not monoio
-  io_uring. One syscall per `sendto` / `recvfrom` on the
-  hot path.
-- **Per-consumer FAULTED handlers**. `rsx-matching` has a
-  POC replay-then-resume path on `CastRecv::Faulted`; risk,
-  marketdata, and gateway still panic with a pointer to the
-  reference impl.
-
-## Vibe
-
-<details>
-<summary>The Vibe</summary>
-
 > *Shall I compare thee to a sane design?*
 > *Thou art more wondrous and more wild by far.*
 > *I fell for thee the night I saw thy spine—*
@@ -359,4 +18,224 @@ A short, honest list of the gaps a careful reader will hit:
 > *If thou hast never built it, thou can'st never tell:*
 > *The thing impossible may work quite well.*
 
-</details>
+A perpetual-futures exchange written in Rust, spec-first, by
+one person, as an exploration of how the internals actually
+fit together. Not a product, not for sale; an open study
+artifact you can run and read.
+
+The transport layer ([rsx-cast](rsx-cast/README.md)) is
+domain-agnostic: `cargo tree -p rsx-cast --edges normal | grep
+rsx-` is empty. It's the load-bearing piece that proves the
+exchange's wire format doubles as on-disk WAL and as the TCP
+replay protocol — the same bytes, three uses, no serialization
+step.
+
+## Why you'd read this code
+
+You're curious how a working exchange is wired end-to-end,
+without the closed-source vendor handwaving. Specs are
+written before the code (47 of them in `specs/2/`), every
+non-obvious choice has a tradeoff note, and gaps are
+labelled gaps rather than dressed up as ship-ready. The
+production code is in there; so is the budget table that
+says where it falls short and why.
+
+## How fast (measured)
+
+| Layer | p50 | Bench |
+|---|---:|---|
+| Match algorithm only (dedup + WAL prep + match) | **340 ns** | `rsx-book::matching_bench` |
+| In-process round-trip (cast + Orderbook + WAL) | **9.58 µs** | `rsx-cast::cast_rtt_bench` |
+| Cross-process production GW→ME→GW | **1 128 µs** | `bench-match-rt` |
+
+99% of the in-process round-trip is the `sendto` syscall;
+framing + algorithm together are <0.7%. The 22× gap from
+in-process to cross-process is dominated by `monoio::time::sleep(100µs)`
+polls in two cast loops (~655 µs alone) plus tokio scheduling.
+Where the time goes:
+[facts/syscall-latency.md](facts/syscall-latency.md). Bench
+catalogue: [docs/benches.md](docs/benches.md).
+
+## What's interesting in the design
+
+- **Casting, the C Message Protocol.** Fixed-size `repr(C)`
+  WAL records over UDP between Gateway, Risk, and ME. One
+  wire format for disk, network, and memory. NAK + idle-only
+  heartbeats for loss recovery; no flow control — slow
+  consumers recover via TCP replication, not by stalling the
+  producer. Byte layout, comparison vs Aeron / KCP / QUIC,
+  and known limits: [specs/2/4-cast.md](specs/2/4-cast.md).
+- **Tile architecture.** Pinned threads + rtrb SPSC rings
+  where it pays off (full tile arrangement in `rsx-risk`,
+  one core-pinned loop in `rsx-matching`); monoio io_uring
+  async where I/O multiplexing dominates (`rsx-gateway`,
+  `rsx-marketdata`). Per-process split:
+  [specs/2/45-tiles.md](specs/2/45-tiles.md).
+- **WAL = wire = stream.** The same `repr(C)` bytes go to
+  disk, over UDP, and over TCP for replay. No serialization
+  step. The 16-byte header carries a `version: u8` at byte 0
+  so receivers gate on it before interpreting any other
+  field. See [specs/2/48-wal.md](specs/2/48-wal.md) and
+  [specs/2/10-replication.md](specs/2/10-replication.md).
+- **Slab + CompressionMap orderbook.** Pre-allocated 65 536
+  `OrderSlot`s per symbol, sparse-to-dense price compression
+  via five distance-based zones (1:1 near-mid, up to 1000:1
+  far prices). Zero malloc on the hot path:
+  [specs/2/21-orderbook.md](specs/2/21-orderbook.md).
+
+## Architecture
+
+```
+                    +------------+
+                    |  Web (WS)  |
+                    +-----+------+
+                          |
+                    +-----v------+
+                    |  Gateway   |  WS + cast bridge
+                    | (monoio)   |  JWT, rate-limit
+                    +-----+------+
+                          | casting/UDP
+                    +-----v------+            +----------+
+                    |   Risk     |  casting/UDP   | Matching |
+                    | (1 pinned  +----------->| (1 pinned|
+                    |  thread,   |<-----------+  thread, |
+                    |  7 rings)  |  cast fills | per-sym) |
+                    +--+---+--+-+              +----+-----+
+                       |   |  |                     |
+              +--------+   |  +------+        +-----v-----+
+              v            v         v        v           v
+         +--------+ +--------+ +--------+ +-------+ +-------+
+         |Postgres| | Mark   | |Recorder| |Mktdata| | Trade |
+         | (write | |(monoio | |(daily  | |(monoio| | UI    |
+         | behind)| | HTTP)  | | WAL    | |  WS)  | |(React)|
+         +--------+ +--------+ +--------+ +-------+ +-------+
+```
+
+Three transports:
+- **Hot path** between processes: cast/UDP (NAK gap
+  recovery, idle-only heartbeats, no flow control).
+- **Cold path** between processes: WAL replication over TCP,
+  optional rustls TLS. Same record bytes as the WAL.
+- **Within a tile-architected process**: rtrb SPSC rings,
+  50–170 ns per hop.
+
+Public API to the world is WebSocket JSON (`rsx-gateway`).
+
+## Reading the code
+
+```
+rsx-types/      Price, Qty, Side, SymbolConfig newtypes
+rsx-cast/       Transport: WAL + casting/UDP + replication/TCP
+                (zero rsx-types prod dep)
+rsx-messages/   Exchange wire records: Fill, BBO, Order*,
+                MarkPrice, Liquidation, ConfigApplied
+rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
+rsx-matching/   ME: per-symbol, single-threaded, core-pinned
+rsx-risk/       Risk: per-shard tile
+rsx-gateway/    monoio WS + cast bridge, hardened JWT
+rsx-marketdata/ monoio shadow book, L2/BBO fan-out
+rsx-mark/       External mark-price feeds → cast to risk
+rsx-recorder/   Archival replication consumer
+rsx-cli/        WAL dump/inspect tool
+rsx-log/        Per-thread SPSC → drain → tracing
+```
+
+Non-cargo subprojects: `rsx-playground/` (Python/FastAPI dev
+dashboard + Playwright), `rsx-webui/` (Vite + React + Tailwind
+Trade UI), `rsx-auth/` (Python OAuth service).
+
+## Running it
+
+**Prerequisites:**
+
+| Tool | Why |
+|---|---|
+| Linux 5.6+ | io_uring (gateway, marketdata) |
+| Rust stable | `cargo build --workspace` |
+| Postgres 14+ | Risk write-behind, accounts |
+| Python 3.14+ | `rsx-playground` (managed via `uv`) |
+| `uv`, `bun` | Python deps, webui build + Playwright |
+
+Postgres dev defaults: role `rsx`, db `rsx`, password `rsx`.
+Override with `PG_URL=…`. Copy `.env.example` → `.env` for
+the full set. Playground mints dev JWTs locally — `rsx-auth`
+not needed to demo.
+
+```bash
+git clone <repo-url> && cd rsx
+make prepare                              # one-time: venv + Playwright
+./rsx-playground/playground start         # FastAPI on :49171
+# visit http://localhost:49171, click "Start All",
+# submit orders, view fills, inspect WAL
+./rsx-playground/playground stop
+```
+
+60-second clean-boot path: [docs/DEMO.md](docs/DEMO.md).
+
+**From source:**
+
+```bash
+make check        # cargo check (fastest feedback)
+make test         # Rust unit + integration (~5s)
+make e2e          # Rust + API + Playwright (~3 min)
+make perf         # Criterion benches
+make lint         # clippy -D warnings
+```
+
+Single crate: `cargo test -p rsx-book`. Single test:
+`cargo test -p rsx-book -- test_name`.
+
+## What's measured vs what's a budget
+
+The microbench numbers above are real and reproducible. The
+cross-process production budgets aren't.
+
+| Number | Measured? |
+|---|---|
+| 54 ns match single fill | yes — `rsx-book` |
+| 31 ns WAL buffer append (pre-flush; `Vec` extend) | yes — `rsx-cast` |
+| 43 ns Nak/Heartbeat encode, 23 ns Fill encode, 9 ns decode | yes — `rsx-cast` + `rsx-messages` |
+| 50–170 ns SPSC ring hop | yes — `rsx-book` |
+| <50 µs GW→ME→GW round trip | **design budget**; harness plan in [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md) |
+| <500 ns ME match | yes — sub-bench of 54 ns |
+| <5 µs risk pre-trade | **design budget** |
+
+## What's not done
+
+The gaps a careful reader will hit:
+
+- **End-to-end latency harness.** The 50 µs / 500 ns numbers
+  are budgets, not measurements. Plan in
+  [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
+- **JWT replay protection.** `JtiTracker` exists in
+  `rsx-gateway` but isn't yet consulted by the WS handshake.
+- **`rsx-cast` UDP** uses `std::net::UdpSocket`, not monoio
+  io_uring. One syscall per `sendto`/`recvfrom`. The
+  io_uring move is gated on gateway/marketdata owning the
+  socket (zero-runtime-dep invariant in `rsx-cast` is
+  load-bearing — see `rsx-cast/CLAUDE.md`).
+- **Per-consumer FAULTED recovery.** `rsx-matching` has a
+  POC `CastRecv::Faulted` → replication-replay path; risk,
+  marketdata, and gateway still panic with a pointer to the
+  reference impl.
+- **`rsx-mark`/`rsx-marketdata` replay** still uses tokio
+  for the replication client.
+
+## Specs
+
+47 spec files in [`specs/2/`](specs/2/). The index is
+[`specs/index.md`](specs/index.md). If you read three to
+start: [1-architecture.md](specs/2/1-architecture.md),
+[4-cast.md](specs/2/4-cast.md),
+[21-orderbook.md](specs/2/21-orderbook.md).
+
+## Other documents
+
+| | |
+|---|---|
+| [PROGRESS.md](PROGRESS.md) | per-crate status |
+| [GUARANTEES.md](GUARANTEES.md) | consistency, durability, ordering |
+| [BLOG.md](BLOG.md) | long-form narrative |
+| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure mode catalogue |
+| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | operator recovery procedures |
+| [TESTING.md](TESTING.md) | test taxonomy |
