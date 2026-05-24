@@ -13,6 +13,7 @@ use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_CANCELLED;
@@ -184,8 +185,23 @@ pub fn write_events_to_wal(
                 };
                 writer.append(&mut record)?;
             }
-            Event::OrderFailed { .. } => {
-                // OrderFailed is not persisted to WAL
+            Event::OrderFailed {
+                user_id,
+                reason,
+                order_id_hi,
+                order_id_lo,
+            } => {
+                let mut record = OrderFailedRecord {
+                    seq: 0,
+                    ts_ns,
+                    user_id,
+                    _pad0: 0,
+                    order_id_hi,
+                    order_id_lo,
+                    reason,
+                    _pad: [0; 23],
+                };
+                writer.append(&mut record)?;
             }
             Event::BBO { .. } => {
                 // BBO not persisted to WAL (derived on replay)
