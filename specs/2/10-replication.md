@@ -297,8 +297,8 @@ transport specification.
 ## 6. Consumer
 
 Embedded in each consumer process. Manages connection to a
-producer's DxsReplay service, tracks processing tips.
-See `rsx-cast/src/client.rs`
+producer's `ReplicationService`, tracks processing tips.
+See `rsx-cast/src/replication_client.rs`
 
 **Endpoint list (ordered newest → oldest):**
 
@@ -424,11 +424,11 @@ The callback writes records to the daily archive file.
 | Current | replication replacement |
 |---------|----------------|
 | ORDERBOOK.md WAL (section 2.8) | ME embeds WalWriter |
-| ORDERBOOK.md recovery | ME embeds DxsReplay server |
+| ORDERBOOK.md recovery | ME embeds ReplicationService |
 | RISK.md replay from ME | Risk is replication consumer of ME stream |
 | RISK.md tip persistence | Consumer.tip persistence |
 | WAL.md local buffer | WalWriter with 10ms flush |
-| WAL.md replica sync | DxsReplay live tail mode |
+| WAL.md replica sync | ReplicationService live tail mode |
 
 ---
 

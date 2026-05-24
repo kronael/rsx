@@ -220,9 +220,9 @@ each stores its exact price, mapping to potentially different new indices.
 
 The matching engine persists orderbook state using replication WalWriter
 ([replication.md](replication.md)) plus online snapshots. Recovery restores the
-latest snapshot and replays the WAL. The ME also embeds a DxsReplay
-server so downstream consumers (risk engines, recorders) can
-subscribe to its event stream.
+latest snapshot and replays the WAL. The ME also embeds a
+`ReplicationService` so downstream consumers (risk engines,
+recorders) can subscribe to its event stream.
 
 ### WAL
 
@@ -230,8 +230,8 @@ subscribe to its event stream.
 - Append every order, cancel, and fill as replication WalRecords.
 - WAL is per-symbol (`stream_id` = `symbol_id`), local disk.
 - Same raw bytes on disk and over the wire — no transformation.
-- DxsReplay server ([replication.md](replication.md) section 5) serves replay and
-  live tail to risk engines and other consumers.
+- `ReplicationService` ([replication.md](replication.md) section 5) serves replay
+  and live tail to risk engines and other consumers.
 
 ### Online Snapshot (Shared Algorithm)
 

@@ -30,7 +30,7 @@ embedded in each risk engine (RISK.md section 4).
 
 ```
 Binance WS ──┐
-              ├──[SPSC]──> Aggregation Loop ──> WalWriter ──> DxsReplay
+              ├──[SPSC]──> Aggregation Loop ──> WalWriter ──> ReplicationService
 Coinbase WS ──┘            (single thread)        |
                                                   └──> casting/UDP -> Risk
 ```
@@ -41,7 +41,7 @@ Coinbase WS ──┘            (single thread)        |
   per symbol.
 - WalWriter appends `MarkPriceRecord` records.
 - casting/UDP sends `MarkPriceRecord` to Risk.
-- DxsReplay server (from `rsx-cast`) broadcasts to replay consumers.
+- ReplicationService (from `rsx-cast`) broadcasts to replay consumers.
 - Recorder archives mark price stream to daily files.
 
 ---
@@ -172,7 +172,7 @@ stops publishing. Consumers handle the absence.
 
 ## 5. Serving Subscribers
 
-The aggregator embeds a DxsReplay server from `rsx-cast`.
+The aggregator embeds a `ReplicationService` from `rsx-cast`.
 
 - Single `stream_id` for the mark price stream.
 - Recorder connects as a replication consumer for archival.

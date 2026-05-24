@@ -69,14 +69,15 @@ topology.
 | rsx-book | Shared orderbook: PriceLevel, OrderSlot, Slab, CompressionMap |
 | rsx-matching | ME tile logic, one instance per symbol, single-threaded |
 | rsx-risk | Risk tile logic, one per user shard, margin + funding + liquidation |
-| rsx-cast | WAL writer/reader, ReplicationConsumer, DxsReplay server (transport-agnostic) |
+| rsx-cast | WAL writer/reader, ReplicationConsumer, ReplicationService (transport-agnostic) |
 | rsx-mark | Mark price aggregator (separate process), external WS feeds, median |
 | rsx-gateway | Gateway tile, WS overlay + casting bridge, auth, rate limit |
 | rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |
 | rsx-recorder | Archival replication consumer (separate process), daily WAL files |
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
-| rsx-maker | Market maker bot (separate process) |
+| rsx-messages | Wire-record catalogue (`Fill` / `BBO` / `Order*` / ...) |
+| rsx-log | Off-hot-path logging primitive (per-thread SPSC ring) |
 
 Non-Rust supporting projects (not in Cargo workspace):
 
@@ -163,8 +164,8 @@ Latency targets (same machine, intra-process SPSC):
   +-----+------+               +------------------+
         |
   +-----v------+     +------------------+
-  | DxsReplay  |---->| Risk (consumer)  |
-  | TCP server |     | replay tips+1    |
+  |Replication |---->| Risk (consumer)  |
+  | Service TCP|     | replay tips+1    |
   +-----+------+     +------------------+
         |
   +-----v------+

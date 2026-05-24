@@ -28,7 +28,7 @@ Binary: `rsx-mark` (standalone service)
 | K5 | Zero sources: no publish (risk falls back to index) | §4 |
 | K6 | Staleness sweep every 1s | §4 |
 | K7 | WalWriter appends MarkPriceEvent records | §1, §5 |
-| K8 | DxsReplay server for subscriber broadcast | §5 |
+| K8 | ReplicationService for subscriber broadcast | §5 |
 | K9 | PriceSource trait for exchange connectors | §3 |
 | K10 | Reconnect backoff: 1/2/4/8s, cap 30s | §3 |
 | K11 | Source connectors push via SPSC to aggregation | §1 |
@@ -75,7 +75,7 @@ Targets from MARK.md §9:
 - Risk engines receive MarkPriceRecord via casting/UDP.
 - Recorder connects as replication consumer for archival (replication.md §8).
 - WalWriter from rsx-cast crate (replication.md §3).
-- DxsReplay server from rsx-cast crate (replication.md §5).
+- ReplicationService from rsx-cast crate (replication.md §5).
 - SPSC rings from source connectors to aggregation loop
 - System-level: mark price stale -> risk falls back to
   index price (RISK.md §4)
