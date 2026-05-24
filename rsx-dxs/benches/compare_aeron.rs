@@ -145,8 +145,15 @@ struct AeronRig {
 
 impl Drop for AeronRig {
     fn drop(&mut self) {
-        // Signal PONG first so it stops touching the publication before we
-        // tear down the driver.
+        // Order matters:
+        //   1. Stop the PONG echo thread so it stops touching pub/sub.
+        //   2. Stop the embedded media driver agent.
+        //   3. Let `Aeron` / `pub` / `sub` drop in the order their owning
+        //      fields are declared (Rust drops fields top-to-bottom).
+        //      `_aeron` is declared above `pong_subscription` and
+        //      `ping_publication`, so the client conductor goes first and
+        //      the resource handles drop afterward — matching the C-side
+        //      lifecycle (close client, then close transport handles).
         self.pong_stop.store(true, Ordering::Release);
         if let Some(h) = self.pong_handle.take() {
             let _ = h.join();
@@ -155,13 +162,6 @@ impl Drop for AeronRig {
         if let Some(h) = self.driver_handle.take() {
             let _ = h.join();
         }
-        // The C-side aeron_driver_close path tears down SHM segments and
-        // the cnc.dat file asynchronously. Give it a beat before the next
-        // bench (in the same process) tries to spin up a fresh driver in
-        // a different unique_dir; otherwise the conductor's keep-alive
-        // check on the new client races with the old driver's exit and
-        // reports "MediaDriver has been shutdown".
-        thread::sleep(Duration::from_millis(500));
     }
 }
 
