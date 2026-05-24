@@ -245,9 +245,10 @@ The receiver tracks `expected_seq` (next seq it wants).
 A gap is detected two ways:
 
 1. A **data record** arrives with `seq > expected_seq`.
-   The receiver buffers it in a bounded reorder buffer
-   (default 512 slots, `config.reorder_buf_limit`) and
-   sends a NAK for `[expected_seq, seq)`.
+   The receiver stages it in the fixed-size reorder ring
+   (2 048 slots, see "Reorder buffer + FAULTED escalation"
+   below) and sends a NAK for the oldest contiguous missing
+   run.
 2. A **heartbeat** arrives with `highest_seq > expected_seq`
    while no new data is arriving. The receiver NAKs the
    tail.
@@ -302,15 +303,76 @@ only had the in-memory ring. The two-tier path is now
 shipped and unit-tested
 (`rsx-dxs/tests/wal_test.rs::read_record_at_seq_*`).
 
-### Reorder buffer
+### Reorder buffer + FAULTED escalation
 
-The receiver buffers up to `reorder_buf_limit` (default
-512) out-of-order records while it waits for the NAK fill.
-On overflow, the receiver advances `expected_seq` past the
-gap, drops the missing records, and emits a structured-log
-warning. The shadow-book / risk consumers handle
-gap-advance via their own resync paths (CAUGHT_UP records
-on TCP replay).
+The receiver buffers out-of-order packets in a fixed-size
+ring mirroring the sender's `send_ring`:
+
+```rust
+const REORDER_CAPACITY: usize = 2048;  // power of 2
+const REORDER_MASK: u64 = (REORDER_CAPACITY - 1) as u64;
+const REORDER_FRAME_BYTES: usize = 256;
+
+reorder_seqs:   Box<[u64; 2048]>
+reorder_lens:   Box<[u16; 2048]>
+reorder_frames: Box<[u8; 2048 * 256]>
+```
+
+Slot index is `seq & REORDER_MASK`. Empty slot iff
+`reorder_seqs[slot] == 0`. Memory: 512 KB per receiver,
+pre-allocated at construction; **zero heap allocations on
+the hot receive path**.
+
+`REORDER_CAPACITY = 2048` sets the maximum in-flight gap
+window. At 10 k pps that's ~200 ms of burst tolerance; at
+1 k pps, 2 s — comfortable margin above realistic LAN
+hiccups. Bigger gaps escalate to FAULTED + DXS replay.
+
+### Three-tier delivery contract
+
+Within a stream, CMP guarantees **strict FIFO**: the
+application sees seqs in monotonic order with **no silent
+skip** path. Loss recovery happens in three tiers:
+
+1. **NAK (in-band).** Receiver detects the gap, fires NAK,
+   sender retransmits from `send_ring` (hot) or WAL (cold).
+   Bounded by `nak_retry_us × max_nak_retries`
+   (100 µs × 8 = 800 µs default total recovery budget).
+
+2. **FAULTED.** If the gap persists past the in-band budget,
+   OR an arriving out-of-order packet would collide with a
+   different seq already in its slot (gap >
+   `REORDER_CAPACITY`), the receiver enters sticky FAULTED
+   state and surfaces `CmpRecv::Faulted { last_delivered_seq,
+   gap_start, gap_end_inclusive }` to the consumer. No
+   silent advance: the receiver keeps returning `Faulted`
+   on every `try_recv` call until the consumer calls
+   `reset_after_replay(new_tip)`.
+
+3. **DXS replay (out-of-band).** The consumer handles
+   `Faulted` by switching to TCP-based WAL replay from
+   `last_delivered_seq + 1` via `DxsConsumer`. Once caught
+   up, it calls `CmpReceiver::reset_after_replay(new_tip)`
+   to clear the FAULTED state and resume normal in-band
+   delivery from `new_tip + 1`.
+
+### Reset semantics
+
+`reset_after_replay(new_tip)` sets `expected_seq = new_tip + 1`
+so live-tail delivery resumes from the right place. It also
+clears the FAULTED flag and drops stale reorder-ring entries.
+
+`highest_seen` is **monotonic**: if `new_tip` is below the
+current `highest_seen` (e.g. a heartbeat or stray OOO packet
+advanced `highest_seen` past the replay's stop point while
+the consumer was draining DXS), the method leaves
+`highest_seen` unchanged. Lowering it could re-arm the gap
+detector against seqs the consumer has already applied via
+replay and silently re-deliver them — a FIFO violation. The
+gap detector compares `expected_seq` against `highest_seen`,
+so keeping `highest_seen` ≥ `expected_seq` is what allows
+the receiver to detect and NAK forward gaps; only forward
+progress is observable to the consumer.
 
 ## 7. WAL replication over TCP (cold path)
 
@@ -549,14 +611,20 @@ RSX_REPL_KEY_PATH=./certs/repl.key
 
 CmpConfig (`rsx-dxs/src/config.rs`):
 
-| Field                   | Default | Meaning                              |
-|-------------------------|---------|--------------------------------------|
-| `default_window`        | 65 536  | seq-delta flow-control window        |
-| `heartbeat_interval_ms` | 100     | max idle time before sender → receiver heartbeat; data sends reset the timer (heartbeats are only emitted when the stream is idle) |
-| `status_interval_ms`    | 10      | receiver → sender status period      |
-| `reorder_buf_limit`     | 512     | receiver-side reorder buffer slots   |
-| `send_ring_limit`       | 4 096   | sender-side retransmit cache slots   |
-| `sender_bind_addr`      | 0.0.0.0:0 | sender source addr for UDP socket  |
+| Field                    | Default   | Meaning                                                |
+|--------------------------|-----------|--------------------------------------------------------|
+| `heartbeat_interval_ms`  | 100       | max idle before heartbeat; data sends reset the timer (heartbeats fire only on idle streams) |
+| `send_ring_limit`        | 4 096     | sender-side retransmit cache slots                     |
+| `sender_bind_addr`       | 0.0.0.0:0 | sender source addr for UDP socket                      |
+| `nak_retry_us`           | 100       | receiver NAK debounce interval (oldest gap)            |
+| `max_nak_retries`        | 8         | retries on oldest gap before FAULTED                   |
+| `retx_dedup_window_us`   | 1 000     | sender per-seq retransmit dedup window                 |
+
+`default_window` / `status_interval_ms` (flow-control) and
+`reorder_buf_limit` (variable receiver buffer) were removed in
+v4: flow control with `StatusMessage` was dropped in commit
+`87b223e`, and the reorder buffer became a fixed 2 048-slot
+ring (compile-time constant) in commit `c89d164`.
 
 ## Cross-references
 
