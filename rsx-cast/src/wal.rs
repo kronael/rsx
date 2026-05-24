@@ -38,10 +38,8 @@ use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use tokio::sync::Notify;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -62,7 +60,6 @@ pub struct WalWriter {
     archive_dir: Option<PathBuf>,
     max_file_size: u64,
     retention_ns: u64,
-    listeners: Vec<Arc<Notify>>,
     records_since_flush: u32,
 }
 
@@ -104,7 +101,6 @@ impl WalWriter {
             archive_dir,
             max_file_size,
             retention_ns,
-            listeners: Vec::new(),
             records_since_flush: 0,
         })
     }
@@ -217,11 +213,6 @@ impl WalWriter {
 
         if elapsed > Duration::from_millis(10) {
             warn!("flush took {}ms", elapsed.as_millis());
-        }
-
-        // notify live consumers
-        for listener in &self.listeners {
-            listener.notify_one();
         }
 
         // rotate after write if file has now reached the limit
@@ -346,12 +337,6 @@ impl WalWriter {
         fs::rename(source, &dest)?;
         info!("archived to {}", dest.display());
         Ok(())
-    }
-
-    pub fn add_listener(&mut self) -> Arc<Notify> {
-        let notify = Arc::new(Notify::new());
-        self.listeners.push(notify.clone());
-        notify
     }
 
     pub fn should_flush(&self) -> bool {

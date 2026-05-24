@@ -69,7 +69,6 @@ async fn tls_client_server_connection() {
 
     let service_addr: SocketAddr =
         "127.0.0.1:19300".parse().unwrap();
-    let service_clone = service.clone();
     let service_task = tokio::spawn(async move {
         service.serve(service_addr).await
     });
@@ -109,8 +108,6 @@ async fn tls_client_server_connection() {
     wal.append(&mut fill).unwrap();
     wal.flush().unwrap();
 
-    let notify = service_clone.add_listener(stream_id).await;
-
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("localhost:{}", service_addr.port());
@@ -141,9 +138,6 @@ async fn tls_client_server_connection() {
             Err(_) => {}
         }
     });
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    notify.notify_waiters();
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -179,7 +173,6 @@ async fn tls_disabled_falls_back_to_plain() {
 
     let service_addr: SocketAddr =
         "127.0.0.1:19301".parse().unwrap();
-    let service_clone = service.clone();
     let service_task = tokio::spawn(async move {
         service.serve(service_addr).await
     });
@@ -218,9 +211,6 @@ async fn tls_disabled_falls_back_to_plain() {
     };
     wal.append(&mut fill).unwrap();
     wal.flush().unwrap();
-
-    let notify = service_clone.add_listener(stream_id).await;
-    notify.notify_waiters();
 
     let tip_file = tmp.path().join("tip");
     let consumer_addr =

@@ -30,7 +30,6 @@ use crate::tls::build_acceptor;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
 use crate::wal::oldest_and_highest_seq;
-use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -38,8 +37,8 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
-use tokio::sync::RwLock;
+use tokio::time::sleep;
+use std::time::Duration;
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
 use tracing::info;
@@ -55,9 +54,6 @@ fn time_ns() -> u64 {
 #[derive(Clone)]
 pub struct ReplicationService {
     pub wal_dir: PathBuf,
-    pub listeners: Arc<
-        RwLock<HashMap<u32, Vec<Arc<Notify>>>>,
-    >,
     pub tls_acceptor: Option<TlsAcceptor>,
 }
 
@@ -73,23 +69,8 @@ impl ReplicationService {
 
         Ok(Self {
             wal_dir,
-            listeners: Arc::new(RwLock::new(
-                HashMap::new(),
-            )),
             tls_acceptor,
         })
-    }
-
-    pub async fn add_listener(
-        &self,
-        stream_id: u32,
-    ) -> Arc<Notify> {
-        let notify = Arc::new(Notify::new());
-        let mut map = self.listeners.write().await;
-        map.entry(stream_id)
-            .or_default()
-            .push(notify.clone());
-        notify
     }
 
     pub async fn serve(
@@ -225,9 +206,6 @@ where
         return Ok(());
     }
 
-    let notify =
-        svc.add_listener(stream_id).await;
-
     let mut reader = WalReader::open_from_seq(
         stream_id,
         from_seq,
@@ -280,7 +258,7 @@ where
     stream.write_all(&encoded).await?;
 
     loop {
-        notify.notified().await;
+        sleep(Duration::from_millis(100)).await;
 
         let mut reader =
             match WalReader::open_from_seq(
