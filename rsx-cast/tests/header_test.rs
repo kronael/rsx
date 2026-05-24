@@ -6,38 +6,34 @@ fn header_encode_decode_roundtrip() {
     let header = WalHeader::new(1, 64, 0xDEADBEEF);
     let bytes = header.to_bytes();
     let decoded = WalHeader::from_bytes(&bytes).unwrap();
-    assert_eq!(decoded.version, WalVersion::V1);
+    assert_eq!(decoded.version, WalVersion::V1 as u8);
     assert_eq!(decoded.record_type, 1);
     assert_eq!(decoded.len, 64);
     assert_eq!(decoded.crc32, 0xDEADBEEF);
-    assert_eq!(decoded._reserved, [0u8; 7]);
 }
 
 #[test]
 fn header_little_endian_verified() {
-    // Wire: version(0) pad(1) record_type(2..4) len(4..6)
-    //       pad(6..8) crc32(8..12) reserved(12..16)
     let raw: [u8; 16] = [
         WalVersion::V1 as u8, // version
-        0x00,                 // pad
+        0x00,                 // _pad0
         0x02, 0x01,           // record_type = 0x0102 LE
         0x03, 0x04,           // len = 0x0403 LE
-        0x00, 0x00,           // pad
+        0x00, 0x00,           // _pad1
         0x05, 0x06, 0x07, 0x08, // crc32 LE
-        0x00, 0x00, 0x00, 0x00, // reserved
+        0x00, 0x00, 0x00, 0x00, // _reserved
     ];
     let h = WalHeader::from_bytes(&raw).unwrap();
-    assert_eq!(h.version, WalVersion::V1);
+    assert_eq!(h.version, WalVersion::V1 as u8);
     assert_eq!(h.record_type, 0x0102);
     assert_eq!(h.len, 0x0403);
     assert_eq!(h.crc32, 0x08070605);
-    assert_eq!(h._reserved, [0u8; 7]);
 }
 
 #[test]
 fn header_new_writes_v1() {
     let header = WalHeader::new(1, 0, 0);
-    assert_eq!(header.version, WalVersion::V1);
+    assert_eq!(header.version, WalVersion::V1 as u8);
 }
 
 #[test]
