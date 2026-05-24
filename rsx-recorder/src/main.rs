@@ -119,7 +119,7 @@ async fn main() -> io::Result<()> {
         config.stream_id,
     )?));
 
-    let mut consumer = DxsConsumer::new(
+    let mut consumer = DxsConsumer::from_single(
         config.stream_id,
         config.producer_addr,
         config.tip_file,

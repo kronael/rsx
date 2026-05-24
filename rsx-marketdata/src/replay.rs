@@ -49,7 +49,7 @@ pub async fn run_replay_bootstrap(
     replay_addr: String,
     tip_file: PathBuf,
 ) -> std::io::Result<ReplayResult> {
-    let mut consumer = DxsConsumer::new(
+    let mut consumer = DxsConsumer::from_single(
         stream_id,
         replay_addr,
         tip_file,
