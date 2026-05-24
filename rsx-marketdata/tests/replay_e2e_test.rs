@@ -1,6 +1,6 @@
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_cast::DxsReplayService;
+use rsx_cast::ReplicationService;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_cast::WalWriter;
@@ -121,7 +121,7 @@ taker_ts_ns: 0,
             writer.flush().unwrap();
 
             let server =
-                DxsReplayService::new(wal_dir, None)
+                ReplicationService::new(wal_dir, None)
                     .unwrap();
 
             tokio::spawn(async move {
@@ -246,7 +246,7 @@ fn recovery_from_me_wal_then_live() {
             writer.flush().unwrap();
 
             let server =
-                DxsReplayService::new(wal_dir, None)
+                ReplicationService::new(wal_dir, None)
                     .unwrap();
 
             tokio::spawn(async move {
@@ -311,7 +311,7 @@ fn recovery_snapshot_sent_after_catchup() {
             writer.flush().unwrap();
 
             let server =
-                DxsReplayService::new(wal_dir, None)
+                ReplicationService::new(wal_dir, None)
                     .unwrap();
 
             tokio::spawn(async move {

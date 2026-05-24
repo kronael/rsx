@@ -7,8 +7,8 @@ use rsx_cast::protocol::Nak;
 use rsx_messages::RECORD_FILL;
 use rsx_cast::protocol::RECORD_HEARTBEAT;
 use rsx_cast::protocol::RECORD_NAK;
-use rsx_cast::protocol::RECORD_REPLAY_REQUEST;
-use rsx_cast::protocol::ReplayRequest;
+use rsx_cast::protocol::RECORD_REPLICATION_REQUEST;
+use rsx_cast::protocol::ReplicationRequest;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
@@ -93,7 +93,7 @@ fn control_record_type_values_match_spec() {
     // 0x10 is reserved (was RECORD_STATUS_MESSAGE, removed).
     assert_eq!(RECORD_NAK, 0x11);
     assert_eq!(RECORD_HEARTBEAT, 0x12);
-    assert_eq!(RECORD_REPLAY_REQUEST, 0x13);
+    assert_eq!(RECORD_REPLICATION_REQUEST, 0x13);
 }
 
 // --- Padding zeroed ---
@@ -167,11 +167,11 @@ taker_ts_ns: 0,
     assert_ne!(crc_corrupt, crc);
 }
 
-// --- ReplayRequest ---
+// --- ReplicationRequest ---
 
 #[test]
 fn replay_request_encode_decode_roundtrip() {
-    let req = ReplayRequest {
+    let req = ReplicationRequest {
         stream_id: 7,
         _pad0: 0,
         from_seq: 42,
@@ -180,7 +180,7 @@ fn replay_request_encode_decode_roundtrip() {
     let bytes = as_bytes(&req);
     let decoded = unsafe {
         std::ptr::read_unaligned(
-            bytes.as_ptr() as *const ReplayRequest,
+            bytes.as_ptr() as *const ReplicationRequest,
         )
     };
     assert_eq!(decoded.stream_id, 7);
@@ -189,6 +189,6 @@ fn replay_request_encode_decode_roundtrip() {
 
 #[test]
 fn replay_request_size_is_64_bytes() {
-    assert_eq!(mem::size_of::<ReplayRequest>(), 64);
-    assert_eq!(mem::align_of::<ReplayRequest>(), 64);
+    assert_eq!(mem::size_of::<ReplicationRequest>(), 64);
+    assert_eq!(mem::align_of::<ReplicationRequest>(), 64);
 }

@@ -1,7 +1,7 @@
 use rsx_cast::cast::CastSender;
 use rsx_messages::RECORD_MARK_PRICE;
 use rsx_cast::wal::WalWriter;
-use rsx_cast::DxsReplayService;
+use rsx_cast::ReplicationService;
 use rsx_mark::aggregator::aggregate_with_staleness;
 use rsx_mark::aggregator::sweep_stale_with_staleness;
 use rsx_mark::config::load_mark_config;
@@ -68,7 +68,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
             )
         })?;
     let wal_dir = PathBuf::from(&config.wal_dir);
-    let service = DxsReplayService::new(wal_dir.clone(), None)?;
+    let service = ReplicationService::new(wal_dir.clone(), None)?;
     rt.spawn(async move {
         if let Err(e) = service.serve(dxs_addr).await {
             tracing::error!("dxs server error: {e}");

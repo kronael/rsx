@@ -430,7 +430,7 @@ fn main() {
                 // SAFETY: fail-fast at startup
                 .expect("tokio runtime for dxs");
             let service =
-                rsx_cast::DxsReplayService::new(wal_path, None)
+                rsx_cast::ReplicationService::new(wal_path, None)
                     // SAFETY: fail-fast at startup
                     .expect("failed to create dxs service");
             rt.block_on(async {

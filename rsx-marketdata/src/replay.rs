@@ -1,5 +1,5 @@
 use rsx_cast::CaughtUpRecord;
-use rsx_cast::DxsConsumer;
+use rsx_cast::ReplicationConsumer;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -49,7 +49,7 @@ pub async fn run_replay_bootstrap(
     replay_addr: String,
     tip_file: PathBuf,
 ) -> std::io::Result<ReplayResult> {
-    let mut consumer = DxsConsumer::from_single(
+    let mut consumer = ReplicationConsumer::from_single(
         stream_id,
         replay_addr,
         tip_file,
