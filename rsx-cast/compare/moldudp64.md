@@ -116,7 +116,7 @@ WAL.
 
 - **Multicast fan-out is native.** One sender, N receivers, zero
   per-receiver state on the sender side. CMP requires one
-  `CmpSender` instance per peer (point-to-point).
+  `CastSender` instance per peer (point-to-point).
 - **Multiple messages per UDP datagram.** Saves header overhead
   on bursty market events. CMP pays a full 16-byte header per
   record.

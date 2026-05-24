@@ -180,7 +180,7 @@ service, and the backtester. KCP would be just a transport.
 | Durability | None | WAL = audit log |
 | Min flush granularity | 1 ms (Rust port) via timer; immediate via `flush()` | per `sendto` (~3.85 µs) |
 | Multi-receiver / fan-out | No (one `conv` per peer) | Per-receiver via DXS TCP replay; CMP itself is unicast |
-| Multiplexed streams | No (single seq space per `conv`) | No (one stream per CmpSender/CmpReceiver pair) |
+| Multiplexed streams | No (single seq space per `conv`) | No (one stream per CastSender/CastReceiver pair) |
 | FIFO within stream | Yes | Yes |
 | Cross-stream ordering | n/a | n/a (separate WAL files per producer) |
 | Auth / encryption | None | None (trust delegated, spec §10.4) |
