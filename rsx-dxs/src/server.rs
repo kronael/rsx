@@ -3,12 +3,15 @@ use crate::encode_utils::compute_crc32;
 use crate::encode_utils::encode_record;
 use crate::header::WalHeader;
 use crate::protocol::CaughtUpRecord;
+use crate::protocol::ReplayNotAvailable;
 use crate::protocol::ReplayRequest;
 use crate::protocol::RECORD_CAUGHT_UP;
+use crate::protocol::RECORD_REPLAY_NOT_AVAILABLE;
 use crate::protocol::RECORD_REPLAY_REQUEST;
 use crate::tls::build_acceptor;
 use crate::wal::WalReader;
 use crate::wal::extract_seq;
+use crate::wal::oldest_and_highest_seq;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
@@ -185,6 +188,51 @@ where
         "replay request stream_id={} from_seq={}",
         stream_id, from_seq
     );
+
+    // Federation pre-check: if the requested from_seq is below
+    // the oldest seq this endpoint can serve, signal explicitly
+    // so the consumer falls back to the next endpoint in its
+    // list. Without this, the consumer would silently land at
+    // the wrong seq (replay starts at first available > from_seq,
+    // creating a hidden gap).
+    let range = oldest_and_highest_seq(
+        stream_id, &svc.wal_dir, None,
+    )?;
+    let (my_oldest, my_highest) = range.unwrap_or((0, 0));
+    let endpoint_can_serve = match range {
+        // 0 means "from the beginning, whatever I have" — always OK.
+        Some((oldest, _)) => from_seq == 0 || from_seq >= oldest,
+        // Endpoint empty: only "from the beginning" is OK.
+        None => from_seq == 0,
+    };
+    if !endpoint_can_serve {
+        warn!(
+            "replay refused stream_id={} from_seq={} \
+             my_oldest={} my_highest={}",
+            stream_id, from_seq, my_oldest, my_highest
+        );
+        let na = ReplayNotAvailable {
+            requested_from_seq: from_seq,
+            my_oldest_seq: my_oldest,
+            my_highest_seq: my_highest,
+            stream_id,
+            _pad: [0; 36],
+        };
+        let payload = unsafe {
+            std::slice::from_raw_parts(
+                &na as *const ReplayNotAvailable
+                    as *const u8,
+                std::mem::size_of::<ReplayNotAvailable>(),
+            )
+        };
+        let encoded = encode_record(
+            RECORD_REPLAY_NOT_AVAILABLE,
+            payload,
+        );
+        stream.write_all(&encoded).await?;
+        stream.flush().await?;
+        return Ok(());
+    }
 
     let notify =
         svc.add_listener(stream_id).await;
