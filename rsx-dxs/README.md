@@ -1,7 +1,7 @@
 # rsx-dxs
 
 Log-backed reliable UDP transport (CMP) + TCP cold-path replay
-(DXS) for fixed-format binary records.
+(DXS) for fixed-size, fixed-format binary records.
 
 **Wire bytes = disk bytes = stream bytes.** No serialization
 step. NAK retransmits read from the WAL itself, so the
