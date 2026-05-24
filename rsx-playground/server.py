@@ -4293,6 +4293,28 @@ async def api_orders_test(request: Request):
             '<span class="text-red-400 text-xs">'
             'invalid symbol_id</span>')
 
+    # Check that gateway and the matching engine for this symbol
+    # are running before attempting to forward the order.
+    _sym_name = next(
+        (k for k, v in start_mod.SYMBOLS.items()
+         if v["id"] == symbol_id),
+        None,
+    )
+    _me_name = f"me-{_sym_name.lower()}" if _sym_name else None
+    _running_names = {
+        p["name"] for p in scan_processes()
+        if p.get("state") == "running"
+    }
+    if "gw-0" not in _running_names:
+        return JSONResponse(
+            {"error": "gateway (gw-0) not available"},
+            status_code=503)
+    if _me_name and _me_name not in _running_names:
+        return JSONResponse(
+            {"error": f"matching engine for "
+                      f"{_sym_name} not available"},
+            status_code=503)
+
     side_str = form.get("side", "buy")
     side_int = 0 if side_str == "buy" else 1
 
