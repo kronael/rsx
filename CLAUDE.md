@@ -100,6 +100,16 @@ rsx-auth/       Python auth service (uv; sqlx migrations)
 - Pin hot threads to cores via core_affinity
 - Panic handler: `install_panic_handler()` from rsx_types
 - Document lock acquisition order where locks exist
+- NEVER inline `tokio::spawn(async move { ... })` in a function
+  body. The handler coroutine MUST be a named `async fn` (or
+  named closure bound to a let) so the caller and reader can
+  reason about lifetime and back-pressure separately from the
+  surrounding sync code. Exception: accept-loop in a server
+  may spawn a per-connection handler — but the handler itself
+  is still a named function, not an inline async move block.
+  Spawning belongs to the layer that can manage coroutines
+  (the entry-point binary / server loop), not to library
+  helpers — those return Futures and let the caller spawn.
 
 ## Trust boundaries (read this before adding "security")
 
