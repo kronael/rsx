@@ -22,7 +22,7 @@ Crate: `rsx-cast`. Embedded by all producers and consumers.
 - [6. Consumer](#6-consumer)
 - [7. Transport](#7-transport)
 - [8. Recorder Pattern](#8-recorder-pattern)
-- [9. How replication Replaces Existing Specs](#9-how-dxs-replaces-existing-specs)
+- [9. How replication Replaces Existing Specs](#9-how-replication-replaces-existing-specs)
 - [10. WAL Replay Edge Cases](#10-wal-replay-edge-cases)
 - [11. Performance Targets](#11-performance-targets)
 - [12. File Organization](#12-file-organization)

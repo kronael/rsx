@@ -22,9 +22,9 @@ Implementation: `rsx-cast/src/cmp.rs`,
 
 ## Table of contents
 
-- [1. What casting is and isn't](#1-what-cmp-is-and-isnt)
+- [1. What casting is and isn't](#1-what-casting-is-and-isnt)
 - [2. Wire format](#2-wire-format)
-- [3. Sequence numbers and CastRecord](#3-sequence-numbers-and-cmprecord)
+- [3. Sequence numbers and CastRecord](#3-sequence-numbers-and-castrecord)
 - [4. Control messages](#4-control-messages)
 - [5. Flow control](#5-flow-control)
 - [6. Loss recovery (NAK)](#6-loss-recovery-nak)
