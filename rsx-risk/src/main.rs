@@ -499,6 +499,7 @@ fn run_main(
     // and surface a WARN each time we yield to shard.run_once
     // so this never silently drops correctness-critical events.
     let mut fill_stalls: u64 = 0;
+    let mut order_stalls: u64 = 0;
     let mut bbo_drops: u64 = 0;
     let mut mark_drops: u64 = 0;
 
@@ -536,11 +537,36 @@ fn run_main(
                             / 1000;
                         rsx_log::latency::sample("risk_in", order.order_id_hi, order.order_id_lo, t_us, order.timestamp_ns);
                     }
-                    if order_prod.push(order).is_err() {
-                        warn!(
-                            "order_prod ring full — \
-                             dropping order"
-                        );
+                    // Stall on full ring rather than dropping —
+                    // dropping turns into a silent ghost order
+                    // (gateway thinks it's pending, ME never
+                    // sees it). Mirror the fill_prod pattern.
+                    // R-N2.
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let mut pending = order;
+                    loop {
+                        match order_prod.push(pending) {
+                            Ok(()) => break,
+                            Err(rtrb::PushError::Full(o)) => {
+                                pending = o;
+                                order_stalls = order_stalls
+                                    .wrapping_add(1);
+                                if order_stalls.is_power_of_two() {
+                                    warn!(
+                                        "order_prod full, \
+                                         stalling (count={})",
+                                        order_stalls,
+                                    );
+                                }
+                                shard.run_once(
+                                    &mut rings,
+                                    now_secs,
+                                );
+                            }
+                        }
                     }
                 }
                 RECORD_CANCEL_REQUEST
