@@ -1,90 +1,105 @@
 # rsx-dxs: Protocol Comparisons
 
-State-of-the-art survey for reliable messaging over UDP. One file per
-protocol; benchmark code lives in `../benches/compare_*.rs`.
+Five serious competitors, judged on **speed** and **features**.
+Supporting-cast protocols (TCP, raw UDP, KCP, SoupBinTCP, ITCH,
+OUCH, gossip / FEC / log) have their own benches and docs for
+completeness — see the supporting-cast section at the bottom.
 
-## What rsx-dxs does
+## What rsx-dxs is
 
-- **Hot path**: CMP/UDP — NAK-based reliable unicast, `#[repr(C)]`
-  fixed-size frames, zero heap on send path, two-tier retransmit.
-- **Cold path**: WAL TCP replay — same binary record layout on disk
-  and wire, retransmit horizon = WAL retention (48 h).
-- **Key claim**: the WAL is not just a retransmit buffer; it is the
-  exchange audit log, the backtesting dataset, and the ML training
-  data source — all at once, with zero transformation.
+- NAK-based reliable UDP unicast (CMP), `#[repr(C)]` fixed-size
+  frames, two-tier retransmit (in-memory ring → on-disk WAL).
+- WAL is the wire format is the audit log. One bytestream, three
+  uses (live, replay, archive). No transformation between them.
+- TCP cold-path replay for catch-up; same record layout.
 
-## Summary table
+## The five serious competitors
 
-| Protocol | Transport | Loss detection | Retransmit source | Latency regime | Language |
-|---|---|---|---|---|---|
-| [raw-udp](raw-udp.md) | UDP | app-layer | — | ~2 µs loopback | any |
-| [rsx-dxs CMP](../README.md) | UDP unicast | NAK (receiver) | hot ring + cold WAL | ~4 µs send body, ~10 µs RTT | Rust |
-| [tcp](tcp.md) | TCP | ACK (cumulative) | in-flight window | ~12–18 µs loopback (std spin), ~100–1 000 µs (tokio) | any |
-| [kcp](kcp.md) | UDP | ACK (sender) | in-memory snd_buf | ~17 µs spin / ~11 ms timer (`compare_kcp`, 128 B loopback); ~25–300 ms (WAN) | C / Rust |
-| [quinn](quinn.md) | QUIC/UDP | ACK (packet-number ranges) | in-memory | ~37 µs persistent loopback (`compare_quinn`, 128 B); 25–400 µs published | Rust |
-| [aeron](aeron.md) | UDP uni+multi+IPC | NAK (receiver) | in-memory term buffers | ~21 µs P50 (AWS c6in.16xlarge), ~305 µs (our 6-core box) | Java/C++ |
-| [moldudp64](moldudp64.md) | UDP multicast | NAK (receiver) | separate request server | ~10 µs loopback (this repo) | any |
-| [soupbintcp](soupbintcp.md) | TCP | ACK (cumulative, kernel TCP) | TCP retransmit + session replay | ~15 µs loopback (this repo) | any |
-| [itch5](itch5.md) | (payload format, runs over moldudp64 / soupbintcp) | n/a | n/a | n/a | any |
-| [ouch](ouch.md) | (payload format, runs over soupbintcp) | n/a | n/a | n/a | any |
-| [chronicle-queue](chronicle-queue.md) | mmapped files / TCP | n/a (durable log) | disk | sub-µs IPC | Java |
-| [lbm](lbm.md) | UDP multicast | NAK (receiver) | in-memory window | ~1–5 µs LAN | C (commercial) |
+### Speed (loopback p50, this 6-core Ryzen, payload 64–128 B)
 
-## Benchmark approach
+| Protocol | Measured here | Published / pinned |
+|---|---:|---|
+| **CMP (rsx-dxs)** | **~10 µs** | — |
+| **MoldUDP64** | ~10 µs | matches CMP shape, NAK + separate request server |
+| **Aeron** (UDP) | ~305 µs | 21 µs (AWS c6in.16xlarge, pinned cores) |
+| **Aeron** (IPC) | 830 ns | sub-µs IPC, JVM warmup excluded |
+| **Quinn / QUIC** | ~37 µs | 25–400 µs (Cloudflare / Google QUIC) |
+| **Chronicle Queue** (Java) | — (doc only) | sub-µs IPC published, mmap-shared |
+| **LBM** (commercial) | — (closed-source) | ~1–5 µs LAN, vendor whitepapers |
 
-All benchmarks: loopback on the same host. Comparison benches
-(`compare_kcp`, `compare_quinn`) use a 128-byte payload to match
-CMP's `FillRecord` (`mem::size_of::<FillRecord>() == 128`); older
-benches that pre-date this alignment may still use 64 bytes.
-Criterion with sample_size=50 on the compare benches.
+Numbers below 30 µs from local benches are dominated by the
+`sendto` syscall (~4 µs) and unpinned-thread scheduler noise.
+See [`facts/cmp-vs-udp-overhead.md`](../../facts/cmp-vs-udp-overhead.md)
+for the attribution breakdown.
+
+### Features
+
+| Property | CMP/DXS | Aeron | MoldUDP64 | Quinn (QUIC) | Chronicle Queue | LBM |
+|---|---|---|---|---|---|---|
+| Loss detection | NAK (receiver) | NAK (receiver) | NAK (receiver) | ACK (packet-num ranges) | n/a (durable log) | NAK (receiver) |
+| Retransmit source | hot ring + WAL | term buffers (RAM) | separate request server | in-memory window | disk | in-memory window |
+| Retransmit horizon | WAL retention (48 h default) | ~192 MB RAM | request server policy | in-flight window | disk retention | RAM-bounded |
+| Durability | **wire = disk format** | Aeron Archive (separate) | external | none | mmap files | external |
+| Multi-receiver | unicast only | unicast + multicast + IPC | multicast | unicast | multi-reader via mmap | multicast + unicast |
+| Connection model | connection-less | connection-less | connection-less | TLS 1.3 handshake | mmap session | session |
+| FEC | — | optional | — | — | — | — |
+| Wire format | 16-byte header, repr(C) | 32-byte header, term offsets | 20-byte header | variable QUIC frames | self-describing | proprietary |
+| Language | Rust | Java + C++ | any (public spec) | Rust | Java/Kotlin | Java + C |
+| License | open (project) | Apache 2.0 | public spec, free to implement | Apache 2.0 | Apache 2.0 | commercial (no public bench) |
+
+### One-paragraph framing
+
+- **Aeron** — direct design ancestor. Same NAK+UDP-unicast philosophy,
+  decade-plus of HFT production. Separates archive (Aeron Archive) from
+  the transport; rsx-dxs fuses them.
+- **MoldUDP64** — Nasdaq's UDP wire protocol for ITCH market data,
+  production-deployed at exchange scale. Public spec — anyone can
+  implement and bench. Closest published peer to CMP's wire shape.
+- **Quinn / QUIC** — the modern "what about QUIC?" answer. ACK-based
+  with congestion control, mandatory TLS, multiplexed streams. Real
+  benefits (NAT traversal, mobile mobility) we don't need on an
+  exchange LAN; real costs (handshake + CC state machine) we don't want.
+- **Chronicle Queue** — persistent-log-as-transport peer on the **other
+  axis**. Where CMP is UDP-over-network, Chronicle is mmap-over-shared-pages.
+  Sub-µs IPC. Java-only, single-host (open-source); cross-host needs
+  Chronicle Enterprise (commercial).
+- **LBM (Informatica UM)** — the commercial gold standard. Same NAK+UDP
+  family. Documented for context; cannot legitimately benchmark (see
+  [`facts/closed-source-messaging.md`](../../facts/closed-source-messaging.md)
+  on the DeWitt clause).
+
+## Running the benches
 
 ```bash
-# Run all comparisons
-cargo bench -p rsx-dxs --bench compare_kcp
-cargo bench -p rsx-dxs --bench compare_quinn
-cargo bench -p rsx-dxs --bench compare_tcp
-cargo bench -p rsx-dxs --bench compare_aeron
-cargo bench -p rsx-dxs --bench compare_moldudp64
-cargo bench -p rsx-dxs --bench compare_soupbintcp
-
-# Raw UDP baseline (already exists)
-cargo bench -p rsx-dxs --bench compare_udp
+cargo bench -p rsx-dxs --bench 'compare_*'
 ```
 
-Loss simulation (requires root):
+For loss-behavior testing (root required, exposes TCP head-of-line
+blocking and CMP NAK recovery under realistic loss):
+
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
-cargo bench ...
+cargo bench -p rsx-dxs --bench 'compare_*'
 sudo tc qdisc del dev lo root
 ```
 
-## Why these protocols
+## Supporting cast
 
-- **raw-udp**: absolute floor — anything above this is protocol overhead.
-- **TCP**: stream baseline; used in rsx-dxs cold path (WAL replay). Answers
-  "why not TCP for live orders?" with a number.
-- **KCP**: most-cited "reliable UDP" alternative in open source; ACK-based;
-  designed for WAN/gaming. Answers "why not KCP?"
-- **Quinn (QUIC)**: answers "why not QUIC?" Mandatory TLS + connection
-  handshake + congestion control — measurable on loopback.
-- **Aeron**: the direct design ancestor of CMP. Loopback bench via the
-  rusteron C media driver (no JVM needed). Apples-to-apples is hard
-  because Aeron's UDP path includes a driver-IPC hop CMP doesn't have;
-  the doc spells out the methodology and published reference numbers.
-- **MoldUDP64**: Nasdaq's UDP dissemination protocol for ITCH market data.
-  Closest published peer to CMP's wire shape — UDP + seq + receiver-side
-  NAK to a separate request server. Answers "how does a real exchange UDP
-  feed protocol frame data, and what does it cost on loopback?"
-- **SoupBinTCP**: Nasdaq's reliable TCP framing for OUCH order entry and
-  TCP-side ITCH. Closest peer to DXS TCP cold path. Answers "what does
-  the Nasdaq TCP framing cost vs raw TCP?"
-- **ITCH 5.0 / OUCH 5.0**: payload formats (not transports) carried over
-  MoldUDP64 and SoupBinTCP respectively. Doc-only entries that explain
-  the transport ↔ message split and size up the records against CMP.
-- **Chronicle Queue / LBM**: design comparisons only (Java / commercial).
+These are benched for completeness; they're not the framing comparison:
+
+| Protocol | Doc | Bench | Why it's not in the main five |
+|---|---|---|---|
+| raw UDP | [raw-udp.md](raw-udp.md) | `compare_udp` | Baseline floor, not a competitor |
+| TCP | [tcp.md](tcp.md) | `compare_tcp` | rsx-dxs uses TCP for cold-path replay, not live |
+| KCP | [kcp.md](kcp.md) | `compare_kcp` | Gaming RUDP; Quinn is the same family more credibly |
+| SoupBinTCP | [soupbintcp.md](soupbintcp.md) | `compare_soupbintcp` | TCP + 3-byte framing; cost is within TCP noise |
+| ITCH 5.0 | [itch5.md](itch5.md) | (payload format) | Application-layer message format over MoldUDP64 |
+| OUCH 5.0 | [ouch.md](ouch.md) | (payload format) | Application-layer message format over SoupBinTCP |
 
 ## Long-tail census
 
-See [niche.md](niche.md) for a deeper census of NAK/ACK reliable UDP,
-persistent-log-as-transport, kernel-bypass, multicast, and gossip
-projects that don't (yet) have their own deep doc.
+See [`niche.md`](niche.md) for ~70 further projects across NAK/ACK
+reliable UDP, persistent-log-as-transport, kernel-bypass, multicast,
+FEC (Solana Turbine), gossip (SWIM/HyParView), and per-language libs.
+Includes a 10-candidate promotion shortlist (NORM, TigerBeetle,
+Apache Iggy, netcode.io, iceoryx2).
