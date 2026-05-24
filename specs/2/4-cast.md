@@ -81,7 +81,7 @@ struct WalHeader {        // 16 bytes, manual encode
     record_type: u16,     // see RECORD_* constants
     len: u16,             // payload length in bytes
     _pad1: u16,           // reserved, must be zero
-    crc32: u32,           // CRC32 IEEE of payload
+    crc32: u32,           // CRC32C (Castagnoli) of payload
     _reserved: [u8; 4],   // reserved, must be zero
 }
 ```
@@ -117,12 +117,13 @@ cache-line-sized.
 
 ### CRC
 
-`crc32` is CRC32 IEEE (zlib polynomial, via the `crc32fast`
-crate) over the payload only — **not** over the header.
-Receivers recompute and discard mismatches silently. This
-catches bit errors on the wire, not malicious tampering;
-casting has no authentication. See `rsx-cast/notes/crc.md`
-for why IEEE rather than CRC32C.
+`crc32` is CRC32C (Castagnoli polynomial, via the `crc32c`
+crate; SSE4.2 hardware path) over the payload only —
+**not** over the header. ~1 cycle per 8 bytes on x86_64
+(~3× the IEEE polynomial under PCLMULQDQ). Receivers
+recompute and discard mismatches silently. This catches
+bit errors on the wire, not malicious tampering; casting
+has no authentication.
 
 ### Endianness and platform
 
