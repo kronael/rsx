@@ -16,7 +16,7 @@ Specs: `specs/2/17-matching.md`, `specs/2/45-tiles.md` §3.1.
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 5-minute sliding-window duplicate detection |
 | `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` — Postgres config polling |
-| `wal_integration.rs` | `write_events_to_wal()`, `flush_if_due()` |
+| `wal_integration.rs` | `publish_events()`, `flush_if_due()`, `write_events_to_wal()` (replay + bench helper) |
 
 ## Tile Shape (Degenerate Tile)
 
@@ -35,21 +35,20 @@ Tight busy-spin on the pinned core (`main.rs:403`):
 
 ```
 loop {
-    1. cmp_receiver.try_recv()      // OrderRequest or CancelRequest from risk
-    2. dedup.check_and_insert()     // 5-minute sliding window
-    3. wal.append(ORDER_ACCEPTED)   // authoritative — panic on err
-    4. process_new_order(book)      // match against book; events in fixed buffer
-    5. write_events_to_wal()        // authoritative — panic on err
-    6. update_order_index(events)   // O(1) cancel index maintenance
-    7. cmp_sender.send_event() x N  // fan-out to risk (best-effort)
-    8. mkt_sender.send_event() x N  // fan-out to marketdata (best-effort)
-    9. flush_if_due(wal, 10ms)      // periodic WAL flush
-   10. poll_scheduled_configs()     // every 10 minutes (Postgres)
+    1. cast_receiver.try_recv()       // OrderRequest or CancelRequest from risk
+    2. dedup.check_and_insert()       // 5-minute sliding window
+    3. wal.append_framed(ORDER_ACCEPTED) // authoritative — panic on err
+    4. process_new_order(book)        // match against book; events in fixed buffer
+    5. publish_events()               // one-CRC fan-out: WAL + cast(risk) + cast(mkt)
+    6. update_order_index(events)     // O(1) cancel index maintenance
+    7. flush_if_due(wal, 10ms)        // periodic WAL flush
+    8. poll_scheduled_configs()       // every 10 minutes (Postgres)
 }
 ```
 
 Cancels share the loop: `process_cancel()` consults
-`order_index` for O(1) slab lookup, then re-runs steps 4-8.
+`order_index` for O(1) slab lookup, then runs steps 4-6 via
+the same `publish_events` fan-out.
 
 ## O(1) Cancel Index
 
