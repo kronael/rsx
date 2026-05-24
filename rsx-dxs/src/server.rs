@@ -26,7 +26,6 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
@@ -102,18 +101,14 @@ impl DxsReplayService {
                 {
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
-                            handle_client_tls(
-                                svc,
-                                tls_stream,
-                            )
-                            .await
+                            handle_client(svc, tls_stream).await
                         }
                         Err(e) => Err(io::Error::other(
                             format!("tls handshake failed: {}", e),
                         )),
                     }
                 } else {
-                    handle_client_plain(svc, stream).await
+                    handle_client(svc, stream).await
                 };
                 if let Err(e) = result {
                     warn!(
@@ -124,22 +119,6 @@ impl DxsReplayService {
             });
         }
     }
-}
-
-async fn handle_client_plain(
-    svc: Arc<DxsReplayService>,
-    stream: TcpStream,
-) -> io::Result<()> {
-    handle_client(svc, stream).await
-}
-
-async fn handle_client_tls(
-    svc: Arc<DxsReplayService>,
-    stream: tokio_rustls::server::TlsStream<
-        TcpStream,
-    >,
-) -> io::Result<()> {
-    handle_client(svc, stream).await
 }
 
 async fn handle_client<S>(
