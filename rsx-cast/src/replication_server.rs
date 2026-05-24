@@ -1,20 +1,4 @@
-//! Replication — TCP catch-up server (the producer side).
-//!
-//! `ReplicationService` accepts TCP connections, parses a
-//! `ReplicationRequest`, and either refuses with
-//! `RECORD_REPLICATION_NOT_AVAILABLE` (when the requested
-//! `from_seq` is below this node's oldest on-disk seq) or
-//! streams WAL records in two phases:
-//!
-//! 1. Historical: drains the WAL from `from_seq` until the
-//!    file tail.
-//! 2. Live tail: subscribes to the `WalWriter` and forwards
-//!    each new record as it lands on disk, until the client
-//!    disconnects.
-//!
-//! The boundary record is `RECORD_CAUGHT_UP`. Optional TLS
-//! per `TlsConfig` for cross-DC replication. See
-//! `specs/10-replication.md`.
+//! `ReplicationService`: TCP catch-up server. See `specs/10-replication.md`.
 
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;

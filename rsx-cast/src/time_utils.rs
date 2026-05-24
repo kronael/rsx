@@ -1,8 +1,4 @@
-//! Time helpers local to rsx-cast.
-//!
-//! `rsx-cast` cannot depend on `rsx-types` (zero-dep transport
-//! invariant; see crate-root CLAUDE.md). So we keep a tiny
-//! local `time_ns` rather than reaching across.
+//! `time_ns`: wall-clock helper. Local copy — `rsx-cast` has no workspace deps.
 
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
