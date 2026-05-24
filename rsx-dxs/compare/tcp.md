@@ -44,7 +44,9 @@ by `TCP_NODELAY`. Without nodelay, the bench measures Nagle's
 | Retransmit source | In-flight window (RAM only) | Hot ring + cold WAL (48 h) |
 | Connection setup | 3-way handshake (1 RTT) | None — `sendto`, zero setup |
 | Congestion control | CUBIC/BBR (kernel) | None (trusted LAN) |
-| Head-of-line blocking | Yes (single byte stream) | Per-stream only |
+| Head-of-line blocking | Yes (at API; lost segment freezes later in-flight bytes until retransmit) | Yes (at API; reorder_buf delays delivery until gap fills) |
+| Gap-detection latency on busy stream | 3 dup-ACKs → fast retransmit | 1 packet arrival → immediate NAK |
+| Gap-detection latency on idle stream | RTO timer (Linux min ~200 ms) | next heartbeat → immediate NAK |
 | Durability | None | WAL on disk |
 
 ## Why CMP uses TCP for cold path but not hot
@@ -72,12 +74,29 @@ constraints:
   handshake alone burns a budget on every reconnect.
 - Multiple independent streams (one per symbol, multiple
   consumers). TCP forces them through one byte stream and
-  head-of-line-blocks across symbols.
+  head-of-line-blocks across symbols (CMP gives one socket
+  per symbol stream, so gaps in symbol A don't block B).
+- Faster gap recovery on idle streams: CMP's heartbeat
+  detects gaps without waiting for new data; TCP needs
+  RTO_min (~200 ms on Linux). On busy streams both recover
+  in ~1 RTT, but CMP fires NAK on the first out-of-order
+  arrival while TCP needs 3 duplicate ACKs.
 - Loss is rare on a trusted 10 GbE fabric. NAK from the
   receiver costs zero on the no-loss path; ACK from the
   receiver costs a packet per message regardless.
 - Congestion control has nothing to do — the fabric has
   fixed capacity, not a competing flow problem.
+
+**On head-of-line blocking, honestly.** A CMP receiver
+holds out-of-order packets in `reorder_buf` (default 512
+slots) and returns `None` from `try_recv()` until the gap
+is filled — same end-result as TCP at the API. The wins
+above are about *how fast* the gap is filled, not about
+delivering out-of-order data. Within one CMP stream FIFO
+is the contract (specs/2/6-consistency.md §"Across
+consumers"). The single-stream-per-symbol design is what
+lets order flow on symbol A keep moving when symbol B
+drops a packet.
 
 Measured penalty depends on the I/O model. Kernel-blocking
 TCP with `TCP_NODELAY` + spin (this bench) costs ~12–18 µs
