@@ -1,5 +1,62 @@
 # Changelog
 
+## [rsx-dxs v0.3.1] — 2026-05-24
+
+Follow-ups to the v0.3.0 reliability sprint. No wire format
+or `WalHeader.version` change; receiver API unchanged.
+
+### Changes
+
+- **`CmpConfig::reorder_buf_limit` removed.** The receiver's
+  reorder buffer became a fixed 2048-slot compile-time ring
+  in v0.3.0 (commit `c89d164`); the config field stayed for
+  `from_env` back-compat but wasn't read anywhere. Dropped
+  the field, the `RSX_CMP_REORDER_BUF_LIMIT` env-var read,
+  and the corresponding row in the parameter table. No
+  migration needed — the field was already inert.
+- **`reset_after_replay` monotonicity invariant documented.**
+  The code already guarded against lowering `highest_seen`
+  (the `if self.highest_seen < new_tip + 1` block); the
+  invariant is now spelled out in the rustdoc and in both
+  spec copies (`specs/2/4-cmp.md` + `rsx-dxs/specs/4-cmp.md`,
+  "Reset semantics" subsection). Lowering `highest_seen`
+  would re-arm the gap detector against seqs the consumer
+  already applied via replay and could cause silent
+  re-delivery — a FIFO violation. `expected_seq` still
+  always jumps to `new_tip + 1`; that's the live resume
+  point.
+- **`rsx-matching` recovers from `CmpRecv::Faulted` via DXS
+  replay (POC).** The matching tile no longer panics on
+  FAULTED. It opens a `DxsConsumer` against the risk
+  producer (env: `RSX_ME_REPLAY_DXS_ADDR`), drains Phase 1
+  until `RECORD_CAUGHT_UP`, applies each `OrderRequest` /
+  `CancelRequest` through the same book + dedup + WAL path
+  the live tail uses, then calls `reset_after_replay`.
+  Helpers live in `rsx_matching::replay` and are exercised
+  end-to-end by `rsx-matching/tests/replay_after_fault_test.rs`
+  against a real `DxsReplayService` over loopback TCP.
+
+  Other consumers (`rsx-risk`, `rsx-marketdata`,
+  `rsx-gateway`) still **panic** on `Faulted`, but with a
+  unified message pointing at `rsx-matching` as the
+  reference implementation:
+
+  ```
+  FAULTED: DXS replay path not yet wired here;
+  see rsx-matching for the POC reference impl
+  ```
+
+  Per-consumer wiring is tracked as future work.
+
+### Spec amendments
+
+- `specs/2/4-cmp.md` "Reset semantics" subsection added
+  under "Three-tier delivery contract".
+- `rsx-dxs/specs/4-cmp.md` standalone copy brought up to v4:
+  reorder ring, FAULTED, three-tier delivery, reset
+  semantics, refreshed config table. The pre-v4 BTreeMap +
+  flow-control sections are gone.
+
 ## [rsx-dxs v0.3.0] — 2026-05-24
 
 CMP reliability v4 — three real bugs in `rsx-dxs/src/cmp.rs`
