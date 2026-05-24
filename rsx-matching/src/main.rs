@@ -512,17 +512,52 @@ fn main() {
         {
             // Per CMP v4 contract: FAULTED means an
             // unrecoverable gap inside the in-band recovery
-            // horizon. Matching must NOT silently advance
-            // past lost orders. Crash so the supervisor
-            // restarts us and we replay via WAL/DXS.
-            panic!(
-                "cmp faulted: last_delivered={} gap=[{}..={}] \
-                 — matching engine cannot proceed; restart \
-                 will recover via WAL replay",
+            // horizon. Recover out-of-band via DXS/TCP replay
+            // from `last_delivered_seq + 1`, then reset the
+            // CMP receiver and resume live UDP delivery.
+            warn!(
+                "matching tile FAULTED at seq={}, opening \
+                 DXS replay from seq={} (gap=[{}..={}])",
                 last_delivered_seq,
+                last_delivered_seq + 1,
                 gap_start,
                 gap_end_inclusive,
             );
+            let replay_addr = env::var(
+                "RSX_ME_REPLAY_DXS_ADDR",
+            )
+            .expect(
+                "FAULTED requires RSX_ME_REPLAY_DXS_ADDR \
+                 pointing at the risk producer's DXS server",
+            );
+            let tip_file = PathBuf::from(&wal_dir).join(
+                format!(
+                    "me_{}_replay_tip.bin", symbol_id,
+                ),
+            );
+            let new_tip = rsx_matching::replay::drain_dxs_replay_into_book(
+                &rt,
+                &mut book,
+                &mut order_index,
+                &mut dedup,
+                &mut wal_writer,
+                symbol_id,
+                replay_addr,
+                last_delivered_seq,
+                tip_file,
+            )
+            // SAFETY: drain failure is unrecoverable for
+            // the POC — supervisor restarts will then take
+            // the normal cold-start replay path. Production
+            // wiring should add bounded retries here.
+            .expect("dxs replay drain failed");
+            cmp_receiver.reset_after_replay(new_tip);
+            info!(
+                "matching tile recovered via DXS replay, \
+                 new_tip={}, resuming live UDP",
+                new_tip,
+            );
+            continue;
         }
         if let CmpRecv::Data(hdr, payload) = recv {
             if hdr.record_type == RECORD_ORDER_REQUEST
@@ -1146,6 +1181,7 @@ fn process_cancel(
         }
     }
 }
+
 
 /// Send events to Marketdata -- Fill, OrderInserted,
 /// OrderCancelled only. OrderDone excluded per MD20.
