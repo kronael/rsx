@@ -7,6 +7,21 @@ Log-backed reliable UDP transport (CMP) + TCP cold-path replay
 step. NAK retransmits read from the WAL itself, so the
 retransmit horizon equals **log retention**, not buffer size.
 
+## How fast
+
+| Operation | p50 |
+|---|---:|
+| `WalWriter::append` (in-memory) | **31 ns** |
+| `CmpSender::send` body | **3.87 µs** (99% `sendto` syscall) |
+| `CmpSender → CmpReceiver` one-way (loopback) | **3.95 µs** |
+| Round-trip (sender → echo → sender) | **10.3 µs** |
+| `WalWriter::flush + fsync` (durability) | **651 µs** (amortised over 10 ms batch) |
+| Cold-tier NAK retransmit (`read_record_at_seq`) | **23.5 ms @ 10 K records** |
+
+Source: `cargo bench --workspace`. Detailed attribution in
+[../docs/benches.md](../docs/benches.md) (project-level) and
+[ARCHITECTURE.md](ARCHITECTURE.md) (this crate).
+
 ## Why this exists
 
 Inside an exchange, every microsecond of encoding is a
@@ -67,6 +82,27 @@ The receive path (`CmpReceiver::try_recv`) currently
 allocates one `Vec<u8>` per in-order packet; a zero-copy
 variant (caller-supplied `&mut [u8]`) is future work.
 
+## Install
+
+```toml
+[dependencies]
+rsx-dxs = { git = "https://github.com/kronael/rsx" }
+```
+
+Or as a workspace member if you've vendored the repo:
+
+```toml
+[dependencies]
+rsx-dxs = { path = "path/to/rsx-dxs" }
+```
+
+A standalone working example lives in
+[examples/cmp_smoke.rs](examples/cmp_smoke.rs). Run it:
+
+```bash
+cargo run --example cmp_smoke
+```
+
 ## Quick start (sender)
 
 ```rust
@@ -107,8 +143,14 @@ loop {
 
 ## See also
 
-- `specs/2/4-cmp.md` — protocol spec, byte-exact
-- `specs/2/48-wal.md` — WAL flush rules, retention, rotation
-- `specs/2/10-dxs.md` — TCP replay protocol details
-- `blog/cmp.md` — design narrative
-- `rsx-messages/` — RSX exchange domain records on top of this
+- [ARCHITECTURE.md](ARCHITECTURE.md) — this crate's internal design
+- [`../specs/2/4-cmp.md`](../specs/2/4-cmp.md) — protocol spec, byte-exact
+- [`../specs/2/48-wal.md`](../specs/2/48-wal.md) — WAL flush rules, retention, rotation
+- [`../specs/2/10-dxs.md`](../specs/2/10-dxs.md) — TCP replay protocol details
+- [`../specs/2/35-testing-cmp.md`](../specs/2/35-testing-cmp.md) + [`../specs/2/36-testing-dxs.md`](../specs/2/36-testing-dxs.md) — test specs
+- [`../rsx-messages/`](../rsx-messages/) — RSX exchange domain records built on top
+- [`../facts/syscall-latency.md`](../facts/syscall-latency.md) — why the `sendto` floor is what it is
+
+## License
+
+MIT OR Apache-2.0 at your option.
