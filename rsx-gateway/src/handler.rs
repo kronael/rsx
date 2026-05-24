@@ -494,13 +494,17 @@ pub async fn handle_connection(
                 {
                     let mut sender =
                         cmp_sender.borrow_mut();
-                    if let Err(e) = sender.send_raw(
+                    match sender.send_raw(
                         RECORD_ORDER_REQUEST,
                         bytes,
                     ) {
-                        warn!("gateway: forward order to risk failed: {e}");
+                        Ok(_) => sender.advance_seq(),
+                        Err(e) => {
+                            warn!("gateway: forward order to risk failed: {e}");
+                            // seq NOT advanced: NAK ring and
+                            // peer's expected-seq stay aligned.
+                        }
                     }
-                    sender.advance_seq();
                 }
                 state
                     .borrow_mut()
