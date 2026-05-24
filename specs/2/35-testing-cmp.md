@@ -42,7 +42,7 @@ tracks implementation progress.
 |----|-------------|---------|--------|
 | C6 | One WAL record per UDP datagram | `sender_one_record_per_udp_datagram` | ☐ |
 | C7 | Monotonic next_seq, assigned per send | `sender_assigns_monotonic_seq` | ☐ |
-| C8 | Heartbeat sent every 10ms | `sender_heartbeat_sent_every_10ms`, `sender_heartbeat_contains_highest_seq` | ☐ |
+| C8 | Heartbeat sent only when idle ≥ `heartbeat_interval_ms` (default 100ms); data sends reset the timer | `sender_heartbeat_sent_on_idle`, `sender_heartbeat_suppressed_by_recent_send`, `sender_heartbeat_contains_highest_seq` | ☐ |
 | C9 | Flow control: won't send beyond consumption_seq + receiver_window | `sender_respects_flow_control_window`, `sender_stalls_when_window_exhausted` | ☐ |
 | C10 | On Nak: fetch from WAL, resend as normal data | `sender_handles_nak_fetches_from_wal`, `sender_retransmit_is_normal_data_record` | ☐ |
 | C12 | Retransmits are normal data records (no special type) | `sender_retransmit_is_normal_data_record` | ☐ |

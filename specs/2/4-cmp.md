@@ -552,7 +552,7 @@ CmpConfig (`rsx-dxs/src/config.rs`):
 | Field                   | Default | Meaning                              |
 |-------------------------|---------|--------------------------------------|
 | `default_window`        | 65 536  | seq-delta flow-control window        |
-| `heartbeat_interval_ms` | 10      | sender → receiver heartbeat period   |
+| `heartbeat_interval_ms` | 100     | max idle time before sender → receiver heartbeat; data sends reset the timer (heartbeats are only emitted when the stream is idle) |
 | `status_interval_ms`    | 10      | receiver → sender status period      |
 | `reorder_buf_limit`     | 512     | receiver-side reorder buffer slots   |
 | `send_ring_limit`       | 4 096   | sender-side retransmit cache slots   |
