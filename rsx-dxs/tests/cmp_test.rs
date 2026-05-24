@@ -8,7 +8,6 @@ use rsx_dxs::records::Nak;
 use rsx_messages::FillRecord;
 use rsx_dxs::records::RECORD_NAK;
 use rsx_messages::RECORD_FILL;
-use rsx_dxs::records::StatusMessage;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::thread;
@@ -108,38 +107,10 @@ fn sender_seq_increments() {
     assert_eq!(sender.next_seq(), 3);
 }
 
-#[test]
-fn status_message_updates_sender_window() {
-    let _tmp = TempDir::new().unwrap();
-    let (mut sender, _receiver) = loopback_pair(_tmp.path());
-    let msg = StatusMessage {
-        consumption_seq: 42,
-        receiver_window: 1024,
-        _pad1: [0u8; 48],
-    };
-    sender.handle_status(&msg);
-    assert_eq!(sender.peer_consumption_seq(), 42);
-}
-
-#[test]
-fn flow_control_stalls_sender() {
-    let _tmp = TempDir::new().unwrap();
-    let (mut sender, _receiver) = loopback_pair(_tmp.path());
-    let msg = StatusMessage {
-        consumption_seq: 0,
-        receiver_window: 1,
-        _pad1: [0u8; 48],
-    };
-    sender.handle_status(&msg);
-
-    let mut fill = fill_payload(1);
-    let sent = sender.send(&mut fill).unwrap();
-    assert!(sent);
-
-    let mut fill2 = fill_payload(2);
-    let sent2 = sender.send(&mut fill2).unwrap();
-    assert!(!sent2);
-}
+// status_message_updates_sender_window + flow_control_stalls_sender
+// removed: StatusMessage/flow-control deleted (exchange-grade
+// transports don't have backpressure; consumers recover via DXS
+// replay, not by stalling the producer).
 
 #[test]
 fn receiver_expected_seq_advances() {
@@ -262,34 +233,8 @@ fn nak_retransmit_from_wal() {
     assert_eq!(decoded.seq, 1);
 }
 
-#[test]
-fn cmp_sender_window_exhausted_blocks() {
-    let _tmp = TempDir::new().unwrap();
-    let (mut sender, _receiver) = loopback_pair(_tmp.path());
-    let msg = StatusMessage {
-        consumption_seq: 0,
-        receiver_window: 3,
-        _pad1: [0u8; 48],
-    };
-    sender.handle_status(&msg);
-
-    for i in 1..=3u64 {
-        let mut fill = fill_payload(i);
-        let sent = sender.send(&mut fill).unwrap();
-        assert!(sent, "msg {} should send", i);
-    }
-
-    let mut fill4 = fill_payload(4);
-    let sent = sender.send(&mut fill4).unwrap();
-    assert!(
-        !sent,
-        "msg 4 should be blocked by window"
-    );
-
-    let mut fill5 = fill_payload(5);
-    let sent = sender.send(&mut fill5).unwrap();
-    assert!(!sent, "msg 5 should also block");
-}
+// cmp_sender_window_exhausted_blocks removed: flow-control window
+// no longer exists. send() never stalls.
 
 #[test]
 fn cmp_heartbeat_sent_on_idle() {
