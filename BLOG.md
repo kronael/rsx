@@ -18,10 +18,6 @@ Two artifacts in one repo:
    product and the load-bearing demo that proves `rsx-dxs`
    handles a non-trivial workload.
 
-The wedge is "open-source the orthogonal libraries that
-already exist, sell the exchange-in-a-box on top." See
-`specs/2/50-wedge.md` for the decision write-up.
-
 The design budget: under 50 microseconds from gateway ingress
 to gateway egress, under 500 nanoseconds for a match inside
 the matching engine. The match-engine number is measured
@@ -170,7 +166,7 @@ central broker, no topic partitions, no consumer groups. The
 WAL IS the log.
 
 WalWriter flushes every 10 milliseconds, rotates files at
-64MB, retains 10 minutes. Backpressure: if the buffer fills
+64MB, retains 48 hours. Backpressure: if the buffer fills
 or flush lag exceeds 10ms, the producer stalls. This is
 deliberate -- the matching engine waits rather than dropping
 events.
@@ -270,12 +266,12 @@ that performs confidence.
 
 ## What's Next
 
-The exchange runs end-to-end. The libraries underneath it are
-the product. Next: package `rsx-dxs` as a standalone consumable
-with a worked example of a non-exchange consumer (a metrics
-ingest pipeline is the obvious one — same characteristics, no
-domain overlap). Then the SDK layer that wraps the matching
-engine + risk + gateway as an embeddable "exchange-in-a-box"
-service. Distribution channel is a founder decision (this
-repo's policy is no external publishing without explicit
-sign-off; see CLAUDE.md "Publishing").
+The exchange runs end-to-end. The open questions we're actively
+working through: tile-architecture parity for gateway and
+marketdata (currently monoio reactors, not pinned cores);
+multicast fan-out for CMP v2 (one ME → N consumers, no
+per-receiver copy); measured GW→ME→GW p50/p99 under sustained
+load rather than the current component-sum estimate. The
+`rsx-dxs` transport layer is already domain-agnostic — the
+blog post will include a worked example of a non-exchange
+consumer using it.
