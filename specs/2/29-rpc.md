@@ -279,10 +279,13 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 - Error response uses ORDER_FAILED(OVERLOADED).
 - Goal: fail fast rather than allow latency to explode.
 
-### casting Flow Control (Secondary)
+### casting Flow Control (removed)
 
-- Receiver sends StatusMessage window every 10ms.
-- Sender stalls when `next_seq > consumption_seq + window`.
+Flow control with `StatusMessage` was dropped in `87b223e`.
+Receivers that can't keep up recover via NAK (in-band) or
+TCP replication (out-of-band); the sender does not stall.
+Application-level rate limiting (next section) is the
+primary backpressure mechanism.
 
 ### Application-Level Rate Limiting
 

@@ -27,8 +27,9 @@ communication. Messages are raw `#[repr(C)]` fixed records
 for prices and quantities. Streams are multiplexed by
 user_id and symbol (no per-user streams).
 
-Transport: casting/UDP (see NETWORK.md). Flow control via
-StatusMessage window + application backpressure.
+Transport: casting/UDP (see NETWORK.md). No flow control
+(removed in commit `87b223e`); receivers recover via NAK
+(in-band) or TCP replication (out-of-band).
 
 ## Order States
 
@@ -116,8 +117,8 @@ casting/UDP. All data payloads start with the casting prefix:
 
 Record layouts are defined in:
 - `rsx-messages` (domain wire records: Fill/BBO/Order*/Mark/Liquidation)
-- `rsx-cast::protocol` (transport control records: StatusMessage,
-  Nak, CastHeartbeat, ReplicationRequest, CaughtUpRecord)
+- `rsx-cast::records` (transport control records: Nak,
+  CastHeartbeat, ReplicationRequest, CaughtUpRecord)
 - per-service wire types (Gateway/Risk/Matching)
 
 ### Record Inventory
@@ -140,16 +141,19 @@ Domain records (`rsx-messages`), all `#[repr(C, align(64))]`:
 | `OrderFailedRecord` | 64 | `RECORD_ORDER_FAILED` | 12 |
 | `LiquidationRecord` | 64 | `RECORD_LIQUIDATION` | 13 |
 
-Transport records (`rsx-cast::protocol`), all
+Transport records (`rsx-cast::records`), all
 `#[repr(C, align(64))]`:
 
 | Record | Size | RECORD_* constant | Value |
 |--------|------|-------------------|-------|
 | `CaughtUpRecord` | 128 | `RECORD_CAUGHT_UP` | 6 |
-| `StatusMessage` | 64 | `RECORD_STATUS_MESSAGE` | 0x10 |
 | `Nak` | 64 | `RECORD_NAK` | 0x11 |
 | `CastHeartbeat` | 64 | `RECORD_HEARTBEAT` | 0x12 |
 | `ReplicationRequest` | 64 | `RECORD_REPLICATION_REQUEST` | 0x13 |
+
+`RECORD_STATUS_MESSAGE = 0x10` was retired in `87b223e`
+when flow control was dropped; the constant value stays
+reserved.
 
 Sizes/alignments are enforced by `const _: () = assert!(...)`
 compile-time checks in each crate. Domain values 0–13 share

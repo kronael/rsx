@@ -109,7 +109,7 @@ invalid record.
 - `RECORD_CONFIG_APPLIED`
 - `RECORD_CAUGHT_UP` (replay marker)
 - `RECORD_ORDER_ACCEPTED` (dedup record)
-- `RECORD_STATUS_MESSAGE` (casting control: flow control)
+- `RECORD_STATUS_MESSAGE` (reserved; retired in `87b223e`)
 - `RECORD_NAK` (casting control: gap detection)
 - `RECORD_HEARTBEAT` (casting control: liveness)
 - `RECORD_MARK_PRICE`
