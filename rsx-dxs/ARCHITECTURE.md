@@ -220,3 +220,21 @@ Recorder --[DXS/TCP]--> ME
 | Risk | Mark WAL | Mark price feed |
 | Marketdata | ME WAL | Shadow book bootstrap |
 | Recorder | ME WAL | Daily archival |
+
+## Architectural Decisions
+
+**Runtime: none — transport library.** `rsx-dxs` is
+domain-agnostic and runtime-agnostic. `CmpSender`,
+`CmpReceiver`, `WalWriter`, `WalReader` are synchronous types
+that the caller drives from whatever loop suits its needs.
+`DxsReplayService` and `DxsConsumer` expose blocking-style
+APIs and an async wrapper for callers on tokio.
+
+This is intentional: consumers pick the runtime that fits
+their stage. Matching engine drives `CmpSender` from a
+pinned tile loop with no reactor at all. Gateway and
+marketdata drive `CmpReceiver` from a monoio reactor.
+Recorder uses `DxsConsumer` from tokio. The transport sits
+under all three without preference. See
+[`../notes/tiles.md`](../notes/tiles.md) for the broader
+runtime landscape.
