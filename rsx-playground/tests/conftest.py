@@ -687,6 +687,25 @@ async def mock_pg_query_error():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_gateway_running(monkeypatch):
+    """Patch scan_processes so /api/orders/test sees gw-0 + me-pengu running.
+
+    CEO-2 added a 503 guard that requires gw-0 in scan_processes(). Gate-3
+    runs before Playwright starts RSX, so without this patch every order
+    test fails with 503. autouse so it applies to all files using this
+    conftest.
+    """
+    _fake = [
+        {"name": "gw-0",     "pid": 99991, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+        {"name": "me-pengu", "pid": 99992, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+    ]
+    monkeypatch.setattr(server, "scan_processes", lambda: _fake)
+    yield
+
+
 @pytest.fixture
 def running_process(monkeypatch):
     """Mock a running process in managed dict.
