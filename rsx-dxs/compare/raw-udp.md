@@ -59,17 +59,24 @@ CMP builds on raw UDP. The cost of CMP above this baseline is:
 - Periodic NAK / heartbeat / StatusMessage processing
 - Sequence number assignment and `peer_consumption_seq` flow control
 
-Measured overhead (loopback, 64 B payload):
+Measured overhead (loopback, 64-128 B payload, this host on 2026-05-24):
 
 ```
-raw UDP RTT      ~2.0 µs  (baseline, compare_udp)
-CMP send body    ~3.87 µs  (one-way; cmp_send_breakdown_bench)
-CMP RTT          ~10.3 µs  (round-trip; cmp_rtt_bench)
+raw UDP RTT      9.89 – 11.80 µs  (compare_udp, --sample-size 30)
+CMP RTT          10.45 – 17.28 µs  (cmp_rtt_bench, --sample-size 30)
+CMP send body    ~4.10 µs  (one-way; cmp_send_breakdown_bench)
+  └─ sendto syscall: 4.07 µs (99.4%)
+  └─ userspace (CRC32 + framing + ring copy): ~26 ns
 ```
 
-CMP adds ~1.9 µs per send over raw UDP on the hot path. The
-dominant cost is the `sendto` syscall (~3.85 µs measured in
-dfe2ef4), not CMP protocol overhead.
+**The earlier "~2 µs" raw-UDP baseline claim was wrong** for this
+host — see `facts/cmp-vs-udp-overhead.md` for the full
+measurement, attribution, and walk-back. Summary: the `sendto`
+syscall dominates 99 % of CMP's per-send cost; CMP's userspace
+work (CRC32 + WalHeader + ring cache) adds ~26 ns, not microseconds.
+
+Benches don't currently pin cores — fix planned. Numbers will
+tighten once that lands.
 
 ## Benchmark
 
