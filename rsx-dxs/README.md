@@ -178,16 +178,114 @@ no-op, but call-site stable for forward compat).
 ## Quick start (receiver)
 
 ```rust
-use rsx_dxs::CmpReceiver;
+use rsx_dxs::{CmpReceiver, CmpRecv};
 
 let mut rx = CmpReceiver::new(bind_addr, sender_addr, stream_id)?;
 loop {
     rx.tick();   // forward-compat hook; cheap, no-op today
-    while let Some((hdr, payload)) = rx.try_recv() {
-        // dispatch by hdr.record_type — transport doesn't care
+    match rx.try_recv() {
+        CmpRecv::Data(hdr, payload) => {
+            // dispatch by hdr.record_type — transport doesn't care
+        }
+        CmpRecv::Empty => {}
+        CmpRecv::Faulted { last_delivered_seq, .. } => {
+            // gap too big for in-band recovery; see Pattern A below
+            // for the canonical DXS-replay-then-reset response.
+            break;
+        }
     }
 }
 ```
+
+## Consumer patterns
+
+Two canonical patterns. Pick one per stream; **don't mix
+them for the same stream**.
+
+### Pattern A — live-latency consumer (TCP bootstrap, UDP live)
+
+For consumers that need µs-class latency on the live tail
+(risk shards, marketdata, mark). Lifecycle:
+
+```
+                                              fault?
+                                                ▲
+ ┌──────────────┐    ┌──────────────┐    ┌─────┴────────┐
+ │ TCP catch-up │───►│ UDP live     │───►│ TCP catch-up │──► UDP live ─►
+ │ (DxsConsumer)│    │ (CmpReceiver)│    │ from new tip │
+ └──────────────┘    └──────────────┘    └──────────────┘
+   Phase 1, until        steady state         on FAULTED:
+   CaughtUpRecord        — listen UDP         drain TCP to
+                                              current, resume UDP
+```
+
+```rust
+use rsx_dxs::{DxsConsumer, CmpReceiver, CmpRecv};
+
+// 1. Bootstrap: drain historical via TCP from last-persisted tip.
+let mut dxs = DxsConsumer::new(stream_id, dxs_addr.clone(),
+                               tip_file.clone(), None)?;
+dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
+// TCP closes here. Steady state has zero TCP per consumer.
+
+// 2. Live: listen UDP.
+let mut rx = CmpReceiver::new(bind_addr, sender_addr, stream_id)?;
+loop {
+    rx.tick();
+    match rx.try_recv() {
+        CmpRecv::Data(hdr, payload) => process(hdr, payload),
+        CmpRecv::Empty => continue,
+        CmpRecv::Faulted { last_delivered_seq, .. } => {
+            // 3. On FAULTED: reopen TCP from the persisted tip,
+            //    drain to current, reset, resume UDP.
+            let mut dxs = DxsConsumer::new(stream_id, dxs_addr.clone(),
+                                           tip_file.clone(), None)?;
+            dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
+            rx.reset_after_replay(dxs.tip);
+        }
+    }
+}
+```
+
+Steady state: zero TCP connection per consumer; producer
+only pays UDP send cost. TCP cost is paid once on startup
+and again only on the (rare) FAULTED escalation.
+
+### Pattern B — TCP-only consumer
+
+For consumers that don't need µs latency (archivers, replay
+tools, analytics, cross-DC replication). DXS Phase 2 supports
+a live tail over TCP, so a single `DxsConsumer` covers both
+historical catch-up and live streaming, indefinitely.
+
+```rust
+use rsx_dxs::DxsConsumer;
+
+let mut dxs = DxsConsumer::new(stream_id, dxs_addr, tip_file, None)?;
+dxs.run(|record| {
+    process(record.header, record.payload);
+}).await?;
+// Never returns under normal operation; reconnects with
+// exponential backoff on TCP errors.
+```
+
+`rsx-recorder` ships as the canonical Pattern B consumer.
+Trades latency (TCP head-of-line blocking, kernel cwnd) for
+operational simplicity (one socket, no NAK state machine,
+no UDP bind, no kernel rmem tuning).
+
+### Choosing
+
+| use case | pattern |
+|---|---|
+| Risk shard, matching consumer, marketdata fan-out | A |
+| Anything inside the GW→ME→GW critical path | A |
+| Archival recorder, replay-to-disk, ETL | B |
+| Read-only analytics on historical data | B |
+| Cross-DC replication (single TCP per peer) | B |
+
+When in doubt: **B is simpler**. Switch to A only when tail-
+latency measurements justify the extra moving parts.
 
 ## Guarantees
 
