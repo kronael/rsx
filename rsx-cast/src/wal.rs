@@ -44,25 +44,36 @@ fn stream_dir(wal_dir: &Path, stream_id: u32) -> PathBuf {
     wal_dir.join(stream_id.to_string())
 }
 
-/// `wal_dir/<stream_id>/<stream_id>_active.wal` — the file the
-/// writer appends to until rotation.
-fn active_file_path(wal_dir: &Path, stream_id: u32) -> PathBuf {
-    stream_dir(wal_dir, stream_id)
-        .join(format!("{}_active.wal", stream_id))
+/// Bare filename of the active (still-being-written) segment.
+fn active_filename(stream_id: u32) -> String {
+    format!("{}_active.wal", stream_id)
 }
 
-/// `wal_dir/<stream_id>/<stream_id>_<first>_<last>.wal` — a
-/// rotated, frozen segment carrying seqs `first..=last`.
+/// Bare filename of a rotated, frozen segment covering
+/// seqs `first..=last`.
+fn segment_filename(
+    stream_id: u32,
+    first_seq: u64,
+    last_seq: u64,
+) -> String {
+    format!("{}_{}_{}.wal", stream_id, first_seq, last_seq)
+}
+
+/// Full path: `<wal_dir>/<stream_id>/<stream_id>_active.wal`.
+fn active_file_path(wal_dir: &Path, stream_id: u32) -> PathBuf {
+    stream_dir(wal_dir, stream_id).join(active_filename(stream_id))
+}
+
+/// Full path: `<wal_dir>/<stream_id>/<stream_id>_<first>_<last>.wal`.
+#[allow(dead_code)]
 fn segment_file_path(
     wal_dir: &Path,
     stream_id: u32,
     first_seq: u64,
     last_seq: u64,
 ) -> PathBuf {
-    stream_dir(wal_dir, stream_id).join(format!(
-        "{}_{}_{}.wal",
-        stream_id, first_seq, last_seq,
-    ))
+    stream_dir(wal_dir, stream_id)
+        .join(segment_filename(stream_id, first_seq, last_seq))
 }
 
 /// `<id>_active.wal` — the writer's open file.
@@ -106,16 +117,13 @@ impl WalWriter {
         wal_dir: &Path,
         max_file_size: u64,
     ) -> io::Result<Self> {
-        let dir = wal_dir.join(stream_id.to_string());
+        let dir = stream_dir(wal_dir, stream_id);
         fs::create_dir_all(&dir)?;
 
-        let active_path = dir.join(format!(
-            "{}_active.wal", stream_id
-        ));
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&active_path)?;
+            .open(active_file_path(wal_dir, stream_id))?;
 
         let file_size = file.metadata()?.len();
 
@@ -233,12 +241,12 @@ impl WalWriter {
 
     /// Rotate: rename active -> seq range, open new active.
     fn rotate(&mut self) -> io::Result<()> {
-        let active_path = self.wal_dir.join(format!(
-            "{}_active.wal", self.stream_id
-        ));
-        let rotated_path = self.wal_dir.join(format!(
-            "{}_{}_{}.wal",
-            self.stream_id, self.first_seq, self.last_seq
+        let active_path = self.wal_dir
+            .join(active_filename(self.stream_id));
+        let rotated_path = self.wal_dir.join(segment_filename(
+            self.stream_id,
+            self.first_seq,
+            self.last_seq,
         ));
 
         if let Err(e) = self.file.sync_all() {
