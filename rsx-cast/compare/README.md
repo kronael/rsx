@@ -17,20 +17,48 @@ completeness — see the supporting-cast section at the bottom.
 
 ## The five serious competitors
 
-### Speed (loopback p50, this 6-core Ryzen, payload 64–128 B)
+### Speed (loopback p50, this 6-core Ryzen, payload **128 B**)
 
-| Protocol | Measured here | Published / pinned |
-|---|---:|---|
-| **casting (rsx-cast)** | **~10 µs** | — |
-| **MoldUDP64** | ~10 µs | matches casting shape, NAK + separate request server |
-| **Aeron** (UDP) | ~305 µs | 21 µs (AWS c6in.16xlarge, pinned cores) |
-| **Aeron** (IPC) | 830 ns | sub-µs IPC, JVM warmup excluded |
-| **Quinn / QUIC** | ~37 µs | 25–400 µs (Cloudflare / Google QUIC) |
-| **Chronicle Queue** (Java) | — (doc only) | sub-µs IPC published, mmap-shared |
-| **LBM** (commercial) | — (closed-source) | ~1–5 µs LAN, vendor whitepapers |
+Every bench below uses the same 128-byte payload (matches
+`size_of::<FillRecord>()`) and pins client+server to cores 2/3.
+Numbers are directly comparable; the bench that produces each
+row is in the right-most column.
+
+| Protocol | Measured here | Bench | Published / pinned |
+|---|---:|---|---|
+| **casting (rsx-cast)** | **~10 µs** | `cast_rtt_bench` | — |
+| **raw UDP** (baseline) | ~10 µs | `compare_all::raw_udp_128b` | floor: `sendto + recvfrom`, no framing |
+| **MoldUDP64** | ~10 µs | `compare_moldudp64::moldudp64_rtt_loopback_128b` | matches casting shape, NAK + separate request server |
+| **TCP_NODELAY** | ~14 µs | `compare_all::tcp_nodelay_128b` | persistent connection, read_exact |
+| **SoupBinTCP** | ~14 µs | `compare_soupbintcp::soupbintcp_rtt_loopback_128b` | TCP + 3-byte framing |
+| **Aeron** (UDP) | ~305 µs | `compare_aeron::aeron_rtt_udp_loopback_128b` | 21 µs on AWS c6in.16xlarge (pinned) |
+| **Aeron** (IPC) | 830 ns | `compare_aeron::aeron_rtt_ipc_128b` | sub-µs IPC |
+| **Quinn / QUIC** | ~37 µs | `compare_all::quinn_persistent_128b` | 25–400 µs (Cloudflare / Google QUIC) |
+| **KCP** (turbo) | ~21 µs | `compare_all::kcp_spin_flush_128b` | turbo mode + spin-flush |
+| **Chronicle Queue** (Java) | — (doc only) | — | sub-µs IPC published, mmap-shared |
+| **LBM** (commercial) | — (closed-source) | — | ~1–5 µs LAN, vendor whitepapers |
+
+How to run them all locally:
+
+```
+cargo bench -p rsx-cast --bench compare_all
+cargo bench -p rsx-cast --bench compare_aeron
+cargo bench -p rsx-cast --bench compare_moldudp64
+cargo bench -p rsx-cast --bench compare_soupbintcp
+```
+
+`compare_all` runs raw_udp + KCP + Quinn + TCP under one
+`EchoClient` trait — same harness, same payload, same pinning,
+in one process. The three standalone benches (aeron, mold, soup)
+stay separate because their server setups can't fit the
+in-process `EchoClient` trait (Aeron needs a media driver and
+callback-driven receive; MoldUDP64/SoupBinTCP need framing
+servers that don't pretend to be an echo socket). They use the
+same payload size and core pinning so the numbers are still
+directly comparable to compare_all.
 
 Numbers below 30 µs from local benches are dominated by the
-`sendto` syscall (~4 µs) and unpinned-thread scheduler noise.
+`sendto` syscall (~4 µs) and scheduler noise.
 See [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
 for the attribution breakdown.
 
