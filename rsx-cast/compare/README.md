@@ -7,11 +7,13 @@ completeness — see the supporting-cast section at the bottom.
 
 ## What rsx-cast is
 
-- NAK-based reliable UDP unicast (CMP), `#[repr(C)]` fixed-size
-  frames, two-tier retransmit (in-memory ring → on-disk WAL).
+- NAK-based reliable UDP unicast (the **casting** half),
+  `#[repr(C)]` fixed-size frames, two-tier retransmit
+  (in-memory ring → on-disk WAL).
 - WAL is the wire format is the audit log. One bytestream, three
   uses (live, replay, archive). No transformation between them.
-- TCP cold-path replay for catch-up; same record layout.
+- TCP cold-path replay (the **replication** half) for catch-up;
+  same record layout.
 
 ## The five serious competitors
 
@@ -19,8 +21,8 @@ completeness — see the supporting-cast section at the bottom.
 
 | Protocol | Measured here | Published / pinned |
 |---|---:|---|
-| **CMP (rsx-cast)** | **~10 µs** | — |
-| **MoldUDP64** | ~10 µs | matches CMP shape, NAK + separate request server |
+| **casting (rsx-cast)** | **~10 µs** | — |
+| **MoldUDP64** | ~10 µs | matches casting shape, NAK + separate request server |
 | **Aeron** (UDP) | ~305 µs | 21 µs (AWS c6in.16xlarge, pinned cores) |
 | **Aeron** (IPC) | 830 ns | sub-µs IPC, JVM warmup excluded |
 | **Quinn / QUIC** | ~37 µs | 25–400 µs (Cloudflare / Google QUIC) |
@@ -29,12 +31,12 @@ completeness — see the supporting-cast section at the bottom.
 
 Numbers below 30 µs from local benches are dominated by the
 `sendto` syscall (~4 µs) and unpinned-thread scheduler noise.
-See [`facts/cmp-vs-udp-overhead.md`](../../facts/cmp-vs-udp-overhead.md)
+See [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
 for the attribution breakdown.
 
 ### Features
 
-| Property | CMP/DXS | Aeron | MoldUDP64 | Quinn (QUIC) | Chronicle Queue | LBM |
+| Property | casting/replication | Aeron | MoldUDP64 | Quinn (QUIC) | Chronicle Queue | LBM |
 |---|---|---|---|---|---|---|
 | Loss detection | NAK (receiver) | NAK (receiver) | NAK (receiver) | ACK (packet-num ranges) | n/a (durable log) | NAK (receiver) |
 | Retransmit source | hot ring + WAL | term buffers (RAM) | separate request server | in-memory window | disk | in-memory window |
@@ -54,18 +56,18 @@ for the attribution breakdown.
   the transport; rsx-cast fuses them.
 - **MoldUDP64** — Nasdaq's UDP wire protocol for ITCH market data,
   production-deployed at exchange scale. Public spec — anyone can
-  implement and bench. Closest published peer to CMP's wire shape.
+  implement and bench. Closest published peer to casting's wire shape.
 - **Quinn / QUIC** — the modern "what about QUIC?" answer. ACK-based
   with congestion control, mandatory TLS, multiplexed streams. Real
   benefits (NAT traversal, mobile mobility) we don't need on an
   exchange LAN; real costs (handshake + CC state machine) we don't want.
 - **Chronicle Queue** — persistent-log-as-transport peer on the **other
-  axis**. Where CMP is UDP-over-network, Chronicle is mmap-over-shared-pages.
+  axis**. Where casting is UDP-over-network, Chronicle is mmap-over-shared-pages.
   Sub-µs IPC. Java-only, single-host (open-source); cross-host needs
   Chronicle Enterprise (commercial).
 - **LBM (Informatica UM)** — the commercial gold standard. Same NAK+UDP
   family. Documented for context; cannot legitimately benchmark (see
-  [`facts/closed-source-messaging.md`](../../facts/closed-source-messaging.md)
+  [`facts/closed-source-messaging.md`](https://github.com/kronael/rsx/blob/master/facts/closed-source-messaging.md)
   on the DeWitt clause).
 
 ## Running the benches
@@ -75,7 +77,7 @@ cargo bench -p rsx-cast --bench 'compare_*'
 ```
 
 For loss-behavior testing (root required, exposes TCP head-of-line
-blocking and CMP NAK recovery under realistic loss):
+blocking and casting NAK recovery under realistic loss):
 
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
