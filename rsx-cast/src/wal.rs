@@ -79,8 +79,8 @@ fn active_file_path(wal_dir: &Path, stream_id: u32) -> PathBuf {
 
 /// WalWriter: append-only WAL with buffered flush + rotation
 pub struct WalWriter {
-    pub stream_id: u32,
-    pub next_seq: u64,
+    stream_id: u32,
+    pub(crate) next_seq: u64,
     buf: Vec<u8>,
     file: File,
     file_size: u64,
