@@ -2,44 +2,32 @@
 ///
 /// Layout (LE on the wire):
 /// ```text
-/// offset 0..2   record_type: u16
-/// offset 2..4   len:         u16   (payload length, bytes)
-/// offset 4..8   crc32:       u32   (CRC32C of payload)
-/// offset 8      version:     u8    (wire-format version)
-/// offset 9..16  _reserved:   [u8; 7]  (must be zero)
+/// offset 0      version:     u8    (wire-format version)
+/// offset 1      _pad:        u8
+/// offset 2..4   record_type: u16
+/// offset 4..6   len:         u16   (payload length, bytes)
+/// offset 6..8   _pad:        u16
+/// offset 8..12  crc32:       u32   (CRC32C of payload)
+/// offset 12..16 _reserved:   [u8; 4]
 /// ```
 ///
-/// `version` repurposes one of the previously-reserved 8
-/// bytes to give the protocol a coordinated upgrade path
-/// without changing the on-the-wire size.
+/// Version is first so receivers can gate on it before
+/// interpreting any other field.
 ///
-/// - `0` (`WAL_HEADER_VERSION_V0`): the original, pre-2026
-///   layout where bytes 8..16 were all-zero. Accepted on
-///   read for back-compat with existing WAL files; not
-///   emitted by new writes.
-/// - `1` (`WAL_HEADER_VERSION_V1`): the current layout
-///   declared by this struct. All new writes carry this.
-///
-/// Adding a new record type does NOT bump the version (record
-/// types are additive — the spec promises that). Bumping the
-/// version is reserved for changes that would break a v1
-/// reader (e.g., re-laying out the header, changing CRC
-/// algorithm). A coordinated stop-redeploy is required across
-/// senders and receivers when bumping.
+/// Adding a new record type does NOT bump the version
+/// (additive). Bump only for header-layout or CRC-algorithm
+/// changes; those require a coordinated stop-redeploy.
 #[derive(Debug, Clone, Copy)]
 pub struct WalHeader {
+    pub version: u8,
     pub record_type: u16,
     pub len: u16,
     pub crc32: u32,
-    pub version: u8,
+    /// Absorbs: pad@1, pad@6..8, reserved@12..16.
     pub _reserved: [u8; 7],
 }
 
-/// Legacy wire format (pre-version-byte). Reserved bytes
-/// were all zero. Accepted on read; never emitted.
-pub const WAL_HEADER_VERSION_V0: u8 = 0;
-
-/// Current wire format. Emitted by all new writes.
+/// Current wire format.
 pub const WAL_HEADER_VERSION_V1: u8 = 1;
 
 /// The version this binary writes. Single source of truth.
@@ -55,27 +43,29 @@ impl WalHeader {
         crc32: u32,
     ) -> Self {
         Self {
+            version: WAL_HEADER_VERSION_LATEST,
             record_type,
             len,
             crc32,
-            version: WAL_HEADER_VERSION_LATEST,
             _reserved: [0u8; 7],
         }
     }
 
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
-        buf[0..2].copy_from_slice(
+        buf[0] = self.version;
+        // buf[1] = 0 (pad)
+        buf[2..4].copy_from_slice(
             &self.record_type.to_le_bytes(),
         );
-        buf[2..4].copy_from_slice(
+        buf[4..6].copy_from_slice(
             &self.len.to_le_bytes(),
         );
-        buf[4..8].copy_from_slice(
+        // buf[6..8] = 0 (pad)
+        buf[8..12].copy_from_slice(
             &self.crc32.to_le_bytes(),
         );
-        buf[8] = self.version;
-        // bytes 9..16 stay zeroed (_reserved)
+        // buf[12..16] stay zeroed
         buf
     }
 
@@ -84,35 +74,26 @@ impl WalHeader {
             return None;
         }
         Some(Self {
+            version: buf[0],
             record_type: u16::from_le_bytes(
-                [buf[0], buf[1]],
-            ),
-            len: u16::from_le_bytes(
                 [buf[2], buf[3]],
             ),
+            len: u16::from_le_bytes(
+                [buf[4], buf[5]],
+            ),
             crc32: u32::from_le_bytes([
-                buf[4], buf[5], buf[6], buf[7],
+                buf[8], buf[9], buf[10], buf[11],
             ]),
-            version: buf[8],
             _reserved: [
-                buf[9], buf[10], buf[11], buf[12],
-                buf[13], buf[14], buf[15],
+                buf[1], buf[6], buf[7],
+                buf[12], buf[13], buf[14], buf[15],
             ],
         })
     }
 
     /// Returns true if this binary can decode the payload
     /// behind a header with this version.
-    ///
-    /// Accepts `V0` (legacy zero) and `V1` (current). Any
-    /// other version is rejected — the receiver must not
-    /// attempt to interpret payload bytes whose framing it
-    /// doesn't understand.
     pub fn is_supported_version(&self) -> bool {
-        matches!(
-            self.version,
-            WAL_HEADER_VERSION_V0
-                | WAL_HEADER_VERSION_V1
-        )
+        self.version == WAL_HEADER_VERSION_V1
     }
 }
