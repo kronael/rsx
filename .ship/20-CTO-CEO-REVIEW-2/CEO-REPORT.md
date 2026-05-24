@@ -288,8 +288,8 @@ Negative:
 - `/v1/fills?sym=PENGU` returns
   `{"detail":"1 validation error: … Input should be a
   valid integer, unable to parse string as an integer …
-   File \"/home/onvos/sandbox/rsx/rsx-playground/
-   server.py\", line 7675, in v1_fills"}`. Two
+   File \"rsx-playground/server.py\",
+   line 7675, in v1_fills"}`. Two
   problems: (a) the public API rejects symbol names and
   wants integer sym_id, contradicting the symbol
   selector on `/book` that lists "PENGU SOL BTC ETH";
