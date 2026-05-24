@@ -730,18 +730,20 @@ See `rsx-cast/benches/wal_bench.rs` and
 
 ```
 rsx-cast/src/
-    lib.rs         -- public API: explicit re-exports
-    header.rs      -- WalHeader (16 B)
-    protocol.rs    -- CastRecord trait, StatusMessage, Nak,
-                      CastHeartbeat, ReplicationRequest, CaughtUpRecord
-    encode_utils.rs -- compute_crc32, as_bytes, encode_record,
-                      decode_payload (generic)
-    cmp.rs         -- CastSender, CastReceiver (UDP transport)
-    wal.rs         -- WalWriter, WalReader, file layout, GC,
-                      read_record_at_seq (NAK fallback)
-    server.rs      -- ReplicationService (TCP)
-    client.rs      -- ReplicationConsumer, tip tracking, reconnect
-    config.rs      -- CastConfig, TlsConfig
+    lib.rs                 -- public API: explicit re-exports
+    header.rs              -- WalHeader (16 B)
+    records.rs             -- CastRecord trait, Nak, CastHeartbeat,
+                              ReplicationRequest, CaughtUpRecord
+    encode_utils.rs        -- compute_crc32 (CRC32C), as_bytes,
+                              encode_record, decode_payload (generic)
+    cast.rs                -- CastSender, CastReceiver (UDP transport)
+    wal.rs                 -- WalWriter, WalReader, file layout, GC,
+                              read_record_at_seq (NAK fallback)
+    replication_server.rs  -- ReplicationService (TCP)
+    replication_client.rs  -- ReplicationConsumer, tip tracking, reconnect
+    config.rs              -- CastConfig, TlsConfig
+    time_utils.rs          -- monotonic time helper (no rsx-types dep)
+    tls.rs                 -- rustls server/client acceptor wrapper
 
 rsx-messages/src/
     lib.rs         -- exchange wire records (FillRecord etc.)
