@@ -86,16 +86,18 @@ lines to avoid false sharing.
 
 ## References
 
-- [`notes/SMRB.md`](SMRB.md) — SPSC ring buffer (rtrb) latency
-  hierarchy and the lock-free protocol RSX rides on
-- [`notes/ALIGN.md`](ALIGN.md) — why `#[repr(C, align(64))]` on
-  every hot-path struct
-- [`notes/ARENA.md`](ARENA.md) — slab arena allocator pattern
-  (zero-heap order storage)
-- [`notes/HOTCOLD.md`](HOTCOLD.md) — hot/cold field separation
-  inside cache-line-sized records
-- [`notes/UDS.md`](UDS.md) — UDS vs shared memory tradeoffs
-  for the sidecar boundary
+- [`rsx-risk/notes/spsc.md`](../rsx-risk/notes/spsc.md) — SPSC ring
+  buffer (rtrb) latency hierarchy and the lock-free protocol
+- [`rsx-book/notes/align.md`](../rsx-book/notes/align.md) — why
+  `#[repr(C, align(64))]` on every hot-path struct
+- [`rsx-book/notes/arena.md`](../rsx-book/notes/arena.md) — slab
+  arena allocator pattern (zero-heap order storage)
+- [`rsx-book/notes/hotcold.md`](../rsx-book/notes/hotcold.md) —
+  hot/cold field separation inside cache-line-sized records
+- [`rsx-risk/notes/uds.md`](../rsx-risk/notes/uds.md) — UDS vs
+  shared memory tradeoffs for the sidecar boundary
+- [`rsx-cli/notes/pq.md`](../rsx-cli/notes/pq.md) — priority queue
+  pattern (related)
 - [`specs/2/45-tiles.md`](../specs/2/45-tiles.md) — architecture
   spec with per-process status
 - [`specs/2/43-testing-smrb.md`](../specs/2/43-testing-smrb.md) —
