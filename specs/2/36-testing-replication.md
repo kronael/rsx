@@ -118,7 +118,7 @@ Targets from replication.md §10:
 
 | Operation | Target |
 |-----------|--------|
-| `WalWriter::append` (Vec extend, no disk I/O) | <200ns |
+| `WalWriter::prepare` + `append_framed` (Vec extend, no disk I/O) | <200ns |
 | WAL flush (fsync) | <1ms per 64KB batch |
 | WAL read (sequential) | >500 MB/s |
 | Replay 100K records | <1s |

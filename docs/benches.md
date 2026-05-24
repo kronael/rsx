@@ -34,7 +34,7 @@ Each crate owns its `benches/` directory. Two families:
 
 | Family | Purpose | Example |
 |---|---|---|
-| **Component isolation** | One leg of the production path in tight loop, real production code | `cmp_one_way_bench`, `bench-match-rt` |
+| **Component isolation** | One leg of the production path in tight loop, real production code | `cast_one_way_bench`, `bench-match-rt` |
 | **Micro-op** | A single primitive in isolation | `crc32_compute_128b`, `price_add` |
 
 Component-isolation benches were added in `.ship/18-COMPONENT-BENCHES`
@@ -55,20 +55,20 @@ don't compose to a production p50 on their own.
 
 | Bench | Measures | Notes |
 |---|---|---|
-| `encode_bench` | `FillRecord` encode/decode, CRC32 over 128 B, `WalHeader` encode/decode | The `fill_record_encode` (23 ns) + `header_encode` (3 ns) appear in CHANGELOG; also see `cmp_send_breakdown_bench` for the same numbers in send-path context |
+| `encode_bench` | `FillRecord` encode/decode, CRC32C over 128 B, `WalHeader` encode/decode | The `fill_record_encode` (23 ns) + `header_encode` (3 ns) appear in CHANGELOG; also see `cast_send_breakdown_bench` for the same numbers in send-path context |
 
 ### rsx-cast (transport: WAL + casting + UDP)
 
 | Bench | Measures | Production leg it isolates |
 |---|---|---|
 | `compare_udp` | Raw UDP loopback round-trip, 64-byte payload, two non-blocking sockets spinning. **Absolute floor.** | none — baseline |
-| `cmp_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | `gateway_in → risk_in`, `risk_out → gateway_cmp_recv` |
-| `cmp_rtt_bench` | casting echo round-trip (A → B → A) with two pairs | the full `risk → ME → risk` triangle |
-| `cmp_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, sendto, NAK ring copy | Attributes the 3.9 µs `send` body — **99 % is sendto** |
-| `wal_bench` | `WalWriter::append` in-memory, flush+fsync 64 KB, sequential read 10 K, replay 100 K | Pre-fsync append is 31 ns; fsync is in the fsync-specific bench below |
-| `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost — **651 µs p50**, 20 000× higher than the in-memory append |
+| `cast_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | `gateway_in → risk_in`, `risk_out → gateway_cast_recv` |
+| `cast_rtt_bench` | casting echo round-trip (A → B → A) with two pairs | the full `risk → ME → risk` triangle |
+| `cast_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, sendto, NAK ring copy | Attributes the 3.9 µs `send` body — **99 % is sendto** |
+| `wal_bench` | `WalWriter::prepare` + `append_framed` in-memory, flush+fsync 64 KB, sequential read 10 K, replay 100 K | Pre-fsync append is 31 ns; fsync is in the fsync-specific bench below |
+| `wal_fsync_bench` | `WalWriter::prepare` + `append_framed` + explicit flush + fsync to disk | Durability cost — **651 µs p50**, 20 000× higher than the in-memory append |
 | `wal_random_read_bench` | `read_record_at_seq(random)` over a pre-populated WAL | Cold-tier NAK retransmit path; O(n) at 23.5 ms @ 10 K records |
-| `cmp_bench` | Protocol record encode/decode (NAK, Heartbeat) | Wire-level primitives only — not on the per-packet send path |
+| `cast_bench` | Protocol record encode/decode (NAK, Heartbeat) | Wire-level primitives only — not on the per-packet send path |
 
 ### rsx-book (orderbook)
 
@@ -80,7 +80,7 @@ don't compose to a production p50 on their own.
 
 | Bench | Measures | Production leg it isolates |
 |---|---|---|
-| `process_order_bench` | Full `me_in → me_out` cycle: dedup + WAL accept + `process_new_order` + write_events_to_wal + index update | `me_in → me_out` in production (the 158 µs leg) |
+| `process_order_bench` | Full `me_in → me_out` cycle: dedup + WAL accept + `process_new_order` + `write_events_to_wal` + index update | `me_in → me_out` in production (the 158 µs leg). Production now goes through `publish_events` (one-CRC fan-out) instead; the bench uses `write_events_to_wal` directly because it isolates the WAL leg without the cast send-path noise. |
 | `match_n_levels_bench` | One incoming order sweeping 1, 5, 20, 100 resting levels | Algorithmic complexity check; n=1 here is 6.8 µs (includes book setup), pure-match is 54 ns |
 | `wal_replay_bench` | `WalReader::next` over a pre-written 30 K-record WAL | Cold-start recovery / snapshot reload — 228 ms @ 30 K records |
 | `matching_bench` | dedup duplicate check, single-slot alloc/free, cancel | Hot-path primitives |
@@ -140,7 +140,7 @@ Its 9.58 µs floor vs the cross-process 1 128 µs tells us
 **~99 % of production latency is inter-process overhead**,
 not algorithm or transport framing.
 
-## CastSender::send sub-attribution (`cmp_send_breakdown_bench`)
+## CastSender::send sub-attribution (`cast_send_breakdown_bench`)
 
 Per `dfe2ef4`:
 
@@ -163,12 +163,15 @@ sendmmsg batching, or kernel bypass (DPDK/AF_XDP).
 
 ## Caveats and gotchas
 
-- **casting flow control closes around iter 65 536 without
-  periodic `tick()`.** `cmp_one_way` and `cmp_rtt` were
-  silently hanging for the first iteration of these benches
-  until we added `tick()` every 1024 sends. The bench source
-  documents this. Production gateway / risk drive ticks via
-  their main loops.
+- **Legacy quirk: casting flow control closed around iter
+  65 536 without periodic `tick()`.** `cast_one_way` and
+  `cast_rtt` were silently hanging for the first iteration of
+  these benches until we added `tick()` every 1024 sends. The
+  StatusMessage/flow-control path was removed in `87b223e`
+  (and `CastReceiver::tick` no-op removed in `dc2a6a6`), so
+  modern benches do not need this workaround. The bench source
+  documents this. `CastSender::tick()` is still called from
+  production sender loops to emit idle-stream heartbeats.
 - **Both sockets binding the same port + `SO_REUSEPORT`
   hash-distributes incoming traffic.** `bench-match-rt`
   hit this: gw_sender and gw_receiver originally shared
@@ -208,7 +211,7 @@ sendmmsg batching, or kernel bypass (DPDK/AF_XDP).
 ## Adding a new bench
 
 1. New `.rs` file under `<crate>/benches/`. Use the
-   `cmp_one_way_bench.rs` shape as a template (docstring
+   `cast_one_way_bench.rs` shape as a template (docstring
    first, then bench).
 2. Wire it in `<crate>/Cargo.toml`:
    ```toml

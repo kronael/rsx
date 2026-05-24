@@ -133,7 +133,7 @@ a metrics ingest pipeline using rsx-cast without any exchange domain knowledge.
 - [ ] `cargo bench -p rsx-book` — confirm 54 ns / 857 ns
 - [ ] `cargo bench -p rsx-cast --bench compare_all` → run `rsx-cast/compare/bench_report --md`
 - [ ] `cargo bench -p rsx-cast --bench compare_kcp --bench compare_quinn`
-- [ ] `cargo bench -p rsx-cast --bench cmp_send_breakdown_bench` — confirm 3.87 µs
+- [ ] `cargo bench -p rsx-cast --bench cast_send_breakdown_bench` — confirm 3.87 µs
 - [ ] End-to-end latency probe under sustained load (currently manual; needs automation)
 
 ---

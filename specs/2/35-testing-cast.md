@@ -145,7 +145,7 @@ long-running stability) are planned for a future iteration.
 
 ## 4. Benchmarks
 
-File: `rsx-cast/benches/cmp_bench.rs`
+File: `rsx-cast/benches/cast_bench.rs`
 
 All benchmarks use Criterion. monoio runtime for async
 benchmarks. Measure userspace time only.
@@ -172,11 +172,11 @@ From casting.md §9:
 | Gateway -> Risk (CastSender) | NETWORK.md | `cmp_test.rs` |
 | Risk -> ME (CastSender) | NETWORK.md | `cmp_test.rs` |
 | ME -> Risk (CastSender) | NETWORK.md | `cmp_test.rs` |
-| Risk -> Gateway (CastSender) | NETWORK.md | `cmp_test.rs` |
-| CastSender reads WAL for retransmit | replication.md §3,4 | `cmp_test.rs` |
-| ReplicationConsumer uses TCP replication | replication.md §5,6 | `client_test.rs` |
-| Recorder uses TCP replication | replication.md §8 | `client_test.rs` |
-| Marketdata recovery via TCP | MARKETDATA.md §8 | `client_test.rs` |
+| Risk -> Gateway (CastSender) | NETWORK.md | `cast_test.rs` |
+| CastSender reads WAL for retransmit | replication.md §3,4 | `cast_test.rs` |
+| ReplicationConsumer uses TCP replication | replication.md §5,6 | `replication_client_test.rs` |
+| Recorder uses TCP replication | replication.md §8 | `replication_client_test.rs` |
+| Marketdata recovery via TCP | MARKETDATA.md §8 | `replication_client_test.rs` |
 | SPSC intra-process, casting inter-process | TILES.md | architectural (no direct test) |
 
 ## 6. monoio / io_uring Test Considerations
@@ -194,18 +194,19 @@ From casting.md §9:
 ## 7. Test File Organization
 
 ```
-rsx-cast/tests/
-    cmp_encoding_test.rs    control message encode/decode
-    cmp_test.rs             CastSender + CastReceiver unit tests
-    client_test.rs          TCP replication client tests
-    header_test.rs          WAL header encoding tests
-    records_test.rs         WAL record type tests
-    tls_test.rs             TLS handshake tests
-    wal_test.rs             WalWriter + WalReader tests
-    common/mod.rs           shared test helpers
+rsx-cast/src/   (inline *_test.rs alongside each module, per 184c3c4)
+    cast_test.rs                 CastSender + CastReceiver unit tests
+    cast_v4_test.rs              v4 reliability invariants
+    encode_utils_test.rs         control message encode/decode
+    header_test.rs               WAL header encoding tests
+    nak_fallback_latency_test.rs cold-tier NAK retransmit timing
+    replication_client_test.rs   TCP replication client tests
+    replication_server_test.rs   TCP replication server tests
+    sustained_throughput_test.rs long-running soak
+    wal_test.rs                  WalWriter + WalReader tests
 
 rsx-cast/benches/
-    cmp_bench.rs            Criterion benchmarks
+    cast_bench.rs            Criterion benchmarks
 ```
 
 ## 8. Coverage Matrix

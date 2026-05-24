@@ -204,7 +204,7 @@ See `rsx-types/src/lib.rs`.
 | Risk post-trade (apply fill) | <1us |
 | End-to-end GW->ME->GW | <50us (same machine, budget) |
 | casting record encode/decode | <50ns (memcpy + CRC) |
-| `WalWriter::append` (Vec extend, no disk I/O) | <200ns |
+| `WalWriter::prepare` + `append_framed` (Vec extend, no disk I/O) | <200ns |
 | WAL flush (fsync) | <1ms per 64KB batch |
 
 ## Correctness Invariants

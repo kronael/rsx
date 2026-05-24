@@ -446,12 +446,12 @@ Measured by `rsx-cast/benches/wal_bench.rs`:
 
 | Op                                          | ns      |
 |---------------------------------------------|---------|
-| `WalWriter::append` (Vec extend, no disk I/O) | 31    |
+| `WalWriter::prepare` + `append_framed` (Vec extend, no disk I/O) | 31 |
 | WAL flush + fsync (64 KB)                   | ~24 000 |
 | Sequential read (10 K recs)                 | TBD     |
 | Replay (100 K recs)                         | TBD     |
 
-`rsx-cast/benches/cmp_bench.rs` + `rsx-messages/benches/encode_bench.rs`:
+`rsx-cast/benches/cast_bench.rs` + `rsx-messages/benches/encode_bench.rs`:
 
 | Op                                                       | ns  |
 |----------------------------------------------------------|-----|
