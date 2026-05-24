@@ -21,6 +21,7 @@ pub mod config;
 pub mod tls;
 
 pub use header::WalHeader;
+pub use header::WalVersion;
 pub use protocol::CastHeartbeat;
 pub use protocol::CastRecord;
 pub use protocol::CaughtUpRecord;

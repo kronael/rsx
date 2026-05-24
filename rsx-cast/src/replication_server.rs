@@ -139,15 +139,6 @@ where
                 "bad header",
             )
         })?;
-    if !hdr.is_supported_version() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "unsupported wire version v{}",
-                hdr.version
-            ),
-        ));
-    }
     if hdr.record_type != RECORD_REPLICATION_REQUEST {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

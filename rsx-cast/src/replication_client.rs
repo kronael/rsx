@@ -304,16 +304,6 @@ impl ReplicationConsumer {
                             "bad header",
                         )
                     })?;
-            if !header.is_supported_version() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "dxs replay: unsupported wire version v{}",
-                        header.version
-                    ),
-                ));
-            }
-
             if header.record_type == RECORD_REPLICATION_NOT_AVAILABLE {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
