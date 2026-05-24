@@ -638,12 +638,10 @@ impl CastReceiver {
     pub fn new(
         bind_addr: SocketAddr,
         sender_addr: SocketAddr,
-        _stream_id: u32,
     ) -> io::Result<Self> {
         Self::with_config(
             bind_addr,
             sender_addr,
-            _stream_id,
             &CastConfig::default(),
         )
     }
@@ -651,7 +649,6 @@ impl CastReceiver {
     pub fn with_config(
         bind_addr: SocketAddr,
         sender_addr: SocketAddr,
-        _stream_id: u32,
         config: &CastConfig,
     ) -> io::Result<Self> {
         let socket = bind_udp(bind_addr)?;

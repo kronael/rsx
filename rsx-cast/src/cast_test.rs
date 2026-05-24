@@ -38,7 +38,6 @@ fn loopback_pair(wal_dir: &std::path::Path) -> (CastSender, CastReceiver) {
     let receiver = CastReceiver::new(
         recv_addr,
         sender_addr,
-        1,
     )
     .unwrap();
 
@@ -172,7 +171,6 @@ fn crc_mismatch_rejected() {
     let tmp = CastReceiver::new(
         recv_addr,
         sender_addr,
-        1,
     )
     .unwrap();
     let recv_local = tmp.local_addr().unwrap();
@@ -181,7 +179,6 @@ fn crc_mismatch_rejected() {
     let mut receiver = CastReceiver::new(
         recv_local,
         sender_addr,
-        1,
     )
     .unwrap();
 

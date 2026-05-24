@@ -75,7 +75,6 @@ fn loopback_with(
     let receiver = CastReceiver::with_config(
         recv_addr,
         sender_addr,
-        1,
         &config,
     )
     .unwrap();
@@ -279,7 +278,7 @@ fn receiver_only() -> (CastReceiver, std::net::SocketAddr, UdpSocket) {
     // observe outgoing NAKs.
     let sender_addr = probe.local_addr().unwrap();
     let receiver =
-        CastReceiver::new(recv_addr, sender_addr, 1).unwrap();
+        CastReceiver::new(recv_addr, sender_addr).unwrap();
     (receiver, recv_addr, probe)
 }
 

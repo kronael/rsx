@@ -77,7 +77,6 @@ fn cmp_send_50k_under_one_second() {
     let mut receiver = CastReceiver::with_config(
         recv_addr,
         sender_addr,
-        1,
         &recv_cfg,
     )
     .unwrap();

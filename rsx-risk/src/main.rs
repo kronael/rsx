@@ -403,7 +403,7 @@ fn run_main(
     }
 
     let mut gw_receiver = CastReceiver::new(
-        risk_addr, gw_addr, 0,
+        risk_addr, gw_addr,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind risk CMP receiver");
@@ -423,7 +423,6 @@ fn run_main(
     let mut me_receiver = CastReceiver::new(
         risk_me_recv_addr,
         first_me_addr,
-        0,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind ME fill receiver");
@@ -448,7 +447,6 @@ fn run_main(
     let mut mark_receiver = CastReceiver::new(
         mark_addr,
         mark_sender_addr,
-        0,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind mark CMP receiver");
@@ -1238,7 +1236,6 @@ fn run_replica(
         // SAFETY: literal addr is always valid
         "127.0.0.1:0".parse().expect("valid addr"),
         first_me_addr,
-        0,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind replica ME receiver");
@@ -1257,7 +1254,7 @@ fn run_replica(
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_CAST_ADDR");
     let mut tip_receiver = CastReceiver::new(
-        replica_addr, main_addr, 0,
+        replica_addr, main_addr,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind replica tip receiver");

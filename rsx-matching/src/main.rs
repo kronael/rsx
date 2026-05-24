@@ -379,7 +379,7 @@ fn main() {
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
     let mut cmp_receiver = CastReceiver::new(
-        me_addr, risk_nak_addr, symbol_id,
+        me_addr, risk_nak_addr,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind CMP receiver");

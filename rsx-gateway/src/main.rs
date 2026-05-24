@@ -107,7 +107,7 @@ fn main() {
 
     // CMP/UDP: receive responses from Risk
     let mut cmp_receiver = CastReceiver::new(
-        gw_addr, risk_addr, 0,
+        gw_addr, risk_addr,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind CMP receiver");

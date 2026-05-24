@@ -27,7 +27,7 @@ fn main() {
     let actual_send_addr = sender.local_addr().unwrap();
     eprintln!("sender bound at {actual_send_addr}");
 
-    let mut receiver = CastReceiver::new(recv_addr, actual_send_addr, 1).unwrap();
+    let mut receiver = CastReceiver::new(recv_addr, actual_send_addr).unwrap();
     eprintln!("receiver created");
 
     let mut rec = FillRecord {

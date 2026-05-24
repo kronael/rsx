@@ -89,8 +89,7 @@ fn nak_wal_fallback_under_5ms() {
         CastSender::new(recv_addr, stream_id, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
     let mut receiver =
-        CastReceiver::new(recv_addr, sender_addr, stream_id)
-            .unwrap();
+        CastReceiver::new(recv_addr, sender_addr).unwrap();
 
     // Push 5000 sends through the in-memory ring so the
     // sender's `ring_seqs[slot for seq=1]` has been

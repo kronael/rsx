@@ -91,7 +91,7 @@ fn mark_cmp_updates_risk_mark_prices() {
     let wal_dir = PathBuf::from("./tmp/cmp_mark_test");
     let mut sender = CastSender::new(recv_local, 0, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver = CastReceiver::new(recv_local, sender_addr, 0).unwrap();
+    let mut receiver = CastReceiver::new(recv_local, sender_addr).unwrap();
 
     let mut rec = MarkPriceRecord {
         seq: 0,
@@ -147,7 +147,7 @@ fn bbo_cmp_updates_risk_index_price() {
     let wal_dir = PathBuf::from("./tmp/cmp_bbo_test");
     let mut sender = CastSender::new(recv_local, 0, &wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver = CastReceiver::new(recv_local, sender_addr, 0).unwrap();
+    let mut receiver = CastReceiver::new(recv_local, sender_addr).unwrap();
 
     let mut rec = BboRecord {
         seq: 0,
