@@ -10,7 +10,7 @@ stream. Consumers connect directly to producers. No central broker.
 The WAL disk format = fixed-record wire format = what gets streamed.
 No transformation between storage and network.
 
-Crate: `rsx-dxs`. Embedded by all producers and consumers.
+Crate: `rsx-cast`. Embedded by all producers and consumers.
 
 ## Table of Contents
 
@@ -51,10 +51,10 @@ is rejected:
 
 - `WalReader::next` returns `Err(InvalidData)` on an unsupported version
   (no skip-and-continue — the framing isn't trusted).
-- `DxsReplayService::handle_client` returns `Err(InvalidData)` on an
-  unsupported version on the inbound `ReplayRequest` header, before any
+- `ReplicationService::handle_client` returns `Err(InvalidData)` on an
+  unsupported version on the inbound `ReplicationRequest` header, before any
   unsafe cast.
-- `DxsConsumer` returns `Err(InvalidData)` on an unsupported version on
+- `ReplicationConsumer` returns `Err(InvalidData)` on an unsupported version on
   any inbound header during streaming, terminating the connection (a
   reconnect with backoff follows).
 
@@ -66,21 +66,21 @@ coordinated stop-redeploy.
 The payload immediately follows the header and is a fixed-record
 struct for that `record_type` (`#[repr(C, align(64))]`, little-endian).
 
-### CmpRecord trait
+### CastRecord trait
 
-All **data** payloads implement the CmpRecord trait and have
+All **data** payloads implement the CastRecord trait and have
 `seq: u64` as the first 8 bytes:
 
 ```rust
-pub trait CmpRecord: Copy {
+pub trait CastRecord: Copy {
     fn seq(&self) -> u64;
     fn set_seq(&mut self, seq: u64);
 }
 ```
 
-Sequence numbers are assigned by WalWriter::append<T: CmpRecord>
-or CmpSender::send<T: CmpRecord>. Control messages
-(StatusMessage, Nak, CmpHeartbeat) do NOT implement CmpRecord.
+Sequence numbers are assigned by WalWriter::append<T: CastRecord>
+or CastSender::send<T: CastRecord>. Control messages
+(StatusMessage, Nak, CastHeartbeat) do NOT implement CastRecord.
 
 Readers validate `crc32` and truncate the WAL on the first
 invalid record.
@@ -114,8 +114,8 @@ invalid record.
 - `RECORD_CANCEL_REQUEST`
 - `RECORD_ORDER_FAILED`
 - `RECORD_LIQUIDATION`
-- `RECORD_REPLAY_REQUEST`
-- `RECORD_REPLAY_NOT_AVAILABLE` (server cannot serve from_seq; consumer tries next endpoint)
+- `RECORD_REPLICATION_REQUEST`
+- `RECORD_REPLICATION_NOT_AVAILABLE` (server cannot serve from_seq; consumer tries next endpoint)
 
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
@@ -148,7 +148,7 @@ in-memory (MESSAGES.md section 7). During replay, records older
 than 5min from WAL tip are skipped.
 
 See `rsx-messages/src/lib.rs` (domain records) and
-`rsx-dxs/src/protocol.rs` (transport control records).
+`rsx-cast/src/protocol.rs` (transport control records).
 
 All fields are encoded little-endian on disk/wire.
 
@@ -187,9 +187,9 @@ request replay from ARCHIVE (see ARCHIVE.md), then resume from replication hot t
 
 ## 3. WalWriter
 
-Append-only writer embedded in each producer. See `rsx-dxs/src/wal.rs`
+Append-only writer embedded in each producer. See `rsx-cast/src/wal.rs`
 
-**Append:** `append<T: CmpRecord>(record: &mut T)` assigns
+**Append:** `append<T: CastRecord>(record: &mut T)` assigns
 monotonic `seq`, serializes fixed record to buf.
 Producer-local sequence, no coordination. O(1) memcpy.
 
@@ -211,7 +211,7 @@ growth if flush falls behind.
 
 ## 4. WalReader
 
-Sequential reader for WAL files. See `rsx-dxs/src/wal.rs`
+Sequential reader for WAL files. See `rsx-cast/src/wal.rs`
 
 **Open from seq:** list files, parse filenames, binary search
 for the file containing `target_seq`. Seek within file by reading
@@ -226,15 +226,15 @@ file in sorted order. Returns `None` when all files exhausted
 
 ---
 
-## 5. Replay Server (DxsReplayService)
+## 5. Replay Server (ReplicationService)
 
-DxsReplayService embedded in each producer. Serves WAL records
+ReplicationService embedded in each producer. Serves WAL records
 to consumers over TCP. See [casting.md](casting.md).
 
 **Request format (WAL record):**
 ```
 #[repr(C, align(64))]
-struct ReplayRequest {
+struct ReplicationRequest {
   u32 stream_id;     // routing for TCP connection
   u32 _pad0;
   u64 from_seq;
@@ -242,7 +242,7 @@ struct ReplayRequest {
 }
 ```
 
-ReplayRequest does NOT implement CmpRecord (no seq field).
+ReplicationRequest does NOT implement CastRecord (no seq field).
 It uses `stream_id` for TCP connection routing.
 
 **Response format:**
@@ -252,9 +252,9 @@ over a TCP stream.
 **Protocol:**
 
 1. Consumer opens TCP connection to producer (optional TLS).
-2. Consumer sends `ReplayRequest` as a WAL record.
+2. Consumer sends `ReplicationRequest` as a WAL record.
 3. If `from_seq` is older than server's WAL retention, server
-   responds with `RECORD_REPLAY_NOT_AVAILABLE` and closes.
+   responds with `RECORD_REPLICATION_NOT_AVAILABLE` and closes.
    Consumer tries next endpoint in its list.
 4. Server opens WalReader at `from_seq` and streams WalRecords.
 5. When reader exhausts all files (caught up to live): server
@@ -298,7 +298,7 @@ transport specification.
 
 Embedded in each consumer process. Manages connection to a
 producer's DxsReplay service, tracks processing tips.
-See `rsx-dxs/src/client.rs`
+See `rsx-cast/src/client.rs`
 
 **Endpoint list (ordered newest → oldest):**
 
@@ -307,7 +307,7 @@ See `rsx-dxs/src/client.rs`
 ```
 
 Each reconnect attempt starts from `endpoints[0]`. On
-`RECORD_REPLAY_NOT_AVAILABLE`, the consumer closes that
+`RECORD_REPLICATION_NOT_AVAILABLE`, the consumer closes that
 connection and tries the next endpoint with the same
 `from_seq`. This naturally cascades through archives and
 "moves back up" — once the consumer's tip is within local
@@ -316,16 +316,16 @@ WAL retention, local wins and stays live permanently.
 **Startup sequence:**
 
 1. Load tip from `tip_file` (0 if missing).
-2. Open `CmpReceiver` in parallel (starts buffering live packets
+2. Open `CastReceiver` in parallel (starts buffering live packets
    in its reorder ring immediately).
 3. Connect to first replication endpoint; try each in order on
-   `RECORD_REPLAY_NOT_AVAILABLE`.
+   `RECORD_REPLICATION_NOT_AVAILABLE`.
 4. Process replayed records via callback, advancing tip.
-5. On `RECORD_CAUGHT_UP` or TCP close: switch to `CmpReceiver`
+5. On `RECORD_CAUGHT_UP` or TCP close: switch to `CastReceiver`
    as the delivery source. Set `expected_seq = tip + 1`.
-   CmpReceiver's NAK mechanism fills any remaining gap from the
+   CastReceiver's NAK mechanism fills any remaining gap from the
    sender's in-memory ring (≤ `SEND_RING_CAPACITY` records, µs).
-6. Deliver live records from `CmpReceiver` going forward.
+6. Deliver live records from `CastReceiver` going forward.
 
 No special handoff record needed. Archive servers close on
 exhaust; local WAL server closes when gap ≤ `SEND_RING_CAPACITY`
@@ -355,9 +355,9 @@ Two transport modes, same WAL records:
 **Recovery handoff (replication → casting):**
 
 Consumers that will ultimately receive live casting open their
-`CmpReceiver` in parallel with replication from the start.
+`CastReceiver` in parallel with replication from the start.
 replication bulk-replays history (archive → local WAL). When replication
-closes, the consumer switches delivery to `CmpReceiver`.
+closes, the consumer switches delivery to `CastReceiver`.
 Any remaining gap (replication tip → casting head) is filled by NAK
 retransmit from the sender's in-memory ring. No explicit
 handshake between replication and casting — the gap is always
@@ -414,7 +414,7 @@ rsx-recorder/src/
     main.rs       -- entrypoint, config, daily rotation
 ```
 
-Recorder reuses `DxsConsumer` from `rsx-dxs` for subscription.
+Recorder reuses `ReplicationConsumer` from `rsx-cast` for subscription.
 The callback writes records to the daily archive file.
 
 ---
@@ -525,7 +525,7 @@ requested `from_seq`. If gap detected, consumer must:
 3. Fail if archive unavailable and gap is unacceptable
 
 **Implementation:** Archive fallback implemented via multi-endpoint
-`DxsConsumer`. Consumer receives `RECORD_REPLAY_NOT_AVAILABLE` from
+`ReplicationConsumer`. Consumer receives `RECORD_REPLICATION_NOT_AVAILABLE` from
 local WAL, falls through to archive endpoints in order. See §6.
 
 **Mitigation:** Set retention window > max expected consumer
@@ -660,7 +660,7 @@ been appended to WAL but not delivered.
 
 **Handling:** Consumer detects disconnect (TCP error on read/write),
 persists current tip, reconnects with backoff (1/2/4/8/30s).
-Sends new ReplayRequest from tip+1. Server replays any missed
+Sends new ReplicationRequest from tip+1. Server replays any missed
 records, sends new CaughtUp, resumes live tail.
 
 **Duplicate handling:** If consumer received records but didn't
@@ -717,7 +717,7 @@ via file-level transition.
 
 ## 11. Performance Targets
 
-See `rsx-dxs/benches/wal_bench.rs` and
+See `rsx-cast/benches/wal_bench.rs` and
 `rsx-messages/benches/encode_bench.rs` for measured targets.
 
 ---
@@ -725,19 +725,19 @@ See `rsx-dxs/benches/wal_bench.rs` and
 ## 12. File Organization
 
 ```
-rsx-dxs/src/
+rsx-cast/src/
     lib.rs         -- public API: explicit re-exports
     header.rs      -- WalHeader (16 B)
-    protocol.rs    -- CmpRecord trait, StatusMessage, Nak,
-                      CmpHeartbeat, ReplayRequest, CaughtUpRecord
+    protocol.rs    -- CastRecord trait, StatusMessage, Nak,
+                      CastHeartbeat, ReplicationRequest, CaughtUpRecord
     encode_utils.rs -- compute_crc32, as_bytes, encode_record,
                       decode_payload (generic)
-    cmp.rs         -- CmpSender, CmpReceiver (UDP transport)
+    cmp.rs         -- CastSender, CastReceiver (UDP transport)
     wal.rs         -- WalWriter, WalReader, file layout, GC,
                       read_record_at_seq (NAK fallback)
-    server.rs      -- DxsReplayService (TCP)
-    client.rs      -- DxsConsumer, tip tracking, reconnect
-    config.rs      -- CmpConfig, TlsConfig
+    server.rs      -- ReplicationService (TCP)
+    client.rs      -- ReplicationConsumer, tip tracking, reconnect
+    config.rs      -- CastConfig, TlsConfig
 
 rsx-messages/src/
     lib.rs         -- exchange wire records (FillRecord etc.)

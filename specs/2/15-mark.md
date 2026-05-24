@@ -41,7 +41,7 @@ Coinbase WS ──┘            (single thread)        |
   per symbol.
 - WalWriter appends `MarkPriceRecord` records.
 - casting/UDP sends `MarkPriceRecord` to Risk.
-- DxsReplay server (from `rsx-dxs`) broadcasts to replay consumers.
+- DxsReplay server (from `rsx-cast`) broadcasts to replay consumers.
 - Recorder archives mark price stream to daily files.
 
 ---
@@ -172,7 +172,7 @@ stops publishing. Consumers handle the absence.
 
 ## 5. Serving Subscribers
 
-The aggregator embeds a DxsReplay server from `rsx-dxs`.
+The aggregator embeds a DxsReplay server from `rsx-cast`.
 
 - Single `stream_id` for the mark price stream.
 - Recorder connects as a replication consumer for archival.

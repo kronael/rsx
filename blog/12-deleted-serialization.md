@@ -56,8 +56,8 @@ No transformation. No encoder. No decoder. Just `memcpy`.
 WAL append is a single function:
 
 ```rust
-// rsx-dxs/src/wal.rs
-pub fn append<T: CmpRecord>(
+// rsx-cast/src/wal.rs
+pub fn append<T: CastRecord>(
     &mut self,
     record: &mut T,
 ) -> io::Result<u64> {
@@ -81,7 +81,7 @@ pub fn append<T: CmpRecord>(
 Reading from WAL:
 
 ```rust
-// rsx-dxs/src/client.rs (DxsConsumer)
+// rsx-cast/src/client.rs (ReplicationConsumer)
 let mut header_buf = [0u8; 16];
 stream.read_exact(&mut header_buf).await?;
 let header = parse_header(&header_buf)?;
@@ -164,7 +164,7 @@ the kernel copies to socket buffer.
 ## Tests Prove It
 
 ```rust
-// rsx-dxs/tests/wal_test.rs
+// rsx-cast/tests/wal_test.rs
 #[test]
 fn writer_append_to_buffer_no_io() {
     let tmp = TempDir::new().unwrap();
@@ -199,8 +199,8 @@ fn writer_flush_writes_to_file() {
 Replay over TCP uses the same format:
 
 ```rust
-// DxsConsumer connects to ME's replay server
-let consumer = DxsConsumer::new(
+// ReplicationConsumer connects to ME's replay server
+let consumer = ReplicationConsumer::new(
     symbol_id,
     "127.0.0.1:9001".to_string(),
     tip_file,
@@ -255,5 +255,5 @@ eliminate it entirely.
 - `specs/2/48-wal.md` - WAL format and guarantees
 - `specs/2/4-cast.md` - casting/UDP wire protocol
 - `rsx-messages/src/lib.rs` - All record types
-- `rsx-dxs/src/wal.rs` - WAL writer implementation
+- `rsx-cast/src/wal.rs` - WAL writer implementation
 - `blog/dont-yolo-structs-over-the-wire.md` - Padding and alignment gotchas

@@ -15,7 +15,7 @@ the light backlog — items not yet a ship project.
 - ✅ F20   `start_all` SIGTERM-first, full-path match (`58b567e`)
 - ✅ Playwright regression specs for F3-F11 (`eb30730`)
 - ✅ `rsx-book` eprintln → tracing (`bbb0f9f`)
-- ✅ `rsx-dxs` 8 MB UDP recv buffer (sustained_throughput stable) (`2fe18e8`)
+- ✅ `rsx-cast` 8 MB UDP recv buffer (sustained_throughput stable) (`2fe18e8`)
 - ✅ clippy 1.93 gate cleared (`533ccf9`)
 - ✅ F21-F28 second oracle pass: real affinity, cid-matched
      probe, honest labels (`596d24a`)
@@ -30,7 +30,7 @@ All 28 audit findings closed. v0.2.0 carry-over fully cleared.
 ## Open
 
 (empty — next up is a v0.3.0 release candidate. The natural
-v0.3 scope: package `rsx-dxs` as a standalone library with a
+v0.3 scope: package `rsx-cast` as a standalone library with a
 non-exchange worked example, draft the SDK that turns the 12
 crates into an embeddable "exchange-in-a-box" per specs/2/50-wedge.md.
 Distribution is a founder decision — see CLAUDE.md

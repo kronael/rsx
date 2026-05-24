@@ -36,7 +36,7 @@
 //! --------------------
 //! - Loss recovery. To bench under loss:
 //!     sudo tc qdisc add dev lo root netem loss 0.1%
-//!     cargo bench -p rsx-dxs --bench compare_kcp
+//!     cargo bench -p rsx-cast --bench compare_kcp
 //!     sudo tc qdisc del dev lo root
 //!   The bench itself does not require root or tc.
 //! - WAN behaviour (loopback only).

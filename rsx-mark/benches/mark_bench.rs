@@ -214,7 +214,7 @@ fn bench_source_to_publish_e2e(c: &mut Criterion) {
 
 // bench_wal_append_mark_event: requires WalWriter which
 // needs filesystem I/O setup. Skipped -- WAL append is
-// benchmarked in rsx-dxs/benches/wal_bench.rs already.
+// benchmarked in rsx-cast/benches/wal_bench.rs already.
 
 // bench_main_loop_idle: requires full runtime setup with
 // SPSC rings, WalWriter, CastSender. The main loop is in

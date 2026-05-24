@@ -81,7 +81,7 @@ See `specs/2/41-testing-matching.md`.
 ## Dependencies
 
 - `rsx-book` -- orderbook and matching algorithm
-- `rsx-dxs` -- WAL writer, casting sender/receiver
+- `rsx-cast` -- WAL writer, casting sender/receiver
 - `rsx-types` -- shared types
 - Postgres (runtime, for config polling)
 

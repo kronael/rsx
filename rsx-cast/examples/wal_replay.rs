@@ -4,7 +4,7 @@
 //! the bytes sitting in the WAL file.
 //!
 //! Run:
-//!   cargo run --example wal_replay -p rsx-dxs
+//!   cargo run --example wal_replay -p rsx-cast
 
 use rsx_cast::WalReader;
 use rsx_cast::WalWriter;

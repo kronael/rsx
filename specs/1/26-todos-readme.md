@@ -25,7 +25,7 @@ Bug hunt 2026-02-14: 59 bugs + 33 spec test gaps + 7 future items.
 |-------|------|----------|------|--------|-----|
 | rsx-playground (Python) | 30 | 8 | 8 | 11 | 3 |
 | rsx-gateway | 4 | 1 | 1 | 2 | 0 |
-| rsx-dxs | 5 | 0 | 2 | 3 | 0 |
+| rsx-cast | 5 | 0 | 2 | 3 | 0 |
 | rsx-book | 4 | 0 | 3 | 1 | 0 |
 | rsx-risk | 4 | 0 | 2 | 1 | 1 |
 | rsx-mark | 3 | 1 | 0 | 2 | 0 |

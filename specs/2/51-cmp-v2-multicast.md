@@ -10,7 +10,7 @@ multicast without a broker, without copying per-receiver.
 
 v1 casting is a point-to-point pipe. One ME → one mktdata receiver works.
 One ME → N consumers (recorder, risk, N marketdata shards, archiver,
-ML feeder) requires N separate `CmpSender` instances and N separate
+ML feeder) requires N separate `CastSender` instances and N separate
 WAL writes of the same bytes. That is O(N) syscalls and O(N) memory
 pressure per frame.
 
@@ -101,10 +101,10 @@ of the slowest receiver that hasn't yet been evicted.
 
 ```rust
 // v1 (unicast)
-CmpSender::new(dest_addr: SocketAddr, stream_id: u32, wal_dir: &str)
+CastSender::new(dest_addr: SocketAddr, stream_id: u32, wal_dir: &str)
 
 // v2 (multicast)
-CmpSender::new_multicast(
+CastSender::new_multicast(
     mcast_group: SocketAddr,   // e.g. 239.1.1.0:5000
     repair_port: u16,          // unicast repair endpoint, same host
     stream_id: u32,
@@ -124,10 +124,10 @@ disabled on loopback for production).
 
 ```rust
 // v1 (unicast)
-CmpReceiver::new(bind_addr: SocketAddr, sender_addr: SocketAddr, stream_id: u32)
+CastReceiver::new(bind_addr: SocketAddr, sender_addr: SocketAddr, stream_id: u32)
 
 // v2 (multicast)
-CmpReceiver::new_multicast(
+CastReceiver::new_multicast(
     mcast_group: SocketAddr,   // group to join
     repair_addr: SocketAddr,   // sender's repair unicast endpoint
     iface: Option<Ipv4Addr>,   // bind interface; None = INADDR_ANY
@@ -141,7 +141,7 @@ group.
 
 ---
 
-## Config additions (`CmpConfig`)
+## Config additions (`CastConfig`)
 
 ```toml
 [cmp]
@@ -158,10 +158,10 @@ stale_receiver_lag_segs = 2    # segments before eviction
 ## Cold reconnect path (unchanged)
 
 A receiver that was evicted (or was never live) connects via
-`DxsConsumer` (TCP + WAL replay), same as today. Once it has caught
+`ReplicationConsumer` (TCP + WAL replay), same as today. Once it has caught
 up to within one window of the live tip, it rejoins the multicast
 group and switches back to hot path. This transition is transparent
-to the application: `CmpReceiver::try_recv` returns records from
+to the application: `CastReceiver::try_recv` returns records from
 both sources in sequence order.
 
 ---
@@ -181,10 +181,10 @@ both sources in sequence order.
 
 ## Implementation order
 
-1. `socket2`-based multicast socket helpers (join/leave/TTL) — `rsx-dxs/src/mcast.rs` (~60 LOC)
-2. `CmpSender::new_multicast` — thin wrapper, changes destination socket only
-3. NAK backoff timer in `CmpReceiver` — ~20 LOC addition to `recv_control`
-4. Per-receiver window tracking in `CmpSender` — replace single `peer_window` with `HashMap<SocketAddr, u64>`
+1. `socket2`-based multicast socket helpers (join/leave/TTL) — `rsx-cast/src/mcast.rs` (~60 LOC)
+2. `CastSender::new_multicast` — thin wrapper, changes destination socket only
+3. NAK backoff timer in `CastReceiver` — ~20 LOC addition to `recv_control`
+4. Per-receiver window tracking in `CastSender` — replace single `peer_window` with `HashMap<SocketAddr, u64>`
 5. Stale eviction + cold-reconnect handoff
 6. `compare/multicast.md` — bench: loopback multicast with 2, 4, 8 receivers
 7. Config surface + docs

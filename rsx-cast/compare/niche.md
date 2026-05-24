@@ -5,7 +5,7 @@ This file is the long-tail companion to the curated `compare/` set
 have a deep doc + a guarantees table + (where feasible) a Criterion
 benchmark in `../benches/`. They were chosen because they are the
 direct, well-known peers — every HFT/exchange architect reading
-about rsx-dxs has already heard of them.
+about rsx-cast has already heard of them.
 
 This doc covers everything else worth naming: NAK/ACK reliable UDP
 libraries, persistent-log-as-transport systems, kernel-bypass
@@ -24,7 +24,7 @@ Conventions
   marked "n/a — closed source" or similar.
 - "Last commit" = `pushed_at` from the GitHub API; "abandoned"
   means no commits in 18+ months.
-- "Differs from rsx-dxs" tries to be one concrete sentence, not
+- "Differs from rsx-cast" tries to be one concrete sentence, not
   a generic difference statement. If the entry is in a different
   category (e.g. multicast, not unicast), say so.
 
@@ -66,7 +66,7 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   suppression via random backoff, parity-FEC option for proactive
   redundancy. Used in military tactical networks and as a ZeroMQ
   transport (see §6).
-- Differs from rsx-dxs CMP: multicast-first (NAK suppression
+- Differs from rsx-cast CMP: multicast-first (NAK suppression
   mandatory), FEC built in, runs over IP-layer routers. CMP is
   unicast-only with no FEC and zero NAK suppression (single
   receiver per pair).
@@ -80,7 +80,7 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   was promoted by Cisco / Microsoft in early 2000s. The library
   has been frozen for nearly a decade but still backs ZeroMQ's
   `pgm://` transport.
-- Differs from rsx-dxs CMP: IP-layer multicast (requires multicast
+- Differs from rsx-cast CMP: IP-layer multicast (requires multicast
   routing in the LAN), parity-FEC for proactive recovery, sender-
   tracked NAK responses (NCF). CMP is per-pair unicast with no FEC.
 
@@ -91,7 +91,7 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   industry (VideoLAN / Net Insight / SRT competitors merged
   efforts). RFC RTT-based NAK with bandwidth-throttled retransmit.
   Supports PSK + DTLS encryption.
-- Differs from rsx-dxs CMP: optimised for video on lossy WAN
+- Differs from rsx-cast CMP: optimised for video on lossy WAN
   (re-request horizon ~ seconds, FEC option), tunnel-mode framing
   over RTP. CMP retransmits fixed-size records from a 48-h WAL
   with no FEC.
@@ -103,7 +103,7 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   Designed for unpredictable internet uplinks (broadcast-camera
   to studio); retransmit horizon limited by a configurable
   send-buffer (default ~ 1 s). Used by OBS, FFmpeg, gstreamer.
-- Differs from rsx-dxs CMP: byte-stream not record-stream, no
+- Differs from rsx-cast CMP: byte-stream not record-stream, no
   on-disk archive (retransmit horizon = send buffer in RAM), AES
   encryption mandatory in production deployments.
 
@@ -119,10 +119,10 @@ reliable multicast over UDP. Three production implementations:
   (BSD-style), ~1 500 stars, active. Most mature, includes RTPS,
   TCP, and IP-multicast transports.
 
-Differs from rsx-dxs CMP: full QoS layer (reliability, durability,
+Differs from rsx-cast CMP: full QoS layer (reliability, durability,
 deadline, history depth), schema-driven (IDL or XML), discovery
 via SPDP/SEDP. RTPS uses HEARTBEAT + ACKNACK rather than gap-fill
-NAK; sender drives the conversation more than rsx-dxs's NAK model.
+NAK; sender drives the conversation more than rsx-cast's NAK model.
 
 ### embeddedRTPS
 - Repo: <https://github.com/embedded-software-laboratory/embeddedRTPS>
@@ -150,7 +150,7 @@ Sender-driven loss detection. KCP and Quinn already covered.
   control aimed at bulk-data transfer over long-fat-pipes (sci
   computing, sky surveys). Influential design (~3k citations) but
   the project is dormant; modern displacement is QUIC.
-- Differs from rsx-dxs CMP: bulk-throughput oriented (10 GbE WAN),
+- Differs from rsx-cast CMP: bulk-throughput oriented (10 GbE WAN),
   large window, slow start. CMP is small-message latency-oriented
   with zero congestion control.
 
@@ -159,7 +159,7 @@ Sender-driven loss detection. KCP and Quinn already covered.
 - IETF "unreliable but congestion-controlled" datagram protocol.
   Mostly displaced by QUIC's DATAGRAM frame (RFC 9221). Worth
   naming for completeness; never gained production deployment.
-- Differs from rsx-dxs CMP: kernel-resident, no application-
+- Differs from rsx-cast CMP: kernel-resident, no application-
   level retransmit, congestion-controlled drops rather than NAK
   recovery.
 
@@ -170,7 +170,7 @@ Sender-driven loss detection. KCP and Quinn already covered.
 - BitTorrent's reliable UDP, MIT 2010. LEDBAT congestion control
   (delay-based, scavenger). Heavily deployed (every BT client)
   but as a background-priority transport.
-- Differs from rsx-dxs CMP: explicitly tries to *yield* to other
+- Differs from rsx-cast CMP: explicitly tries to *yield* to other
   traffic; CMP assumes it owns the wire.
 
 ### UDX — Holepunch reliable UDP
@@ -180,7 +180,7 @@ Sender-driven loss detection. KCP and Quinn already covered.
 - Reliable, multiplexed, congestion-controlled streams over UDP.
   Built for P2P (Hyperswarm / Pear). No handshakes, no encryption
   (assumes a Noise tunnel above it).
-- Differs from rsx-dxs CMP: P2P NAT-traversal first, stream API
+- Differs from rsx-cast CMP: P2P NAT-traversal first, stream API
   rather than message, congestion control mandatory.
 
 ### QUIC implementations not already in `quinn.md`
@@ -257,7 +257,7 @@ connection-oriented framing.
 
 All three are by Glenn Fiedler (GafferOnGames). Used by Valve,
 Activision, indie studios. Single-author maintained but stable
-APIs since 2018. Differs from rsx-dxs: client-server gaming
+APIs since 2018. Differs from rsx-cast: client-server gaming
 focus (move/shoot at 60 Hz), per-packet AEAD encryption,
 serialization helpers (bit-packer). No persistent log.
 
@@ -282,7 +282,7 @@ Not surveyed in depth here because everyone knows it. Wire format:
 TCP, length-prefixed Records framed into RecordBatch. Replication
 via Fetch API (followers pull from leader). 99th-pct latency ~1
 order of magnitude above Chronicle Queue (~ms vs µs). The point
-of citing it: Kafka is what rsx-dxs is *not*.
+of citing it: Kafka is what rsx-cast is *not*.
 
 ### Apache BookKeeper + DistributedLog + Pulsar
 - BookKeeper repo: <https://github.com/apache/bookkeeper>, 1 995
@@ -292,8 +292,8 @@ of citing it: Kafka is what rsx-dxs is *not*.
   of BK, now subsumed into Pulsar.
 - Pulsar: <https://github.com/apache/pulsar>, 15 251 stars,
   active. The current consumer of BookKeeper.
-- Differs from rsx-dxs: ZooKeeper coordination, quorum writes
-  across N bookies, ledger lifecycle management. rsx-dxs WAL is
+- Differs from rsx-cast: ZooKeeper coordination, quorum writes
+  across N bookies, ledger lifecycle management. rsx-cast WAL is
   single-writer, no quorum, no metadata service.
 - Worth citing as the "if you wanted CMP-style live + WAL-style
   cold but with strong replication guarantees" reference design.
@@ -313,7 +313,7 @@ of citing it: Kafka is what rsx-dxs is *not*.
 - Persistent log layer on top of NATS Core. RAFT-based replication
   optimised to reuse the data plane for consensus messages. Stream
   storage is per-server (no shared ledger). Linearizable writes.
-- Differs from rsx-dxs: connection-oriented client API, JSON or
+- Differs from rsx-cast: connection-oriented client API, JSON or
   binary headers, per-stream RAFT group rather than single-writer
   WAL.
 
@@ -322,8 +322,8 @@ of citing it: Kafka is what rsx-dxs is *not*.
 - Rust, thread-per-core via io_uring + compio, Kafka-style log,
   TCP/QUIC/HTTP transports. Aiming for "Kafka semantics, Aeron
   performance".
-- Differs from rsx-dxs: still a *broker* (clients connect, then
-  produce/consume). rsx-dxs has no broker — every writer owns
+- Differs from rsx-cast: still a *broker* (clients connect, then
+  produce/consume). rsx-cast has no broker — every writer owns
   its own WAL.
 
 ### Redpanda
@@ -331,7 +331,7 @@ of citing it: Kafka is what rsx-dxs is *not*.
   active. License: BSL (not open-source by OSI).
 - C++ on Seastar (thread-per-core). Kafka wire-protocol
   compatible. RAFT replication. The de-facto "fast Kafka" today.
-- Differs from rsx-dxs: ditto Iggy — broker model, plus Kafka API
+- Differs from rsx-cast: ditto Iggy — broker model, plus Kafka API
   semantics (consumer groups, offsets, transactions).
 
 ### Raft Engine (TiKV)
@@ -339,7 +339,7 @@ of citing it: Kafka is what rsx-dxs is *not*.
 - Embedded log-structured storage for *raft logs*. Not a
   transport but a relevant data-structure reference: how to
   pack many small append-only logs into a single file efficiently.
-- Worth reading next to rsx-dxs WAL design (different problem —
+- Worth reading next to rsx-cast WAL design (different problem —
   one shared log vs many independent logs — but same constraints
   on append-only, durable, recoverable).
 
@@ -357,18 +357,18 @@ of citing it: Kafka is what rsx-dxs is *not*.
 - Financial transactions DB in Zig. Uses Viewstamped Replication
   (VSR) rather than RAFT. Single-binary, no ZK / etcd. Worth
   citing for "VSR is a valid alternative to RAFT for exchange-
-  class persistence" — directly relevant if rsx-dxs ever needs
+  class persistence" — directly relevant if rsx-cast ever needs
   multi-replica state.
-- Differs from rsx-dxs: VSR consensus across replicas vs CMP
-  unicast + WAL replication. TigerBeetle is the DB; rsx-dxs is
+- Differs from rsx-cast: VSR consensus across replicas vs CMP
+  unicast + WAL replication. TigerBeetle is the DB; rsx-cast is
   the transport.
 
 ### Sled / Hills (Rust embedded KV)
 - sled: <https://github.com/spacejam/sled>, 8.5k+ stars.
 - Log-structured embedded KV in Rust. Pre-alpha for years; cited
-  here because rsx-dxs WAL writer shares some design DNA
+  here because rsx-cast WAL writer shares some design DNA
   (segment files, fsync semantics, single writer).
-- Differs from rsx-dxs: it's a KV index over a log, not a log
+- Differs from rsx-cast: it's a KV index over a log, not a log
   qua transport.
 
 ### Hazelcast Jet
@@ -397,7 +397,7 @@ what *rides* on the transport.
 - UDP-multicast protocol with sequence numbers + a separate TCP
   re-request server for gap recovery. Used for NASDAQ ITCH market
   data delivery.
-- Differs from rsx-dxs CMP: gap recovery via a *different
+- Differs from rsx-cast CMP: gap recovery via a *different
   channel* (TCP rewinder service). CMP gap recovery is in-band
   (NAK over the same UDP socket, retransmit from same producer).
 
@@ -417,8 +417,8 @@ what *rides* on the transport.
 - The TCP framing under OUCH (and many other NASDAQ-derived
   protocols). Sequence numbers, login + heartbeats. Open
   decoders in Wireshark (`packet-soupbintcp.c`).
-- Differs from rsx-dxs DXS/TCP replay: SoupBinTCP is a *live*
-  session protocol; rsx-dxs TCP is replay-only (cold path),
+- Differs from rsx-cast DXS/TCP replay: SoupBinTCP is a *live*
+  session protocol; rsx-cast TCP is replay-only (cold path),
   live orders are UDP.
 
 ### SBE — Simple Binary Encoding
@@ -427,7 +427,7 @@ what *rides* on the transport.
 - OSI L6 wire encoding. Schema → generated Java/C++/C#/Go/Rust
   decoders. Used by CME (MDP3, iLink3) and many exchanges. Pairs
   with Aeron in production.
-- Differs from rsx-dxs message layout: SBE is a *schema-driven*
+- Differs from rsx-cast message layout: SBE is a *schema-driven*
   binary format. CMP/WAL records are hand-rolled `#[repr(C)]`
   Rust structs. SBE adds versioning + tooling; CMP/WAL trades
   that for one less codegen step.
@@ -452,8 +452,8 @@ what *rides* on the transport.
 - FIX-Trading-Community's session layer for high-perf binary
   trading. Origins: NASDAQ SoupBinTCP + UFO ("UDP for Orders").
   Variants over TCP and UDP. UFO is the closest spec analogue
-  to rsx-dxs CMP (sequenced order datagrams with NAK recovery).
-- Differs from rsx-dxs CMP: standardised session-layer
+  to rsx-cast CMP (sequenced order datagrams with NAK recovery).
+- Differs from rsx-cast CMP: standardised session-layer
   bracketing (Negotiate, Establish, Terminate), per-flow auth,
   designed for client-vendor interop. CMP has no session
   bracketing (sendto on first frame, NAK on first gap).
@@ -464,7 +464,7 @@ what *rides* on the transport.
 - The de-facto open FOSS FIX engine since 2001. Carries FIX 4.x
   / 5.x messages over TCP. Stars range ~1-2.5k per impl. All
   active.
-- Differs from rsx-dxs: tag/value text protocol, TCP-only, no
+- Differs from rsx-cast: tag/value text protocol, TCP-only, no
   WAL semantics (relies on session-level msg numbers + a store).
 
 ### Project Parity (paritytrading)
@@ -480,7 +480,7 @@ what *rides* on the transport.
 - Vendor-neutral market-data middleware API. Wraps Solace,
   Tibco RV, ZeroMQ, etc. Originally Wombat → NYSE → Linux
   Foundation → FINOS. C/C++/Java/C#.
-- Differs from rsx-dxs: API layer, not a wire protocol.
+- Differs from rsx-cast: API layer, not a wire protocol.
   Useful as "what does a polyglot market-data API look like".
 
 ### Liquibook
@@ -497,7 +497,7 @@ what *rides* on the transport.
   Block split into ~1200-byte "shreds"; Reed-Solomon 32:32
   erasure coding (FEC); recipients form a layered tree
   (Turbine). Recently QUIC has been overlaid on the shred path.
-- Differs from rsx-dxs CMP: FEC instead of NAK (proactive rather
+- Differs from rsx-cast CMP: FEC instead of NAK (proactive rather
   than reactive), tree multicast topology, slot-bounded retention
   (you only retransmit within a block). CMP is per-pair unicast,
   no FEC, 48-h retention.
@@ -520,14 +520,14 @@ what *rides* on the transport.
 ## 5. DPDK / kernel-bypass / io_uring-native stacks
 
 Not transports; they are *under* the transport. Cited because
-rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
+rsx-cast's "later: DPDK/AF_XDP swap" line implies this design space.
 
 ### Seastar
 - Repo: <https://github.com/scylladb/seastar>, 9 228 stars, active.
 - C++ thread-per-core framework. Used by ScyllaDB, Redpanda,
   Ceph Crimson. Includes its own userspace TCP/IP over DPDK.
-- Differs from rsx-dxs: framework, not a library. You write code
-  *in* Seastar's future/promise style. rsx-dxs hot path is
+- Differs from rsx-cast: framework, not a library. You write code
+  *in* Seastar's future/promise style. rsx-cast hot path is
   threads + SPSC rings, no future combinators.
 
 ### Glommio
@@ -535,7 +535,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
 - Rust thread-per-core on io_uring. Datadog. Three rings per
   thread (poll for NVMe, submission/completion). Closer
   Rust-native equivalent of Seastar.
-- Differs from rsx-dxs: async/await everywhere; rsx-dxs gateway
+- Differs from rsx-cast: async/await everywhere; rsx-cast gateway
   uses monoio (also io_uring), risk/ME use plain tokio + SPSC
   for hot path.
 
@@ -554,7 +554,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
 - Repo: <https://github.com/smoltcp-rs/smoltcp>, 4 462 stars,
   active.
 - Rust embedded TCP/IP stack, no heap allocation. Targeted at
-  bare-metal / RTOS. Cited as "is rsx-dxs ever going to want a
+  bare-metal / RTOS. Cited as "is rsx-cast ever going to want a
   Rust-native userspace stack?" — answer is probably no (smoltcp
   trades throughput for embeddedness; we want the opposite).
 
@@ -576,7 +576,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
 - tcpdirect: <https://github.com/Xilinx-CNS/tcpdirect>, 80 stars,
   active. Lower-latency proprietary API. ~20 ns half-RTT claim.
 - ef_vi: the lowest layer (raw Ethernet frame queues).
-- These are *not* transports but enable rsx-dxs to run faster
+- These are *not* transports but enable rsx-cast to run faster
   on Solarflare HW (which is the standard HFT NIC). Cited
   because every HFT design conversation hits these names.
 
@@ -590,7 +590,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
   stars. C++ true zero-copy IPC for AUTOSAR / ROS 2.
 - iceoryx2: <https://github.com/eclipse-iceoryx/iceoryx2>, 2 267
   stars, active. Rust rewrite. POSIX shared memory, no broker.
-- Differs from rsx-dxs SPSC: cross-process IPC (rsx-dxs SPSC
+- Differs from rsx-cast SPSC: cross-process IPC (rsx-cast SPSC
   is intra-process), publish/subscribe with multiple consumers,
   larger payloads. iceoryx2 is the cleanest open Rust alternative
   to rtrb for cross-process zero-copy.
@@ -600,7 +600,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
   active.
 - Rust. Pub/sub + query + storage. Min wire overhead 4 B.
   Has a zenoh-pico for microcontrollers. ROS 2 RMW.
-- Differs from rsx-dxs: more like a fabric than a transport
+- Differs from rsx-cast: more like a fabric than a transport
   (peer-to-peer routing, no fixed topology, schema-less).
 
 ---
@@ -613,8 +613,8 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
 - Brokerless messaging library. UDP/multicast transports via
   PGM (`zmq_pgm`), EPGM (PGM tunneled in UDP), and NORM
   (`zmq_norm`). Other transports: TCP, IPC, inproc, WebSocket.
-- Differs from rsx-dxs: high-level socket abstractions
-  (REQ/REP, PUB/SUB, PUSH/PULL etc.) — rsx-dxs CMP is a single
+- Differs from rsx-cast: high-level socket abstractions
+  (REQ/REP, PUB/SUB, PUSH/PULL etc.) — rsx-cast CMP is a single
   per-pair unicast pipe.
 
 ### nanomsg-next-generation (nng)
@@ -641,7 +641,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
   flow-controls like multicast (each receiver tracked
   individually). Useful when L3 multicast isn't available
   (most clouds).
-- Cited because "Aeron without multicast" is closer to rsx-dxs
+- Cited because "Aeron without multicast" is closer to rsx-cast
   CMP than "Aeron with multicast" — both are per-pair unicast.
 
 ---
@@ -649,7 +649,7 @@ rsx-dxs's "later: DPDK/AF_XDP swap" line implies this design space.
 ## 7. Gossip / cluster membership over UDP
 
 Not in scope as a transport competitor, but worth cataloguing
-because rsx-dxs may later need failure detection.
+because rsx-cast may later need failure detection.
 
 ### hashicorp/memberlist
 - Repo: <https://github.com/hashicorp/memberlist>, 4 061 stars,
@@ -692,7 +692,7 @@ A quick census, beyond the Rust/.NET/Java already covered.
   (ring buffers, off-heap maps). Companion to Aeron + SBE.
 - LMAX Disruptor — <https://github.com/LMAX-Exchange/disruptor>,
   18 344 stars. The ring-buffer design that started it all.
-  Not a transport but the pattern lives in rsx-dxs's SPSC rings.
+  Not a transport but the pattern lives in rsx-cast's SPSC rings.
 
 ### Erlang/Elixir
 - gen_udp (OTP kernel) — just sockets, no reliability.
@@ -763,7 +763,7 @@ genuinely earn their own deep doc + guarantees table.
    in for Fast-DDS / CycloneDDS / OpenDDS (they share the wire
    protocol). DDS is the *most* widespread NAK-based UDP system
    by deployment count (every ROS 2 robot in the world). The
-   QoS layer also gives a good "what rsx-dxs doesn't do and why"
+   QoS layer also gives a good "what rsx-cast doesn't do and why"
    contrast. *Benchmark feasibility: medium — Fast-DDS pubsub
    loopback is straightforward but builds drag in TinyXML +
    FastCDR.*
@@ -771,7 +771,7 @@ genuinely earn their own deep doc + guarantees table.
 3. **Solana Turbine** — `compare/turbine.md`. The
    highest-throughput UDP reliable broadcast in production.
    FEC-based (not NAK), tree multicast, slot-bounded retention.
-   Direct foil to rsx-dxs's NAK + WAL model. The Firedancer
+   Direct foil to rsx-cast's NAK + WAL model. The Firedancer
    implementation is in C and is benchmark-able. *Benchmark
    feasibility: low — full Turbine requires a live cluster;
    we'd only quote published numbers.*
@@ -789,7 +789,7 @@ genuinely earn their own deep doc + guarantees table.
 
 5. **TigerBeetle (VSR)** — `compare/tigerbeetle.md`. Not a UDP
    transport but a sibling design: deterministic, single-binary,
-   exchange-class, log-based. The "what if rsx-dxs needed multi-
+   exchange-class, log-based. The "what if rsx-cast needed multi-
    replica state" question lands here. VSR vs RAFT discussion
    is independently valuable. *Benchmark feasibility: medium —
    `tigerbeetle benchmark` exists but doesn't isolate transport.*
@@ -798,25 +798,25 @@ genuinely earn their own deep doc + guarantees table.
    (single doc covering Glenn Fiedler's stack). It's the most
    widely cited "secure reliable UDP for games" stack and answers
    "why not just use the gaming community's RUDP?". Differs from
-   rsx-dxs in encryption-mandatory + per-packet AEAD + connection
+   rsx-cast in encryption-mandatory + per-packet AEAD + connection
    tokens. *Benchmark feasibility: yes — reliable.io has a
    loopback example, ~300 LOC to wrap in Criterion.*
 
 7. **iceoryx2** — `compare/iceoryx.md`. Not UDP at all but the
    closest *Rust* zero-copy cross-process alternative. Useful
-   for "rsx-dxs SPSC is intra-process; what if you need IPC
+   for "rsx-cast SPSC is intra-process; what if you need IPC
    across processes without going to UDP?". *Benchmark
    feasibility: yes — iceoryx2 has Criterion benches upstream.*
 
 ### Maybe / lower priority (3)
 
 8. **MoldUDP64 + SoupBinTCP** — `compare/mold-soup.md`. Combined
-   doc on NASDAQ's wire format pair. Useful for showing rsx-dxs
+   doc on NASDAQ's wire format pair. Useful for showing rsx-cast
    solving the same problem in-band (NAK over the same socket)
    that NASDAQ solves by deploying a separate TCP rewinder server.
 
 9. **SBE** — `compare/sbe.md`. Just the encoding layer, not a
-   transport — but rsx-dxs explicitly does *not* use SBE
+   transport — but rsx-cast explicitly does *not* use SBE
    (hand-rolled `#[repr(C)]` instead), and the contrast is
    probably worth a short doc.
 

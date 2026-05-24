@@ -5,9 +5,9 @@ status: verified
 sources:
   - https://github.com/aeron-io/aeron/wiki/Performance-Testing (Real Logic — cache-warming + spin-loop bench design)
   - lscpu / getconf on the bench host (AMD Ryzen 9 5950X, 6-core slice)
-  - rsx-dxs/benches/cmp_send_breakdown_bench.rs (the per-stage attribution bench)
-  - rsx-dxs/benches/compare_udp.rs (raw UDP RTT, formerly udp_rtt_bench.rs)
-  - rsx-dxs/benches/cmp_rtt_bench.rs (casting RTT)
+  - rsx-cast/benches/cmp_send_breakdown_bench.rs (the per-stage attribution bench)
+  - rsx-cast/benches/compare_udp.rs (raw UDP RTT, formerly udp_rtt_bench.rs)
+  - rsx-cast/benches/cmp_rtt_bench.rs (casting RTT)
   - facts/syscall-latency.md (sendto cost prior measurement)
   - https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html (cache-line size)
   - https://www.akkadia.org/drepper/cpumemory.pdf (Ulrich Drepper, "What every programmer should know about memory")
@@ -30,7 +30,7 @@ carefully.
 ## Measured numbers (post-pinning, 128 B payload)
 
 Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1.0-43-amd64, Rust release
-benches via `cargo bench -p rsx-dxs ... -- --sample-size 50 --measurement-time 3 --warm-up-time 1`.
+benches via `cargo bench -p rsx-cast ... -- --sample-size 50 --measurement-time 3 --warm-up-time 1`.
 Sender + echoer pinned to cores 2 and 3 via `core_affinity`. Payload aligned
 to 128 B (size_of::<FillRecord>()) across all comparison benches so the table
 is apples-to-apples.
@@ -188,7 +188,7 @@ For readers landing here without the bench harness context:
 
 ## The pinning gap — closed
 
-**All rsx-dxs benches now pin threads to cores 2 and 3** (commit `ae75df9`
+**All rsx-cast benches now pin threads to cores 2 and 3** (commit `ae75df9`
 added `core_affinity = "0.8"` as a dev-dep and pinned sender + echoer in
 every two-thread RTT bench; single-thread benches pin their worker to
 core 2). The two-thread RTT distributions tightened by 10–40% as shown in
@@ -228,9 +228,9 @@ Re-measure when:
 
 - `facts/syscall-latency.md` — the syscall-level "why" behind the 4 µs
   `sendto` cost.
-- `rsx-dxs/benches/cmp_send_breakdown_bench.rs` — the bench that produced
+- `rsx-cast/benches/cmp_send_breakdown_bench.rs` — the bench that produced
   the per-stage attribution.
-- `rsx-dxs/compare/raw-udp.md` — the protocol comparison doc; this file's
+- `rsx-cast/compare/raw-udp.md` — the protocol comparison doc; this file's
   numbers supersede the table there.
 - `.ship/18-COMPONENT-BENCHES/LANDSCAPE.md` — broader bench landscape if it
   still exists.

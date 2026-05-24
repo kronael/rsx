@@ -128,7 +128,7 @@ Live tail? Wait for flush notification, read new records.
 
 ```proto
 service DxsReplay {
-  rpc Stream(ReplayRequest) returns (stream WalBytes);
+  rpc Stream(ReplicationRequest) returns (stream WalBytes);
 }
 ```
 
@@ -219,7 +219,7 @@ and mystery P&L.
 The WAL writer retains 10 minutes. That's enough for crash recovery. But
 you want to keep everything forever—audits, compliance, replay, debugging.
 
-The recorder is a DxsConsumer that writes to daily archive files:
+The recorder is a ReplicationConsumer that writes to daily archive files:
 
 ```
 archive/1/1_2024-01-15.wal

@@ -116,8 +116,8 @@ casting/UDP. All data payloads start with the casting prefix:
 
 Record layouts are defined in:
 - `rsx-messages` (domain wire records: Fill/BBO/Order*/Mark/Liquidation)
-- `rsx-dxs::protocol` (transport control records: StatusMessage,
-  Nak, CmpHeartbeat, ReplayRequest, CaughtUpRecord)
+- `rsx-cast::protocol` (transport control records: StatusMessage,
+  Nak, CastHeartbeat, ReplicationRequest, CaughtUpRecord)
 - per-service wire types (Gateway/Risk/Matching)
 
 ### Record Inventory
@@ -140,7 +140,7 @@ Domain records (`rsx-messages`), all `#[repr(C, align(64))]`:
 | `OrderFailedRecord` | 64 | `RECORD_ORDER_FAILED` | 12 |
 | `LiquidationRecord` | 64 | `RECORD_LIQUIDATION` | 13 |
 
-Transport records (`rsx-dxs::protocol`), all
+Transport records (`rsx-cast::protocol`), all
 `#[repr(C, align(64))]`:
 
 | Record | Size | RECORD_* constant | Value |
@@ -148,8 +148,8 @@ Transport records (`rsx-dxs::protocol`), all
 | `CaughtUpRecord` | 128 | `RECORD_CAUGHT_UP` | 6 |
 | `StatusMessage` | 64 | `RECORD_STATUS_MESSAGE` | 0x10 |
 | `Nak` | 64 | `RECORD_NAK` | 0x11 |
-| `CmpHeartbeat` | 64 | `RECORD_HEARTBEAT` | 0x12 |
-| `ReplayRequest` | 64 | `RECORD_REPLAY_REQUEST` | 0x13 |
+| `CastHeartbeat` | 64 | `RECORD_HEARTBEAT` | 0x12 |
+| `ReplicationRequest` | 64 | `RECORD_REPLICATION_REQUEST` | 0x13 |
 
 Sizes/alignments are enforced by `const _: () = assert!(...)`
 compile-time checks in each crate. Domain values 0–13 share

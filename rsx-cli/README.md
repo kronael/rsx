@@ -54,7 +54,7 @@ cargo build -p rsx-cli
 - `clap` -- CLI argument parsing
 - `ctrlc` -- SIGINT handling for `--follow`
 - `serde_json` -- JSON output
-- `rsx-dxs` -- WAL reader, header decoding
+- `rsx-cast` -- WAL reader, header decoding
 - `rsx-messages` -- record type constants and payload structs
 
 ## See Also

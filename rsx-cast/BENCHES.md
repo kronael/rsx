@@ -1,4 +1,4 @@
-# rsx-dxs Benches
+# rsx-cast Benches
 
 Every measurement program in this crate: what it measures and how
 to run it. Numbers in [README.md](README.md) and
@@ -17,7 +17,7 @@ cargo bench --bench <bench_name> -- --sample-size 50 \
   --warm-up-time 1 --measurement-time 3
 
 # All benches in this crate
-cargo bench -p rsx-dxs
+cargo bench -p rsx-cast
 ```
 
 Criterion writes per-bench results to
@@ -28,9 +28,9 @@ Criterion writes per-bench results to
 | Bench | Measures | What it isolates |
 |---|---|---|
 | `compare_udp` | Raw UDP loopback RTT, 128 B payload, two non-blocking sockets spinning. **Absolute floor.** | Baseline: no protocol work |
-| `cmp_one_way_bench` | `CmpSender::send` → `CmpReceiver::try_recv` one direction | Hot send → hot recv |
+| `cmp_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | Hot send → hot recv |
 | `cmp_rtt_bench` | casting echo RTT (A → B → A), two paired senders + receivers | Full sender → echo → sender triangle |
-| `cmp_send_breakdown_bench` | Each step inside `CmpSender::send` separately: CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs `send` body — 99 % is `sendto` |
+| `cmp_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs `send` body — 99 % is `sendto` |
 | `wal_bench` | `WalWriter::append` in-memory, flush + fsync 64 KB, sequential read 10 K records | Append (31 ns) + sequential reader throughput |
 | `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost: 651 µs p50 single-record |
 | `wal_random_read_bench` | `read_record_at_seq(random)` over a pre-populated WAL | Cold-tier NAK retransmit path; O(n) at 23.5 ms @ 10 K records |
@@ -44,7 +44,7 @@ benches pin their worker to core 2. See
 [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
 § "The pinning gap" for the before/after distributions.
 
-## CmpSender::send sub-attribution (`cmp_send_breakdown_bench`)
+## CastSender::send sub-attribution (`cmp_send_breakdown_bench`)
 
 Per-stage median, 128 B payload + 16 B header, post-pinning:
 
@@ -57,7 +57,7 @@ Per-stage median, 128 B payload + 16 B header, post-pinning:
 | `ring_cache_copy_128b` | 3.1 ns |
 | **Sum** | **~4.07 µs** |
 
-If every line of Rust in `CmpSender::send` were eliminated, you'd
+If every line of Rust in `CastSender::send` were eliminated, you'd
 save ~26 ns out of ~4 070 ns — 0.6 % improvement. The remaining
 99.4 % is the `sendto` syscall, which is kernel code we don't
 own. To reduce it: io_uring SQE submission, `sendmmsg` batching,
@@ -71,8 +71,8 @@ mechanism.
   per iteration. Why an earlier `udp_rtt` bench read as 29 µs
   for weeks before the fix.
 - **Both sockets binding the same port + `SO_REUSEPORT`**
-  hash-distributes incoming traffic. Each `CmpSender` /
-  `CmpReceiver` needs its own port.
+  hash-distributes incoming traffic. Each `CastSender` /
+  `CastReceiver` needs its own port.
 - **WAL fsync 651 µs is amortised in production**: the writer
   flushes every 10 ms, not per record. As long as ≥ 10 orders
   share one fsync, per-order cost is ≪ 651 µs. The 24 µs

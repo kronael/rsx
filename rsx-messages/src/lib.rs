@@ -1,4 +1,4 @@
-//! RSX exchange wire messages on top of `rsx-dxs` transport.
+//! RSX exchange wire messages on top of `rsx-cast` transport.
 //!
 //! Application-level records that flow over CMP/UDP and DXS/TCP:
 //! order events, fills, BBO, marks, liquidations. All

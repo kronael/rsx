@@ -4,18 +4,18 @@
 
 Two artifacts in one repo:
 
-1. **`rsx-dxs` — an open-source, log-backed reliable UDP
+1. **`rsx-cast` — an open-source, log-backed reliable UDP
    transport.** WAL on disk, casting on the wire, replication for replay.
    The WAL bytes, the wire bytes, and the replay stream bytes
    are the same bytes. Domain-agnostic — `cargo tree -p
-   rsx-dxs --edges normal | grep rsx-` is empty. Any project
+   rsx-cast --edges normal | grep rsx-` is empty. Any project
    that wants 50-µs-class messaging without Kafka can use it.
 
 2. **A complete perpetuals exchange built on it.** Gateway,
    Risk, Matching Engine, Marketdata, Mark Price, Recorder,
    each a separate process. Spec-first: 50+ spec files
    written before any code. The exchange is both a real
-   product and the load-bearing demo that proves `rsx-dxs`
+   product and the load-bearing demo that proves `rsx-cast`
    handles a non-trivial workload.
 
 The design budget: under 50 microseconds from gateway ingress
@@ -181,8 +181,8 @@ coverage for every finding).
 
 The twelfth crate is `rsx-messages` — exchange-specific wire
 records (Fill, BBO, Order*) extracted from the transport so
-`rsx-dxs` stays domain-agnostic. The "anyone could use this
-transport" claim is provable: `cargo tree -p rsx-dxs --edges
+`rsx-cast` stays domain-agnostic. The "anyone could use this
+transport" claim is provable: `cargo tree -p rsx-cast --edges
 normal` has no `rsx-` entries.
 
 All 12 crates build and run end-to-end. See PROGRESS.md for
@@ -272,6 +272,6 @@ marketdata (currently monoio reactors, not pinned cores);
 multicast fan-out for casting v2 (one ME → N consumers, no
 per-receiver copy); measured GW→ME→GW p50/p99 under sustained
 load rather than the current component-sum estimate. The
-`rsx-dxs` transport layer is already domain-agnostic — the
+`rsx-cast` transport layer is already domain-agnostic — the
 blog post will include a worked example of a non-exchange
 consumer using it.

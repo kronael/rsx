@@ -91,9 +91,9 @@ Public Nasdaq feed numbers (ITCH 5.0 / TotalView):
 - The protocol itself adds essentially zero processing — parse
   header, dispatch payload.
 
-## Relation to rsx-dxs
+## Relation to rsx-cast
 
-| Dimension | MoldUDP64 | rsx-dxs CMP |
+| Dimension | MoldUDP64 | rsx-cast CMP |
 |---|---|---|
 | Transport | UDP multicast (1:N) | UDP unicast (1:1) |
 | Byte order | Big-endian | Little-endian (native x86_64) |

@@ -36,12 +36,12 @@ cargo run -p rsx-recorder
 
 ## Testing
 
-No dedicated tests. Depends on rsx-dxs client/server tests.
+No dedicated tests. Depends on rsx-cast client/server tests.
 See `specs/2/36-testing-replication.md`.
 
 ## Dependencies
 
-- `rsx-dxs` -- DxsConsumer (TCP replay client)
+- `rsx-cast` -- ReplicationConsumer (TCP replay client)
 - `rsx-messages` -- domain wire records (Fill/BBO/Order*/...)
 
 ## Gotchas

@@ -959,7 +959,7 @@ implementations).
 #### What it is
 
 Open-source Aeron (Apache-2.0, github `aeron-io/aeron`) is already
-covered in `rsx-dxs/compare/aeron.md`. **Aeron Premium** is the
+covered in `rsx-cast/compare/aeron.md`. **Aeron Premium** is the
 commercial tier sold by Real Logic, the company founded by Martin
 Thompson and Todd Montgomery that maintains Aeron. Premium adds:
 
@@ -1010,7 +1010,7 @@ page:
 
 #### What we can do
 
-- **OSS Aeron is already benched** in `rsx-dxs/compare/aeron.md`.
+- **OSS Aeron is already benched** in `rsx-cast/compare/aeron.md`.
 - **Aeron Premium**: acquire eval, bench DPDK vs our own casting-over-
   DPDK path if we ever build one. Don't publish numbers.
 - **Cite the AWS blog's 2M msg/s** figure with attribution.
@@ -1076,7 +1076,7 @@ Chronicle publishes their own latency figures openly:
 - **Cite the vendor numbers** with attribution.
 - **Bench Chronicle Queue's open-source portion** — Chronicle
   Queue itself is Apache-2.0 and is benched in
-  `rsx-dxs/compare/chronicle-queue.md`. Chronicle FIX is the
+  `rsx-cast/compare/chronicle-queue.md`. Chronicle FIX is the
   commercial layer.
 
 #### Sources

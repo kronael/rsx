@@ -6,7 +6,7 @@ status: shipped
 
 Source specs: [replication.md](replication.md), [WAL.md](WAL.md)
 
-Crate: `rsx-dxs`
+Crate: `rsx-cast`
 
 ## Table of Contents
 
@@ -37,9 +37,9 @@ Crate: `rsx-dxs`
 | D11 | WalReader: sequential iteration across files | replication.md §4 |
 | D12 | DxsReplay server: TCP stream from from_seq | replication.md §5 |
 | D13 | DxsReplay: CaughtUp marker then live tail | replication.md §5 |
-| D14 | DxsConsumer: tip persistence every 10ms | replication.md §6 |
-| D15 | DxsConsumer: reconnect with backoff 1/2/4/8/30s | replication.md §6 |
-| D16 | DxsConsumer: resume from tip+1 | replication.md §6 |
+| D14 | ReplicationConsumer: tip persistence every 10ms | replication.md §6 |
+| D15 | ReplicationConsumer: reconnect with backoff 1/2/4/8/30s | replication.md §6 |
+| D16 | ReplicationConsumer: resume from tip+1 | replication.md §6 |
 | D17 | Recorder: daily rotation, same fixed-record format | replication.md §8 |
 | D18 | Bounded loss window: 10ms (WAL.md) | WAL.md |
 | D19 | Replica lag bound: 100ms, stall if exceeded | WAL.md |
@@ -57,7 +57,7 @@ Crate: `rsx-dxs`
 
 ## Unit Tests
 
-See `rsx-dxs/tests/wal_test.rs` — covers WAL record encoding
+See `rsx-cast/tests/wal_test.rs` — covers WAL record encoding
 (header encode/decode, little-endian layout, CRC32 scope, all payload
 types roundtrip, edge cases: max payload, CRC mismatch, truncated
 header/payload, zero-length payload, unknown version fail-fast,
@@ -66,7 +66,7 @@ rotation at 64MB, GC, backpressure stalls, size-threshold flush), and
 WalReader (open from seq, sequential iteration, file transitions, EOF,
 CRC invalid truncation, unknown version stop).
 
-See `rsx-dxs/tests/records_test.rs` — covers DxsConsumer (tip load/zero,
+See `rsx-cast/tests/records_test.rs` — covers ReplicationConsumer (tip load/zero,
 replay request from tip+1, tip advancement and persistence, reconnect
 backoff, callback invocation, dedup by seq).
 
@@ -74,7 +74,7 @@ backoff, callback invocation, dedup by seq).
 
 ## E2E Tests
 
-See `rsx-dxs/tests/wal_test.rs` — covers writer+reader roundtrip (100
+See `rsx-cast/tests/wal_test.rs` — covers writer+reader roundtrip (100
 records, rotation across files, crash/recover from last fsync, GC then
 read retained range), replay server+consumer (from beginning/mid, CaughtUp
 marker, live tail, multiple consumers, disconnect/reconnect resume), tip
@@ -87,7 +87,7 @@ lag stall.
 
 ## Edge Case Tests
 
-See `rsx-dxs/tests/wal_test.rs` — covers crash mid-rotation, partial
+See `rsx-cast/tests/wal_test.rs` — covers crash mid-rotation, partial
 records at EOF, CRC mismatch mid-file, unknown record types, seq gaps from
 GC, replay from future seq, empty active file, interleaved rotation during
 replay, orphaned active files, concurrent readers, tip persistence lag,
@@ -96,7 +96,7 @@ flush lag, replay from seq 0, and rotation boundary continuity.
 
 ### Invariant Verification Tests
 
-The following invariants are verified in `rsx-dxs/tests/wal_test.rs`
+The following invariants are verified in `rsx-cast/tests/wal_test.rs`
 (existing coverage). Aspirational scenarios (marked *) are planned but
 not yet implemented:
 
@@ -133,12 +133,12 @@ Targets from replication.md §10:
   (ORDERBOOK.md §2.8)
 - Matching engine embeds DxsReplay server for downstream
   consumers (replication.md §5)
-- Risk engine connects as DxsConsumer for replay on startup
+- Risk engine connects as ReplicationConsumer for replay on startup
   (RISK.md §replication)
 - Mark aggregator embeds WalWriter + DxsReplay for mark
   prices (MARK.md §1)
-- Recorder connects as DxsConsumer for archival (replication.md §8)
-- Market data connects as DxsConsumer for recovery
+- Recorder connects as ReplicationConsumer for archival (replication.md §8)
+- Market data connects as ReplicationConsumer for recovery
   (MARKETDATA.md §8)
 - WAL backpressure rules propagate to matching engine stall
   (WAL.md, CONSISTENCY.md §3)

@@ -74,8 +74,8 @@ Targets from MARK.md §9:
 
 - Risk engines receive MarkPriceRecord via casting/UDP.
 - Recorder connects as replication consumer for archival (replication.md §8).
-- WalWriter from rsx-dxs crate (replication.md §3).
-- DxsReplay server from rsx-dxs crate (replication.md §5).
+- WalWriter from rsx-cast crate (replication.md §3).
+- DxsReplay server from rsx-cast crate (replication.md §5).
 - SPSC rings from source connectors to aggregation loop
 - System-level: mark price stale -> risk falls back to
   index price (RISK.md §4)

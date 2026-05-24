@@ -6,7 +6,7 @@ The bug looked innocent:
 let sock = UdpSocket::bind("127.0.0.1:8080")?;
 let addr = sock.local_addr()?;
 drop(sock);
-let receiver = CmpReceiver::new(addr, ...)?;
+let receiver = CastReceiver::new(addr, ...)?;
 ```
 
 Tests passed. Code worked. Then we enabled parallel test execution and
@@ -78,7 +78,7 @@ created.
 ```rust
 let probe = UdpSocket::bind("127.0.0.1:8080")?;
 let addr = probe.local_addr()?;
-let receiver = CmpReceiver::new_with_socket(probe)?;  // Takes ownership
+let receiver = CastReceiver::new_with_socket(probe)?;  // Takes ownership
 ```
 
 This works if your API supports taking an existing socket. Many Rust
@@ -95,7 +95,7 @@ Better fix for tests: let the OS assign a unique port to each test.
 let sock = UdpSocket::bind("127.0.0.1:0")?;
 let addr = sock.local_addr()?;  // OS assigned, e.g., 127.0.0.1:54321
 drop(sock);
-let receiver = CmpReceiver::new(addr, ...)?;
+let receiver = CastReceiver::new(addr, ...)?;
 ```
 
 Each test gets a unique port. No coordination needed. Parallel execution
@@ -179,16 +179,16 @@ prefer ephemeral ports.
 We fixed 3 instances across the codebase:
 
 ```rust
-// rsx-dxs/tests/cmp_test.rs
-fn loopback_pair(wal_dir: &Path) -> (CmpSender, CmpReceiver) {
+// rsx-cast/tests/cmp_test.rs
+fn loopback_pair(wal_dir: &Path) -> (CastSender, CastReceiver) {
     let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();  // Ephemeral
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
 
-    let sender = CmpSender::new(recv_addr, 1, wal_dir).unwrap();
+    let sender = CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
 
-    let receiver = CmpReceiver::new(recv_addr, sender_addr, 1).unwrap();
+    let receiver = CastReceiver::new(recv_addr, sender_addr, 1).unwrap();
     (sender, receiver)
 }
 ```

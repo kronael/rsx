@@ -63,7 +63,7 @@ process uses every tile, but the roles are standardized.
 - **WAL/TCP (cold path)**: replay/streaming of WAL records.
 
 All casting **data** payloads start with `seq: u64` at byte 0
-(CmpRecord). Control messages do not carry `seq`.
+(CastRecord). Control messages do not carry `seq`.
 
 ## Telemetry
 

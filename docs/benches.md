@@ -57,14 +57,14 @@ don't compose to a production p50 on their own.
 |---|---|---|
 | `encode_bench` | `FillRecord` encode/decode, CRC32 over 128 B, `WalHeader` encode/decode | The `fill_record_encode` (23 ns) + `header_encode` (3 ns) appear in CHANGELOG; also see `cmp_send_breakdown_bench` for the same numbers in send-path context |
 
-### rsx-dxs (transport: WAL + casting + UDP)
+### rsx-cast (transport: WAL + casting + UDP)
 
 | Bench | Measures | Production leg it isolates |
 |---|---|---|
 | `compare_udp` | Raw UDP loopback round-trip, 64-byte payload, two non-blocking sockets spinning. **Absolute floor.** | none — baseline |
-| `cmp_one_way_bench` | `CmpSender::send` → `CmpReceiver::try_recv` one direction | `gateway_in → risk_in`, `risk_out → gateway_cmp_recv` |
+| `cmp_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | `gateway_in → risk_in`, `risk_out → gateway_cmp_recv` |
 | `cmp_rtt_bench` | casting echo round-trip (A → B → A) with two pairs | the full `risk → ME → risk` triangle |
-| `cmp_send_breakdown_bench` | Each step inside `CmpSender::send` separately: CRC, header build, buf pack, sendto, NAK ring copy | Attributes the 3.9 µs `send` body — **99 % is sendto** |
+| `cmp_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, sendto, NAK ring copy | Attributes the 3.9 µs `send` body — **99 % is sendto** |
 | `wal_bench` | `WalWriter::append` in-memory, flush+fsync 64 KB, sequential read 10 K, replay 100 K | Pre-fsync append is 31 ns; fsync is in the fsync-specific bench below |
 | `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost — **651 µs p50**, 20 000× higher than the in-memory append |
 | `wal_random_read_bench` | `read_record_at_seq(random)` over a pre-populated WAL | Cold-tier NAK retransmit path; O(n) at 23.5 ms @ 10 K records |
@@ -140,7 +140,7 @@ Its 9.58 µs floor vs the cross-process 1 128 µs tells us
 **~99 % of production latency is inter-process overhead**,
 not algorithm or transport framing.
 
-## CmpSender::send sub-attribution (`cmp_send_breakdown_bench`)
+## CastSender::send sub-attribution (`cmp_send_breakdown_bench`)
 
 Per `dfe2ef4`:
 
@@ -153,7 +153,7 @@ Per `dfe2ef4`:
 | `ring_cache_copy_144b` | 3 ns |
 | **Sum** | **3 874 ns** ≈ bench-match-rt `gw_send` |
 
-If you eliminated **every line of Rust code in `CmpSender::send`**,
+If you eliminated **every line of Rust code in `CastSender::send`**,
 you'd save 28 ns out of 3 874 ns — **0.7 % improvement**.
 The remaining 99.3 % is the `sendto` syscall, which is
 kernel code we don't own. To reduce it: io_uring SQE
@@ -173,7 +173,7 @@ sendmmsg batching, or kernel bypass (DPDK/AF_XDP).
   hash-distributes incoming traffic.** `bench-match-rt`
   hit this: gw_sender and gw_receiver originally shared
   `gw_bind`; ME's replies landed on the sender socket half
-  the time and vanished. Each CmpSender / CmpReceiver
+  the time and vanished. Each CastSender / CastReceiver
   needs its own port (`18cfb00`).
 - **`set_read_timeout` setsockopt inside a hot loop adds
   ~µs per iteration.** Why udp_rtt was reading as 29 µs
@@ -188,7 +188,7 @@ sendmmsg batching, or kernel bypass (DPDK/AF_XDP).
   So `gw_send` 3.77 µs is the classical-sendto cost.
   Production gateway uses monoio (io_uring) and should be
   meaningfully cheaper. To get the io_uring number we'd
-  need to port `CmpSender` itself to monoio — logged as a
+  need to port `CastSender` itself to monoio — logged as a
   deferred refactor.
 - **WAL fsync 651 µs is amortised in production**: the
   writer flushes every 10 ms, not per record. As long as

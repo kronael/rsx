@@ -20,7 +20,7 @@ sources:
   - https://unixism.net/loti/tutorial/sq_poll.html
     (Lord of the io_uring, SQPOLL details)
   - own measurement `dfe2ef4` bench-match-rt + cmp_send_breakdown
-local_measurement: rsx-dxs/benches/cmp_send_breakdown_bench.rs
+local_measurement: rsx-cast/benches/cmp_send_breakdown_bench.rs
                    rsx-cli/src/bin/bench_match_rt.rs
 ---
 
@@ -183,7 +183,7 @@ work). For our case, the gap is bigger because we're not
 risk and matching use std::net which pays the full
 sendto cost.
 
-## How this maps to our 3.85 µs `CmpSender::send`
+## How this maps to our 3.85 µs `CastSender::send`
 
 Our send body is 99% sendto cost (`dfe2ef4` decomposition).
 Standard `std::net::UdpSocket::send_to` on Linux 6.1
@@ -212,11 +212,11 @@ Options ordered by effort × payoff for this codebase:
 
 ### 1. monoio io_uring UDP in gateway/marketdata
 
-rsx-dxs is runtime-free by design — `CmpReceiver` takes
+rsx-cast is runtime-free by design — `CastReceiver` takes
 bytes, not a socket. The caller (gateway, marketdata) owns
 the `UdpSocket`. Replacing `std::net::UdpSocket` with
 `monoio::net::UdpSocket` in the caller is the correct path;
-rsx-dxs itself never gains a runtime dep.
+rsx-cast itself never gains a runtime dep.
 
 Effort: ~50-100 LOC in gateway + marketdata only.
 
@@ -234,7 +234,7 @@ process burns one full core (acceptable for the hot path).
 
 ### 3. sendmmsg batching
 
-Effort: ~50 LOC in CmpSender. When multiple records are
+Effort: ~50 LOC in CastSender. When multiple records are
 ready, call `sendmmsg(buf_vec, n)` instead of N `sendto`s.
 
 Expected gain: **~3 µs per record after the first** in a
@@ -276,7 +276,7 @@ Re-measure when:
 - Kernel jumps a major version (Linux 7.0?)
 - New CPU mitigations are added (next class of speculative
   attacks)
-- We port any CmpSender/Receiver to monoio::net (will
+- We port any CastSender/Receiver to monoio::net (will
   invalidate the std::net numbers above)
 - We swap to DPDK / AF_XDP
 

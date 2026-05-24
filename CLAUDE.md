@@ -37,10 +37,10 @@ Rust workspace (12 crates, see Cargo.toml):
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
-rsx-dxs/        Domain-agnostic transport: casting/UDP + WAL +
+rsx-cast/        Domain-agnostic transport: casting/UDP + WAL +
                 replication/TCP replay (no rsx-types dep)
 rsx-messages/   RSX exchange wire records (Fill/BBO/Order*/...)
-                on top of rsx-dxs
+                on top of rsx-cast
 rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab,
                 CompressionMap)
 rsx-matching/   ME tile logic (one instance per symbol)
@@ -112,7 +112,7 @@ layer, do NOT add code in the layer that's being delegated
   no encryption." Auth lives at the gateway (JWT, TLS) for
   external clients and at the L3 network (firewall, VPC,
   namespace) for internal RSX peers. Do not add per-frame
-  source-IP filters, MACs, or signing to CmpReceiver. If
+  source-IP filters, MACs, or signing to CastReceiver. If
   cross-DC peer auth is ever genuinely needed, do it as a
   sealed-frame extension under a future `WalHeader.version`,
   not by retrofitting the current zero-copy path.
@@ -152,7 +152,7 @@ gives false confidence. Don't do it.
   derivations, prior art, measurements that justify a choice.
   Not "how it is" (that's ARCHITECTURE.md) — "why is it like that".
   Examples: `rsx-book/notes/slab.md`, `rsx-risk/notes/spsc.md`.
-  `rsx-dxs/compare/` follows the same principle but is named after
+  `rsx-cast/compare/` follows the same principle but is named after
   its theme (protocol comparisons); new research notes go in `notes/`.
 
 ## Naming
@@ -168,13 +168,13 @@ gives false confidence. Don't do it.
 
 - `cargo check` first, always (fastest feedback, no codegen)
 - Single test: `cargo test -p rsx-book -- test_name`
-- Single test file: `cargo test -p rsx-dxs --test wal_test`
+- Single test file: `cargo test -p rsx-cast --test wal_test`
 - Debug builds default (~3x faster compile than release)
 - 80 char line width, max 120
 - `make test`: Rust unit tests (`--lib` only) <5s, every commit
 - `make e2e`: Rust + API + Playwright (~3min), every PR
 - `make integration`: testcontainers, 1-5min (uses `--ignored`)
-- `make wal`: WAL correctness <10s (cargo test -p rsx-dxs)
+- `make wal`: WAL correctness <10s (cargo test -p rsx-cast)
 - `make smoke`: deployed system <1min
 - `make perf`: Criterion benchmarks, nightly
 - `make lint`: clippy with `-D warnings`

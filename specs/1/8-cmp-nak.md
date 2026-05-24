@@ -6,24 +6,24 @@ status: shipped
 
 ## Goal
 
-`CmpSender::handle_nak` opens a `WalReader` to retransmit dropped
+`CastSender::handle_nak` opens a `WalReader` to retransmit dropped
 UDP packets, but the sender never writes to WAL, so `open_from_seq`
 always fails and the retransmit is silently dropped. The receiver
-(`CmpReceiver`) stalls at the first lost packet, fills its reorder
+(`CastReceiver`) stalls at the first lost packet, fills its reorder
 buffer (512 slots), and starts dropping all subsequent messages.
 
-Fix: add an in-memory send ring to `CmpSender`. On every `send()`,
+Fix: add an in-memory send ring to `CastSender`. On every `send()`,
 store `header + payload` bytes indexed by seq. `handle_nak` reads from
 the ring instead of WAL. Evict entries older than
 `peer_consumption_seq` to bound memory usage.
 
 ## File
 
-`rsx-dxs/src/cmp.rs` — single file change.
+`rsx-cast/src/cmp.rs` — single file change.
 
 ## Implementation
 
-### 1. Add `send_ring` field to `CmpSender`
+### 1. Add `send_ring` field to `CastSender`
 
 ```rust
 send_ring: std::collections::BTreeMap<u64, Vec<u8>>,
@@ -71,9 +71,9 @@ pub fn handle_nak(&mut self, nak: &Nak) {
 
 ## Acceptance Criteria
 
-1. `cargo build -p rsx-dxs` succeeds with zero errors.
-2. `cargo test -p rsx-dxs` passes.
-3. Existing `CmpSender`/`CmpReceiver` API is unchanged (no callers
+1. `cargo build -p rsx-cast` succeeds with zero errors.
+2. `cargo test -p rsx-cast` passes.
+3. Existing `CastSender`/`CastReceiver` API is unchanged (no callers
    need to change).
 4. `handle_nak` no longer calls `WalReader::open_from_seq`.
 5. The "nak retransmit open" warning no longer appears in logs during
@@ -83,7 +83,7 @@ pub fn handle_nak(&mut self, nak: &Nak) {
 
 - Do NOT add WAL persistence to `send()` — hot path must stay
   allocation-free after ring is pre-allocated.
-- Do NOT change the `CmpConfig` public API unless necessary.
+- Do NOT change the `CastConfig` public API unless necessary.
 - Keep `send_ring_limit` as a struct field (configurable via
-  `CmpConfig` if `CmpConfig` already has an extensible pattern).
+  `CastConfig` if `CastConfig` already has an extensible pattern).
 - 80 char line width, max 120.

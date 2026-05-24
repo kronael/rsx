@@ -135,7 +135,7 @@ Client (WS JSON)
 |  5. Circuit breaker `allow()`                  |
 |  6. Symbol bound + tick/lot alignment          |
 |  7. UUIDv7 oid; pending.push                   |
-|  8. CmpSender::send_raw(ORDER_REQUEST, &bytes) |
+|  8. CastSender::send_raw(ORDER_REQUEST, &bytes) |
 |     (binary forward path; alloc-free)          |
 +-------------------------------------------------+
     |

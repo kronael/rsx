@@ -6,7 +6,7 @@ CLI tools for RSX exchange operations.
 
 ### wal-dump
 
-Reads WAL files via `WalReader::open_from_seq()` from rsx-dxs.
+Reads WAL files via `WalReader::open_from_seq()` from rsx-cast.
 Iterates all records sequentially, printing sequence number,
 record type name, payload length, and CRC32.
 

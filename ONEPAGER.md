@@ -14,27 +14,27 @@ a competing venue rebuilds the same pieces, badly.
 
 Two layers, one repo.
 
-1. **rsx-dxs** — domain-agnostic transport: WAL + casting (C-struct UDP)
+1. **rsx-cast** — domain-agnostic transport: WAL + casting (C-struct UDP)
    + TCP replay. Same bytes on disk, in UDP, on the wire. No
    knowledge of orders, fills, or users. Reusable wherever you need
    an audited stream of fixed-size records.
 
 2. **The rest** — orderbook, matching, risk, gateway, marketdata,
-   mark, recorder, maker. A working perp exchange on top of rsx-dxs.
+   mark, recorder, maker. A working perp exchange on top of rsx-cast.
    Separate processes, each pinned, each one tile per concern.
 
 ## Why it's different (the wedge)
 
 B+A — see `specs/2/50-wedge.md`.
 
-- **B (open-source orthogonal libs)**: rsx-dxs is the headline. WAL
+- **B (open-source orthogonal libs)**: rsx-cast is the headline. WAL
   format = wire format = stream format is a meaningful design choice
   almost nobody makes; it earns you free correctness (one parser,
   one fuzz target) and free observability (one tool, three views).
 - **A (exchange-in-a-box)**: the rest layered on top. Buyers who
-  want a venue get one; buyers who want only the rails get rsx-dxs.
+  want a venue get one; buyers who want only the rails get rsx-cast.
 
-The boundary is enforced in the build: `cargo tree -p rsx-dxs
+The boundary is enforced in the build: `cargo tree -p rsx-cast
 --edges normal` shows zero rsx-types/rsx-messages dependency.
 
 ## Proof
@@ -50,14 +50,14 @@ LANDSCAPE.md`, `docs/benches.md`):
 | Cross-process via Python WS probe | **11 878 µs** | end-to-end with client framing |
 
 99% of the in-process round-trip is the `sendto` syscall body
-(`rsx-dxs/benches/cmp_send_breakdown_bench.rs`). Algorithm + framing
+(`rsx-cast/benches/cmp_send_breakdown_bench.rs`). Algorithm + framing
 add up to <0.7% of wall time. Optimisation targets are kernel-bypass
 shaped, not Rust-shaped, and `specs/2/4-cast.md` already documents the
 DPDK / AF_XDP "Later" path. Honest.
 
 ## What's open
 
-- Monoio-native UdpSocket on `CmpReceiver` (~50 LOC) — kills the
+- Monoio-native UdpSocket on `CastReceiver` (~50 LOC) — kills the
   100 µs sleep that explains ~655 µs of cross-process p50.
 - Adversarial CTO + CEO audits round 2 (`.ship/20-CTO-CEO-REVIEW-2/`,
   in-flight at time of writing).

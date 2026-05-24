@@ -8,13 +8,13 @@ archive files.
 
 - `RecorderState` -- archive directory, current file handle,
   write buffer, daily rotation
-- `DxsConsumer` (from rsx-dxs) -- TCP client with tip
+- `ReplicationConsumer` (from rsx-cast) -- TCP client with tip
   persistence and exponential backoff
 
 ## Data Flow
 
 ```
-ME WAL --> DxsReplayService --> [TCP] --> DxsConsumer
+ME WAL --> ReplicationService --> [TCP] --> ReplicationConsumer
                                               |
                                          RecorderState
                                               |
@@ -23,7 +23,7 @@ ME WAL --> DxsReplayService --> [TCP] --> DxsConsumer
 
 ## Record Processing
 
-1. Connects to replication producer (replay server) using `DxsConsumer`
+1. Connects to replication producer (replay server) using `ReplicationConsumer`
 2. Receives `RawWalRecord` via callback
 3. Buffers records, flushes to disk every 1000 records
 4. Rotates output file daily (`{stream_id}_{date}.wal`)
@@ -41,7 +41,7 @@ source (no transformation).
 ## Architectural Decisions
 
 **Runtime: tokio.** The recorder is a TCP-only replay
-consumer — a single `DxsConsumer` covers historical catch-up
+consumer — a single `ReplicationConsumer` covers historical catch-up
 and the live tail indefinitely, with built-in exponential
 backoff on disconnects. tokio is the right pick because the
 work is async file I/O plus one long-lived TCP connection;

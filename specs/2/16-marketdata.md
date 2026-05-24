@@ -58,7 +58,7 @@ is a bitmask (e.g. 3 = bbo + depth, 7 = all three). See WEBPROTO.md.
 ## Multi-ME Aggregation
 
 Marketdata listens to N matching engines concurrently
-(one symbol → one ME). One `CmpReceiver` is bound per ME
+(one symbol → one ME). One `CastReceiver` is bound per ME
 on a derived local port. Records are demultiplexed by
 `symbol_id` in the payload; each symbol's events flow
 into its own shadow book independently.
@@ -71,7 +71,7 @@ into its own shadow book independently.
   depth subscribers for that symbol and resumes from the
   new `seq + 1`. Duplicates (`got < expected`) are ignored.
 - On startup, marketdata may bootstrap via WAL/TCP replay
-  (`DxsConsumer`) from a configured `replay_addr` and tip
+  (`ReplicationConsumer`) from a configured `replay_addr` and tip
   file. It replays `OrderInserted`, `OrderCancelled`, and
   `Fill` records into the shadow books until receiving
   `CaughtUp`, then switches to live casting/UDP ingest. This

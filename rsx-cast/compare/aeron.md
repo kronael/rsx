@@ -2,7 +2,7 @@
 
 Open-source Java/C++ reliable UDP transport by Real Logic
 (Martin Thompson, Todd Montgomery). The direct design ancestor
-of rsx-dxs CMP. Widely deployed in HFT and trading systems;
+of rsx-cast CMP. Widely deployed in HFT and trading systems;
 acquired by Adaptive Financial Consulting in 2022.
 
 - Repo: https://github.com/aeron-io/aeron (Apache-2.0)
@@ -169,7 +169,7 @@ RTT computed from the embedded message timestamp (in-handler).
 
 ### Our local bench
 
-`rsx-dxs/benches/compare_aeron.rs` — loopback ping/pong over
+`rsx-cast/benches/compare_aeron.rs` — loopback ping/pong over
 Aeron UDP, 64-byte payload, embedded media driver in the same
 process, no core pinning.
 
@@ -263,7 +263,7 @@ side-by-side:
 ## Running the bench
 
 ```bash
-cargo bench -p rsx-dxs --bench compare_aeron
+cargo bench -p rsx-cast --bench compare_aeron
 ```
 
 Prerequisites (Debian/Ubuntu):

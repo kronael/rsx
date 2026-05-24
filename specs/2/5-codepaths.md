@@ -142,15 +142,15 @@ Spec intent:
 - WAL records replayed via replication server; consumers bootstrap state.
 
 Implementation path:
-- WAL: `rsx-dxs/src/wal.rs`
-- replication server: `rsx-dxs/src/server.rs`
+- WAL: `rsx-cast/src/wal.rs`
+- replication server: `rsx-cast/src/server.rs`
 - Marketdata replay bootstrap: `rsx-marketdata/src/replay.rs`
 
 Tests:
-- WAL tests: `rsx-dxs/tests/wal_test.rs`
-- replication client tests: `rsx-dxs/tests/client_test.rs`
+- WAL tests: `rsx-cast/tests/wal_test.rs`
+- replication client tests: `rsx-cast/tests/client_test.rs`
 - Marketdata replay tests: `rsx-marketdata/tests/replay_test.rs`
-- casting flow control/NAK: `rsx-dxs/tests/cmp_test.rs`
+- casting flow control/NAK: `rsx-cast/tests/cmp_test.rs`
 
 ## 10) Risk Replica Sync
 

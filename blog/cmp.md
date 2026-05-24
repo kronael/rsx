@@ -120,7 +120,7 @@ without breaking every reader. New features use new record
 types. Breaking changes bump the `version` byte in
 `WalHeader` (byte 8, repurposed from the old reserved
 range); receivers reject unknown versions at every ingress
-(`CmpReceiver::try_recv`, `WalReader::next`, `DxsConsumer`,
+(`CastReceiver::try_recv`, `WalReader::next`, `ReplicationConsumer`,
 random-access reads). `V0` (legacy zero) is still accepted
 on read so old WAL files replay. This is fine — all
 components are compiled from the same repo.

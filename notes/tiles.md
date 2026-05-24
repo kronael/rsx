@@ -26,7 +26,7 @@ rings).
 - **L1/L2-warm hot state.** Everything the tile touches sits on
   its core's caches.
 - **Zero heap on the hot path.** Pre-allocated event buffers,
-  slab arenas, fixed `Box<[T]>` slabs in `CmpSender`.
+  slab arenas, fixed `Box<[T]>` slabs in `CastSender`.
 - **Backpressure for free.** A full output ring stalls the
   producer; consumers cannot be DoS'd by an upstream burst.
 - **Deterministic hand-off.** SPSC push/pop runs ~50–170 ns. No

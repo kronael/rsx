@@ -401,8 +401,8 @@ fn bench_aeron_ipc(c: &mut Criterion) {
 // the in-process collision.
 //
 // Run both with:
-//   cargo bench -p rsx-dxs --bench compare_aeron       # UDP loopback
-//   cargo bench -p rsx-dxs --bench compare_aeron_ipc   # IPC (shared mem)
+//   cargo bench -p rsx-cast --bench compare_aeron       # UDP loopback
+//   cargo bench -p rsx-cast --bench compare_aeron_ipc   # IPC (shared mem)
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(50);

@@ -2,17 +2,17 @@
 
 Two artifacts in one repo:
 
-1. **`rsx-dxs` — an open-source, log-backed reliable UDP
+1. **`rsx-cast` — an open-source, log-backed reliable UDP
    transport.** WAL on disk, casting on the wire, replication for replay.
    The WAL bytes, the UDP bytes, and the replay-stream bytes
-   are the same bytes. Domain-agnostic: `cargo tree -p rsx-dxs
+   are the same bytes. Domain-agnostic: `cargo tree -p rsx-cast
    --edges normal | grep rsx-` is empty. Drop it into any
    project that needs 50-µs-class messaging without Kafka.
 2. **A complete perpetuals exchange built on it.** Gateway,
    Risk, Matching Engine, Marketdata, Mark, Recorder, Maker —
    each a separate process. Spec-first: 47 spec files in
    `specs/2/` written before the code. The exchange is both a
-   real product and the load-bearing demo that proves `rsx-dxs`
+   real product and the load-bearing demo that proves `rsx-cast`
    handles a non-trivial workload.
 
 The wedge — "open-source the orthogonal libs that already
@@ -159,12 +159,12 @@ and [specs/2/20-network.md](specs/2/20-network.md).
 ## Crate layout
 
 12 Rust crates in the cargo workspace; rsx-messages was
-split out of rsx-dxs so transport is now domain-agnostic
+split out of rsx-cast so transport is now domain-agnostic
 (zero rsx-types prod dep — only dev-deps).
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, macros
-rsx-dxs/        Domain-agnostic transport: WAL + casting/UDP +
+rsx-cast/        Domain-agnostic transport: WAL + casting/UDP +
                 replication/TCP replay; versioned wire header
                 (no rsx-types prod dep)
 rsx-messages/   Exchange wire records: Fill, BBO, Order*,
@@ -221,8 +221,8 @@ because the harness that would assert that doesn't exist yet.
 | Number                          | Measured?               |
 |---------------------------------|-------------------------|
 | 54 ns match single fill         | yes — `rsx-book` bench  |
-| 31 ns WAL buffer append (no disk I/O; `WalWriter::append` is a `Vec` extend, pre-fsync) | yes — `rsx-dxs` bench   |
-| 43 ns protocol-record encode (StatusMessage / Nak / Heartbeat; 23 ns for `FillRecord`), 9 ns decode | yes — `rsx-dxs/cmp_bench` + `rsx-messages/encode_bench` |
+| 31 ns WAL buffer append (no disk I/O; `WalWriter::append` is a `Vec` extend, pre-fsync) | yes — `rsx-cast` bench   |
+| 43 ns protocol-record encode (StatusMessage / Nak / Heartbeat; 23 ns for `FillRecord`), 9 ns decode | yes — `rsx-cast/cmp_bench` + `rsx-messages/encode_bench` |
 | 50–170 ns SPSC ring hop         | yes — `rsx-book` bench  |
 | <50 µs GW→ME→GW round trip      | **design budget**; F1 probe + dashboard shipped (commit `bded133`), `make latency-publish` writes p50/p99 to `bench-baseline.json` once cluster-run; WAL-backed NAK retransmit (`366d1b2`) closes the two-tier loss-recovery path |
 | <500 ns ME match                | yes — sub-bench of 54 ns |

@@ -35,9 +35,9 @@ This document describes the shared WAL architecture for the risk engine and the 
   (`V0` = legacy zero-reserved, `V1` = current). Adding
   record types is additive and does NOT bump the version;
   bumping is reserved for breaking framing changes.
-- Data payloads implement CmpRecord trait with `seq: u64` as
+- Data payloads implement CastRecord trait with `seq: u64` as
   first field. Sequence assigned by WalWriter::append or
-  CmpSender::send.
+  CastSender::send.
 - Concrete record layouts are defined in **replication.md** and reused for storage + streaming.
 
 ### Version Policy

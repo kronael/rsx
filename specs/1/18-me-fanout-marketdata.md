@@ -11,11 +11,11 @@ Goal: ME sends events to Marketdata in addition to Risk
 
 **Current state:** ME only sends casting events to Risk. Marketdata
 main.rs already handles casting decode, shadow book, WS broadcast —
-just needs events. One CmpSender addition.
+just needs events. One CastSender addition.
 
 ---
 
-### Stage 1: Add Marketdata CmpSender to ME
+### Stage 1: Add Marketdata CastSender to ME
 
 **Goal**: ME sends Fill, OrderInserted, OrderCancelled, OrderDone
 to marketdata in addition to risk.

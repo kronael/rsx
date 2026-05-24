@@ -51,28 +51,28 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - Message encoding for outbound casting
 - O(1) `(user_id, oid)` cancel index (no linear book scan)
 
-### rsx-dxs (transport, domain-agnostic)
+### rsx-cast (transport, domain-agnostic)
 
 - WalWriter: 10ms flush, 64MB rotate, 10min retain
 - WalReader with sequence extraction
-- DxsReplayService (TCP, from seq N)
+- ReplicationService (TCP, from seq N)
 - Streaming protocol (casting) over UDP: flow control, NACK-based
 - Two-tier NAK retransmit: in-mem ring + WAL random-access
-- Protocol records: StatusMessage, Nak, CmpHeartbeat,
-  ReplayRequest, CaughtUpRecord (in `protocol.rs`)
+- Protocol records: StatusMessage, Nak, CastHeartbeat,
+  ReplicationRequest, CaughtUpRecord (in `protocol.rs`)
 - TLS support, backpressure, tip persistence
 - Wire-format version byte in `WalHeader` (V0/V1); readers
   reject unknown versions, writers stamp the current one
 - Preallocated `send_ring` on casting sender (zero heap on the
   send path)
 - No `rsx-types` dep — transport accepts any
-  `CmpRecord` (repr(C) + seq at offset 0)
+  `CastRecord` (repr(C) + seq at offset 0)
 
 ### rsx-messages (exchange wire records)
 
-- Extracted from `rsx-dxs` so the transport stays
+- Extracted from `rsx-cast` so the transport stays
   domain-agnostic
-- 11 `#[repr(C, align(64))]` records on top of `rsx-dxs`
+- 11 `#[repr(C, align(64))]` records on top of `rsx-cast`
 - FillRecord, BboRecord, OrderInsertedRecord,
   OrderCancelledRecord, OrderDoneRecord,
   OrderAcceptedRecord, OrderFailedRecord,

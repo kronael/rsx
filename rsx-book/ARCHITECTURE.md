@@ -128,7 +128,7 @@ When mid drifts >50% of zone 0 width, migrate to new array:
 ## Event Buffer and Fanout
 
 Fixed array `[Event; 10_000]` on Orderbook struct. Reset per
-cycle. Two independent CmpSenders:
+cycle. Two independent CastSenders:
 - ME -> Risk: fills, BBO, order done/failed
 - ME -> Marketdata: inserts, cancels, fills
 

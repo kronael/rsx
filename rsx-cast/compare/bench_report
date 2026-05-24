@@ -4,13 +4,13 @@
 # dependencies = ["rich>=13"]
 # ///
 """
-Criterion benchmark report for rsx-dxs protocol comparison.
+Criterion benchmark report for rsx-cast protocol comparison.
 
 Usage:
     uv run scripts/bench_report.py                  # all benches in target/criterion/
     uv run scripts/bench_report.py --filter compare # only compare_* benches
     uv run scripts/bench_report.py --md             # also write REPORT.md
-    uv run scripts/bench_report.py --md --out rsx-dxs/compare/RESULTS.md
+    uv run scripts/bench_report.py --md --out rsx-cast/compare/RESULTS.md
 """
 
 import argparse
@@ -141,8 +141,8 @@ def main() -> None:
                     help="only include benchmarks whose name contains STR")
     ap.add_argument("--md", action="store_true",
                     help="also write a markdown table")
-    ap.add_argument("--out", default="rsx-dxs/compare/RESULTS.md", metavar="PATH",
-                    help="markdown output path (default: rsx-dxs/compare/RESULTS.md)")
+    ap.add_argument("--out", default="rsx-cast/compare/RESULTS.md", metavar="PATH",
+                    help="markdown output path (default: rsx-cast/compare/RESULTS.md)")
     args = ap.parse_args()
 
     results = load_results(args.filter)

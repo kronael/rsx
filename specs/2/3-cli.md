@@ -7,7 +7,7 @@ status: shipped
 ## Purpose
 
 `rsx-cli` is an offline WAL debugging tool. It reads WAL files written
-by `rsx-dxs` and prints records in human-readable or JSON format.
+by `rsx-cast` and prints records in human-readable or JSON format.
 Intended for operators and developers inspecting exchange state.
 
 ---

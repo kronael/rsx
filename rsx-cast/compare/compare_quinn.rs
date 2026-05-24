@@ -55,7 +55,7 @@
 //!
 //! Loss simulation (separate run, requires root):
 //!   sudo tc qdisc add dev lo root netem loss 0.1%
-//!   cargo bench -p rsx-dxs --bench compare_quinn
+//!   cargo bench -p rsx-cast --bench compare_quinn
 //!   sudo tc qdisc del dev lo root
 //! The bench itself does not require root or tc.
 

@@ -197,7 +197,7 @@ let mut position = load_position(user_id=100)?;  // seq=1200
 let tip = load_tip(symbol_id=1)?;                // 1200
 
 // Replay fills from tip+1
-let mut consumer = DxsConsumer::new(symbol_id=1, tip_file);
+let mut consumer = ReplicationConsumer::new(symbol_id=1, tip_file);
 while let Some(record) = consumer.poll().await? {
     if record.header.record_type == RECORD_FILL {
         let fill: FillRecord = parse(record.payload);

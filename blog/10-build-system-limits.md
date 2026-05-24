@@ -28,8 +28,8 @@ Total time: 30 minutes instead of 2 hours.
 
 ## What Actually Happened
 
-Worker 1: Started, compiled rsx-dxs (2.1GB target dir)
-Worker 2: Started, compiled rsx-dxs again (2.1GB target dir)
+Worker 1: Started, compiled rsx-cast (2.1GB target dir)
+Worker 2: Started, compiled rsx-cast again (2.1GB target dir)
 Worker 3: Started, compiled rsx-gateway (1.8GB target dir)
 Worker 4: Started, compiled rsx-risk (2.3GB target dir)
 
