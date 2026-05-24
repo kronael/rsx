@@ -32,12 +32,12 @@ ride the same transport.
 | File | Purpose |
 |------|---------|
 | `header.rs` | 16-byte `WalHeader`. Version byte at offset 8 (`V0` = legacy zero, `V1` = current). Reserved bytes 9..16 must be zero. |
-| `protocol.rs` | `CastRecord` trait + protocol records (`CastHeartbeat`, `Nak`, `ReplicationRequest`, `CaughtUpRecord`, `ReplicationNotAvailable`). Compile-time size/align asserts on each. `StatusMessage` + flow-control removed in `87b223e`. |
+| `protocol.rs` | `CastRecord` trait + protocol records (`CastHeartbeat`, `Nak`, `ReplicationRequest`, `CaughtUpRecord`, `ReplicationNotAvailable`). Compile-time size/align asserts on each. |
 | `encode_utils.rs` | Generic helpers: `compute_crc32`, `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
-| `cmp.rs` | `CastSender` + `CastReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
+| `cast.rs` | `CastSender` + `CastReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
 | `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, 4h retention GC) + `WalReader` + `read_record_at_seq`. |
-| `server.rs` | `ReplicationService` (TCP, optional TLS). Sends `ReplicationNotAvailable` when `from_seq` precedes oldest WAL seq. |
-| `client.rs` | `ReplicationConsumer` (TCP replay, sync). Multi-endpoint: tries endpoints newest→oldest; advances on `ReplicationNotAvailable`. Backoff 1/2/4/8/30s ±20% jitter. |
+| `replication_server.rs` | `ReplicationService` (TCP, optional TLS). Sends `ReplicationNotAvailable` when `from_seq` precedes oldest WAL seq. |
+| `replication_client.rs` | `ReplicationConsumer` (TCP replay, sync). Multi-endpoint: tries endpoints newest→oldest; advances on `ReplicationNotAvailable`. Backoff 1/2/4/8/30s ±20% jitter. |
 | `config.rs` | `CastConfig`, `TlsConfig`. Every field documents its env var. |
 
 ## Transport paths
@@ -58,7 +58,7 @@ ride the same transport.
   `ReplicationConsumer` resumes from a persisted tip with backoff
   on disconnect.
 
-## casting sender ring (cmp.rs)
+## casting sender ring (cast.rs)
 
 Three `Box<[T]>` slabs, indexed by `seq & SEND_RING_MASK`:
 
@@ -202,16 +202,16 @@ for the dated authoritative numbers.
 
 | Operation | Measured | Bench |
 |---|---:|---|
-| Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cmp_bench` |
+| Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cast_bench` |
 | `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
-| Protocol-record decode | 9 ns | `cmp_bench` |
+| Protocol-record decode | 9 ns | `cast_bench` |
 | `WalWriter::append` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
 | WAL flush + fsync (64 KB batch — production amortisation) | 24 µs | `wal_fsync_bench` batch variant |
 | WAL flush + fsync (single record — naive sync per append) | 651 µs | `wal_fsync_bench` single-record variant |
 | WAL sequential read | ~700 MB/s | `wal_bench` |
-| casting RTT, loopback, 128 B | 11.26 µs | `cmp_rtt_bench` |
+| casting RTT, loopback, 128 B | 11.26 µs | `cast_rtt_bench` |
 | Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
-| `CastSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cmp_send_breakdown_bench` |
+| `CastSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`) | 23.5 ms @ 10 K records | `wal_random_read_bench` |
 
 ## Connection topology
@@ -220,7 +220,7 @@ for the dated authoritative numbers.
 Gateway --[casting/UDP]--> Risk --[casting/UDP]--> ME
 Gateway <--[casting/UDP]-- Risk <--[casting/UDP]-- ME
                                       ME --[SPSC]--> WalWriter
-                              WalWriter --[notify]--> DxsReplay
+                              WalWriter --[notify]--> ReplicationService
                                       ME --[casting/UDP]--> Marketdata
 Mark --[replication/TCP]------> Risk
 Recorder --[replication/TCP]--> ME
@@ -250,6 +250,6 @@ This is intentional: consumers pick the runtime that fits
 their stage. Matching engine drives `CastSender` from a
 pinned tile loop with no reactor at all. Gateway and
 marketdata own the UDP socket and pass raw bytes to
-`CastReceiver` (invert-ownership pattern — see `cmp.rs`).
+`CastReceiver` (invert-ownership pattern — see `cast.rs`).
 Recorder drives `ReplicationConsumer` blocking from its own thread.
 The transport sits under all of them without preference.
