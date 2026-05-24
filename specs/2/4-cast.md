@@ -366,8 +366,8 @@ with optional rustls TLS. Used for replay (recover from
 crash), replication (warm replicas), and archival
 (rsx-recorder). Throughput-oriented, not latency-oriented.
 
-Implementation: `rsx-cast/src/server.rs` (`ReplicationService`),
-`rsx-cast/src/client.rs` (`ReplicationConsumer`).
+Implementation: `rsx-cast/src/replication_server.rs` (`ReplicationService`),
+`rsx-cast/src/replication_client.rs` (`ReplicationConsumer`).
 
 ```
 Consumer                          Producer

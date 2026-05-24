@@ -143,14 +143,15 @@ Spec intent:
 
 Implementation path:
 - WAL: `rsx-cast/src/wal.rs`
-- replication server: `rsx-cast/src/server.rs`
+- replication server: `rsx-cast/src/replication_server.rs`
 - Marketdata replay bootstrap: `rsx-marketdata/src/replay.rs`
 
 Tests:
-- WAL tests: `rsx-cast/tests/wal_test.rs`
-- replication client tests: `rsx-cast/tests/client_test.rs`
+- WAL tests: `rsx-cast/src/wal_test.rs`
+- replication client tests: `rsx-cast/src/replication_client_test.rs`
 - Marketdata replay tests: `rsx-marketdata/tests/replay_test.rs`
-- casting flow control/NAK: `rsx-cast/tests/cmp_test.rs`
+- casting NAK + v4 reliability: `rsx-cast/src/cast_test.rs`,
+  `rsx-cast/src/cast_v4_test.rs`
 
 ## 10) Risk Replica Sync
 

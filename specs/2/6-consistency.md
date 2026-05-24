@@ -201,8 +201,9 @@ here) is:
   `Position::apply_fill` for both taker and maker on every persisted
   fill (with `seq <= tip` dedup to keep one-to-one with WAL fills).
 - **#5 Tips monotonic.** Not covered here. Enforced by
-  `rsx-cast/src/client.rs::DxsClient::run_*` (`self.tip = self.tip.max(seq)`)
-  and `rsx-risk/src/shard.rs::process_fill` (writes seq after `seq > tip`
+  `rsx-cast/src/replication_client.rs::ReplicationConsumer::run_*`
+  (`self.tip = self.tip.max(seq)`) and
+  `rsx-risk/src/shard.rs::process_fill` (writes seq after `seq > tip`
   dedup gate). Implied by invariant 1 above on the producer side.
 - **#6 Best bid < best ask (no crossed book).** Not covered here.
   Enforced by `rsx-book/src/matching.rs::process_new_order` — incoming
