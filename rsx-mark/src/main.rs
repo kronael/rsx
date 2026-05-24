@@ -80,7 +80,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         &wal_dir,
         None,
         64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        48 * 60 * 60 * 1_000_000_000,
     )?;
 
     let mark_dest: std::net::SocketAddr = env::var(

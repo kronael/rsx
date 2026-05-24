@@ -277,7 +277,7 @@ fn main() {
         &PathBuf::from(&wal_dir),
         None,
         64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        48 * 60 * 60 * 1_000_000_000,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to create wal writer");
