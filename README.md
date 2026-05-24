@@ -43,7 +43,8 @@ loops accounts for ~655 µs of it).
 - **casting, the C Message Protocol** — fixed-size `repr(C)` WAL
   records over UDP between Gateway, Risk, and ME. One wire
   format for disk, network, and memory. NAK + heartbeat for
-  loss recovery, sequence-window flow control. See
+  loss recovery; no flow control (slow consumers recover via
+  replication, not by stalling the producer). See
   [specs/2/4-cast.md](specs/2/4-cast.md) for byte layout,
   comparison vs Aeron / kcp / QUIC, and known limits.
 - **Tile architecture** — pinned threads + rtrb SPSC rings
@@ -145,8 +146,8 @@ make bench-gate            # local 10% regression gate
 ```
 
 Transports:
-- **Hot path** between processes: casting/UDP (sequence-window
-  flow control, NAK gap recovery)
+- **Hot path** between processes: casting/UDP (NAK gap
+  recovery, idle-only heartbeats, no flow control)
 - **Cold path** between processes: WAL replication over TCP
   with optional rustls TLS (replay, replication, archival)
 - **Within a tile-architected process**: rtrb SPSC rings,
@@ -180,8 +181,9 @@ rsx-gateway/    Gateway (monoio WS + casting bridge, hardened JWT
 rsx-marketdata/ Marketdata (monoio shadow book, L2/BBO)
 rsx-mark/       Mark price (external feeds, casting to risk)
 rsx-recorder/   Recorder (archival replication consumer)
-rsx-cli/        WAL dump/inspect tool (JSON + parquet)
-rsx-maker/      Market-maker bot (two-sided quoting)
+rsx-cli/        WAL dump/inspect tool (JSON output)
+rsx-log/        Off-hot-path logging primitive (SPSC ring →
+                drain thread → tracing events)
 ```
 
 Non-cargo subprojects:
@@ -222,7 +224,7 @@ because the harness that would assert that doesn't exist yet.
 |---------------------------------|-------------------------|
 | 54 ns match single fill         | yes — `rsx-book` bench  |
 | 31 ns WAL buffer append (no disk I/O; `WalWriter::append` is a `Vec` extend, pre-fsync) | yes — `rsx-cast` bench   |
-| 43 ns protocol-record encode (StatusMessage / Nak / Heartbeat; 23 ns for `FillRecord`), 9 ns decode | yes — `rsx-cast/cmp_bench` + `rsx-messages/encode_bench` |
+| 43 ns protocol-record encode (Nak / CastHeartbeat; 23 ns for `FillRecord`), 9 ns decode | yes — `rsx-cast/cast_bench` + `rsx-messages/encode_bench` |
 | 50–170 ns SPSC ring hop         | yes — `rsx-book` bench  |
 | <50 µs GW→ME→GW round trip      | **design budget**; F1 probe + dashboard shipped (commit `bded133`), `make latency-publish` writes p50/p99 to `bench-baseline.json` once cluster-run; WAL-backed NAK retransmit (`366d1b2`) closes the two-tier loss-recovery path |
 | <500 ns ME match                | yes — sub-bench of 54 ns |
@@ -314,11 +316,11 @@ A short, honest list of the gaps a careful reader will hit:
 - **End-to-end latency harness.** The 50 µs / 500 ns numbers
   are budgets, not measurements. Plan in
   [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
-- **casting NAK retransmit** is now two-tier (commit `366d1b2`):
-  in-memory ring for recent records, WAL-backed for older
-  history. The send-ring uses preallocated `Box<[T]>` slabs
-  (`7befe76`) — zero heap on the send path. Documented in
-  [specs/2/4-cast.md §10.3](specs/2/4-cast.md).
+- **casting NAK retransmit** is two-tier: in-memory ring for
+  recent records, WAL-backed for older history. The send-ring
+  uses preallocated `Box<[T]>` slabs — zero heap on the send
+  path. Documented in
+  [specs/2/4-cast.md](specs/2/4-cast.md).
 - **JWT replay protection**: `JtiTracker` (`a6a92c3`) is
   implemented but not yet wired through `ws_handshake` — the
   type exists, the handshake doesn't consult it. Tracked as
@@ -329,8 +331,10 @@ A short, honest list of the gaps a careful reader will hit:
 - **casting transport** uses `std::net::UdpSocket`, not monoio
   io_uring. One syscall per `sendto` / `recvfrom` on the
   hot path.
-- **rsx-maker** uses blocking `tungstenite`. Fine for a demo;
-  not a low-latency client.
+- **Per-consumer FAULTED handlers**. `rsx-matching` has a
+  POC replay-then-resume path on `CastRecv::Faulted`; risk,
+  marketdata, and gateway still panic with a pointer to the
+  reference impl.
 
 ## Vibe
 

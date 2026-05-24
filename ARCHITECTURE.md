@@ -83,7 +83,8 @@ rsx-marketdata/ ShadowBook, L2/BBO/trades, subscriptions
 rsx-mark/       Aggregator, BinanceSource, CoinbaseSource
 rsx-recorder/   Daily WAL archival
 rsx-cli/        WAL dump tool
-rsx-maker/      Market-maker bot (two-sided quoting)
+rsx-log/        Off-hot-path logging primitive (SPSC ring →
+                drain thread → tracing events)
 ```
 
 ## Communication Patterns
@@ -92,17 +93,19 @@ Two transport modes carry identical WAL records:
 
 **Hot path -- casting/UDP:** Live order/fill flow between Gateway,
 Risk, and ME. One WAL record per UDP datagram. Aeron-inspired
-NACK + flow control. Sub-10us same-machine latency.
+NAK gap recovery, idle-only heartbeats, no flow control.
+Sub-10us same-machine latency on loopback.
 
 **Cold path -- WAL/TCP:** Replay, replication, archival. Plain
-TCP byte stream, optional TLS. Used by ReplicationConsumer/DxsReplay.
+TCP byte stream, optional TLS. Used by ReplicationConsumer /
+ReplicationService.
 
 ```
 Gateway --[casting/UDP]--> Risk --[casting/UDP]--> ME
 Gateway <--[casting/UDP]-- Risk <--[casting/UDP]-- ME
                        Risk --[SPSC]-----> PG write-behind
                                     ME --[SPSC]--> WAL Writer
-                          WAL Writer --[notify]--> DxsReplay
+                          WAL Writer --[notify]--> ReplicationService
                                     ME --[casting/UDP]--> Marketdata
 Mark    --[replication/TCP]--> Risk (mark prices)
 ```
@@ -144,16 +147,17 @@ connected by SPSC rings (rtrb, 50-170ns per hop):
 
 ```
 Matching Engine process:
-+===============================================+
-|  +-------+  SPSC  +---------+  SPSC  +------+ |
-|  |  casting  |------->| Matching|------->| WAL  | |
-|  |Receiver|<------| tile    |------->|Writer| |
-|  +-------+  fills |         | events +--+---+ |
-|                    +---------+     +----v----+ |
-|                        |          |DxsReplay | |
-|                        |          |  tile    | |
-|                        |          +---------+  |
-+===============================================+
++=========================================================+
+|  +-------+  SPSC  +---------+  SPSC  +-----------+      |
+|  |Cast   |------->| Matching|------->| WalWriter |      |
+|  |Receiver|<------| tile    |------->|           |      |
+|  +-------+  fills |         | events +--+--------+      |
+|                    +---------+         |                |
+|                        |          +----v---------+      |
+|                        |          | Replication- |      |
+|                        |          | Service tile |      |
+|                        |          +--------------+      |
++=========================================================+
 ```
 
 Within process: SPSC rings (zero syscall, 50-170ns).
@@ -197,8 +201,8 @@ See `rsx-types/src/lib.rs`.
 | ME match (per order) | 100-500ns |
 | Risk pre-trade check | <5us |
 | Risk post-trade (apply fill) | <1us |
-| End-to-end GW->ME->GW | <50us (same machine) |
-| Streaming protocol (casting) record encode/decode | <50ns (memcpy + CRC) |
+| End-to-end GW->ME->GW | <50us (same machine, budget) |
+| casting record encode/decode | <50ns (memcpy + CRC) |
 | `WalWriter::append` (Vec extend, no disk I/O) | <200ns |
 | WAL flush (fsync) | <1ms per 64KB batch |
 
