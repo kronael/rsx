@@ -9,11 +9,12 @@
 //! the gap exceeds ring capacity (consumer must switch to
 //! `ReplicationConsumer` for a TCP cold-start in either case).
 //!
-//! No async runtime. Caller owns the socket. The reorder ring,
-//! send ring, and per-slot NAK rate-limit state are all
-//! pre-allocated; the hot path performs zero heap allocations
-//! aside from per-packet `Vec<u8>` payload delivery (future
-//! work: caller-supplied buffer variant).
+//! No async runtime. Caller owns the socket. The send ring,
+//! reorder ring, and per-slot NAK state are all pre-allocated.
+//! Use [`CastReceiver::poll`] for zero-allocation receive delivery
+//! — the callback receives `&[u8]` directly from the receiver's
+//! internal buffer. [`CastReceiver::try_recv`] is a shim that
+//! wraps `poll` with one `Vec<u8>` per in-order record.
 //!
 //! Wire-format details and FAULTED semantics live in
 //! `specs/4-cast.md`.
@@ -29,6 +30,7 @@ use crate::protocol::RECORD_HEARTBEAT;
 use crate::protocol::RECORD_NAK;
 use crate::wal::extract_seq;
 use crate::wal::read_record_at_seq;
+use crate::wal::Framed;
 use socket2::Domain;
 use socket2::Protocol;
 use socket2::Socket;
@@ -302,6 +304,61 @@ impl CastSender {
         Ok(())
     }
 
+    /// Publish a record framed by `WalWriter::prepare`. No CRC
+    /// compute, no seq assignment — those costs were paid in
+    /// `prepare`, and the seq from `framed.seq` is what
+    /// indexes the send ring. The sender's own `next_seq`
+    /// counter advances to stay in lockstep with the WAL.
+    ///
+    /// Paired callers (those that both persist AND publish the
+    /// same record) MUST use this entry point. See
+    /// `notes/crc.md` and the rsx-cast crate docs.
+    pub fn send_framed(
+        &mut self,
+        framed: &Framed,
+    ) -> io::Result<()> {
+        let seq = framed.seq;
+        let total =
+            WalHeader::SIZE + framed.payload.len();
+        if self.buf.len() < total {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "send buffer too small for record",
+            ));
+        }
+        self.buf[..WalHeader::SIZE]
+            .copy_from_slice(&framed.header.to_bytes());
+        self.buf[WalHeader::SIZE..total]
+            .copy_from_slice(framed.payload);
+        self.socket
+            .send_to(&self.buf[..total], self.dest)?;
+
+        // Cache the frame for NAK retransmit, same policy as
+        // `send`.
+        if total <= SEND_RING_FRAME_BYTES {
+            let slot =
+                (seq & SEND_RING_MASK) as usize;
+            self.ring_seqs[slot] = seq;
+            self.ring_lens[slot] = total as u16;
+            let off = slot * SEND_RING_FRAME_BYTES;
+            self.ring_frames[off..off + total]
+                .copy_from_slice(&self.buf[..total]);
+        } else {
+            let slot =
+                (seq & SEND_RING_MASK) as usize;
+            self.ring_seqs[slot] = 0;
+            self.ring_lens[slot] = 0;
+        }
+
+        // Keep sender's counter in lockstep with the WAL.
+        // If the caller is paired, framed.seq == self.next_seq;
+        // if seqs ever diverge, this preserves the WAL as
+        // canonical and rebases the sender on top of it.
+        self.next_seq = seq + 1;
+        self.last_heartbeat = Instant::now();
+        Ok(())
+    }
+
     pub fn tick(&mut self) -> io::Result<()> {
         let now = Instant::now();
         if now.duration_since(self.last_heartbeat)
@@ -536,6 +593,26 @@ pub enum CastRecv {
     /// slots). Consumer must do a full DXS/TCP cold-start from
     /// `last_delivered_seq + 1`, then call
     /// `reset_after_replay(new_tip)` to resume.
+    Reconnect {
+        last_delivered_seq: u64,
+    },
+}
+
+/// Zero-copy counterpart to [`CastRecv`], returned by
+/// [`CastReceiver::poll`]. The payload is delivered via an
+/// `FnOnce` callback that receives a `&[u8]` pointing directly
+/// into the receiver's internal buffer — no heap allocation.
+///
+/// Use [`CastReceiver::try_recv`] if you need an owned `Vec<u8>`.
+#[derive(Debug)]
+pub enum CastPoll {
+    Empty,
+    Data,
+    Faulted {
+        last_delivered_seq: u64,
+        gap_start: u64,
+        gap_end_inclusive: u64,
+    },
     Reconnect {
         last_delivered_seq: u64,
     },

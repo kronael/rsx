@@ -612,11 +612,21 @@ fn main() {
                         reason: REASON_DUPLICATE,
                         _pad: [0; 23],
                     };
-                    wal_writer
-                        .append(&mut fail)
-                        .expect("wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)");
-                    if let Err(e) = cmp_sender.send(&mut fail) {
-                        warn!("cmp send fail-record (duplicate): {e}");
+                    {
+                        let framed = wal_writer
+                            .prepare(&mut fail)
+                            .expect("wal prepare failed (duplicate-reject)");
+                        wal_writer
+                            .append_framed(&framed)
+                            .expect("wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)");
+                        if let Err(e) =
+                            cmp_sender.send_framed(&framed)
+                        {
+                            warn!(
+                                "cmp send fail-record \
+                                 (duplicate): {e}"
+                            );
+                        }
                     }
                 } else {
                     // Record acceptance in WAL
@@ -1040,12 +1050,15 @@ fn emit_config_applied(
         effective_at_ms,
         applied_at_ns: ts,
     };
-    wal.append(&mut record)
+    let framed = wal
+        .prepare(&mut record)
+        .expect("wal prepare failed (config_applied)");
+    wal.append_framed(&framed)
         .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede CMP fan-out");
-    if let Err(e) = risk_sender.send(&mut record) {
+    if let Err(e) = risk_sender.send_framed(&framed) {
         warn!("cmp send config_applied to risk failed: {e}");
     }
-    if let Err(e) = mkt_sender.send(&mut record) {
+    if let Err(e) = mkt_sender.send_framed(&framed) {
         warn!("cmp send config_applied to marketdata failed: {e}");
     }
     info!(

@@ -19,6 +19,18 @@ use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::protocol::CastRecord;
 use std::fs;
+
+/// A record framed exactly once for both persistence and
+/// publication. Returned by `WalWriter::prepare`. The borrow
+/// of `payload` keeps the source record locked against
+/// mutation until `Framed` is dropped, so the bytes the WAL
+/// writes and the bytes the sender publishes are byte-equal
+/// by construction.
+pub struct Framed<'a> {
+    pub header: WalHeader,
+    pub payload: &'a [u8],
+    pub seq: u64,
+}
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
@@ -106,13 +118,19 @@ impl WalWriter {
         }
     }
 
-    /// Append typed CMP record to in-memory buffer.
-    /// Assigns seq via CastRecord::set_seq. No I/O. O(1).
-    /// Returns assigned seq.
-    pub fn append<T: CastRecord>(
+    /// Assign seq, compute CRC, build header. The single point
+    /// at which a record is "framed" for both WAL persistence
+    /// and live UDP send.
+    ///
+    /// Paired callers (those that both persist AND publish the
+    /// same record) MUST use this entry point — calling
+    /// `append` and `CastSender::send` separately on the same
+    /// record recomputes CRC and the seq counters can drift.
+    /// See `notes/crc.md`.
+    pub fn prepare<'a, T: CastRecord>(
         &mut self,
-        record: &mut T,
-    ) -> io::Result<u64> {
+        record: &'a mut T,
+    ) -> io::Result<Framed<'a>> {
         let payload_len = std::mem::size_of::<T>();
         if payload_len > MAX_PAYLOAD as usize {
             return Err(io::Error::new(
@@ -121,21 +139,8 @@ impl WalWriter {
             ));
         }
 
-        // backpressure: stall if buf > 2x max_file_size
-        let limit = (self.max_file_size as usize)
-            .saturating_mul(2)
-            .max(256 * 1024);
-        if self.buf.len() > limit {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "wal buffer full, backpressure",
-            ));
-        }
-
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.last_seq = seq;
-
         record.set_seq(seq);
 
         let payload = as_bytes(record);
@@ -146,9 +151,44 @@ impl WalWriter {
             crc,
         );
 
-        self.buf.extend_from_slice(&header.to_bytes());
-        self.buf.extend_from_slice(payload);
+        Ok(Framed { header, payload, seq })
+    }
+
+    /// Append a pre-framed record to the in-memory buffer.
+    /// No CRC compute, no seq assignment — caller already paid
+    /// those costs in `prepare`. O(memcpy).
+    pub fn append_framed(
+        &mut self,
+        framed: &Framed,
+    ) -> io::Result<()> {
+        // backpressure: stall if buf > 2x max_file_size
+        let limit = (self.max_file_size as usize)
+            .saturating_mul(2)
+            .max(256 * 1024);
+        if self.buf.len() > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "wal buffer full, backpressure",
+            ));
+        }
+        self.last_seq = framed.seq;
+        self.buf.extend_from_slice(&framed.header.to_bytes());
+        self.buf.extend_from_slice(framed.payload);
         self.records_since_flush += 1;
+        Ok(())
+    }
+
+    /// Convenience for solo-WAL callers (write to disk without
+    /// also publishing over UDP). Wraps `prepare` +
+    /// `append_framed` so the CRC is still computed exactly
+    /// once.
+    pub fn append<T: CastRecord>(
+        &mut self,
+        record: &mut T,
+    ) -> io::Result<u64> {
+        let framed = self.prepare(record)?;
+        let seq = framed.seq;
+        self.append_framed(&framed)?;
         Ok(seq)
     }
 
