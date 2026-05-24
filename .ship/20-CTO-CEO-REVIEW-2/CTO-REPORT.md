@@ -417,7 +417,7 @@ Five specific claims rated: CONFIRMED / REFUTED / PARTIAL.
 ```
 passed=887 failed=0 ignored=46
 ```
-(`/home/onvos/sandbox/rsx/tmp/cto2-test-results.log`).
+(`tmp/cto2-test-results.log`).
 Three sources cite three different numbers though:
 - MEMORY.md / ONEPAGER.md: 887
 - CHANGELOG.md:135: 878
