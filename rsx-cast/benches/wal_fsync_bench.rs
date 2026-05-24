@@ -74,11 +74,7 @@ fn bench_wal_append_fsync_single(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        1024 * 1024 * 1024, // 1 GiB — never rotate
-        600_000_000_000,
+        1, tmp.path(), 1024 * 1024 * 1024,
     )
     .unwrap();
 
@@ -97,11 +93,7 @@ fn bench_wal_append_fsync_batch_100(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        1024 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 1024 * 1024 * 1024,
     )
     .unwrap();
 

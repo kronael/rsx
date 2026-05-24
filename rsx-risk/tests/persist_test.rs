@@ -399,11 +399,7 @@ async fn replay_from_wal_rebuilds_positions() {
 
     // Write 3 fills for symbol 0
     let mut writer = WalWriter::new(
-        0,
-        wal_path,
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        0, wal_path, 64 * 1024 * 1024,
     )
     .unwrap();
     for i in 1..=3u64 {
@@ -488,11 +484,7 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
     let wal_path = wal_dir.path();
 
     let mut writer = WalWriter::new(
-        0,
-        wal_path,
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        0, wal_path, 64 * 1024 * 1024,
     )
     .unwrap();
 

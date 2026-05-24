@@ -171,7 +171,7 @@ where
     );
 
     let range = oldest_and_highest_seq(
-        stream_id, &svc.wal_dir, None,
+        stream_id, &svc.wal_dir,
     )?;
     let (my_oldest, my_highest) = range.unwrap_or((0, 0));
     let endpoint_can_serve = match range {

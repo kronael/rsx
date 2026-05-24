@@ -187,9 +187,7 @@ fn main() {
     let mut wal = WalWriter::new(
         SYMBOL_ID,
         tmp_me.as_path(),
-        None,
         64 * 1024 * 1024, // 64 MB rotation
-        60 * 1_000_000_000, // 60s retention
     )
     .unwrap();
     let mut book = make_book_with_liquidity(total);

@@ -131,12 +131,8 @@ fn bench_me_accept_path(c: &mut Criterion) {
     c.bench_function("me_process_order_full_path", |b| {
         let mut book = make_book_with_liquidity();
         let mut wal = WalWriter::new(
-            SYMBOL_ID,
-            &tmp,
-            None,
-            64 * 1024 * 1024,
-            0,
-        )
+        SYMBOL_ID, &tmp, 64 * 1024 * 1024,
+    )
         .expect("wal");
         let mut dedup = DedupTracker::new();
         let mut index: FxHashMap<OrderKey, u32> =

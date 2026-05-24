@@ -1,11 +1,10 @@
 //! WAL — the substrate shared by casting and replication.
 //!
 //! Append-only sequence of `WalHeader` + payload records,
-//! rotated into fixed-size segment files (default 64 MiB),
-//! hot-retained on disk (default 4 h) and optionally archived
-//! beyond that. The bytes on disk are identical to the bytes
-//! sent over UDP by `CastSender` and over TCP by
-//! `ReplicationService` — there is no serialization step.
+//! rotated into fixed-size segment files (default 64 MiB).
+//! The bytes on disk are identical to the bytes sent over UDP
+//! by `CastSender` and over TCP by `ReplicationService` —
+//! there is no serialization step.
 //!
 //! `WalWriter` owns the active segment; `WalReader` iterates
 //! either forward (replay) or random-access by seq
@@ -40,7 +39,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
-use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -57,9 +55,7 @@ pub struct WalWriter {
     first_seq: u64,
     last_seq: u64,
     wal_dir: PathBuf,
-    archive_dir: Option<PathBuf>,
     max_file_size: u64,
-    retention_ns: u64,
     records_since_flush: u32,
 }
 
@@ -67,17 +63,10 @@ impl WalWriter {
     pub fn new(
         stream_id: u32,
         wal_dir: &Path,
-        archive_dir: Option<PathBuf>,
         max_file_size: u64,
-        retention_ns: u64,
     ) -> io::Result<Self> {
         let dir = wal_dir.join(stream_id.to_string());
         fs::create_dir_all(&dir)?;
-
-        if let Some(ref archive) = archive_dir {
-            let archive_stream_dir = archive.join(stream_id.to_string());
-            fs::create_dir_all(&archive_stream_dir)?;
-        }
 
         let active_path = dir.join(format!(
             "{}_active.wal", stream_id
@@ -98,9 +87,7 @@ impl WalWriter {
             first_seq: 1,
             last_seq: 0,
             wal_dir: dir,
-            archive_dir,
             max_file_size,
-            retention_ns,
             records_since_flush: 0,
         })
     }
@@ -259,83 +246,6 @@ impl WalWriter {
         self.file_size = 0;
         self.first_seq = self.next_seq;
 
-        self.gc()?;
-        Ok(())
-    }
-
-    /// Delete rotated files older than retention window.
-    /// If archive_dir configured, move to archive first.
-    pub fn gc(&self) -> io::Result<()> {
-        let entries = fs::read_dir(&self.wal_dir)?;
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-
-            if name.ends_with("_active.wal") {
-                continue;
-            }
-
-            if let Some(info) = parse_wal_filename(&name) {
-                if info.stream_id != self.stream_id {
-                    continue;
-                }
-                let meta = match std::fs::metadata(
-                    entry.path(),
-                ) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                let age = std::time::SystemTime::now()
-                    .duration_since(
-                        meta.modified()
-                            .unwrap_or(
-                                std::time::SystemTime::now()
-                            ),
-                    )
-                    .unwrap_or_default();
-                if age.as_nanos() as u64
-                    > self.retention_ns
-                {
-                    if let Some(ref archive) = self.archive_dir {
-                        self.archive_file(&entry.path(), archive)?;
-                    } else {
-                        debug!(
-                            "gc deleting {}",
-                            entry.path().display()
-                        );
-                        fs::remove_file(entry.path())?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Move WAL file to archive directory.
-    fn archive_file(
-        &self,
-        source: &Path,
-        archive_dir: &Path,
-    ) -> io::Result<()> {
-        let filename = source.file_name().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "no filename",
-            )
-        })?;
-        let dest = archive_dir
-            .join(self.stream_id.to_string())
-            .join(filename);
-
-        debug!(
-            "archiving {} -> {}",
-            source.display(),
-            dest.display()
-        );
-
-        fs::rename(source, &dest)?;
-        info!("archived to {}", dest.display());
         Ok(())
     }
 
@@ -390,34 +300,8 @@ impl WalReader {
         target_seq: u64,
         wal_dir: &Path,
     ) -> io::Result<Self> {
-        Self::open_from_seq_with_archive(
-            stream_id, target_seq, wal_dir, None,
-        )
-    }
-
-    /// Open reader with archive fallback support.
-    ///
-    /// Discovery merges hot + archive (when present) into a
-    /// single list sorted by `first_seq`. The active file
-    /// sorts last (sentinel `first_seq=u64::MAX`). Iteration
-    /// is then just `file_idx += 1` across the merged list;
-    /// there is no hot/archive transition state.
-    pub fn open_from_seq_with_archive(
-        stream_id: u32,
-        target_seq: u64,
-        wal_dir: &Path,
-        archive_dir: Option<&Path>,
-    ) -> io::Result<Self> {
         let hot_dir = wal_dir.join(stream_id.to_string());
-        let arc_dir =
-            archive_dir.map(|p| p.join(stream_id.to_string()));
-
-        let mut dirs: Vec<&Path> = Vec::with_capacity(2);
-        if let Some(ref a) = arc_dir {
-            dirs.push(a.as_path());
-        }
-        dirs.push(hot_dir.as_path());
-
+        let dirs = [hot_dir.as_path()];
         let files = list_wal_files_across(stream_id, &dirs)?;
         let file_idx = pick_start_idx(&files, target_seq);
 
@@ -636,18 +520,9 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
 pub fn oldest_and_highest_seq(
     stream_id: u32,
     wal_dir: &Path,
-    archive_dir: Option<&Path>,
 ) -> io::Result<Option<(u64, u64)>> {
     let hot_dir = wal_dir.join(stream_id.to_string());
-    let arc_dir =
-        archive_dir.map(|p| p.join(stream_id.to_string()));
-
-    let mut dirs: Vec<&Path> = Vec::with_capacity(2);
-    if let Some(ref a) = arc_dir {
-        dirs.push(a.as_path());
-    }
-    dirs.push(hot_dir.as_path());
-
+    let dirs = [hot_dir.as_path()];
     let files = list_wal_files_across(stream_id, &dirs)?;
     let mut oldest: Option<u64> = None;
     let mut highest: Option<u64> = None;
@@ -736,18 +611,9 @@ pub fn read_record_at_seq(
     stream_id: u32,
     target_seq: u64,
     wal_dir: &Path,
-    archive_dir: Option<&Path>,
 ) -> io::Result<Option<RawWalRecord>> {
     let hot_dir = wal_dir.join(stream_id.to_string());
-    let arc_dir =
-        archive_dir.map(|p| p.join(stream_id.to_string()));
-
-    let mut dirs: Vec<&Path> = Vec::with_capacity(2);
-    if let Some(ref a) = arc_dir {
-        dirs.push(a.as_path());
-    }
-    dirs.push(hot_dir.as_path());
-
+    let dirs = [hot_dir.as_path()];
     let files = list_wal_files_across(stream_id, &dirs)?;
     if let Some(target) = pick_file_for_seq(&files, target_seq)
     {

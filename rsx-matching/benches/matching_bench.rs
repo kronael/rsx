@@ -257,8 +257,8 @@ fn bench_wal_append_per_event(c: &mut Criterion) {
         "wal_append_per_event",
         |b| {
             let mut writer = WalWriter::new(
-                99, &tmp, None, 64 * 1024 * 1024, 0,
-            )
+        99, &tmp, 64 * 1024 * 1024,
+    )
             .unwrap();
             let mut book = make_book();
             let mut ask = make_order(

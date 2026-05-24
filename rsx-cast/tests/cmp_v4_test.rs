@@ -434,11 +434,7 @@ fn handle_nak_dedups_within_window() {
     // path can serve the seq=1 retransmit.
     let stream_id = 1u32;
     let mut writer = rsx_cast::wal::WalWriter::new(
-        stream_id,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        stream_id, tmp.path(), 64 * 1024 * 1024,
     )
     .unwrap();
     let mut f_wal = fill(1);

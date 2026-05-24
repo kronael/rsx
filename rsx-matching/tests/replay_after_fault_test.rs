@@ -83,11 +83,7 @@ fn write_risk_wal(
     stream_id: u32,
 ) -> u64 {
     let mut writer = WalWriter::new(
-        stream_id,
-        wal_dir,
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        stream_id, wal_dir, 64 * 1024 * 1024,
     )
     .unwrap();
     // The seq is assigned by WalWriter::append via set_seq
@@ -239,11 +235,7 @@ fn faulted_recovers_via_dxs_replay() {
         FxHashMap::default();
     let mut dedup = DedupTracker::new();
     let mut me_writer = WalWriter::new(
-        SYM,
-        &me_wal_dir,
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        SYM, &me_wal_dir, 64 * 1024 * 1024,
     )
     .unwrap();
 

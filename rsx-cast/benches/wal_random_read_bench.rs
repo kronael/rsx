@@ -4,7 +4,7 @@
 //!
 //! What this measures
 //! -----------------
-//! `wal::read_record_at_seq(stream_id, target_seq, wal_dir, None)`
+//! `wal::read_record_at_seq(stream_id, target_seq, wal_dir)`
 //! against a pre-populated WAL file of N records, for random
 //! target seqs uniformly distributed across [1, N].
 //!
@@ -91,11 +91,7 @@ fn bench_wal_random_read_10k(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        1024 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 1024 * 1024 * 1024,
     )
     .unwrap();
     for _ in 0..10_000u64 {
@@ -109,12 +105,7 @@ fn bench_wal_random_read_10k(c: &mut Criterion) {
     c.bench_function("wal_random_read_10k", |b| {
         b.iter(|| {
             let seq = (rng.next() % 10_000) + 1;
-            let rec = read_record_at_seq(
-                1,
-                black_box(seq),
-                tmp.path(),
-                None,
-            )
+            let rec = read_record_at_seq(1, black_box(seq), tmp.path())
             .unwrap();
             black_box(rec);
         });
@@ -125,11 +116,7 @@ fn bench_wal_random_read_100k(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        1024 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 1024 * 1024 * 1024,
     )
     .unwrap();
     for _ in 0..100_000u64 {
@@ -143,12 +130,7 @@ fn bench_wal_random_read_100k(c: &mut Criterion) {
     c.bench_function("wal_random_read_100k", |b| {
         b.iter(|| {
             let seq = (rng.next() % 100_000) + 1;
-            let rec = read_record_at_seq(
-                1,
-                black_box(seq),
-                tmp.path(),
-                None,
-            )
+            let rec = read_record_at_seq(1, black_box(seq), tmp.path())
             .unwrap();
             black_box(rec);
         });

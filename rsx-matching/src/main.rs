@@ -283,9 +283,7 @@ fn main() {
     let mut wal_writer = WalWriter::new(
         symbol_id,
         &PathBuf::from(&wal_dir),
-        None,
         64 * 1024 * 1024,
-        4 * 60 * 60 * 1_000_000_000,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to create wal writer");

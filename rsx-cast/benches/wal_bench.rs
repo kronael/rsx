@@ -53,11 +53,7 @@ fn bench_wal_append_in_memory(c: &mut Criterion) {
     // Criterion sample. Previous 64 MiB cap (= ~880k iters) was
     // marginal and the silent `let _ =` hid the failure.
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        1024 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 1024 * 1024 * 1024,
     )
     .unwrap();
 
@@ -78,11 +74,7 @@ fn bench_wal_flush_fsync(c: &mut Criterion) {
     let tmp = TempDir::new().unwrap();
     // 1 GiB cap so the writer never rotates inside the bench.
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        1024 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 1024 * 1024 * 1024,
     )
     .unwrap();
 
@@ -107,11 +99,7 @@ fn bench_wal_read_sequential(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 64 * 1024 * 1024,
     )
     .unwrap();
 
@@ -143,11 +131,7 @@ fn bench_replay_100k_records(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(
-        1,
-        tmp.path(),
-        None,
-        64 * 1024 * 1024,
-        600_000_000_000,
+        1, tmp.path(), 64 * 1024 * 1024,
     )
     .unwrap();
 

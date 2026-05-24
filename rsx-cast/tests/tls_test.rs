@@ -77,11 +77,7 @@ async fn tls_client_server_connection() {
 
     let stream_id = 1u32;
     let mut wal = WalWriter::new(
-        stream_id,
-        &wal_dir,
-        None,
-        64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        stream_id, &wal_dir, 64 * 1024 * 1024,
     )
     .unwrap();
 
@@ -181,11 +177,7 @@ async fn tls_disabled_falls_back_to_plain() {
 
     let stream_id = 1u32;
     let mut wal = WalWriter::new(
-        stream_id,
-        &wal_dir,
-        None,
-        64 * 1024 * 1024,
-        10 * 60 * 1_000_000_000,
+        stream_id, &wal_dir, 64 * 1024 * 1024,
     )
     .unwrap();
 
