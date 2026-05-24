@@ -5,7 +5,7 @@
 //! per-user rate limiting, circuit breaker, pending order
 //! tracking with timeout. Stateless — crash and restart.
 
-pub mod protocol;
+pub mod records;
 pub mod convert;
 pub mod config;
 pub mod rate_limit;

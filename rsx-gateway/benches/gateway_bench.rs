@@ -12,9 +12,9 @@ use rsx_gateway::convert::qty_to_fixed;
 use rsx_gateway::order_id::generate_order_id;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingOrders;
-use rsx_gateway::protocol::parse;
-use rsx_gateway::protocol::serialize;
-use rsx_gateway::protocol::WsFrame;
+use rsx_gateway::records::parse;
+use rsx_gateway::records::serialize;
+use rsx_gateway::records::WsFrame;
 use rsx_gateway::rate_limit::RateLimiter;
 use rsx_types::SymbolConfig;
 
