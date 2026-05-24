@@ -110,7 +110,7 @@ taker_ts_ns: 0,
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("localhost:{}", service_addr.port());
-    let mut consumer = DxsConsumer::new(
+    let mut consumer = DxsConsumer::from_single(
         stream_id,
         consumer_addr,
         tip_file,
@@ -222,7 +222,7 @@ taker_ts_ns: 0,
     let tip_file = tmp.path().join("tip");
     let consumer_addr =
         format!("127.0.0.1:{}", service_addr.port());
-    let mut consumer = DxsConsumer::new(
+    let mut consumer = DxsConsumer::from_single(
         stream_id,
         consumer_addr,
         tip_file,
