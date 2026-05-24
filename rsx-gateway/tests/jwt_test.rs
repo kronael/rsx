@@ -190,3 +190,29 @@ fn test_jti_tracker_evicts_oldest_when_full() {
     assert!(t.record(Some("a")));
     assert_eq!(t.len(), 2);
 }
+
+/// R-N5: if the 101 handshake response write fails after we
+/// already recorded the jti, the client never saw "switching
+/// protocols". The retry with the same JWT must succeed; the
+/// jti is rolled back to allow that.
+#[test]
+fn test_jti_tracker_rollback_allows_retry() {
+    use rsx_gateway::jwt::JtiTracker;
+    let mut t = JtiTracker::new(8);
+    assert!(t.record(Some("xyz")));
+    assert_eq!(t.len(), 1);
+    t.rollback("xyz");
+    assert_eq!(t.len(), 0);
+    // Retry with same jti succeeds.
+    assert!(t.record(Some("xyz")));
+}
+
+#[test]
+fn test_jti_tracker_rollback_unknown_is_noop() {
+    use rsx_gateway::jwt::JtiTracker;
+    let mut t = JtiTracker::new(8);
+    t.rollback("never-recorded");
+    assert_eq!(t.len(), 0);
+    assert!(t.record(Some("a")));
+    assert_eq!(t.len(), 1);
+}

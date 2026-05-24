@@ -129,4 +129,18 @@ impl JtiTracker {
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
+
+    /// Roll back a previously-recorded jti. Used when a handshake
+    /// fails AFTER `record` succeeded (e.g. the 101 response write
+    /// failed) so the same jti can be retried by the client. See
+    /// CTO-REPORT.md R-N5.
+    pub fn rollback(&mut self, jti: &str) {
+        if self.seen.remove(jti) {
+            if let Some(pos) =
+                self.order.iter().position(|x| x == jti)
+            {
+                self.order.remove(pos);
+            }
+        }
+    }
 }
