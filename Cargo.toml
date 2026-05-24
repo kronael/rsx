@@ -3,7 +3,7 @@ members = [
     "rsx-types",
     "rsx-book",
     "rsx-matching",
-    "rsx-dxs",
+    "rsx-cast",
     "rsx-recorder",
     "rsx-risk",
     "rsx-mark",
