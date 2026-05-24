@@ -209,9 +209,11 @@ including:
    target throughput).
 
 6. **Archive fallback:** If consumer offline longer than retention
-   window (default 48h), hot WAL files are GC'd. Consumer must
-   request replay from archive (cold storage). If archive
-   unavailable, consumer cannot recover missing range.
+   window (default 4h), hot WAL files are GC'd. Consumer must
+   request replay from archive (cold storage). The 4 h hot
+   window sizes a crash-recovery + brief-outage budget; longer
+   durability is the archive's job. If archive unavailable,
+   consumer cannot recover missing range.
 
 **Operational monitoring:**
 
