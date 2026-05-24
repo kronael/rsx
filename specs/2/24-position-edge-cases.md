@@ -1023,7 +1023,7 @@ Expected seq: 1001
 Received: 1001, 1002, 1004 (1003 missing)
 ```
 
-**CMP protocol handling (CMP.md):**
+**Streaming protocol (CMP) handling (CMP.md):**
 - Consumer detects gap via seq comparison
 - Sends NACK to producer (ME)
 - ME resends missing fill (from WAL buffer)

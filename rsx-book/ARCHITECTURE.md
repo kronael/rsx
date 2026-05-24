@@ -151,3 +151,19 @@ Total per book                                 ~10 GB
 | Match (zone 0) | O(1) per fill |
 | Match (smooshed) | O(k) per slot |
 | Best bid/ask | O(1) (cached) |
+
+## Architectural Decisions
+
+**Runtime: none — pure data structures.** `rsx-book` is a
+library, not a process. No async runtime, no threading
+primitives, no I/O. The crate provides slab arenas,
+compressed price levels, and the matching algorithm; the
+caller owns the loop and the threading model.
+
+Consumers today: `rsx-matching` (degenerate tile) and
+`rsx-marketdata` (shadow book inside a monoio reactor).
+Both treat the book as single-owner state on whatever
+thread happens to drive them — see
+[`../notes/tiles.md`](../notes/tiles.md) for the broader
+pattern. The book makes no claims about thread-safety
+because none of its callers share it across threads.

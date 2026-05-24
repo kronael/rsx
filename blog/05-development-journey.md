@@ -97,7 +97,7 @@ Day 2 was about connecting the pieces:
 2026-02-10 13:49 [feat] Wire ME->Risk->Gateway event forwarding
 ```
 
-The CMP protocol got its final form: a `CmpRecord` trait with
+The streaming protocol (CMP) got its final form: a `CmpRecord` trait with
 `seq: u64` as the first 8 bytes, shared across all data payloads.
 The matching engine, risk engine, and gateway were wired together
 through CMP/UDP.

@@ -249,7 +249,7 @@ if book.best_bid_tick \!= old_bid || book.best_ask_tick \!= old_ask {
 
 ## Deduplication
 
-Orders arrive over UDP (CMP protocol), which does not guarantee
+Orders arrive over UDP (streaming protocol, CMP), which does not guarantee
 exactly-once delivery. The matching engine tracks recently seen
 order IDs in a `DedupTracker`:
 

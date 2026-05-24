@@ -28,6 +28,17 @@ RSX uses. Adding a new record type is local: define a
 `#[repr(C, align(64))]` struct, pick a `RECORD_*` u16,
 implement `CmpRecord`. No edit to `rsx-dxs` required.
 
+## Architectural Decisions
+
+**Runtime: none — wire records only.** `rsx-messages` is a
+library of `#[repr(C, align(64))]` structs and the
+`CmpRecord` impl for each. No runtime, no I/O, no threading.
+The records travel through `rsx-dxs` transport (streaming
+protocol CMP over UDP, replay protocol DXS over TCP, WAL on
+disk) without being aware of which path they're on. See
+[`../notes/tiles.md`](../notes/tiles.md) for the runtime
+choices made by the producers and consumers of these records.
+
 ## See also
 
 - `rsx-dxs/README.md` — transport
