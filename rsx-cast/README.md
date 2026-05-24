@@ -332,6 +332,13 @@ latency measurements justify the extra moving parts.
 
 ### Known caveats
 
+- **Reorder buffer overflow triggers `Reconnect`.**
+  The receiver's reorder ring holds at most 2048 out-of-order
+  slots. A gap larger than 2048 sequence numbers overflows the
+  ring and returns `CastRecvWith::Reconnect` (sticky until
+  reset). The application must drain the stream via
+  `ReplicationConsumer` from the last delivered seq and call
+  `reset_after_replay` before resuming UDP delivery.
 - **Cold-tier retransmit is O(N) inside one WAL segment.**
   `read_record_at_seq` scans the file to locate the requested
   seq; ~23.5 ms at 10 K records on commodity SSD. Hot retransmits
@@ -421,9 +428,6 @@ or pin a git rev.
   (the `rsx-cli` crate). It uses this crate as a dependency
   and reads any WAL written here.
 - **Environment variables.** `CastConfig::from_env` reads:
-  - `RSX_CAST_REORDER_BUF_LIMIT` (default 512) — cap on
-    out-of-order packets buffered while waiting for a NAK
-    fill. Overflow drops the oldest gap and re-syncs.
   - `RSX_CAST_HEARTBEAT_INTERVAL_MS` (default 100) — sender
     heartbeat cadence; idle-stream only (data sends reset
     the timer).
