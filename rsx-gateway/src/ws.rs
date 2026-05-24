@@ -16,16 +16,10 @@ use crate::jwt::JtiTracker;
 const WS_MAGIC: &str =
     "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-/// Per-process JWT-ID replay tracker. Caps at 16 K live jtis
-/// with FIFO eviction. Tokens without a `jti` are rejected
-/// upstream in `extract_user_and_record_jti` — see
-/// CTO-REPORT.md R3 (a token missing jti would otherwise
-/// silently bypass replay defence).
-///
-/// Per-process is the deliberate choice — see WEDGE.md
-/// (B+A: open-source orthogonal parts). A multi-replica
-/// replay defence would need a centralized cache (Redis)
-/// keyed by jti and is intentionally out of scope.
+/// Per-process JWT-ID replay tracker. 16 K-entry FIFO cap.
+/// Tokens without `jti` are rejected upstream in
+/// `extract_user_and_record_jti` — without that gate a token
+/// missing `jti` would silently bypass replay defence.
 static JTI_TRACKER: LazyLock<Mutex<JtiTracker>> =
     LazyLock::new(|| Mutex::new(JtiTracker::new(16_384)));
 
