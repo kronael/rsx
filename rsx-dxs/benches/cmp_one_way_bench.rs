@@ -7,6 +7,10 @@
 //! no NAK. Both sides on 127.0.0.1, both threads spinning
 //! cache-hot.
 //!
+//! Sender pinned to core 2, receiver to core 3. Without pinning
+//! the threads migrate and the one-way latency picks up µs-scale
+//! cache-eviction noise.
+//!
 //! This is the protocol isolation of the production legs
 //! `gateway_in → risk_in` and `risk_out → gateway_cmp_recv`.
 //! Adds (over `udp_rtt_loopback_64b`): WalHeader build + CRC32
@@ -31,6 +35,7 @@
 //!   (CmpReceiver::try_recv is NOT zero-heap on recv; the
 //!   zero-heap claim applies to CmpSender::send only).
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -79,7 +84,15 @@ fn ephemeral_addr() -> SocketAddr {
         .unwrap()
 }
 
+fn pick_cores() -> (CoreId, CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let s = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    let r = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
+    (s, r)
+}
+
 fn bench_cmp_one_way(c: &mut Criterion) {
+    let (sender_core, recv_core) = pick_cores();
     let tmp = TempDir::new().unwrap();
     let send_bind = ephemeral_addr();
     let recv_bind = ephemeral_addr();
@@ -107,6 +120,7 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     // peer status replies the sender needs to keep its window
     // open get sent.
     let handle = thread::spawn(move || {
+        core_affinity::set_for_current(recv_core);
         let mut i: u64 = 0;
         while !stop_clone.load(Ordering::Relaxed) {
             if let Some(frame) = receiver.try_recv() {
@@ -125,10 +139,15 @@ fn bench_cmp_one_way(c: &mut Criterion) {
         }
     });
 
+    // Sender side runs the Criterion timer closure on this thread.
+    core_affinity::set_for_current(sender_core);
+
+    // Pre-build the record outside the timed loop (seq is
+    // overwritten by sender.send).
+    let mut rec = fill_record();
     c.bench_function("cmp_one_way_fill", |b| {
         let mut iter: u64 = 0;
         b.iter(|| {
-            let mut rec = fill_record();
             let before = recv_count.load(Ordering::Acquire);
             // Send. Flow control closes around 64K iters
             // without status round-trips — we drive
@@ -163,5 +182,11 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     let _ = handle.join();
 }
 
-criterion_group!(benches, bench_cmp_one_way);
+criterion_group! {
+    name = benches;
+    // sample_size(50) matches the rest of the compare/CMP RTT bench
+    // family for cross-bench alignment.
+    config = Criterion::default().sample_size(50);
+    targets = bench_cmp_one_way
+}
 criterion_main!(benches);
