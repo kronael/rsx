@@ -33,7 +33,7 @@ use rsx_book::matching::IncomingOrder;
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
-use rsx_cast::protocol::CastRecord;
+use rsx_cast::records::CastRecord;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal_integration::write_events_to_wal;

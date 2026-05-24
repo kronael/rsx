@@ -11,7 +11,7 @@
 //! [`CastRecord`].
 
 pub mod header;
-pub mod protocol;
+pub mod records;
 pub mod encode_utils;
 pub mod wal;
 pub mod cast;
@@ -22,15 +22,15 @@ pub mod tls;
 
 pub use header::WalHeader;
 pub use header::WalVersion;
-pub use protocol::CastHeartbeat;
-pub use protocol::CastRecord;
-pub use protocol::CaughtUpRecord;
-pub use protocol::Nak;
-pub use protocol::ReplicationNotAvailable;
-pub use protocol::RECORD_CAUGHT_UP;
-pub use protocol::RECORD_HEARTBEAT;
-pub use protocol::RECORD_NAK;
-pub use protocol::RECORD_REPLICATION_NOT_AVAILABLE;
+pub use records::CastHeartbeat;
+pub use records::CastRecord;
+pub use records::CaughtUpRecord;
+pub use records::Nak;
+pub use records::ReplicationNotAvailable;
+pub use records::RECORD_CAUGHT_UP;
+pub use records::RECORD_HEARTBEAT;
+pub use records::RECORD_NAK;
+pub use records::RECORD_REPLICATION_NOT_AVAILABLE;
 pub use encode_utils::as_bytes;
 pub use encode_utils::compute_crc32;
 pub use encode_utils::encode_record;

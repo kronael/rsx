@@ -4,7 +4,7 @@ use rsx_cast::config::TlsConfig;
 use rsx_cast::config::TlsServer;
 use rsx_cast::config::TlsClient;
 use rsx_messages::FillRecord;
-use rsx_cast::protocol::RECORD_CAUGHT_UP;
+use rsx_cast::records::RECORD_CAUGHT_UP;
 use rsx_messages::RECORD_FILL;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::ReplicationService;

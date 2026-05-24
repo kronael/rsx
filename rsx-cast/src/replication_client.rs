@@ -15,9 +15,9 @@
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
-use crate::protocol::ReplicationRequest;
-use crate::protocol::RECORD_REPLICATION_NOT_AVAILABLE;
-use crate::protocol::RECORD_REPLICATION_REQUEST;
+use crate::records::ReplicationRequest;
+use crate::records::RECORD_REPLICATION_NOT_AVAILABLE;
+use crate::records::RECORD_REPLICATION_REQUEST;
 use crate::tls::build_connector;
 use crate::tls::extract_server_name;
 use crate::wal::RawWalRecord;

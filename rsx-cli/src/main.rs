@@ -1,6 +1,6 @@
 use clap::Parser;
 use clap::Subcommand;
-use rsx_cast::protocol::*;
+use rsx_cast::records::*;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::WalReader;
 use rsx_messages::*;

@@ -127,7 +127,7 @@ fn write_risk_wal(
 #[derive(Copy, Clone)]
 struct OrderMessageWire(OrderMessage);
 
-impl rsx_cast::protocol::CastRecord for OrderMessageWire {
+impl rsx_cast::records::CastRecord for OrderMessageWire {
     fn seq(&self) -> u64 {
         self.0.seq
     }

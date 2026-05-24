@@ -5,9 +5,9 @@ use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
-use rsx_cast::protocol::Nak;
+use rsx_cast::records::Nak;
 use rsx_messages::FillRecord;
-use rsx_cast::protocol::RECORD_NAK;
+use rsx_cast::records::RECORD_NAK;
 use rsx_messages::RECORD_FILL;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -273,6 +273,6 @@ fn cmp_heartbeat_sent_on_idle() {
     let (n, _) = result.unwrap();
     assert!(n >= WalHeader::SIZE);
     let hdr = WalHeader::from_bytes(&buf[..16]).unwrap();
-    assert_eq!(hdr.record_type, rsx_cast::protocol::RECORD_HEARTBEAT);
+    assert_eq!(hdr.record_type, rsx_cast::records::RECORD_HEARTBEAT);
 }
 
