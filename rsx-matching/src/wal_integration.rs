@@ -1,18 +1,35 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::matching::IncomingOrder;
+use rsx_book::matching::process_new_order;
 use rsx_types::NONE;
+use rsx_types::Side;
+use rsx_types::TimeInForce;
 use rsx_book::snapshot;
+use rsx_dxs::wal::WalReader;
 use rsx_dxs::wal::WalWriter;
+use rsx_dxs::wal::extract_seq;
 use rsx_messages::FillRecord;
-use rsx_messages::OrderInsertedRecord;
+use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderInsertedRecord;
+use rsx_messages::RECORD_ORDER_ACCEPTED;
+use rsx_messages::RECORD_ORDER_CANCELLED;
+use rustc_hash::FxHashMap;
 use std::fs;
 use std::io;
+use std::io::Read as _;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing::info;
 use tracing::warn;
+
+/// `(user_id, order_id_hi, order_id_lo) -> slab handle`.
+/// Mirror of the type in `main.rs`. Kept here so replay can
+/// take ownership of the index without main.rs leaking it.
+pub type OrderKey = (u32, u64, u64);
 
 /// Write all events from the book's event buffer to WAL.
 pub fn write_events_to_wal(
@@ -227,12 +244,17 @@ pub fn load_snapshot(
 }
 
 /// Save book snapshot to
-/// `{wal_dir}/{symbol_id}/snapshot.bin`.
-/// Uses atomic rename to avoid partial writes.
+/// `{wal_dir}/{symbol_id}/snapshot.bin`, and the WAL seq at
+/// snapshot time to `wal_seq.txt` alongside.
+/// Uses atomic rename to avoid partial writes. The sidecar is
+/// the recovery anchor: `replay_wal_after_snapshot` resumes
+/// from `sidecar + 1` so we never re-execute records the
+/// snapshot already contains.
 pub fn save_snapshot(
     book: &Orderbook,
     wal_dir: &str,
     symbol_id: u32,
+    wal_last_seq: u64,
 ) -> io::Result<()> {
     let dir = PathBuf::from(wal_dir)
         .join(symbol_id.to_string());
@@ -242,5 +264,182 @@ pub fn save_snapshot(
     snapshot::save(book, &mut file)?;
     file.sync_all()?;
     fs::rename(&tmp, &dest)?;
+
+    let seq_tmp = dir.join("wal_seq.txt.tmp");
+    let seq_dest = dir.join("wal_seq.txt");
+    let mut seq_file = fs::File::create(&seq_tmp)?;
+    write!(seq_file, "{}", wal_last_seq)?;
+    seq_file.sync_all()?;
+    fs::rename(&seq_tmp, &seq_dest)?;
     Ok(())
+}
+
+/// Load the WAL seq sidecar written by [`save_snapshot`].
+/// Returns `None` if missing or unparseable; the caller must
+/// then fall back to "no snapshot" (full replay from seq 1).
+pub fn load_wal_seq(
+    wal_dir: &str,
+    symbol_id: u32,
+) -> Option<u64> {
+    let path = PathBuf::from(wal_dir)
+        .join(symbol_id.to_string())
+        .join("wal_seq.txt");
+    let mut s = String::new();
+    fs::File::open(&path).ok()?.read_to_string(&mut s).ok()?;
+    s.trim().parse::<u64>().ok()
+}
+
+/// Replay WAL records after a snapshot to bring the book to
+/// the current state. R-N1: snapshot is taken every 10 s but
+/// fills are forwarded to clients immediately, so a SIGKILL
+/// between snapshots loses every fill in that window unless
+/// the WAL is replayed.
+///
+/// Re-executes RECORD_ORDER_ACCEPTED records via
+/// `process_new_order`, which deterministically regenerates
+/// the same fills + side-effect events that the matching
+/// engine produced live. RECORD_ORDER_CANCELLED records are
+/// applied as `book.cancel_order(handle)` against the
+/// reconstructed `order_index`. Other record types (Fill,
+/// OrderInserted, OrderDone, BBO) are skipped — they are
+/// side effects of the accepted-order replay above.
+///
+/// Returns the highest WAL seq applied (caller seeds
+/// `WalWriter::next_seq = ret + 1` so subsequent live writes
+/// never reuse a replayed seq).
+pub fn replay_wal_after_snapshot(
+    book: &mut Orderbook,
+    order_index: &mut FxHashMap<OrderKey, u32>,
+    dedup: &mut crate::dedup::DedupTracker,
+    wal_dir: &str,
+    symbol_id: u32,
+    start_seq: u64,
+) -> io::Result<u64> {
+    let wal_path = PathBuf::from(wal_dir);
+    let mut reader = WalReader::open_from_seq(
+        symbol_id, start_seq, &wal_path,
+    )?;
+    let mut last_seq = start_seq.saturating_sub(1);
+    let mut accepted = 0u64;
+    let mut cancelled = 0u64;
+    while let Some(raw) = reader.next()? {
+        let seq = extract_seq(&raw.payload).unwrap_or(0);
+        if seq > last_seq {
+            last_seq = seq;
+        }
+        match raw.header.record_type {
+            t if t == RECORD_ORDER_ACCEPTED
+                && raw.payload.len()
+                    >= std::mem::size_of::<OrderAcceptedRecord>() =>
+            {
+                let rec = unsafe {
+                    std::ptr::read_unaligned(
+                        raw.payload.as_ptr()
+                            as *const OrderAcceptedRecord,
+                    )
+                };
+                // Re-record dedup so a duplicate that arrives
+                // post-restart is still rejected.
+                let _ = dedup.check_and_insert(
+                    rec.user_id,
+                    rec.order_id_hi,
+                    rec.order_id_lo,
+                );
+                let mut incoming = IncomingOrder {
+                    price: rec.price,
+                    qty: rec.qty,
+                    remaining_qty: rec.qty,
+                    side: if rec.side == 0 {
+                        Side::Buy
+                    } else {
+                        Side::Sell
+                    },
+                    tif: match rec.tif {
+                        1 => TimeInForce::IOC,
+                        2 => TimeInForce::FOK,
+                        _ => TimeInForce::GTC,
+                    },
+                    user_id: rec.user_id,
+                    reduce_only: rec.reduce_only != 0,
+                    post_only: rec.post_only != 0,
+                    timestamp_ns: rec.ts_ns,
+                    order_id_hi: rec.order_id_hi,
+                    order_id_lo: rec.order_id_lo,
+                };
+                process_new_order(book, &mut incoming);
+                update_order_index_local(
+                    book.events(),
+                    order_index,
+                );
+                accepted += 1;
+            }
+            t if t == RECORD_ORDER_CANCELLED
+                && raw.payload.len()
+                    >= std::mem::size_of::<OrderCancelledRecord>() =>
+            {
+                let rec = unsafe {
+                    std::ptr::read_unaligned(
+                        raw.payload.as_ptr()
+                            as *const OrderCancelledRecord,
+                    )
+                };
+                let key: OrderKey = (
+                    rec.user_id,
+                    rec.order_id_hi,
+                    rec.order_id_lo,
+                );
+                if let Some(&handle) = order_index.get(&key) {
+                    book.cancel_order(handle);
+                    order_index.remove(&key);
+                    cancelled += 1;
+                }
+            }
+            _ => {} // Skip Fill / OrderInserted / OrderDone /
+                    // OrderFailed / BBO — all side effects.
+        }
+    }
+    info!(
+        "wal replay: accepted={} cancelled={} last_seq={}",
+        accepted, cancelled, last_seq,
+    );
+    Ok(last_seq)
+}
+
+/// Local copy of main.rs's `update_order_index` so replay
+/// doesn't need to import a private symbol. Keeps the same
+/// shape: a successful insert/restore puts the handle into
+/// the index; a Done removes it.
+fn update_order_index_local(
+    events: &[Event],
+    index: &mut FxHashMap<OrderKey, u32>,
+) {
+    for ev in events {
+        match *ev {
+            Event::OrderInserted {
+                handle,
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                ..
+            } => {
+                index.insert(
+                    (user_id, order_id_hi, order_id_lo),
+                    handle,
+                );
+            }
+            Event::OrderDone {
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                ..
+            } => {
+                index.remove(&(
+                    user_id,
+                    order_id_hi,
+                    order_id_lo,
+                ));
+            }
+            _ => {}
+        }
+    }
 }
