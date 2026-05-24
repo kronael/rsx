@@ -82,7 +82,7 @@ rsx-auth/       Python auth service (uv; sqlx migrations)
 
 - Crate-per-concern, flat modules (no nested mod dirs)
 - Re-export key types from lib.rs
-- Tests in `tests/` dir with `_test.rs` suffix, not inline
+- Unit tests in `src/<module>_test.rs`, imported via `#[cfg(test)] mod <module>_test;`
 - `_utils.rs` for stateless helpers only
 
 ## Rust Patterns
@@ -178,7 +178,7 @@ gives false confidence. Don't do it.
 
 - `cargo check` first, always (fastest feedback, no codegen)
 - Single test: `cargo test -p rsx-book -- test_name`
-- Single test file: `cargo test -p rsx-cast --test wal_test`
+- Single test file (unit): `cargo test -p rsx-cast --lib wal_test`
 - Debug builds default (~3x faster compile than release)
 - 80 char line width, max 120
 - `make test`: Rust unit tests (`--lib` only) <5s, every commit
@@ -221,10 +221,11 @@ Gate ordering: `gate-1-startup` (server imports) → `gate-2-partials`
 
 ## Testing
 
-- Tests in dedicated files, separate from code:
-  `src/margin.rs` -> `tests/margin_test.rs` (not inline #[cfg(test)])
-- E2E tests: real component + mocked deps, `tests/` dir
-- Integration: testcontainers-rs (Postgres), `tests/` dir
+- Unit tests: `src/<module>_test.rs` alongside the source, imported with
+  `#[cfg(test)] mod <module>_test;` at the bottom of `src/<module>.rs`.
+  Use `crate::` paths inside the test file. NOT inline `mod tests {}`.
+- Integration / E2E tests: real component + mocked deps, `tests/` dir
+- Cross-crate integration: testcontainers-rs (Postgres), `tests/` dir
 - `--test-threads=1` if global state via DashMap/RwLock
 - Centralize test setup in `tests/common/mod.rs`
 - Testcontainers: dynamic port via `.get_host_port_ipv4()`

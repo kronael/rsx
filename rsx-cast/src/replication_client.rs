@@ -369,3 +369,7 @@ fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "replication_client_test.rs"]
+mod replication_client_test;

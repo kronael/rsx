@@ -275,3 +275,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "replication_server_test.rs"]
+mod replication_server_test;
