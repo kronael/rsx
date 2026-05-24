@@ -73,3 +73,11 @@ harness = false
 [[bench]]
 name = "compare_quinn"
 harness = false
+
+[[bench]]
+name = "compare_moldudp64"
+harness = false
+
+[[bench]]
+name = "compare_soupbintcp"
+harness = false
