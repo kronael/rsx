@@ -77,3 +77,7 @@ harness = false
 [[bench]]
 name = "compare_all"
 harness = false
+
+[[bench]]
+name = "compare_tcp"
+harness = false
