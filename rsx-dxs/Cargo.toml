@@ -27,6 +27,7 @@ socket2 = { version = "0.5", features = ["all"] }
 criterion = "0.5"
 tempfile = "3"
 rcgen = "0.13"
+core_affinity = "0.8"
 rsx-messages = { path = "../rsx-messages" }
 rsx-types = { path = "../rsx-types" }
 # protocol comparison benches (compare/*)

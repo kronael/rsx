@@ -2326,6 +2326,7 @@ version = "0.2.0"
 dependencies = [
  "bytes",
  "chrono",
+ "core_affinity",
  "crc32fast",
  "criterion",
  "kcp",

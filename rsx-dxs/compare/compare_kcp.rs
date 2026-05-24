@@ -25,6 +25,13 @@
 //!   apples with CMP's `cmp_rtt_fill_echo` (no per-frame ACK on
 //!   CMP — see `compare/kcp.md` for the asymmetry).
 //!
+//! TODO(oracle): the client flushes the standalone ACK AFTER `recv()`
+//! inside the timed loop, so the reported RTT includes ACK emission
+//! cost from the previous iter's echo (documented intentional). If we
+//! want a "wire-only" RTT companion bench, add a sibling
+//! `kcp_rtt_spin_no_ack_128b` that batches the ACK into the next
+//! send() instead of flushing immediately.
+//!
 //! What is NOT measured
 //! --------------------
 //! - Loss recovery. To bench under loss:
@@ -42,6 +49,9 @@
 //! uses Criterion's default 100, this bench uses 50 for setup-time
 //! tractability of the naive variant). Same loopback (127.0.0.1).
 //! Spin-loop client polling. No TLS, no handshake.
+//! Client (Criterion timer) pinned to core 2, server echo thread
+//! to core 3. The naive variant sleeps 1 ms; pinning still
+//! reduces tail variance there.
 //!
 //! Adapter-overhead caveat
 //! -----------------------
@@ -64,6 +74,7 @@
 //! after that, `flush()` calls in the hot loop bypass the
 //! scheduler.
 
+use core_affinity::CoreId;
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -86,6 +97,13 @@ use std::time::Instant;
 // asserts size_of::<FillRecord>() == 128). cmp_rtt_bench.rs sends
 // one FillRecord per iter; this bench sends 128 B of payload bytes.
 const PAYLOAD_LEN: usize = 128;
+
+fn pick_cores() -> (CoreId, CoreId) {
+    let ids = core_affinity::get_core_ids().unwrap_or_default();
+    let c = ids.get(2).copied().unwrap_or(CoreId { id: 0 });
+    let s = ids.get(3).copied().unwrap_or(CoreId { id: 1 });
+    (c, s)
+}
 
 fn now_ms() -> u32 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -128,6 +146,7 @@ fn drain_output(queue: &OutQueue, sock: &UdpSocket, dest: SocketAddr) {
 // ── naive: sleep-based update() ──────────────────────────────────────────────
 
 fn bench_kcp_naive(c: &mut Criterion) {
+    let (cli_core, srv_core) = pick_cores();
     let srv_sock = UdpSocket::bind("127.0.0.1:0").expect("srv bind");
     srv_sock.set_nonblocking(true).expect("srv nonblock");
     let srv_addr = srv_sock.local_addr().expect("srv addr");
@@ -144,6 +163,7 @@ fn bench_kcp_naive(c: &mut Criterion) {
     let srv_ready2 = Arc::clone(&srv_ready);
 
     let srv_handle = thread::spawn(move || {
+        core_affinity::set_for_current(srv_core);
         let srv_out: OutQueue = Rc::new(RefCell::new(VecDeque::new()));
         let mut kcp = make_kcp(1, Rc::clone(&srv_out));
         let mut buf = [0u8; 2048];
@@ -166,6 +186,9 @@ fn bench_kcp_naive(c: &mut Criterion) {
             thread::sleep(Duration::from_millis(1));
         }
     });
+
+    // Client side runs the Criterion timer on this thread.
+    core_affinity::set_for_current(cli_core);
 
     // Wait for server thread to publish ready before client touches the wire.
     while !srv_ready.load(Ordering::Acquire) {
@@ -226,6 +249,7 @@ fn bench_kcp_naive(c: &mut Criterion) {
 // ── spin: flush() immediately, no sleep ──────────────────────────────────────
 
 fn bench_kcp_spin(c: &mut Criterion) {
+    let (cli_core, srv_core) = pick_cores();
     let srv_sock = UdpSocket::bind("127.0.0.1:0").expect("srv bind");
     srv_sock.set_nonblocking(true).expect("srv nonblock");
     let srv_addr = srv_sock.local_addr().expect("srv addr");
@@ -242,6 +266,7 @@ fn bench_kcp_spin(c: &mut Criterion) {
     let srv_ready2 = Arc::clone(&srv_ready);
 
     let srv_handle = thread::spawn(move || {
+        core_affinity::set_for_current(srv_core);
         let srv_out: OutQueue = Rc::new(RefCell::new(VecDeque::new()));
         let mut kcp = make_kcp(2, Rc::clone(&srv_out));
         let mut buf = [0u8; 2048];
@@ -278,6 +303,9 @@ fn bench_kcp_spin(c: &mut Criterion) {
     while !srv_ready.load(Ordering::Acquire) {
         std::hint::spin_loop();
     }
+
+    // Client side runs the Criterion timer on this thread.
+    core_affinity::set_for_current(cli_core);
 
     let cli_out: OutQueue = Rc::new(RefCell::new(VecDeque::new()));
     let mut kcp = make_kcp(2, Rc::clone(&cli_out));
