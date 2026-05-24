@@ -41,7 +41,7 @@ correctness batch.
 | rsx-types | shipped | newtypes, config, validation, invariant-named asserts | — |
 | rsx-book | shipped | snapshot, matching, compression | proptest harness |
 | rsx-matching | shipped | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel index | — |
-| rsx-cast | shipped | WAL, casting/UDP, replication/TCP, V0/V1 wire-format version byte, preallocated send_ring | — |
+| rsx-cast | shipped | WAL, casting/UDP, replication/TCP, V1 wire-format version byte (at offset 0), preallocated send_ring | — |
 | rsx-messages | shipped | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest (extracted from rsx-cast) | — |
 | rsx-gateway | shipped | JWT (32B min, exp/nbf, JtiTracker dormant), per-IP rate limit (FIFO eviction), circuit breaker, REST, monoio WS | tile parity (pinning, ring) |
 | rsx-risk | shipped | replication, funding, liquidation, PG write-behind, full tile (7 SPSC rings) | (T3.2) replica → main promotion via state machine |
@@ -65,7 +65,7 @@ correctness batch.
 |-----------|---------|
 | match single fill | 54 ns |
 | insert resting order | 857 ns |
-| `WalWriter::append` (Vec extend, pre-fsync) | 31 ns |
+| `WalWriter::prepare` + `append_framed` (Vec extend, pre-fsync) | 31 ns |
 | WAL flush + fsync 64 KB | 24 µs |
 | protocol-record encode (Nak / CastHeartbeat) | 43 ns |
 | `FillRecord` encode | 23 ns |
