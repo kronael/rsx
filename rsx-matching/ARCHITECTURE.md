@@ -151,6 +151,24 @@ That is blocking I/O and explicitly off the hot loop. See
 [`../notes/tiles.md`](../notes/tiles.md) for the broader
 pattern.
 
+## Cold-start snapshot + WAL replay (wal_integration.rs)
+
+Snapshots are written every 10 s with atomic rename
+(`snapshot.bin` + `wal_seq.txt` sidecar). Between snapshots,
+SIGKILL would lose every fill — recovery replays the WAL from
+`sidecar + 1`:
+
+- `RECORD_ORDER_ACCEPTED` → re-runs `process_new_order` to
+  deterministically regenerate fills + side-effect events.
+- `RECORD_ORDER_CANCELLED` → `book.cancel_order(handle)`
+  against the reconstructed `order_index`.
+- Other record types (Fill, OrderInserted, OrderDone, BBO)
+  are skipped — they are side effects of accepted-order replay.
+
+`replay_wal_after_snapshot` returns the highest WAL seq applied;
+caller seeds `WalWriter::next_seq = ret + 1` so subsequent live
+writes never reuse a replayed seq.
+
 ## FAULTED → replay recovery (replay.rs)
 
 When `CastReceiver::try_recv` returns `CastRecv::Faulted`, the
