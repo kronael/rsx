@@ -319,15 +319,25 @@ skip** path. Loss recovery happens in three tiers:
    Bounded by `nak_debounce_us × max_nak_retries`
    (50 ms × 8 = 400 ms default total recovery budget).
 
-2. **FAULTED.** If the gap persists past the in-band budget,
-   OR an arriving out-of-order packet would collide with a
-   different seq already in its slot (gap >
-   `REORDER_CAPACITY`), the receiver enters sticky FAULTED
-   state and surfaces `CastRecv::Faulted { last_delivered_seq,
-   gap_start, gap_end_inclusive }` to the consumer. No
-   silent advance: the receiver keeps returning `Faulted`
-   on every `try_recv` call until the consumer calls
-   `reset_after_replay(new_tip)`.
+2. **FAULTED / RECONNECT (two sticky states).** The receiver
+   has two distinct unrecoverable-in-band outcomes:
+
+   - **FAULTED** — NAK retry budget exhausted on the oldest
+     contiguous gap. Receiver surfaces
+     `CastRecv::Faulted { last_delivered_seq, gap_start,
+     gap_end_inclusive }`. Consumer may resume from
+     `last_delivered_seq + 1` via TCP replay.
+
+   - **RECONNECT** — an arriving out-of-order packet would
+     collide with a different seq already in its slot
+     (gap > `REORDER_CAPACITY`). Receiver surfaces
+     `CastRecv::Reconnect { last_delivered_seq }`. Consumer
+     must do a full cold-start replay (the gap is too large
+     for the reorder ring to bridge).
+
+   Both states are sticky: the receiver keeps returning the
+   same variant on every `try_recv` call until the consumer
+   calls `reset_after_replay(new_tip)`. No silent advance.
 
 3. **replication (out-of-band).** The consumer handles
    `Faulted` by switching to TCP-based WAL replay from
