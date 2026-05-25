@@ -13,3 +13,6 @@ pub mod state;
 pub mod jwt;
 pub mod route;
 pub mod rest;
+pub mod replay;
+
+pub use replay::drain_replay;

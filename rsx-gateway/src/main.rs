@@ -33,9 +33,73 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::info;
+use tracing::warn;
 
 const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
 const NS_PER_MS: u64 = 1_000_000;
+
+/// Drain the risk producer's replication stream after the
+/// gateway's CMP receiver hit a sticky FAULTED or RECONNECT.
+/// Mirrors `rsx_risk::main::handle_replay`. Round-1 apply
+/// just logs records; the gateway's outbound state (per-user
+/// pending map, position cache) recovers indirectly via
+/// risk re-emitting after its own replay completes.
+fn handle_replay(
+    last_delivered_seq: u64,
+    gap: Option<(u64, u64)>,
+    wal_dir: &str,
+) -> u64 {
+    match gap {
+        Some((gs, ge)) => warn!(
+            "gateway cmp_receiver FAULTED at \
+             seq={last_delivered_seq} gap=[{gs}..={ge}], \
+             opening replay via RSX_RISK_REPLICATION_ADDR",
+        ),
+        None => warn!(
+            "gateway cmp_receiver RECONNECT at \
+             seq={last_delivered_seq}, opening replay via \
+             RSX_RISK_REPLICATION_ADDR",
+        ),
+    }
+    let replay_addr = env::var("RSX_RISK_REPLICATION_ADDR")
+        .unwrap_or_else(|_| {
+            panic!(
+                "gateway {} requires \
+                 RSX_RISK_REPLICATION_ADDR pointing at \
+                 risk's replication server",
+                if gap.is_some() { "FAULTED" } else { "RECONNECT" },
+            )
+        });
+    // Gateway sees a merged stream from risk (response side);
+    // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
+    // risk gw_sender.
+    let tip_file = PathBuf::from(wal_dir)
+        .join("gateway_replay_tip.bin");
+    let new_tip = rsx_gateway::drain_replay(
+        0,
+        replay_addr.clone(),
+        last_delivered_seq,
+        tip_file,
+        |raw| {
+            let seq = rsx_cast::wal::extract_seq(&raw.payload)
+                .unwrap_or(0);
+            tracing::debug!(
+                "gateway replay applied record_type={} seq={}",
+                raw.header.record_type, seq,
+            );
+        },
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "gateway replay drain failed against \
+             {replay_addr}: {e}",
+        )
+    });
+    info!(
+        "gateway replay drained, new_tip={new_tip}, resuming",
+    );
+    new_tip
+}
 
 fn log_effective_gateway_config(
     config: &rsx_gateway::config::GatewayConfig,
@@ -203,21 +267,24 @@ fn main() {
                         last_delivered_seq,
                         gap_start,
                         gap_end_inclusive,
-                    } => panic!(
-                        "FAULTED: DXS replay path not yet \
-                         wired here; see rsx-matching for \
-                         the POC reference impl \
-                         (last_delivered={} gap=[{}..={}])",
-                        last_delivered_seq,
-                        gap_start,
-                        gap_end_inclusive,
-                    ),
-                    CastRecv::Reconnect { last_delivered_seq } => panic!(
-                        "RECONNECT: ring overflow, DXS \
-                         replay path not yet wired \
-                         (last_delivered={})",
-                        last_delivered_seq,
-                    ),
+                    } => {
+                        let new_tip = handle_replay(
+                            last_delivered_seq,
+                            Some((gap_start, gap_end_inclusive)),
+                            &wal_dir,
+                        );
+                        cmp_receiver.reset_after_replay(new_tip);
+                        continue;
+                    }
+                    CastRecv::Reconnect { last_delivered_seq } => {
+                        let new_tip = handle_replay(
+                            last_delivered_seq,
+                            None,
+                            &wal_dir,
+                        );
+                        cmp_receiver.reset_after_replay(new_tip);
+                        continue;
+                    }
                 };
                 {
                 match hdr.record_type {
