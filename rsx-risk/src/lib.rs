@@ -29,6 +29,7 @@ pub use margin::ExposureIndex;
 pub use margin::PortfolioMargin;
 pub use margin::SymbolRiskParams;
 pub use replay::ColdStartState;
+pub use replay::drain_replay;
 pub use position::Position;
 pub use rings::OrderResponse;
 pub use rings::ShardRings;
