@@ -221,6 +221,79 @@ fn main() {
     }
 }
 
+/// Handle a `CastRecv::Faulted` or `CastRecv::Reconnect` by
+/// draining the producer's replication stream from
+/// `last_delivered_seq + 1`. Returns the new tip to pass into
+/// `CastReceiver::reset_after_replay`.
+///
+/// The apply path is intentionally minimal for round 1 — each
+/// record is just acknowledged so the receiver can resume.
+/// Re-injecting orders/fills/marks into the live ring is a
+/// follow-up (see .ship/28-REFINE-AUDIT-2/PLAN.md). The spec
+/// invariant "ME never silently drops" is preserved because
+/// matching has its own FAULTED handler that re-runs the
+/// authoritative replay from risk's WAL.
+///
+/// Panics if the replay endpoint env var is unset (fail-loud
+/// per the spec) or the replication consumer exhausts its
+/// retry budget. Transient connection errors retry inside
+/// `drain_replay`.
+fn handle_replay(
+    label: &str,
+    env_var: &str,
+    stream_id: u32,
+    last_delivered_seq: u64,
+    gap: Option<(u64, u64)>,
+    wal_dir: &str,
+) -> u64 {
+    match gap {
+        Some((gs, ge)) => warn!(
+            "{label} FAULTED at seq={last_delivered_seq} \
+             gap=[{gs}..={ge}], opening replay via {env_var}",
+        ),
+        None => warn!(
+            "{label} RECONNECT at seq={last_delivered_seq}, \
+             opening replay via {env_var}",
+        ),
+    }
+    let replay_addr = env::var(env_var).unwrap_or_else(|_| {
+        panic!(
+            "{label} {} requires {env_var} pointing at the \
+             producer's replication server",
+            if gap.is_some() { "FAULTED" } else { "RECONNECT" },
+        )
+    });
+    let tip_file = std::path::PathBuf::from(wal_dir).join(
+        format!("risk_{label}_{stream_id}_replay_tip.bin"),
+    );
+    let new_tip = rsx_risk::drain_replay(
+        stream_id,
+        replay_addr.clone(),
+        last_delivered_seq,
+        tip_file,
+        // Round-1 apply: log per-record. State re-injection
+        // is a follow-up; see PLAN.md.
+        |raw| {
+            let seq = rsx_cast::wal::extract_seq(&raw.payload)
+                .unwrap_or(0);
+            tracing::debug!(
+                "{label} replay applied record_type={} seq={}",
+                raw.header.record_type, seq,
+            );
+        },
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "{label} replay drain failed against {replay_addr}: \
+             {e}",
+        )
+    });
+    info!(
+        "{label} replay drained, new_tip={new_tip}, resuming",
+    );
+    new_tip
+}
+
 /// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
 fn rand_jitter() -> f64 {
     use std::time::SystemTime;
@@ -527,23 +600,30 @@ fn run_main(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => panic!(
-                    "FAULTED: DXS replay path not yet \
-                     wired here; see rsx-matching for the \
-                     POC reference impl \
-                     (last_delivered={} gap=[{}..={}])",
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                ),
-                CastRecv::Reconnect {
-                    last_delivered_seq,
-                } => panic!(
-                    "RECONNECT: ring overflow, DXS \
-                     replay path not yet wired \
-                     (last_delivered={})",
-                    last_delivered_seq,
-                ),
+                } => {
+                    let new_tip = handle_replay(
+                        "risk.gw",
+                        "RSX_GW_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    gw_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "risk.gw",
+                        "RSX_GW_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    gw_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
             };
             {
             match hdr.record_type {
@@ -631,23 +711,30 @@ fn run_main(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => panic!(
-                    "FAULTED: DXS replay path not yet \
-                     wired here; see rsx-matching for the \
-                     POC reference impl \
-                     (last_delivered={} gap=[{}..={}])",
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                ),
-                CastRecv::Reconnect {
-                    last_delivered_seq,
-                } => panic!(
-                    "RECONNECT: ring overflow, DXS \
-                     replay path not yet wired \
-                     (last_delivered={})",
-                    last_delivered_seq,
-                ),
+                } => {
+                    let new_tip = handle_replay(
+                        "risk.me",
+                        "RSX_ME_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    me_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "risk.me",
+                        "RSX_ME_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    me_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
             };
             {
             match hdr.record_type {
@@ -877,23 +964,30 @@ fn run_main(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => panic!(
-                    "FAULTED: DXS replay path not yet \
-                     wired here; see rsx-matching for the \
-                     POC reference impl \
-                     (last_delivered={} gap=[{}..={}])",
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                ),
-                CastRecv::Reconnect {
-                    last_delivered_seq,
-                } => panic!(
-                    "RECONNECT: ring overflow, DXS \
-                     replay path not yet wired \
-                     (last_delivered={})",
-                    last_delivered_seq,
-                ),
+                } => {
+                    let new_tip = handle_replay(
+                        "risk.mark",
+                        "RSX_MARK_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    mark_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "risk.mark",
+                        "RSX_MARK_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    mark_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
             };
             {
             if preamble.record_type == RECORD_MARK_PRICE {
@@ -1263,6 +1357,9 @@ fn run_replica(
     .and_then(|s| s.parse().ok())
     .unwrap_or(500u64);
 
+    let wal_dir = env::var("RSX_RISK_WAL_DIR")
+        .unwrap_or_else(|_| "./tmp/wal".into());
+
     let mut last_poll_ms = 0u64;
     let promoted = Arc::new(AtomicBool::new(false));
 
@@ -1286,23 +1383,30 @@ fn run_replica(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => panic!(
-                    "FAULTED: DXS replay path not yet \
-                     wired here; see rsx-matching for the \
-                     POC reference impl \
-                     (last_delivered={} gap=[{}..={}])",
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                ),
-                CastRecv::Reconnect {
-                    last_delivered_seq,
-                } => panic!(
-                    "RECONNECT: ring overflow, DXS \
-                     replay path not yet wired \
-                     (last_delivered={})",
-                    last_delivered_seq,
-                ),
+                } => {
+                    let new_tip = handle_replay(
+                        "replica.me",
+                        "RSX_ME_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    me_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "replica.me",
+                        "RSX_ME_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    me_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
             };
             if preamble.record_type == RECORD_FILL {
                 if let Some(fill) = decode_payload::<FillRecord>(&payload) {
@@ -1332,23 +1436,30 @@ fn run_replica(
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => panic!(
-                    "FAULTED: DXS replay path not yet \
-                     wired here; see rsx-matching for the \
-                     POC reference impl \
-                     (last_delivered={} gap=[{}..={}])",
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                ),
-                CastRecv::Reconnect {
-                    last_delivered_seq,
-                } => panic!(
-                    "RECONNECT: ring overflow, DXS \
-                     replay path not yet wired \
-                     (last_delivered={})",
-                    last_delivered_seq,
-                ),
+                } => {
+                    let new_tip = handle_replay(
+                        "replica.tip",
+                        "RSX_RISK_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    tip_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "replica.tip",
+                        "RSX_RISK_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    tip_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
             };
             if preamble.record_type == 0x20 {
                 if let Some(msg) = decode_payload::<TipSyncMessage>(&payload) {

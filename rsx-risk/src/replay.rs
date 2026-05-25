@@ -3,10 +3,91 @@ use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::shard::RiskShard;
 use crate::types::FillEvent;
+use rsx_cast::ReplicationConsumer;
+use rsx_cast::RECORD_CAUGHT_UP;
+use rsx_cast::wal::RawWalRecord;
+use rsx_cast::wal::extract_seq;
 use rustc_hash::FxHashMap;
+use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 use tokio_postgres::Client;
 use tokio_postgres::Error;
+use tracing::info;
+use tracing::warn;
+
+/// Drain a replication-replay stream after `CastRecv::Faulted`
+/// or `CastRecv::Reconnect`. Mirrors
+/// `rsx_matching::replay::drain_dxs_replay_into_book` but
+/// delegates record application to a caller-supplied closure,
+/// so the same drain helper serves all four risk receivers
+/// (gw / me / mark / replica-tip), each with its own
+/// local-state apply.
+///
+/// Builds a single-threaded tokio runtime on demand — FAULTED
+/// is rare enough that the few-millisecond setup cost is
+/// negligible. Returns the highest seq applied (`new_tip`).
+/// The caller is expected to invoke
+/// `CastReceiver::reset_after_replay(new_tip)` to clear the
+/// sticky FAULTED/RECONNECT state and resume live UDP.
+pub fn drain_replay<F>(
+    stream_id: u32,
+    replay_addr: String,
+    last_delivered_seq: u64,
+    tip_file: PathBuf,
+    mut apply: F,
+) -> io::Result<u64>
+where
+    F: FnMut(&RawWalRecord),
+{
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut consumer = ReplicationConsumer::new(
+        stream_id,
+        vec![replay_addr],
+        tip_file,
+        None,
+    )?;
+    // Pre-seed tip so the request starts at last_delivered + 1
+    // regardless of stale on-disk tip.
+    consumer.tip = last_delivered_seq;
+
+    let mut new_tip = last_delivered_seq;
+    let mut applied = 0u64;
+    let mut skipped = 0u64;
+    let result = rt.block_on(consumer.run_once(
+        |raw: RawWalRecord| -> bool {
+            if raw.header.record_type == RECORD_CAUGHT_UP {
+                return false;
+            }
+            let seq = extract_seq(&raw.payload).unwrap_or(0);
+            if seq <= last_delivered_seq {
+                skipped += 1;
+                return true;
+            }
+            if seq > new_tip {
+                new_tip = seq;
+            }
+            apply(&raw);
+            applied += 1;
+            true
+        },
+    ));
+    if let Err(e) = result {
+        warn!(
+            "risk replay stream ended with error: {e} \
+             (applied={applied} skipped={skipped} \
+             new_tip={new_tip})",
+        );
+        return Err(e);
+    }
+    info!(
+        "risk replay drained: stream_id={stream_id} \
+         applied={applied} skipped={skipped} new_tip={new_tip}",
+    );
+    Ok(new_tip)
+}
 
 pub struct ColdStartState {
     pub accounts: FxHashMap<u32, Account>,
