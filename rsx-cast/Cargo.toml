@@ -1,6 +1,6 @@
 [package]
 name = "rsx-cast"
-version = "0.5.0"
+version = "0.5.2"
 edition = "2021"
 description = "Log-backed reliable UDP (casting) + TCP replication for fixed-format binary records. Wire = disk = stream."
 repository = "https://github.com/kronael/rsx"

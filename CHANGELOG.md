@@ -1,5 +1,18 @@
 # Changelog
 
+## [rsx-cast v0.5.2] — 2026-05-25
+
+Cargo.toml version finally caught up to the CHANGELOG (was
+stuck at 0.5.0 through the v0.5.1 work). Plus minor:
+
+- Spec: `CastRecv::Reconnect` variant spec'd as a sibling of
+  `Faulted` in `specs/2/4-cast.md` (ring-overflow case had
+  been conflated into FAULTED prose).
+- README: project intent stated openly — demonstration today,
+  deployment planned for esoteric special derivatives.
+- New audit skills `cto-eval` + `ceo-eval` codify the
+  `.ship/27` review patterns.
+
 ## [rsx-cast v0.5.1] — 2026-05-25
 
 Internal-API trims from the `.ship/27-REFINE-AUDIT` Round 1+2
