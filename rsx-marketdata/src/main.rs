@@ -25,6 +25,70 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::info;
+use tracing::warn;
+
+/// Drain ME's replication stream after the marketdata's CMP
+/// receiver hit a sticky FAULTED or RECONNECT. Mirrors
+/// `rsx_risk::main::handle_replay` and
+/// `rsx_gateway::main::handle_replay`. Round-1 apply just
+/// logs records — the shadow book recovers indirectly via
+/// the snapshot-resend triggered by the live-stream seq-gap
+/// detector after `reset_after_replay`.
+fn handle_replay(
+    stream_id: u32,
+    last_delivered_seq: u64,
+    gap: Option<(u64, u64)>,
+    replay_addr: Option<&str>,
+    tip_file_path: &str,
+) -> u64 {
+    match gap {
+        Some((gs, ge)) => warn!(
+            "marketdata cmp_receiver FAULTED at \
+             seq={last_delivered_seq} gap=[{gs}..={ge}], \
+             opening replay via RSX_MD_REPLAY_ADDR",
+        ),
+        None => warn!(
+            "marketdata cmp_receiver RECONNECT at \
+             seq={last_delivered_seq}, opening replay via \
+             RSX_MD_REPLAY_ADDR",
+        ),
+    }
+    let addr = replay_addr.unwrap_or_else(|| {
+        panic!(
+            "marketdata {} requires RSX_MD_REPLAY_ADDR \
+             pointing at ME's replication server",
+            if gap.is_some() { "FAULTED" } else { "RECONNECT" },
+        )
+    });
+    let tip_file = PathBuf::from(format!(
+        "{tip_file_path}.replay_{stream_id}",
+    ));
+    let new_tip = rsx_marketdata::replay::drain_replay(
+        stream_id,
+        addr.to_string(),
+        last_delivered_seq,
+        tip_file,
+        |raw| {
+            let seq = rsx_cast::wal::extract_seq(&raw.payload)
+                .unwrap_or(0);
+            tracing::debug!(
+                "marketdata replay applied record_type={} seq={}",
+                raw.header.record_type, seq,
+            );
+        },
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "marketdata replay drain failed against \
+             {addr}: {e}",
+        )
+    });
+    info!(
+        "marketdata replay drained, new_tip={new_tip}, \
+         resuming",
+    );
+    new_tip
+}
 
 fn log_effective_marketdata_config(
     config: &rsx_marketdata::config::MarketDataConfig,
@@ -224,23 +288,32 @@ fn main() {
                         last_delivered_seq,
                         gap_start,
                         gap_end_inclusive,
-                    } => panic!(
-                        "FAULTED: DXS replay path not yet \
-                         wired here; see rsx-matching for \
-                         the POC reference impl \
-                         (last_delivered={} gap=[{}..={}])",
-                        last_delivered_seq,
-                        gap_start,
-                        gap_end_inclusive,
-                    ),
+                    } => {
+                        let new_tip = handle_replay(
+                            config.stream_id,
+                            last_delivered_seq,
+                            Some((gap_start, gap_end_inclusive)),
+                            config.replay_addr.as_deref(),
+                            &config.tip_file,
+                        );
+                        cmp_receiver
+                            .reset_after_replay(new_tip);
+                        continue;
+                    }
                     CastRecv::Reconnect {
                         last_delivered_seq,
-                    } => panic!(
-                        "RECONNECT: ring overflow, DXS \
-                         replay path not yet wired \
-                         (last_delivered={})",
-                        last_delivered_seq,
-                    ),
+                    } => {
+                        let new_tip = handle_replay(
+                            config.stream_id,
+                            last_delivered_seq,
+                            None,
+                            config.replay_addr.as_deref(),
+                            &config.tip_file,
+                        );
+                        cmp_receiver
+                            .reset_after_replay(new_tip);
+                        continue;
+                    }
                 };
                 {
                 // Seq gap detection: extract seq from payload
