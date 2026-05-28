@@ -217,9 +217,9 @@ for the dated authoritative numbers.
 | WAL flush + fsync, 1 000 records | 1.19 ms | `wal_fsync_bench` — fsync still dominant |
 | WAL flush + fsync, 10 000 records | 5.94 ms | `wal_fsync_bench` — append overhead visible |
 | WAL sequential read | ~700 MB/s | `wal_bench` |
-| casting RTT, loopback, 128 B | 11.26 µs | `cast_rtt_bench` |
+| casting RTT, loopback, 128 B | 9.7 µs | `cast_rtt_bench` |
 | Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
-| `CastSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
+| `CastSender::send` body (per call) | ~3.65 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 10 K records | 10.4 ms | `wal_random_read_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 100 K records | 80.6 ms | `wal_random_read_bench` |
 

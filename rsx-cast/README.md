@@ -18,12 +18,13 @@ QUIC's job (see [When NOT to use this](#when-not-to-use-this)).
 | Operation | p50 | Bench / env |
 |---|---:|---|
 | `WalWriter::append` (in-memory) | **31 ns** | `wal_bench`, single thread |
-| `CastSender::send` body | **~4.07 µs** (99% kernel UDP send path) | `cast_send_breakdown_bench`, 128 B payload + 16 B header |
+| `CastSender::send` body | **~3.65 µs** (99% kernel `sendto`) | `cast_send_breakdown_bench`, 128 B payload + 16 B header |
 | Raw UDP RTT (baseline) | **9.89 µs** | `compare_udp`, 128 B, two threads pinned to cores 2/3 |
-| casting RTT (sender → echo → sender) | **11.26 µs** | `cast_rtt_bench`, 128 B, two threads pinned |
-| `WalWriter::flush + fsync`, single record | **651 µs** | `wal_fsync_bench`, sync per append |
-| `WalWriter::flush + fsync`, 64 KB batch | **24 µs** | `wal_fsync_bench`, amortised |
-| Cold-tier NAK retransmit (`read_record_at_seq`) | **23.5 ms @ 10 K records** | `wal_random_read_bench`, scans backwards |
+| casting RTT (sender → echo → sender) | **9.7 µs** | `cast_rtt_bench`, 128 B, two threads pinned |
+| `WalWriter::flush + fsync`, 1 record | **498 µs** | `wal_fsync_bench` (real disk, core-pinned) |
+| `WalWriter::flush + fsync`, 100 records | **627 µs** | `wal_fsync_bench` — fsync dominates |
+| `WalWriter::flush + fsync`, 10 000 records | **5.94 ms** | `wal_fsync_bench` — append overhead visible |
+| Cold-tier NAK retransmit (`read_record_at_seq`) | **10.4 ms @ 10 K records** | `wal_random_read_bench`, scans backwards |
 
 Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1, Rust release.
 Authoritative dated measurements:
@@ -107,18 +108,20 @@ Every casting datagram and every WAL record is:
 +------------------+-------------------------------+
 | WalHeader (16B)  | payload (<= 65535B, repr(C))  |
 +------------------+-------------------------------+
-  record_type: u16
-  len:         u16
-  crc32c:      u32   (Castagnoli, payload only)
-  version:     u8    (wire-format version; legacy=0, current=1)
-  reserved:    7B    (zero on receive)
+  version:     u8    (offset 0; V1 = 1; V0 retired)
+  _pad0:       u8    (offset 1)
+  record_type: u16   (offset 2..4)
+  len:         u16   (offset 4..6)
+  _pad1:       u16   (offset 6..8)
+  crc32c:      u32   (offset 8..12; Castagnoli, payload only)
+  reserved:    [u8; 4] (offset 12..16; zero)
 ```
 
-A single `version` byte lives in the previously-reserved
-space. Adding a new record type does NOT bump the version
-(record types are an open set); the version is reserved for
-format-breaking changes that a v1 receiver could not safely
-parse. Receivers reject unknown versions.
+The `version` byte is at offset 0. Adding a new record type
+does NOT bump the version (record types are an open set);
+the version is reserved for format-breaking changes that a
+v1 reader could not safely parse. Receivers reject unknown
+versions. V0 (legacy zero) was retired in commit `64dda88`.
 
 Payloads are `#[repr(C, align(64))]`. Sequence number is the
 first `u64` of every data record (per the [`CastRecord`] trait).
@@ -347,7 +350,7 @@ latency measurements justify the extra moving parts.
   `reset_after_replay` before resuming UDP delivery.
 - **Cold-tier retransmit is O(N) inside one WAL segment.**
   `read_record_at_seq` scans the file to locate the requested
-  seq; ~23.5 ms at 10 K records on commodity SSD. Hot retransmits
+  seq; ~10.4 ms at 10 K records on commodity SSD. Hot retransmits
   (within the 4 K-slot send ring) are µs-scale; the cold tier
   is acceptable for cold-start replay and stale NAKs, not for
   realtime tail-of-stream recovery.
@@ -405,9 +408,9 @@ latency measurements justify the extra moving parts.
 - **One-to-many fan-out today** — v2 multicast is planned,
   not shipped.
 - **Cold-tier latency-sensitive replay** — `read_record_at_seq`
-  is O(N) within a WAL segment file (23.5 ms @ 10 K records).
-  Acceptable for cold-start replay or stale NAKs; not for
-  realtime tail-of-stream recovery.
+  is O(N) within a WAL segment file (10.4 ms @ 10 K records,
+  80.6 ms @ 100 K). Acceptable for cold-start replay or stale
+  NAKs; not for realtime tail-of-stream recovery.
 - **Per-packet zero-copy receive** — `CastReceiver::try_recv`
   currently allocates one `Vec<u8>` per in-order packet. A
   caller-supplied `&mut [u8]` variant is future work.
@@ -496,7 +499,7 @@ This crate has no public stable API yet. The
 [CHANGELOG](https://github.com/kronael/rsx/blob/master/CHANGELOG.md)
 in the wider rsx exchange repo is the source of truth for
 rename maps, env-var changes, and wire-format bumps.
-Current crate version is **0.5.0**; v4 reliability (FAULTED,
+Current crate version is **0.5.2**; v4 reliability (FAULTED,
 NAK debounce, retransmit dedup) shipped in v0.3.0.
 
 ## How to read this crate
