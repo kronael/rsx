@@ -113,6 +113,15 @@ SCENARIOS = {
 # ── port allocation ─────────────────────────────────────
 
 BASE_ME_CMP = 9100
+
+# ── core pinning ─────────────────────────────────────────
+# Pin hot-path processes to dedicated cores to prevent UDP
+# drops from scheduler preemption. Core 0 is left for OS.
+# Adjust if running on a machine with fewer than 6 cores.
+CORE_GW    = 1   # gateway
+CORE_RISK  = 2   # risk shard 0
+CORE_ME_0  = 3   # ME (first symbol, e.g. PENGU)
+CORE_MD    = 4   # marketdata
 BASE_RISK_CMP = 9200
 BASE_GW_CMP = 9300
 BASE_MARK_CMP = 9400
@@ -227,6 +236,7 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MD_CAST_ADDR": md_cmp,
             "RSX_ME_REPLICATION_BIND_ADDR": me_replication,
             "RSX_ME_DATABASE_URL": pg_url,
+            "RSX_ME_CORE_ID": str(CORE_ME_0 + len([s for s in symbols if s['id'] < sid])),
             "RUST_LOG": "info",
         }
         plan.append((
@@ -280,6 +290,7 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_ME_CAST_ADDRS": me_cmp_addrs,
                 "RSX_ME_REPLICATION_ADDR": me_replication_addrs,
                 "RSX_RISK_WAL_DIR": "./tmp/wal",
+                "RSX_RISK_CORE_ID": str(CORE_RISK + shard),
                 "RSX_RISK_MARK_CAST_ADDR":
                     f"127.0.0.1:{BASE_RISK_MARK_CMP}",
                 "RSX_MARK_CAST_ADDR":
@@ -348,6 +359,7 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_GW_RL_USER": "5000",
                 "RSX_GW_RL_IP": "10000",
                 "RSX_MAX_SYMBOLS": "16",
+                "RSX_GW_CORE_ID": str(CORE_GW + gw),
                 **sym_env,
                 "RUST_LOG": "info",
             },
@@ -362,6 +374,7 @@ def build_spawn_plan(config, pg_url, release=False):
                 f"0.0.0.0:{BASE_MD_WS}",
             "RSX_ME_CAST_ADDRS": me_cmp_addrs,
             "RSX_MD_STREAM_ID": "1",
+            "RSX_MD_CORE_ID": str(CORE_MD),
             "RUST_LOG": "info",
         },
     ))
