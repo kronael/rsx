@@ -6,6 +6,17 @@ Uses Tailwind Play CDN (script tag, JIT compiler in browser)
 
 import html
 import os
+from pathlib import Path as _Path
+
+# Use a local copy of the Tailwind Play CDN script if present so the
+# playground works without internet access.  Download it once with:
+#   curl -o rsx-playground/tailwind-play.js https://cdn.tailwindcss.com
+_TAILWIND_LOCAL = _Path(__file__).resolve().parent / "tailwind-play.js"
+_TAILWIND_SRC = (
+    "./static/tailwind-play.js"
+    if _TAILWIND_LOCAL.exists()
+    else "https://cdn.tailwindcss.com"
+)
 
 TABS = [
     ("Walkthrough", "./walkthrough"),
@@ -55,7 +66,7 @@ def layout(title, content, active_tab="./overview"):
 <meta name="viewport"
   content="width=device-width, initial-scale=1">
 <title>RSX -- {title}</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="{_TAILWIND_SRC}"></script>
 <script src="./static/htmx.min.js"></script>
 <script>
 tailwind.config = {{
@@ -586,7 +597,7 @@ and liquidation triggers.</p>""")
     </thead>
     <tbody>
       <tr><td class="py-1 px-2">Rust unit</td>
-        <td class="py-1 px-2 text-right">~1,200</td>
+        <td class="py-1 px-2 text-right">~880</td>
         <td class="py-1 px-2 text-right">&lt;5s</td></tr>
       <tr><td class="py-1 px-2">Python</td>
         <td class="py-1 px-2 text-right">~930</td>
@@ -597,7 +608,7 @@ and liquidation triggers.</p>""")
       <tr class="border-t border-slate-700 text-white">
         <td class="py-1 px-2">Total</td>
         <td class="py-1 px-2 text-right font-bold">
-          ~2,550</td>
+          ~2,230</td>
         <td class="py-1 px-2 text-right"></td></tr>
     </tbody>
   </table>
@@ -636,7 +647,7 @@ exchange.</p>
     Fixed-point. Single-threaded matching.
     54 ns match (measured); &lt;50us round-trip budget.</p>
   <p class="text-xs text-slate-500 mt-2">
-    11 crates &middot; ~2,550 tests &middot;
+    12 Rust crates &middot; ~880 unit tests &middot;
     54ns match &middot; 31ns WAL append</p>
 </div>"""
 
@@ -4136,12 +4147,13 @@ def format_notional(raw_i64):
     return f"{sign}${whole:,}.{cents:02d}"
 
 
-def render_book_ladder(symbol_id, snap):
+def render_book_ladder(symbol_id, snap, source=None):
     """Render orderbook ladder from depth snap.
 
     snap: {"bids": [{"px": int, "qty": int}, ...],
            "asks": [{"px": int, "qty": int}, ...]}
     Asks shown top (worst→best price), bids below.
+    source: "synthetic" | "bbo" | "live" | None
     """
     sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
     if snap is None:
@@ -4189,7 +4201,17 @@ def render_book_ladder(symbol_id, snap):
             f'<td class="text-right font-mono">{fq(qty)}</td>'
             f'</tr>\n'
         )
-    return f"""<table class="w-full text-xs">
+    source_badge = ""
+    if source == "synthetic":
+        source_badge = (
+            '<span class="ml-2 text-amber-400 text-xs '
+            'font-bold uppercase tracking-wider">'
+            '[SYNTHETIC]</span>'
+        )
+    return f"""<div class="text-xs text-slate-400 mb-1">
+  {sym}{source_badge}
+</div>
+<table class="w-full text-xs">
 <tr class="text-slate-500">
   <th class="text-left">Side</th>
   <th class="text-right">Price</th>
@@ -4343,7 +4365,14 @@ def render_order_trace(order, fills):
                      f"{fill_count} fill(s), total qty {fill_qty}")
             )
         else:
-            steps.append(step("amber", "open", "resting in book"))
+            tif = order.get("tif", "GTC")
+            if tif in ("IOC", "FOK"):
+                steps.append(step(
+                    "amber", "expired",
+                    f"{tif} order — no fill received "
+                    f"(risk may have rejected post-ack)"))
+            else:
+                steps.append(step("amber", "open", "resting in book"))
     elif status == "rejected":
         reason = html.escape(order.get("reason", "unknown"))
         steps.append(step("red", "rejected", reason))
