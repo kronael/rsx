@@ -120,6 +120,7 @@ BASE_MD_CMP = 9500
 BASE_GW_WS = 8080
 BASE_MD_WS = 8180
 BASE_RISK_MARK_CMP = 9600
+BASE_ME_REPLICATION = 9700
 
 DEFAULT_PG_URL = (
     "postgres://rsx:rsx@127.0.0.1:5432/rsx"
@@ -207,6 +208,7 @@ def build_spawn_plan(config, pg_url, release=False):
         me_cmp = f"127.0.0.1:{BASE_ME_CMP + sid}"
         risk_cmp = f"127.0.0.1:{BASE_RISK_CMP}"
         md_cmp = f"127.0.0.1:{BASE_MD_CMP + sid}"
+        me_replication = f"127.0.0.1:{BASE_ME_REPLICATION + sid}"
         env = {
             "RSX_ME_SYMBOL_ID": str(sid),
             "RSX_ME_PRICE_DECIMALS": str(sym["price_dec"]),
@@ -217,6 +219,7 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_ME_CAST_ADDR": me_cmp,
             "RSX_RISK_CAST_ADDR": risk_cmp,
             "RSX_MD_CAST_ADDR": md_cmp,
+            "RSX_ME_REPLICATION_BIND_ADDR": me_replication,
             "RSX_ME_DATABASE_URL": pg_url,
             "RUST_LOG": "info",
         }
@@ -366,7 +369,7 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_RECORDER_STREAM_ID":
                 str(sid),
             "RSX_RECORDER_PRODUCER_ADDR":
-                f"127.0.0.1:{BASE_ME_CMP + sid}",
+                f"127.0.0.1:{BASE_ME_REPLICATION + sid}",
             "RSX_RECORDER_ARCHIVE_DIR":
                 "./tmp/wal/archive",
             "RSX_RECORDER_TIP_FILE":

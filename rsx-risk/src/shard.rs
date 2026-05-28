@@ -234,25 +234,19 @@ impl RiskShard {
         }
     }
 
-    fn positions_for_user(
+    fn iter_positions_for_user(
         &self,
         user_id: u32,
-    ) -> Vec<&Position> {
-        // O(this user's symbol count), not O(all positions).
-        // Per-user index built in `ensure_position` /
-        // `load_state` and maintained on every mutation.
-        match self.positions_by_user.get(&user_id) {
-            Some(symbols) => {
-                let mut out = Vec::with_capacity(symbols.len());
-                for &symbol_id in symbols {
-                    if let Some(p) = self.positions.get(&(user_id, symbol_id)) {
-                        out.push(p);
-                    }
-                }
-                out
-            }
-            None => Vec::new(),
-        }
+    ) -> impl Iterator<Item = &Position> + '_ {
+        let positions = &self.positions;
+        self.positions_by_user
+            .get(&user_id)
+            .into_iter()
+            .flat_map(move |symbols| {
+                symbols.iter().filter_map(move |&symbol_id| {
+                    positions.get(&(user_id, symbol_id))
+                })
+            })
     }
 
     /// RISK.md §1. Process a fill from ME ring.
@@ -473,19 +467,14 @@ impl RiskShard {
             Some(a) => a,
             None => return,
         };
-        let positions = self.positions_for_user(user_id);
         let frozen = self.frozen_for_user(user_id);
         let state = self.margin.calculate(
             account,
-            &positions,
+            self.iter_positions_for_user(user_id),
             &self.mark_prices,
             frozen,
         );
-        // Collect symbol IDs (Copy u32) to free the &Position
-        // borrows on self.positions before mutably accessing
-        // self.liquidation.
-        let liq_syms: Vec<u32> = positions
-            .iter()
+        let liq_syms: Vec<u32> = self.iter_positions_for_user(user_id)
             .filter(|p| !p.is_empty())
             .map(|p| p.symbol_id)
             .collect();
@@ -545,15 +534,13 @@ impl RiskShard {
         }
 
         let account = &self.accounts[&order.user_id];
-        let positions =
-            self.positions_for_user(order.user_id);
         let frozen = self.frozen_for_user(order.user_id);
 
         // Use cached fallback (index fills mark=0 gaps).
         let mark_prices = &self.fallback_mark_prices;
         let state = self.margin.calculate(
             account,
-            &positions,
+            self.iter_positions_for_user(order.user_id),
             mark_prices,
             frozen,
         );
@@ -579,7 +566,7 @@ impl RiskShard {
         }
         match self.margin.check_order(
             account,
-            &positions,
+            self.iter_positions_for_user(order.user_id),
             order,
             mark_prices,
             self.taker_fee_bps[sid],

@@ -99,7 +99,7 @@ fn bench_portfolio_margin_10(c: &mut Criterion) {
             b.iter(|| {
                 black_box(pm.calculate(
                     black_box(&account),
-                    black_box(&pos_refs),
+                    pos_refs.iter().copied(),
                     black_box(&marks),
                     0,
                 ))
@@ -138,7 +138,7 @@ fn bench_portfolio_margin_50(c: &mut Criterion) {
             b.iter(|| {
                 black_box(pm.calculate(
                     black_box(&account),
-                    black_box(&pos_refs),
+                    pos_refs.iter().copied(),
                     black_box(&marks),
                     0,
                 ))
