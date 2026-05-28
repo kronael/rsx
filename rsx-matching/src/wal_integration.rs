@@ -411,9 +411,12 @@ pub fn publish_events(
                 ask_qty,
             } => {
                 // BBO is not persisted to WAL (derived on
-                // replay). Sent only over cmp + mkt via the
-                // sender's own seq counter; one CRC per
-                // destination.
+                // replay). Each destination is an independent
+                // cast stream with its own seq counter, so
+                // send() assigns seq + CRC per call. Two calls
+                // = two CRC computations — this is correct;
+                // fan_out() can't be used here because BBO has
+                // no WAL writer to supply a shared seq.
                 let mut record = rsx_messages::BboRecord {
                     seq: 0,
                     ts_ns,
