@@ -412,11 +412,7 @@ fn main() {
                 }
             }
 
-            // Yield to monoio scheduler
-            monoio::time::sleep(
-                std::time::Duration::from_micros(100),
-            )
-            .await;
+            monoio::time::sleep(std::time::Duration::ZERO).await;
         }
     });
 }
