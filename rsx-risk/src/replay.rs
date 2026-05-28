@@ -56,24 +56,45 @@ where
     let mut new_tip = last_delivered_seq;
     let mut applied = 0u64;
     let mut skipped = 0u64;
-    let result = rt.block_on(consumer.run_once(
-        |raw: RawWalRecord| -> bool {
-            if raw.header.record_type == RECORD_CAUGHT_UP {
-                return false;
+    // Retry on NotFound: WAL flushes every 10ms. Missing seq may
+    // be buffered in memory. Three retries at 15ms covers the window.
+    const MAX_RETRIES: u8 = 3;
+    let mut attempts = 0u8;
+    let result = loop {
+        let r = rt.block_on(consumer.run_once(
+            |raw: RawWalRecord| -> bool {
+                if raw.header.record_type == RECORD_CAUGHT_UP {
+                    return false;
+                }
+                let seq = extract_seq(&raw.payload).unwrap_or(0);
+                if seq <= last_delivered_seq {
+                    skipped += 1;
+                    return true;
+                }
+                if seq > new_tip {
+                    new_tip = seq;
+                }
+                apply(&raw);
+                applied += 1;
+                true
+            },
+        ));
+        attempts += 1;
+        match &r {
+            Err(e) if e.kind() == io::ErrorKind::NotFound
+                && attempts < MAX_RETRIES =>
+            {
+                warn!(
+                    "risk replay not available (attempt \
+                     {attempts}), retrying in 15ms"
+                );
+                std::thread::sleep(
+                    std::time::Duration::from_millis(15),
+                );
             }
-            let seq = extract_seq(&raw.payload).unwrap_or(0);
-            if seq <= last_delivered_seq {
-                skipped += 1;
-                return true;
-            }
-            if seq > new_tip {
-                new_tip = seq;
-            }
-            apply(&raw);
-            applied += 1;
-            true
-        },
-    ));
+            _ => break r,
+        }
+    };
     if let Err(e) = result {
         warn!(
             "risk replay stream ended with error: {e} \
