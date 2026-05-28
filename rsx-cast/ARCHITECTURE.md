@@ -208,10 +208,10 @@ for the dated authoritative numbers.
 
 | Operation | Measured | Bench |
 |---|---:|---|
-| Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cast_bench` |
+| Protocol-record encode (`Nak` / `CastHeartbeat`) | ~49 ns | `cast_bench` |
 | `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
-| Protocol-record decode | 9 ns | `cast_bench` |
-| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
+| Protocol-record decode | ~9 ns | `cast_bench` |
+| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | ~37 ns | `wal_bench` |
 | WAL flush + fsync, 1 record | 498 µs | `wal_fsync_bench` (real disk, core-pinned) |
 | WAL flush + fsync, 100 records | 627 µs | `wal_fsync_bench` — fsync dominates |
 | WAL flush + fsync, 1 000 records | 1.19 ms | `wal_fsync_bench` — fsync still dominant |

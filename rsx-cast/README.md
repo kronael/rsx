@@ -17,7 +17,7 @@ QUIC's job (see [When NOT to use this](#when-not-to-use-this)).
 
 | Operation | p50 | Bench / env |
 |---|---:|---|
-| `WalWriter::append` (in-memory) | **31 ns** | `wal_bench`, single thread |
+| `WalWriter::append` (in-memory) | **~37 ns** | `wal_bench`, single thread |
 | `CastSender::send` body | **~3.65 µs** (99% kernel `sendto`) | `cast_send_breakdown_bench`, 128 B payload + 16 B header |
 | Raw UDP RTT (baseline) | **9.89 µs** | `compare_udp`, 128 B, two threads pinned to cores 2/3 |
 | casting RTT (sender → echo → sender) | **9.7 µs** | `cast_rtt_bench`, 128 B, two threads pinned |
