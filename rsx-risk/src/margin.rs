@@ -31,10 +31,10 @@ impl PortfolioMargin {
     /// RISK.md §3. Full portfolio margin calculation.
     /// `frozen` is the sum of margin reserved for the
     /// account's open orders (see `RiskShard::frozen_for_user`).
-    pub fn calculate(
+    pub fn calculate<'a>(
         &self,
         account: &Account,
-        positions: &[&Position],
+        positions: impl Iterator<Item = &'a Position>,
         mark_prices: &[i64],
         frozen: i64,
     ) -> MarginState {
@@ -95,10 +95,10 @@ impl PortfolioMargin {
     }
 
     /// RISK.md §6. Pre-trade check.
-    pub fn check_order(
+    pub fn check_order<'a>(
         &self,
         account: &Account,
-        positions: &[&Position],
+        positions: impl Iterator<Item = &'a Position>,
         order: &OrderRequest,
         mark_prices: &[i64],
         taker_fee_bps: i64,

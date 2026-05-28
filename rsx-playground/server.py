@@ -1575,8 +1575,9 @@ def scan_wal_files():
     return files
 
 
-# WAL header: 16 bytes (type:u16, len:u16, crc32:u32, reserved:8)
-WAL_HDR = struct.Struct('<HHI8s')
+# WAL header V1: 16 bytes
+#   version:u8(0) pad:u8 record_type:u16 len:u16 pad:u16 crc32:u32 reserved:4s
+WAL_HDR = struct.Struct('<BBHHHi4s')
 # BboRecord: 72 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
 #   bid_px:i64, bid_qty:i64, bid_count:u32, pad:u32,
 #   ask_px:i64, ask_qty:i64, ask_count:u32, pad:u32)
@@ -1640,8 +1641,10 @@ def parse_wal_records(stream_dir, record_types=None):
             continue
         pos = 0
         while pos + WAL_HDR.size <= len(data):
-            rtype, rlen, crc, _ = WAL_HDR.unpack_from(
+            _ver, _, rtype, rlen, _, crc, _ = WAL_HDR.unpack_from(
                 data, pos)
+            if _ver != 1:
+                break
             pos += WAL_HDR.size
             if rlen == 0 or pos + rlen > len(data):
                 break
