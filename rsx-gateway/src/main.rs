@@ -195,6 +195,17 @@ fn main() {
     let hb_interval = config.heartbeat_interval_ms;
     let hb_timeout = config.heartbeat_timeout_ms;
 
+    if let Ok(core_str) = env::var("RSX_GW_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let ids = core_affinity::get_core_ids()
+                .unwrap_or_default();
+            if let Some(id) = ids.get(core_id) {
+                core_affinity::set_for_current(*id);
+                tracing::info!("gateway pinned to core {}", core_id);
+            }
+        }
+    }
+
     let mut rt =
         monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
             .enable_timer()

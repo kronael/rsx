@@ -28,6 +28,7 @@ base64 = "0.22"
 rustc-hash = "2"
 jsonwebtoken = "9"
 serde = { version = "1", features = ["derive"] }
+core_affinity = "0.8"
 
 [[bench]]
 name = "gateway_bench"

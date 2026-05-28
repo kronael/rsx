@@ -229,6 +229,17 @@ fn main() {
         me_addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(","),
     );
 
+    if let Ok(core_str) = std::env::var("RSX_MD_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let ids = core_affinity::get_core_ids()
+                .unwrap_or_default();
+            if let Some(id) = ids.get(core_id) {
+                core_affinity::set_for_current(*id);
+                tracing::info!("marketdata pinned to core {}", core_id);
+            }
+        }
+    }
+
     // Run monoio event loop
     let mut rt = monoio::RuntimeBuilder::<
         monoio::FusionDriver,
