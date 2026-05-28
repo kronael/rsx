@@ -303,6 +303,24 @@ wal:
 smoke:
 	bash scripts/smoke.sh
 
+# Bump UDP socket buffer sizes so the auto-maker can run without
+# overrunning the receive queue (default 212 KB is too small).
+# Requires sudo; idempotent. Add to /etc/sysctl.d/99-rsx.conf for
+# persistence across reboots.
+tune-host:
+	sudo sysctl -w net.core.rmem_max=26214400
+	sudo sysctl -w net.core.wmem_max=26214400
+	sudo sysctl -w net.core.rmem_default=26214400
+	@echo "net.core.rmem_max/wmem_max set to 25 MB"
+	@echo "To persist: echo 'net.core.rmem_max=26214400' | sudo tee /etc/sysctl.d/99-rsx.conf"
+
+# Reproducible end-to-end demo: start minimal cluster, submit one IOC
+# order, wait for a fill in the WAL. Exits 0 on success, 1 on timeout.
+# Pre: playground server running (./rsx-playground/playground start)
+# Post: fills visible in ./tmp/wal/10_active.wal
+demo-trade:
+	bash scripts/demo-trade.sh
+
 # Performance benchmarks (Rust)
 perf:
 	cargo bench
