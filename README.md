@@ -84,7 +84,9 @@ catalogue: [docs/benches.md](docs/benches.md).
 - **Slab + CompressionMap orderbook.** Pre-allocated 65 536
   `OrderSlot`s per symbol, sparse-to-dense price compression
   via five distance-based zones (1:1 near-mid, up to 1000:1
-  far prices). Zero malloc on the hot path:
+  far prices). Zero malloc on the order hot path (GW→Risk→ME→Risk→GW).
+  Off-path operations (BBO margin scan, funding settlement) allocate
+  small per-call Vecs where borrow constraints require it.
   [specs/2/21-orderbook.md](specs/2/21-orderbook.md).
 
 ## Architecture

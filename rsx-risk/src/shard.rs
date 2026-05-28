@@ -481,21 +481,20 @@ impl RiskShard {
             &self.mark_prices,
             frozen,
         );
-        let syms: Vec<u32> = positions
+        // Collect symbol IDs (Copy u32) to free the &Position
+        // borrows on self.positions before mutably accessing
+        // self.liquidation.
+        let liq_syms: Vec<u32> = positions
             .iter()
             .filter(|p| !p.is_empty())
             .map(|p| p.symbol_id)
             .collect();
-        if self.margin.needs_liquidation(&state) {
-            for sid in syms {
-                self.liquidation.enqueue(
-                    user_id, sid, now_ns,
-                );
-            }
-        } else {
-            for sid in syms {
-                self.liquidation
-                    .cancel_if_recovered(user_id, sid);
+        let needs_liq = self.margin.needs_liquidation(&state);
+        for sid in liq_syms {
+            if needs_liq {
+                self.liquidation.enqueue(user_id, sid, now_ns);
+            } else {
+                self.liquidation.cancel_if_recovered(user_id, sid);
             }
         }
     }
@@ -839,15 +838,14 @@ impl RiskShard {
             if let Some(bbo) = self.stashed_bbo[sid].take()
             {
                 self.process_bbo(&bbo);
-                // RISK.md §7: margin scan on every BBO
-                let users: Vec<u32> = self
-                    .exposure
-                    .users_for_symbol(sid)
-                    .to_vec();
-                for user_id in users {
-                    self.check_liquidation_for(
-                        user_id, now_ns,
-                    );
+                // RISK.md §7: margin scan on every BBO.
+                // Index once to get count, then re-index per
+                // iteration — each borrow is short-lived (Copy
+                // u32) so no conflict with the &mut self call.
+                let n = self.exposure.users_for_symbol(sid).len();
+                for i in 0..n {
+                    let user_id = self.exposure.users_for_symbol(sid)[i];
+                    self.check_liquidation_for(user_id, now_ns);
                 }
             }
         }
@@ -890,6 +888,10 @@ impl RiskShard {
                 index,
                 &self.funding_config,
             );
+            // Funding settlement is periodic (not per-order hot
+            // path). Vec<u32> avoids a borrow conflict with the
+            // &mut self calls (positions.get, accounts.get_mut,
+            // push_persist) inside the loop.
             let users: Vec<u32> = self
                 .exposure
                 .users_for_symbol(sid)
