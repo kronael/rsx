@@ -61,15 +61,17 @@ fn handle_replay(
              RSX_RISK_REPLICATION_ADDR",
         ),
     }
-    let replay_addr = env::var("RSX_RISK_REPLICATION_ADDR")
-        .unwrap_or_else(|_| {
-            panic!(
-                "gateway {} requires \
-                 RSX_RISK_REPLICATION_ADDR pointing at \
-                 risk's replication server",
-                if gap.is_some() { "FAULTED" } else { "RECONNECT" },
-            )
-        });
+    let replay_addr = match env::var("RSX_RISK_REPLICATION_ADDR") {
+        Ok(a) => a,
+        Err(_) => {
+            let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
+            warn!(
+                "RSX_RISK_REPLICATION_ADDR not set; \
+                 skipping gap to seq={skip_to} (in-flight fills lost)"
+            );
+            return skip_to;
+        }
+    };
     // Gateway sees a merged stream from risk (response side);
     // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
     // risk gw_sender.
