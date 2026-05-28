@@ -540,11 +540,9 @@ fn main() {
                 last_delivered_seq,
                 tip_file,
             )
-            // SAFETY: drain failure is unrecoverable for
-            // the POC — supervisor restarts will then take
-            // the normal cold-start replay path. Production
-            // wiring should add bounded retries here.
-            .expect("dxs replay drain failed");
+            .unwrap_or_else(|e| {
+                panic!("dxs replay drain failed: {e}");
+            });
             cmp_receiver.reset_after_replay(new_tip);
             info!(
                 "matching tile recovered via DXS replay, \
