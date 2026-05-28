@@ -32,7 +32,7 @@ The `sendto` syscall dominates at 99%.
 
 | Operation | Measured | Command |
 |---|---:|---|
-| `WalWriter::append` in-memory | 31 ns | `cargo bench -p rsx-cast --bench wal_bench` |
+| `WalWriter::append` in-memory | ~37 ns | `cargo bench -p rsx-cast --bench wal_bench` |
 | WAL flush + fsync, 1 record | 498 µs | `cargo bench -p rsx-cast --bench wal_fsync_bench` |
 | WAL flush + fsync, 100 records | 627 µs | same — fsync dominates |
 | WAL flush + fsync, 1 000 records | 1.19 ms | same |
