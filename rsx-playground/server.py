@@ -346,7 +346,8 @@ current_scenario = "minimal"
 # intentional stop/kill; updated on crash detection.
 #
 # Fields per entry:
-#   restarts        int   — consecutive crash count
+#   restarts        int   — consecutive crash count (reset on stability)
+#   total_restarts  int   — cumulative crash count (never reset)
 #   blocked         bool  — circuit open; no further auto-restart
 #   next_restart_at float — epoch seconds; honour backoff window
 #   last_crash_ts   float — epoch of last detected crash
@@ -577,6 +578,7 @@ async def spawn_process(name, binary, env):
     if name not in _restart_state:
         _restart_state[name] = {
             "restarts": 0,
+            "total_restarts": 0,
             "blocked": False,
             "next_restart_at": 0.0,
             "last_crash_ts": 0.0,
@@ -744,6 +746,7 @@ async def _process_watcher():
 
                 # Record crash and compute next backoff delay.
                 rs["restarts"] += 1
+                rs["total_restarts"] = rs.get("total_restarts", 0) + 1
                 rs["last_crash_ts"] = now
                 attempt = rs["restarts"]
 
@@ -1116,6 +1119,7 @@ app = FastAPI(
 _STATIC_DIR = Path(__file__).resolve().parent
 _STATIC_FILES = {
     "htmx.min.js": "application/javascript",
+    "tailwind-play.js": "application/javascript",
 }
 
 
@@ -1392,6 +1396,8 @@ def scan_processes():
         seen.add(name)
         proc = info["proc"]
         if proc.returncode is None:
+            tr = _restart_state.get(name, {}).get(
+                "total_restarts", 0)
             try:
                 ps = _get_ps(proc.pid)
                 mem = ps.memory_info()
@@ -1403,6 +1409,7 @@ def scan_processes():
                     "mem": human_size(mem.rss),
                     "uptime": human_uptime(
                         ps.create_time()),
+                    "total_restarts": tr,
                 })
             except (psutil.NoSuchProcess,
                     psutil.AccessDenied):
@@ -1411,6 +1418,7 @@ def scan_processes():
                     "name": name, "pid": proc.pid,
                     "state": "running", "cpu": "-",
                     "mem": "-", "uptime": "-",
+                    "total_restarts": tr,
                 })
         else:
             rs = _restart_state.get(name, {})
@@ -1420,6 +1428,7 @@ def scan_processes():
                 "state": state, "cpu": "-",
                 "mem": "-", "uptime": "-",
                 "restarts": rs.get("restarts", 0),
+                "total_restarts": rs.get("total_restarts", 0),
             })
 
     # 2. PID files (from ./start or previous session)
@@ -1442,6 +1451,8 @@ def scan_processes():
                         "mem": human_size(mem.rss),
                         "uptime": human_uptime(
                             ps.create_time()),
+                        "total_restarts": _restart_state.get(
+                            name, {}).get("total_restarts", 0),
                     })
                     seen.add(name)
                     continue
@@ -1461,6 +1472,8 @@ def scan_processes():
                 "name": name, "pid": "-",
                 "state": "stopped", "cpu": "-",
                 "mem": "-", "uptime": "-",
+                "total_restarts": _restart_state.get(
+                    name, {}).get("total_restarts", 0),
             })
 
     return sorted(result, key=lambda p: p["name"])
@@ -1762,7 +1775,7 @@ def _wal_stream_dirs():
     except OSError:
         return
     for d in entries:
-        if d.is_dir():
+        if d.is_dir() and d.name != "archive":
             yield d
 
 
@@ -2783,7 +2796,7 @@ async def docs(filename: str):
 <meta name="viewport"
   content="width=device-width, initial-scale=1">
 <title>RSX Docs -- {safe_filename}</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="{pages._TAILWIND_SRC}"></script>
 <script>
 tailwind.config = {{
   darkMode: 'class',
@@ -3218,11 +3231,13 @@ async def x_key_metrics():
 @app.get("/x/pulse", response_class=HTMLResponse)
 async def x_pulse():
     procs = _cached_for("procs", 1.0, scan_processes)
+    plan_names = {
+        name for name, _, _ in get_spawn_plan(current_scenario)}
     running = sum(
-        1 for p in procs if p.get("state") == "running")
-    # scan_processes() appends every expected plan entry as
-    # "stopped" if absent, so len(procs) is the expected count.
-    expected = len(procs)
+        1 for p in procs
+        if p.get("state") == "running"
+        and p["name"] in plan_names)
+    expected = len(plan_names)
     streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
     wal_files = sum(s.get("files", 0) for s in streams)
     elapsed = max(1, time.time() - SERVER_START)
@@ -3669,7 +3684,8 @@ async def x_book(symbol_id: int = Query(10)):
     snap = _book_snap.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
-            pages.render_book_ladder(symbol_id, snap))
+            pages.render_book_ladder(symbol_id, snap,
+                                     source="live"))
     # Fallback: WAL BBO gives at most 1 bid + 1 ask
     bbo = parse_wal_bbo(symbol_id)
     if bbo is not None:
@@ -3681,12 +3697,14 @@ async def x_book(symbol_id: int = Query(10)):
             snap_from_bbo["asks"] = [
                 {"px": bbo["ask_px"], "qty": bbo["ask_qty"]}]
         return HTMLResponse(
-            pages.render_book_ladder(symbol_id, snap_from_bbo))
+            pages.render_book_ladder(symbol_id, snap_from_bbo,
+                                     source="synthetic"))
     # Last fallback: maker book
     maker_snap = _maker_book(symbol_id)
     if maker_snap:
         return HTMLResponse(
-            pages.render_book_ladder(symbol_id, maker_snap))
+            pages.render_book_ladder(symbol_id, maker_snap,
+                                     source="synthetic"))
     return HTMLResponse(
         pages.render_book_ladder(symbol_id, None))
 
@@ -4546,12 +4564,23 @@ async def _run_invariant_checks() -> list[dict]:
 
     if wal_exists:
         for s in scan_wal_streams():
+            total_bytes = s.get("total_bytes", 0)
+            if s["files"] == 0:
+                st = "warn"
+                detail = "no WAL files"
+            elif total_bytes == 0:
+                st = "warn"
+                detail = (f"{s['files']} files, 0 bytes"
+                          " — no records written")
+            else:
+                st = "pass"
+                detail = (f"{s['files']} files, "
+                          f"{s['total_size']}")
             checks.append({
-                "name": f"WAL stream {s['name']} has files",
-                "status": "pass" if s["files"] > 0 else "warn",
+                "name": f"WAL stream {s['name']} has data",
+                "status": st,
                 "time": now,
-                "detail": f"{s['files']} files, "
-                          f"{s['total_size']}",
+                "detail": detail,
             })
 
     procs = scan_processes()
@@ -6401,15 +6430,24 @@ async def _run_gw_only_probe() -> dict:
                         if len(gw_only_latencies) > 1000:
                             del gw_only_latencies[:500]
                         err = frame["E"]
+                        error_code = (
+                            err[0] if isinstance(err, list)
+                            and err else None)
+                        error_msg = (
+                            err[1] if isinstance(err, list)
+                            and len(err) > 1 else None)
                         return {
                             "ok": True,
+                            "probe_ok": True,
                             "elapsed_us": elapsed_us,
-                            "error_code": (
-                                err[0] if isinstance(err, list)
-                                and err else None),
-                            "error_msg": (
-                                err[1] if isinstance(err, list)
-                                and len(err) > 1 else None),
+                            "error_code": error_code,
+                            "error_msg": error_msg,
+                            "note": (
+                                "gateway rejected "
+                                f"(error_code {error_code})"
+                                " — expected"
+                                if error_code == 1007
+                                else None),
                         }
     except aiohttp.ClientError as exc:
         return {"ok": False,

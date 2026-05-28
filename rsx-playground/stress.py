@@ -146,6 +146,11 @@ async def main() -> int:
         print(f"error: {results['error']}", file=sys.stderr)
         return 1
 
+    submitted = results.get("metrics", {}).get("submitted", 0)
+    if submitted == 0:
+        print("no orders submitted: fail", file=sys.stderr)
+        return 1
+
     p99 = results.get("latency_us", {}).get("p99", 0)
     if p99 < TARGET_P99:
         print(f"p99={p99}us < target={TARGET_P99}us: pass")
