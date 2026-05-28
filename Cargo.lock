@@ -2362,6 +2362,7 @@ name = "rsx-gateway"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "core_affinity",
  "criterion",
  "jsonwebtoken",
  "monoio",
@@ -2412,6 +2413,7 @@ name = "rsx-marketdata"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "core_affinity",
  "criterion",
  "monoio",
  "rsx-book",
