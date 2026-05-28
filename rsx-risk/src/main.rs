@@ -489,9 +489,12 @@ fn run_main(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
-    // Use first ME addr as the CMP peer for the receiver
+    // Use first ME addr as the CMP peer for the receiver.
+    // me_stream_id = symbol_id of the first (primary) ME;
+    // used as stream_id in FAULTED TCP replay requests.
     // SAFETY: me_addrs.is_empty() checked above
-    let first_me_addr = *me_addrs.values().next()
+    let (me_stream_id, first_me_addr) = me_addrs.iter().next()
+        .map(|(&sid, &addr)| (sid, addr))
         .expect("INVARIANT: me_addrs non-empty (checked above)");
     let mut me_receiver = CastReceiver::new(
         risk_me_recv_addr,
@@ -715,7 +718,7 @@ fn run_main(
                     let new_tip = handle_replay(
                         "risk.me",
                         "RSX_ME_REPLICATION_ADDR",
-                        shard_id,
+                        me_stream_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         &wal_dir,
@@ -727,7 +730,7 @@ fn run_main(
                     let new_tip = handle_replay(
                         "risk.me",
                         "RSX_ME_REPLICATION_ADDR",
-                        shard_id,
+                        me_stream_id,
                         last_delivered_seq,
                         None,
                         &wal_dir,
@@ -1321,8 +1324,9 @@ fn run_replica(
         );
     }
     // SAFETY: me_addrs.is_empty() checked above
-    let first_me_addr =
-        *me_addrs.values().next().expect("INVARIANT: me_addrs non-empty (checked above)");
+    let (me_stream_id, first_me_addr) = me_addrs.iter().next()
+        .map(|(&sid, &addr)| (sid, addr))
+        .expect("INVARIANT: me_addrs non-empty (checked above)");
     let mut me_receiver = CastReceiver::new(
         // SAFETY: literal addr is always valid
         "127.0.0.1:0".parse().expect("valid addr"),
@@ -1387,7 +1391,7 @@ fn run_replica(
                     let new_tip = handle_replay(
                         "replica.me",
                         "RSX_ME_REPLICATION_ADDR",
-                        shard_id,
+                        me_stream_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         &wal_dir,
@@ -1399,7 +1403,7 @@ fn run_replica(
                     let new_tip = handle_replay(
                         "replica.me",
                         "RSX_ME_REPLICATION_ADDR",
-                        shard_id,
+                        me_stream_id,
                         last_delivered_seq,
                         None,
                         &wal_dir,
