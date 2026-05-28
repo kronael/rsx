@@ -256,17 +256,13 @@ fn handle_replay(
              opening replay via {env_var}",
         ),
     }
-    let replay_addr = match env::var(env_var) {
-        Ok(a) => a,
-        Err(_) => {
-            let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
-            warn!(
-                "{env_var} not set; skipping {label} gap to \
-                 seq={skip_to} (in-flight records lost)"
-            );
-            return skip_to;
-        }
-    };
+    let replay_addr = env::var(env_var).unwrap_or_else(|_| {
+        panic!(
+            "{label} {} requires {env_var} pointing at the \
+             producer's replication server",
+            if gap.is_some() { "FAULTED" } else { "RECONNECT" },
+        )
+    });
     let tip_file = std::path::PathBuf::from(wal_dir).join(
         format!("risk_{label}_{stream_id}_replay_tip.bin"),
     );

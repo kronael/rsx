@@ -197,6 +197,12 @@ def build_spawn_plan(config, pg_url, release=False):
         f"wss://stream.binance.com:9443/stream?streams={streams}"
     )
 
+    # comma-separated ME replication addresses for Risk FAULTED replay
+    # (one TCP replication server per ME, at BASE_ME_REPLICATION + sid)
+    me_replication_addrs = ",".join(
+        f"127.0.0.1:{BASE_ME_REPLICATION + s['id']}" for s in symbols
+    )
+
     # comma-separated ME CMP addresses for Risk + Marketdata
     me_cmp_addrs = ",".join(
         f"127.0.0.1:{BASE_ME_CMP + s['id']}" for s in symbols
@@ -272,6 +278,7 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_GW_CAST_ADDR":
                     f"127.0.0.1:{BASE_GW_CMP}",
                 "RSX_ME_CAST_ADDRS": me_cmp_addrs,
+                "RSX_ME_REPLICATION_ADDR": me_replication_addrs,
                 "RSX_RISK_WAL_DIR": "./tmp/wal",
                 "RSX_RISK_MARK_CAST_ADDR":
                     f"127.0.0.1:{BASE_RISK_MARK_CMP}",

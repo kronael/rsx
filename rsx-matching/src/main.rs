@@ -517,18 +517,13 @@ fn main() {
                 gap_start,
                 gap_end_inclusive,
             );
-            let replay_addr = match env::var("RSX_ME_REPLICATION_ADDR") {
-                Ok(a) => a,
-                Err(_) => {
-                    warn!(
-                        "RSX_ME_REPLICATION_ADDR not set; \
-                         skipping gap to seq={gap_end_inclusive} \
-                         (in-flight orders lost)"
-                    );
-                    cmp_receiver.reset_after_replay(gap_end_inclusive);
-                    continue;
-                }
-            };
+            let replay_addr = env::var(
+                "RSX_ME_REPLICATION_ADDR",
+            )
+            .expect(
+                "FAULTED requires RSX_ME_REPLICATION_ADDR \
+                 pointing at the risk producer's replication server",
+            );
             let tip_file = PathBuf::from(&wal_dir).join(
                 format!(
                     "me_{}_replay_tip.bin", symbol_id,
