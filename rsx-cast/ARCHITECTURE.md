@@ -212,13 +212,16 @@ for the dated authoritative numbers.
 | `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
 | Protocol-record decode | 9 ns | `cast_bench` |
 | `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
-| WAL flush + fsync (64 KB batch — production amortisation) | 24 µs | `wal_fsync_bench` batch variant |
-| WAL flush + fsync (single record — naive sync per append) | 651 µs | `wal_fsync_bench` single-record variant |
+| WAL flush + fsync, 1 record | 498 µs | `wal_fsync_bench` (real disk, core-pinned) |
+| WAL flush + fsync, 100 records | 627 µs | `wal_fsync_bench` — fsync dominates |
+| WAL flush + fsync, 1 000 records | 1.19 ms | `wal_fsync_bench` — fsync still dominant |
+| WAL flush + fsync, 10 000 records | 5.94 ms | `wal_fsync_bench` — append overhead visible |
 | WAL sequential read | ~700 MB/s | `wal_bench` |
 | casting RTT, loopback, 128 B | 11.26 µs | `cast_rtt_bench` |
 | Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
 | `CastSender::send` body (per call) | ~4.07 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
-| Cold-tier NAK retransmit (`read_record_at_seq`) | 23.5 ms @ 10 K records | `wal_random_read_bench` |
+| Cold-tier NAK retransmit (`read_record_at_seq`), 10 K records | 10.4 ms | `wal_random_read_bench` |
+| Cold-tier NAK retransmit (`read_record_at_seq`), 100 K records | 80.6 ms | `wal_random_read_bench` |
 
 ## Connection topology
 
