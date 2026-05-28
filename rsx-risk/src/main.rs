@@ -266,28 +266,49 @@ fn handle_replay(
     let tip_file = std::path::PathBuf::from(wal_dir).join(
         format!("risk_{label}_{stream_id}_replay_tip.bin"),
     );
-    let new_tip = rsx_risk::drain_replay(
-        stream_id,
-        replay_addr.clone(),
-        last_delivered_seq,
-        tip_file,
-        // Round-1 apply: log per-record. State re-injection
-        // is a follow-up; see PLAN.md.
-        |raw| {
-            let seq = rsx_cast::wal::extract_seq(&raw.payload)
-                .unwrap_or(0);
-            tracing::debug!(
-                "{label} replay applied record_type={} seq={}",
-                raw.header.record_type, seq,
-            );
-        },
-    )
-    .unwrap_or_else(|e| {
-        panic!(
-            "{label} replay drain failed against {replay_addr}: \
-             {e}",
+    // Retry if the WAL hasn't flushed the gap records yet.
+    // WAL flushes every 10ms; 5 retries × 15ms = 75ms covers
+    // the window plus some slack for burst writes.
+    let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
+    const MAX_TIP_RETRIES: u8 = 5;
+    let mut tip_retries = 0u8;
+    let new_tip = loop {
+        let tip = rsx_risk::drain_replay(
+            stream_id,
+            replay_addr.clone(),
+            last_delivered_seq,
+            tip_file.clone(),
+            |raw| {
+                let seq = rsx_cast::wal::extract_seq(
+                    &raw.payload,
+                ).unwrap_or(0);
+                tracing::debug!(
+                    "{label} replay applied \
+                     record_type={} seq={}",
+                    raw.header.record_type, seq,
+                );
+            },
         )
-    });
+        .unwrap_or_else(|e| {
+            panic!(
+                "{label} replay drain failed against \
+                 {replay_addr}: {e}",
+            )
+        });
+        tip_retries += 1;
+        if tip < gap_end && tip_retries < MAX_TIP_RETRIES {
+            warn!(
+                "{label} replay tip={tip} < gap_end={gap_end}, \
+                 WAL not flushed yet (attempt {tip_retries}), \
+                 retrying in 15ms"
+            );
+            std::thread::sleep(
+                std::time::Duration::from_millis(15),
+            );
+        } else {
+            break tip;
+        }
+    };
     info!(
         "{label} replay drained, new_tip={new_tip}, resuming",
     );
