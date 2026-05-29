@@ -2,7 +2,21 @@
 
 ## ORPHAN-FREEZE — phantom margin hold survives risk recovery (correctness)
 
-**Status: OPEN.** `process_order` (`rsx-risk/src/shard.rs:580`) freezes
+**Status: FIXED 2026-05-29** (commit: durable freeze on ME OrderAccepted).
+`process_order` keeps the in-memory freeze (pre-trade gate) but no longer
+write-behinds to PG pre-send; `shard::confirm_freeze` writes the durable
+`FrozenInsert` only when ME's `RECORD_ORDER_ACCEPTED` returns. PG can no
+longer hold a freeze the WAL never confirmed. 8 new tests in
+`orphan_freeze_test.rs` (FM6/FM11/FM13a/FM14); rsx-risk 268 pass.
+**Follow-up (minor, open):** PG rows written *before* this fix could still
+hold legacy orphans — a one-time Option-A reconcile (drop PG freezes with
+no WAL `OrderAccepted`) on next recovery would clear them. New orders are
+closed at the source.
+
+---
+
+### (original report, now fixed)
+`process_order` (`rsx-risk/src/shard.rs:580`) freezes
 in-memory AND write-behinds a `FrozenInsert` to PG **before forwarding to
 ME**. If risk dies (or the risk→ME send drops) after the PG write but
 before ME accepts, recovery loads the PG `frozen_orders` snapshot with a
