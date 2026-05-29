@@ -41,7 +41,7 @@ phase-1 historical specs.
 | 11 | [11-gateway.md](11-gateway.md) | shipped | Gateway service — WS ingress + casting bridge + JWT |
 | 17 | [17-matching.md](17-matching.md) | shipped | Matching engine — per-symbol, single-threaded |
 | 21 | [21-orderbook.md](21-orderbook.md) | shipped | Orderbook data structures + matching algorithm |
-| 28 | [28-risk.md](28-risk.md) | shipped | Risk engine — portfolio margin per user shard |
+| 28 | [28-risk.md](28-risk.md) | partial | Risk engine — portfolio margin per user shard (return path being moved to ME→GW-direct) |
 | 16 | [16-marketdata.md](16-marketdata.md) | shipped | Market data service — shadow book, L2/BBO/trades |
 | 15 | [15-mark.md](15-mark.md) | shipped | Mark price aggregator (Binance + Coinbase + ...) |
 | 13 | [13-liquidator.md](13-liquidator.md) | partial | Liquidator |
