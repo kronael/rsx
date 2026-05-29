@@ -31,9 +31,9 @@ orderbook WAL replay.
 ## Architecture Overview
 
 ```
-Mark Aggregator -+  (replication producer, see MARK.md)
+Mark Aggregator -+  (see MARK.md)
                   |
-           [not wired to risk in v1]
+           [casting/UDP: MarkPriceRecord, via RSX_RISK_MARK_CAST_ADDR]
                   |
 Gateway -[casting/UDP]-> Risk Shard (main) -[casting/UDP]-> Matching Engines
                        |        ^                     |

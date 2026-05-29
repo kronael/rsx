@@ -209,8 +209,14 @@ fn main_loop(sources: Vec<SpscConsumer<SourcePrice>>,
     }
 ```
 
-The main loop is single-threaded, busy-spin. Async tasks (WS
+The main loop is single-threaded and **ergonomic, not busy-spin**:
+it drains its input rings, sweeps staleness, flushes the WAL, then
+sleeps ~250µs. Mark is off the critical path — mark prices tick on
+external-feed cadence and feed margin/liquidation, which tolerate
+second-scale latency — so it must not burn a core. Async tasks (WS
 connectors) run on a separate tokio runtime in background threads.
+(A prior dedicated-core busy-spin was reverted 2026-05-29: unpinned,
+it floated onto a hot-path core and starved it → UDP RcvbufErrors.)
 
 ---
 
@@ -281,4 +287,8 @@ rsx-mark/src/
 
 No core pinning. Mark is not on the critical
 GW→ME→GW path, so the aggregator loop runs as a
-plain busy-spin thread without `core_affinity`.
+plain ergonomic thread (sleep ~250µs, no `core_affinity`).
+It MUST NOT busy-spin: an unpinned spinner floats across cores
+and starves a pinned hot-path consumer (gateway/risk/ME),
+whose UDP socket then overflows → kernel RcvbufErrors → dropped
+packets → FAULTED storm.

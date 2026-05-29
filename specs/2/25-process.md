@@ -118,11 +118,13 @@ Links:
 
 Tiles:
 - Network Tile (monoio): external price feeds.
-- Core Tile (busy-spin): mark aggregation.
+- Core Tile (ergonomic, sleep ~250µs — NOT busy-spin): mark
+  aggregation. Off the critical path; unpinned. Must not spin —
+  an unpinned spinner starves a pinned hot-path core.
 
 Links:
 - replication server (WAL/TCP) for archival/replay.
-- casting/UDP mark feed to Risk.
+- casting/UDP mark feed to Risk (`RSX_RISK_MARK_CAST_ADDR`).
 
 ### Recorder Process
 

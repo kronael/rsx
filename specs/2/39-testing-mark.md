@@ -32,13 +32,13 @@ Binary: `rsx-mark` (standalone service)
 | K9 | PriceSource trait for exchange connectors | §3 |
 | K10 | Reconnect backoff: 1/2/4/8s, cap 30s | §3 |
 | K11 | Source connectors push via SPSC to aggregation | §1 |
-| K12 | Main loop single-threaded, busy-spin | §6 |
+| K12 | Main loop single-threaded, ergonomic (sleep ~250µs, not busy-spin) | §6 |
 | K13 | Recorder archives mark price stream | §1, replication.md §8 |
 | K14 | MarkPriceEvent: symbol_id, mark_price, ts, mask, count | §2 |
 | K15 | Env config: staleness_ns, per-source enabled flag | §7 |
 | K16 | Main loop: drain rings -> staleness sweep -> wal flush | §6 |
 | K17 | Coinbase source disabled by default (enabled=false) | §7 |
-| K18 | WS tasks on separate tokio runtime, main loop busy-spin | §6 |
+| K18 | WS tasks on separate tokio runtime; main loop ergonomic (sleep ~250µs, unpinned) | §6 |
 | K19 | Source mask bitmask of contributing sources | §2 |
 | K20 | SymbolMarkState indexed by symbol_id in Vec | §2 |
 | K21 | WAL flush every 10ms via wal.maybe_flush() | §6 |
