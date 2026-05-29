@@ -586,17 +586,16 @@ impl RiskShard {
                     .or_default()
                     .insert(key, margin_needed);
                 self.orders_processed += 1;
-                self.push_persist(
-                    PersistEvent::FrozenInsert(
-                        FrozenOrderRecord {
-                            user_id: order.user_id,
-                            order_id_hi: order.order_id_hi,
-                            order_id_lo: order.order_id_lo,
-                            symbol_id: order.symbol_id,
-                            amount: margin_needed,
-                        },
-                    ),
-                );
+                // The durable FrozenInsert is NOT written here.
+                // WAL OrderAccepted (ME-confirmed) is the sole
+                // authority for durable freezes: persisting the
+                // freeze before ME confirms would, on a crash
+                // between PG write and ME accept, leave PG holding
+                // a freeze with no confirming OrderAccepted/release
+                // in the WAL -> permanent phantom margin hold. The
+                // in-memory freeze above stays (pre-trade gate);
+                // `confirm_freeze` writes the durable record when
+                // ME's RECORD_ORDER_ACCEPTED comes back.
                 OrderResponse::Accepted {
                     user_id: order.user_id,
                     margin_reserved: margin_needed,
@@ -611,6 +610,39 @@ impl RiskShard {
                 order_id_lo: order.order_id_lo,
             },
         }
+    }
+
+    /// ME confirmed the order (RECORD_ORDER_ACCEPTED). Write
+    /// the durable freeze to PG now — this is the sole point a
+    /// freeze becomes durable, so PG can never hold a freeze the
+    /// WAL never confirmed. Amount is taken from the in-memory
+    /// `frozen_orders` set by `process_order`; if absent (order
+    /// not seen on this shard, or already released) nothing is
+    /// persisted.
+    pub fn confirm_freeze(
+        &mut self,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        symbol_id: u32,
+    ) {
+        if !self.user_in_shard(user_id) {
+            return;
+        }
+        let key = order_key(order_id_hi, order_id_lo);
+        let amount = match self.frozen_orders.get(&key) {
+            Some(&(owner, amount)) if owner == user_id => amount,
+            _ => return,
+        };
+        self.push_persist(PersistEvent::FrozenInsert(
+            FrozenOrderRecord {
+                user_id,
+                order_id_hi,
+                order_id_lo,
+                symbol_id,
+                amount,
+            },
+        ));
     }
 
     /// Release frozen margin when order completes.
