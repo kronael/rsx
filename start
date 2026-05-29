@@ -122,6 +122,8 @@ CORE_GW    = 1   # gateway
 CORE_RISK  = 2   # risk shard 0
 CORE_ME_0  = 3   # ME (first symbol, e.g. PENGU)
 CORE_MD    = 4   # marketdata
+CORE_MARK  = 5   # mark aggregator (busy-spins; MUST be dedicated)
+# recorder is idle tokio — shares core 0 with the OS, not pinned.
 BASE_RISK_CMP = 9200
 BASE_GW_CMP = 9300
 BASE_MARK_CMP = 9400
@@ -261,6 +263,7 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MARK_SOURCE_BINANCE_WS_URL":
                 binance_ws_url,
             "RSX_MARK_SOURCE_COINBASE_ENABLED": "0",
+            "RSX_MARK_CORE_ID": str(CORE_MARK),
             "RUST_LOG": "info",
         },
     ))
@@ -366,6 +369,10 @@ def build_spawn_plan(config, pg_url, release=False):
         ))
 
     # ── Marketdata ──────────────────────────────────
+    # Replay + gap-detection track ME's stream, whose id is the
+    # first symbol's id (single-ME demo). RSX_MD_REPLAY_ADDR must
+    # point at that ME's TCP replication server or FAULTED panics.
+    first_sid = symbols[0]["id"]
     plan.append((
         "marketdata",
         f"{target}/rsx-marketdata",
@@ -373,7 +380,9 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MD_LISTEN":
                 f"0.0.0.0:{BASE_MD_WS}",
             "RSX_ME_CAST_ADDRS": me_cmp_addrs,
-            "RSX_MD_STREAM_ID": "1",
+            "RSX_MD_STREAM_ID": str(first_sid),
+            "RSX_MD_REPLAY_ADDR":
+                f"127.0.0.1:{BASE_ME_REPLICATION + first_sid}",
             "RSX_MD_CORE_ID": str(CORE_MD),
             "RUST_LOG": "info",
         },

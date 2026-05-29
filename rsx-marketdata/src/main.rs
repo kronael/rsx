@@ -63,26 +63,47 @@ fn handle_replay(
     let tip_file = PathBuf::from(format!(
         "{tip_file_path}.replay_{stream_id}",
     ));
-    let new_tip = rsx_marketdata::replay::drain_replay(
-        stream_id,
-        addr.to_string(),
-        last_delivered_seq,
-        tip_file,
-        |raw| {
-            let seq = rsx_cast::wal::extract_seq(&raw.payload)
-                .unwrap_or(0);
-            tracing::debug!(
-                "marketdata replay applied record_type={} seq={}",
-                raw.header.record_type, seq,
-            );
-        },
-    )
-    .unwrap_or_else(|e| {
-        panic!(
-            "marketdata replay drain failed against \
-             {addr}: {e}",
+    // Retry while the producer's WAL hasn't flushed the gap
+    // records yet (10ms flush window). Without this, replay
+    // returns the old tip, the receiver resets to it, and the
+    // next UDP packet FAULTs again — an infinite loop.
+    let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
+    const MAX_TIP_RETRIES: u8 = 5;
+    let mut tip_retries = 0u8;
+    let new_tip = loop {
+        let tip = rsx_marketdata::replay::drain_replay(
+            stream_id,
+            addr.to_string(),
+            last_delivered_seq,
+            tip_file.clone(),
+            |raw| {
+                let seq = rsx_cast::wal::extract_seq(&raw.payload)
+                    .unwrap_or(0);
+                tracing::debug!(
+                    "marketdata replay applied record_type={} seq={}",
+                    raw.header.record_type, seq,
+                );
+            },
         )
-    });
+        .unwrap_or_else(|e| {
+            panic!(
+                "marketdata replay drain failed against \
+                 {addr}: {e}",
+            )
+        });
+        tip_retries += 1;
+        if tip < gap_end && tip_retries < MAX_TIP_RETRIES {
+            warn!(
+                "marketdata replay tip={tip} < gap_end={gap_end}, \
+                 WAL not flushed (attempt {tip_retries}), retry 15ms"
+            );
+            std::thread::sleep(
+                std::time::Duration::from_millis(15),
+            );
+        } else {
+            break tip;
+        }
+    };
     info!(
         "marketdata replay drained, new_tip={new_tip}, \
          resuming",
