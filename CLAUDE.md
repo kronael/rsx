@@ -253,6 +253,27 @@ for notional = price * qty at risk boundary.
 - Backpressure: buffer full or flush lag > 10ms -> stall producer
 - Tip persistence: every 10ms, idempotent replay from tip+1
 
+## Core layout (6-core dev host) — KEEP IN VIEW
+
+| Core | Process | Model |
+|---|---|---|
+| 0 | OS + mark + recorder | off-path, ergonomic (sleep ~0% CPU), unpinned |
+| 1 | gateway | hot path, pinned, monoio |
+| 2 | risk shard 0 | hot path, pinned, busy-spin |
+| 3 | ME / matching | hot path, pinned, busy-spin |
+| 4 | marketdata | hot path, pinned, monoio |
+| 5 | spare headroom | — |
+
+**Rule: a busy-spin loop MUST be pinned to its own core.** An
+unpinned spinner floats across cores (CFS rebalancing) onto a
+hot-path core, starves that consumer, and its UDP socket
+overflows → kernel `RcvbufErrors` → dropped packets → FAULTED
+replay storm. This is NOT a UDP problem; loopback UDP is lossless
+under load when the consumer keeps draining. Off-path services
+(mark, recorder) must NOT busy-spin — they sleep and stay
+unpinned. Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/
+`CORE_ME_0`/`CORE_MD`); env vars `RSX_{GW,RISK,ME,MD}_CORE_ID`.
+
 ## Networking Stack
 
 - **Gateway, Risk, Market Data:** monoio with io_uring. All three

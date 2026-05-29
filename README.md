@@ -179,6 +179,29 @@ make prepare                              # one-time: venv + Playwright
 
 60-second clean-boot path: [docs/DEMO.md](docs/DEMO.md).
 
+### Core layout (6-core host)
+
+Hot-path processes busy-spin, so each **must** own a core. An
+unpinned spinner floats across cores (CFS load-balancing), lands
+on a hot core, starves that consumer, and its UDP socket overflows
+→ kernel `RcvbufErrors` → dropped packets → FAULTED replay storm.
+This bit us: `rsx-mark` was an unpinned busy-spinner stealing the
+gateway's core. Pinning (and making mark ergonomic) fixed it.
+
+| Core | Process | Model |
+|---|---|---|
+| 0 | OS + mark + recorder | off-path, ergonomic (sleep, ~0% CPU), unpinned |
+| 1 | gateway | hot path, pinned, monoio |
+| 2 | risk shard 0 | hot path, pinned, busy-spin |
+| 3 | ME / matching | hot path, pinned, busy-spin |
+| 4 | marketdata | hot path, pinned, monoio |
+| 5 | (spare headroom) | — |
+
+Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/
+`CORE_MD`). Off-path services (`mark`, `recorder`) sleep instead
+of spinning and stay unpinned. On a host with fewer cores, edit
+those constants or expect contention.
+
 **From source:**
 
 ```bash

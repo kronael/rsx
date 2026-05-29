@@ -253,7 +253,13 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         }
         mark_sender.recv_control();
 
-        // bare busy-spin: no yield, dedicated core
+        // Off the critical path: mark prices tick on external-feed
+        // cadence (~10/s/symbol) and feed margin/liquidation, which
+        // tolerate second-scale latency. A 250µs poll drains the
+        // input ring promptly without burning a core — ergonomic,
+        // like the other off-path services. (Was a dedicated-core
+        // busy-spin; that starved hot-path cores when unpinned.)
+        std::thread::sleep(Duration::from_micros(250));
     }
 }
 

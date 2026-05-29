@@ -114,16 +114,19 @@ SCENARIOS = {
 
 BASE_ME_CMP = 9100
 
-# ── core pinning ─────────────────────────────────────────
-# Pin hot-path processes to dedicated cores to prevent UDP
-# drops from scheduler preemption. Core 0 is left for OS.
-# Adjust if running on a machine with fewer than 6 cores.
-CORE_GW    = 1   # gateway
-CORE_RISK  = 2   # risk shard 0
-CORE_ME_0  = 3   # ME (first symbol, e.g. PENGU)
-CORE_MD    = 4   # marketdata
-CORE_MARK  = 5   # mark aggregator (busy-spins; MUST be dedicated)
-# recorder is idle tokio — shares core 0 with the OS, not pinned.
+# ── core pinning (6-core host; see README "Core layout") ──
+# Hot-path processes busy-spin and MUST each own a core, or an
+# unpinned spinner floats across cores (CFS load-balancing) onto
+# a hot core, starves the consumer, and its UDP socket overflows
+# → kernel RcvbufErrors → dropped packets → FAULTED replay storm.
+# Core 0 is left for the OS + ergonomic off-path services.
+CORE_GW    = 1   # gateway      (hot path, pinned)
+CORE_RISK  = 2   # risk shard 0 (hot path, pinned)
+CORE_ME_0  = 3   # ME / matching (hot path, pinned)
+CORE_MD    = 4   # marketdata   (hot path, pinned)
+# core 5: spare headroom.
+# mark + recorder are OFF-path and ergonomic (sleep, ~0% CPU):
+# unpinned, share core 0 with the OS. They must NOT busy-spin.
 BASE_RISK_CMP = 9200
 BASE_GW_CMP = 9300
 BASE_MARK_CMP = 9400
@@ -263,7 +266,6 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MARK_SOURCE_BINANCE_WS_URL":
                 binance_ws_url,
             "RSX_MARK_SOURCE_COINBASE_ENABLED": "0",
-            "RSX_MARK_CORE_ID": str(CORE_MARK),
             "RUST_LOG": "info",
         },
     ))
