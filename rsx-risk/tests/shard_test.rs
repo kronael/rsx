@@ -365,67 +365,52 @@ fn funding_settles_at_interval() {
     assert_ne!(before, after); // funding was applied
 }
 
-#[test]
-fn run_once_empty_rings_no_crash() {
-    let mut s = make_shard();
-    let (_, fill_c) = rtrb::RingBuffer::<FillEvent>::new(4);
-    let (_, order_c) =
-        rtrb::RingBuffer::<OrderRequest>::new(4);
-    let (_, mark_c) =
-        rtrb::RingBuffer::<rsx_risk::rings::MarkPriceUpdate>::new(4);
-    let (_, bbo_c) = rtrb::RingBuffer::<BboUpdate>::new(4);
-    let (resp_p, _) =
+fn make_rings() -> (
+    rsx_risk::ShardRings,
+    rtrb::Consumer<OrderResponse>,
+    rtrb::Consumer<OrderRequest>,
+) {
+    let (resp_p, resp_c) =
         rtrb::RingBuffer::<OrderResponse>::new(4);
-    let (accepted_p, _accepted_c) =
+    let (accepted_p, accepted_c) =
         rtrb::RingBuffer::<OrderRequest>::new(4);
-    let mut rings = rsx_risk::ShardRings {
-        fill_consumers: vec![fill_c],
-        order_consumer: order_c,
-        mark_consumer: mark_c,
-        bbo_consumers: vec![bbo_c],
+    let rings = rsx_risk::ShardRings {
         response_producer: resp_p,
         accepted_producer: accepted_p,
     };
-    s.run_once(&mut rings, 0);
+    (rings, resp_c, accepted_c)
+}
+
+#[test]
+fn tick_empty_no_crash() {
+    let mut s = make_shard();
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
     assert_eq!(s.fills_processed, 0);
 }
 
 #[test]
-fn run_once_fills_before_orders() {
-    // Verify fills are processed before orders in run_once
+fn fills_processed_before_orders() {
+    // The fills-before-orders invariant now holds at the main
+    // loop level (me_receiver block runs before gw_receiver
+    // block), not inside `tick`. This test asserts the invariant
+    // directly: process the fill first, then the order, and
+    // confirm the order's pre-trade margin check sees the
+    // position the fill created (no crash, order accepted with
+    // the freed/updated margin state).
     let mut s = make_shard();
     s.accounts
         .insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
 
-    let (mut fill_p, fill_c) =
-        rtrb::RingBuffer::<FillEvent>::new(4);
-    let (mut order_p, order_c) =
-        rtrb::RingBuffer::<OrderRequest>::new(4);
-    let (_, mark_c) =
-        rtrb::RingBuffer::<rsx_risk::rings::MarkPriceUpdate>::new(4);
-    let (_, bbo_c) = rtrb::RingBuffer::<BboUpdate>::new(4);
-    let (resp_p, mut resp_c) =
-        rtrb::RingBuffer::<OrderResponse>::new(4);
-    let (accepted_p, _accepted_c) =
-        rtrb::RingBuffer::<OrderRequest>::new(4);
-
-    fill_p.push(fill(0, 1, 0, 10_000, 100, 1)).unwrap();
-    order_p.push(order(0, 0, 10_000, 10)).unwrap();
-
-    let mut rings = rsx_risk::ShardRings {
-        fill_consumers: vec![fill_c],
-        order_consumer: order_c,
-        mark_consumer: mark_c,
-        bbo_consumers: vec![bbo_c],
-        response_producer: resp_p,
-        accepted_producer: accepted_p,
-    };
-    s.run_once(&mut rings, 0);
-
+    // Fills drained first.
+    s.process_fill(&fill(0, 1, 0, 10_000, 100, 1));
     assert_eq!(s.fills_processed, 1);
+    assert_eq!(s.positions[&(0, 0)].long_qty, 100);
+
+    // Then the order's margin check runs against post-fill state.
+    let resp = s.process_order(&order(0, 0, 10_000, 10));
     assert_eq!(s.orders_processed, 1);
-    let resp = resp_c.pop().unwrap();
     assert!(
         matches!(resp, OrderResponse::Accepted { .. })
     );
@@ -645,56 +630,23 @@ fn order_while_user_being_liquidated_rejected() {
 
 #[test]
 fn fill_flood_position_matches_sum_of_fills() {
-    // Simulates the main-loop pattern: push fills into
-    // the SPSC, drain via run_once, repeat. Verifies that
-    // the position state equals the sum of all qty fed in
-    // even when the producer would have stalled.
+    // Mirrors the main-loop pattern: the recv handler calls
+    // process_fill directly (no input ring), then tick runs the
+    // periodic work + egress backpressure. Verifies position
+    // state equals the sum of all qty fed in, with no fill lost.
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
 
-    // Tiny ring (size 4) so we hit the full case quickly.
-    let (mut fill_p, fill_c) =
-        rtrb::RingBuffer::<FillEvent>::new(4);
-    let (_, order_c) =
-        rtrb::RingBuffer::<OrderRequest>::new(4);
-    let (_, mark_c) = rtrb::RingBuffer::<
-        rsx_risk::rings::MarkPriceUpdate,
-    >::new(4);
-    let (_, bbo_c) =
-        rtrb::RingBuffer::<BboUpdate>::new(4);
-    let (resp_p, _) =
-        rtrb::RingBuffer::<OrderResponse>::new(4);
-    let (accepted_p, _accepted_c) =
-        rtrb::RingBuffer::<OrderRequest>::new(4);
-    let mut rings = rsx_risk::ShardRings {
-        fill_consumers: vec![fill_c],
-        order_consumer: order_c,
-        mark_consumer: mark_c,
-        bbo_consumers: vec![bbo_c],
-        response_producer: resp_p,
-        accepted_producer: accepted_p,
-    };
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
 
     // 100 fills of 7 each = expected long_qty 700.
     let mut delivered: i64 = 0;
     let total_fills = 100u64;
     for seq in 1..=total_fills {
-        // Mirror the main-loop stall pattern: spin until
-        // push succeeds, draining via run_once in between.
-        let mut pending = fill(0, 1, 0, 100, 7, seq);
-        loop {
-            match fill_p.push(pending) {
-                Ok(()) => break,
-                Err(rtrb::PushError::Full(ev)) => {
-                    pending = ev;
-                    s.run_once(&mut rings, 0);
-                }
-            }
-        }
+        s.process_fill(&fill(0, 1, 0, 100, 7, seq));
+        s.tick(&mut rings, 0);
         delivered += 7;
     }
-    // Final drain.
-    s.run_once(&mut rings, 0);
 
     let pos = &s.positions[&(0, 0)];
     assert_eq!(

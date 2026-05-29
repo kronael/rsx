@@ -10,14 +10,10 @@ use rsx_risk::config::ReplicationConfig;
 use rsx_risk::config::ShardConfig;
 use rsx_risk::funding::FundingConfig;
 use rsx_risk::margin::SymbolRiskParams;
-use rsx_risk::rings::MarkPriceUpdate;
 use rsx_risk::rings::OrderResponse;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
 use rsx_risk::types::BboUpdate;
-use rsx_risk::types::FillEvent;
-use rsx_risk::types::OrderRequest;
-use rtrb::Producer;
 use rtrb::RingBuffer;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -51,37 +47,22 @@ fn test_config(max_symbols: usize) -> ShardConfig {
     }
 }
 
-fn make_rings(
-) -> (ShardRings, Producer<MarkPriceUpdate>, Producer<BboUpdate>) {
-    let (_fill_prod, fill_cons) =
-        RingBuffer::<FillEvent>::new(8);
-    let (_order_prod, order_cons) =
-        RingBuffer::<OrderRequest>::new(8);
-    let (mark_prod, mark_cons) =
-        RingBuffer::<MarkPriceUpdate>::new(8);
-    let (bbo_prod, bbo_cons) =
-        RingBuffer::<BboUpdate>::new(8);
+fn make_rings() -> ShardRings {
     let (resp_prod, _resp_cons) =
         RingBuffer::<OrderResponse>::new(8);
     let (acc_prod, _acc_cons) =
-        RingBuffer::<OrderRequest>::new(8);
+        RingBuffer::<rsx_risk::types::OrderRequest>::new(8);
 
-    let rings = ShardRings {
-        fill_consumers: vec![fill_cons],
-        order_consumer: order_cons,
-        mark_consumer: mark_cons,
-        bbo_consumers: vec![bbo_cons],
+    ShardRings {
         response_producer: resp_prod,
         accepted_producer: acc_prod,
-    };
-
-    (rings, mark_prod, bbo_prod)
+    }
 }
 
 #[test]
 fn mark_cmp_updates_risk_mark_prices() {
     let mut shard = RiskShard::new(test_config(2));
-    let (mut rings, mut mark_prod, _bbo_prod) = make_rings();
+    let mut rings = make_rings();
 
     let _recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let tmp = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -122,22 +103,18 @@ fn mark_cmp_updates_risk_mark_prices() {
                     payload.as_ptr() as *const MarkPriceRecord,
                 )
             };
-            let _ = mark_prod.push(MarkPriceUpdate {
-                seq: decoded.seq,
-                symbol_id: decoded.symbol_id,
-                price: decoded.mark_price.0,
-            });
+            shard.update_mark(decoded.symbol_id, decoded.mark_price.0);
         }
     }
 
-    shard.run_once(&mut rings, 0);
+    shard.tick(&mut rings, 0);
     assert_eq!(shard.mark_prices[1], 55_000);
 }
 
 #[test]
 fn bbo_cmp_updates_risk_index_price() {
     let mut shard = RiskShard::new(test_config(2));
-    let (mut rings, _mark_prod, mut bbo_prod) = make_rings();
+    let mut rings = make_rings();
 
     let _recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let tmp = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -182,7 +159,7 @@ fn bbo_cmp_updates_risk_index_price() {
                     payload.as_ptr() as *const BboRecord,
                 )
             };
-            let _ = bbo_prod.push(BboUpdate {
+            shard.stash_bbo(BboUpdate {
                 seq: decoded.seq,
                 symbol_id: decoded.symbol_id,
                 bid_px: decoded.bid_px.0,
@@ -193,7 +170,7 @@ fn bbo_cmp_updates_risk_index_price() {
         }
     }
 
-    shard.run_once(&mut rings, 0);
+    shard.tick(&mut rings, 0);
     assert_eq!(shard.index_prices[1].price, 100);
     assert!(shard.index_prices[1].valid);
 }

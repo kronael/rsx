@@ -1,7 +1,4 @@
-use crate::types::BboUpdate;
-use crate::types::FillEvent;
 use crate::types::OrderRequest;
-use rtrb::Consumer;
 use rtrb::Producer;
 
 /// Mark price update from DXS/mark aggregator.
@@ -31,12 +28,11 @@ pub enum OrderResponse {
     },
 }
 
-/// SPSC ring endpoints for one risk shard.
+/// Egress SPSC ring endpoints for one risk shard. Input rings
+/// removed: the recv loop calls `process_*` directly (same
+/// thread). These two carry the shard's output back to the
+/// main loop's casting senders.
 pub struct ShardRings {
-    pub fill_consumers: Vec<Consumer<FillEvent>>,
-    pub order_consumer: Consumer<OrderRequest>,
-    pub mark_consumer: Consumer<MarkPriceUpdate>,
-    pub bbo_consumers: Vec<Consumer<BboUpdate>>,
     pub response_producer: Producer<OrderResponse>,
     pub accepted_producer: Producer<OrderRequest>,
 }

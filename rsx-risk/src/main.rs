@@ -33,7 +33,6 @@ use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::replay::replay_from_wal;
-use rsx_risk::rings::MarkPriceUpdate;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
 use rsx_risk::BboUpdate;
@@ -611,154 +610,28 @@ fn run_main(
     // SAFETY: fail-fast at startup
     .expect("failed to create GW CMP sender");
 
-    // SPSC rings for run_once (internal)
-    let (mut fill_prod, fill_cons) =
-        rtrb::RingBuffer::<FillEvent>::new(4096);
-    let (mut order_prod, order_cons) =
-        rtrb::RingBuffer::<OrderRequest>::new(2048);
-    let (mut mark_prod, mark_cons) =
-        rtrb::RingBuffer::<MarkPriceUpdate>::new(256);
-    let (mut bbo_prod, bbo_cons) =
-        rtrb::RingBuffer::<BboUpdate>::new(256);
+    // Egress SPSC rings. Input rings removed: the recv loop
+    // calls shard.process_* directly (same thread). These two
+    // carry shard output back to this loop's casting senders.
     let (resp_prod, mut resp_cons) =
         rtrb::RingBuffer::<OrderResponse>::new(2048);
     let (accepted_prod, mut accepted_cons) =
         rtrb::RingBuffer::<OrderRequest>::new(2048);
 
     let mut rings = ShardRings {
-        fill_consumers: vec![fill_cons],
-        order_consumer: order_cons,
-        mark_consumer: mark_cons,
-        bbo_consumers: vec![bbo_cons],
         response_producer: resp_prod,
         accepted_producer: accepted_prod,
     };
 
     info!("risk shard {} running", shard_id);
 
-    // Backpressure counters: spin-stall on full producer ring
-    // and surface a WARN each time we yield to shard.run_once
-    // so this never silently drops correctness-critical events.
-    let mut fill_stalls: u64 = 0;
-    let mut order_stalls: u64 = 0;
-    let mut bbo_drops: u64 = 0;
-    let mut mark_drops: u64 = 0;
-
     loop {
         let now_secs = time();
 
-        // Orders/cancels from Gateway.
-        loop {
-            let (hdr, payload) = match gw_receiver.try_recv() {
-                CastRecv::Data(h, p) => (h, p),
-                CastRecv::Empty => break,
-                CastRecv::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "risk.gw",
-                        "RSX_GW_REPLICATION_ADDR",
-                        shard_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
-                    );
-                    gw_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-                CastRecv::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "risk.gw",
-                        "RSX_GW_REPLICATION_ADDR",
-                        shard_id,
-                        last_delivered_seq,
-                        None,
-                        &wal_dir,
-                    );
-                    gw_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-            };
-            {
-            match hdr.record_type {
-                RECORD_ORDER_REQUEST => if let Some(order) =
-                    decode_payload::<OrderRequest>(&payload)
-                {
-                    // F4.3 — per-stage latency trace.
-                    // Stage `risk_in` = order arrived from
-                    // gateway. t_us measured against the
-                    // gateway's submit timestamp.
-                    {
-                        let now_ns = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_nanos() as u64)
-                            .unwrap_or(0);
-                        let t_us = now_ns
-                            .saturating_sub(order.timestamp_ns)
-                            / 1000;
-                        rsx_log::latency::sample("risk_in", order.order_id_hi, order.order_id_lo, t_us, order.timestamp_ns);
-                    }
-                    // Stall on full ring rather than dropping —
-                    // dropping turns into a silent ghost order
-                    // (gateway thinks it's pending, ME never
-                    // sees it). Mirror the fill_prod pattern.
-                    // R-N2.
-                    let now_secs = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let mut pending = order;
-                    loop {
-                        match order_prod.push(pending) {
-                            Ok(()) => break,
-                            Err(rtrb::PushError::Full(o)) => {
-                                pending = o;
-                                order_stalls = order_stalls
-                                    .wrapping_add(1);
-                                if order_stalls.is_power_of_two() {
-                                    warn!(
-                                        "order_prod full, \
-                                         stalling (count={})",
-                                        order_stalls,
-                                    );
-                                }
-                                shard.run_once(
-                                    &mut rings,
-                                    now_secs,
-                                );
-                            }
-                        }
-                    }
-                }
-                RECORD_CANCEL_REQUEST => if let Some(cancel) =
-                    decode_payload::<CancelRequest>(&payload)
-                {
-                    // Forward cancel to correct ME.
-                    if let Some(s) = me_senders
-                        .get_mut(&cancel.symbol_id)
-                    {
-                        if let Err(e) = s.send_raw(
-                            RECORD_CANCEL_REQUEST,
-                            &payload,
-                        ) {
-                            warn!("risk: forward cancel to me failed: {e}");
-                        }
-                    } else {
-                        warn!(
-                            "cancel for unknown \
-                             symbol_id={}",
-                            cancel.symbol_id
-                        );
-                    }
-                }
-                _ => {}
-            }
-            }
-        }
-
-        // Events from ME (fills, BBO, order lifecycle).
+        // Events from ME (fills, BBO, order lifecycle) are
+        // drained BEFORE orders so an order's pre-trade margin
+        // check sees margin freed by this tick's fills/releases
+        // (capital efficiency; fills-before-orders invariant).
         loop {
             let (hdr, payload) = match me_receiver.try_recv() {
                 CastRecv::Data(h, p) => (h, p),
@@ -797,26 +670,17 @@ fn run_main(
                 RECORD_BBO => if let Some(rec) =
                     decode_payload::<BboRecord>(&payload)
                 {
-                    // BBO is a "latest wins" state snapshot;
-                    // drops are safe but counted so this is
-                    // never silent.
-                    if bbo_prod.push(BboUpdate {
+                    // BBO is a "latest wins" state snapshot.
+                    // Stash (coalesces per symbol); the tick
+                    // drains + runs the per-BBO margin scan.
+                    shard.stash_bbo(BboUpdate {
                         seq: rec.seq,
                         symbol_id: rec.symbol_id,
                         bid_px: rec.bid_px.0,
                         bid_qty: rec.bid_qty.0,
                         ask_px: rec.ask_px.0,
                         ask_qty: rec.ask_qty.0,
-                    }).is_err() {
-                        bbo_drops =
-                            bbo_drops.wrapping_add(1);
-                        if bbo_drops.is_power_of_two() {
-                            warn!(
-                                "bbo_prod ring full, drops={}",
-                                bbo_drops,
-                            );
-                        }
-                    }
+                    });
                     // Forward to GW to maintain CMP seq
                     // continuity (GW ignores BBO content).
                     forward_to_gw(&mut gw_sender, RECORD_BBO, &payload);
@@ -854,12 +718,12 @@ fn run_main(
                         rsx_log::latency::sample("risk_out", fill.taker_order_id_hi, fill.taker_order_id_lo, t_us, anchor_ns);
                     }
                     // Fills are correctness-critical:
-                    // position == sum(fills). Stall and
-                    // drain via shard.run_once rather than
-                    // drop. Bounded retry: SPSC consumer
-                    // is in-process so this resolves in a
-                    // few iterations.
-                    let mut event = FillEvent {
+                    // position == sum(fills). Process
+                    // directly on this thread (no input
+                    // ring) — process_fill only touches
+                    // shard state and the persist ring,
+                    // which has its own stall path.
+                    let event = FillEvent {
                         seq: fill.seq,
                         symbol_id: fill.symbol_id,
                         taker_user_id: fill
@@ -871,31 +735,7 @@ fn run_main(
                         taker_side: fill.taker_side,
                         timestamp_ns: fill.ts_ns,
                     };
-                    loop {
-                        match fill_prod.push(event) {
-                            Ok(()) => break,
-                            Err(rtrb::PushError::Full(
-                                ev,
-                            )) => {
-                                event = ev;
-                                fill_stalls = fill_stalls
-                                    .wrapping_add(1);
-                                if fill_stalls
-                                    .is_power_of_two()
-                                {
-                                    warn!(
-                                        "fill_prod full, \
-                                         stalling (count={})",
-                                        fill_stalls,
-                                    );
-                                }
-                                shard.run_once(
-                                    &mut rings,
-                                    now_secs,
-                                );
-                            }
-                        }
-                    }
+                    shard.process_fill(&event);
                     // Forward fill to GW
                     forward_to_gw(&mut gw_sender, RECORD_FILL, &payload);
                     // Sub-stage: CMP send to gateway completed.
@@ -989,6 +829,122 @@ fn run_main(
             }
         }
 
+        // Orders/cancels from Gateway.
+        loop {
+            // Egress backpressure: if either output ring is
+            // full a processed order's response/accepted push
+            // would have nowhere to go. Stop draining the
+            // socket this iteration — the kernel recv buffer
+            // absorbs, the main loop drains the output rings
+            // below, and we resume next iteration. Same end
+            // state as the old order_prod stall, no drop.
+            if rings.response_producer.is_full()
+                || rings.accepted_producer.is_full()
+            {
+                break;
+            }
+            let (hdr, payload) = match gw_receiver.try_recv() {
+                CastRecv::Data(h, p) => (h, p),
+                CastRecv::Empty => break,
+                CastRecv::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => {
+                    let new_tip = handle_replay(
+                        "risk.gw",
+                        "RSX_GW_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    gw_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+                CastRecv::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "risk.gw",
+                        "RSX_GW_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    gw_receiver.reset_after_replay(new_tip);
+                    continue;
+                }
+            };
+            {
+            match hdr.record_type {
+                RECORD_ORDER_REQUEST => if let Some(order) =
+                    decode_payload::<OrderRequest>(&payload)
+                {
+                    // F4.3 — per-stage latency trace.
+                    // Stage `risk_in` = order arrived from
+                    // gateway. t_us measured against the
+                    // gateway's submit timestamp.
+                    {
+                        let now_ns = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos() as u64)
+                            .unwrap_or(0);
+                        let t_us = now_ns
+                            .saturating_sub(order.timestamp_ns)
+                            / 1000;
+                        rsx_log::latency::sample("risk_in", order.order_id_hi, order.order_id_lo, t_us, order.timestamp_ns);
+                    }
+                    // Process directly on this thread (no input
+                    // ring). The loop head guarantees both output
+                    // rings have a free slot, so neither push can
+                    // fail — a dropped response/accepted would be
+                    // a silent ghost order (gateway thinks it's
+                    // pending, ME never sees it). R-N2.
+                    let resp = shard.process_order(&order);
+                    if matches!(
+                        resp,
+                        OrderResponse::Accepted { .. }
+                    ) {
+                        rings.accepted_producer
+                            .push(order)
+                            .expect(
+                                "INVARIANT: accepted_producer \
+                                 capacity checked at loop head",
+                            );
+                    }
+                    rings.response_producer
+                        .push(resp)
+                        .expect(
+                            "INVARIANT: response_producer \
+                             capacity checked at loop head",
+                        );
+                }
+                RECORD_CANCEL_REQUEST => if let Some(cancel) =
+                    decode_payload::<CancelRequest>(&payload)
+                {
+                    // Forward cancel to correct ME.
+                    if let Some(s) = me_senders
+                        .get_mut(&cancel.symbol_id)
+                    {
+                        if let Err(e) = s.send_raw(
+                            RECORD_CANCEL_REQUEST,
+                            &payload,
+                        ) {
+                            warn!("risk: forward cancel to me failed: {e}");
+                        }
+                    } else {
+                        warn!(
+                            "cancel for unknown \
+                             symbol_id={}",
+                            cancel.symbol_id
+                        );
+                    }
+                }
+                _ => {}
+            }
+            }
+        }
+
         // Mark prices from Mark process
         loop {
             let (preamble, payload) = match mark_receiver
@@ -1025,33 +981,19 @@ fn run_main(
                     continue;
                 }
             };
-            {
             if preamble.record_type == RECORD_MARK_PRICE {
                 if let Some(rec) = decode_payload::<MarkPriceRecord>(&payload) {
-                    // Mark price is "latest wins" state;
-                    // drops are safe but counted so this is
-                    // never silent.
-                    if mark_prod.push(MarkPriceUpdate {
-                        seq: rec.seq,
-                        symbol_id: rec.symbol_id,
-                        price: rec.mark_price.0,
-                    }).is_err() {
-                        mark_drops =
-                            mark_drops.wrapping_add(1);
-                        if mark_drops.is_power_of_two() {
-                            warn!(
-                                "mark_prod ring full, drops={}",
-                                mark_drops,
-                            );
-                        }
-                    }
+                    // Latest-wins state; applied directly on the
+                    // tile (no ring — recv and shard share a thread).
+                    shard.update_mark(rec.symbol_id, rec.mark_price.0);
                 }
-            }
             }
         }
 
-        // Run risk engine
-        shard.run_once(&mut rings, now_secs);
+        // Periodic risk work (liquidation sweep, tip persist,
+        // stashed-BBO drain) — inputs are processed directly in
+        // the recv handlers above.
+        shard.tick(&mut rings, now_secs);
 
         // Drain responses: send ORDER_FAILED to GW
         while let Ok(resp) = resp_cons.pop() {
