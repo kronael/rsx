@@ -1,6 +1,27 @@
 # Bug queue
 
-## SEQ-1 — casting seq-space collision on filtered fan-out streams (CRITICAL)
+## SEQ-1 — casting seq-space collision on filtered fan-out streams (CRITICAL) — RESOLVED 2026-05-29
+
+**Status: FIXED.** Steady-state FAULTED count is now 0/15s on all three
+streams (was ~2/sec on risk+marketdata, ~34/min on gateway). The e2e latency
+probe went from 5–17 clean samples (mostly timeouts) to **551/500 ok, 0 fail**.
+
+**Fixes shipped:**
+- ME `publish_events`: OrderDone, OrderFailed, and BBO now fan out to BOTH
+  risk+marketdata on the single WAL seq (BBO was using CastSender's own
+  next_seq counter — the desync root cause; now WAL'd).
+- ME main loop: OrderAccepted (was WAL-only) and duplicate-reject (was
+  cmp-only) now fan to both — they consume a WAL seq, so skipping a stream
+  punched a hole. OrderAccepted fires per resting order → was the ~2/sec rate.
+- risk→gateway: all sends go through `forward_to_gw`, which renumbers with
+  gw_sender's own contiguous seq (fixes the seq=0 margin-reject the gateway
+  dropped, and ME-seq-space holes). Gateway never replays from risk → safe.
+
+Original diagnosis kept below for reference.
+
+---
+
+## SEQ-1 (original diagnosis)
 
 **Symptom:** constant FAULTED replay storms on the ME→risk, ME→marketdata,
 and risk→gateway casting streams, even with **zero kernel packet loss**
