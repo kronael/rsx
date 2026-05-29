@@ -1021,7 +1021,13 @@ impl RiskShard {
 
     /// One iteration of the main loop.
     /// Priority: fills > orders > mark > bbo > funding.
-    pub fn run_once(
+    /// Periodic tick: runs the liquidation sweep, tip/funding
+    /// settlement, and BBO drain. Order/fill/bbo/mark INGEST is
+    /// done directly by the recv loop (same thread) via
+    /// `process_order`/`process_fill`/`stash_bbo`/`update_mark`.
+    /// This keeps only the work that is time-driven rather than
+    /// message-driven, plus the egress-ring backpressure stall.
+    pub fn tick(
         &mut self,
         rings: &mut ShardRings,
         now_secs: u64,
@@ -1040,7 +1046,7 @@ impl RiskShard {
         }
 
         // Downstream backpressure: if the accepted-order
-        // or response ring is full, drained orders would
+        // or response ring is full, liquidation orders would
         // have to be dropped to push. Stall instead so
         // upstream (gateway/main-loop) sees the back-
         // pressure and queues at the receiver side.
@@ -1057,14 +1063,7 @@ impl RiskShard {
             return;
         }
 
-        // 1. Drain all fills (highest priority)
-        for consumer in &mut rings.fill_consumers {
-            while let Ok(fill) = consumer.pop() {
-                self.process_fill(&fill);
-            }
-        }
-
-        // 1b. Process pending liquidations
+        // 1. Process pending liquidations
         let now_ns = now_secs * 1_000_000_000;
         let (liq_orders, socialized_losses) = {
             let positions = &self.positions;
@@ -1126,55 +1125,12 @@ impl RiskShard {
 
         self.liquidation.remove_done();
 
-        // 2. Drain orders. Stop if either downstream ring
-        // fills up mid-batch: pop'd order's response would
-        // otherwise vanish silently. Stall until next tick.
-        while !rings.accepted_producer.is_full()
-            && !rings.response_producer.is_full()
-        {
-            let order = match rings.order_consumer.pop() {
-                Ok(o) => o,
-                Err(_) => break,
-            };
-            let resp = self.process_order(&order);
-            if matches!(
-                resp,
-                OrderResponse::Accepted { .. }
-            ) {
-                rings.accepted_producer
-                    .push(order.clone())
-                    .expect(
-                        "INVARIANT: accepted_producer \
-                         capacity checked at loop head",
-                    );
-            }
-            rings.response_producer
-                .push(resp)
-                .expect(
-                    "INVARIANT: response_producer \
-                     capacity checked at loop head",
-                );
-        }
-        if rings.accepted_producer.is_full()
-            || rings.response_producer.is_full()
-        {
-            self.backpressured = true;
-        }
-
-        // 3. Drain mark price updates
-        while let Ok(mark) = rings.mark_consumer.pop() {
-            self.update_mark(mark.symbol_id, mark.price);
-        }
-
-        // 4. Drain BBOs
-        for consumer in &mut rings.bbo_consumers {
-            while let Ok(bbo) = consumer.pop() {
-                self.stash_bbo(bbo);
-            }
-        }
+        // 2. Apply coalesced BBOs (recv loop stashed them;
+        // drain runs the per-BBO margin scan anchored on this
+        // tick's now_ns).
         self.drain_stashed_bbos(now_ns);
 
-        // 5. Funding settlement
+        // 3. Funding settlement
         self.maybe_settle_funding(now_secs);
     }
 
