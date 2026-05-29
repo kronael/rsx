@@ -13,7 +13,9 @@ use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::RECORD_BBO;
+use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_MARK_PRICE;
@@ -942,6 +944,21 @@ fn run_main(
                 }
                 RECORD_ORDER_INSERTED => if decode_payload::<OrderInsertedRecord>(&payload).is_some() {
                     forward_to_gw(&mut gw_sender, RECORD_ORDER_INSERTED, &payload);
+                }
+                RECORD_ORDER_ACCEPTED => if let Some(rec) =
+                    decode_payload::<OrderAcceptedRecord>(&payload)
+                {
+                    // ME confirmed the order: now (and only now)
+                    // write the durable freeze. Reduce-only orders
+                    // reserve no margin, so nothing to persist.
+                    if rec.reduce_only == 0 {
+                        shard.confirm_freeze(
+                            rec.user_id,
+                            rec.order_id_hi,
+                            rec.order_id_lo,
+                            rec.symbol_id,
+                        );
+                    }
                 }
                 RECORD_ORDER_FAILED => if let Some(rec) =
                     decode_payload::<OrderFailedRecord>(&payload)
