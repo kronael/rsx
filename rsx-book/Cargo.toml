@@ -14,3 +14,7 @@ criterion = "0.5"
 [[bench]]
 name = "book_bench"
 harness = false
+
+[[bench]]
+name = "deep_book_bench"
+harness = false
