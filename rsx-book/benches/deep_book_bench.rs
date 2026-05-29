@@ -9,9 +9,11 @@
 //!   never accumulates events across iterations.
 //!
 //! Distributions:
-//! - prices ~ Normal(mid, SIGMA), assigned to bid/ask side with a fixed
-//!   half-spread so the seed is never crossed (bids < mid-HS, asks > mid+HS).
-//! - resting size ~ BASE * (1 + K*dist/SIGMA) * Unif(0.5,1.5): grows with
+//! - price offset ~ Student-t(NU) * SCALE — heavy-tailed (fat tails, like
+//!   real markets), assigned to bid/ask side with a fixed half-spread so
+//!   the seed is never crossed (bids < mid-HS, asks > mid+HS). Offset is
+//!   clamped to MAX_OFF so extreme tail draws stay inside the price range.
+//! - resting size ~ BASE * (1 + K*dist/SCALE) * Unif(0.5,1.5): grows with
 //!   distance from the mean (deeper levels carry more size).
 //! - taker (fill) size ~ BASE * (1 + Exp(mean=1)), side ~ Bernoulli(0.5):
 //!   simple, occasionally sweeps a few levels.
@@ -35,7 +37,9 @@ use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
 
 const MID: i64 = 1_000_000;
-const SIGMA: f64 = 20_000.0; // ~2% of mid
+const SCALE: f64 = 12_000.0; // Student-t scale (body ~ prior normal sigma)
+const NU: u32 = 3; // t degrees of freedom: low = heavy tails
+const MAX_OFF: i64 = 450_000; // clamp extreme tail draws into price range
 const HALF_SPREAD: i64 = 50; // guarantees bids < asks at seed
 const BASE: f64 = 100.0; // base resting/taker size (lots)
 const SIZE_K: f64 = 0.5; // resting size growth with distance from mean
@@ -80,16 +84,28 @@ impl Rng {
     fn exp(&mut self, mean: f64) -> f64 {
         -mean * self.unif().max(1e-12).ln()
     }
+    /// Student-t with `nu` degrees of freedom: t = Z / sqrt(chi2_nu / nu).
+    /// Low nu => heavy tails (fat-tailed price spread, like real markets).
+    fn student_t(&mut self, nu: u32) -> f64 {
+        let z = self.normal();
+        let mut chi2 = 0.0;
+        for _ in 0..nu {
+            let n = self.normal();
+            chi2 += n * n;
+        }
+        z / (chi2 / nu as f64).sqrt()
+    }
 }
 
 /// Draw one resting order: normal price around mid, side by coin flip,
 /// size that grows with distance from the mean.
 fn draw_resting(rng: &mut Rng) -> (i64, i64, Side) {
-    let off = HALF_SPREAD + (rng.normal().abs() * SIGMA).round() as i64;
+    let raw = (rng.student_t(NU).abs() * SCALE).round() as i64;
+    let off = (HALF_SPREAD + raw).min(MAX_OFF);
     let buy = rng.next_u64() & 1 == 0;
     let price = if buy { MID - off } else { MID + off };
     let noise = 0.5 + rng.unif(); // [0.5, 1.5)
-    let qty = (BASE * (1.0 + SIZE_K * off as f64 / SIGMA) * noise)
+    let qty = (BASE * (1.0 + SIZE_K * off as f64 / SCALE) * noise)
         .round()
         .max(1.0) as i64;
     (price, qty, if buy { Side::Buy } else { Side::Sell })
