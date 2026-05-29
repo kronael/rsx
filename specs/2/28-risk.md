@@ -8,6 +8,7 @@ status: shipped
 
 - [Context](#context)
 - [Architecture Overview](#architecture-overview)
+- [Return Path (output leg)](#return-path-output-leg)
 - [Components](#components)
 - [Persistence](#persistence)
 - [Replication & Failover](#replication--failover)
@@ -49,6 +50,10 @@ Gateway -[casting/UDP]-> Risk Shard (main) -[casting/UDP]-> Matching Engines
 - Each shard consumes **all symbols** (filters fills for its users)
 - Hot path is single-threaded, busy-spin on dedicated core
 - Postgres write-behind on separate thread (10ms flush)
+- The output leg (fills → client) is moving off Risk to **ME → GW
+  direct**, with `ME → Risk` async for settle — see
+  [Return Path](#return-path-output-leg). The diagram's fills→Risk
+  arrow is that async settle stream.
 
 ### Tile arrangement
 
@@ -75,6 +80,70 @@ The persist sidecar runs on its own `tokio::runtime::current_thread`
 in a dedicated `std::thread::spawn` (see `run_main` — separate from
 the lease/migration runtime). It owns its own Postgres client and
 shares no locks with the pinned tile.
+
+## Return Path (output leg)
+
+Risk is the margin authority and **brackets** the matching engine: it
+*reserves* margin before execution and *settles* it after. But only the
+reserve is synchronous on the order's path — the settle is **async**.
+
+```
+                 reserve (sync)            execute
+Gateway --[order]--> Risk --[order]--> Matching Engine
+   ^                  ^                      |
+   |                  | ME→Risk (async:      | ME→GW (direct:
+   |                  |  fills, BBO — settle) |  fill / DONE / FAILED)
+   |                  +----------------------+
+   +-------------------------------------------+
+```
+
+- **Input leg — reserve (synchronous):** `GW → Risk → ME`. Pre-trade
+  check + **freeze worst-case margin** (`notional × im_rate + fee`),
+  then forward. A hard gate — without it ME could execute an order the
+  user can't back. See [Pre-Trade Risk Check](#6-pre-trade-risk-check).
+- **Confirmation — `ME → GW` direct (critical path):** the fill /
+  `ORDER_DONE` / `ORDER_FAILED` reaches the client in **3 hops**. The
+  gateway is a **direct casting consumer of ME** (alongside marketdata),
+  tracking per-symbol seq for gap detection.
+- **Settle — `ME → Risk` (async, off critical path):** Risk applies the
+  fill to the position and releases the frozen reservation (`apply_fill`
+  on FILL, `release_frozen_for_order` on DONE / CANCELLED / FAILED). Not
+  on the client path.
+
+Client-visible path is **3 hops** (vs 4 if Risk forwarded), ~7.6 µs
+saved (~half the round-trip; see the casting loopback RTT bench).
+
+Why it is safe:
+
+1. The input freeze is **worst-case** → no over-leverage in the async
+   gap; the order was already margin-gated on the way in.
+2. Fills are **authoritative** — Risk reconciles *to* them, never
+   rejects. The ME confirmation is always valid.
+3. Risk recovers via **orderbook-WAL replay** (gap detection unchanged),
+   so being off the return leg does not affect crash-safety.
+
+Trade-off — **margin is eventually-consistent (no read-your-writes).**
+The client learns order A's outcome from ME before Risk processed A's
+release; a sub-millisecond client reusing freed margin within the async
+lag (≈ one `ME→Risk` hop + Risk queue, µs-scale) can get order B
+spuriously rejected / under-credited. **Solvency is never at risk** —
+only a fast client racing its own freed margin. A capital/UX cost, not
+a safety one; acceptable for the demo.
+
+**Hybrid escape hatch** (if read-your-writes is later required, e.g. to
+court capital-recycling HFT market-makers): keep `ME → GW` for fast
+notifications, but have the gateway hold a per-user "next
+margin-affecting order waits for Risk's margin-update ack" — restoring
+read-your-writes at the cost of gateway state + a thin `Risk → GW`
+margin-delta stream (not the full fill).
+
+> **Status — `partial`.** The input leg + worst-case freeze are
+> shipped. The async output split is **not yet implemented**: code today
+> still routes the output leg back through Risk (`forward_to_gw` + the
+> `response` shard→gateway ring). Reaching this spec means ME adds the
+> gateway as a fan-out target, the gateway tracks per-symbol seq, and
+> Risk drops `forward_to_gw` / the `response` ring. **rsx-cast is
+> unchanged** (caller-level fan-out only — the freeze holds).
 
 ## Components
 
