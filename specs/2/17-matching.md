@@ -51,9 +51,16 @@ For every casting/UDP order frame:
    `append_framed` / `send_framed`. WAL is authoritative; WAL
    failure panics. Cast sends are best-effort and only warn on
    failure (receivers recover via NAK / replication-TCP replay).
-   `BBO` is the one event not framed by the WAL; both senders
-   use their own seq counter via `CastSender::send` for that
-   record.
+   EVERY emitted record — `Fill`, `OrderInserted`,
+   `OrderCancelled`, `OrderDone`, `OrderFailed`, `OrderAccepted`,
+   the duplicate-reject, and `BBO` — is framed on the single WAL
+   seq and fanned to BOTH senders. There is no selective fan-out
+   and no per-sender seq counter: a record skipped on one stream,
+   or numbered from a second counter, leaves a seq hole the
+   receiver reads as a gap → false FAULTED. (This was bug SEQ-1,
+   fixed 2026-05-29; `BBO` previously used `CastSender::send` with
+   its own counter, which desynced from the WAL seq.) Consumers
+   ignore record types they don't handle.
 5. **Maintain cancel index** — walk `book.events()` and update
    the O(1) cancel index (see below).
 

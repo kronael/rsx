@@ -48,19 +48,36 @@ Additionally, Recorder instances connect as replication consumers
 ([replication.md](replication.md) section 8) to archive event streams to daily
 files. Recorders are asynchronous — they do not affect the hot path.
 
-Event routing (transport-agnostic):
+**Transport fan-out (what each direct consumer receives on the
+wire).** ME fans **every** emitted record — `Fill`, `BBO`,
+`OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`,
+`OrderAccepted`, and the duplicate-reject — to **both** of its
+direct casting consumers (Risk and MktData) on the **single WAL
+seq**. This is mandatory, not optional: each casting stream does
+seq-gap detection, so a record skipped on a stream (or numbered
+from a second counter) is a hole the receiver reads as a gap →
+false FAULTED. This was bug **SEQ-1** (fixed 2026-05-29). The
+Gateway is **not** a direct ME consumer — Risk forwards to it on
+a re-sequenced stream (Risk renumbers with its own contiguous
+gateway-seq; see RISK.md `forward_to_gw`).
 
-| Event           | Risk | Gateway | MktData |
-|-----------------|------|---------|---------|
-| Fill            | yes  | yes     | yes     |
-| BBO             | yes  | no      | no      |
-| OrderInserted   | no   | no      | yes     |
-| OrderCancelled  | no   | yes     | yes     |
-| OrderDone       | yes  | yes     | no      |
+**Logical consumption (which events each consumer acts on).**
+Consumers receive the full stream but only process the types they
+care about; the rest are ignored (`_ => {}`):
+
+| Event           | Risk acts | Gateway acts | MktData acts |
+|-----------------|-----------|--------------|--------------|
+| Fill            | yes (position) | yes (client) | yes (trade) |
+| BBO             | yes (index px) | no       | derives own  |
+| OrderInserted   | no        | yes (ack)    | yes (book)   |
+| OrderCancelled  | yes (unfreeze) | yes     | yes (book)   |
+| OrderDone       | yes (unfreeze) | yes (client) | no       |
+| OrderFailed     | no        | yes (reject) | no           |
+| OrderAccepted   | no (dedup record) | no   | no           |
 
 BBO emitted by ME after any order that changes best bid/ask.
 Risk uses it for index price. MktData derives its own BBO from
-shadow book.
+its shadow book (it receives ME's BBO on the wire but ignores it).
 
 Fills also update ME-internal position tracking (section 6.5
 of ORDERBOOK.md) for reduce-only enforcement. No new event row
@@ -131,31 +148,19 @@ for step-by-step operational recovery procedures.
 ## Drain Loop Pseudocode (casting)
 
 ```rust
+// SEQ-1: uniform fan-out. EVERY record is framed on the single
+// WAL seq and sent to BOTH direct consumers (risk + market_data).
+// No selective routing — that would punch seq holes → FAULTED.
+// Gateway is downstream of risk (risk re-sequences its gw stream),
+// so it is not a direct fan-out target here.
 fn drain_events(book: &Orderbook, links: &mut FanOutLinks) {
     for i in 0..book.event_len {
         let event = &book.event_buf[i as usize];
-
-        match event {
-            Event::Fill { .. } => {
-                links.risk.send_cmp(event);
-                links.gateway.send_cmp(event);
-                links.market_data.send_cmp(event);
-            }
-            Event::OrderDone { .. } => {
-                links.risk.send_cmp(event);
-                links.gateway.send_cmp(event);
-            }
-            Event::OrderCancelled { .. } => {
-                links.gateway.send_cmp(event);
-                links.market_data.send_cmp(event);
-            }
-            Event::OrderInserted { .. } => {
-                links.market_data.send_cmp(event);
-            }
-            Event::BBO { .. } => {
-                links.risk.send_cmp(event);
-            }
-        }
+        // one prepare → one WAL seq + CRC → append + send to both
+        let framed = links.wal.prepare(event);
+        links.wal.append_framed(&framed);
+        links.risk.send_framed(&framed);
+        links.market_data.send_framed(&framed);
     }
 }
 ```
