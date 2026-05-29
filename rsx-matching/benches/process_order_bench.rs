@@ -200,6 +200,16 @@ fn bench_me_accept_path(c: &mut Criterion) {
             )
             .unwrap();
 
+            // Drain the WAL buffer periodically WITHOUT fsync. The
+            // per-order hot path is a memcpy into the buffer; fsync
+            // is batched every 10ms off-path, so it must not be in
+            // the timed loop. reset_write_buf clears the buffer with
+            // no disk I/O, keeping it bounded across the criterion
+            // run while preserving the true in-memory append cost.
+            if counter % 1024 == 0 {
+                wal.reset_write_buf();
+            }
+
             // Maintain order index (O(1) cancels later).
             update_index(book.events(), &mut index);
         });
