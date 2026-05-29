@@ -4,6 +4,27 @@ This file is local to the `rsx-cast/` crate. It records the README +
 docs conventions specific to this crate. Inherits everything from the
 repo-root `../CLAUDE.md`.
 
+## FROZEN — done, v0.5.2 (as of 2026-05-29)
+
+**rsx-cast is complete and frozen. It accepts BUGFIXES ONLY.**
+
+- A **bugfix** = restoring documented/intended behavior (a CRC error,
+  a crash, a wire-format mismatch, a NAK/replay correctness fault).
+  Fix it, note it in CHANGELOG, done.
+- **Any other change** — new API, new record type, signature change,
+  behavior change, refactor, "improvement", dependency bump,
+  performance rework — requires **explicit sign-off from the founder
+  before writing code**. Propose it, get a yes, then implement. Do
+  NOT change rsx-cast as a side effect of work in another crate.
+- If a task in another crate seems to *need* an rsx-cast change,
+  stop and ask first — usually the right fix is in the caller.
+- The SEQ-1 fix (2026-05-29) lived in the CALLERS (rsx-matching,
+  rsx-risk), NOT in rsx-cast — that is the correct pattern. The
+  transport was sound; the producers mis-sequenced their fan-out.
+
+Rationale: rsx-cast is the extractable, stable artifact. Churn here
+ripples into every process. Stability > cleverness.
+
 ## Runtime — NEVER add one
 
 `rsx-cast` has zero runtime deps and must stay that way. `CastSender`,
