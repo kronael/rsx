@@ -21,7 +21,6 @@ phase-1 historical specs.
 | 25 | [25-process.md](25-process.md) | shipped | Process + tile composition per binary |
 | 45 | [45-tiles.md](45-tiles.md) | partial | Pinned-thread tile architecture |
 | 20 | [20-network.md](20-network.md) | shipped | System network topology |
-| 50 | [50-wedge.md](50-wedge.md) | shipped | **Wedge decision: open-source orthogonal libs + exchange-in-a-box** |
 
 ## Wire + transport (rsx-cast)
 
