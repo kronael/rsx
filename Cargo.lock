@@ -2394,6 +2394,7 @@ dependencies = [
 name = "rsx-mark"
 version = "0.2.0"
 dependencies = [
+ "core_affinity",
  "criterion",
  "futures-util",
  "rsx-cast",

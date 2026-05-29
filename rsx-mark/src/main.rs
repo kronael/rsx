@@ -52,6 +52,22 @@ fn log_effective_mark_config(config: &MarkConfig) {
 }
 
 fn run(config: &MarkConfig) -> io::Result<()> {
+    // Mark busy-spins (see main loop below) and MUST own a
+    // dedicated core. Unpinned, it floats onto a hot-path
+    // core (gateway/risk/ME) and starves it — the starved
+    // consumer then can't drain its UDP socket, the kernel
+    // RcvbufErrors, and packets drop. Pin it.
+    if let Ok(core_str) = std::env::var("RSX_MARK_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let ids = core_affinity::get_core_ids()
+                .unwrap_or_default();
+            if let Some(id) = ids.get(core_id) {
+                core_affinity::set_for_current(*id);
+                tracing::info!("mark pinned to core {}", core_id);
+            }
+        }
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
