@@ -380,7 +380,11 @@ pub fn publish_events(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                fan_out(writer, cmp, None, &mut record)?;
+                // SEQ-1: full fan-out to BOTH streams. Sending to
+                // only one consumer leaves a WAL-seq hole on the
+                // other → false FAULTED. marketdata ignores types
+                // it doesn't handle.
+                fan_out(writer, cmp, Some(mkt), &mut record)?;
             }
             Event::OrderFailed {
                 user_id,
@@ -398,11 +402,12 @@ pub fn publish_events(
                     reason,
                     _pad: [0; 23],
                 };
-                // WAL-only — solo `append` keeps one CRC.
-                {
-                    let framed = writer.prepare(&mut record)?;
-                    writer.append_framed(&framed)?;
-                }
+                // SEQ-1: was WAL-only, which left a seq hole on
+                // both live streams every time an order failed at
+                // ME. Fan out to both so the seq stays contiguous;
+                // the gateway also needs ORDER_FAILED to tell the
+                // client its order was rejected.
+                fan_out(writer, cmp, Some(mkt), &mut record)?;
             }
             Event::BBO {
                 bid_px,
@@ -410,13 +415,17 @@ pub fn publish_events(
                 ask_px,
                 ask_qty,
             } => {
-                // BBO is not persisted to WAL (derived on
-                // replay). Each destination is an independent
-                // cast stream with its own seq counter, so
-                // send() assigns seq + CRC per call. Two calls
-                // = two CRC computations — this is correct;
-                // fan_out() can't be used here because BBO has
-                // no WAL writer to supply a shared seq.
+                // SEQ-1 (the bug that caused the FAULTED storms):
+                // BBO previously used cmp.send()/mkt.send(), which
+                // stamp the CastSender's OWN next_seq — a different
+                // counter from the WAL seq used by send_framed for
+                // every other record. Since BBO wasn't WAL'd, the
+                // two counters desynced and the wire seq regressed
+                // → "sender reset detected" → FAULTED. Route BBO
+                // through fan_out on the single WAL seq like every
+                // other record. It is now WAL'd (cheap; replay
+                // skips it since BBO is re-derived) so live seq ==
+                // replay seq and both streams stay contiguous.
                 let mut record = rsx_messages::BboRecord {
                     seq: 0,
                     ts_ns,
@@ -431,12 +440,7 @@ pub fn publish_events(
                     ask_count: 0,
                     _pad2: 0,
                 };
-                if let Err(e) = cmp.send(&mut record) {
-                    warn!("cmp send BBO failed: {e}");
-                }
-                if let Err(e) = mkt.send(&mut record) {
-                    warn!("mkt send BBO failed: {e}");
-                }
+                fan_out(writer, cmp, Some(mkt), &mut record)?;
             }
         }
     }
