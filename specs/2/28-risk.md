@@ -137,6 +137,67 @@ margin-affecting order waits for Risk's margin-update ack" — restoring
 read-your-writes at the cost of gateway state + a thin `Risk → GW`
 margin-delta stream (not the full fill).
 
+### Reply delivery & idempotency
+
+The client gets **no reply until a response propagates back** — there is
+no optimistic gateway ack. So a crash, a dropped datagram, or a WS
+timeout anywhere on the path means the client **may never receive the
+reply**, even though the order may have executed. This is inherent: the
+order's outcome is durable in the **ME WAL** (a fill is journaled before
+anyone is told); only the *notification* is at-most-once.
+
+Recovery is **exactly-once execution + at-most-once notification +
+idempotent retry**:
+
+1. **`cid` idempotent resubmit** — dedup is persisted in the WAL
+   (`RECORD_ORDER_ACCEPTED`). A retry of an order that already executed
+   is deduped (no double-execution); a retry of one that never executed
+   runs once. Safe regardless of which delivery was lost.
+2. **Reconcile on reconnect** — the client queries open-orders /
+   fills-since-seq and learns the true state from the durable log.
+
+**Order expiry (`valid_until`) — NOT YET SUPPORTED.** TimeInForce is only
+`GTC | IOC | FOK`; there is no client-set good-till-date. A `valid_until`
+timestamp would bound the worst case (a resting order whose owner lost
+the connection self-cancels at its deadline, releasing its freeze) and
+is the recommended addition. It does **not** by itself fix the
+orphan-freeze below (an order ME never accepted has nothing to expire) —
+that needs WAL reconciliation.
+
+### Failure handling (every step)
+
+| Step | Logical fail | Crash / loss |
+|------|--------------|--------------|
+| Client→GW | malformed/auth → GW rejects to client over WS | GW stateless → client reconnects, resubmits (`cid`) |
+| GW→Risk | — | intents **not WAL'd** → lost → client timeout → resubmit |
+| Risk check+freeze | insufficient margin → **`Risk → GW` reject** (the one client-bound msg that originates at Risk, not ME — this reverse edge cannot be removed) | freeze applied + write-behind to PG **pre-send** → orphan freeze if Risk dies before ME accepts (see below) |
+| Risk→ME | — | order lost pre-exec → resubmit; freeze self-heals (never reconstructed from WAL) |
+| ME match | post-only-cross→`CANCELLED`; IOC no-fill→`DONE`; FOK/reduce-only→`FAILED` — all ME-originated → `ME→GW` + `ME→Risk` | WAL authoritative to last flush; hot-spare ME + WAL replay rebuilds book |
+| ME→GW (confirm) | — | **confirmation lost ≠ fill lost**; client reconciles via fills-since-seq |
+| ME→Risk (settle) | — | Risk behind/crashes → WAL replay rebuilds positions (`apply_fill`) + freezes (`replay_freeze_order` from `OrderAccepted`) + releases |
+
+**Invariants that make every crash survivable:** `cid` idempotency;
+ME WAL is the authority; freezes are rebuilt from WAL `OrderAccepted`
+(so a freeze ME never accepted self-heals); worst-case freeze makes async
+settle safe; tips monotonic ⇒ idempotent replay from tip+1.
+
+### Open bug — orphan freeze (reconcile from WAL)
+
+`process_order` (`shard.rs`) freezes in-memory **and write-behinds a
+`FrozenInsert` to PG before forwarding to ME**. If Risk dies (or the
+`Risk→ME` send drops) after that PG write but before ME accepts the
+order, recovery loads the PG snapshot with a freeze that has **no
+`OrderAccepted` and no release in the WAL** — a phantom hold on the
+user's margin that never clears.
+
+**Fix — the WAL `OrderAccepted` stream is the sole authority for
+freezes.** On recovery, reconcile the PG `frozen_orders` snapshot against
+the WAL: drop any frozen order the WAL never confirms. Equivalently,
+write-behind the durable freeze **on `OrderAccepted` ingestion** (ME
+confirmed) rather than pre-send, so PG can never hold an unconfirmed
+freeze. The pre-send in-memory freeze (needed for the pre-trade gate)
+stays; only its *durable* record moves to the WAL-confirmed point.
+
 > **Status — `partial`.** The input leg + worst-case freeze are
 > shipped. The async output split is **not yet implemented**: code today
 > still routes the output leg back through Risk (`forward_to_gw` + the

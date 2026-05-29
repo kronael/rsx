@@ -1,5 +1,26 @@
 # Bug queue
 
+## ORPHAN-FREEZE — phantom margin hold survives risk recovery (correctness)
+
+**Status: OPEN.** `process_order` (`rsx-risk/src/shard.rs:580`) freezes
+in-memory AND write-behinds a `FrozenInsert` to PG **before forwarding to
+ME**. If risk dies (or the risk→ME send drops) after the PG write but
+before ME accepts, recovery loads the PG `frozen_orders` snapshot with a
+freeze that has **no `OrderAccepted` and no release in the WAL** → a
+permanent phantom hold on the user's available margin.
+
+**Fix (user-confirmed: "reconcile from the WAL"):** make the WAL
+`OrderAccepted` stream the sole authority for freezes. Either (a) on
+recovery reconcile the PG snapshot against the WAL and drop freezes the
+WAL never confirms, or (b) write-behind the durable freeze on
+`OrderAccepted` ingestion (ME-confirmed) instead of pre-send. The
+in-memory pre-send freeze (pre-trade gate) stays; only its durable record
+moves to the WAL-confirmed point. Spec: `specs/2/28-risk.md` Return Path.
+
+**Related:** no `valid_until`/GTD exists (TIF = GTC|IOC|FOK only); adding
+one would bound lost-reply/orphan resting-order lifetime but does NOT fix
+this (an order ME never accepted has nothing to expire).
+
 ## SEQ-1 — casting seq-space collision on filtered fan-out streams (CRITICAL) — RESOLVED 2026-05-29
 
 **Status: FIXED.** Steady-state FAULTED count is now 0/15s on all three
