@@ -315,6 +315,36 @@ fn handle_replay(
     new_tip
 }
 
+/// Forward a record onto risk's gateway stream, renumbering it
+/// with `gw`'s own contiguous seq (SEQ-1 fix). Risk's gateway
+/// stream multiplexes forwarded ME records AND risk-generated
+/// margin rejects; preserving ME's seq (or the reject's seq=0)
+/// leaves holes the gateway reads as FAULTED, and seq=0 records
+/// are dropped outright by the receiver. The gateway never
+/// replays *from* risk, so renumbering is safe — the seq is
+/// transport-only on this hop; the record is identified by its
+/// order_id. CRC is recomputed by `send_raw` over the restamped
+/// payload.
+fn forward_to_gw(
+    gw: &mut CastSender,
+    record_type: u16,
+    payload: &[u8],
+) {
+    let plen = payload.len();
+    if plen < 8 || plen > 256 {
+        warn!("risk: gw forward bad payload len={plen}");
+        return;
+    }
+    let mut buf = [0u8; 256];
+    buf[..plen].copy_from_slice(payload);
+    let seq = gw.next_seq();
+    buf[0..8].copy_from_slice(&seq.to_le_bytes());
+    if let Err(e) = gw.send_raw(record_type, &buf[..plen]) {
+        warn!("risk: forward to gw failed: {e}");
+    }
+    gw.advance_seq();
+}
+
 /// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
 fn rand_jitter() -> f64 {
     use std::time::SystemTime;
@@ -787,12 +817,7 @@ fn run_main(
                     }
                     // Forward to GW to maintain CMP seq
                     // continuity (GW ignores BBO content).
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_BBO,
-                        &payload,
-                    ) {
-                        warn!("risk: forward bbo to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_BBO, &payload);
                 }
                 RECORD_FILL => if let Some(fill) =
                     decode_payload::<FillRecord>(&payload)
@@ -870,12 +895,7 @@ fn run_main(
                         }
                     }
                     // Forward fill to GW
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_FILL,
-                        &payload,
-                    ) {
-                        warn!("risk: forward fill to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_FILL, &payload);
                     // Sub-stage: CMP send to gateway completed.
                     // Anchor on the same taker_ts_ns used by
                     // risk_out (with the >2024 plausibility
@@ -908,12 +928,7 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_ORDER_DONE,
-                        &payload,
-                    ) {
-                        warn!("risk: forward order_done to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_DONE, &payload);
                 }
                 RECORD_ORDER_CANCELLED => if let Some(rec) =
                     decode_payload::<OrderCancelledRecord>(&payload)
@@ -923,20 +938,10 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_ORDER_CANCELLED,
-                        &payload,
-                    ) {
-                        warn!("risk: forward order_cancelled to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_CANCELLED, &payload);
                 }
                 RECORD_ORDER_INSERTED => if decode_payload::<OrderInsertedRecord>(&payload).is_some() {
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_ORDER_INSERTED,
-                        &payload,
-                    ) {
-                        warn!("risk: forward order_inserted to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_INSERTED, &payload);
                 }
                 RECORD_ORDER_FAILED => if let Some(rec) =
                     decode_payload::<OrderFailedRecord>(&payload)
@@ -946,12 +951,7 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_ORDER_FAILED,
-                        &payload,
-                    ) {
-                        warn!("risk: forward order_failed to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, &payload);
                 }
                 RECORD_CONFIG_APPLIED => if let Some(rec) =
                     decode_payload::<ConfigAppliedRecord>(&payload)
@@ -965,12 +965,7 @@ fn run_main(
                         rec.symbol_id,
                         rec.config_version,
                     );
-                    if let Err(e) = gw_sender.send_raw(
-                        RECORD_CONFIG_APPLIED,
-                        &payload,
-                    ) {
-                        warn!("risk: forward config_applied to gw failed: {e}");
-                    }
+                    forward_to_gw(&mut gw_sender, RECORD_CONFIG_APPLIED, &payload);
                 }
                 _ => {}
             }
@@ -1072,12 +1067,16 @@ fn run_main(
                     reason: reason_u8,
                     _pad: [0; 23],
                 };
-                if let Err(e) = gw_sender.send_raw(
+                // SEQ-1: was send_raw with the record's seq=0,
+                // which the gateway drops (seq==0) AND which has
+                // no place in the forwarded-ME seq space. Route
+                // through forward_to_gw so it gets gw_sender's
+                // next contiguous seq like every other gw record.
+                forward_to_gw(
+                    &mut gw_sender,
                     RECORD_ORDER_FAILED,
                     as_bytes(&rec),
-                ) {
-                    warn!("risk: send order_failed to gw failed: {e}");
-                }
+                );
             }
         }
 
