@@ -562,6 +562,20 @@ impl RiskShard {
             };
         }
 
+        // Solvency guard: non-positive price/qty yields a negative
+        // notional → negative margin_needed → a freeze that *adds*
+        // available margin. The gateway validates this on the WS
+        // path, but risk is the solvency authority — reject here
+        // regardless (cheap top-of-function branch, defense in depth).
+        if order.price <= 0 || order.qty <= 0 {
+            return OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason: RejectReason::InsufficientMargin,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+        }
+
         self.ensure_account(order.user_id);
 
         // Rebuild fallback before borrowing account/positions.

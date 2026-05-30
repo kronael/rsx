@@ -232,6 +232,41 @@ fn order_rejected_margin_insufficient() {
 }
 
 #[test]
+fn order_nonpositive_price_or_qty_rejected() {
+    // RISK-NO-PRICE-QTY-GUARD: well-funded account, but a
+    // negative/zero price or qty must be rejected BEFORE the
+    // margin math — otherwise notional=price*qty goes negative
+    // and the freeze *adds* available margin (solvency hole).
+    let cases = [
+        (10_000, 0),       // zero qty
+        (10_000, -10),     // negative qty
+        (0, 10),           // zero price
+        (-10_000, 10),     // negative price
+        (-10_000, -10),    // both negative (positive notional!)
+    ];
+    for (price, qty) in cases {
+        let mut s = make_shard();
+        s.accounts
+            .insert(0, Account::new(0, 1_000_000_000));
+        s.mark_prices[0] = 10_000;
+        let o = order(0, 0, price, qty);
+        let resp = s.process_order(&o);
+        assert!(
+            matches!(
+                resp,
+                OrderResponse::Rejected {
+                    reason: RejectReason::InsufficientMargin,
+                    ..
+                }
+            ),
+            "price={price} qty={qty} should be rejected, got {resp:?}"
+        );
+        // No freeze leaked from a rejected order.
+        assert_eq!(s.frozen_for_user(0), 0);
+    }
+}
+
+#[test]
 fn order_not_in_shard_rejected() {
     let mut s = make_shard();
     let o = order(1, 0, 10_000, 10); // user 1 not in shard 0

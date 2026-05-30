@@ -71,6 +71,16 @@ const RESTART_BACKOFF_SECS: &[u64] = &[
 /// Max consecutive crashes before the shard gives up.
 const MAX_RESTARTS: usize = 8;
 
+/// Advisory-lock key serializing `run_migrations` across nodes.
+/// The eager-replica protocol runs migrations at boot on EVERY
+/// node, before the per-shard main lock is won (that happens late,
+/// in warm-catchup). `002_rename_tables.sql` is not idempotent, so
+/// concurrent boots would race. Hold this short-lived lock around
+/// run_migrations so exactly one node migrates at a time. The key
+/// is a fixed negative sentinel that can never collide with a
+/// per-shard lock key (shard_id, always small non-negative).
+const MIGRATION_LOCK_KEY: i64 = -8_100_500_900;
+
 /// Transition signalled by `run_main` on return.
 #[derive(Debug)]
 enum MainTransition {
@@ -143,7 +153,9 @@ fn log_effective_risk_config(
 fn main() {
     install_panic_handler();
 
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
+        .init();
 
     // Drain hot-path latency samples out-of-band
     // (see rsx-types/src/latency.rs). 100 ms is a
@@ -458,7 +470,22 @@ fn run_main(
                 error!("pg connection error: {e}");
             }
         });
-        run_migrations(&client).await?;
+        // Serialize migrations across concurrent node boots: the
+        // main per-shard lock is won late (warm-catchup), so without
+        // this every node would migrate at once and the non-idempotent
+        // 002_rename_tables.sql would race. Distinct key from shard_id.
+        client
+            .batch_execute(&format!(
+                "SELECT pg_advisory_lock({MIGRATION_LOCK_KEY})"
+            ))
+            .await?;
+        let migrate = run_migrations(&client).await;
+        client
+            .batch_execute(&format!(
+                "SELECT pg_advisory_unlock({MIGRATION_LOCK_KEY})"
+            ))
+            .await?;
+        migrate?;
         let state = load_from_postgres(
             &client,
             shard_id,
@@ -1166,19 +1193,55 @@ fn run_main(
                 order_id_hi: order.order_id_hi,
                 order_id_lo: order.order_id_lo,
             };
-            if let Some(s) = me_senders
+            let send_failed = match me_senders
                 .get_mut(&order.symbol_id)
             {
-                if let Err(e) = s.send_raw(
-                    RECORD_ORDER_REQUEST,
-                    as_bytes(&msg),
-                ) {
-                    warn!("risk: forward order to me failed: {e}");
+                Some(s) => {
+                    if let Err(e) = s.send_raw(
+                        RECORD_ORDER_REQUEST,
+                        as_bytes(&msg),
+                    ) {
+                        warn!("risk: forward order to me failed: {e}");
+                        true
+                    } else {
+                        false
+                    }
                 }
-            } else {
-                warn!(
-                    "order for unknown symbol_id={}",
-                    order.symbol_id
+                None => {
+                    warn!(
+                        "order for unknown symbol_id={}",
+                        order.symbol_id
+                    );
+                    true
+                }
+            };
+            // The pre-trade gate already froze margin in-memory for
+            // this accepted order. If ME never receives it, no
+            // RECORD_ORDER_ACCEPTED returns → the freeze (and the
+            // gateway's pending order) would leak forever. Release
+            // the in-memory freeze and tell the client it failed.
+            // (The durable PG freeze is only written by confirm_freeze
+            // on OrderAccepted, so there is nothing durable to undo.)
+            if send_failed {
+                shard.release_frozen_for_order(
+                    order.user_id,
+                    order.order_id_hi,
+                    order.order_id_lo,
+                );
+                let rec = OrderFailedRecord {
+                    seq: 0,
+                    ts_ns: now_secs * 1_000_000_000,
+                    user_id: order.user_id,
+                    _pad0: 0,
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
+                    reason: FailureReason::NetworkError as u8,
+                    _pad: [0; 23],
+                };
+                forward_to_gw(
+                    &mut gw_sender,
+                    RECORD_ORDER_FAILED,
+                    as_bytes(&rec),
                 );
             }
         }

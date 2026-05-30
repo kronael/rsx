@@ -79,3 +79,14 @@ fn index_price_spread_zero_equals_price() {
     let p = calculate_index(100, 10, 100, 10, 0);
     assert_eq!(p, 100);
 }
+
+#[test]
+fn index_price_qty_sum_no_i64_overflow() {
+    // RISK-INDEX-QTY-OVERFLOW: bid_qty + ask_qty would overflow
+    // i64 if summed before widening to i128 (debug panic /
+    // release wrap). Each near i64::MAX; sum > i64::MAX.
+    let big = i64::MAX - 1;
+    let p = calculate_index(100, big, 110, big, 0);
+    // Balanced thick book → ~mid, computed without overflow.
+    assert_eq!(p, 105);
+}
