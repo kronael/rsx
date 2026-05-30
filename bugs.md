@@ -1,5 +1,37 @@
 # Bug queue
 
+## Status — 2026-05-30 fix sprint
+
+**FIXED** (verified, committed):
+- ME-NEXT-SEQ-REGRESSION, ME-SNAPSHOT order_index rebuild (dedup half deferred — TODO) — `bd877bc`
+- RISK-FREEZE-LEAK-ON-ME-SEND-FAIL, RISK-INDEX-QTY-OVERFLOW, RISK-NO-PRICE-QTY-GUARD
+  (verified already guarded upstream at the gateway; added defensive guard anyway),
+  MIGRATIONS-UNLOCKED (separate advisory lock) — `d623537`
+- GW-U64-TRUNCATION, GW-WS-FIN-IGNORED, GW-WS-UNMASKED-ACCEPTED, GW-PENDING-BEFORE-SEND,
+  GW-CANCEL-SEQ-GAP, GW-COMPLETION-ROUTE-BY-USERID — `5a578d3`
+- ANSI-IN-LOGS (all binaries, `with_ansi(IsTerminal)`) — across the above
+- LATENCY-TRACE-ALWAYS-ON (compile-time macro) — earlier this session
+
+**MITIGATED in-place** (full fix deferred):
+- GATEWAY-LATENCY — per-conn egress drain poll 10ms→500µs (`5a578d3`+handler); the
+  zero-poll fix (per-conn notify / egress tile-split) is the scale path, deferred
+  per founder ("make the tile correct, don't split now").
+
+**VERIFIED BY-DESIGN** (no change): ME-REPLAY-SKIPS-DOWNSTREAM (independent recovery),
+RISK-FUNDING-CROSS-SHARD, GW-SINGLE-SHARD-NO-ROUTING, BOOK-FAR-PRICE-BUCKETING.
+
+**LIKELY RESOLVED — needs live re-verify**: IOC-NOT-HONORED — current code traces tif
+correctly through every hop (gateway parse → OrderRequest → accepted ring [full
+OrderRequest incl tif] → OrderMessage → to_incoming → matching IOC cancel); parse/wire/
+matching IOC unit tests all pass; could not reproduce. The early-session order-path
+restructure (accepted ring now carries the full OrderRequest) appears to have closed it.
+
+**DEFERRED — book session** (founder: "solve once we're dealing with book"):
+BOOK-BBO-COMPRESSED-INDEX (correctness, multi-zone), BOOK-SCAN-NEXT-BID-OFFBY,
+BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY.
+
+Inline entries below retain full detail.
+
 ## MIGRATIONS-UNLOCKED — run_migrations runs before the advisory lock (LOW)
 
 **Status: OPEN.** Found 2026-05-30 building the eager replica. With the eager
