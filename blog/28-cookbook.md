@@ -1,6 +1,8 @@
-# RSX Cookbook: Recipes for Driving the Exchange
+# RSX Operations Cookbook: Recipes for Driving the Exchange
 
-A task-oriented companion to the design posts. Each recipe is a
+A task-oriented companion to the design posts. (For how the exchange was
+*built* — spec-first, agent-driven — see
+[Building RSX](29-building-rsx.md), the vibe-book.) Each recipe is a
 self-contained "I want to X → do this" with the exact commands. Every
 command here is what the dev path actually runs — no pseudo-code.
 

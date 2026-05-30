@@ -177,9 +177,18 @@ completeness, data flow, WebSocket health, error
 handling. Cross-reference specs. Every manual check
 becomes a test.
 
-## How-To
+## How-To & Method
 
-**[RSX Cookbook: Recipes for Driving the Exchange](28-cookbook.md)**
+**[Building RSX: A Spec-First, Agent-Driven Manual](29-building-rsx.md)**
+
+The vibe-book. How a perpetuals exchange got built solo by writing specs
+first and driving AI agents through a disciplined loop — `/ship` →
+`/build` → `/refine`, hostile `cto-eval`/`ceo-eval` judges, hard gates,
+detached-HEAD git, filesystem memory. The method, using
+[`kronael/tools`](https://github.com/kronael/tools). Read this if you
+want to build something serious this way.
+
+**[RSX Operations Cookbook: Recipes for Driving the Exchange](28-cookbook.md)**
 
 Task-oriented recipes with the exact commands: boot the exchange, make
 the book two-sided, submit an order, read the WAL, check health/readiness
