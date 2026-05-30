@@ -112,10 +112,10 @@ Risk shards. The gateway is stateless and routes by both keys.
    order(user U │ symbol S)   │ casting/UDP
                 ▼
  ┌───────────────────────────┐
- │  Risk  —  SHARD BY user_id │ ◀── add shards =      each shard
- │  Risk[0] Risk[1] … Risk[k] │     more users        OWNS a user
- │  positions + margin in RAM │                       range; pinned,
- │  1 pinned busy-spin loop   │                       busy-spin tile
+ │  Risk — SHARD BY user_id   │ ◀── add a shard =     owns a set of
+ │  via fixed vshards + map   │     move ~1/N of the   vshards (not
+ │  Risk[0] Risk[1] … Risk[k] │     vshard slots to it  a live-count
+ │  positions + margin in RAM │     (rest stay put)     modulo); pinned
  └──────┬───────────────▲─────┘
  reserve│ (sync)        │settle (async)  casting/UDP
         ▼               │
@@ -141,9 +141,14 @@ Risk shards. The gateway is stateless and routes by both keys.
 **What scales as what:**
 - **Gateway** — stateless; scale by **connection count** (add
   instances behind a load balancer). Holds no positions.
-- **Risk** — shard by **`user_id`**. Each shard owns a disjoint
-  range of users and holds their positions + margin in RAM.
-  More users → more shards.
+- **Risk** — shard by **`user_id`** via *fixed virtual shards + a
+  map*: `vshard = hash(user_id) % N_VSHARDS` (N_VSHARDS fixed) →
+  `shardmap[vshard]` → node. Each shard owns a set of vshards and
+  holds those users' positions + margin in RAM. Adding a shard
+  moves only ~1/N of the vshard slots (and migrates those users by
+  warm-catchup + cutover, reusing the warm-standby path) — *not* a
+  `user_id % shard_count` reshuffle of everyone. See
+  [specs/2/28-risk.md](specs/2/28-risk.md) §Sharding & scale-out.
 - **ME (matching)** — shard by **`symbol_id`**. One pinned
   engine per tradeable instrument, no cross-symbol shared state.
   More symbols → more ME instances.

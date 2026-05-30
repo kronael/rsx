@@ -337,7 +337,9 @@ Logically part of risk engine, could be extracted later.
 
 Order flow through `RiskShard::process_order`:
 
-1. Reject `NotInShard` if `user_id % shard_count != shard_id`
+1. Reject `NotInShard` if this shard does not own the user's virtual
+   shard: `vshard = hash(user_id) % N_VSHARDS` (N_VSHARDS fixed),
+   reject when `shardmap[vshard] != shard_id`. See §Sharding & scale-out.
 2. Recompute fallback mark (mark with index backfill) on first
    order after a price update
 3. Reject `UserInLiquidation` if `equity < maintenance_margin`
@@ -378,6 +380,52 @@ liquidation processing — a fill updates the position before
 `maybe_process_liquidations()` runs.
 
 See `rsx-risk/src/shard.rs::on_price_update`.
+
+## Sharding & scale-out
+
+Risk shards by **user**. The mapping is two stages, deliberately
+decoupled so the cluster can grow without a global reshuffle:
+
+```
+user_id ──hash──▶ vshard = hash(user_id) % N_VSHARDS   (N_VSHARDS FIXED, e.g. 4096)
+vshard  ──map───▶ shard_id                              (shardmap, mutable lookup table)
+```
+
+`N_VSHARDS` is a constant chosen once and never changed, so `user → vshard`
+is stable forever. Physical placement lives entirely in `shardmap`
+(vshard → shard_id), a small table the gateway and every shard read.
+
+**Why not `user_id % shard_count`.** Plain modulo puts the live node
+count in the hash, so adding a shard (4→5) reassigns ≈ (1 − 1/N) of *all*
+users at once. Because a risk shard holds the user's positions + frozen
+margin in RAM and is their solvency authority, that means migrating
+nearly everyone's live financial state in one step — there is no
+incremental path. Fixed vshards + a map confine a node addition to moving
+≈ 1/nodes of the *slots*; every other user stays put.
+
+**Adding a shard.** Pick a set of vshards to hand to the new node, then
+migrate each (below) and flip its `shardmap` entry. Nothing else moves.
+
+**User migration (vshard A → B).** Reuses the warm-standby machinery in
+§Replication & Failover — a migration is a scoped failover:
+
+1. **Warm-load.** B loads the vshard's users' positions from Postgres and
+   catches up to the WAL tip via replication, *while A still serves them*.
+2. **Cutover.** Briefly quiesce the vshard on A (stop accepting new orders
+   for those users, drain in-flight, flush final state to WAL/PG), set
+   `shardmap[vshard] = B`, and B replays the last records to the tip and
+   goes live.
+3. **Release.** A drops the vshard's users.
+
+The only pause is per-vshard (a slice of users), never global. The
+per-shard advisory lock (invariant #10, one main per shard) generalizes
+to **per-vshard**: exactly one node is the live solvency authority for a
+vshard at any instant, so the cutover cannot split-brain on margin.
+
+**Status:** forward design. v1 runs single-shard (`shard_count = 1`,
+`N_VSHARDS` maps everything to shard 0); the gateway routes via a single
+`RSX_RISK_CAST_ADDR`. The `shardmap` lookup, multi-shard routing, and
+migration handshake are specced here but not yet implemented.
 
 ## Persistence
 
