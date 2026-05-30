@@ -137,23 +137,44 @@ fn orphan_freeze_not_durable_without_order_accepted() {
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
 
-    // Order accepted by the pre-trade gate -> in-memory freeze.
+    // Observe the shard's durable-persist stream so the recovery
+    // snapshot is DERIVED from what the shard actually persisted —
+    // not a hand-picked empty map (which would make this circular).
+    let (prod, mut cons) =
+        rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(16);
+    s.set_persist_producer(prod);
+
+    // Order passes the pre-trade gate -> in-memory freeze.
     let o = order(0, 0, 10_000, 10, 42);
     let resp = s.process_order(&o);
     assert!(matches!(resp, OrderResponse::Accepted { .. }));
     assert!(s.frozen_for_user(0) > 0, "in-memory freeze for gate");
 
-    // ME never confirmed -> nothing was persisted. Simulate
-    // recovery: a fresh shard loads PG state. With the fix, PG
-    // holds no FrozenInsert for this order, so the cold-start
-    // frozen_orders map is empty.
+    // THE FIX: process_order persists nothing before ME confirms.
+    // Build the PG recovery snapshot from the actual persist stream;
+    // if the pre-send write-behind were reintroduced this map would
+    // hold the orphan and the assertion below would fail.
+    let mut fo = FxHashMap::default();
+    while let Ok(ev) = cons.pop() {
+        if let rsx_risk::persist::PersistEvent::FrozenInsert(f) = ev {
+            let key = ((f.order_id_hi as u128) << 64)
+                | f.order_id_lo as u128;
+            fo.insert(key, (f.user_id, f.amount));
+        }
+    }
+    assert!(
+        fo.is_empty(),
+        "ME never confirmed -> shard must have persisted no freeze",
+    );
+
+    // Recovery from that (genuinely empty) snapshot -> no orphan.
     let mut recovered = make_shard();
     recovered.load_state(ColdStartState {
         accounts: FxHashMap::default(),
         positions: FxHashMap::default(),
         tips: vec![0u64; 4],
         insurance_funds: FxHashMap::default(),
-        frozen_orders: FxHashMap::default(),
+        frozen_orders: fo,
     });
     assert_eq!(
         recovered.frozen_for_user(0),
@@ -273,6 +294,20 @@ fn replay_order_cancelled_releases_freeze() {
     writer.append_framed(&f).unwrap();
     writer.flush().unwrap();
 
+    // Control: accepted-replay alone freezes a real amount, so the
+    // 0 below proves the cancel RELEASED a freeze (not vacuous).
+    {
+        let cdir = tmp.path().join("ctrl");
+        std::fs::create_dir_all(&cdir).unwrap();
+        write_wal(&cdir, 0, vec![accepted(0, 0, 0, 10_000, 10, 42)], |r, seq| {
+            r.seq = seq
+        });
+        let mut c = make_shard();
+        c.accounts.insert(0, Account::new(0, 1_000_000_000));
+        replay_from_wal(&mut c, &cdir, &[0]).unwrap();
+        assert_eq!(c.frozen_for_user(0), 10_050, "control: accepted freezes");
+    }
+
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
@@ -307,6 +342,20 @@ fn replay_order_failed_releases_freeze() {
     let f = writer.prepare(&mut fail).unwrap();
     writer.append_framed(&f).unwrap();
     writer.flush().unwrap();
+
+    // Control: accepted-replay alone freezes a real amount, so the
+    // 0 below proves order-failed RELEASED a freeze (not vacuous).
+    {
+        let cdir = tmp.path().join("ctrl");
+        std::fs::create_dir_all(&cdir).unwrap();
+        write_wal(&cdir, 0, vec![accepted(0, 0, 0, 10_000, 10, 42)], |r, seq| {
+            r.seq = seq
+        });
+        let mut c = make_shard();
+        c.accounts.insert(0, Account::new(0, 1_000_000_000));
+        replay_from_wal(&mut c, &cdir, &[0]).unwrap();
+        assert_eq!(c.frozen_for_user(0), 10_050, "control: accepted freezes");
+    }
 
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
