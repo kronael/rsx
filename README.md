@@ -167,6 +167,64 @@ Three transports tie it together:
 
 Public API to the world is WebSocket JSON (`rsx-gateway`).
 
+## How fast
+
+Measured at commit `7a6846a`, 6-core box, no core isolation, debug
+vs release noted. The sub-10 µs *network* target is aspirational — the
+in-process floor is there, the cross-process path isn't yet. Full method
++ curves: [reports/20260530_load-curves.md](reports/20260530_load-curves.md).
+
+### (A) Components under load — service time, fastest first
+
+Closed-loop service time (the CPU cost of the work; no queue). Each part
+absorbs the offered rate in the left column until it saturates.
+
+| Part | sustained | p50 | p99 |
+|---|---:|---:|---:|
+| Risk: reject (not-in-shard) | 96 M/s | 30 ns | 40 ns |
+| Orderbook: match a resting fill (book 100k–10M deep) | — | 51 ns | — |
+| Risk: reject (insufficient margin) | 26 M/s | 50 ns | 90 ns |
+| Risk: accept order (0 open/user) | 10.0 M/s | 110 ns | 181 ns |
+| ME: full accept (dedup + WAL + match + events + index) | — | 205 ns | — |
+| Risk: accept order (64 open/user) | 5.2 M/s | 191 ns | 321 ns |
+| Risk: process fill (hot users) | 4.8 M/s | 200 ns | 351 ns |
+| Risk: accept order (512 open/user) | 1.1 M/s | 852 ns | 1313 ns |
+
+The orderbook match holds **~51 ns p50 whether the book has 100k, 1M, or
+10M resting orders** — the compressed slab is depth-independent. Risk
+accept cost scales with a user's *open-order* count (the frozen-margin
+sum), shown by the depth sweep. **Load curve** (open-loop, no coordinated
+omission): the risk shard holds flat **~0.16 µs p50 up to ~4 M orders/s**
+offered, then knees at **~6 M/s** (accept ratio → 91%, p99 → 34 ms,
+backlog unbounded). Under persist backpressure the fill path **stalls,
+never drops**.
+
+### (B) Network stack — rsx-cast, loopback, pinned
+
+| Hop | p50 |
+|---|---:|
+| One-way (`CastSender::send` → `try_recv`) | 3.89 µs |
+| Round-trip echo (2 hops) | 7.60 µs |
+
+Loopback only — a real NIC adds IRQ + driver tx/rx. ~99% of this is the
+`sendto`/`recvfrom` syscall, which the io_uring move targets (see end).
+Wire microbenchmarks (release): WAL append 31 ns, Nak/Heartbeat encode
+43 ns, Fill encode 23 ns, decode 9 ns; SPSC ring hop 50–170 ns.
+
+### (C) Whole exchange GW→ME→GW — single stream
+
+| Path | p50 | p99 | note |
+|---|---:|---:|---|
+| In-process round-trip (cast/UDP loopback + full ME) | 7.5 µs | 16.9 µs | transport-bound floor, measured |
+| Live WS single warmed stream | 2.25 ms | 18.8 ms | gateway reactor egress; **−80%** after the egress-drain fix (was 11.5 ms) |
+| REST `/health` (fresh conn) | ~115 µs | ~1.4 ms | measured |
+| **Target: <50 µs GW→ME→GW** | — | — | **aspirational** |
+
+Risk pre-trade (<5 µs budget) and ME match (<500 ns budget) are now *met*
+in the component numbers above (110 ns accept, 205 ns full accept). The
+open gap is the cross-process whole-e2e path. Parallel/flood whole-e2e is
+blocked by `ME-FAULTED-NO-REPLAY-ADDR` (bugs.md) — single-stream only.
+
 ## Reading the code
 
 ```
@@ -253,21 +311,6 @@ make lint         # clippy -D warnings
 Single crate: `cargo test -p rsx-book`. Single test:
 `cargo test -p rsx-book -- test_name`.
 
-## What's measured vs what's a budget
-
-The microbench numbers above are real and reproducible. The
-cross-process production budgets aren't.
-
-| Number | Measured? |
-|---|---|
-| 54 ns match single fill | yes — `rsx-book` |
-| 31 ns WAL buffer append (pre-flush; `Vec` extend) | yes — `rsx-cast` |
-| 43 ns Nak/Heartbeat encode, 23 ns Fill encode, 9 ns decode | yes — `rsx-cast` + `rsx-messages` |
-| 50–170 ns SPSC ring hop | yes — `rsx-book` |
-| <50 µs GW→ME→GW round trip | **design budget**; harness plan in [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md) |
-| <500 ns ME match | yes — sub-bench of 54 ns |
-| <5 µs risk pre-trade | **design budget** |
-
 ## What's not done
 
 The gaps a careful reader will hit:
@@ -315,8 +358,9 @@ start: [1-architecture.md](specs/2/1-architecture.md),
 | | |
 |---|---|
 | [PROGRESS.md](PROGRESS.md) | per-component status |
-| [GUARANTEES.md](GUARANTEES.md) | consistency, durability, ordering invariants |
-| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure-mode catalogue |
+| [GUARANTEES.md](GUARANTEES.md) | **what's lost when** — consistency, durability, data-loss bounds |
+| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure-mode catalogue (per-scenario loss matrix) |
+| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | operator recovery procedures |
 | [TESTING.md](TESTING.md) | test taxonomy |
 
 ## Next step in the experiment
