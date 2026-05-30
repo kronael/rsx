@@ -126,8 +126,14 @@ pub fn drain_dxs_replay_into_book(
 
 /// Apply a single replayed `OrderRequest` / `CancelRequest`
 /// to the in-tile state. Mirrors the live order-handling
-/// block in `main` minus the downstream CMP sends — see the
-/// module-level TODO.
+/// block in `main` minus the downstream CMP sends to
+/// risk/marketdata — BY DESIGN. FAULTED recovery rebuilds only
+/// ME's local book + WAL; each downstream consumer recovers
+/// independently by draining its own replay against ME's
+/// replication server (risk via RSX_ME_REPLICATION_ADDR →
+/// shard.process_fill; marketdata → book.apply_fill_by_order_id).
+/// Re-sending here would duplicate those streams and risk
+/// seq/ordering corruption. (bugs.md ME-REPLAY-SKIPS-DOWNSTREAM)
 pub fn apply_replayed_record(
     book: &mut Orderbook,
     order_index: &mut FxHashMap<OrderKey, u32>,
