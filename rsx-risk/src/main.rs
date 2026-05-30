@@ -4,6 +4,9 @@ use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_cast::decode_payload;
+use rsx_cast::ReplicationConsumer;
+use rsx_cast::RECORD_CAUGHT_UP;
+use rsx_cast::wal::extract_seq;
 use std::collections::HashMap;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::BboRecord;
@@ -30,9 +33,11 @@ use rsx_matching::wire::OrderMessage;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
+use rsx_risk::replay::apply_record;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::replay::replay_from_wal;
+use rsx_cast::CaughtUpRecord;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
 use rsx_risk::BboUpdate;
@@ -66,8 +71,27 @@ const MAX_RESTARTS: usize = 8;
 #[derive(Debug)]
 enum MainTransition {
     /// Advisory lease lost; main() should loop and call
-    /// `run_main` again, which re-blocks on the advisory lock.
+    /// `run_main` again, which re-enters WARM CATCHUP and
+    /// re-tries the non-blocking lock acquire.
     Demote,
+}
+
+/// Node role in the eager warm-standby protocol. Every process
+/// boots into `WarmCatchup`, consumes the main's authoritative
+/// ME replication stream, and only transitions to `Live` once it
+/// is caught up AND wins the (non-blocking) advisory lock. There
+/// is no separate "cold main boot" — promotion is always warm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeState {
+    /// Applying the ME replication stream into the shard with no
+    /// persist worker, no gateway ingress, no egress, no
+    /// liquidation tick. Polling the non-blocking lock once
+    /// caught up.
+    WarmCatchup,
+    /// Sole lock holder (invariant #10). Persist worker, lease
+    /// renewal, gateway ingress + egress, liquidation tick all
+    /// attached. Applying ME records AND forwarding to GW.
+    Live,
 }
 
 fn log_effective_risk_config(
@@ -138,15 +162,20 @@ fn main() {
 
     let mut attempts: usize = 0;
 
-    // Every process is a candidate main. `run_main` blocks on
-    // the per-shard advisory lock (pg_advisory_lock), so standby
-    // processes park there until the holder dies; exactly one is
-    // ever past the lock (invariant #10). On a clean Demote
-    // (lease lost) we reset the restart budget and call
-    // `run_main` again — it re-blocks on the lock, so a demoted
-    // process becomes a standby until it re-wins. `run_main` is
-    // re-enterable: it owns its PG client, persist worker, and
-    // lease thread, and tears all three down before returning.
+    // Every process is a warm candidate main. `run_main` boots
+    // into WARM CATCHUP: it loads PG state, replays boot WAL, then
+    // consumes the main's authoritative ME replication stream into
+    // its shard WITHOUT persisting or forwarding. Only once caught
+    // up does it call the NON-BLOCKING advisory lock; the lock
+    // (not catch-up) remains the sole single-main fence (invariant
+    // #10). The first node catches up to an empty stream, wins the
+    // free lock, and goes LIVE with the already-warm shard (no
+    // full rebuild). Later nodes stay warm and retry the lock. On
+    // a clean Demote (lease lost) we reset the restart budget and
+    // call `run_main` again — it re-enters WARM CATCHUP and
+    // re-tries the lock. `run_main` is re-enterable: it owns its
+    // PG client, catchup consumer, persist worker, and lease
+    // thread, and tears them all down before returning.
     loop {
         let err: Box<dyn std::error::Error> = match run_main(
             shard_id, max_symbols,
@@ -330,6 +359,7 @@ fn run_main(
     let shard_count = config.shard_count;
     let lease_renew_interval_ms = config.replication_config.lease_renew_interval_ms;
     let lease_renew_interval_secs = (lease_renew_interval_ms / 1000).max(1);
+    let lease_poll_interval_ms = config.replication_config.lease_poll_interval_ms;
     let mut shard = RiskShard::new(config);
 
     // SAFETY: fail-fast at startup -- risk requires
@@ -340,6 +370,11 @@ fn run_main(
         .enable_all()
         .build()?;
 
+    // Load PG state WITHOUT acquiring the advisory lock. Every
+    // node loads + warms; the lock is only attempted after
+    // catch-up (see WARM CATCHUP below). The connection is kept
+    // alive by a background task; the same `rt` + `pg_client` are
+    // later moved into the lease thread on promotion.
     let mut lease = AdvisoryLease::new(shard_id);
     let pg_client = rt.block_on(async {
         let (client, connection) =
@@ -353,10 +388,6 @@ fn run_main(
                 error!("pg connection error: {e}");
             }
         });
-        // Block on the advisory lock BEFORE migrations so
-        // standby processes park here (invariant #10: at most
-        // one main per shard) instead of racing migrations.
-        lease.acquire(&client).await?;
         run_migrations(&client).await?;
         let state = load_from_postgres(
             &client,
@@ -366,9 +397,87 @@ fn run_main(
         )
         .await?;
         shard.load_state(state);
-        info!("cold start loaded from postgres");
+        info!("loaded accounts from postgres (warm candidate)");
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;
+
+    let wal_dir = env::var("RSX_RISK_WAL_DIR")
+        .unwrap_or_else(|_| "./tmp/wal".into());
+    let symbol_ids: Vec<u32> =
+        (0..max_symbols as u32).collect();
+    let replayed = replay_from_wal(
+        &mut shard,
+        std::path::Path::new(&wal_dir),
+        &symbol_ids,
+    )?;
+    if replayed > 0 {
+        info!("replayed {} fills from boot wal", replayed);
+    }
+
+    // Resolve ME topology up front: the warm replica must catch
+    // up the SAME ME source the live main consumes. The live main
+    // binds ONE CastReceiver for all MEs (single recv addr) and
+    // uses the first ME's symbol_id as the replication stream_id
+    // for FAULTED replay. We match that: ONE ReplicationConsumer
+    // against RSX_ME_REPLICATION_ADDR with that stream_id.
+    let me_addrs = rsx_risk::me_cmp_addrs_from_env();
+    if me_addrs.is_empty() {
+        return Err("no ME CMP addresses configured".into());
+    }
+    // SAFETY: me_addrs.is_empty() checked above
+    let me_stream_id = me_addrs
+        .keys()
+        .next()
+        .copied()
+        .expect("INVARIANT: me_addrs non-empty (checked above)");
+    let me_repl_addr = env::var("RSX_ME_REPLICATION_ADDR")
+        .expect(
+            "RSX_ME_REPLICATION_ADDR required (ME's replication \
+             server — the warm-catchup + FAULTED replay source)",
+        );
+
+    // Mark stream addresses (consumed in warm AND live).
+    let mark_addr: SocketAddr =
+        env::var("RSX_RISK_MARK_CAST_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9105".into())
+            .parse()
+            // SAFETY: fail-fast at startup
+            .expect("invalid RSX_RISK_MARK_CAST_ADDR");
+    let mark_sender_addr: SocketAddr =
+        env::var("RSX_MARK_CAST_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9106".into())
+            .parse()
+            // SAFETY: fail-fast at startup
+            .expect("invalid RSX_MARK_CAST_ADDR");
+    let mut mark_receiver = CastReceiver::new(
+        mark_addr,
+        mark_sender_addr,
+    )
+    // SAFETY: fail-fast at startup
+    .expect("failed to bind mark CMP receiver");
+
+    // ===== WARM CATCHUP =====
+    // Consume the main's authoritative ME replication stream into
+    // the shard until caught up, then win the non-blocking lock.
+    // Blocks (re-trying the lock) until promotion. On error,
+    // returns it to main()'s restart loop.
+    let mut state = NodeState::WarmCatchup;
+    info!("risk shard {} state={:?}", shard_id, state);
+    run_warm_catchup(
+        &rt,
+        &pg_client,
+        &mut lease,
+        &mut shard,
+        &mut mark_receiver,
+        me_stream_id,
+        &me_repl_addr,
+        &wal_dir,
+        lease_poll_interval_ms,
+    )?;
+    // Past this point this node is the SOLE advisory-lock holder
+    // (invariant #10) and the shard is warm + final-drained.
+    state = NodeState::Live;
+    info!("risk shard {} state={:?} (promoted)", shard_id, state);
 
     let lease_held = Arc::new(AtomicBool::new(true));
     let lease_error = Arc::new(AtomicBool::new(false));
@@ -382,19 +491,6 @@ fn run_main(
         lease_error.clone(),
         lease_stop.clone(),
     );
-
-    let wal_dir = env::var("RSX_RISK_WAL_DIR")
-        .unwrap_or_else(|_| "./tmp/wal".into());
-    let symbol_ids: Vec<u32> =
-        (0..max_symbols as u32).collect();
-    let replayed = replay_from_wal(
-        &mut shard,
-        std::path::Path::new(&wal_dir),
-        &symbol_ids,
-    )?;
-    if replayed > 0 {
-        info!("replayed {} fills from wal", replayed);
-    }
 
     let (persist_prod, persist_cons) =
         rtrb::RingBuffer::<PersistEvent>::new(8192);
@@ -473,15 +569,6 @@ fn run_main(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_GW_CAST_ADDR");
-    let me_addrs = rsx_risk::me_cmp_addrs_from_env();
-    if me_addrs.is_empty() {
-        stop_persist_worker(
-            &persist_shutdown,
-            persist_handle,
-        );
-        stop_lease_thread(&lease_stop, lease_thread);
-        return Err("no ME CMP addresses configured".into());
-    }
 
     let mut gw_receiver = CastReceiver::new(
         risk_addr, gw_addr,
@@ -498,11 +585,14 @@ fn run_main(
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
     // Use first ME addr as the CMP peer for the receiver.
-    // me_stream_id = symbol_id of the first (primary) ME;
-    // used as stream_id in FAULTED TCP replay requests.
-    // SAFETY: me_addrs.is_empty() checked above
-    let (me_stream_id, first_me_addr) = me_addrs.iter().next()
-        .map(|(&sid, &addr)| (sid, addr))
+    // me_stream_id (resolved before warm catchup) = symbol_id of
+    // the first (primary) ME; used as stream_id in FAULTED TCP
+    // replay requests.
+    // SAFETY: me_addrs.is_empty() checked before warm catchup
+    let first_me_addr = me_addrs
+        .values()
+        .next()
+        .copied()
         .expect("INVARIANT: me_addrs non-empty (checked above)");
     let mut me_receiver = CastReceiver::new(
         risk_me_recv_addr,
@@ -511,29 +601,8 @@ fn run_main(
     // SAFETY: fail-fast at startup
     .expect("failed to bind ME fill receiver");
 
-    // Receive mark prices from Mark process
-    let mark_addr: SocketAddr =
-        env::var("RSX_RISK_MARK_CAST_ADDR")
-            .unwrap_or_else(|_| {
-                "127.0.0.1:9105".into()
-            })
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_MARK_CAST_ADDR");
-    let mark_sender_addr: SocketAddr =
-        env::var("RSX_MARK_CAST_ADDR")
-            .unwrap_or_else(|_| {
-                "127.0.0.1:9106".into()
-            })
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_MARK_CAST_ADDR");
-    let mut mark_receiver = CastReceiver::new(
-        mark_addr,
-        mark_sender_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind mark CMP receiver");
+    // mark_receiver was bound + drained during warm catchup; the
+    // same socket carries on into the live loop below.
 
     // Send validated orders to ME.
     // One CastSender per ME, keyed by symbol_id.
@@ -579,7 +648,7 @@ fn run_main(
         accepted_producer: accepted_prod,
     };
 
-    info!("risk shard {} running", shard_id);
+    info!("risk shard {} running state={:?}", shard_id, state);
 
     loop {
         let now_secs = time();
@@ -1046,6 +1115,206 @@ fn run_main(
                 warn!("lease lost, re-acquiring advisory lock");
                 return Ok(MainTransition::Demote);
             }
+        }
+    }
+}
+
+/// WARM CATCHUP (NodeState::WarmCatchup).
+///
+/// Consume the live main's authoritative ME WAL replication
+/// stream (the SAME source `handle_replay` uses for FAULTED
+/// recovery — no separate risk WAL) into the already-PG-loaded
+/// shard, applying each record via the shared `apply_record`
+/// path. Also drain the mark stream into `update_mark`. NO
+/// persist worker, NO gateway ingress/egress, NO liquidation
+/// tick — this node is a passive follower.
+///
+/// CAUGHT-UP detection: the replication server emits
+/// RECORD_CAUGHT_UP { live_seq } after draining its current WAL.
+/// `caught_up` ⟺ we have seen that record AND `applied_seq >=
+/// live_seq`. We open the consumer with a per-node tip file so a
+/// reconnect resumes from the persisted tip+1 (CAUGHT_UP itself
+/// carries no seq, so it never advances the tip).
+///
+/// PROMOTE: only when caught up do we call the NON-BLOCKING
+/// `pg_try_advisory_lock`. If it fails another node holds the
+/// lock — stay warm and retry after `lease_poll_interval_ms`. If
+/// it succeeds this node is the sole holder (invariant #10); we
+/// do a FINAL DRAIN of any records past the last CAUGHT_UP and
+/// return Ok — the caller transitions to LIVE with the warm
+/// shard (no rebuild). The advisory lock is the SOLE single-main
+/// fence; catch-up only gates WHEN `try_acquire` is called.
+///
+/// ME topology: the live main binds ONE CastReceiver for all MEs
+/// and replays a single stream_id, so this is ONE
+/// ReplicationConsumer — matching that topology.
+#[allow(clippy::too_many_arguments)]
+fn run_warm_catchup(
+    rt: &tokio::runtime::Runtime,
+    pg_client: &tokio_postgres::Client,
+    lease: &mut AdvisoryLease,
+    shard: &mut RiskShard,
+    mark_receiver: &mut CastReceiver,
+    me_stream_id: u32,
+    me_repl_addr: &str,
+    wal_dir: &str,
+    lease_poll_interval_ms: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tip_file = std::path::PathBuf::from(wal_dir).join(
+        format!("risk_warm_me_{me_stream_id}_tip.bin"),
+    );
+    let mut consumer = ReplicationConsumer::new(
+        me_stream_id,
+        vec![me_repl_addr.to_owned()],
+        tip_file,
+        None,
+    )?;
+    // Resume the ME stream from the shard's persisted per-symbol
+    // tip so we don't re-request records already folded into the
+    // PG snapshot (process_fill still dedups on tip — invariant
+    // #5 — but skipping the re-request is cheaper).
+    if (me_stream_id as usize) < shard.tips.len() {
+        consumer.tip = shard.tips[me_stream_id as usize];
+    }
+
+    info!(
+        "warm catchup: consuming ME replication \
+         stream_id={me_stream_id} from {me_repl_addr} tip={}",
+        consumer.tip,
+    );
+
+    let mut applied_seq: u64 = consumer.tip;
+    let poll = Duration::from_millis(lease_poll_interval_ms.max(1));
+
+    loop {
+        // Drain mark prices (latest-wins state) each iteration so
+        // the warm shard's margin view stays fresh; mark gaps are
+        // recoverable (latest-wins) so we ignore FAULTED here.
+        drain_mark_warm(mark_receiver, shard);
+
+        // Stream ME records until CAUGHT_UP (callback returns
+        // false) or the connection ends. `caught_live_seq` is set
+        // by the callback when it sees RECORD_CAUGHT_UP.
+        let mut caught_live_seq: Option<u64> = None;
+        let stream = rt.block_on(consumer.run_once(|raw| {
+            if raw.header.record_type == RECORD_CAUGHT_UP {
+                if let Some(rec) =
+                    decode_payload::<CaughtUpRecord>(&raw.payload)
+                {
+                    caught_live_seq = Some(rec.live_seq);
+                }
+                // Stop the stream so the outer loop can poll the
+                // lock; reconnect resumes from tip+1.
+                return false;
+            }
+            let seq = extract_seq(&raw.payload).unwrap_or(0);
+            if seq > applied_seq {
+                applied_seq = seq;
+            }
+            apply_record(
+                shard,
+                raw.header.record_type,
+                &raw.payload,
+            );
+            true
+        }));
+
+        if let Err(e) = stream {
+            // Disconnect/error clears caught_up implicitly (we
+            // re-derive it next iteration). Back off then retry;
+            // the consumer reconnects from its persisted tip+1.
+            warn!(
+                "warm catchup: ME stream error: {e}; \
+                 retry in {}ms",
+                poll.as_millis(),
+            );
+            std::thread::sleep(poll);
+            continue;
+        }
+
+        let caught_up = match caught_live_seq {
+            Some(live_seq) => applied_seq >= live_seq,
+            None => false,
+        };
+
+        if !caught_up {
+            // Connection ended without CAUGHT_UP, or we are
+            // behind the reported live_seq. Loop to re-stream
+            // (resumes from tip+1) — no lock attempt.
+            continue;
+        }
+
+        // Caught up: attempt the NON-BLOCKING lock. This is the
+        // ONLY place try_acquire is called; the lock — not
+        // catch-up — is the single-main fence (invariant #10).
+        let acquired = rt
+            .block_on(lease.try_acquire(pg_client))?;
+        if !acquired {
+            // Another node is main. Stay warm; keep applying.
+            std::thread::sleep(poll);
+            continue;
+        }
+
+        info!(
+            "warm catchup: caught up (applied_seq={applied_seq}) \
+             AND won advisory lock — final drain then go LIVE",
+        );
+
+        // FINAL DRAIN: between the last CAUGHT_UP and winning the
+        // lock the main may have written more records. Apply
+        // everything up to the current WAL tip so the live loop
+        // starts with no gap. One more run_once: stream to the
+        // next CAUGHT_UP and stop.
+        let final_drain = rt.block_on(consumer.run_once(|raw| {
+            if raw.header.record_type == RECORD_CAUGHT_UP {
+                return false;
+            }
+            let seq = extract_seq(&raw.payload).unwrap_or(0);
+            if seq > applied_seq {
+                applied_seq = seq;
+            }
+            apply_record(
+                shard,
+                raw.header.record_type,
+                &raw.payload,
+            );
+            true
+        }));
+        if let Err(e) = final_drain {
+            warn!(
+                "warm catchup: final drain stream error: {e} \
+                 (applied_seq={applied_seq}); proceeding — the \
+                 live ME receiver re-syncs via FAULTED replay",
+            );
+        }
+        drain_mark_warm(mark_receiver, shard);
+        return Ok(());
+    }
+}
+
+/// Drain the mark CastReceiver into the shard during warm
+/// catchup. Mark is latest-wins state; FAULTED/RECONNECT are
+/// ignored (the next live mark supersedes any gap).
+fn drain_mark_warm(
+    mark_receiver: &mut CastReceiver,
+    shard: &mut RiskShard,
+) {
+    loop {
+        let recv = mark_receiver.try_recv_with(|preamble, payload| {
+            if preamble.record_type == RECORD_MARK_PRICE {
+                if let Some(rec) =
+                    decode_payload::<MarkPriceRecord>(payload)
+                {
+                    shard.update_mark(
+                        rec.symbol_id,
+                        rec.mark_price.0,
+                    );
+                }
+            }
+        });
+        match recv {
+            CastRecvWith::Data => {}
+            _ => break,
         }
     }
 }

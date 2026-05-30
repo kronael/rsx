@@ -2,8 +2,10 @@
 
 Risk engine process. One instance per user shard. Pre-trade
 margin checks, position tracking, funding, liquidation,
-insurance fund, and single-writer leader election via a
-Postgres advisory lock. Canonical full-tile arrangement per
+insurance fund, and single-writer leader election via an
+eager warm-standby protocol gated by a Postgres advisory
+lock (warm-catchup → caught-up → non-blocking acquire).
+Canonical full-tile arrangement per
 `specs/2/45-tiles.md` §3.2.
 
 Specs: `specs/2/28-risk.md`, `specs/2/45-tiles.md` §3.2.
@@ -12,7 +14,7 @@ Specs: `specs/2/28-risk.md`, `specs/2/45-tiles.md` §3.2.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: advisory-lock acquire, ring construction, casting pump, lease watch |
+| `main.rs` | Binary: warm-catchup + promotion state machine, ring construction, casting pump, lease watch |
 | `shard.rs` | `RiskShard` — core state machine, `process_order()`, fill apply |
 | `types.rs` | `FillEvent`, `OrderRequest`, `BboUpdate`, `RejectReason` |
 | `account.rs` | `Account` struct and balance operations |
@@ -164,58 +166,109 @@ When `equity < maint_margin`:
 
 ## Leader Election & Failover
 
-Every risk-shard process is an identical candidate main.
-There is no separate replica mode — `main()` calls `run_main`
-in a loop, and `run_main` blocks on the per-shard advisory
-lock before doing anything else:
+Every risk-shard process is an identical **warm candidate
+main**. Boot, standby, and promotion are one path: a process
+loads Postgres, then *warms* — it applies the live main's
+authoritative stream into its own shard state — and only goes
+LIVE once it is caught up AND wins the advisory lock. There is
+no separate "cold main boot"; promotion is always warm.
+
+`main()` calls `run_main` in a loop. `run_main` is a two-state
+machine (`NodeState`):
 
 ```
+enum NodeState { WarmCatchup, Live }
+
 run_main:
-  connect Postgres
-  → pg_advisory_lock(shard_id)   (BLOCKING — standbys park here)
+  connect Postgres (NO advisory lock yet)
   → run_migrations
   → load_from_postgres           (accounts, positions, tips)
-  → replay_from_wal(tip+1)       (rebuild fills since last persist)
-  → spawn lease thread + persist sidecar
-  → live loop
+  → replay_from_wal(tip+1)       (fold boot WAL into shard)
+  ── NodeState::WarmCatchup ──────────────────────────────
+  → consume ME WAL replication stream + mark stream,
+    apply each record via replay::apply_record (NO persist,
+    NO gateway ingress, NO egress, NO liquidation tick)
+  → on caught_up: pg_try_advisory_lock (NON-BLOCKING)
+       false → stay warm, keep applying, retry next poll
+       true  → final-drain ME stream, transition to LIVE
+  ── NodeState::Live ─────────────────────────────────────
+  → attach persist producer + spawn persist sidecar
+  → spawn lease-renewal thread
+  → bind gateway receiver + senders (ingress + egress)
+  → live loop: apply ME records AND forward to GW,
+    process gateway orders, run liquidation tick
 ```
 
-A standby process is just a candidate main blocked inside
-`pg_advisory_lock`. When the current main's PG session ends
-(crash, demote) the lock releases and exactly one standby
-unblocks and becomes main. The blocking acquire happens
-*before* migrations so standbys never race migrations.
+**What the warm replica consumes.** The SAME source the live
+main uses for FAULTED recovery: ME's WAL replication server at
+`RSX_ME_REPLICATION_ADDR`. No separate risk WAL is introduced.
+Records are applied through `replay::apply_record` — the exact
+function `replay_from_wal` uses — so warm-apply, boot-replay,
+and FAULTED-replay share one state-apply path. The mark cast
+stream (`RSX_RISK_MARK_CAST_ADDR`) is drained into
+`update_mark` in both warm and live modes.
+
+**ME topology.** The live main binds ONE `CastReceiver` for
+all MEs (single recv addr) and replays a single `stream_id`
+(the first/primary ME's `symbol_id`) for FAULTED recovery. The
+warm replica matches that topology exactly: ONE
+`ReplicationConsumer` against `RSX_ME_REPLICATION_ADDR` with
+that same `stream_id`. (If the main is ever changed to
+per-symbol ME receivers, the warm path must grow to one
+consumer per ME stream to match.)
+
+**Caught-up detection.** `rsx-cast`'s `ReplicationService`
+emits `RECORD_CAUGHT_UP { live_seq }` after draining its
+current WAL. The warm loop sets
+`caught_up ⟺ saw RECORD_CAUGHT_UP(live_seq=T) AND
+applied_seq >= T`. The consumer uses a per-node tip file, so a
+disconnect/error clears caught-up implicitly (re-derived next
+iteration) and reconnect resumes from the persisted tip+1.
+`CAUGHT_UP` carries no seq so it never advances the tip.
+
+**Promotion (strict, catch-up-only) and the no-double-main
+argument.** `pg_try_advisory_lock` is called ONLY when
+caught_up. The advisory lock — not catch-up — remains the
+SOLE single-main fence (invariant #10); catch-up only gates
+*when* `try_acquire` is called, it never replaces the lock.
+So there is no double-main window: two nodes can both be
+caught up, but Postgres grants the lock to exactly one. The
+loser stays warm and retries `try_acquire` every
+`lease_poll_interval_ms`. There is NO cold-promote fallback:
+a node that never catches up never attempts the lock (strict
+availability tradeoff — see CRASH-SCENARIOS.md). On winning
+the lock the node does a FINAL DRAIN (apply any ME records
+written between the last `CAUGHT_UP` and the lock grant) so
+the live loop starts with no gap, then transitions to LIVE
+with the already-warm shard — no discard, no full rebuild.
 
 **Re-entry on lease loss.** The lease thread renews the lock
 on its own tokio runtime; on loss it sets an `AtomicBool` the
-hot loop polls each tick. On loss the loop tears down the
-persist sidecar and lease thread (each owns a PG connection),
-drops its PG client, and returns `MainTransition::Demote`.
-`main()` then calls `run_main` again, which reconnects and
-re-blocks on the advisory lock. `run_main` is therefore
-re-enterable: it owns all of its PG/thread resources and
-releases them before returning, so a Demote → re-acquire
-cycle leaks nothing. On a crash (error return) `main()`
-applies the restart-backoff budget instead.
-
-**No replica buffering or tip-sync.** Earlier designs had a
-replica buffer fills + receive tip-sync from main so a promoted
-replica could continue without a PG read. That state was never
-load-bearing: on promotion it was discarded and `run_main`
-rebuilt from Postgres + WAL anyway. The buffer, the tip-sync
-casting channel (record type `0x20`), and the `Role`/replica
-state machine were deleted; PG + WAL replay is the single
-recovery path.
+live loop polls each tick. On loss the loop tears down the
+persist sidecar and lease thread (each owns a PG connection)
+and returns `MainTransition::Demote`. `main()` calls `run_main`
+again, which re-enters WARM CATCHUP (step 2) and re-tries the
+non-blocking lock — this process becomes a warm standby again.
+`run_main` is re-enterable: it owns its PG client, catchup
+consumer, persist worker, lease thread, and sockets, and tears
+them all down before returning, so a Demote → re-acquire cycle
+leaks nothing. On a crash (error return) `main()` applies the
+restart-backoff budget instead.
 
 ### Advisory Lock (Invariant #10)
 
-`AdvisoryLease` (`lease.rs`) wraps `pg_advisory_lock`,
-`pg_try_advisory_lock`, and `pg_advisory_unlock` on
-`shard_id`. Postgres guarantees at most one holder per shard,
-so at most one main per shard.
+`AdvisoryLease` (`lease.rs`) wraps `pg_try_advisory_lock`
+(promotion gate, non-blocking), the `pg_locks` self-check
+(`renew`), and `pg_advisory_unlock` (`release`) on `shard_id`.
+Postgres guarantees at most one holder per shard, so at most
+one main per shard. Catch-up never bypasses this — it only
+decides *when* to call `try_acquire`.
 
 Data loss bound: 10ms (one WAL flush interval) on a single
-crash, recovered by WAL replay from the persisted tip.
+crash, recovered by WAL replay from the persisted tip. Async
+replication adds a bounded staleness window on promotion (the
+main can apply record K and die before the replication server
+streams K to standbys); see CRASH-SCENARIOS.md.
 
 ## Persistence
 

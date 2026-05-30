@@ -1,5 +1,18 @@
 # Bug queue
 
+## MIGRATIONS-UNLOCKED — run_migrations runs before the advisory lock (LOW)
+
+**Status: OPEN.** Found 2026-05-30 building the eager replica. With the eager
+warm-standby protocol, the advisory lock is acquired LATE (only after catch-up,
+in `run_warm_catchup`), so `run_migrations` (rsx-risk/src/main.rs ~391) now runs
+on EVERY node at boot WITHOUT the lock. `002_rename_tables.sql` is not
+idempotent, so concurrent standby startups (or a re-run) can error. Pre-fix the
+lock was held first, serializing migrations. Low severity (startup edge; demo
+usually single-node; `batch_execute` per-file). **Fix:** run migrations under a
+separate short-lived `pg_advisory_lock` (distinct key from the shard-main lock)
+so exactly one node migrates at a time, independent of leader election; or make
+the migrations idempotent. Triage only.
+
 ## LATENCY-TRACE-ALWAYS-ON — per-stage trace runs unconditionally on the hot path (LOW)
 
 **Status: OPEN.** Found 2026-05-30 in the hot-path audit. `rsx_log::latency::
