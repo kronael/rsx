@@ -7,6 +7,7 @@ edition = "2021"
 rsx-cast = { path = "../rsx-cast" }
 rsx-types = { path = "../rsx-types" }
 rsx-messages = { path = "../rsx-messages" }
+rsx-health = { path = "../rsx-health" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

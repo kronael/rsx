@@ -1,6 +1,10 @@
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::decode_payload;
+use rsx_health::CounterGauge;
+use rsx_health::HealthSnapshot;
+use rsx_health::LoadGauges;
+use rsx_health::QueueGauge;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -21,9 +25,12 @@ use rsx_types::install_panic_handler;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
+use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tracing::info;
 use tracing::warn;
 
@@ -263,6 +270,57 @@ fn main() {
         }
     }
 
+    // Health server: RSX_MD_HEALTH_ADDR=127.0.0.1:9203
+    // GET /health → 200/503 liveness
+    // GET /ready   → 200/503 readiness
+    // GET /metrics → JSON (subscriber count, drop counter)
+    let gauges: Arc<LoadGauges> = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    gauges.ready.store(true, Ordering::Relaxed);
+    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    if let Ok(addr_str) = env::var("RSX_MD_HEALTH_ADDR") {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            let g = gauges.clone();
+            let max_out = config.max_outbound as u64;
+            rsx_health::spawn_health_server(addr, move || {
+                let conns = g.connections.load(Ordering::Relaxed);
+                let drops = g.drops.load(Ordering::Relaxed);
+                // Use connections as a proxy for subscriber
+                // pressure; saturation from drop rate.
+                let saturation = if max_out > 0 {
+                    (drops as f64 / (conns.max(1) as f64 * max_out as f64)).min(1.0)
+                } else {
+                    0.0
+                };
+                HealthSnapshot {
+                    live: g.live.load(Ordering::Relaxed),
+                    ready: g.ready.load(Ordering::Relaxed),
+                    saturation,
+                    queues: vec![
+                        QueueGauge {
+                            name: "subscribers",
+                            used: conns,
+                            cap: 65536,
+                        },
+                    ],
+                    counters: vec![
+                        CounterGauge {
+                            name: "drops",
+                            value: drops,
+                        },
+                        CounterGauge {
+                            name: "publishes",
+                            value: g.publishes.load(Ordering::Relaxed),
+                        },
+                    ],
+                    state: g.state_label(),
+                }
+            });
+        } else {
+            warn!("RSX_MD_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
     // Run monoio event loop
     let mut rt = monoio::RuntimeBuilder::<
         monoio::FusionDriver,
@@ -272,6 +330,7 @@ fn main() {
     // SAFETY: fail-fast at startup
     .expect("failed to build monoio runtime");
 
+    let gauges_inner = gauges.clone();
     rt.block_on(async move {
 
         let ws_addr = config.listen_addr.clone();
@@ -432,6 +491,20 @@ fn main() {
             if now.saturating_sub(last_evict_ns) >= BOOK_TTL_NS {
                 state.borrow_mut().evict_stale_books(BOOK_TTL_NS);
                 last_evict_ns = now;
+            }
+
+            // Publish load gauges (relaxed stores; once per
+            // monoio yield — not per message).
+            {
+                let st = state.borrow();
+                gauges_inner.connections.store(
+                    st.connection_count() as u64,
+                    Ordering::Relaxed,
+                );
+                gauges_inner.drops.store(
+                    st.gap_count(),
+                    Ordering::Relaxed,
+                );
             }
 
             monoio::time::sleep(std::time::Duration::ZERO).await;

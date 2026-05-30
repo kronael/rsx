@@ -1,6 +1,9 @@
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::ReplicationService;
+use rsx_health::CounterGauge;
+use rsx_health::HealthSnapshot;
+use rsx_health::LoadGauges;
 use rsx_mark::aggregator::aggregate_with_staleness;
 use rsx_mark::aggregator::sweep_stale_with_staleness;
 use rsx_mark::config::load_mark_config;
@@ -14,8 +17,10 @@ use rsx_types::time_utils::time_ns;
 use rsx_types::install_panic_handler;
 use std::io;
 use std::env;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
@@ -165,6 +170,46 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         }
     }
 
+    // Health server: RSX_MARK_HEALTH_ADDR=127.0.0.1:9204
+    // GET /health → 200/503 liveness
+    // GET /ready   → 200/503 readiness (false when all sources stale)
+    // GET /metrics → JSON (publish counter, stale sources)
+    let gauges: Arc<LoadGauges> = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    gauges.ready.store(true, Ordering::Relaxed);
+    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    if let Ok(addr_str) = env::var("RSX_MARK_HEALTH_ADDR") {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            let g = gauges.clone();
+            rsx_health::spawn_health_server(addr, move || {
+                let publishes = g.publishes.load(Ordering::Relaxed);
+                let drops = g.drops.load(Ordering::Relaxed);
+                // ready=false when all sources are stale
+                // (drops holds stale source count)
+                let ready = g.ready.load(Ordering::Relaxed);
+                HealthSnapshot {
+                    live: g.live.load(Ordering::Relaxed),
+                    ready,
+                    saturation: 0.0,
+                    queues: vec![],
+                    counters: vec![
+                        CounterGauge {
+                            name: "publishes",
+                            value: publishes,
+                        },
+                        CounterGauge {
+                            name: "stale_sources",
+                            value: drops,
+                        },
+                    ],
+                    state: g.state_label(),
+                }
+            });
+        } else {
+            warn!("RSX_MARK_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
     let mut last_sweep = Instant::now();
     let mut last_flush = Instant::now();
 
@@ -201,6 +246,10 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         {
                             if let Err(e) = mark_sender.send_framed(&framed) {
                                 warn!("mark: cmp send (aggregate) failed: {e}");
+                            } else {
+                                gauges.publishes.fetch_add(
+                                    1, Ordering::Relaxed,
+                                );
                             }
                         }
                     }
@@ -214,6 +263,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
             >= SWEEP_INTERVAL
         {
             let now_ns = time_ns();
+            let mut stale_count: u64 = 0;
             for (sid, state) in
                 states.iter_mut().enumerate()
             {
@@ -225,6 +275,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                         config.staleness_ns,
                     )
                 {
+                    stale_count += 1;
                     if let Ok(framed) = wal_writer.prepare(&mut evt) {
                         if wal_writer
                             .append_framed(&framed)
@@ -237,6 +288,12 @@ fn run(config: &MarkConfig) -> io::Result<()> {
                     }
                 }
             }
+            // ready=false when ALL symbols are stale. stale_count
+            // == states.len() means no live price for any symbol.
+            let all_stale = !states.is_empty()
+                && stale_count == states.len() as u64;
+            gauges.ready.store(!all_stale, Ordering::Relaxed);
+            gauges.drops.store(stale_count, Ordering::Relaxed);
             last_sweep = now;
         }
 

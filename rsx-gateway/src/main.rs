@@ -25,6 +25,10 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_health::HealthSnapshot;
+use rsx_health::LoadGauges;
+use rsx_health::QueueGauge;
+use rsx_health::CounterGauge;
 use rsx_types::install_panic_handler;
 use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
@@ -32,6 +36,8 @@ use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tracing::info;
 use tracing::warn;
 
@@ -147,6 +153,59 @@ fn main() {
     let config = load_gateway_config();
     log_effective_gateway_config(&config);
 
+    // Health server: RSX_GW_HEALTH_ADDR=127.0.0.1:9200
+    // GET /health → 200/503 (liveness)
+    // GET /ready   → 200/503 (readiness; 503 when pending ≥ 90%)
+    // GET /metrics → JSON load snapshot (HPA / ops)
+    let gauges: Arc<LoadGauges> = LoadGauges::new();
+    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    if let Ok(addr_str) = env::var("RSX_GW_HEALTH_ADDR") {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            let g = gauges.clone();
+            let max_p = config.max_pending as u64;
+            rsx_health::spawn_health_server(addr, move || {
+                let pending = g.pending_orders.load(Ordering::Relaxed);
+                let conns = g.connections.load(Ordering::Relaxed);
+                let saturation = if max_p > 0 {
+                    (pending as f64) / (max_p as f64)
+                } else {
+                    0.0
+                };
+                let ready = g.live.load(Ordering::Relaxed)
+                    && saturation < 0.9;
+                HealthSnapshot {
+                    live: g.live.load(Ordering::Relaxed),
+                    ready,
+                    saturation,
+                    queues: vec![
+                        QueueGauge {
+                            name: "pending",
+                            used: pending,
+                            cap: max_p,
+                        },
+                    ],
+                    counters: vec![
+                        CounterGauge {
+                            name: "connections",
+                            value: conns,
+                        },
+                        CounterGauge {
+                            name: "rejects",
+                            value: g.rejects.load(Ordering::Relaxed),
+                        },
+                        CounterGauge {
+                            name: "orders_processed",
+                            value: g.orders_processed.load(Ordering::Relaxed),
+                        },
+                    ],
+                    state: g.state_label(),
+                }
+            });
+        } else {
+            warn!("RSX_GW_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
     let risk_addr: SocketAddr =
         env::var("RSX_RISK_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9101".into())
@@ -218,7 +277,12 @@ fn main() {
     let listen_addr = config.listen_addr.clone();
     let rl_user = config.rate_limit_per_user;
     let rl_ip = config.rate_limit_per_ip;
+    let gauges_inner = gauges.clone();
     rt.block_on(async move {
+        // Signal that the gateway is live once the monoio
+        // runtime is up — the health server thread may start
+        // reading gauges immediately after spawn_health_server.
+        gauges_inner.live.store(true, Ordering::Relaxed);
         let state = Rc::new(RefCell::new({
             let mut s = GatewayState::new(
                 max_pending,
@@ -417,6 +481,20 @@ fn main() {
                         st.remove_connection(*id);
                     }
                 }
+            }
+
+            // Publish load gauges (relaxed stores; off hot path —
+            // runs once per monoio yield, not per message).
+            {
+                let st = state.borrow();
+                gauges_inner.pending_orders.store(
+                    st.pending.len() as u64,
+                    Ordering::Relaxed,
+                );
+                gauges_inner.connections.store(
+                    st.connections.len() as u64,
+                    Ordering::Relaxed,
+                );
             }
 
             monoio::time::sleep(std::time::Duration::ZERO).await;
