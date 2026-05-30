@@ -348,6 +348,51 @@ fn stash_bbo_keeps_latest() {
 // --- Funding + loop ---
 
 #[test]
+fn funding_zero_sum_across_users_uneven_split() {
+    // Invariant #9: Σ applied funding per symbol == 0 even
+    // for an uneven position split [+1,+1,+1,-3]. With odd
+    // qtys/rate, per-user rounding would leak; settle_symbol
+    // parks the residual so the column sums to zero exactly.
+    let mut cfg = default_config();
+    // Zero fees so collateral deltas isolate funding only.
+    cfg.taker_fee_bps = vec![0; 4];
+    cfg.maker_fee_bps = vec![0; 4];
+    let mut s = RiskShard::new(cfg);
+    // Shard-0 users: 0, 2, 4 (long 1); 6 (short 3).
+    for u in [0u32, 2, 4, 6] {
+        s.accounts.insert(u, Account::new(u, 1_000_000_000));
+    }
+    let mark = 1000;
+    let mut seq = 0u64;
+    let mut buy = |s: &mut RiskShard, u: u32, qty: i64| {
+        seq += 1;
+        // taker=u (in shard), maker=1 (shard 1, ignored).
+        let mut f = fill(u, 1, 0, mark, qty, seq);
+        f.taker_side = 0; // buy -> long
+        s.process_fill(&f);
+    };
+    buy(&mut s, 0, 1);
+    buy(&mut s, 2, 1);
+    buy(&mut s, 4, 1);
+    seq += 1;
+    let mut sell = fill(6, 1, 0, mark, 3, seq);
+    sell.taker_side = 1; // sell -> short
+    s.process_fill(&sell);
+    // Diverge mark from index so the rate is non-zero.
+    s.mark_prices[0] = mark + 33;
+    s.index_prices[0].price = mark;
+    s.index_prices[0].valid = true;
+    let before: i64 =
+        [0u32, 2, 4, 6].iter().map(|u| s.accounts[u].collateral).sum();
+    s.maybe_settle_funding(28_800);
+    let after: i64 =
+        [0u32, 2, 4, 6].iter().map(|u| s.accounts[u].collateral).sum();
+    // Σ collateral delta == -Σ payments == 0.
+    assert_eq!(before, after, "funding must be zero-sum per symbol");
+    assert_eq!(s.last_funding_id, 1);
+}
+
+#[test]
 fn funding_settles_at_interval() {
     let mut s = make_shard();
     s.accounts
@@ -624,6 +669,69 @@ fn order_while_user_being_liquidated_rejected() {
             ..
         }
     ));
+}
+
+#[test]
+fn liquidation_enqueued_via_index_when_mark_silent() {
+    // FIX 2: check_liquidation_for must price off the
+    // fallback (mark, else index). A SHORT at entry 100 looks
+    // *profitable* at mark==0 (the old, raw-mark code would
+    // not liquidate), but a valid index of 10_000 from BBO
+    // makes it deeply underwater. Liquidation must not be
+    // inert when the mark feed is silent — it must use the
+    // index fallback, the same source as the pre-trade check.
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 100)); // tiny
+    // No mark for symbol 0 (silent feed).
+    s.mark_prices[0] = 0;
+    // Valid index via BBO (mid = 10_000), far above entry.
+    s.process_bbo(&BboUpdate {
+        seq: 1,
+        symbol_id: 0,
+        bid_px: 10_000,
+        bid_qty: 10,
+        ask_px: 10_000,
+        ask_qty: 10,
+    });
+    // User 0 SELLS 100 @ 100 (taker_side=1 -> short).
+    let mut f = fill(0, 1, 0, 100, 100, 1);
+    f.taker_side = 1;
+    s.process_fill(&f); // triggers check_liquidation_for(0)
+    // Sanity: at the silent mark (0) the short is in profit,
+    // so only the index fallback exposes the loss.
+    assert!(
+        s.liquidation.is_in_liquidation(0, 0),
+        "short underwater-by-index must enqueue when mark==0"
+    );
+}
+
+// --- Liquidation halt / resume (LIQUIDATOR.md §10) ---
+
+#[test]
+fn halt_for_user_pauses_active_liquidation_symbols() {
+    // FIX 3: ORDER_FAILED for a user halts liquidation on the
+    // symbols that user is being liquidated on.
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 100));
+    s.mark_prices[0] = 10_000;
+    s.process_fill(&fill(0, 1, 0, 10_000, 100, 1));
+    assert!(s.liquidation.is_in_liquidation(0, 0));
+    assert!(!s.liquidation.is_halted(0));
+    s.halt_liquidation_for_user(0);
+    assert!(s.liquidation.is_halted(0));
+    // Resume (next successful fill for the symbol) clears it.
+    s.resume_liquidation(0);
+    assert!(!s.liquidation.is_halted(0));
+}
+
+#[test]
+fn halt_resume_symbol_primitive() {
+    let mut s = make_shard();
+    assert!(!s.liquidation.is_halted(2));
+    s.halt_liquidation(2);
+    assert!(s.liquidation.is_halted(2));
+    s.resume_liquidation(2);
+    assert!(!s.liquidation.is_halted(2));
 }
 
 // --- Backpressure: positions == sum(fills) under flood ---

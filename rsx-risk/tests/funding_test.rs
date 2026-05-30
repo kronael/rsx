@@ -233,3 +233,53 @@ fn funding_settle_residual_parked_on_largest_position() {
     assert_eq!(payments[3], -3);
     assert_eq!(payments.iter().sum::<i64>(), 0);
 }
+
+#[test]
+fn settle_symbol_zero_sum_balanced_uneven_split() {
+    // Globally balanced uneven split [+1,+1,+1,-3] (Σ net=0,
+    // i.e. all counterparties live on this shard): per-user
+    // truncation would otherwise leak; settle_symbol must sum
+    // to exactly 0.
+    let net = [1i64, 1, 1, -3];
+    let mark = 1000;
+    let rate = 33; // odd rate forces division residuals
+    let pays = settle_symbol(&net, mark, rate);
+    assert_eq!(pays.len(), net.len());
+    assert_eq!(pays.iter().sum::<i64>(), 0);
+}
+
+#[test]
+fn settle_symbol_one_sided_shard_keeps_net_funding() {
+    // A shard owning only the long side (Σ net != 0) must NOT
+    // be forced to zero — the offsetting users are on other
+    // shards. Funding still flows; only the intra-shard
+    // rounding leak is removed, so Σpays == aggregate payment.
+    let net = [7i64, -1, -1, -1, -1, -1, -1]; // Σ = 1
+    let mark = 1000;
+    let rate = 17;
+    let pays = settle_symbol(&net, mark, rate);
+    let agg = calculate_payment(1, mark, rate);
+    assert_eq!(pays.iter().sum::<i64>(), agg);
+    assert_ne!(agg, 0); // one-sided shard still owes funding
+}
+
+#[test]
+fn settle_symbol_matches_per_user_when_no_rounding() {
+    // When every per-user payment divides cleanly, settle_symbol
+    // equals plain per-user calculate_payment (no residual).
+    let net = [100i64, -40, -60];
+    let mark = 1000;
+    let rate = 50;
+    let pays = settle_symbol(&net, mark, rate);
+    let expected: Vec<i64> = net
+        .iter()
+        .map(|&q| calculate_payment(q, mark, rate))
+        .collect();
+    assert_eq!(pays, expected);
+}
+
+#[test]
+fn settle_symbol_empty_is_empty() {
+    let pays = settle_symbol(&[], 1000, 50);
+    assert!(pays.is_empty());
+}

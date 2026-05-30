@@ -463,6 +463,13 @@ impl RiskShard {
         if !self.user_in_shard(user_id) {
             return;
         }
+        // Use the cached fallback (mark, else index from BBO).
+        // A silent mark feed (mark==0) must not make liquidation
+        // inert when a valid index exists — same source the
+        // pre-trade check uses, kept consistent here.
+        if self.mark_dirty {
+            self.rebuild_fallback();
+        }
         let account = match self.accounts.get(&user_id) {
             Some(a) => a,
             None => return,
@@ -471,7 +478,7 @@ impl RiskShard {
         let state = self.margin.calculate(
             account,
             self.iter_positions_for_user(user_id),
-            &self.mark_prices,
+            &self.fallback_mark_prices,
             frozen,
         );
         let liq_syms: Vec<u32> = self.iter_positions_for_user(user_id)
@@ -509,6 +516,36 @@ impl RiskShard {
             post_only: false,
             is_liquidation: true,
             _pad: [0; 3],
+        }
+    }
+
+    /// LIQUIDATOR.md §10. Halt liquidation for a symbol.
+    /// Active rounds for the symbol pause until resumed.
+    pub fn halt_liquidation(&mut self, symbol_id: u32) {
+        self.liquidation.halt_symbol(symbol_id);
+    }
+
+    /// LIQUIDATOR.md §10. Resume liquidation for a symbol
+    /// (e.g. once it accepts orders again).
+    pub fn resume_liquidation(&mut self, symbol_id: u32) {
+        self.liquidation.resume_symbol(symbol_id);
+    }
+
+    /// LIQUIDATOR.md §10: "Order rejected (symbol halted):
+    /// liquidation for that symbol pauses." The ORDER_FAILED
+    /// record from ME carries no symbol_id, so halt every
+    /// symbol the user is currently being liquidated on — the
+    /// failed order is one of those liquidation orders.
+    pub fn halt_liquidation_for_user(&mut self, user_id: u32) {
+        let syms: Vec<u32> = self
+            .liquidation
+            .active
+            .iter()
+            .filter(|s| s.user_id == user_id)
+            .map(|s| s.symbol_id)
+            .collect();
+        for sid in syms {
+            self.liquidation.halt_symbol(sid);
         }
     }
 
@@ -873,12 +910,14 @@ impl RiskShard {
     /// RISK.md §5. Settle funding if interval elapsed.
     ///
     /// Invariant #9 (funding zero-sum per symbol per interval): for
-    /// each symbol we compute one `(rate, mark)` and apply
-    /// `calculate_payment(net_qty, mark, rate)` to every user's signed
-    /// `net_qty`. Sum over users in a symbol equals
-    /// `rate * mark * Σ net_qty / 10_000`; `Σ net_qty = 0` follows from
-    /// invariant #4 (every fill adds +qty to one side, -qty to the
-    /// other), so total payment per symbol is zero.
+    /// each symbol we compute one `(rate, mark)` and call
+    /// `funding::settle_symbol` over every exposed user's signed
+    /// `net_qty` in one shot. `settle_symbol` removes the intra-shard
+    /// integer-division residual (parks it on the largest position)
+    /// without forcing this shard's one-sided column to zero — the
+    /// offsetting users live on other shards, and globally
+    /// `Σ net_qty == 0` (invariant #4), so the aggregate payments
+    /// cancel across shards.
     pub fn maybe_settle_funding(
         &mut self,
         now_secs: u64,
@@ -908,51 +947,53 @@ impl RiskShard {
                 &self.funding_config,
             );
             // Funding settlement is periodic (not per-order hot
-            // path). Vec<u32> avoids a borrow conflict with the
-            // &mut self calls (positions.get, accounts.get_mut,
-            // push_persist) inside the loop.
+            // path). Collect exposed users' signed net_qty into a
+            // slice with a parallel user_id list (alignment must be
+            // exact), settle the whole symbol in one zero-sum pass,
+            // then distribute payments back. Vec avoids a borrow
+            // conflict with the &mut self calls below.
             let users: Vec<u32> = self
                 .exposure
                 .users_for_symbol(sid)
                 .to_vec();
+            let mut settle_users: Vec<u32> =
+                Vec::with_capacity(users.len());
+            let mut net_qtys: Vec<i64> =
+                Vec::with_capacity(users.len());
             for user_id in users {
-                let key =
-                    (user_id, sid as u32);
                 if let Some(pos) =
-                    self.positions.get(&key)
+                    self.positions.get(&(user_id, sid as u32))
                 {
-                    let payment =
-                        funding::calculate_payment(
-                            pos.net_qty(),
-                            mark,
-                            rate,
-                        );
-                    if let Some(acct) = self
-                        .accounts
-                        .get_mut(&user_id)
-                    {
-                        acct.deduct_fee(payment);
-                    }
-                    let acct_clone = self
-                        .accounts
-                        .get(&user_id)
-                        .cloned();
+                    settle_users.push(user_id);
+                    net_qtys.push(pos.net_qty());
+                }
+            }
+            let payments =
+                funding::settle_symbol(&net_qtys, mark, rate);
+            for (user_id, payment) in
+                settle_users.iter().zip(payments)
+            {
+                let user_id = *user_id;
+                if let Some(acct) =
+                    self.accounts.get_mut(&user_id)
+                {
+                    acct.deduct_fee(payment);
+                }
+                let acct_clone =
+                    self.accounts.get(&user_id).cloned();
+                self.push_persist(PersistEvent::Funding(
+                    FundingRecord {
+                        user_id,
+                        symbol_id: sid as u32,
+                        amount: payment,
+                        rate,
+                        settlement_ts: now_secs,
+                    },
+                ));
+                if let Some(acct) = acct_clone {
                     self.push_persist(
-                        PersistEvent::Funding(
-                            FundingRecord {
-                                user_id,
-                                symbol_id: sid as u32,
-                                amount: payment,
-                                rate,
-                                settlement_ts: now_secs,
-                            },
-                        ),
+                        PersistEvent::Account(acct),
                     );
-                    if let Some(acct) = acct_clone {
-                        self.push_persist(
-                            PersistEvent::Account(acct),
-                        );
-                    }
                 }
             }
         }
@@ -1063,11 +1104,17 @@ impl RiskShard {
             return;
         }
 
-        // 1. Process pending liquidations
+        // 1. Process pending liquidations. Price the
+        // liquidation rounds off the fallback (mark, else
+        // index) so a silent mark feed doesn't make the engine
+        // inert — consistent with the pre-trade check.
         let now_ns = now_secs * 1_000_000_000;
+        if self.mark_dirty {
+            self.rebuild_fallback();
+        }
         let (liq_orders, socialized_losses) = {
             let positions = &self.positions;
-            let mark_prices = &self.mark_prices;
+            let mark_prices = &self.fallback_mark_prices;
             self.liquidation.maybe_process(
                 now_ns,
                 &|uid, sid| {
