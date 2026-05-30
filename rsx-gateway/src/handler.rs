@@ -427,8 +427,8 @@ pub async fn handle_connection(
 
                 // F4.3 — per-stage latency trace. Stage
                 // `gateway_in` is the first time we see this
-                // order; t_us = 0 by definition.
-                rsx_log::latency::sample("gateway_in", oid_hi, oid_lo, 0u64, now_ns);
+                // order; t_us ≈ 0 by definition.
+                rsx_log::latency_sample!("gateway_in", oid_hi, oid_lo, now_ns);
 
                 let seq =
                     cmp_sender.borrow().next_seq();
