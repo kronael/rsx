@@ -57,7 +57,7 @@ pub fn setup_hot_thread(core: usize) -> HotSetup {
     // so mlockall's MCL_CURRENT pins the now-mapped stack pages. Pages reached
     // deeper than this still fault once (MCL_FUTURE then pins them), so warm
     // past the hot loop's max depth.
-    warm_stack(STACK_WARM_KIB * 1024);
+    warm_stack();
     let mlocked = mlock_all();
     HotSetup {
         core,
@@ -68,18 +68,18 @@ pub fn setup_hot_thread(core: usize) -> HotSetup {
     }
 }
 
-/// Pre-fault the current thread's stack `bytes` deep by **writing** one byte
-/// per page (write, not read — to break copy-on-write and the shared zero
-/// page). Call before the hot loop and before `mlockall`. `#[inline(never)]`
-/// so the frame is really pushed; `black_box` so the writes aren't elided.
+/// Pre-fault the current thread's stack `STACK_WARM_KIB` deep by **writing**
+/// one byte per page (write, not read — to break copy-on-write and the shared
+/// zero page). Call before the hot loop and before `mlockall`.
+/// `#[inline(never)]` so the frame is really pushed; `black_box` so the writes
+/// aren't elided. One knob (`STACK_WARM_KIB`) sizes both the frame and the
+/// depth, so they can't drift.
 #[inline(never)]
-pub fn warm_stack(bytes: usize) {
+pub fn warm_stack() {
     const PAGE: usize = 4096;
-    const CAP: usize = 256 * 1024; // fixed frame; keep ≪ thread stack
-    let mut buf = [0u8; CAP];
-    let n = bytes.min(CAP);
+    let mut buf = [0u8; STACK_WARM_KIB * 1024];
     let mut i = 0;
-    while i < n {
+    while i < buf.len() {
         buf[i] = (i & 0xff) as u8;
         i += PAGE;
     }
