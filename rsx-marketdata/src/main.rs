@@ -599,7 +599,7 @@ fn handle_fill(
     max_outbound: usize,
 ) {
     let mut st = state.borrow_mut();
-    let mut trade_msg = None;
+    let mut trade_msg: Option<std::sync::Arc<str>> = None;
     let update = match st.book_mut(rec.symbol_id) {
         Some(book) => {
             let update = book.apply_fill_by_order_id(
@@ -615,7 +615,7 @@ fn handle_fill(
                     rec.taker_side,
                     rec.ts_ns,
                 );
-                trade_msg = Some(serialize_trade(&trade));
+                trade_msg = Some(serialize_trade(&trade).into());
             }
             update
         }
@@ -670,8 +670,9 @@ fn broadcast_updates(
         }
         None => return,
     };
-    let delta_msg = serialize_l2_delta(&delta);
-    let mut bbo_msg = None;
+    let delta_msg: std::sync::Arc<str> =
+        serialize_l2_delta(&delta).into();
+    let mut bbo_msg: Option<std::sync::Arc<str>> = None;
     if let Some(bbo) = bbo {
         let changed = match st.last_bbo_mut(symbol_id) {
             Some(last) => {
@@ -685,7 +686,7 @@ fn broadcast_updates(
             None => true,
         };
         if changed {
-            bbo_msg = Some(serialize_bbo(&bbo));
+            bbo_msg = Some(serialize_bbo(&bbo).into());
         }
     }
 

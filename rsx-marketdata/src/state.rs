@@ -6,9 +6,10 @@ use rsx_types::SymbolConfig;
 use rsx_types::time_utils::time_ns;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub struct ConnectionState {
-    pub outbound: VecDeque<String>,
+    pub outbound: VecDeque<Arc<str>>,
     pub last_heartbeat_ns: u64,
 }
 
@@ -74,7 +75,7 @@ impl MarketDataState {
     pub fn push_to_client(
         &mut self,
         conn_id: u64,
-        msg: String,
+        msg: Arc<str>,
         max_outbound: usize,
     ) -> bool {
         if let Some(conn) = self.connections.get_mut(&conn_id)
@@ -91,7 +92,7 @@ impl MarketDataState {
     pub fn drain_outbound(
         &mut self,
         conn_id: u64,
-    ) -> Vec<String> {
+    ) -> Vec<Arc<str>> {
         if let Some(conn) = self.connections.get_mut(&conn_id)
         {
             conn.outbound.drain(..).collect()
@@ -276,6 +277,7 @@ impl MarketDataState {
     ) {
         if let Some(snapshot) = self.snapshot_msg(symbol_id, depth)
         {
+            let snapshot: Arc<str> = snapshot.into();
             let clients = self.subs.clients_for_symbol(symbol_id);
             for client_id in clients {
                 if self.subs.has_depth(client_id, symbol_id) {
@@ -313,14 +315,14 @@ impl MarketDataState {
             // disconnected client, which is acceptable.
             let _accepted = self.push_to_client(
                 client_id,
-                snapshot,
+                snapshot.into(),
                 max_outbound,
             );
         }
     }
 
     pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {
-        let msg = format!("{{\"H\":[{}]}}", ts_ms);
+        let msg: Arc<str> = format!("{{\"H\":[{}]}}", ts_ms).into();
         for conn in self.connections.values_mut() {
             conn.outbound.push_back(msg.clone());
         }

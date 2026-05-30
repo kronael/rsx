@@ -24,12 +24,12 @@ fn send_snapshot_clears_queue_on_backpressure() {
     let conn_id = state.add_connection();
 
     // Fill outbound to capacity 1
-    assert!(state.push_to_client(conn_id, "x".to_string(), 1));
-    assert!(!state.push_to_client(conn_id, "y".to_string(), 1));
+    assert!(state.push_to_client(conn_id, "x".into(), 1));
+    assert!(!state.push_to_client(conn_id, "y".into(), 1));
 
     state.send_snapshot_to_client(conn_id, 1, 10, 10);
 
     let msgs = state.drain_outbound(conn_id);
     assert_eq!(msgs.len(), 1);
-    assert_eq!(msgs[0], "{\"B\":[1,[],[],0,0]}");
+    assert_eq!(&*msgs[0], "{\"B\":[1,[],[],0,0]}");
 }
