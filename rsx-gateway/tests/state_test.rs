@@ -28,8 +28,8 @@ fn broadcast_heartbeat_adds_to_outbound() {
     let msgs2 = state.drain_outbound(c2);
     assert_eq!(msgs1.len(), 1);
     assert_eq!(msgs2.len(), 1);
-    assert_eq!(msgs1[0], "{\"H\":[12345]}");
-    assert_eq!(msgs2[0], "{\"H\":[12345]}");
+    assert_eq!(&*msgs1[0], "{\"H\":[12345]}");
+    assert_eq!(&*msgs2[0], "{\"H\":[12345]}");
 }
 
 #[test]
