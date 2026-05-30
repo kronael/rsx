@@ -46,6 +46,7 @@ use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
 use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
+use rsx_risk::RejectReason;
 use rsx_risk::persist::PersistEvent;
 use rsx_types::install_panic_handler;
 use rsx_types::FailureReason;
@@ -1064,14 +1065,13 @@ fn run_main(
             {
                 gauges.rejects.fetch_add(1, Ordering::Relaxed);
                 let reason_u8 = match reason {
-                    rsx_risk::RejectReason::InsufficientMargin => {
-                        FailureReason::InsufficientMargin
-                            as u8
+                    RejectReason::InsufficientMargin => {
+                        FailureReason::InsufficientMargin as u8
                     }
-                    rsx_risk::RejectReason::UserInLiquidation => {
+                    RejectReason::UserInLiquidation => {
                         FailureReason::UserInLiquidation as u8
                     }
-                    rsx_risk::RejectReason::NotInShard => {
+                    RejectReason::NotInShard => {
                         FailureReason::WrongShard as u8
                     }
                 };
