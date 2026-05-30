@@ -23,8 +23,8 @@ fn heartbeat_broadcast_sends_to_all_clients() {
 
     assert_eq!(msgs1.len(), 1);
     assert_eq!(msgs2.len(), 1);
-    assert_eq!(msgs1[0], "{\"H\":[12345]}");
-    assert_eq!(msgs2[0], "{\"H\":[12345]}");
+    assert_eq!(&*msgs1[0], "{\"H\":[12345]}");
+    assert_eq!(&*msgs2[0], "{\"H\":[12345]}");
 }
 
 #[test]

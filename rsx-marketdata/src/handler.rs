@@ -115,7 +115,8 @@ pub async fn handle_connection(
             Ok(MdFrame::Heartbeat { timestamp_ms }) => {
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
-                let echo = format!("{{\"H\":[{}]}}", timestamp_ms);
+                let echo: std::sync::Arc<str> =
+                    format!("{{\"H\":[{}]}}", timestamp_ms).into();
                 // SAFETY: heartbeat echo is best-effort;
                 // a slow client with full outbound has
                 // bigger problems than a missed pong.
