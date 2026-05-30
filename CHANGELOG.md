@@ -1,5 +1,60 @@
 # Changelog
 
+## [v0.6.0] — 2026-05-30
+
+> RSX v0.6.0 — warm standby + zero-alloc hot path
+>
+> Risk shards now keep a hot standby that fails over fast, and the
+> order hot path stopped allocating per message.
+>
+> • Warm-standby replica — a standby applies the live stream and takes over only once caught up (advisory-lock fenced, no split-brain).
+> • Zero-alloc receive — every cast loop reads packets in place via try_recv_with, no per-message heap copy.
+> • Latency trace is now a compile-out macro (latency_sample!) — zero cost unless built with the trace feature.
+> • Lock-free, copy-free hot tiles — removed the last per-fill Vec; an audit confirms no mutexes/copies on the busy-spin path.
+>
+> Full notes: CHANGELOG.md
+
+Workspace-wide wave; rsx-cast itself is frozen (unchanged).
+
+### Added
+
+- Eager warm-standby replica (rsx-risk): every process loads PG, warm-
+  catches-up by applying ME's WAL replication stream, then wins
+  `pg_try_advisory_lock` only once caught up; the loser stays warm and
+  retries. Boot/standby/promotion are one path. Strict catch-up-only
+  (no cold fallback); the async staleness window is documented in
+  CRASH-SCENARIOS.md. Advisory lock stays the sole single-main fence (#10).
+- `rsx-types::cpu::setup_hot_thread` — concentrated hot-thread setup
+  (pin + stack-warm + `mlockall` + isolation check), wired into all 5
+  binaries; `notes/hot-path.md` documents the discipline.
+- `rsx-types::cache::Padded<T>` — 128B-aligned false-sharing primitive.
+- `latency_sample!` macro (rsx-log) — compile-time per-stage trace behind
+  the `latency-trace` feature (default off = zero hot-path cost).
+
+### Changed
+
+- All cast-receive hot loops migrated to zero-copy `try_recv_with` — no
+  per-message `Vec` alloc on risk/ME/marketdata/gateway order paths.
+- Replaced the dead buffer-then-discard replica + `Role`/tip-sync state
+  machine with the eager protocol (large net LOC removal).
+- Gateway egress outbound queue → `Arc<str>` (refcount fan-out, not
+  per-connection `String` copies).
+- `check_liquidation_for` iterates the user's positions directly — the
+  per-fill `Vec<u32>` alloc is gone.
+
+### Fixed
+
+- rsx-log test race under multi-threaded `make test` (serialized via a guard).
+- Integration tests: stale persist schema refs (`funding_payments`→`funding`,
+  `seq`→`last_seq`) and the advisory-lock tests now self-provision Postgres
+  via testcontainers instead of a non-existent `localhost` DB.
+
+### Audit
+
+- No-mutex / no-copy sweep: the busy-spin tiles are confirmed lock-free and
+  (now) copy-free. 19 triaged correctness findings logged in `bugs.md`
+  (review queue; not auto-fixed).
+
 ## [rsx-cast v0.5.2] — 2026-05-25
 
 Cargo.toml version finally caught up to the CHANGELOG (was
