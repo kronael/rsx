@@ -29,11 +29,46 @@ wire protocol is defined in WEBPROTO.md.
 
 ## Runtime Model
 
-- Single-threaded monoio (io_uring) reactor. `GatewayState`
-  lives behind `Rc<RefCell<...>>`; no locks, no cross-thread
-  sharing. One connection = one spawned task.
-- casting/UDP send (to risk) and receive (responses) run on the
-  same reactor as WS handlers.
+**Current (shipped).** Single-threaded monoio (io_uring) reactor.
+`GatewayState` lives behind `Rc<RefCell<...>>`; no locks, no
+cross-thread sharing. One connection = one spawned task. casting/UDP
+send (to risk) and receive (responses) run on the **same reactor** as
+the WS accept loop and per-connection handlers.
+
+**Limitation — egress is starved by ingress (measured 2026-05-30).**
+The casting-receive is one task on this shared reactor: it drains the
+socket, routes each response, then `sleep(0).await` yields. Under
+WS-ingress load it loses the scheduling race. A single-order trace:
+the response left Risk/ME by ~0.57 ms (`me_out`) but did not reach the
+gateway receive (`gateway_cmp_recv`) until ~4.8 ms — a **~4.2 ms wait
+in the kernel UDP socket buffer** for the recv task's next reactor turn
+(gap ≈ **0.8 ms p50 / 10 ms p90** over 1934 probes). Route+write after
+recv is ~40 µs, and Risk/ME are sub-ms — so the latency-critical egress
+path being on the same reactor as unbounded WS ingress *is* the e2e
+latency. (`me_out → gateway_cmp_recv` is the whole gap.)
+
+**Target — decouple egress from the WS reactor (NOT YET IMPLEMENTED).**
+Run the casting receive on a **dedicated pinned thread** (busy-spin
+`recv_from`, like the Risk/ME tiles), off the WS reactor. It decodes
+each response, correlates by `order_id` to the owning connection via a
+read-mostly `oid → connection` index, and pushes the response into that
+connection's **SPSC outbox ring**, waking the connection's WS task. The
+WS reactor keeps ingress (accept → read → validate → casting-send to
+Risk) and, per connection, drains the outbox → writes the WS frame.
+
+- Egress latency becomes independent of ingress load: the casting
+  socket is drained in µs, not after a multi-ms reactor turn.
+- State model: relaxes "no cross-thread sharing" to ONE SPSC handoff
+  per connection + a read-mostly `oid→connection` index. The
+  `cid→order_id` pending map stays ingress-owned (egress routes by
+  `order_id`, which every response carries).
+- Optional further isolation: shard WS connections across N pinned
+  reactor threads so one high-rate connection cannot starve others'
+  writes.
+
+This mirrors the Risk tile (busy-spin hot loop ↔ tokio PG sidecar via
+SPSC) and the system rule that a latency-critical path runs on its own
+pinned, busy-spin core.
 
 ## Connection Lifecycle
 
