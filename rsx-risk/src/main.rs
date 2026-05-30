@@ -496,11 +496,13 @@ fn run_main(
         if let Ok(core_id) =
             core_str.parse::<usize>()
         {
-            let ids = core_affinity::get_core_ids()
-                .unwrap_or_default();
-            if let Some(id) = ids.get(core_id) {
-                core_affinity::set_for_current(*id);
-                info!("pinned to core {}", core_id);
+            let setup = rsx_types::cpu::setup_hot_thread(core_id);
+            info!("risk {}", setup);
+            if setup.isolated == Some(false) {
+                tracing::warn!(
+                    "risk core {} not isolated — expect tail spikes",
+                    core_id
+                );
             }
         }
     }

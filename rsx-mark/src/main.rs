@@ -59,11 +59,13 @@ fn run(config: &MarkConfig) -> io::Result<()> {
     // RcvbufErrors, and packets drop. Pin it.
     if let Ok(core_str) = std::env::var("RSX_MARK_CORE_ID") {
         if let Ok(core_id) = core_str.parse::<usize>() {
-            let ids = core_affinity::get_core_ids()
-                .unwrap_or_default();
-            if let Some(id) = ids.get(core_id) {
-                core_affinity::set_for_current(*id);
-                tracing::info!("mark pinned to core {}", core_id);
+            let setup = rsx_types::cpu::setup_hot_thread(core_id);
+            tracing::info!("mark {}", setup);
+            if setup.isolated == Some(false) {
+                tracing::warn!(
+                    "mark core {} not isolated — expect tail spikes",
+                    core_id
+                );
             }
         }
     }
