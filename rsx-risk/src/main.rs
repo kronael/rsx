@@ -365,6 +365,22 @@ fn forward_to_gw(
     gw.advance_seq();
 }
 
+/// Drive a tokio_postgres connection to completion. tokio_postgres
+/// returns the `Connection` future separately from the `Client`; it
+/// must be polled on a task for the client to make progress. Named
+/// (not an inline `tokio::spawn(async move {…})`) per CLAUDE.md so the
+/// coroutine's lifetime is visible to the reader.
+async fn drive_pg_connection(
+    connection: tokio_postgres::Connection<
+        tokio_postgres::Socket,
+        tokio_postgres::tls::NoTlsStream,
+    >,
+) {
+    if let Err(e) = connection.await {
+        error!("pg connection error: {e}");
+    }
+}
+
 /// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
 fn rand_jitter() -> f64 {
     use std::time::SystemTime;
@@ -408,11 +424,7 @@ fn run_main(
                 tokio_postgres::NoTls,
             )
             .await?;
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("pg connection error: {e}");
-            }
-        });
+        tokio::spawn(drive_pg_connection(connection));
         // Migrations are idempotent and concurrency-safe (each is
         // version-guarded + idempotent DDL + ON CONFLICT), so every
         // node can run them at boot with no lock. See migrations/CLAUDE.md.
@@ -555,13 +567,7 @@ fn run_main(
                     .await
                     // SAFETY: fail-fast at startup
                     .expect("pg connect for persist");
-                tokio::spawn(async move {
-                    if let Err(e) = connection.await {
-                        error!(
-                            "persist pg error: {e}"
-                        );
-                    }
-                });
+                tokio::spawn(drive_pg_connection(connection));
                 run_persist_worker_with_shutdown(
                     persist_cons,
                     client,
