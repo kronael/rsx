@@ -29,46 +29,44 @@ wire protocol is defined in WEBPROTO.md.
 
 ## Runtime Model
 
-**Current (shipped).** Single-threaded monoio (io_uring) reactor.
-`GatewayState` lives behind `Rc<RefCell<...>>`; no locks, no
-cross-thread sharing. One connection = one spawned task. casting/UDP
-send (to risk) and receive (responses) run on the **same reactor** as
-the WS accept loop and per-connection handlers.
+**Targets: 100k concurrent WS connections, µs-scale egress latency, no
+cross-connection head-of-line blocking.** (Not yet implemented — the
+build is currently a single monoio reactor; that cannot meet this: one
+thread cycling 100k sockets is ~10 ms per lap, so a connection waits up
+to ~10 ms for its turn. This is a scheduling limit, not a tuning one.)
 
-**Limitation — egress is starved by ingress (measured 2026-05-30).**
-The casting-receive is one task on this shared reactor: it drains the
-socket, routes each response, then `sleep(0).await` yields. Under
-WS-ingress load it loses the scheduling race. A single-order trace:
-the response left Risk/ME by ~0.57 ms (`me_out`) but did not reach the
-gateway receive (`gateway_cmp_recv`) until ~4.8 ms — a **~4.2 ms wait
-in the kernel UDP socket buffer** for the recv task's next reactor turn
-(gap ≈ **0.8 ms p50 / 10 ms p90** over 1934 probes). Route+write after
-recv is ~40 µs, and Risk/ME are sub-ms — so the latency-critical egress
-path being on the same reactor as unbounded WS ingress *is* the e2e
-latency. (`me_out → gateway_cmp_recv` is the whole gap.)
+**Sharded reactors.** N pinned reactor threads, one per core. A reactor
+is one event loop: it asks io_uring which of its sockets are ready and
+runs each handler in turn. `SO_REUSEPORT` load-balances incoming
+connections across the N listeners; a connection is **pinned to one
+reactor for its lifetime** (read *and* write on that reactor's io_uring
+— a socket can't be written from another reactor). Each reactor owns
+~100k/N connections and its own `GatewayState` shard behind
+`Rc<RefCell<…>>` — no locks, no cross-thread sharing within a shard. A
+noisy connection loads only its own shard; the others are unaffected.
 
-**Target — decouple egress from the WS reactor (NOT YET IMPLEMENTED).**
-Run the casting receive on a **dedicated pinned thread** (busy-spin
-`recv_from`, like the Risk/ME tiles), off the WS reactor. It decodes
-each response, correlates by `order_id` to the owning connection via a
-read-mostly `oid → connection` index, and pushes the response into that
-connection's **SPSC outbox ring**, waking the connection's WS task. The
-WS reactor keeps ingress (accept → read → validate → casting-send to
-Risk) and, per connection, drains the outbox → writes the WS frame.
+**Decoupled egress.** The casting receive from Risk runs on a
+**dedicated pinned busy-spin thread**, off every reactor, draining
+`recv_from` in µs. It decodes each response, correlates by `order_id`
+to the owning connection via a read-mostly `oid → (shard, connection)`
+index, pushes the response into that connection's **SPSC outbox ring**,
+and wakes the owning reactor — whose only egress work is the WS write.
+Egress latency is therefore independent of ingress load: the response
+never waits in the kernel socket buffer for a reactor turn.
 
-- Egress latency becomes independent of ingress load: the casting
-  socket is drained in µs, not after a multi-ms reactor turn.
-- State model: relaxes "no cross-thread sharing" to ONE SPSC handoff
-  per connection + a read-mostly `oid→connection` index. The
-  `cid→order_id` pending map stays ingress-owned (egress routes by
-  `order_id`, which every response carries).
-- Optional further isolation: shard WS connections across N pinned
-  reactor threads so one high-rate connection cannot starve others'
-  writes.
+- `cid → order_id` pending map is ingress-owned, per shard; egress
+  routes by `order_id` (every response carries it).
+- Per-connection outboxes are bounded; stream updates **coalesce**
+  (latest BBO wins) instead of queueing — a slow client never blocks a
+  reactor.
 
-This mirrors the Risk tile (busy-spin hot loop ↔ tokio PG sidecar via
-SPSC) and the system rule that a latency-critical path runs on its own
-pinned, busy-spin core.
+**Latency floor (kernel-bypass).** io_uring **SQPOLL** (no syscall per
+op) + registered fds/buffers + multishot recv on the WS side; AF_XDP or
+DPDK on the internal casting UDP side to skip the kernel network stack;
+`SO_BUSY_POLL` so the NIC is polled, not interrupt-driven.
+
+This mirrors the Risk/ME tiles: a latency-critical path runs on its own
+pinned, busy-spin core, and cross-tile handoff is a single SPSC ring.
 
 ## Connection Lifecycle
 
