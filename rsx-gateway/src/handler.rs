@@ -161,11 +161,18 @@ pub async fn handle_connection(
             }
         }
 
-        // Wait up to 10ms for data to be ready before
-        // reading. This avoids io_uring cancel-safety
-        // issues that corrupt the stream byte offset.
+        // Wait for inbound data, but cap the wait so a response
+        // routed into `outbound` by the CMP loop is drained +
+        // written promptly instead of sitting until the next
+        // inbound frame. 500us bounds the egress-delivery tail
+        // (was 10ms — the dominant GW->ME->GW latency per the
+        // GATEWAY-LATENCY trace) without a separate egress tile;
+        // the timeout only cancels a readiness check (no read
+        // started) so the io_uring cancel-safety / byte-offset
+        // concern is unaffected. The eventual zero-poll fix is a
+        // per-conn wake (notify) or the egress tile-split.
         let ready = monoio::time::timeout(
-            std::time::Duration::from_millis(10),
+            std::time::Duration::from_micros(500),
             stream.readable(false),
         )
         .await;
