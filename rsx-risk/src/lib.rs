@@ -16,7 +16,6 @@ pub mod persist;
 pub mod replay;
 pub mod schema;
 pub mod lease;
-pub mod replica;
 
 pub use account::Account;
 pub use config::LiquidationConfig;

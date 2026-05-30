@@ -1,3 +1,18 @@
+//! Leader-election + crash-recovery integration tests.
+//!
+//! After the replica-mode deletion, every risk-shard process is
+//! a candidate main: it blocks on `pg_advisory_lock(shard_id)`,
+//! then loads PG state + replays WAL. These tests cover the two
+//! durable guarantees that protocol rests on:
+//!   - invariant #10: the advisory lock is exclusive (at most one
+//!     main per shard; the next process acquires only after the
+//!     holder's session drops).
+//!   - crash recovery: a cold-started shard rebuilds its state
+//!     from a Postgres `ColdStartState` snapshot.
+//!
+//! The advisory-lock tests are `#[ignore]`d (need a live PG; run
+//! under `make integration`).
+
 use rsx_risk::account::Account;
 use rsx_risk::config::LiquidationConfig;
 use rsx_risk::config::ReplicationConfig;
@@ -8,12 +23,11 @@ use rsx_risk::margin::SymbolRiskParams;
 use rsx_risk::position::Position;
 use rsx_risk::replay::ColdStartState;
 use rsx_risk::shard::RiskShard;
-use rsx_risk::types::FillEvent;
 use rustc_hash::FxHashMap;
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
-fn test_config(is_replica: bool) -> ShardConfig {
+fn test_config() -> ShardConfig {
     ShardConfig {
         shard_id: 0,
         shard_count: 1,
@@ -31,251 +45,9 @@ fn test_config(is_replica: bool) -> ShardConfig {
         funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig {
-            is_replica,
             lease_poll_interval_ms: 500,
             lease_renew_interval_ms: 1000,
-            replica_sync_ring_size: 1024,
         },
-    }
-}
-
-#[tokio::test]
-async fn replica_stays_in_sync_with_main_via_tip_sync() {
-    let mut main_shard = RiskShard::new(test_config(false));
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    let fills = vec![
-        FillEvent {
-            seq: 1,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000,
-            qty: 10_0000,
-            taker_side: 0,
-            timestamp_ns: 1000,
-        },
-        FillEvent {
-            seq: 2,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50001_0000,
-            qty: 5_0000,
-            taker_side: 1,
-            timestamp_ns: 2000,
-        },
-        FillEvent {
-            seq: 3,
-            symbol_id: 1,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 30000_0000,
-            qty: 20_0000,
-            taker_side: 0,
-            timestamp_ns: 3000,
-        },
-    ];
-
-    for fill in &fills {
-        main_shard.process_fill(fill);
-        replica_shard.buffer_fill_for_replica(fill.clone());
-    }
-
-    assert_eq!(main_shard.tips[0], 2);
-    assert_eq!(main_shard.tips[1], 3);
-    assert_eq!(replica_shard.replica_buffered_count(), 3);
-
-    replica_shard.apply_tip_from_main(0, 2);
-    replica_shard.apply_tip_from_main(1, 3);
-
-    assert_eq!(replica_shard.replica_buffered_count(), 0);
-    assert_eq!(replica_shard.tips[0], 2);
-    assert_eq!(replica_shard.tips[1], 3);
-
-    let main_pos = main_shard
-        .positions
-        .get(&(100u32, 0u32))
-        .unwrap();
-    let replica_pos = replica_shard
-        .positions
-        .get(&(100u32, 0u32))
-        .unwrap();
-
-    assert_eq!(main_pos.long_qty, replica_pos.long_qty);
-    assert_eq!(main_pos.short_qty, replica_pos.short_qty);
-    assert_eq!(
-        main_pos.realized_pnl,
-        replica_pos.realized_pnl
-    );
-}
-
-#[tokio::test]
-async fn replica_buffers_fills_ahead_of_tip_sync() {
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    for seq in 1..=10 {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000,
-            qty: 10_0000,
-            taker_side: 0,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    assert_eq!(replica_shard.replica_buffered_count(), 10);
-
-    replica_shard.apply_tip_from_main(0, 5);
-    assert_eq!(replica_shard.replica_buffered_count(), 5);
-    assert_eq!(replica_shard.tips[0], 5);
-
-    replica_shard.apply_tip_from_main(0, 10);
-    assert_eq!(replica_shard.replica_buffered_count(), 0);
-    assert_eq!(replica_shard.tips[0], 10);
-}
-
-#[tokio::test]
-async fn replica_promotion_no_data_loss() {
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    // Add 100 fills for symbol 0
-    for seq in 1..=100 {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000,
-            qty: 10_0000,
-            taker_side: 0,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    // Add 50 fills for symbol 1
-    for seq in 1..=50 {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 1,
-            taker_user_id: 300,
-            maker_user_id: 400,
-            price: 40000_0000,
-            qty: 5_0000,
-            taker_side: 1,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    // Add 25 more fills for symbol 2 (won't get tip applied)
-    for seq in 1..=25 {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 2,
-            taker_user_id: 500,
-            maker_user_id: 600,
-            price: 30000_0000,
-            qty: 3_0000,
-            taker_side: 0,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    // Apply tips for symbols 0 and 1 only
-    replica_shard.apply_tip_from_main(0, 100);
-    replica_shard.apply_tip_from_main(1, 50);
-
-    // Symbol 2 should still have 25 buffered fills
-    let fills_before = replica_shard.replica_buffered_count();
-    assert_eq!(fills_before, 25);
-
-    // Promotion should apply nothing (no new tips)
-    let applied_fills = replica_shard.promote_from_replica();
-    assert_eq!(applied_fills.len(), 0);
-
-    // Verify positions from applied fills
-    let pos0 = replica_shard.positions.get(&(100u32, 0u32));
-    assert!(pos0.is_some());
-    assert_eq!(pos0.unwrap().long_qty, 100 * 10_0000);
-
-    let pos1 = replica_shard.positions.get(&(300u32, 1u32));
-    assert!(pos1.is_some());
-    assert_eq!(pos1.unwrap().short_qty, 50 * 5_0000);
-}
-
-#[tokio::test]
-async fn promotion_invariant_only_up_to_last_tip() {
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    for seq in 1..=20 {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000,
-            qty: 10_0000,
-            taker_side: 0,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    replica_shard.apply_tip_from_main(0, 15);
-
-    assert_eq!(replica_shard.replica_buffered_count(), 5);
-
-    let fills = replica_shard.promote_from_replica();
-    assert_eq!(fills.len(), 0);
-
-    assert_eq!(replica_shard.tips[0], 15);
-
-    let pos = replica_shard.positions.get(&(100u32, 0u32));
-    assert!(pos.is_some());
-    assert_eq!(pos.unwrap().long_qty, 15 * 10_0000);
-}
-
-#[tokio::test]
-async fn multi_symbol_fill_interleaving_with_replica() {
-    let mut main_shard = RiskShard::new(test_config(false));
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    for i in 0..50 {
-        let symbol_id = (i % 4) as u32;
-        let seq = (i / 4) + 1;
-        let fill = FillEvent {
-            seq,
-            symbol_id,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000 + (i as i64 * 100),
-            qty: 10_0000,
-            taker_side: (i % 2) as u8,
-            timestamp_ns: i as u64 * 1000,
-        };
-        main_shard.process_fill(&fill);
-        replica_shard.buffer_fill_for_replica(fill);
-    }
-
-    for symbol_id in 0..4 {
-        let tip = main_shard.tips[symbol_id];
-        replica_shard.apply_tip_from_main(symbol_id as u32, tip);
-    }
-
-    assert_eq!(replica_shard.replica_buffered_count(), 0);
-
-    for symbol_id in 0..4 {
-        assert_eq!(
-            main_shard.tips[symbol_id],
-            replica_shard.tips[symbol_id]
-        );
     }
 }
 
@@ -311,7 +83,7 @@ async fn lease_renewal_keeps_main_alive() {
 
 #[tokio::test]
 #[ignore]
-async fn replica_detects_main_crash_via_lock_poll() {
+async fn standby_detects_main_crash_via_lock() {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| {
             "postgresql://postgres@localhost/rsx_test".into()
@@ -325,12 +97,12 @@ async fn replica_detects_main_crash_via_lock_poll() {
         let _ = conn_main.await;
     });
 
-    let (client_replica, conn_replica) =
+    let (client_standby, conn_standby) =
         tokio_postgres::connect(&db_url, NoTls)
             .await
             .expect("failed to connect");
     tokio::spawn(async move {
-        let _ = conn_replica.await;
+        let _ = conn_standby.await;
     });
 
     let shard_id = 201;
@@ -341,11 +113,11 @@ async fn replica_detects_main_crash_via_lock_poll() {
         .await
         .expect("main acquire");
 
-    let mut lease_replica = AdvisoryLease::new(shard_id);
-    let acquired = lease_replica
-        .try_acquire(&client_replica)
+    let mut lease_standby = AdvisoryLease::new(shard_id);
+    let acquired = lease_standby
+        .try_acquire(&client_standby)
         .await
-        .expect("replica try");
+        .expect("standby try");
     assert!(!acquired);
 
     drop(client_main);
@@ -353,16 +125,16 @@ async fn replica_detects_main_crash_via_lock_poll() {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let acquired = lease_replica
-        .try_acquire(&client_replica)
+    let acquired = lease_standby
+        .try_acquire(&client_standby)
         .await
-        .expect("replica acquire after crash");
+        .expect("standby acquire after crash");
     assert!(acquired);
 }
 
 #[tokio::test]
 #[ignore]
-async fn both_crash_cold_start_from_postgres() {
+async fn cold_start_from_postgres() {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| {
             "postgresql://postgres@localhost/rsx_test".into()
@@ -376,10 +148,7 @@ async fn both_crash_cold_start_from_postgres() {
         let _ = conn.await;
     });
 
-    let _shard_id = 202;
-    let _max_symbols = 4;
-
-    let mut shard = RiskShard::new(test_config(false));
+    let mut shard = RiskShard::new(test_config());
 
     let mut accounts = FxHashMap::default();
     accounts.insert(
@@ -426,89 +195,6 @@ async fn both_crash_cold_start_from_postgres() {
     let pos = shard.positions.get(&(100u32, 0u32)).unwrap();
     assert_eq!(pos.long_qty, 100_0000);
     assert_eq!(pos.last_fill_seq, 10);
-}
-
-#[tokio::test]
-async fn replica_applies_fills_in_seq_order() {
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    let seqs = vec![5, 3, 1, 4, 2];
-    for &seq in &seqs {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000,
-            qty: 10_0000,
-            taker_side: 0,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    replica_shard.apply_tip_from_main(0, 5);
-
-    let pos = replica_shard.positions.get(&(100u32, 0u32));
-    assert!(pos.is_some());
-    assert_eq!(pos.unwrap().long_qty, 5 * 10_0000);
-    assert_eq!(pos.unwrap().last_fill_seq, 5);
-}
-
-#[tokio::test]
-async fn replica_handles_seq_gaps() {
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    let seqs = vec![1, 2, 5, 6, 10];
-    for &seq in &seqs {
-        replica_shard.buffer_fill_for_replica(FillEvent {
-            seq,
-            symbol_id: 0,
-            taker_user_id: 100,
-            maker_user_id: 200,
-            price: 50000_0000,
-            qty: 10_0000,
-            taker_side: 0,
-            timestamp_ns: seq * 1000,
-        });
-    }
-
-    replica_shard.apply_tip_from_main(0, 10);
-
-    let pos = replica_shard.positions.get(&(100u32, 0u32));
-    assert!(pos.is_some());
-    assert_eq!(pos.unwrap().long_qty, 5 * 10_0000);
-    assert_eq!(replica_shard.tips[0], 10);
-}
-
-#[tokio::test]
-async fn replica_dedup_on_duplicate_fills() {
-    let mut replica_shard =
-        RiskShard::new(test_config(true));
-
-    let fill = FillEvent {
-        seq: 1,
-        symbol_id: 0,
-        taker_user_id: 100,
-        maker_user_id: 200,
-        price: 50000_0000,
-        qty: 10_0000,
-        taker_side: 0,
-        timestamp_ns: 1000,
-    };
-
-    replica_shard.buffer_fill_for_replica(fill.clone());
-    replica_shard.buffer_fill_for_replica(fill.clone());
-    replica_shard.buffer_fill_for_replica(fill);
-
-    assert_eq!(replica_shard.replica_buffered_count(), 1);
-
-    replica_shard.apply_tip_from_main(0, 1);
-
-    let pos = replica_shard.positions.get(&(100u32, 0u32));
-    assert!(pos.is_some());
-    assert_eq!(pos.unwrap().long_qty, 10_0000);
 }
 
 #[tokio::test]

@@ -399,10 +399,10 @@ pub async fn run_persist_worker(
 /// each flush cycle. When the flag flips to `true`, the
 /// worker drains any pending events with one final flush
 /// attempt and returns. Used by the risk Main role so that
-/// a demote can cleanly stop the worker before the next
-/// promote spawns a fresh one — otherwise a
-/// Main→Replica→Main cycle leaks worker threads, each
-/// holding its own PG connection.
+/// a demote (lease loss) can cleanly stop the worker before
+/// `run_main` re-acquires the advisory lock and spawns a fresh
+/// one — otherwise a demote → re-acquire cycle leaks worker
+/// threads, each holding its own PG connection.
 pub async fn run_persist_worker_with_shutdown(
     mut consumer: Consumer<PersistEvent>,
     mut client: Client,

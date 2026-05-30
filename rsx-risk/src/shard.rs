@@ -14,7 +14,6 @@ use crate::persist::LiquidationRecord;
 use crate::persist::PersistEvent;
 use crate::position::Position;
 use crate::price::IndexPrice;
-use crate::replica::ReplicaState;
 use crate::replay::ColdStartState;
 use crate::rings::OrderResponse;
 use crate::rings::ShardRings;
@@ -66,8 +65,6 @@ pub struct RiskShard {
     pub orders_processed: u64,
     pub backpressured: bool,
     persist_producer: Option<Producer<PersistEvent>>,
-    replica_tip_producer: Option<Producer<(u32, u64)>>,
-    pub replica_state: Option<ReplicaState>,
     pub liquidation: LiquidationEngine,
 
     // Cached mark prices with index-price fallback for
@@ -80,12 +77,6 @@ pub struct RiskShard {
 impl RiskShard {
     pub fn new(config: ShardConfig) -> Self {
         let max = config.max_symbols;
-        let replica_state =
-            if config.replication_config.is_replica {
-                Some(ReplicaState::new(max))
-            } else {
-                None
-            };
         Self {
             shard_id: config.shard_id,
             shard_count: config.shard_count,
@@ -116,8 +107,6 @@ impl RiskShard {
             orders_processed: 0,
             backpressured: false,
             persist_producer: None,
-            replica_tip_producer: None,
-            replica_state,
             fallback_mark_prices: vec![0i64; max],
             mark_dirty: true,
             liquidation: LiquidationEngine::new(
@@ -1181,81 +1170,6 @@ impl RiskShard {
         self.maybe_settle_funding(now_secs);
     }
 
-    pub fn set_replica_tip_producer(
-        &mut self,
-        producer: Producer<(u32, u64)>,
-    ) {
-        self.replica_tip_producer = Some(producer);
-    }
-
-    pub fn push_tip_to_replica(
-        &mut self,
-        symbol_id: u32,
-        tip: u64,
-    ) {
-        if let Some(ref mut p) = self.replica_tip_producer {
-            if p.push((symbol_id, tip)).is_err() {
-                warn!(
-                    "replica tip ring full for sym {}",
-                    symbol_id
-                );
-            }
-        }
-    }
-
-    pub fn is_replica(&self) -> bool {
-        self.replica_state.is_some()
-    }
-
-    pub fn buffer_fill_for_replica(
-        &mut self,
-        fill: FillEvent,
-    ) {
-        if let Some(ref mut r) = self.replica_state {
-            r.buffer_fill(fill);
-        }
-    }
-
-    pub fn apply_tip_from_main(
-        &mut self,
-        symbol_id: u32,
-        tip: u64,
-    ) {
-        if let Some(ref mut r) = self.replica_state {
-            r.apply_tip(symbol_id, tip);
-            let fills =
-                r.drain_fills_up_to_tip(symbol_id);
-            for fill in fills {
-                self.process_fill(&fill);
-            }
-        }
-    }
-
-    pub fn promote_from_replica(
-        &mut self,
-    ) -> Vec<FillEvent> {
-        if let Some(ref mut r) = self.replica_state {
-            let fills = r.drain_all_up_to_tips();
-            for fill in &fills {
-                self.process_fill(fill);
-            }
-            info!(
-                shard_id = self.shard_id,
-                fills_applied = fills.len(),
-                "promoted from replica"
-            );
-            fills
-        } else {
-            Vec::new()
-        }
-    }
-
-    pub fn replica_buffered_count(&self) -> usize {
-        self.replica_state
-            .as_ref()
-            .map(|r| r.total_buffered())
-            .unwrap_or(0)
-    }
 }
 
 fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {

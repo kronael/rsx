@@ -20,9 +20,8 @@ use tracing::warn;
 /// or `CastRecv::Reconnect`. Mirrors
 /// `rsx_matching::replay::drain_dxs_replay_into_book` but
 /// delegates record application to a caller-supplied closure,
-/// so the same drain helper serves all four risk receivers
-/// (gw / me / mark / replica-tip), each with its own
-/// local-state apply.
+/// so the same drain helper serves all three risk receivers
+/// (gw / me / mark), each with its own local-state apply.
 ///
 /// Builds a single-threaded tokio runtime on demand — FAULTED
 /// is rare enough that the few-millisecond setup cost is
