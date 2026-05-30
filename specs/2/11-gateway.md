@@ -68,6 +68,10 @@ DPDK on the internal casting UDP side to skip the kernel network stack;
 This mirrors the Risk/ME tiles: a latency-critical path runs on its own
 pinned, busy-spin core, and cross-tile handoff is a single SPSC ring.
 
+**Why io_uring here, and the reactor's latency contract** (readiness vs
+completion, the syscall budget, and the road to fully zero-copy RX/TX via
+AF_XDP) — see `rsx-gateway/notes/io-model.md`.
+
 ## Connection Lifecycle
 
 1. Client opens WebSocket with `Authorization: Bearer <JWT>`
