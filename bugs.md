@@ -1,5 +1,20 @@
 # Bug queue
 
+## LATENCY-TRACE-ALWAYS-ON — per-stage trace runs unconditionally on the hot path (LOW)
+
+**Status: OPEN.** Found 2026-05-30 in the hot-path audit. `rsx_log::latency::
+sample` → `rsx_log::push` is **ungated**: every order pushes ≥2 records per
+stage (e.g. ME does `me_in` + `me_dedup_done`, each preceded by a `time_ns()`
+VDSO clock read + a thread-local `RefCell::borrow_mut` + SPSC push). Across all
+stages (gateway/risk/ME emit several) that's ~tens of ns/order of trace
+overhead on a ~340 ns match budget, present even in production where the trace
+is unwanted. Violates the "no logging on hot path" discipline (notes/hot-path
+.md). **Fix:** gate behind a process-wide `AtomicBool` read once from an env
+var at startup (`RSX_LATENCY_TRACE`), early-return in `push`/`sample` when off
+— one predictable branch, no syscall. NOT flipped here because the latency-
+publish tooling + the reports/ stage timings consume these samples; changing
+the default needs those updated in lockstep. Triage only.
+
 ## IOC-NOT-HONORED — IOC order with no liquidity rests instead of cancelling (MED)
 
 **Status: OPEN.** Found 2026-05-30 building the WS order-latency bench. A
