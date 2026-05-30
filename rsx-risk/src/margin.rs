@@ -49,7 +49,7 @@ impl PortfolioMargin {
                 continue;
             }
             let mark = mark_prices[sid];
-            upnl += pos.unrealized_pnl(mark).unwrap_or_else(|_| {
+            let pos_upnl = pos.unrealized_pnl(mark).unwrap_or_else(|_| {
                 error!(
                     "unrealized_pnl overflow: \
                      user={} symbol={} mark={}",
@@ -57,6 +57,7 @@ impl PortfolioMargin {
                 );
                 i64::MIN
             });
+            upnl = upnl.saturating_add(pos_upnl);
             let notional =
                 pos.notional(mark).unwrap_or_else(|_| {
                     error!(
