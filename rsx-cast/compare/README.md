@@ -38,6 +38,17 @@ row is in the right-most column.
 | **Chronicle Queue** (Java) | — (doc only) | — | sub-µs IPC published, mmap-shared |
 | **LBM** (commercial) | — (closed-source) | — | ~1–5 µs LAN, vendor whitepapers |
 
+For this workload, casting's RTT is at the raw-UDP floor (the
+protocol adds ~0 µs over `sendto + recvfrom`), ties MoldUDP64's
+UDP-sequenced frame, and is lower than the TCP protocols
+(TCP_NODELAY, SoupBinTCP), the userspace-RUDP options (KCP, QUIC),
+and Aeron's networked UDP path. The only lower numbers are
+shared-memory IPC paths (Aeron IPC ~830 ns, Chronicle sub-µs) —
+those are not network transports and carry no WAL. This is a
+loopback measurement of one fixed-record LAN workload, not a
+general verdict on the competitors' designed-for workloads
+(Aeron multicast fan-out, QUIC over the WAN).
+
 How to run them all locally:
 
 ```
@@ -68,7 +79,7 @@ for the attribution breakdown.
 |---|---|---|---|---|---|---|
 | Loss detection | NAK (receiver) | NAK (receiver) | NAK (receiver) | ACK (packet-num ranges) | n/a (durable log) | NAK (receiver) |
 | Retransmit source | hot ring + WAL | term buffers (RAM) | separate request server | in-memory window | disk | in-memory window |
-| Retransmit horizon | WAL retention (48 h default) | ~192 MB RAM | request server policy | in-flight window | disk retention | RAM-bounded |
+| Retransmit horizon | WAL retention (4 h default) | ~192 MB RAM | request server policy | in-flight window | disk retention | RAM-bounded |
 | Durability | **wire = disk format** | Aeron Archive (separate) | external | none | mmap files | external |
 | Multi-receiver | unicast only | unicast + multicast + IPC | multicast | unicast | multi-reader via mmap | multicast + unicast |
 | Connection model | connection-less | connection-less | connection-less | TLS 1.3 handshake | mmap session | session |
@@ -119,9 +130,9 @@ These are benched for completeness; they're not the framing comparison:
 
 | Protocol | Doc | Bench | Why it's not in the main five |
 |---|---|---|---|
-| raw UDP | [raw-udp.md](raw-udp.md) | `compare_udp` | Baseline floor, not a competitor |
-| TCP | [tcp.md](tcp.md) | `compare_tcp` | rsx-cast uses TCP for cold-path replay, not live |
-| KCP | [kcp.md](kcp.md) | `compare_kcp` | Gaming RUDP; Quinn is the same family more credibly |
+| raw UDP | [raw-udp.md](raw-udp.md) | `compare_all::raw_udp_128b` | Baseline floor, not a competitor |
+| TCP | [tcp.md](tcp.md) | `compare_all::tcp_nodelay_128b` | rsx-cast uses TCP for cold-path replay, not live |
+| KCP | [kcp.md](kcp.md) | `compare_all::kcp_spin_flush_128b` | Gaming RUDP; Quinn is the same family more credibly |
 | SoupBinTCP | [soupbintcp.md](soupbintcp.md) | `compare_soupbintcp` | TCP + 3-byte framing; cost is within TCP noise |
 
 Payload formats (ITCH 5.0, OUCH 5.0, SBE, FAST) belong to the

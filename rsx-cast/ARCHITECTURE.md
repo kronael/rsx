@@ -73,10 +73,16 @@ Zero allocations on the hot **send** path. On NAK, the sender
 checks `ring_seqs[slot] == seq` (cache hit) or falls back to
 `read_record_at_seq` (cache miss). NAK counts are clamped to
 `SEND_RING_CAPACITY` so a malicious peer can't make the
-sender loop on `u64::MAX`. The receive path
-(`CastReceiver::try_recv`) currently allocates one `Vec<u8>`
-per in-order packet; a caller-supplied `&mut [u8]` variant
-is future work.
+sender loop on `u64::MAX`.
+
+The **receive** path has two entry points: `try_recv_with`
+delivers the payload as a `&[u8]` into the receiver's internal
+packet buffer via an `FnOnce(WalHeader, &[u8])` callback (zero
+allocation — use on the hot path); `try_recv` is a convenience
+wrapper that returns an owned `Vec<u8>` per in-order packet.
+Out-of-order frames land in a separate 2048-slot reorder ring
+(`reorder_seqs` / `reorder_lens` / `reorder_frames`); overflow
+returns `Reconnect`.
 
 ## WAL record format
 
@@ -113,9 +119,11 @@ no longer accept it.
 - **Rotation**: on flush, if `file_size >= max_file_size`
   (64MB default), close active file, rename with seq range,
   open new active file, run GC.
-- **GC**: mtime-based; delete files older than retention
-  (4h default per CLAUDE.md; no time-based GC wired in
-  `wal.rs` today — rotation alone bounds disk use).
+- **GC**: `prune_old_segments` runs at the end of every
+  `rotate()`. mtime-based; deletes rotated segments older than
+  `RETENTION_NS` (4h; const in `wal.rs`). Best-effort — an
+  unlink failure is logged and skipped, never propagated. The
+  active file is never touched.
 - **Backpressure**: append blocks when buf > 2x
   `max_file_size`.
 
@@ -126,8 +134,10 @@ wal/{stream_id}/{stream_id}_{first_seq}_{last_seq}.wal
 wal/{stream_id}/{stream_id}_active.wal
 ```
 
-Filenames encode the seq range — O(1) file selection for
-`read_record_at_seq`. No file header, no index.
+Filenames encode the seq range. `read_record_at_seq` picks the
+segment whose `[first_seq, last_seq]` covers the target (linear
+scan of the file list, bounded by retention), then scans that
+one file for the record. No file header, no index.
 
 ## Replay Protocol (replication) — server.rs
 
@@ -202,24 +212,29 @@ Consumers dedup by `seq`. Risk treats any record with
 
 All p50 unless noted. Host: AMD Ryzen 9 5950X (6-core
 slice), Linux 6.1, Rust release, threads pinned. See
-[BENCHES.md](BENCHES.md) for per-bench attribution and
+[BENCHES.md](BENCHES.md) for per-bench attribution,
+[`compare/README.md`](compare/README.md) for the same-harness
+comparison against Aeron / MoldUDP64 / SoupBinTCP / Quinn / KCP /
+raw UDP / TCP, and
 [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
-for the dated authoritative numbers.
+for the dated authoritative numbers. casting's loopback RTT
+(9.7 µs) sits at the raw-UDP floor (9.89 µs) — the protocol adds
+~0 µs; 99 % of the send body is the `sendto` syscall.
 
 | Operation | Measured | Bench |
 |---|---:|---|
-| Protocol-record encode (`Nak` / `CastHeartbeat`) | ~49 ns | `cast_bench` |
-| `FillRecord` encode | 23 ns | parent `rsx-messages` `encode_bench` |
-| Protocol-record decode | ~9 ns | `cast_bench` |
-| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | ~37 ns | `wal_bench` |
+| Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cast_bench` |
+| Protocol-record decode | 9 ns | `cast_bench` |
+| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
 | WAL flush + fsync, 1 record | 498 µs | `wal_fsync_bench` (real disk, core-pinned) |
 | WAL flush + fsync, 100 records | 627 µs | `wal_fsync_bench` — fsync dominates |
 | WAL flush + fsync, 1 000 records | 1.19 ms | `wal_fsync_bench` — fsync still dominant |
 | WAL flush + fsync, 10 000 records | 5.94 ms | `wal_fsync_bench` — append overhead visible |
 | WAL sequential read | ~700 MB/s | `wal_bench` |
 | casting RTT, loopback, 128 B | 9.7 µs | `cast_rtt_bench` |
-| Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_udp` |
-| `CastSender::send` body (per call) | ~3.65 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
+| casting one-way, loopback, 128 B | ~5.3 µs | `cast_one_way_bench` |
+| Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_all::raw_udp_128b` |
+| `CastSender::send` body (per call) | ~4.0 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 10 K records | 10.4 ms | `wal_random_read_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 100 K records | 80.6 ms | `wal_random_read_bench` |
 
