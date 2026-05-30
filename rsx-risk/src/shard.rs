@@ -470,12 +470,22 @@ impl RiskShard {
             &self.fallback_mark_prices,
             frozen,
         );
-        let liq_syms: Vec<u32> = self.iter_positions_for_user(user_id)
-            .filter(|p| !p.is_empty())
-            .map(|p| p.symbol_id)
-            .collect();
         let needs_liq = self.margin.needs_liquidation(&state);
-        for sid in liq_syms {
+        // Iterate the user's symbols directly instead of collecting a
+        // Vec<u32> per fill: positions_by_user + positions are borrowed
+        // immutably and liquidation mutably — disjoint fields, so no heap
+        // allocation on this per-fill hot path.
+        let Some(syms) = self.positions_by_user.get(&user_id) else {
+            return;
+        };
+        for &sid in syms {
+            let active = self
+                .positions
+                .get(&(user_id, sid))
+                .is_some_and(|p| !p.is_empty());
+            if !active {
+                continue;
+            }
             if needs_liq {
                 self.liquidation.enqueue(user_id, sid, now_ns);
             } else {
