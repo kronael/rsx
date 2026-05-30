@@ -7,6 +7,7 @@ use rtrb::RingBuffer;
 use std::cell::RefCell;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -51,6 +52,13 @@ static CONSUMERS: OnceLock<Mutex<Vec<Consumer<Record>>>> =
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
+/// Hot-path trace gate. When false, `push` is a single relaxed load + return —
+/// no thread-local touch, no ring write — and callers should skip the
+/// `time_ns()` read too via [`latency::enabled`]. Defaults to true so tooling
+/// that never calls `set_enabled` keeps emitting; binaries set it from
+/// `RSX_LATENCY_TRACE` at startup (see `latency::set_enabled`).
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
 fn consumers() -> &'static Mutex<Vec<Consumer<Record>>> {
     CONSUMERS.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -79,6 +87,9 @@ fn init_thread_ring() -> Producer<Record> {
 /// the fast path.
 #[inline]
 pub fn push(record: Record) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     PRODUCER.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
@@ -99,8 +110,24 @@ pub fn push(record: Record) {
 
 /// Sub-module for the per-stage latency sample API.
 pub mod latency {
+    use super::ENABLED;
     use super::Kind;
+    use super::Ordering;
     use super::Record;
+
+    /// Enable/disable the latency trace process-wide. Call once at startup,
+    /// typically `set_enabled(env::var("RSX_LATENCY_TRACE").as_deref() != Ok("0"))`.
+    #[inline]
+    pub fn set_enabled(on: bool) {
+        ENABLED.store(on, Ordering::Relaxed);
+    }
+
+    /// Is the trace on? A relaxed atomic load (~1 cycle). Hot-path callers
+    /// gate the `time_ns()` read on this: `if enabled() { sample(...) }`.
+    #[inline]
+    pub fn enabled() -> bool {
+        ENABLED.load(Ordering::Relaxed)
+    }
 
     /// Push a latency sample. Wraps [`super::push`] with
     /// the fields named the way callers think about them.
