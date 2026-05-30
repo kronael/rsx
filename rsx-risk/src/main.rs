@@ -715,9 +715,11 @@ fn run_main(
                         ask_px: rec.ask_px.0,
                         ask_qty: rec.ask_qty.0,
                     });
-                    // Forward to GW to maintain cast seq
-                    // continuity (GW ignores BBO content).
-                    forward_to_gw(&mut gw_sender, RECORD_BBO, payload);
+                    // BBO is consumed only by risk (margin scan). It is
+                    // NOT forwarded to the gateway: the gateway has no BBO
+                    // handler, and forward_to_gw re-sequences with gw's own
+                    // counter, so dropping it leaves no seq gap. Public BBO
+                    // reaches clients via the marketdata process.
                 }
                 RECORD_FILL => if let Some(fill) =
                     decode_payload::<FillRecord>(payload)
