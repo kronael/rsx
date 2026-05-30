@@ -97,6 +97,31 @@ fn update_order_index(
     }
 }
 
+/// Rebuild `order_index` from a freshly restored book's
+/// active resting orders. A snapshot persists the book's slab
+/// but not the (user,oid)->handle map, so without this a
+/// post-restart cancel for a pre-snapshot resting order would
+/// miss the index and silently no-op. Scans every slab handle
+/// and re-keys the active ones — same (user,oid)->handle shape
+/// `update_order_index` builds from OrderInserted events.
+/// (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, index half)
+fn rebuild_order_index_from_book(
+    book: &rsx_book::book::Orderbook,
+    index: &mut FxHashMap<OrderKey, u32>,
+) {
+    index.clear();
+    for handle in 0..book.orders.len() {
+        let slot = book.orders.get(handle);
+        if !slot.is_active() {
+            continue;
+        }
+        index.insert(
+            (slot.user_id, slot.order_id_hi, slot.order_id_lo),
+            handle,
+        );
+    }
+}
+
 fn log_effective_matching_config(
     cfg: &SymbolConfig,
     db_url: &Option<String>,
@@ -185,7 +210,11 @@ fn load_config_from_env() -> io::Result<SymbolConfig> {
 fn main() {
     install_panic_handler();
 
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_ansi(std::io::IsTerminal::is_terminal(
+            &std::io::stdout(),
+        ))
+        .init();
 
     // Drain hot-path latency samples out-of-band
     // (see rsx-types/src/latency.rs). 100 ms is a
@@ -309,6 +338,17 @@ fn main() {
         load_snapshot(&wal_dir, symbol_id);
     let replay_from = if let Some(loaded) = snapshot_loaded {
         book = *loaded;
+        // The snapshot persists the book slab but not the
+        // (user,oid)->handle index — rebuild it from the
+        // restored resting orders so post-restart cancels for
+        // pre-snapshot orders hit. WAL replay below layers its
+        // own OrderInserted/OrderDone deltas on top.
+        // (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, index half)
+        // TODO(bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD): dedup
+        // not restored across snapshot — pre-snapshot oids can
+        // re-accept; needs a persisted dedup snapshot or
+        // RECORD_ORDER_ACCEPTED replay.
+        rebuild_order_index_from_book(&book, &mut order_index);
         let sidecar = load_wal_seq(&wal_dir, symbol_id);
         info!(
             "book restored from snapshot: book.seq={} wal_seq_sidecar={:?}",
@@ -339,8 +379,16 @@ fn main() {
                 wal_writer.set_next_seq(last_seq + 1);
             }
             Ok(_) => {
-                // No records replayed — leave next_seq=1
-                // (writer is fresh).
+                // No records replayed past start_seq, but the
+                // snapshot already covers seqs up to start_seq-1
+                // on disk. The fresh writer's next_seq defaults
+                // to 1, which would reuse/regress WAL seqs the
+                // snapshot implies — violating invariant #5
+                // (tips monotonic). Advance to the snapshot tip
+                // so the next live append never regresses below
+                // what the snapshot already covers.
+                // (bugs.md ME-NEXT-SEQ-REGRESSION)
+                wal_writer.set_next_seq(start_seq.max(1));
             }
             Err(e) => {
                 warn!(
