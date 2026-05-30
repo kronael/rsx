@@ -1,4 +1,4 @@
-//! CMP v4 FAULTED → DXS replay POC end-to-end test.
+//! Casting v4 FAULTED → DXS replay POC end-to-end test.
 //!
 //! Simulates: risk process has WAL-persisted OrderRequest
 //! records that matching never saw (some were dropped on
@@ -50,7 +50,7 @@ fn reserve_port() -> SocketAddr {
 }
 
 /// Build an OrderMessage as it would arrive from risk on
-/// the CMP wire. WalWriter will assign seq via set_seq.
+/// the casting wire. WalWriter will assign seq via set_seq.
 fn order_msg(
     uid: u32,
     oid: u64,

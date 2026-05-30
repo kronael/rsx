@@ -38,7 +38,7 @@ Triage rule applied
 
 ## Contents
 
-1. NAK-based reliable UDP (the Aeron / CMP family)
+1. NAK-based reliable UDP (the Aeron / casting family)
 2. ACK-based / hybrid reliable UDP (the KCP / QUIC family)
 3. Persistent-log-as-transport (the Chronicle / Kafka family)
 4. Trading / market-data wire formats
@@ -53,7 +53,7 @@ Triage rule applied
 
 ## 1. NAK-based reliable UDP
 
-This is the Aeron / CMP family: receiver detects gaps via sequence
+This is the Aeron / casting family: receiver detects gaps via sequence
 discontinuity and sends a NAK; sender retransmits from a buffer.
 Already covered in `aeron.md` and `lbm.md`. The long tail below.
 
@@ -66,8 +66,8 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   suppression via random backoff, parity-FEC option for proactive
   redundancy. Used in military tactical networks and as a ZeroMQ
   transport (see §6).
-- Differs from rsx-cast CMP: multicast-first (NAK suppression
-  mandatory), FEC built in, runs over IP-layer routers. CMP is
+- Differs from rsx-cast casting: multicast-first (NAK suppression
+  mandatory), FEC built in, runs over IP-layer routers. casting is
   unicast-only with no FEC and zero NAK suppression (single
   receiver per pair).
 
@@ -80,9 +80,9 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   was promoted by Cisco / Microsoft in early 2000s. The library
   has been frozen for nearly a decade but still backs ZeroMQ's
   `pgm://` transport.
-- Differs from rsx-cast CMP: IP-layer multicast (requires multicast
+- Differs from rsx-cast casting: IP-layer multicast (requires multicast
   routing in the LAN), parity-FEC for proactive recovery, sender-
-  tracked NAK responses (NCF). CMP is per-pair unicast with no FEC.
+  tracked NAK responses (NCF). casting is per-pair unicast with no FEC.
 
 ### RIST — Reliable Internet Stream Transport
 - Spec: <https://www.rist.tv/>, ref impl <https://code.videolan.org/rist/librist>
@@ -91,9 +91,9 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   industry (VideoLAN / Net Insight / SRT competitors merged
   efforts). RFC RTT-based NAK with bandwidth-throttled retransmit.
   Supports PSK + DTLS encryption.
-- Differs from rsx-cast CMP: optimised for video on lossy WAN
+- Differs from rsx-cast casting: optimised for video on lossy WAN
   (re-request horizon ~ seconds, FEC option), tunnel-mode framing
-  over RTP. CMP retransmits fixed-size records from a 48-h WAL
+  over RTP. casting retransmits fixed-size records from a 48-h WAL
   with no FEC.
 
 ### SRT — Secure Reliable Transport
@@ -103,7 +103,7 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   Designed for unpredictable internet uplinks (broadcast-camera
   to studio); retransmit horizon limited by a configurable
   send-buffer (default ~ 1 s). Used by OBS, FFmpeg, gstreamer.
-- Differs from rsx-cast CMP: byte-stream not record-stream, no
+- Differs from rsx-cast casting: byte-stream not record-stream, no
   on-disk archive (retransmit horizon = send buffer in RAM), AES
   encryption mandatory in production deployments.
 
@@ -119,7 +119,7 @@ reliable multicast over UDP. Three production implementations:
   (BSD-style), ~1 500 stars, active. Most mature, includes RTPS,
   TCP, and IP-multicast transports.
 
-Differs from rsx-cast CMP: full QoS layer (reliability, durability,
+Differs from rsx-cast casting: full QoS layer (reliability, durability,
 deadline, history depth), schema-driven (IDL or XML), discovery
 via SPDP/SEDP. RTPS uses HEARTBEAT + ACKNACK rather than gap-fill
 NAK; sender drives the conversation more than rsx-cast's NAK model.
@@ -150,8 +150,8 @@ Sender-driven loss detection. KCP and Quinn already covered.
   control aimed at bulk-data transfer over long-fat-pipes (sci
   computing, sky surveys). Influential design (~3k citations) but
   the project is dormant; modern displacement is QUIC.
-- Differs from rsx-cast CMP: bulk-throughput oriented (10 GbE WAN),
-  large window, slow start. CMP is small-message latency-oriented
+- Differs from rsx-cast casting: bulk-throughput oriented (10 GbE WAN),
+  large window, slow start. casting is small-message latency-oriented
   with zero congestion control.
 
 ### DCCP — Datagram Congestion Control Protocol (RFC 4340)
@@ -159,7 +159,7 @@ Sender-driven loss detection. KCP and Quinn already covered.
 - IETF "unreliable but congestion-controlled" datagram protocol.
   Mostly displaced by QUIC's DATAGRAM frame (RFC 9221). Worth
   naming for completeness; never gained production deployment.
-- Differs from rsx-cast CMP: kernel-resident, no application-
+- Differs from rsx-cast casting: kernel-resident, no application-
   level retransmit, congestion-controlled drops rather than NAK
   recovery.
 
@@ -170,8 +170,8 @@ Sender-driven loss detection. KCP and Quinn already covered.
 - BitTorrent's reliable UDP, MIT 2010. LEDBAT congestion control
   (delay-based, scavenger). Heavily deployed (every BT client)
   but as a background-priority transport.
-- Differs from rsx-cast CMP: explicitly tries to *yield* to other
-  traffic; CMP assumes it owns the wire.
+- Differs from rsx-cast casting: explicitly tries to *yield* to other
+  traffic; casting assumes it owns the wire.
 
 ### UDX — Holepunch reliable UDP
 - Repos: <https://github.com/holepunchto/libudx> (C),
@@ -180,7 +180,7 @@ Sender-driven loss detection. KCP and Quinn already covered.
 - Reliable, multiplexed, congestion-controlled streams over UDP.
   Built for P2P (Hyperswarm / Pear). No handshakes, no encryption
   (assumes a Noise tunnel above it).
-- Differs from rsx-cast CMP: P2P NAT-traversal first, stream API
+- Differs from rsx-cast casting: P2P NAT-traversal first, stream API
   rather than message, congestion control mandatory.
 
 ### QUIC implementations not already in `quinn.md`
@@ -220,7 +220,7 @@ Not a protocol but an addressable difference. RFC 9221 adds
 unreliable datagrams to a QUIC connection — i.e. a "send and pray"
 mode while keeping the encrypted/authenticated session. Every
 mainstream QUIC impl above supports it. This is the closest
-analogue to CMP's per-message unreliable semantics within a
+analogue to casting's per-message unreliable semantics within a
 connection-oriented framing.
 
 ### Tachyon
@@ -308,7 +308,7 @@ of citing it: Kafka is what rsx-cast is *not*.
 - Differs from rsx-cast: ZooKeeper coordination, quorum writes
   across N bookies, ledger lifecycle management. rsx-cast WAL is
   single-writer, no quorum, no metadata service.
-- Worth citing as the "if you wanted CMP-style live + WAL-style
+- Worth citing as the "if you wanted casting-style live + WAL-style
   cold but with strong replication guarantees" reference design.
 
 ### LogDevice (Facebook, archived)
@@ -372,7 +372,7 @@ of citing it: Kafka is what rsx-cast is *not*.
   citing for "VSR is a valid alternative to RAFT for exchange-
   class persistence" — directly relevant if rsx-cast ever needs
   multi-replica state.
-- Differs from rsx-cast: VSR consensus across replicas vs CMP
+- Differs from rsx-cast: VSR consensus across replicas vs casting
   unicast + WAL replication. TigerBeetle is the DB; rsx-cast is
   the transport.
 
@@ -410,8 +410,8 @@ what *rides* on the transport.
 - UDP-multicast protocol with sequence numbers + a separate TCP
   re-request server for gap recovery. Used for NASDAQ ITCH market
   data delivery.
-- Differs from rsx-cast CMP: gap recovery via a *different
-  channel* (TCP rewinder service). CMP gap recovery is in-band
+- Differs from rsx-cast casting: gap recovery via a *different
+  channel* (TCP rewinder service). casting gap recovery is in-band
   (NAK over the same UDP socket, retransmit from same producer).
 
 ### ITCH (NASDAQ market data)
@@ -441,8 +441,8 @@ what *rides* on the transport.
   decoders. Used by CME (MDP3, iLink3) and many exchanges. Pairs
   with Aeron in production.
 - Differs from rsx-cast message layout: SBE is a *schema-driven*
-  binary format. CMP/WAL records are hand-rolled `#[repr(C)]`
-  Rust structs. SBE adds versioning + tooling; CMP/WAL trades
+  binary format. casting/WAL records are hand-rolled `#[repr(C)]`
+  Rust structs. SBE adds versioning + tooling; casting/WAL trades
   that for one less codegen step.
 
 ### FAST — FIX Adapted for STreaming
@@ -465,10 +465,10 @@ what *rides* on the transport.
 - FIX-Trading-Community's session layer for high-perf binary
   trading. Origins: NASDAQ SoupBinTCP + UFO ("UDP for Orders").
   Variants over TCP and UDP. UFO is the closest spec analogue
-  to rsx-cast CMP (sequenced order datagrams with NAK recovery).
-- Differs from rsx-cast CMP: standardised session-layer
+  to rsx-cast casting (sequenced order datagrams with NAK recovery).
+- Differs from rsx-cast casting: standardised session-layer
   bracketing (Negotiate, Establish, Terminate), per-flow auth,
-  designed for client-vendor interop. CMP has no session
+  designed for client-vendor interop. casting has no session
   bracketing (sendto on first frame, NAK on first gap).
 
 ### QuickFIX (open-source FIX engine)
@@ -510,9 +510,9 @@ what *rides* on the transport.
   Block split into ~1200-byte "shreds"; Reed-Solomon 32:32
   erasure coding (FEC); recipients form a layered tree
   (Turbine). Recently QUIC has been overlaid on the shred path.
-- Differs from rsx-cast CMP: FEC instead of NAK (proactive rather
+- Differs from rsx-cast casting: FEC instead of NAK (proactive rather
   than reactive), tree multicast topology, slot-bounded retention
-  (you only retransmit within a block). CMP is per-pair unicast,
+  (you only retransmit within a block). casting is per-pair unicast,
   no FEC, 48-h retention.
 - Citable as the most-deployed UDP-reliable transport on
   the planet by raw bandwidth (Solana mainnet sustains
@@ -627,7 +627,7 @@ rsx-cast's "later: DPDK/AF_XDP swap" line implies this design space.
   PGM (`zmq_pgm`), EPGM (PGM tunneled in UDP), and NORM
   (`zmq_norm`). Other transports: TCP, IPC, inproc, WebSocket.
 - Differs from rsx-cast: high-level socket abstractions
-  (REQ/REP, PUB/SUB, PUSH/PULL etc.) — rsx-cast CMP is a single
+  (REQ/REP, PUB/SUB, PUSH/PULL etc.) — rsx-cast casting is a single
   per-pair unicast pipe.
 
 ### nanomsg-next-generation (nng)
@@ -655,7 +655,7 @@ rsx-cast's "later: DPDK/AF_XDP swap" line implies this design space.
   individually). Useful when L3 multicast isn't available
   (most clouds).
 - Cited because "Aeron without multicast" is closer to rsx-cast
-  CMP than "Aeron with multicast" — both are per-pair unicast.
+  casting than "Aeron with multicast" — both are per-pair unicast.
 
 ---
 
@@ -790,9 +790,9 @@ genuinely earn their own deep doc + guarantees table.
    we'd only quote published numbers.*
 
 4. **NORM (RFC 5740, NRL)** — `compare/norm.md`. The IETF
-   standard equivalent of CMP's NAK model, but multicast and
+   standard equivalent of casting's NAK model, but multicast and
    with FEC. NRL impl is small (~25k LOC C++). Citable as
-   "what an IETF-standard CMP-equivalent looks like" — would
+   "what an IETF-standard casting-equivalent looks like" — would
    nicely fill the gap that exists today between `aeron.md`
    (proprietary protocol, JVM driver) and `lbm.md` (commercial).
    *Benchmark feasibility: yes — `norm` builds out of the box,

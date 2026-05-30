@@ -57,7 +57,7 @@ cargo test -p rsx-marketdata
 ```
 
 12 test files: config, event_routing, heartbeat,
-me_cmp_addrs, protocol, replay, replay_e2e, seq_gap,
+me_cast_addrs, protocol, replay, replay_e2e, seq_gap,
 shadow, snapshot_consistency, state_resync, subscription.
 Seq gap detection with automatic L2 snapshot resend.
 See `specs/2/40-testing-marketdata.md`.

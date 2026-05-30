@@ -46,7 +46,7 @@ const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
 const NS_PER_MS: u64 = 1_000_000;
 
 /// Drain the risk producer's replication stream after the
-/// gateway's CMP receiver hit a sticky FAULTED or RECONNECT.
+/// gateway's cast receiver hit a sticky FAULTED or RECONNECT.
 /// Mirrors `rsx_risk::main::handle_replay`. Round-1 apply
 /// just logs records; the gateway's outbound state (per-user
 /// pending map, position cache) recovers indirectly via
@@ -58,12 +58,12 @@ fn handle_replay(
 ) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
-            "gateway cmp_receiver FAULTED at \
+            "gateway cast_receiver FAULTED at \
              seq={last_delivered_seq} gap=[{gs}..={ge}], \
              opening replay via RSX_RISK_REPLICATION_ADDR",
         ),
         None => warn!(
-            "gateway cmp_receiver RECONNECT at \
+            "gateway cast_receiver RECONNECT at \
              seq={last_delivered_seq}, opening replay via \
              RSX_RISK_REPLICATION_ADDR",
         ),
@@ -229,21 +229,21 @@ fn main() {
     let wal_dir = env::var("RSX_GW_WAL_DIR")
         .unwrap_or_else(|_| "./tmp/wal".into());
 
-    // CMP/UDP: send orders to Risk
-    let cmp_sender = CastSender::new(
+    // casting/UDP: send orders to Risk
+    let cast_sender = CastSender::new(
         risk_addr,
         0,
         &PathBuf::from(&wal_dir),
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to create CMP sender");
+    .expect("failed to create cast sender");
 
-    // CMP/UDP: receive responses from Risk
-    let mut cmp_receiver = CastReceiver::new(
+    // casting/UDP: receive responses from Risk
+    let mut cast_receiver = CastReceiver::new(
         gw_addr, risk_addr,
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to bind CMP receiver");
+    .expect("failed to bind cast receiver");
 
     info!(
         "gateway started on {}",
@@ -303,7 +303,7 @@ fn main() {
             s
         }));
         let sender =
-            Rc::new(RefCell::new(cmp_sender));
+            Rc::new(RefCell::new(cast_sender));
 
         // Spawn WS accept loop
         let ws_addr = listen_addr;
@@ -342,7 +342,7 @@ fn main() {
         let mut last_pending_sweep = time_ns();
         let mut last_heartbeat_ns = time_ns();
 
-        // CMP polling loop (yields to monoio)
+        // casting polling loop (yields to monoio)
         loop {
             loop {
                 // Zero-copy egress recv: route in-place from the
@@ -350,15 +350,15 @@ fn main() {
                 // alloc. The closure can't break/continue the
                 // outer loop, so the recv outcome is matched
                 // after it returns.
-                let outcome = cmp_receiver.try_recv_with(|hdr, payload| {
+                let outcome = cast_receiver.try_recv_with(|hdr, payload| {
                 match hdr.record_type {
                     RECORD_FILL => if let Some(rec) = decode_payload::<FillRecord>(payload) {
                         // Sub-stage: fill record arrived at
-                        // gateway's CMP recv loop, about to
+                        // gateway's cast recv loop, about to
                         // route. Anchor on taker_ts_ns (with
                         // the >2024 plausibility guard).
                         rsx_log::latency_sample!(
-                            "gateway_cmp_recv",
+                            "gateway_cast_recv",
                             rec.taker_order_id_hi,
                             rec.taker_order_id_lo,
                             if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
@@ -425,7 +425,7 @@ fn main() {
                             Some((gap_start, gap_end_inclusive)),
                             &wal_dir,
                         );
-                        cmp_receiver.reset_after_replay(new_tip);
+                        cast_receiver.reset_after_replay(new_tip);
                     }
                     CastRecvWith::Reconnect { last_delivered_seq } => {
                         let new_tip = handle_replay(
@@ -433,13 +433,13 @@ fn main() {
                             None,
                             &wal_dir,
                         );
-                        cmp_receiver.reset_after_replay(new_tip);
+                        cast_receiver.reset_after_replay(new_tip);
                     }
                 }
             }
 
             if let Err(e) = sender.borrow_mut().tick() {
-                tracing::warn!("gateway: cmp_sender tick failed: {e}");
+                tracing::warn!("gateway: cast_sender tick failed: {e}");
             }
             sender.borrow_mut().recv_control();
 

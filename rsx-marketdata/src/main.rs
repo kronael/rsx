@@ -35,7 +35,7 @@ use std::time::Duration;
 use tracing::info;
 use tracing::warn;
 
-/// Drain ME's replication stream after the marketdata's CMP
+/// Drain ME's replication stream after the marketdata's cast
 /// receiver hit a sticky FAULTED or RECONNECT. Mirrors
 /// `rsx_risk::main::handle_replay` and
 /// `rsx_gateway::main::handle_replay`. Round-1 apply just
@@ -51,12 +51,12 @@ fn handle_replay(
 ) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
-            "marketdata cmp_receiver FAULTED at \
+            "marketdata cast_receiver FAULTED at \
              seq={last_delivered_seq} gap=[{gs}..={ge}], \
              opening replay via RSX_MD_REPLAY_ADDR",
         ),
         None => warn!(
-            "marketdata cmp_receiver RECONNECT at \
+            "marketdata cast_receiver RECONNECT at \
              seq={last_delivered_seq}, opening replay via \
              RSX_MD_REPLAY_ADDR",
         ),
@@ -232,11 +232,11 @@ fn main() {
 
     let state = Rc::new(RefCell::new(state));
 
-    let me_addrs = rsx_marketdata::config::me_cmp_addrs_from_env();
+    let me_addrs = rsx_marketdata::config::me_cast_addrs_from_env();
 
     // One CastReceiver per ME. Local bind port derived from
-    // ME port: BASE_MD_CMP(9500) = BASE_ME_CMP(9100) + 400.
-    let mut cmp_receivers: Vec<CastReceiver> = me_addrs
+    // ME port: BASE_MD_CAST(9500) = BASE_ME_CAST(9100) + 400.
+    let mut cast_receivers: Vec<CastReceiver> = me_addrs
         .iter()
         .map(|me_addr| {
             let md_port = me_addr.port() + 400;
@@ -244,17 +244,17 @@ fn main() {
                 format!("127.0.0.1:{}", md_port)
                     .parse()
                     // SAFETY: fail-fast at startup
-                    .expect("invalid MD CMP bind addr");
+                    .expect("invalid MD cast bind addr");
             CastReceiver::new(bind_addr, *me_addr)
                 // SAFETY: fail-fast at startup
-                .expect("failed to bind marketdata CMP")
+                .expect("failed to bind marketdata cast")
         })
         .collect();
 
     info!(
         "marketdata started on {} subscribing to {} ME(s): {}",
         config.listen_addr,
-        cmp_receivers.len(),
+        cast_receivers.len(),
         me_addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(","),
     );
 
@@ -371,9 +371,9 @@ fn main() {
         const BOOK_TTL_NS: u64 = 60_000_000_000;
 
         loop {
-            for cmp_receiver in &mut cmp_receivers {
+            for cast_receiver in &mut cast_receivers {
             loop {
-                let recv = cmp_receiver.try_recv_with(|hdr, payload| {
+                let recv = cast_receiver.try_recv_with(|hdr, payload| {
                     // Seq gap detection: extract seq from payload
                     // and check for gaps. On gap, resend snapshot.
                     if let Some(seq) = extract_seq(payload) {
@@ -451,7 +451,7 @@ fn main() {
                             config.replay_addr.as_deref(),
                             &config.tip_file,
                         );
-                        cmp_receiver
+                        cast_receiver
                             .reset_after_replay(new_tip);
                         continue;
                     }
@@ -465,14 +465,14 @@ fn main() {
                             config.replay_addr.as_deref(),
                             &config.tip_file,
                         );
-                        cmp_receiver
+                        cast_receiver
                             .reset_after_replay(new_tip);
                         continue;
                     }
                 }
             }
 
-            } // for cmp_receiver
+            } // for cast_receiver
 
             let now = time_ns();
             if now.saturating_sub(last_heartbeat_ns) >= heartbeat_interval_ns {
@@ -513,7 +513,7 @@ fn main() {
     });
 }
 
-/// Extract symbol_id from CMP record payload.
+/// Extract symbol_id from casting record payload.
 /// All records have seq(8) + ts_ns(8) + symbol_id(4) layout.
 fn extract_symbol_id(
     record_type: u16,

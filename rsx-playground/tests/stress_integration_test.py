@@ -441,7 +441,7 @@ async def test_rate_limit_triggered(gateway):
     # Send all orders first, then drain responses.
     # Gateway processes sequentially: read -> validate ->
     # respond. Rate-limited orders get immediate E response.
-    # Valid orders go to CMP with no response.
+    # Valid orders go to cast with no response.
     for i in range(30):
         cid = make_cid(f"rl{i:016d}")
         frame = new_order_frame(

@@ -36,7 +36,7 @@ Loopback path: user → `sendto` syscall → kernel socket buffer
 
 ## Guarantees
 
-| Dimension | Raw UDP | rsx-cast CMP |
+| Dimension | Raw UDP | rsx-cast casting |
 |---|---|---|
 | Delivery | Best-effort (may drop) | Reliable (NAK + WAL retransmit) |
 | Ordering | Unordered (may reorder) | Per-stream FIFO (seq monotonic) |
@@ -47,12 +47,12 @@ Loopback path: user → `sendto` syscall → kernel socket buffer
 | Flow control | None (sender can overrun receiver) | `peer_consumption_seq` window |
 | Connection state | None | seq + NAK list + status heartbeat |
 
-Everything in the CMP column is layered above the kernel UDP
+Everything in the casting column is layered above the kernel UDP
 socket. Each row is a cost measured against the raw-UDP floor.
 
 ## Relation to rsx-cast
 
-CMP builds on raw UDP. The cost of CMP above this baseline is:
+casting builds on raw UDP. The cost of casting above this baseline is:
 
 - 16-byte `WalHeader` framing + CRC32C verification
 - `send_ring` slot write (WAL record caching for hot-tier retransmit)
@@ -63,16 +63,16 @@ Measured overhead (loopback, 64-128 B payload, this host on 2026-05-24):
 
 ```
 raw UDP RTT      9.89 – 11.80 µs  (compare_udp, --sample-size 30)
-CMP RTT          10.45 – 17.28 µs  (cmp_rtt_bench, --sample-size 30)
-CMP send body    ~4.10 µs  (one-way; cmp_send_breakdown_bench)
+casting RTT          10.45 – 17.28 µs  (cmp_rtt_bench, --sample-size 30)
+casting send body    ~4.10 µs  (one-way; cmp_send_breakdown_bench)
   └─ sendto syscall: 4.07 µs (99.4%)
   └─ userspace (CRC32 + framing + ring copy): ~26 ns
 ```
 
 **The earlier "~2 µs" raw-UDP baseline claim was wrong** for this
-host — see `facts/cmp-vs-udp-overhead.md` for the full
+host — see `facts/cast-vs-udp-overhead.md` for the full
 measurement, attribution, and walk-back. Summary: the `sendto`
-syscall dominates 99 % of CMP's per-send cost; CMP's userspace
+syscall dominates 99 % of casting's per-send cost; casting's userspace
 work (CRC32 + WalHeader + ring cache) adds ~26 ns, not microseconds.
 
 Benches don't currently pin cores — fix planned. Numbers will
@@ -107,6 +107,6 @@ Cloudflare kernel-bypass write-up.
 - No gap detection — a dropped fill is silently lost.
 - No retransmit — consumer must implement all reliability.
 
-Every exchange transport that uses UDP (LBM, Aeron, CMP)
+Every exchange transport that uses UDP (LBM, Aeron, casting)
 adds reliability on top. The question is how: NAK-based
-(Aeron, CMP, LBM), ACK-based (KCP), or FEC (Solana Turbine).
+(Aeron, casting, LBM), ACK-based (KCP), or FEC (Solana Turbine).

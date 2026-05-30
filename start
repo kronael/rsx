@@ -112,7 +112,7 @@ SCENARIOS = {
 
 # ── port allocation ─────────────────────────────────────
 
-BASE_ME_CMP = 9100
+BASE_ME_CAST = 9100
 
 # ── core pinning (6-core host; see README "Core layout") ──
 # Hot-path processes busy-spin and MUST each own a core, or an
@@ -127,13 +127,13 @@ CORE_MD    = 4   # marketdata   (hot path, pinned)
 # core 5: spare headroom.
 # mark + recorder are OFF-path and ergonomic (sleep, ~0% CPU):
 # unpinned, share core 0 with the OS. They must NOT busy-spin.
-BASE_RISK_CMP = 9200
-BASE_GW_CMP = 9300
-BASE_MARK_CMP = 9400
-BASE_MD_CMP = 9500
+BASE_RISK_CAST = 9200
+BASE_GW_CAST = 9300
+BASE_MARK_CAST = 9400
+BASE_MD_CAST = 9500
 BASE_GW_WS = 8080
 BASE_MD_WS = 8180
-BASE_RISK_MARK_CMP = 9600
+BASE_RISK_MARK_CAST = 9600
 BASE_ME_REPLICATION = 9700
 
 DEFAULT_PG_URL = (
@@ -217,17 +217,17 @@ def build_spawn_plan(config, pg_url, release=False):
         f"127.0.0.1:{BASE_ME_REPLICATION + s['id']}" for s in symbols
     )
 
-    # comma-separated ME CMP addresses for Risk + Marketdata
-    me_cmp_addrs = ",".join(
-        f"127.0.0.1:{BASE_ME_CMP + s['id']}" for s in symbols
+    # comma-separated ME cast addresses for Risk + Marketdata
+    me_cast_addrs = ",".join(
+        f"127.0.0.1:{BASE_ME_CAST + s['id']}" for s in symbols
     )
 
     # ── ME instances ────────────────────────────────
     for sym in symbols:
         sid = sym["id"]
-        me_cmp = f"127.0.0.1:{BASE_ME_CMP + sid}"
-        risk_cmp = f"127.0.0.1:{BASE_RISK_CMP}"
-        md_cmp = f"127.0.0.1:{BASE_MD_CMP + sid}"
+        me_cast = f"127.0.0.1:{BASE_ME_CAST + sid}"
+        risk_cast = f"127.0.0.1:{BASE_RISK_CAST}"
+        md_cast = f"127.0.0.1:{BASE_MD_CAST + sid}"
         me_replication = f"127.0.0.1:{BASE_ME_REPLICATION + sid}"
         env = {
             "RSX_ME_SYMBOL_ID": str(sid),
@@ -236,9 +236,9 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_ME_TICK_SIZE": str(sym["tick"]),
             "RSX_ME_LOT_SIZE": str(sym["lot"]),
             "RSX_ME_WAL_DIR": f"./tmp/wal/{sym['name'].lower()}",
-            "RSX_ME_CAST_ADDR": me_cmp,
-            "RSX_RISK_CAST_ADDR": risk_cmp,
-            "RSX_MD_CAST_ADDR": md_cmp,
+            "RSX_ME_CAST_ADDR": me_cast,
+            "RSX_RISK_CAST_ADDR": risk_cast,
+            "RSX_MD_CAST_ADDR": md_cast,
             "RSX_ME_REPLICATION_BIND_ADDR": me_replication,
             "RSX_ME_DATABASE_URL": pg_url,
             "RSX_ME_CORE_ID": str(CORE_ME_0 + len([s for s in symbols if s['id'] < sid])),
@@ -256,12 +256,12 @@ def build_spawn_plan(config, pg_url, release=False):
         f"{target}/rsx-mark",
         {
             "RSX_MARK_LISTEN_ADDR":
-                f"127.0.0.1:{BASE_MARK_CMP}",
+                f"127.0.0.1:{BASE_MARK_CAST}",
             "RSX_MARK_WAL_DIR": "./tmp/wal/mark",
             "RSX_MARK_STREAM_ID": "100",
             "RSX_MARK_SYMBOL_MAP": mark_symbol_map,
             "RSX_RISK_MARK_CAST_ADDR":
-                f"127.0.0.1:{BASE_RISK_MARK_CMP}",
+                f"127.0.0.1:{BASE_RISK_MARK_CAST}",
             "RSX_MARK_SOURCE_BINANCE_ENABLED": "1",
             "RSX_MARK_SOURCE_BINANCE_WS_URL":
                 binance_ws_url,
@@ -289,17 +289,17 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_RISK_RESET_FROZEN_ON_START": "1",
                 "RSX_RISK_MAX_SYMBOLS": str(max(s["id"] for s in symbols) + 1),
                 "RSX_RISK_CAST_ADDR":
-                    f"127.0.0.1:{BASE_RISK_CMP + shard}",
+                    f"127.0.0.1:{BASE_RISK_CAST + shard}",
                 "RSX_GW_CAST_ADDR":
-                    f"127.0.0.1:{BASE_GW_CMP}",
-                "RSX_ME_CAST_ADDRS": me_cmp_addrs,
+                    f"127.0.0.1:{BASE_GW_CAST}",
+                "RSX_ME_CAST_ADDRS": me_cast_addrs,
                 "RSX_ME_REPLICATION_ADDR": me_replication_addrs,
                 "RSX_RISK_WAL_DIR": "./tmp/wal",
                 "RSX_RISK_CORE_ID": str(CORE_RISK + shard),
                 "RSX_RISK_MARK_CAST_ADDR":
-                    f"127.0.0.1:{BASE_RISK_MARK_CMP}",
+                    f"127.0.0.1:{BASE_RISK_MARK_CAST}",
                 "RSX_MARK_CAST_ADDR":
-                    f"127.0.0.1:{BASE_MARK_CMP}",
+                    f"127.0.0.1:{BASE_MARK_CAST}",
                 "DATABASE_URL": pg_url,
                 "RUST_LOG": "info",
             },
@@ -320,10 +320,10 @@ def build_spawn_plan(config, pg_url, release=False):
                             str(len(symbols)),
                         "RSX_RISK_IS_REPLICA": "true",
                         "RSX_RISK_CAST_ADDR":
-                            f"127.0.0.1:{BASE_RISK_CMP + 10 + shard * 2 + r}",
+                            f"127.0.0.1:{BASE_RISK_CAST + 10 + shard * 2 + r}",
                         "RSX_GW_CAST_ADDR":
-                            f"127.0.0.1:{BASE_GW_CMP}",
-                        "RSX_ME_CAST_ADDRS": me_cmp_addrs,
+                            f"127.0.0.1:{BASE_GW_CAST}",
+                        "RSX_ME_CAST_ADDRS": me_cast_addrs,
                         "RSX_RISK_WAL_DIR": "./tmp/wal",
                         "DATABASE_URL": pg_url,
                         "RUST_LOG": "info",
@@ -349,9 +349,9 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_GW_LISTEN":
                     f"0.0.0.0:{BASE_GW_WS + gw}",
                 "RSX_GW_CAST_ADDR":
-                    f"127.0.0.1:{BASE_GW_CMP + gw}",
+                    f"127.0.0.1:{BASE_GW_CAST + gw}",
                 "RSX_RISK_CAST_ADDR":
-                    f"127.0.0.1:{BASE_RISK_CMP}",
+                    f"127.0.0.1:{BASE_RISK_CAST}",
                 "RSX_GW_WAL_DIR": "./tmp/wal",
                 # Dev secret. Production MUST override this env var
                 # with a real secret minted by the auth service.
@@ -381,7 +381,7 @@ def build_spawn_plan(config, pg_url, release=False):
         {
             "RSX_MD_LISTEN":
                 f"0.0.0.0:{BASE_MD_WS}",
-            "RSX_ME_CAST_ADDRS": me_cmp_addrs,
+            "RSX_ME_CAST_ADDRS": me_cast_addrs,
             "RSX_MD_STREAM_ID": str(first_sid),
             "RSX_MD_REPLAY_ADDR":
                 f"127.0.0.1:{BASE_ME_REPLICATION + first_sid}",

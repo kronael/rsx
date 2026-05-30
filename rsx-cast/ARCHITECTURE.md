@@ -216,7 +216,7 @@ slice), Linux 6.1, Rust release, threads pinned. See
 [`compare/README.md`](compare/README.md) for the same-harness
 comparison against Aeron / MoldUDP64 / SoupBinTCP / Quinn / KCP /
 raw UDP / TCP, and
-[`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
+[`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
 for the dated authoritative numbers. casting's loopback RTT
 (9.7 µs) sits at the raw-UDP floor (9.89 µs) — the protocol adds
 ~0 µs; 99 % of the send body is the `sendto` syscall.

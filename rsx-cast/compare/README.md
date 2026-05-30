@@ -70,7 +70,7 @@ directly comparable to compare_all.
 
 Numbers below 30 µs from local benches are dominated by the
 `sendto` syscall (~4 µs) and scheduler noise.
-See [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
+See [`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
 for the attribution breakdown.
 
 ### Features

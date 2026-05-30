@@ -1,4 +1,4 @@
-//! Two CMP streams feeding a single MarketDataState.
+//! Two casting streams feeding a single MarketDataState.
 //!
 //! Models the production wiring: marketdata binds one
 //! CastReceiver per matching engine (one ME per symbol) and

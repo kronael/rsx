@@ -3,7 +3,7 @@
 Every measurement program in this crate: what it measures and how
 to run it. Numbers in [README.md](README.md) and
 [ARCHITECTURE.md](ARCHITECTURE.md) trace back to one of these
-files; [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
+files; [`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
 records the dated measured values.
 
 ## How to run
@@ -41,7 +41,7 @@ Criterion writes per-bench results to
 All Criterion benches in this crate pin sender + echoer threads to
 cores 2 and 3 (`core_affinity = "0.8"` dev-dep). Single-thread
 benches pin their worker to core 2. See
-[`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
+[`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
 § "The pinning gap" for the before/after distributions.
 
 ## CastSender::send sub-attribution (`cast_send_breakdown_bench`)
@@ -91,5 +91,5 @@ mechanism.
   Chronicle Queue, LBM, SoupBinTCP).
 - [`facts/syscall-latency.md`](facts/syscall-latency.md) — the
   syscall-level "why" behind the ~4 µs `sendto` cost.
-- [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md)
+- [`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
   — authoritative dated measurements (parent repo).

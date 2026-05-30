@@ -35,7 +35,7 @@ by `TCP_NODELAY`. Without nodelay, the bench measures Nagle's
 
 ## Guarantees
 
-| Dimension | TCP | rsx-cast CMP |
+| Dimension | TCP | rsx-cast casting |
 |---|---|---|
 | Delivery | Reliable (ACK + retransmit) | Reliable (NAK + WAL retransmit) |
 | Ordering | In-order byte stream | Per-stream FIFO (seq monotonic) |
@@ -49,10 +49,10 @@ by `TCP_NODELAY`. Without nodelay, the bench measures Nagle's
 | Gap-detection latency on idle stream | RTO timer (Linux min ~200 ms) | next heartbeat → immediate NAK |
 | Durability | None | WAL on disk |
 
-## Why CMP uses TCP for cold path but not hot
+## Why casting uses TCP for cold path but not hot
 
 **Cold path (DXS replay over TCP).** A consumer that has
-fallen behind beyond CMP's hot ring asks the recorder for
+fallen behind beyond casting's hot ring asks the recorder for
 historical records by seq range. This is:
 
 - Bulk sequential — throughput matters, per-message latency
@@ -67,19 +67,19 @@ historical records by seq range. This is:
 TCP is the right answer here. The kernel does the work the
 application would otherwise duplicate.
 
-**Hot path (CMP/UDP).** Live order flow has different
+**Hot path (casting/UDP).** Live order flow has different
 constraints:
 
 - Latency-sensitive: <50 µs GW→ME→GW budget. The 3-way
   handshake alone burns a budget on every reconnect.
 - Multiple independent streams (one per symbol, multiple
   consumers). TCP forces them through one byte stream and
-  head-of-line-blocks across symbols (CMP gives one socket
+  head-of-line-blocks across symbols (casting gives one socket
   per symbol stream, so gaps in symbol A don't block B).
-- Faster gap recovery on idle streams: CMP's heartbeat
+- Faster gap recovery on idle streams: casting's heartbeat
   detects gaps without waiting for new data; TCP needs
   RTO_min (~200 ms on Linux). On busy streams both recover
-  in ~1 RTT, but CMP fires NAK on the first out-of-order
+  in ~1 RTT, but casting fires NAK on the first out-of-order
   arrival while TCP needs 3 duplicate ACKs.
 - Loss is rare on a trusted 10 GbE fabric. NAK from the
   receiver costs zero on the no-loss path; ACK from the
@@ -87,12 +87,12 @@ constraints:
 - Congestion control has nothing to do — the fabric has
   fixed capacity, not a competing flow problem.
 
-**On head-of-line blocking, honestly.** A CMP receiver
+**On head-of-line blocking, honestly.** A casting receiver
 holds out-of-order packets in `reorder_buf` (default 512
 slots) and returns `None` from `try_recv()` until the gap
 is filled — same end-result as TCP at the API. The wins
 above are about *how fast* the gap is filled, not about
-delivering out-of-order data. Within one CMP stream FIFO
+delivering out-of-order data. Within one casting stream FIFO
 is the contract (specs/2/6-consistency.md §"Across
 consumers"). The single-stream-per-symbol design is what
 lets order flow on symbol A keep moving when symbol B
@@ -100,17 +100,17 @@ drops a packet.
 
 Measured penalty depends on the I/O model. Kernel-blocking
 TCP with `TCP_NODELAY` + spin (this bench) costs ~12–18 µs
-RTT — within ~2× of CMP's ~10 µs. Async TCP through a
+RTT — within ~2× of casting's ~10 µs. Async TCP through a
 reactor (`compare_quinn.rs::tcp_rtt_nodelay`, the iggy
 project at apache/iggy#606) measures ~100–1 000 µs — ~10–
-100× CMP. The async path is what most production order-
+100× casting. The async path is what most production order-
 flow servers actually pay; the spin-loop path is the kernel
 floor with no reactor overhead.
 
-The TCP-vs-CMP gap is not principally about TCP being
+The TCP-vs-casting gap is not principally about TCP being
 "slow" — it is about head-of-line blocking, the one-stream
 funnel, and the reactor cost of all-but-spin async TCP
-clients. CMP keeps each symbol in its own UDP flow with no
+clients. casting keeps each symbol in its own UDP flow with no
 shared queue between them.
 
 ## Benchmark
@@ -137,7 +137,7 @@ would race and break the round-trip count under load.
 | Transport | Loopback p50 (measured / expected) |
 |---|---|
 | Raw UDP | ~2 µs |
-| rsx-cast CMP | ~10 µs |
+| rsx-cast casting | ~10 µs |
 | TCP nodelay (this bench) | ~12–18 µs (measured) |
 | Tokio TCP (`compare_quinn.rs`) | ~100–1 000 µs |
 | Quinn QUIC | ~200–2 000 µs |

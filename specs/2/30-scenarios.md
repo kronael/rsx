@@ -67,12 +67,12 @@ primary risk shard. "2×risk" = 2 replicas (spare mode).
 ## Port Allocation
 
 ```
-BASE_ME_CMP      = 9100   ME casting: 9100 + symbol_id
-BASE_RISK_CMP    = 9200   Risk primary: 9200 + shard_id
+BASE_ME_CAST     = 9100   ME casting: 9100 + symbol_id
+BASE_RISK_CAST   = 9200   Risk primary: 9200 + shard_id
                            Risk replicas: 9210+shard*2+replica
-BASE_GW_CMP      = 9300   GW casting: 9300 + gw_index
-BASE_MARK_CMP    = 9400   Mark aggregator (single)
-BASE_MD_CMP      = 9500   Marketdata casting: 9500 + symbol_id
+BASE_GW_CAST     = 9300   GW casting: 9300 + gw_index
+BASE_MARK_CAST   = 9400   Mark aggregator (single)
+BASE_MD_CAST     = 9500   Marketdata casting: 9500 + symbol_id
 BASE_RISK_MARK   = 9600   Mark→Risk push (single)
 BASE_GW_WS       = 8080   GW WebSocket: 8080 + gw_index
 BASE_MD_WS       = 8180   Marketdata WebSocket (single)
@@ -177,7 +177,7 @@ primary symbol only (simpler, sufficient for dev).
 - Replace hardcoded `symbols[0]` URL construction
 
 ### 4. Fix `build_spawn_plan` env vars (`start` script)
-- Compute `me_cmp_addrs` as comma-joined list of all ME
+- Compute `me_cast_addrs` as comma-joined list of all ME
   casting addresses before the Risk/Marketdata entries
 - Pass as `RSX_ME_CAST_ADDRS` to Risk, Risk replicas, and
   Marketdata

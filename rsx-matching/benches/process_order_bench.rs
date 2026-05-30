@@ -3,7 +3,7 @@
 //! `write_events_to_wal` + `update_order_index`.
 //!
 //! This is everything the matching engine main loop runs
-//! between `me_in` and `me_out` (sans CMP send / per-stage
+//! between `me_in` and `me_out` (sans cast send / per-stage
 //! latency probes). All of it on real production code:
 //! - real `Orderbook` (with pre-seeded resting liquidity)
 //! - real `WalWriter` (tempdir-backed)

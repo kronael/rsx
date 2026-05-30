@@ -18,9 +18,9 @@ test.describe("Topology tab", () => {
     await expect(page.getByRole("heading", { name: "Core Affinity Map" })).toBeVisible();
   });
 
-  test("has CMP connections card", async ({ page }) => {
+  test("has cast connections card", async ({ page }) => {
     await page.goto("/topology");
-    await expect(page.getByRole("heading", { name: "CMP Connections" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Cast Connections" })).toBeVisible();
   });
 
   test("has process list card", async ({ page }) => {
@@ -40,11 +40,11 @@ test.describe("Topology tab", () => {
     await expect(page.locator("#topo-node-mark")).toBeVisible();
   });
 
-  test("process graph shows edges for CMP connections", async ({ page }) => {
+  test("process graph shows edges for cast connections", async ({ page }) => {
     await page.goto("/topology");
 
     // Should show connection labels between nodes
-    await expect(page.locator("text=CMP").first()).toBeVisible();
+    await expect(page.locator("text=cast").first()).toBeVisible();
     await expect(page.locator("text=WAL").first()).toBeVisible();
   });
 
@@ -65,20 +65,20 @@ test.describe("Topology tab", () => {
     expect(content).toMatch(/Core|no processes/i);
   });
 
-  test("CMP connections card auto-refreshes every 2s", async ({ page }) => {
+  test("cast connections card auto-refreshes every 2s", async ({ page }) => {
     await page.goto("/topology");
-    const cmpFlows = page.locator("[hx-get='./x/cmp-flows']");
+    const castFlows = page.locator("[hx-get='./x/cast-flows']");
 
-    await verifyPolling(cmpFlows, "every 2s");
+    await verifyPolling(castFlows, "every 2s");
   });
 
-  test("CMP connections show gateway-risk-ME flow", async ({ page }) => {
+  test("cast connections show gateway-risk-ME flow", async ({ page }) => {
     await page.goto("/topology");
-    const cmpFlows = page.locator("[hx-get='./x/cmp-flows']");
+    const castFlows = page.locator("[hx-get='./x/cast-flows']");
     await waitForHTMX(page, 2000);
 
     // Should show connection names
-    const content = await cmpFlows.textContent();
+    const content = await castFlows.textContent();
     expect(content).toMatch(/Gateway.*Risk|Risk.*ME|ME.*Mktdata/i);
   });
 
@@ -144,10 +144,10 @@ test.describe("Topology tab", () => {
 
   // F9: ME -> Mktdata used to show Sent 0 / Recv 0 while
   // marketdata was visibly receiving updates. The counter now
-  // sums fills + BBOs (the actual CMP payload).
-  test("cmp_counters_track_marketdata_progress (F9)",
+  // sums fills + BBOs (the actual cast payload).
+  test("cast_counters_track_marketdata_progress (F9)",
     async ({ request }) => {
-      const r = await request.get("/x/cmp-flows");
+      const r = await request.get("/x/cast-flows");
       expect(r.ok()).toBe(true);
       const html = await r.text();
       // Capture all three flows in order. We don't require
@@ -239,15 +239,15 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F3.4: the three CMP pipes pulled from one source repeated
+  // F3.4: the three cast pipes pulled from one source repeated
   // the same number three times ("1117 / 1117 / 1117"). Per-pipe
   // counters now come from per-process WAL streams. Under load
   // (any maker traffic), the three should diverge. With a cold
   // cluster every count is 0 — also acceptable. The forbidden
   // shape is three identical non-zero numbers.
-  test("cmp_flow_counters_distinct_per_pipe",
+  test("cast_flow_counters_distinct_per_pipe",
     async ({ request }) => {
-      const r = await request.get("/x/cmp-flows");
+      const r = await request.get("/x/cast-flows");
       expect(r.ok()).toBe(true);
       const html = await r.text();
       const tds = [
@@ -268,7 +268,7 @@ test.describe("Topology tab", () => {
           && nums.length === 3;
         expect(
           allSame,
-          `cmp pipes all read ${nums[0]} — ghost is back`,
+          `cast pipes all read ${nums[0]} — ghost is back`,
         ).toBe(false);
       }
     },

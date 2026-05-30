@@ -110,11 +110,11 @@ tracks implementation progress.
 
 ## 2. Unit Tests
 
-See `rsx-cast/tests/cmp_encoding_test.rs` — covers control message
+See `rsx-cast/tests/cast_encoding_test.rs` — covers control message
 encode/decode roundtrips, size asserts, little-endian field layout,
 record type constant values, padding zeroing, and CRC32 scope.
 
-See `rsx-cast/tests/cmp_test.rs` — covers CastSender (monotonic seq,
+See `rsx-cast/tests/cast_test.rs` — covers CastSender (monotonic seq,
 heartbeat timing, flow control window, NAK handling, retransmit format,
 zero-heap send loop) and CastReceiver (sequential delivery, gap detection,
 NAK emission, StatusMessage timing, reorder buffer, duplicate/unknown
@@ -127,11 +127,11 @@ tip+1, TLS handshake, invalid CRC disconnect.
 
 ## 3. E2E Tests
 
-Note: the e2e test files listed below (`cmp_e2e_test.rs`,
-`cmp_fault_test.rs`) are aspirational — not yet present in
+Note: the e2e test files listed below (`cast_e2e_test.rs`,
+`cast_fault_test.rs`) are aspirational — not yet present in
 `rsx-cast/tests/`. Scenarios below describe intended coverage.
 
-See `rsx-cast/tests/cmp_test.rs` for existing happy-path integration.
+See `rsx-cast/tests/cast_test.rs` for existing happy-path integration.
 Remaining e2e scenarios (fault injection, flow control under real load,
 long-running stability) are planned for a future iteration.
 
@@ -177,9 +177,9 @@ From casting.md §9:
 
 | Integration | Spec Reference | Test Coverage |
 |-------------|----------------|---------------|
-| Gateway -> Risk (CastSender) | NETWORK.md | `cmp_test.rs` |
-| Risk -> ME (CastSender) | NETWORK.md | `cmp_test.rs` |
-| ME -> Risk (CastSender) | NETWORK.md | `cmp_test.rs` |
+| Gateway -> Risk (CastSender) | NETWORK.md | `cast_test.rs` |
+| Risk -> ME (CastSender) | NETWORK.md | `cast_test.rs` |
+| ME -> Risk (CastSender) | NETWORK.md | `cast_test.rs` |
 | Risk -> Gateway (CastSender) | NETWORK.md | `cast_test.rs` |
 | CastSender reads WAL for retransmit | replication.md §3,4 | `cast_test.rs` |
 | ReplicationConsumer uses TCP replication | replication.md §5,6 | `replication_client_test.rs` |

@@ -90,7 +90,7 @@ const SEND_RING_MASK: u64 =
 const REORDER_CAPACITY: usize = 2048;
 const REORDER_MASK: u64 =
     REORDER_CAPACITY as u64 - 1;
-/// Per-slot frame size. Sized to hold every current CMP
+/// Per-slot frame size. Sized to hold every current casting
 /// record (FillRecord, BboRecord, OrderAcceptedRecord and
 /// CaughtUpRecord are 128 B payload; everything else is
 /// 64 B). 16 B header + 128 B payload + headroom = 256.
@@ -227,10 +227,10 @@ impl CastSender {
         })
     }
 
-    /// Send a typed CMP record. Assigns seq via
+    /// Send a typed casting record. Assigns seq via
     /// CastRecord::set_seq.
     ///
-    /// No flow control: CMP has no backpressure. If the
+    /// No flow control: casting has no backpressure. If the
     /// receiver can't keep up, recovery is via NAK (small
     /// gaps) or DXS replay (large gaps), not by stalling
     /// the producer.
@@ -1102,7 +1102,7 @@ impl CastReceiver {
     /// to defend against a spoofed heartbeat with `highest_seq`
     /// near u64::MAX -- without the clamp, a single bad frame
     /// would walk ~2^64 slots and wedge the receiver thread.
-    /// CMP trust model (specs/2/4-cast.md §10.4) delegates frame
+    /// Casting trust model (specs/2/4-cast.md §10.4) delegates frame
     /// authentication to L3; it does NOT delegate "don't loop
     /// forever on attacker-controllable input." See CTO audit
     /// .ship/27 attack scenario A.

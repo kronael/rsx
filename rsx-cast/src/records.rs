@@ -14,7 +14,7 @@ pub const RECORD_HEARTBEAT: u16 = 0x12;
 pub(crate) const RECORD_REPLICATION_REQUEST: u16 = 0x13;
 pub(crate) const RECORD_REPLICATION_NOT_AVAILABLE: u16 = 0x15;
 
-/// Trait for all CMP data records. Guarantees seq is
+/// Trait for all casting data records. Guarantees seq is
 /// readable/writable at a known location in the payload.
 /// All implementors are #[repr(C, align(64))], Copy.
 pub trait CastRecord: Copy {
@@ -32,7 +32,7 @@ pub struct CastHeartbeat {
     pub _pad1: [u8; 56],
 }
 
-/// CMP Nak — wire size 64 bytes.
+/// Cast Nak — wire size 64 bytes.
 /// Receiver -> sender, on gap detection.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]

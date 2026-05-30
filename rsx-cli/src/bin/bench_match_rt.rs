@@ -24,7 +24,7 @@ use std::time::Duration;
 
 /// Thin newtype that lets a raw `OrderMessage` ride the
 /// CastSender path. Same memory layout — `repr(C)` —
-/// and `CastRecord` lets CMP set the seq.
+/// and `CastRecord` lets the cast sender set the seq.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct OrderRequestWire {

@@ -246,11 +246,11 @@ fn nak_retransmit_from_wal() {
     assert_eq!(decoded.seq, 1);
 }
 
-// cmp_sender_window_exhausted_blocks removed: flow-control window
+// cast_sender_window_exhausted_blocks removed: flow-control window
 // no longer exists. send() never stalls.
 
 #[test]
-fn cmp_heartbeat_sent_on_idle() {
+fn cast_heartbeat_sent_on_idle() {
     let tmp = TempDir::new().unwrap();
     let wal_dir = tmp.path();
 

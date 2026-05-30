@@ -2,7 +2,7 @@
 
 Nasdaq's reliable TCP framing for OUCH (order entry) and ITCH
 (market data over TCP, e.g. for non-colo subscribers). Public
-specification. Closest published peer to CMP's TCP framing — both
+specification. Closest published peer to casting's TCP framing — both
 provide reliable, sequenced, length-prefixed records over TCP with
 heartbeats and session resumption.
 
@@ -69,7 +69,7 @@ end-of-session markers.
 Both sides send a Heartbeat packet (`H`/`R`, 3 bytes total) every
 second when no other traffic is in flight. 15 seconds without any
 packet from the peer → tear down the connection. This is the
-exchange equivalent of CMP's `CmpHeartbeat` (every 10 ms by
+exchange equivalent of casting's `CastHeartbeat` (every 10 ms by
 default).
 
 ### Reliability: TCP's
@@ -95,7 +95,7 @@ Loss across a disconnect = client reconnects with
 | Sequencing | Implicit per S-packet count | Explicit `seq:u64` in every record |
 | Replay anchor | `Login.requested_seq` | `ReplayRequest{from_seq:u64}` |
 | Live tail signal | None (continuous stream) | `CaughtUpRecord{live_seq}` |
-| Heartbeat | Every 1 s (`H`/`R`) | Every 10 ms (CMP only; DXS TCP uses TCP keepalive) |
+| Heartbeat | Every 1 s (`H`/`R`) | Every 10 ms (casting only; DXS TCP uses TCP keepalive) |
 | Login / auth | Username + password (cleartext) | None at transport (auth at gateway) |
 | Encryption | None standard (TLS via OUCH-over-TLS extension) | None |
 | Per-message framing overhead | 3 B | 16 B (record header = same as on-disk WAL) |

@@ -58,7 +58,7 @@ fn make_rings() -> ShardRings {
 }
 
 #[test]
-fn mark_cmp_updates_risk_mark_prices() {
+fn mark_cast_updates_risk_mark_prices() {
     let mut shard = RiskShard::new(test_config(2));
     let mut rings = make_rings();
 
@@ -110,7 +110,7 @@ fn mark_cmp_updates_risk_mark_prices() {
 }
 
 #[test]
-fn bbo_cmp_updates_risk_index_price() {
+fn bbo_cast_updates_risk_index_price() {
     let mut shard = RiskShard::new(test_config(2));
     let mut rings = make_rings();
 

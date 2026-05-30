@@ -64,7 +64,7 @@ fn main() {
     let mut reader = WalReader::open_from_seq(STREAM_ID, 1, dir).unwrap();
     let mut n = 0;
     while let Some(raw) = reader.next().unwrap() {
-        // Headers + payload bytes are identical to what would go over CMP.
+        // Headers + payload bytes are identical to what would go over casting.
         let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
         eprintln!(
             "read  seq={seq} type={} len={}",

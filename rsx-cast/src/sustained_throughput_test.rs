@@ -1,4 +1,4 @@
-//! Sustained CMP send throughput.
+//! Sustained casting send throughput.
 //!
 //! Send 50k records through a CastSender and assert that the
 //! wall-clock cost is well under one second. The criterion

@@ -62,7 +62,7 @@ empty-book IOC buy via WS. Triage only.
 
 **Status: MITIGATED (full fix deferred).** Single-order stage trace (live
 cluster): the response left Risk by ~571µs (`me_out`) but the gateway didn't
-receive it (`gateway_cmp_recv`) until much later — the response sat in the
+receive it (`gateway_cast_recv`) until much later — the response sat in the
 gateway UDP socket buffer waiting for the casting-recv poll loop to get a turn
 on the shared monoio reactor (WS accept + per-conn handlers + casting-recv all
 on one reactor). The egress-drain poll was tightened 10ms→500µs (`5a578d3` +

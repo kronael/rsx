@@ -2,13 +2,13 @@
 
 Nasdaq's UDP multicast dissemination protocol. Carries ITCH 5.0
 market data feeds (TotalView, BX, PSX). Public specification, freely
-implementable. The closest published peer to CMP's wire shape: a
+implementable. The closest published peer to casting's wire shape: a
 sequence-numbered, NAK-recovered, fixed-header UDP frame with a
 fan-out delivery model.
 
 Spec: https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/moldudp64.pdf
 
-Why we include it: same protocol family as CMP (UDP + seq + NAK
+Why we include it: same protocol family as casting (UDP + seq + NAK
 recovery), but with multicast fan-out and a separate retransmit
 channel. Lets us bench framing overhead against a real exchange
 wire protocol with a known footprint.
@@ -42,7 +42,7 @@ A single packet typically carries one message; bursty market events
 pack multiple. MTU governs the upper bound (Nasdaq uses 1 472 B
 payload to stay below 1 500 B Ethernet MTU).
 
-Compare CMP/WAL: 16-byte header (`record_type:u16, len:u16,
+Compare casting/WAL: 16-byte header (`record_type:u16, len:u16,
 crc32:u32, _pad:u64`) + one fixed-size `#[repr(C, align(64))]`
 payload per packet. No per-packet message-count; one record per
 UDP datagram by construction.
@@ -78,8 +78,8 @@ ACK, no window, no sender-side rate limiting. Receivers that fall
 behind use the request channel to catch up; the dissemination
 side never slows down.
 
-This matches CMP's design assumption (trusted, fixed-capacity
-LAN), with the difference that CMP is unicast and uses receiver
+This matches casting's design assumption (trusted, fixed-capacity
+LAN), with the difference that casting is unicast and uses receiver
 windows (`StatusMessage.receiver_window`) as advisory backpressure.
 
 ### Latency characteristics
@@ -93,7 +93,7 @@ Public Nasdaq feed numbers (ITCH 5.0 / TotalView):
 
 ## Relation to rsx-cast
 
-| Dimension | MoldUDP64 | rsx-cast CMP |
+| Dimension | MoldUDP64 | rsx-cast casting |
 |---|---|---|
 | Transport | UDP multicast (1:N) | UDP unicast (1:1) |
 | Byte order | Big-endian | Little-endian (native x86_64) |
@@ -108,32 +108,32 @@ Public Nasdaq feed numbers (ITCH 5.0 / TotalView):
 | Designed use | Market data dissemination (downstream only) | Bidirectional order flow + market data |
 
 MoldUDP64 is the dissemination half of an exchange feed (downstream
-only — no order entry). CMP handles both directions in one protocol;
+only — no order entry). casting handles both directions in one protocol;
 it bundles the request-server role into the sender via the embedded
 WAL.
 
-### Stronger than CMP
+### Stronger than casting
 
 - **Multicast fan-out is native.** One sender, N receivers, zero
-  per-receiver state on the sender side. CMP requires one
+  per-receiver state on the sender side. casting requires one
   `CastSender` instance per peer (point-to-point).
 - **Multiple messages per UDP datagram.** Saves header overhead
-  on bursty market events. CMP pays a full 16-byte header per
+  on bursty market events. casting pays a full 16-byte header per
   record.
 - **NAK suppression in multicast** means a single retransmit
-  recovers loss for the entire receiver group. CMP retransmits
+  recovers loss for the entire receiver group. casting retransmits
   per receiver.
 
-### Weaker than CMP
+### Weaker than casting
 
 - **Retransmit horizon is implementation-defined.** Nasdaq's
   Glimpse service replays the start-of-day snapshot via a
-  separate TCP protocol. CMP's WAL is always there, always
+  separate TCP protocol. casting's WAL is always there, always
   48 h deep.
 - **Big-endian framing** costs `bswap64`/`bswap16` on x86_64
-  every parse. CMP is native little-endian.
+  every parse. casting is native little-endian.
 - **Downstream only.** No model for order entry — Nasdaq uses
-  OUCH (SoupBinTCP) for that, two protocols where CMP has one.
+  OUCH (SoupBinTCP) for that, two protocols where casting has one.
 
 ## Benchmark
 

@@ -5,9 +5,9 @@ status: verified
 sources:
   - https://github.com/aeron-io/aeron/wiki/Performance-Testing (Real Logic — cache-warming + spin-loop bench design)
   - lscpu / getconf on the bench host (AMD Ryzen 9 5950X, 6-core slice)
-  - rsx-cast/benches/cmp_send_breakdown_bench.rs (the per-stage attribution bench)
+  - rsx-cast/benches/cast_send_breakdown_bench.rs (the per-stage attribution bench)
   - rsx-cast/benches/compare_udp.rs (raw UDP RTT, formerly udp_rtt_bench.rs)
-  - rsx-cast/benches/cmp_rtt_bench.rs (casting RTT)
+  - rsx-cast/benches/cast_rtt_bench.rs (casting RTT)
   - facts/syscall-latency.md (sendto cost prior measurement)
   - https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html (cache-line size)
   - https://www.akkadia.org/drepper/cpumemory.pdf (Ulrich Drepper, "What every programmer should know about memory")
@@ -40,7 +40,7 @@ is apples-to-apples.
 | bench | low | median | high |
 |---|---:|---:|---:|
 | `udp_rtt_loopback_128b` (raw UDP) | 8.71 µs | 9.89 µs | 11.33 µs |
-| `cmp_rtt_fill_echo` (casting) | 9.39 µs | 11.26 µs | 13.60 µs |
+| `cast_rtt_fill_echo` (casting) | 9.39 µs | 11.26 µs | 13.60 µs |
 
 casting median is ~14% higher than raw UDP, not 5×. The casting high (13.6 µs) is
 roughly 1.2× raw UDP's high — much tighter than the unpinned spread.
@@ -69,7 +69,7 @@ modest.
 
 ### casting send-path attribution (per send call, 128 B payload + 16 B header)
 
-From `cmp_send_breakdown_bench.rs` (post-pinning, median values):
+From `cast_send_breakdown_bench.rs` (post-pinning, median values):
 
 | stage | time | what it does |
 |---|---:|---|
@@ -228,7 +228,7 @@ Re-measure when:
 
 - `facts/syscall-latency.md` — the syscall-level "why" behind the 4 µs
   `sendto` cost.
-- `rsx-cast/benches/cmp_send_breakdown_bench.rs` — the bench that produced
+- `rsx-cast/benches/cast_send_breakdown_bench.rs` — the bench that produced
   the per-stage attribution.
 - `rsx-cast/compare/raw-udp.md` — the protocol comparison doc; this file's
   numbers supersede the table there.

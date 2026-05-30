@@ -131,7 +131,7 @@ fn log_effective_matching_config(
     md_addr: &SocketAddr,
 ) {
     info!(
-        "matching effective config: symbol_id={} tick_size={} lot_size={} price_decimals={} qty_decimals={} db_enabled={} wal_dir={} me_cmp_addr={} risk_cmp_addr={} md_cmp_addr={}",
+        "matching effective config: symbol_id={} tick_size={} lot_size={} price_decimals={} qty_decimals={} db_enabled={} wal_dir={} me_cast_addr={} risk_cast_addr={} md_cast_addr={}",
         cfg.symbol_id,
         cfg.tick_size,
         cfg.lot_size,
@@ -404,7 +404,7 @@ fn main() {
     let mut last_snapshot = Instant::now();
     let mut last_config_poll = Instant::now();
 
-    // CMP/UDP: receive orders from Risk
+    // casting/UDP: receive orders from Risk
     let me_addr: SocketAddr = env::var("RSX_ME_CAST_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9100".into())
         .parse()
@@ -427,21 +427,21 @@ fn main() {
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
-    let mut cmp_receiver = CastReceiver::new(
+    let mut cast_receiver = CastReceiver::new(
         me_addr, risk_nak_addr,
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to bind CMP receiver");
+    .expect("failed to bind cast receiver");
 
-    let mut cmp_sender = CastSender::new(
+    let mut cast_sender = CastSender::new(
         risk_me_recv_addr,
         symbol_id,
         &PathBuf::from(&wal_dir),
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to create CMP sender");
+    .expect("failed to create cast sender");
 
-    // CMP/UDP: send events to Marketdata
+    // casting/UDP: send events to Marketdata
     let mkt_addr: SocketAddr =
         env::var("RSX_MD_CAST_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:9103".into())
@@ -454,7 +454,7 @@ fn main() {
         &PathBuf::from(&wal_dir),
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to create MD CMP sender");
+    .expect("failed to create MD cast sender");
     log_effective_matching_config(
         &book.config,
         &db_url,
@@ -499,7 +499,7 @@ fn main() {
     if config_version > 0 {
         emit_config_applied(
             &mut wal_writer,
-            &mut cmp_sender,
+            &mut cast_sender,
             &mut mkt_sender,
             symbol_id,
             config_version,
@@ -592,7 +592,7 @@ fn main() {
             info!("matching engine shutdown complete");
             std::process::exit(0);
         }
-        // Receive orders/cancels via CMP/UDP from Risk.
+        // Receive orders/cancels via casting/UDP from Risk.
         // Zero-copy: the order-processing body runs inside the
         // callback, borrowing the receiver's recv buffer — no
         // per-message Vec allocation. The closure cannot
@@ -600,7 +600,7 @@ fn main() {
         // never needs to (the dup path is an if/else, not an
         // early return); Faulted/Empty/Reconnect are handled in
         // the match below where `continue` is legal.
-        let recv = cmp_receiver.try_recv_with(|hdr, payload| {
+        let recv = cast_receiver.try_recv_with(|hdr, payload| {
             if hdr.record_type == RECORD_ORDER_REQUEST {
             if let Some(order_msg) = decode_payload::<OrderMessage>(payload) {
                 // F4.3 — per-stage latency trace. Stage
@@ -657,7 +657,7 @@ fn main() {
                         // there → false FAULTED. marketdata ignores
                         // the type.
                         if let Err(e) =
-                            cmp_sender.send_framed(&framed)
+                            cast_sender.send_framed(&framed)
                         {
                             warn!(
                                 "cmp send fail-record \
@@ -709,7 +709,7 @@ fn main() {
                         // FAULT source). Fan out to both; consumers
                         // ignore RECORD_ORDER_ACCEPTED (dedup record).
                         if let Err(e) =
-                            cmp_sender.send_framed(&framed)
+                            cast_sender.send_framed(&framed)
                         {
                             warn!("cmp send order-accepted: {e}");
                         }
@@ -740,14 +740,14 @@ fn main() {
                         order_msg.timestamp_ns
                     );
 
-                    // Publish events: WAL append + CMP send to
-                    // risk + (selective) CMP send to marketdata,
+                    // Publish events: WAL append + cast send to
+                    // risk + (selective) cast send to marketdata,
                     // each event prepared once (one CRC). Crash
                     // on WAL failure rather than lose fills.
                     let ts_ns = time_ns();
                     publish_events(
                         &mut wal_writer,
-                        &mut cmp_sender,
+                        &mut cast_sender,
                         &mut mkt_sender,
                         &book,
                         symbol_id,
@@ -798,7 +798,7 @@ fn main() {
                 process_cancel(
                     &mut book,
                     &mut wal_writer,
-                    &mut cmp_sender,
+                    &mut cast_sender,
                     &mut mkt_sender,
                     &order_index,
                     symbol_id,
@@ -819,11 +819,11 @@ fn main() {
             gap_end_inclusive,
         } = recv
         {
-            // Per CMP v4 contract: FAULTED means an
+            // Per casting v4 contract: FAULTED means an
             // unrecoverable gap inside the in-band recovery
             // horizon. Recover out-of-band via DXS/TCP replay
             // from `last_delivered_seq + 1`, then reset the
-            // CMP receiver and resume live UDP delivery.
+            // cast receiver and resume live UDP delivery.
             warn!(
                 "matching tile FAULTED at seq={}, opening \
                  DXS replay from seq={} (gap=[{}..={}])",
@@ -858,7 +858,7 @@ fn main() {
             .unwrap_or_else(|e| {
                 panic!("dxs replay drain failed: {e}");
             });
-            cmp_receiver.reset_after_replay(new_tip);
+            cast_receiver.reset_after_replay(new_tip);
             info!(
                 "matching tile recovered via DXS replay, \
                  new_tip={}, resuming live UDP",
@@ -906,7 +906,7 @@ fn main() {
                             }
                             emit_config_applied(
                                 &mut wal_writer,
-                                &mut cmp_sender,
+                                &mut cast_sender,
                                 &mut mkt_sender,
                                 symbol_id,
                                 cfg.config_version,
@@ -941,13 +941,13 @@ fn main() {
             last_snapshot = Instant::now();
         }
 
-        if let Err(e) = cmp_sender.tick() {
-            warn!("cmp_sender tick (heartbeat) failed: {e}");
+        if let Err(e) = cast_sender.tick() {
+            warn!("cast_sender tick (heartbeat) failed: {e}");
         }
         if let Err(e) = mkt_sender.tick() {
             warn!("mkt_sender tick (heartbeat) failed: {e}");
         }
-        cmp_sender.recv_control();
+        cast_sender.recv_control();
         mkt_sender.recv_control();
     }
 }
@@ -974,7 +974,7 @@ fn emit_config_applied(
         .prepare(&mut record)
         .expect("wal prepare failed (config_applied)");
     wal.append_framed(&framed)
-        .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede CMP fan-out");
+        .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede cast fan-out");
     if let Err(e) = risk_sender.send_framed(&framed) {
         warn!("cmp send config_applied to risk failed: {e}");
     }
@@ -988,7 +988,7 @@ fn emit_config_applied(
 }
 
 /// Cancel a resting order by order_id, emit events,
-/// write WAL, and send CMP to risk + marketdata.
+/// write WAL, and send cast to risk + marketdata.
 ///
 /// Looks up the slab handle in `order_index` (O(1)) instead
 /// of a linear slab scan. The caller must call
@@ -998,7 +998,7 @@ fn emit_config_applied(
 fn process_cancel(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
-    cmp_sender: &mut CastSender,
+    cast_sender: &mut CastSender,
     mkt_sender: &mut CastSender,
     order_index: &FxHashMap<OrderKey, u32>,
     symbol_id: u32,
@@ -1096,7 +1096,7 @@ fn process_cancel(
 
     let ts_ns = time_ns();
     publish_events(
-        wal_writer, cmp_sender, mkt_sender, book, symbol_id, ts_ns,
+        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns,
     )
     .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
 }

@@ -36,7 +36,7 @@ pub async fn handle_connection(
     mut stream: TcpStream,
     peer: SocketAddr,
     state: Rc<RefCell<GatewayState>>,
-    cmp_sender: Rc<RefCell<CastSender>>,
+    cast_sender: Rc<RefCell<CastSender>>,
     jwt_secret: &str,
     heartbeat_interval_ms: u64,
     heartbeat_timeout_ms: u64,
@@ -162,7 +162,7 @@ pub async fn handle_connection(
         }
 
         // Wait for inbound data, but cap the wait so a response
-        // routed into `outbound` by the CMP loop is drained +
+        // routed into `outbound` by the cast loop is drained +
         // written promptly instead of sitting until the next
         // inbound frame. 500us bounds the egress-delivery tail
         // (was 10ms — the dominant GW->ME->GW latency per the
@@ -438,7 +438,7 @@ pub async fn handle_connection(
                 rsx_log::latency_sample!("gateway_in", oid_hi, oid_lo, now_ns);
 
                 let seq =
-                    cmp_sender.borrow().next_seq();
+                    cast_sender.borrow().next_seq();
                 let order = OrderRequest {
                     seq,
                     user_id,
@@ -492,7 +492,7 @@ pub async fn handle_connection(
                 let bytes = as_bytes(&order);
                 let sent = {
                     let mut sender =
-                        cmp_sender.borrow_mut();
+                        cast_sender.borrow_mut();
                     match sender.send_raw(
                         RECORD_ORDER_REQUEST,
                         bytes,
@@ -588,7 +588,7 @@ pub async fn handle_connection(
                             );
                             drop(st);
                             if !send_cancel(
-                                &cmp_sender, &mut cancel,
+                                &cast_sender, &mut cancel,
                             ) {
                                 send_error(
                                     &mut stream,
@@ -626,7 +626,7 @@ pub async fn handle_connection(
                             );
                             drop(st);
                             if !send_cancel(
-                                &cmp_sender, &mut cancel,
+                                &cast_sender, &mut cancel,
                             ) {
                                 send_error(
                                     &mut stream,
@@ -736,10 +736,10 @@ fn build_cancel(
 /// expected-seq stay aligned). On failure the caller surfaces
 /// the error to the client.
 fn send_cancel(
-    cmp_sender: &Rc<RefCell<CastSender>>,
+    cast_sender: &Rc<RefCell<CastSender>>,
     cancel: &mut CancelRequest,
 ) -> bool {
-    let mut sender = cmp_sender.borrow_mut();
+    let mut sender = cast_sender.borrow_mut();
     cancel.seq = sender.next_seq();
     let bytes = as_bytes(cancel);
     match sender.send_raw(RECORD_CANCEL_REQUEST, bytes) {

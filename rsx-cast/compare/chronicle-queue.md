@@ -21,7 +21,7 @@ and *is* the reader cursor space.
 
 - Chronicle: WAL on disk, mmap shared with reader processes.
   Persistence and IPC are the same artefact.
-- rsx-cast: WAL on disk, identical bytes broadcast over CMP/UDP,
+- rsx-cast: WAL on disk, identical bytes broadcast over casting/UDP,
   identical bytes streamed back via TCP for cold replay.
   Persistence, live transport, and replay are the same artefact.
 
@@ -152,7 +152,7 @@ OSS Chronicle Queue is single-host only. Cross-host replication
 ("Chronicle Queue Enterprise Replication") is a commercial
 product layered on Chronicle Network + TCP.
 
-rsx-cast has cross-host built in: CMP/UDP unicast for the live
+rsx-cast has cross-host built in: casting/UDP unicast for the live
 path and TCP replay for the cold path are both in `rsx-cast/`.
 There is no separate enterprise tier; the same WAL serves the
 local archival reader (`rsx-recorder`) and the cold-replay
@@ -164,19 +164,19 @@ Comparing OSS Chronicle Queue against rsx-cast included
 features. "Default" means the out-of-the-box behaviour;
 where capability differs from default it's called out.
 
-| Property | Chronicle Queue (OSS) | rsx-cast WAL + CMP |
+| Property | Chronicle Queue (OSS) | rsx-cast WAL + casting |
 |---|---|---|
 | On-disk format | `.cq4` mmapped, Chronicle Wire (self-describing or fieldless) | `#[repr(C, align(64))]` fixed-layout records + 16 B header |
-| Disk format == wire format | yes (mmap IPC reads same bytes) | yes (CMP frames + TCP replay are identical to WAL records) |
+| Disk format == wire format | yes (mmap IPC reads same bytes) | yes (casting frames + TCP replay are identical to WAL records) |
 | Rotation trigger | time (daily / hourly / weekly cycle) | size (64 MB) + retention GC (48 h) |
 | Random seek by sequence | O(log n) via embedded index | O(n) linear scan within a 64 MB file (no per-file index) |
 | Default per-append sync | none — OS page-cache flush only | `sync_all()` on every flush; flush cadence = 10 ms |
 | Manual sync API | yes (`ExcerptCommon.sync()`, `lastIndexMSynced()`, Bytes `SyncMode`) | yes (`WalWriter::flush()`) |
 | Default durability bound | unbounded (caller-driven) | ~10 ms (cadence-driven) |
 | Concurrent writers | yes — serialised by write lock in `metadata.cq4t` | no shared lock; one writer per stream, fan-in via multiple streams |
-| Multiple readers | yes (mmap IPC, steady-state sub-µs) | yes (TCP replay; CMP unicast is point-to-point) |
-| Cross-host transport | not in OSS; enterprise replication is commercial | included (CMP/UDP live + TCP replay) |
-| Hot-path syscalls (steady state) | none on read; appender writes to mapped pages | `sendto` per CMP frame on send; TCP for cold path |
+| Multiple readers | yes (mmap IPC, steady-state sub-µs) | yes (TCP replay; casting unicast is point-to-point) |
+| Cross-host transport | not in OSS; enterprise replication is commercial | included (casting/UDP live + TCP replay) |
+| Hot-path syscalls (steady state) | none on read; appender writes to mapped pages | `sendto` per casting frame on send; TCP for cold path |
 | Wire schema evolution | self-describing, version-tolerant | fixed C structs, version byte in `WalHeader` |
 | Language | Java / Kotlin (JVM) | Rust |
 | Hot-path GC | zero (off-heap) | n/a (no GC) |
@@ -203,7 +203,7 @@ involve it.
 ## rsx-cast reference numbers
 
 From `rsx-cast/benches/`, criterion p50 on the dev box. These
-benches are pure WAL-side; the CMP and end-to-end RTT numbers
+benches are pure WAL-side; the casting and end-to-end RTT numbers
 live in the other compare/ docs.
 
 | Bench | What it measures | p50 |
@@ -241,7 +241,7 @@ linear). rsx-cast wins on **cross-host out of the box** and on
 
 The benches in this directory (`compare_kcp.rs`, `compare_quinn.rs`,
 `compare_udp.rs`) all share one harness: spin up two endpoints
-in the same Rust process, measure echo RTT for a 64-byte CMP
+in the same Rust process, measure echo RTT for a 64-byte casting
 frame.
 
 Chronicle Queue can't slot into that harness honestly:
@@ -254,7 +254,7 @@ Chronicle Queue can't slot into that harness honestly:
    it over TCP or a pipe benches TCP/pipe latency with Chronicle
    as a stationary participant — that's an apples-to-oranges
    number that would mislead more than inform.
-3. **The model isn't comparable.** CMP is sender → wire → receiver
+3. **The model isn't comparable.** casting is sender → wire → receiver
    over an unreliable channel with NAK retransmit. Chronicle
    IPC is appender → mmap page → tailer with no channel and no
    loss. A single RTT number in microseconds means different
@@ -262,7 +262,7 @@ Chronicle Queue can't slot into that harness honestly:
 
 A Java JMH benchmark would be a perfectly valid measurement
 — but it would be a **different harness measuring a different
-thing**: mmap IPC RTT in Java, vs CMP/UDP RTT in Rust. Sticking
+thing**: mmap IPC RTT in Java, vs casting/UDP RTT in Rust. Sticking
 those two numbers next to each other invites the wrong
 conclusion. We've chosen side-by-side published / self-harness
 numbers rather than fabricating an apples-to-apples RTT. The
@@ -272,7 +272,7 @@ that **do** plug into the Rust harness (`compare_kcp.rs`,
 reasons above.
 
 If a future deployment needs an mmap intra-host IPC path in
-addition to CMP/UDP, the relevant comparison is not "rsx-cast vs
+addition to casting/UDP, the relevant comparison is not "rsx-cast vs
 Chronicle" but "should rsx-cast grow an mmap reader for the same
 WAL the producer is already writing?" The WAL bytes are already
 on disk in the right layout; the missing piece is a tailer-side

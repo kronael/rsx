@@ -54,10 +54,10 @@ PG_URL = os.environ.get(
 
 GW_WS_PORT = 28080
 MD_WS_PORT = 28081
-GW_CMP_PORT = 28200   # GW listens for Risk fills here
-RISK_CMP_PORT = 28300  # Risk listens for GW orders + ME events
-ME_CMP_PORT = 28100   # ME listens for Risk orders
-MD_CMP_PORT = 28103   # Marketdata listens for ME events
+GW_CAST_PORT = 28200   # GW listens for Risk fills here
+RISK_CAST_PORT = 28300  # Risk listens for GW orders + ME events
+ME_CAST_PORT = 28100   # ME listens for Risk orders
+MD_CAST_PORT = 28103   # Marketdata listens for ME events
 
 
 def _wait_port(port: int, timeout: float = 5.0) -> bool:
@@ -143,8 +143,8 @@ def stack(tmp_path_factory):
         "RSX_GW_RL_USER": "10000",
         "RSX_GW_RL_IP": "100000",
         "RSX_GW_HEARTBEAT_INTERVAL_S": "30",
-        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
-        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CAST_PORT}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CAST_PORT}",
         "RSX_GW_WAL_DIR": wal_gw,
         "RSX_MAX_SYMBOLS": "16",
         "RSX_DEFAULT_TICK_SIZE": "1",
@@ -154,9 +154,9 @@ def stack(tmp_path_factory):
     env_risk = {
         **env_base,
         "DATABASE_URL": PG_URL,
-        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
-        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
-        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CAST_PORT}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CAST_PORT}",
+        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CAST_PORT}",
         "RSX_RISK_WAL_DIR": wal_risk,
         "RSX_RISK_SHARD_ID": "0",
         "RSX_RISK_SHARD_COUNT": "1",
@@ -173,17 +173,17 @@ def stack(tmp_path_factory):
         "RSX_ME_QTY_DECIMALS": "0",
         "RSX_ME_TICK_SIZE": "1",
         "RSX_ME_LOT_SIZE": "1",
-        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
-        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CMP_PORT}",
-        "RSX_MD_CAST_ADDR": f"127.0.0.1:{MD_CMP_PORT}",
+        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CAST_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{RISK_CAST_PORT}",
+        "RSX_MD_CAST_ADDR": f"127.0.0.1:{MD_CAST_PORT}",
         "RSX_ME_WAL_DIR": wal_me,
     }
 
     env_md = {
         **env_base,
         "RSX_MD_LISTEN": f"0.0.0.0:{MD_WS_PORT}",
-        "RSX_MKT_CAST_ADDR": f"127.0.0.1:{MD_CMP_PORT}",
-        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CMP_PORT}",
+        "RSX_MKT_CAST_ADDR": f"127.0.0.1:{MD_CAST_PORT}",
+        "RSX_ME_CAST_ADDR": f"127.0.0.1:{ME_CAST_PORT}",
         "RSX_MD_TIP_FILE": str(tmp / "md.tip"),
     }
 
