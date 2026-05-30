@@ -71,16 +71,6 @@ const RESTART_BACKOFF_SECS: &[u64] = &[
 /// Max consecutive crashes before the shard gives up.
 const MAX_RESTARTS: usize = 8;
 
-/// Advisory-lock key serializing `run_migrations` across nodes.
-/// The eager-replica protocol runs migrations at boot on EVERY
-/// node, before the per-shard main lock is won (that happens late,
-/// in warm-catchup). `002_rename_tables.sql` is not idempotent, so
-/// concurrent boots would race. Hold this short-lived lock around
-/// run_migrations so exactly one node migrates at a time. The key
-/// is a fixed negative sentinel that can never collide with a
-/// per-shard lock key (shard_id, always small non-negative).
-const MIGRATION_LOCK_KEY: i64 = -8_100_500_900;
-
 /// Transition signalled by `run_main` on return.
 #[derive(Debug)]
 enum MainTransition {
@@ -470,22 +460,10 @@ fn run_main(
                 error!("pg connection error: {e}");
             }
         });
-        // Serialize migrations across concurrent node boots: the
-        // main per-shard lock is won late (warm-catchup), so without
-        // this every node would migrate at once and the non-idempotent
-        // 002_rename_tables.sql would race. Distinct key from shard_id.
-        client
-            .batch_execute(&format!(
-                "SELECT pg_advisory_lock({MIGRATION_LOCK_KEY})"
-            ))
-            .await?;
-        let migrate = run_migrations(&client).await;
-        client
-            .batch_execute(&format!(
-                "SELECT pg_advisory_unlock({MIGRATION_LOCK_KEY})"
-            ))
-            .await?;
-        migrate?;
+        // Migrations are idempotent and concurrency-safe (each is
+        // version-guarded + idempotent DDL + ON CONFLICT), so every
+        // node can run them at boot with no lock. See migrations/CLAUDE.md.
+        run_migrations(&client).await?;
         let state = load_from_postgres(
             &client,
             shard_id,
