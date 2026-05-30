@@ -15,8 +15,9 @@
 //! up and terminates instead of retrying forever.
 //!
 //! Gap 3: Shutdown signal causes a clean worker exit — used by
-//! `run_main` to stop the worker before a demote so that a
-//! Main → Replica → Main cycle does not leak worker threads.
+//! `run_main` to stop the worker on a demote (lease loss) so
+//! that the demote → re-acquire cycle does not leak worker
+//! threads.
 //!
 //! All three tests need Docker; gated with #[ignore], run
 //! under `make integration`.
@@ -193,12 +194,11 @@ async fn persist_circuit_opens_on_sustained_failure() {
 }
 
 /// Gap 3 — shutdown signal causes the worker to exit cleanly,
-/// proving that a Main → Replica → Main role transition no
-/// longer leaks a worker thread. We write one tip, flip the
-/// shutdown flag, and assert the worker handle resolves
-/// within a generous window. Without `run_main`'s shutdown
-/// plumbing the same role cycle would spawn N workers, each
-/// holding its own PG connection.
+/// proving that a demote → re-acquire cycle no longer leaks a
+/// worker thread. We write one tip, flip the shutdown flag, and
+/// assert the worker handle resolves within a generous window.
+/// Without `run_main`'s shutdown plumbing each re-acquire would
+/// spawn another worker, each holding its own PG connection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires docker; pg testcontainer"]
 async fn persist_worker_exits_on_shutdown_signal() {
