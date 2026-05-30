@@ -37,3 +37,27 @@ fn fee_one_lot_one_tick_one_bps() {
     // 1 * 1 * 1 / 10000 = 0
     assert_eq!(calculate_fee(1, 1, 1), 0);
 }
+
+#[test]
+fn fee_rebate_overflow_saturates_negative() {
+    // Huge rebate (negative bps, giant notional) must saturate
+    // toward i64::MIN, NOT invert into a giant positive fee.
+    // 1e11 * 1e11 * -1000 / 10000 = -1e21 < i64::MIN.
+    let fee = calculate_fee(
+        100_000_000_000,
+        100_000_000_000,
+        -1000,
+    );
+    assert_eq!(fee, i64::MIN);
+}
+
+#[test]
+fn fee_cost_overflow_saturates_positive() {
+    // Huge positive fee saturates to i64::MAX (sign preserved).
+    let fee = calculate_fee(
+        100_000_000_000,
+        100_000_000_000,
+        1000,
+    );
+    assert_eq!(fee, i64::MAX);
+}

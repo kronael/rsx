@@ -227,6 +227,49 @@ fn margin_mark_price_unavailable_uses_index() {
 }
 
 #[test]
+fn margin_upnl_sum_saturates_no_panic() {
+    // Two positions whose individual upnl each fit in i64 but
+    // whose SUM overflows i64. Plain `+=` panics in debug /
+    // wraps in release (a wrap from large-positive could flip
+    // negative, or two large-negatives wrap positive and mask
+    // insolvency). saturating_add must clamp instead.
+    let pm = make_pm(2);
+    let mut p0 = Position::new(1, 0);
+    p0.apply_fill(0, 0, 3_000_000_000, 1); // long 3e9 @ entry 0
+    let mut p1 = Position::new(1, 1);
+    p1.apply_fill(0, 0, 3_000_000_000, 2); // long 3e9 @ entry 0
+    let a = Account::new(1, 1000);
+    let marks = vec![2_000_000_000, 2_000_000_000];
+    // each upnl = 3e9 * 2e9 = 6e18 (fits i64); sum 1.2e19 > i64::MAX
+    let s = pm.calculate(&a, [&p0, &p1].into_iter(), &marks, 0);
+    assert_eq!(s.unrealized_pnl, i64::MAX);
+    // equity saturates positive (huge gains) -> solvent, sane
+    assert_eq!(s.equity, i64::MAX);
+}
+
+#[test]
+fn margin_upnl_negative_sum_saturates_solvent_guard() {
+    // Two deeply-underwater positions: each upnl fits i64 but
+    // the sum underflows. A wrap (release `+=`) could flip the
+    // sum positive and mask insolvency -> wrongly solvent.
+    // saturating_add must clamp to i64::MIN (insolvent).
+    let pm = make_pm(2);
+    let mut p0 = Position::new(1, 0);
+    // long 3e9 @ entry 2e9, mark 0 -> upnl = 3e9*(0-2e9) = -6e18
+    p0.apply_fill(0, 2_000_000_000, 3_000_000_000, 1);
+    let mut p1 = Position::new(1, 1);
+    p1.apply_fill(0, 2_000_000_000, 3_000_000_000, 2);
+    let a = Account::new(1, 1000);
+    let marks = vec![0, 0];
+    let s = pm.calculate(&a, [&p0, &p1].into_iter(), &marks, 0);
+    assert_eq!(s.unrealized_pnl, i64::MIN);
+    // equity = collateral + MIN, saturating -> deeply negative
+    // (account looks insolvent: the safe direction).
+    assert_eq!(s.equity, i64::MIN.saturating_add(1000));
+    assert!(s.equity < 0);
+}
+
+#[test]
 fn margin_mark_price_zero_handled() {
     let pm = make_pm(1);
     let mut p = Position::new(1, 0);
