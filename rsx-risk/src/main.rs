@@ -30,10 +30,7 @@ use rsx_messages::CancelRequest;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
-use rsx_health::CounterGauge;
-use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
-use rsx_health::QueueGauge;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
@@ -44,6 +41,7 @@ use rsx_risk::replay::replay_from_wal;
 use rsx_cast::CaughtUpRecord;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
+use rsx_risk::ShardConfig;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
 use rsx_risk::OrderRequest;
@@ -63,6 +61,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+mod metrics;
 
 /// Backoff schedule (seconds) for shard crash-restarts.
 const RESTART_BACKOFF_SECS: &[u64] = &[
@@ -98,9 +97,7 @@ enum NodeState {
     Live,
 }
 
-fn log_effective_risk_config(
-    config: &rsx_risk::ShardConfig,
-) {
+fn log_effective_risk_config(config: &ShardConfig) {
     info!(
         "risk effective config: shard_id={} shard_count={} max_symbols={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
         config.shard_id,
@@ -176,52 +173,7 @@ fn main() {
     if let Ok(addr_str) = env::var("RSX_RISK_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             let g = gauges.clone();
-            rsx_health::spawn_health_server(addr, move || {
-                let live = g.live.load(Ordering::Relaxed);
-                let ready = g.ready.load(Ordering::Relaxed);
-                let resp_used = g.resp_ring_used.load(Ordering::Relaxed);
-                let resp_cap = g.resp_ring_cap.load(Ordering::Relaxed);
-                let acc_used = g.accept_ring_used.load(Ordering::Relaxed);
-                let acc_cap = g.accept_ring_cap.load(Ordering::Relaxed);
-                let persist_used = g.persist_ring_used.load(Ordering::Relaxed);
-                let persist_cap = g.persist_ring_cap.load(Ordering::Relaxed);
-                let saturation = {
-                    let mut max = 0.0f64;
-                    for (u, c) in [
-                        (resp_used, resp_cap),
-                        (acc_used, acc_cap),
-                        (persist_used, persist_cap),
-                    ] {
-                        if c > 0 {
-                            let f = (u as f64) / (c as f64);
-                            if f > max { max = f; }
-                        }
-                    }
-                    max
-                };
-                HealthSnapshot {
-                    live,
-                    ready,
-                    saturation,
-                    queues: vec![
-                        QueueGauge { name: "resp_ring",
-                            used: resp_used, cap: resp_cap },
-                        QueueGauge { name: "accept_ring",
-                            used: acc_used, cap: acc_cap },
-                        QueueGauge { name: "persist_ring",
-                            used: persist_used, cap: persist_cap },
-                    ],
-                    counters: vec![
-                        CounterGauge { name: "orders_processed",
-                            value: g.orders_processed.load(Ordering::Relaxed) },
-                        CounterGauge { name: "fills_processed",
-                            value: g.fills_processed.load(Ordering::Relaxed) },
-                        CounterGauge { name: "rejects",
-                            value: g.rejects.load(Ordering::Relaxed) },
-                    ],
-                    state: g.state_label(),
-                }
-            });
+            rsx_health::spawn_health_server(addr, move || metrics::health_snapshot(&g));
         } else {
             warn!("RSX_RISK_HEALTH_ADDR: invalid addr '{addr_str}'");
         }
@@ -1534,7 +1486,9 @@ fn spawn_lease_thread(
             loop {
                 tokio::time::sleep(interval).await;
                 if stop.load(Ordering::Relaxed) {
-                    let _ = lease.release(&pg_client).await;
+                    if let Err(e) = lease.release(&pg_client).await {
+                        warn!("lease release on stop failed: {e}");
+                    }
                     return;
                 }
                 match lease.renew(&pg_client).await {
@@ -1564,5 +1518,7 @@ fn stop_lease_thread(
     handle: std::thread::JoinHandle<()>,
 ) {
     stop.store(true, Ordering::Relaxed);
-    let _ = handle.join();
+    if let Err(e) = handle.join() {
+        warn!("lease thread panicked on join: {:?}", e);
+    }
 }
