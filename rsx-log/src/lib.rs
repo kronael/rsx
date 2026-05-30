@@ -218,8 +218,18 @@ fn dispatch(r: &Record) {
 mod tests {
     use super::*;
 
+    // These tests share process-global state: round_trips drains ALL
+    // registered rings (the consumer registry), and both touch the global
+    // DROPPED counter. Run them serially so `make test` (multi-threaded) is
+    // deterministic — otherwise round_trips can empty the drop test's ring
+    // before it overflows. Recover from poison so one failure doesn't cascade.
+    static TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn latency_sample_round_trips_via_ring() {
+        let _g = TEST_GUARD
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         push(Record {
             kind: Kind::Latency,
             stage_or_target: "test_stage",
@@ -247,6 +257,9 @@ mod tests {
 
     #[test]
     fn drop_counter_increments_on_full_ring() {
+        let _g = TEST_GUARD
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let rec = |a: u64, stage| Record {
             kind: Kind::Latency,
             stage_or_target: stage,
