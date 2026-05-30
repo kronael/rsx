@@ -33,7 +33,7 @@ pub fn encode_record(
 }
 
 /// Convert repr(C) struct to byte slice. Used for
-/// serializing CMP records to wire format.
+/// serializing casting records to wire format.
 pub fn as_bytes<T>(val: &T) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(

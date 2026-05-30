@@ -460,9 +460,9 @@ fn run_main(
     // uses the first ME's symbol_id as the replication stream_id
     // for FAULTED replay. We match that: ONE ReplicationConsumer
     // against RSX_ME_REPLICATION_ADDR with that stream_id.
-    let me_addrs = rsx_risk::me_cmp_addrs_from_env();
+    let me_addrs = rsx_risk::me_cast_addrs_from_env();
     if me_addrs.is_empty() {
-        return Err("no ME CMP addresses configured".into());
+        return Err("no ME cast addresses configured".into());
     }
     // SAFETY: me_addrs.is_empty() checked above
     let me_stream_id = me_addrs
@@ -494,7 +494,7 @@ fn run_main(
         mark_sender_addr,
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to bind mark CMP receiver");
+    .expect("failed to bind mark cast receiver");
 
     // ===== WARM CATCHUP =====
     // Consume the main's authoritative ME replication stream into
@@ -613,7 +613,7 @@ fn run_main(
         risk_addr, gw_addr,
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to bind risk CMP receiver");
+    .expect("failed to bind risk cast receiver");
 
     // Receive fills/events from ME (separate port).
     // All MEs send to this single recv addr.
@@ -623,7 +623,7 @@ fn run_main(
             .parse()
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_RISK_ME_RECV_ADDR");
-    // Use first ME addr as the CMP peer for the receiver.
+    // Use first ME addr as the cast peer for the receiver.
     // me_stream_id (resolved before warm catchup) = symbol_id of
     // the first (primary) ME; used as stream_id in FAULTED TCP
     // replay requests.
@@ -661,7 +661,7 @@ fn run_main(
             &me_sender_cfg,
         )
         // SAFETY: fail-fast at startup
-        .expect("failed to create ME CMP sender");
+        .expect("failed to create ME cast sender");
         me_senders.insert(sid, sender);
     }
 
@@ -672,7 +672,7 @@ fn run_main(
         Path::new(&wal_dir),
     )
     // SAFETY: fail-fast at startup
-    .expect("failed to create GW CMP sender");
+    .expect("failed to create GW cast sender");
 
     // Egress SPSC rings. Input rings removed: the recv loop
     // calls shard.process_* directly (same thread). These two
@@ -715,7 +715,7 @@ fn run_main(
                         ask_px: rec.ask_px.0,
                         ask_qty: rec.ask_qty.0,
                     });
-                    // Forward to GW to maintain CMP seq
+                    // Forward to GW to maintain cast seq
                     // continuity (GW ignores BBO content).
                     forward_to_gw(&mut gw_sender, RECORD_BBO, payload);
                 }
@@ -770,12 +770,12 @@ fn run_main(
                     shard.resume_liquidation(fill.symbol_id);
                     // Forward fill to GW
                     forward_to_gw(&mut gw_sender, RECORD_FILL, payload);
-                    // Sub-stage: CMP send to gateway completed.
+                    // Sub-stage: cast send to gateway completed.
                     // Anchor on the same taker_ts_ns used by
                     // risk_out (with the >2024 plausibility
                     // guard).
                     rsx_log::latency_sample!(
-                        "risk_cmp_send_done",
+                        "risk_cast_send_done",
                         fill.taker_order_id_hi,
                         fill.taker_order_id_lo,
                         if fill.taker_ts_ns == 0 {
@@ -1104,7 +1104,7 @@ fn run_main(
             }
         }
 
-        // Drain accepted orders -> CMP to correct ME
+        // Drain accepted orders -> cast to correct ME
         while let Ok(order) = accepted_cons.pop() {
             let msg = OrderMessage {
                 seq: order.seq,
@@ -1182,7 +1182,7 @@ fn run_main(
             }
         }
 
-        // CMP housekeeping
+        // Cast housekeeping
         for s in me_senders.values_mut() {
             if let Err(e) = s.tick() {
                 warn!("risk: me_sender tick failed: {e}");

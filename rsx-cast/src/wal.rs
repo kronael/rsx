@@ -677,7 +677,7 @@ fn scan_file_seq_range(
 
 /// Random-access read of a single WAL record by seq.
 ///
-/// Used by CMP NAK retransmit when the requested seq has
+/// Used by casting NAK retransmit when the requested seq has
 /// fallen out of the in-memory send_ring (default 4096).
 /// The cost is one file open + a sequential scan within
 /// that file (≤ 64 MB by default rotation), so a NAK

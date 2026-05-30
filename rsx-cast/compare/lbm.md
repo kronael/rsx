@@ -10,7 +10,7 @@ middleware for financial market data, deployed at exchange scale
 **No bench possible.** This page is design comparison only.
 Closed source + commercial license precludes a like-for-like
 Criterion harness. Included because LBM is the direct design
-ancestor of the entire NAK-UDP-multicast family; CMP and Aeron
+ancestor of the entire NAK-UDP-multicast family; casting and Aeron
 both descend from the lineage. Honest acknowledgment that the
 approach has been production-validated at scale.
 
@@ -46,12 +46,12 @@ The exact framing layout is not published byte-for-byte.
 - Source retransmits from in-memory transmission window.
 - No central broker — source IS the server for its own stream.
 
-This is the same NAK model as CMP and Aeron, adapted for
+This is the same NAK model as casting and Aeron, adapted for
 multicast fan-out.
 
 ### LBT-RU (unicast)
 
-Same NAK-based model but point-to-point. Closer to CMP.
+Same NAK-based model but point-to-point. Closer to casting.
 
 ### Durability
 
@@ -65,19 +65,19 @@ data, comparable to Aeron's term buffers.
 ```
 LBM/29West (Todd Montgomery)
   → Aeron (Todd Montgomery + Martin Thompson, Real Logic)
-  → CMP (rsx-cast, NAK model + WAL cold tier)
+  → casting (rsx-cast, NAK model + WAL cold tier)
 ```
 
 Todd Montgomery left 29West/Informatica and co-founded Real
 Logic, which built Aeron as the open-source rethink of the
-same model. CMP takes the NAK-from-receiver primitive and
+same model. casting takes the NAK-from-receiver primitive and
 adds a WAL cold tier — closing the gap between in-RAM
 retransmit and durable replay that Informatica sells as a
 separate paid product.
 
 ## Guarantees
 
-| Dimension | LBM (LBT-RM / LBT-RU) | rsx-cast CMP |
+| Dimension | LBM (LBT-RM / LBT-RU) | rsx-cast casting |
 |---|---|---|
 | Delivery | Reliable (NAK + retransmit) | Reliable (NAK + WAL retransmit) |
 | Loss detection | Receiver (NAK to source) | Receiver (seq gap → NAK) |

@@ -308,7 +308,7 @@ fn run(config: &MarkConfig) -> io::Result<()> {
         }
 
         if let Err(e) = mark_sender.tick() {
-            warn!("mark: cmp_sender tick failed: {e}");
+            warn!("mark: cast_sender tick failed: {e}");
         }
         mark_sender.recv_control();
 

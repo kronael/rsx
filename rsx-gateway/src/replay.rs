@@ -1,5 +1,5 @@
 //! `drain_replay`: FAULTED/RECONNECT recovery for the
-//! gateway's CMP receiver. Mirrors `rsx_matching::replay`
+//! gateway's cast receiver. Mirrors `rsx_matching::replay`
 //! and `rsx_risk::replay::drain_replay`; the apply callback
 //! is supplied by the caller so the gateway can decide how
 //! to route any records that arrive during replay (today:

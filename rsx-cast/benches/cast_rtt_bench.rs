@@ -1,15 +1,15 @@
-//! CMP echo round-trip: A → B → A.
+//! casting echo round-trip: A → B → A.
 //!
 //! What this measures
 //! -----------------
-//! Two CMP endpoints. A sends a `FillRecord` to B; B receives,
+//! Two cast endpoints. A sends a `FillRecord` to B; B receives,
 //! echoes the (modified) record back; A receives. Timed: the
 //! full round-trip from A's `send()` return to A's `try_recv()`
 //! returning B's echo.
 //!
 //! This is closer in shape to the production
-//! `gateway_in → risk_in → gateway_cmp_recv` triangle than a
-//! one-way bench: it includes two CMP send paths, two CMP
+//! `gateway_in → risk_in → gateway_cast_recv` triangle than a
+//! one-way bench: it includes two cast send paths, two cast
 //! recv paths, and the natural bidirectional traffic that the
 //! NAK subsystem expects. Senders call `tick()` every 1024
 //! iters to emit idle-stream heartbeats; the heartbeat path

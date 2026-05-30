@@ -128,7 +128,7 @@ verbosity, stale claims, broken examples. NOT entire sections.
 
 Run through this checklist:
 
-- [ ] Numbers in "How fast" match the most recent `facts/cmp-vs-udp-overhead.md`
+- [ ] Numbers in "How fast" match the most recent `facts/cast-vs-udp-overhead.md`
 - [ ] "What it gives you" doesn't reference removed features (e.g. `StatusMessage` was removed in 87b223e — don't resurrect)
 - [ ] Quick-start examples actually use every binding they construct (no dangling `let mut wal = ...` that's never referenced)
 - [ ] "Guarantees" reflects what the code does TODAY, not what we'd like (e.g. FAULTED escalation is specced but not implemented — note it's pending until that lands)
@@ -213,7 +213,7 @@ remove it as part of the same change set.
 When a README number disagrees with measurement, the chain is:
 
 1. `cargo bench` is authoritative.
-2. `facts/cmp-vs-udp-overhead.md` records dated measured numbers.
+2. `facts/cast-vs-udp-overhead.md` records dated measured numbers.
 3. README / ARCHITECTURE quote from facts; cite the bench name.
 
 If README and ARCHITECTURE disagree (they currently do on fsync —

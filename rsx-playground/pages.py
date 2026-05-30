@@ -209,7 +209,7 @@ def walkthrough_page():
     s1 = _wt_section(
         "big-picture",
         "The Big Picture",
-        "7 processes, CMP/UDP between them, WAL for "
+        "7 processes, casting/UDP between them, WAL for "
         "recovery. &lt;50us round-trip design budget; "
         "ME match measured at 54 ns.",
         """
@@ -220,12 +220,12 @@ def walkthrough_page():
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS + CMP bridge
+                    |  Gateway   |  WS + casting bridge
                     | (io_uring) |  JWT, rate limit
                     +-----+------+
-                          | CMP/UDP
+                          | casting/UDP
                     +-----v------+         +----------+
-                    |   Risk     | CMP/UDP | Matching |
+                    |   Risk     | casting/UDP | Matching |
                     |  Engine    +--------&gt;| Engine   |
                     | (1 shard)  |&lt;--------+ (1/sym)  |
                     +--+---+--+-+  fills   +----+-----+
@@ -292,9 +292,9 @@ def walkthrough_page():
 User          Gateway        Risk          ME
  |               |             |             |
  |--WS order---&gt;|             |             |
- |               |--CMP/UDP-&gt;|             |
+ |               |--casting/UDP-&gt;|             |
  |               |             |--margin--&gt;|
- |               |             |--CMP/UDP-&gt;|
+ |               |             |--casting/UDP-&gt;|
  |               |             |             |--match
  |               |             |             |--WAL
  |               |             |&lt;--fills----|
@@ -319,12 +319,12 @@ User          Gateway        Risk          ME
         network</td></tr>
     <tr><td class="py-1 px-2">2</td>
       <td class="py-1 px-2">Gateway &rarr; Risk</td>
-      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2">casting/UDP</td>
       <td class="py-1 px-2 text-green-400">
         ~0.5us</td></tr>
     <tr><td class="py-1 px-2">3</td>
       <td class="py-1 px-2">Risk &rarr; ME</td>
-      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2">casting/UDP</td>
       <td class="py-1 px-2 text-green-400">
         ~0.5us</td></tr>
     <tr><td class="py-1 px-2">4</td>
@@ -334,12 +334,12 @@ User          Gateway        Risk          ME
         font-bold">54ns</td></tr>
     <tr><td class="py-1 px-2">5</td>
       <td class="py-1 px-2">ME &rarr; Risk</td>
-      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2">casting/UDP</td>
       <td class="py-1 px-2 text-green-400">
         ~0.5us</td></tr>
     <tr><td class="py-1 px-2">6</td>
       <td class="py-1 px-2">Risk &rarr; Gateway</td>
-      <td class="py-1 px-2">CMP/UDP</td>
+      <td class="py-1 px-2">casting/UDP</td>
       <td class="py-1 px-2 text-green-400">
         ~0.5us</td></tr>
     <tr><td class="py-1 px-2">7</td>
@@ -444,11 +444,11 @@ tip+1, go live on CaughtUp.</p>""")
         "<span class='text-green-400 font-bold'>"
         "31ns</span> append, "
         "<span class='text-blue-400'>24us</span> flush. "
-        "CMP/UDP with NACK flow control.",
+        "casting/UDP with NACK flow control.",
         """
 <p><strong class="text-white">Zero Transformation:
 </strong>
-The WAL disk format, CMP wire format, and DXS stream
+The WAL disk format, casting wire format, and DXS stream
 format are identical. 16B header + #[repr(C, align(64))]
 payload. No serialization, no copying, no translation.</p>
 <p><strong class="text-white">WalWriter:</strong>
@@ -456,7 +456,7 @@ Buffer appends at 31ns each. Flush to disk every 10ms
 with fsync (24us for 64KB batch). Rotate at 64MB,
 retain 10 minutes. Backpressure: buffer full or flush
 lag &gt;10ms stalls the producer.</p>
-<p><strong class="text-white">CMP Protocol:</strong>
+<p><strong class="text-white">Casting Protocol:</strong>
 Aeron-inspired UDP transport. NACK-based flow control,
 heartbeat keepalive, reorder buffer for out-of-order
 datagrams. Encode: 43ns, decode: 9ns.</p>
@@ -481,7 +481,7 @@ broker. Recorder, marketdata, and risk all use DXS.</p>
     <div class="text-green-400 text-lg font-bold">
       9ns</div>
     <div class="text-slate-500 text-[10px]">
-      CMP decode</div>
+      cast decode</div>
   </div>
 </div>""")
 
@@ -533,7 +533,7 @@ and liquidation triggers.</p>""")
         "benchmarks",
         "The Numbers",
         "Measured: sub-microsecond match (54 ns), "
-        "31 ns WAL append, 9 ns CMP decode. "
+        "31 ns WAL append, 9 ns cast decode. "
         "Round-trip is a component-sum budget pending the "
         "E2E harness.",
         """
@@ -563,10 +563,10 @@ and liquidation triggers.</p>""")
     <tr><td class="py-1 px-2">WAL flush+fsync 64KB</td>
       <td class="py-1 px-2 text-right text-blue-400">
         24 us</td></tr>
-    <tr><td class="py-1 px-2">CMP encode</td>
+    <tr><td class="py-1 px-2">cast encode</td>
       <td class="py-1 px-2 text-right text-green-400">
         43 ns</td></tr>
-    <tr><td class="py-1 px-2">CMP decode</td>
+    <tr><td class="py-1 px-2">cast decode</td>
       <td class="py-1 px-2 text-right text-green-400">
         9 ns</td></tr>
     <tr><td class="py-1 px-2">Replay 100k records</td>
@@ -1046,10 +1046,10 @@ def topology_page():
       select-none px-1">&#x21C4; WS</span>
     {gateway}
     <span class="text-zinc-600 text-xs self-center
-      select-none px-1">&#x2192; CMP</span>
+      select-none px-1">&#x2192; cast</span>
     {risk}
     <span class="text-zinc-600 text-xs self-center
-      select-none px-1">&#x2192; CMP</span>
+      select-none px-1">&#x2192; cast</span>
     {matching}
     <span class="text-zinc-600 text-xs self-center
       select-none px-1">&#x2192; WAL</span>
@@ -1108,9 +1108,9 @@ function applyTopoFlow(evt) {{
         'loading...</span>'
         '</div>',
     )
-    cmp = _card(
-        "CMP Connections",
-        '<div hx-get="./x/cmp-flows" '
+    cast_conn = _card(
+        "Cast Connections",
+        '<div hx-get="./x/cast-flows" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
         '<span class="text-slate-600">'
@@ -1132,7 +1132,7 @@ function applyTopoFlow(evt) {{
   {_card("Selected Component", detail)}
   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
     {affinity}
-    {cmp}
+    {cast_conn}
   </div>
   {proc_list}
 </div>"""
@@ -1847,13 +1847,13 @@ gap-2 text-xs">
     <div class="text-slate-500">rsx-dxs bench</div>
   </div>
   <div class="bg-slate-800 rounded p-2">
-    <div class="text-slate-400">CMP encode</div>
+    <div class="text-slate-400">cast encode</div>
     <div class="text-emerald-400 text-lg font-bold">
       43 ns</div>
     <div class="text-slate-500">rsx-gateway bench</div>
   </div>
   <div class="bg-slate-800 rounded p-2">
-    <div class="text-slate-400">CMP decode</div>
+    <div class="text-slate-400">cast decode</div>
     <div class="text-emerald-400 text-lg font-bold">
       9 ns</div>
     <div class="text-slate-500">rsx-gateway bench</div>
@@ -1924,7 +1924,7 @@ end-to-end probe is queued as task F1 in
 <p class="text-xs text-slate-500 mt-2">
 The gateway round-trip card above measures the
 playground &harr; gateway path (Python &rarr; aiohttp
-&rarr; gateway WS &rarr; JSON &rarr; JWT &rarr; CMP
+&rarr; gateway WS &rarr; JSON &rarr; JWT &rarr; cast
 &rarr; reverse). It overstates the matching
 latency &mdash; it's useful as a liveness signal,
 not as the &lt;50 &micro;s claim.</p>
@@ -2747,8 +2747,8 @@ def render_core_affinity(processes):
     return html
 
 
-def render_cmp_flows(record_counts=None):
-    """CMP flow stats from per-pipe WAL record counts.
+def render_cast_flows(record_counts=None):
+    """Cast flow stats from per-pipe WAL record counts.
 
     Each pipe reads its own producer's WAL stream (F3.4):
       Gateway -> Risk : RECORD_ORDER_ACCEPTED on gw-* WAL

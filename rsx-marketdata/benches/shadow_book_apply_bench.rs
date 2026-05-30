@@ -1,6 +1,6 @@
-//! Feed real CMP wire records through the marketdata
+//! Feed real casting wire records through the marketdata
 //! shadow-book apply path. This is the consumer-side cost
-//! of every CMP packet ME sends to MD: parse + look up the
+//! of every casting packet ME sends to MD: parse + look up the
 //! order in the shadow's `order_map` + apply to the
 //! internal `Orderbook` + bump seq.
 //!

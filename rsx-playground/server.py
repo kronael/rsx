@@ -1021,7 +1021,7 @@ async def start_all(scenario="minimal"):
     # wait for processes to stabilize, then auto-start auth.
     # Maker is NOT auto-started: it generates ~40 ord/s which
     # outpaces the default UDP rmem (208 KB on stock kernels)
-    # and triggers cmp FAULTED + risk-panic-restart loops, which
+    # and triggers cast FAULTED + risk-panic-restart loops, which
     # then masks every other demo failure mode. Operators start
     # it manually from /controls when they want depth.
     if started:
@@ -3297,19 +3297,19 @@ async def x_core_affinity():
         pages.render_core_affinity(scan_processes()))
 
 
-@app.get("/x/cmp-flows", response_class=HTMLResponse)
-async def x_cmp_flows():
+@app.get("/x/cast-flows", response_class=HTMLResponse)
+async def x_cast_flows():
     # Per-pipe counters wired to per-process WAL streams so the
     # three rows show distinct numbers under load (F3.4). Each
-    # process writes its own outbound CMP frames to its own WAL
+    # process writes its own outbound casting frames to its own WAL
     # stream, so counting records on the producer's stream is
     # the closest proxy without adding cross-process telemetry.
-    counts = _cached_for("cmp_pipe_counts", 1.0, _cmp_pipe_counts)
-    return HTMLResponse(pages.render_cmp_flows(counts))
+    counts = _cached_for("cast_pipe_counts", 1.0, _cast_pipe_counts)
+    return HTMLResponse(pages.render_cast_flows(counts))
 
 
-def _cmp_pipe_counts() -> dict:
-    """Count outbound CMP records per producer WAL stream.
+def _cast_pipe_counts() -> dict:
+    """Count outbound casting records per producer WAL stream.
 
     Gateway -> Risk: orders accepted on the gateway WAL stream.
     Risk -> ME: orders forwarded (accepted+failed) on the risk WAL.
@@ -6351,7 +6351,7 @@ async def api_latency_probe(
 # touched, so the RTT measures Python aiohttp + WS write +
 # gateway parse + gateway prevalidate + reverse path only.
 # Subtract this from the e2e probe to estimate the
-# risk+ME+CMP+WAL contribution.
+# risk+ME+cast+WAL contribution.
 _GW_PROBE_INVALID_SYMBOL: int = 999_999
 _GW_PROBE_TIMEOUT_S = 2.0
 

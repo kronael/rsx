@@ -116,7 +116,7 @@ test.describe("Readiness pipeline", () => {
 
 // Five-minute soak: polls /api/processes every 5 s and FAILS
 // if any RSX process restarts (pid changes) or uptime drops.
-// Proves the F1 fix (CMP SO_REUSEPORT + graceful WAL drain on
+// Proves the F1 fix (cast SO_REUSEPORT + graceful WAL drain on
 // SIGTERM) keeps a warm cluster green with no operator action.
 // Tagged @long so the fast lane can opt out via grep-invert.
 test.describe("@long warm-cluster soak", () => {

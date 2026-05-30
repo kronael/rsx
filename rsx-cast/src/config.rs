@@ -10,7 +10,7 @@ fn env_var<T: std::str::FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
-/// CMP transport configuration.
+/// Casting transport configuration.
 ///
 /// All fields can be overridden via env vars (see
 /// [`CastConfig::from_env`]); defaults are tuned for a trusted

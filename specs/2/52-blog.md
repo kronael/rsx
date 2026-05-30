@@ -45,7 +45,7 @@ exchange systems will immediately see what's unusual.
 | Loopback RTT (GW→ME→GW) | ~10 µs (component sum) |
 
 Cite: `rsx-book/benches/book_bench.rs`, `rsx-cast/compare/bench_report`,
-`facts/cmp-vs-udp-overhead.md`.
+`facts/cast-vs-udp-overhead.md`.
 
 ### 3. WAL = wire = stream (the interesting design decision)
 
@@ -81,7 +81,7 @@ Protocol overhead bench:
 - QUIC persistent: ~200–500 µs (TLS + congestion control)
 
 Cite: `rsx-cast/compare/kcp.md`, `rsx-cast/compare/quinn.md`,
-`facts/cmp-vs-udp-overhead.md`, `rsx-cast/compare/compare_all.rs`.
+`facts/cast-vs-udp-overhead.md`, `rsx-cast/compare/compare_all.rs`.
 
 Prior art acknowledgement: Aeron (Real Logic) is the direct design ancestor.
 [Todd Montgomery](https://github.com/tmont) designed the original PGM/multicast

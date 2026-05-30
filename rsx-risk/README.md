@@ -111,10 +111,10 @@ cargo test -p rsx-risk -- --test-threads=1
 
 Use `--test-threads=1` for tests with global state.
 
-20 test files covering: account, cmp_ingest, fees, funding,
+20 test files covering: account, cast_ingest, fees, funding,
 insurance, insurance_liquidation_e2e, insurance_persist,
 liquidation, liquidator_e2e, margin, margin_recalc,
-me_cmp_addrs, missing_integration, persist, position, price,
+me_cast_addrs, missing_integration, persist, position, price,
 replica, replication_e2e, shard, shard_e2e.
 See `specs/2/42-testing-risk.md`.
 

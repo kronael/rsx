@@ -64,12 +64,12 @@ RESET_STREAM, MAX_DATA, PING, … (29 frame types in RFC 9000
   var  stream_data
 ```
 
-Compare to CMP, where one record = one UDP datagram = 16 B
+Compare to casting, where one record = one UDP datagram = 16 B
 `WalHeader` + fixed payload, no nesting, no varints, no
 encryption.
 
 The variable-length encoding is the price of QUIC's flexibility
-(multiplexed streams, varint sizes, optional frame fields). CMP's
+(multiplexed streams, varint sizes, optional frame fields). casting's
 fixed layout means the receiver can compute every field's offset
 at compile time and `read_record_at_seq` is a single `pread`
 with no parser.
@@ -90,8 +90,8 @@ re-transmitted in a new packet (with a new packet number) —
 unlike TCP where the sequence number is the byte offset, QUIC
 fully decouples packet number from stream offset.
 
-Contrast with CMP NAK-based recovery: receiver sees a gap in
-sequence numbers (CMP's seq lives in the record's payload, not
+Contrast with casting NAK-based recovery: receiver sees a gap in
+sequence numbers (casting's seq lives in the record's payload, not
 the header) and sends a NAK frame. One RTT to retransmit. No
 ACK on success. See `rsx-cast/src/protocol.rs` `Nak`.
 
@@ -103,7 +103,7 @@ congestion window and the connection idle timeout (default
 30 s, configurable). There is no disk-backed retransmit; if the
 sender process exits, all unacknowledged stream data is lost.
 
-CMP's cold-tier WAL gives 48 h of random-access retransmit
+casting's cold-tier WAL gives 48 h of random-access retransmit
 (`read_record_at_seq`), survives sender restart, and doubles
 as the audit log + recorder feed.
 
@@ -116,7 +116,7 @@ QUIC's congestion controllers ship in `quinn-proto`:
 
 All three are designed for the public internet. On a 10 GbE
 LAN with near-zero loss, they add scheduling latency without
-improving throughput. CMP has no CC at all (spec §10.4).
+improving throughput. casting has no CC at all (spec §10.4).
 
 ### Connection model + handshake
 
@@ -133,7 +133,7 @@ opening a persistent connection in setup. 0-RTT is possible
 for resumed sessions but adds replay-attack semantics that are
 out of scope for an exchange.
 
-CMP has no handshake. The first record on the wire is real
+casting has no handshake. The first record on the wire is real
 data.
 
 ### Durability
@@ -155,10 +155,10 @@ internet (Solana TPU, HTTP/3, iroh peer-to-peer). On a trusted
   firewall).
 - Congestion control is paying scheduling latency to solve a
   problem that doesn't exist on a fixed-capacity LAN.
-- The handshake is paying 1 RTT per new connection — CMP
+- The handshake is paying 1 RTT per new connection — casting
   pays zero.
 - Variable-length framing forces a parser on the hot path;
-  CMP records are direct casts of `#[repr(C, align(64))]`
+  casting records are direct casts of `#[repr(C, align(64))]`
   structs.
 
 The iggy project measured Quinn at ~1.97 ms vs TCP at ~0.99 ms
@@ -167,11 +167,11 @@ on localhost for 40-byte messages (iggy/#606). Our local
 host) are ~37 µs — significantly faster than iggy's number,
 likely because we use a current-thread Tokio runtime, a
 pre-opened bidirectional stream, and `read_exact` instead of
-length-prefix framing. Still ~3.6× CMP's 10.3 µs RTT.
+length-prefix framing. Still ~3.6× casting's 10.3 µs RTT.
 
-## Guarantees comparison: Quinn (QUIC) vs rsx-cast CMP
+## Guarantees comparison: Quinn (QUIC) vs rsx-cast casting
 
-| Dimension | Quinn (QUIC) | rsx-cast CMP |
+| Dimension | Quinn (QUIC) | rsx-cast casting |
 |---|---|---|
 | Underlying transport | UDP unicast | UDP unicast |
 | Wire framing | Variable (varints, nested frames) | Fixed 16 B header + fixed payload |
@@ -223,20 +223,20 @@ before timing in each variant.
 This bench measures **application-visible loopback RTT** with
 the same Criterion shape, payload size (128 B), and warmup
 pattern as `cmp_rtt_bench.rs` — making the numbers
-size-comparable to CMP's RTT bench (p50 ~10.3 µs on this host;
+size-comparable to casting's RTT bench (p50 ~10.3 µs on this host;
 `.ship/18-COMPONENT-BENCHES/LANDSCAPE.md`).
 
 One important asymmetry remains:
 
 > `rt.block_on()` is on the timed critical path of every QUIC
 > and TCP iteration. This adds Tokio executor / waker scheduling
-> overhead (~hundreds of ns) that CMP does NOT pay — CMP's RTT
+> overhead (~hundreds of ns) that casting does NOT pay — casting's RTT
 > bench is synchronous and spin-polls. This is fundamental to
 > Quinn's async API surface and cannot be eliminated without
 > forking the crate. Published Quinn numbers (picoquic 20 µs
 > min, iggy ~1.97 ms avg) include the same overhead, so the
 > comparison is fair against published QUIC data, even though
-> it is biased upward against CMP's syscall-only path.
+> it is biased upward against casting's syscall-only path.
 
 What it does NOT measure:
 - TLS handshake latency (excluded by design; ~150–400 µs once).
@@ -256,12 +256,12 @@ The bench itself does not depend on root or `tc`.
 
 | Bench | p50 |
 |---|---|
-| `cmp_rtt_fill_echo` (CMP, 128 B) | 10.3 µs |
+| `cmp_rtt_fill_echo` (casting, 128 B) | 10.3 µs |
 | `tcp_rtt_nodelay_128b` | ~14 µs |
 | `quinn_rtt_persistent_128b` | ~37 µs |
 | `quinn_rtt_new_stream_128b` | ~38 µs |
 
-CMP < TCP < Quinn — as the protocol overhead model predicts.
+casting < TCP < Quinn — as the protocol overhead model predicts.
 `new_stream` is only marginally slower than `persistent`
 because Quinn keeps stream creation cheap once the connection
 exists (no extra RTT, just a STREAM frame on the existing
@@ -297,15 +297,15 @@ All three are production-quality. Quinn chosen because:
 - **Multiplexed streams without HOL blocking** — multiple
   independent flows over one UDP 4-tuple.
 - **Connection migration** — client IP changes are transparent;
-  CMP has no equivalent.
-- **NAT traversal** — QUIC works through NAT; CMP requires
+  casting has no equivalent.
+- **NAT traversal** — QUIC works through NAT; casting requires
   L3 reachability.
-- **Standardised wire format** — RFC 9000/9001/9002. CMP is
+- **Standardised wire format** — RFC 9000/9001/9002. casting is
   proprietary.
 - **Ecosystem reach** — every browser speaks QUIC; nothing
-  speaks CMP.
+  speaks casting.
 
-## Where CMP is genuinely better
+## Where casting is genuinely better
 
 - **Loopback / LAN latency**: ~10 µs RTT vs Quinn's ~37 µs
   (measured) or hundreds-of-µs in published benches.
@@ -326,5 +326,5 @@ All three are production-quality. Quinn chosen because:
   https://www.privateoctopus.com/2024/10/13/RandomLoopbackDelaysSlowBbr.html
 - iggy issue #606 (TCP vs QUIC localhost):
   https://github.com/apache/iggy/issues/606
-- CMP local loopback numbers:
+- casting local loopback numbers:
   `.ship/18-COMPONENT-BENCHES/LANDSCAPE.md`

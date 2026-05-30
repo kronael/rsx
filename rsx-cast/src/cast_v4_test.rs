@@ -1,4 +1,4 @@
-//! CMP reliability v4 — reorder ring + oldest-run NAK +
+//! Casting reliability v4 — reorder ring + oldest-run NAK +
 //! FAULTED + sender-side retransmit dedup. See
 //! `.ship/26-CMP-RELIABILITY-V4/SPEC.md`.
 

@@ -1,9 +1,9 @@
-//! CMP one-way latency: `CastSender::send` → `CastReceiver::try_recv`.
+//! casting one-way latency: `CastSender::send` → `CastReceiver::try_recv`.
 //!
 //! What this measures
 //! -----------------
 //! `CastSender::send` returns to `CastReceiver::try_recv` returns
-//! the same record. Single direction, one CMP hop, in-order,
+//! the same record. Single direction, one cast hop, in-order,
 //! no NAK. Both sides on 127.0.0.1, both threads spinning
 //! cache-hot.
 //!
@@ -12,7 +12,7 @@
 //! cache-eviction noise.
 //!
 //! This is the protocol isolation of the production legs
-//! `gateway_in → risk_in` and `risk_out → gateway_cmp_recv`.
+//! `gateway_in → risk_in` and `risk_out → gateway_cast_recv`.
 //! Adds (over `udp_rtt_loopback_64b`): WalHeader build + CRC32
 //! over the 128-byte FillRecord, send-ring slot cache,
 //! receiver-side WalHeader parse + CRC32 verify + in-order
@@ -161,7 +161,7 @@ fn bench_cmp_one_way(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    // sample_size(50) matches the rest of the compare/CMP RTT bench
+    // sample_size(50) matches the rest of the compare/cast RTT bench
     // family for cross-bench alignment.
     config = Criterion::default().sample_size(50);
     targets = bench_cmp_one_way

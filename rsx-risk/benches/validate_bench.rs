@@ -9,11 +9,11 @@
 //! insert into the `frozen_orders` / `frozen_by_user` maps,
 //! response construction.
 //!
-//! In production this leg sits between the gateway→risk CMP
-//! recv and the risk→ME CMP send (the "risk_in → me_in"
+//! In production this leg sits between the gateway→risk cast
+//! recv and the risk→ME cast send (the "risk_in → me_in"
 //! macro-stage in `SPEED-OFFHOT.md`). Measured macro-stage
-//! delta = 181 µs; that includes CMP recv, two SPSC ring
-//! hops, this validate path, and the CMP send to ME. This
+//! delta = 181 µs; that includes cast recv, two SPSC ring
+//! hops, this validate path, and the cast send to ME. This
 //! bench isolates the validate slice alone.
 //!
 //! What's included
@@ -26,9 +26,9 @@
 //! - `OrderResponse` construction
 //!
 //! What's excluded
-//! - CMP recv on the inbound side
+//! - cast recv on the inbound side
 //! - SPSC ring producer/consumer in/out of the shard
-//! - CMP send on the outbound (risk → ME)
+//! - cast send on the outbound (risk → ME)
 //! - WAL append on the risk side (Recorder is the persister)
 //!
 //! Iteration shape: each iter calls `process_order` with a

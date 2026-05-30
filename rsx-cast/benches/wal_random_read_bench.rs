@@ -9,7 +9,7 @@
 //! target seqs uniformly distributed across [1, N].
 //!
 //! This is the cold-tier hop in the two-tier NAK retransmit
-//! horizon (CMP §10.6): if the requested seq has aged out of
+//! horizon (casting §10.6): if the requested seq has aged out of
 //! the in-memory send-ring (4 096 slots), the sender falls
 //! through to this path, opens the matching WAL file, and
 //! linear-scans from the file start looking for the target

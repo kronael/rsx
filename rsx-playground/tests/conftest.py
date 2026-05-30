@@ -369,8 +369,8 @@ GW_BINARY = RSX_ROOT / "target" / "debug" / "rsx-gateway"
 
 # Test ports (offset to avoid collisions)
 GW_WS_PORT = 18080
-GW_RISK_CMP_PORT = 19300
-GW_CMP_PORT = 19200
+GW_RISK_CAST_PORT = 19300
+GW_CAST_PORT = 19200
 
 
 def _port_open(port: int) -> bool:
@@ -403,8 +403,8 @@ def gateway():
         "RSX_GW_RL_IP": "100",
         "RSX_GW_RL_INSTANCE": "1000",
         "RSX_GW_HEARTBEAT_INTERVAL_S": "5",
-        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{GW_RISK_CMP_PORT}",
-        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CMP_PORT}",
+        "RSX_RISK_CAST_ADDR": f"127.0.0.1:{GW_RISK_CAST_PORT}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CAST_PORT}",
         "RSX_GW_WAL_DIR": str(RSX_ROOT / "tmp" / "wal_test"),
         "RSX_MAX_SYMBOLS": "16",
         "RSX_DEFAULT_TICK_SIZE": "1",
@@ -464,8 +464,8 @@ def gateway_small_pending():
         )
 
     ws_port = GW_WS_PORT + 1
-    risk_port = GW_RISK_CMP_PORT + 1
-    cmp_port = GW_CMP_PORT + 1
+    risk_port = GW_RISK_CAST_PORT + 1
+    cast_port = GW_CAST_PORT + 1
 
     env = {
         **os.environ,
@@ -479,7 +479,7 @@ def gateway_small_pending():
         "RSX_GW_RL_INSTANCE": "10000",
         "RSX_GW_HEARTBEAT_INTERVAL_S": "60",
         "RSX_RISK_CAST_ADDR": f"127.0.0.1:{risk_port}",
-        "RSX_GW_CAST_ADDR": f"127.0.0.1:{cmp_port}",
+        "RSX_GW_CAST_ADDR": f"127.0.0.1:{cast_port}",
         "RSX_GW_WAL_DIR": str(
             RSX_ROOT / "tmp" / "wal_test_pending"
         ),

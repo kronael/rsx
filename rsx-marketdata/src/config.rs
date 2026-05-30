@@ -107,15 +107,15 @@ pub fn load_marketdata_config() -> MarketDataConfig {
     }
 }
 
-/// Parse a comma-separated ME CMP address string into a Vec.
-pub fn parse_me_cmp_addrs(raw: &str) -> Vec<SocketAddr> {
+/// Parse a comma-separated ME cast address string into a Vec.
+pub fn parse_me_cast_addrs(raw: &str) -> Vec<SocketAddr> {
     raw.split(',')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(|s| {
             s.parse().unwrap_or_else(|_| {
                 eprintln!(
-                    "rsx-marketdata: invalid ME CMP addr: {}",
+                    "rsx-marketdata: invalid ME cast addr: {}",
                     s
                 );
                 std::process::exit(2);
@@ -124,12 +124,12 @@ pub fn parse_me_cmp_addrs(raw: &str) -> Vec<SocketAddr> {
         .collect()
 }
 
-/// Read ME CMP addresses from env. Prefers `RSX_ME_CAST_ADDRS`
+/// Read ME cast addresses from env. Prefers `RSX_ME_CAST_ADDRS`
 /// (comma-separated), falls back to `RSX_ME_CAST_ADDR` (single),
 /// then defaults to `127.0.0.1:9100`.
-pub fn me_cmp_addrs_from_env() -> Vec<SocketAddr> {
+pub fn me_cast_addrs_from_env() -> Vec<SocketAddr> {
     let raw = std::env::var("RSX_ME_CAST_ADDRS")
         .or_else(|_| std::env::var("RSX_ME_CAST_ADDR"))
         .unwrap_or_else(|_| "127.0.0.1:9100".to_owned());
-    parse_me_cmp_addrs(&raw)
+    parse_me_cast_addrs(&raw)
 }

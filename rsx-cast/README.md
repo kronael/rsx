@@ -63,7 +63,7 @@ Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1, Rust release.
 Reproduce: `cargo bench -p rsx-cast --bench compare_all` (+ the
 standalone `compare_aeron` / `compare_moldudp64` / `compare_soupbintcp`).
 Authoritative dated measurements:
-[`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md).
+[`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md).
 Per-bench attribution: [BENCHES.md](BENCHES.md). Comparison harness
 and feature matrix: [`compare/README.md`](compare/README.md).
 Architectural walk-through: [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -103,7 +103,7 @@ Implementation path:
 
 Tests:
 - Mark aggregation: `rsx-mark/tests/aggregator_test.rs`
-- Mark->risk casting ingest: `rsx-risk/tests/cmp_ingest_test.rs`
+- Mark->risk casting ingest: `rsx-risk/tests/cast_ingest_test.rs`
 
 ## 7) BBO / Index Price Feed (ME -> Risk)
 
@@ -117,7 +117,7 @@ Implementation path:
 
 Tests:
 - Index price unit tests: `rsx-risk/tests/price_test.rs`
-- ME BBO->risk casting ingest: `rsx-risk/tests/cmp_ingest_test.rs`
+- ME BBO->risk casting ingest: `rsx-risk/tests/cast_ingest_test.rs`
 
 ## 8) Marketdata (ME -> Marketdata -> WS)
 

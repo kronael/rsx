@@ -101,11 +101,11 @@ Two independent `CastSender`s:
 - ME → Marketdata: inserts, cancels, fills
 
 `publish_events` (`wal_integration.rs`) prepares each record once
-(single CRC + seq) and fans the resulting `Framed` to WAL + cmp
+(single CRC + seq) and fans the resulting `Framed` to WAL + cast
 + (optionally) mkt with `send_framed` / `append_framed` — no
 re-CRC per destination. Routing per event type:
 
-| Event | WAL | cmp (risk) | mkt |
+| Event | WAL | cast (risk) | mkt |
 |---|---|---|---|
 | `Fill` / `OrderInserted` / `OrderCancelled` | yes | yes | yes |
 | `OrderDone` | yes | yes | no |
@@ -181,7 +181,7 @@ recovery path:
    `RECORD_CAUGHT_UP` arrives.
 3. Apply each `OrderRequest` / `CancelRequest` to the in-tile
    state via `apply_replayed_record`.
-4. Call `cmp_receiver.reset_after_replay(new_tip)` to resume
+4. Call `cast_receiver.reset_after_replay(new_tip)` to resume
    live UDP delivery from `new_tip + 1`.
 
 Downstream re-emit is intentionally skipped — risk and marketdata

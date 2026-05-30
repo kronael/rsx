@@ -126,7 +126,7 @@ pub fn drain_dxs_replay_into_book(
 
 /// Apply a single replayed `OrderRequest` / `CancelRequest`
 /// to the in-tile state. Mirrors the live order-handling
-/// block in `main` minus the downstream CMP sends to
+/// block in `main` minus the downstream cast sends to
 /// risk/marketdata — BY DESIGN. FAULTED recovery rebuilds only
 /// ME's local book + WAL; each downstream consumer recovers
 /// independently by draining its own replay against ME's
@@ -210,7 +210,7 @@ pub fn apply_replayed_record(
         RECORD_CANCEL_REQUEST => {
             let Some(req) = decode_payload::<CancelRequest>(&raw.payload) else { return; };
             // Mirrors process_cancel in main.rs minus
-            // downstream CMP sends. Same WAL/event shape.
+            // downstream cast sends. Same WAL/event shape.
             let key: OrderKey = (
                 req.user_id,
                 req.order_id_hi,

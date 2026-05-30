@@ -22,7 +22,7 @@ eviction sweeps.
 |------|---------|
 | `main.rs` | Binary: monoio runtime, replay bootstrap, per-ME casting loop, dispatch, heartbeat, book eviction |
 | `lib.rs` | Re-exports |
-| `config.rs` | `MarketDataConfig` from env; `me_cmp_addrs_from_env` parses multi-ME list |
+| `config.rs` | `MarketDataConfig` from env; `me_cast_addrs_from_env` parses multi-ME list |
 | `state.rs` | `MarketDataState`, connection registry, subscription manager wrapper, per-symbol seq tracking, snapshot dispatch |
 | `shadow.rs` | `ShadowBook` -- wraps `rsx_book::Orderbook` with order-id index for `apply_*_by_order_id` |
 | `subscription.rs` | `SubscriptionManager` -- per-client channels (BBO/depth/trades) + depth pref |

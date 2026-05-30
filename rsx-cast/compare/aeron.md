@@ -2,7 +2,7 @@
 
 Open-source Java/C++ reliable UDP transport by Real Logic
 (Martin Thompson, Todd Montgomery). The direct design ancestor
-of rsx-cast CMP. Widely deployed in HFT and trading systems;
+of rsx-cast casting. Widely deployed in HFT and trading systems;
 acquired by Adaptive Financial Consulting in 2022.
 
 - Repo: https://github.com/aeron-io/aeron (Apache-2.0)
@@ -37,7 +37,7 @@ replay-able data.
 
 Encoding: little-endian throughout.
 
-**CMP difference.** Our `WalHeader` is 16 bytes (the on-disk
+**casting difference.** Our `WalHeader` is 16 bytes (the on-disk
 WAL record header doubles as the wire header) with a flat
 `u64 seq`, a `u16 record_type`, a `u16 len`, and a CRC32. No
 `term_id` / `term_offset` / `session_id`. Trade-off:
@@ -45,7 +45,7 @@ WAL record header doubles as the wire header) with a flat
 - Aeron's term layout makes replay zero-copy from RAM in
   large strides — but the retransmit horizon is whatever fits
   in the term buffers (default ~192 MB / stream).
-- CMP's flat seq + WAL file layout makes the disk file the
+- casting's flat seq + WAL file layout makes the disk file the
   retransmit horizon (48 h retention by default). Slower per
   retransmit (random-access disk read), but the horizon is
   measured in hours of traffic rather than megabytes.
@@ -64,11 +64,11 @@ the sender naming the missing range.
   ("NAK suppression"). Prevents NAK implosion.
 - The sender retransmits from its in-memory term buffer.
 
-The model is identical in CMP: receiver detects a gap on
+The model is identical in casting: receiver detects a gap on
 `seq`, sends `Nak{from_seq, count}` back to the sender, sender
-retransmits. The retransmit path is ~1 RTT. CMP is unicast
+retransmits. The retransmit path is ~1 RTT. casting is unicast
 only — no NAK suppression backoff because there can be only
-one receiver per CMP stream.
+one receiver per casting stream.
 
 ## Retransmit horizon
 
@@ -84,7 +84,7 @@ live publication. This is a clean separation — the live wire
 protocol is RAM-bounded and fast; the archive is a different
 service with its own SUBSCRIBE / REPLAY protocol.
 
-**CMP/DXS**: retransmit is two-tier in the same component.
+**casting/DXS**: retransmit is two-tier in the same component.
 
 1. **Hot tier**: a 4096-slot pre-allocated send ring inside
    `CastSender`. NAKs for recent sequences are served from
@@ -106,7 +106,7 @@ defaults to half the term length. Receivers send
 `StatusMessage` frames advertising their consumption position;
 the sender uses these to compute the send-side window.
 
-CMP has the same shape: `StatusMessage` (`consumption_seq`,
+casting has the same shape: `StatusMessage` (`consumption_seq`,
 `receiver_window`) every 10 ms from receiver to sender;
 sender stalls when the in-flight window is exhausted. There
 is no per-publication strategy choice — single receiver per
@@ -114,14 +114,14 @@ stream, single window equation. Configurable window size.
 
 ## Durability: integrated vs sidecar
 
-| | Aeron | CMP/DXS |
+| | Aeron | casting/DXS |
 |---|---|---|
 | Durability | Aeron Archive (separate process / API) | WAL embedded in CastSender |
 | Sender startup | Connect to driver, no disk | Open WAL file (mmap'd) |
 | Crash recovery | Replay from archive | Replay WAL from last tip |
 | Wire = disk? | No (term buffer vs archive recording format) | Yes (WalHeader + payload, identical bytes) |
 
-CMP collapses the archive into the protocol. The WAL file you
+casting collapses the archive into the protocol. The WAL file you
 write to disk *is* the wire format — `dd if=/path/to/wal | nc`
 would be a syntactically valid replay stream. This is the
 "wire = disk = stream" claim that motivates the design.
@@ -141,7 +141,7 @@ gives:
 - An extra IPC hop on every send and every receive
   (app → driver shm → kernel UDP → driver shm → app).
 
-**CMP has no driver**. `CastSender::send()` calls `sendto()`
+**casting has no driver**. `CastSender::send()` calls `sendto()`
 directly from the application thread. Cost: no IPC hop, but
 each process owns its own UDP socket and WAL file. Suits
 RSX's tile architecture (one process per role, pinned
@@ -177,8 +177,8 @@ process, no core pinning.
 |---|---:|---:|---|
 | Aeron UDP loopback (this bench, 6-core box, no pinning) | ~305 µs | ~570 µs | criterion total closure time |
 | Aeron IPC (shared memory, this bench) | ~830 ns | ~1 µs | non-default; see source for caveat |
-| CMP RTT (`cmp_rtt_bench`, same box) | ~10 µs | n/a | two CastSender/Receiver pairs, loopback |
-| CMP send body (`cmp_send_breakdown_bench`) | 3.87 µs | n/a | sendto-side only |
+| casting RTT (`cast_rtt_bench`, same box) | ~10 µs | n/a | two CastSender/Receiver pairs, loopback |
+| casting send body (`cast_send_breakdown_bench`) | 3.87 µs | n/a | sendto-side only |
 | Aeron AWS open source (c6in.16xlarge) | 21–22 µs | 32–43 µs | published, pinned cores |
 
 **Why our Aeron UDP number is 10–30× worse than the
@@ -191,8 +191,8 @@ of round-trip. The IPC variant doesn't suffer because the
 kernel UDP path drops out of the critical section. This is
 not Aeron's protocol overhead — it is our environment.
 
-**Why CMP RTT is lower in our setup** even though Aeron is
-generally faster in production: CMP has no driver IPC hop.
+**Why casting RTT is lower in our setup** even though Aeron is
+generally faster in production: casting has no driver IPC hop.
 On loopback with all threads in one process, `sendto()`
 direct from the application is faster than going
 `app → driver SHM → sendto → driver SHM → app` by exactly
@@ -205,7 +205,7 @@ the protocol actually does. Treat our 305 µs as a
 
 ## Guarantees comparison
 
-| Property | Aeron | CMP/DXS |
+| Property | Aeron | casting/DXS |
 |---|---|---|
 | Reliable delivery | Yes | Yes |
 | Loss detection | NAK (receiver) | NAK (receiver) |
@@ -226,27 +226,27 @@ the protocol actually does. Treat our 305 µs as a
 
 ## Where Aeron is genuinely more capable
 
-CMP simplified Aeron for one trust assumption (LAN), one
+casting simplified Aeron for one trust assumption (LAN), one
 topology (unicast), and one language (Rust). Honest
 side-by-side:
 
 - **Multicast / multi-destination cast.** Aeron does fan-out
-  at the wire level; CMP fans out at the sender (one socket
+  at the wire level; casting fans out at the sender (one socket
   per receiver). For 100 receivers, Aeron multicast sends
-  one packet; CMP unicast sends 100.
+  one packet; casting unicast sends 100.
 - **Maturity.** Aeron is decades old, with production
-  deployments at the largest exchanges. CMP is new.
+  deployments at the largest exchanges. casting is new.
 - **Flow-control strategies.** Aeron lets you pick
-  `min`/`max`/`tagged` per publication; CMP has one
+  `min`/`max`/`tagged` per publication; casting has one
   strategy (windowed StatusMessage).
-- **TLS option.** Aeron 1.45+ supports DTLS; CMP delegates
+- **TLS option.** Aeron 1.45+ supports DTLS; casting delegates
   TLS to the layers around it (L3 firewall, gateway).
 - **Position abstraction.** Aeron's term-based position
   model is more flexible for replay/seek operations against
-  large in-memory windows; CMP's flat seq + WAL is simpler
+  large in-memory windows; casting's flat seq + WAL is simpler
   but doesn't support sub-record seeking.
 
-## Where CMP is intentionally narrower
+## Where casting is intentionally narrower
 
 - **No archiver.** The producer process is its own archive.
   One fewer service to deploy, monitor, recover.
@@ -257,7 +257,7 @@ side-by-side:
   layer.
 - **One trust model.** Trusted LAN. The system-spec
   (specs/2/4-cast.md §10.4) delegates auth to the gateway
-  (JWT) and the L3 network (firewall, VPC). CMP is
+  (JWT) and the L3 network (firewall, VPC). casting is
   intentionally unauthenticated.
 
 ## Running the bench

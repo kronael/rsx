@@ -100,7 +100,7 @@ In main.rs:
 
 Read rsx-matching/src/main.rs first to understand the
 current structure. The pattern is identical to the existing
-cmp_sender usage.
+cast_sender usage.
 
 Add a helper function:
 ```rust
@@ -113,7 +113,7 @@ fn send_event_marketdata(
     match *event {
         // Fill, OrderInserted, OrderCancelled only
         // Skip OrderDone (MD20)
-        // Reuse same record construction as send_event_cmp
+        // Reuse same record construction as send_event_cast
     }
 }
 ```

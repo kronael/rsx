@@ -1,4 +1,4 @@
-//! CMP protocol-record encode/decode (NAK, Heartbeat). Wire-level primitives; not on the per-packet send path.
+//! casting protocol-record encode/decode (NAK, Heartbeat). Wire-level primitives; not on the per-packet send path.
 //!
 //! Worker thread pinned to core 2 for measurement stability.
 //!

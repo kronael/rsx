@@ -30,7 +30,7 @@ All little-endian. MTU default 1400 B → MSS = 1376 B. Messages
 larger than MSS are split into multiple segments with descending
 `frg`; all segments must arrive before delivery.
 
-Compare to CMP's `WalHeader` (`rsx-cast/src/header.rs`):
+Compare to casting's `WalHeader` (`rsx-cast/src/header.rs`):
 ```
 Offset  Size  Field
 0       2     record_type
@@ -40,7 +40,7 @@ Offset  Size  Field
 9       7     reserved
 ```
 16 bytes total, fixed-size `#[repr(C, align(64))]` payload immediately
-after, no `frg` field (CMP messages are pre-sized ≤ MTU; the
+after, no `frg` field (casting messages are pre-sized ≤ MTU; the
 matching engine never produces frames > 256 B).
 
 ### Reliability model: ACK-based (sender-driven)
@@ -56,19 +56,19 @@ KCP detects loss at the **sender** via absence of ACKs:
    without waiting for RTO.
 4. If no ACK arrives within RTO → timeout retransmit.
 
-Contrast with NAK-based (CMP, Aeron): the **receiver** detects the
+Contrast with NAK-based (casting, Aeron): the **receiver** detects the
 gap on the next datagram with a higher seq and immediately sends
 NAK(N). The sender retransmits in ~1 RTT.
 
 Latency consequence on zero loss: KCP still sends one ACK per
 DATA, so every DATA frame triggers a control-plane round-trip.
-CMP on zero loss sends *zero* control traffic per record — only a
+casting on zero loss sends *zero* control traffic per record — only a
 periodic `StatusMessage` every 10 ms for flow control
 (`rsx-cast/src/protocol.rs` — RECORD_STATUS_MESSAGE).
 
 ### Retransmit horizon
 
-| Property | KCP | CMP |
+| Property | KCP | casting |
 |---|---|---|
 | Source of retransmit | `snd_buf` (RAM) | hot ring (4 096 slots, RAM) → cold WAL (disk) |
 | Discard condition | Per-segment ACK received | Per-receiver consumption_seq via StatusMessage |
@@ -78,7 +78,7 @@ periodic `StatusMessage` every 10 ms for flow control
 
 KCP discards a segment from `snd_buf` as soon as its ACK arrives.
 A late NAK or a restarted receiver cannot recover any history.
-CMP's cold-tier WAL provides 48 hours of random-access retransmit
+casting's cold-tier WAL provides 48 hours of random-access retransmit
 via `read_record_at_seq` — long enough for a downstream service
 to crash, restart, and resume from its last persisted offset.
 
@@ -94,7 +94,7 @@ Turbo is correct for an exchange's trusted-LAN use case — a 10 GbE
 datacenter fabric is not congested and TCP-style CC adds latency
 without benefit.
 
-CMP has no congestion control at all (spec §10.4: "Trusted internal
+casting has no congestion control at all (spec §10.4: "Trusted internal
 network"). Flow control is the receiver's `consumption_seq` carried
 in `StatusMessage`; sender stalls when its window would exceed the
 receiver's reported window.
@@ -138,7 +138,7 @@ identified by the `conv` field and is just shared state on both
 sides — no handshake, no SYN/FIN. The application is responsible
 for telling KCP the peer's UDP address.
 
-CMP is also connection-less (UDP unicast), identified by a
+casting is also connection-less (UDP unicast), identified by a
 matching pair of bind addresses on sender and receiver. Spec
 §10.4.
 
@@ -154,20 +154,20 @@ It has no business on an exchange critical path where:
 1. The dominant latency is the `sendto` syscall (~3.85 µs
    measured locally, see `facts/syscall-latency.md`), not loss
    recovery.
-2. Every per-DATA ACK doubles control-plane traffic vs CMP's
+2. Every per-DATA ACK doubles control-plane traffic vs casting's
    NAK-on-gap model.
 3. Integer-millisecond RTO is incompatible with a sub-100 µs SLA.
 4. No persistence — a producer restart loses all retransmit
-   history; CMP's WAL survives.
+   history; casting's WAL survives.
 
 KCP also fundamentally lacks the audit-log property: every fill,
 order, and cancel in rsx-cast is on disk before it's on the wire,
 and the same bytes feed the recorder, the marketdata replay
 service, and the backtester. KCP would be just a transport.
 
-## Guarantees comparison: KCP turbo vs rsx-cast CMP
+## Guarantees comparison: KCP turbo vs rsx-cast casting
 
-| Dimension | KCP turbo (`nc=1`) | rsx-cast CMP |
+| Dimension | KCP turbo (`nc=1`) | rsx-cast casting |
 |---|---|---|
 | Underlying transport | UDP unicast | UDP unicast |
 | Wire header size | 24 B | 16 B |
@@ -179,7 +179,7 @@ service, and the backtester. KCP would be just a transport.
 | Survives sender restart | No | Yes (WAL replay) |
 | Durability | None | WAL = audit log |
 | Min flush granularity | 1 ms (Rust port) via timer; immediate via `flush()` | per `sendto` (~3.85 µs) |
-| Multi-receiver / fan-out | No (one `conv` per peer) | Per-receiver via DXS TCP replay; CMP itself is unicast |
+| Multi-receiver / fan-out | No (one `conv` per peer) | Per-receiver via DXS TCP replay; casting itself is unicast |
 | Multiplexed streams | No (single seq space per `conv`) | No (one stream per CastSender/CastReceiver pair) |
 | FIFO within stream | Yes | Yes |
 | Cross-stream ordering | n/a | n/a (separate WAL files per producer) |
@@ -201,7 +201,7 @@ to casting's `FillRecord`, which is
 Two scenarios:
 - `kcp_rtt_naive_1ms_interval_128b` — timer-driven `update()` every
   1 ms on both sides. Shows the latency floor from the polling
-  model. NOT a fair comparison with CMP's RTT bench (which
+  model. NOT a fair comparison with casting's RTT bench (which
   spin-polls); kept as a "realistic integration mode" datapoint.
 - `kcp_rtt_spin_flush_128b` — busy-spin server, explicit
   `flush()` after every `send()`. Reveals KCP's true protocol
@@ -225,7 +225,7 @@ The bench itself does not depend on root or `tc`.
 This bench measures **application-visible loopback RTT** using
 the same Criterion shape, payload size (128 B), and warmup
 methodology as `cmp_rtt_bench.rs` — making `kcp_rtt_spin_flush_128b`
-size-comparable to CMP's RTT bench (p50 ~10.3 µs on this host;
+size-comparable to casting's RTT bench (p50 ~10.3 µs on this host;
 `.ship/18-COMPONENT-BENCHES/LANDSCAPE.md`).
 
 What it does NOT measure:
@@ -238,11 +238,11 @@ What it does NOT measure:
 
 | Bench | p50 |
 |---|---|
-| `cmp_rtt_fill_echo` (CMP, 128 B) | 10.3 µs |
+| `cmp_rtt_fill_echo` (casting, 128 B) | 10.3 µs |
 | `kcp_rtt_spin_flush_128b` | ~17 µs |
 | `kcp_rtt_naive_1ms_interval_128b` | ~11 ms |
 
-The 17 µs spin number is roughly 1.6× CMP — close to the lower
+The 17 µs spin number is roughly 1.6× casting — close to the lower
 bound of KCP's possible per-frame overhead (24 B header parse,
 ACK list maintenance, Rust port adapter copy). The 11 ms naive
 number is dominated by the 1 ms sleep granularity on each side.
@@ -267,25 +267,25 @@ c6in.16xlarge, 100k msg/s):
 - P50: 21–22 µs
 - P99: 32–43 µs
 
-CMP loopback RTT, this repo:
-- P50: ~10.3 µs (`cmp_rtt_bench`, see LANDSCAPE.md).
+casting loopback RTT, this repo:
+- P50: ~10.3 µs (`cast_rtt_bench`, see LANDSCAPE.md).
 
-KCP and Aeron / CMP do not compete in the same latency bracket
+KCP and Aeron / casting do not compete in the same latency bracket
 even on zero-loss loopback.
 
 ## Where KCP is genuinely better
 
 - **Portability**: ~1 000 LOC of standards C; ports exist in Go,
-  Rust, Python, Java, JS, Swift, C#. CMP is Rust-only.
+  Rust, Python, Java, JS, Swift, C#. casting is Rust-only.
 - **Battle-tested on bad networks**: gaming and VPN deployments
-  prove KCP works in production with 5–30% loss. CMP has
+  prove KCP works in production with 5–30% loss. casting has
   never been tested on a public-internet path.
 - **No persistence requirement**: KCP works fine with no disk;
-  rsx-cast CMP assumes a WAL.
+  rsx-cast casting assumes a WAL.
 - **Multi-language reach**: if you need a client in C# or Swift,
   KCP wins by existing.
 
-## Where CMP is genuinely better
+## Where casting is genuinely better
 
 - **Loopback / LAN latency**: ~10 µs RTT vs KCP's ~17 µs spin
   floor or millisecond timer-driven floor.
@@ -319,6 +319,6 @@ implementation.
 - KCP benchmark wiki: linked from the KCP repo README
 - Aeron AWS 2025 numbers:
   https://aws.amazon.com/blogs/industries/aeron-on-aws-2025-performance-benchmark-results/
-- CMP local loopback numbers:
+- casting local loopback numbers:
   `.ship/18-COMPONENT-BENCHES/LANDSCAPE.md`, commit 82e9966 baseline
 - Syscall floor: `facts/syscall-latency.md`
