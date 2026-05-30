@@ -28,100 +28,133 @@ product surface that runs on top of it is sketched at
 [krons.fiu.wtf/pub/krons/sfdx](https://krons.fiu.wtf/pub/krons/sfdx/)
 — find it if you look.
 
-The transport layer ([rsx-cast](rsx-cast/README.md)) is
-domain-agnostic: `cargo tree -p rsx-cast --edges normal | grep
-rsx-` is empty. It's the load-bearing piece that proves the
-exchange's wire format doubles as on-disk WAL and as the TCP
-replay protocol — the same bytes, three uses, no serialization
-step.
+## Why study this code
 
-## Why you'd read this code
+The point of RSX is to learn how to write **fast distributed
+code** — processing millions of events per second with a
+target of **sub-10 µs latency over the network**. That target
+is aspirational today: the in-process round trip is 9.58 µs,
+but cross-process it is still 1.1 ms — the benchmark tables
+below show exactly where the time goes and why. The value is
+in reading a *working*, *measured*, *honestly-labelled*
+attempt: specs are written before the code (47 of them in
+`specs/2/`), every non-obvious choice has a tradeoff note, and
+gaps are labelled gaps rather than dressed up as ship-ready —
+no closed-source vendor handwaving.
 
-You're curious how a working exchange is wired end-to-end,
-without the closed-source vendor handwaving. Specs are
-written before the code (47 of them in `specs/2/`), every
-non-obvious choice has a tradeoff note, and gaps are
-labelled gaps rather than dressed up as ship-ready. The
-production code is in there; so is the budget table that
-says where it falls short and why.
+Each component below is done and worth studying on its own;
+together they show how an exchange is wired end-to-end.
 
-## How fast (measured)
+## Components worth studying
 
-| Layer | p50 | Bench |
-|---|---:|---|
-| Match algorithm only (dedup + WAL prep + match) | **340 ns** | `rsx-book::matching_bench` |
-| In-process round-trip (cast + Orderbook + WAL) | **9.58 µs** | `rsx-cast::cast_rtt_bench` |
-| Cross-process production GW→ME→GW | **1 128 µs** | `bench-match-rt` |
+Each is a separate process or crate, done and tested. Why each
+one repays a read:
 
-99% of the in-process round-trip is the `sendto` syscall;
-framing + algorithm together are <0.7%. The 22× gap from
-in-process to cross-process is dominated by `monoio::time::sleep(100µs)`
-polls in two cast loops (~655 µs alone) plus tokio scheduling.
-Where the time goes:
-[facts/syscall-latency.md](facts/syscall-latency.md). Bench
-catalogue: [docs/benches.md](docs/benches.md).
-
-## What's interesting in the design
-
-- **Casting, the C Message Protocol.** Fixed-size `repr(C)`
-  WAL records over UDP between Gateway, Risk, and ME. One
-  wire format for disk, network, and memory. NAK + idle-only
-  heartbeats for loss recovery; no flow control — slow
-  consumers recover via TCP replication, not by stalling the
-  producer. Byte layout, comparison vs Aeron / KCP / QUIC,
-  and known limits: [specs/2/4-cast.md](specs/2/4-cast.md).
-- **Tile architecture.** Pinned threads + rtrb SPSC rings
-  where it pays off (full tile arrangement in `rsx-risk`,
-  one core-pinned loop in `rsx-matching`); monoio io_uring
-  async where I/O multiplexing dominates (`rsx-gateway`,
-  `rsx-marketdata`). Per-process split:
-  [specs/2/45-tiles.md](specs/2/45-tiles.md).
-- **WAL = wire = stream.** The same `repr(C)` bytes go to
-  disk, over UDP, and over TCP for replay. No serialization
-  step. The 16-byte header carries a `version: u8` at byte 0
-  so receivers gate on it before interpreting any other
-  field. See [specs/2/48-wal.md](specs/2/48-wal.md) and
-  [specs/2/10-replication.md](specs/2/10-replication.md).
-- **Slab + CompressionMap orderbook.** Pre-allocated 65 536
-  `OrderSlot`s per symbol, sparse-to-dense price compression
-  via five distance-based zones (1:1 near-mid, up to 1000:1
-  far prices). Zero malloc on the order hot path (GW→Risk→ME→Risk→GW);
-  risk margin check iterates positions via a zero-alloc index iterator.
-  Off-path operations (BBO scan, funding settlement) allocate small
-  per-call Vecs.
+- **`rsx-cast` — log-backed reliable UDP transport.** The
+  load-bearing trick: the wire bytes, the on-disk WAL bytes,
+  and the TCP replay-stream bytes are *the same bytes* —
+  `repr(C)` records, no serialization step. Domain-agnostic
+  (`cargo tree -p rsx-cast --edges normal | grep rsx-` is
+  empty), so any project wanting 50-µs-class messaging without
+  Kafka can lift it. NAK gap-recovery + idle-only heartbeats;
+  slow consumers recover via TCP replay, never by stalling the
+  producer. [specs/2/4-cast.md](specs/2/4-cast.md),
+  [rsx-cast/README.md](rsx-cast/README.md).
+- **`rsx-matching` — the matching engine.** Single-threaded,
+  core-pinned, bare busy-spin, zero heap on the hot path —
+  54 ns per single fill. Read it for how a price-time-priority
+  book runs with no allocation, no locks, no async runtime.
   [specs/2/21-orderbook.md](specs/2/21-orderbook.md).
+- **`rsx-book` — slab + CompressionMap orderbook.** 65 536
+  pre-allocated `OrderSlot`s per symbol; sparse-to-dense price
+  compression via five distance-based zones (1:1 near mid, up
+  to 1000:1 far). How you fit a 20M-level book in ~15 MB and
+  look a price up in 2–5 ns.
+- **`rsx-risk` — per-user-shard risk tile.** The full tile
+  arrangement: one core-pinned busy-spin loop, SPSC rings, and
+  a tokio sidecar for Postgres write-behind *off* the hot path.
+  The cross-margin check iterates positions via a zero-alloc
+  index iterator. How to keep solvency-critical state in RAM on
+  the critical path while persisting asynchronously.
+  [specs/2/28-risk.md](specs/2/28-risk.md).
+- **`rsx-gateway` — WebSocket ingress + cast bridge.** monoio /
+  io_uring for many concurrent WS fds, a hardened JWT
+  handshake, then a bridge onto the cast/UDP hot path. Where
+  async I/O multiplexing belongs vs where a pinned tile does.
+  [specs/2/20-network.md](specs/2/20-network.md).
+- **`rsx-marketdata` — shadow book + fan-out.** monoio, off the
+  order critical path; drains ME's casting firehose and fans
+  L2 / BBO / trades out to public subscribers. The keep-up
+  problem: a slow consumer here must never back-pressure
+  matching. [specs/2/16-marketdata.md](specs/2/16-marketdata.md).
+
+Supporting cast: `rsx-types` (fixed-point newtypes),
+`rsx-messages` (the wire records), `rsx-mark` (external feeds →
+cast), `rsx-recorder` (archival replay consumer), `rsx-log`
+(off-hot-path logging), `rsx-cli` (WAL inspect).
 
 ## Architecture
 
+An order from user **U** on symbol **S** routes
+`GW → Risk[U] → ME[S] → Risk[U] → GW`. The two shard axes are
+independent: add symbols → add ME instances; add users → add
+Risk shards. The gateway is stateless and routes by both keys.
+
 ```
-                    +------------+
-                    |  Web (WS)  |
-                    +-----+------+
-                          |
-                    +-----v------+
-                    |  Gateway   |  WS + cast bridge
-                    | (monoio)   |  JWT, rate-limit
-                    +-----+------+
-                          | casting/UDP
-                    +-----v------+            +----------+
-                    |   Risk     |  casting/UDP   | Matching |
-                    | (1 pinned  +----------->| (1 pinned|
-                    |  thread,   |<-----------+  thread, |
-                    |  7 rings)  |  cast fills | per-sym) |
-                    +--+---+--+-+              +----+-----+
-                       |   |  |                     |
-              +--------+   |  +------+        +-----v-----+
-              v            v         v        v           v
-         +--------+ +--------+ +--------+ +-------+ +-------+
-         |Postgres| | Mark   | |Recorder| |Mktdata| | Trade |
-         | (write | |(monoio | |(daily  | |(monoio| | UI    |
-         | behind)| | HTTP)  | | WAL    | |  WS)  | |(React)|
-         +--------+ +--------+ +--------+ +-------+ +-------+
+  many clients (WS, JSON)                       SCALE-OUT AXES
+   │    │    │    │                              ──────────────
+   ▼    ▼    ▼    ▼
+ ┌───────────────────────────┐
+ │  Gateway  (monoio)         │ ◀── add instances    STATELESS
+ │  WS · JWT · routes U→Risk, │     per connection    front; no
+ │  S→ME · cast bridge        │     load              per-user
+ └─────────────┬─────────────┘                       state held
+   order(user U │ symbol S)   │ casting/UDP
+                ▼
+ ┌───────────────────────────┐
+ │  Risk  —  SHARD BY user_id │ ◀── add shards =      each shard
+ │  Risk[0] Risk[1] … Risk[k] │     more users        OWNS a user
+ │  positions + margin in RAM │                       range; pinned,
+ │  1 pinned busy-spin loop   │                       busy-spin tile
+ └──────┬───────────────▲─────┘
+ reserve│ (sync)        │settle (async)  casting/UDP
+        ▼               │
+ ┌───────────────────────────┐
+ │  ME  —  SHARD BY symbol    │ ◀── add engines =     one engine
+ │  ME[BTC] ME[ETH] … ME[sym] │     more symbols      PER symbol;
+ │  single-thread, pinned,    │                       no shared
+ │  busy-spin, zero-heap match│                       state across
+ └─────────────┬─────────────┘                       symbols
+               │ fills / BBO  (fire-and-forget, off the critical path)
+  ┌────────┬───┴────┬─────────┬──────────┐
+  ▼        ▼        ▼         ▼          ▼
+┌────────┐┌────────┐┌────────┐┌────────┐┌────────┐
+│Mktdata ││ Mark   ││Recorder││Postgres││Trade UI│
+│L2/BBO  ││ feeds  ││ archive││(write- ││(React) │
+│fan-out ││ → cast ││  WAL   ││ behind)││        │
+│monoio  ││        ││        ││ per    ││        │
+│ scale  ││        ││        ││ Risk   ││        │
+│by subs ││        ││        ││ shard  ││        │
+└────────┘└────────┘└────────┘└────────┘└────────┘
 ```
 
-Three transports:
-- **Hot path** between processes: cast/UDP (NAK gap
-  recovery, idle-only heartbeats, no flow control).
+**What scales as what:**
+- **Gateway** — stateless; scale by **connection count** (add
+  instances behind a load balancer). Holds no positions.
+- **Risk** — shard by **`user_id`**. Each shard owns a disjoint
+  range of users and holds their positions + margin in RAM.
+  More users → more shards.
+- **ME (matching)** — shard by **`symbol_id`**. One pinned
+  engine per tradeable instrument, no cross-symbol shared state.
+  More symbols → more ME instances.
+- **Marketdata** — scale by **public subscriber count**; off the
+  order critical path, fan-out only.
+- The user axis and the symbol axis are **orthogonal** — grow
+  either without touching the other.
+
+Three transports tie it together:
+- **Hot path** between processes: cast/UDP (NAK gap recovery,
+  idle-only heartbeats, no flow control).
 - **Cold path** between processes: WAL replication over TCP,
   optional rustls TLS. Same record bytes as the WAL.
 - **Within a tile-architected process**: rtrb SPSC rings,
@@ -182,12 +215,10 @@ make prepare                              # one-time: venv + Playwright
 
 ### Core layout (6-core host)
 
-Hot-path processes busy-spin, so each **must** own a core. An
-unpinned spinner floats across cores (CFS load-balancing), lands
-on a hot core, starves that consumer, and its UDP socket overflows
-→ kernel `RcvbufErrors` → dropped packets → FAULTED replay storm.
-This bit us: `rsx-mark` was an unpinned busy-spinner stealing the
-gateway's core. Pinning (and making mark ergonomic) fixed it.
+Hot-path processes busy-spin, so each **must** own a dedicated
+core. Without pinning they float across cores and starve each
+other — a starved hot-path process stalls, so pin each one to
+its own core.
 
 | Core | Process | Model |
 |---|---|---|
@@ -200,8 +231,9 @@ gateway's core. Pinning (and making mark ergonomic) fixed it.
 
 Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/
 `CORE_MD`). Off-path services (`mark`, `recorder`) sleep instead
-of spinning and stay unpinned. On a host with fewer cores, edit
-those constants or expect contention.
+of spinning and stay unpinned. The hot-path processes need a
+dedicated core each — on a host with fewer cores than that, you
+can't run them without starving each other.
 
 **From source:**
 

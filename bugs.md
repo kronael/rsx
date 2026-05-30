@@ -30,7 +30,30 @@ restructure (accepted ring now carries the full OrderRequest) appears to have cl
 BOOK-BBO-COMPRESSED-INDEX (correctness, multi-zone), BOOK-SCAN-NEXT-BID-OFFBY,
 BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY.
 
+**NEW — found during e2e re-measurement 2026-05-30**:
+ME-FAULTED-NO-REPLAY-ADDR (MED) — parallel WS load → dropped UDP packet → ME
+FAULTED → panic (no replay addr / no Risk replication server). Blocks
+parallel-load benchmarking; single stream unaffected. Detail below.
+
 Inline entries below retain full detail.
+
+## ME-FAULTED-NO-REPLAY-ADDR — ME FAULTED recovery has no replay source (MED)
+
+**Status: OPEN.** Found 2026-05-30 during e2e re-measurement (parallel WS
+workload). Under parallel load a single dropped UDP packet on loopback (seq gap,
+e.g. 258→259) puts the ME's `CastReceiver` into FAULTED recovery. The ME then
+panics for two stacked reasons: (1) `RSX_ME_REPLICATION_ADDR` is unset in the
+ME spawn env — the `start` script gives that var to Risk (so Risk can replay
+from ME's WAL on Risk-side FAULTED) but not to the ME; and (2) Risk exposes no
+TCP replication server for the ME to pull from, so the ME's FAULTED→replay path
+is unimplementable as wired even if the addr were set. Single-stream is
+unaffected (no gaps). **Impact:** blocks any sustained parallel-load measurement
+(the GW→ME→GW p50/p99 under load that PROGRESS lists as not-done). **Fix
+sketch:** decide the ME's cold-path replay source (a Risk-side replication
+server, or replay from the ME's own WAL tip), then wire the corresponding
+`*_REPLICATION_ADDR` into the ME spawn env in `start`. Triage — design decision
+first. Companion to per-consumer FAULTED recovery (only `rsx-matching` has the
+POC path; risk/marketdata/gateway still panic).
 
 ## MIGRATIONS-UNLOCKED — run_migrations runs before the advisory lock (LOW)
 
