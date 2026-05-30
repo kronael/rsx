@@ -175,7 +175,7 @@ async fn persist_tips_roundtrip() {
 
     let rows = client
         .query(
-            "SELECT symbol_id, seq FROM tips \
+            "SELECT symbol_id, last_seq FROM tips \
              WHERE instance_id = 0 ORDER BY symbol_id",
             &[],
         )
@@ -212,7 +212,7 @@ async fn persist_funding_payments_append() {
 
     let rows = client
         .query(
-            "SELECT count(*) FROM funding_payments",
+            "SELECT count(*) FROM funding",
             &[],
         )
         .await

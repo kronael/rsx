@@ -46,7 +46,24 @@ use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::time::Duration;
 use tempfile::TempDir;
+use testcontainers::runners::AsyncRunner;
+use testcontainers::ContainerAsync;
+use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::NoTls;
+
+/// Spin a throwaway Postgres testcontainer and return it + a connstring.
+/// The advisory-lock tests need a real shared PG but no schema (pg_advisory_lock
+/// is built-in), so this runs no migrations. Hold the returned container for the
+/// test's lifetime; it stops on drop.
+async fn pg_container() -> (ContainerAsync<Postgres>, String) {
+    let container = Postgres::default().start().await.unwrap();
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+    let connstr = format!(
+        "host=localhost port={port} user=postgres \
+         password=postgres dbname=postgres"
+    );
+    (container, connstr)
+}
 
 fn test_config() -> ShardConfig {
     ShardConfig {
@@ -75,13 +92,9 @@ fn test_config() -> ShardConfig {
 #[tokio::test]
 #[ignore]
 async fn lease_renewal_keeps_main_alive() {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| {
-            "postgresql://postgres@localhost/rsx_test".into()
-        });
-
+    let (_pg, connstr) = pg_container().await;
     let (client, conn) =
-        tokio_postgres::connect(&db_url, NoTls)
+        tokio_postgres::connect(&connstr, NoTls)
             .await
             .expect("failed to connect");
     tokio::spawn(async move {
@@ -105,13 +118,9 @@ async fn lease_renewal_keeps_main_alive() {
 #[tokio::test]
 #[ignore]
 async fn standby_detects_main_crash_via_lock() {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| {
-            "postgresql://postgres@localhost/rsx_test".into()
-        });
-
+    let (_pg, connstr) = pg_container().await;
     let (client_main, conn_main) =
-        tokio_postgres::connect(&db_url, NoTls)
+        tokio_postgres::connect(&connstr, NoTls)
             .await
             .expect("failed to connect");
     tokio::spawn(async move {
@@ -119,7 +128,7 @@ async fn standby_detects_main_crash_via_lock() {
     });
 
     let (client_standby, conn_standby) =
-        tokio_postgres::connect(&db_url, NoTls)
+        tokio_postgres::connect(&connstr, NoTls)
             .await
             .expect("failed to connect");
     tokio::spawn(async move {
@@ -156,19 +165,9 @@ async fn standby_detects_main_crash_via_lock() {
 #[tokio::test]
 #[ignore]
 async fn cold_start_from_postgres() {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| {
-            "postgresql://postgres@localhost/rsx_test".into()
-        });
-
-    let (_client, conn) =
-        tokio_postgres::connect(&db_url, NoTls)
-            .await
-            .expect("failed to connect");
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-
+    // Pure in-memory: ColdStartState -> load_state -> assert. No PG needed
+    // (the snapshot is constructed directly; persistence is covered by
+    // persist_test.rs).
     let mut shard = RiskShard::new(test_config());
 
     let mut accounts = FxHashMap::default();
@@ -221,13 +220,9 @@ async fn cold_start_from_postgres() {
 #[tokio::test]
 #[ignore]
 async fn split_brain_prevented_by_advisory_lock() {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| {
-            "postgresql://postgres@localhost/rsx_test".into()
-        });
-
+    let (_pg, connstr) = pg_container().await;
     let (client1, conn1) =
-        tokio_postgres::connect(&db_url, NoTls)
+        tokio_postgres::connect(&connstr, NoTls)
             .await
             .expect("failed to connect");
     tokio::spawn(async move {
@@ -235,7 +230,7 @@ async fn split_brain_prevented_by_advisory_lock() {
     });
 
     let (client2, conn2) =
-        tokio_postgres::connect(&db_url, NoTls)
+        tokio_postgres::connect(&connstr, NoTls)
             .await
             .expect("failed to connect");
     tokio::spawn(async move {
