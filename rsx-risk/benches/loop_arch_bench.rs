@@ -35,23 +35,46 @@
 //! If every variant is syscall-bound and roughly equal, the bench SAYS SO.
 //! It does not crown a winner by construction.
 //!
+//! EQUAL CORE BUDGET (conclusion-critical -- read this)
+//! ----------------------------------------------------
+//! Every variant is given the SAME total core budget K (the swept axis,
+//! `LAB_NS`, is now K -- the per-variant CORE BUDGET, not a reactor count).
+//! Variants that need an always-hot helper thread (tile's spin receiver,
+//! batched's mmsg thread) pay for it OUT OF their budget:
+//!
+//!     monoio-sharded  : K reactors,             0 helper   -> K cores
+//!     tokio           : K worker threads,        0 helper   -> K cores
+//!     busy-spin-tile  : (K-1) reactors + 1 spin helper      -> K cores
+//!     batched-syscall : (K-1) reactors + 1 batch helper     -> K cores
+//!
+//! `service_us` is computed with K for every variant (K x window /
+//! completed). The echo service runs on its OWN core OUTSIDE K in every
+//! variant (it is the constant downstream, not part of the SUT budget).
+//! The per-variant reactor/helper split is printed in the table so the
+//! accounting is visible. This is THE fix for the original bench, which
+//! gave tile/batched a free extra always-hot core and still divided by N.
+//!
 //! THE FOUR VARIANTS (only the stub architecture differs)
 //! ------------------------------------------------------
-//!   1. monoio-sharded  -- N pinned monoio current-thread reactors; client
+//!   1. monoio-sharded  -- K pinned monoio current-thread reactors; client
 //!      conns sharded across them by SO_REUSEPORT; the echo submit+recv is
 //!      done as monoio UDP I/O on the reactor. A `sleep(ZERO)` drain-yield
 //!      mirrors the real casting-recv loop in rsx-gateway/rsx-risk.
-//!   2. tokio           -- one tokio multi-thread runtime, N worker threads;
+//!   2. tokio           -- one tokio multi-thread runtime, K worker threads;
 //!      same logic, tokio sockets, work-stealing scheduler.
-//!   3. busy-spin-tile  -- N pinned reactors own the client conns (read +
-//!      write); ONE dedicated pinned thread busy-spins on the echo socket
-//!      and routes each echo reply back to the owning reactor over a
-//!      per-reactor rtrb SPSC ring (reactor_idx + conn token + send-stamp
+//!   3. busy-spin-tile  -- (K-1) pinned reactors own the client conns (read +
+//!      write); ONE dedicated pinned thread (the K-th core) busy-spins on the
+//!      echo socket and routes each echo reply back to the owning reactor over
+//!      a per-reactor rtrb SPSC ring (reactor_idx + conn token + send-stamp
 //!      ride in the echo payload). Submit-to-echo is a direct UDP send from
 //!      the reactor; only the echo RECV is centralized + spun.
-//!   4. batched-syscall -- monoio-sharded, but the echo submit+recv is
-//!      batched with sendmmsg/recvmmsg (many datagrams per syscall) to
-//!      isolate the syscall-amortization lever in (2) above.
+//!   4. batched-syscall -- (K-1) monoio reactors + 1 batch helper (the K-th
+//!      core); the echo submit+recv is batched with sendmmsg/recvmmsg (many
+//!      datagrams per syscall) to isolate the syscall-amortization lever in
+//!      (2) above. Partial batches flush PROMPTLY (whatever drained this turn
+//!      goes out in one sendmmsg) so the variant does not stall waiting for a
+//!      full batch under low in-flight depth -- batching needs pipeline depth
+//!      to amortize, and the bench shows that rather than deadlocking.
 //!
 //! SYSTEM UNDER TEST (per client request)
 //! --------------------------------------
@@ -69,11 +92,21 @@
 //! the bottleneck (single small datagram, no work).
 //!
 //! CLIENTS / OFFERED LOAD: real loopback TCP connections (length-prefixed
-//! binary frames). Load is CLOSED-LOOP: a fixed pool of `CONNS` connections,
-//! each holding `PIPELINE` requests in flight, driven by load-gen threads
-//! pinned to the spare cores. Closed-loop keeps the offered load identical
-//! and bounded across variants and stops the generator from melting down
-//! into an unbounded open-loop blast that would just measure the generator.
+//! binary frames). Two load models:
+//!   * CLOSED-LOOP (default): a fixed pool of `CONNS` connections, each holding
+//!     `PIPELINE` requests in flight, refilled only on completion. This keeps
+//!     offered load bounded and stops generator meltdown, but it measures
+//!     "RTT at concurrency = conns x pipeline", NOT latency under a fixed
+//!     external arrival rate. Under saturation a closed loop slows its own
+//!     offered rate -- this is COORDINATED OMISSION: the latency a request
+//!     would have seen had it been sent on schedule is not recorded, so tail
+//!     numbers near saturation UNDERSTATE the real tail. Read closed-loop p99.9
+//!     as "tail at this concurrency", not "tail under fixed load".
+//!   * OPEN-LOOP (LAB_OPEN_RATE>0): each conn fires at a fixed per-conn rate
+//!     regardless of whether prior requests completed; RTT is measured against
+//!     the SCHEDULED send time. This is the proper near-saturation test (it
+//!     does not hide coordinated omission) but can back up the conn's socket
+//!     buffer if the server cannot keep up -- watch req/s vs offered rate.
 //! Each request is stamped with a monotonic send-time at the client; the
 //! load side records round-trip = recv_time - send_time. We try to raise
 //! RLIMIT_NOFILE in-process and open as many conns as the box allows; the
@@ -86,13 +119,19 @@
 //!     cargo bench  -p rsx-risk --bench loop_arch_bench
 //!
 //! Environment knobs (all optional; defaults chosen for a 6-core box):
-//!     LAB_CONNS=10000     target client connections (capped by fd/ports)
-//!     LAB_PIPELINE=4      in-flight requests per connection
-//!     LAB_NS="2,4"        comma-separated stub-core counts to sweep
-//!     LAB_SAMPLES=100000  completed round-trips to record per (variant,N)
-//!     LAB_WARMUP_MS=400   warm-up before recording
+//!     LAB_CONNS=2000      target client connections (capped by fd/ports)
+//!     LAB_PIPELINE=1      in-flight requests per connection (CLOSED-LOOP).
+//!                         Batching needs depth>1 to amortize; raise to see it.
+//!     LAB_NS="2,4"        comma-separated CORE BUDGETS K to sweep (total cores
+//!                         per variant incl. any helper; see EQUAL CORE BUDGET)
+//!     LAB_SAMPLES=200000  completed round-trips to record per (variant,K)
+//!     LAB_WARMUP_MS=2000  warm-up before recording (>=2s: 10k conns settle slow)
 //!     LAB_DURATION_MS=0   if >0, cap each measurement window (else sample-bound)
 //!     LAB_VARIANTS="all"  subset, e.g. "monoio,tokio,tile,batched"
+//!     LAB_OPEN_RATE=0     if >0, OPEN-LOOP mode: each conn fires at this fixed
+//!                         per-conn rate (req/s) regardless of completions, so
+//!                         RTT is measured under fixed offered load (the proper
+//!                         saturation test). 0 = closed-loop (default).
 //!
 //! HOW TO READ THE RESULTS
 //! -----------------------
@@ -127,6 +166,21 @@
 //!   * SINGLE BOX, shared cores. The load generator, echo service, and stub
 //!     all run on the same machine and contend for the same 6 cores. We pin
 //!     to isolate, but cache/memory bandwidth and the scheduler are shared.
+//!   * PINNING IS TO LOGICAL CPUs. `core_affinity::get_core_ids()` returns
+//!     logical CPUs (SMT siblings, not physical cores). On an SMT/NUMA box two
+//!     "cores" in the budget K may be hyperthread siblings sharing one physical
+//!     core, or land on different NUMA nodes -- both change the result. The
+//!     bench does not pin IRQs or steer softirqs. Treat the core budget as
+//!     "logical CPUs", and on a real measurement isolate physical cores
+//!     (isolcpus / numactl) before quoting numbers.
+//!   * SYSCALLS/REQ IS ECHO-SIDE-ONLY + APPROXIMATE. The counter tallies only
+//!     the stub's echo send/recv CALLS (incl. failures). It does NOT count TCP
+//!     read/write, accept, epoll/io_uring submit+complete, timers, wakeups,
+//!     ring handoffs, or allocator syscalls. It is a LEVER INDICATOR (does this
+//!     variant amortize the echo syscall?), not a total syscall budget. For
+//!     rigorous attribution run under `perf stat -e syscalls:*,context-switches`
+//!     (or strace -c / eBPF) -- the trustworthy in-bench metrics are LATENCY
+//!     and THROUGHPUT; syscalls/req only labels the regime.
 //!   * NOT a microbenchmark harness. This is a hand-rolled load test (no
 //!     Criterion) because the unit under test is a multi-thread system, not
 //!     a pure function. Run it a few times; expect a few % run-to-run noise.
@@ -163,10 +217,11 @@ const ECHO_PAYLOAD: usize = 32; // small token to the echo service (idx+token+st
 struct Cfg {
     conns: usize,
     pipeline: usize,
-    ns: Vec<usize>,
+    ns: Vec<usize>, // CORE BUDGETS K to sweep (total cores per variant incl. helper)
     samples: u64,
     warmup_ms: u64,
     duration_ms: u64,
+    open_rate: u64, // per-conn req/s in open-loop mode; 0 = closed-loop
     variants: Vec<Variant>,
 }
 
@@ -227,12 +282,13 @@ fn load_cfg() -> Cfg {
             ]
         });
     Cfg {
-        conns: env_usize("LAB_CONNS", 10_000),
+        conns: env_usize("LAB_CONNS", 2_000),
         pipeline: env_usize("LAB_PIPELINE", 1),
         ns,
-        samples: env_u64("LAB_SAMPLES", 100_000),
-        warmup_ms: env_u64("LAB_WARMUP_MS", 400),
+        samples: env_u64("LAB_SAMPLES", 200_000),
+        warmup_ms: env_u64("LAB_WARMUP_MS", 2_000),
         duration_ms: env_u64("LAB_DURATION_MS", 0),
+        open_rate: env_u64("LAB_OPEN_RATE", 0),
         variants,
     }
 }
@@ -432,6 +488,7 @@ fn run_load(
     server_addr: SocketAddr,
     target_conns: usize,
     pipeline: usize,
+    open_rate: u64,
     samples_target: u64,
     warmup: Duration,
     duration_cap: Duration,
@@ -485,6 +542,7 @@ fn run_load(
                 drive_conns(
                     conns,
                     pipeline,
+                    open_rate,
                     record,
                     stop,
                     total_completed,
@@ -533,6 +591,7 @@ fn run_load(
 fn drive_conns(
     mut conns: Vec<TcpStream>,
     pipeline: usize,
+    open_rate: u64,
     record: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     total_completed: Arc<AtomicU64>,
@@ -558,12 +617,26 @@ fn drive_conns(
     let mut recv_have: Vec<usize> = vec![0; n];
     let mut in_flight: Vec<usize> = vec![0; n];
 
-    // prime each conn to `pipeline` in-flight requests
+    let open_loop = open_rate > 0;
+    // OPEN-LOOP: per-conn inter-arrival gap in ns; next scheduled fire per conn.
+    let gap_ns: u64 = if open_loop { 1_000_000_000 / open_rate } else { 0 };
+    let mut next_fire: Vec<u64> = vec![0; n];
+
     start_barrier.wait();
-    for i in 0..n {
-        for _ in 0..pipeline {
-            if send_request(&mut conns[i], &mut send_buf).is_ok() {
-                in_flight[i] += 1;
+    if open_loop {
+        // stagger each conn's first fire across one gap so the thread doesn't
+        // emit all n at the same instant.
+        let base = now_ns();
+        for i in 0..n {
+            next_fire[i] = base + (gap_ns / n.max(1) as u64) * i as u64;
+        }
+    } else {
+        // CLOSED-LOOP: prime each conn to `pipeline` in-flight requests.
+        for i in 0..n {
+            for _ in 0..pipeline {
+                if send_request(&mut conns[i], &mut send_buf).is_ok() {
+                    in_flight[i] += 1;
+                }
             }
         }
     }
@@ -571,6 +644,25 @@ fn drive_conns(
     let mut local_flush = 0u64;
     while !stop.load(Ordering::Relaxed) {
         for i in 0..n {
+            // OPEN-LOOP: fire every gap_ns regardless of completions, stamping
+            // the SCHEDULED time so RTT = recv - scheduled (no coordinated
+            // omission). Catch up if we fell behind (bounded per turn).
+            if open_loop {
+                let now = now_ns();
+                let mut fires = 0;
+                while next_fire[i] <= now && fires < 64 {
+                    let sched = next_fire[i];
+                    put_u32(&mut send_buf, 0, FRAME as u32);
+                    put_u64(&mut send_buf, 4, sched); // stamp = SCHEDULED time
+                    // open-loop write_all: finish the frame (closed-loop's
+                    // skip-on-WouldBlock would distort a fixed-rate model).
+                    if write_full(&mut conns[i], &send_buf).is_ok() {
+                        in_flight[i] += 1;
+                    }
+                    next_fire[i] += gap_ns;
+                    fires += 1;
+                }
+            }
             // drain any complete responses on conn i
             loop {
                 let want = 4 + FRAME;
@@ -584,7 +676,7 @@ fn drive_conns(
                             let now = now_ns();
                             let sent = get_u64(&recv_bufs[i], 4);
                             recv_have[i] = 0;
-                            in_flight[i] -= 1;
+                            in_flight[i] = in_flight[i].saturating_sub(1);
                             if record.load(Ordering::Relaxed) {
                                 let rtt = now.saturating_sub(sent).max(1);
                                 hist.record(rtt).ok();
@@ -595,8 +687,9 @@ fn drive_conns(
                                     local_flush = 0;
                                 }
                             }
-                            // refill to keep pipeline depth constant
-                            if send_request(&mut conns[i], &mut send_buf).is_ok() {
+                            // CLOSED-LOOP: refill to keep pipeline depth constant.
+                            // OPEN-LOOP: the schedule drives sends, not completion.
+                            if !open_loop && send_request(&mut conns[i], &mut send_buf).is_ok() {
                                 in_flight[i] += 1;
                             }
                         }
@@ -623,16 +716,63 @@ fn drive_conns(
 fn send_request(stream: &mut TcpStream, send_buf: &mut [u8]) -> std::io::Result<()> {
     let now = now_ns();
     put_u64(send_buf, 4, now); // client_send_ns at payload[0..8]
-    // write_all on a nonblocking socket: small frames fit the socket buffer;
-    // on WouldBlock we treat it as "not sent" and skip this refill cycle.
-    match stream.write(send_buf) {
-        Ok(n) if n == send_buf.len() => Ok(()),
-        Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::Other, "short write")),
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-            Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "wb"))
+    // Nonblocking write. A PARTIAL write must NOT silently corrupt the in-flight
+    // accounting (the old code dropped a half-emitted frame): spin-retry the
+    // remaining tail until the whole frame is on the socket, bounded so one
+    // wedged conn can't hang the generator. On genuine error -> propagate as a
+    // real failure (the caller does NOT increment in_flight). If the very first
+    // byte WouldBlocks (socket buf full, nothing sent) -> skip this refill.
+    let mut off = 0usize;
+    let total = send_buf.len();
+    let mut spins = 0u32;
+    while off < total {
+        match stream.write(&send_buf[off..]) {
+            Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "closed")),
+            Ok(k) => off += k,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if off == 0 {
+                    // nothing emitted yet: clean skip, frame never started.
+                    return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "wb"));
+                }
+                // mid-frame: must finish it or the stream desyncs. Bounded spin.
+                spins += 1;
+                if spins > 1_000_000 {
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "stuck"));
+                }
+                std::hint::spin_loop();
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
         }
-        Err(e) => Err(e),
     }
+    Ok(())
+}
+
+// Open-loop full-frame write: unlike send_request (which may cleanly skip a
+// refill on a full socket buffer), the fixed-rate model must emit every
+// scheduled frame, so spin-finish the whole buffer. Bounded so a wedged conn
+// can't hang the generator; a hard failure drops the frame (counted only as a
+// non-increment of in_flight).
+#[inline]
+fn write_full(stream: &mut TcpStream, buf: &[u8]) -> std::io::Result<()> {
+    let mut off = 0usize;
+    let mut spins = 0u32;
+    while off < buf.len() {
+        match stream.write(&buf[off..]) {
+            Ok(0) => return Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "closed")),
+            Ok(k) => off += k,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                spins += 1;
+                if spins > 1_000_000 {
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "stuck"));
+                }
+                std::hint::spin_loop();
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 #[inline(always)]
@@ -1123,15 +1263,33 @@ mod tile_stub {
             put_u64(&mut out, 16, client_send_ns);
             // direct sendto on the shared submit fd (kernel routes the reply to
             // the connected echo, echo replies to this socket -> spin thread).
-            unsafe {
-                let _ = libc::send(
-                    submit_fd,
-                    out.as_ptr() as *const libc::c_void,
-                    out.len(),
-                    libc::MSG_DONTWAIT,
-                );
+            // A dropped submit (EAGAIN under burst) would leave the coroutine
+            // awaiting a reply that never comes -> wedge the closed loop, so we
+            // retry on WouldBlock. Count the SYSCALL each attempt (it happened);
+            // credit a datagram only on the accepting call.
+            loop {
+                let r = unsafe {
+                    libc::send(
+                        submit_fd,
+                        out.as_ptr() as *const libc::c_void,
+                        out.len(),
+                        libc::MSG_DONTWAIT,
+                    )
+                };
+                counters.echo_sends.fetch_add(1, Ordering::Relaxed);
+                if r >= 0 {
+                    counters.echo_datagrams.fetch_add(1, Ordering::Relaxed);
+                    break;
+                }
+                let err = std::io::Error::last_os_error();
+                if err.kind() != std::io::ErrorKind::WouldBlock {
+                    break; // hard error: give up this submit (reply won't come)
+                }
+                monoio::time::sleep(Duration::ZERO).await;
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
             }
-            counters.echo_sends.fetch_add(1, Ordering::Relaxed);
 
             // AWAIT the routed reply: poll the per-reactor done-map, yielding.
             // The reactor's drain loop fills it from the SPSC ring.
@@ -1294,6 +1452,9 @@ mod batched_stub {
         let mut recv_bufs = vec![[0u8; ECHO_PAYLOAD]; BATCH];
         let n = submit_rx.len();
         let mut rr = 0usize; // round-robin start across submit rings for fairness
+        // tiny backlog for submits a partial sendmmsg didn't accept (re-flushed
+        // promptly next turn so no request is silently dropped).
+        let mut backlog: Vec<Submit> = Vec::with_capacity(BATCH);
 
         while !stop.load(Ordering::Relaxed) {
             // 1) Drain up to BATCH submits across the reactor rings.
@@ -1312,25 +1473,63 @@ mod batched_stub {
             }
             rr = (rr + 1) % n;
 
-            if pending.is_empty() {
-                std::hint::spin_loop();
-                continue;
-            }
-
-            // 2) sendmmsg: one syscall for all pending submits. Pack the
-            //    idx + req_id into each datagram so the echo round-trips it.
+            // 2) sendmmsg: ONE syscall for whatever we drained. PROMPT PARTIAL
+            //    FLUSH -- we do NOT wait for the ring to fill to BATCH. Under
+            //    pipeline=1 there is at most one in-flight submit per reactor,
+            //    so a "wait for full batch" loop would deadlock (the batch
+            //    never fills because reactors are blocked awaiting the reply).
+            //    Sending whatever is ready keeps the pipe moving; batching only
+            //    actually amortizes when in-flight depth (pipeline) is high,
+            //    which the throughput/syscalls-per-req numbers then show.
+            //    sendmmsg can return < m on EAGAIN/partial; count the syscall
+            //    ALWAYS (it happened) but only credit the datagrams it accepted.
             let m = pending.len();
-            for (k, s) in pending.iter().enumerate() {
-                put_u32(&mut send_bufs[k], 0, s.idx);
-                put_u64(&mut send_bufs[k], 8, s.req_id);
+            if m > 0 {
+                for (k, s) in pending.iter().enumerate() {
+                    put_u32(&mut send_bufs[k], 0, s.idx);
+                    put_u64(&mut send_bufs[k], 8, s.req_id);
+                }
+                let sent = sendmmsg_batch(echo_fd, &mut send_bufs[..m]);
+                counters.echo_sends.fetch_add(1, Ordering::Relaxed); // ONE syscall (even on err)
+                if sent > 0 {
+                    counters.echo_datagrams.fetch_add(sent as u64, Ordering::Relaxed);
+                }
+                // If sendmmsg accepted fewer than m, re-queue the tail so those
+                // requests are not silently lost (would wedge the closed loop).
+                if (sent.max(0) as usize) < m {
+                    for s in pending.iter().skip(sent.max(0) as usize) {
+                        let ridx = s.idx as usize;
+                        // best-effort retry next turn via the owning reactor's
+                        // submit ring is not reachable here; instead resend
+                        // directly next turns by pushing back onto our pending
+                        // path -- simplest: drop into a tiny local backlog.
+                        backlog.push(*s);
+                        let _ = ridx;
+                    }
+                }
             }
-            let sent = sendmmsg_batch(echo_fd, &mut send_bufs[..m]);
-            counters.echo_sends.fetch_add(1, Ordering::Relaxed); // ONE syscall
-            let _ = sent;
 
-            // 3) recvmmsg: one syscall draining up to BATCH echo replies.
-            //    We may need a few turns to collect all m back; the next loop
-            //    iterations recvmmsg again, so replies are never lost.
+            // 2b) flush any backlog from a prior partial send (prompt, bounded).
+            if !backlog.is_empty() {
+                let b = backlog.len().min(BATCH);
+                for (k, s) in backlog.iter().take(b).enumerate() {
+                    put_u32(&mut send_bufs[k], 0, s.idx);
+                    put_u64(&mut send_bufs[k], 8, s.req_id);
+                }
+                let sent = sendmmsg_batch(echo_fd, &mut send_bufs[..b]);
+                counters.echo_sends.fetch_add(1, Ordering::Relaxed);
+                let ok = sent.max(0) as usize;
+                if ok > 0 {
+                    counters.echo_datagrams.fetch_add(ok as u64, Ordering::Relaxed);
+                }
+                backlog.drain(..ok.min(backlog.len()));
+            }
+
+            // 3) recvmmsg EVERY turn, independent of whether we just sent. This
+            //    is THE fix for the throughput collapse: replies arrive a turn
+            //    or two AFTER the send, by which point pending may be empty; if
+            //    recv only ran when there were submits, undrained replies would
+            //    wedge the closed loop at low depth. Drain unconditionally.
             let got = recvmmsg_batch(echo_fd, &mut recv_bufs[..BATCH]);
             if got > 0 {
                 counters.echo_recvs.fetch_add(1, Ordering::Relaxed); // ONE syscall
@@ -1345,8 +1544,9 @@ mod batched_stub {
                     }
                 }
             }
-            // count the datagrams we sent as well (moved out the door)
-            counters.echo_datagrams.fetch_add(m as u64, Ordering::Relaxed);
+            if m == 0 && got == 0 && backlog.is_empty() {
+                std::hint::spin_loop();
+            }
         }
     }
 
@@ -1518,7 +1718,9 @@ mod batched_stub {
 
 struct Row {
     variant: Variant,
-    n: usize,
+    k: usize,        // total core budget for this variant (reactors + helper)
+    reactors: usize, // reactor/worker threads
+    helper: usize,   // dedicated helper threads (spin/batch); 0 for monoio/tokio
     p50: u64,
     p99: u64,
     p999: u64,
@@ -1527,15 +1729,25 @@ struct Row {
     conns: usize,
     calc_ns: f64,
     syscalls_per_req: f64,
-    service_us: f64, // per-core busy time per completed request (N / throughput)
+    service_us: f64, // per-core busy time per completed request (K / throughput)
 }
 
-fn run_variant(variant: Variant, n: usize, cfg: &Cfg, layout: &CoreLayout, calc_ns: f64) -> Row {
+// Split a core budget K into (reactors, helpers) per variant. monoio/tokio
+// spend all K on reactors/workers; tile/batched spend K-1 on reactors and 1 on
+// the always-hot helper -- so every variant occupies exactly K SUT cores.
+fn budget_split(variant: Variant, k: usize) -> (usize, usize) {
+    match variant {
+        Variant::MonoioSharded | Variant::Tokio => (k, 0),
+        Variant::BusySpinTile | Variant::BatchedSyscall => (k.saturating_sub(1).max(1), 1),
+    }
+}
+
+fn run_variant(variant: Variant, k: usize, cfg: &Cfg, layout: &CoreLayout, calc_ns: f64) -> Row {
     let counters = Arc::new(Counters::default());
     counters.reset();
     let stop = Arc::new(AtomicBool::new(false));
 
-    // echo on its own core in every variant
+    // echo on its own core in every variant (constant downstream, outside K)
     let echo_stop = Arc::new(AtomicBool::new(false));
     let (echo_addr, echo_handle) = spawn_echo(layout.echo, echo_stop.clone());
 
@@ -1548,20 +1760,28 @@ fn run_variant(variant: Variant, n: usize, cfg: &Cfg, layout: &CoreLayout, calc_
     let server_addr = claim.local_addr().unwrap();
     drop(claim); // reactors re-bind the same port with SO_REUSEPORT
 
-    let stub_cores = &layout.stub[..n];
+    let (reactors, helper) = budget_split(variant, k);
+    // The SUT draws ALL its threads from the same K-core slice of the pool:
+    // reactors take pool[0..reactors]; the helper (if any) takes pool[reactors]
+    // -- i.e. pool[reactors] == pool[k-1]. No variant gets a core outside [0,k).
+    let pool = &layout.pool;
+    let reactor_cores = &pool[..reactors.min(pool.len())];
+    let helper_core = pool[(reactors).min(pool.len().saturating_sub(1))];
 
     let server_handles: Vec<JoinHandle<()>> = match variant {
         Variant::MonoioSharded => monoio_stub::spawn_reactors(
-            server_addr, echo_addr, n, stub_cores, counters.clone(), stop.clone(),
+            server_addr, echo_addr, reactors, reactor_cores, counters.clone(), stop.clone(),
         ),
         Variant::Tokio => vec![tokio_stub::spawn_runtime(
-            server_addr, echo_addr, n, stub_cores.to_vec(), counters.clone(), stop.clone(),
+            server_addr, echo_addr, reactors, reactor_cores.to_vec(), counters.clone(), stop.clone(),
         )],
         Variant::BusySpinTile => tile_stub::spawn_tile(
-            server_addr, echo_addr, n, stub_cores, layout.spin, counters.clone(), stop.clone(),
+            server_addr, echo_addr, reactors, reactor_cores, helper_core, counters.clone(),
+            stop.clone(),
         ),
         Variant::BatchedSyscall => batched_stub::spawn_batched(
-            server_addr, echo_addr, n, stub_cores, layout.spin, counters.clone(), stop.clone(),
+            server_addr, echo_addr, reactors, reactor_cores, helper_core, counters.clone(),
+            stop.clone(),
         ),
     };
 
@@ -1572,6 +1792,7 @@ fn run_variant(variant: Variant, n: usize, cfg: &Cfg, layout: &CoreLayout, calc_
         server_addr,
         cfg.conns,
         cfg.pipeline,
+        cfg.open_rate,
         cfg.samples,
         Duration::from_millis(cfg.warmup_ms),
         Duration::from_millis(cfg.duration_ms),
@@ -1591,21 +1812,25 @@ fn run_variant(variant: Variant, n: usize, cfg: &Cfg, layout: &CoreLayout, calc_
     let sends = counters.echo_sends.load(Ordering::Relaxed);
     let recvs = counters.echo_recvs.load(Ordering::Relaxed);
     let reqs = counters.requests.load(Ordering::Relaxed).max(1);
-    // syscalls per request = (send syscalls + recv syscalls) / requests.
-    // Non-batched paths do 1 sendto + 1 recvfrom => ~2.0. The batched path
-    // counts sendmmsg/recvmmsg CALLS (not datagrams), so this drops well < 2.
+    // ECHO-SIDE-ONLY syscalls/req = (send + recv CALLS) / requests. Non-batched
+    // paths do 1 send + 1 recv => ~2.0. Batched counts sendmmsg/recvmmsg CALLS
+    // (not datagrams) so it drops well < 2 under depth. NOT a total syscall
+    // budget (excludes TCP/accept/epoll/io_uring/timers) -- a lever indicator.
     let syscalls_per_req = (sends + recvs) as f64 / reqs as f64;
 
     // throughput = completed round-trips / recorded window (warm-up excluded).
     let throughput = load.completed as f64 / load.window.as_secs_f64().max(1e-9);
-    // per-core service estimate: N cores busy for the whole window completing
-    // `completed` requests => N/throughput seconds of core-time per request.
-    // This is the work-rate view (NOT response time, which includes queueing).
-    let service_us = if throughput > 0.0 { n as f64 / throughput * 1e6 } else { 0.0 };
+    // per-core service estimate uses the FULL budget K (reactors + helper), so
+    // tile/batched are charged for their always-hot helper core. K cores busy
+    // for the whole window completing `completed` requests => K/throughput
+    // core-seconds per request. Work-rate view, NOT response time.
+    let service_us = if throughput > 0.0 { k as f64 / throughput * 1e6 } else { 0.0 };
 
     Row {
         variant,
-        n,
+        k,
+        reactors,
+        helper,
         p50: load.hist.value_at_quantile(0.50),
         p99: load.hist.value_at_quantile(0.99),
         p999: load.hist.value_at_quantile(0.999),
@@ -1638,43 +1863,44 @@ fn bind_reuseport_listener(addr: SocketAddr) -> TcpListener {
 }
 
 // ---------------------------------------------------------------------------
-// Core layout: assign echo, spin, stub reactors, and load-gen threads to
-// distinct physical cores as much as the box allows.
-//   core 0           : echo service (+ spin thread for the tile)
-//   cores 1..1+N     : stub reactors
-//   remaining        : load generators
+// Core layout: EQUAL CORE BUDGET. The SUT gets a pool of `max_k` LOGICAL CPUs
+// (the largest budget swept). Every variant draws its threads from this same
+// pool, so the total SUT cores are identical across variants:
+//   core 0              : echo service (constant downstream, OUTSIDE the budget)
+//   cores 1..1+max_k    : the SUT budget pool. A variant with budget K uses the
+//                         first K of these:
+//                           monoio/tokio  -> K reactors/workers, no helper
+//                           tile/batched  -> (K-1) reactors + 1 helper (the
+//                                            K-th pool core is the spin/batch
+//                                            thread, NOT a free extra core)
+//   remaining           : load generators
+// Pinning is to LOGICAL CPUs (SMT siblings / NUMA not accounted for; see the
+// module CAVEATS). On a tight box (gen pool empty) generators share echo's core.
 // ---------------------------------------------------------------------------
 
 struct CoreLayout {
     echo: CoreId,
-    spin: CoreId,
-    stub: Vec<CoreId>,
+    pool: Vec<CoreId>, // SUT budget pool: max_k logical CPUs, shared by all variants
     gen: Vec<CoreId>,
 }
 
-fn plan_cores(max_n: usize) -> CoreLayout {
+fn plan_cores(max_k: usize) -> CoreLayout {
     let ids = core_ids();
     let total = ids.len().max(1);
-    // Stub reactors are the SUT: they get dedicated cores 1..1+max_n. echo and
-    // the tile/batch helper thread are "downstream" -- on a box with cores to
-    // spare they each get a core; when cores run short the helper shares core 0
-    // with echo (echo is light) so the stub cores stay clean. Load generators
-    // take whatever is left, falling back to sharing core 0 + the helper core.
     let echo = ids[0];
-    let stub: Vec<CoreId> = (0..max_n).map(|i| ids[(1 + i) % total]).collect();
-    let helper_core = 1 + max_n; // first core past the stub block
-    let spin = if helper_core < total { ids[helper_core] } else { ids[0] };
-    let gen_start = if helper_core < total { helper_core + 1 } else { 1 + max_n };
+    // budget pool: cores 1..1+max_k (wrap if the box is small).
+    let pool: Vec<CoreId> = (0..max_k).map(|i| ids[(1 + i) % total]).collect();
+    let gen_start = 1 + max_k;
     let mut gen: Vec<CoreId> = (gen_start..total).map(|i| ids[i]).collect();
     if gen.is_empty() {
-        // out of dedicated cores: generators share echo's core (and the helper
-        // core if distinct). Loopback generation is light relative to the SUT.
+        // out of dedicated cores: generators share echo's core (loopback gen is
+        // light relative to the SUT) and the last pool core.
         gen.push(ids[0]);
         if total > 1 {
             gen.push(ids[total - 1]);
         }
     }
-    CoreLayout { echo, spin, stub, gen }
+    CoreLayout { echo, pool, gen }
 }
 
 // ---------------------------------------------------------------------------
@@ -1690,19 +1916,32 @@ fn print_tables(rows: &[Row], achieved_conns: usize, nofile: u64, cfg: &Cfg) {
         " target conns={}  achieved={}  pipeline={}  RLIMIT_NOFILE={}  samples/cell={}",
         cfg.conns, achieved_conns, cfg.pipeline, nofile, cfg.samples
     );
-    println!(" calc=512B memcpy+xor-fold   echo=1 UDP datagram round-trip (own core)");
+    println!(" calc=512B memcpy+xor-fold   echo=1 UDP datagram round-trip (own core, outside K)");
+    let mode = if cfg.open_rate > 0 {
+        format!("OPEN-LOOP @ {} req/s/conn (RTT vs scheduled send)", cfg.open_rate)
+    } else {
+        format!("CLOSED-LOOP @ concurrency = conns x pipeline = {}", cfg.conns * cfg.pipeline)
+    };
+    println!(" load model: {mode}");
+    println!(" EQUAL CORE BUDGET K: every variant occupies K logical CPUs (cores/split below)");
     println!();
     println!(" (A) ROUND-TRIP LATENCY  (us)  +  throughput");
     println!(
-        " {:<16} {:>3} {:>10} {:>10} {:>10} {:>10} {:>14} {:>8}",
-        "variant", "N", "p50", "p99", "p999", "max", "req/s", "conns"
+        " {:<16} {:>3} {:>11} {:>10} {:>10} {:>10} {:>10} {:>13} {:>7}",
+        "variant", "K", "cores", "p50", "p99", "p999", "max", "req/s", "conns"
     );
-    println!(" {}", "-".repeat(86));
+    println!(" {}", "-".repeat(98));
     for r in rows {
+        let split = if r.helper > 0 {
+            format!("{}r+{}h", r.reactors, r.helper)
+        } else {
+            format!("{}r", r.reactors)
+        };
         println!(
-            " {:<16} {:>3} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>14.0} {:>8}",
+            " {:<16} {:>3} {:>11} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>13.0} {:>7}",
             r.variant.label(),
-            r.n,
+            r.k,
+            split,
             r.p50 as f64 / 1000.0,
             r.p99 as f64 / 1000.0,
             r.p999 as f64 / 1000.0,
@@ -1714,14 +1953,14 @@ fn print_tables(rows: &[Row], achieved_conns: usize, nofile: u64, cfg: &Cfg) {
     println!();
     println!(" (B) ATTRIBUTION  (where the time goes -- per completed request)");
     println!(
-        " {:<16} {:>3} {:>10} {:>12} {:>14} {:>20}",
-        "variant", "N", "calc-ns", "service-us", "syscalls/req", "verdict"
+        " {:<16} {:>3} {:>10} {:>12} {:>16} {:>18}",
+        "variant", "K", "calc-ns", "service-us", "echo-sys/req", "verdict"
     );
     println!(" {}", "-".repeat(80));
     for r in rows {
-        // service-us = per-core busy time per request. calc-ns is the pure
-        // work. (service-us - calc) is dominated by the echo syscalls + the
-        // reactor's read/write of the client frame + scheduling.
+        // service-us = per-core busy time per request across the FULL budget K
+        // (helper included). calc-ns is the pure work; (service-us - calc) is
+        // dominated by the echo syscalls + client frame read/write + scheduling.
         let calc_us = r.calc_ns / 1000.0;
         let calc_frac = if r.service_us > 0.0 { calc_us / r.service_us } else { 0.0 };
         let verdict = if r.syscalls_per_req < 1.5 {
@@ -1732,9 +1971,9 @@ fn print_tables(rows: &[Row], achieved_conns: usize, nofile: u64, cfg: &Cfg) {
             "syscall-bound"
         };
         println!(
-            " {:<16} {:>3} {:>10.1} {:>12.2} {:>14.2} {:>20}",
+            " {:<16} {:>3} {:>10.1} {:>12.2} {:>16.2} {:>18}",
             r.variant.label(),
-            r.n,
+            r.k,
             r.calc_ns,
             r.service_us,
             r.syscalls_per_req,
@@ -1742,15 +1981,22 @@ fn print_tables(rows: &[Row], achieved_conns: usize, nofile: u64, cfg: &Cfg) {
         );
     }
     println!();
+    println!(" cores: r=reactor/worker threads, h=dedicated helper (spin/batch). Every");
+    println!("   variant sums to K logical CPUs; echo runs on its own core OUTSIDE K.");
     println!(" calc-ns: pure 512B memcpy+xor work (calibrated uncontended).");
-    println!(" service-us: N x window / completed = per-core busy time per request.");
-    println!("   calc << service + syscalls/req ~2  =>  SYSCALL-BOUND.");
-    println!("   syscalls/req << 2 (batched)        =>  syscall lever is real.");
-    println!(" p50/p99 in (A) are RESPONSE times (include closed-loop queueing =");
-    println!("   conns x pipeline / throughput); compare them only within a fixed N.");
+    println!(" service-us: K x window / completed = per-core busy time per request (K incl.");
+    println!("   the helper core -- tile/batched are charged for it, the original bench was not).");
+    println!(" echo-sys/req: ECHO-SIDE-ONLY send+recv CALLS per request (incl. failures).");
+    println!("   NOT a total syscall budget (no TCP/accept/epoll/io_uring/timers). A LEVER");
+    println!("   indicator: ~2 => one send+recv/req; <<2 (batched) => syscall amortized.");
+    println!("   For rigorous attribution run under `perf stat -e syscalls:*,context-switches`.");
+    println!(" p50/p99 in (A): closed-loop = RESPONSE time at concurrency = conns x pipeline");
+    println!("   (coordinated-omission caveat near saturation); open-loop = RTT vs scheduled");
+    println!("   send. Compare only WITHIN a fixed K and a fixed load model.");
     println!();
-    println!(" CAVEATS: synthetic calc + loopback UDP echo + single shared box.");
-    println!(" Absolute us are NOT production latencies; the SHAPE + attribution are.");
+    println!(" CAVEATS: synthetic calc + loopback UDP echo + single shared box; pinning is to");
+    println!("   LOGICAL CPUs (SMT/NUMA not accounted). Absolute us are NOT production");
+    println!("   latencies; the SHAPE + attribution are the point.");
     println!("================================================================================");
 }
 
@@ -1765,25 +2011,26 @@ fn main() {
 
     let cfg = load_cfg();
     let nofile = raise_nofile();
-    let max_n = cfg.ns.iter().copied().max().unwrap_or(2);
-    let layout = plan_cores(max_n);
+    let max_k = cfg.ns.iter().copied().max().unwrap_or(2);
+    let layout = plan_cores(max_k);
     let calc_ns = calibrate_calc_ns();
 
     eprintln!(
-        "lab: cores total={} stub={:?} gen={} calc-ns={:.1} nofile={}",
+        "lab: cores total={} budget-pool={:?} gen={} calc-ns={:.1} nofile={} open_rate={}",
         core_ids().len(),
-        layout.stub.iter().map(|c| c.id).collect::<Vec<_>>(),
+        layout.pool.iter().map(|c| c.id).collect::<Vec<_>>(),
         layout.gen.len(),
         calc_ns,
         nofile,
+        cfg.open_rate,
     );
 
     let mut rows = Vec::new();
     let mut achieved = 0usize;
     for &variant in &cfg.variants {
-        for &n in &cfg.ns {
-            eprintln!("lab: running variant={} N={} ...", variant.label(), n);
-            let row = run_variant(variant, n, &cfg, &layout, calc_ns);
+        for &k in &cfg.ns {
+            eprintln!("lab: running variant={} K={} ...", variant.label(), k);
+            let row = run_variant(variant, k, &cfg, &layout, calc_ns);
             achieved = achieved.max(row.conns);
             rows.push(row);
             // brief cool-down so ports/fds fully release between cells
