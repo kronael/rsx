@@ -456,53 +456,80 @@ pub async fn handle_connection(
                     client_order_id: cid_bytes,
                     timestamp_ns: now_ns,
                 };
-                {
-                    let mut st = state.borrow_mut();
-                    if !st.pending.push(pending) {
-                        let err = serialize(
-                            &WsFrame::Error {
-                                code: 1003,
-                                message:
-                                    "pending queue full"
-                                        .to_string(),
-                            },
+                // Reject early if we cannot track the order,
+                // before spending a send.
+                if state.borrow().pending.is_full() {
+                    let err = serialize(&WsFrame::Error {
+                        code: 1003,
+                        message: "pending queue full"
+                            .to_string(),
+                    });
+                    if let Err(e) = ws_write_text(
+                        &mut stream,
+                        err.as_bytes(),
+                    )
+                    .await
+                    {
+                        warn!(
+                            "ws write failed conn {}: {e}",
+                            conn_id
                         );
-                        if let Err(e) = ws_write_text(
-                            &mut stream,
-                            err.as_bytes(),
-                        )
-                        .await
-                        {
-                            warn!(
-                                "ws write failed conn \
-                                 {}: {e}",
-                                conn_id
-                            );
-                        }
-                        continue;
                     }
+                    continue;
                 }
 
+                // Send first; only commit the pending +
+                // record success AFTER the send returns Ok.
+                // On failure: do not track the order, surface
+                // the error to the client, trip the circuit.
                 let bytes = as_bytes(&order);
-                {
+                let sent = {
                     let mut sender =
                         cmp_sender.borrow_mut();
                     match sender.send_raw(
                         RECORD_ORDER_REQUEST,
                         bytes,
                     ) {
-                        Ok(_) => sender.advance_seq(),
+                        Ok(_) => {
+                            sender.advance_seq();
+                            true
+                        }
                         Err(e) => {
                             warn!("gateway: forward order to risk failed: {e}");
                             // seq NOT advanced: NAK ring and
                             // peer's expected-seq stay aligned.
+                            false
                         }
                     }
+                };
+                if !sent {
+                    {
+                        let mut st = state.borrow_mut();
+                        st.circuit.record_failure();
+                    }
+                    let err = serialize(&WsFrame::Error {
+                        code: 1006,
+                        message: "order forward failed"
+                            .to_string(),
+                    });
+                    if let Err(e) = ws_write_text(
+                        &mut stream,
+                        err.as_bytes(),
+                    )
+                    .await
+                    {
+                        warn!(
+                            "ws write failed conn {}: {e}",
+                            conn_id
+                        );
+                    }
+                    continue;
                 }
-                state
-                    .borrow_mut()
-                    .circuit
-                    .record_success();
+                {
+                    let mut st = state.borrow_mut();
+                    st.pending.push(pending);
+                    st.circuit.record_success();
+                }
 
                 // SAFETY: oid/qty are bound for logging
                 // in sibling branches; this branch has
@@ -553,9 +580,16 @@ pub async fn handle_connection(
                                 &p.order_id,
                             );
                             drop(st);
-                            send_cancel(
+                            if !send_cancel(
                                 &cmp_sender, &mut cancel,
-                            );
+                            ) {
+                                send_error(
+                                    &mut stream,
+                                    1006,
+                                    "cancel forward failed",
+                                )
+                                .await;
+                            }
                         } else {
                             drop(st);
                             send_error(
@@ -584,9 +618,16 @@ pub async fn handle_connection(
                                 &p.order_id,
                             );
                             drop(st);
-                            send_cancel(
+                            if !send_cancel(
                                 &cmp_sender, &mut cancel,
-                            );
+                            ) {
+                                send_error(
+                                    &mut stream,
+                                    1006,
+                                    "cancel forward failed",
+                                )
+                                .await;
+                            }
                         } else {
                             drop(st);
                             send_error(
@@ -682,17 +723,28 @@ fn build_cancel(
     }
 }
 
+/// Forward a cancel to risk. Returns true on a successful send.
+/// The seq is advanced only after `send_raw` returns Ok, so a
+/// failed send leaves no local seq gap (NAK ring + peer's
+/// expected-seq stay aligned). On failure the caller surfaces
+/// the error to the client.
 fn send_cancel(
     cmp_sender: &Rc<RefCell<CastSender>>,
     cancel: &mut CancelRequest,
-) {
+) -> bool {
     let mut sender = cmp_sender.borrow_mut();
     cancel.seq = sender.next_seq();
     let bytes = as_bytes(cancel);
-    if let Err(e) = sender.send_raw(RECORD_CANCEL_REQUEST, bytes) {
-        warn!("gateway: forward cancel to risk failed: {e}");
+    match sender.send_raw(RECORD_CANCEL_REQUEST, bytes) {
+        Ok(_) => {
+            sender.advance_seq();
+            true
+        }
+        Err(e) => {
+            warn!("gateway: forward cancel to risk failed: {e}");
+            false
+        }
     }
-    sender.advance_seq();
 }
 
 async fn send_error(

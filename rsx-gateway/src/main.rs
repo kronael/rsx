@@ -33,6 +33,7 @@ use rsx_types::install_panic_handler;
 use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
 use std::env;
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -142,7 +143,14 @@ fn log_effective_gateway_config(
 fn main() {
     install_panic_handler();
 
-    tracing_subscriber::fmt::init();
+    // ANSI only when stdout is a TTY; file logs stay clean
+    // and greppable (structured latency lines).
+    tracing_subscriber::fmt()
+        .with_ansi(std::io::stdout().is_terminal())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env(),
+        )
+        .init();
 
     // Drain hot-path latency samples out-of-band
     // (see rsx-types/src/latency.rs). 100 ms is a

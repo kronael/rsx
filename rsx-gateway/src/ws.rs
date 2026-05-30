@@ -335,9 +335,28 @@ pub async fn ws_read_frame_buf(
         tmp[0]
     };
 
+    let fin = (b0 & 0x80) != 0;
     let opcode = b0 & 0x0F;
     let masked = (b1 & 0x80) != 0;
     let len1 = (b1 & 0x7F) as usize;
+
+    // RFC 6455: reject fragmented frames (FIN=0). Reassembly is
+    // out of scope; a partial frame must never be parsed as a
+    // full order. Reject so we don't decode half a message.
+    if !fin {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "fragmented frame (FIN=0) not supported",
+        ));
+    }
+
+    // RFC 6455 §5.1: client->server frames MUST be masked.
+    if !masked {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unmasked client frame rejected",
+        ));
+    }
 
     // Helper: read n bytes from buf then stream
     macro_rules! read_n {

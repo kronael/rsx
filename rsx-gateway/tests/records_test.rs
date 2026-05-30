@@ -91,6 +91,33 @@ fn parse_n_frame_invalid_side_rejected() {
 }
 
 #[test]
+fn parse_n_frame_symbol_id_over_u32_rejected() {
+    // u32::MAX + 1 must not truncate to 0 (wrong routing).
+    let json = format!(
+        "{{\"N\":[4294967296,0,50000,100,\"{}\",0]}}",
+        cid20()
+    );
+    assert!(matches!(
+        parse(&json),
+        Err(ParseError::InvalidValue(_))
+    ));
+}
+
+#[test]
+fn parse_n_frame_symbol_id_u32_max_ok() {
+    let json = format!(
+        "{{\"N\":[4294967295,0,50000,100,\"{}\",0]}}",
+        cid20()
+    );
+    match parse(&json).unwrap() {
+        WsFrame::NewOrder { symbol_id, .. } => {
+            assert_eq!(symbol_id, u32::MAX);
+        }
+        other => panic!("expected NewOrder, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_n_frame_missing_field_rejected() {
     let json = r#"{"N":[1,0,50000]}"#;
     assert!(matches!(
