@@ -33,6 +33,47 @@ One thread, pinned to an **isolated** core, tight busy loop:
 - **NUMA-local** memory on the same node as the core *and* the NIC; **hugepages**
   to cut TLB misses.
 
+## No page faults — the full discipline
+
+`mlock` pins a range of virtual address space into physical RAM (no swap/
+reclaim) **and populates it** — the kernel faults the pages in and pins them at
+lock time. `mlockall(MCL_CURRENT | MCL_FUTURE)` = everything mapped now + later,
+the one-call startup move. Needs `CAP_IPC_LOCK` or a raised `RLIMIT_MEMLOCK`.
+
+Two fault kinds to eliminate:
+- **Major (disk/swap):** `mlockall` + disable swap (`swapoff`, or
+  `vm.swappiness=0`). Locked pages never swap.
+- **Minor (first touch of a freshly-mapped page, COW, the shared zero page):**
+  pre-fault before the hot path — `mmap(MAP_POPULATE)`, or walk the region
+  **writing** one byte per page (write, not read — to break COW and the zero
+  page), or rely on `mlock`'s population.
+
+Then the hot-path discipline:
+- **Allocator:** never `malloc`/`free`/grow on the hot path — the allocator
+  itself faults (`mmap`/`brk` on growth, `munmap` on free → the next alloc
+  re-faults). Configure it to retain (jemalloc `retain`, large glibc
+  `MALLOC_TRIM_THRESHOLD_`) or don't use it on the hot path at all.
+- **THP off:** khugepaged compaction is a classic latency spike — disable
+  Transparent Huge Pages (or `madvise`) and use **explicit hugepages** (which
+  separately cut TLB misses — a different problem from faults).
+- **Preallocate, never realloc:** allocate every buffer/pool at startup sized
+  for worst case, prefault + lock, reuse via object pools / free lists /
+  fixed-slot rings. Don't `realloc` (it can move data → fresh pages → faults +
+  copy); reserve one large **arena** up front (prefaulted + locked) and
+  **bump-allocate** within it, so growth is just advancing a pointer in
+  resident memory. Genuine resizing happens during warmup, never in the loop.
+- **The stack (the extra step):** the stack is lazily-grown anonymous memory;
+  `mlockall(MCL_CURRENT)` only locks the pages **already mapped** — pages you
+  haven't descended into yet aren't mapped, so future stack growth still
+  faults. Fix = **stack warming**: at thread startup, before the hot loop,
+  touch the deepest stack you'll use (a large local array that writes a byte
+  per page down to max depth), then return; combined with `mlockall` those
+  pages are resident + pinned. Set a fixed adequate stack size
+  (`pthread_attr_setstacksize` / `ulimit -s`); on the hot path avoid `alloca`,
+  large VLAs, and deep call chains to cold pages. **`rsx-types::cpu::warm_stack`
+  does this** (256 KiB by default), called by `setup_hot_thread` *before*
+  `mlockall` so the warmed pages get pinned.
+
 ## More submission threads? No.
 
 Multiple threads on one io_uring ring means synchronizing the SQ — contention +
