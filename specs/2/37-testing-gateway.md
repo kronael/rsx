@@ -78,8 +78,7 @@ Targets from NETWORK.md:
 | Path | Target |
 |------|--------|
 | External -> Gateway | ~1-10ms (after TLS) |
-| Gateway -> Risk (UDS) | ~50-100us per message |
-| Gateway -> Risk (TCP) | ~100-300us per message |
+| Gateway -> Risk (casting/UDP) | ~4 µs one-way, loopback (measured) |
 | WS frame parse (N/C/A) | <500ns |
 | UUIDv7 generation | <50ns |
 | Rate limit check | <50ns |
