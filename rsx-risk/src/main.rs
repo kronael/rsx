@@ -736,6 +736,10 @@ fn run_main(
                         timestamp_ns: fill.ts_ns,
                     };
                     shard.process_fill(&event);
+                    // LIQUIDATOR.md §10: a fill means the
+                    // symbol is accepting orders again, so any
+                    // halt from a prior ORDER_FAILED is lifted.
+                    shard.resume_liquidation(fill.symbol_id);
                     // Forward fill to GW
                     forward_to_gw(&mut gw_sender, RECORD_FILL, &payload);
                     // Sub-stage: CMP send to gateway completed.
@@ -808,6 +812,12 @@ fn run_main(
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
+                    // LIQUIDATOR.md §10: order rejected (symbol
+                    // halted) pauses liquidation for that symbol.
+                    // OrderFailedRecord carries no symbol_id, so
+                    // halt the symbols this user is being
+                    // liquidated on (the failed order is one).
+                    shard.halt_liquidation_for_user(rec.user_id);
                     forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, &payload);
                 }
                 RECORD_CONFIG_APPLIED => if let Some(rec) =

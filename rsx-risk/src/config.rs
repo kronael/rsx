@@ -125,6 +125,20 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         maker_fee_bps.push(-1); // -0.01% rebate
     }
 
+    // Long-side liq price is mark*(10000-slip)/10000; slip
+    // above 10_000 bps drives it negative. Fail fast.
+    let max_slip_bps =
+        env_u64("RSX_LIQUIDATION_MAX_SLIP_BPS", 9999);
+    if max_slip_bps > 10_000 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "RSX_LIQUIDATION_MAX_SLIP_BPS ({}) must be <= 10000",
+                max_slip_bps
+            ),
+        ));
+    }
+
     let is_replica =
         env_bool("RSX_RISK_IS_REPLICA", false);
     let lease_poll_interval_ms =
@@ -149,8 +163,7 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
                 "RSX_LIQUIDATION_BASE_SLIP_BPS", 1),
             max_rounds: env_u64(
                 "RSX_LIQUIDATION_MAX_ROUNDS", 10) as u32,
-            max_slip_bps: env_u64(
-                "RSX_LIQUIDATION_MAX_SLIP_BPS", 9999),
+            max_slip_bps,
         },
         replication_config: ReplicationConfig {
             is_replica,

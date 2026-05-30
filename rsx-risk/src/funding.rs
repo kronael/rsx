@@ -53,20 +53,23 @@ fn floor_div_10k(x: i128) -> i64 {
     q.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
-/// RISK.md §5 + invariant #9 (funding zero-sum per symbol per interval).
+/// RISK.md §5, invariant #9 (funding zero-sum per symbol).
+/// Compute each user's funding payment for one symbol.
+/// `net_qtys[i]` is the signed position for user i; returns
+/// payments in the same order, positive = pays.
 ///
-/// Computes one funding payment per user for a single symbol and
-/// returns them in the same order as `net_qtys`. The sum of the
-/// returned payments is **exactly zero** whenever `Σ net_qtys == 0`
-/// (which invariant #4 guarantees: every fill adds +qty to one side
-/// and -qty to the other).
-///
-/// Per-user floor rounding alone does NOT net to zero — e.g. three
-/// longs of qty 1 and one short of qty 3 each floor independently and
-/// can leak ±1 unit per interval. We round every payment with `floor`
-/// (project rule) and then push the entire rounding residual onto the
-/// largest-magnitude position, where a sub-unit adjustment is
-/// immaterial. This makes Σ payments == 0 by construction.
+/// A Risk shard owns only a subset of users, so its local
+/// `Σ net_qty` is generally non-zero — the offsetting users
+/// live on other shards. We therefore do NOT force this
+/// shard's column to zero (that would erase legitimate
+/// one-sided funding). What we DO eliminate is the
+/// integer-division leak *within this shard*: summing each
+/// user's individually-truncated payment differs from the
+/// single truncation of the shard's aggregate net_qty by a
+/// small residual. That residual is value created/destroyed
+/// by rounding alone; we park it on the largest-magnitude
+/// position. Globally (Σ over shards) `Σ net_qty == 0`
+/// (invariant #4), so the aggregate-based payments cancel.
 pub fn settle_symbol(
     net_qtys: &[i64],
     mark: i64,
@@ -76,32 +79,49 @@ pub fn settle_symbol(
         .iter()
         .map(|&q| calculate_payment(q, mark, rate))
         .collect();
-
-    // Residual = Σ payments (zero only by luck after independent
-    // flooring). Absorb it on the largest-magnitude position so the
-    // book nets exactly to zero.
-    let residual: i128 =
+    let sum_rounded: i128 =
         payments.iter().map(|&p| p as i128).sum();
+    let net_total: i128 =
+        net_qtys.iter().map(|&q| q as i128).sum();
+    let agg_payment =
+        calculate_payment_i128(net_total, mark, rate);
+    let residual = (sum_rounded - agg_payment)
+        .clamp(i64::MIN as i128, i64::MAX as i128)
+        as i64;
     if residual != 0 {
-        if let Some(idx) = largest_abs_idx(net_qtys) {
-            let adj = (payments[idx] as i128 - residual)
-                .clamp(i64::MIN as i128, i64::MAX as i128)
-                as i64;
-            payments[idx] = adj;
+        if let Some(i) = largest_idx(net_qtys) {
+            payments[i] = payments[i].saturating_sub(residual);
         }
     }
     payments
 }
 
+/// floor(net_qty * mark * rate / 10_000) at i128 width, clamped into
+/// i128's i64 range. The aggregate truncation that per-user payments
+/// are reconciled against in `settle_symbol`.
+fn calculate_payment_i128(
+    net_qty: i128,
+    mark: i64,
+    rate: i64,
+) -> i128 {
+    (net_qty * mark as i128 * rate as i128)
+        .div_euclid(10_000)
+        .clamp(i64::MIN as i128, i64::MAX as i128)
+}
+
 /// Index of the largest-|net_qty| element (first on ties). `None` if
 /// the slice is empty. The residual is parked here because adjusting a
 /// few units against the biggest position is the least material.
-fn largest_abs_idx(net_qtys: &[i64]) -> Option<usize> {
-    net_qtys
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, &q)| (q as i128).unsigned_abs())
-        .map(|(i, _)| i)
+fn largest_idx(net_qtys: &[i64]) -> Option<usize> {
+    let mut best: Option<(usize, i64)> = None;
+    for (i, &q) in net_qtys.iter().enumerate() {
+        let mag = q.saturating_abs();
+        match best {
+            Some((_, b)) if mag <= b => {}
+            _ => best = Some((i, mag)),
+        }
+    }
+    best.map(|(i, _)| i)
 }
 
 pub fn interval_id(
