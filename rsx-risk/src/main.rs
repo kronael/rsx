@@ -1329,24 +1329,19 @@ fn stop_persist_worker(
     handle: std::thread::JoinHandle<()>,
 ) {
     shutdown.store(true, Ordering::Relaxed);
-    // Bounded wait via a watchdog thread so a stuck worker
-    // can't hang the demote. The worker drains pending then
-    // returns; the typical exit window is FLUSH_INTERVAL_MS
-    // (10ms) + one final flush_batch. We give it 5s — well
-    // past the worst-case exponential backoff between
-    // failed flushes.
-    let watch = std::thread::spawn(move || handle.join());
+    // Bounded wait so a stuck worker can't hang the demote. Poll
+    // the handle directly (no watchdog thread). The worker drains
+    // pending then returns; the typical exit window is
+    // FLUSH_INTERVAL (10ms) + one final flush_batch. We give it 5s
+    // — well past the worst-case exponential backoff between failed
+    // flushes; past that we abandon the thread (cleaned up on
+    // process exit).
     let start = std::time::Instant::now();
     loop {
-        if watch.is_finished() {
-            // SAFETY: outer JoinHandle's payload is the
-            // inner thread's join Result; we already
-            // requested shutdown and only want to know
-            // the watchdog itself terminated. Any panic
-            // in the watchdog is logged via panic_handler.
-            if let Err(e) = watch.join() {
+        if handle.is_finished() {
+            if let Err(e) = handle.join() {
                 warn!(
-                    "persist watchdog thread panicked: {:?}",
+                    "persist worker thread panicked: {:?}",
                     e,
                 );
             }
