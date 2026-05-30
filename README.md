@@ -18,10 +18,9 @@
 > *If thou hast never built it, thou can'st never tell:*
 > *The thing impossible may work quite well.*
 
-A perpetual-futures exchange written in Rust, spec-first, by
-one person. **This is an educational and research project — a
-serious one**, built to eventually grow into a solid, usable
-system at v1. Today it's an open study artifact you can run
+A perpetual-futures exchange written in Rust. **This is an
+educational and research project — a serious one**, built to
+eventually grow into a solid, usable system at v1. Today it's an open study artifact you can run
 and read. The next step is to deploy it to serve as an
 exchange for a small set of esoteric special derivatives,
 once the gaps in the "what's not done" list are closed. The

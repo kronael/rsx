@@ -177,6 +177,15 @@ completeness, data flow, WebSocket health, error
 handling. Cross-reference specs. Every manual check
 becomes a test.
 
+## How-To
+
+**[RSX Cookbook: Recipes for Driving the Exchange](28-cookbook.md)**
+
+Task-oriented recipes with the exact commands: boot the exchange, make
+the book two-sided, submit an order, read the WAL, check health/readiness
+for scale-out, inject a fault and watch recovery, run the test tiers. The
+hands-on companion to the design posts.
+
 ## Topics Covered
 
 - Ultra-low-latency design (<50us end-to-end, 100ns matching)
