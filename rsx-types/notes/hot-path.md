@@ -181,9 +181,13 @@ cross-thread fields — shard counters/flags, future egress-tile cursors.)
 - ✅ Busy-spin, pinned: risk + ME (std non-blocking UDP, no runtime on the hot
   loop). Gateway egress tile is the planned addition (see gateway Runtime Model).
 - ✅ SPSC rings (rtrb) for intra-process handoff; per-consumer rings.
-- ⚠️ **CPU setup is being concentrated** into `rsx-types::cpu` (was duplicated
-  across 5 binaries). isolcpus/nohz_full/irqaffinity + mlock + NUMA + hugepages
-  are deployment concerns the shared setup should assert/warn about.
+- ✅ **CPU setup concentrated** into `rsx-types::cpu` — all 5 binaries
+  (gateway/risk/ME/marketdata/mark) call `setup_hot_thread` (pin + stack-warm +
+  `mlockall` + isolation warn) instead of inline `core_affinity`.
+  isolcpus/nohz_full/irqaffinity + NUMA + hugepages remain deployment concerns
+  (the setup warns when a pinned core isn't in isolcpus).
+- ✅ **False-sharing primitive concentrated** into `rsx-types::cache`
+  (`Padded<T>`, `LINE`/`PAD`).
 - ⛳ Forward path: AF_XDP/DPDK for casting RX/TX (kernel bypass); fixed-record
   in-place decode already designed for it.
 - Audit TODO: verify no hot-path malloc/log/syscall; SPSC head/tail padding;
