@@ -10,7 +10,7 @@ BEGIN
         SELECT 1 FROM migrations WHERE id = '001_base_schema'
     ) THEN
 
-        CREATE TABLE positions (
+        CREATE TABLE IF NOT EXISTS positions (
             user_id          INT     NOT NULL,
             symbol_id        INT     NOT NULL,
             long_qty         BIGINT  NOT NULL DEFAULT 0,
@@ -23,14 +23,14 @@ BEGIN
             PRIMARY KEY (user_id, symbol_id)
         );
 
-        CREATE TABLE accounts (
+        CREATE TABLE IF NOT EXISTS accounts (
             user_id       INT    NOT NULL PRIMARY KEY,
             collateral    BIGINT NOT NULL DEFAULT 0,
             frozen_margin BIGINT NOT NULL DEFAULT 0,
             version       BIGINT NOT NULL DEFAULT 0
         );
 
-        CREATE TABLE fills (
+        CREATE TABLE IF NOT EXISTS fills (
             symbol_id      INT     NOT NULL,
             taker_user_id  INT     NOT NULL,
             maker_user_id  INT     NOT NULL,
@@ -43,17 +43,17 @@ BEGIN
             timestamp_ns   BIGINT  NOT NULL
         );
 
-        CREATE UNIQUE INDEX idx_fills_symbol_seq
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_symbol_seq
             ON fills (symbol_id, seq);
 
-        CREATE TABLE tips (
+        CREATE TABLE IF NOT EXISTS tips (
             instance_id INT NOT NULL,
             symbol_id   INT NOT NULL,
             last_seq    BIGINT NOT NULL DEFAULT 0,
             PRIMARY KEY (instance_id, symbol_id)
         );
 
-        CREATE TABLE funding_payments (
+        CREATE TABLE IF NOT EXISTS funding_payments (
             user_id       INT    NOT NULL,
             symbol_id     INT    NOT NULL,
             amount        BIGINT NOT NULL,
@@ -61,16 +61,16 @@ BEGIN
             settlement_ts BIGINT NOT NULL
         );
 
-        CREATE INDEX idx_funding_user_symbol
+        CREATE INDEX IF NOT EXISTS idx_funding_user_symbol
             ON funding_payments (user_id, symbol_id);
 
-        CREATE TABLE insurance_fund (
+        CREATE TABLE IF NOT EXISTS insurance_fund (
             symbol_id INT    NOT NULL PRIMARY KEY,
             balance   BIGINT NOT NULL DEFAULT 0,
             version   BIGINT NOT NULL DEFAULT 0
         );
 
-        CREATE TABLE liquidation_events (
+        CREATE TABLE IF NOT EXISTS liquidation_events (
             user_id      INT     NOT NULL,
             symbol_id    INT     NOT NULL,
             round        INT     NOT NULL,
@@ -82,11 +82,12 @@ BEGIN
             timestamp_ns BIGINT  NOT NULL
         );
 
-        CREATE INDEX idx_liquidation_user_symbol
+        CREATE INDEX IF NOT EXISTS idx_liquidation_user_symbol
             ON liquidation_events (user_id, symbol_id);
 
         INSERT INTO migrations (id)
-            VALUES ('001_base_schema');
+            VALUES ('001_base_schema')
+            ON CONFLICT (id) DO NOTHING;
 
     END IF;
 END;

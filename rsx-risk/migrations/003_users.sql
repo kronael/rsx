@@ -4,7 +4,7 @@ BEGIN
         SELECT 1 FROM migrations WHERE id = '003_users'
     ) THEN
 
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             user_id       SERIAL PRIMARY KEY,
             provider      TEXT NOT NULL,
             provider_sub  TEXT NOT NULL,
@@ -24,7 +24,8 @@ BEGIN
         -- rsx-auth becomes the only writer.
 
         INSERT INTO migrations (id)
-            VALUES ('003_users');
+            VALUES ('003_users')
+            ON CONFLICT (id) DO NOTHING;
 
     END IF;
 END;
