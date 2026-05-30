@@ -823,6 +823,63 @@ curl http://risk:9200/api/v1/margin-verify?user_id=123
 
 ---
 
+## S10b: Eager Warm-Standby — Promotion Staleness & Strict Availability
+
+The risk shard uses an **eager warm-standby** protocol (see
+`rsx-risk/ARCHITECTURE.md` § Leader Election & Failover). Every node
+warms by applying the live main's ME WAL replication stream into its
+own shard, and only calls the NON-BLOCKING `pg_try_advisory_lock` once
+it is caught up. Two accepted, by-design properties follow:
+
+### Accepted: bounded async-replication staleness window on promotion
+
+Replication from the main is **asynchronous** — there is no sync-ack /
+PG-commit-tip fence between the main applying a record and the
+replication server streaming it to standbys (founder chose strict;
+no sync fence). So a narrow window exists:
+
+```
+main applies fill at seq K  (position updated in-RAM)
+main dies BEFORE the ME replication server streams K to standbys
+→ a promoted warm node is caught up only to K-1
+```
+
+- **Bound:** at most the in-flight replication lag at the instant of
+  the main's death (one WAL flush interval, ~10ms, plus network +
+  stream-batch latency). It is NOT unbounded — the warm node was
+  applying the live stream up to that point.
+- **No correctness loss:** fills are the source of truth and are
+  durable in ME's WAL. On going LIVE the new main's ME `CastReceiver`
+  resumes from its tip; any K it missed arrives as a normal
+  live record or via FAULTED replay, and `process_fill` dedups on the
+  per-symbol tip (invariant #5). Solvency is never at risk — the gap
+  is transient lag, not lost state.
+- **Why accepted:** a sync-ack fence would add a round-trip to every
+  record on the main's hot path purely to shrink an already-bounded,
+  self-healing window. The founder chose the strict-no-fence tradeoff.
+
+### Accepted: strict no-caught-up ⇒ no promotion (availability note)
+
+Promotion is **catch-up-only**: a node that is never caught up never
+attempts the advisory lock. There is NO cold-promote fallback.
+
+- **Consequence:** if the ME replication source is unreachable and no
+  standby ever reaches caught-up, NO node promotes — the shard stays
+  unavailable rather than promote a node with an unknown-staleness
+  view. This is intentional (correctness over availability for the
+  risk single-writer).
+- **Operational implication:** alert on "no advisory-lock holder for
+  shard N for > T" the same way you alert on split-brain. Recovery is
+  to restore the ME replication endpoint (`RSX_ME_REPLICATION_ADDR`),
+  after which the warmest standby catches up and promotes on its own.
+- **No double-main:** the advisory lock remains the SOLE single-main
+  fence (invariant #10). Multiple nodes may be caught up simultaneously
+  and all call `try_acquire`; Postgres grants it to exactly one. Catch-
+  up only gates *when* `try_acquire` is called — it never replaces the
+  lock, so it can never open a double-main window.
+
+---
+
 ## S15: Full Network Partition (All Components Isolated) for 1 Minute
 
 ### Preconditions

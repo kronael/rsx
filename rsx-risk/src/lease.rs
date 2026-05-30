@@ -5,11 +5,15 @@ use tracing::warn;
 
 /// Postgres advisory-lock-backed shard lease.
 ///
-/// Invariant #10 (at most one main per shard): `pg_advisory_lock(shard_id)`
-/// is exclusive per Postgres cluster; every candidate main blocks on
-/// `acquire()` at the top of `main.rs::run_main` before doing any work,
-/// so two main processes for the same `shard_id` cannot coexist against
-/// the same database.
+/// Invariant #10 (at most one main per shard): the advisory lock on
+/// `shard_id` is exclusive per Postgres cluster. In the eager
+/// warm-standby protocol every candidate warms first, then calls the
+/// NON-BLOCKING `try_acquire()` only once caught up (see
+/// `main.rs::run_warm_catchup`). Postgres grants the lock to exactly
+/// one caller, so two main processes for the same `shard_id` cannot
+/// coexist. Catch-up gates *when* `try_acquire` is called; the lock
+/// itself remains the sole single-main fence. `acquire()` (blocking)
+/// is retained for callers that want to park rather than poll.
 pub struct AdvisoryLease {
     shard_id: u32,
     lease_acquired: bool,

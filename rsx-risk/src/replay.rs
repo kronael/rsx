@@ -243,23 +243,129 @@ pub async fn load_from_postgres(
     })
 }
 
+/// Apply one ME WAL record to the shard. Shared by `replay_from_wal`
+/// (boot WAL replay) and the warm-catchup loop in `main.rs` (live ME
+/// replication stream). Returns `true` if the record was a FILL (so
+/// callers can count fills replayed).
+///
+/// This is the authoritative state-apply path: it mutates shard
+/// position/freeze/mark/index/config state only — no egress, no
+/// liquidation halt/resume, no latency traces. Those live in the LIVE
+/// loop (`run_main`) because they are forward-to-gateway side effects,
+/// not state. Idempotent re-apply is safe: `process_fill` dedups on the
+/// per-symbol tip (invariant #5), and freeze insert/release is keyed by
+/// order_id.
+pub fn apply_record(
+    shard: &mut RiskShard,
+    record_type: u16,
+    payload: &[u8],
+) -> bool {
+    use rsx_cast::decode_payload;
+    use rsx_messages::decode_fill_record;
+    use rsx_messages::BboRecord;
+    use rsx_messages::ConfigAppliedRecord;
+    use rsx_messages::OrderAcceptedRecord;
+    use rsx_messages::OrderCancelledRecord;
+    use rsx_messages::OrderDoneRecord;
+    use rsx_messages::OrderFailedRecord;
+    use rsx_messages::RECORD_BBO;
+    use rsx_messages::RECORD_CONFIG_APPLIED;
+    use rsx_messages::RECORD_FILL;
+    use rsx_messages::RECORD_ORDER_ACCEPTED;
+    use rsx_messages::RECORD_ORDER_CANCELLED;
+    use rsx_messages::RECORD_ORDER_DONE;
+    use rsx_messages::RECORD_ORDER_FAILED;
+
+    match record_type {
+        RECORD_FILL => {
+            if let Some(fill) = decode_fill_record(payload) {
+                shard.process_fill(&FillEvent {
+                    seq: fill.seq,
+                    symbol_id: fill.symbol_id,
+                    taker_user_id: fill.taker_user_id,
+                    maker_user_id: fill.maker_user_id,
+                    price: fill.price.0,
+                    qty: fill.qty.0,
+                    taker_side: fill.taker_side,
+                    timestamp_ns: fill.ts_ns,
+                });
+                return true;
+            }
+        }
+        RECORD_ORDER_DONE => {
+            if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
+                shard.release_frozen_for_order(
+                    rec.user_id,
+                    rec.order_id_hi,
+                    rec.order_id_lo,
+                );
+            }
+        }
+        RECORD_ORDER_CANCELLED => {
+            if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
+                shard.release_frozen_for_order(
+                    rec.user_id,
+                    rec.order_id_hi,
+                    rec.order_id_lo,
+                );
+            }
+        }
+        RECORD_ORDER_FAILED => {
+            if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
+                shard.release_frozen_for_order(
+                    rec.user_id,
+                    rec.order_id_hi,
+                    rec.order_id_lo,
+                );
+            }
+        }
+        RECORD_ORDER_ACCEPTED => {
+            if let Some(rec) = decode_payload::<OrderAcceptedRecord>(payload) {
+                if shard.user_in_shard(rec.user_id)
+                    && rec.reduce_only == 0
+                {
+                    shard.replay_freeze_order(
+                        rec.user_id,
+                        rec.order_id_hi,
+                        rec.order_id_lo,
+                        rec.price,
+                        rec.qty,
+                        rec.symbol_id,
+                    );
+                }
+            }
+        }
+        RECORD_BBO => {
+            if let Some(rec) = decode_payload::<BboRecord>(payload) {
+                shard.process_bbo(&crate::types::BboUpdate {
+                    seq: rec.seq,
+                    symbol_id: rec.symbol_id,
+                    bid_px: rec.bid_px.0,
+                    bid_qty: rec.bid_qty.0,
+                    ask_px: rec.ask_px.0,
+                    ask_qty: rec.ask_qty.0,
+                });
+            }
+        }
+        RECORD_CONFIG_APPLIED => {
+            if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
+                shard.process_config_applied(
+                    rec.symbol_id,
+                    rec.config_version,
+                );
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
 pub fn replay_from_wal(
     shard: &mut RiskShard,
     wal_dir: &Path,
     symbol_ids: &[u32],
 ) -> std::io::Result<u64> {
-    use rsx_cast::decode_payload;
-    use rsx_messages::decode_fill_record;
-    use rsx_messages::OrderAcceptedRecord;
-    use rsx_messages::OrderCancelledRecord;
-    use rsx_messages::OrderDoneRecord;
-    use rsx_messages::OrderFailedRecord;
     use rsx_cast::WalReader;
-    use rsx_messages::RECORD_ORDER_ACCEPTED;
-    use rsx_messages::RECORD_ORDER_FAILED;
-    use rsx_messages::RECORD_ORDER_CANCELLED;
-    use rsx_messages::RECORD_ORDER_DONE;
-    use rsx_messages::RECORD_FILL;
 
     let mut replayed = 0u64;
     for &sid in symbol_ids {
@@ -275,70 +381,12 @@ pub fn replay_from_wal(
             sid, start_seq, wal_dir,
         )?;
         while let Some(raw) = reader.next()? {
-            match raw.header.record_type {
-                RECORD_FILL => {
-                    let fill = match decode_fill_record(
-                        &raw.payload,
-                    ) {
-                        Some(f) => f,
-                        None => continue,
-                    };
-                    shard.process_fill(&FillEvent {
-                        seq: fill.seq,
-                        symbol_id: fill.symbol_id,
-                        taker_user_id: fill.taker_user_id,
-                        maker_user_id: fill.maker_user_id,
-                        price: fill.price.0,
-                        qty: fill.qty.0,
-                        taker_side: fill.taker_side,
-                        timestamp_ns: fill.ts_ns,
-                    });
-                    replayed += 1;
-                }
-                RECORD_ORDER_DONE => {
-                    if let Some(rec) = decode_payload::<OrderDoneRecord>(&raw.payload) {
-                        shard.release_frozen_for_order(
-                            rec.user_id,
-                            rec.order_id_hi,
-                            rec.order_id_lo,
-                        );
-                    }
-                }
-                RECORD_ORDER_CANCELLED => {
-                    if let Some(rec) = decode_payload::<OrderCancelledRecord>(&raw.payload) {
-                        shard.release_frozen_for_order(
-                            rec.user_id,
-                            rec.order_id_hi,
-                            rec.order_id_lo,
-                        );
-                    }
-                }
-                RECORD_ORDER_FAILED => {
-                    if let Some(rec) = decode_payload::<OrderFailedRecord>(&raw.payload) {
-                        shard.release_frozen_for_order(
-                            rec.user_id,
-                            rec.order_id_hi,
-                            rec.order_id_lo,
-                        );
-                    }
-                }
-                RECORD_ORDER_ACCEPTED => {
-                    if let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) {
-                        if shard.user_in_shard(rec.user_id)
-                            && rec.reduce_only == 0
-                        {
-                            shard.replay_freeze_order(
-                                rec.user_id,
-                                rec.order_id_hi,
-                                rec.order_id_lo,
-                                rec.price,
-                                rec.qty,
-                                rec.symbol_id,
-                            );
-                        }
-                    }
-                }
-                _ => {}
+            if apply_record(
+                shard,
+                raw.header.record_type,
+                &raw.payload,
+            ) {
+                replayed += 1;
             }
         }
     }
