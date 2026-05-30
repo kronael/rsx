@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tracing::info;
 use tracing::warn;
 
@@ -105,7 +106,7 @@ fn handle_replay(
                  WAL not flushed (attempt {tip_retries}), retry 15ms"
             );
             std::thread::sleep(
-                std::time::Duration::from_millis(15),
+                Duration::from_millis(15),
             );
         } else {
             break tip;
@@ -507,7 +508,7 @@ fn main() {
                 );
             }
 
-            monoio::time::sleep(std::time::Duration::ZERO).await;
+            monoio::time::sleep(Duration::ZERO).await;
         }
     });
 }
@@ -599,7 +600,7 @@ fn handle_fill(
     max_outbound: usize,
 ) {
     let mut st = state.borrow_mut();
-    let mut trade_msg: Option<std::sync::Arc<str>> = None;
+    let mut trade_msg: Option<Arc<str>> = None;
     let update = match st.book_mut(rec.symbol_id) {
         Some(book) => {
             let update = book.apply_fill_by_order_id(
@@ -670,9 +671,9 @@ fn broadcast_updates(
         }
         None => return,
     };
-    let delta_msg: std::sync::Arc<str> =
+    let delta_msg: Arc<str> =
         serialize_l2_delta(&delta).into();
-    let mut bbo_msg: Option<std::sync::Arc<str>> = None;
+    let mut bbo_msg: Option<Arc<str>> = None;
     if let Some(bbo) = bbo {
         let changed = match st.last_bbo_mut(symbol_id) {
             Some(last) => {

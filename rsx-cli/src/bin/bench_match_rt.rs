@@ -20,6 +20,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
+use std::time::Duration;
 
 /// Thin newtype that lets a raw `OrderMessage` ride the
 /// CastSender path. Same memory layout — `repr(C)` —
@@ -357,7 +358,7 @@ fn main() {
                         let _ = gw_sender.tick();
                         gw_sender.recv_control();
                         if wait_start.elapsed()
-                            > std::time::Duration::from_millis(50)
+                            > Duration::from_millis(50)
                         {
                             timed_out = true;
                             break;
