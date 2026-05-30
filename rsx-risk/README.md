@@ -45,11 +45,50 @@ For replica mode, add `RSX_RISK_IS_REPLICA=true`.
 
 ## Deployment
 
-- One instance per shard (user_id % shard_count == shard_id)
+- One instance per shard; users map to shards via fixed virtual shards +
+  a `shardmap` (`hash(user_id) % N_VSHARDS` → node), **not** live modulo —
+  see `specs/2/28-risk.md` §Sharding & scale-out
 - Pin to dedicated CPU core (via `core_affinity` + `RSX_RISK_CORE_ID`)
 - Needs Postgres for state persistence and advisory lock
 - Connects to Gateway, ME(s), and Mark via casting/UDP
 - Run a replica alongside for failover (~500ms detection)
+
+## Postgres & migrations
+
+**Expected setup.** Risk needs one Postgres reachable at `DATABASE_URL`
+(dev default `postgres://rsx:rsx@127.0.0.1:5432/rsx`). It holds the durable
+state — accounts, positions, frozen-margin records — that the in-RAM hot
+state is rebuilt from on boot. No other service writes risk's tables.
+Postgres is **off the hot path**: the pinned loop never touches it; a tokio
+sidecar drains the persist ring and write-behinds (see Internal architecture).
+
+**Migrations run at boot, automatically.** Each node connects, takes a
+dedicated `MIGRATION_LOCK_KEY` advisory lock (distinct from the per-shard
+main lock), runs the pending SQL, then releases it. The lock **serializes
+concurrent node boots** so migrations can't race — necessary under the
+eager warm-standby protocol, where the per-shard main lock is won late
+(after catch-up), so every node would otherwise migrate at once. Files
+apply in order:
+
+| File | Adds |
+|------|------|
+| `001_base_schema.sql` | accounts, positions, fills |
+| `002_rename_tables.sql` | table renames (not idempotent — relies on the lock) |
+| `003_users.sql` | users table |
+| `004_frozen_orders.sql` | frozen-margin durable records |
+
+**Boot sequence** — identical for a fresh shard, a replica, or a migration
+target; there is no separate path:
+
+1. Connect to Postgres; run migrations under `MIGRATION_LOCK_KEY`.
+2. Load state from Postgres (accounts/positions) **without** the shard main
+   lock — every node is a warm candidate.
+3. Replay the local WAL, then warm-catch-up from the ME replication stream
+   to the tip.
+4. Once caught up, take the non-blocking per-shard advisory lock. Win → go
+   `Live`; lose → stay a warm standby and retry.
+
+Moving a vshard between nodes (migration) reuses exactly this path.
 
 ## Internal architecture
 
@@ -106,8 +145,9 @@ See `specs/2/42-testing-risk.md`.
   margin calculation, position tracking, funding,
   liquidation, persistence, replication.
 - **Why** — [`notes/`](notes/): design rationale for
-  non-obvious choices (SPSC ring usage, UDS sidecar
-  boundary). Read when a decision looks arbitrary.
+  non-obvious choices (SPSC ring usage, the persist-sidecar
+  boundary, UDS-vs-shared-mem transport study). Read when a
+  decision looks arbitrary.
 
 ## See Also
 

@@ -13,8 +13,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 - **GATEWAY-LATENCY** (HIGH, *mitigated*) — egress-drain poll 10ms→500µs shipped
   (`5a578d3`); the zero-poll tile-split is the scale path, deferred per founder
   ("make the tile correct, don't split now"). Detail below.
-- **MIGRATIONS-UNLOCKED** (LOW) — `run_migrations` runs before the advisory lock
-  under the eager-replica protocol. Detail below.
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
 BOOK-BBO-COMPRESSED-INDEX, BOOK-SCAN-NEXT-BID-OFFBY, BOOK-SLAB-FREE-UNGUARDED,
@@ -73,18 +71,6 @@ handler), which dropped WS single-stream p50 from 11.5ms to 2.25ms
 the casting-recv response path to a dedicated pinned busy-spin thread (off the
 reactor) → SPSC ring → WS writer tasks (same pattern as Risk/ME). Biggest single
 e2e win; deferred per founder ("don't split now").
-
-## MIGRATIONS-UNLOCKED — run_migrations runs before the advisory lock (LOW)
-
-**Status: OPEN.** Found 2026-05-30 building the eager replica. With the eager
-warm-standby protocol the advisory lock is acquired LATE (only after catch-up,
-in `run_warm_catchup`), so `run_migrations` (`rsx-risk/src/main.rs` ~391) now
-runs on EVERY node at boot WITHOUT the lock. `002_rename_tables.sql` is not
-idempotent, so concurrent standby startups (or a re-run) can error. Low severity
-(startup edge; demo usually single-node). **Fix:** run migrations under a
-separate short-lived `pg_advisory_lock` (distinct key from the shard-main lock)
-so exactly one node migrates at a time, independent of leader election; or make
-the migrations idempotent.
 
 ## Deferred book-session bugs (detail)
 

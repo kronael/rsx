@@ -307,6 +307,7 @@ start: [1-architecture.md](specs/2/1-architecture.md),
 | | |
 |---|---|
 | [docs/concepts/](docs/concepts/index.md) | the design choices, each explained — *why* it's the right call |
+| [docs/concepts/glossary.md](docs/concepts/glossary.md) | terms (casting, WAL, vshard, tile, BBO…) — one line each + read-more links |
 | [blog/](blog/README.md) | engineering posts + the build manual ([vibe-book](blog/29-building-rsx.md)) + [ops cookbook](blog/28-cookbook.md) |
 
 ## Reference

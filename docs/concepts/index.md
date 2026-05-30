@@ -43,3 +43,5 @@ specs. For *how fast it goes*, read the benchmark tables.
 - [sharding-axes](sharding-axes.md) — Two orthogonal scale-out
   axes: Risk shards by user_id, ME shards by symbol. Gateway
   is stateless. Adding users and adding symbols are independent.
+- [glossary](glossary.md) — RSX terms (casting, WAL, vshard,
+  tile, BBO, mark vs index…), one line each + read-more links.
