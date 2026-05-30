@@ -1,5 +1,4 @@
 use rsx_cast::as_bytes;
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
@@ -1329,7 +1328,6 @@ fn run_replica(
         .unwrap_or_else(|_| "./tmp/wal".into());
 
     let mut last_poll_ms = 0u64;
-    let promoted = Arc::new(AtomicBool::new(false));
 
     info!(
         "replica {} running, polling for promotion",
@@ -1342,12 +1340,29 @@ fn run_replica(
 
         // Buffer fills from ME
         loop {
-            let (preamble, payload) = match me_receiver
-                .try_recv()
-            {
-                CastRecv::Data(h, p) => (h, p),
-                CastRecv::Empty => break,
-                CastRecv::Faulted {
+            let recv = me_receiver.try_recv_with(|preamble, payload| {
+                if preamble.record_type == RECORD_FILL {
+                    if let Some(fill) =
+                        decode_payload::<FillRecord>(payload)
+                    {
+                        let fill_event = FillEvent {
+                            seq: fill.seq,
+                            symbol_id: fill.symbol_id,
+                            taker_user_id: fill.taker_user_id,
+                            maker_user_id: fill.maker_user_id,
+                            price: fill.price.0,
+                            qty: fill.qty.0,
+                            taker_side: fill.taker_side,
+                            timestamp_ns: fill.ts_ns,
+                        };
+                        shard.buffer_fill_for_replica(fill_event);
+                    }
+                }
+            });
+            match recv {
+                CastRecvWith::Data => {}
+                CastRecvWith::Empty => break,
+                CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -1361,9 +1376,8 @@ fn run_replica(
                         &wal_dir,
                     );
                     me_receiver.reset_after_replay(new_tip);
-                    continue;
                 }
-                CastRecv::Reconnect { last_delivered_seq } => {
+                CastRecvWith::Reconnect { last_delivered_seq } => {
                     let new_tip = handle_replay(
                         "replica.me",
                         "RSX_ME_REPLICATION_ADDR",
@@ -1373,34 +1387,28 @@ fn run_replica(
                         &wal_dir,
                     );
                     me_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-            };
-            if preamble.record_type == RECORD_FILL {
-                if let Some(fill) = decode_payload::<FillRecord>(&payload) {
-                    let fill_event = FillEvent {
-                        seq: fill.seq,
-                        symbol_id: fill.symbol_id,
-                        taker_user_id: fill.taker_user_id,
-                        maker_user_id: fill.maker_user_id,
-                        price: fill.price.0,
-                        qty: fill.qty.0,
-                        taker_side: fill.taker_side,
-                        timestamp_ns: fill.ts_ns,
-                    };
-                    shard.buffer_fill_for_replica(fill_event);
                 }
             }
         }
 
         // Receive tip sync from main
         loop {
-            let (preamble, payload) = match tip_receiver
-                .try_recv()
-            {
-                CastRecv::Data(h, p) => (h, p),
-                CastRecv::Empty => break,
-                CastRecv::Faulted {
+            let recv = tip_receiver.try_recv_with(|preamble, payload| {
+                if preamble.record_type == 0x20 {
+                    if let Some(msg) =
+                        decode_payload::<TipSyncMessage>(payload)
+                    {
+                        shard.apply_tip_from_main(
+                            msg.symbol_id,
+                            msg.tip,
+                        );
+                    }
+                }
+            });
+            match recv {
+                CastRecvWith::Data => {}
+                CastRecvWith::Empty => break,
+                CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -1414,9 +1422,8 @@ fn run_replica(
                         &wal_dir,
                     );
                     tip_receiver.reset_after_replay(new_tip);
-                    continue;
                 }
-                CastRecv::Reconnect { last_delivered_seq } => {
+                CastRecvWith::Reconnect { last_delivered_seq } => {
                     let new_tip = handle_replay(
                         "replica.tip",
                         "RSX_RISK_REPLICATION_ADDR",
@@ -1426,15 +1433,6 @@ fn run_replica(
                         &wal_dir,
                     );
                     tip_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-            };
-            if preamble.record_type == 0x20 {
-                if let Some(msg) = decode_payload::<TipSyncMessage>(&payload) {
-                    shard.apply_tip_from_main(
-                        msg.symbol_id,
-                        msg.tip,
-                    );
                 }
             }
         }
@@ -1451,7 +1449,6 @@ fn run_replica(
                 info!(
                     "replica acquired lock, promoting"
                 );
-                promoted.store(true, Ordering::Release);
                 break;
             }
         }
