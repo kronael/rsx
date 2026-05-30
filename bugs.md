@@ -29,6 +29,115 @@ ignored somewhere on the GW→risk→ME path. Gateway parses arr[5]→tif correc
 Effect on bench: the latency harness uses GTC + explicit cancel-after instead
 (book hygiene), which works; IOC would have been simpler. Triage only — not
 fixed (no explicit fix request).
+**Refined 2026-05-30 (oracle bug-hunt):** the matching CORE is correct — an
+IOC residual is sent to `OrderDone` at `rsx-book/src/matching.rs:188` and the
+empty-book IOC test covers it. So the bug is NOT the algorithm; it's in the
+GW→risk→ME *propagation* of `tif` (a field is lost/defaulted to GTC somewhere
+between the gateway parse and the book call). Narrows the search to wire
+decode/encode at a shard boundary.
+
+## Oracle bug-hunt 2026-05-30 (risk / matching / book / gateway)
+
+4 background codex (gpt-5.5) passes, one per crate. Each finding below was
+spot-verified against the source (confidence tagged). **None fixed** — review
+queue. `[V]`=verified real, `[D]`=by-design/known-limitation (logged for
+tracking, likely not actionable), `[?]`=needs one more verification.
+
+### High
+
+- **RISK-NO-PRICE-QTY-GUARD `[?]` (potential solvency).** `shard.rs:553`
+  `process_order` → `margin.check_order` (`margin.rs:116`) computes
+  `notional = price*qty` with **no `price>0 / qty>0` guard**, and the
+  `rsx_types::validate_order` helper is called **nowhere** on the live path.
+  A negative qty/price would yield negative `margin_needed` → a negative
+  freeze that *increases* available margin. VERIFY whether the gateway (or ME
+  config check) rejects `price<=0 / qty<=0` before risk; I could not locate
+  such a guard. If absent → real solvency hole. Fix: reject non-positive
+  price/qty at the gateway entry (cite trust boundary) and/or defensively in
+  margin.
+- **ME-NEXT-SEQ-REGRESSION `[V]`.** `rsx-matching/src/main.rs:333` — after a
+  snapshot loads and **zero** WAL records replay past `start_seq`, the `Ok(_)`
+  branch leaves `next_seq = 1` ("writer is fresh") even though the snapshot
+  implies prior on-disk seqs. Next live append reuses/regresses WAL seqs →
+  violates invariant #5 (tips monotonic). Fix: `set_next_seq(start_seq)` even
+  when zero records replayed.
+- **ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD `[?]`.** `main.rs:303` — snapshot
+  restore rebuilds the book but not `order_index` or `dedup`. After restart:
+  cancels for pre-snapshot resting orders miss, and order IDs accepted before
+  the snapshot can be re-accepted (dup). Fix: scan snapshot orders into
+  `order_index`; persist+restore dedup (or replay `RECORD_ORDER_ACCEPTED`).
+
+### Medium
+
+- **BOOK-BBO-COMPRESSED-INDEX `[V]`.** `book.rs:184-194` (`best_bid/ask`
+  update) and `scan_next_bid/ask` (`339-378`) compare the **compressed tick
+  index** as a price proxy (`tick > best_bid_tick`). The compression map is
+  *sawtooth*, not globally price-monotonic: zone-1 bids get higher indices
+  than zone-0 bids but represent *lower* prices (verified by hand: mid=100,
+  a 95 bid → index 10 while a 99 bid → index 3). So with resting orders in
+  >1 zone, `best_bid/ask` and crossing detection are wrong. Fix: track best
+  by raw price per side, or make `price_to_index` globally monotonic.
+- **BOOK-SCAN-NEXT-BID-OFFBY `[V]`.** `book.rs:340` — `scan_next_bid` guards
+  `if from < 2 { return NONE }`; for `from==1` it should still check tick 0.
+  Cancelling the best bid at tick 1 with a resting bid at tick 0 drops that
+  bid from the BBO. Fix: guard `from == 0 || from == NONE`.
+- **RISK-FREEZE-LEAK-ON-ME-SEND-FAIL `[V]`.** `main.rs:1079,1082` — the
+  in-memory freeze is inserted pre-send (correct pre-trade gate); if the ME
+  send fails or no `me_sender` exists for the symbol, the path only logs, so
+  no confirming `OrderAccepted`/release ever arrives → the in-memory freeze
+  leaks margin (distinct from ORPHAN-FREEZE, which was the *durable* PG side).
+  Fix: `release_frozen_for_order` + reply ORDER_FAILED on send error / missing
+  sender.
+- **GW-U64-TRUNCATION `[V]`.** `records.rs:91` `as_u32` truncates JSON numbers
+  > `u32::MAX` (e.g. 4294967296 → 0) → wrong symbol/user routing. Fix:
+  range-check `n <= u32::MAX` before the cast.
+- **GW-WS-FIN-IGNORED `[V]`.** `ws.rs:338` ignores the FIN bit — a fragmented
+  text frame (`FIN=0, opcode=1`) is treated as a complete message → an order
+  can be parsed from a partial frame. Fix: reject `FIN=0` or reassemble.
+- **GW-PENDING-BEFORE-SEND `[V]`.** `handler.rs:459` inserts the pending order
+  (+ `record_success`) before the cast send at 490; on send failure it only
+  logs → stuck pending, client never told. Fix: send first, or roll back
+  pending + surface the failure.
+- **GW-CANCEL-SEQ-GAP `[V]`.** `handler.rs:692` advances the cast seq even when
+  `send_raw` fails (695) → local seq gap + silently dropped cancel. Fix:
+  `advance_seq()` only after a successful send.
+- **GW-COMPLETION-ROUTE-BY-USERID `[V]`.** `route.rs:131` routes a completion
+  by `rec.user_id` instead of pairing on the pending `order_id` → a wrong
+  user_id misroutes the update and removes the real user's pending order. Fix:
+  look up pending by order_id, then route to `pending.user_id`.
+- **ME-REDUCEONLY-IOC-FILLEDQTY `[?]`.** `rsx-book/src/matching.rs:190` —
+  `filled = order.qty - order.remaining_qty` counts the reduce-only clamp as
+  an execution, so an empty-book reduce-only IOC can report nonzero filled
+  qty. Fix: compute fills from actually-matched qty, separate from the clamp.
+
+### Low / by-design
+
+- **BOOK-FAR-PRICE-BUCKETING `[D]`.** `compression.rs:48,118` — compression
+  buckets far prices (10/100/1000 ticks per slot), so distinct prices share a
+  level → price-time priority is coarse for far-from-mid orders. Intentional
+  compressed-book tradeoff; logged as a known design risk, not a defect.
+- **BOOK-STALE-HANDLE-REUSE `[?]`.** `book.rs:241` — `cancel_order` only checks
+  `is_active()`; the slab reuses freed indices, so a stale handle could alias a
+  reused slot. Safe only if the ME's `order_index` never retains a freed
+  handle. Fix (defensive): generational handles or `(handle, order_id)` check.
+- **BOOK-SLAB-FREE-UNGUARDED `[V]` (hardening).** `slab.rs:49` — `free()`
+  accepts any in-bounds index → double-free / freelist cycle possible. Add a
+  debug assert (`idx < bump_next` and not already free).
+- **RISK-INDEX-QTY-OVERFLOW `[V]`.** `price.rs:18` sums `bid_qty + ask_qty`
+  before widening to i128 → debug panic / release wrap on huge quantities.
+  Fix: widen to i128 before the add.
+- **GW-WS-UNMASKED-ACCEPTED `[V]` (hardening).** `ws.rs:339` accepts unmasked
+  client frames (RFC requires client→server masking). Fix: reject `!masked`
+  inbound.
+- **RISK-FUNDING-CROSS-SHARD `[D]`.** `shard.rs:955` — `settle_symbol` zeroes
+  only the shard-local rounding residual; global zero-sum (invariant #9) isn't
+  guaranteed across shards. Known multi-shard gap (demo is single-shard).
+- **GW-SINGLE-SHARD-NO-ROUTING `[D]`.** `main.rs:166` — one `RSX_RISK_CAST_ADDR`
+  sender, no `user_id % shard_count` selection. Known single-shard demo limit.
+- **ME-REPLAY-SKIPS-DOWNSTREAM `[?]`.** `replay.rs:126` — FAULTED/DXS replay
+  rebuilds the local book + ME WAL but does not re-send recovered
+  fills/done/BBO to risk/marketdata. May be by-design (each consumer recovers
+  independently via its own replay) — confirm before treating as a bug.
 
 ## GATEWAY-LATENCY — casting-recv poll-loop starvation dominates e2e (HIGH)
 
