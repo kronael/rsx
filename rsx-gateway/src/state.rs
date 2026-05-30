@@ -4,6 +4,7 @@ use crate::rate_limit::RateLimiter;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use rsx_types::SymbolConfig;
 
@@ -17,7 +18,7 @@ pub const IP_LIMITER_MAX: usize = 10_000;
 /// Per-connection state.
 pub struct ConnectionState {
     pub user_id: u32,
-    pub outbound: VecDeque<String>,
+    pub outbound: VecDeque<Arc<str>>,
     pub last_activity_ns: u64,
     pub last_heartbeat_sent_ns: u64,
     pub last_heartbeat_recv_ns: u64,
@@ -158,7 +159,7 @@ impl GatewayState {
     pub fn push_to_user(
         &mut self,
         user_id: u32,
-        msg: String,
+        msg: Arc<str>,
     ) {
         for conn in self.connections.values_mut() {
             if conn.user_id == user_id {
@@ -171,8 +172,8 @@ impl GatewayState {
         &mut self,
         ts_ms: u64,
     ) {
-        let msg =
-            format!("{{\"H\":[{}]}}", ts_ms);
+        let msg: Arc<str> =
+            format!("{{\"H\":[{}]}}", ts_ms).into();
         for conn in self.connections.values_mut() {
             conn.outbound.push_back(msg.clone());
         }
@@ -282,7 +283,7 @@ impl GatewayState {
     pub fn drain_outbound(
         &mut self,
         conn_id: u64,
-    ) -> Vec<String> {
+    ) -> Vec<Arc<str>> {
         if let Some(conn) =
             self.connections.get_mut(&conn_id)
         {

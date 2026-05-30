@@ -10,6 +10,7 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
     let mut bytes = [0u8; 16];
@@ -58,6 +59,7 @@ pub fn route_fill(
         rec.taker_order_id_lo,
         if rec.taker_ts_ns == 0 { rec.ts_ns } else { rec.taker_ts_ns }
     );
+    let msg: Arc<str> = msg.into();
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());
     st.push_to_user(rec.maker_user_id, msg);
@@ -83,7 +85,7 @@ pub fn route_order_inserted(
         reason: 0,
     });
     let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
+    st.push_to_user(rec.user_id, msg.into());
 }
 
 pub fn route_order_done(
@@ -107,7 +109,7 @@ pub fn route_order_done(
     let oid_bytes_val =
         oid_bytes(rec.order_id_hi, rec.order_id_lo);
     let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
+    st.push_to_user(rec.user_id, msg.into());
     st.pending.remove(&oid_bytes_val);
 }
 
@@ -126,7 +128,7 @@ pub fn route_order_cancelled(
     let oid_bytes_val =
         oid_bytes(rec.order_id_hi, rec.order_id_lo);
     let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
+    st.push_to_user(rec.user_id, msg.into());
     st.pending.remove(&oid_bytes_val);
 }
 
@@ -144,7 +146,7 @@ pub fn route_liquidation(
         slip_bps: rec.slip_bps,
     });
     let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
+    st.push_to_user(rec.user_id, msg.into());
 }
 
 pub fn route_order_failed(
@@ -162,6 +164,6 @@ pub fn route_order_failed(
     let oid_bytes_val =
         oid_bytes(rec.order_id_hi, rec.order_id_lo);
     let mut st = state.borrow_mut();
-    st.push_to_user(rec.user_id, msg);
+    st.push_to_user(rec.user_id, msg.into());
     st.pending.remove(&oid_bytes_val);
 }

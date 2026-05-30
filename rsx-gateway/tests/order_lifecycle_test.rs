@@ -72,7 +72,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
         reason: 0,
     });
     let out = state.borrow_mut().drain_outbound(conn_taker);
-    assert_eq!(out, vec![expected_inserted]);
+    assert_eq!(out, vec![expected_inserted.into()]);
 
     let fill = FillRecord {
         seq: 2,
@@ -106,8 +106,8 @@ taker_ts_ns: 0,
     });
     let out_taker = state.borrow_mut().drain_outbound(conn_taker);
     let out_maker = state.borrow_mut().drain_outbound(conn_maker);
-    assert_eq!(out_taker, vec![expected_fill.clone()]);
-    assert_eq!(out_maker, vec![expected_fill]);
+    assert_eq!(out_taker, vec![expected_fill.clone().into()]);
+    assert_eq!(out_maker, vec![expected_fill.into()]);
 
     let done = OrderDoneRecord {
         seq: 3,
@@ -134,7 +134,7 @@ taker_ts_ns: 0,
         reason: 0,
     });
     let out = state.borrow_mut().drain_outbound(conn_taker);
-    assert_eq!(out, vec![expected_done]);
+    assert_eq!(out, vec![expected_done.into()]);
     assert!(state.borrow().pending.is_empty());
 }
 
@@ -184,6 +184,6 @@ fn order_cancel_routes_and_clears_pending() {
         reason: 0,
     });
     let out = state.borrow_mut().drain_outbound(conn);
-    assert_eq!(out, vec![expected]);
+    assert_eq!(out, vec![expected.into()]);
     assert!(state.borrow().pending.is_empty());
 }
