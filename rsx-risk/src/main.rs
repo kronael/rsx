@@ -62,29 +62,11 @@ const RESTART_BACKOFF_SECS: &[u64] = &[
 /// Max consecutive crashes before the shard gives up.
 const MAX_RESTARTS: usize = 8;
 
-/// Role the shard process is currently playing. Driven by
-/// `main()`'s state-machine loop; `run_replica` returns when
-/// it has acquired the advisory lock (→ Main), `run_main`
-/// returns when it has lost the lease (→ Replica) or been
-/// asked to shut down. No recursion, no env mutation.
-#[derive(Clone, Copy, Debug)]
-enum Role {
-    Replica,
-    Main,
-}
-
-/// Transition signalled by `run_replica` on return.
-#[derive(Debug)]
-enum ReplicaTransition {
-    /// Advisory lock acquired; main() should switch to Main.
-    Promote,
-}
-
 /// Transition signalled by `run_main` on return.
 #[derive(Debug)]
 enum MainTransition {
-    /// Advisory lease lost; main() should switch to Replica
-    /// and resume polling.
+    /// Advisory lease lost; main() should loop and call
+    /// `run_main` again, which re-blocks on the advisory lock.
     Demote,
 }
 
@@ -92,11 +74,10 @@ fn log_effective_risk_config(
     config: &rsx_risk::ShardConfig,
 ) {
     info!(
-        "risk effective config: shard_id={} shard_count={} max_symbols={} replica={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
+        "risk effective config: shard_id={} shard_count={} max_symbols={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
         config.shard_id,
         config.shard_count,
         config.max_symbols,
-        config.replication_config.is_replica,
         config.replication_config.lease_poll_interval_ms,
         config.replication_config.lease_renew_interval_ms,
         config.liquidation_config.base_delay_ns,
@@ -148,49 +129,34 @@ fn main() {
     let shard_id = config.shard_id;
     let shard_count = config.shard_count;
     let max_symbols = config.max_symbols;
-    let initial_is_replica =
-        config.replication_config.is_replica;
 
     info!(
-        "risk shard {} starting ({} shards, {} symbols, replica={})",
-        shard_id, shard_count, max_symbols, initial_is_replica,
+        "risk shard {} starting ({} shards, {} symbols)",
+        shard_id, shard_count, max_symbols,
     );
     log_effective_risk_config(&config);
 
-    let mut role = if initial_is_replica {
-        Role::Replica
-    } else {
-        Role::Main
-    };
     let mut attempts: usize = 0;
 
-    // State-machine loop. On clean transitions we reset the
-    // restart budget — a successful promote/demote isn't a
-    // crash.
+    // Every process is a candidate main. `run_main` blocks on
+    // the per-shard advisory lock (pg_advisory_lock), so standby
+    // processes park there until the holder dies; exactly one is
+    // ever past the lock (invariant #10). On a clean Demote
+    // (lease lost) we reset the restart budget and call
+    // `run_main` again — it re-blocks on the lock, so a demoted
+    // process becomes a standby until it re-wins. `run_main` is
+    // re-enterable: it owns its PG client, persist worker, and
+    // lease thread, and tears all three down before returning.
     loop {
-        let err: Box<dyn std::error::Error> = match role {
-            Role::Replica => match run_replica(
-                shard_id, max_symbols,
-            ) {
-                Ok(ReplicaTransition::Promote) => {
-                    info!("transition: Replica → Main");
-                    role = Role::Main;
-                    attempts = 0;
-                    continue;
-                }
-                Err(e) => e,
-            },
-            Role::Main => match run_main(
-                shard_id, max_symbols,
-            ) {
-                Ok(MainTransition::Demote) => {
-                    info!("transition: Main → Replica");
-                    role = Role::Replica;
-                    attempts = 0;
-                    continue;
-                }
-                Err(e) => e,
-            },
+        let err: Box<dyn std::error::Error> = match run_main(
+            shard_id, max_symbols,
+        ) {
+            Ok(MainTransition::Demote) => {
+                info!("lease lost; re-acquiring advisory lock");
+                attempts = 0;
+                continue;
+            }
+            Err(e) => e,
         };
 
         attempts += 1;
@@ -212,9 +178,9 @@ fn main() {
         let sleep_ms =
             (backoff_secs * 1000) as i64 + jitter_ms;
         error!(
-            "crashed in role {:?} ({}/{} attempts): \
+            "crashed ({}/{} attempts): \
              {err}; restart in {sleep_ms}ms",
-            role, attempts, MAX_RESTARTS,
+            attempts, MAX_RESTARTS,
         );
         std::thread::sleep(Duration::from_millis(
             sleep_ms.max(100) as u64,
@@ -387,8 +353,11 @@ fn run_main(
                 error!("pg connection error: {e}");
             }
         });
-        run_migrations(&client).await?;
+        // Block on the advisory lock BEFORE migrations so
+        // standby processes park here (invariant #10: at most
+        // one main per shard) instead of racing migrations.
         lease.acquire(&client).await?;
+        run_migrations(&client).await?;
         let state = load_from_postgres(
             &client,
             shard_id,
@@ -431,25 +400,10 @@ fn run_main(
         rtrb::RingBuffer::<PersistEvent>::new(8192);
     shard.set_persist_producer(persist_prod);
 
-    // Tip sync channel for replica (if replica is running)
-    let replica_addr: Option<SocketAddr> =
-        env::var("RSX_RISK_REPLICA_ADDR")
-            .ok()
-            .and_then(|s| s.parse().ok());
-    let mut tip_sender = replica_addr.map(|addr| {
-        CastSender::new(
-            addr,
-            0,
-            Path::new(&wal_dir),
-        )
-        // SAFETY: fail-fast at startup
-        .expect("failed to create replica tip sender")
-    });
-
     // Persist worker thread. We retain its `JoinHandle` and
     // a shutdown flag so that a demote can stop the worker
-    // cleanly before returning — otherwise a Main → Replica
-    // → Main cycle leaks worker threads, each holding its
+    // cleanly before returning — otherwise a demote →
+    // re-acquire cycle leaks worker threads, each holding its
     // own PG connection.
     let persist_shutdown = Arc::new(AtomicBool::new(false));
     let persist_handle = {
@@ -1077,27 +1031,10 @@ fn run_main(
         }
         gw_sender.recv_control();
 
-        // Send tips to replica if configured
-        if let Some(ref mut sender) = tip_sender {
-            for (symbol_id, &tip) in
-                shard.tips.iter().enumerate()
-            {
-                // Send tip update to replica
-                let tip_msg = TipSyncMessage {
-                    symbol_id: symbol_id as u32,
-                    tip,
-                    _pad: [0; 48],
-                };
-                if let Err(e) = sender.send_raw(0x20, as_bytes(&tip_msg)) {
-                    warn!("risk: tip send to replica failed: {e}");
-                }
-            }
-            if let Err(e) = sender.tick() {
-                warn!("risk: tip_sender tick failed: {e}");
-            }
-        }
-
-        // Check lease health (non-blocking — lease thread updates atomically)
+        // Check lease health (non-blocking — lease thread updates atomically).
+        // On loss we tear down the persist worker + lease thread (each owns a
+        // PG connection) and return so main()'s loop re-enters run_main, which
+        // re-blocks on the advisory lock — this process becomes a standby.
         if !lease_held.load(Ordering::Relaxed) {
             stop_persist_worker(&persist_shutdown, persist_handle);
             stop_lease_thread(&lease_stop, lease_thread);
@@ -1106,7 +1043,7 @@ fn run_main(
                     "lease check failed after 3 consecutive errors".into()
                 );
             } else {
-                warn!("lease lost, demoting to replica");
+                warn!("lease lost, re-acquiring advisory lock");
                 return Ok(MainTransition::Demote);
             }
         }
@@ -1206,276 +1143,4 @@ fn stop_lease_thread(
 ) {
     stop.store(true, Ordering::Relaxed);
     let _ = handle.join();
-}
-
-#[repr(C, align(64))]
-#[derive(Copy, Clone)]
-struct TipSyncMessage {
-    symbol_id: u32,
-    tip: u64,
-    _pad: [u8; 48],
-}
-
-fn run_replica(
-    shard_id: u32,
-    max_symbols: usize,
-) -> Result<ReplicaTransition, Box<dyn std::error::Error>> {
-    let config = load_shard_config()?;
-    let shard_count = config.shard_count;
-    let mut shard = RiskShard::new(config);
-
-    // SAFETY: fail-fast at startup
-    let db_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL required for replica");
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-
-    let mut lease = AdvisoryLease::new(shard_id);
-    let client = rt.block_on(async {
-        let (client, connection) =
-            tokio_postgres::connect(
-                &db_url,
-                tokio_postgres::NoTls,
-            )
-            .await?;
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("pg connection error: {e}");
-            }
-        });
-
-        // Try to acquire lock (should fail, main holds it)
-        match lease.try_acquire(&client).await {
-            Ok(true) => {
-                warn!(
-                    "replica acquired lock immediately, \
-                     main not running?"
-                );
-            }
-            Ok(false) => {
-                info!(
-                    "replica starting, main holds lock"
-                );
-            }
-            Err(e) => {
-                return Err(Box::new(e)
-                    as Box<dyn std::error::Error>);
-            }
-        }
-
-        // Load baseline state from Postgres
-        let state = load_from_postgres(
-            &client,
-            shard_id,
-            shard_count,
-            max_symbols,
-        )
-        .await?;
-        shard.load_state(state);
-        info!("replica loaded baseline from postgres");
-        Ok::<_, Box<dyn std::error::Error>>(client)
-    })?;
-
-    // Set up CMP receiver from MEs (same as main).
-    // Use first ME addr as CMP peer for the receiver.
-    let me_addrs = rsx_risk::me_cmp_addrs_from_env();
-    if me_addrs.is_empty() {
-        return Err(
-            "no ME CMP addresses configured".into()
-        );
-    }
-    // SAFETY: me_addrs.is_empty() checked above
-    let (me_stream_id, first_me_addr) = me_addrs.iter().next()
-        .map(|(&sid, &addr)| (sid, addr))
-        .expect("INVARIANT: me_addrs non-empty (checked above)");
-    let mut me_receiver = CastReceiver::new(
-        // SAFETY: literal addr is always valid
-        "127.0.0.1:0".parse().expect("valid addr"),
-        first_me_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind replica ME receiver");
-
-    // Replica receives tip sync from main
-    let replica_addr: SocketAddr =
-        env::var("RSX_RISK_REPLICA_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9111".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_REPLICA_ADDR");
-    let main_addr: SocketAddr =
-        env::var("RSX_RISK_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9101".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CAST_ADDR");
-    let mut tip_receiver = CastReceiver::new(
-        replica_addr, main_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind replica tip receiver");
-
-    let lease_poll_interval_ms = env::var(
-        "RSX_RISK_LEASE_POLL_MS",
-    )
-    .ok()
-    .and_then(|s| s.parse().ok())
-    .unwrap_or(500u64);
-
-    let wal_dir = env::var("RSX_RISK_WAL_DIR")
-        .unwrap_or_else(|_| "./tmp/wal".into());
-
-    let mut last_poll_ms = 0u64;
-
-    info!(
-        "replica {} running, polling for promotion",
-        shard_id
-    );
-
-    loop {
-        let now_secs = time();
-        let now_ms = now_secs * 1000;
-
-        // Buffer fills from ME
-        loop {
-            let recv = me_receiver.try_recv_with(|preamble, payload| {
-                if preamble.record_type == RECORD_FILL {
-                    if let Some(fill) =
-                        decode_payload::<FillRecord>(payload)
-                    {
-                        let fill_event = FillEvent {
-                            seq: fill.seq,
-                            symbol_id: fill.symbol_id,
-                            taker_user_id: fill.taker_user_id,
-                            maker_user_id: fill.maker_user_id,
-                            price: fill.price.0,
-                            qty: fill.qty.0,
-                            taker_side: fill.taker_side,
-                            timestamp_ns: fill.ts_ns,
-                        };
-                        shard.buffer_fill_for_replica(fill_event);
-                    }
-                }
-            });
-            match recv {
-                CastRecvWith::Data => {}
-                CastRecvWith::Empty => break,
-                CastRecvWith::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "replica.me",
-                        "RSX_ME_REPLICATION_ADDR",
-                        me_stream_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
-                    );
-                    me_receiver.reset_after_replay(new_tip);
-                }
-                CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "replica.me",
-                        "RSX_ME_REPLICATION_ADDR",
-                        me_stream_id,
-                        last_delivered_seq,
-                        None,
-                        &wal_dir,
-                    );
-                    me_receiver.reset_after_replay(new_tip);
-                }
-            }
-        }
-
-        // Receive tip sync from main
-        loop {
-            let recv = tip_receiver.try_recv_with(|preamble, payload| {
-                if preamble.record_type == 0x20 {
-                    if let Some(msg) =
-                        decode_payload::<TipSyncMessage>(payload)
-                    {
-                        shard.apply_tip_from_main(
-                            msg.symbol_id,
-                            msg.tip,
-                        );
-                    }
-                }
-            });
-            match recv {
-                CastRecvWith::Data => {}
-                CastRecvWith::Empty => break,
-                CastRecvWith::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "replica.tip",
-                        "RSX_RISK_REPLICATION_ADDR",
-                        shard_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
-                    );
-                    tip_receiver.reset_after_replay(new_tip);
-                }
-                CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "replica.tip",
-                        "RSX_RISK_REPLICATION_ADDR",
-                        shard_id,
-                        last_delivered_seq,
-                        None,
-                        &wal_dir,
-                    );
-                    tip_receiver.reset_after_replay(new_tip);
-                }
-            }
-        }
-
-        // Poll for advisory lock
-        if now_ms - last_poll_ms
-            >= lease_poll_interval_ms
-        {
-            last_poll_ms = now_ms;
-            let acquired = rt.block_on(async {
-                lease.try_acquire(&client).await
-            })?;
-            if acquired {
-                info!(
-                    "replica acquired lock, promoting"
-                );
-                break;
-            }
-        }
-
-    }
-
-    // Promotion: apply buffered fills up to last tips. The
-    // resulting shard state is discarded — run_main will
-    // rebuild from Postgres + WAL on the next state-machine
-    // tick. promote_from_replica is kept for its logging /
-    // future use; the buffered-fills drain it performs is
-    // belt-and-suspenders against persist-worker lag.
-    info!(
-        "promoting replica to main, buffered={}",
-        shard.replica_buffered_count()
-    );
-    let fills = shard.promote_from_replica();
-    info!(
-        "promotion applied {} fills, returning to main \
-         state-machine for re-entry as main",
-        fills.len()
-    );
-
-    // Release the replica's PG session (and thus its
-    // advisory lock) so run_main's blocking acquire on the
-    // next tick can re-grab it cleanly.
-    drop(client);
-
-    Ok(ReplicaTransition::Promote)
 }

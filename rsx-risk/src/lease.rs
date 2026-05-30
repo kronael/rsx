@@ -6,10 +6,10 @@ use tracing::warn;
 /// Postgres advisory-lock-backed shard lease.
 ///
 /// Invariant #10 (at most one main per shard): `pg_advisory_lock(shard_id)`
-/// is exclusive per Postgres cluster; the replica path in
-/// `main.rs::run_replica` blocks on `acquire()` before promoting to
-/// main, so two main processes for the same `shard_id` cannot coexist
-/// against the same database.
+/// is exclusive per Postgres cluster; every candidate main blocks on
+/// `acquire()` at the top of `main.rs::run_main` before doing any work,
+/// so two main processes for the same `shard_id` cannot coexist against
+/// the same database.
 pub struct AdvisoryLease {
     shard_id: u32,
     lease_acquired: bool,

@@ -2,8 +2,9 @@
 
 Risk engine process. One instance per user shard. Pre-trade
 margin checks, position tracking, funding, liquidation,
-insurance fund, and main/replica replication. Canonical
-full-tile arrangement per `specs/2/45-tiles.md` §3.2.
+insurance fund, and single-writer leader election via a
+Postgres advisory lock. Canonical full-tile arrangement per
+`specs/2/45-tiles.md` §3.2.
 
 Specs: `specs/2/28-risk.md`, `specs/2/45-tiles.md` §3.2.
 
@@ -11,7 +12,7 @@ Specs: `specs/2/28-risk.md`, `specs/2/45-tiles.md` §3.2.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: ring construction, casting pump, replica mode, promotion |
+| `main.rs` | Binary: advisory-lock acquire, ring construction, casting pump, lease watch |
 | `shard.rs` | `RiskShard` — core state machine, `process_order()`, fill apply |
 | `types.rs` | `FillEvent`, `OrderRequest`, `BboUpdate`, `RejectReason` |
 | `account.rs` | `Account` struct and balance operations |
@@ -25,7 +26,6 @@ Specs: `specs/2/28-risk.md`, `specs/2/45-tiles.md` §3.2.
 | `replay.rs` | Cold start from Postgres + WAL replay |
 | `schema.rs` | Postgres table creation |
 | `lease.rs` | `AdvisoryLease` — Postgres advisory lock for single-writer |
-| `replica.rs` | `ReplicaState`, fill buffering, promotion |
 | `rings.rs` | `ShardRings`, `OrderResponse`, `MarkPriceUpdate` |
 | `config.rs` | `ShardConfig`, `ReplicationConfig` |
 | `risk_utils.rs` | Fee calculation |
@@ -39,20 +39,18 @@ only intra-process IPC.
 
 ### Rings (all in `main.rs::run_main`)
 
-| Ring | Capacity | Direction | Site |
-|------|----------|-----------|------|
-| `PersistEvent` | 8192 | shard → persist sidecar | `main.rs:239` |
-| `FillEvent` | 4096 | casting pump → shard | `main.rs:405` |
-| `OrderRequest` (primary) | 2048 | casting pump → shard | `main.rs:407` |
-| `MarkPriceUpdate` | 256 | casting pump → shard | `main.rs:409` |
-| `BboUpdate` | 256 | casting pump → shard | `main.rs:411` |
-| `OrderResponse` | 2048 | shard → casting sender | `main.rs:413` |
-| `OrderRequest` (replica) | 2048 | casting pump → shard | `main.rs:415` |
+| Ring | Capacity | Direction |
+|------|----------|-----------|
+| `PersistEvent` | 8192 | shard → persist sidecar |
+| `OrderResponse` | 2048 | shard → casting sender |
+| `OrderRequest` (accepted) | 2048 | shard → casting sender (to ME) |
 
 `PersistEvent` is sized largest because Postgres write-behind
-absorbs bursts of fills and position updates. The two
-`OrderRequest` rings (primary + replica) exist so a failed
-replica handoff cannot corrupt the live order stream.
+absorbs bursts of fills and position updates. Input rings were
+removed: the casting receive pump and the shard share one
+pinned thread, so the pump calls `shard.process_*` directly
+(an input ring would be a redundant per-message copy). Only
+shard output crosses a ring boundary.
 
 ### Threading
 
@@ -64,8 +62,9 @@ replica handoff cannot corrupt the live order stream.
   runtime that drains `PersistEvent` via
   `tokio_postgres`. Blocking PG write-behind cannot live
   on the pinned core, hence the dedicated thread.
-- **Lease task**: `pg_try_advisory_lock` polling on the
-  same sidecar pattern (replica path).
+- **Lease thread**: renews the advisory lock on its own
+  tokio runtime; on loss it flips an `AtomicBool` the hot
+  loop watches, triggering a clean `run_main` re-entry.
 
 ## Main Loop Priority
 
@@ -80,8 +79,7 @@ loop {
     4. BBO updates               (trigger margin recalc)
     5. Funding settlement        (every 8h interval)
     6. Liquidation processing    (if triggered by fill)
-    7. Lease renewal             (every ~1s)
-    8. Tip-sync emit to replica  (record_type=0x20, main.rs:844)
+    7. Lease health check        (AtomicBool set by lease thread)
 }
 ```
 
@@ -164,48 +162,60 @@ When `equity < maint_margin`:
 4. Insurance fund absorbs losses past bankruptcy price.
 5. Socialized loss if insurance exhausted.
 
-## Replication & Failover
+## Leader Election & Failover
 
-casting record type `0x20` carries `TipSyncMessage` between
-main and replica (`main.rs:830-844` emit; `main.rs:1032`
-ingest). Live path is casting/UDP; cold replay is replication/TCP from
-WAL tip+1.
+Every risk-shard process is an identical candidate main.
+There is no separate replica mode — `main()` calls `run_main`
+in a loop, and `run_main` blocks on the per-shard advisory
+lock before doing anything else:
 
-- **Main** (`run_main`, `main.rs:181`): acquire advisory
-  lock → load from PG → replication from tip+1 → `CaughtUp`
-  on all streams → live. Emits tip-sync to replica.
-- **Replica** (`run_replica`, `main.rs:880`): `pg_try_advisory_lock`
-  fails → buffer fills from all MEs → poll lock every
-  ~500ms → on acquire, apply buffered fills up to last
-  observed tip → promote.
+```
+run_main:
+  connect Postgres
+  → pg_advisory_lock(shard_id)   (BLOCKING — standbys park here)
+  → run_migrations
+  → load_from_postgres           (accounts, positions, tips)
+  → replay_from_wal(tip+1)       (rebuild fills since last persist)
+  → spawn lease thread + persist sidecar
+  → live loop
+```
+
+A standby process is just a candidate main blocked inside
+`pg_advisory_lock`. When the current main's PG session ends
+(crash, demote) the lock releases and exactly one standby
+unblocks and becomes main. The blocking acquire happens
+*before* migrations so standbys never race migrations.
+
+**Re-entry on lease loss.** The lease thread renews the lock
+on its own tokio runtime; on loss it sets an `AtomicBool` the
+hot loop polls each tick. On loss the loop tears down the
+persist sidecar and lease thread (each owns a PG connection),
+drops its PG client, and returns `MainTransition::Demote`.
+`main()` then calls `run_main` again, which reconnects and
+re-blocks on the advisory lock. `run_main` is therefore
+re-enterable: it owns all of its PG/thread resources and
+releases them before returning, so a Demote → re-acquire
+cycle leaks nothing. On a crash (error return) `main()`
+applies the restart-backoff budget instead.
+
+**No replica buffering or tip-sync.** Earlier designs had a
+replica buffer fills + receive tip-sync from main so a promoted
+replica could continue without a PG read. That state was never
+load-bearing: on promotion it was discarded and `run_main`
+rebuilt from Postgres + WAL anyway. The buffer, the tip-sync
+casting channel (record type `0x20`), and the `Role`/replica
+state machine were deleted; PG + WAL replay is the single
+recovery path.
 
 ### Advisory Lock (Invariant #10)
 
-`AdvisoryLease` (`lease.rs`) wraps `pg_try_advisory_lock`
-and `pg_advisory_unlock` on `shard_id`. Postgres guarantees
-at most one main per shard.
+`AdvisoryLease` (`lease.rs`) wraps `pg_advisory_lock`,
+`pg_try_advisory_lock`, and `pg_advisory_unlock` on
+`shard_id`. Postgres guarantees at most one holder per shard,
+so at most one main per shard.
 
-### Promotion Path (T3.2 — known sharp edge)
-
-Replica → main promotion at `main.rs:1086-1092` currently:
-
-```rust
-std::env::set_var("RSX_RISK_IS_REPLICA", "false");
-run_main(shard_id, max_symbols)  // recursive
-```
-
-Two known issues, flagged in `.ship/13-A16Z-FIXES` T3.2:
-
-1. `std::env::set_var` is UB-adjacent on glibc with
-   concurrent reads (rust-lang/rust#27970).
-2. The recursive `run_main` call grows the stack on every
-   promotion.
-
-Deferred until replication E2E coverage grows. Refactor
-target: state-machine loop, no recursion, no env-var
-toggle.
-
-Data loss bound: 10ms single crash, 100ms dual crash.
+Data loss bound: 10ms (one WAL flush interval) on a single
+crash, recovered by WAL replay from the persisted tip.
 
 ## Persistence
 

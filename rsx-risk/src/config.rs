@@ -28,19 +28,15 @@ impl Default for LiquidationConfig {
 }
 
 pub struct ReplicationConfig {
-    pub is_replica: bool,
     pub lease_poll_interval_ms: u64,
     pub lease_renew_interval_ms: u64,
-    pub replica_sync_ring_size: usize,
 }
 
 impl Default for ReplicationConfig {
     fn default() -> Self {
         Self {
-            is_replica: false,
             lease_poll_interval_ms: 500,
             lease_renew_interval_ms: 1000,
-            replica_sync_ring_size: 1024,
         }
     }
 }
@@ -72,13 +68,6 @@ fn env_usize(key: &str, default: usize) -> usize {
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_bool(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -139,8 +128,6 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         ));
     }
 
-    let is_replica =
-        env_bool("RSX_RISK_IS_REPLICA", false);
     let lease_poll_interval_ms =
         env_u64("RSX_RISK_LEASE_POLL_MS", 500);
     let lease_renew_interval_ms =
@@ -166,10 +153,8 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
             max_slip_bps,
         },
         replication_config: ReplicationConfig {
-            is_replica,
             lease_poll_interval_ms,
             lease_renew_interval_ms,
-            replica_sync_ring_size: 1024,
         },
     })
 }

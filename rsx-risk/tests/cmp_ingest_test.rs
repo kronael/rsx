@@ -39,10 +39,8 @@ fn test_config(max_symbols: usize) -> ShardConfig {
         funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig {
-            is_replica: false,
             lease_poll_interval_ms: 500,
             lease_renew_interval_ms: 1000,
-            replica_sync_ring_size: 1024,
         },
     }
 }
