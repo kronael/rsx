@@ -17,13 +17,18 @@ impl InsuranceFund {
         }
     }
 
+    /// Balance MAY go negative (insurance exhausted -> loss is
+    /// socialized further; the negative balance signals depletion).
+    /// Saturating so a pathological loss can't panic the shard in
+    /// debug builds or wrap in release (matches the i128-clamp
+    /// discipline in `process_socialized_loss`).
     pub fn deduct(&mut self, amount: i64) {
-        self.balance -= amount;
+        self.balance = self.balance.saturating_sub(amount);
         self.version += 1;
     }
 
     pub fn add(&mut self, amount: i64) {
-        self.balance += amount;
+        self.balance = self.balance.saturating_add(amount);
         self.version += 1;
     }
 }
