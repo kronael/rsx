@@ -708,7 +708,23 @@ def mock_gateway_running(monkeypatch):
         {"name": "me-sol",   "pid": 99995, "state": "running",
          "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
     ]
-    monkeypatch.setattr(server, "scan_processes", lambda: _fake)
+
+    def _fake_scan():
+        # Mirror real scan_processes: merge in anything added to
+        # `managed` (e.g. a maker the test injects) and return sorted
+        # by name, so tests of those two behaviours pass against the
+        # mock too.
+        procs = list(_fake)
+        have = {p["name"] for p in procs}
+        for name in server.managed:
+            if name not in have:
+                procs.append({
+                    "name": name, "pid": "-", "state": "running",
+                    "cpu": "-", "mem": "-", "uptime": "-",
+                })
+        return sorted(procs, key=lambda p: p["name"])
+
+    monkeypatch.setattr(server, "scan_processes", _fake_scan)
     yield
 
 
