@@ -24,6 +24,7 @@ use crate::types::OrderRequest;
 use crate::types::RejectReason;
 use rtrb::Producer;
 use rustc_hash::FxHashMap;
+use std::collections::hash_map::Entry;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -206,7 +207,6 @@ impl RiskShard {
         user_id: u32,
         symbol_id: u32,
     ) {
-        use std::collections::hash_map::Entry;
         match self.positions.entry((user_id, symbol_id)) {
             Entry::Occupied(_) => {
                 // Already present; index already has it
@@ -760,7 +760,7 @@ impl RiskShard {
             / 10_000;
         let order_im = i64::try_from(im_128)
             .unwrap_or(i64::MAX);
-        let order_fee = crate::risk_utils::calculate_fee(
+        let order_fee = calculate_fee(
             qty,
             price,
             self.taker_fee_bps[sid],

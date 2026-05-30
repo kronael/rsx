@@ -2,11 +2,27 @@ use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::shard::RiskShard;
+use crate::types::BboUpdate;
 use crate::types::FillEvent;
+use rsx_cast::decode_payload;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_cast::wal::RawWalRecord;
 use rsx_cast::wal::extract_seq;
+use rsx_messages::decode_fill_record;
+use rsx_messages::BboRecord;
+use rsx_messages::ConfigAppliedRecord;
+use rsx_messages::OrderAcceptedRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
+use rsx_messages::RECORD_BBO;
+use rsx_messages::RECORD_CONFIG_APPLIED;
+use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_ORDER_ACCEPTED;
+use rsx_messages::RECORD_ORDER_CANCELLED;
+use rsx_messages::RECORD_ORDER_DONE;
+use rsx_messages::RECORD_ORDER_FAILED;
 use rustc_hash::FxHashMap;
 use std::io;
 use std::path::Path;
@@ -260,22 +276,6 @@ pub fn apply_record(
     record_type: u16,
     payload: &[u8],
 ) -> bool {
-    use rsx_cast::decode_payload;
-    use rsx_messages::decode_fill_record;
-    use rsx_messages::BboRecord;
-    use rsx_messages::ConfigAppliedRecord;
-    use rsx_messages::OrderAcceptedRecord;
-    use rsx_messages::OrderCancelledRecord;
-    use rsx_messages::OrderDoneRecord;
-    use rsx_messages::OrderFailedRecord;
-    use rsx_messages::RECORD_BBO;
-    use rsx_messages::RECORD_CONFIG_APPLIED;
-    use rsx_messages::RECORD_FILL;
-    use rsx_messages::RECORD_ORDER_ACCEPTED;
-    use rsx_messages::RECORD_ORDER_CANCELLED;
-    use rsx_messages::RECORD_ORDER_DONE;
-    use rsx_messages::RECORD_ORDER_FAILED;
-
     match record_type {
         RECORD_FILL => {
             if let Some(fill) = decode_fill_record(payload) {
@@ -337,7 +337,7 @@ pub fn apply_record(
         }
         RECORD_BBO => {
             if let Some(rec) = decode_payload::<BboRecord>(payload) {
-                shard.process_bbo(&crate::types::BboUpdate {
+                shard.process_bbo(&BboUpdate {
                     seq: rec.seq,
                     symbol_id: rec.symbol_id,
                     bid_px: rec.bid_px.0,
