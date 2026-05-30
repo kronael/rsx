@@ -19,13 +19,15 @@
 > *The thing impossible may work quite well.*
 
 A perpetual-futures exchange written in Rust, spec-first, by
-one person. **This is a demonstration project — a serious
-one.** Today it's an open study artifact you can run and
-read. The plan is to deploy it on a small set of esoteric
-special derivatives once the gaps in the "what's not done"
-list are closed. The product surface that runs on top of it
-is sketched at [krons.fiu.wtf](https://krons.fiu.wtf) — find
-it if you look.
+one person. **This is an educational and research project — a
+serious one**, built to eventually grow into a solid, usable
+system at v1. Today it's an open study artifact you can run
+and read. The next step is to deploy it to serve as an
+exchange for a small set of esoteric special derivatives,
+once the gaps in the "what's not done" list are closed. The
+product surface that runs on top of it is sketched at
+[krons.fiu.wtf/pub/krons/sfdx](https://krons.fiu.wtf/pub/krons/sfdx/)
+— find it if you look.
 
 The transport layer ([rsx-cast](rsx-cast/README.md)) is
 domain-agnostic: `cargo tree -p rsx-cast --edges normal | grep
