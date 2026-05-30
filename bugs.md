@@ -1,5 +1,20 @@
 # Bug queue
 
+## IOC-NOT-HONORED — IOC order with no liquidity rests instead of cancelling (MED)
+
+**Status: OPEN.** Found 2026-05-30 building the WS order-latency bench. A
+`{N:[10,0,1,100000,cid,1]}` (tif=1 = IOC) BUY submitted against a confirmed-
+empty book returns `{"U":[oid,1,...]}` (status RESTING / OrderInserted) — it
+inserts into the book instead of immediately cancelling. Per rsx-book
+matching.rs:188-199, a `remaining_qty > 0` IOC must emit `OrderDone` with
+`REASON_CANCELLED` (not `OrderInserted`). So tif=IOC is being dropped or
+ignored somewhere on the GW→risk→ME path. Gateway parses arr[5]→tif correctly
+(records.rs:200), risk forwards `tif: order.tif` (main.rs:1059), ME converts
+1→IOC (wire.rs:36) — yet the order rests. Repro: empty-book IOC buy via WS.
+Effect on bench: the latency harness uses GTC + explicit cancel-after instead
+(book hygiene), which works; IOC would have been simpler. Triage only — not
+fixed (no explicit fix request).
+
 ## GATEWAY-LATENCY — casting-recv poll-loop starvation dominates e2e (HIGH)
 
 **Status: OPEN.** Single-order stage trace (live cluster): ME finishes +

@@ -2526,7 +2526,9 @@ dependencies = [
 name = "rsx-types"
 version = "0.2.0"
 dependencies = [
+ "core_affinity",
  "criterion",
+ "libc",
 ]
 
 [[package]]

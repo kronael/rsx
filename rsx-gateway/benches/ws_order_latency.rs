@@ -19,15 +19,27 @@
 //!      (gateway closes after each REST response) -> the
 //!      connect + HTTP round-trip floor to contrast with WS.
 //!
-//! All order workloads submit non-crossing limit BUYs at a low
-//! price so every order RESTS: a resting order produces EXACTLY
-//! ONE reply ({"U":[oid,1,...]} status RESTING), giving a clean
-//! 1-order:1-reply mapping. This removes the fill-vs-done multi-
-//! frame ambiguity (and needs no market maker). Per the oracle
-//! design review, the deterministic single outcome is what makes
-//! the per-order RTT honest. To measure the MATCHING path
-//! instead, run a maker + set the price to cross (the harness
-//! counts fills/dones separately).
+//! All order workloads submit non-crossing GTC limit BUYs at a low
+//! price (empty/own-side book): each order RESTS and produces
+//! EXACTLY ONE reply ({"U":[oid,1,...]} status RESTING), giving a
+//! clean 1-order:1-reply mapping (no fill/done multi-frame
+//! ambiguity, no market maker needed). On a single stream with one
+//! in-flight order, the next non-heartbeat frame IS that order's
+//! reply (FIFO) — no cid/oid correlation needed. The MEASURED
+//! submit->reply RTT covers the full GW->risk->ME->GW round trip
+//! (decode, margin check, WAL accept, book insert, OrderInserted
+//! emit, return path). Per the oracle design review, the
+//! deterministic single outcome is what makes the per-order RTT
+//! honest. To measure the MATCHING path instead, run a maker + cross
+//! the book (the harness counts fills separately).
+//!
+//! SLAB BUDGET: resting orders are never cancelled, so they pile up
+//! in rsx-book's fixed 65_536-deep order slab (ME panics beyond it).
+//! The harness REFUSES to run if single_n + warmup + the parallel
+//! total would exceed it on one ME process. Run against a FRESH ME
+//! (empty book). IOC (tif=1) would avoid resting entirely, but
+//! IOC-with-no-liquidity currently RESTS instead of cancelling
+//! end-to-end (logged in bugs.md), so GTC-resting is used.
 //!
 //! Client is hand-rolled WS framing over std::net::TcpStream (no
 //! async runtime, no WS library) to keep client-side overhead
@@ -68,6 +80,9 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 const DEV_SECRET: &str = "rsx-dev-secret-not-for-prod-padpad";
+/// Time-in-force: 0 == GTC (see rsx-types TimeInForce). A non-
+/// crossing GTC limit rests -> exactly one RESTING reply.
+const TIF_GTC: u8 = 0;
 
 fn env_str(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
@@ -402,10 +417,17 @@ enum ReplyKind {
 /// the next non-heartbeat frame IS the reply to the order we just
 /// sent — no cid/oid correlation is needed. This holds ONLY because
 /// (a) we never pipeline (one submit -> one blocking read) and
-/// (b) resting orders produce exactly one frame ({"U":[oid,1,..]}).
-/// `out.rested == n` confirms the invariant held; any filled/
-/// failed/other > 0 means the book crossed or a reject occurred and
-/// the pairing assumption (and the RTTs) should be distrusted.
+/// (b) a non-crossing limit order produces exactly one frame
+/// ({"U":[oid,1,..]} status RESTING). `out.rested == n` confirms
+/// the invariant held; any filled/failed/other > 0 means the book
+/// unexpectedly crossed or a reject occurred and the pairing
+/// assumption (and the RTTs) should be distrusted.
+///
+/// BOOK SIZE: resting orders accumulate in rsx-book's order slab,
+/// which is a fixed 65_536 deep (ME panics "slab exhausted" beyond
+/// it). The caller MUST keep (single_n + warmup) and the parallel
+/// total within that budget on a single ME process — see `main`.
+#[allow(clippy::too_many_arguments)]
 fn run_stream(
     conn: &mut WsConn,
     sym: u64,
@@ -432,7 +454,7 @@ fn run_stream(
         let t0 = Instant::now();
         if conn.send_text(&frame).is_err() {
             if i >= warmup {
-                out.transport_fail += (total - i) as u64;
+                out.transport_fail += total - i;
             }
             break;
         }
@@ -445,7 +467,7 @@ fn run_stream(
                 },
                 Err(_) => {
                     if i >= warmup {
-                        out.transport_fail += (total - i) as u64;
+                        out.transport_fail += total - i;
                     }
                     let dur = measured_start.map(|s| s.elapsed()).unwrap_or_default();
                     return (rtts, out, dur);
@@ -478,13 +500,15 @@ fn print_table(label: &str, s: &Stats, out: &Outcome, achieved_rate: f64, mode: 
         "  outcomes     : rested={} filled={} cancelled={} failed={} errors={} other={} transport_fail={}",
         out.rested, out.filled, out.cancelled, out.failed, out.errors, out.other, out.transport_fail
     );
+    // Clean iff every measured order produced its expected single
+    // terminal reply (resting -> RESTING) with no transport failures.
     let clean = out.rested == s.n as u64 && out.transport_fail == 0;
     println!(
         "  pairing      : {}",
         if clean {
-            "OK (every measured order rested -> 1 reply, FIFO one-in-flight)"
+            "OK (every measured order -> 1 RESTING reply, FIFO one-in-flight)"
         } else {
-            "SUSPECT (non-rested or transport failures -> distrust RTTs)"
+            "SUSPECT (unexpected outcome or transport failures -> distrust RTTs)"
         }
     );
     println!("  RTT us  min={} mean={}", s.min, s.mean);
@@ -641,16 +665,36 @@ fn main() {
     let sym = env_u64("RSX_BENCH_SYMBOL", 10);
     let px = env_u64("RSX_BENCH_PRICE", 1) as i64;
     let qty = env_u64("RSX_BENCH_QTY", 100_000) as i64;
-    let single_n = env_u64("RSX_BENCH_SINGLE_N", 100_000);
+    // Defaults sized to fit rsx-book's 65_536-deep order slab on one
+    // ME (single 31k + parallel 30k = 61k < 65k). 100k on one stream
+    // would exhaust the slab; raise these only against a maker/IOC
+    // setup that doesn't leave orders resting.
+    let single_n = env_u64("RSX_BENCH_SINGLE_N", 30_000);
     let par_conn = env_u64("RSX_BENCH_PAR_CONN", 100);
-    let par_n = env_u64("RSX_BENCH_PAR_N", 1000);
+    let par_n = env_u64("RSX_BENCH_PAR_N", 250);
     let warmup = env_u64("RSX_BENCH_WARMUP", 1000);
+    let par_warmup = env_u64("RSX_BENCH_PAR_WARMUP", 50);
     let rest_n = env_u64("RSX_BENCH_REST_N", 5000);
+
+    // Slab budget guard: every resting order stays in the book.
+    const SLAB_CAP: u64 = 65_536;
+    let total_resting = single_n + warmup + par_conn * (par_n + par_warmup);
+    if total_resting >= SLAB_CAP {
+        eprintln!(
+            "REFUSING: resting orders {total_resting} >= rsx-book slab {SLAB_CAP}.\n\
+             single_n+warmup ({}) + par_conn*(par_n+par_warmup) ({}) would panic the ME.\n\
+             Lower the counts, or use a maker/IOC setup so orders don't rest.",
+            single_n + warmup,
+            par_conn * (par_n + par_warmup),
+        );
+        std::process::exit(2);
+    }
 
     println!("rsx-gateway WS order-latency bench (real gateway, warmed clients)");
     println!(
         "  ws={ws_addr} http={http_addr} sym={sym} px={px} qty={qty}\n  \
-         single_n={single_n} par_conn={par_conn} par_n={par_n} warmup={warmup} rest_n={rest_n}"
+         single_n={single_n} par_conn={par_conn} par_n={par_n} warmup={warmup} \
+         par_warmup={par_warmup} rest_n={rest_n} (resting total {total_resting} < slab {SLAB_CAP})"
     );
 
     // 0. client-overhead calibration (loopback echo).
@@ -671,7 +715,7 @@ fn main() {
         match WsConn::connect(&ws_addr, &jwt) {
             Ok(mut conn) => {
                 let (rtts, out, dur) = run_stream(
-                    &mut conn, sym, 0, px, qty, 0, "s1-", warmup, single_n,
+                    &mut conn, sym, 0, px, qty, TIF_GTC,"s1-", warmup, single_n,
                 );
                 let rate = rtts.len() as f64 / dur.as_secs_f64().max(1e-9);
                 let s = percentiles(rtts);
@@ -709,14 +753,12 @@ fn main() {
                     Ok(c) => c,
                     Err(_) => return (Vec::new(), Outcome::default(), Duration::ZERO),
                 };
-                // Per-connection warmup BEFORE the barrier (all BUY at
-                // the same low px so every order RESTS: deterministic
-                // 1-order:1-reply, book never crosses).
-                let _ = run_stream(&mut conn, sym, 0, px, qty, 0, &format!("w{c}-"), 0, warmup);
+                // Per-connection warmup BEFORE the barrier.
+                let _ = run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, &format!("w{c}-"), 0, par_warmup);
                 barrier.wait();
                 let start = Instant::now();
                 let (rtts, out, _) =
-                    run_stream(&mut conn, sym, 0, px, qty, 0, &format!("p{c}-"), 0, par_n);
+                    run_stream(&mut conn, sym, 0, px, qty, TIF_GTC,&format!("p{c}-"), 0, par_n);
                 (rtts, out, start.elapsed())
             }));
         }
