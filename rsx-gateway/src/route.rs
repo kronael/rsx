@@ -31,64 +31,42 @@ pub fn route_fill(
     let maker_oid =
         oid_hex(rec.maker_order_id_hi, rec.maker_order_id_lo);
     let msg = serialize(&WsFrame::Fill {
-        taker_order_id: taker_oid.clone(),
-        maker_order_id: maker_oid.clone(),
+        taker_order_id: taker_oid,
+        maker_order_id: maker_oid,
         price: rec.price.0,
         qty: rec.qty.0,
         timestamp_ns: rec.ts_ns,
         fee: 0, // v1: fee not in FillRecord, computed at risk layer
     });
     // F4.3 — per-stage latency trace. Stage `gateway_out`
-    // closes the GW→ME→GW loop. Anchor t_us against the
-    // taker's gateway-ingress timestamp (rec.taker_ts_ns)
-    // so the closing delta composes with gateway_in /
-    // risk_in / me_in / me_out / risk_out on the same
-    // clock origin. Falls back to rec.ts_ns (ME emit) when
-    // the field is missing (legacy WAL records).
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    let anchor_ns = if rec.taker_ts_ns == 0 {
-        rec.ts_ns
-    } else {
-        rec.taker_ts_ns
-    };
-    let t_us = now_ns.saturating_sub(anchor_ns) / 1000;
-    // Sub-stage: serialize completed. Captured BEFORE the
-    // gateway_out emission so we can attribute the serde_json
-    // cost separately from the latency-ring emission itself.
-    rsx_log::latency::sample(
+    // closes the GW→ME→GW loop. Anchor against the taker's
+    // gateway-ingress timestamp (rec.taker_ts_ns) so the
+    // closing delta composes with gateway_in / risk_in /
+    // me_in / me_out / risk_out on the same clock origin.
+    // Falls back to rec.ts_ns (ME emit) for legacy records.
+    // serialize_done is captured before gateway_out to
+    // attribute the serde_json cost separately.
+    rsx_log::latency_sample!(
         "gateway_route_serialize_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        t_us,
-        anchor_ns,
+        if rec.taker_ts_ns == 0 { rec.ts_ns } else { rec.taker_ts_ns }
     );
-    rsx_log::latency::sample(
+    rsx_log::latency_sample!(
         "gateway_out",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        t_us,
-        anchor_ns,
+        if rec.taker_ts_ns == 0 { rec.ts_ns } else { rec.taker_ts_ns }
     );
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());
     st.push_to_user(rec.maker_user_id, msg);
     drop(st);
-    // Sub-stage: both push_to_user calls completed (both
-    // outbound VecDeques now hold the fill frame).
-    let now_ns2 = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    let t_us2 = now_ns2.saturating_sub(anchor_ns) / 1000;
-    rsx_log::latency::sample(
+    rsx_log::latency_sample!(
         "gateway_route_push_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        t_us2,
-        anchor_ns,
+        if rec.taker_ts_ns == 0 { rec.ts_ns } else { rec.taker_ts_ns }
     );
 }
 

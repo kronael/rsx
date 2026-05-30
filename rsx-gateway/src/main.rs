@@ -1,5 +1,5 @@
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_messages::ConfigAppliedRecord;
@@ -273,88 +273,56 @@ fn main() {
         // CMP polling loop (yields to monoio)
         loop {
             loop {
-                let (hdr, payload) = match cmp_receiver
-                    .try_recv()
-                {
-                    CastRecv::Data(h, p) => (h, p),
-                    CastRecv::Empty => break,
-                    CastRecv::Faulted {
-                        last_delivered_seq,
-                        gap_start,
-                        gap_end_inclusive,
-                    } => {
-                        let new_tip = handle_replay(
-                            last_delivered_seq,
-                            Some((gap_start, gap_end_inclusive)),
-                            &wal_dir,
-                        );
-                        cmp_receiver.reset_after_replay(new_tip);
-                        continue;
-                    }
-                    CastRecv::Reconnect { last_delivered_seq } => {
-                        let new_tip = handle_replay(
-                            last_delivered_seq,
-                            None,
-                            &wal_dir,
-                        );
-                        cmp_receiver.reset_after_replay(new_tip);
-                        continue;
-                    }
-                };
-                {
+                // Zero-copy egress recv: route in-place from the
+                // receiver's internal buffer, no per-message Vec
+                // alloc. The closure can't break/continue the
+                // outer loop, so the recv outcome is matched
+                // after it returns.
+                let outcome = cmp_receiver.try_recv_with(|hdr, payload| {
                 match hdr.record_type {
-                    RECORD_FILL => if let Some(rec) = decode_payload::<FillRecord>(&payload) {
+                    RECORD_FILL => if let Some(rec) = decode_payload::<FillRecord>(payload) {
                         // Sub-stage: fill record arrived at
                         // gateway's CMP recv loop, about to
                         // route. Anchor on taker_ts_ns (with
                         // the >2024 plausibility guard).
-                        {
-                            let now_ns = std::time::SystemTime::now()
-                                .duration_since(
-                                    std::time::UNIX_EPOCH,
-                                )
-                                .map(|d| d.as_nanos() as u64)
-                                .unwrap_or(0);
-                            let anchor_ns = if rec.taker_ts_ns
-                                > 1_700_000_000_000_000_000
-                            {
+                        rsx_log::latency_sample!(
+                            "gateway_cmp_recv",
+                            rec.taker_order_id_hi,
+                            rec.taker_order_id_lo,
+                            if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
                                 rec.taker_ts_ns
                             } else {
                                 rec.ts_ns
-                            };
-                            let t_us = now_ns
-                                .saturating_sub(anchor_ns)
-                                / 1000;
-                            rsx_log::latency::sample("gateway_cmp_recv", rec.taker_order_id_hi, rec.taker_order_id_lo, t_us, anchor_ns);
-                        }
+                            }
+                        );
                         route_fill(&state, &rec);
                     }
-                    RECORD_ORDER_DONE => if let Some(rec) = decode_payload::<OrderDoneRecord>(&payload) {
+                    RECORD_ORDER_DONE => if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
                         route_order_done(
                             &state, &rec,
                         );
                     }
-                    RECORD_ORDER_CANCELLED => if let Some(rec) = decode_payload::<OrderCancelledRecord>(&payload) {
+                    RECORD_ORDER_CANCELLED => if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
                         route_order_cancelled(
                             &state, &rec,
                         );
                     }
-                    RECORD_ORDER_INSERTED => if let Some(rec) = decode_payload::<OrderInsertedRecord>(&payload) {
+                    RECORD_ORDER_INSERTED => if let Some(rec) = decode_payload::<OrderInsertedRecord>(payload) {
                         route_order_inserted(
                             &state, &rec,
                         );
                     }
-                    RECORD_ORDER_FAILED => if let Some(rec) = decode_payload::<OrderFailedRecord>(&payload) {
+                    RECORD_ORDER_FAILED => if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
                         route_order_failed(
                             &state, &rec,
                         );
                     }
-                    RECORD_LIQUIDATION => if let Some(rec) = decode_payload::<LiquidationRecord>(&payload) {
+                    RECORD_LIQUIDATION => if let Some(rec) = decode_payload::<LiquidationRecord>(payload) {
                         route_liquidation(
                             &state, &rec,
                         );
                     }
-                    RECORD_CONFIG_APPLIED => if let Some(rec) = decode_payload::<ConfigAppliedRecord>(&payload) {
+                    RECORD_CONFIG_APPLIED => if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
                         let applied = state
                             .borrow_mut()
                             .apply_config_applied(
@@ -370,6 +338,31 @@ fn main() {
                         }
                     }
                     _ => {}
+                }
+                });
+                match outcome {
+                    CastRecvWith::Data => {}
+                    CastRecvWith::Empty => break,
+                    CastRecvWith::Faulted {
+                        last_delivered_seq,
+                        gap_start,
+                        gap_end_inclusive,
+                    } => {
+                        let new_tip = handle_replay(
+                            last_delivered_seq,
+                            Some((gap_start, gap_end_inclusive)),
+                            &wal_dir,
+                        );
+                        cmp_receiver.reset_after_replay(new_tip);
+                    }
+                    CastRecvWith::Reconnect { last_delivered_seq } => {
+                        let new_tip = handle_replay(
+                            last_delivered_seq,
+                            None,
+                            &wal_dir,
+                        );
+                        cmp_receiver.reset_after_replay(new_tip);
+                    }
                 }
             }
 
@@ -423,7 +416,6 @@ fn main() {
                         }
                         st.remove_connection(*id);
                     }
-                }
                 }
             }
 

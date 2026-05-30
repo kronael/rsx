@@ -16,6 +16,7 @@ rsx-types = { path = "../rsx-types" }
 rsx-book = { path = "../rsx-book" }
 rsx-cast = { path = "../rsx-cast" }
 rsx-messages = { path = "../rsx-messages" }
+rsx-log = { path = "../rsx-log" }
 monoio = "0.2"
 tokio = { version = "1", features = ["rt", "macros"] }
 tracing = "0.1"

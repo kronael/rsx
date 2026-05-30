@@ -1,5 +1,6 @@
 use rsx_cast::as_bytes;
 use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
@@ -635,42 +636,10 @@ fn run_main(
         // check sees margin freed by this tick's fills/releases
         // (capital efficiency; fills-before-orders invariant).
         loop {
-            let (hdr, payload) = match me_receiver.try_recv() {
-                CastRecv::Data(h, p) => (h, p),
-                CastRecv::Empty => break,
-                CastRecv::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "risk.me",
-                        "RSX_ME_REPLICATION_ADDR",
-                        me_stream_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
-                    );
-                    me_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-                CastRecv::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "risk.me",
-                        "RSX_ME_REPLICATION_ADDR",
-                        me_stream_id,
-                        last_delivered_seq,
-                        None,
-                        &wal_dir,
-                    );
-                    me_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-            };
-            {
+            let recv = me_receiver.try_recv_with(|hdr, payload| {
             match hdr.record_type {
                 RECORD_BBO => if let Some(rec) =
-                    decode_payload::<BboRecord>(&payload)
+                    decode_payload::<BboRecord>(payload)
                 {
                     // BBO is a "latest wins" state snapshot.
                     // Stash (coalesces per symbol); the tick
@@ -685,10 +654,10 @@ fn run_main(
                     });
                     // Forward to GW to maintain CMP seq
                     // continuity (GW ignores BBO content).
-                    forward_to_gw(&mut gw_sender, RECORD_BBO, &payload);
+                    forward_to_gw(&mut gw_sender, RECORD_BBO, payload);
                 }
                 RECORD_FILL => if let Some(fill) =
-                    decode_payload::<FillRecord>(&payload)
+                    decode_payload::<FillRecord>(payload)
                 {
                     // F4.3 — per-stage latency trace.
                     // Stage `risk_out` = fill received from
@@ -700,25 +669,16 @@ fn run_main(
                     // ts_ns if the field is missing (legacy WAL
                     // record predating the FillRecord layout
                     // change).
-                    {
-                        let now_ns =
-                            std::time::SystemTime::now()
-                                .duration_since(
-                                    std::time::UNIX_EPOCH,
-                                )
-                                .map(|d| d.as_nanos() as u64)
-                                .unwrap_or(0);
-                        let anchor_ns =
-                            if fill.taker_ts_ns == 0 {
-                                fill.ts_ns
-                            } else {
-                                fill.taker_ts_ns
-                            };
-                        let t_us = now_ns
-                            .saturating_sub(anchor_ns)
-                            / 1000;
-                        rsx_log::latency::sample("risk_out", fill.taker_order_id_hi, fill.taker_order_id_lo, t_us, anchor_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "risk_out",
+                        fill.taker_order_id_hi,
+                        fill.taker_order_id_lo,
+                        if fill.taker_ts_ns == 0 {
+                            fill.ts_ns
+                        } else {
+                            fill.taker_ts_ns
+                        }
+                    );
                     // Fills are correctness-critical:
                     // position == sum(fills). Process
                     // directly on this thread (no input
@@ -743,56 +703,47 @@ fn run_main(
                     // halt from a prior ORDER_FAILED is lifted.
                     shard.resume_liquidation(fill.symbol_id);
                     // Forward fill to GW
-                    forward_to_gw(&mut gw_sender, RECORD_FILL, &payload);
+                    forward_to_gw(&mut gw_sender, RECORD_FILL, payload);
                     // Sub-stage: CMP send to gateway completed.
                     // Anchor on the same taker_ts_ns used by
                     // risk_out (with the >2024 plausibility
                     // guard).
-                    {
-                        let now_ns =
-                            std::time::SystemTime::now()
-                                .duration_since(
-                                    std::time::UNIX_EPOCH,
-                                )
-                                .map(|d| d.as_nanos() as u64)
-                                .unwrap_or(0);
-                        let anchor_ns =
-                            if fill.taker_ts_ns == 0 {
-                                fill.ts_ns
-                            } else {
-                                fill.taker_ts_ns
-                            };
-                        let t_us = now_ns
-                            .saturating_sub(anchor_ns)
-                            / 1000;
-                        rsx_log::latency::sample("risk_cmp_send_done", fill.taker_order_id_hi, fill.taker_order_id_lo, t_us, anchor_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "risk_cmp_send_done",
+                        fill.taker_order_id_hi,
+                        fill.taker_order_id_lo,
+                        if fill.taker_ts_ns == 0 {
+                            fill.ts_ns
+                        } else {
+                            fill.taker_ts_ns
+                        }
+                    );
                 }
                 RECORD_ORDER_DONE => if let Some(rec) =
-                    decode_payload::<OrderDoneRecord>(&payload)
+                    decode_payload::<OrderDoneRecord>(payload)
                 {
                     shard.release_frozen_for_order(
                         rec.user_id,
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_DONE, &payload);
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_DONE, payload);
                 }
                 RECORD_ORDER_CANCELLED => if let Some(rec) =
-                    decode_payload::<OrderCancelledRecord>(&payload)
+                    decode_payload::<OrderCancelledRecord>(payload)
                 {
                     shard.release_frozen_for_order(
                         rec.user_id,
                         rec.order_id_hi,
                         rec.order_id_lo,
                     );
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_CANCELLED, &payload);
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_CANCELLED, payload);
                 }
-                RECORD_ORDER_INSERTED => if decode_payload::<OrderInsertedRecord>(&payload).is_some() {
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_INSERTED, &payload);
+                RECORD_ORDER_INSERTED => if decode_payload::<OrderInsertedRecord>(payload).is_some() {
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_INSERTED, payload);
                 }
                 RECORD_ORDER_ACCEPTED => if let Some(rec) =
-                    decode_payload::<OrderAcceptedRecord>(&payload)
+                    decode_payload::<OrderAcceptedRecord>(payload)
                 {
                     // ME confirmed the order: now (and only now)
                     // write the durable freeze. Reduce-only orders
@@ -807,7 +758,7 @@ fn run_main(
                     }
                 }
                 RECORD_ORDER_FAILED => if let Some(rec) =
-                    decode_payload::<OrderFailedRecord>(&payload)
+                    decode_payload::<OrderFailedRecord>(payload)
                 {
                     shard.release_frozen_for_order(
                         rec.user_id,
@@ -820,10 +771,10 @@ fn run_main(
                     // halt the symbols this user is being
                     // liquidated on (the failed order is one).
                     shard.halt_liquidation_for_user(rec.user_id);
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, &payload);
+                    forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, payload);
                 }
                 RECORD_CONFIG_APPLIED => if let Some(rec) =
-                    decode_payload::<ConfigAppliedRecord>(&payload)
+                    decode_payload::<ConfigAppliedRecord>(payload)
                 {
                     shard.process_config_applied(
                         rec.symbol_id,
@@ -834,10 +785,40 @@ fn run_main(
                         rec.symbol_id,
                         rec.config_version,
                     );
-                    forward_to_gw(&mut gw_sender, RECORD_CONFIG_APPLIED, &payload);
+                    forward_to_gw(&mut gw_sender, RECORD_CONFIG_APPLIED, payload);
                 }
                 _ => {}
             }
+            });
+            match recv {
+                CastRecvWith::Data => {}
+                CastRecvWith::Empty => break,
+                CastRecvWith::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => {
+                    let new_tip = handle_replay(
+                        "risk.me",
+                        "RSX_ME_REPLICATION_ADDR",
+                        me_stream_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    me_receiver.reset_after_replay(new_tip);
+                }
+                CastRecvWith::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "risk.me",
+                        "RSX_ME_REPLICATION_ADDR",
+                        me_stream_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    me_receiver.reset_after_replay(new_tip);
+                }
             }
         }
 
@@ -855,57 +836,21 @@ fn run_main(
             {
                 break;
             }
-            let (hdr, payload) = match gw_receiver.try_recv() {
-                CastRecv::Data(h, p) => (h, p),
-                CastRecv::Empty => break,
-                CastRecv::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "risk.gw",
-                        "RSX_GW_REPLICATION_ADDR",
-                        shard_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
-                    );
-                    gw_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-                CastRecv::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "risk.gw",
-                        "RSX_GW_REPLICATION_ADDR",
-                        shard_id,
-                        last_delivered_seq,
-                        None,
-                        &wal_dir,
-                    );
-                    gw_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-            };
-            {
+            let recv = gw_receiver.try_recv_with(|hdr, payload| {
             match hdr.record_type {
                 RECORD_ORDER_REQUEST => if let Some(order) =
-                    decode_payload::<OrderRequest>(&payload)
+                    decode_payload::<OrderRequest>(payload)
                 {
                     // F4.3 — per-stage latency trace.
                     // Stage `risk_in` = order arrived from
                     // gateway. t_us measured against the
                     // gateway's submit timestamp.
-                    {
-                        let now_ns = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_nanos() as u64)
-                            .unwrap_or(0);
-                        let t_us = now_ns
-                            .saturating_sub(order.timestamp_ns)
-                            / 1000;
-                        rsx_log::latency::sample("risk_in", order.order_id_hi, order.order_id_lo, t_us, order.timestamp_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "risk_in",
+                        order.order_id_hi,
+                        order.order_id_lo,
+                        order.timestamp_ns
+                    );
                     // Process directly on this thread (no input
                     // ring). The loop head guarantees both output
                     // rings have a free slot, so neither push can
@@ -932,7 +877,7 @@ fn run_main(
                         );
                 }
                 RECORD_CANCEL_REQUEST => if let Some(cancel) =
-                    decode_payload::<CancelRequest>(&payload)
+                    decode_payload::<CancelRequest>(payload)
                 {
                     // Forward cancel to correct ME.
                     if let Some(s) = me_senders
@@ -940,7 +885,7 @@ fn run_main(
                     {
                         if let Err(e) = s.send_raw(
                             RECORD_CANCEL_REQUEST,
-                            &payload,
+                            payload,
                         ) {
                             warn!("risk: forward cancel to me failed: {e}");
                         }
@@ -954,17 +899,54 @@ fn run_main(
                 }
                 _ => {}
             }
+            });
+            match recv {
+                CastRecvWith::Data => {}
+                CastRecvWith::Empty => break,
+                CastRecvWith::Faulted {
+                    last_delivered_seq,
+                    gap_start,
+                    gap_end_inclusive,
+                } => {
+                    let new_tip = handle_replay(
+                        "risk.gw",
+                        "RSX_GW_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        Some((gap_start, gap_end_inclusive)),
+                        &wal_dir,
+                    );
+                    gw_receiver.reset_after_replay(new_tip);
+                }
+                CastRecvWith::Reconnect { last_delivered_seq } => {
+                    let new_tip = handle_replay(
+                        "risk.gw",
+                        "RSX_GW_REPLICATION_ADDR",
+                        shard_id,
+                        last_delivered_seq,
+                        None,
+                        &wal_dir,
+                    );
+                    gw_receiver.reset_after_replay(new_tip);
+                }
             }
         }
 
         // Mark prices from Mark process
         loop {
-            let (preamble, payload) = match mark_receiver
-                .try_recv()
-            {
-                CastRecv::Data(h, p) => (h, p),
-                CastRecv::Empty => break,
-                CastRecv::Faulted {
+            let recv = mark_receiver.try_recv_with(|preamble, payload| {
+            if preamble.record_type == RECORD_MARK_PRICE {
+                if let Some(rec) = decode_payload::<MarkPriceRecord>(payload) {
+                    // Latest-wins state; applied directly on the
+                    // tile (no ring — recv and shard share a thread).
+                    shard.update_mark(rec.symbol_id, rec.mark_price.0);
+                }
+            }
+            });
+            match recv {
+                CastRecvWith::Data => {}
+                CastRecvWith::Empty => break,
+                CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
@@ -978,9 +960,8 @@ fn run_main(
                         &wal_dir,
                     );
                     mark_receiver.reset_after_replay(new_tip);
-                    continue;
                 }
-                CastRecv::Reconnect { last_delivered_seq } => {
+                CastRecvWith::Reconnect { last_delivered_seq } => {
                     let new_tip = handle_replay(
                         "risk.mark",
                         "RSX_MARK_REPLICATION_ADDR",
@@ -990,14 +971,6 @@ fn run_main(
                         &wal_dir,
                     );
                     mark_receiver.reset_after_replay(new_tip);
-                    continue;
-                }
-            };
-            if preamble.record_type == RECORD_MARK_PRICE {
-                if let Some(rec) = decode_payload::<MarkPriceRecord>(&payload) {
-                    // Latest-wins state; applied directly on the
-                    // tile (no ring — recv and shard share a thread).
-                    shard.update_mark(rec.symbol_id, rec.mark_price.0);
                 }
             }
         }

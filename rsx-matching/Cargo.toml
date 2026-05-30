@@ -16,6 +16,11 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-postgres = "0.7"
 libc = "0.2"
 
+[features]
+# Compile in the per-stage latency trace (latency_sample! macro). Off by
+# default = zero hot-path cost. Build with --features latency-trace to profile.
+latency-trace = []
+
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3"

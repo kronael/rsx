@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
-use rsx_cast::cast::CastRecv;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
@@ -498,74 +498,26 @@ fn main() {
             info!("matching engine shutdown complete");
             std::process::exit(0);
         }
-        // Receive orders/cancels via CMP/UDP from Risk
-        let recv = cmp_receiver.try_recv();
-        if let CastRecv::Faulted {
-            last_delivered_seq,
-            gap_start,
-            gap_end_inclusive,
-        } = recv
-        {
-            // Per CMP v4 contract: FAULTED means an
-            // unrecoverable gap inside the in-band recovery
-            // horizon. Recover out-of-band via DXS/TCP replay
-            // from `last_delivered_seq + 1`, then reset the
-            // CMP receiver and resume live UDP delivery.
-            warn!(
-                "matching tile FAULTED at seq={}, opening \
-                 DXS replay from seq={} (gap=[{}..={}])",
-                last_delivered_seq,
-                last_delivered_seq + 1,
-                gap_start,
-                gap_end_inclusive,
-            );
-            let replay_addr = env::var(
-                "RSX_ME_REPLICATION_ADDR",
-            )
-            .expect(
-                "FAULTED requires RSX_ME_REPLICATION_ADDR \
-                 pointing at the risk producer's replication server",
-            );
-            let tip_file = PathBuf::from(&wal_dir).join(
-                format!(
-                    "me_{}_replay_tip.bin", symbol_id,
-                ),
-            );
-            let new_tip = rsx_matching::replay::drain_dxs_replay_into_book(
-                &rt,
-                &mut book,
-                &mut order_index,
-                &mut dedup,
-                &mut wal_writer,
-                symbol_id,
-                replay_addr,
-                last_delivered_seq,
-                tip_file,
-            )
-            .unwrap_or_else(|e| {
-                panic!("dxs replay drain failed: {e}");
-            });
-            cmp_receiver.reset_after_replay(new_tip);
-            info!(
-                "matching tile recovered via DXS replay, \
-                 new_tip={}, resuming live UDP",
-                new_tip,
-            );
-            continue;
-        }
-        if let CastRecv::Data(hdr, payload) = recv {
+        // Receive orders/cancels via CMP/UDP from Risk.
+        // Zero-copy: the order-processing body runs inside the
+        // callback, borrowing the receiver's recv buffer — no
+        // per-message Vec allocation. The closure cannot
+        // `continue`/`break` the outer loop, but the Data body
+        // never needs to (the dup path is an if/else, not an
+        // early return); Faulted/Empty/Reconnect are handled in
+        // the match below where `continue` is legal.
+        let recv = cmp_receiver.try_recv_with(|hdr, payload| {
             if hdr.record_type == RECORD_ORDER_REQUEST {
-            if let Some(order_msg) = decode_payload::<OrderMessage>(&payload) {
+            if let Some(order_msg) = decode_payload::<OrderMessage>(payload) {
                 // F4.3 — per-stage latency trace. Stage
                 // `me_in` = order arrived at matching engine.
                 // t_us measured against gateway submit ts.
-                {
-                    let now_ns = time_ns();
-                    let t_us = now_ns
-                        .saturating_sub(order_msg.timestamp_ns)
-                        / 1000;
-                    rsx_log::latency::sample("me_in", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                }
+                rsx_log::latency_sample!(
+                    "me_in",
+                    order_msg.order_id_hi,
+                    order_msg.order_id_lo,
+                    order_msg.timestamp_ns
+                );
                 // Dedup check
                 let is_dup = dedup.check_and_insert(
                     order_msg.user_id,
@@ -574,13 +526,12 @@ fn main() {
                 );
                 // Sub-stage: dedup completed (after FxHashMap
                 // insert). Anchored on the same t0 as me_in.
-                {
-                    let now_ns = time_ns();
-                    let t_us = now_ns
-                        .saturating_sub(order_msg.timestamp_ns)
-                        / 1000;
-                    rsx_log::latency::sample("me_dedup_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                }
+                rsx_log::latency_sample!(
+                    "me_dedup_done",
+                    order_msg.order_id_hi,
+                    order_msg.order_id_lo,
+                    order_msg.timestamp_ns
+                );
 
                 if is_dup {
                     let ts = time_ns();
@@ -671,15 +622,12 @@ fn main() {
                         }
                     }
                     // Sub-stage: OrderAcceptedRecord appended.
-                    {
-                        let now_ns = time_ns();
-                        let t_us = now_ns
-                            .saturating_sub(
-                                order_msg.timestamp_ns,
-                            )
-                            / 1000;
-                        rsx_log::latency::sample("me_wal_accepted_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "me_wal_accepted_done",
+                        order_msg.order_id_hi,
+                        order_msg.order_id_lo,
+                        order_msg.timestamp_ns
+                    );
 
                     let mut incoming =
                         order_msg.to_incoming();
@@ -687,15 +635,12 @@ fn main() {
                         &mut book, &mut incoming,
                     );
                     // Sub-stage: match cycle finished.
-                    {
-                        let now_ns = time_ns();
-                        let t_us = now_ns
-                            .saturating_sub(
-                                order_msg.timestamp_ns,
-                            )
-                            / 1000;
-                        rsx_log::latency::sample("me_match_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "me_match_done",
+                        order_msg.order_id_hi,
+                        order_msg.order_id_lo,
+                        order_msg.timestamp_ns
+                    );
 
                     // Publish events: WAL append + CMP send to
                     // risk + (selective) CMP send to marketdata,
@@ -712,15 +657,12 @@ fn main() {
                     )
                     .expect("publish_events failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
                     // Sub-stage: events flushed + sent.
-                    {
-                        let now_ns = time_ns();
-                        let t_us = now_ns
-                            .saturating_sub(
-                                order_msg.timestamp_ns,
-                            )
-                            / 1000;
-                        rsx_log::latency::sample("me_wal_events_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "me_wal_events_done",
+                        order_msg.order_id_hi,
+                        order_msg.order_id_lo,
+                        order_msg.timestamp_ns
+                    );
 
                     // Maintain the (user, oid) -> handle
                     // index so subsequent cancels are O(1).
@@ -729,15 +671,12 @@ fn main() {
                         &mut order_index,
                     );
                     // Sub-stage: order index updated.
-                    {
-                        let now_ns = time_ns();
-                        let t_us = now_ns
-                            .saturating_sub(
-                                order_msg.timestamp_ns,
-                            )
-                            / 1000;
-                        rsx_log::latency::sample("me_index_done", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "me_index_done",
+                        order_msg.order_id_hi,
+                        order_msg.order_id_lo,
+                        order_msg.timestamp_ns
+                    );
 
                     // F4.3 — per-stage latency trace. Stage
                     // `me_out` = ME finished matching and is
@@ -745,19 +684,16 @@ fn main() {
                     // measured against the order's gateway
                     // submit timestamp. We only log once per
                     // incoming order (against its oid).
-                    {
-                        let now_ns = time_ns();
-                        let t_us = now_ns
-                            .saturating_sub(
-                                order_msg.timestamp_ns,
-                            )
-                            / 1000;
-                        rsx_log::latency::sample("me_out", order_msg.order_id_hi, order_msg.order_id_lo, t_us, order_msg.timestamp_ns);
-                    }
+                    rsx_log::latency_sample!(
+                        "me_out",
+                        order_msg.order_id_hi,
+                        order_msg.order_id_lo,
+                        order_msg.timestamp_ns
+                    );
                 }
             } // end if let Some(order_msg)
             } else if hdr.record_type == RECORD_CANCEL_REQUEST {
-            if let Some(req) = decode_payload::<CancelRequest>(&payload) {
+            if let Some(req) = decode_payload::<CancelRequest>(payload) {
                 process_cancel(
                     &mut book,
                     &mut wal_writer,
@@ -775,7 +711,65 @@ fn main() {
                 );
             } // end if let Some(req)
             }
-        } else if book.is_migrating() {
+        });
+        if let CastRecvWith::Faulted {
+            last_delivered_seq,
+            gap_start,
+            gap_end_inclusive,
+        } = recv
+        {
+            // Per CMP v4 contract: FAULTED means an
+            // unrecoverable gap inside the in-band recovery
+            // horizon. Recover out-of-band via DXS/TCP replay
+            // from `last_delivered_seq + 1`, then reset the
+            // CMP receiver and resume live UDP delivery.
+            warn!(
+                "matching tile FAULTED at seq={}, opening \
+                 DXS replay from seq={} (gap=[{}..={}])",
+                last_delivered_seq,
+                last_delivered_seq + 1,
+                gap_start,
+                gap_end_inclusive,
+            );
+            let replay_addr = env::var(
+                "RSX_ME_REPLICATION_ADDR",
+            )
+            .expect(
+                "FAULTED requires RSX_ME_REPLICATION_ADDR \
+                 pointing at the risk producer's replication server",
+            );
+            let tip_file = PathBuf::from(&wal_dir).join(
+                format!(
+                    "me_{}_replay_tip.bin", symbol_id,
+                ),
+            );
+            let new_tip = rsx_matching::replay::drain_dxs_replay_into_book(
+                &rt,
+                &mut book,
+                &mut order_index,
+                &mut dedup,
+                &mut wal_writer,
+                symbol_id,
+                replay_addr,
+                last_delivered_seq,
+                tip_file,
+            )
+            .unwrap_or_else(|e| {
+                panic!("dxs replay drain failed: {e}");
+            });
+            cmp_receiver.reset_after_replay(new_tip);
+            info!(
+                "matching tile recovered via DXS replay, \
+                 new_tip={}, resuming live UDP",
+                new_tip,
+            );
+            continue;
+        }
+        // Nothing delivered this tick (Empty/Reconnect): make
+        // progress on a background compression-map migration if
+        // one is in flight. Data was already processed in the
+        // callback above.
+        if !matches!(recv, CastRecvWith::Data) && book.is_migrating() {
             book.migrate_batch(100);
         }
 

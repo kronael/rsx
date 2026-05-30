@@ -1,5 +1,5 @@
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::decode_payload;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
@@ -313,12 +313,73 @@ fn main() {
         loop {
             for cmp_receiver in &mut cmp_receivers {
             loop {
-                let (hdr, payload) = match cmp_receiver
-                    .try_recv()
-                {
-                    CastRecv::Data(h, p) => (h, p),
-                    CastRecv::Empty => break,
-                    CastRecv::Faulted {
+                let recv = cmp_receiver.try_recv_with(|hdr, payload| {
+                    // Seq gap detection: extract seq from payload
+                    // and check for gaps. On gap, resend snapshot.
+                    if let Some(seq) = extract_seq(payload) {
+                        let symbol_id = extract_symbol_id(
+                            hdr.record_type,
+                            payload,
+                        );
+                        if let Some(sid) = symbol_id {
+                            let gap = state
+                                .borrow_mut()
+                                .check_seq(sid, seq);
+                            if let Some((expected, got)) = gap {
+                                tracing::warn!(
+                                    "marketdata seq gap sym={} \
+                                     expected={} got={}",
+                                    sid,
+                                    expected,
+                                    got,
+                                );
+                                state.borrow_mut().resend_snapshot(
+                                    sid,
+                                    config.snapshot_depth,
+                                    config.max_outbound,
+                                );
+                            }
+                        }
+                    }
+
+                    match hdr.record_type {
+                        RECORD_ORDER_INSERTED => {
+                            if let Some(rec) = decode_payload::<OrderInsertedRecord>(payload) {
+                                handle_insert(
+                                    &state,
+                                    &rec,
+                                    config.max_outbound,
+                                );
+                            }
+                        }
+                        RECORD_ORDER_CANCELLED => {
+                            if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
+                                handle_cancel(
+                                    &state,
+                                    &rec,
+                                    config.max_outbound,
+                                );
+                            }
+                        }
+                        RECORD_FILL => {
+                            if let Some(rec) = decode_payload::<FillRecord>(payload) {
+                                handle_fill(
+                                    &state,
+                                    &rec,
+                                    config.max_outbound,
+                                );
+                            }
+                        }
+                        RECORD_ORDER_DONE => {
+                            // Not routed to marketdata per spec.
+                        }
+                        _ => {}
+                    }
+                });
+                match recv {
+                    CastRecvWith::Data => {}
+                    CastRecvWith::Empty => break,
+                    CastRecvWith::Faulted {
                         last_delivered_seq,
                         gap_start,
                         gap_end_inclusive,
@@ -334,7 +395,7 @@ fn main() {
                             .reset_after_replay(new_tip);
                         continue;
                     }
-                    CastRecv::Reconnect {
+                    CastRecvWith::Reconnect {
                         last_delivered_seq,
                     } => {
                         let new_tip = handle_replay(
@@ -348,69 +409,6 @@ fn main() {
                             .reset_after_replay(new_tip);
                         continue;
                     }
-                };
-                {
-                // Seq gap detection: extract seq from payload
-                // and check for gaps. On gap, resend snapshot.
-                if let Some(seq) = extract_seq(&payload) {
-                    let symbol_id = extract_symbol_id(
-                        hdr.record_type,
-                        &payload,
-                    );
-                    if let Some(sid) = symbol_id {
-                        let gap = state
-                            .borrow_mut()
-                            .check_seq(sid, seq);
-                        if let Some((expected, got)) = gap {
-                            tracing::warn!(
-                                "marketdata seq gap sym={} \
-                                 expected={} got={}",
-                                sid,
-                                expected,
-                                got,
-                            );
-                            state.borrow_mut().resend_snapshot(
-                                sid,
-                                config.snapshot_depth,
-                                config.max_outbound,
-                            );
-                        }
-                    }
-                }
-
-                match hdr.record_type {
-                    RECORD_ORDER_INSERTED => {
-                        if let Some(rec) = decode_payload::<OrderInsertedRecord>(&payload) {
-                            handle_insert(
-                                &state,
-                                &rec,
-                                config.max_outbound,
-                            );
-                        }
-                    }
-                    RECORD_ORDER_CANCELLED => {
-                        if let Some(rec) = decode_payload::<OrderCancelledRecord>(&payload) {
-                            handle_cancel(
-                                &state,
-                                &rec,
-                                config.max_outbound,
-                            );
-                        }
-                    }
-                    RECORD_FILL => {
-                        if let Some(rec) = decode_payload::<FillRecord>(&payload) {
-                            handle_fill(
-                                &state,
-                                &rec,
-                                config.max_outbound,
-                            );
-                        }
-                    }
-                    RECORD_ORDER_DONE => {
-                        // Not routed to marketdata per spec.
-                    }
-                    _ => {}
-                }
                 }
             }
 

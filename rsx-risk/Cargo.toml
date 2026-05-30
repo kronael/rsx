@@ -24,6 +24,11 @@ tokio-postgres = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
+[features]
+# Compile in the per-stage latency trace (latency_sample! macro). Off by
+# default = zero hot-path cost. Build with --features latency-trace to profile.
+latency-trace = []
+
 [dev-dependencies]
 core_affinity = "0.8"
 rtrb = "0.3"

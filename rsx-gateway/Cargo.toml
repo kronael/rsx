@@ -29,6 +29,11 @@ rustc-hash = "2"
 jsonwebtoken = "9"
 serde = { version = "1", features = ["derive"] }
 
+[features]
+# Compile in the per-stage latency trace (latency_sample! macro). Off by
+# default = zero hot-path cost. Build with --features latency-trace to profile.
+latency-trace = []
+
 [[bench]]
 name = "gateway_bench"
 harness = false
