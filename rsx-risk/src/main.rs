@@ -1220,16 +1220,38 @@ fn run_warm_catchup(
         }));
 
         if let Err(e) = stream {
-            // Disconnect/error clears caught_up implicitly (we
-            // re-derive it next iteration). Back off then retry;
-            // the consumer reconnects from its persisted tip+1.
-            warn!(
-                "warm catchup: ME stream error: {e}; \
-                 retry in {}ms",
-                poll.as_millis(),
-            );
-            std::thread::sleep(poll);
-            continue;
+            // RECORD_REPLICATION_NOT_AVAILABLE maps to NotFound.
+            // When consumer.tip > 0 this means ME cannot serve our
+            // current tip+1, most likely because ME just restarted
+            // with an empty WAL (my_highest=0). Our PG snapshot
+            // already covers everything up to consumer.tip, so we
+            // are ahead of ME — treat as caught up and proceed to
+            // lock acquisition.
+            if e.kind() == std::io::ErrorKind::NotFound
+                && consumer.tip > 0
+            {
+                info!(
+                    "warm catchup: ME WAL behind our tip={} \
+                     (fresh boot or GC'd tail); \
+                     PG snapshot is current — treating as caught up",
+                    consumer.tip,
+                );
+                // Synthesize the caught-up condition so the lock
+                // attempt below fires normally.
+                caught_live_seq = Some(0);
+                applied_seq = consumer.tip;
+            } else {
+                // Disconnect/error clears caught_up implicitly (we
+                // re-derive it next iteration). Back off then retry;
+                // the consumer reconnects from its persisted tip+1.
+                warn!(
+                    "warm catchup: ME stream error: {e}; \
+                     retry in {}ms",
+                    poll.as_millis(),
+                );
+                std::thread::sleep(poll);
+                continue;
+            }
         }
 
         let caught_up = match caught_live_seq {
