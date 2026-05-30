@@ -131,6 +131,44 @@ Ring hygiene:
   cross-socket adds ~100 ns+ over the ~tens-of-ns on-socket snoop.
 - **Software-prefetch the next slot** while processing the current one.
 
+## False sharing — the util + how to find it
+
+The flip side of the coherence truth above. **False sharing** is when two
+threads write two *different* variables that happen to share one cache line —
+nothing is logically shared, but MESI invalidates the other core's copy on
+every write, so the line ping-pongs across the interconnect each iteration.
+Classic victims: a producer's tail next to a consumer's head, two per-thread
+counters in one struct, a flag set by one thread and polled by another.
+
+**The util** (`rsx-types::cache`, concentrated so layout is consistent
+everywhere):
+- `Padded<T>` — wraps a value so it sits alone on its own line span; give each
+  independently-written datum its own `Padded`. `Deref`/`DerefMut` so it's
+  transparent at the use site.
+- `LINE = 64` (the real line, for layout reasoning) and `PAD = 128` (the
+  alignment to *avoid* false sharing). It's 128, not 64, because Intel's
+  adjacent-line prefetcher pulls lines in pairs — the destructive-interference
+  unit is two lines. (Same choice as crossbeam's `CachePadded`.)
+
+**How to find it** — don't guess, measure:
+- **`perf c2c`** is the purpose-built tool. `perf c2c record -- ./prog` then
+  `perf c2c report` lists **HITM** (hit-modified) cache lines — the lines being
+  pulled dirty from another core — with the *offsets within the line* and the
+  two functions/PIDs fighting over it. A hot line with two different writers at
+  different offsets is the smoking gun.
+- **Quick yes/no:** `perf stat -e mem_load_l3_hit_retired.xsnp_hitm ...` under
+  load — a high HITM rate that scales with thread count = lines bouncing.
+- **Static, before it ships:** `pahole -C <Struct> <binary>` prints field
+  offsets, holes, and which fields share a 64 B line. Cross-check every
+  `repr(C)` struct touched by more than one thread.
+- **Heuristic:** any field written by thread A within 64 B of a field written
+  by thread B is a candidate. Per-thread mutable state (cursors, counters,
+  flags, backpressure bits) is the usual culprit — `Padded` each, or group all
+  of one thread's mutable fields together and pad the boundary.
+
+(rtrb already pads its own head/tail internally; `Padded` is for *our*
+cross-thread fields — shard counters/flags, future egress-tile cursors.)
+
 ## The two corrections to remember
 
 1. **More submitters HURT** latency — **shard the input** (RSS) instead.
