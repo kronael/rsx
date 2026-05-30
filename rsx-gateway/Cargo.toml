@@ -50,6 +50,10 @@ harness = false
 name = "jti_tracker_bench"
 harness = false
 
+[[bench]]
+name = "ws_order_latency"
+harness = false
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 jsonwebtoken = "9"
