@@ -166,6 +166,17 @@ gives false confidence. Don't do it.
   `rsx-cast/compare/` follows the same principle but is named after
   its theme (protocol comparisons); new research notes go in `notes/`.
 
+## Profiling reports (`reports/`)
+- Save every profiling/benchmark run worth keeping as a dated report in
+  `reports/YYYYMMDD_tag.md` (e.g. `reports/20260530_e2e-ws-probe.md`).
+  Checked into git — a long-lived latency/throughput record so we can see
+  improvements (and regressions) over time as the system evolves.
+- Each report: what was measured, the numbers (tables), the conclusion,
+  and caveats (closed/open-loop, synthetic, single-box, in-process, etc.).
+  Cite the source bench/script + commit so it's reproducible.
+- This is the durable home for "how fast was it on date X" — distinct from
+  `notes/` (why-decisions) and Criterion's `target/criterion` (transient).
+
 ## Naming
 
 - `seq` not `seq_no`, `ts_ns` not `timestamp_nanoseconds`
