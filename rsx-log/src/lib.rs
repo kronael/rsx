@@ -7,9 +7,9 @@ use rtrb::RingBuffer;
 use std::cell::RefCell;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::SystemTime;
 use std::time::Duration;
 
 /// Fixed-shape log record. Kept small so each push is a
@@ -52,13 +52,6 @@ static CONSUMERS: OnceLock<Mutex<Vec<Consumer<Record>>>> =
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
-/// Hot-path trace gate. When false, `push` is a single relaxed load + return —
-/// no thread-local touch, no ring write — and callers should skip the
-/// `time_ns()` read too via [`latency::enabled`]. Defaults to true so tooling
-/// that never calls `set_enabled` keeps emitting; binaries set it from
-/// `RSX_LATENCY_TRACE` at startup (see `latency::set_enabled`).
-static ENABLED: AtomicBool = AtomicBool::new(true);
-
 fn consumers() -> &'static Mutex<Vec<Consumer<Record>>> {
     CONSUMERS.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -87,9 +80,6 @@ fn init_thread_ring() -> Producer<Record> {
 /// the fast path.
 #[inline]
 pub fn push(record: Record) {
-    if !ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
     PRODUCER.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
@@ -108,37 +98,51 @@ pub fn push(record: Record) {
     });
 }
 
-/// Sub-module for the per-stage latency sample API.
+/// Wall-clock nanoseconds (CLOCK_REALTIME via the VDSO). A *shared* clock so
+/// stage samples stamped in one process correlate with another's — a per-
+/// process monotonic `Instant` could not. Only called from `latency::emit`,
+/// i.e. only when the `latency-trace` feature is on.
+#[inline]
+pub fn now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
+
+/// Emit a latency sample for `stage`, anchored at the wall-clock `t0_ns`, for
+/// order id (`oid_hi`, `oid_lo`). **Compiles to nothing** unless the calling
+/// crate enables its `latency-trace` feature — no clock read, no push, the
+/// argument expressions aren't even evaluated. Zero hot-path cost in
+/// production. Enable for a profiling build: `cargo build -p rsx-matching
+/// --features latency-trace`.
+///
+/// Any crate that invokes this MUST declare the feature (`[features]
+/// latency-trace = []`) or the `#[cfg]` trips the `unexpected_cfgs` lint.
+#[macro_export]
+macro_rules! latency_sample {
+    ($stage:expr, $oid_hi:expr, $oid_lo:expr, $t0_ns:expr) => {{
+        #[cfg(feature = "latency-trace")]
+        $crate::latency::emit($stage, $oid_hi, $oid_lo, $t0_ns);
+    }};
+}
+
 pub mod latency {
-    use super::ENABLED;
     use super::Kind;
-    use super::Ordering;
     use super::Record;
 
-    /// Enable/disable the latency trace process-wide. Call once at startup,
-    /// typically `set_enabled(env::var("RSX_LATENCY_TRACE").as_deref() != Ok("0"))`.
+    /// Push a latency sample for `stage` measured from `t0_ns` (µs delta).
+    /// Call via the [`latency_sample!`](crate::latency_sample) macro, NOT
+    /// directly — the macro compiles the call (and its clock read) away unless
+    /// the `latency-trace` feature is enabled.
     #[inline]
-    pub fn set_enabled(on: bool) {
-        ENABLED.store(on, Ordering::Relaxed);
-    }
-
-    /// Is the trace on? A relaxed atomic load (~1 cycle). Hot-path callers
-    /// gate the `time_ns()` read on this: `if enabled() { sample(...) }`.
-    #[inline]
-    pub fn enabled() -> bool {
-        ENABLED.load(Ordering::Relaxed)
-    }
-
-    /// Push a latency sample. Wraps [`super::push`] with
-    /// the fields named the way callers think about them.
-    #[inline]
-    pub fn sample(
+    pub fn emit(
         stage: &'static str,
         oid_hi: u64,
         oid_lo: u64,
-        t_us: u64,
         t0_ns: u64,
     ) {
+        let t_us = super::now_ns().saturating_sub(t0_ns) / 1000;
         super::push(Record {
             kind: Kind::Latency,
             stage_or_target: stage,
@@ -216,13 +220,14 @@ mod tests {
 
     #[test]
     fn latency_sample_round_trips_via_ring() {
-        latency::sample(
-            "test_stage",
-            0xaabb,
-            0xccdd,
-            42,
-            1_700_000_000_000_000_000,
-        );
+        push(Record {
+            kind: Kind::Latency,
+            stage_or_target: "test_stage",
+            a: 0xaabb,
+            b: 0xccdd,
+            c: 42,
+            d: 1_700_000_000_000_000_000,
+        });
         let mut regs = consumers().lock().unwrap();
         let mut seen = false;
         for cons in regs.iter_mut() {
@@ -242,17 +247,19 @@ mod tests {
 
     #[test]
     fn drop_counter_increments_on_full_ring() {
+        let rec = |a: u64, stage| Record {
+            kind: Kind::Latency,
+            stage_or_target: stage,
+            a,
+            b: 0,
+            c: 0,
+            d: 0,
+        };
         for i in 0..RING_CAP {
-            latency::sample(
-                "fill",
-                i as u64,
-                0,
-                0,
-                0,
-            );
+            push(rec(i as u64, "fill"));
         }
         let before = DROPPED.load(Ordering::Relaxed);
-        latency::sample("overflow", 0, 0, 0, 0);
+        push(rec(0, "overflow"));
         let after = DROPPED.load(Ordering::Relaxed);
         assert!(
             after > before,
