@@ -9,6 +9,7 @@ use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use tracing::info;
 use tracing::warn;
 
@@ -115,7 +116,7 @@ pub async fn handle_connection(
             Ok(MdFrame::Heartbeat { timestamp_ms }) => {
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
-                let echo: std::sync::Arc<str> =
+                let echo: Arc<str> =
                     format!("{{\"H\":[{}]}}", timestamp_ms).into();
                 // SAFETY: heartbeat echo is best-effort;
                 // a slow client with full outbound has

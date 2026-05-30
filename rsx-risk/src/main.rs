@@ -368,7 +368,7 @@ fn handle_replay(
                  retrying in 15ms"
             );
             std::thread::sleep(
-                std::time::Duration::from_millis(15),
+                Duration::from_millis(15),
             );
         } else {
             break tip;

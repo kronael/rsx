@@ -1,8 +1,10 @@
 //! Mark price data structures. MARK.md §2.
 
+use std::collections::HashMap;
+
 pub type MarkPriceEvent = rsx_messages::MarkPriceRecord;
 
-pub type SymbolMap = std::collections::HashMap<String, u32>;
+pub type SymbolMap = HashMap<String, u32>;
 
 /// A single price update from one exchange source.
 #[derive(Debug, Clone, Copy)]

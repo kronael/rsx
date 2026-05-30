@@ -11,6 +11,7 @@ use rsx_gateway::ws::is_ws_upgrade;
 use rsx_types::SymbolConfig;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 // ── helpers ───────────────────────────────────────
 
@@ -61,14 +62,14 @@ async fn round_trip(
     });
 
     monoio::time::sleep(
-        std::time::Duration::from_millis(5),
+        Duration::from_millis(5),
     )
     .await;
 
     let mut client =
         TcpStream::connect(addr).await.unwrap();
     monoio::time::sleep(
-        std::time::Duration::from_millis(20),
+        Duration::from_millis(20),
     )
     .await;
 
@@ -517,7 +518,7 @@ fn ws_handshake_responds_101() {
         });
 
         monoio::time::sleep(
-            std::time::Duration::from_millis(5),
+            Duration::from_millis(5),
         )
         .await;
 
@@ -541,7 +542,7 @@ fn ws_handshake_responds_101() {
         res.unwrap();
 
         monoio::time::sleep(
-            std::time::Duration::from_millis(20),
+            Duration::from_millis(20),
         )
         .await;
 
@@ -594,7 +595,7 @@ fn ws_handshake_401_without_auth() {
         });
 
         monoio::time::sleep(
-            std::time::Duration::from_millis(5),
+            Duration::from_millis(5),
         )
         .await;
 
@@ -616,7 +617,7 @@ fn ws_handshake_401_without_auth() {
         res.unwrap();
 
         monoio::time::sleep(
-            std::time::Duration::from_millis(20),
+            Duration::from_millis(20),
         )
         .await;
 

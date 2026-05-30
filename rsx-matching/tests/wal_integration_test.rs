@@ -11,6 +11,7 @@ use rsx_matching::wal_integration::write_events_to_wal;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
+use std::time::Duration;
 use std::time::Instant;
 use tempfile::TempDir;
 
@@ -143,7 +144,7 @@ taker_ts_ns: 0,
 
     // Simulate 10ms passing
     std::thread::sleep(
-        std::time::Duration::from_millis(15),
+        Duration::from_millis(15),
     );
     flush_if_due(&mut writer, &mut last_flush).unwrap();
 

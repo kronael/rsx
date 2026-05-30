@@ -24,6 +24,7 @@ use rsx_types::time_utils::time_ns;
 use rustc_hash::FxHashMap;
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::info;
 use tracing::warn;
 
@@ -102,7 +103,7 @@ pub fn drain_dxs_replay_into_book(
                      retrying in 15ms"
                 );
                 std::thread::sleep(
-                    std::time::Duration::from_millis(15),
+                    Duration::from_millis(15),
                 );
             }
             _ => break r,
