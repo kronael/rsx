@@ -720,3 +720,43 @@ fn max_rounds_zero_allows_round_one_then_socializes() {
         LiquidationStatus::Done
     );
 }
+
+// Regression: when the first liquidation order is placed at
+// now_ns == 0 (a monotonic clock can read 0 near boot), the
+// backoff delay must still gate round 2+. The old gate used
+// `last_order_ns != 0` as the "first order" sentinel; placing
+// round 1 at now_ns == 0 left last_order_ns == 0, so every
+// later round looked like the first and skipped the delay
+// entirely — firing the whole schedule with no backoff.
+#[test]
+fn first_order_at_zero_does_not_collapse_backoff() {
+    let mut e = LiquidationEngine::new(
+        1_000_000_000, // 1s base delay
+        10,
+        10,
+        500,
+    );
+    e.enqueue(1, 100, 0);
+    // Round 1 fires immediately at now_ns == 0.
+    let (o1, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
+    assert_eq!(o1.len(), 1);
+    assert_eq!(e.active[0].round, 2);
+    assert_eq!(e.active[0].last_order_ns, 0);
+
+    // round 2 delay = 2 * 1s = 2s. At t=0.5s the delay has
+    // NOT elapsed, so no order may fire.
+    let (o2, _) =
+        e.maybe_process(500_000_000, &|_, _| 10, &|_| 50000);
+    assert_eq!(o2.len(), 0, "backoff must hold for round 2");
+
+    // Still too early at t=1.5s (< 2s).
+    let (o3, _) =
+        e.maybe_process(1_500_000_000, &|_, _| 10, &|_| 50000);
+    assert_eq!(o3.len(), 0, "backoff must hold for round 2");
+
+    // At t=2s the delay has elapsed; round 2 fires.
+    let (o4, _) =
+        e.maybe_process(2_000_000_000, &|_, _| 10, &|_| 50000);
+    assert_eq!(o4.len(), 1, "round 2 fires after 2s backoff");
+    assert_eq!(e.active[0].round, 3);
+}
