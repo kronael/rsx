@@ -22,11 +22,12 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
   - Cold path: WAL replication over TCP (replay, replication)
 - Within each process: tile architecture (pinned threads
   + SPSC rings for intra-process IPC, see TILES.md)
-- Hot path I/O: monoio (io_uring) on Gateway, Risk, and Marketdata
-  (all on the GW→ME→GW critical path). Mark, Recorder run on tokio
-  (off critical path; blocking PG write-behind, ergonomics fine).
-  Risk tile: monoio casting/UDP hot loop + tokio task for PG write-behind;
-  handoff via SPSC ring between the two (same tile pattern as Gateway).
+- Hot path I/O: monoio (io_uring) on Gateway (WS, many client fds);
+  Risk hot loop is std non-blocking UDP busy-spin (rsx-cast CastReceiver,
+  no runtime on the hot path); tokio off-path only (PG write-behind, lease).
+  Marketdata is monoio but off the order critical path (market-data
+  dissemination path, pinned for keep-up). Mark, Recorder on tokio (off
+  critical path; ergonomics fine).
 - Later: DPDK/AF_XDP swaps I/O layer, same interfaces
 - Target: <50us GW→ME→GW, <500ns ME match
 - Zero heap on hot path, i64 fixed-point, no floats
@@ -253,42 +254,23 @@ for notional = price * qty at risk boundary.
 - Backpressure: buffer full or flush lag > 10ms -> stall producer
 - Tip persistence: every 10ms, idempotent replay from tip+1
 
-## Core layout (6-core dev host) — KEEP IN VIEW
-
-| Core | Process | Model |
-|---|---|---|
-| 0 | OS + mark + recorder | off-path, ergonomic (sleep ~0% CPU), unpinned |
-| 1 | gateway | hot path, pinned, monoio |
-| 2 | risk shard 0 | hot path, pinned, busy-spin |
-| 3 | ME / matching | hot path, pinned, busy-spin |
-| 4 | marketdata | hot path, pinned, monoio |
-| 5 | spare headroom | — |
-
-**Rule: a busy-spin loop MUST be pinned to its own core.** An
-unpinned spinner floats across cores (CFS rebalancing) onto a
-hot-path core, starves that consumer, and its UDP socket
-overflows → kernel `RcvbufErrors` → dropped packets → FAULTED
-replay storm. This is NOT a UDP problem; loopback UDP is lossless
-under load when the consumer keeps draining. Off-path services
-(mark, recorder) must NOT busy-spin — they sleep and stay
-unpinned. Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/
-`CORE_ME_0`/`CORE_MD`); env vars `RSX_{GW,RISK,ME,MD}_CORE_ID`.
-
 ## Networking Stack
 
-- **Gateway, Risk, Market Data:** monoio with io_uring. All three
-  are on the critical path (<50us end-to-end GW→ME→GW). Every
-  epoll syscall adds latency. io_uring batches submissions
-  in shared kernel/userspace rings -- fewer syscalls, lower
-  tail latency. Each tile is a dedicated pinned thread with
-  one SPSC downqueue (orders in) and one SPSC upqueue
-  (fills out). The I/O multiplexing inside the tile is the
-  only part that touches the network stack.
-- **Risk tile specifically:** monoio casting/UDP loop handles the
-  hot path (order recv → margin check → forward to ME). A
-  separate tokio task owns PG write-behind; SPSC ring hands
-  off position updates from monoio → tokio without blocking
-  the hot loop. Same handoff pattern as Gateway's WS→casting split.
+- **Gateway:** monoio with io_uring. On the order critical path
+  (<50us end-to-end GW→ME→GW). io_uring batches submissions
+  in shared kernel/userspace rings — fewer syscalls, lower
+  tail latency. Justified by many concurrent WS connections (I/O-bound
+  across N fds); a tile would still have to do the same WS parsing.
+- **Risk:** std non-blocking UDP busy-spin on the hot path (rsx-cast
+  `CastReceiver`, no async runtime). On the order critical path, pinned
+  core. A separate tokio runtime in a sidecar thread owns PG write-behind
+  and lease renewal; handoff via SPSC ring (persist ring) from the pinned
+  loop to the tokio worker.
+- **Market Data:** monoio with io_uring, pinned. Off the order critical
+  path. ME pushes fill/insert/cancel events to marketdata fire-and-forget;
+  the order round-trip never waits on marketdata. Pinned for keep-up (drain
+  ME's casting firehose to avoid UDP RcvbufErrors → FAULTED); monoio
+  justified by many public WS subscriber connections.
 - **Later:** userspace networking (DPDK, AF_XDP) swaps the
   I/O layer inside the same tile. No changes to SPSC rings
   or ME.

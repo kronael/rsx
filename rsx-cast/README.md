@@ -9,40 +9,78 @@ no copy between layers**.
 sender-side retransmit, fixed `#[repr(C)]` frames. **replication** is
 the TCP cold-path replay protocol over the same record bytes.
 The NAK retransmit horizon equals **log retention** (default
-48 h), not RAM. Trust model: trusted LAN only, single sender
+4 h), not RAM. Trust model: trusted LAN only, single sender
 per stream, no congestion control — public-internet use is
 QUIC's job (see [When NOT to use this](#when-not-to-use-this)).
 
 ## How fast
 
-| Operation | p50 | Bench / env |
+For the workload this crate exists to serve — a single sender
+streaming fixed 128 B `#[repr(C)]` records over a trusted LAN —
+casting runs at the raw-UDP floor and is faster than every
+networked alternative measured under the same harness. All rows
+below are loopback p50, 128 B payload (= `size_of::<FillRecord>()`),
+client + echoer pinned to cores 2/3, same Criterion harness.
+
+| Protocol | p50 RTT | Bench |
 |---|---:|---|
-| `WalWriter::append` (in-memory) | **~37 ns** | `wal_bench`, single thread |
-| `CastSender::send` body | **~3.65 µs** (99% kernel `sendto`) | `cast_send_breakdown_bench`, 128 B payload + 16 B header |
-| Raw UDP RTT (baseline) | **9.89 µs** | `compare_udp`, 128 B, two threads pinned to cores 2/3 |
-| casting RTT (sender → echo → sender) | **9.7 µs** | `cast_rtt_bench`, 128 B, two threads pinned |
+| **casting (rsx-cast)** | **~10 µs** | `cast_rtt_bench` |
+| raw UDP (floor) | ~10 µs | `compare_all::raw_udp_128b` |
+| MoldUDP64 | ~10 µs | `compare_moldudp64::moldudp64_rtt_loopback_128b` |
+| TCP_NODELAY | ~14 µs | `compare_all::tcp_nodelay_128b` |
+| SoupBinTCP | ~14 µs | `compare_soupbintcp::soupbintcp_rtt_loopback_128b` |
+| KCP (turbo + spin) | ~21 µs | `compare_all::kcp_spin_flush_128b` |
+| Quinn / QUIC | ~37 µs | `compare_all::quinn_persistent_128b` |
+| Aeron (UDP) | ~305 µs | `compare_aeron::aeron_rtt_udp_loopback_128b` |
+| Aeron (IPC, not network) | ~830 ns | `compare_aeron::aeron_rtt_ipc_128b` |
+
+What the numbers say, factually: casting's RTT is indistinguishable
+from raw UDP (the protocol adds ~0 µs — see the send breakdown),
+ties MoldUDP64's UDP-sequenced frame, and is lower than the TCP
+protocols (TCP_NODELAY, SoupBinTCP), the userspace-RUDP options
+(KCP, QUIC), and Aeron's networked UDP path. The only faster
+numbers in the survey are shared-memory IPC paths — Aeron IPC
+(~830 ns) and Chronicle Queue (sub-µs, Java) — which are not
+network transports and don't carry a WAL. casting is not "fastest
+in general"; it is at the UDP floor for this fixed-record LAN
+workload and beats the networked peers because it does no
+serialization, no per-frame negotiation, and no congestion-control
+bookkeeping.
+
+Internal latencies (same host, same pinning):
+
+| Operation | p50 | Bench |
+|---|---:|---|
+| `CastSender::send` body | **~4.0 µs** (99 % kernel `sendto`) | `cast_send_breakdown_bench`, 128 B + 16 B header |
+| casting one-way (send → recv) | **~5.3 µs** | `cast_one_way_bench` |
+| `WalWriter::prepare` + `append_framed` (in-memory) | **~31 ns** | `wal_bench`, single thread |
 | `WalWriter::flush + fsync`, 1 record | **498 µs** | `wal_fsync_bench` (real disk, core-pinned) |
 | `WalWriter::flush + fsync`, 100 records | **627 µs** | `wal_fsync_bench` — fsync dominates |
 | `WalWriter::flush + fsync`, 10 000 records | **5.94 ms** | `wal_fsync_bench` — append overhead visible |
-| Cold-tier NAK retransmit (`read_record_at_seq`) | **10.4 ms @ 10 K records** | `wal_random_read_bench`, scans backwards |
+| Cold-tier NAK retransmit (`read_record_at_seq`) | **10.4 ms @ 10 K records** | `wal_random_read_bench`, in-file scan |
 
 Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1, Rust release.
+Reproduce: `cargo bench -p rsx-cast --bench compare_all` (+ the
+standalone `compare_aeron` / `compare_moldudp64` / `compare_soupbintcp`).
 Authoritative dated measurements:
 [`facts/cmp-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cmp-vs-udp-overhead.md).
-Per-bench attribution: [BENCHES.md](BENCHES.md). Architectural
-walk-through: [ARCHITECTURE.md](ARCHITECTURE.md).
+Per-bench attribution: [BENCHES.md](BENCHES.md). Comparison harness
+and feature matrix: [`compare/README.md`](compare/README.md).
+Architectural walk-through: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Footnotes.**
-- **p99 not yet measured.** Aeron and Chronicle Queue publish
-  p99 / p99.9; we publish p50 only. Run `cargo bench` yourself
-  for your environment.
-- **Loopback ≠ production.** The numbers above are spin-loop
-  loopback microbenches with pinned threads. The exchange's
-  cross-process p50 is ~1 128 µs — dominated by monoio's
-  100 µs sleep-polls, tokio reactor schedules, and PG
-  write-behind churn. Transport overhead is a ~10 µs slice of
-  the cross-process cost; if you care about the full path,
-  re-bench in your deployment.
+- **p50 only; p99 not yet measured.** Aeron and Chronicle Queue
+  publish p99 / p99.9; this crate publishes p50. Run `cargo bench`
+  yourself for tail behaviour in your environment.
+- **Loopback ≠ production, and not a general protocol benchmark.**
+  The numbers above are spin-loop loopback microbenches with pinned
+  threads, on this crate's target workload (trusted LAN, fixed
+  `repr(C)` records, no TLS on UDP). They are not a verdict on the
+  competitors' designed-for workloads (Aeron's multicast fan-out,
+  QUIC's WAN/NAT traversal). The exchange's cross-process p50 is
+  ~1 128 µs — dominated by monoio's 100 µs sleep-polls, tokio
+  reactor schedules, and PG write-behind churn, not transport.
+  Transport is a ~10 µs slice of that; re-bench in your deployment.
 
 ## Why this exists
 
@@ -58,12 +96,12 @@ skips it.
 
 The retransmit story falls out of this. When the receiver
 NAKs a missing seq, the sender first checks the in-memory
-ring (~4 K most recent frames) and on miss does an O(log N)
-file-lookup + O(1) random read against the same WAL the
-producer writes for audit. Retransmit horizon = WAL
-retention, not RAM. This is "embedded WAL" vs. Aeron's
-"separate Archive sidecar"; the protocol invention is small,
-the packaging difference is the point.
+ring (4 K most-recent frames) and on miss picks the WAL
+segment whose filename-encoded seq range covers the target,
+then scans that one file for the record. Retransmit horizon =
+WAL retention (4 h default), not RAM. This is "embedded WAL"
+vs. Aeron's "separate Archive sidecar"; the protocol
+invention is small, the packaging difference is the point.
 
 ## What it gives you
 
@@ -86,11 +124,12 @@ the packaging difference is the point.
 - **Two-tier retransmit (embedded, not sidecar).** First the
   in-memory `send_ring` (4 K most-recent frames, ~µs to
   re-send). On miss, fall back to
-  `wal::read_record_at_seq` — a random-access read from the
-  WAL file that holds that seq. Retransmit horizon = **WAL
-  retention** (default 48 h), not RAM. Aeron's equivalent
-  ships as a separate Archive process; casting keeps the audit
-  log and the retransmit cache in the same producer.
+  `wal::read_record_at_seq` — pick the WAL segment whose
+  filename-encoded seq range covers the target, scan that one
+  file for the record. Retransmit horizon = **WAL retention**
+  (default 4 h), not RAM. Aeron's equivalent ships as a
+  separate Archive process; casting keeps the audit log and
+  the retransmit cache in the same producer.
 - **replication/TCP** — same record bytes, reliable transport. Used
   for cold-start replay (`ReplicationConsumer::run`) and
   archival/replication. Optional rustls TLS.
@@ -131,11 +170,11 @@ first `u64` of every data record (per the [`CastRecord`] trait).
 - **Send path** (`CastSender::send`): the preallocated `send_ring`
   holds the 4 K most-recent frames; every send is a copy into an
   already-owned slot + one `sendto` syscall. No heap traffic.
-- **Receive path** (`CastReceiver::poll`): the callback receives a
-  `&[u8]` pointing directly into the receiver's internal reorder
-  buffer — the caller reads the struct in place, no `Vec` is
-  allocated. `try_recv` is a backwards-compat shim that wraps
-  `poll` with one `Vec<u8>` per record; use `poll` on the hot path.
+- **Receive path** (`CastReceiver::try_recv_with`): the `FnOnce`
+  callback receives a `&[u8]` pointing directly into the receiver's
+  internal packet buffer — the caller reads the struct in place, no
+  `Vec` is allocated. `try_recv` is a convenience shim that returns
+  an owned `Vec<u8>` per record; use `try_recv_with` on the hot path.
 - **Wire = disk = stream**: the 16-byte header + `#[repr(C)]`
   payload written to WAL is bitwise identical to what goes on the
   wire and what the TCP replay stream delivers. There is no
@@ -165,13 +204,15 @@ cargo run --example cast_smoke
 use rsx_cast::CastSender;
 use rsx_cast::WalWriter;
 
-// One WAL per stream. `CastSender` opens its own WAL handle
-// internally; the explicit `WalWriter` shown here is for
-// callers that prepare a record once and fan it out
-// (prepare → append_framed → send_framed; see `notes/crc.md`).
-// Hot-tier retention is fixed at 4h: segments older than that
-// are pruned on rotation. Long-term durability lives in the
-// recorder/ARCHIVE tier.
+// One WAL per stream. `CastSender` takes `wal_dir` to READ from
+// during cold-tier NAK retransmit (when the requested seq has
+// aged out of the in-memory send ring); it does NOT write the WAL.
+// A producer that wants its stream persisted runs a separate
+// `WalWriter` over the same dir and uses the single-CRC fan-out
+// (prepare → append_framed → send_framed) so seq + CRC are
+// computed exactly once for both the disk record and the UDP frame.
+// Hot-tier retention is 4h: segments older than that are pruned on
+// rotation. Long-term durability lives in the recorder/ARCHIVE tier.
 let mut wal = WalWriter::new(
     stream_id,
     &wal_dir,
@@ -179,12 +220,20 @@ let mut wal = WalWriter::new(
 )?;
 let mut sender = CastSender::new(dest_addr, stream_id, &wal_dir)?;
 
+// Paired persist + publish: one seq, one CRC, two destinations.
 let mut fill = my_crate::FillRecord { /* ... */ };
-sender.send(&mut fill)?;   // assigns seq, writes to WAL, sends UDP, caches
-wal.flush()?;              // call periodically (e.g. every 10 ms in a tick loop)
-sender.tick()?;            // emits CastHeartbeat if the stream has been idle
-sender.recv_control();     // drains incoming NAKs and retransmits as needed
+let framed = wal.prepare(&mut fill)?; // assigns seq + CRC + header once
+wal.append_framed(&framed)?;          // → in-memory WAL buf (not yet durable)
+sender.send_framed(&framed)?;         // → UDP + send-ring cache (no re-CRC)
+wal.flush()?;                        // fsync; call periodically (e.g. 10 ms tick)
+sender.tick()?;                      // emits CastHeartbeat if the stream is idle
+sender.recv_control();               // drains incoming NAKs, retransmits as needed
 ```
+
+For a publish-only stream (no persistence, no NAK fallback to
+disk), skip the `WalWriter` and call `sender.send(&mut fill)?` —
+that assigns the seq, computes the CRC, sends, and caches in the
+ring, but a NAK for an aged-out seq cannot be served.
 
 `tick()` and `recv_control()` are non-optional in steady state.
 Heartbeats are how the **receiver** detects a stalled tail (no
@@ -254,22 +303,26 @@ For consumers that need µs-class latency on the live tail
 use rsx_cast::{ReplicationConsumer, CastReceiver, CastRecv};
 
 // 1. Bootstrap: drain historical via TCP from last-persisted tip.
-let mut dxs = ReplicationConsumer::new(stream_id, dxs_addr.clone(),
+// `endpoints: Vec<String>` — tried in order; federation falls
+// through to the next on ReplicationNotAvailable.
+let mut dxs = ReplicationConsumer::new(stream_id, endpoints.clone(),
                                tip_file.clone(), None)?;
 dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
 // TCP closes here. Steady state has zero TCP per consumer.
 
-// 2. Live: listen UDP.
-let mut rx = CastReceiver::new(bind_addr, sender_addr, stream_id)?;
+// 2. Live: listen UDP. (sender_addr is where NAKs are sent.)
+let mut rx = CastReceiver::new(bind_addr, sender_addr)?;
 loop {
     rx.tick();
     match rx.try_recv() {
         CastRecv::Data(hdr, payload) => process(hdr, payload),
         CastRecv::Empty => continue,
-        CastRecv::Faulted { last_delivered_seq, .. } => {
-            // 3. On FAULTED: reopen TCP from the persisted tip,
-            //    drain to current, reset, resume UDP.
-            let mut dxs = ReplicationConsumer::new(stream_id, dxs_addr.clone(),
+        // Faulted (NAK retries exhausted) and Reconnect (reorder
+        // ring overflow) both escalate to TCP replay + reset.
+        CastRecv::Faulted { .. } | CastRecv::Reconnect { .. } => {
+            // 3. Reopen TCP from the persisted tip, drain to
+            //    current, reset, resume UDP.
+            let mut dxs = ReplicationConsumer::new(stream_id, endpoints.clone(),
                                            tip_file.clone(), None)?;
             dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
             rx.reset_after_replay(dxs.tip);
@@ -292,7 +345,7 @@ historical catch-up and live streaming, indefinitely.
 ```rust
 use rsx_cast::ReplicationConsumer;
 
-let mut dxs = ReplicationConsumer::new(stream_id, dxs_addr, tip_file, None)?;
+let mut dxs = ReplicationConsumer::new(stream_id, endpoints, tip_file, None)?;
 dxs.run(|record| {
     process(record.header, record.payload);
 }).await?;
@@ -330,8 +383,9 @@ latency measurements justify the extra moving parts.
   via the TCP replay path. Bounded loss on crash: up to one
   flush interval (10 ms default) of pre-fsync records.
 - **Retransmit horizon**: bounded by WAL retention (default
-  48 h), not by RAM. Cold retransmits read directly from log
-  files via `read_record_at_seq`.
+  4 h; segments pruned at rotation), not by RAM. Cold
+  retransmits read directly from log files via
+  `read_record_at_seq`.
 - **Idempotent replay**: consumers dedup by `seq`. Records
   with `seq ≤ tips[stream_id]` are a no-op. Tips persist
   every 10 ms; recovery resumes from `tip + 1`.
@@ -354,9 +408,10 @@ latency measurements justify the extra moving parts.
   (within the 4 K-slot send ring) are µs-scale; the cold tier
   is acceptable for cold-start replay and stale NAKs, not for
   realtime tail-of-stream recovery.
-- **Receive path allocates one `Vec<u8>` per in-order packet.**
-  `CastReceiver::try_recv` allocates the payload buffer per
-  call. A caller-supplied `&mut [u8]` variant is future work.
+- **`try_recv` allocates one `Vec<u8>` per in-order packet.**
+  Use `try_recv_with` (callback delivers a `&[u8]` into the
+  receiver's buffer) for the zero-allocation path. There is no
+  caller-supplied `&mut [u8]` copy-out variant.
 - **Not all consumers handle `CastRecv::Faulted` yet.** The
   receiver surfaces FAULTED to the caller; the matching tile
   recovers via `ReplicationConsumer` replay (POC reference),
@@ -411,15 +466,20 @@ latency measurements justify the extra moving parts.
   is O(N) within a WAL segment file (10.4 ms @ 10 K records,
   80.6 ms @ 100 K). Acceptable for cold-start replay or stale
   NAKs; not for realtime tail-of-stream recovery.
-- **Per-packet zero-copy receive** — `CastReceiver::try_recv`
-  currently allocates one `Vec<u8>` per in-order packet. A
-  caller-supplied `&mut [u8]` variant is future work.
+- **Owned-payload receive** — `CastReceiver::try_recv` allocates
+  one `Vec<u8>` per in-order packet. The zero-copy path is
+  `try_recv_with` (callback gets a `&[u8]` into the receiver's
+  buffer); use it on the hot path. There is no caller-supplied
+  `&mut [u8]` copy-out variant.
 - **No congestion control** — a sender that outpaces the
   link buries the receiver. The trust assumption is that
   capacity planning happens out-of-band.
-- **Slow-consumer behavior is "drop silently"** — see the
-  reorder-buffer caveat under Guarantees. If the consumer
-  needs FAULTED + halt-and-rebuild semantics, wait for v4.
+- **Slow-consumer behavior is bounded-buffer drop** — a reorder
+  ring overflow surfaces `CastRecvWith::Reconnect` and NAK-retry
+  exhaustion surfaces `CastRecvWith::Faulted`; both are sticky
+  and require a TCP replay + `reset_after_replay` to resume (see
+  Consumer patterns). The receiver does not pace the sender and
+  does not buffer unboundedly.
 
 ## MSRV
 
@@ -499,8 +559,10 @@ This crate has no public stable API yet. The
 [CHANGELOG](https://github.com/kronael/rsx/blob/master/CHANGELOG.md)
 in the wider rsx exchange repo is the source of truth for
 rename maps, env-var changes, and wire-format bumps.
-Current crate version is **0.5.2**; v4 reliability (FAULTED,
-NAK debounce, retransmit dedup) shipped in v0.3.0.
+Current crate version is **0.5.2**. The reliability primitives
+(`Faulted` / `Reconnect` escalation, NAK debounce, retransmit
+dedup window) are present in the current API; see the CHANGELOG
+for the version each landed in.
 
 ## How to read this crate
 
