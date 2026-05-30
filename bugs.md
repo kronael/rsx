@@ -15,7 +15,13 @@ the migrations idempotent. Triage only.
 
 ## LATENCY-TRACE-ALWAYS-ON — per-stage trace runs unconditionally on the hot path (LOW)
 
-**Status: OPEN.** Found 2026-05-30 in the hot-path audit. `rsx_log::latency::
+**Status: RESOLVED 2026-05-30.** Replaced the runtime gate idea with a
+compile-time `rsx_log::latency_sample!` macro behind the `latency-trace` cargo
+feature (default OFF) — when off it expands to nothing (no clock read, no push,
+args not evaluated). All call sites in risk/ME/gateway converted; default builds
+carry zero hot-path trace cost. Original report below.
+
+**Status: OPEN (original).** Found 2026-05-30 in the hot-path audit. `rsx_log::latency::
 sample` → `rsx_log::push` is **ungated**: every order pushes ≥2 records per
 stage (e.g. ME does `me_in` + `me_dedup_done`, each preceded by a `time_ns()`
 VDSO clock read + a thread-local `RefCell::borrow_mut` + SPSC push). Across all
