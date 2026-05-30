@@ -1,5 +1,6 @@
 //! rsx-types: shared newtypes (`Price`, `Qty`, `Side`, `SymbolConfig`). See ARCHITECTURE.md.
 
+pub mod cpu;
 pub mod macros;
 pub mod time_utils;
 
