@@ -30,6 +30,10 @@ use rsx_messages::CancelRequest;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
+use rsx_health::CounterGauge;
+use rsx_health::HealthSnapshot;
+use rsx_health::LoadGauges;
+use rsx_health::QueueGauge;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
@@ -160,6 +164,67 @@ fn main() {
     );
     log_effective_risk_config(&config);
 
+    // Health server: RSX_RISK_HEALTH_ADDR=127.0.0.1:9201
+    // GET /health → 200/503 liveness
+    // GET /ready   → 200/503 readiness (only when Live)
+    // GET /metrics → JSON (ring occupancy, counters)
+    let gauges: Arc<LoadGauges> = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    // ready=false until we reach NodeState::Live
+    if let Ok(addr_str) = env::var("RSX_RISK_HEALTH_ADDR") {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            let g = gauges.clone();
+            rsx_health::spawn_health_server(addr, move || {
+                let live = g.live.load(Ordering::Relaxed);
+                let ready = g.ready.load(Ordering::Relaxed);
+                let resp_used = g.resp_ring_used.load(Ordering::Relaxed);
+                let resp_cap = g.resp_ring_cap.load(Ordering::Relaxed);
+                let acc_used = g.accept_ring_used.load(Ordering::Relaxed);
+                let acc_cap = g.accept_ring_cap.load(Ordering::Relaxed);
+                let persist_used = g.persist_ring_used.load(Ordering::Relaxed);
+                let persist_cap = g.persist_ring_cap.load(Ordering::Relaxed);
+                let saturation = {
+                    let mut max = 0.0f64;
+                    for (u, c) in [
+                        (resp_used, resp_cap),
+                        (acc_used, acc_cap),
+                        (persist_used, persist_cap),
+                    ] {
+                        if c > 0 {
+                            let f = (u as f64) / (c as f64);
+                            if f > max { max = f; }
+                        }
+                    }
+                    max
+                };
+                HealthSnapshot {
+                    live,
+                    ready,
+                    saturation,
+                    queues: vec![
+                        QueueGauge { name: "resp_ring",
+                            used: resp_used, cap: resp_cap },
+                        QueueGauge { name: "accept_ring",
+                            used: acc_used, cap: acc_cap },
+                        QueueGauge { name: "persist_ring",
+                            used: persist_used, cap: persist_cap },
+                    ],
+                    counters: vec![
+                        CounterGauge { name: "orders_processed",
+                            value: g.orders_processed.load(Ordering::Relaxed) },
+                        CounterGauge { name: "fills_processed",
+                            value: g.fills_processed.load(Ordering::Relaxed) },
+                        CounterGauge { name: "rejects",
+                            value: g.rejects.load(Ordering::Relaxed) },
+                    ],
+                    state: g.state_label(),
+                }
+            });
+        } else {
+            warn!("RSX_RISK_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
     let mut attempts: usize = 0;
 
     // Every process is a warm candidate main. `run_main` boots
@@ -178,10 +243,14 @@ fn main() {
     // thread, and tears them all down before returning.
     loop {
         let err: Box<dyn std::error::Error> = match run_main(
-            shard_id, max_symbols,
+            shard_id, max_symbols, gauges.clone(),
         ) {
             Ok(MainTransition::Demote) => {
                 info!("lease lost; re-acquiring advisory lock");
+                // Back to warm catchup state: not ready until
+                // we win the lock again.
+                gauges.ready.store(false, Ordering::Relaxed);
+                gauges.state_idx.store(1, Ordering::Relaxed);
                 attempts = 0;
                 continue;
             }
@@ -354,6 +423,7 @@ fn rand_jitter() -> f64 {
 fn run_main(
     shard_id: u32,
     max_symbols: usize,
+    gauges: Arc<LoadGauges>,
 ) -> Result<MainTransition, Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
     let shard_count = config.shard_count;
@@ -462,6 +532,8 @@ fn run_main(
     // Blocks (re-trying the lock) until promotion. On error,
     // returns it to main()'s restart loop.
     let mut state = NodeState::WarmCatchup;
+    gauges.state_idx.store(1, Ordering::Relaxed); // "warm_catchup"
+    gauges.ready.store(false, Ordering::Relaxed);
     info!("risk shard {} state={:?}", shard_id, state);
     run_warm_catchup(
         &rt,
@@ -477,6 +549,8 @@ fn run_main(
     // Past this point this node is the SOLE advisory-lock holder
     // (invariant #10) and the shard is warm + final-drained.
     state = NodeState::Live;
+    gauges.state_idx.store(2, Ordering::Relaxed); // "live"
+    gauges.ready.store(true, Ordering::Relaxed);
     info!("risk shard {} state={:?} (promoted)", shard_id, state);
 
     let lease_held = Arc::new(AtomicBool::new(true));
@@ -494,6 +568,7 @@ fn run_main(
 
     let (persist_prod, persist_cons) =
         rtrb::RingBuffer::<PersistEvent>::new(8192);
+    gauges.persist_ring_cap.store(8192, Ordering::Relaxed);
     shard.set_persist_producer(persist_prod);
 
     // Persist worker thread. We retain its `JoinHandle` and
@@ -642,6 +717,8 @@ fn run_main(
         rtrb::RingBuffer::<OrderResponse>::new(2048);
     let (accepted_prod, mut accepted_cons) =
         rtrb::RingBuffer::<OrderRequest>::new(2048);
+    gauges.resp_ring_cap.store(2048, Ordering::Relaxed);
+    gauges.accept_ring_cap.store(2048, Ordering::Relaxed);
 
     let mut rings = ShardRings {
         response_producer: resp_prod,
@@ -720,6 +797,9 @@ fn run_main(
                         timestamp_ns: fill.ts_ns,
                     };
                     shard.process_fill(&event);
+                    gauges.fills_processed.fetch_add(
+                        1, Ordering::Relaxed,
+                    );
                     // LIQUIDATOR.md §10: a fill means the
                     // symbol is accepting orders again, so any
                     // halt from a prior ORDER_FAILED is lifted.
@@ -879,6 +959,9 @@ fn run_main(
                     // fail — a dropped response/accepted would be
                     // a silent ghost order (gateway thinks it's
                     // pending, ME never sees it). R-N2.
+                    gauges.orders_processed.fetch_add(
+                        1, Ordering::Relaxed,
+                    );
                     let resp = shard.process_order(&order);
                     if matches!(
                         resp,
@@ -1002,6 +1085,17 @@ fn run_main(
         // the recv handlers above.
         shard.tick(&mut rings, now_secs);
 
+        // Publish load gauges (relaxed stores; once per loop
+        // iteration, not per message — zero hot-path syscall cost).
+        gauges.resp_ring_used.store(
+            resp_cons.slots() as u64,
+            Ordering::Relaxed,
+        );
+        gauges.accept_ring_used.store(
+            accepted_cons.slots() as u64,
+            Ordering::Relaxed,
+        );
+
         // Drain responses: send ORDER_FAILED to GW
         while let Ok(resp) = resp_cons.pop() {
             if let OrderResponse::Rejected {
@@ -1011,6 +1105,7 @@ fn run_main(
                 order_id_lo,
             } = resp
             {
+                gauges.rejects.fetch_add(1, Ordering::Relaxed);
                 let reason_u8 = match reason {
                     rsx_risk::RejectReason::InsufficientMargin => {
                         FailureReason::InsufficientMargin

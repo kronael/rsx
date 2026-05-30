@@ -17,6 +17,7 @@ rsx-log = { path = "../rsx-log" }
 rsx-matching = { path = "../rsx-matching" }
 rsx-cast = { path = "../rsx-cast" }
 rsx-messages = { path = "../rsx-messages" }
+rsx-health = { path = "../rsx-health" }
 rustc-hash = "2"
 rtrb = "0.3"
 tokio = { version = "1", features = ["rt", "time"] }

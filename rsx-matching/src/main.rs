@@ -4,6 +4,10 @@ use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
+use rsx_health::CounterGauge;
+use rsx_health::HealthSnapshot;
+use rsx_health::LoadGauges;
+use rsx_health::QueueGauge;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::OrderAcceptedRecord;
@@ -36,6 +40,7 @@ use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -454,6 +459,47 @@ fn main() {
         );
     }
 
+    // Health server: RSX_ME_HEALTH_ADDR=127.0.0.1:9202
+    // GET /health → 200/503 liveness
+    // GET /ready   → 200/503 readiness
+    // GET /metrics → JSON (match throughput, dedup map size)
+    let gauges: Arc<LoadGauges> = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    gauges.ready.store(true, Ordering::Relaxed);
+    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    if let Ok(addr_str) = env::var("RSX_ME_HEALTH_ADDR") {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            let g = gauges.clone();
+            rsx_health::spawn_health_server(addr, move || {
+                HealthSnapshot {
+                    live: g.live.load(Ordering::Relaxed),
+                    ready: g.ready.load(Ordering::Relaxed),
+                    saturation: 0.0,
+                    queues: vec![
+                        QueueGauge {
+                            name: "dedup_map",
+                            used: g.dedup_map_size.load(Ordering::Relaxed),
+                            cap: 65536,
+                        },
+                    ],
+                    counters: vec![
+                        CounterGauge {
+                            name: "orders_processed",
+                            value: g.orders_processed.load(Ordering::Relaxed),
+                        },
+                        CounterGauge {
+                            name: "publishes",
+                            value: g.publishes.load(Ordering::Relaxed),
+                        },
+                    ],
+                    state: g.state_label(),
+                }
+            });
+        } else {
+            warn!("RSX_ME_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
     // `dedup` + `order_index` are populated above by
     // replay_wal_after_snapshot when applicable. After this
     // point only the live event loop mutates them.
@@ -533,6 +579,10 @@ fn main() {
                     order_msg.timestamp_ns
                 );
 
+                // Update order counter regardless of dup status.
+                gauges.orders_processed.fetch_add(
+                    1, Ordering::Relaxed,
+                );
                 if is_dup {
                     let ts = time_ns();
                     let mut fail = OrderFailedRecord {
@@ -656,6 +706,9 @@ fn main() {
                         ts_ns,
                     )
                     .expect("publish_events failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
+                    gauges.publishes.fetch_add(
+                        1, Ordering::Relaxed,
+                    );
                     // Sub-stage: events flushed + sent.
                     rsx_log::latency_sample!(
                         "me_wal_events_done",
@@ -774,6 +827,10 @@ fn main() {
         }
 
         dedup.maybe_cleanup();
+        gauges.dedup_map_size.store(
+            dedup.len() as u64,
+            Ordering::Relaxed,
+        );
 
         // Poll config every 10 minutes
         if last_config_poll.elapsed().as_secs() >= 600 {

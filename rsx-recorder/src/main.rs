@@ -5,16 +5,23 @@ use chrono::Utc;
 use config::RecorderConfig;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::RawWalRecord;
+use rsx_health::CounterGauge;
+use rsx_health::HealthSnapshot;
+use rsx_health::LoadGauges;
 use rsx_types::install_panic_handler;
+use std::env;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::Write;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use tracing::info;
+use tracing::warn;
 
 struct RecorderState {
     archive_dir: PathBuf,
@@ -114,6 +121,37 @@ async fn main() -> io::Result<()> {
 
     let config = RecorderConfig::from_env()?;
 
+    // Health server: RSX_RECORDER_HEALTH_ADDR=127.0.0.1:9205
+    // GET /health → 200/503 liveness
+    // GET /ready   → 200/503 readiness
+    // GET /metrics → JSON (record_count, lag)
+    let gauges: Arc<LoadGauges> = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    gauges.ready.store(true, Ordering::Relaxed);
+    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    if let Ok(addr_str) = env::var("RSX_RECORDER_HEALTH_ADDR") {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            let g = gauges.clone();
+            rsx_health::spawn_health_server(addr, move || {
+                HealthSnapshot {
+                    live: g.live.load(Ordering::Relaxed),
+                    ready: g.ready.load(Ordering::Relaxed),
+                    saturation: 0.0,
+                    queues: vec![],
+                    counters: vec![
+                        CounterGauge {
+                            name: "records_written",
+                            value: g.publishes.load(Ordering::Relaxed),
+                        },
+                    ],
+                    state: g.state_label(),
+                }
+            });
+        } else {
+            warn!("RSX_RECORDER_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
     let state = Arc::new(Mutex::new(RecorderState::new(
         &config.archive_dir,
         config.stream_id,
@@ -127,6 +165,7 @@ async fn main() -> io::Result<()> {
     )?;
 
     let state_clone = state.clone();
+    let gauges_rec = gauges.clone();
     consumer
         .run(move |record: RawWalRecord| {
             // SAFETY: recover from mutex poison
@@ -136,6 +175,10 @@ async fn main() -> io::Result<()> {
             if let Err(e) = s.write_record(&record) {
                 tracing::error!(
                     "write archive error: {}", e
+                );
+            } else {
+                gauges_rec.publishes.fetch_add(
+                    1, Ordering::Relaxed,
                 );
             }
         })

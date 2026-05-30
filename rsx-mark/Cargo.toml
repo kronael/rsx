@@ -16,6 +16,7 @@ rsx-types = { path = "../rsx-types" }
 rsx-cast = { path = "../rsx-cast" }
 rsx-messages = { path = "../rsx-messages" }
 rsx-log = { path = "../rsx-log" }
+rsx-health = { path = "../rsx-health" }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 rtrb = "0.3"

@@ -49,6 +49,10 @@ impl MarketDataState {
         }
     }
 
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
+    }
+
     pub fn add_connection(&mut self) -> u64 {
         let id = self.next_conn_id;
         self.next_conn_id += 1;
