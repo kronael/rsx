@@ -2,6 +2,7 @@ use rsx_risk::funding::calculate_payment;
 use rsx_risk::funding::calculate_rate;
 use rsx_risk::funding::interval_id;
 use rsx_risk::funding::is_settlement_due;
+use rsx_risk::funding::settle_symbol;
 use rsx_risk::funding::FundingConfig;
 
 fn default_config() -> FundingConfig {
@@ -144,4 +145,91 @@ fn funding_payment_formula_qty_times_mark_times_rate() {
     // payment = 10 * 1000 * 50 / 10000 = 50
     let p = calculate_payment(10, 1000, 50);
     assert_eq!(p, 50);
+}
+
+#[test]
+fn funding_payment_floors_toward_negative_infinity() {
+    // Project rule: floor always. A short receiving funding has a
+    // negative scaled value; -3 * 333 * 50 = -49950, /10000 = -4.995.
+    // Floor = -5 (truncating `/` would wrongly give -4).
+    let p = calculate_payment(-3, 333, 50);
+    assert_eq!(p, -5);
+    // The mirrored long pays floor(+4.995) = +4.
+    let q = calculate_payment(3, 333, 50);
+    assert_eq!(q, 4);
+}
+
+#[test]
+fn funding_zero_sum_uneven_position_split() {
+    // Invariant #9 (P0). Three longs of qty 1 and one short of qty 3.
+    // Σ net_qty = 0. Independent per-user floor leaks -1 unit:
+    //   long  +1 -> floor(0.1665e2/... ) per user, short -3 -> -4.995.
+    // settle_symbol must net EXACTLY to zero.
+    let net_qtys = [1, 1, 1, -3];
+    let payments = settle_symbol(&net_qtys, 333, 50);
+    let total: i64 = payments.iter().sum();
+    assert_eq!(total, 0, "funding must be zero-sum (invariant #9)");
+}
+
+#[test]
+fn funding_zero_sum_negative_rate_uneven_split() {
+    // Same shape, negative rate (shorts pay longs). Must still net 0.
+    let net_qtys = [1, 1, 1, -3];
+    let payments = settle_symbol(&net_qtys, 333, -50);
+    let total: i64 = payments.iter().sum();
+    assert_eq!(total, 0);
+}
+
+#[test]
+fn funding_zero_sum_many_users_pathological_marks() {
+    // Stress: many users, marks/rates chosen to maximize remainders.
+    // Σ net_qty held at 0; settle_symbol must net exactly to zero
+    // regardless of how the floors fall.
+    for &mark in &[1, 7, 333, 99_991, 1_000_003] {
+        for &rate in &[1, 3, 17, 50, -1, -37, -100] {
+            // 5 longs summing to +37, 4 shorts summing to -37.
+            let net_qtys =
+                [3, 7, 11, 5, 11, -13, -9, -8, -7];
+            assert_eq!(net_qtys.iter().sum::<i64>(), 0);
+            let payments =
+                settle_symbol(&net_qtys, mark, rate);
+            let total: i64 = payments.iter().sum();
+            assert_eq!(
+                total, 0,
+                "zero-sum failed at mark={mark} rate={rate}"
+            );
+        }
+    }
+}
+
+#[test]
+fn funding_settle_matches_calculate_payment_when_exact() {
+    // When every payment divides evenly, settle_symbol must equal
+    // the per-user calculate_payment values (no spurious adjustment).
+    let net_qtys = [10, -10];
+    let payments = settle_symbol(&net_qtys, 1000, 50);
+    assert_eq!(payments[0], calculate_payment(10, 1000, 50));
+    assert_eq!(payments[1], calculate_payment(-10, 1000, 50));
+    assert_eq!(payments.iter().sum::<i64>(), 0);
+}
+
+#[test]
+fn funding_settle_empty_no_panic() {
+    let payments = settle_symbol(&[], 1000, 50);
+    assert!(payments.is_empty());
+}
+
+#[test]
+fn funding_settle_residual_parked_on_largest_position() {
+    // The short (qty 3, |3| largest) should absorb the residual so the
+    // small longs keep their natural floored value.
+    let net_qtys = [1, 1, 1, -3];
+    let payments = settle_symbol(&net_qtys, 333, 50);
+    // Each long floors to +0? 1*333*50=16650 -> floor(1.665)=1.
+    assert_eq!(payments[0], 1);
+    assert_eq!(payments[1], 1);
+    assert_eq!(payments[2], 1);
+    // Short carries -3 to balance the three +1 longs.
+    assert_eq!(payments[3], -3);
+    assert_eq!(payments.iter().sum::<i64>(), 0);
 }

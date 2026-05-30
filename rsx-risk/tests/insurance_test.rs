@@ -174,3 +174,23 @@ fn default_produces_zeroed_fund() {
     assert_eq!(fund.balance, 0);
     assert_eq!(fund.version, 0);
 }
+
+// -- overflow hardening --
+
+#[test]
+fn deduct_saturates_instead_of_panicking() {
+    // A pathological socialized loss must not panic the shard
+    // (debug overflow) nor wrap (release). Balance floors at i64::MIN.
+    let mut fund = InsuranceFund::new(100, i64::MIN + 10);
+    fund.deduct(i64::MAX);
+    assert_eq!(fund.balance, i64::MIN);
+    assert_eq!(fund.version, 1);
+}
+
+#[test]
+fn add_saturates_instead_of_panicking() {
+    let mut fund = InsuranceFund::new(100, i64::MAX - 10);
+    fund.add(i64::MAX);
+    assert_eq!(fund.balance, i64::MAX);
+    assert_eq!(fund.version, 1);
+}
