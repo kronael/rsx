@@ -30,8 +30,11 @@ rtrb = "0.3"
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
 tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
 criterion = "0.5"
+monoio = "0.2"
+hdrhistogram = "7"
+libc = "0.2"
 
 [[bench]]
 name = "risk_bench"
@@ -39,4 +42,8 @@ harness = false
 
 [[bench]]
 name = "validate_bench"
+harness = false
+
+[[bench]]
+name = "loop_arch_bench"
 harness = false
