@@ -1,5 +1,31 @@
 # Bug queue
 
+## GATEWAY-LATENCY — casting-recv poll-loop starvation dominates e2e (HIGH)
+
+**Status: OPEN.** Single-order stage trace (live cluster): ME finishes +
+response leaves Risk by ~571µs (`me_out`), but the gateway doesn't receive
+it (`gateway_cmp_recv`) until ~4794µs — a **~4.2ms hole**. Across 1934
+probes the `me_out → gateway_cmp_recv` gap is **~0.8ms p50 / ~10ms p90** —
+i.e. essentially the entire e2e latency. The response sits in the gateway's
+UDP socket buffer waiting for the casting-recv poll loop to get a turn on
+the shared monoio reactor (WS accept + per-conn handlers + casting-recv all
+on one reactor; `sleep(ZERO)` yields the core per empty poll). Risk (65µs),
+ME match (~80µs), Risk return (556µs) are all sub-ms — NOT the bottleneck.
+(NB: earlier "11ms is Python" was wrong — GW-only RTT is 143µs.)
+**Fix:** tile-split the casting-recv response path to a dedicated pinned
+busy-spin thread (off the reactor) → SPSC ring → WS writer tasks. Same
+pattern as Risk/ME. Biggest single e2e win.
+
+## ANSI-IN-LOGS — tracing writes color escapes into log files (LOW)
+
+**Status: OPEN.** Process logs (`log/*.log`) contain ANSI color escapes
+(`\x1b[2m…\x1b[0m`) because the tracing fmt layer has ANSI enabled even
+when output is a file, not a TTY. Makes structured latency lines
+(`stage="risk_in" t_us=…`) un-greppable without stripping. **Fix:**
+`.with_ansi(false)` (or TTY-detect) in the tracing init across rsx binaries
+(gateway/risk/matching/marketdata/mark/recorder), ideally via a shared
+rsx-log init helper.
+
 ## ORPHAN-FREEZE — phantom margin hold survives risk recovery (correctness)
 
 **Status: FIXED 2026-05-29** (commit: durable freeze on ME OrderAccepted).
