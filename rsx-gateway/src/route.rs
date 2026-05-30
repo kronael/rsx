@@ -109,16 +109,19 @@ pub fn route_order_done(
         _ => 0,
     };
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    emit_to_user(state, rec.user_id, &WsFrame::OrderUpdate {
+    // Pair on order_id (see route_order_cancelled): the tracked
+    // pending's user_id is authoritative, not rec.user_id.
+    let removed = state.borrow_mut().pending.remove(
+        &oid_bytes(rec.order_id_hi, rec.order_id_lo),
+    );
+    let user_id = removed.map_or(rec.user_id, |p| p.user_id);
+    emit_to_user(state, user_id, &WsFrame::OrderUpdate {
         order_id: oid,
         status,
         filled_qty: rec.filled_qty.0,
         remaining_qty: rec.remaining_qty.0,
         reason: 0,
     });
-    state.borrow_mut().pending.remove(
-        &oid_bytes(rec.order_id_hi, rec.order_id_lo),
-    );
 }
 
 pub fn route_order_cancelled(
@@ -126,16 +129,22 @@ pub fn route_order_cancelled(
     rec: &OrderCancelledRecord,
 ) {
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    emit_to_user(state, rec.user_id, &WsFrame::OrderUpdate {
+    // Pair the completion on order_id, not the record's user_id:
+    // a wrong user_id must not misroute the update or evict the
+    // real owner's pending. Remove returns the tracked pending,
+    // whose user_id is authoritative; fall back to rec.user_id
+    // only when no pending exists (nothing to misroute/evict).
+    let removed = state.borrow_mut().pending.remove(
+        &oid_bytes(rec.order_id_hi, rec.order_id_lo),
+    );
+    let user_id = removed.map_or(rec.user_id, |p| p.user_id);
+    emit_to_user(state, user_id, &WsFrame::OrderUpdate {
         order_id: oid,
         status: 2, // cancelled
         filled_qty: 0,
         remaining_qty: rec.remaining_qty.0,
         reason: 0,
     });
-    state.borrow_mut().pending.remove(
-        &oid_bytes(rec.order_id_hi, rec.order_id_lo),
-    );
 }
 
 pub fn route_liquidation(
@@ -158,14 +167,17 @@ pub fn route_order_failed(
     rec: &OrderFailedRecord,
 ) {
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    emit_to_user(state, rec.user_id, &WsFrame::OrderUpdate {
+    // Pair on order_id (see route_order_cancelled): the tracked
+    // pending's user_id is authoritative, not rec.user_id.
+    let removed = state.borrow_mut().pending.remove(
+        &oid_bytes(rec.order_id_hi, rec.order_id_lo),
+    );
+    let user_id = removed.map_or(rec.user_id, |p| p.user_id);
+    emit_to_user(state, user_id, &WsFrame::OrderUpdate {
         order_id: oid,
         status: 3, // failed
         filled_qty: 0,
         remaining_qty: 0,
         reason: rec.reason,
     });
-    state.borrow_mut().pending.remove(
-        &oid_bytes(rec.order_id_hi, rec.order_id_lo),
-    );
 }

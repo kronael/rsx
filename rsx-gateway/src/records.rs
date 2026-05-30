@@ -90,7 +90,9 @@ impl std::error::Error for ParseError {}
 
 fn as_u32(v: &Value, field: &str) -> Result<u32, ParseError> {
     v.as_u64()
-        .map(|n| n as u32)
+        .and_then(|n| {
+            if n <= u32::MAX as u64 { Some(n as u32) } else { None }
+        })
         .ok_or_else(|| {
             ParseError::InvalidValue(field.to_string())
         })
