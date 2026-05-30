@@ -251,3 +251,53 @@ RSX_POSTGRES_URL=postgres://localhost:5432/rsx
 Components start in any order with exponential backoff
 (1s/2s/4s/8s, max 30s). System converges as components
 come online.
+
+## Health and Load Endpoints
+
+Each daemon optionally binds a `rsx-health` HTTP server on a
+dedicated `std::thread` (off the hot path entirely). Activate
+by setting the env var; skip by leaving it unset.
+
+| Daemon | Env var | Default port |
+|--------|---------|--------------|
+| Gateway | `RSX_GW_HEALTH_ADDR` | 9200 |
+| Risk | `RSX_RISK_HEALTH_ADDR` | 9201 |
+| Matching Engine | `RSX_ME_HEALTH_ADDR` | 9202 |
+| Marketdata | `RSX_MD_HEALTH_ADDR` | 9203 |
+| Mark | `RSX_MARK_HEALTH_ADDR` | 9204 |
+| Recorder | `RSX_RECORDER_HEALTH_ADDR` | 9205 |
+
+Three HTTP endpoints per daemon:
+
+- `GET /health` — liveness probe. 200 = process alive.
+  503 = fatal state. k8s restarts the pod on 503.
+- `GET /ready` — readiness probe. 200 = ready for traffic.
+  503 = overloaded or warming up. k8s removes the pod from
+  the Service load-balancer → sheds load. Risk returns 503
+  during `WarmCatchup` (before it wins the advisory lock).
+  Gateway returns 503 when pending queue ≥ 90% capacity.
+- `GET /metrics` — JSON load snapshot for HPA and ops.
+  Returns `HealthSnapshot` JSON with ring occupancy, event
+  counters, and saturation (0.0–1.0, highest ring fraction).
+
+### Hot-path cost
+
+Zero. The hot loop does only `AtomicU64::store(n, Relaxed)` or
+`fetch_add(1, Relaxed)` on an `Arc<LoadGauges>` shared with the
+health thread. No mutex, no allocation, no syscall per message.
+The health server reads those atomics with `Relaxed` loads only
+when a HTTP request arrives (off the hot path, separate thread).
+
+### k8s usage pattern
+
+```yaml
+livenessProbe:
+  httpGet: { path: /health, port: 9202 }
+  failureThreshold: 3
+readinessProbe:
+  httpGet: { path: /ready, port: 9202 }
+  failureThreshold: 1   # shed immediately on overload
+```
+
+HPA can scrape `/metrics` via a custom adapter and scale on
+`saturation` (ring fullness) rather than raw CPU.
