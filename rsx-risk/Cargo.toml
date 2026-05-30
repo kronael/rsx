@@ -47,3 +47,11 @@ harness = false
 [[bench]]
 name = "loop_arch_bench"
 harness = false
+
+[[bench]]
+name = "risk_throughput_bench"
+harness = false
+
+[[bench]]
+name = "risk_flood_bench"
+harness = false
