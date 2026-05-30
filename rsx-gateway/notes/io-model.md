@@ -64,12 +64,18 @@ the workload was 2 syscalls/req and bound by exactly that; batching cut it to
 ~0.25). The completion model also removes a kernel↔user round-trip (readiness →
 read → copy collapses to one completion).
 
-**But** (the gateway lesson): even io_uring completions are reaped by **one
-reactor** running a cooperative task queue. A latency-critical CQE still waits
-for the reactor's reap-and-wake turn while it runs other tasks — fewer syscalls,
-**no per-socket priority**. That's why our gateway's response sits ~ms in the
-ring under ingress load, and why the fix is *architecture* (busy-spin egress
-tile + sharded reactors), not a flag. See the gateway Runtime Model spec.
+**But** (the gateway lesson, stated correctly): the reactor per-lap is **fast**
+(µs) and no-priority is the right default — *until the core saturates*. The ~ms
+gateway response stall we measured was a **single reactor core drowning in a
+synthetic order flood** (≈138k orders on one core), i.e. a **capacity** problem,
+**not** a missing priority. Priority wouldn't help: on a maxed core it only
+reshuffles *which* task waits — the WS writes (also on that reactor) still back
+up because there aren't enough cycles; it adds no throughput. The real fixes are
+**capacity** — shard reactors across cores (`SO_REUSEPORT`) so none saturates,
+and give the latency-critical path its *own* unsaturated core via the egress
+tile — and **work-reduction** (batch syscalls, binary not JSON, fewer copies) so
+each lap does less and the core saturates at a far higher rate. Not priority,
+not a flag. See the gateway Runtime Model spec.
 
 ## The road to fully zero-copy
 
