@@ -297,13 +297,32 @@ start: [1-architecture.md](specs/2/1-architecture.md),
 [4-cast.md](specs/2/4-cast.md),
 [21-orderbook.md](specs/2/21-orderbook.md).
 
-## Other documents
+## Concepts & blog
 
 | | |
 |---|---|
-| [PROGRESS.md](PROGRESS.md) | per-crate status |
-| [GUARANTEES.md](GUARANTEES.md) | consistency, durability, ordering |
-| [BLOG.md](BLOG.md) | long-form narrative |
-| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure mode catalogue |
-| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | operator recovery procedures |
+| [docs/concepts/](docs/concepts/index.md) | the design choices, each explained — *why* it's the right call |
+| [blog/](blog/README.md) | engineering posts + the build manual ([vibe-book](blog/29-building-rsx.md)) + [ops cookbook](blog/28-cookbook.md) |
+
+## Reference
+
+| | |
+|---|---|
+| [PROGRESS.md](PROGRESS.md) | per-component status |
+| [GUARANTEES.md](GUARANTEES.md) | consistency, durability, ordering invariants |
+| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure-mode catalogue |
 | [TESTING.md](TESTING.md) | test taxonomy |
+
+## Next step in the experiment
+
+**`rsx-cast` moves from `std::net::UdpSocket` to io_uring.** Today it
+does one `sendto`/`recvfrom` syscall per packet — and on the loopback
+benches *that syscall is the dominant cost* (~99% of the in-process round
+trip). A single-message loopback bench won't show io_uring as faster:
+there's no NIC, no IRQ, and a lone packet has nothing to batch. The win
+appears under high packet rates on a real NIC, where io_uring amortizes
+submissions across a shared kernel/userspace ring and collapses the
+per-packet syscall. The move is gated on gateway/marketdata owning the
+socket — the zero-runtime-dep invariant in `rsx-cast` is load-bearing
+(see `rsx-cast/CLAUDE.md`). It's the next networking experiment, not a
+bug fix.
