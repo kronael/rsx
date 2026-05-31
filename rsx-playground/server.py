@@ -63,7 +63,7 @@ STRESS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PG_URL = os.environ.get(
     "DATABASE_URL",
-    "postgres://rsx:folium@10.0.2.1:5432/rsx_dev",
+    "postgres://rsx:rsx@127.0.0.1:5432/rsx",
 )
 
 GATEWAY_URL = os.environ.get(
