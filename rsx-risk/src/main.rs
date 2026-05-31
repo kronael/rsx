@@ -1316,24 +1316,19 @@ fn run_warm_catchup(
         }));
 
         if let Err(e) = stream {
-            // RECORD_REPLICATION_NOT_AVAILABLE maps to NotFound.
-            // When consumer.tip > 0 this means ME cannot serve our
-            // current tip+1, most likely because ME just restarted
-            // with an empty WAL (my_highest=0). Our PG snapshot
-            // already covers everything up to consumer.tip, so we
-            // are ahead of ME — treat as caught up and proceed to
-            // lock acquisition.
-            if e.kind() == std::io::ErrorKind::NotFound
-                && consumer.tip > 0
-            {
+            // RECORD_REPLICATION_NOT_AVAILABLE maps to NotFound: ME
+            // cannot serve a replay from our tip+1. Two cases, both
+            // "nothing to catch up": (1) tip==0 fresh cluster — ME's
+            // WAL is empty (my_highest=0), there is nothing to apply;
+            // (2) tip>0 — ME restarted empty / GC'd its tail, and our
+            // PG snapshot already covers up to consumer.tip, so we are
+            // ahead of ME. Either way, caught up → proceed to the lock.
+            if e.kind() == std::io::ErrorKind::NotFound {
                 info!(
-                    "warm catchup: ME WAL behind our tip={} \
-                     (fresh boot or GC'd tail); \
-                     PG snapshot is current — treating as caught up",
+                    "warm catchup: ME has nothing at/after tip+1 \
+                     (tip={}, empty ME or behind us) — caught up",
                     consumer.tip,
                 );
-                // Synthesize the caught-up condition so the lock
-                // attempt below fires normally.
                 caught_live_seq = Some(0);
                 applied_seq = consumer.tip;
             } else {
