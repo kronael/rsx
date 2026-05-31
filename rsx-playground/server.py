@@ -4220,8 +4220,9 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     try:
         secret = os.environ.get("RSX_GW_JWT_SECRET", "")
         if not secret:
-            return {"ok": False, "error":
-                    "RSX_GW_JWT_SECRET not configured"}
+            # 3-tuple like every other return path — a dict here makes
+            # the caller's `result[1]` raise KeyError(1) → spurious 500.
+            return None, "RSX_GW_JWT_SECRET not configured", None
         token = pyjwt.encode(
             {
                 "sub": f"playground:{user_id}",
