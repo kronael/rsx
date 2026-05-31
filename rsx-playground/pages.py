@@ -181,9 +181,17 @@ def layout(title, content, active_tab="./overview"):
             label, href = tab_item
             external = False
 
-        if href == active_tab:
+        is_active = href == active_tab
+        is_walkthrough = href == "./walkthrough"
+
+        if is_active:
             cls = ("bg-slate-700 text-white "
                    "px-3 py-1.5 rounded text-xs font-mono")
+        elif is_walkthrough:
+            # D: nav graduation — Walkthrough is the entry point
+            cls = ("text-blue-300 hover:text-white "
+                   "hover:bg-slate-700 px-3 py-1.5 "
+                   "rounded text-xs font-mono font-bold")
         else:
             cls = ("text-slate-400 hover:text-white "
                    "hover:bg-slate-700 px-3 py-1.5 "
@@ -236,6 +244,10 @@ document.addEventListener('htmx:afterSwap', function(e) {{
   <span class="text-sm font-bold text-blue-400
     mr-4 tracking-wider">RSX</span>
   {tabs}
+  <span id="proc-chip" class="ml-auto text-[10px]"
+    hx-get="./x/proc-chip"
+    hx-trigger="load, every 4s"
+    hx-swap="outerHTML"></span>
 </nav>
 <main class="p-2 sm:p-4 max-w-7xl mx-auto space-y-3">
 {content}
@@ -1074,7 +1086,9 @@ def overview_page():
             '<input type="radio" name="scenario-ov" '
             'id="scenario" value="minimal" '
             'class="sr-only peer" checked>'
-            '<span class="peer-checked:bg-zinc-500 '
+            '<span title="1 symbol (PENGU), no replication — '
+            'fastest startup" '
+            'class="peer-checked:bg-zinc-500 '
             'peer-checked:text-white bg-zinc-700 '
             'text-zinc-300 px-2 py-1 rounded text-xs '
             'font-medium hover:bg-zinc-600 '
@@ -1083,7 +1097,8 @@ def overview_page():
             '<label class="cursor-pointer">'
             '<input type="radio" name="scenario-ov" '
             'value="duo" class="sr-only peer">'
-            '<span class="peer-checked:bg-zinc-500 '
+            '<span title="2 symbols (PENGU + SOL), no replication" '
+            'class="peer-checked:bg-zinc-500 '
             'peer-checked:text-white bg-zinc-700 '
             'text-zinc-300 px-2 py-1 rounded text-xs '
             'font-medium hover:bg-zinc-600 '
@@ -1092,7 +1107,8 @@ def overview_page():
             '<label class="cursor-pointer">'
             '<input type="radio" name="scenario-ov" '
             'value="full" class="sr-only peer">'
-            '<span class="peer-checked:bg-zinc-500 '
+            '<span title="3 symbols + recorder replication" '
+            'class="peer-checked:bg-zinc-500 '
             'peer-checked:text-white bg-zinc-700 '
             'text-zinc-300 px-2 py-1 rounded text-xs '
             'font-medium hover:bg-zinc-600 '
@@ -1101,7 +1117,8 @@ def overview_page():
             '<label class="cursor-pointer">'
             '<input type="radio" name="scenario-ov" '
             'value="stress" class="sr-only peer">'
-            '<span class="peer-checked:bg-amber-600 '
+            '<span title="High-rate order flood — requires make tune-host first" '
+            'class="peer-checked:bg-amber-600 '
             'peer-checked:text-white bg-zinc-700 '
             'text-zinc-300 px-2 py-1 rounded text-xs '
             'font-medium hover:bg-zinc-600 '
@@ -1151,7 +1168,9 @@ def overview_page():
         '</div>',
     )
     rings = _card(
-        "WAL stream lag (proxy)",
+        '<abbr title="Write-Ahead Log producer-consumer lag — proxy'
+        ' for SPSC ring backpressure (rings are not externally visible)">'
+        'WAL stream lag (proxy)</abbr>',
         '<div hx-get="./x/ring-pressure" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
@@ -1159,7 +1178,10 @@ def overview_page():
         '</div>',
     )
     invariants = _card(
-        "Invariants",
+        '<abbr title="System-wide correctness invariants checked'
+        ' continuously: fills-before-done, exactly-one-completion,'
+        ' FIFO order, position=sum(fills), monotonic tips, etc.">'
+        'Invariants</abbr>',
         '<div hx-get="./x/invariant-status" '
         'hx-trigger="load, every 5s" '
         'hx-swap="innerHTML">'
@@ -1167,7 +1189,9 @@ def overview_page():
         '</div>',
     )
     wal_status = _card(
-        "WAL Status",
+        '<abbr title="Write-Ahead Log — append-only binary log'
+        ' shared by disk, wire, and replication stream">WAL</abbr>'
+        ' Status',
         '<div hx-get="./x/wal-status" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
@@ -1369,16 +1393,22 @@ def topology_page():
   <div class="flex flex-wrap items-center gap-1 mb-3">
     {client}
     <span class="text-zinc-600 text-xs self-center
-      select-none px-1">&#x21C4; WS</span>
+      select-none px-1" title="WebSocket">&#x21C4; WS</span>
     {gateway}
     <span class="text-zinc-600 text-xs self-center
-      select-none px-1">&#x2192; cast</span>
+      select-none px-1"
+      title="casting: UDP multicast with NAK retransmit">
+      &#x2192; cast</span>
     {risk}
     <span class="text-zinc-600 text-xs self-center
-      select-none px-1">&#x2192; cast</span>
+      select-none px-1"
+      title="casting: UDP multicast with NAK retransmit">
+      &#x2192; cast</span>
     {matching}
     <span class="text-zinc-600 text-xs self-center
-      select-none px-1">&#x2192; WAL</span>
+      select-none px-1"
+      title="WAL replication: TCP stream of WAL records">
+      &#x2192; WAL</span>
     {marketdata}
   </div>
 
@@ -2352,12 +2382,15 @@ not as the &lt;50 &micro;s claim.</p>
 
 def render_e2e_latency(latencies=None):
     """Render the E2E p50/p95/p99 latency block."""
+    _p50 = '<abbr title="50th percentile (median) latency">p50</abbr>'
+    _p95 = '<abbr title="95th percentile latency">p95</abbr>'
+    _p99 = '<abbr title="99th percentile latency — tail">p99</abbr>'
     if not latencies:
         return (
             '<div class="flex gap-6">'
-            + _metric("p50", "--", "slate-500")
-            + _metric("p95", "--", "slate-500")
-            + _metric("p99", "--", "slate-500")
+            + _metric(_p50, "--", "slate-500")
+            + _metric(_p95, "--", "slate-500")
+            + _metric(_p99, "--", "slate-500")
             + _metric("max", "--", "slate-500")
             + '<div class="text-xs text-slate-500 self-center">'
             'no probes yet — click Run one probe</div>'
@@ -2377,9 +2410,9 @@ def render_e2e_latency(latencies=None):
         return "red-400"
     return (
         '<div class="flex gap-6">'
-        + _metric("p50", f"{p50}us", color_for_lat(p50))
-        + _metric("p95", f"{p95}us", color_for_lat(p95))
-        + _metric("p99", f"{p99}us", color_for_lat(p99))
+        + _metric(_p50, f"{p50}us", color_for_lat(p50))
+        + _metric(_p95, f"{p95}us", color_for_lat(p95))
+        + _metric(_p99, f"{p99}us", color_for_lat(p99))
         + _metric("max", f"{max_lat}us",
                   color_for_lat(max_lat))
         + f'<div class="text-xs text-slate-500 '
@@ -2974,6 +3007,44 @@ def render_key_metrics(
     )
 
 
+def render_proc_chip(procs):
+    """Small nav chip: 'procs N/M · gw●' with link to Control."""
+    if not procs:
+        return (
+            '<a id="proc-chip" href="./control" '
+            'class="ml-auto text-[10px] text-slate-500 '
+            'hover:text-slate-300" '
+            'hx-get="./x/proc-chip" hx-trigger="every 4s" '
+            'hx-swap="outerHTML">'
+            'procs ?</a>'
+        )
+    total = len(procs)
+    running = sum(1 for p in procs if p.get("state") == "running")
+    # detect gateway by name prefix
+    gw = next(
+        (p for p in procs if "gw" in p["name"]
+         or "gateway" in p["name"]),
+        None,
+    )
+    gw_up = gw and gw.get("state") == "running"
+    gw_dot = (
+        '<span class="text-emerald-400">●</span>'
+        if gw_up
+        else '<span class="text-red-400">●</span>'
+    )
+    color = "text-emerald-400" if running == total else "text-amber-400"
+    return (
+        f'<a id="proc-chip" href="./control" '
+        f'title="Process status — click to manage" '
+        f'class="ml-auto text-[10px] {color} '
+        f'hover:text-white font-mono" '
+        f'hx-get="./x/proc-chip" hx-trigger="every 4s" '
+        f'hx-swap="outerHTML">'
+        f'procs {running}/{total} · gw{gw_dot}'
+        f'</a>'
+    )
+
+
 def render_ring_pressure(streams=None):
     """WAL stream lag as a proxy for backpressure.
 
@@ -3221,29 +3292,45 @@ def render_control_grid(processes):
     for p in processes:
         name = p["name"]
         state = p.get("state", "unknown")
+        result_id = f"ctrl-result-{name}"
         if state == "running":
             actions = (
                 _btn("Stop", "red",
                      f'hx-post="./api/processes/{name}/stop" '
-                     'hx-swap="none"') + " "
+                     f'hx-target="#{result_id}" hx-swap="innerHTML" '
+                     'title="Graceful SIGTERM — flushes WAL"') + " "
                 + _btn("Restart", "blue",
                        f'hx-post="./api/processes/{name}/'
-                       f'restart" hx-swap="none"') + " "
+                       f'restart" hx-target="#{result_id}" '
+                       'hx-swap="innerHTML"') + " "
                 + _btn("Kill", "red",
                        f'hx-post="./api/processes/{name}/'
-                       f'kill" hx-swap="none"')
+                       f'kill" hx-target="#{result_id}" '
+                       'hx-swap="innerHTML" '
+                       'title="Force SIGKILL — simulates crash, no cleanup"')
+                + f' <span id="{result_id}" '
+                  f'class="text-[10px] text-slate-500"></span>'
             )
         else:
-            actions = _btn(
-                "Start", "green",
-                f'hx-post="./api/processes/{name}/start" '
-                'hx-swap="none"',
+            actions = (
+                _btn(
+                    "Start", "green",
+                    f'hx-post="./api/processes/{name}/start" '
+                    f'hx-target="#{result_id}" hx-swap="innerHTML"',
+                )
+                + f' <span id="{result_id}" '
+                  f'class="text-[10px] text-slate-500"></span>'
             )
+        state_label = (
+            '<abbr title="Crashed too many times; auto-restart'
+            ' circuit open — use Restart to reset">blocked</abbr>'
+            if state == "blocked" else state
+        )
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{_dot(state)}</td>'
             f'<td {_TD}>{name}</td>'
-            f'<td {_TD}>{state}</td>'
+            f'<td {_TD}>{state_label}</td>'
             f'<td {_TD}>{p.get("pid", "-")}</td>'
             f'<td {_TD}>{p.get("uptime", "-")}</td>'
             f'<td {_TD}>{actions}</td></tr>'
@@ -3314,25 +3401,37 @@ def render_faults_grid(processes):
     for p in processes:
         name = p["name"]
         state = p.get("state", "unknown")
+        result_id = f"fault-result-{name}"
         actions = (
             _btn("Stop", "red",
                  f'hx-post="./api/processes/{name}/stop" '
-                 'hx-swap="none"') + " "
+                 f'hx-target="#{result_id}" hx-swap="innerHTML" '
+                 'title="Graceful SIGTERM — flushes WAL"') + " "
             + _btn("Kill", "red",
                    f'hx-post="./api/processes/{name}/kill" '
-                   'hx-swap="none"')
+                   f'hx-target="#{result_id}" hx-swap="innerHTML" '
+                   'title="Force SIGKILL — simulates crash, no cleanup"')
         )
         if state != "running":
             actions += " " + _btn(
                 "Restart", "blue",
                 f'hx-post="./api/processes/{name}/restart" '
-                'hx-swap="none"',
+                f'hx-target="#{result_id}" hx-swap="innerHTML"',
             )
+        actions += (
+            f' <span id="{result_id}" '
+            f'class="text-[10px] text-slate-500"></span>'
+        )
+        state_label = (
+            '<abbr title="Crashed too many times; auto-restart'
+            ' circuit open — use Restart to reset">blocked</abbr>'
+            if state == "blocked" else state
+        )
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{_dot(state)}</td>'
             f'<td {_TD}>{name}</td>'
-            f'<td {_TD}>{state}</td>'
+            f'<td {_TD}>{state_label}</td>'
             f'<td {_TD}>{p.get("pid", "-")}</td>'
             f'<td {_TD}>{actions}</td></tr>'
         )
@@ -3486,8 +3585,13 @@ def render_wal_rotation(streams=None):
 def render_wal_timeline(records=None):
     """Show recent WAL events as timeline."""
     if not records:
-        return ('<span class="text-slate-500 text-xs">'
-                'no WAL events recorded</span>')
+        return (
+            '<span class="text-slate-500 text-xs">'
+            'no WAL events yet &mdash; '
+            '<a href="./orders" class="text-blue-400 '
+            'hover:underline">&rarr; place an order</a>'
+            '</span>'
+        )
     rows = ""
     for rec in records[:50]:
         rtype = rec.get("type", "?")
@@ -3545,7 +3649,10 @@ def render_wal_timeline(records=None):
             f'{html.escape(detail)}</td></tr>'
         )
     return _table(
-        ["Seq", "Type", "Symbol", "Detail (px/qty raw)"], rows)
+        ['<abbr title="WAL sequence number — monotonically'
+         ' increasing, never reused">Seq</abbr>',
+         "Type", "Symbol",
+         'Detail (px/qty raw — fixed-point i64)'], rows)
 
 
 # ── Logs ─────────────────────────────────────────────────
@@ -3775,12 +3882,14 @@ def render_gateway_mode_badge(reachable: bool) -> str:
     if reachable:
         color = "text-green-400"
         label = "GW: live"
+        tip = "Gateway reachable — orders can be submitted"
     else:
         color = "text-amber-400"
         label = "GW: offline"
+        tip = "Gateway unreachable — start processes on Control"
     return (
-        f'<span id="gw-mode-badge" class="{color}">'
-        f'{label}</span>'
+        f'<span id="gw-mode-badge" class="{color}" '
+        f'title="{tip}">{label}</span>'
     )
 
 
@@ -3843,8 +3952,16 @@ SYMBOL_NAMES_STR = {
 
 def render_recent_orders(orders):
     if not orders:
-        return ('<span class="text-slate-600">'
-                'no orders yet</span>')
+        return (
+            '<span class="text-slate-600">'
+            'no orders yet &mdash; '
+            '<a href="./orders" class="text-blue-400 '
+            'hover:underline">&rarr; place one here</a>'
+            ', then '
+            '<a href="./book" class="text-blue-400 '
+            'hover:underline">watch it on Book</a>'
+            '</span>'
+        )
     rows = ""
     for o in orders:
         sym = o.get("symbol", "-")
@@ -3896,8 +4013,13 @@ def render_recent_orders(orders):
             f'<td {_TD}>{cancel}</td></tr>'
         )
     return _table(
-        ["CID", "Symbol", "Side", "Price", "Qty",
-         "TIF", "Flags", "Status", "Latency", "Time", ""],
+        ['<abbr title="Client order ID (20-char string)">CID</abbr>',
+         "Symbol", "Side", "Price", "Qty",
+         '<abbr title="Time In Force: GTC=Good Till Cancel,'
+         ' IOC=Immediate Or Cancel, FOK=Fill Or Kill">TIF</abbr>',
+         "Flags", "Status",
+         '<abbr title="Playground→Gateway round-trip (µs)">Latency</abbr>',
+         "Time", ""],
         rows,
     )
 
@@ -4055,8 +4177,10 @@ def render_risk_overview(data, funding_data,
     """Render all 7 risk dashboard panels."""
     sim = data.get("simulated", True)
     sim_tag = (
-        '<span class="text-[10px] text-slate-600 ml-1">'
-        '(simulated)</span>'
+        '<abbr title="Risk data is reconstructed from seed'
+        ' accounts; Postgres may be offline"'
+        ' class="text-[10px] text-slate-600 ml-1">'
+        '(simulated)</abbr>'
         if sim else ''
     )
     system = data.get("system", {})
@@ -4070,9 +4194,11 @@ def render_risk_overview(data, funding_data,
     accts_liq = system.get("accounts_near_liq", 0)
     sys_panel = (
         '<div class="grid grid-cols-2 sm:grid-cols-5 gap-3">'
-        + _metric("Total OI",
-                  format_notional(oi) if oi else "--",
-                  "blue-400")
+        + _metric(
+            '<abbr title="Open Interest: total notional'
+            ' of all open long positions">Total OI</abbr>',
+            format_notional(oi) if oi else "--",
+            "blue-400")
         + _metric("Long Notional",
                   format_notional(long_n) if long_n else "--",
                   "emerald-400")
@@ -4210,7 +4336,11 @@ def render_risk_overview(data, funding_data,
                 )
             pos_table = _table(
                 ["Symbol", "Side", "Qty", "Entry",
-                 "Mark", "uPnL", "Notional", "IM", "MM"],
+                 '<abbr title="Mark price from external feeds">Mark</abbr>',
+                 '<abbr title="Unrealised Profit &amp; Loss">uPnL</abbr>',
+                 "Notional",
+                 '<abbr title="Initial Margin requirement">IM</abbr>',
+                 '<abbr title="Maintenance Margin requirement">MM</abbr>'],
                 pos_rows,
             )
         else:
@@ -4286,14 +4416,25 @@ def render_risk_overview(data, funding_data,
         )
     fund_panel = (
         _table(
-            ["Symbol", "Rate", "Next", "Mark",
-             "Index", "Premium"],
+            ["Symbol",
+             '<abbr title="Funding rate in basis points'
+             ' (1 bps = 0.01%) — paid every 8h from longs'
+             ' to shorts (positive) or reverse (negative)">'
+             'Rate</abbr>',
+             "Next",
+             '<abbr title="Mark price from external CEX feeds'
+             ' — used for margin and PnL">Mark</abbr>',
+             '<abbr title="Index price: size-weighted mid'
+             ' from ME BBO — fallback when mark is 0">Index</abbr>',
+             '<abbr title="Premium in bps: (mark−index)/index">'
+             'Premium</abbr>'],
             fund_rows,
         )
         if fund_rows
         else (
             '<span class="text-slate-500 text-xs">'
-            'no BBO data</span>'
+            'no <abbr title="Best Bid/Offer">BBO</abbr>'
+            ' data</span>'
         )
     )
 
@@ -4659,15 +4800,29 @@ def render_book_ladder(symbol_id, snap, source=None):
     sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
     if snap is None:
         return (
-            f'<div class="text-slate-500 text-xs">'
-            f'{sym}: no book data yet (waiting for orders)'
+            f'<div class="text-slate-500 text-xs space-y-1">'
+            f'<span>{sym}: no book data yet</span>'
+            f'<span class="ml-2">'
+            f'<a href="./orders" class="text-blue-400 '
+            f'hover:underline">&rarr; place a test order</a>'
+            f' &nbsp;·&nbsp; '
+            f'<a href="./maker" class="text-blue-400 '
+            f'hover:underline">start maker</a>'
+            f'</span>'
             f'</div>')
     bids = snap.get("bids", [])
     asks = snap.get("asks", [])
     if not bids and not asks:
         return (
-            f'<div class="text-slate-500 text-xs">'
-            f'{sym}: no book data yet (waiting for orders)'
+            f'<div class="text-slate-500 text-xs space-y-1">'
+            f'<span>{sym}: no book data yet</span>'
+            f'<span class="ml-2">'
+            f'<a href="./orders" class="text-blue-400 '
+            f'hover:underline">&rarr; place a test order</a>'
+            f' &nbsp;·&nbsp; '
+            f'<a href="./maker" class="text-blue-400 '
+            f'hover:underline">start maker</a>'
+            f'</span>'
             f'</div>')
     best_bid = bids[0].get("px", 0) if bids else 0
     best_ask = asks[0].get("px", 0) if asks else 0
@@ -4729,7 +4884,10 @@ def render_book_stats(symbols):
     if not symbols:
         return (
             '<span class="text-slate-500 text-xs">'
-            'no book data yet (waiting for orders)</span>')
+            'no book data yet &mdash; '
+            '<a href="./orders" class="text-blue-400 '
+            'hover:underline">&rarr; place a test order</a>'
+            '</span>')
     rows = []
     for sid, bbo in sorted(symbols.items()):
         if sid not in SYMBOL_CONFIG:
@@ -4760,10 +4918,14 @@ def render_book_stats(symbols):
 <table class="w-full text-xs">
 <tr class="text-slate-500">
   <th class="text-left">Symbol</th>
-  <th class="text-right">Bid</th>
-  <th class="text-right">Ask</th>
-  <th class="text-right">Spread</th>
-  <th class="text-right">Orders</th>
+  <th class="text-right"
+    title="Best Bid: highest buy price in the book">Bid</th>
+  <th class="text-right"
+    title="Best Ask: lowest sell price in the book">Ask</th>
+  <th class="text-right"
+    title="Ask − Bid spread">Spread</th>
+  <th class="text-right"
+    title="Total resting orders on both sides">Orders</th>
 </tr>
 {''.join(rows)}
 </table>"""
@@ -4774,7 +4936,14 @@ def render_live_fills(fills):
     if not fills:
         return (
             '<span class="text-slate-500 text-xs">'
-            'no fills yet</span>')
+            'no fills yet &mdash; '
+            '<a href="./maker" class="text-blue-400 '
+            'hover:underline">start maker</a>'
+            ' for liquidity, then '
+            '<a href="./orders" class="text-blue-400 '
+            'hover:underline">place an order</a>'
+            '</span>'
+        )
     rows = []
     for f in fills[:20]:
         sid = f.get("symbol_id", 0)
