@@ -4686,12 +4686,20 @@ async def _run_invariant_checks() -> list[dict]:
     all_running = (
         len(running) >= expected_count > 0
     )
+    running_names = {p["name"] for p in running}
+    expected_names = [name for name, _, _ in expected]
+    down = [n for n in expected_names if n not in running_names]
+    if procs:
+        proc_detail = f"{len(running)}/{expected_count} running"
+        if down:
+            proc_detail += "; down: " + ", ".join(down)
+    else:
+        proc_detail = "no processes running"
     checks.append({
         "name": "RSX processes running",
         "status": "pass" if all_running else "fail",
         "time": now,
-        "detail": (f"{len(running)}/{expected_count} running"
-                   if procs else "no processes running"),
+        "detail": proc_detail,
     })
 
     # postgres connectivity
@@ -4742,18 +4750,26 @@ async def _run_invariant_checks() -> list[dict]:
             ),
         })
     else:
-        violations = sum(
-            1 for i in range(1, len(fill_seqs))
+        inversion_pairs: list[tuple[int, int]] = [
+            (fill_seqs[i - 1], fill_seqs[i])
+            for i in range(1, len(fill_seqs))
             if fill_seqs[i] < fill_seqs[i - 1]
+        ]
+        violations = len(inversion_pairs)
+        fill_detail = (
+            f"{len(fill_seqs)} fills, "
+            f"{violations} seq inversions"
         )
+        if inversion_pairs:
+            pairs_str = "; ".join(
+                f"{a}→{b}" for a, b in inversion_pairs[:3]
+            )
+            fill_detail += f"; first: {pairs_str}"
         checks.append({
             "name": "Fills precede ORDER_DONE (per order)",
             "status": "pass" if violations == 0 else "fail",
             "time": now,
-            "detail": (
-                f"{len(fill_seqs)} fills, "
-                f"{violations} seq inversions"
-            ),
+            "detail": fill_detail,
         })
 
     # ── invariant 2: exactly-one completion per order ───────
@@ -4763,21 +4779,22 @@ async def _run_invariant_checks() -> list[dict]:
             cid = o.get("cid", "")
             completed[cid] = completed.get(cid, 0) + 1
     dupes = {c: n for c, n in completed.items() if n > 1}
+    if dupes:
+        dupe_detail = (
+            f"{len(dupes)} cids with duplicate completions"
+            f"; cids: {', '.join(list(dupes)[:5])}"
+        )
+    elif completed:
+        dupe_detail = f"{len(completed)} orders, no duplicates"
+    else:
+        dupe_detail = "no completed orders observed"
     checks.append({
         "name": "Exactly-one completion per order",
         "status": "fail" if dupes else (
             "pass" if completed else "skip"
         ),
         "time": now,
-        "detail": (
-            f"{len(dupes)} cids with duplicate completions"
-            if dupes
-            else (
-                f"{len(completed)} orders, no duplicates"
-                if completed
-                else "no completed orders observed"
-            )
-        ),
+        "detail": dupe_detail,
     })
 
     # ── invariant 3: FIFO within price level ────────────────
@@ -4832,13 +4849,19 @@ async def _run_invariant_checks() -> list[dict]:
                     "detail": "pg query returned None",
                 })
             elif rows:
+                pos_detail = (
+                    f"{len(rows)} position/fill mismatches: "
+                    + "; ".join(
+                        f"user={r['user_id']} sym={r['symbol_id']}"
+                        f" pos={r['pos']} fills={r['fills']}"
+                        for r in rows[:3]
+                    )
+                )
                 checks.append({
                     "name": "Position = sum of fills (risk engine)",
                     "status": "fail",
                     "time": now,
-                    "detail": (
-                        f"{len(rows)} position/fill mismatches"
-                    ),
+                    "detail": pos_detail,
                 })
             else:
                 checks.append({
@@ -4986,6 +5009,13 @@ async def _run_invariant_checks() -> list[dict]:
                     "detail": "pg query returned None",
                 })
             elif rows:
+                fund_detail = (
+                    f"{len(rows)} symbols with non-zero net funding: "
+                    + "; ".join(
+                        f"sym={r['symbol_id']} net={r['net']}"
+                        for r in rows[:5]
+                    )
+                )
                 checks.append({
                     "name": (
                         "Funding zero-sum across"
@@ -4993,10 +5023,7 @@ async def _run_invariant_checks() -> list[dict]:
                     ),
                     "status": "fail",
                     "time": now,
-                    "detail": (
-                        f"{len(rows)} symbols with"
-                        " non-zero net funding"
-                    ),
+                    "detail": fund_detail,
                 })
             else:
                 checks.append({

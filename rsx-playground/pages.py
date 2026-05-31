@@ -3675,30 +3675,49 @@ def render_verify(checks):
                 'no checks run yet</span>')
     rows = ""
     for c in checks:
-        if c.get("status") == "pass":
+        status = c.get("status", "skip")
+        if status == "pass":
             badge = ("bg-emerald-950 text-emerald-400 "
                      "border border-emerald-900")
             label = "PASS"
-        elif c.get("status") == "fail":
+            row_border = ""
+            summary_label = "details"
+            summary_cls = "text-slate-500"
+        elif status == "fail":
             badge = ("bg-red-950 text-red-400 "
                      "border border-red-900")
             label = "FAIL"
-        elif c.get("status") == "warn":
+            row_border = " border-l-2 border-red-800"
+            summary_label = "show reason"
+            summary_cls = "text-red-400"
+        elif status == "warn":
             badge = ("bg-yellow-950 text-yellow-400 "
                      "border border-yellow-900")
             label = "WARN"
+            row_border = " border-l-2 border-yellow-800"
+            summary_label = "show reason"
+            summary_cls = "text-amber-400"
         else:
             badge = ("bg-slate-800 text-slate-400 "
                      "border border-slate-700")
             label = "SKIP"
+            row_border = ""
+            summary_label = "details"
+            summary_cls = "text-slate-500"
         detail = ""
         if c.get("detail"):
             detail = (
-                f'<div class="text-[10px] text-slate-500 '
-                f'mt-0.5">{html.escape(str(c["detail"]))}</div>'
+                f'<details class="mt-0.5">'
+                f'<summary class="cursor-pointer select-none '
+                f'hover:underline text-[10px] {summary_cls}">'
+                f'{summary_label}</summary>'
+                f'<div class="text-[10px] text-slate-400 '
+                f'whitespace-pre-wrap mt-0.5">'
+                f'{html.escape(str(c["detail"]))}</div>'
+                f'</details>'
             )
         rows += (
-            f'<tr class="hover:bg-slate-800/50">'
+            f'<tr class="hover:bg-slate-800/50{row_border}">'
             f'<td {_TD}><span class="{badge} px-2 py-0.5 '
             f'rounded text-[10px] font-semibold">'
             f'{label}</span></td>'
