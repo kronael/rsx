@@ -2514,6 +2514,33 @@ async def x_topology_component(component: str):
         pages.render_component_detail(component, handler()))
 
 
+@app.get("/components", response_class=HTMLResponse)
+async def components_index():
+    return HTMLResponse(pages.components_index_page())
+
+
+@app.get("/component/{key}", response_class=HTMLResponse)
+async def component_detail(key: str):
+    if key not in pages.COMPONENTS:
+        return HTMLResponse(
+            f'<html><body style="font-family:monospace;'
+            f'background:#0b0e11;color:#888;padding:2rem">'
+            f'<h2>Unknown component: {html.escape(key)}</h2>'
+            f'<p><a href="./components" '
+            f'style="color:#60a5fa">Back to Components</a></p>'
+            f'</body></html>',
+            status_code=404,
+        )
+    return HTMLResponse(pages.component_page(key))
+
+
+@app.get("/x/component-logs/{key}", response_class=HTMLResponse)
+async def x_component_logs(key: str):
+    """Partial: log tail filtered to a single component."""
+    lines = read_logs(process=key, max_lines=50)
+    return HTMLResponse(pages.render_logs(lines))
+
+
 @app.get("/book", response_class=HTMLResponse)
 async def book():
     return HTMLResponse(pages.book_page())
