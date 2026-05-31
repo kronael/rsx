@@ -22,6 +22,7 @@ TABS = [
     ("Walkthrough", "./walkthrough"),
     ("Overview", "./overview"),
     ("Topology", "./topology"),
+    ("Components", "./components"),
     ("Latency", "./latency"),
     ("Cast", "./cast"),
     ("Book", "./book"),
@@ -37,6 +38,137 @@ TABS = [
     ("Docs", "./docs"),
     ("Trade", "./trade/"),
 ]
+
+# ── Component registry ────────────────────────────────────
+# One entry per real RSX process. Keys match PROC_HINTS keys
+# in server.py (used as log_key for read_logs(process=key)).
+COMPONENTS: dict = {
+    "gateway": {
+        "name": "Gateway",
+        "blurb": (
+            "The Gateway is the single WS ingress for all client traffic. "
+            "It authenticates connections with JWT, rate-limits, and bridges "
+            "between the client WebSocket protocol and the internal "
+            "casting/UDP transport to the Risk engine. "
+            "It runs on monoio (io_uring) to handle many concurrent "
+            "connections with minimal syscall overhead."
+        ),
+        "docs": [
+            ("Spec: Gateway", "./docs/spec/11-gateway"),
+            ("Concept: Tiles &amp; Pinning",
+             "./docs/concepts/tiles-and-pinning"),
+            ("Concept: Sharding Axes",
+             "./docs/concepts/sharding-axes"),
+        ],
+        "log_key": "gateway",
+        "viz": None,
+    },
+    "risk": {
+        "name": "Risk",
+        "blurb": (
+            "The Risk engine runs one shard per user partition. "
+            "Each shard holds positions and margin for its users in RAM, "
+            "performs pre-trade margin checks on every inbound order, and "
+            "updates positions on every fill. "
+            "It also runs liquidation rounds, funding settlements, and "
+            "persists state to Postgres with a 10ms write-behind flush."
+        ),
+        "docs": [
+            ("Spec: Risk", "./docs/spec/28-risk"),
+            ("Concept: Sharding Axes",
+             "./docs/concepts/sharding-axes"),
+            ("Concept: Tiles &amp; Pinning",
+             "./docs/concepts/tiles-and-pinning"),
+        ],
+        "log_key": "risk",
+        "viz": None,
+    },
+    "matching": {
+        "name": "Matching Engine",
+        "blurb": (
+            "One ME instance runs per symbol, single-threaded and pinned "
+            "to a dedicated core. It uses a slab arena allocator "
+            "(pre-allocated OrderSlots) and a CompressionMap for O(1) "
+            "level access. Price-time FIFO matching with GTC/IOC/FOK. "
+            "Measured at 54 ns per fill and ~340 ns algorithmic round-trip."
+        ),
+        "docs": [
+            ("Spec: Orderbook", "./docs/spec/21-orderbook"),
+            ("Spec: Matching", "./docs/spec/17-matching"),
+            ("Concept: Slab &amp; Compression",
+             "./docs/concepts/slab-and-compression"),
+        ],
+        "log_key": "matching",
+        "viz": "book",
+    },
+    "marketdata": {
+        "name": "Marketdata",
+        "blurb": (
+            "Marketdata maintains a shadow orderbook per symbol rebuilt "
+            "from ME WAL events (INSERT, CANCEL, FILL) via the replication "
+            "subscription. It broadcasts L2 depth snapshots (20 levels), "
+            "BBO updates, and a trade tape (200-entry rolling window) to "
+            "public WebSocket subscribers. Not on the order critical path."
+        ),
+        "docs": [
+            ("Spec: Marketdata", "./docs/spec/16-marketdata"),
+            ("Concept: WAL = Wire = Stream",
+             "./docs/concepts/wal-is-wire-is-stream"),
+        ],
+        "log_key": "marketdata",
+        "viz": None,
+    },
+    "mark": {
+        "name": "Mark Price",
+        "blurb": (
+            "A separate process connecting to external exchange WebSocket "
+            "feeds (Binance, Coinbase). Computes a weighted mean across "
+            "sources with a staleness filter — sources older than the "
+            "configurable timeout are dropped. Writes MARK_PRICE records "
+            "to the WAL every 1 second; the Risk engine consumes them "
+            "for margin recalculation and liquidation triggers."
+        ),
+        "docs": [
+            ("Spec: Mark Price", "./docs/spec/15-mark"),
+            ("Concept: Tiles &amp; Pinning",
+             "./docs/concepts/tiles-and-pinning"),
+        ],
+        "log_key": "mark",
+        "viz": None,
+    },
+    "recorder": {
+        "name": "Recorder",
+        "blurb": (
+            "The Recorder is an archival replication consumer. It connects "
+            "to ME replication streams via TCP and writes all WAL records "
+            "to daily rotating files for long-term durability. "
+            "It is off the order critical path and runs on tokio for "
+            "ergonomics."
+        ),
+        "docs": [
+            ("Spec: Replication", "./docs/spec/10-replication"),
+            ("Concept: WAL = Wire = Stream",
+             "./docs/concepts/wal-is-wire-is-stream"),
+        ],
+        "log_key": "recorder",
+        "viz": None,
+    },
+    "maker": {
+        "name": "Market Maker",
+        "blurb": (
+            "A demo market-making bot that places two-sided quotes around "
+            "the mid price via the Gateway WebSocket. It reads BBO from "
+            "marketdata when available, auto-reconnects on disconnect, and "
+            "refreshes quotes on a configurable interval. "
+            "Not part of the exchange core — it's a load-and-demo tool."
+        ),
+        "docs": [
+            ("Guide: Scenarios", "./docs/guide/scenarios"),
+        ],
+        "log_key": "maker",
+        "viz": None,
+    },
+}
 
 
 def layout(title, content, active_tab="./overview"):
@@ -1167,10 +1299,20 @@ def render_component_detail(component, data):
         for k, v in rows
     )
 
+    comp_link = ""
+    if component in COMPONENTS:
+        comp_name = COMPONENTS[component]["name"]
+        comp_link = (
+            f'<a href="../component/{html.escape(component)}" '
+            f'class="ml-3 text-xs text-blue-400 '
+            f'hover:text-blue-300 shrink-0">'
+            f'&rarr; open {html.escape(comp_name)} page</a>'
+        )
+
     return (
         f'<div class="bg-zinc-900 border border-zinc-700 '
         f'rounded-lg p-4">'
-        f'<div class="flex items-center gap-3 mb-3">'
+        f'<div class="flex items-center gap-3 mb-3 flex-wrap">'
         f'<span class="w-2.5 h-2.5 rounded-full {dot}"></span>'
         f'<span class="text-sm font-mono font-bold '
         f'text-slate-200">{html.escape(name)}</span>'
@@ -1180,6 +1322,7 @@ def render_component_detail(component, data):
         f"pid: {html.escape(str(pid))}"
         f"&nbsp;&nbsp;uptime: {html.escape(str(uptime))}"
         f"</span>"
+        f"{comp_link}"
         f"</div>"
         f'<div class="text-xs">{rows_html}</div>'
         f"</div>"
@@ -5240,3 +5383,205 @@ def maker_page(
 {config_card}
 {stats_card}"""
     return layout("Market Maker", content, "./maker")
+
+
+# ── Components index page ─────────────────────────────────
+
+def components_index_page() -> str:
+    """Index listing all 7 components as links."""
+    cards = ""
+    for key, comp in COMPONENTS.items():
+        name = comp["name"]
+        blurb_short = comp["blurb"][:120] + "..."
+        cards += (
+            f'<a href="./component/{key}" '
+            f'class="block bg-slate-900 border border-slate-800 '
+            f'rounded-lg p-4 hover:border-blue-600 '
+            f'transition-colors group">'
+            f'<div class="flex items-center gap-2 mb-2">'
+            f'<span class="text-sm font-bold text-slate-200 '
+            f'group-hover:text-white">{html.escape(name)}</span>'
+            f'<span class="text-[10px] text-slate-600 font-mono">'
+            f'{html.escape(key)}</span>'
+            f'</div>'
+            f'<p class="text-xs text-slate-500 leading-relaxed">'
+            f'{html.escape(blurb_short)}'
+            f'</p>'
+            f'</a>\n'
+        )
+    content = f"""
+<div class="mb-3">
+  <h1 class="text-lg font-bold text-white">RSX Components</h1>
+  <p class="text-xs text-slate-500 mt-1">
+    Click a component to see what it is, its docs, live health,
+    and log tail.</p>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+{cards}
+</div>"""
+    return layout("Components", content, "./components")
+
+
+# ── Single component page ─────────────────────────────────
+
+def component_page(key: str) -> str:
+    """DRY template for a single component detail page."""
+    comp = COMPONENTS[key]
+    name = comp["name"]
+    blurb = comp["blurb"]
+    docs = comp["docs"]
+    log_key = comp["log_key"]
+    viz = comp["viz"]
+
+    # ── Header: name + links ─────────────────────────────
+    # Live status shown in the health card below via the
+    # topology partial (render_component_detail).
+    header = (
+        f'<div class="bg-slate-900 border border-slate-800 '
+        f'rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">'
+        f'<h1 class="text-lg font-bold text-white">'
+        f'{html.escape(name)}</h1>'
+        f'<span class="text-xs text-slate-500">{html.escape(key)}</span>'
+        f'<a href="./topology" '
+        f'class="ml-auto text-xs text-blue-400 hover:text-blue-300">'
+        f'&larr; Topology</a>'
+        f'<a href="./components" '
+        f'class="text-xs text-blue-400 hover:text-blue-300">'
+        f'All Components</a>'
+        f'</div>'
+    )
+
+    # ── What it is: blurb + doc links ───────────────────
+    doc_links = "".join(
+        f'<a href="{href}" target="_blank" rel="noopener noreferrer" '
+        f'class="inline-flex items-center gap-1 text-xs '
+        f'text-blue-400 hover:text-blue-300 bg-slate-800 '
+        f'px-2 py-1 rounded border border-slate-700">'
+        f'{label} &#x2197;</a>\n'
+        for label, href in docs
+    )
+    what_it_is = _card(
+        "What it is",
+        f'<p class="text-xs text-slate-300 leading-relaxed mb-3">'
+        f'{html.escape(blurb)}</p>'
+        f'<div class="flex flex-wrap gap-2">{doc_links}</div>',
+    )
+
+    # ── Live health ──────────────────────────────────────
+    # Embeds the topology detail partial (status dot, pid,
+    # uptime, RSS, per-component rows). CPU intentionally
+    # omitted — busy-spin tiles peg 100% by design (healthy).
+    health_body = (
+        f'<div id="comp-health-rows" '
+        f'hx-get="./x/topology/{key}" '
+        f'hx-trigger="load, every 3s" '
+        f'hx-swap="innerHTML">'
+        f'<span class="text-slate-600 text-xs">loading...</span>'
+        f'</div>'
+    )
+    health_card = _card(
+        "Live Health (status, RSS, details)",
+        f'<p class="text-[10px] text-slate-600 mb-2 italic">'
+        f'CPU omitted — busy-spin tiles peg 100% by design '
+        f'(healthy).</p>'
+        + health_body,
+    )
+
+    # ── Latency ──────────────────────────────────────────
+    if key == "gateway":
+        lat_body = (
+            '<div hx-get="./x/risk-latency" '
+            'hx-trigger="load, every 3s" hx-swap="innerHTML">'
+            '<span class="text-slate-600 text-xs">loading...</span>'
+            '</div>'
+            '<p class="text-[10px] text-slate-500 mt-2">'
+            'Gateway round-trip: playground &harr; gateway WS. '
+            'Empty until a probe runs &mdash; '
+            '<a href="./latency" class="text-blue-400 '
+            'hover:text-blue-300">Latency tab</a> '
+            'has the Run probe button.</p>'
+        )
+    elif key == "risk":
+        lat_body = (
+            '<div hx-get="./x/risk-latency" '
+            'hx-trigger="load, every 3s" hx-swap="innerHTML">'
+            '<span class="text-slate-600 text-xs">loading...</span>'
+            '</div>'
+            '<p class="text-[10px] text-slate-500 mt-2">'
+            'Risk leg: measured as part of the gateway round-trip. '
+            'See the full breakdown in the '
+            '<a href="./latency" class="text-blue-400 '
+            'hover:text-blue-300">Latency tab</a>.</p>'
+        )
+    elif key == "matching":
+        lat_body = (
+            '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">'
+            '<div class="bg-slate-800 rounded p-2">'
+            '<div class="text-slate-400">match single fill</div>'
+            '<div class="text-emerald-400 text-lg font-bold">54 ns</div>'
+            '<div class="text-slate-500">Criterion bench</div>'
+            '</div>'
+            '<div class="bg-slate-800 rounded p-2">'
+            '<div class="text-slate-400">algo round-trip</div>'
+            '<div class="text-emerald-400 text-lg font-bold">~340 ns</div>'
+            '<div class="text-slate-500">component bench</div>'
+            '</div>'
+            '<div class="bg-slate-800 rounded p-2">'
+            '<div class="text-slate-400">insert order</div>'
+            '<div class="text-emerald-400 text-lg font-bold">857 ns</div>'
+            '<div class="text-slate-500">Criterion bench</div>'
+            '</div>'
+            '</div>'
+            '<p class="text-[10px] text-slate-500 mt-2">'
+            'These are Criterion micro-benchmarks. '
+            'No per-component live latency from the running system &mdash; '
+            'see <a href="./latency" class="text-blue-400 '
+            'hover:text-blue-300">Latency tab</a> '
+            'for the end-to-end probe.</p>'
+        )
+    else:
+        lat_body = (
+            '<p class="text-xs text-slate-500">'
+            'No per-component live latency for this process. '
+            'See the '
+            '<a href="./latency" class="text-blue-400 '
+            'hover:text-blue-300">Latency tab</a> '
+            'for gateway round-trip and e2e measurements.</p>'
+        )
+    latency_card = _card("Latency", lat_body)
+
+    # ── Log tail ─────────────────────────────────────────
+    log_card = _card(
+        f"Log tail ({html.escape(log_key)})",
+        f'<div class="max-h-48 overflow-y-auto logs-auto-scroll" '
+        f'hx-get="./x/component-logs/{html.escape(log_key)}" '
+        f'hx-trigger="load, every 2s" '
+        f'hx-swap="innerHTML">'
+        f'<span class="text-slate-600 text-xs">loading...</span>'
+        f'</div>',
+    )
+
+    # ── Viz (matching only: orderbook) ───────────────────
+    viz_card = ""
+    if viz == "book":
+        viz_card = _card(
+            "Live Orderbook (symbol 10 / PENGU)",
+            '<div hx-get="./x/book?symbol_id=10" '
+            'hx-trigger="load, every 1s" hx-swap="innerHTML">'
+            '<span class="text-slate-600 text-xs">loading...</span>'
+            '</div>',
+        )
+
+    content = (
+        f"\n{header}\n"
+        f"{what_it_is}\n"
+        f"{health_card}\n"
+        f"{latency_card}\n"
+        f"{log_card}\n"
+        f"{viz_card}\n"
+    )
+    return layout(
+        f"Component: {name}",
+        content,
+        "./components",
+    )
