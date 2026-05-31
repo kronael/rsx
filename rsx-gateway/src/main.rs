@@ -238,12 +238,29 @@ fn main() {
     // SAFETY: fail-fast at startup
     .expect("failed to create cast sender");
 
-    // casting/UDP: receive responses from Risk
-    let mut cast_receiver = CastReceiver::new(
-        gw_addr, risk_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind cast receiver");
+    // casting/UDP: receive responses from Risk. Retry on AddrInUse:
+    // a fast restart (fault-injection / supervisor) races the old
+    // process's socket release; panicking here would leave the
+    // gateway dead instead of recovering.
+    let mut cast_receiver = {
+        let mut attempt = 0;
+        loop {
+            match CastReceiver::new(gw_addr, risk_addr) {
+                Ok(r) => break r,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::AddrInUse
+                        && attempt < 30 =>
+                {
+                    attempt += 1;
+                    tracing::warn!(
+                        "gateway cast bind {gw_addr} in use, retry {attempt}/30"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                Err(e) => panic!("failed to bind cast receiver: {e}"),
+            }
+        }
+    };
 
     info!(
         "gateway started on {}",
