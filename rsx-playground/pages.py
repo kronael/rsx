@@ -223,7 +223,7 @@ tailwind.config = {{
 <script>
 document.addEventListener('htmx:afterSwap', function(e) {{
   var t = e.detail.target;
-  if (t.id === 'log-view' || t.classList.contains('logs-auto-scroll')) {{
+  if (t.classList.contains('logs-auto-scroll')) {{
     t.scrollTop = t.scrollHeight;
   }}
 }});
@@ -1776,185 +1776,259 @@ document.querySelectorAll('input[name="wal-filter-r"]')
 
 def logs_page():
     body = """
+<!-- hidden inputs carry filter state for hx-include -->
+<input type="hidden" id="log-process" name="log-process" value="">
+<input type="hidden" id="log-level"   name="log-level"   value="">
+<input type="hidden" id="log-search"  name="log-search"  value="">
+
+<!-- filter bar -->
 <div class="mb-3 space-y-2">
-  <div class="flex flex-wrap items-center gap-2">
-    <span class="text-xs text-slate-500">Quick filters:</span>
-    <button class="bg-slate-800 text-slate-400 px-2 py-1 rounded
-      text-xs border border-slate-700 hover:bg-slate-700"
-      onclick="quickFilter('gateway', '')">gateway</button>
-    <button class="bg-slate-800 text-slate-400 px-2 py-1 rounded
-      text-xs border border-slate-700 hover:bg-slate-700"
-      onclick="quickFilter('risk', '')">risk</button>
-    <button class="bg-slate-800 text-slate-400 px-2 py-1 rounded
-      text-xs border border-slate-700 hover:bg-slate-700"
-      onclick="quickFilter('matching', '')">matching</button>
-    <button class="bg-red-900/40 text-red-400 px-2 py-1 rounded
-      text-xs border border-red-900 hover:bg-red-900"
-      onclick="quickFilter('', 'error')">errors only</button>
-    <button class="bg-amber-900/40 text-amber-400 px-2 py-1 rounded
-      text-xs border border-amber-900 hover:bg-amber-900"
-      onclick="quickFilter('', 'warn')">warnings only</button>
+  <div class="flex flex-wrap items-center gap-1.5">
+    <span class="text-xs text-slate-500 mr-1">source</span>
+    <button id="fp-all"       class="log-fp log-pill log-pill-on"  onclick="setProc('')">all</button>
+    <button id="fp-gateway"   class="log-fp log-pill"              onclick="setProc('gateway')">gw</button>
+    <button id="fp-risk"      class="log-fp log-pill"              onclick="setProc('risk')">risk</button>
+    <button id="fp-matching"  class="log-fp log-pill"              onclick="setProc('matching')">me</button>
+    <button id="fp-marketdata"class="log-fp log-pill"              onclick="setProc('marketdata')">mktdata</button>
+    <button id="fp-mark"      class="log-fp log-pill"              onclick="setProc('mark')">mark</button>
+    <button id="fp-recorder"  class="log-fp log-pill"              onclick="setProc('recorder')">rec</button>
+    <span class="text-slate-700 mx-1">|</span>
+    <span class="text-xs text-slate-500 mr-1">level</span>
+    <button id="fl-all"  class="log-fl log-pill log-pill-on"         onclick="setLevel('')">all</button>
+    <button id="fl-error"class="log-fl log-pill log-pill-err"        onclick="setLevel('error')">ERR</button>
+    <button id="fl-warn" class="log-fl log-pill log-pill-wrn"        onclick="setLevel('warn')">WRN</button>
+    <button id="fl-info" class="log-fl log-pill"                     onclick="setLevel('info')">INF</button>
+    <button id="fl-debug"class="log-fl log-pill log-pill-dbg"        onclick="setLevel('debug')">DBG</button>
+    <span class="text-slate-700 mx-1">|</span>
+    <button id="tail-toggle"
+      class="log-pill text-xs px-2 py-0.5 rounded border
+        border-slate-600 text-slate-400 bg-slate-800 hover:bg-slate-700"
+      onclick="toggleTail()">tail: on</button>
   </div>
   <div class="flex flex-wrap items-center gap-2">
-    <input type="text" id="smart-search"
-      class="flex-1 min-w-0 w-full sm:min-w-[200px]
-        sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs"
-      placeholder="Smart search: 'gateway error order' or just search text (press / to focus, Ctrl+L to clear)"
-      onkeydown="handleSmartSearch(event)">
-    <button class="bg-slate-800 text-slate-400 px-3 py-1 rounded
-      text-xs border border-slate-700 hover:bg-slate-700"
-      onclick="clearAllFilters()">Clear All</button>
-    <button class="bg-red-900/40 text-red-400 px-3 py-1 rounded
-      text-xs border border-red-900 hover:bg-red-900"
-      hx-post="./api/logs/clear"
-      hx-target="#clear-logs-result"
-      hx-swap="innerHTML">Clear All Logs</button>
-    <span id="clear-logs-result" class="text-xs"></span>
-  </div>
-  <div class="hidden" id="filter-dropdowns">
-    <select id="log-process" name="log-process"
-      class="w-full sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
-      <option value="">all processes</option>
-      <option value="gateway">gateway</option>
-      <option value="risk">risk</option>
-      <option value="matching">matching</option>
-      <option value="marketdata">marketdata</option>
-      <option value="mark">mark</option>
-      <option value="recorder">recorder</option>
-    </select>
-    <select id="log-level" name="log-level"
-      class="w-full sm:w-auto bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs">
-      <option value="">all levels</option>
-      <option value="error">error</option>
-      <option value="warn">warn</option>
-      <option value="info">info</option>
-      <option value="debug">debug</option>
-    </select>
-    <input type="text" id="log-search" name="log-search"
-      class="w-full sm:w-44 bg-slate-950 border border-slate-700
-        text-slate-300 px-2 py-1 rounded text-xs"
-      placeholder="search...">
+    <input type="text" id="log-search-input"
+      class="flex-1 min-w-0 w-full sm:min-w-[220px] sm:w-auto
+        bg-slate-950 border border-slate-700 text-slate-300
+        px-2 py-1 rounded text-xs font-mono"
+      placeholder="search... (/ to focus, Ctrl+L to clear)">
+    <button class="log-pill text-xs px-2 py-0.5 rounded border
+        border-slate-600 text-slate-400 bg-slate-800 hover:bg-slate-700"
+      onclick="clearAllFilters()">clear filters</button>
+    <button class="log-pill text-xs px-2 py-0.5 rounded border
+        border-red-900 text-red-400 bg-red-900/20 hover:bg-red-900/40"
+      onclick="if(confirm('Delete all log files on disk?')){
+        htmx.ajax('POST','./api/logs/clear',
+          {target:'#clear-logs-result',swap:'innerHTML'})}">
+      purge logs</button>
+    <span id="clear-logs-result" class="text-xs text-slate-500"></span>
   </div>
 </div>
-<div id="log-view" class="max-h-[60vh] sm:max-h-[500px]
-  overflow-y-auto overflow-x-auto"
-     hx-get="./x/logs" hx-trigger="load, every 2s"
-     hx-swap="innerHTML"
-     hx-include="#log-process, #log-level, #log-search">
-  <span class="text-slate-600">loading...</span>
+
+<!-- log table -->
+<div id="log-wrap" class="overflow-auto" style="max-height:60vh;overflow-anchor:none">
+  <table id="log-table"
+    class="w-full text-xs font-mono border-collapse"
+    style="table-layout:fixed">
+    <colgroup>
+      <col style="width:5.5rem">
+      <col style="width:7rem">
+      <col style="width:3.5rem">
+      <col>
+    </colgroup>
+    <thead class="sticky top-0 bg-slate-900 z-10">
+      <tr class="text-slate-500 text-left">
+        <th class="px-2 py-1 font-normal border-b border-slate-800">source</th>
+        <th class="px-2 py-1 font-normal border-b border-slate-800">time</th>
+        <th class="px-2 py-1 font-normal border-b border-slate-800">lvl</th>
+        <th class="px-2 py-1 font-normal border-b border-slate-800">message</th>
+      </tr>
+    </thead>
+    <tbody id="log-view"
+      hx-get="./x/logs" hx-trigger="load"
+      hx-swap="innerHTML"
+      hx-include="#log-process, #log-level, #log-search">
+      <tr><td colspan="4" class="text-slate-600 px-2 py-2">loading...</td></tr>
+    </tbody>
+  </table>
 </div>
-<div id="log-modal" class="hidden fixed inset-0 bg-black/80
-  flex items-center justify-center z-50" onclick="closeModal()">
-  <div class="bg-slate-900 border border-slate-700 rounded-lg
-    p-4 max-w-[95vw] sm:max-w-4xl max-h-[85vh]
-    overflow-auto m-2 sm:m-4"
-    onclick="event.stopPropagation()">
-    <div class="flex justify-between items-start mb-3">
-      <h3 class="text-sm font-semibold text-slate-400">
-        Full Log Line</h3>
-      <div class="flex gap-2">
-        <button class="bg-slate-800 text-slate-400 px-2 py-1
-          rounded text-xs hover:bg-slate-700"
-          onclick="copyLogLine()">Copy</button>
-        <button class="bg-slate-800 text-slate-400 px-2 py-1
-          rounded text-xs hover:bg-slate-700"
-          onclick="closeModal()">Close</button>
-      </div>
-    </div>
-    <pre id="modal-content"
-      class="text-xs text-slate-300 whitespace-pre-wrap
-        break-all font-mono bg-slate-950 p-3 rounded"></pre>
-  </div>
-</div>
+
+<style>
+.log-pill { cursor:pointer; font-size:.7rem; padding:.15rem .45rem;
+  border-radius:.25rem; border-width:1px; }
+.log-pill-on { background:rgb(51 65 85); color:rgb(148 163 184);
+  border-color:rgb(71 85 105); }
+.log-fp, .log-fl { background:transparent; color:rgb(100 116 139);
+  border-color:rgb(51 65 85); }
+.log-fp:hover,.log-fl:hover { background:rgb(30 41 59); }
+.log-pill-err { color:rgb(248 113 113); border-color:rgb(127 29 29); }
+.log-pill-wrn { color:rgb(251 191 36); border-color:rgb(120 53 15); }
+.log-pill-dbg { color:rgb(71 85 105); border-color:rgb(51 65 85); }
+</style>
+
 <script>
-let currentLogLines = [];
+// ── filter state ──────────────────────────────────────────
+let _tailOn = true;
+let _tailTimer = null;
+let _expandedRow = null;
 
-function quickFilter(process, level) {
-  document.getElementById('log-process').value = process;
-  document.getElementById('log-level').value = level;
-  document.getElementById('log-search').value = '';
-  document.getElementById('smart-search').value = '';
+function _sync() {
   htmx.trigger('#log-view', 'load');
+  _restartTail();
 }
 
-function parseSmartSearch(text) {
-  const processes = ['gateway', 'risk', 'matching', 'marketdata',
-    'mark', 'recorder'];
-  const levels = ['error', 'warn', 'info', 'debug'];
-  const words = text.toLowerCase().trim().split(/\s+/);
-  let process = '', level = '', search = [];
-
-  for (const word of words) {
-    if (processes.includes(word)) {
-      process = word;
-    } else if (levels.includes(word)) {
-      level = word;
-    } else {
-      search.push(word);
-    }
-  }
-
-  return { process, level, search: search.join(' ') };
+function setProc(v) {
+  document.getElementById('log-process').value = v;
+  document.querySelectorAll('.log-fp').forEach(b => b.classList.remove('log-pill-on'));
+  const id = v ? 'fp-' + (v === 'matching' ? 'matching' : v) : 'fp-all';
+  const el = document.getElementById(id);
+  if (el) el.classList.add('log-pill-on');
+  _sync();
 }
 
-function handleSmartSearch(event) {
-  if (event.key === 'Enter') {
-    const text = event.target.value;
-    const parsed = parseSmartSearch(text);
-    document.getElementById('log-process').value = parsed.process;
-    document.getElementById('log-level').value = parsed.level;
-    document.getElementById('log-search').value = parsed.search;
-    htmx.trigger('#log-view', 'load');
-  }
+function setLevel(v) {
+  document.getElementById('log-level').value = v;
+  document.querySelectorAll('.log-fl').forEach(b => b.classList.remove('log-pill-on'));
+  const id = v ? 'fl-' + v : 'fl-all';
+  const el = document.getElementById(id);
+  if (el) el.classList.add('log-pill-on');
+  _sync();
 }
 
 function clearAllFilters() {
   document.getElementById('log-process').value = '';
   document.getElementById('log-level').value = '';
   document.getElementById('log-search').value = '';
-  document.getElementById('smart-search').value = '';
-  htmx.trigger('#log-view', 'load');
+  document.getElementById('log-search-input').value = '';
+  document.querySelectorAll('.log-fp').forEach(b => b.classList.remove('log-pill-on'));
+  document.getElementById('fp-all').classList.add('log-pill-on');
+  document.querySelectorAll('.log-fl').forEach(b => b.classList.remove('log-pill-on'));
+  document.getElementById('fl-all').classList.add('log-pill-on');
+  _sync();
 }
 
-function showFullLine(element, index) {
-  const modal = document.getElementById('log-modal');
-  const content = document.getElementById('modal-content');
-  content.textContent = element.textContent.replace('click to expand', '').trim();
-  modal.classList.remove('hidden');
+// debounced free-text search
+let _searchDebounce = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('log-search-input');
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => {
+      document.getElementById('log-search').value = inp.value;
+      _sync();
+    }, 300);
+  });
+});
+
+// ── inline accordion ──────────────────────────────────────
+function toggleRow(tr) {
+  const detail = tr.querySelector('.log-detail');
+  const summary = tr.querySelector('.log-summary');
+  if (!detail) return;
+
+  if (_expandedRow && _expandedRow !== tr) {
+    const prev = _expandedRow.querySelector('.log-detail');
+    const prevS = _expandedRow.querySelector('.log-summary');
+    if (prev) prev.classList.add('hidden');
+    if (prevS) prevS.classList.remove('hidden');
+    _expandedRow.classList.remove('bg-slate-800/60');
+  }
+
+  const open = !detail.classList.contains('hidden');
+  if (open) {
+    detail.classList.add('hidden');
+    summary.classList.remove('hidden');
+    tr.classList.remove('bg-slate-800/60');
+    _expandedRow = null;
+  } else {
+    detail.classList.remove('hidden');
+    summary.classList.add('hidden');
+    tr.classList.add('bg-slate-800/60');
+    _expandedRow = tr;
+  }
 }
 
-function closeModal() {
-  document.getElementById('log-modal').classList.add('hidden');
-}
-
-function copyLogLine() {
-  const content = document.getElementById('modal-content').textContent;
-  navigator.clipboard.writeText(content).then(() => {
-    const btn = event.target;
+function copyRowLine(btn) {
+  const text = btn.dataset.raw || btn.closest('tr')
+    ?.querySelector('pre')?.textContent || '';
+  navigator.clipboard.writeText(text).then(() => {
     const orig = btn.textContent;
-    btn.textContent = 'Copied!';
-    btn.classList.add('bg-green-900', 'text-green-400');
-    setTimeout(() => {
-      btn.textContent = orig;
-      btn.classList.remove('bg-green-900', 'text-green-400');
-    }, 2000);
+    btn.textContent = 'copied';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
   });
 }
 
+// ── live tail ─────────────────────────────────────────────
+function toggleTail() {
+  _tailOn = !_tailOn;
+  const btn = document.getElementById('tail-toggle');
+  btn.textContent = 'tail: ' + (_tailOn ? 'on' : 'off');
+  btn.style.color = _tailOn ? '' : 'rgb(100 116 139)';
+  if (_tailOn) _restartTail(); else clearTimeout(_tailTimer);
+}
+
+function _restartTail() {
+  clearTimeout(_tailTimer);
+  if (_tailOn) _scheduleTail();
+}
+
+function _scheduleTail() {
+  _tailTimer = setTimeout(_doTail, 2000);
+}
+
+function _doTail() {
+  // skip while a row is expanded or user has scrolled down
+  const wrap = document.getElementById('log-wrap');
+  const scrolledDown = wrap && wrap.scrollTop > 40;
+  const hasFilters = document.getElementById('log-process').value
+    || document.getElementById('log-level').value
+    || document.getElementById('log-search').value;
+  if (_expandedRow || scrolledDown || hasFilters) {
+    _scheduleTail();
+    return;
+  }
+  fetch('./x/logs-tail')
+    .then(r => r.text())
+    .then(html => {
+      if (!html.trim()) { _scheduleTail(); return; }
+      const tbody = document.getElementById('log-view');
+      if (!tbody) { _scheduleTail(); return; }
+      // prepend new rows; cap at 500
+      const tmp = document.createElement('tbody');
+      tmp.innerHTML = html;
+      const newRows = Array.from(tmp.querySelectorAll('tr'));
+      for (const r of newRows.reverse()) {
+        tbody.insertBefore(r, tbody.firstChild);
+      }
+      // trim excess
+      while (tbody.rows.length > 500) {
+        tbody.deleteRow(tbody.rows.length - 1);
+      }
+    })
+    .catch(() => {})
+    .finally(() => { _scheduleTail(); });
+}
+
+// ── keyboard shortcuts ────────────────────────────────────
 document.addEventListener('keydown', (e) => {
   if (e.key === '/' && e.target.tagName !== 'INPUT') {
     e.preventDefault();
-    document.getElementById('smart-search').focus();
+    const inp = document.getElementById('log-search-input');
+    if (inp) inp.focus();
   }
   if (e.ctrlKey && e.key === 'l') {
     e.preventDefault();
     clearAllFilters();
   }
-  if (e.key === 'Escape') {
-    closeModal();
+  if (e.key === 'Escape' && _expandedRow) {
+    toggleRow(_expandedRow);
+  }
+});
+
+// start tail after initial load
+document.addEventListener('htmx:afterSwap', (e) => {
+  if (e.detail.target && e.detail.target.id === 'log-view') {
+    _scheduleTail();
   }
 });
 </script>"""
@@ -3476,30 +3550,91 @@ def render_wal_timeline(records=None):
 
 # ── Logs ─────────────────────────────────────────────────
 
+def _parse_log_line(line):
+    """Split '[fname] <ISO ts> LEVEL target: msg' into parts.
+
+    Returns (source, time_str, level, message).  Falls back to
+    ('', '', '', line) when the format doesn't match.
+    """
+    import re
+    # [gw-0] 2026-05-31T12:34:56.789012Z INFO rsx_gateway::ws: connected
+    m = re.match(
+        r'^\[([^\]]+)\]\s+'          # [source]
+        r'(\S+)\s+'                   # timestamp
+        r'(ERROR|WARN|INFO|DEBUG|TRACE)\s+'  # level
+        r'(.*)$',                     # rest (target: msg)
+        line,
+    )
+    if not m:
+        return ('', '', '', line)
+    src = m.group(1)
+    ts = m.group(2)
+    lvl = m.group(3)
+    msg = m.group(4)
+    # compact timestamp → HH:MM:SS.mmm
+    tm = re.sub(r'^.*T(\d{2}:\d{2}:\d{2})\.(\d{3}).*$',
+                r'\1.\2', ts)
+    if tm == ts:          # no match → keep short slice
+        tm = ts[11:23] if len(ts) > 23 else ts
+    return (src, tm, lvl, msg)
+
+
 def render_logs(lines):
+    """Render log lines as table rows (<tr> elements, no wrapper)."""
     if not lines:
-        return ('<span class="text-slate-600">'
-                'no log lines</span>')
-    out = ""
-    for i, line in enumerate(lines):
-        cls = "text-slate-400"
-        low = line.lower()
-        if " error " in low:
-            cls = "text-red-400"
-        elif " warn " in low:
-            cls = "text-amber-400"
-        elif " debug " in low:
-            cls = "text-slate-600"
-        safe_line = html.escape(line)
+        return ('<tr><td colspan="4" '
+                'class="text-slate-600 px-2 py-2 text-xs">'
+                'no log lines</td></tr>')
+    _LVL_BADGE = {
+        'ERROR': ('bg-red-900/50 text-red-400',   'ERR'),
+        'WARN':  ('bg-amber-900/40 text-amber-400', 'WRN'),
+        'INFO':  ('text-slate-400',                'INF'),
+        'DEBUG': ('text-slate-600',                'DBG'),
+        'TRACE': ('text-slate-700',                'TRC'),
+    }
+    out = ''
+    for line in lines:
+        src, tm, lvl, msg = _parse_log_line(line)
+        badge_cls, badge_lbl = _LVL_BADGE.get(
+            lvl, ('text-slate-500', lvl[:3] or '?'))
+        safe_src  = html.escape(src  or '—')
+        safe_tm   = html.escape(tm)
+        safe_msg  = html.escape(msg or line)
+        safe_raw  = html.escape(line)
+        # truncate summary to ~120 chars
+        summary = safe_msg[:120] + ('…' if len(safe_msg) > 120 else '')
+        # row css
+        row_base = ('cursor-pointer hover:bg-slate-800/50 '
+                    'border-b border-slate-800/40 text-xs')
         out += (
-            f'<div class="{cls} text-xs py-0.5 font-mono '
-            f'whitespace-pre-wrap break-all cursor-pointer '
-            f'hover:bg-slate-800 px-1 rounded group relative" '
-            f'onclick="showFullLine(this, {i})">'
-            f'<span class="group-hover:opacity-100 opacity-0 '
-            f'absolute right-1 top-1 text-[10px] text-slate-500">'
-            f'click to expand</span>'
-            f'{safe_line}</div>\n'
+            f'<tr class="{row_base}" onclick="toggleRow(this)">\n'
+            f'  <td class="px-2 py-1 text-slate-500 truncate'
+            f'             whitespace-nowrap">{safe_src}</td>\n'
+            f'  <td class="px-2 py-1 text-slate-600'
+            f'             whitespace-nowrap">{safe_tm}</td>\n'
+            f'  <td class="px-2 py-1 whitespace-nowrap">'
+            f'    <span class="font-mono {badge_cls}">'
+            f'{badge_lbl}</span></td>\n'
+            f'  <td class="px-2 py-1 text-slate-300'
+            f'             overflow-hidden">\n'
+            f'    <div class="log-summary truncate'
+            f'               whitespace-nowrap">{summary}</div>\n'
+            f'    <div class="log-detail hidden mt-1">\n'
+            f'      <pre class="whitespace-pre-wrap break-all'
+            f'                  text-slate-400 bg-slate-900/60'
+            f'                  p-2 rounded text-[11px]">'
+            f'{safe_raw}</pre>\n'
+            f'      <button class="log-copy-btn mt-1 text-[10px]'
+            f'        text-slate-500 hover:text-slate-300'
+            f'        border border-slate-700'
+            f'        px-2 py-0.5 rounded bg-slate-800"'
+            f' data-raw="{safe_raw}"'
+            f' onclick="event.stopPropagation();'
+            f'copyRowLine(this)">'
+            f'copy</button>\n'
+            f'    </div>\n'
+            f'  </td>\n'
+            f'</tr>\n'
         )
     return out
 
