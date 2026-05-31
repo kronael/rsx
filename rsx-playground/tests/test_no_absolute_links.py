@@ -54,6 +54,7 @@ HTMX_PARTIALS = [
     "/x/margin-ladder",
     "/x/order-trace",
     "/x/position-heatmap",
+    "/x/proc-chip",
     "/x/processes",
     "/x/recent-orders",
     "/x/reconciliation",

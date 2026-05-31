@@ -2193,9 +2193,15 @@ def _topo_gateway() -> dict:
         "pid": p.get("pid", "-"),
         "uptime": p.get("uptime", "-"),
         "rows": [
-            ("orders (session)", len(recent_orders)),
-            ("fills (session)", len(recent_fills)),
-            ("WAL tips", wal_tips),
+            ('<abbr title="Orders submitted since this'
+             ' dashboard session started">orders (session)</abbr>',
+             len(recent_orders)),
+            ('<abbr title="Fills received since this'
+             ' dashboard session started">fills (session)</abbr>',
+             len(recent_fills)),
+            ('<abbr title="Highest WAL sequence number seen'
+             ' per symbol — monotonically increasing">WAL tips</abbr>',
+             wal_tips),
         ],
     }
 
@@ -3066,6 +3072,12 @@ async def _htmx_500(request: Request, exc: Exception):
 async def x_processes():
     procs = _cached_for("procs", 1.0, scan_processes)
     return HTMLResponse(pages.render_process_table(procs))
+
+
+@app.get("/x/proc-chip", response_class=HTMLResponse)
+async def x_proc_chip():
+    procs = _cached_for("procs", 1.0, scan_processes)
+    return HTMLResponse(pages.render_proc_chip(procs))
 
 
 _BENCH_BASELINE_FILE = ROOT / "bench-baseline.json"
@@ -3995,6 +4007,18 @@ async def api_process_action(
                 None)
             if proc and proc["pid"] != "-":
                 try:
+                    # Mark intentional BEFORE sending signal so the
+                    # watcher cannot race between the signal and the
+                    # flag being set.  Preserve existing counters.
+                    rs = _restart_state.setdefault(name, {
+                        "restarts": 0,
+                        "total_restarts": 0,
+                        "blocked": False,
+                        "next_restart_at": 0.0,
+                        "last_crash_ts": 0.0,
+                        "intentional": False,
+                    })
+                    rs["intentional"] = True
                     os.kill(int(proc["pid"]), signal.SIGTERM)
                     pid_file = PID_DIR / f"{name}.pid"
                     if pid_file.exists():
@@ -4018,6 +4042,16 @@ async def api_process_action(
                 None)
             if proc and proc["pid"] != "-":
                 try:
+                    # Mark intentional so watcher does not revive.
+                    rs = _restart_state.setdefault(name, {
+                        "restarts": 0,
+                        "total_restarts": 0,
+                        "blocked": False,
+                        "next_restart_at": 0.0,
+                        "last_crash_ts": 0.0,
+                        "intentional": False,
+                    })
+                    rs["intentional"] = True
                     os.kill(int(proc["pid"]), signal.SIGKILL)
                     pid_file = PID_DIR / f"{name}.pid"
                     if pid_file.exists():
