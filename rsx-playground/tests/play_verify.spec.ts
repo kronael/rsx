@@ -91,7 +91,7 @@ test.describe("Verify tab", () => {
     await expect(results).toContainText(/PASS|FAIL|SKIP/);
   });
 
-  test("each invariant row has exactly PASS, FAIL, or SKIP badge", async ({ page }) => {
+  test("each invariant row has exactly PASS, FAIL, WARN, or SKIP badge", async ({ page }) => {
     await page.goto("/verify");
     await page.locator("button", { hasText: "Run All Checks" }).click();
     await waitForHTMX(page, 3000);
@@ -101,7 +101,7 @@ test.describe("Verify tab", () => {
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
       const badge = await rows.nth(i).locator("span").first().textContent();
-      expect(badge?.trim()).toMatch(/^(PASS|FAIL|SKIP)$/);
+      expect(badge?.trim()).toMatch(/^(PASS|FAIL|WARN|SKIP)$/);
     }
   });
 
