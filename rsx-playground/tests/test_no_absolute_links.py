@@ -36,7 +36,7 @@ HTMX_PARTIALS = [
     "/x/auth-failures",
     "/x/book",
     "/x/book-stats",
-    "/x/cmp-flows",
+    "/x/cast-flows",
     "/x/control-grid",
     "/x/core-affinity",
     "/x/current-scenario",
