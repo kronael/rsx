@@ -1234,28 +1234,39 @@ def risk_page():
   <button class="bg-emerald-900/60 text-emerald-400
     px-3 py-1 rounded text-xs border border-emerald-800
     hover:bg-emerald-800 cursor-pointer"
-    hx-post="./api/users/create" hx-swap="none">Create User</button>
+    onclick="riskAction('create')">Create User</button>
   <button class="bg-blue-900/40 text-blue-400
     px-3 py-1 rounded text-xs border border-blue-900
     hover:bg-blue-900 cursor-pointer"
-    hx-post="./api/users/1/deposit" hx-swap="none"
-    >Deposit</button>
+    onclick="riskAction('deposit')">Deposit</button>
   <button class="bg-slate-800 text-slate-400
     px-3 py-1 rounded text-xs border border-slate-700
     hover:bg-slate-700 cursor-pointer"
-    hx-post="./api/risk/users/1/freeze"
-    hx-swap="none">Freeze</button>
+    onclick="riskAction('freeze')">Freeze</button>
   <button class="bg-slate-800 text-slate-400
     px-3 py-1 rounded text-xs border border-slate-700
     hover:bg-slate-700 cursor-pointer"
-    hx-post="./api/risk/users/1/unfreeze"
-    hx-swap="none">Unfreeze</button>
+    onclick="riskAction('unfreeze')">Unfreeze</button>
   <button class="bg-red-900/40 text-red-400
     px-3 py-1 rounded text-xs border border-red-900
     hover:bg-red-900 cursor-pointer"
-    hx-post="./api/risk/liquidate"
-    hx-swap="none">Liquidate</button>
+    onclick="riskAction('liquidate')">Liquidate</button>
 </div>
+<div id="risk-action-result" class="mt-2 text-xs"></div>
+<script>
+function riskAction(action) {
+  var uid = (document.getElementById('risk-uid').value || '1').trim();
+  var path, values = {};
+  if (action === 'create') { path = './api/users/create'; }
+  else if (action === 'deposit') { path = './api/users/' + uid + '/deposit'; }
+  else if (action === 'liquidate') {
+    path = './api/risk/liquidate'; values = {user_id: uid};
+  } else { path = './api/risk/users/' + uid + '/' + action; }
+  htmx.ajax('POST', path, {
+    target: '#risk-action-result', swap: 'innerHTML', values: values,
+  });
+}
+</script>
 <div id="risk-data" class="mt-3">
   <span class="text-slate-600">
     enter user_id and click lookup</span>
@@ -1844,7 +1855,7 @@ gap-2 text-xs">
     <div class="text-slate-400">WAL append (in-mem)</div>
     <div class="text-emerald-400 text-lg font-bold">
       31 ns</div>
-    <div class="text-slate-500">rsx-dxs bench</div>
+    <div class="text-slate-500">rsx-cast bench</div>
   </div>
   <div class="bg-slate-800 rounded p-2">
     <div class="text-slate-400">cast encode</div>
@@ -1868,7 +1879,7 @@ gap-2 text-xs">
     <div class="text-slate-400">WAL flush + fsync 64 KB</div>
     <div class="text-amber-400 text-lg font-bold">
       ~24 &micro;s</div>
-    <div class="text-slate-500">rsx-dxs bench</div>
+    <div class="text-slate-500">rsx-cast bench</div>
   </div>
 </div>
 <p class="text-xs text-slate-500 mt-2">
@@ -1881,11 +1892,9 @@ or
     budget = _card(
         "Design budgets (not measured E2E yet)",
         """<div class="text-xs text-slate-300 space-y-2">
-<p>The headline targets &mdash; documented but not
-asserted by an automated harness today. The continuous
-end-to-end probe is queued as task F1 in
-<code class="bg-slate-800 px-1 rounded">
-.ship/12-SHOWCASE-HONEST</code>.</p>
+<p>The headline targets &mdash; documented but not yet
+asserted by an automated end-to-end harness. Use the live
+probe above to measure the round-trip on this box.</p>
 <table class="w-full text-xs">
   <thead class="text-slate-500">
     <tr>
@@ -2109,6 +2118,7 @@ def orders_page():
     )
 
     matrix_html = (
+        '<div hx-on::response-error="quickOrderError(event)">'
         '<div class="space-y-2 mb-2">'
         '<div class="text-[10px] text-slate-500 uppercase'
         ' tracking-wider">Buy (up)</div>'
@@ -2123,6 +2133,17 @@ def orders_page():
         '</div>'
         '<div id="quick-result" '
         'class="text-xs min-h-[20px] mb-3"></div>'
+        '</div>'
+        '<script>'
+        'function quickOrderError(evt){'
+        'var q=document.getElementById("quick-result");'
+        'if(!q)return;'
+        'var s=(evt.detail&&evt.detail.xhr)?evt.detail.xhr.status:"error";'
+        'q.innerHTML=\'<span class="text-amber-400">no response (\'+s+'
+        '\') &mdash; is the gateway running? '
+        '<a href="./control" class="underline">Control</a></span>\';'
+        '}'
+        '</script>'
     )
 
     custom_form = """<details class="group">

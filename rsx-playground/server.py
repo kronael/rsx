@@ -2460,19 +2460,6 @@ async def x_topology_flow():
     return JSONResponse({"nodes": nodes})
 
 
-@app.get("/x/topology/{component}",
-         response_class=HTMLResponse)
-async def x_topology_component(component: str):
-    handler = _TOPO_HANDLERS.get(component)
-    if not handler:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            f"unknown component: {component}</span>"
-        )
-    return HTMLResponse(
-        pages.render_component_detail(component, handler()))
-
-
 @app.get("/x/topology/summary",
          response_class=HTMLResponse)
 async def x_topology_summary():
@@ -2509,6 +2496,21 @@ async def x_topology_summary():
         f'<span class="text-zinc-600 ml-auto truncate '
         f'max-w-[300px]">{names}</span>'
     )
+
+
+@app.get("/x/topology/{component}",
+         response_class=HTMLResponse)
+async def x_topology_component(component: str):
+    # Declared AFTER the literal /x/topology/flow and /summary
+    # routes so this catch-all does not swallow them.
+    handler = _TOPO_HANDLERS.get(component)
+    if not handler:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            f"unknown component: {component}</span>"
+        )
+    return HTMLResponse(
+        pages.render_component_detail(component, handler()))
 
 
 @app.get("/book", response_class=HTMLResponse)
