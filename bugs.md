@@ -102,3 +102,39 @@ Founder: solve these when we next work the book. All verified against source;
   buckets far prices (10/100/1000 ticks per slot), so distinct prices share a
   level → price-time priority is coarse far from mid. Intentional compressed-book
   tradeoff; logged as a known design risk, not a defect.
+
+## Dashboard stability + RSX process flapping (2026-05-31, task 29-#12)
+- Playground dashboard runs as a SINGLE uvicorn worker (server.py:8127,
+  workers=1 reload=False) with no self-watchdog. Any kill = full outage
+  until manual `./playground start`. NOTE: several apparent "crashes" this
+  session were self-inflicted (`pkill -f server.py` matched the running
+  shell; `fuser -k 49171/tcp` deliberate) — the server is more stable than
+  it appeared; the real gap is no supervisor.
+- RSX processes flap (e.g. 4/7 running): auto-restart supervisor with a
+  circuit-breaker opening after 5 crashes -> `blocked` (server.py:344-357).
+  Root crash causes: Postgres down (10.0.2.1:5432 unreachable),
+  marketdata rcvbuf -> FAULTED, maker-induced cast FAULTED (per MEMORY).
+- FIX options (needs decision; edit blocked while overview agent owns
+  server.py): (a) run dashboard under systemd/pm2 or a small watchdog;
+  (b) bring Postgres up so PG-dependent processes stop crashing;
+  (c) `make tune-host` (rmem_max) before enabling the auto-maker to avoid
+  the rcvbuf FAULTED loop.
+
+## Control Stop/Start buttons don't work (2026-05-31, task 29)
+- Owner reports per-process Stop/Start (control grid + faults page) do
+  nothing. Suspect: buttons post ./api/processes/{name}/{action} WITHOUT
+  an x-confirm header (only the walkthrough all/start at pages.py:663 sends
+  hx-headers x-confirm), while the all/* endpoints require check_confirm.
+  Verify the {name}/{action} handler's confirm/run_id gate and either send
+  the header from the buttons or drop the gate for single-process actions.
+  Must be covered by the audit + Playwright play-tests.
+
+  CORRECTION: the {name}/{action} handler (server.py:3942) needs only
+  loopback (no confirm gate), so it's NOT a header issue. Likely cause:
+  (a) the raw-PID stop fallback (3958-3972, hit when name not in `managed`
+  after a dashboard restart drops the in-memory dict) SIGTERMs but does NOT
+  mark intentional/update _restart_state, so the auto-restart watcher
+  revives the process; and/or (b) no visible feedback. Fix: route single-
+  process stop through the intentional-flag path (like stop_process) even
+  on the raw-PID branch, and surface the result. Confirm by clicking Stop
+  and watching whether the process reappears.
