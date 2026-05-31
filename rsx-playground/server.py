@@ -2752,47 +2752,77 @@ def _md_inline(text: str) -> str:
 
 @app.get("/docs")
 async def docs_index():
-    """Redirect /docs to /docs/README."""
-    return RedirectResponse("./docs/README")
+    """Redirect /docs to the guide landing page."""
+    return RedirectResponse("./docs/guide/README")
 
 
 @app.get("/docs/{filename:path}")
 async def docs(filename: str):
     """Serve playground documentation files."""
-    docs_dir = Path(__file__).parent / "docs"
+    # Root allowlist: GUIDE = how to use the playground;
+    # DOCS = the platform itself (concepts + repo docs + spec).
+    # URLs are /docs/<root>/<file>; bare names normalize into
+    # guide so depth stays 2 and the relative sidebar links work.
+    repo_root = Path(__file__).resolve().parent.parent
+    doc_roots = {
+        "guide": Path(__file__).parent / "docs",
+        "concepts": repo_root / "docs" / "concepts",
+        "platform": repo_root / "docs",
+        "spec": repo_root / "specs" / "2",
+    }
     if not filename:
-        filename = "README.md"
-    if not filename.endswith(".md"):
-        filename += ".md"
-    file_path = (docs_dir / filename).resolve()
-    if not str(file_path).startswith(
-        str(docs_dir.resolve())
-    ):
+        filename = "guide/README"
+    parts = filename.split("/", 1)
+    if parts[0] in doc_roots:
+        root_key = parts[0]
+        rel = parts[1] if len(parts) > 1 else "README"
+    else:
+        return RedirectResponse(f"guide/{filename}")
+    base = doc_roots[root_key].resolve()
+    if not rel.endswith(".md"):
+        rel += ".md"
+    file_path = (base / rel).resolve()
+    if (not str(file_path).startswith(str(base))
+            or not file_path.exists()
+            or not file_path.is_file()):
         return HTMLResponse(
-            "<h1>404 Not Found</h1>",
-            status_code=404)
-    if not file_path.exists() or not file_path.is_file():
-        return HTMLResponse(
-            "<h1>404 Not Found</h1>",
-            status_code=404)
+            "<h1>404 Not Found</h1>", status_code=404)
     content = file_path.read_text()
-    safe_filename = html.escape(filename)
+    safe_filename = html.escape(f"{root_key}/{rel}")
     md_json = json.dumps(content)
 
-    # sidebar: list all docs
-    doc_files = sorted(docs_dir.glob("*.md"))
-    sidebar = ""
-    for f in doc_files:
-        name = f.stem
-        label = name.replace("-", " ").replace(
-            "_", " ").title()
-        active = "font-bold text-white" if (
-            f.name == filename) else "text-slate-400"
-        sidebar += (
-            f'<a href="./{f.name}" '
-            f'class="{active} block py-1 '
-            f'hover:text-white text-sm">'
-            f'{html.escape(label)}</a>\n')
+    def _doc_label(stem):
+        s = re.sub(r"^\d+[-_]", "", stem)
+        return s.replace("-", " ").replace("_", " ").title()
+
+    def _doc_group(title, key):
+        d = doc_roots[key]
+        if not d.exists():
+            return ""
+        out = (
+            f'<div class="mt-4 mb-1 text-xs text-slate-500 '
+            f'uppercase tracking-wider">{html.escape(title)}</div>')
+        for f in sorted(d.glob("*.md")):
+            cls = ("font-bold text-white"
+                   if (key == root_key and f.name == rel)
+                   else "text-slate-400")
+            out += (
+                f'<a href="../{key}/{f.stem}" '
+                f'class="{cls} block py-0.5 hover:text-white '
+                f'text-xs">{html.escape(_doc_label(f.stem))}</a>\n')
+        return out
+
+    # GUIDE group, then DOCS groups (platform internals).
+    sidebar = (
+        '<div class="text-xs text-emerald-500 uppercase '
+        'tracking-wider font-bold">Guide</div>'
+        + _doc_group("Using the playground", "guide")
+        + '<div class="mt-5 text-xs text-blue-400 uppercase '
+        'tracking-wider font-bold">Docs</div>'
+        + _doc_group("Concepts", "concepts")
+        + _doc_group("Platform", "platform")
+        + _doc_group("Spec", "spec")
+    )
 
     doc_html = f"""<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -2911,15 +2941,13 @@ tailwind.config = {{
 <div class="flex min-h-screen">
   <aside class="w-52 bg-[#0b1120] border-r
     border-slate-700 p-4 shrink-0">
-    <a href="../" class="text-white font-bold text-sm
+    <a href="../../" class="text-white font-bold text-sm
       block mb-4">RSX Playground</a>
-    <div class="mb-3 text-xs text-slate-500
-      uppercase tracking-wider">Docs</div>
     {sidebar}
     <div class="mt-6 pt-4 border-t border-slate-700">
-      <a href="../" class="text-slate-400 text-xs
+      <a href="../../" class="text-slate-400 text-xs
         hover:text-white block py-1">Dashboard</a>
-      <a href="../trade/" target="_blank" rel="noopener"
+      <a href="../../trade/" target="_blank" rel="noopener"
         class="text-slate-400 text-xs hover:text-white block py-1"
         >Trade UI ↗</a>
     </div>
