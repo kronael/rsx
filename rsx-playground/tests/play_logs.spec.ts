@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForHTMX, waitForRefresh, pressSlashForSearch, pressClearShortcut } from "./test_helpers";
+import { waitForHTMX, waitForRefresh } from "./test_helpers";
 
 test.describe("Logs tab", () => {
   test("loads and has filters", async ({ page }) => {
@@ -7,27 +7,30 @@ test.describe("Logs tab", () => {
     await expect(page.locator("nav a", { hasText: "Logs" }))
       .toHaveClass(/bg-slate-700/);
     await expect(page.getByRole("heading", { name: "Unified Log" })).toBeVisible();
-    // Filter dropdowns are hidden (smart search sets them)
+    // Filter inputs are present (hidden inputs + visible search)
     await expect(page.locator("#log-process")).toBeAttached();
     await expect(page.locator("#log-level")).toBeAttached();
     await expect(page.locator("#log-search")).toBeAttached();
-    // Smart search is visible
-    await expect(page.locator("#smart-search")).toBeVisible();
+    // Visible free-text search
+    await expect(page.locator("#log-search-input")).toBeVisible();
+    // Pill buttons present
+    await expect(page.locator("button#fp-all")).toBeVisible();
+    await expect(page.locator("button#fl-all")).toBeVisible();
   });
 
-  test("process filter has expected options", async ({ page }) => {
+  test("process pill buttons present", async ({ page }) => {
     await page.goto("/logs");
-    const select = page.locator("#log-process");
-    await expect(select.locator("option")).toHaveCount(7);
-    await expect(select.locator("option[value='gateway']"))
-      .toHaveText("gateway");
+    for (const id of ["fp-all", "fp-gateway", "fp-risk", "fp-matching",
+                       "fp-marketdata", "fp-mark", "fp-recorder"]) {
+      await expect(page.locator(`#${id}`)).toBeAttached();
+    }
   });
 
-  test("level filter has expected options", async ({ page }) => {
+  test("level pill buttons present", async ({ page }) => {
     await page.goto("/logs");
-    const select = page.locator("#log-level");
-    await expect(select.locator("option[value='error']"))
-      .toHaveText("error");
+    for (const id of ["fl-all", "fl-error", "fl-warn", "fl-info", "fl-debug"]) {
+      await expect(page.locator(`#${id}`)).toBeAttached();
+    }
   });
 
   test("has error aggregation card", async ({ page }) => {
@@ -35,187 +38,211 @@ test.describe("Logs tab", () => {
     await expect(page.getByRole("heading", { name: "Error Aggregation" })).toBeVisible();
   });
 
-  // New interactive tests (9 total)
-
-  test("full line visibility: long lines are fully visible via scroll or wrap", async ({ page }) => {
+  test("log table renders with thead and tbody", async ({ page }) => {
     await page.goto("/logs");
     await page.waitForLoadState("networkidle");
-    const logView = page.locator("#log-view");
-
-    // Log lines should be visible (wrapped or scrollable)
-    const logLines = logView.locator("div");
-    const count = await logLines.count();
-
-    if (count > 0) {
-      const firstLine = logLines.first();
-      await expect(firstLine).toBeVisible();
-
-      // Check if line has whitespace-pre-wrap or overflow
-      const classes = await firstLine.getAttribute("class") ?? "";
-      const style = await firstLine.getAttribute("style") ?? "";
-      expect(classes + style).toMatch(
-        /whitespace|break|overflow|pre-wrap|scroll/
-      );
-    }
+    await expect(page.locator("#log-table")).toBeVisible();
+    await expect(page.locator("#log-table thead")).toBeVisible();
+    await expect(page.locator("#log-view")).toBeAttached();
   });
 
-  test("quick filters: click gateway chip applies instant filter", async ({ page }) => {
+  test("no modal: log-modal is absent from DOM", async ({ page }) => {
+    await page.goto("/logs");
+    await expect(page.locator("#log-modal")).not.toBeAttached();
+  });
+
+  test("quick filters: click gateway pill sets hidden input", async ({ page }) => {
     await page.goto("/logs");
     await page.waitForLoadState("networkidle");
 
-    // Click gateway quick filter
-    const gatewayBtn = page.locator("button", { hasText: /^gateway$/ });
-    await gatewayBtn.click();
+    await page.locator("#fp-gateway").click();
     await waitForHTMX(page);
 
-    // Verify hidden filter was set via JavaScript
     const value = await page.evaluate(() => {
-      const el = document.getElementById("log-process") as HTMLSelectElement;
-      return el?.value;
+      return (document.getElementById("log-process") as HTMLInputElement)?.value;
     });
     expect(value).toBe("gateway");
   });
 
-  test("smart search: type multiple keywords applies all filters", async ({ page }) => {
+  test("level pill: click ERR sets log-level hidden input", async ({ page }) => {
     await page.goto("/logs");
-    const smartSearch = page.locator("#smart-search");
-
-    // Type smart search query
-    await smartSearch.fill("gateway error order");
-    await smartSearch.press("Enter");
-    await waitForHTMX(page);
-
-    // Verify hidden filters were set via JavaScript
-    const values = await page.evaluate(() => {
-      return {
-        process: (document.getElementById("log-process") as HTMLSelectElement)?.value,
-        level: (document.getElementById("log-level") as HTMLSelectElement)?.value,
-        search: (document.getElementById("log-search") as HTMLInputElement)?.value,
-      };
-    });
-
-    // Should extract "gateway" as process, "error" as level, "order" as search
-    expect(values.process).toBe("gateway");
-    expect(values.level).toBe("error");
-    expect(values.search).toBe("order");
-  });
-
-  test("keyboard shortcuts: press / focuses search", async ({ page }) => {
-    await page.goto("/logs");
-    // Wait for page to fully settle under load
     await page.waitForLoadState("networkidle");
 
-    // Focus the page, then press /
-    await page.locator("h2").first().click();
-    await page.keyboard.press("/");
+    await page.locator("#fl-error").click();
+    await waitForHTMX(page);
 
-    // Smart search should be focused
-    const smartSearch = page.locator("#smart-search");
-    await expect(smartSearch).toBeFocused({ timeout: 5000 });
+    const value = await page.evaluate(() => {
+      return (document.getElementById("log-level") as HTMLInputElement)?.value;
+    });
+    expect(value).toBe("error");
   });
 
-  test("filter clearing: press Ctrl+L clears all filters", async ({ page }) => {
+  test("free-text search: typing updates log-search after debounce", async ({ page }) => {
     await page.goto("/logs");
+    await page.waitForLoadState("networkidle");
 
-    // Set filters via smart search
-    const smartSearch = page.locator("#smart-search");
-    await smartSearch.fill("gateway error test");
-    await smartSearch.press("Enter");
+    await page.locator("#log-search-input").fill("connected");
+    await page.waitForTimeout(400); // debounce
+
+    const value = await page.evaluate(() => {
+      return (document.getElementById("log-search") as HTMLInputElement)?.value;
+    });
+    expect(value).toBe("connected");
+  });
+
+  test("clear filters: clears all hidden inputs", async ({ page }) => {
+    await page.goto("/logs");
+    await page.waitForLoadState("networkidle");
+
+    // Set some filters
+    await page.locator("#fp-gateway").click();
+    await waitForHTMX(page);
+    await page.locator("#fl-error").click();
     await waitForHTMX(page);
 
-    // Press Ctrl+L to clear
-    await page.keyboard.press("Control+l");
+    // Click clear filters
+    await page.locator("button", { hasText: "clear filters" }).click();
     await waitForHTMX(page);
 
-    // All hidden filters should be cleared
     const values = await page.evaluate(() => {
       return {
-        process: (document.getElementById("log-process") as HTMLSelectElement)?.value,
-        level: (document.getElementById("log-level") as HTMLSelectElement)?.value,
+        process: (document.getElementById("log-process") as HTMLInputElement)?.value,
+        level: (document.getElementById("log-level") as HTMLInputElement)?.value,
         search: (document.getElementById("log-search") as HTMLInputElement)?.value,
-        smart: (document.getElementById("smart-search") as HTMLInputElement)?.value,
       };
     });
-
     expect(values.process).toBe("");
     expect(values.level).toBe("");
     expect(values.search).toBe("");
-    expect(values.smart).toBe("");
   });
 
-  test("line expansion: click line shows full content in modal", async ({ page }) => {
+  test("inline accordion: click row expands detail, no modal", async ({ page }) => {
     await page.goto("/logs");
     await page.waitForLoadState("networkidle");
-    const logView = page.locator("#log-view");
 
-    const logLines = logView.locator("div[onclick*='showFullLine']");
-    const count = await logLines.count();
+    const rows = page.locator("#log-view tr");
+    const count = await rows.count();
 
     if (count > 0) {
-      // Click first log line
-      await logLines.first().click();
+      // Click first data row
+      await rows.first().click();
 
-      // Modal should appear
-      const modal = page.locator("#log-modal");
-      await expect(modal).not.toHaveClass(/hidden/);
+      // Detail div should be visible inside the row
+      const detail = rows.first().locator(".log-detail");
+      await expect(detail).not.toHaveClass(/hidden/);
 
-      // Modal content should be visible
-      const modalContent = page.locator("#modal-content");
-      await expect(modalContent).toBeVisible();
+      // Summary should be hidden
+      const summary = rows.first().locator(".log-summary");
+      await expect(summary).toHaveClass(/hidden/);
+
+      // No modal should appear
+      await expect(page.locator("#log-modal")).not.toBeAttached();
     }
   });
 
-  test("copy button exists in modal", async ({ page }) => {
+  test("inline accordion: Escape collapses open row", async ({ page }) => {
     await page.goto("/logs");
     await page.waitForLoadState("networkidle");
-    const logView = page.locator("#log-view");
 
-    const logLines = logView.locator("div[onclick*='showFullLine']");
-    const count = await logLines.count();
+    const rows = page.locator("#log-view tr");
+    const count = await rows.count();
 
     if (count > 0) {
-      // Click line to open modal
-      await logLines.first().click();
+      await rows.first().click();
+      const detail = rows.first().locator(".log-detail");
+      await expect(detail).not.toHaveClass(/hidden/);
 
-      // Copy button should be visible in modal
-      const copyBtn = page.locator("#log-modal button", { hasText: "Copy" });
+      await page.keyboard.press("Escape");
+      await expect(detail).toHaveClass(/hidden/);
+    }
+  });
+
+  test("inline accordion: only one row open at a time", async ({ page }) => {
+    await page.goto("/logs");
+    await page.waitForLoadState("networkidle");
+
+    const rows = page.locator("#log-view tr");
+    const count = await rows.count();
+
+    if (count >= 2) {
+      await rows.nth(0).click();
+      await rows.nth(1).click();
+
+      // First row's detail should be closed
+      const firstDetail = rows.nth(0).locator(".log-detail");
+      await expect(firstDetail).toHaveClass(/hidden/);
+
+      // Second row's detail should be open
+      const secondDetail = rows.nth(1).locator(".log-detail");
+      await expect(secondDetail).not.toHaveClass(/hidden/);
+    }
+  });
+
+  test("copy button inside expanded row", async ({ page }) => {
+    await page.goto("/logs");
+    await page.waitForLoadState("networkidle");
+
+    const rows = page.locator("#log-view tr");
+    const count = await rows.count();
+
+    if (count > 0) {
+      await rows.first().click();
+      const copyBtn = rows.first().locator("button", { hasText: "copy" });
       await expect(copyBtn).toBeVisible();
     }
   });
 
-  test("auto-refresh with filters: filters persist across auto-refresh", async ({ page }) => {
+  test("tail toggle button present", async ({ page }) => {
     await page.goto("/logs");
-
-    // Set filter via smart search
-    const smartSearch = page.locator("#smart-search");
-    await smartSearch.fill("risk");
-    await smartSearch.press("Enter");
-    await waitForHTMX(page);
-
-    const initialFilter = await page.evaluate(() => {
-      return (document.getElementById("log-process") as HTMLSelectElement)?.value;
-    });
-    expect(initialFilter).toBe("risk");
-
-    // Wait for auto-refresh (2s interval)
-    await waitForRefresh(2000);
-
-    // Filter should still be set
-    const afterFilter = await page.evaluate(() => {
-      return (document.getElementById("log-process") as HTMLSelectElement)?.value;
-    });
-    expect(afterFilter).toBe("risk");
+    await expect(page.locator("#tail-toggle")).toBeVisible();
   });
 
-  // F7: "gateway" quick filter used to match the literal name
-  // and miss every gw-0 log line, while "errors only" surfaced
-  // the same lines. PROC_HINTS now maps "gateway" → "gw-" so
-  // every quick-filter returns ≥ 1 line if the process is up.
+  test("keyboard shortcut / focuses search input", async ({ page }) => {
+    await page.goto("/logs");
+    await page.waitForLoadState("networkidle");
+
+    await page.locator("h2").first().click();
+    await page.keyboard.press("/");
+
+    await expect(page.locator("#log-search-input")).toBeFocused({ timeout: 5000 });
+  });
+
+  test("keyboard shortcut Ctrl+L clears all filters", async ({ page }) => {
+    await page.goto("/logs");
+    await page.locator("#fp-risk").click();
+    await waitForHTMX(page);
+
+    await page.keyboard.press("Control+l");
+    await waitForHTMX(page);
+
+    const value = await page.evaluate(() => {
+      return (document.getElementById("log-process") as HTMLInputElement)?.value;
+    });
+    expect(value).toBe("");
+  });
+
+  test("auto-refresh with filters: process filter persists", async ({ page }) => {
+    await page.goto("/logs");
+
+    await page.locator("#fp-risk").click();
+    await waitForHTMX(page);
+
+    const initial = await page.evaluate(() => {
+      return (document.getElementById("log-process") as HTMLInputElement)?.value;
+    });
+    expect(initial).toBe("risk");
+
+    await waitForRefresh(2000);
+
+    const after = await page.evaluate(() => {
+      return (document.getElementById("log-process") as HTMLInputElement)?.value;
+    });
+    expect(after).toBe("risk");
+  });
+
+  // F7: gateway filter matches gw- log lines
   test("filter_label_to_log_prefix (F7): gateway filter matches gw- lines",
     async ({ request }) => {
-      // Hit /x/logs directly so we're not racing the polling
-      // refresh. We only assert non-emptiness when the gateway
-      // is actually emitting logs.
       const proc = await request.get("/api/processes");
       const procs = await proc.json() as Array<{
         name: string; state: string;
@@ -227,8 +254,6 @@ test.describe("Logs tab", () => {
       expect(res.ok()).toBe(true);
       const html = await res.text();
       if (gwUp) {
-        // At least one [gw-N] line must appear under the
-        // "gateway" component filter.
         expect(html).toMatch(/\[gw-\d+\]/);
       }
     },
@@ -248,8 +273,7 @@ test.describe("Logs tab", () => {
     await page.goto("/logs");
     await page.waitForLoadState("networkidle");
 
-    // Trigger some interactions
-    await page.locator("button", { hasText: /^gateway$/ }).click();
+    await page.locator("#fp-gateway").click();
     await waitForHTMX(page);
 
     await page.waitForTimeout(1000);

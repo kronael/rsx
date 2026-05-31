@@ -3486,6 +3486,7 @@ async def x_logs(
 
 @app.get("/x/logs-tail", response_class=HTMLResponse)
 async def x_logs_tail():
+    # Returns bare <tr> rows (no table wrapper) for JS prepend.
     return HTMLResponse(
         pages.render_logs(read_logs(max_lines=20)))
 
