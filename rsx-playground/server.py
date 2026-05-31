@@ -36,6 +36,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
+import cast_demo
 import pages
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -2553,6 +2554,11 @@ async def orders():
     return HTMLResponse(pages.orders_page())
 
 
+@app.get("/cast", response_class=HTMLResponse)
+async def cast_page():
+    return HTMLResponse(cast_demo.cast_page())
+
+
 @app.get("/latency", response_class=HTMLResponse)
 async def latency_page():
     return HTMLResponse(pages.latency_page())
@@ -3554,6 +3560,34 @@ async def x_e2e_latency():
 @app.get("/x/risk-latency", response_class=HTMLResponse)
 async def x_risk_latency():
     return HTMLResponse(pages.render_risk_latency(order_latencies))
+
+
+@app.get("/x/latency-overview", response_class=HTMLResponse)
+async def x_latency_overview():
+    return HTMLResponse(
+        pages.render_latency_overview(e2e_latencies, gw_only_latencies))
+
+
+@app.get("/x/load-overview", response_class=HTMLResponse)
+async def x_load_overview():
+    running = _stress_running()
+    window_s = 30
+    now = time.time()
+    cutoff = now - window_s
+    ord_s = int(
+        sum(1 for ts in recent_order_ts if ts >= cutoff) / window_s)
+    submitted = 0
+    accepted = 0
+    if running:
+        submitted = len([
+            o for o in recent_orders
+            if o.get("status") not in {None}])
+        accepted = len([
+            o for o in recent_orders
+            if o.get("status") == "accepted"])
+    return HTMLResponse(
+        pages.render_load_overview(
+            running, current_scenario, ord_s, accepted, submitted))
 
 
 @app.get("/x/reconciliation",

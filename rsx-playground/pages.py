@@ -23,6 +23,7 @@ TABS = [
     ("Overview", "./overview"),
     ("Topology", "./topology"),
     ("Latency", "./latency"),
+    ("Cast", "./cast"),
     ("Book", "./book"),
     ("Risk", "./risk"),
     ("WAL", "./wal"),
@@ -736,6 +737,168 @@ exchange.</p>
     )
 
 
+def _lat_color(us: int) -> str:
+    if us < 100:
+        return "emerald-400"
+    if us < 1000:
+        return "amber-400"
+    return "red-400"
+
+
+def render_latency_overview(e2e_lats: list, gw_lats: list) -> str:
+    """Compact latency card for /overview: e2e + gw p50/p99."""
+    probe_btn = (
+        '<button'
+        ' hx-post="./api/latency-probe"'
+        ' hx-target="#lat-ov-result"'
+        ' hx-swap="innerHTML"'
+        ' class="px-2 py-0.5 rounded text-[10px]'
+        ' bg-blue-900/40 text-blue-400 border border-blue-800'
+        ' hover:bg-blue-800 cursor-pointer ml-2">'
+        'Run probe</button>'
+        '<span id="lat-ov-result" class="text-[10px]'
+        ' text-slate-500 ml-1"></span>'
+    )
+    if not e2e_lats and not gw_lats:
+        return (
+            '<div class="text-xs text-slate-500 italic">'
+            'no live samples'
+            + probe_btn
+            + '</div>'
+        )
+
+    def row(label: str, lats: list) -> str:
+        if not lats:
+            return (
+                f'<div class="flex items-center gap-4 py-1'
+                f' border-b border-slate-800/40 last:border-0">'
+                f'<span class="w-28 text-[10px] text-slate-500'
+                f' uppercase tracking-wider">{label}</span>'
+                f'<span class="text-xs text-slate-600 italic">'
+                f'no samples</span>'
+                f'</div>'
+            )
+        s = sorted(lats)
+        n = len(s)
+        p50 = s[n // 2]
+        p99 = s[int(n * 0.99)]
+        return (
+            f'<div class="flex items-center gap-4 py-1'
+            f' border-b border-slate-800/40 last:border-0">'
+            f'<span class="w-28 text-[10px] text-slate-500'
+            f' uppercase tracking-wider">{label}</span>'
+            + _metric("p50", f"{p50}µs", _lat_color(p50))
+            + _metric("p99", f"{p99}µs", _lat_color(p99))
+            + f'<span class="text-[10px] text-slate-600">'
+            f'n={n}</span>'
+            f'</div>'
+        )
+
+    return (
+        '<div>'
+        + row("e2e gw→me→gw", e2e_lats)
+        + row("gw-only", gw_lats)
+        + '<div class="mt-2">' + probe_btn + '</div>'
+        + '</div>'
+    )
+
+
+def render_load_overview(
+    stress_running: bool,
+    scenario: str,
+    ord_s: int,
+    accepted: int,
+    submitted: int,
+) -> str:
+    """Compact load / scenario card for /overview."""
+    if stress_running:
+        status_dot = '<span class="text-emerald-400">&#9679;</span>'
+        status_txt = (
+            f'<span class="text-emerald-400 text-xs font-semibold">'
+            f'running</span>'
+        )
+        acpt_pct = (
+            f"{100 * accepted // submitted}%"
+            if submitted > 0 else "--"
+        )
+        stats = (
+            '<div class="flex gap-4 mt-2">'
+            + _metric("scenario", html.escape(scenario), "blue-400")
+            + _metric("ord/s", str(ord_s), "cyan-400")
+            + _metric("accept", acpt_pct,
+                      "emerald-400" if acpt_pct != "--" else "slate-500")
+            + '</div>'
+        )
+        stop_btn = (
+            '<button'
+            ' hx-post="./api/stress/stop"'
+            ' hx-target="#load-ov-result"'
+            ' hx-swap="innerHTML"'
+            ' class="px-2 py-0.5 rounded text-[10px]'
+            ' bg-amber-900/40 text-amber-400 border border-amber-800'
+            ' hover:bg-amber-800 cursor-pointer">'
+            '&#9632; stop stress</button>'
+        )
+        return (
+            '<div>'
+            + '<div class="flex items-center gap-2">'
+            + status_dot + status_txt
+            + '</div>'
+            + stats
+            + '<div class="mt-2 flex gap-2 items-center">'
+            + stop_btn
+            + '<span id="load-ov-result" class="text-[10px]'
+            + ' text-slate-500 ml-1"></span>'
+            + '</div>'
+            + '</div>'
+        )
+    else:
+        idle_dot = '<span class="text-slate-600">&#9675;</span>'
+        idle_txt = (
+            '<span class="text-slate-500 text-xs">no load test running</span>'
+        )
+        sc_label = (
+            f'<span class="text-[10px] text-slate-500 ml-2">'
+            f'scenario: <span class="text-slate-300">'
+            f'{html.escape(scenario)}</span></span>'
+        )
+        low_btn = (
+            '<button'
+            ' hx-post="./api/stress/start"'
+            ' hx-vals=\'{"rate": 10, "duration": 60}\''
+            ' hx-target="#load-ov-result"'
+            ' hx-swap="innerHTML"'
+            ' class="px-2 py-0.5 rounded text-[10px]'
+            ' bg-blue-900/40 text-blue-400 border border-blue-800'
+            ' hover:bg-blue-800 cursor-pointer">'
+            '&#9654; low (10/s)</button>'
+        )
+        high_btn = (
+            '<button'
+            ' hx-post="./api/stress/start"'
+            ' hx-vals=\'{"rate": 100, "duration": 60}\''
+            ' hx-target="#load-ov-result"'
+            ' hx-swap="innerHTML"'
+            ' class="px-2 py-0.5 rounded text-[10px]'
+            ' bg-blue-900/40 text-blue-400 border border-blue-800'
+            ' hover:bg-blue-800 cursor-pointer">'
+            '&#9654; high (100/s)</button>'
+        )
+        return (
+            '<div>'
+            + '<div class="flex items-center gap-2">'
+            + idle_dot + idle_txt + sc_label
+            + '</div>'
+            + '<div class="mt-2 flex gap-2 items-center">'
+            + low_btn
+            + high_btn
+            + '<span id="load-ov-result" class="text-[10px]'
+            + ' text-slate-500 ml-1"></span>'
+            + '</div>'
+            + '</div>'
+        )
+
+
 # ── Screen 1: Overview ──────────────────────────────────
 
 def overview_page():
@@ -896,6 +1059,22 @@ def overview_page():
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
+    latency_ov = _card(
+        "Latency (live)",
+        '<div hx-get="./x/latency-overview" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    load_ov = _card(
+        "Load Test",
+        '<div hx-get="./x/load-overview" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
     pulse = (
         '<div class="bg-slate-900 border border-slate-800 '
         'rounded-lg px-4 py-2 flex flex-wrap items-center '
@@ -912,6 +1091,10 @@ def overview_page():
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {health}
 {procs}
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{latency_ov}
+{load_ov}
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {metrics}
