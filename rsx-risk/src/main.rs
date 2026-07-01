@@ -64,6 +64,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+mod db;
 mod metrics;
 
 /// Backoff schedule (seconds) for shard crash-restarts.
@@ -360,22 +361,6 @@ fn forward_to_gw(
     gw.advance_seq();
 }
 
-/// Drive a tokio_postgres connection to completion. tokio_postgres
-/// returns the `Connection` future separately from the `Client`; it
-/// must be polled on a task for the client to make progress. Named
-/// (not an inline `tokio::spawn(async move {…})`) per CLAUDE.md so the
-/// coroutine's lifetime is visible to the reader.
-async fn drive_pg_connection(
-    connection: tokio_postgres::Connection<
-        tokio_postgres::Socket,
-        tokio_postgres::tls::NoTlsStream,
-    >,
-) {
-    if let Err(e) = connection.await {
-        error!("pg connection error: {e}");
-    }
-}
-
 /// Body of the persist worker thread. Owns a dedicated
 /// current-thread tokio runtime + PG connection and drains the
 /// persist ring until shutdown. Named (not an inline
@@ -393,14 +378,10 @@ fn persist_thread_body(
         // SAFETY: fail-fast at startup
         .expect("tokio rt");
     rt.block_on(async move {
-        let (client, connection) = tokio_postgres::connect(
-            &url,
-            tokio_postgres::NoTls,
-        )
-        .await
-        // SAFETY: fail-fast at startup
-        .expect("pg connect for persist");
-        tokio::spawn(drive_pg_connection(connection));
+        let client = db::connect(&url)
+            .await
+            // SAFETY: fail-fast at startup
+            .expect("pg connect for persist");
         run_persist_worker_with_shutdown(
             persist_cons,
             client,
@@ -456,13 +437,7 @@ fn run_main(
     // later moved into the lease thread on promotion.
     let mut lease = AdvisoryLease::new(shard_id);
     let pg_client = rt.block_on(async {
-        let (client, connection) =
-            tokio_postgres::connect(
-                db_url,
-                tokio_postgres::NoTls,
-            )
-            .await?;
-        tokio::spawn(drive_pg_connection(connection));
+        let client = db::connect(db_url).await?;
         // Migrations are idempotent and concurrency-safe (each is
         // version-guarded + idempotent DDL + ON CONFLICT), so every
         // node can run them at boot with no lock. See migrations/CLAUDE.md.
