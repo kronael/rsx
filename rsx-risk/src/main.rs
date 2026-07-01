@@ -71,15 +71,6 @@ const RESTART_BACKOFF_SECS: &[u64] = &[
 /// Max consecutive crashes before the shard gives up.
 const MAX_RESTARTS: usize = 8;
 
-/// Transition signalled by `run_main` on return.
-#[derive(Debug)]
-enum MainTransition {
-    /// Advisory lease lost; main() should loop and call
-    /// `run_main` again, which re-enters WARM CATCHUP and
-    /// re-tries the non-blocking lock acquire.
-    Demote,
-}
-
 /// Node role in the eager warm-standby protocol. Every process
 /// boots into `WarmCatchup`, consumes the main's authoritative
 /// ME replication stream, and only transitions to `Live` once it
@@ -200,7 +191,9 @@ fn main() {
         let err: Box<dyn std::error::Error> = match run_main(
             shard_id, max_symbols, gauges.clone(),
         ) {
-            Ok(MainTransition::Demote) => {
+            // Ok(()) means demoted (lease lost); re-enter warm
+            // catchup and re-try the non-blocking advisory lock.
+            Ok(()) => {
                 info!("lease lost; re-acquiring advisory lock");
                 // Back to warm catchup state: not ready until
                 // we win the lock again.
@@ -395,7 +388,7 @@ fn run_main(
     shard_id: u32,
     max_symbols: usize,
     gauges: Arc<LoadGauges>,
-) -> Result<MainTransition, Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
     let shard_count = config.shard_count;
     let lease_renew_interval_ms = config.replication_config.lease_renew_interval_ms;
@@ -1209,7 +1202,8 @@ fn run_main(
                 );
             } else {
                 warn!("lease lost, re-acquiring advisory lock");
-                return Ok(MainTransition::Demote);
+                // Ok(()) = demoted; main() re-enters warm catchup.
+                return Ok(());
             }
         }
     }
