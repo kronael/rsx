@@ -521,7 +521,7 @@ fn run_main(
     let lease_held = Arc::new(AtomicBool::new(true));
     let lease_error = Arc::new(AtomicBool::new(false));
     let lease_stop = Arc::new(AtomicBool::new(false));
-    let lease_thread = spawn_lease_thread(
+    let lease_thread = rsx_risk::lease::spawn_lease_thread(
         rt,
         pg_client,
         lease,
@@ -1151,7 +1151,7 @@ fn run_main(
         // re-blocks on the advisory lock — this process becomes a standby.
         if !lease_held.load(Ordering::Relaxed) {
             stop_persist_worker(&persist_shutdown, persist_handle);
-            stop_lease_thread(&lease_stop, lease_thread);
+            rsx_risk::lease::stop_lease_thread(&lease_stop, lease_thread);
             if lease_error.load(Ordering::Relaxed) {
                 return Err(
                     "lease check failed after 3 consecutive errors".into()
@@ -1420,84 +1420,5 @@ fn stop_persist_worker(
             return;
         }
         std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn spawn_lease_thread(
-    rt: tokio::runtime::Runtime,
-    pg_client: tokio_postgres::Client,
-    lease: rsx_risk::lease::AdvisoryLease,
-    renew_interval_secs: u64,
-    lease_held: Arc<AtomicBool>,
-    lease_error: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        lease_thread_body(
-            rt,
-            pg_client,
-            lease,
-            renew_interval_secs,
-            lease_held,
-            lease_error,
-            stop,
-        )
-    })
-}
-
-/// Body of the lease-renewal thread. Owns the promoted `rt` +
-/// `pg_client` and renews the advisory lease every
-/// `renew_interval_secs`, clearing `lease_held` on loss/error.
-/// Named (not an inline `std::thread::spawn(move || {…})`) per
-/// CLAUDE.md so the coroutine's lifetime is visible to the reader.
-#[allow(clippy::too_many_arguments)]
-fn lease_thread_body(
-    rt: tokio::runtime::Runtime,
-    pg_client: tokio_postgres::Client,
-    mut lease: rsx_risk::lease::AdvisoryLease,
-    renew_interval_secs: u64,
-    lease_held: Arc<AtomicBool>,
-    lease_error: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-) {
-    rt.block_on(async move {
-        let interval = Duration::from_secs(renew_interval_secs.max(1));
-        let mut consec_errors: u32 = 0;
-        loop {
-            tokio::time::sleep(interval).await;
-            if stop.load(Ordering::Relaxed) {
-                if let Err(e) = lease.release(&pg_client).await {
-                    warn!("lease release on stop failed: {e}");
-                }
-                return;
-            }
-            match lease.renew(&pg_client).await {
-                Ok(true) => { consec_errors = 0; }
-                Ok(false) => {
-                    warn!("lease lost (shard {})", lease.shard_id());
-                    lease_held.store(false, Ordering::Release);
-                    return;
-                }
-                Err(e) => {
-                    consec_errors += 1;
-                    warn!("lease renew error ({}/3): {e}", consec_errors);
-                    if consec_errors >= 3 {
-                        lease_error.store(true, Ordering::Release);
-                        lease_held.store(false, Ordering::Release);
-                        return;
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn stop_lease_thread(
-    stop: &Arc<AtomicBool>,
-    handle: std::thread::JoinHandle<()>,
-) {
-    stop.store(true, Ordering::Relaxed);
-    if let Err(e) = handle.join() {
-        warn!("lease thread panicked on join: {:?}", e);
     }
 }
