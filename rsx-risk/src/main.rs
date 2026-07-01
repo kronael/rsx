@@ -33,6 +33,7 @@ use rsx_matching::wire::OrderMessage;
 use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_risk::config::load_shard_config;
+use rsx_risk::config::RuntimeConfig;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::replay::apply_record;
@@ -432,10 +433,18 @@ fn run_main(
     let lease_poll_interval_ms = config.replication_config.lease_poll_interval_ms;
     let mut shard = RiskShard::new(config);
 
-    // SAFETY: fail-fast at startup -- risk requires
-    // postgres for state persistence and advisory locks
-    let db_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL required for risk");
+    // All process I/O topology parsed once, fail-fast on
+    // malformed required values (DATABASE_URL, ME repl addr,
+    // cast addrs). See RuntimeConfig for defaults.
+    let cfg = RuntimeConfig::from_env();
+    // `wal_dir` is passed as &str to handle_replay /
+    // run_warm_catchup; derive it once from the PathBuf.
+    let wal_dir: &str = cfg
+        .wal_dir
+        .to_str()
+        // SAFETY: fail-fast at startup
+        .expect("RSX_RISK_WAL_DIR must be valid UTF-8");
+    let db_url = &cfg.db_url;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -449,7 +458,7 @@ fn run_main(
     let pg_client = rt.block_on(async {
         let (client, connection) =
             tokio_postgres::connect(
-                &db_url,
+                db_url,
                 tokio_postgres::NoTls,
             )
             .await?;
@@ -470,13 +479,11 @@ fn run_main(
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;
 
-    let wal_dir = env::var("RSX_RISK_WAL_DIR")
-        .unwrap_or_else(|_| "./tmp/wal".into());
     let symbol_ids: Vec<u32> =
         (0..max_symbols as u32).collect();
     let replayed = replay_from_wal(
         &mut shard,
-        std::path::Path::new(&wal_dir),
+        std::path::Path::new(wal_dir),
         &symbol_ids,
     )?;
     if replayed > 0 {
@@ -499,28 +506,12 @@ fn run_main(
         .next()
         .copied()
         .expect("INVARIANT: me_addrs non-empty (checked above)");
-    let me_repl_addr = env::var("RSX_ME_REPLICATION_ADDR")
-        .expect(
-            "RSX_ME_REPLICATION_ADDR required (ME's replication \
-             server — the warm-catchup + FAULTED replay source)",
-        );
+    let me_repl_addr = &cfg.me_repl_addr;
 
     // Mark stream addresses (consumed in warm AND live).
-    let mark_addr: SocketAddr =
-        env::var("RSX_RISK_MARK_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9105".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_MARK_CAST_ADDR");
-    let mark_sender_addr: SocketAddr =
-        env::var("RSX_MARK_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9106".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_MARK_CAST_ADDR");
     let mut mark_receiver = CastReceiver::new(
-        mark_addr,
-        mark_sender_addr,
+        cfg.mark_addr,
+        cfg.mark_sender_addr,
     )
     // SAFETY: fail-fast at startup
     .expect("failed to bind mark cast receiver");
@@ -585,35 +576,19 @@ fn run_main(
         })
     };
 
-    if let Ok(core_str) =
-        env::var("RSX_RISK_CORE_ID")
-    {
-        if let Ok(core_id) =
-            core_str.parse::<usize>()
-        {
-            let setup = rsx_types::cpu::setup_hot_thread(core_id);
-            info!("risk {}", setup);
-            if setup.isolated == Some(false) {
-                tracing::warn!(
-                    "risk core {} not isolated — expect tail spikes",
-                    core_id
-                );
-            }
+    if let Some(core_id) = cfg.core_id {
+        let setup = rsx_types::cpu::setup_hot_thread(core_id);
+        info!("risk {}", setup);
+        if setup.isolated == Some(false) {
+            tracing::warn!(
+                "risk core {} not isolated — expect tail spikes",
+                core_id
+            );
         }
     }
 
-    let risk_addr: SocketAddr =
-        env::var("RSX_RISK_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9101".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CAST_ADDR");
-    let gw_addr: SocketAddr =
-        env::var("RSX_GW_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9102".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_GW_CAST_ADDR");
+    let risk_addr = cfg.risk_addr;
+    let gw_addr = cfg.gw_addr;
 
     let mut gw_receiver = CastReceiver::new(
         risk_addr, gw_addr,
@@ -623,12 +598,7 @@ fn run_main(
 
     // Receive fills/events from ME (separate port).
     // All MEs send to this single recv addr.
-    let risk_me_recv_addr: SocketAddr =
-        env::var("RSX_RISK_ME_RECV_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:28301".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_ME_RECV_ADDR");
+    let risk_me_recv_addr = cfg.risk_me_recv_addr;
     // Use first ME addr as the cast peer for the receiver.
     // me_stream_id (resolved before warm catchup) = symbol_id of
     // the first (primary) ME; used as stream_id in FAULTED TCP
@@ -651,10 +621,8 @@ fn run_main(
 
     // Send validated orders to ME.
     // One CastSender per ME, keyed by symbol_id.
-    let me_send_bind: Option<String> =
-        env::var("RSX_RISK_ME_SEND_ADDR").ok();
     let me_sender_cfg = CastConfig {
-        sender_bind_addr: me_send_bind,
+        sender_bind_addr: cfg.me_send_bind.clone(),
         ..Default::default()
     };
     let mut me_senders: HashMap<u32, CastSender> =

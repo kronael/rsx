@@ -20,6 +20,7 @@ pub mod lease;
 pub use account::Account;
 pub use config::LiquidationConfig;
 pub use config::ReplicationConfig;
+pub use config::RuntimeConfig;
 pub use config::ShardConfig;
 pub use config::me_cast_addrs_from_env;
 pub use config::parse_me_cast_addrs;
