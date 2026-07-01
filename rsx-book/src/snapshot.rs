@@ -300,6 +300,10 @@ pub fn load(
     book.orders = slab;
     book.best_bid_tick = best_bid_tick;
     book.best_ask_tick = best_ask_tick;
+    // Derive raw BBA prices from restored levels (sawtooth index is
+    // not a price proxy; snapshot format stores ticks only).
+    book.best_bid_px = book.price_at_tick(best_bid_tick);
+    book.best_ask_px = book.price_at_tick(best_ask_tick);
     book.sequence = sequence;
     book.user_states = user_states;
     book.user_map = user_map;

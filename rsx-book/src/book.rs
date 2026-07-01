@@ -25,6 +25,12 @@ pub struct Orderbook {
     pub orders: Slab<OrderSlot>,
     pub best_bid_tick: u32,
     pub best_ask_tick: u32,
+    /// Raw price of the best bid/ask level. The compression map is a
+    /// SAWTOOTH (index is not globally price-monotonic across zones),
+    /// so BBA must be tracked/compared by raw price, never by tick
+    /// index. NONE tick => price is 0 (unused).
+    pub best_bid_px: i64,
+    pub best_ask_px: i64,
     pub compression: CompressionMap,
     pub state: BookState,
     pub config: SymbolConfig,
@@ -68,6 +74,8 @@ impl Orderbook {
             orders: Slab::new(capacity),
             best_bid_tick: NONE,
             best_ask_tick: NONE,
+            best_bid_px: 0,
+            best_ask_px: 0,
             compression,
             state: BookState::Normal,
             config,
@@ -178,20 +186,23 @@ impl Orderbook {
         level.total_qty += qty;
         level.order_count += 1;
 
-        // Update BBA
+        // Update BBA by RAW PRICE (compression index is a sawtooth,
+        // not a price proxy — see best_bid_px doc).
         match side {
             Side::Buy => {
                 if self.best_bid_tick == NONE
-                    || tick > self.best_bid_tick
+                    || price > self.best_bid_px
                 {
                     self.best_bid_tick = tick;
+                    self.best_bid_px = price;
                 }
             }
             Side::Sell => {
                 if self.best_ask_tick == NONE
-                    || tick < self.best_ask_tick
+                    || price < self.best_ask_px
                 {
                     self.best_ask_tick = tick;
+                    self.best_ask_px = price;
                 }
             }
         }
@@ -256,11 +267,15 @@ impl Orderbook {
             {
                 self.best_bid_tick =
                     self.scan_next_bid(tick);
+                self.best_bid_px = self
+                    .price_at_tick(self.best_bid_tick);
             } else if side == Side::Sell as u8
                 && tick == self.best_ask_tick
             {
                 self.best_ask_tick =
                     self.scan_next_ask(tick);
+                self.best_ask_px = self
+                    .price_at_tick(self.best_ask_tick);
             }
         }
 
@@ -336,44 +351,72 @@ impl Orderbook {
         true
     }
 
-    pub fn scan_next_bid(&self, from: u32) -> u32 {
-        if from < 2 || from == NONE {
-            return NONE;
+    /// Raw price of the head order at `tick`, or 0 if `tick == NONE`.
+    #[inline]
+    pub fn price_at_tick(&self, tick: u32) -> i64 {
+        if tick == NONE {
+            return 0;
         }
-        let mut i = from - 1;
-        loop {
-            if self.active_levels[i as usize]
-                .order_count
-                > 0
-            {
-                return i;
-            }
-            if i == 0 {
-                return NONE;
-            }
-            i -= 1;
+        let head = self.active_levels[tick as usize].head;
+        if head == NONE {
+            return 0;
         }
+        self.orders.get(head).price.0
     }
 
-    pub fn scan_next_ask(&self, from: u32) -> u32 {
-        if self.active_levels.is_empty() {
-            return NONE;
-        }
-        let max =
-            self.active_levels.len() as u32 - 1;
-        if from >= max || from == NONE {
-            return NONE;
-        }
-        let mut i = from + 1;
-        while i <= max {
-            if self.active_levels[i as usize]
-                .order_count
-                > 0
-            {
-                return i;
+    /// Find the tick of the highest-priced non-empty bid level.
+    ///
+    /// The compression map is a sawtooth: tick index is NOT globally
+    /// price-monotonic, so we cannot walk indices to find the next-best
+    /// bid. Instead do a single bounded linear pass over the fixed slot
+    /// array and take the max price among BUY levels. The just-vacated
+    /// best level (`_from`) is excluded implicitly (its `order_count` is
+    /// 0). No allocation. O(slots) worst case, but only runs when the
+    /// best bid level empties (cancel or full consumption), not per
+    /// order. `_from` is unused, kept for call-site symmetry.
+    pub fn scan_next_bid(&self, _from: u32) -> u32 {
+        let mut best_tick = NONE;
+        let mut best_px = i64::MIN;
+        for (i, level) in
+            self.active_levels.iter().enumerate()
+        {
+            if level.order_count == 0 {
+                continue;
             }
-            i += 1;
+            let head = self.orders.get(level.head);
+            if head.side != Side::Buy as u8 {
+                continue;
+            }
+            let px = head.price.0;
+            if best_tick == NONE || px > best_px {
+                best_tick = i as u32;
+                best_px = px;
+            }
         }
-        NONE
+        best_tick
+    }
+
+    /// Find the tick of the lowest-priced non-empty ask level.
+    /// See `scan_next_bid` for why this scans by price, not index.
+    pub fn scan_next_ask(&self, _from: u32) -> u32 {
+        let mut best_tick = NONE;
+        let mut best_px = i64::MAX;
+        for (i, level) in
+            self.active_levels.iter().enumerate()
+        {
+            if level.order_count == 0 {
+                continue;
+            }
+            let head = self.orders.get(level.head);
+            if head.side != Side::Sell as u8 {
+                continue;
+            }
+            let px = head.price.0;
+            if best_tick == NONE || px < best_px {
+                best_tick = i as u32;
+                best_px = px;
+            }
+        }
+        best_tick
     }
 }

@@ -100,16 +100,16 @@ pub fn process_new_order(
     }
 
     if order.post_only {
-        let order_tick =
-            book.compression.price_to_index(order.price);
+        // Cross detection by RAW PRICE: the compression index is a
+        // sawtooth and cannot be compared as a price proxy.
         let would_cross = match order.side {
             Side::Buy => {
                 book.best_ask_tick != NONE
-                    && order_tick >= book.best_ask_tick
+                    && order.price >= book.best_ask_px
             }
             Side::Sell => {
                 book.best_bid_tick != NONE
-                    && order_tick <= book.best_bid_tick
+                    && order.price <= book.best_bid_px
             }
         };
         if would_cross {
@@ -153,6 +153,8 @@ pub fn process_new_order(
                 if level.order_count == 0 {
                     book.best_ask_tick =
                         book.scan_next_ask(ask_tick);
+                    book.best_ask_px = book
+                        .price_at_tick(book.best_ask_tick);
                 }
                 if order.remaining_qty == before {
                     break;
@@ -174,6 +176,8 @@ pub fn process_new_order(
                 if level.order_count == 0 {
                     book.best_bid_tick =
                         book.scan_next_bid(bid_tick);
+                    book.best_bid_px = book
+                        .price_at_tick(book.best_bid_tick);
                 }
                 if order.remaining_qty == before {
                     break;
@@ -387,42 +391,40 @@ pub fn match_at_level(
     }
 }
 
+/// Total resting qty on the opposite side that an aggressor at
+/// `limit_price` would cross. The compression map is a sawtooth, so we
+/// cannot walk levels in price order via `scan_next_*`; instead do a
+/// single bounded pass over all levels and sum orders that satisfy the
+/// price predicate. No allocation.
 fn available_liquidity(
     book: &Orderbook,
     side: Side,
     limit_price: i64,
 ) -> i64 {
     let mut total: i64 = 0;
-    match side {
-        Side::Buy => {
-            let mut tick = book.best_ask_tick;
-            while tick != NONE {
-                let mut cursor =
-                    book.active_levels[tick as usize].head;
-                while cursor != NONE {
-                    let maker = book.orders.get(cursor);
-                    if maker.price.0 <= limit_price {
-                        total += maker.remaining_qty.0;
-                    }
-                    cursor = maker.next;
-                }
-                tick = book.scan_next_ask(tick);
-            }
+    for level in book.active_levels.iter() {
+        if level.order_count == 0 {
+            continue;
         }
-        Side::Sell => {
-            let mut tick = book.best_bid_tick;
-            while tick != NONE {
-                let mut cursor =
-                    book.active_levels[tick as usize].head;
-                while cursor != NONE {
-                    let maker = book.orders.get(cursor);
-                    if maker.price.0 >= limit_price {
-                        total += maker.remaining_qty.0;
-                    }
-                    cursor = maker.next;
+        let mut cursor = level.head;
+        while cursor != NONE {
+            let maker = book.orders.get(cursor);
+            let crosses = match side {
+                // aggressor buys asks priced <= limit
+                Side::Buy => {
+                    maker.side == Side::Sell as u8
+                        && maker.price.0 <= limit_price
                 }
-                tick = book.scan_next_bid(tick);
+                // aggressor sells into bids priced >= limit
+                Side::Sell => {
+                    maker.side == Side::Buy as u8
+                        && maker.price.0 >= limit_price
+                }
+            };
+            if crosses {
+                total += maker.remaining_qty.0;
             }
+            cursor = maker.next;
         }
     }
     total

@@ -6,6 +6,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **BENCH-KCP-FLUSH-NEEDUPDATE** (LOW) — `compare_all` panics at
+  `benches/compare_all.rs:230` on the KCP warmup: `kcp.flush().unwrap()`
+  returns `Err(NeedUpdate)` because the `kcp` crate requires at least one
+  `update()` before the first `flush()`. `raw_udp_128b` runs and reports
+  (median ~9.9 µs, verified 2026-07-01) but the run aborts before KCP/Quinn/
+  TCP. `compare/kcp.md` documents the intended startup `update()` ("the bench
+  pays this once at startup") — the code regressed and no longer calls it.
+  Fix: call `kcp.update(now_ms)` once before the warmup `flush()` in both the
+  server thread (line ~207) and the client ctor (line ~229). Bench-only; does
+  not touch rsx-cast source. Flagged, not patched, per no-touch-Rust scope.
 - **ME-FAULTED-NO-REPLAY-ADDR** (MED) — parallel load FAULTs the ME → panic;
   no replay source wired. Blocks parallel-load benchmarking. Detail below.
 - **IOC-NOT-HONORED** (MED) — empty-book IOC rests instead of cancelling; `tif`
@@ -77,16 +87,20 @@ e2e win; deferred per founder ("don't split now").
 Founder: solve these when we next work the book. All verified against source;
 `[V]` real, `[?]` needs one more check, `[D]` by-design/known-limitation.
 
-- **BOOK-BBO-COMPRESSED-INDEX `[V]`.** `book.rs:184-194` (`best_bid/ask`) and
-  `scan_next_bid/ask` (`339-378`) compare the *compressed tick index* as a price
-  proxy. The compression map is sawtooth, not globally price-monotonic (mid=100,
-  a 95 bid → index 10 while a 99 bid → index 3), so with resting orders in >1
-  zone, `best_bid/ask` and crossing detection are wrong. Fix: track best by raw
-  price per side, or make `price_to_index` globally monotonic.
-- **BOOK-SCAN-NEXT-BID-OFFBY `[V]`.** `book.rs:340` — `scan_next_bid` guards
-  `if from < 2 { return NONE }`; for `from==1` it should still check tick 0.
-  Cancelling the best bid at tick 1 with a resting bid at tick 0 drops that bid
-  from the BBO. Fix: guard `from == 0 || from == NONE`.
+- **BOOK-BBO-COMPRESSED-INDEX `[FIXED]`.** BBA is now tracked by RAW PRICE, not
+  by tick index. Added `best_bid_px`/`best_ask_px` to `Orderbook`; `insert_resting`
+  and `migration` compare price; `cancel_order`/match-loop rescan and refresh px;
+  `snapshot::load` derives px from restored ticks. `scan_next_bid/ask` rewritten to
+  a bounded single pass over all levels picking max-bid / min-ask by price (filtered
+  by head-order side). `post_only` cross detection and FOK `available_liquidity`
+  now compare raw price instead of walking indices. Tests in
+  `rsx-book/tests/book_test.rs`: `best_bid_is_highest_price_across_zones`,
+  `post_only_sell_crossing_bid_across_zones_cancelled` (fail before / pass after).
+  Note: ask half of the compression map was already index-monotonic, so only the
+  bid side and cross detection actually misbehaved.
+- **BOOK-SCAN-NEXT-BID-OFFBY `[FIXED]`.** The `if from < 2` guard was removed
+  entirely — `scan_next_bid` now scans every level including tick 0. Test
+  `cancel_best_bid_at_tick_one_keeps_tick_zero` (fail before / pass after).
 - **BOOK-SLAB-FREE-UNGUARDED `[V]` (hardening).** `slab.rs:49` — `free()` accepts
   any in-bounds index → double-free / freelist cycle possible. Add a debug
   assert (`idx < bump_next` and not already free).
