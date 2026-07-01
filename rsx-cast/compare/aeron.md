@@ -39,14 +39,14 @@ Encoding: little-endian throughout.
 
 **casting difference.** Our `WalHeader` is 16 bytes (the on-disk
 WAL record header doubles as the wire header) with a flat
-`u64 seq`, a `u16 record_type`, a `u16 len`, and a CRC32. No
+`u64 seq`, a `u16 record_type`, a `u16 len`, and a CRC32C. No
 `term_id` / `term_offset` / `session_id`. Trade-off:
 
 - Aeron's term layout makes replay zero-copy from RAM in
   large strides — but the retransmit horizon is whatever fits
   in the term buffers (default ~192 MB / stream).
 - casting's flat seq + WAL file layout makes the disk file the
-  retransmit horizon (48 h retention by default). Slower per
+  retransmit horizon (4 h retention by default). Slower per
   retransmit (random-access disk read), but the horizon is
   measured in hours of traffic rather than megabytes.
 
@@ -91,7 +91,7 @@ service with its own SUBSCRIBE / REPLAY protocol.
    this ring with zero allocation, zero disk I/O.
 2. **Cold tier**: a NAK whose `from_seq` predates the hot
    ring falls through to `read_record_at_seq` on the WAL
-   file. Retransmit horizon = WAL retention (default 48 h).
+   file. Retransmit horizon = WAL retention (default 4 h).
 
 The WAL is the source of truth for the application *and* the
 retransmit reservoir for the transport. There is no archiver
@@ -106,11 +106,18 @@ defaults to half the term length. Receivers send
 `StatusMessage` frames advertising their consumption position;
 the sender uses these to compute the send-side window.
 
-casting has the same shape: `StatusMessage` (`consumption_seq`,
-`receiver_window`) every 10 ms from receiver to sender;
-sender stalls when the in-flight window is exhausted. There
-is no per-publication strategy choice — single receiver per
-stream, single window equation. Configurable window size.
+casting has **no wire-level flow control** — the receiver sends no
+window-advertisement frame, and the only control record on the
+wire is a NAK (on a detected gap) plus an idle-only heartbeat.
+An earlier `StatusMessage`/receiver-window mechanism was removed
+in commit 87b223e; casting is single-receiver-per-stream and
+handles overrun one layer up instead: the WAL writer stalls the
+producer when flush lag exceeds 10 ms or its buffer fills, and
+the receiver's bounded reorder buffer caps how far ahead the
+sender can run. This is a real narrowing vs Aeron — casting cannot
+throttle a fast sender to a slow receiver mid-stream on the wire;
+it relies on the WAL-writer backpressure and the trusted-LAN
+capacity assumption (spec §10.4).
 
 ## Durability: integrated vs sidecar
 
@@ -177,7 +184,7 @@ process, no core pinning.
 |---|---:|---:|---|
 | Aeron UDP loopback (this bench, 6-core box, no pinning) | ~305 µs | ~570 µs | criterion total closure time |
 | Aeron IPC (shared memory, this bench) | ~830 ns | ~1 µs | non-default; see source for caveat |
-| casting RTT (`cast_rtt_bench`, same box) | ~10 µs | n/a | two CastSender/Receiver pairs, loopback |
+| casting RTT (`cast_rtt_bench`, same box) | ~9.3 µs | n/a | two CastSender/Receiver pairs, loopback (re-run 2026-07-01) |
 | casting send body (`cast_send_breakdown_bench`) | 3.87 µs | n/a | sendto-side only |
 | Aeron AWS open source (c6in.16xlarge) | 21–22 µs | 32–43 µs | published, pinned cores |
 
@@ -210,12 +217,12 @@ the protocol actually does. Treat our 305 µs as a
 | Reliable delivery | Yes | Yes |
 | Loss detection | NAK (receiver) | NAK (receiver) |
 | Retransmit source | term buffers (RAM, ~192 MB default) | hot ring (4096 slots, RAM) + cold WAL (disk) |
-| Retransmit horizon | term-buffer lifetime (seconds) | WAL retention (48 h default) |
+| Retransmit horizon | term-buffer lifetime (seconds) | WAL retention (4 h default) |
 | Durability | Aeron Archive (separate process) | WAL embedded in sender |
 | Wire = disk | No | Yes |
 | FIFO per stream | Yes | Yes |
 | Multi-receiver | Yes (UDP multicast, multi-destination cast) | No (unicast only) |
-| Flow control | Configurable (`max` / `min` / `tagged`) | Window from StatusMessage |
+| Flow control | Configurable (`max` / `min` / `tagged`) | None on the wire; WAL-writer backpressure + bounded reorder buffer |
 | Congestion control | Optional (CUBIC) | None |
 | Frame header | 32 bytes | 16 bytes (`WalHeader`) |
 | IPC topology | Driver process + clients via SHM rings | None (sendto direct from app thread) |
@@ -236,9 +243,10 @@ side-by-side:
   one packet; casting unicast sends 100.
 - **Maturity.** Aeron is decades old, with production
   deployments at the largest exchanges. casting is new.
-- **Flow-control strategies.** Aeron lets you pick
-  `min`/`max`/`tagged` per publication; casting has one
-  strategy (windowed StatusMessage).
+- **Wire-level flow control.** Aeron lets you pick
+  `min`/`max`/`tagged` per publication; casting has none on the
+  wire — a fast sender can outrun a slow receiver until the
+  reorder buffer or WAL-writer backpressure intervenes.
 - **TLS option.** Aeron 1.45+ supports DTLS; casting delegates
   TLS to the layers around it (L3 firewall, gateway).
 - **Position abstraction.** Aeron's term-based position

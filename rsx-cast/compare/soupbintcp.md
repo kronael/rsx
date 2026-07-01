@@ -120,9 +120,9 @@ Loss across a disconnect = client reconnects with
   payload access on x86_64.
 - **No durable retransmit horizon.** SoupBinTCP relies on the
   exchange's archive service (Nasdaq Glimpse, a separate
-  protocol). DXS guarantees 48 h of replay from the embedded WAL.
+  protocol). DXS guarantees 4 h of replay from the embedded WAL.
 - **No application-level CRC.** SoupBin trusts TCP's 16-bit
-  checksum. DXS records carry a CRC32 in the header — catches
+  checksum. DXS records carry a CRC32C in the header — catches
   WAL corruption in addition to wire corruption.
 - **Implicit sequencing** (S-packet count) is fragile: any
   out-of-band recovery has to count packets, not read sequence
@@ -130,9 +130,12 @@ Loss across a disconnect = client reconnects with
 
 ## Benchmark
 
-`benches/compare_soupbintcp.rs` (run with `cargo bench --bench
-compare_soupbintcp`) — Criterion, loopback, 64 B payload over
-std `TcpStream` with `TCP_NODELAY`.
+`benches/compare_soupbintcp.rs::soupbintcp_rtt_loopback_128b`
+(run with `cargo bench -p rsx-cast --bench compare_soupbintcp`) —
+Criterion, loopback, 128 B payload (matches `FillRecord`) over
+std `TcpStream` with `TCP_NODELAY`. SoupBinTCP stays a standalone
+bench (its framing server does not fit the `compare_all`
+`EchoClient` trait) but uses the same payload size and pinning.
 
 Frames each direction as `length:u16 (BE) | type:u8 ('U' or 'S')
 | payload`. Sender writes the framed packet, echoer reads
@@ -140,9 +143,10 @@ Frames each direction as `length:u16 (BE) | type:u8 ('U' or 'S')
 frames its own SoupBin packet back. Both directions perform a
 full SoupBin parse + emit (not raw byte echo).
 
-Expected p50 on Linux loopback: ~10–30 µs (raw TCP loopback
-floor with `TCP_NODELAY` is ~10 µs std-sockets, framing parse
-on both sides adds a few hundred ns).
+Measured p50 on Linux loopback: ~14 µs (2026-05-24) — the TCP
+`TCP_NODELAY` floor (~14 µs std-sockets on this host) plus a
+few hundred ns of framing parse on both sides. Not re-run this
+session.
 
 ## Sources
 

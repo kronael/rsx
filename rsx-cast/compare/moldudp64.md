@@ -42,8 +42,10 @@ A single packet typically carries one message; bursty market events
 pack multiple. MTU governs the upper bound (Nasdaq uses 1 472 B
 payload to stay below 1 500 B Ethernet MTU).
 
-Compare casting/WAL: 16-byte header (`record_type:u16, len:u16,
-crc32:u32, _pad:u64`) + one fixed-size `#[repr(C, align(64))]`
+Compare casting/WAL: 16-byte header (`version:u8` at offset 0,
+`_pad0:u8`, `record_type:u16`, `len:u16`, `_pad1:u16`,
+`crc32:u32` — a CRC32C value in the `crc32`-named field —
+`_reserved:[u8;4]`) + one fixed-size `#[repr(C, align(64))]`
 payload per packet. No per-packet message-count; one record per
 UDP datagram by construction.
 
@@ -79,8 +81,10 @@ behind use the request channel to catch up; the dissemination
 side never slows down.
 
 This matches casting's design assumption (trusted, fixed-capacity
-LAN), with the difference that casting is unicast and uses receiver
-windows (`StatusMessage.receiver_window`) as advisory backpressure.
+LAN). casting likewise has no wire-level flow control — it is unicast
+and relies on WAL-writer backpressure (producer stalls on flush-lag
+> 10 ms) plus a bounded receiver reorder buffer rather than any
+receiver-advertised window on the wire.
 
 ### Latency characteristics
 
@@ -103,7 +107,7 @@ Public Nasdaq feed numbers (ITCH 5.0 / TotalView):
 | Retransmit source | Separate request server | Embedded: hot ring + cold WAL |
 | Retransmit channel | Out-of-band UDP/TCP to request server | Same socket (NAK + sendto) |
 | Multicast NAK suppression | Yes (retransmit on group) | N/A (unicast) |
-| Durable archive | External (TotalView Glimpse) | Embedded WAL (48 h) |
+| Durable archive | External (TotalView Glimpse) | Embedded WAL (4 h) |
 | End-of-session marker | `msg_count = 0xFFFF` | None (live tail forever) |
 | Designed use | Market data dissemination (downstream only) | Bidirectional order flow + market data |
 
@@ -129,7 +133,7 @@ WAL.
 - **Retransmit horizon is implementation-defined.** Nasdaq's
   Glimpse service replays the start-of-day snapshot via a
   separate TCP protocol. casting's WAL is always there, always
-  48 h deep.
+  4 h deep.
 - **Big-endian framing** costs `bswap64`/`bswap16` on x86_64
   every parse. casting is native little-endian.
 - **Downstream only.** No model for order entry — Nasdaq uses
@@ -137,26 +141,32 @@ WAL.
 
 ## Benchmark
 
-`benches/compare_moldudp64.rs` (run with `cargo bench --bench
-compare_moldudp64`) — Criterion, loopback, 64 B payload,
-**unicast** UDP (not multicast).
+`benches/compare_moldudp64.rs::moldudp64_rtt_loopback_128b` (run
+with `cargo bench -p rsx-cast --bench compare_moldudp64`) —
+Criterion, loopback, 128 B payload (matches `FillRecord`),
+**unicast** UDP (not multicast). MoldUDP64 stays a standalone
+bench (its framing server does not fit the `compare_all`
+`EchoClient` trait) but uses the same payload size and core
+pinning, so the number is directly comparable.
 
-We bench unicast for fair RTT comparison with the existing
-`udp_rtt_bench` / `compare_kcp` / `compare_tcp` set. Loopback
-multicast on Linux is finicky (IGMP, IP_ADD_MEMBERSHIP, route
-hints) and would measure kernel multicast plumbing rather than
-the protocol's framing cost — which is what we want to isolate.
+We bench unicast for fair RTT comparison with the `compare_all`
+raw_udp / kcp / tcp set. Loopback multicast on Linux is finicky
+(IGMP, IP_ADD_MEMBERSHIP, route hints) and would measure kernel
+multicast plumbing rather than the protocol's framing cost —
+which is what we want to isolate.
 
-Frame: 20 B downstream header + 2 B message-length + 64 B
-payload = 86 B on the wire per direction. Sequence number
+Frame: 20 B downstream header + 2 B message-length + 128 B
+payload = 150 B on the wire per direction. Sequence number
 incremented on every send; `msg_count = 1`. The echoer parses
 the header, validates the seq and message count, extracts the
 payload, then frames its own MoldUDP64 packet back with the
 echoer's own seq counter (a fair, full-stack parse + emit on
 both sides — not a raw byte echo).
 
-Expected p50 on Linux loopback: ~3–6 µs (raw UDP floor ~2 µs
-plus header parse on both sides).
+Measured p50 on Linux loopback: ~10 µs (2026-05-24) — at the
+raw-UDP floor, since the header parse on both sides is tens of
+ns and the ~4 µs `sendto`/`recvfrom` syscalls dominate. Not
+re-run this session.
 
 ## Sources
 

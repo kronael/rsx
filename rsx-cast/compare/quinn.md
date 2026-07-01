@@ -103,7 +103,7 @@ congestion window and the connection idle timeout (default
 30 s, configurable). There is no disk-backed retransmit; if the
 sender process exits, all unacknowledged stream data is lost.
 
-casting's cold-tier WAL gives 48 h of random-access retransmit
+casting's cold-tier WAL gives 4 h of random-access retransmit
 (`read_record_at_seq`), survives sender restart, and doubles
 as the audit log + recorder feed.
 
@@ -163,11 +163,11 @@ internet (Solana TPU, HTTP/3, iroh peer-to-peer). On a trusted
 
 The iggy project measured Quinn at ~1.97 ms vs TCP at ~0.99 ms
 on localhost for 40-byte messages (iggy/#606). Our local
-`compare_quinn` measurements (128 B, persistent stream, this
-host) are ~37 µs — significantly faster than iggy's number,
-likely because we use a current-thread Tokio runtime, a
-pre-opened bidirectional stream, and `read_exact` instead of
-length-prefix framing. Still ~3.6× casting's 10.3 µs RTT.
+`compare_all::quinn_persistent_128b` measurement (128 B,
+persistent stream, this host) is ~37 µs — significantly faster
+than iggy's number, likely because we use a current-thread Tokio
+runtime, a pre-opened bidirectional stream, and `read_exact`
+instead of length-prefix framing. Still ~4× casting's ~9.3 µs RTT.
 
 ## Guarantees comparison: Quinn (QUIC) vs rsx-cast casting
 
@@ -180,8 +180,8 @@ length-prefix framing. Still ~3.6× casting's 10.3 µs RTT.
 | Loss detection | ACK-based (packet-number ranges) | NAK-based (receiver-driven on gap) |
 | Detection latency (zero loss) | n/a (ACKs always sent) | n/a (no control plane on success) |
 | Detection latency (1 lost pkt) | ~3 ACKs or PTO | ~1 RTT |
-| Retransmit source | `SentPacket` table (RAM) | hot ring (4 096) + cold WAL (48 h) |
-| Retransmit horizon | seconds (until ACK or idle timeout) | 48 h |
+| Retransmit source | `SentPacket` table (RAM) | hot ring (4 096) + cold WAL (4 h) |
+| Retransmit horizon | seconds (until ACK or idle timeout) | 4 h |
 | Survives sender restart | No | Yes (WAL replay) |
 | Durability | None | WAL = audit log |
 | Multiplexed streams | Yes (many bi/uni per connection) | No (one stream per Cmp pair) |
@@ -190,41 +190,40 @@ length-prefix framing. Still ~3.6× casting's 10.3 µs RTT.
 | Connection migration | Yes (Connection IDs) | No (UDP 4-tuple is identity) |
 | Congestion control | CUBIC/NewReno/BBR | None |
 | 0-RTT resumption | Yes (with replay caveat) | n/a |
-| Zero-loss control-plane overhead | ACK frames, MAX_DATA, … | One `StatusMessage` per 10 ms |
+| Zero-loss control-plane overhead | ACK frames, MAX_DATA, … | None (idle-only heartbeat every 100 ms) |
 | Heap allocation per send | Yes (Vec, varint encoding) | No (pre-allocated ring slot) |
 | Language ecosystem | C (msquic, quiche), Go (quic-go), Rust, … | Rust only |
 | Production HFT use | None documented | Target use case |
 
 ## Benchmark
 
-`benches/compare_quinn.rs` (run with `cargo bench --bench
-compare_quinn`) — Criterion, loopback, 128 B payload (matched
-to casting's `FillRecord`).
+`benches/compare_all.rs::quinn_persistent_128b` (run with `cargo
+bench -p rsx-cast --bench compare_all`) — Criterion, loopback,
+128 B payload (matched to casting's `FillRecord`), under the
+shared `EchoClient` harness alongside raw_udp / kcp / tcp. The
+standalone `compare_quinn.rs` (which also had a `new_stream`
+variant) was folded into `compare_all.rs` in commit 836cfb1;
+the retained variant reuses one persistent bidirectional stream.
 
-Three scenarios:
-- `quinn_rtt_new_stream_128b` — open a fresh bidirectional
-  stream every iteration. Shows the per-stream creation cost
-  (HTTP/3-style "one stream per request").
-- `quinn_rtt_persistent_128b` — open one stream in setup,
-  reuse it across iterations with a fixed-size `read_exact`
-  framing. Shows the steady-state QUIC overhead with the
-  handshake AND stream creation outside the timed loop.
-- `tcp_rtt_nodelay_128b` — TCP `TCP_NODELAY` baseline, also
-  persistent connection with `read_exact`.
+- `quinn_persistent_128b` — open one stream in setup, reuse it
+  across iterations with a fixed-size `read_exact` framing.
+  Steady-state QUIC overhead with the handshake AND stream
+  creation outside the timed loop.
+- `tcp_nodelay_128b` — TCP `TCP_NODELAY` baseline, also
+  persistent connection with `read_exact` (same harness).
 
 The TLS handshake is **always** outside the timed loop. The
 self-signed cert is generated once with `rcgen`. The connection
-is established and (for `persistent_128b`) the stream opened
-before Criterion starts sampling. A full warmup RTT happens
-before timing in each variant.
+is established and the stream opened before Criterion starts
+sampling. A full warmup RTT happens before timing.
 
 ### What this bench is and isn't
 
 This bench measures **application-visible loopback RTT** with
 the same Criterion shape, payload size (128 B), and warmup
-pattern as `cmp_rtt_bench.rs` — making the numbers
-size-comparable to casting's RTT bench (p50 ~10.3 µs on this host;
-`.ship/18-COMPONENT-BENCHES/LANDSCAPE.md`).
+pattern as `cast_rtt_bench.rs` — making the numbers
+size-comparable to casting's RTT bench (p50 ~9.3 µs on this host;
+`cast_rtt_bench`, re-run 2026-07-01).
 
 One important asymmetry remains:
 
@@ -247,24 +246,24 @@ What it does NOT measure:
 Loss simulation (separate run, requires root):
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
-cargo bench -p rsx-cast --bench compare_quinn
+cargo bench -p rsx-cast --bench compare_all
 sudo tc qdisc del dev lo root
 ```
 The bench itself does not depend on root or `tc`.
 
-### Measured numbers (this host, 2026-05-24)
+### Measured numbers
 
-| Bench | p50 |
-|---|---|
-| `cmp_rtt_fill_echo` (casting, 128 B) | 10.3 µs |
-| `tcp_rtt_nodelay_128b` | ~14 µs |
-| `quinn_rtt_persistent_128b` | ~37 µs |
-| `quinn_rtt_new_stream_128b` | ~38 µs |
+| Bench | p50 | When |
+|---|---|---|
+| `cmp_rtt_fill_echo` (casting, 128 B) | ~9.3 µs | 2026-07-01 |
+| `tcp_nodelay_128b` | ~14 µs | 2026-05-24 |
+| `quinn_persistent_128b` | ~37 µs | 2026-05-24 |
+| (removed) `quinn_new_stream` | ~38 µs | last-measured before folding |
 
 casting < TCP < Quinn — as the protocol overhead model predicts.
-`new_stream` is only marginally slower than `persistent`
-because Quinn keeps stream creation cheap once the connection
-exists (no extra RTT, just a STREAM frame on the existing
+The removed `new_stream` variant was only marginally slower than
+`persistent` because Quinn keeps stream creation cheap once the
+connection exists (no extra RTT, just a STREAM frame on the existing
 connection).
 
 ## Published loopback numbers
@@ -312,7 +311,7 @@ All three are production-quality. Quinn chosen because:
 - **Zero handshake** — first packet is real payload.
 - **Audit log built in** — same byte stream on wire, disk,
   retransmit, audit, backtester.
-- **48 h retransmit horizon** via WAL random access.
+- **4 h retransmit horizon** via WAL random access.
 - **Survives sender restart** — WAL replay reconstructs state.
 - **No CC, no encryption, no varints** — predictable cost model.
 
