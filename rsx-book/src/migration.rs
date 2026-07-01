@@ -75,6 +75,8 @@ impl Orderbook {
         // Re-scan BBA in new array
         self.best_bid_tick = NONE;
         self.best_ask_tick = NONE;
+        self.best_bid_px = 0;
+        self.best_ask_px = 0;
     }
 
     /// Resolve a level, migrating lazily if needed.
@@ -189,18 +191,20 @@ impl Orderbook {
             self.orders.get_mut(cursor).tick_index =
                 new_idx;
 
-            // Update BBA
+            // Update BBA by RAW PRICE (index is a sawtooth).
             if side == Side::Buy as u8 {
                 if self.best_bid_tick == NONE
-                    || new_idx > self.best_bid_tick
+                    || price > self.best_bid_px
                 {
                     self.best_bid_tick = new_idx;
+                    self.best_bid_px = price;
                 }
             } else if side == Side::Sell as u8
                 && (self.best_ask_tick == NONE
-                    || new_idx < self.best_ask_tick)
+                    || price < self.best_ask_px)
             {
                 self.best_ask_tick = new_idx;
+                self.best_ask_px = price;
             }
 
             cursor = next;
