@@ -39,6 +39,25 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tracing::warn;
 
+/// Daemon lifecycle state, stored in `LoadGauges::state_idx`
+/// as `state as u64`. `state_label` decodes it back to a
+/// human string. Values are stable wire-visible integers
+/// (health `/metrics` state label depends on them).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonState {
+    /// Pre-init / unknown (zero-init default).
+    Boot = 0,
+    /// Applying the replication stream, not yet promoted.
+    WarmCatchup = 1,
+    /// Sole lock holder, serving traffic.
+    Live = 2,
+    /// Fault detected; recovering via replay.
+    Faulted = 3,
+    /// Generic "running" for daemons without a warm/live split.
+    Running = 4,
+}
+
 /// One queue gauge: name, used slots, capacity.
 pub struct QueueGauge {
     pub name: &'static str,
@@ -180,13 +199,19 @@ impl LoadGauges {
         })
     }
 
+    /// Store the daemon state (relaxed). Typed alternative to
+    /// `state_idx.store(n, ...)` with a magic number.
+    pub fn set_state(&self, s: DaemonState) {
+        self.state_idx.store(s as u64, Ordering::Relaxed);
+    }
+
     /// Decode state_idx → human label.
     pub fn state_label(&self) -> &'static str {
         match self.state_idx.load(Ordering::Relaxed) {
-            1 => "warm_catchup",
-            2 => "live",
-            3 => "faulted",
-            4 => "running",
+            x if x == DaemonState::WarmCatchup as u64 => "warm_catchup",
+            x if x == DaemonState::Live as u64 => "live",
+            x if x == DaemonState::Faulted as u64 => "faulted",
+            x if x == DaemonState::Running as u64 => "running",
             _ => "unknown",
         }
     }

@@ -30,6 +30,7 @@ use rsx_messages::CancelRequest;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_matching::wire::OrderMessage;
+use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::lease::AdvisoryLease;
@@ -198,7 +199,7 @@ fn main() {
                 // Back to warm catchup state: not ready until
                 // we win the lock again.
                 gauges.ready.store(false, Ordering::Relaxed);
-                gauges.state_idx.store(1, Ordering::Relaxed);
+                gauges.set_state(DaemonState::WarmCatchup);
                 attempts = 0;
                 continue;
             }
@@ -495,7 +496,7 @@ fn run_main(
     // Blocks (re-trying the lock) until promotion. On error,
     // returns it to main()'s restart loop.
     let mut state = NodeState::WarmCatchup;
-    gauges.state_idx.store(1, Ordering::Relaxed); // "warm_catchup"
+    gauges.set_state(DaemonState::WarmCatchup);
     gauges.ready.store(false, Ordering::Relaxed);
     info!("risk shard {} state={:?}", shard_id, state);
     run_warm_catchup(
@@ -512,7 +513,7 @@ fn run_main(
     // Past this point this node is the SOLE advisory-lock holder
     // (invariant #10) and the shard is warm + final-drained.
     state = NodeState::Live;
-    gauges.state_idx.store(2, Ordering::Relaxed); // "live"
+    gauges.set_state(DaemonState::Live);
     gauges.ready.store(true, Ordering::Relaxed);
     info!("risk shard {} state={:?} (promoted)", shard_id, state);
 
