@@ -1,4 +1,11 @@
-# rsx-webui
+# rsx-webui — DISCONTINUED
+
+> **DISCONTINUED (2026-07-01).** The React trading GUI is no longer
+> the trade surface. The primary trading client is now a **terminal
+> UI (`rsx-tui`, ratatui)**. This SPA is frozen — no new features,
+> bugfix-only until removed. The playground keeps a lighter,
+> less-interactive web GUI for read-only demonstration; heavy
+> interactive trading moves to the TUI. Do not build on this.
 
 React trading UI for RSX. Vite + Tailwind, connects
 to gateway via WebSocket.
