@@ -6,16 +6,23 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
-- **BENCH-KCP-FLUSH-NEEDUPDATE** (LOW) — `compare_all` panics at
-  `benches/compare_all.rs:230` on the KCP warmup: `kcp.flush().unwrap()`
-  returns `Err(NeedUpdate)` because the `kcp` crate requires at least one
-  `update()` before the first `flush()`. `raw_udp_128b` runs and reports
-  (median ~9.9 µs, verified 2026-07-01) but the run aborts before KCP/Quinn/
-  TCP. `compare/kcp.md` documents the intended startup `update()` ("the bench
-  pays this once at startup") — the code regressed and no longer calls it.
-  Fix: call `kcp.update(now_ms)` once before the warmup `flush()` in both the
-  server thread (line ~207) and the client ctor (line ~229). Bench-only; does
-  not touch rsx-cast source. Flagged, not patched, per no-touch-Rust scope.
+- **BENCH-KCP-FLUSH-NEEDUPDATE** `[FIXED]` — `compare_all` panicked on the
+  KCP warmup `flush()` (`Err(NeedUpdate)`: kcp needs one `update()` to set
+  its `updated` flag before the first flush). Fixed by priming `k.update(0)`
+  once in `make_kcp` (loopback has no loss so the retransmit clock is
+  irrelevant). Now `raw_udp_128b` ~10 µs and `kcp_spin_flush_128b` ~12.7 µs
+  both measure (verified 2026-07-01). Bench-only; rsx-cast source untouched.
+- **BENCH-QUINN-ACCEPT-BI** (LOW, *unmasked by the KCP fix*) — with KCP no
+  longer aborting the run, `compare_all` now panics at
+  `benches/compare_all.rs:356`: `srv_conn.accept_bi().await.unwrap()`. QUIC
+  opens a bidirectional stream lazily — the client's `open_bi()` sends nothing
+  on the wire until the first `write`, so the server's `accept_bi()` never sees
+  the stream (resolves to a connection error / hang). The Quinn row was masked
+  by the earlier KCP abort, so this has likely been broken since KCP regressed;
+  the README "~37 µs" is last-measured 2026-05-24, not reproducible now. Fix:
+  have the client write one priming byte after `open_bi()` before the server
+  `accept_bi()`, or restructure the stream handshake. Bench-only. Flagged, not
+  patched (separate from the KCP one-liner; QUIC stream-lifecycle surgery).
 - **ME-FAULTED-NO-REPLAY-ADDR** (MED) — parallel load FAULTs the ME → panic;
   no replay source wired. Blocks parallel-load benchmarking. Detail below.
 - **IOC-NOT-HONORED** (MED) — empty-book IOC rests instead of cancelling; `tif`
