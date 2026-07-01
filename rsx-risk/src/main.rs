@@ -429,7 +429,7 @@ fn run_main(
             max_symbols,
         )
         .await?;
-        shard.load_state(state);
+        shard.set_state(state);
         info!("loaded accounts from postgres (warm candidate)");
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;

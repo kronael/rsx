@@ -169,7 +169,7 @@ fn orphan_freeze_not_durable_without_order_accepted() {
 
     // Recovery from that (genuinely empty) snapshot -> no orphan.
     let mut recovered = make_shard();
-    recovered.load_state(ColdStartState {
+    recovered.set_state(ColdStartState {
         accounts: FxHashMap::default(),
         positions: FxHashMap::default(),
         tips: vec![0u64; 4],
@@ -228,7 +228,7 @@ fn confirmed_freeze_is_durable() {
     let mut fo = FxHashMap::default();
     let key = (0u128 << 64) | frozen.order_id_lo as u128;
     fo.insert(key, (frozen.user_id, frozen.amount));
-    recovered.load_state(ColdStartState {
+    recovered.set_state(ColdStartState {
         accounts: FxHashMap::default(),
         positions: FxHashMap::default(),
         tips: vec![0u64; 4],
