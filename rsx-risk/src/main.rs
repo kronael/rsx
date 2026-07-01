@@ -375,6 +375,41 @@ async fn drive_pg_connection(
     }
 }
 
+/// Body of the persist worker thread. Owns a dedicated
+/// current-thread tokio runtime + PG connection and drains the
+/// persist ring until shutdown. Named (not an inline
+/// `std::thread::spawn(move || {…})`) per CLAUDE.md so the
+/// worker's lifetime is visible to the reader.
+fn persist_thread_body(
+    url: String,
+    sid: u32,
+    persist_cons: rtrb::Consumer<PersistEvent>,
+    shutdown: Arc<AtomicBool>,
+) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        // SAFETY: fail-fast at startup
+        .expect("tokio rt");
+    rt.block_on(async move {
+        let (client, connection) = tokio_postgres::connect(
+            &url,
+            tokio_postgres::NoTls,
+        )
+        .await
+        // SAFETY: fail-fast at startup
+        .expect("pg connect for persist");
+        tokio::spawn(drive_pg_connection(connection));
+        run_persist_worker_with_shutdown(
+            persist_cons,
+            client,
+            sid,
+            Some(shutdown),
+        )
+        .await;
+    });
+}
+
 /// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
 fn rand_jitter() -> f64 {
     use std::time::SystemTime;
@@ -546,30 +581,7 @@ fn run_main(
         let sid = shard_id;
         let shutdown = persist_shutdown.clone();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder
-                ::new_current_thread()
-                .enable_all()
-                .build()
-                // SAFETY: fail-fast at startup
-                .expect("tokio rt");
-            rt.block_on(async move {
-                let (client, connection) =
-                    tokio_postgres::connect(
-                        &url,
-                        tokio_postgres::NoTls,
-                    )
-                    .await
-                    // SAFETY: fail-fast at startup
-                    .expect("pg connect for persist");
-                tokio::spawn(drive_pg_connection(connection));
-                run_persist_worker_with_shutdown(
-                    persist_cons,
-                    client,
-                    sid,
-                    Some(shutdown),
-                )
-                .await;
-            });
+            persist_thread_body(url, sid, persist_cons, shutdown)
         })
     };
 
@@ -1471,44 +1483,70 @@ fn stop_persist_worker(
 fn spawn_lease_thread(
     rt: tokio::runtime::Runtime,
     pg_client: tokio_postgres::Client,
-    mut lease: rsx_risk::lease::AdvisoryLease,
+    lease: rsx_risk::lease::AdvisoryLease,
     renew_interval_secs: u64,
     lease_held: Arc<AtomicBool>,
     lease_error: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        rt.block_on(async move {
-            let interval = Duration::from_secs(renew_interval_secs.max(1));
-            let mut consec_errors: u32 = 0;
-            loop {
-                tokio::time::sleep(interval).await;
-                if stop.load(Ordering::Relaxed) {
-                    if let Err(e) = lease.release(&pg_client).await {
-                        warn!("lease release on stop failed: {e}");
-                    }
+        lease_thread_body(
+            rt,
+            pg_client,
+            lease,
+            renew_interval_secs,
+            lease_held,
+            lease_error,
+            stop,
+        )
+    })
+}
+
+/// Body of the lease-renewal thread. Owns the promoted `rt` +
+/// `pg_client` and renews the advisory lease every
+/// `renew_interval_secs`, clearing `lease_held` on loss/error.
+/// Named (not an inline `std::thread::spawn(move || {…})`) per
+/// CLAUDE.md so the coroutine's lifetime is visible to the reader.
+#[allow(clippy::too_many_arguments)]
+fn lease_thread_body(
+    rt: tokio::runtime::Runtime,
+    pg_client: tokio_postgres::Client,
+    mut lease: rsx_risk::lease::AdvisoryLease,
+    renew_interval_secs: u64,
+    lease_held: Arc<AtomicBool>,
+    lease_error: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+) {
+    rt.block_on(async move {
+        let interval = Duration::from_secs(renew_interval_secs.max(1));
+        let mut consec_errors: u32 = 0;
+        loop {
+            tokio::time::sleep(interval).await;
+            if stop.load(Ordering::Relaxed) {
+                if let Err(e) = lease.release(&pg_client).await {
+                    warn!("lease release on stop failed: {e}");
+                }
+                return;
+            }
+            match lease.renew(&pg_client).await {
+                Ok(true) => { consec_errors = 0; }
+                Ok(false) => {
+                    warn!("lease lost (shard {})", lease.shard_id());
+                    lease_held.store(false, Ordering::Release);
                     return;
                 }
-                match lease.renew(&pg_client).await {
-                    Ok(true) => { consec_errors = 0; }
-                    Ok(false) => {
-                        warn!("lease lost (shard {})", lease.shard_id());
+                Err(e) => {
+                    consec_errors += 1;
+                    warn!("lease renew error ({}/3): {e}", consec_errors);
+                    if consec_errors >= 3 {
+                        lease_error.store(true, Ordering::Release);
                         lease_held.store(false, Ordering::Release);
                         return;
                     }
-                    Err(e) => {
-                        consec_errors += 1;
-                        warn!("lease renew error ({}/3): {e}", consec_errors);
-                        if consec_errors >= 3 {
-                            lease_error.store(true, Ordering::Release);
-                            lease_held.store(false, Ordering::Release);
-                            return;
-                        }
-                    }
                 }
             }
-        });
-    })
+        }
+    });
 }
 
 fn stop_lease_thread(
