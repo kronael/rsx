@@ -14,19 +14,15 @@ pub fn health_snapshot(g: &LoadGauges) -> HealthSnapshot {
     let acc_cap = g.accept_ring_cap.load(Ordering::Relaxed);
     let persist_used = g.persist_ring_used.load(Ordering::Relaxed);
     let persist_cap = g.persist_ring_cap.load(Ordering::Relaxed);
-    let mut saturation = 0.0f64;
-    for (used, cap) in [
+    let saturation = [
         (resp_used, resp_cap),
         (acc_used, acc_cap),
         (persist_used, persist_cap),
-    ] {
-        if cap > 0 {
-            let f = (used as f64) / (cap as f64);
-            if f > saturation {
-                saturation = f;
-            }
-        }
-    }
+    ]
+    .into_iter()
+    .filter(|&(_, cap)| cap > 0)
+    .map(|(used, cap)| (used as f64) / (cap as f64))
+    .fold(0.0f64, f64::max);
     HealthSnapshot {
         live: g.live.load(Ordering::Relaxed),
         ready: g.ready.load(Ordering::Relaxed),
