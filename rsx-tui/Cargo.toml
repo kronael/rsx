@@ -1,0 +1,11 @@
+[package]
+name = "rsx-tui"
+version = "0.1.0"
+edition = "2021"
+
+# The RSX trading terminal. ratatui (re-exports crossterm) is the only
+# UI dep. Live data will reuse the workspace wire types (rsx-types,
+# rsx-messages) once the gateway WS client lands — kept out until then
+# so the scaffold builds standalone.
+[dependencies]
+ratatui = "0.29"

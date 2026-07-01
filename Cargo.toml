@@ -13,6 +13,7 @@ members = [
     "rsx-log",
     "rsx-messages",
     "rsx-health",
+    "rsx-tui",
 ]
 resolver = "2"
 
