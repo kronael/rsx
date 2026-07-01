@@ -3,6 +3,7 @@ use crate::margin::SymbolRiskParams;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tracing::warn;
 
 pub struct LiquidationConfig {
@@ -195,4 +196,109 @@ pub fn me_cast_addrs_from_env() -> HashMap<u32, SocketAddr> {
         .or_else(|_| std::env::var("RSX_ME_CAST_ADDR"))
         .unwrap_or_else(|_| "127.0.0.1:9110".to_owned());
     parse_me_cast_addrs(&raw)
+}
+
+/// Runtime env config for the risk process, parsed ONCE at boot
+/// with fail-fast on malformed required values. Distinct from
+/// `ShardConfig` (sharding/margin/liquidation params) — this
+/// holds the process's I/O topology (PG url, WAL dir, cast
+/// addrs). Defaults and required-vs-optional match the original
+/// scattered `env::var` sites in `run_main` exactly.
+pub struct RuntimeConfig {
+    /// Postgres connection string. Required.
+    pub db_url: String,
+    /// WAL directory. Default `./tmp/wal`.
+    pub wal_dir: PathBuf,
+    /// ME replication server (warm-catchup + FAULTED replay
+    /// source). Required.
+    pub me_repl_addr: String,
+    /// Mark cast receive addr. Default `127.0.0.1:9105`.
+    pub mark_addr: SocketAddr,
+    /// Mark cast sender (peer) addr. Default `127.0.0.1:9106`.
+    pub mark_sender_addr: SocketAddr,
+    /// Risk cast receive addr (from gateway). Default
+    /// `127.0.0.1:9101`.
+    pub risk_addr: SocketAddr,
+    /// Gateway cast addr (responses out). Default
+    /// `127.0.0.1:9102`.
+    pub gw_addr: SocketAddr,
+    /// Fill/event receive addr (from all MEs). Default
+    /// `127.0.0.1:28301`.
+    pub risk_me_recv_addr: SocketAddr,
+    /// Optional bind addr hint for the ME-bound sender.
+    pub me_send_bind: Option<String>,
+    /// Optional hot-thread core to pin. `None` if unset OR
+    /// unparseable (silent skip preserves legacy behavior — a
+    /// bad core id is NOT a boot failure).
+    pub core_id: Option<usize>,
+}
+
+impl RuntimeConfig {
+    /// Parse the runtime config from env. Required values
+    /// (`DATABASE_URL`, `RSX_ME_REPLICATION_ADDR`) and malformed
+    /// SocketAddrs fail-fast via `expect` — a bad addr must fail
+    /// loudly at boot, not silently default mid-run.
+    pub fn from_env() -> Self {
+        let db_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL required for risk");
+        let wal_dir = PathBuf::from(
+            std::env::var("RSX_RISK_WAL_DIR")
+                .unwrap_or_else(|_| "./tmp/wal".into()),
+        );
+        let me_repl_addr = std::env::var("RSX_ME_REPLICATION_ADDR")
+            .expect(
+                "RSX_ME_REPLICATION_ADDR required (ME's replication \
+                 server — the warm-catchup + FAULTED replay source)",
+            );
+        let mark_addr = parse_addr(
+            "RSX_RISK_MARK_CAST_ADDR",
+            "127.0.0.1:9105",
+        );
+        let mark_sender_addr = parse_addr(
+            "RSX_MARK_CAST_ADDR",
+            "127.0.0.1:9106",
+        );
+        let risk_addr = parse_addr(
+            "RSX_RISK_CAST_ADDR",
+            "127.0.0.1:9101",
+        );
+        let gw_addr = parse_addr(
+            "RSX_GW_CAST_ADDR",
+            "127.0.0.1:9102",
+        );
+        let risk_me_recv_addr = parse_addr(
+            "RSX_RISK_ME_RECV_ADDR",
+            "127.0.0.1:28301",
+        );
+        let me_send_bind =
+            std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
+        // Silent skip on unset OR unparseable (legacy: a bad
+        // core id is a no-op, not a boot failure).
+        let core_id = std::env::var("RSX_RISK_CORE_ID")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok());
+
+        Self {
+            db_url,
+            wal_dir,
+            me_repl_addr,
+            mark_addr,
+            mark_sender_addr,
+            risk_addr,
+            gw_addr,
+            risk_me_recv_addr,
+            me_send_bind,
+            core_id,
+        }
+    }
+}
+
+/// Parse a SocketAddr from `key`, defaulting to `default` when
+/// unset. A malformed value (env or default) fails fast.
+fn parse_addr(key: &str, default: &str) -> SocketAddr {
+    std::env::var(key)
+        .unwrap_or_else(|_| default.into())
+        .parse()
+        // SAFETY: fail-fast at startup
+        .unwrap_or_else(|_| panic!("invalid {key}"))
 }
