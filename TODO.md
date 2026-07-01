@@ -36,8 +36,22 @@ crates into an embeddable "exchange-in-a-box" per specs/2/50-wedge.md.
 Distribution is a founder decision — see CLAUDE.md
 "Publishing" — this repo does not publish externally.)
 
+## Direction (2026-07-01)
+
+- **Trade surface = TUI, not GUI.** `rsx-webui` (React SPA) is
+  **DISCONTINUED** — frozen, bugfix-only until removed. The primary
+  trading client is now a terminal UI, `rsx-tui`, built on **ratatui**
+  (best-in-class Rust TUI; reuses `rsx-types`/`rsx-messages` wire types,
+  connects to the gateway WS). Planned, not started.
+- **Playground keeps a web GUI** — but read-only / less-interactive
+  (component pages, cast demo, logs, viz). Demonstration surface, not a
+  trading terminal.
+
 ## Backlog
 
+- **NEW: rsx-tui** — ratatui trading terminal. Orderbook ladder, order
+  entry, positions/fills, connects via gateway WS (webproto 49). Reuse
+  wire types from the workspace. Replaces rsx-webui as the trade surface.
 - **10-DEPLOY** — public domain, Docker, TLS, one-click
   reviewer demo.
 
