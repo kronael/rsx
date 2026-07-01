@@ -43,9 +43,9 @@ Loopback path: user → `sendto` syscall → kernel socket buffer
 | Duplicates | May duplicate | Dedup in receiver via seq |
 | Framing | None (one datagram = one recvfrom) | 16-byte `WalHeader` + fixed-size payload |
 | Integrity | UDP checksum (optional, weak) | CRC32C over each record |
-| Durability | None | WAL on disk, 48 h retransmit horizon |
-| Flow control | None (sender can overrun receiver) | `peer_consumption_seq` window |
-| Connection state | None | seq + NAK list + status heartbeat |
+| Durability | None | WAL on disk, 4 h retransmit horizon |
+| Flow control | None (sender can overrun receiver) | None on the wire; producer stalls on WAL flush-lag; bounded reorder buffer |
+| Connection state | None | seq + NAK list + idle-only heartbeat |
 
 Everything in the casting column is layered above the kernel UDP
 socket. Each row is a cost measured against the raw-UDP floor.
@@ -56,50 +56,58 @@ casting builds on raw UDP. The cost of casting above this baseline is:
 
 - 16-byte `WalHeader` framing + CRC32C verification
 - `send_ring` slot write (WAL record caching for hot-tier retransmit)
-- Periodic NAK / heartbeat / StatusMessage processing
-- Sequence number assignment and `peer_consumption_seq` flow control
+- NAK handling on a detected gap + an idle-only heartbeat (100 ms)
+- Sequence number assignment
 
-Measured overhead (loopback, 64-128 B payload, this host on 2026-05-24):
+Measured overhead (loopback, 128 B payload):
 
 ```
-raw UDP RTT      9.89 – 11.80 µs  (compare_udp, --sample-size 30)
-casting RTT          10.45 – 17.28 µs  (cmp_rtt_bench, --sample-size 30)
-casting send body    ~4.10 µs  (one-way; cmp_send_breakdown_bench)
+raw UDP RTT      8.90 – 11.01 µs  (compare_all::raw_udp_128b, re-run 2026-07-01)
+casting RTT      8.36 – 10.47 µs  (cast_rtt_bench cmp_rtt_fill_echo, re-run 2026-07-01)
+casting send body    ~4.10 µs     (one-way; cast_send_breakdown_bench, 2026-05-24)
   └─ sendto syscall: 4.07 µs (99.4%)
-  └─ userspace (CRC32 + framing + ring copy): ~26 ns
+  └─ userspace (CRC32C + framing + ring copy): ~26 ns
 ```
 
 **The earlier "~2 µs" raw-UDP baseline claim was wrong** for this
 host — see `facts/cast-vs-udp-overhead.md` for the full
 measurement, attribution, and walk-back. Summary: the `sendto`
 syscall dominates 99 % of casting's per-send cost; casting's userspace
-work (CRC32 + WalHeader + ring cache) adds ~26 ns, not microseconds.
+work (CRC32C + WalHeader + ring cache) adds ~26 ns, not microseconds.
 
-Benches don't currently pin cores — fix planned. Numbers will
-tighten once that lands.
+Sender + echoer are pinned to cores 2/3 in every RTT bench
+(`core_affinity`), which tightened the casting distribution by
+10–40% vs the pre-pinning baseline (see the facts file).
 
 ## Benchmark
 
-`benches/compare_udp.rs` (run with `cargo bench --bench compare_udp`)
-— pre-existing, ships with rsx-cast.
+`benches/compare_all.rs::raw_udp_128b` (run with `cargo bench -p
+rsx-cast --bench compare_all`). The standalone `compare_udp.rs`
+was folded into `compare_all.rs` in commit 836cfb1.
 
 Two non-blocking sockets on 127.0.0.1, both threads
 busy-spinning. No per-iteration `setsockopt`. No blocking
-recv wake-up. 64-byte payload (one cache line). Measures
+recv wake-up. 128-byte payload (matches `FillRecord`). Measures
 true kernel UDP round-trip.
 
 ## Published numbers
 
 | Environment | RTT P50 |
 |---|---|
-| Linux loopback, same host, non-blocking + spin | ~2.0 µs |
+| Linux loopback, this host, non-blocking + spin (measured) | ~9.9 µs |
 | Linux loopback, blocking recv | ~5–10 µs |
 | Same-rack 10 GbE, non-blocking | ~5–15 µs |
 | Cross-DC WAN | 500 µs – 50 ms |
 
+The first row is our measured `compare_all::raw_udp_128b`
+(2026-07-01), dominated by two `sendto` + two `recvfrom` at
+~4 µs each. Some published loopback micro-benchmarks quote
+~2 µs; that figure did not reproduce on this host, and
+`facts/cast-vs-udp-overhead.md` documents the walk-back.
+
 Sources: RFC 768 (UDP), `udp(7)` Linux man page,
 `facts/syscall-latency.md` (local measurement dfe2ef4),
-Cloudflare kernel-bypass write-up.
+`facts/cast-vs-udp-overhead.md` (the ~2 µs walk-back).
 
 ## Why not raw UDP for exchange IPC
 

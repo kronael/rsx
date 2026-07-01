@@ -81,7 +81,7 @@ separate paid product.
 |---|---|---|
 | Delivery | Reliable (NAK + retransmit) | Reliable (NAK + WAL retransmit) |
 | Loss detection | Receiver (NAK to source) | Receiver (seq gap → NAK) |
-| Retransmit source | In-memory window (seconds) | Hot ring + cold WAL (48 h) |
+| Retransmit source | In-memory window (seconds) | Hot ring + cold WAL (4 h) |
 | Multicast | Yes (primary use case) | No (unicast only, v2 multicast planned) |
 | NAK suppression | Yes (multicast fan-out) | N/A (unicast) |
 | Topic/subject routing | Yes | No (point-to-point per stream) |
@@ -102,7 +102,7 @@ retransmit only (seconds of data). The Informatica Persistence
 add-on writes to disk but is a separate product and a
 separate format from the live wire stream.
 
-rsx-cast's WAL retains 48 h of every exchange event in the
+rsx-cast's WAL retains 4 h of every exchange event in the
 same binary format as the wire — immediately usable for
 backtesting, regulatory replay, and ML training, without
 transformation.

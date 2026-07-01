@@ -74,8 +74,9 @@ Criterion benchmarks on the orderbook and transport layer:
 |------------------------------------------------|----------|
 | Match single fill                              | 54 ns    |
 | Insert resting order                           | 857 ns   |
-| `WalWriter::prepare` + `append_framed` (Vec extend, pre-fsync) | 31 ns |
-| WAL flush + fsync 64 KB                        | 24 us    |
+| `WalWriter::prepare` + `append_framed` (Vec extend, pre-fsync) | ~38 ns |
+| WAL flush + fsync, 1 record (unamortised)      | ~426 us  |
+| WAL flush + fsync, amortised at 1 000 rec/flush | ~1.1 us/rec |
 | Protocol-record encode (Nak / CastHeartbeat) | 43 ns |
 | `FillRecord` encode                            | 23 ns    |
 | Protocol-record decode                         | 9 ns     |
@@ -103,9 +104,11 @@ architectures, no precision loss across the entire pipeline.
 **casting/UDP, not Kafka.** A message broker adds milliseconds of
 latency and an operational dependency. casting is a custom
 protocol inspired by Aeron: C structs over UDP, NAK-based
-gap recovery, per-stream ordering, no congestion control.
-Each datagram is one message. No framing, no length prefix,
-no deserialization.
+gap recovery, per-stream ordering, no congestion control. Each
+datagram is one fixed-size record behind a 16-byte header — no
+variable-length framing, no length-prefix parsing, no
+deserialization step; the receiver casts the bytes straight
+into a `#[repr(C)]` struct.
 
 **Slab arena allocation.** The matching engine pre-allocates
 all order slots at startup. O(1) alloc via free list, O(1)
@@ -155,10 +158,12 @@ fill orders front to back, advance to next level if needed.
 The WAL disk format, the casting wire format, and the replication stream
 format are identical. No transformation between them.
 
-Each record: 16-byte header (stream_id, seq, record_type,
-payload_len) followed by a `#[repr(C, align(64))]` payload.
-The same bytes written to disk are the same bytes sent over
-UDP and the same bytes streamed to consumers over TCP.
+Each record: 16-byte header (version, record_type, payload
+length, CRC32C over the payload) followed by a `#[repr(C,
+align(64))]` payload; the sequence number lives in the payload,
+not the header. The same bytes written to disk are the same
+bytes sent over UDP and the same bytes streamed to consumers
+over TCP.
 
 replication (the cold-path layer) is brokerless. Each producer
 IS the replay server. Consumers connect directly to the

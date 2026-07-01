@@ -62,23 +62,25 @@ NAK(N). The sender retransmits in ~1 RTT.
 
 Latency consequence on zero loss: KCP still sends one ACK per
 DATA, so every DATA frame triggers a control-plane round-trip.
-casting on zero loss sends *zero* control traffic per record — only a
-periodic `StatusMessage` every 10 ms for flow control
-(`rsx-cast/src/protocol.rs` — RECORD_STATUS_MESSAGE).
+casting on zero loss sends *zero* control traffic per record — the
+only background frame is an idle-only heartbeat (`RECORD_HEARTBEAT`,
+`rsx-cast/src/records.rs`) sent every 100 ms when the stream has
+gone quiet, suppressed entirely while data flows. casting has no
+flow-control frame; recovery is receiver-driven NAK on a seq gap.
 
 ### Retransmit horizon
 
 | Property | KCP | casting |
 |---|---|---|
 | Source of retransmit | `snd_buf` (RAM) | hot ring (4 096 slots, RAM) → cold WAL (disk) |
-| Discard condition | Per-segment ACK received | Per-receiver consumption_seq via StatusMessage |
-| Max horizon | Bounded by `snd_wnd` (default 32, turbo 128) | 4 096 hot, 48 h cold (WAL retention) |
+| Discard condition | Per-segment ACK received | Hot ring is a fixed 4 096-slot LRU; cold tier bounded by WAL retention |
+| Max horizon | Bounded by `snd_wnd` (default 32, turbo 128) | 4 096 hot, 4 h cold (WAL retention) |
 | Survives sender restart | No | Yes (WAL replay) |
 | Audit log | No | Yes (WAL = audit log) |
 
 KCP discards a segment from `snd_buf` as soon as its ACK arrives.
 A late NAK or a restarted receiver cannot recover any history.
-casting's cold-tier WAL provides 48 hours of random-access retransmit
+casting's cold-tier WAL provides 4 hours of random-access retransmit
 via `read_record_at_seq` — long enough for a downstream service
 to crash, restart, and resume from its last persisted offset.
 
@@ -94,10 +96,12 @@ Turbo is correct for an exchange's trusted-LAN use case — a 10 GbE
 datacenter fabric is not congested and TCP-style CC adds latency
 without benefit.
 
-casting has no congestion control at all (spec §10.4: "Trusted internal
-network"). Flow control is the receiver's `consumption_seq` carried
-in `StatusMessage`; sender stalls when its window would exceed the
-receiver's reported window.
+casting has no congestion control and no flow-control frame at all
+(spec §10.4: "Trusted internal network"). Backpressure is handled
+one layer up: the WAL writer stalls the producer when its flush
+lag exceeds 10 ms or the buffer fills, and the receiver's bounded
+reorder buffer bounds how far ahead the sender can run. There is
+no receiver-advertised window on the wire.
 
 ### RTO
 
@@ -174,8 +178,8 @@ service, and the backtester. KCP would be just a transport.
 | Loss detection | Sender (ACK absence + fastack) | Receiver (seq gap → NAK) |
 | Detection latency (zero-loss) | n/a (ACK per DATA always) | n/a (no control plane on success) |
 | Detection latency (1 lost frame) | ~2 RTT (need 2 newer ACKs) | ~1 RTT (gap seen on next frame) |
-| Retransmit source | `snd_buf` (RAM, bounded by `snd_wnd`) | hot ring (4 096) + cold WAL (48 h) |
-| Retransmit horizon | seconds (until ACK arrives) | 48 h |
+| Retransmit source | `snd_buf` (RAM, bounded by `snd_wnd`) | hot ring (4 096) + cold WAL (4 h) |
+| Retransmit horizon | seconds (until ACK arrives) | 4 h |
 | Survives sender restart | No | Yes (WAL replay) |
 | Durability | None | WAL = audit log |
 | Min flush granularity | 1 ms (Rust port) via timer; immediate via `flush()` | per `sendto` (~3.85 µs) |
@@ -185,7 +189,7 @@ service, and the backtester. KCP would be just a transport.
 | Cross-stream ordering | n/a | n/a (separate WAL files per producer) |
 | Auth / encryption | None | None (trust delegated, spec §10.4) |
 | Congestion control | Optional (`nc=0` standard / `nc=1` turbo) | None |
-| Zero-loss control-plane overhead | One ACK per DATA | One `StatusMessage` per 10 ms |
+| Zero-loss control-plane overhead | One ACK per DATA | None (idle-only heartbeat every 100 ms) |
 | Heap allocation per send | Yes (`snd_buf.push_back`) | No (pre-allocated ring slot) |
 | Language ecosystem | C reference + Rust port (`kcp` 0.6) + Go + many | Rust only (this crate) |
 | Production HFT use | None documented | Target use case |
@@ -193,40 +197,48 @@ service, and the backtester. KCP would be just a transport.
 
 ## Benchmark
 
-`benches/compare_kcp.rs` (run with `cargo bench --bench
-compare_kcp`) — Criterion, loopback, 128 B payload (matched
-to casting's `FillRecord`, which is
-`mem::size_of::<FillRecord>() == 128`).
+`benches/compare_all.rs::kcp_spin_flush_128b` (run with `cargo
+bench -p rsx-cast --bench compare_all`) — Criterion, loopback,
+128 B payload (matched to casting's `FillRecord`, which is
+`mem::size_of::<FillRecord>() == 128`). KCP runs under the shared
+`EchoClient` harness alongside raw_udp / quinn / tcp.
 
-Two scenarios:
-- `kcp_rtt_naive_1ms_interval_128b` — timer-driven `update()` every
-  1 ms on both sides. Shows the latency floor from the polling
-  model. NOT a fair comparison with casting's RTT bench (which
-  spin-polls); kept as a "realistic integration mode" datapoint.
-- `kcp_rtt_spin_flush_128b` — busy-spin server, explicit
-  `flush()` after every `send()`. Reveals KCP's true protocol
-  overhead with the scheduler bypassed.
+- `kcp_spin_flush_128b` — busy-spin server, explicit `flush()`
+  after every `send()`. Reveals KCP's true protocol overhead with
+  the scheduler bypassed.
 
-Both use the same KCP configuration:
+The KCP configuration:
 ```
 nodelay=1, interval=1ms, resend=2, nc=1, wndsize=128/128, mtu=1400
 ```
 
+The earlier standalone `compare_kcp.rs` (with a `naive_1ms`
+timer-driven variant) was folded into `compare_all.rs` in commit
+836cfb1; only the spin-flush variant is retained. The naive
+1-ms-timer datapoint was ~11 ms, dominated by the sleep
+granularity — see "Published numbers" for why that mode is
+unsuited to an exchange path.
+
 Loss simulation (separate run, requires root):
 ```bash
 sudo tc qdisc add dev lo root netem loss 0.1%
-cargo bench -p rsx-cast --bench compare_kcp
+cargo bench -p rsx-cast --bench compare_all
 sudo tc qdisc del dev lo root
 ```
 The bench itself does not depend on root or `tc`.
+
+> Note (2026-07-01): `compare_all` currently aborts on a KCP
+> warmup panic (`flush()` before `update()`; `bugs.md`
+> BENCH-KCP-FLUSH-NEEDUPDATE), so the number below is the
+> last-measured 2026-05-24 figure, not re-run this session.
 
 ### What this bench is and isn't
 
 This bench measures **application-visible loopback RTT** using
 the same Criterion shape, payload size (128 B), and warmup
-methodology as `cmp_rtt_bench.rs` — making `kcp_rtt_spin_flush_128b`
-size-comparable to casting's RTT bench (p50 ~10.3 µs on this host;
-`.ship/18-COMPONENT-BENCHES/LANDSCAPE.md`).
+methodology as `cast_rtt_bench.rs` — making `kcp_spin_flush_128b`
+size-comparable to casting's RTT bench (p50 ~9–10 µs on this host;
+`cast_rtt_bench`, re-run 2026-07-01).
 
 What it does NOT measure:
 - Loss recovery (no `tc` injection in the bench itself).
@@ -238,11 +250,11 @@ What it does NOT measure:
 
 | Bench | p50 |
 |---|---|
-| `cmp_rtt_fill_echo` (casting, 128 B) | 10.3 µs |
-| `kcp_rtt_spin_flush_128b` | ~17 µs |
-| `kcp_rtt_naive_1ms_interval_128b` | ~11 ms |
+| `cmp_rtt_fill_echo` (casting, 128 B) | ~9.3 µs |
+| `kcp_spin_flush_128b` | ~17 µs |
+| (removed) `naive_1ms_interval` | ~11 ms (last-measured before folding) |
 
-The 17 µs spin number is roughly 1.6× casting — close to the lower
+The 17 µs spin number is roughly 1.8× casting — close to the lower
 bound of KCP's possible per-frame overhead (24 B header parse,
 ACK list maintenance, Rust port adapter copy). The 11 ms naive
 number is dominated by the 1 ms sleep granularity on each side.
@@ -268,7 +280,7 @@ c6in.16xlarge, 100k msg/s):
 - P99: 32–43 µs
 
 casting loopback RTT, this repo:
-- P50: ~10.3 µs (`cast_rtt_bench`, see LANDSCAPE.md).
+- P50: ~9.3 µs (`cast_rtt_bench`, re-run 2026-07-01).
 
 KCP and Aeron / casting do not compete in the same latency bracket
 even on zero-loss loopback.
@@ -292,7 +304,7 @@ even on zero-loss loopback.
 - **Audit log built in**: WAL is the same byte stream as the
   wire and disk format; one log feeds retransmit, audit,
   backtesting, and ML training.
-- **Long retransmit horizon**: 48 h via WAL random-access vs
+- **Long retransmit horizon**: 4 h via WAL random-access vs
   bounded by ACK arrival.
 - **Survives restarts**: WAL replay reconstructs sender state
   exactly; KCP's `snd_buf` is in-process RAM only.

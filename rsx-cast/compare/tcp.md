@@ -41,7 +41,7 @@ by `TCP_NODELAY`. Without nodelay, the bench measures Nagle's
 | Ordering | In-order byte stream | Per-stream FIFO (seq monotonic) |
 | Framing | None — app-layer required | 16-byte `WalHeader` + fixed payload |
 | Loss detection | Cumulative ACK + SACK (sender side) | Seq gap → NAK (receiver side) |
-| Retransmit source | In-flight window (RAM only) | Hot ring + cold WAL (48 h) |
+| Retransmit source | In-flight window (RAM only) | Hot ring + cold WAL (4 h) |
 | Connection setup | 3-way handshake (1 RTT) | None — `sendto`, zero setup |
 | Congestion control | CUBIC/BBR (kernel) | None (trusted LAN) |
 | Head-of-line blocking | Yes (at API; lost segment freezes later in-flight bytes until retransmit) | Yes (at API; reorder_buf delays delivery until gap fills) |
@@ -99,13 +99,12 @@ lets order flow on symbol A keep moving when symbol B
 drops a packet.
 
 Measured penalty depends on the I/O model. Kernel-blocking
-TCP with `TCP_NODELAY` + spin (this bench) costs ~12–18 µs
-RTT — within ~2× of casting's ~10 µs. Async TCP through a
-reactor (`compare_quinn.rs::tcp_rtt_nodelay`, the iggy
-project at apache/iggy#606) measures ~100–1 000 µs — ~10–
-100× casting. The async path is what most production order-
-flow servers actually pay; the spin-loop path is the kernel
-floor with no reactor overhead.
+TCP with `TCP_NODELAY` + spin (`compare_all::tcp_nodelay_128b`)
+costs ~14 µs RTT — within ~1.5× of casting's ~9.3 µs. Async TCP
+through a reactor (the iggy project at apache/iggy#606) measures
+~100–1 000 µs — ~10–100× casting. The async path is what most
+production order-flow servers actually pay; the spin-loop path
+is the kernel floor with no reactor overhead.
 
 The TCP-vs-casting gap is not principally about TCP being
 "slow" — it is about head-of-line blocking, the one-stream
@@ -115,12 +114,12 @@ shared queue between them.
 
 ## Benchmark
 
-`benches/compare_tcp.rs` (run with `cargo bench --bench
-compare_tcp`) — Criterion, loopback, 64-byte payload, std
-`TcpListener` / `TcpStream` with `TCP_NODELAY` on both ends.
-Non-blocking sockets + spin-loop on the receiver, matching
-the style of `compare_udp.rs` and `compare_kcp.rs`'s spin
-variant.
+`benches/compare_all.rs::tcp_nodelay_128b` (run with `cargo bench
+-p rsx-cast --bench compare_all`) — Criterion, loopback, 128-byte
+payload, std `TcpListener` / `TcpStream` with `TCP_NODELAY` on
+both ends, under the shared `EchoClient` harness alongside
+raw_udp / kcp / quinn. The standalone `compare_tcp.rs` was folded
+into `compare_all.rs` in commit 836cfb1.
 
 The connection is established once in setup, before the
 timed loop. The 3-way handshake is not measured — this is
@@ -129,18 +128,18 @@ matches the QUIC bench convention (one connection, many
 iterations) and is what real long-lived consumers like
 DXS replay see in production.
 
-The receiver reads exactly 64 bytes per iteration in a
+The receiver reads exactly 128 bytes per iteration in a
 `read_exact`-style loop. Partial recvs are real on TCP and
 the bench must drain them correctly; a naive single `read()`
 would race and break the round-trip count under load.
 
-| Transport | Loopback p50 (measured / expected) |
+| Transport | Loopback p50 |
 |---|---|
-| Raw UDP | ~2 µs |
-| rsx-cast casting | ~10 µs |
-| TCP nodelay (this bench) | ~12–18 µs (measured) |
-| Tokio TCP (`compare_quinn.rs`) | ~100–1 000 µs |
-| Quinn QUIC | ~200–2 000 µs |
+| Raw UDP | ~9.9 µs (measured, 2026-07-01) |
+| rsx-cast casting | ~9.3 µs (measured, 2026-07-01) |
+| TCP nodelay (this bench) | ~14 µs (measured, 2026-05-24) |
+| Tokio async TCP (reactor) | ~100–1 000 µs (published, iggy#606) |
+| Quinn QUIC | ~37 µs measured; ~200–2 000 µs published |
 
 The std-blocking + spin variant is much faster than the
 tokio-async TCP path because there's no reactor wake-up

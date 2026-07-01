@@ -112,9 +112,10 @@ represented in this comparison.
 rsx-cast takes the opposite **default**: `WalWriter::flush()`
 invokes `File::sync_all()` (fsync), and the producer loop
 calls flush every 10 ms. Worst-case data loss on power failure
-is bounded to ~10 ms of records. The cost is the 651 µs fsync
-on the flush path; that cost is amortised across however many
-records batched into one flush window. See
+is bounded to ~10 ms of records. The cost is the ~426 µs fsync
+on the flush path (`wal_flush_interval/1rec`, 2026-07-01); that
+cost is amortised across however many records batched into one
+flush window (~1.13 µs/record at 1 000 records/flush). See
 `rsx-cast/benches/wal_fsync_bench.rs`.
 
 The comparison here is about **defaults**, not capabilities.
@@ -168,7 +169,7 @@ where capability differs from default it's called out.
 |---|---|---|
 | On-disk format | `.cq4` mmapped, Chronicle Wire (self-describing or fieldless) | `#[repr(C, align(64))]` fixed-layout records + 16 B header |
 | Disk format == wire format | yes (mmap IPC reads same bytes) | yes (casting frames + TCP replay are identical to WAL records) |
-| Rotation trigger | time (daily / hourly / weekly cycle) | size (64 MB) + retention GC (48 h) |
+| Rotation trigger | time (daily / hourly / weekly cycle) | size (64 MB) + retention GC (4 h) |
 | Random seek by sequence | O(log n) via embedded index | O(n) linear scan within a 64 MB file (no per-file index) |
 | Default per-append sync | none — OS page-cache flush only | `sync_all()` on every flush; flush cadence = 10 ms |
 | Manual sync API | yes (`ExcerptCommon.sync()`, `lastIndexMSynced()`, Bytes `SyncMode`) | yes (`WalWriter::flush()`) |
@@ -206,27 +207,36 @@ From `rsx-cast/benches/`, criterion p50 on the dev box. These
 benches are pure WAL-side; the casting and end-to-end RTT numbers
 live in the other compare/ docs.
 
+Bench IDs below are the current criterion IDs (the old
+`wal_append_*` names were renamed); numbers marked (2026-07-01)
+were re-run this session, the rest are last-measured.
+
 | Bench | What it measures | p50 |
 |---|---|---:|
-| `wal_bench::wal_append_in_memory` | `WalWriter::append` to in-memory buffer, no flush | ~31 ns |
-| `wal_fsync_bench::wal_append_fsync_single` | append + explicit flush + `sync_all()` | ~651 µs |
-| `wal_fsync_bench::wal_append_fsync_batch_100` | 100 appends + one flush + fsync | ~700 µs (~7 µs/record amortised) |
-| `wal_bench::wal_read_sequential_10k` | open + replay 10 K records sequentially | sub-ms |
-| `wal_random_read_bench::wal_random_read_10k` | random `read_record_at_seq` over 10 K file | ~23 ms (O(n) linear scan) |
-| `wal_random_read_bench::wal_random_read_100k` | random over 100 K file | linearly higher |
+| `wal_write/append_1rec` | prepare + `append_framed` to in-memory buffer, no flush | ~38 ns (2026-07-01) |
+| `wal_flush_interval/1rec` | 1 append + flush + `sync_all()` (unamortised) | ~426 µs (2026-07-01) |
+| `wal_flush_interval/100rec` | 100 appends + one flush + fsync | ~569 µs (~5.7 µs/record amortised, 2026-07-01) |
+| `wal_flush_interval/1k_rec` | 1 000 appends + one flush + fsync | ~1.13 ms (~1.13 µs/record amortised, 2026-07-01) |
+| `wal_read/replay/10k` | open + replay 10 K records sequentially | ~13.5 ms (2026-07-01) |
+| `wal_random_read_10k` | random `read_record_at_seq` over 10 K file | ~6.3 ms (O(n) linear scan, 2026-07-01) |
+| `wal_random_read_100k` | random over 100 K file | ~66 ms (~10× the 10 K file, confirming O(n), 2026-07-01) |
 
 The take-away when comparing:
 
-- **In-memory append** (31 ns) is in the same ballpark as the
+- **In-memory append** (~38 ns) is in the same ballpark as the
   Chronicle "well under 1 µs" claim. Both are bounded by a
   handful of cache-line writes + one bounds check.
-- **Durable append** (651 µs unamortised) is the cost rsx-cast
-  pays on every flush by default. OSS Chronicle does not pay
-  it by default — the OS page cache is left to flush in
-  background. Callers can opt in via `ExcerptCommon.sync()`
-  or `SyncMode`, at which point similar fsync-class costs
-  apply.
-- **Random read by seq** (23 ms over 10 K records) is rsx-cast's
+- **Durable append** (~426 µs unamortised, but ~1.13 µs/record
+  when 1 000 records batch into one flush) is the cost rsx-cast
+  pays on flush by default. OSS Chronicle does not pay it by
+  default — the OS page cache is left to flush in background.
+  Callers can opt in via `ExcerptCommon.sync()` or `SyncMode`,
+  at which point similar fsync-class costs apply. The
+  single-record ~426 µs and the batched ~1.13 µs/record are the
+  same fsync amortised over different batch sizes, not a
+  contradiction.
+- **Random read by seq** (~6.3 ms over a 10 K file, ~66 ms over
+  100 K — a clean ~10× confirming the O(n) scan) is rsx-cast's
   weakest leg — there is no per-file index. Chronicle's
   multi-level index makes the same operation O(log n) and would
   win on any large file. This is logged as a deferred feature.
@@ -239,10 +249,10 @@ linear). rsx-cast wins on **cross-host out of the box** and on
 
 ## Why we did not write a direct benchmark
 
-The benches in this directory (`compare_kcp.rs`, `compare_quinn.rs`,
-`compare_udp.rs`) all share one harness: spin up two endpoints
-in the same Rust process, measure echo RTT for a 64-byte casting
-frame.
+The reliable-transport benches (`compare_all.rs`: raw_udp / kcp /
+quinn / tcp under one `EchoClient` trait) all share one harness:
+spin up two endpoints in the same Rust process, measure echo RTT
+for a 128-byte casting frame.
 
 Chronicle Queue can't slot into that harness honestly:
 
@@ -267,8 +277,8 @@ those two numbers next to each other invites the wrong
 conclusion. We've chosen side-by-side published / self-harness
 numbers rather than fabricating an apples-to-apples RTT. The
 compare/ directory does include Criterion benches for protocols
-that **do** plug into the Rust harness (`compare_kcp.rs`,
-`compare_quinn.rs`); Chronicle intentionally does not, for the
+that **do** plug into the Rust harness (KCP, Quinn, TCP, raw UDP
+in `compare_all.rs`); Chronicle intentionally does not, for the
 reasons above.
 
 If a future deployment needs an mmap intra-host IPC path in

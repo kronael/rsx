@@ -93,7 +93,7 @@ Already covered in `aeron.md` and `lbm.md`. The long tail below.
   Supports PSK + DTLS encryption.
 - Differs from rsx-cast casting: optimised for video on lossy WAN
   (re-request horizon ~ seconds, FEC option), tunnel-mode framing
-  over RTP. casting retransmits fixed-size records from a 48-h WAL
+  over RTP. casting retransmits fixed-size records from a 4-h WAL
   with no FEC.
 
 ### SRT — Secure Reliable Transport
@@ -513,7 +513,7 @@ what *rides* on the transport.
 - Differs from rsx-cast casting: FEC instead of NAK (proactive rather
   than reactive), tree multicast topology, slot-bounded retention
   (you only retransmit within a block). casting is per-pair unicast,
-  no FEC, 48-h retention.
+  no FEC, 4-h retention.
 - Citable as the most-deployed UDP-reliable transport on
   the planet by raw bandwidth (Solana mainnet sustains
   ~tens of Gbps per validator).
