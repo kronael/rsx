@@ -662,7 +662,7 @@ fn recovery_resumes_pending_liquidations() {
         frozen_orders: FxHashMap::default(),
     };
 
-    s.load_state(state);
+    s.set_state(state);
     s.update_mark(0, 10_000);
 
     // Any non-liquidation order must be rejected because

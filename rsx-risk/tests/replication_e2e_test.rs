@@ -165,7 +165,7 @@ async fn standby_detects_main_crash_via_lock() {
 #[tokio::test]
 #[ignore]
 async fn cold_start_from_postgres() {
-    // Pure in-memory: ColdStartState -> load_state -> assert. No PG needed
+    // Pure in-memory: ColdStartState -> set_state -> assert. No PG needed
     // (the snapshot is constructed directly; persistence is covered by
     // persist_test.rs).
     let mut shard = RiskShard::new(test_config());
@@ -206,7 +206,7 @@ async fn cold_start_from_postgres() {
         frozen_orders: FxHashMap::default(),
     };
 
-    shard.load_state(state);
+    shard.set_state(state);
 
     assert_eq!(shard.tips[0], 10);
     assert_eq!(shard.accounts.len(), 1);

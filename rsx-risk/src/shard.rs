@@ -38,7 +38,7 @@ pub struct RiskShard {
     pub positions: FxHashMap<(u32, u32), Position>,
     /// Per-user index over `positions`. user_id → set of
     /// symbol_ids this user has a position in. Maintained on
-    /// every `ensure_position` and rebuilt on `load_state`.
+    /// every `ensure_position` and rebuilt on `set_state`.
     /// Replaces O(all_positions) scans in `positions_for_user`
     /// with O(this_user's_positions).
     positions_by_user: FxHashMap<u32, rustc_hash::FxHashSet<u32>>,
@@ -56,7 +56,7 @@ pub struct RiskShard {
     frozen_orders: FxHashMap<u128, (u32, i64)>,
     /// Per-user index over `frozen_orders`. user_id →
     /// {order_id → frozen_amount}. Maintained on every
-    /// frozen_orders insert/remove and rebuilt on `load_state`.
+    /// frozen_orders insert/remove and rebuilt on `set_state`.
     /// Replaces O(all_frozen) scans in `frozen_for_user` with
     /// O(this_user's_open_orders).
     frozen_by_user: FxHashMap<u32, FxHashMap<u128, i64>>,
@@ -128,7 +128,7 @@ impl RiskShard {
         self.persist_producer = Some(producer);
     }
 
-    pub fn load_state(&mut self, state: ColdStartState) {
+    pub fn set_state(&mut self, state: ColdStartState) {
         self.accounts = state.accounts;
         self.positions = state.positions;
         self.insurance_funds = state.insurance_funds;
