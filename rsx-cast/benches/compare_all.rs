@@ -157,6 +157,10 @@ fn make_kcp(conv: u32, queue: OutQueue) -> Kcp<UdpOutput> {
     k.set_nodelay(true, 1, 2, true); // turbo: nodelay, interval=1ms, resend=2, nc
     k.set_wndsize(128, 128);
     k.set_mtu(1400).unwrap();
+    // kcp requires one update() to set its `updated` flag before the
+    // first flush(), else flush() returns Err(NeedUpdate). Loopback has
+    // no loss so the retransmit clock is irrelevant; prime once at 0.
+    k.update(0);
     k
 }
 
