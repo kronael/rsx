@@ -135,7 +135,7 @@ pub fn forward_to_gw(
     payload: &[u8],
 ) {
     let plen = payload.len();
-    if plen < 8 || plen > 256 {
+    if !(8..=256).contains(&plen) {
         warn!("risk: gw forward bad payload len={plen}");
         return;
     }
