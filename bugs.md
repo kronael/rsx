@@ -6,6 +6,24 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **STARTUP-ORDERING-FRAGILITY** (MED, ops) — "can't start the system via the
+  playground" traced to a chain of order-dependencies, none self-healing:
+  (1) **Postgres must be up first** — if the `rsx-postgres` container is stopped/
+  gone, risk-0 crash-loops "error connecting to server" and nothing comes up;
+  the playground still reports "started 6 processes" (misleading). Mitigated:
+  `docker update --restart unless-stopped rsx-postgres` so it survives.
+  (2) **Playground manages the cluster in-memory** — restarting the playground
+  server orphans the processes it spawned and they die; the new instance starts
+  with an empty process table. (3) **Playground marketdata subscriber
+  circuit-breaks** if marketdata isn't live when the playground starts ("md
+  subscriber circuit open: N failures; pausing fan-out") and does NOT
+  auto-recover → `_book_snap` stays empty → orders can't price → rest/reject.
+  (4) Fresh PG needs `seed_accounts` (runs at playground startup) + a risk
+  restart to load them. (5) `/api/risk/users/N` mislabels an empty-positions
+  result as "no postgres connection". Correct bring-up order: PG → playground
+  server → cluster (start-all) → maker → deposits. Fix: a supervised start
+  sequence (or make PG a compose service + the playground reconnect its md
+  subscriber + not lose the process table on restart).
 - **BOOK-BENCH-DEEP-PANIC** (LOW, bench) — `deep_book_bench` panics
   `assert!("slab exhausted")` at `slab.rs:39` during `cancel_depth` (≥10k) /
   `deep_flat` (1M/10M). Harness `build(n)` sizes the slab to `n+1024`, but the
