@@ -20,6 +20,8 @@ use socket2::Type;
 use std::io;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
+use std::os::fd::AsRawFd;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
@@ -1155,6 +1157,19 @@ impl CastReceiver {
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.socket.local_addr()
+    }
+}
+
+/// Expose the underlying UDP fd so a caller running an async
+/// runtime (gateway/marketdata on monoio) can await readiness
+/// on its own reactor instead of polling `try_recv_with`. The
+/// caller duplicates the fd and wraps it for POLL_ADD-style
+/// wakeup; the recv itself still goes through this receiver's
+/// std socket. rsx-cast stays runtime-free — this is a pure
+/// read-only accessor, not a behavior change.
+impl AsRawFd for CastReceiver {
+    fn as_raw_fd(&self) -> RawFd {
+        self.socket.as_raw_fd()
     }
 }
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- rsx-cast: `impl AsRawFd for CastReceiver` — a founder-authorized,
+  purely additive read-only accessor exposing the receiver's UDP fd
+  so a caller on an async runtime (gateway on monoio/io_uring) can
+  await readiness on its own reactor instead of polling `try_recv_with`.
+  No runtime dep, no behavior change, no signature change — the recv
+  still goes through the receiver's std socket. The gateway now parks
+  on POLL_ADD and wakes the instant a casting datagram lands, dropping
+  the old `sleep(ZERO)` yield-spin from the response path.
+
 ## [v0.6.0] — 2026-05-30
 
 > RSX v0.6.0 — warm standby + zero-alloc hot path
