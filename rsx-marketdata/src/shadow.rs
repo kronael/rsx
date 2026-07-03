@@ -266,23 +266,10 @@ impl ShadowBook {
         &self,
         depth: usize,
     ) -> Vec<L2Level> {
-        let mut levels = Vec::with_capacity(depth);
-        let mut tick = self.book.best_bid_tick;
-        while tick != NONE && levels.len() < depth {
-            let level =
-                &self.book.active_levels[tick as usize];
-            if level.order_count > 0 {
-                let head = level.head;
-                let price =
-                    self.book.orders.get(head).price.0;
-                levels.push(L2Level {
-                    price,
-                    qty: level.total_qty,
-                    count: level.order_count,
-                });
-            }
-            tick = self.book.scan_next_bid(tick);
-        }
+        let mut levels = self.side_levels(Side::Buy);
+        // Bids best-first = highest price first.
+        levels.sort_by(|a, b| b.price.cmp(&a.price));
+        levels.truncate(depth);
         levels
     }
 
@@ -290,24 +277,35 @@ impl ShadowBook {
         &self,
         depth: usize,
     ) -> Vec<L2Level> {
-        let mut levels = Vec::with_capacity(depth);
-        let mut tick = self.book.best_ask_tick;
-        while tick != NONE && levels.len() < depth {
-            let level =
-                &self.book.active_levels[tick as usize];
-            if level.order_count > 0 {
-                let head = level.head;
-                let price =
-                    self.book.orders.get(head).price.0;
-                levels.push(L2Level {
-                    price,
-                    qty: level.total_qty,
-                    count: level.order_count,
-                });
-            }
-            tick = self.book.scan_next_ask(tick);
-        }
+        let mut levels = self.side_levels(Side::Sell);
+        // Asks best-first = lowest price first.
+        levels.sort_by(|a, b| a.price.cmp(&b.price));
+        levels.truncate(depth);
         levels
+    }
+
+    /// Every non-empty level on one side, unordered. The compression
+    /// map is a sawtooth (tick index is not price-monotonic), so the
+    /// caller sorts by price rather than walking indices. Off the
+    /// order critical path (marketdata dissemination), so the linear
+    /// scan + sort is fine.
+    fn side_levels(&self, side: Side) -> Vec<L2Level> {
+        let mut out = Vec::new();
+        for level in self.book.active_levels.iter() {
+            if level.order_count == 0 {
+                continue;
+            }
+            let head = self.book.orders.get(level.head);
+            if head.side != side as u8 {
+                continue;
+            }
+            out.push(L2Level {
+                price: head.price.0,
+                qty: level.total_qty,
+                count: level.order_count,
+            });
+        }
+        out
     }
 }
 
