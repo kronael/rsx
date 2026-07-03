@@ -7510,6 +7510,22 @@ async def api_sessions_status():
         }
 
 
+def _maker_liquidity_live() -> bool:
+    """True when the maker's quotes can actually be resting on a
+    live book: the gateway and at least one ME are running. When
+    false, the maker's local active_cids/levels are stale bookkeeping
+    (the gateway dropped the orders), not real liquidity.
+    """
+    procs = _cached_for("procs", 1.0, scan_processes)
+    running = {
+        p.get("name") for p in procs
+        if p.get("state") == "running"
+    }
+    gw_ok = any(n.startswith("gw-") for n in running)
+    me_ok = any(n.startswith("me-") for n in running)
+    return gw_ok and me_ok
+
+
 @app.get("/x/maker-status", response_class=HTMLResponse)
 async def x_maker_status():
     info = managed.get(MAKER_NAME)
@@ -7520,7 +7536,9 @@ async def x_maker_status():
             'maker stopped</span>')
     pid = info["proc"].pid if info else "?"
     stats = _read_maker_stats()
-    return HTMLResponse(pages.maker_status_html(stats, pid))
+    return HTMLResponse(
+        pages.maker_status_html(
+            stats, pid, liquidity_live=_maker_liquidity_live()))
 
 
 @app.get("/x/maker-live", response_class=HTMLResponse)
@@ -7538,6 +7556,7 @@ async def x_maker_live():
             pid=pid,
             restarts=restarts,
             stats=stats,
+            liquidity_live=_maker_liquidity_live() if running else True,
         )
     )
 
