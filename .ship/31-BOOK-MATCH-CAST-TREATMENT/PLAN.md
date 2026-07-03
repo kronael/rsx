@@ -138,3 +138,38 @@ integrate, run, verify numbers → commit → founder reviews the gate.**
 
 Applies to both crates. rsx-book first (its `compare/` dir is the only
 fully-missing piece; benches + README + notes already exist to build on).
+
+## Fairness & honesty — HARD requirements (added 2026-07-03)
+
+These are non-negotiable; the comparison is worthless (or dishonest) without them.
+
+### Uniform, minimal harness — same resources for every contender
+- ONE shared harness module per crate (`#[path="harness.rs"] mod harness;`),
+  used by every bench. It fixes: payload size, core pinning (client→core2,
+  server→core3), warmup, `sample_size`, alloc discipline. No bench re-rolls
+  its own — drift is how unfairness creeps in.
+- Every contender gets the SAME cores, SAME payload, SAME measurement config.
+- **Cast fairness bug found (2026-07-03): MoldUDP64 + SoupBinTCP benches are
+  NOT pinned** (`TODO(pinning)` never done) while raw-UDP/KCP/TCP/Aeron/cast
+  pin core2/3 — so the current cast table is not apples-to-apples. Fix as part
+  of the shared-harness refactor (founder-authorized change to the frozen
+  crate's benches). Also fix the stale "64-byte payload" doc headers in
+  mold/soup (const is 128).
+- Where a contender genuinely can't share resources (Aeron media-driver agents
+  can't be pinned), document the asymmetry explicitly in its note — don't hide it.
+
+### Flag every literature reimplementation
+- Any competitor we build from a paper/spec/blog (MoldUDP64, SoupBinTCP,
+  WK-Selph hashmap+DLL LOB, Disruptor-style matcher, array-ladder) is OUR
+  clean-room reimplementation and **may be incorrect or unoptimized** — it can
+  make us look good against a strawman or make the competitor look slow because
+  we built it badly.
+- Every such bench + its `compare/` note carries an explicit caveat: "clean-room
+  reimplementation from <source>; measures our version, NOT the vendor's
+  optimized code; treat as a reference-implementation baseline." Same standard
+  the cast MoldUDP64 note already sets — make it consistent across all.
+- **codex/oracle audits each reimplementation for faithfulness** (does it
+  actually implement the algorithm, or a simplified/favorable variant?) BEFORE
+  any number is published. This is codex's most important job here.
+- Real-vendor numbers (published) stay doc-only and clearly attributed as
+  theirs, never mixed with our measured baselines.
