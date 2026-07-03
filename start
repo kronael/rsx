@@ -136,6 +136,19 @@ BASE_MD_WS = 8180
 BASE_RISK_MARK_CAST = 9600
 BASE_ME_REPLICATION = 9700
 
+# Health / metrics servers (RSX_*_HEALTH_ADDR). Each daemon binds a
+# small HTTP /health + /metrics endpoint here. 98xx band: clear of the
+# cast ports (91xx-97xx), the WS ports (8080/8180), and replication
+# (97xx). One 10-port block per daemon type so multi-instance (ME per
+# symbol, risk per shard) offsets by index without colliding. The
+# suggested 9200-9205 could NOT be used — 9200 is BASE_RISK_CAST.
+BASE_ME_HEALTH = 9800        # + sid
+BASE_RISK_HEALTH = 9810      # + shard (replicas: + 10 + shard*2 + r)
+BASE_GW_HEALTH = 9820        # + gw
+BASE_MARK_HEALTH = 9830
+BASE_MD_HEALTH = 9840
+BASE_RECORDER_HEALTH = 9850
+
 DEFAULT_PG_URL = (
     "postgres://rsx:rsx@127.0.0.1:5432/rsx"
 )
@@ -242,6 +255,7 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_ME_REPLICATION_BIND_ADDR": me_replication,
             "RSX_ME_DATABASE_URL": pg_url,
             "RSX_ME_CORE_ID": str(CORE_ME_0 + len([s for s in symbols if s['id'] < sid])),
+            "RSX_ME_HEALTH_ADDR": f"127.0.0.1:{BASE_ME_HEALTH + sid}",
             "RUST_LOG": "info",
         }
         plan.append((
@@ -266,6 +280,8 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MARK_SOURCE_BINANCE_WS_URL":
                 binance_ws_url,
             "RSX_MARK_SOURCE_COINBASE_ENABLED": "0",
+            "RSX_MARK_HEALTH_ADDR":
+                f"127.0.0.1:{BASE_MARK_HEALTH}",
             "RUST_LOG": "info",
         },
     ))
@@ -300,6 +316,8 @@ def build_spawn_plan(config, pg_url, release=False):
                     f"127.0.0.1:{BASE_RISK_MARK_CAST}",
                 "RSX_MARK_CAST_ADDR":
                     f"127.0.0.1:{BASE_MARK_CAST}",
+                "RSX_RISK_HEALTH_ADDR":
+                    f"127.0.0.1:{BASE_RISK_HEALTH + shard}",
                 "DATABASE_URL": pg_url,
                 "RUST_LOG": "info",
             },
@@ -325,6 +343,8 @@ def build_spawn_plan(config, pg_url, release=False):
                             f"127.0.0.1:{BASE_GW_CAST}",
                         "RSX_ME_CAST_ADDRS": me_cast_addrs,
                         "RSX_RISK_WAL_DIR": "./tmp/wal",
+                        "RSX_RISK_HEALTH_ADDR":
+                            f"127.0.0.1:{BASE_RISK_HEALTH + 10 + shard * 2 + r}",
                         "DATABASE_URL": pg_url,
                         "RUST_LOG": "info",
                     },
@@ -365,6 +385,8 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_GW_RL_IP": "10000",
                 "RSX_MAX_SYMBOLS": "16",
                 "RSX_GW_CORE_ID": str(CORE_GW + gw),
+                "RSX_GW_HEALTH_ADDR":
+                    f"127.0.0.1:{BASE_GW_HEALTH + gw}",
                 **sym_env,
                 "RUST_LOG": "info",
             },
@@ -386,6 +408,8 @@ def build_spawn_plan(config, pg_url, release=False):
             "RSX_MD_REPLAY_ADDR":
                 f"127.0.0.1:{BASE_ME_REPLICATION + first_sid}",
             "RSX_MD_CORE_ID": str(CORE_MD),
+            "RSX_MD_HEALTH_ADDR":
+                f"127.0.0.1:{BASE_MD_HEALTH}",
             "RUST_LOG": "info",
         },
     ))
@@ -405,6 +429,8 @@ def build_spawn_plan(config, pg_url, release=False):
                 "./tmp/wal/archive",
             "RSX_RECORDER_TIP_FILE":
                 f"./tmp/recorder-tip-{sid}",
+            "RSX_RECORDER_HEALTH_ADDR":
+                f"127.0.0.1:{BASE_RECORDER_HEALTH}",
             "RUST_LOG": "info",
         },
     ))
