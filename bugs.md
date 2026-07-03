@@ -6,6 +6,15 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — `match_by_type_bench` +
+  `match_n_levels_bench` measure 32–120 µs where the match algo is ~30 ns and a
+  full single accept is 266 ns. `post_only_rest` (crosses nothing) at 69 µs is
+  the tell: the `iter_batched` depth-10k book fixture's alloc/drop cost bleeds
+  into the timed region (or, less likely, an O(depth) accept path — itself a
+  finding). Order-type/sweep numbers quarantined in the 20260703 report, NOT
+  cited as per-order-type latency. Fix: shallow-book fixture or exclude the
+  fixture drop from timing, then re-run under the Phase-2 codex faithfulness
+  audit. `match_by_depth` (~30ns flat) is unaffected + trusted.
 - **RECORDER-ARCHIVE-UNBOUNDED** (MED) — `tmp/wal/archive` grew to **59 GB**
   during this session's demo runs (continuous maker quoting → BBO/fill records
   archived with no retention), filling the disk → ENOSPC that failed cluster
