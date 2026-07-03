@@ -6,6 +6,20 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **BOOK-BENCH-DEEP-PANIC** (LOW, bench) — `deep_book_bench` panics
+  `assert!("slab exhausted")` at `slab.rs:39` during `cancel_depth` (≥10k) /
+  `deep_flat` (1M/10M). Harness `build(n)` sizes the slab to `n+1024`, but the
+  cancel_depth refill churn + big-N flat benches exceed it. Result: the depth
+  curves, `match_by_depth`, and the depth-independence flatness proof (Phase 1's
+  headline) were NOT captured. Fix: size the slab for churn/max-N in the harness
+  (or bound the refill). Book Phase 1 numbers incomplete until fixed.
+- **BOOK-BENCH-MICROOPS-OPTIMIZED** (LOW, bench) — several `book_bench` micro-ops
+  measure implausible picoseconds/zero because the op is elided (missing
+  `black_box`): `modify_order_qty_down` 0 ps, `slab_alloc_bump` 285 ps,
+  `slab_alloc_from_freelist` 735 ps, `compression_price_to_index_*` ~460 ps.
+  Also `match_single_fill` is mislabeled (5 µs — sweeps a 1k-ask book, not one
+  54 ns fill) and `insert_depth` is inverted (pair measurement). Fix: `black_box`
+  inputs/outputs + relabel/rescope. Quarantined in the 20260703 report.
 - **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — `match_by_type_bench` +
   `match_n_levels_bench` measure 32–120 µs where the match algo is ~30 ns and a
   full single accept is 266 ns. `post_only_rest` (crosses nothing) at 69 µs is
