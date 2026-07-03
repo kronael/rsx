@@ -67,5 +67,5 @@ Shows throughput, latency histogram, and error rate.
 
 ## Trade
 
-React-based trading UI served from the rsx-webui build.
-Full order blotter and live market data.
+Not served by the playground. Trading is via the `rsx-tui`
+terminal client (ratatui), a separate Rust binary.

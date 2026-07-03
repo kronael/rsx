@@ -2,6 +2,9 @@
 status: partial
 ---
 
+**SUPERSEDED 2026-07-03** — the trade UI is now the rsx-tui terminal
+client (ratatui). This spec is retained for history.
+
 # TRADE-UI.md
 
 Trade UI integration issues and fix plan.

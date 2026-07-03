@@ -242,11 +242,11 @@ rsx-mark/       External mark-price feeds → cast to risk
 rsx-recorder/   Archival replication consumer
 rsx-cli/        WAL dump/inspect tool
 rsx-log/        Per-thread SPSC → drain → tracing
+rsx-tui/        ratatui trading terminal (trade surface)
 ```
 
 Non-cargo subprojects: `rsx-playground/` (Python/FastAPI dev
-dashboard + Playwright), `rsx-webui/` (Vite + React + Tailwind
-Trade UI), `rsx-auth/` (Python OAuth service).
+dashboard + Playwright), `rsx-auth/` (Python OAuth service).
 
 ## Running it
 
