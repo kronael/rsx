@@ -25,6 +25,7 @@ use quinn::Connection;
 use quinn::Endpoint;
 use rustls::pki_types::CertificateDer;
 use rustls::RootCertStore;
+use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::mpsc::Receiver;
@@ -32,6 +33,7 @@ use std::sync::mpsc::Sender;
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Instant;
 use tokio::runtime::Builder;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -180,6 +182,12 @@ async fn run_client(
         return;
     }
 
+    // Send timestamps of in-flight orders, oldest first. A server
+    // `Latency` frame (which carries internal + engine time) is paired
+    // FIFO with the matching order to derive the net (client↔gateway)
+    // leg the server can't see: net = measured RTT − internal − engine.
+    let mut pending: VecDeque<Instant> = VecDeque::new();
+
     loop {
         tokio::select! {
             maybe = out_rx.recv() => match maybe {
@@ -188,6 +196,7 @@ async fn run_client(
                         let _ = inbound.send(GwEvent::Disconnected);
                         return;
                     }
+                    pending.push_back(Instant::now());
                 }
                 // QuicConn dropped: flush and exit cleanly.
                 None => {
@@ -197,6 +206,7 @@ async fn run_client(
             },
             event = wire::read_event(&mut recv) => match event {
                 Ok(ev) => {
+                    let ev = fill_net_leg(ev, &mut pending);
                     if inbound.send(ev).is_err() {
                         return;
                     }
@@ -207,6 +217,27 @@ async fn run_client(
                 }
             },
         }
+    }
+}
+
+/// For a server `Latency` frame, measure the round-trip against the
+/// oldest in-flight order and fill the `net` leg (RTT minus the
+/// server-reported internal + engine time). Other events pass through.
+fn fill_net_leg(
+    ev: GwEvent,
+    pending: &mut VecDeque<Instant>,
+) -> GwEvent {
+    match ev {
+        GwEvent::Latency { internal_ns, engine_ns, .. } => {
+            let rtt_ns = pending
+                .pop_front()
+                .map(|t| t.elapsed().as_nanos() as u64)
+                .unwrap_or(0);
+            let net_ns =
+                rtt_ns.saturating_sub(internal_ns.saturating_add(engine_ns));
+            GwEvent::Latency { net_ns, internal_ns, engine_ns }
+        }
+        other => other,
     }
 }
 

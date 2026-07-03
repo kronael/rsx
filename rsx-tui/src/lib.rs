@@ -57,5 +57,19 @@ pub fn demo_events() -> Vec<GwEvent> {
             entry_px: 9_998,
             upnl: 42,
         },
+        // Representative measured component figures (see reports/):
+        // ME match ~340 ns, internal casting RTT ~7.6 µs, local net
+        // ~2.5 µs. Two samples so p50 / best differ. The live path
+        // replaces these with what the gateway actually stamps.
+        GwEvent::Latency {
+            net_ns: 2_500,
+            internal_ns: 7_600,
+            engine_ns: 340,
+        },
+        GwEvent::Latency {
+            net_ns: 2_300,
+            internal_ns: 7_100,
+            engine_ns: 310,
+        },
     ]
 }

@@ -7,6 +7,8 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::Terminal;
 use rsx_tui::app::App;
+use rsx_tui::app::Latency;
+use rsx_tui::conn::GwEvent;
 use rsx_tui::conn::MockConn;
 use rsx_tui::conn::Side;
 use rsx_tui::conn::Tif;
@@ -120,6 +122,28 @@ fn q_and_esc_quit() {
         handle_key(&mut app, KeyCode::Esc, &mut conn),
         Control::Quit,
     );
+}
+
+#[test]
+fn latency_events_fold_into_stats() {
+    let mut app = App::new("PENGU-PERP");
+    app.apply_event(GwEvent::Latency {
+        net_ns: 2_500,
+        internal_ns: 7_600,
+        engine_ns: 340,
+    });
+    app.apply_event(GwEvent::Latency {
+        net_ns: 2_300,
+        internal_ns: 7_100,
+        engine_ns: 310,
+    });
+    assert_eq!(
+        app.last_lat,
+        Some(Latency { net_ns: 2_300, internal_ns: 7_100, engine_ns: 310 }),
+    );
+    // totals: 10_440 then 9_710 -> sorted [9_710, 10_440].
+    assert_eq!(app.lat_p50_ns(), Some(10_440));
+    assert_eq!(app.lat_min_ns(), Some(9_710));
 }
 
 #[test]

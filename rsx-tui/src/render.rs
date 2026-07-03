@@ -30,12 +30,14 @@ pub fn draw(f: &mut Frame, app: &App) {
             Constraint::Min(0),
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(f.area());
 
     draw_status(f, root[0], app);
-    draw_statusline(f, root[2], app);
-    draw_help(f, root[3]);
+    draw_speed(f, root[2], app);
+    draw_statusline(f, root[3], app);
+    draw_help(f, root[4]);
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -76,6 +78,57 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         ),
     ]);
     f.render_widget(Paragraph::new(line), area);
+}
+
+/// Format a nanosecond duration adaptively with integer math (no
+/// floats): `340 ns`, `9.6 µs`, `1.28 ms`.
+fn fmt_ns(ns: u64) -> String {
+    if ns < 1_000 {
+        format!("{ns} ns")
+    } else if ns < 1_000_000 {
+        format!("{}.{} µs", ns / 1_000, (ns % 1_000) / 100)
+    } else {
+        format!("{}.{:02} ms", ns / 1_000_000, (ns % 1_000_000) / 10_000)
+    }
+}
+
+/// The speed strip — the whole point of the terminal's pitch. Shows the
+/// last round-trip split into net / internal / engine, plus rolling
+/// p50 and best. Dim until the first measurement arrives.
+fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
+    let cyan = Style::default().fg(Color::Cyan);
+    let dim = Style::default().fg(Color::DarkGray);
+    let spans = match app.last_lat {
+        None => vec![Span::styled(
+            " ⚡ latency: waiting for first round-trip…",
+            dim,
+        )],
+        Some(l) => {
+            let total = fmt_ns(l.total_ns());
+            let p50 = app.lat_p50_ns().map(fmt_ns).unwrap_or_default();
+            let best = app.lat_min_ns().map(fmt_ns).unwrap_or_default();
+            vec![
+                Span::styled(
+                    format!(" ⚡ RTT {total} "),
+                    cyan.add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(
+                        "= net {} + internal {} + engine {}",
+                        fmt_ns(l.net_ns),
+                        fmt_ns(l.internal_ns),
+                        fmt_ns(l.engine_ns),
+                    ),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!("   p50 {p50} · best {best}"),
+                    dim,
+                ),
+            ]
+        }
+    };
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The most recent event / action, so the trader gets feedback.

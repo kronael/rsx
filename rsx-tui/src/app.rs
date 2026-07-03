@@ -14,6 +14,28 @@ use std::collections::VecDeque;
 /// Trade tape depth.
 const MAX_TRADES: usize = 50;
 
+/// Rolling latency-sample window (for p50 / min).
+const MAX_LAT: usize = 128;
+
+/// One measured round-trip, split by where the time went (ns).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Latency {
+    /// client ↔ gateway (QUIC leg).
+    pub net_ns: u64,
+    /// casting GW→Risk→ME→Risk→GW (internal UDP).
+    pub internal_ns: u64,
+    /// ME match + risk processing.
+    pub engine_ns: u64,
+}
+
+impl Latency {
+    pub fn total_ns(&self) -> u64 {
+        self.net_ns
+            .saturating_add(self.internal_ns)
+            .saturating_add(self.engine_ns)
+    }
+}
+
 /// Which order-entry field has focus (digits/backspace edit it).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Field {
@@ -79,6 +101,10 @@ pub struct App {
     pub open_orders: usize,
     /// Fills observed this session.
     pub fills: usize,
+    /// Most recent measured round-trip breakdown.
+    pub last_lat: Option<Latency>,
+    /// Rolling window of round-trip totals (ns) for p50 / min.
+    pub lat_totals: VecDeque<u64>,
 }
 
 impl App {
@@ -95,7 +121,24 @@ impl App {
             entry: OrderEntry::new(),
             open_orders: 0,
             fills: 0,
+            last_lat: None,
+            lat_totals: VecDeque::new(),
         }
+    }
+
+    /// p50 of the round-trip totals in the rolling window (ns).
+    pub fn lat_p50_ns(&self) -> Option<u64> {
+        if self.lat_totals.is_empty() {
+            return None;
+        }
+        let mut v: Vec<u64> = self.lat_totals.iter().copied().collect();
+        v.sort_unstable();
+        Some(v[v.len() / 2])
+    }
+
+    /// Minimum round-trip total in the rolling window (ns).
+    pub fn lat_min_ns(&self) -> Option<u64> {
+        self.lat_totals.iter().copied().min()
     }
 
     /// Best ask minus best bid; 0 if either side is empty.
@@ -148,6 +191,14 @@ impl App {
                     Some(p) => *p = row,
                     None => self.positions.push(row),
                 }
+            }
+            GwEvent::Latency { net_ns, internal_ns, engine_ns } => {
+                let lat = Latency { net_ns, internal_ns, engine_ns };
+                self.lat_totals.push_back(lat.total_ns());
+                if self.lat_totals.len() > MAX_LAT {
+                    self.lat_totals.pop_front();
+                }
+                self.last_lat = Some(lat);
             }
         }
     }
