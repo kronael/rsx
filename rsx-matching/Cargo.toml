@@ -42,5 +42,13 @@ name = "match_n_levels_bench"
 harness = false
 
 [[bench]]
+name = "match_depth_bench"
+harness = false
+
+[[bench]]
+name = "match_by_type_bench"
+harness = false
+
+[[bench]]
 name = "wal_replay_bench"
 harness = false
