@@ -6,6 +6,15 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **RECORDER-ARCHIVE-UNBOUNDED** (MED) — `tmp/wal/archive` grew to **59 GB**
+  during this session's demo runs (continuous maker quoting → BBO/fill records
+  archived with no retention), filling the disk → ENOSPC that failed cluster
+  stop/start via the playground API. WAL retention (`RETENTION_NS`=4h) covers
+  the hot tier (`tmp/wal/pengu` stayed 39 MB), but the recorder's ARCHIVE
+  stream has no rotation/GC — "ARCHIVE handles long-term durability" was taken
+  literally as keep-forever. Fix: archive rotation/retention (size or age cap),
+  or document that archive needs external lifecycle management + a dev cap.
+  Cleared manually (find -delete + kill recorder to release the fd) → 100 G free.
 - **BENCH-MOLD-SOUP-UNPINNED** (LOW, fairness) — `compare_moldudp64` +
   `compare_soupbintcp` never pin their threads (`TODO(pinning)` never done)
   while casting/raw-UDP/KCP/Aeron pin client→core2/echo→core3. Their numbers
