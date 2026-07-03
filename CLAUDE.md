@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Spec-first perpetuals exchange. All specs in `specs/2/`.
 
-## Architecture (see specs/2/20-network.md, TILES.md)
+## Architecture (see specs/2/20-network.md, specs/2/45-tiles.md)
 
 - Separate processes: Gateway, Risk (per user shard),
   ME (per symbol), Marketdata, Recorder, Mark
@@ -21,7 +21,7 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
   - Live path: casting/UDP (order flow, fills)
   - Cold path: WAL replication over TCP (replay, replication)
 - Within each process: tile architecture (pinned threads
-  + SPSC rings for intra-process IPC, see TILES.md)
+  + SPSC rings for intra-process IPC, see specs/2/45-tiles.md)
 - Hot path I/O: monoio (io_uring) on Gateway (WS, many client fds);
   Risk hot loop is std non-blocking UDP busy-spin (rsx-cast CastReceiver,
   no runtime on the hot path); tokio off-path only (PG write-behind, lease).
@@ -34,7 +34,7 @@ Spec-first perpetuals exchange. All specs in `specs/2/`.
 
 ## Crate Layout
 
-Rust workspace (12 crates, see Cargo.toml):
+Rust workspace (14 crates, see Cargo.toml):
 
 ```
 rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
@@ -53,6 +53,9 @@ rsx-recorder/   Archival replication consumer (separate process)
 rsx-cli/        WAL dump/inspect tool (clap CLI)
 rsx-log/        Off-hot-path logging primitive (per-thread
                 SPSC ring → drain thread → tracing events)
+rsx-health/     Health/metrics primitive: HealthSnapshot +
+                spawn_health_server (/health /ready /metrics),
+                LoadGauges shared by all daemons
 rsx-tui/        Trade surface: ratatui trading terminal
                 (orderbook ladder, order entry, positions/
                 fills over the gateway WS)
@@ -315,7 +318,7 @@ for notional = price * qty at risk boundary.
 | Mark price | specs/2/15-mark.md | specs/2/39-testing-mark.md |
 | Gateway | specs/2/20-network.md, specs/2/49-webproto.md, specs/2/29-rpc.md, specs/2/18-messages.md | specs/2/37-testing-gateway.md |
 | Market data | specs/2/16-marketdata.md | specs/2/40-testing-marketdata.md |
-| SPSC rings | notes/SMRB.md | specs/2/43-testing-smrb.md |
+| SPSC rings | specs/2/45-tiles.md | specs/2/43-testing-smrb.md |
 | Validation edge cases | specs/2/47-validation-edge-cases.md | (cross-references all) |
 
 ## Root Navigation
