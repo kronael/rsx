@@ -69,6 +69,24 @@ fn empty_app_offline_before_connect() {
 }
 
 #[test]
+fn renders_speed_strip_breakdown() {
+    // demo feed includes Latency events, so the speed strip shows the
+    // net/internal/engine split and formatted values.
+    let s = render(&demo_app(), 120, 30);
+    assert!(s.contains("RTT"), "speed strip present");
+    assert!(s.contains("net"), "net leg labelled");
+    assert!(s.contains("internal"), "internal leg labelled");
+    assert!(s.contains("engine"), "engine leg labelled");
+    assert!(s.contains("ns") || s.contains("µs"), "formatted latency");
+}
+
+#[test]
+fn speed_strip_waits_before_first_measurement() {
+    let s = render(&App::new("PENGU-PERP"), 120, 30);
+    assert!(s.contains("waiting"), "speed strip idle before first RTT");
+}
+
+#[test]
 fn narrow_terminal_does_not_panic() {
     let _ = render(&demo_app(), 20, 8);
 }

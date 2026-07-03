@@ -105,6 +105,17 @@ pub enum GwEvent {
         entry_px: i64,
         upnl: i64,
     },
+    /// A measured round-trip for one operation, broken into where the
+    /// time went (nanoseconds). `net` = client↔gateway (the QUIC leg,
+    /// measured by this client); `internal` = casting GW→Risk→ME→Risk→GW
+    /// (internal UDP hops, stamped by the gateway); `engine` = ME match +
+    /// risk processing (stamped by the gateway). Total = net + internal +
+    /// engine. Emitted by the transport after each order round-trip.
+    Latency {
+        net_ns: u64,
+        internal_ns: u64,
+        engine_ns: u64,
+    },
 }
 
 /// Transport to the gateway. Non-blocking: `poll_event` returns the

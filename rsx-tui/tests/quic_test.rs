@@ -65,6 +65,16 @@ async fn run_server(endpoint: Endpoint, got: mpsc::Sender<OrderReq>) {
     if wire::write_event(&mut send, &fill).await.is_err() {
         return;
     }
+    // Timing report: the gateway knows internal (casting) + engine time;
+    // net is left 0 for the client to fill from the measured round-trip.
+    let lat = GwEvent::Latency {
+        net_ns: 0,
+        internal_ns: 7_600,
+        engine_ns: 340,
+    };
+    if wire::write_event(&mut send, &lat).await.is_err() {
+        return;
+    }
     // Hold the connection open until the client closes (returns Err).
     let _ = wire::read_order(&mut recv).await;
 }
@@ -100,12 +110,16 @@ fn quic_loopback_roundtrips_order_and_event() {
 
     let mut saw_connected = false;
     let mut saw_fill: Option<GwEvent> = None;
+    let mut saw_lat: Option<GwEvent> = None;
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && (!saw_connected || saw_fill.is_none()) {
+    while Instant::now() < deadline
+        && (!saw_connected || saw_fill.is_none() || saw_lat.is_none())
+    {
         while let Some(ev) = conn.poll_event() {
             match ev {
                 GwEvent::Connected => saw_connected = true,
                 GwEvent::Fill { .. } => saw_fill = Some(ev),
+                GwEvent::Latency { .. } => saw_lat = Some(ev),
                 _ => {}
             }
         }
@@ -118,6 +132,17 @@ fn quic_loopback_roundtrips_order_and_event() {
         fill,
         GwEvent::Fill { oid: 7, px: 10_001, qty: 5, side: Side::Buy },
     );
+
+    // The client filled the net leg from its measured round-trip; the
+    // server-stamped internal + engine components pass through unchanged.
+    match saw_lat.expect("client never observed Latency") {
+        GwEvent::Latency { net_ns, internal_ns, engine_ns } => {
+            assert_eq!(internal_ns, 7_600);
+            assert_eq!(engine_ns, 340);
+            assert!(net_ns > 0, "client measured the net (client↔gateway) leg");
+        }
+        other => panic!("expected Latency, got {other:?}"),
+    }
 
     let got = order_rx
         .recv_timeout(Duration::from_secs(2))

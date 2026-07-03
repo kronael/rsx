@@ -64,6 +64,11 @@ enum WireEvent {
         entry_px: i64,
         upnl: i64,
     },
+    Latency {
+        net_ns: u64,
+        internal_ns: u64,
+        engine_ns: u64,
+    },
 }
 
 impl From<WireEvent> for GwEvent {
@@ -88,6 +93,9 @@ impl From<WireEvent> for GwEvent {
                     entry_px,
                     upnl,
                 }
+            }
+            WireEvent::Latency { net_ns, internal_ns, engine_ns } => {
+                GwEvent::Latency { net_ns, internal_ns, engine_ns }
             }
         }
     }
