@@ -2,6 +2,9 @@
 name = "rsx-book"
 version = "0.2.0"
 edition = "2021"
+# harness.rs is a shared module (#[path] include), not a bench target;
+# disable auto-discovery so only the explicit [[bench]] entries build.
+autobenches = false
 
 [dependencies]
 rsx-types = { path = "../rsx-types" }
@@ -10,6 +13,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 criterion = "0.5"
+core_affinity = "0.8"
 
 [[bench]]
 name = "book_bench"
