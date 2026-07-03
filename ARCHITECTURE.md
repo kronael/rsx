@@ -1,6 +1,6 @@
 # RSX System Architecture
 
-Spec-first perpetuals exchange. ~21k LOC Rust across 12 crates.
+Spec-first perpetuals exchange. ~22k LOC Rust across 14 crates.
 All specifications in `specs/2/`.
 
 ## System Diagram
@@ -222,7 +222,7 @@ See `rsx-types/src/lib.rs`.
 10. Advisory lock exclusive: one main per shard
 
 See GUARANTEES.md for formal durability and recovery
-specifications. See CRITIQUE.md for known gaps.
+specifications. See bugs.md + PROGRESS.md for known gaps.
 
 ## Durability Model
 
