@@ -173,3 +173,26 @@ These are non-negotiable; the comparison is worthless (or dishonest) without the
   any number is published. This is codex's most important job here.
 - Real-vendor numbers (published) stay doc-only and clearly attributed as
   theirs, never mixed with our measured baselines.
+
+### Provenance taxonomy — readers must know what each number IS (added 2026-07-03)
+
+Every contender is one of three kinds; label it visibly everywhere a number
+appears (compare table column, per-note banner, README legend):
+
+- **[lib]** — the real third-party library, linked + run here (cast: `kcp`,
+  `quinn`, std raw-UDP; book/matching: any real crate we can depend on). The
+  number is that library, on this box. Trustworthy.
+- **[reimpl]** — OUR clean-room reimplementation from a spec/paper/blog (cast:
+  MoldUDP64, SoupBinTCP; book: WK-Selph hashmap+DLL, array-ladder; matching:
+  Disruptor-style baseline). May be wrong or unoptimized — a reference baseline,
+  NOT the vendor's real performance. codex audits faithfulness before publish.
+- **[pub]** — a published vendor figure we did NOT run (Aeron AWS-pinned,
+  Chronicle, LBM, kdb+, Nasdaq INET). Attributed as theirs; never averaged in
+  with our measured rows.
+
+Rules:
+- The compare-table gets a `Kind` column with these tags. No untagged rows.
+- Each `compare/<x>.md` opens with a one-line provenance banner.
+- Each README's "How fast" / comparison section carries the 3-line legend.
+- A [reimpl] row NEVER claims we "beat product X" — only "beat our reference
+  reimplementation of X's approach". Keep that wording discipline.
