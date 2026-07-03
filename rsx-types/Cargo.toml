@@ -2,6 +2,13 @@
 name = "rsx-types"
 version = "0.2.0"
 edition = "2021"
+description = "Fixed-point Price/Qty newtypes, order enums, and hot-thread (pin + mlock + cache-pad) setup helpers for a low-latency exchange."
+repository = "https://github.com/kronael/rsx"
+license = "MIT OR Apache-2.0"
+keywords = ["fixed-point", "trading", "low-latency", "newtype", "cache-line"]
+categories = ["data-structures", "concurrency"]
+readme = "README.md"
+publish = false
 
 [dependencies]
 core_affinity = "0.8"
