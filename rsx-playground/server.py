@@ -3827,13 +3827,36 @@ async def x_stale_orders():
         f'{len(stale)} stale order(s)</span>')
 
 
+def _me_live(symbol_id: int) -> bool:
+    """True when the matching engine for this symbol is running.
+
+    The book ladder renders the last snapshot; if the ME is down
+    that ladder is stale (no longer backed by a live book), so the
+    caller badges it as such instead of showing phantom liquidity.
+    """
+    sym_name = next(
+        (k for k, v in start_mod.SYMBOLS.items()
+         if v["id"] == symbol_id),
+        None,
+    )
+    if not sym_name:
+        return True  # unknown symbol: don't assert staleness
+    me_name = f"me-{sym_name.lower()}"
+    procs = _cached_for("procs", 1.0, scan_processes)
+    return any(
+        p.get("name") == me_name and p.get("state") == "running"
+        for p in procs
+    )
+
+
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
+    stale = not _me_live(symbol_id)
     snap = _book_snap.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, snap,
-                                     source="live"))
+                                     source="live", stale=stale))
     # Fallback: WAL BBO gives at most 1 bid + 1 ask
     bbo = parse_wal_bbo(symbol_id)
     if bbo is not None:
@@ -3846,13 +3869,13 @@ async def x_book(symbol_id: int = Query(10)):
                 {"px": bbo["ask_px"], "qty": bbo["ask_qty"]}]
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, snap_from_bbo,
-                                     source="synthetic"))
+                                     source="synthetic", stale=stale))
     # Last fallback: maker book
     maker_snap = _maker_book(symbol_id)
     if maker_snap:
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, maker_snap,
-                                     source="synthetic"))
+                                     source="synthetic", stale=stale))
     return HTMLResponse(
         pages.render_book_ladder(symbol_id, None))
 
