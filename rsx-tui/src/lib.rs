@@ -52,7 +52,7 @@ pub fn demo_events() -> Vec<GwEvent> {
         GwEvent::Trade { side: Side::Buy, px: 10_001, qty: 5 },
         GwEvent::Trade { side: Side::Sell, px: 10_000, qty: 3 },
         GwEvent::Position {
-            symbol: "PENGU-PERP",
+            symbol: "PENGU-PERP".to_owned(),
             net_qty: 14,
             entry_px: 9_998,
             upnl: 42,
@@ -62,12 +62,12 @@ pub fn demo_events() -> Vec<GwEvent> {
         // ~2.5 µs. Two samples so p50 / best differ. The live path
         // replaces these with what the gateway actually stamps.
         GwEvent::Latency {
-            net_ns: 2_500,
+            net_ns: Some(2_500),
             internal_ns: 7_600,
             engine_ns: 340,
         },
         GwEvent::Latency {
-            net_ns: 2_300,
+            net_ns: Some(2_300),
             internal_ns: 7_100,
             engine_ns: 310,
         },

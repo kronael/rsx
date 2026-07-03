@@ -15,91 +15,9 @@
 
 use crate::conn::GwEvent;
 use crate::conn::OrderReq;
-use crate::conn::Side;
 use quinn::RecvStream;
 use quinn::SendStream;
-use serde::Deserialize;
 use std::io;
-
-/// Owned mirror of `GwEvent` for the read side.
-///
-/// `GwEvent::Position` holds `symbol: &'static str`, so `GwEvent` can
-/// only be `Deserialize<'static>` — impossible to decode from a borrowed
-/// frame buffer. This mirror is `DeserializeOwned` (`symbol: String`);
-/// the `From` impl converts to `GwEvent`, leaking the symbol once per
-/// position update (symbols are a small fixed set, so the leak is
-/// bounded). Field names match `GwEvent` so the externally-tagged JSON
-/// that `GwEvent`'s `Serialize` produces decodes straight into this.
-#[derive(Deserialize)]
-enum WireEvent {
-    Connected,
-    Disconnected,
-    Book {
-        bids: Vec<(i64, i64)>,
-        asks: Vec<(i64, i64)>,
-    },
-    Trade {
-        side: Side,
-        px: i64,
-        qty: i64,
-    },
-    Accepted {
-        oid: u64,
-    },
-    Fill {
-        oid: u64,
-        px: i64,
-        qty: i64,
-        side: Side,
-    },
-    Done {
-        oid: u64,
-    },
-    Rejected {
-        reason: String,
-    },
-    Position {
-        symbol: String,
-        net_qty: i64,
-        entry_px: i64,
-        upnl: i64,
-    },
-    Latency {
-        net_ns: u64,
-        internal_ns: u64,
-        engine_ns: u64,
-    },
-}
-
-impl From<WireEvent> for GwEvent {
-    fn from(w: WireEvent) -> GwEvent {
-        match w {
-            WireEvent::Connected => GwEvent::Connected,
-            WireEvent::Disconnected => GwEvent::Disconnected,
-            WireEvent::Book { bids, asks } => GwEvent::Book { bids, asks },
-            WireEvent::Trade { side, px, qty } => {
-                GwEvent::Trade { side, px, qty }
-            }
-            WireEvent::Accepted { oid } => GwEvent::Accepted { oid },
-            WireEvent::Fill { oid, px, qty, side } => {
-                GwEvent::Fill { oid, px, qty, side }
-            }
-            WireEvent::Done { oid } => GwEvent::Done { oid },
-            WireEvent::Rejected { reason } => GwEvent::Rejected { reason },
-            WireEvent::Position { symbol, net_qty, entry_px, upnl } => {
-                GwEvent::Position {
-                    symbol: Box::leak(symbol.into_boxed_str()),
-                    net_qty,
-                    entry_px,
-                    upnl,
-                }
-            }
-            WireEvent::Latency { net_ns, internal_ns, engine_ns } => {
-                GwEvent::Latency { net_ns, internal_ns, engine_ns }
-            }
-        }
-    }
-}
 
 /// Reject frames larger than this (guards a corrupt/hostile length
 /// prefix from triggering a huge allocation). 1 MiB is far above any
@@ -163,6 +81,5 @@ pub async fn write_event(
 /// Client side: decode one event frame into a `GwEvent`.
 pub async fn read_event(recv: &mut RecvStream) -> io::Result<GwEvent> {
     let body = read_frame(recv).await?;
-    let wire: WireEvent = serde_json::from_slice(&body).map_err(to_io)?;
-    Ok(wire.into())
+    serde_json::from_slice(&body).map_err(to_io)
 }

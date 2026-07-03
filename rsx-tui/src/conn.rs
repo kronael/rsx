@@ -58,13 +58,10 @@ pub struct OrderReq {
 /// Inbound event from the gateway. The UI folds these into `App`
 /// state each tick. Prices/quantities are raw i64 fixed-point, the
 /// wire representation (conversion to human units is a display
-/// concern, done at render).
-/// `Serialize` only: `GwEvent::Position` holds `symbol: &'static str`,
-/// which can only implement `Deserialize<'static>`, never
-/// `DeserializeOwned` — so it cannot be decoded from a borrowed buffer.
-/// The read path decodes an owned mirror (`wire::WireEvent`) and converts,
-/// leaking the symbol once per position update. See `wire.rs`.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+/// concern, done at render). All fields are owned, so `GwEvent`
+/// decodes straight off a frame buffer (`DeserializeOwned`) — no
+/// borrowed mirror, no per-event leak.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum GwEvent {
     Connected,
     Disconnected,
@@ -98,21 +95,22 @@ pub enum GwEvent {
     Rejected {
         reason: String,
     },
-    /// A position update for the account.
+    /// A position update for the account. `symbol` is owned (no leak).
     Position {
-        symbol: &'static str,
+        symbol: String,
         net_qty: i64,
         entry_px: i64,
         upnl: i64,
     },
     /// A measured round-trip for one operation, broken into where the
-    /// time went (nanoseconds). `net` = client↔gateway (the QUIC leg,
-    /// measured by this client); `internal` = casting GW→Risk→ME→Risk→GW
-    /// (internal UDP hops, stamped by the gateway); `engine` = ME match +
-    /// risk processing (stamped by the gateway). Total = net + internal +
-    /// engine. Emitted by the transport after each order round-trip.
+    /// time went (nanoseconds). `internal` = casting GW→Risk→ME→Risk→GW
+    /// (stamped by the gateway); `engine` = ME match + risk processing
+    /// (stamped by the gateway). `net_ns` = client↔gateway (the QUIC
+    /// leg): the gateway sends it `None`; the client fills it from the
+    /// measured round-trip, or leaves it `None` when it can't be paired
+    /// to a submitted order (so the display never shows a fabricated 0).
     Latency {
-        net_ns: u64,
+        net_ns: Option<u64>,
         internal_ns: u64,
         engine_ns: u64,
     },
