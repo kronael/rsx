@@ -33,6 +33,11 @@ fn run<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
 ) -> io::Result<()> {
     let mut app = App::new("PENGU-PERP");
+    // Offline demo transport. The live path is `rsx_tui::QuicConn`:
+    //   let roots = rsx_tui::quic::roots([gateway_cert])?;
+    //   let mut conn = QuicConn::connect(addr, "gateway", roots)?;
+    // Both implement `GatewayConn`, so the loop below is unchanged. The
+    // mock keeps `cargo run -p rsx-tui` working with no live gateway.
     let mut conn = MockConn::new();
     conn.push_events(demo_events());
 
