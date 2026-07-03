@@ -1,4 +1,15 @@
-//! rsx-log: off-hot-path logging primitive. See README.md.
+//! An off-hot-path logging primitive: a per-thread wait-free SPSC ring feeds a
+//! single drain thread that turns records into `tracing` events.
+//!
+//! The producer side is a ~20–30 ns wait-free [`push`] of a fixed-shape
+//! [`Record`] onto a thread-local `rtrb` ring — no allocation, no lock, no
+//! syscall, no clock read on the hot path. [`start_drainer`] spawns one drain
+//! thread that periodically sweeps every registered ring and dispatches to
+//! `tracing::event!`. A full ring drops and bumps a counter instead of blocking,
+//! so a pinned busy-loop tile never stalls on telemetry. The intended entry
+//! point is the [`latency_sample!`] macro, which compiles to nothing unless the
+//! calling crate enables its own `latency-trace` feature. See README.md and
+//! ARCHITECTURE.md.
 
 use rtrb::Consumer;
 use rtrb::Producer;
