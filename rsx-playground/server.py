@@ -3371,43 +3371,87 @@ async def x_core_affinity():
 
 @app.get("/x/cast-flows", response_class=HTMLResponse)
 async def x_cast_flows():
-    # Per-pipe counters wired to per-process WAL streams so the
-    # three rows show distinct numbers under load (F3.4). Each
-    # process writes its own outbound casting frames to its own WAL
-    # stream, so counting records on the producer's stream is
-    # the closest proxy without adding cross-process telemetry.
+    # Truthful per-pipe counters (see _cast_pipe_counts):
+    # ME->Mktdata from the ME's per-symbol WAL; gw/risk write NO
+    # WAL, so their legs come from the daemon health /metrics
+    # endpoints, or render "live" when those aren't exposed.
     counts = _cached_for("cast_pipe_counts", 1.0, _cast_pipe_counts)
     return HTMLResponse(pages.render_cast_flows(counts))
 
 
-def _cast_pipe_counts() -> dict:
-    """Count outbound casting records per producer WAL stream.
+def _fetch_daemon_counter(addr: str, counter: str):
+    """Read one counter from a daemon's health /metrics endpoint.
 
-    Gateway -> Risk: orders accepted on the gateway WAL stream.
-    Risk -> ME: orders forwarded (accepted+failed) on the risk WAL.
-    ME -> Mktdata: fills + BBOs on the ME WAL.
+    Returns the int value, or None when the endpoint is
+    unreachable or the counter is absent. Best-effort, short
+    timeout — the health server runs off the daemon's hot path
+    (rsx-health), so this never touches the order path.
     """
-    gw_to_risk = 0
-    risk_to_me = 0
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://{addr}/metrics", timeout=0.3) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+    for c in data.get("counters", []):
+        if c.get("name") == counter:
+            try:
+                return int(c.get("value", 0))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _daemon_counter_sum(prefix: str, env_key: str, counter: str):
+    """Sum a health counter across managed daemons whose name
+    starts with `prefix` (e.g. "gw-", "risk-").
+
+    The health address comes from the daemon's own spawn env
+    (`env_key`, e.g. RSX_GW_HEALTH_ADDR) — we never invent a port.
+    Returns None (rendered honestly as "live", not a fake 0) when
+    no matching daemon exposes a health endpoint. The gateway and
+    risk tiles write no WAL, so this is the only truthful source
+    for their pipe throughput.
+    """
+    total = 0
+    found = False
+    for name, info in managed.items():
+        if not name.startswith(prefix):
+            continue
+        addr = info.get("env", {}).get(env_key)
+        if not addr:
+            continue
+        val = _fetch_daemon_counter(addr, counter)
+        if val is not None:
+            total += val
+            found = True
+    return total if found else None
+
+
+def _cast_pipe_counts() -> dict:
+    """Per-pipe cast-flow counters, from truthful sources.
+
+    ME -> Mktdata: FILL+BBO records on the ME's per-symbol WAL
+    (dir named by symbol, e.g. "pengu"). This is exactly what the
+    ME casts to marketdata, and it's the only leg backed by a WAL.
+
+    Gateway -> Risk / Risk -> ME: the gateway and risk tiles write
+    NO WAL, so their throughput can only come from the daemon
+    health /metrics endpoints (orders_processed). When those aren't
+    exposed the value is None -> rendered "live", never a fake 0.
+    """
     me_to_mkt = 0
     for sd in _wal_stream_dirs():
-        name = sd.name
-        if name.startswith("gw-") or name == "gateway":
-            for _ in parse_wal_records(
-                    sd, {RECORD_ORDER_ACCEPTED}):
-                gw_to_risk += 1
-        elif name.startswith("risk-") or name == "risk":
-            for _ in parse_wal_records(
-                    sd, {RECORD_ORDER_ACCEPTED,
-                          RECORD_ORDER_FAILED}):
-                risk_to_me += 1
-        elif name.startswith("me-") or name == "matching":
-            for _ in parse_wal_records(
-                    sd, {RECORD_FILL, RECORD_BBO}):
-                me_to_mkt += 1
+        if sd.name == "mark":
+            continue
+        for _ in parse_wal_records(sd, {RECORD_FILL, RECORD_BBO}):
+            me_to_mkt += 1
     return {
-        "gw_to_risk": gw_to_risk,
-        "risk_to_me": risk_to_me,
+        "gw_to_risk": _daemon_counter_sum(
+            "gw-", "RSX_GW_HEALTH_ADDR", "orders_processed"),
+        "risk_to_me": _daemon_counter_sum(
+            "risk-", "RSX_RISK_HEALTH_ADDR", "orders_processed"),
         "me_to_mkt": me_to_mkt,
     }
 
