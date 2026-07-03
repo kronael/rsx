@@ -2520,6 +2520,7 @@ dependencies = [
 name = "rsx-book"
 version = "0.2.0"
 dependencies = [
+ "core_affinity",
  "criterion",
  "rsx-types",
  "rustc-hash",
