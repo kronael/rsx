@@ -36,7 +36,6 @@ TABS = [
     ("Orders", "./orders"),
     ("Stress", "./stress"),
     ("Docs", "./docs"),
-    ("Trade", "./trade/"),
 ]
 
 # ── Component registry ────────────────────────────────────
@@ -262,9 +261,8 @@ document.addEventListener('htmx:afterSwap', function(e) {{
       class="text-blue-400 hover:text-blue-300">
       Playground Docs</a>
     <span class="text-slate-700">|</span>
-    <a href="./trade/"
-      class="text-blue-400 hover:text-blue-300">
-      Trade UI</a>
+    <span class="text-slate-500">
+      Trade via the rsx-tui terminal client</span>
   </div>
 </footer>
 </body>
@@ -767,11 +765,9 @@ and liquidation triggers.</p>""")
         "order.",
         """
 <p>See the links below to explore the running
-exchange.</p>
+exchange. Trading itself is via the rsx-tui terminal
+client, not a web page.</p>
 <div class="mt-3 flex flex-wrap gap-3">
-  <a href="./trade/"
-    class="text-blue-400 hover:text-blue-300 text-xs">
-    Open Trade UI &rarr;</a>
   <a href="./orders"
     class="text-blue-400 hover:text-blue-300 text-xs">
     Submit Orders &rarr;</a>
@@ -854,9 +850,6 @@ exchange.</p>
 
   <div class="flex flex-wrap gap-3 pt-1
     border-t border-slate-800">
-    <a href="./trade/"
-      class="text-blue-400 hover:text-blue-300 text-xs">
-      Open Trade UI &rarr;</a>
     <a href="./overview"
       class="text-blue-400 hover:text-blue-300 text-xs">
       Dashboard &rarr;</a>

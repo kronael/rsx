@@ -28,7 +28,6 @@ PAGE_ROUTES = [
     "/orders",
     "/stress",
     "/docs",
-    "/trade/",
 ]
 
 # All HTMX partial routes
@@ -117,7 +116,7 @@ def test_page_returns_200(route):
 def test_page_no_absolute_links(route):
     """Page routes must not contain root-absolute href/src."""
     resp = client.get(route, follow_redirects=True)
-    # Skip non-HTML (redirects to /trade/ SPA etc.)
+    # Skip non-HTML (e.g. redirects to ./docs/guide/*)
     ct = resp.headers.get("content-type", "")
     if "text/html" not in ct:
         return

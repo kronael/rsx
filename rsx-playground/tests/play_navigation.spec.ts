@@ -22,11 +22,10 @@ const TABS = [
 // Tabs that leave the playground layout
 const EXTERNAL_TABS = [
   { label: "Docs", path: "/docs" },
-  { label: "Trade", path: "/trade/" },
 ];
 
 test.describe("Navigation", () => {
-  test("all 15 tab links are present", async ({ page }) => {
+  test("all 14 tab links are present", async ({ page }) => {
     await page.goto("/");
     for (const tab of [...TABS, ...EXTERNAL_TABS]) {
       await expect(

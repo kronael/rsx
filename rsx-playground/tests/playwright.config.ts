@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import path from "path";
 
 // Domain shards — deterministic order:
-//   routing → htmx → verify → readiness → process-control → market-maker → trade-ui
+//   routing → htmx → verify → readiness → process-control → market-maker
 // retries: 0 globally; play-shard.sh blocks re-runs when failure signature unchanged.
 // Reporter is set per-run via CLI --reporter flag (json + junit from play-shard.sh).
 // PLAYWRIGHT_JUNIT_OUTPUT_NAME env var controls junit artifact path.
@@ -121,7 +121,7 @@ export default defineConfig({
     // Verifies core processes, maker, and book are ready before product
     // shards that exercise the live exchange path.  Declared after verify
     // so the phase chain is: infra-smoke → readiness → (process-control,
-    // market-maker, trade-ui).
+    // market-maker).
     {
       name: "readiness",
       testMatch: ["play_readiness.spec.ts"],
@@ -144,17 +144,6 @@ export default defineConfig({
       testMatch: ["play_maker.spec.ts"],
       use: { baseURL: "http://localhost:49171" },
       timeout: 60_000,
-      dependencies: ["readiness"],
-    },
-    // Shard 5: trade-ui — React SPA (67 tests)
-    // Depends on readiness (maker + book ready); decoupled from
-    // market-maker test results so maker edge-case failures don't
-    // block the trade UI suite.
-    {
-      name: "trade-ui",
-      testMatch: [
-        "play_trade.spec.ts",
-      ],
       dependencies: ["readiness"],
     },
     // Shard 6: latency — performance and memory bounds (15 tests)

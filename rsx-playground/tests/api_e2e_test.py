@@ -529,28 +529,13 @@ def test_stress_page(client):
     assert "text/html" in resp.headers["content-type"]
 
 
-# ── Trade UI Page ──────────────────────────────────────────
+# ── Trade UI (rsx-tui terminal client, not served here) ────
 
 
-def test_trade_page_redirect(client):
-    """GET /trade redirects to /trade/."""
+def test_trade_route_removed(client):
+    """GET /trade is gone; trading is via the rsx-tui terminal client."""
     resp = client.get("/trade", follow_redirects=False)
-    assert resp.status_code in (301, 307)
-
-
-def test_trade_page_loads(client):
-    """GET /trade/ returns 200 HTML."""
-    resp = client.get("/trade/")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_trade_page_has_script_tags(client):
-    """Trade page includes JS script tags."""
-    resp = client.get("/trade/")
-    assert resp.status_code == 200
-    text = resp.text
-    assert "<script" in text or ".js" in text
+    assert resp.status_code == 404
 
 
 # ── Docs Pages ─────────────────────────────────────────────

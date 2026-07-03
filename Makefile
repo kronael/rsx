@@ -5,12 +5,12 @@
        play-infra play-orders play-nav play-api \
        play-full \
        api-unit api-integration api-stress \
-       bench-webui bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help check-progress acceptance-bundle \
+       bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help check-progress acceptance-bundle \
        gen-release-truth release-gate \
        lint-snapshot lint-snapshot-tests ci-guard publish-progress regen-progress exit-criteria task-report status-doctor \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-infra-smoke shard-routing shard-htmx shard-control \
-       shard-maker shard-trade shards shards-gated shards-report \
+       shard-maker shards shards-gated shards-report \
        ci ci-full \
        prepare check-links \
        local-validate local-validate-dry local-validate-pending \
@@ -59,7 +59,6 @@ help:
 	@echo "  make gen-release-truth - Generate release_truth.json (no ext CLI dep)"
 	@echo "  make release-gate      - BLOCK release unless Playwright==421/421 and all gates green"
 	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
-	@echo "  make bench-webui   - React render benchmark: p95 latency per orderbook update"
 	@echo "  make clean         - Clean build artifacts"
 	@echo ""
 	@echo "Individual Playwright Tests:"
@@ -153,8 +152,7 @@ play-full:
 # Usage: make shard-routing   (navigation+overview+topology, 29 tests)
 #        make shard-htmx      (book+risk+wal+logs+faults+verify, 83 tests)
 #        make shard-control   (control+orders, 35 tests)
-#        make shard-trade     (trade UI SPA, 67 tests)
-#        make shards          (all 4 shards in order)
+#        make shards          (all shards in order)
 
 SHARD := rsx-playground/tests/play-shard.sh
 
@@ -176,10 +174,7 @@ shard-control:
 shard-maker:
 	@bash $(SHARD) market-maker
 
-shard-trade:
-	@bash $(SHARD) trade-ui
-
-shards: shard-routing shard-htmx shard-control shard-maker shard-trade
+shards: shard-routing shard-htmx shard-control shard-maker
 	@echo "==> All shards passed."
 
 # shards-report: run all shards (continue on failure); publish combined
@@ -202,7 +197,7 @@ shards-gated: shard-infra-smoke
 		echo "    Run 'make shards-gated' $(INFRA_SMOKE_STREAK_N) consecutive times to unlock."; \
 	else \
 		echo "==> [shards-gated] streak=$$STREAK >= $(INFRA_SMOKE_STREAK_N): unlocking full fan-out"; \
-		$(MAKE) shard-routing shard-htmx shard-control shard-maker shard-trade; \
+		$(MAKE) shard-routing shard-htmx shard-control shard-maker; \
 		echo "==> All shards passed."; \
 	fi
 
@@ -232,12 +227,6 @@ _ABS_GREP := grep -En \
 	'(href|src|hx-get|hx-post|hx-put|hx-delete|hx-patch|action)=["\x27]/[^/]'
 
 check-links:
-	@echo "==> [check-links] dist/index.html"
-	@if $(_ABS_GREP) rsx-webui/dist/index.html; then \
-		echo "FAIL: root-absolute href/src in dist/index.html" >&2; \
-		exit 1; \
-	fi
-	@echo "    PASS: dist/index.html clean"
 	@echo "==> [check-links] server.py + pages.py source templates"
 	@if $(_ABS_GREP) \
 		rsx-playground/server.py \
@@ -354,13 +343,6 @@ bench-gate-e2e:
 # (e.g. after a deliberate optimisation). Commit the result.
 bench-gate-e2e-save:
 	bash scripts/bench-gate-e2e.sh --save-reference
-
-# WebUI render benchmark: measures p50/p95/p99 React render latency
-# per orderbook delta update. Asserts p95 < 16ms (one rAF frame).
-# Requires: cd rsx-webui && bun run build (builds dist/ first)
-bench-webui:
-	cd rsx-webui && bun run build && \
-	bunx playwright test orderbook.bench.spec.ts --reporter=list
 
 # Validate PROGRESS.md accounting (fail CI if inconsistent)
 check-progress:
