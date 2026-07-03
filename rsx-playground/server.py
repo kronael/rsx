@@ -4458,6 +4458,38 @@ def _trim_recent_orders():
         del recent_orders[:100]
 
 
+# Gateway webproto response frames (see specs/2/49-webproto.md):
+#   {U:[oid,status,filled,remaining,reason]}  status 0=FILLED
+#     1=RESTING 2=CANCELLED 3=FAILED
+#   {F:[taker_oid,maker_oid,px,qty,ts,fee]}   immediate fill
+#   {E:[code,message]}                        protocol/validation error
+# No ACK for a resting GTC order (surfaces via caller timeout).
+def _classify_order_response(msg) -> tuple[str, str]:
+    """Map a gateway response frame to a lifecycle (status, note).
+
+    Statuses: filled | resting | cancelled | rejected | accepted
+    (ack, unknown status) | error (no/unexpected frame). A viewer
+    can tell a fill from resting liquidity from a hang — the whole
+    point of the recent-orders status column.
+    """
+    if not msg:
+        return "error", "no response"
+    if "U" in msg:
+        u = msg["U"]
+        code = u[1] if len(u) > 1 else -1
+        if code == 3:
+            reason = u[4] if len(u) > 4 else 0
+            return "rejected", f"reason={reason}"
+        return {0: "filled", 1: "resting",
+                2: "cancelled"}.get(code, "accepted"), ""
+    if "F" in msg:
+        return "filled", ""
+    if "E" in msg:
+        e = msg["E"]
+        return "rejected", str(e[1] if len(e) > 1 else e)
+    return "error", "unexpected response"
+
+
 @app.post("/api/orders/test")
 async def api_orders_test(request: Request):
     denied = _require_admin_request(request)
@@ -4654,70 +4686,28 @@ async def api_orders_test(request: Request):
         order_latencies.append(latency_us)
         if len(order_latencies) > 1000:
             del order_latencies[:500]
+        order["latency_us"] = latency_us
 
-    # Gateway responses (see WEBPROTO.md):
-    # {U:[oid, status, filled, remaining, reason]}
-    #   status 0=FILLED 1=RESTING 2=CANCELLED 3=FAILED
-    # {F:[taker_oid, maker_oid, px, qty, ts, fee]} — immediate fill
-    # {E:[code, message]} — protocol error
-    # No ACK for resting GTC orders (handled via timeout above)
-    if msg and "U" in msg:
-        u = msg["U"]
-        status_code = u[1] if len(u) > 1 else -1
-        if status_code == 3:
-            reason_code = u[4] if len(u) > 4 else 0
-            order["status"] = "rejected"
-            order["reason"] = str(reason_code)
-            recent_orders.append(order)
-            _trim_recent_orders()
-            return HTMLResponse(
-                f'<span class="text-red-400 text-xs">'
-                f'order {cid} rejected: reason={reason_code}'
-                f'</span>')
-        else:
-            # Filled (0) or resting ACK (1)
-            order["status"] = "accepted"
-            if latency_us is not None:
-                order["latency_us"] = latency_us
-            recent_orders.append(order)
-            _trim_recent_orders()
-            lat_str = (
-                f"{latency_us}us" if latency_us is not None
-                else "?"
-            )
-            return HTMLResponse(
-                f'<span class="text-emerald-400 text-xs">'
-                f'order {cid} accepted ({lat_str})</span>')
-    elif msg and "F" in msg:
-        # Immediate fill — order accepted and filled
-        order["status"] = "accepted"
-        if latency_us is not None:
-            order["latency_us"] = latency_us
-        recent_orders.append(order)
-        _trim_recent_orders()
-        lat_str = (
-            f"{latency_us}us" if latency_us is not None else "?"
-        )
+    # Real lifecycle status so a filled order reads "filled", a
+    # resting order "resting", a hang stays visible — no more
+    # everything-is-"accepted".
+    status_label, note = _classify_order_response(msg)
+    order["status"] = status_label
+    if note:
+        order["reason"] = note
+    recent_orders.append(order)
+    _trim_recent_orders()
+    ok = status_label in ("filled", "resting", "accepted")
+    lat_str = f"{latency_us}us" if latency_us is not None else "?"
+    if ok:
         return HTMLResponse(
             f'<span class="text-emerald-400 text-xs">'
-            f'order {cid} accepted ({lat_str})</span>')
-    elif msg and "E" in msg:
-        e = msg["E"]
-        err_msg = e[1] if len(e) > 1 else "unknown"
-        order["status"] = "rejected"
-        order["reason"] = str(err_msg)
-        recent_orders.append(order)
-        _trim_recent_orders()
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'order {cid} rejected: {err_msg}</span>')
-    else:
-        order["status"] = "error"
-        recent_orders.append(order)
-        _trim_recent_orders()
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'order {cid} unexpected response</span>')
+            f'order {cid} {status_label} ({lat_str})</span>')
+    color = "text-amber-400" if status_label == "error" else "text-red-400"
+    detail = f": {note}" if note else ""
+    return HTMLResponse(
+        f'<span class="{color} text-xs">'
+        f'order {cid} {status_label}{detail}</span>')
 
 
 async def _run_invariant_checks() -> list[dict]:
@@ -5241,6 +5231,11 @@ async def api_orders_random():
         '5 random orders submitted</span>')
 
 
+# A "market" quick order is sent as a marketable-limit sweep this
+# far through the mid so it crosses the visible book on either side.
+_MARKET_SWEEP_PCT = 50.0
+
+
 @app.post("/api/orders/quick")
 async def api_orders_quick(request: Request):
     """Quick order endpoint for the matrix buttons.
@@ -5307,43 +5302,51 @@ async def api_orders_quick(request: Request):
     price_scale = 10 ** price_dec
     qty_scale = 10 ** qty_dec
 
-    # Determine price: 0 = market; otherwise compute from mid
-    if offset_pct == 0.0 and not randomize:
-        price_int = 0
-        tif_int = 1  # IOC for market
-    else:
-        # Get mid price from book snapshot or WAL BBO
-        snap = _book_snap.get(symbol_id)
-        mid_raw = None
-        if snap:
-            bids = snap.get("bids", [])
-            asks = snap.get("asks", [])
-            if bids and asks:
-                mid_raw = (bids[0]["px"] + asks[0]["px"]) // 2
-            elif bids:
-                mid_raw = bids[0]["px"]
-            elif asks:
-                mid_raw = asks[0]["px"]
-        if mid_raw is None:
-            bbo = parse_wal_bbo(symbol_id)
-            if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
-                mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
-            elif bbo and bbo.get("bid_px"):
-                mid_raw = bbo["bid_px"]
-            elif bbo and bbo.get("ask_px"):
-                mid_raw = bbo["ask_px"]
+    # Reference mid from book snapshot or WAL BBO (used by both the
+    # market-sweep and limit paths).
+    snap = _book_snap.get(symbol_id)
+    mid_raw = None
+    if snap:
+        bids = snap.get("bids", [])
+        asks = snap.get("asks", [])
+        if bids and asks:
+            mid_raw = (bids[0]["px"] + asks[0]["px"]) // 2
+        elif bids:
+            mid_raw = bids[0]["px"]
+        elif asks:
+            mid_raw = asks[0]["px"]
+    if mid_raw is None:
+        bbo = parse_wal_bbo(symbol_id)
+        if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
+            mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
+        elif bbo and bbo.get("bid_px"):
+            mid_raw = bbo["bid_px"]
+        elif bbo and bbo.get("ask_px"):
+            mid_raw = bbo["ask_px"]
 
-        if mid_raw is None:
-            # No price data: fall back to market order
-            price_int = 0
-            tif_int = 1
-        else:
-            raw = mid_raw * (1.0 + offset_pct / 100.0)
-            # Snap to tick grid
-            price_int = int(round(raw / tick_size)) * tick_size
-            if price_int <= 0:
-                price_int = tick_size
-            tif_int = 0  # GTC limit
+    def _to_tick(raw):
+        p = int(round(raw / tick_size)) * tick_size
+        return p if p > 0 else tick_size
+
+    # offset 0 = "market": send a marketable-limit sweep (buy far
+    # above the ask / sell far below the bid) so it actually crosses.
+    # A price-0 IOC crosses nothing on a buy and everything at 0 on a
+    # sell — never a real market fill, and leaves the order hung.
+    is_market = offset_pct == 0.0 and not randomize
+    if mid_raw is None:
+        # No book to price against: send IOC at a minimal valid price
+        # so the order resolves (cancels) instead of resting a bogus
+        # price-0 order that hangs forever.
+        price_int = tick_size
+        tif_int = 1
+    elif is_market:
+        sweep = (_MARKET_SWEEP_PCT if side_int == 0
+                 else -_MARKET_SWEEP_PCT)
+        price_int = _to_tick(mid_raw * (1.0 + sweep / 100.0))
+        tif_int = 1  # IOC market sweep
+    else:
+        price_int = _to_tick(mid_raw * (1.0 + offset_pct / 100.0))
+        tif_int = 0  # GTC limit
 
     qty_int = int(round(human_qty * qty_scale))
     if qty_int % lot_size != 0:
@@ -5403,31 +5406,22 @@ async def api_orders_quick(request: Request):
         order_latencies.append(latency_us)
         if len(order_latencies) > 1000:
             del order_latencies[:500]
+        order["latency_us"] = latency_us
 
-    if msg and "U" in msg:
-        u = msg["U"]
-        status_map = {
-            0: "filled", 1: "resting", 2: "cancelled", 3: "failed",
-        }
-        status_label = status_map.get(u[1], "unknown")
-        order["status"] = status_label
-        recent_orders.append(order)
-        _trim_recent_orders()
-        color = (
-            "text-emerald-400" if u[1] in (0, 1)
-            else "text-red-400"
-        )
-        return HTMLResponse(
-            f'<span class="{color} text-xs font-medium">'
-            f'{label} {status_label}</span>'
-        )
-
-    order["status"] = "sent"
+    # Surface the terminal lifecycle state (filled/resting/rejected)
+    # — never leave a quick order stuck on "sent".
+    status_label, note = _classify_order_response(msg)
+    order["status"] = status_label
+    if note:
+        order["reason"] = note
     recent_orders.append(order)
     _trim_recent_orders()
+    ok = status_label in ("filled", "resting", "accepted")
+    color = "text-emerald-400" if ok else "text-red-400"
+    detail = f": {note}" if note else ""
     return HTMLResponse(
-        f'<span class="text-emerald-400 text-xs font-medium">'
-        f'sent {label}</span>'
+        f'<span class="{color} text-xs font-medium">'
+        f'{label} {status_label}{detail}</span>'
     )
 
 

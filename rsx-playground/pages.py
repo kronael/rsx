@@ -3953,6 +3953,29 @@ SYMBOL_NAMES_STR = {
 }
 
 
+_ORDER_STATUS_COLOR = {
+    "filled": "text-emerald-400",
+    "resting": "text-sky-400",
+    "accepted": "text-emerald-400",
+    "submitted": "text-slate-400",
+    "pending": "text-slate-400",
+    "cancelled": "text-slate-500",
+    "rejected": "text-red-400",
+    "failed": "text-red-400",
+    "error": "text-amber-400",
+    "timeout": "text-amber-400",
+}
+
+
+def _order_status_cell(status: str) -> str:
+    """Colour-code the lifecycle status so a fill (green), resting
+    liquidity (blue), a reject (red) and a hang (amber) are
+    distinguishable at a glance."""
+    color = _ORDER_STATUS_COLOR.get(status, "text-slate-400")
+    return (f'<span class="{color}">'
+            f'{html.escape(str(status))}</span>')
+
+
 def render_recent_orders(orders):
     if not orders:
         return (
@@ -4010,7 +4033,7 @@ def render_recent_orders(orders):
             f'<td {_TD}>{html.escape(str(o.get("qty", "-")))}</td>'
             f'<td {_TD}>{html.escape(str(tif))}</td>'
             f'<td {_TD}>{html.escape(flags.strip())}</td>'
-            f'<td {_TD}>{html.escape(str(o.get("status", "-")))}</td>'
+            f'<td {_TD}>{_order_status_cell(o.get("status", "-"))}</td>'
             f'<td {_TD}>{latency_str}</td>'
             f'<td {_TD}>{html.escape(str(o.get("ts", "-")))}</td>'
             f'<td {_TD}>{cancel}</td></tr>'
