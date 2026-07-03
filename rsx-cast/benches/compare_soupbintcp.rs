@@ -3,7 +3,7 @@
 //! What this measures
 //! -----------------
 //! Clean-room implementation of just enough Nasdaq SoupBinTCP
-//! framing to round-trip one 64-byte payload over std
+//! framing to round-trip one 128-byte payload over std
 //! `TcpStream` (loopback, `TCP_NODELAY` on both ends, persistent
 //! connection — handshake is outside the timed loop).
 //!
@@ -19,7 +19,7 @@
 //! 3-byte header and then the payload (full SoupBin parse + emit,
 //! not raw byte echo).
 //!
-//! Payload: 64 bytes. Total wire per direction: 2 + 1 + 64 = 67 B.
+//! Payload: 128 bytes. Total wire per direction: 2 + 1 + 128 = 131 B.
 //!
 //! Compare with:
 //!   udp_rtt_bench       raw UDP floor (~2 µs)
@@ -28,10 +28,6 @@
 //!   compare_quinn       QUIC overhead (~200–500 µs)
 //!
 //! See compare/soupbintcp.md for protocol details.
-//!
-//! TODO(pinning): a parallel sub is adding core_affinity across
-//! the bench suite — this thread spawn picks up pinning in the
-//! follow-up merge.
 
 use criterion::black_box;
 use criterion::criterion_group;
