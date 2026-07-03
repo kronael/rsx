@@ -18,25 +18,83 @@ _TAILWIND_SRC = (
     else "https://cdn.tailwindcss.com"
 )
 
+# Nav order: teaching arc first, then ops tools. WAL sits in
+# the arc (persistence step) but doubles as an ops inspector.
 TABS = [
-    ("Walkthrough", "./walkthrough"),
     ("Overview", "./overview"),
     ("Topology", "./topology"),
     ("Components", "./components"),
-    ("Latency", "./latency"),
     ("Cast", "./cast"),
     ("Book", "./book"),
     ("Risk", "./risk"),
     ("WAL", "./wal"),
-    ("Logs", "./logs"),
-    ("Control", "./control"),
-    ("Maker", "./maker"),
-    ("Faults", "./faults"),
-    ("Verify", "./verify"),
+    ("Latency", "./latency"),
     ("Orders", "./orders"),
+    ("Maker", "./maker"),
+    ("Control", "./control"),
+    ("Logs", "./logs"),
+    ("Verify", "./verify"),
+    ("Faults", "./faults"),
     ("Stress", "./stress"),
     ("Docs", "./docs"),
 ]
+
+# Per-page narrative hints: {active_tab: (hint, next_href,
+# next_label)}. Only teaching-arc pages; ops tabs get none.
+# Each hint is flow/direction ("next -> X") in <=2 sentences --
+# never metrics or component re-explanations (those live in the
+# component blurbs). Global on/off via localStorage.rsxHints
+# (see layout head script); the arc is walked in nav order.
+PAGE_HINTS = {
+    "./overview": (
+        "start here: boot the exchange and watch it come alive. "
+        "next &rarr; Topology to see how the seven processes wire "
+        "together.",
+        "./topology", "Topology",
+    ),
+    "./topology": (
+        "the process map &mdash; an order routes gateway &rarr; "
+        "risk &rarr; matching and back. next &rarr; Components to "
+        "open up each box.",
+        "./components", "Components",
+    ),
+    "./cast": (
+        "casting/UDP carries every order and fill between "
+        "processes, and the WAL records the same bytes for replay. "
+        "next &rarr; Book to watch the orderbook those messages "
+        "build.",
+        "./book", "Book",
+    ),
+    "./book": (
+        "the live orderbook where resting orders meet incoming "
+        "ones. next &rarr; Risk, which vets every order before it "
+        "lands here.",
+        "./risk", "Risk",
+    ),
+    "./risk": (
+        "risk checks margin before an order reaches the book and "
+        "updates positions on every fill. next &rarr; WAL to see "
+        "those events persisted.",
+        "./wal", "WAL",
+    ),
+    "./wal": (
+        "every order and fill is appended here &mdash; the same "
+        "bytes on disk, on the wire, and in the replay stream. "
+        "next &rarr; Latency to see how fast the round-trip runs.",
+        "./latency", "Latency",
+    ),
+    "./latency": (
+        "measures the gateway &rarr; matching &rarr; gateway "
+        "round-trip end to end. next &rarr; Orders to send one "
+        "yourself.",
+        "./orders", "Orders",
+    ),
+    "./orders": (
+        "submit test orders and watch them flow through the whole "
+        "system. for real trading, use the rsx-tui terminal client.",
+        None, None,
+    ),
+}
 
 # ── Component registry ────────────────────────────────────
 # One entry per real RSX process. Keys match PROC_HINTS keys
@@ -170,6 +228,42 @@ COMPONENTS: dict = {
 }
 
 
+def _hint_bar(active_tab):
+    """Narrative hint bar shown after nav on teaching-arc pages.
+
+    Global on/off via localStorage.rsxHints (layout head script).
+    Returns "" for pages not in PAGE_HINTS.
+    """
+    hint = PAGE_HINTS.get(active_tab)
+    if not hint:
+        return ""
+    text, next_href, next_label = hint
+    nxt = ""
+    if next_href:
+        nxt = (
+            f'<a href="{next_href}" class="shrink-0 text-blue-400 '
+            f'hover:text-blue-300 font-semibold whitespace-nowrap">'
+            f'next &rarr; {next_label}</a>'
+        )
+    return f"""
+<div class="max-w-7xl mx-auto px-2 sm:px-4 pt-3">
+  <div class="rsx-hint flex items-start justify-between gap-3
+    border-l-4 border-blue-500 bg-slate-800/50 rounded
+    px-3 py-2">
+    <p class="text-xs text-slate-300 leading-relaxed">{text}</p>
+    <div class="flex items-center gap-3 shrink-0">
+      {nxt}
+      <button type="button" onclick="rsxHints(false)"
+        class="text-[10px] text-slate-500 hover:text-slate-300
+          cursor-pointer whitespace-nowrap">Hide hints</button>
+    </div>
+  </div>
+  <button type="button" onclick="rsxHints(true)"
+    class="rsx-hints-show text-[10px] text-blue-400
+      hover:text-blue-300 cursor-pointer">Show hints</button>
+</div>"""
+
+
 def layout(title, content, active_tab="./overview"):
     """Wrap content in full page with nav tabs."""
     tabs = ""
@@ -181,16 +275,10 @@ def layout(title, content, active_tab="./overview"):
             external = False
 
         is_active = href == active_tab
-        is_walkthrough = href == "./walkthrough"
 
         if is_active:
             cls = ("bg-slate-700 text-white "
                    "px-3 py-1.5 rounded text-xs font-mono")
-        elif is_walkthrough:
-            # D: nav graduation — Walkthrough is the entry point
-            cls = ("text-blue-300 hover:text-white "
-                   "hover:bg-slate-700 px-3 py-1.5 "
-                   "rounded text-xs font-mono font-bold")
         else:
             cls = ("text-slate-400 hover:text-white "
                    "hover:bg-slate-700 px-3 py-1.5 "
@@ -226,7 +314,24 @@ tailwind.config = {{
   .htmx-indicator {{ display: none; }}
   .htmx-request .htmx-indicator {{ display: inline; }}
   .htmx-request.htmx-indicator {{ display: inline; }}
+  .hints-off .rsx-hint {{ display: none; }}
+  .rsx-hints-show {{ display: none; }}
+  .hints-off .rsx-hints-show {{ display: inline-block; }}
 </style>
+<script>
+function rsxHints(on) {{
+  document.documentElement.classList.toggle('hints-off', !on);
+  try {{ localStorage.setItem('rsxHints', on ? 'on' : 'off'); }}
+  catch (e) {{}}
+}}
+(function() {{
+  try {{
+    if (localStorage.getItem('rsxHints') === 'off') {{
+      document.documentElement.classList.add('hints-off');
+    }}
+  }} catch (e) {{}}
+}})();
+</script>
 <script>
 document.addEventListener('htmx:afterSwap', function(e) {{
   var t = e.detail.target;
@@ -248,6 +353,7 @@ document.addEventListener('htmx:afterSwap', function(e) {{
     hx-trigger="load, every 4s"
     hx-swap="outerHTML"></span>
 </nav>
+{_hint_bar(active_tab)}
 <main class="p-2 sm:p-4 max-w-7xl mx-auto space-y-3">
 {content}
 </main>
@@ -286,76 +392,26 @@ def _card(title, body, header_right=""):
 </div>"""
 
 
-# ── Screen 0: Walkthrough ───────────────────────────────
+# ── Overview intro (folded-in walkthrough) ──────────────
+# The old /walkthrough hero + architecture/lifecycle diagrams
+# live here now; /walkthrough redirects to /overview. The
+# Start-All launcher stays reachable via the Process Table card.
 
-def _wt_section(sid, title, tldr, body):
-    """Walkthrough section: TL;DR bar + expandable detail."""
-    return f"""
-<section id="{sid}" class="scroll-mt-12">
-  <div class="bg-slate-900 border border-slate-800
-    rounded-lg overflow-hidden">
-    <div class="border-l-4 border-blue-500 px-4 py-2
-      bg-slate-800/50">
-      <h2 class="text-sm font-bold text-white">{title}</h2>
-      <p class="text-xs text-slate-400 mt-0.5">{tldr}</p>
-    </div>
-    <details class="group">
-      <summary class="px-4 py-2 text-xs text-blue-400
-        cursor-pointer hover:text-blue-300
-        select-none">
-        Expand details</summary>
-      <div class="px-4 pb-4 text-xs leading-relaxed
-        text-slate-300 space-y-3">
-        {body}
-      </div>
-    </details>
-  </div>
-</section>"""
-
-
-def walkthrough_page():
-    nav = """
-<div class="sticky top-0 z-10 bg-slate-950/90
-  backdrop-blur border-b border-slate-800 py-1.5 px-2
-  flex gap-2 overflow-x-auto text-[11px]
-  scrollbar-thin">
-  <a href="#big-picture"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Big Picture</a>
-  <a href="#order-lifecycle"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Order Flow</a>
-  <a href="#matching-engine"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Matching</a>
-  <a href="#risk-engine"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Risk</a>
-  <a href="#wal-transport"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">WAL</a>
-  <a href="#market-data"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Market Data</a>
-  <a href="#mark-price"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Mark Price</a>
-  <a href="#benchmarks"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Numbers</a>
-  <a href="#try-it"
-    class="text-blue-400 hover:text-white
-    whitespace-nowrap">Try It</a>
+def _overview_intro():
+    hero = """
+<div class="text-center py-5">
+  <h1 class="text-2xl font-bold text-white tracking-wide">
+    RSX Exchange</h1>
+  <p class="text-sm text-slate-400 mt-1">
+    Spec-first perpetuals exchange. Fixed-point.
+    Single-threaded matching. 54&nbsp;ns match (measured);
+    &lt;50us round-trip budget.</p>
+  <p class="text-xs text-slate-500 mt-2">
+    12 Rust crates &middot; ~880 unit tests &middot;
+    54ns match &middot; 31ns WAL append</p>
 </div>"""
 
-    # ── Section 1: Big Picture ──
-    s1 = _wt_section(
-        "big-picture",
-        "The Big Picture",
-        "7 processes, casting/UDP between them, WAL for "
-        "recovery. &lt;50us round-trip design budget; "
-        "ME match measured at 54 ns.",
-        """
+    arch = """
 <pre class="text-[10px] text-green-400
   overflow-x-auto leading-tight my-2">
                     +------------+
@@ -419,17 +475,9 @@ def walkthrough_page():
       <td class="py-1 px-2">Two-sided quoting,
         auto-reconnect</td></tr>
   </tbody>
-</table>""")
+</table>"""
 
-    # ── Section 2: Order Lifecycle ──
-    s2 = _wt_section(
-        "order-lifecycle",
-        "Order Lifecycle",
-        "WS &rarr; Gateway &rarr; Risk &rarr; ME "
-        "&rarr; Risk &rarr; Gateway &rarr; WS. "
-        "Seven hops, &lt;50us design budget "
-        "(component sum &mdash; E2E harness pending).",
-        """
+    lifecycle = """
 <pre class="text-[10px] text-green-400
   overflow-x-auto leading-tight my-2">
 User          Gateway        Risk          ME
@@ -445,433 +493,33 @@ User          Gateway        Risk          ME
  |               |&lt;--fills----|             |
  |&lt;--WS fill----|             |             |
 </pre>
-<table class="w-full text-xs">
-  <thead>
-    <tr class="text-slate-500 border-b border-slate-800">
-      <th class="text-left py-1 px-2">Hop</th>
-      <th class="text-left py-1 px-2">From &rarr; To</th>
-      <th class="text-left py-1 px-2">Transport</th>
-      <th class="text-left py-1 px-2">Latency</th>
-    </tr>
-  </thead>
-  <tbody class="text-slate-300">
-    <tr><td class="py-1 px-2">1</td>
-      <td class="py-1 px-2">User &rarr; Gateway</td>
-      <td class="py-1 px-2">WebSocket</td>
-      <td class="py-1 px-2 text-slate-500">
-        network</td></tr>
-    <tr><td class="py-1 px-2">2</td>
-      <td class="py-1 px-2">Gateway &rarr; Risk</td>
-      <td class="py-1 px-2">casting/UDP</td>
-      <td class="py-1 px-2 text-green-400">
-        ~0.5us</td></tr>
-    <tr><td class="py-1 px-2">3</td>
-      <td class="py-1 px-2">Risk &rarr; ME</td>
-      <td class="py-1 px-2">casting/UDP</td>
-      <td class="py-1 px-2 text-green-400">
-        ~0.5us</td></tr>
-    <tr><td class="py-1 px-2">4</td>
-      <td class="py-1 px-2">ME match</td>
-      <td class="py-1 px-2">slab</td>
-      <td class="py-1 px-2 text-green-400
-        font-bold">54ns</td></tr>
-    <tr><td class="py-1 px-2">5</td>
-      <td class="py-1 px-2">ME &rarr; Risk</td>
-      <td class="py-1 px-2">casting/UDP</td>
-      <td class="py-1 px-2 text-green-400">
-        ~0.5us</td></tr>
-    <tr><td class="py-1 px-2">6</td>
-      <td class="py-1 px-2">Risk &rarr; Gateway</td>
-      <td class="py-1 px-2">casting/UDP</td>
-      <td class="py-1 px-2 text-green-400">
-        ~0.5us</td></tr>
-    <tr><td class="py-1 px-2">7</td>
-      <td class="py-1 px-2">Gateway &rarr; User</td>
-      <td class="py-1 px-2">WebSocket</td>
-      <td class="py-1 px-2 text-slate-500">
-        network</td></tr>
-    <tr class="border-t border-slate-700
-      font-bold text-white">
-      <td class="py-1 px-2" colspan="3">
-        Total (component sum, budget)</td>
-      <td class="py-1 px-2 text-amber-400">
-        &lt;50us</td></tr>
-  </tbody>
-</table>""")
+<p class="text-xs text-slate-400 mt-1">
+  WS &rarr; Gateway &rarr; Risk &rarr; ME &rarr; Risk
+  &rarr; Gateway &rarr; WS. Seven hops, &lt;50us design
+  budget (component sum &mdash; E2E harness pending).</p>"""
 
-    # ── Section 3: Matching Engine ──
-    s3 = _wt_section(
-        "matching-engine",
-        "The Matching Engine",
-        "Slab arena + CompressionMap. "
-        "<span class='text-green-400 font-bold'>"
-        "54ns</span> per fill. "
-        "Zero heap allocation on hot path.",
-        """
-<p>One ME instance per symbol, single-threaded, pinned
-to a dedicated core. Bare busy-spin event loop.</p>
-<p><strong class="text-white">Slab Arena:</strong>
-Pre-allocated 65,536 OrderSlots per symbol
-(rsx-matching/src/main.rs:220), O(1) alloc from free list
-(0.8ns), O(1) free (7.9ns). No malloc ever touches the
-hot path.</p>
-<p><strong class="text-white">CompressionMap:</strong>
-Maps sparse price space to dense array indices via 5
-distance-based zones. Compresses 20M possible price
-levels down to ~617K slots (~15MB per side). Near-mid
-prices get 1:1 mapping, far prices compress 1000:1.</p>
-<p><strong class="text-white">Matching:</strong>
-Price-time FIFO. Aggressive order walks the opposite
-side level-by-level. GTC/IOC/FOK supported. Events
-(fills, done, cancel) buffered in fixed [Event; 10000]
-array, drained after each cycle.</p>
-<div class="mt-2 grid grid-cols-2 gap-2">
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-green-400 text-lg font-bold">
-      54ns</div>
-    <div class="text-slate-500 text-[10px]">
-      single fill</div>
+    return f"""
+{hero}
+<details class="bg-slate-900 border border-slate-800
+  rounded-lg overflow-hidden">
+  <summary class="px-4 py-2 text-xs text-blue-400
+    cursor-pointer hover:text-blue-300 select-none
+    border-l-4 border-blue-500 bg-slate-800/50">
+    Architecture &amp; order lifecycle</summary>
+  <div class="px-4 pb-4 space-y-4">
+    <section id="big-picture" class="scroll-mt-12">
+      <h2 class="text-sm font-bold text-white mt-3
+        mb-1">The Big Picture</h2>
+      {arch}
+    </section>
+    <section id="order-lifecycle" class="scroll-mt-12">
+      <h2 class="text-sm font-bold text-white mt-3
+        mb-1">Order Lifecycle</h2>
+      {lifecycle}
+    </section>
   </div>
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-green-400 text-lg font-bold">
-      857ns</div>
-    <div class="text-slate-500 text-[10px]">
-      insert order</div>
-  </div>
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-green-400 text-lg font-bold">
-      2.8us</div>
-    <div class="text-slate-500 text-[10px]">
-      sweep 10 levels</div>
-  </div>
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-green-400 text-lg font-bold">
-      ~0ns</div>
-    <div class="text-slate-500 text-[10px]">
-      cancel (O(1))</div>
-  </div>
-</div>""")
+</details>"""
 
-    # ── Section 4: Risk Engine ──
-    s4 = _wt_section(
-        "risk-engine",
-        "Risk Engine",
-        "Portfolio margin, liquidation rounds, "
-        "funding every 8h. Postgres write-behind.",
-        """
-<p>One shard per user partition. Pre-trade margin check
-on every order, post-trade position update on every
-fill.</p>
-<p><strong class="text-white">Portfolio Margin:</strong>
-IMR (initial) and MMR (maintenance) calculated across
-all positions for a user. Mark price ticks trigger
-recalculation for exposed users.</p>
-<p><strong class="text-white">Liquidation:</strong>
-When equity &lt; MMR: liquidation rounds with configurable
-slip BPS, insurance fund backstop. Advisory lock ensures
-exactly one liquidator per shard.</p>
-<p><strong class="text-white">Funding:</strong>
-Every 8 hours, zero-sum settlement across all users
-per symbol. Accumulated in real-time, settled atomically.</p>
-<p><strong class="text-white">Durability:</strong>
-Postgres write-behind: 10ms batched flush, COPY for
-fills, UPSERT for positions. sync_commit=on.
-Crash recovery: load tips from PG, DXS replay from
-tip+1, go live on CaughtUp.</p>""")
-
-    # ── Section 5: WAL & Transport ──
-    s5 = _wt_section(
-        "wal-transport",
-        "WAL &amp; Transport",
-        "WAL = wire = stream. "
-        "<span class='text-green-400 font-bold'>"
-        "31ns</span> append, "
-        "<span class='text-blue-400'>24us</span> flush. "
-        "casting/UDP with NACK flow control.",
-        """
-<p><strong class="text-white">Zero Transformation:
-</strong>
-The WAL disk format, casting wire format, and DXS stream
-format are identical. 16B header + #[repr(C, align(64))]
-payload. No serialization, no copying, no translation.</p>
-<p><strong class="text-white">WalWriter:</strong>
-Buffer appends at 31ns each. Flush to disk every 10ms
-with fsync (24us for 64KB batch). Rotate at 64MB,
-retain 10 minutes. Backpressure: buffer full or flush
-lag &gt;10ms stalls the producer.</p>
-<p><strong class="text-white">Casting Protocol:</strong>
-Aeron-inspired UDP transport. NACK-based flow control,
-heartbeat keepalive, reorder buffer for out-of-order
-datagrams. Encode: 43ns, decode: 9ns.</p>
-<p><strong class="text-white">DXS Replay:</strong>
-Each producer IS the replay server. Consumers connect
-directly via TCP, request from sequence N. No central
-broker. Recorder, marketdata, and risk all use DXS.</p>
-<div class="mt-2 grid grid-cols-3 gap-2">
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-green-400 text-lg font-bold">
-      31ns</div>
-    <div class="text-slate-500 text-[10px]">
-      WAL append</div>
-  </div>
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-blue-400 text-lg font-bold">
-      24us</div>
-    <div class="text-slate-500 text-[10px]">
-      flush+fsync</div>
-  </div>
-  <div class="bg-slate-800 rounded p-2 text-center">
-    <div class="text-green-400 text-lg font-bold">
-      9ns</div>
-    <div class="text-slate-500 text-[10px]">
-      cast decode</div>
-  </div>
-</div>""")
-
-    # ── Section 6: Market Data ──
-    s6 = _wt_section(
-        "market-data",
-        "Market Data",
-        "Shadow book rebuilt from WAL stream. "
-        "L2 depth, BBO, trades. Public WebSocket.",
-        """
-<p>Marketdata maintains a shadow orderbook per symbol,
-rebuilt from ME WAL events (INSERT, CANCEL, FILL) via
-DXS subscription. Not on the critical path.</p>
-<p><strong class="text-white">Outputs:</strong>
-L2 depth snapshots (20 levels), BBO updates, trade
-tape (200-entry rolling window). Broadcast to public
-WS subscribers per symbol.</p>
-<p><strong class="text-white">Seq Gap Detection:
-</strong>
-Monitors WAL sequence numbers. Gap detected = request
-resend from DXS replay server. Shadow book is ephemeral
--- full rebuild on restart.</p>
-<p><strong class="text-white">Multi-Symbol:</strong>
-Single marketdata process subscribes to all ME instances
-via RSX_ME_CAST_ADDRS (comma-separated). One shadow book
-per symbol.</p>""")
-
-    # ── Section 7: Mark Price ──
-    s7 = _wt_section(
-        "mark-price",
-        "Mark Price",
-        "Binance + Coinbase feeds. Weighted mean "
-        "with staleness filter. 1s sweep.",
-        """
-<p>Separate process connecting to external exchange
-WebSocket feeds (Binance, Coinbase). Computes weighted
-mean across sources.</p>
-<p><strong class="text-white">Staleness:</strong>
-Sources older than configurable timeout are dropped
-from aggregation. If all sources stale, last known
-price holds (no phantom liquidations).</p>
-<p><strong class="text-white">Output:</strong>
-MARK_PRICE records written to WAL every 1s sweep.
-Risk engine consumes these for margin recalculation
-and liquidation triggers.</p>""")
-
-    # ── Section 8: The Numbers ──
-    s8 = _wt_section(
-        "benchmarks",
-        "The Numbers",
-        "Measured: sub-microsecond match (54 ns), "
-        "31 ns WAL append, 9 ns cast decode. "
-        "Round-trip is a component-sum budget pending the "
-        "E2E harness.",
-        """
-<table class="w-full text-xs">
-  <thead>
-    <tr class="text-slate-500 border-b border-slate-800">
-      <th class="text-left py-1 px-2">Operation</th>
-      <th class="text-right py-1 px-2">Latency</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td class="py-1 px-2">Match single fill</td>
-      <td class="py-1 px-2 text-right text-green-400
-        font-bold">54 ns</td></tr>
-    <tr><td class="py-1 px-2">Insert resting order</td>
-      <td class="py-1 px-2 text-right text-green-400">
-        857 ns</td></tr>
-    <tr><td class="py-1 px-2">Cancel order</td>
-      <td class="py-1 px-2 text-right text-green-400">
-        ~0 ns</td></tr>
-    <tr><td class="py-1 px-2">Sweep 10 levels</td>
-      <td class="py-1 px-2 text-right text-green-400">
-        2.8 us</td></tr>
-    <tr><td class="py-1 px-2">WAL append</td>
-      <td class="py-1 px-2 text-right text-green-400
-        font-bold">31 ns</td></tr>
-    <tr><td class="py-1 px-2">WAL flush+fsync 64KB</td>
-      <td class="py-1 px-2 text-right text-blue-400">
-        24 us</td></tr>
-    <tr><td class="py-1 px-2">cast encode</td>
-      <td class="py-1 px-2 text-right text-green-400">
-        43 ns</td></tr>
-    <tr><td class="py-1 px-2">cast decode</td>
-      <td class="py-1 px-2 text-right text-green-400">
-        9 ns</td></tr>
-    <tr><td class="py-1 px-2">Replay 100k records</td>
-      <td class="py-1 px-2 text-right text-blue-400">
-        121 ms</td></tr>
-    <tr class="border-t border-slate-700 font-bold
-      text-white">
-      <td class="py-1 px-2">End-to-end (budget, no harness)</td>
-      <td class="py-1 px-2 text-right text-amber-400">
-        &lt;50 us</td></tr>
-  </tbody>
-</table>
-<div class="mt-3 text-slate-500">
-  Budgets: &lt;50us GW&rarr;ME&rarr;GW, &lt;500ns ME match.
-  ME match is measured (54 ns); E2E is a component-sum
-  budget pending the continuous harness in
-  <code>specs/2/22-perf-verification.md</code>.
-</div>
-<div class="mt-3">
-  <table class="w-full text-xs">
-    <thead>
-      <tr class="text-slate-500 border-b
-        border-slate-800">
-        <th class="text-left py-1 px-2">Suite</th>
-        <th class="text-right py-1 px-2">Tests</th>
-        <th class="text-right py-1 px-2">Time</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr><td class="py-1 px-2">Rust unit</td>
-        <td class="py-1 px-2 text-right">~880</td>
-        <td class="py-1 px-2 text-right">&lt;5s</td></tr>
-      <tr><td class="py-1 px-2">Python</td>
-        <td class="py-1 px-2 text-right">~930</td>
-        <td class="py-1 px-2 text-right">~10s</td></tr>
-      <tr><td class="py-1 px-2">Playwright</td>
-        <td class="py-1 px-2 text-right">421</td>
-        <td class="py-1 px-2 text-right">~60s</td></tr>
-      <tr class="border-t border-slate-700 text-white">
-        <td class="py-1 px-2">Total</td>
-        <td class="py-1 px-2 text-right font-bold">
-          ~2,230</td>
-        <td class="py-1 px-2 text-right"></td></tr>
-    </tbody>
-  </table>
-</div>""")
-
-    # ── Section 9: Try It ──
-    s9 = _wt_section(
-        "try-it",
-        "Try It",
-        "Start the exchange and submit your first "
-        "order.",
-        """
-<p>See the links below to explore the running
-exchange. Trading itself is via the rsx-tui terminal
-client, not a web page.</p>
-<div class="mt-3 flex flex-wrap gap-3">
-  <a href="./orders"
-    class="text-blue-400 hover:text-blue-300 text-xs">
-    Submit Orders &rarr;</a>
-  <a href="./book"
-    class="text-blue-400 hover:text-blue-300 text-xs">
-    View Orderbook &rarr;</a>
-  <a href="./overview"
-    class="text-blue-400 hover:text-blue-300 text-xs">
-    Dashboard &rarr;</a>
-</div>""")
-
-    hero = """
-<div class="text-center py-6">
-  <h1 class="text-2xl font-bold text-white
-    tracking-wide">RSX Exchange</h1>
-  <p class="text-sm text-slate-400 mt-1">
-    Spec-first perpetuals exchange.
-    Fixed-point. Single-threaded matching.
-    54 ns match (measured); &lt;50us round-trip budget.</p>
-  <p class="text-xs text-slate-500 mt-2">
-    12 Rust crates &middot; ~880 unit tests &middot;
-    54ns match &middot; 31ns WAL append</p>
-</div>"""
-
-    # Interactive launch panel — always visible, not
-    # collapsed. Shows Start button, live process status,
-    # and live depth.
-    launch = """
-<section id="launch" class="bg-slate-900 border
-  border-slate-800 rounded-lg p-4 space-y-4">
-  <div class="flex flex-wrap items-center gap-3">
-    <button id="wt-start-btn"
-      hx-post="./api/processes/all/start"
-      hx-headers='{"x-confirm":"yes"}'
-      hx-vals='{"scenario":"minimal"}'
-      hx-target="#wt-start-result"
-      hx-swap="innerHTML"
-      class="bg-blue-600 hover:bg-blue-500 text-white
-        px-5 py-2.5 rounded text-sm font-bold
-        cursor-pointer">
-      Start All
-    </button>
-    <button
-      hx-post="./api/maker/start"
-      hx-target="#wt-start-result"
-      hx-swap="innerHTML"
-      class="bg-emerald-700 hover:bg-emerald-600
-        text-white px-4 py-2.5 rounded text-sm
-        font-bold cursor-pointer">
-      Start Maker
-    </button>
-    <span id="wt-start-result" class="text-xs
-      text-slate-400"></span>
-  </div>
-
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-    <div>
-      <h3 class="text-xs font-bold text-slate-400
-        mb-2 uppercase tracking-wider">Processes</h3>
-      <div id="wt-processes"
-        hx-get="./x/processes"
-        hx-trigger="load, every 2s"
-        hx-swap="innerHTML"
-        class="text-xs">
-        <p class="text-slate-500">Loading...</p>
-      </div>
-    </div>
-    <div>
-      <h3 class="text-xs font-bold text-slate-400
-        mb-2 uppercase tracking-wider">Orderbook</h3>
-      <div id="wt-depth"
-        hx-get="./x/book?symbol_id=10"
-        hx-trigger="load, every 2s"
-        hx-swap="innerHTML"
-        class="text-xs">
-        <p class="text-slate-500">Loading depth...</p>
-      </div>
-    </div>
-  </div>
-
-  <div class="flex flex-wrap gap-3 pt-1
-    border-t border-slate-800">
-    <a href="./overview"
-      class="text-blue-400 hover:text-blue-300 text-xs">
-      Dashboard &rarr;</a>
-    <a href="./orders"
-      class="text-blue-400 hover:text-blue-300 text-xs">
-      Submit Orders &rarr;</a>
-  </div>
-</section>"""
-
-    sections = (
-        f"{hero}"
-        f"{launch}"
-        f"<div class='space-y-3 mt-4'>"
-        f"{s1}{s2}{s3}{s4}{s5}{s6}{s7}{s8}{s9}"
-        f"</div>"
-    )
-
-    return layout(
-        "Walkthrough",
-        f"{nav}{sections}",
-        active_tab="./walkthrough",
-    )
 
 
 def _lat_color(us: int) -> str:
@@ -1235,6 +883,7 @@ def overview_page():
         '</div>'
     )
     content = f"""
+{_overview_intro()}
 {welcome}
 {pulse}
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">

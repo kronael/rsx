@@ -2124,12 +2124,13 @@ def read_logs(process=None, level=None, search=None,
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return RedirectResponse("./walkthrough")
+    return RedirectResponse("./overview")
 
 
 @app.get("/walkthrough", response_class=HTMLResponse)
 async def walkthrough():
-    return HTMLResponse(pages.walkthrough_page())
+    # Repurposed: hero + launcher + diagrams now live on Overview.
+    return RedirectResponse("./overview")
 
 
 @app.get("/overview", response_class=HTMLResponse)
