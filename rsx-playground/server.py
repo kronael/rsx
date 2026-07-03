@@ -5225,9 +5225,15 @@ async def api_orders_cancel(cid: str):
         f'{cid} not found or not cancellable</span>')
 
 
+_BATCH_MAX = 100
+
+
 @app.post("/api/orders/batch")
-async def api_orders_batch():
-    for i in range(10):
+async def api_orders_batch(count: int = Query(10)):
+    # Honor the requested count (was silently capped at 10), clamped
+    # to a sane [1, _BATCH_MAX] range.
+    n = max(1, min(count, _BATCH_MAX))
+    for i in range(n):
         recent_orders.append({
             "cid": f"bat-{int(time.time()*1000)%100000+i:05d}",
             "symbol": "10",
@@ -5237,9 +5243,10 @@ async def api_orders_batch():
             "ts": datetime.now().strftime("%H:%M:%S"),
         })
     _trim_recent_orders()
+    capped = " (capped)" if count > _BATCH_MAX else ""
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
-        '10 batch orders submitted</span>')
+        f'{n} batch orders submitted{capped}</span>')
 
 
 @app.post("/api/orders/random")
