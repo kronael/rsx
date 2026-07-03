@@ -286,7 +286,7 @@ integration:
 
 # WAL correctness tests (<10s)
 wal:
-	cargo test -p rsx-dxs
+	cargo test -p rsx-cast
 
 # Smoke tests (<1min) - deployed systems
 smoke:
