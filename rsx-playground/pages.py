@@ -3233,25 +3233,35 @@ def render_core_affinity(processes):
 
 
 def render_cast_flows(record_counts=None):
-    """Cast flow stats from per-pipe WAL record counts.
+    """Cast flow stats from truthful per-pipe sources.
 
-    Each pipe reads its own producer's WAL stream (F3.4):
-      Gateway -> Risk : RECORD_ORDER_ACCEPTED on gw-* WAL
-      Risk -> ME      : RECORD_ORDER_ACCEPTED+FAILED on risk-* WAL
-      ME -> Mktdata   : RECORD_FILL+BBO on me-* WAL
-    The three numbers come from three distinct streams, so the
-    earlier "1117/1117/1117" ghost (same source, three rows) is
-    structurally impossible now.
+      ME -> Mktdata   : FILL+BBO on the ME's per-symbol WAL.
+      Gateway -> Risk : gateway health /metrics orders_processed.
+      Risk -> ME      : risk health /metrics orders_processed.
+    The gateway and risk tiles write no WAL, so a None value
+    (health endpoint not exposed) renders "&mdash;" / "live", never
+    a fake 0.
     """
+    note = ""
     if record_counts:
-        gw_r = record_counts.get("gw_to_risk", 0)
-        r_me = record_counts.get("risk_to_me", 0)
-        me_md = record_counts.get("me_to_mkt", 0)
+        def _fmt(v):
+            return "&mdash;" if v is None else str(v)
+        gw_r = record_counts.get("gw_to_risk")
+        r_me = record_counts.get("risk_to_me")
+        me_md = record_counts.get("me_to_mkt")
         flows = [
-            ("Gateway -> Risk", str(gw_r), str(gw_r), "0", "0"),
-            ("Risk -> ME", str(r_me), str(r_me), "0", "0"),
-            ("ME -> Mktdata", str(me_md), str(me_md), "0", "0"),
+            ("Gateway -> Risk", _fmt(gw_r), _fmt(gw_r), "0", "0"),
+            ("Risk -> ME", _fmt(r_me), _fmt(r_me), "0", "0"),
+            ("ME -> Mktdata", _fmt(me_md), _fmt(me_md), "0", "0"),
         ]
+        if gw_r is None or r_me is None:
+            note = (
+                '<p class="text-[10px] text-slate-500 mt-1">'
+                'gw/risk write no WAL; "&mdash;" means the daemon '
+                'health /metrics endpoint (RSX_*_HEALTH_ADDR) is '
+                'not exposed in this run. ME&rarr;Mktdata counts '
+                'FILL+BBO on the ME WAL.</p>'
+            )
     else:
         flows = [
             ("Gateway -> Risk", "--", "--", "0", "0"),
@@ -3271,7 +3281,7 @@ def render_cast_flows(record_counts=None):
     return _table(
         ["Connection", "Sent", "Recv", "NAK", "Drop"],
         rows,
-    )
+    ) + note
 
 
 # ── Control grid ─────────────────────────────────────────
