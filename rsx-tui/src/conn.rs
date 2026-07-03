@@ -7,18 +7,20 @@
 //! `MockConn` with no network. Casting (the internal GW↔Risk↔ME
 //! transport) is unrelated and untouched; QUIC is user-facing only.
 
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::io;
 
 /// A side for an order or a print.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Side {
     Buy,
     Sell,
 }
 
 /// Time-in-force.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Tif {
     Gtc,
     Ioc,
@@ -45,7 +47,7 @@ impl Tif {
 }
 
 /// An order the UI wants to submit.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct OrderReq {
     pub side: Side,
     pub price: i64,
@@ -57,7 +59,12 @@ pub struct OrderReq {
 /// state each tick. Prices/quantities are raw i64 fixed-point, the
 /// wire representation (conversion to human units is a display
 /// concern, done at render).
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// `Serialize` only: `GwEvent::Position` holds `symbol: &'static str`,
+/// which can only implement `Deserialize<'static>`, never
+/// `DeserializeOwned` — so it cannot be decoded from a borrowed buffer.
+/// The read path decodes an owned mirror (`wire::WireEvent`) and converts,
+/// leaking the symbol once per position update. See `wire.rs`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub enum GwEvent {
     Connected,
     Disconnected,
