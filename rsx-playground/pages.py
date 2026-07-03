@@ -305,6 +305,9 @@ tailwind.config = {{
         mono: ['SF Mono', 'Cascadia Code', 'Fira Code',
           'ui-monospace', 'monospace'],
       }},
+      // krons design system: flat, 3px radius on cards/buttons/
+      // inputs/tags (rounded-full stays for status dots + toggles).
+      borderRadius: {{ DEFAULT: '3px', md: '3px', lg: '3px' }},
     }},
   }},
 }}
