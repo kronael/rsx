@@ -10,7 +10,9 @@
 pub mod app;
 pub mod conn;
 pub mod input;
+pub mod quic;
 pub mod render;
+pub mod wire;
 
 pub use app::drain;
 pub use app::App;
@@ -22,6 +24,7 @@ pub use conn::MockConn;
 pub use conn::OrderReq;
 pub use conn::Side;
 pub use conn::Tif;
+pub use quic::QuicConn;
 pub use input::handle_key;
 pub use input::Control;
 pub use render::draw;

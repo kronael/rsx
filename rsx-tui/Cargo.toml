@@ -3,9 +3,18 @@ name = "rsx-tui"
 version = "0.1.0"
 edition = "2021"
 
-# The RSX trading terminal. ratatui (re-exports crossterm) is the only
-# UI dep. Live data will reuse the workspace wire types (rsx-types,
-# rsx-messages) once the gateway WS client lands — kept out until then
-# so the scaffold builds standalone.
+# The RSX trading terminal. ratatui (re-exports crossterm) is the UI
+# dep; quinn + tokio + rustls back the QUIC client transport (QuicConn),
+# the user-facing client↔gateway leg. serde carries the webproto-49
+# frame bodies. Internal casting (rsx-cast) is a separate transport and
+# is not a dep here.
 [dependencies]
 ratatui = "0.29"
+quinn = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "net"] }
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+rcgen = "0.13"
