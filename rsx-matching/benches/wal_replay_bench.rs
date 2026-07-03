@@ -20,6 +20,9 @@ use rsx_types::Price;
 use rsx_types::Qty;
 use std::path::PathBuf;
 
+#[path = "harness.rs"]
+mod harness;
+
 const SYMBOL_ID: u32 = 77;
 const N: u64 = 10_000;
 
@@ -102,6 +105,7 @@ fn populate_wal(dir: &PathBuf) {
 }
 
 fn bench_wal_replay(c: &mut Criterion) {
+    harness::pin();
     let dir = PathBuf::from("./tmp/bench_wal_replay");
     populate_wal(&dir);
 
@@ -123,5 +127,9 @@ fn bench_wal_replay(c: &mut Criterion) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-criterion_group!(benches, bench_wal_replay);
+criterion_group! {
+    name = benches;
+    config = harness::criterion();
+    targets = bench_wal_replay
+}
 criterion_main!(benches);
