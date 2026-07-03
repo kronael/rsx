@@ -12,41 +12,39 @@ fat-tailed Student-t book fixture `harness::build(n)` so every bench
 measures against identically-constructed books. No bench re-rolls its
 own pin/config/fixture — drift is how unfairness creeps in.
 
-## >>> NUMBERS PENDING — cluster was up during this run <<<
+## Status — PARTIAL; benches need a fix round (2026-07-03)
 
-The RSX cluster was running when this bench pass was attempted, so
-**no p50s were recorded** (recording contended numbers would be
-dishonest). The operator should re-run with the cluster stopped and
-fill the tables below.
+Ran cluster-free (RSX tiles stopped, `sample_size 50`, pin core 2, shared
+4-core docker host). Outcome: `book_bench` (micro-ops) completed;
+**`deep_book_bench` PANICKED** — `assert!("slab exhausted")` at `slab.rs:39` —
+so the depth curves, `match_by_depth`, and the deep flatness proof (the
+headline) were **NOT captured**. Several `book_bench` micro-ops are also
+unreliable. **The review gate caught real bench bugs — these are NOT a baseline
+yet.** Bugs logged: `BOOK-BENCH-DEEP-PANIC`, `BOOK-BENCH-MICROOPS-OPTIMIZED`.
 
-Evidence (2026-07-03, `ps` + `/proc/loadavg`, 4-core box):
+### Captured (indicative — trusted subset)
+- `slab_free` **7.9 ns** · `compression_new` **12.8 ns** ·
+  `price_to_index_bisection` **1.9 ns** · `recenter_lazy_per_access` **2.0 ns**
+- `event_buffer_drain_100` **7.3 µs** · `recenter_10k_orders` **291 µs** ·
+  `best_bid_scan_after_cancel` **51.7 µs** · `modify_order_price_change` **3.3 µs**
 
-```
-pid       %cpu  comm
-1874120   18.9  rsx-matching
-1861580    8.4  rsx-recorder
-1861312    3.7  rsx-mark
-1861565    2.3  rsx-marketdata
-1861448    0.9  rsx-gateway
-3534114    0.0  rsx-risk        (busy-spin tile; sampled low this instant)
-loadavg: 2.83 4.56 5.51  (4 cores)
-```
+### Quarantined — do NOT cite
+- **Optimized away (missing `black_box`):** `modify_order_qty_down` **0 ps**,
+  `slab_alloc_bump` 285 ps, `slab_alloc_from_freelist` 735 ps,
+  `compression_price_to_index_{near,far}` ~460 ps.
+- **Mislabeled:** `match_single_fill` 5.0 µs — sweeps a 1k-ask book (~1k fills),
+  NOT the single ~54 ns fill the label claims.
+- **Artifact:** `insert_depth` inverted (n=1 → 38 µs, n=100k → 197 ns) —
+  insert+cancel pair measurement, not a per-op depth curve.
 
-`rsx-risk` and `rsx-matching` are busy-spin tiles; on a 4-core box they
-contend cores 2/3 — exactly the cores the harness pins to. Load average
-2.83/4 (and 4.56 / 5.51 over 5 / 15 min) confirms sustained load.
+### NOT captured (deep_book_bench panic)
+`cancel_depth` (≥10k), `match_by_depth`, `deep_flat` 100k/1M/10M — including the
+depth-independence headline. Blocked on `BOOK-BENCH-DEEP-PANIC`: harness
+`build(n)` sizes the slab to `n+1024`, but `cancel_depth` refill churn (and the
+1M/10M `deep_flat`) exhaust it. Fix the harness slab sizing + `black_box` the
+micro-ops, then re-run. The detail tables below (PENDING) document what each
+bench is meant to measure — retain for the fix round.
 
-### Re-run (cluster-free)
-
-```bash
-./rsx-playground/playground stop-all      # or kill the rsx-* PIDs
-pgrep -af 'rsx-risk|rsx-matching|market_maker'   # confirm empty
-cargo bench -p rsx-book --bench book_bench
-cargo bench -p rsx-book --bench deep_book_bench   # 10M depth ~1.3 GB RAM
-```
-
-Then transcribe the criterion p50 (median) into the tables below and
-drop this PENDING banner.
 
 ## What each bench measures
 
