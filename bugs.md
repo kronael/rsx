@@ -38,12 +38,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   The target errors ("package ID rsx-dxs did not match"). CLAUDE.md already
   documents `make wal` = `cargo test -p rsx-cast`. One-word fix; logged not
   patched per bug-triage protocol.
-- **BENCH-KCP-FLUSH-NEEDUPDATE** `[FIXED]` — `compare_all` panicked on the
-  KCP warmup `flush()` (`Err(NeedUpdate)`: kcp needs one `update()` to set
-  its `updated` flag before the first flush). Fixed by priming `k.update(0)`
-  once in `make_kcp` (loopback has no loss so the retransmit clock is
-  irrelevant). Now `raw_udp_128b` ~10 µs and `kcp_spin_flush_128b` ~12.7 µs
-  both measure (verified 2026-07-01). Bench-only; rsx-cast source untouched.
 - **BENCH-QUINN-ACCEPT-BI** (LOW, *unmasked by the KCP fix*) — with KCP no
   longer aborting the run, `compare_all` now panics at
   `benches/compare_all.rs:356`: `srv_conn.accept_bi().await.unwrap()`. QUIC
@@ -64,9 +58,9 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   ("make the tile correct, don't split now"). Detail below.
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
-BOOK-BBO-COMPRESSED-INDEX, BOOK-SCAN-NEXT-BID-OFFBY, BOOK-SLAB-FREE-UNGUARDED,
-BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY, BOOK-FAR-PRICE-BUCKETING.
-Detail below.
+BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY,
+BOOK-FAR-PRICE-BUCKETING. Detail below. (BOOK-BBO-COMPRESSED-INDEX +
+BOOK-SCAN-NEXT-BID-OFFBY were fixed 2026-07-03 — see git/CHANGELOG.)
 
 **BY-DESIGN (no action):** RISK-FUNDING-CROSS-SHARD (global zero-sum not
 guaranteed across shards; demo is single-shard), GW-SINGLE-SHARD-NO-ROUTING
@@ -126,20 +120,6 @@ e2e win; deferred per founder ("don't split now").
 Founder: solve these when we next work the book. All verified against source;
 `[V]` real, `[?]` needs one more check, `[D]` by-design/known-limitation.
 
-- **BOOK-BBO-COMPRESSED-INDEX `[FIXED]`.** BBA is now tracked by RAW PRICE, not
-  by tick index. Added `best_bid_px`/`best_ask_px` to `Orderbook`; `insert_resting`
-  and `migration` compare price; `cancel_order`/match-loop rescan and refresh px;
-  `snapshot::load` derives px from restored ticks. `scan_next_bid/ask` rewritten to
-  a bounded single pass over all levels picking max-bid / min-ask by price (filtered
-  by head-order side). `post_only` cross detection and FOK `available_liquidity`
-  now compare raw price instead of walking indices. Tests in
-  `rsx-book/tests/book_test.rs`: `best_bid_is_highest_price_across_zones`,
-  `post_only_sell_crossing_bid_across_zones_cancelled` (fail before / pass after).
-  Note: ask half of the compression map was already index-monotonic, so only the
-  bid side and cross detection actually misbehaved.
-- **BOOK-SCAN-NEXT-BID-OFFBY `[FIXED]`.** The `if from < 2` guard was removed
-  entirely — `scan_next_bid` now scans every level including tick 0. Test
-  `cancel_best_bid_at_tick_one_keeps_tick_zero` (fail before / pass after).
 - **BOOK-SLAB-FREE-UNGUARDED `[V]` (hardening).** `slab.rs:49` — `free()` accepts
   any in-bounds index → double-free / freelist cycle possible. Add a debug
   assert (`idx < bump_next` and not already free).
