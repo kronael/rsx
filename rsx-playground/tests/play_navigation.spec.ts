@@ -1,10 +1,8 @@
 import { test, expect } from "@playwright/test";
 
 // Tabs that render playground layout (have active nav).
-// Use getByRole({name, exact:true}) so e.g. "WAL" doesn't
-// match "Walkthrough".
+// Nav order: teaching arc first, then ops tools.
 const TABS = [
-  { label: "Walkthrough", path: "/walkthrough" },
   { label: "Overview", path: "/overview" },
   { label: "Topology", path: "/topology" },
   { label: "Book", path: "/book" },
@@ -25,7 +23,7 @@ const EXTERNAL_TABS = [
 ];
 
 test.describe("Navigation", () => {
-  test("all 14 tab links are present", async ({ page }) => {
+  test("all 13 tab links are present", async ({ page }) => {
     await page.goto("/");
     for (const tab of [...TABS, ...EXTERNAL_TABS]) {
       await expect(
