@@ -48,19 +48,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   while casting/raw-UDP/KCP/Aeron pin client→core2/echo→core3. Their numbers
   (mold 8.8µs, soup 11.2µs on 2026-07-03) are not strictly comparable. Fix in
   the uniform-harness refactor (.ship/31): shared harness pins all benches.
-- **CLUSTER-HEALTH-ADDR-UNSET** (LOW) — the `start` spawn plan never sets
-  `RSX_*_HEALTH_ADDR`, so no daemon /health/metrics server binds (only cast/
-  WS/replication ports listen). Playground cast-flows gw/risk counters fall
-  back to "—" (honest) instead of live numbers; /ready and HPA metrics also
-  unavailable. Fix: set health addrs in the spawn plan. Found during ceo-eval.
-- **PLAYGROUND-DOCS-SIDEBAR-TEST** (LOW, pre-existing) — `api_e2e_test.py::
-  test_docs_has_sidebar` fails: GET `/docs/README` renders a client-side
-  `marked.parse` loader whose HTML lacks `href="./"`/`/docs/` sidebar links
-  the test asserts. Bare `/docs/README` (depth 1) likely skips the sidebar
-  branch that `/docs/guide/README` (depth 2) hits. Pre-existing — the docs
-  route is byte-identical to session start (cf79e1d) and predates the
-  rsx-webui removal. Fix is either the route (sidebar for bare names) or the
-  test (hit the depth-2 URL). Deferred to a playground pass.
 
 - **BENCH-QUINN-ACCEPT-BI** (LOW, *unmasked by the KCP fix*) — with KCP no
   longer aborting the run, `compare_all` now panics at
@@ -77,9 +64,12 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   no replay source wired. Blocks parallel-load benchmarking. Detail below.
 - **IOC-NOT-HONORED** (MED) — empty-book IOC rests instead of cancelling; `tif`
   lost on the GW→risk→ME propagation (matching core is correct). Detail below.
-- **GATEWAY-LATENCY** (HIGH, *mitigated*) — egress-drain poll 10ms→500µs shipped
-  (`5a578d3`); the zero-poll tile-split is the scale path, deferred per founder
-  ("make the tile correct, don't split now"). Detail below.
+- **GATEWAY-LATENCY** (MED, *readiness fix landed*) — the cast-recv yield-spin is
+  gone: the gateway now awaits io_uring readiness on the CastReceiver fd
+  (`946b71d` + `7454187` exposes the fd), event-driven not polled. Earlier
+  500µs conn-side egress poll (`5a578d3`) may remain; re-measure with
+  `ws_order_latency` on a QUIET box to confirm the win + whether the conn poll
+  still shows. Detail below.
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
 BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY,
