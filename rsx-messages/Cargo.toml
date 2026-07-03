@@ -2,6 +2,13 @@
 name = "rsx-messages"
 version = "0.2.0"
 edition = "2021"
+description = "RSX exchange wire records: fixed #[repr(C, align(64))] order/fill/BBO/mark structs over the rsx-cast transport (wire = disk = stream)."
+repository = "https://github.com/kronael/rsx"
+license = "MIT OR Apache-2.0"
+keywords = ["trading", "wire-format", "repr-c", "exchange", "low-latency"]
+categories = ["data-structures", "encoding"]
+readme = "README.md"
+publish = false
 
 [dependencies]
 rsx-types = { path = "../rsx-types" }
