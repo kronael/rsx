@@ -35,6 +35,7 @@ use std::cell::RefCell;
 use std::env;
 use std::io::IsTerminal;
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -44,6 +45,14 @@ use tracing::warn;
 
 const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
 const NS_PER_MS: u64 = 1_000_000;
+
+/// Idle wakeup cadence for the casting loop. When no datagram
+/// is arriving, the loop still wakes this often to run
+/// housekeeping (heartbeat broadcast, sender NAK control,
+/// pending sweep, stale-connection reap). Inbound datagrams
+/// wake the loop immediately via POLL_ADD, independent of this.
+const HOUSEKEEPING_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(1);
 
 /// Drain the risk producer's replication stream after the
 /// gateway's cast receiver hit a sticky FAULTED or RECONNECT.
@@ -359,7 +368,35 @@ fn main() {
         let mut last_pending_sweep = time_ns();
         let mut last_heartbeat_ns = time_ns();
 
-        // casting polling loop (yields to monoio)
+        // Await casting readiness on the io_uring reactor
+        // instead of polling. We duplicate the receiver's UDP
+        // fd (dup shares the file description, so POLLIN
+        // reflects the same recv queue) and wrap the dup in a
+        // monoio UdpSocket used *only* for `readable()` —
+        // POLL_ADD wakeup; the recv itself stays on the
+        // receiver's own std socket via `try_recv_with`.
+        let readiness = {
+            let dup = unsafe {
+                std::os::fd::BorrowedFd::borrow_raw(
+                    cast_receiver.as_raw_fd(),
+                )
+            }
+            .try_clone_to_owned()
+            // SAFETY: fail-fast at startup
+            .expect("dup casting fd for readiness poll");
+            monoio::net::udp::UdpSocket::from_std(dup.into())
+                // SAFETY: fail-fast at startup
+                .expect("wrap casting fd in monoio UdpSocket")
+        };
+
+        // Casting recv loop. Drains every pending datagram,
+        // runs periodic housekeeping, then parks on the
+        // reactor until the next datagram lands (or a 1 ms
+        // housekeeping timer fires — heartbeats, NAK control,
+        // and connection reaping still run while casting is
+        // idle). This is NOT a spin: the hot response path is
+        // woken by POLL_ADD the instant a datagram arrives;
+        // the timer only bounds idle-time housekeeping.
         loop {
             loop {
                 // Zero-copy egress recv: route in-place from the
@@ -522,7 +559,23 @@ fn main() {
                 );
             }
 
-            monoio::time::sleep(std::time::Duration::ZERO).await;
+            // Park on the reactor: wake instantly on an
+            // inbound casting datagram (io_uring POLL_ADD via
+            // `readable`), or after the housekeeping interval,
+            // whichever comes first. relaxed=false so the
+            // readiness is authoritative for our own recv.
+            monoio::select! {
+                r = readiness.readable(false) => {
+                    if let Err(e) = r {
+                        tracing::warn!(
+                            "gateway: casting readable failed: {e}"
+                        );
+                    }
+                }
+                _ = monoio::time::sleep(
+                    HOUSEKEEPING_INTERVAL,
+                ) => {}
+            }
         }
     });
 }
