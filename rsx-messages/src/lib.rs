@@ -1,4 +1,14 @@
-//! rsx-messages: domain wire records on top of `rsx-cast`. See `specs/2/18-messages.md`.
+//! The RSX exchange's application wire records — fixed
+//! `#[repr(C, align(64))]` structs that flow over the `rsx-cast` transport with
+//! no serialization step.
+//!
+//! Eleven record types (fills, BBO, the order lifecycle, marks, liquidations)
+//! each implement [`rsx_cast::CastRecord`], so the same bytes ride casting/UDP,
+//! replication/TCP, and the WAL unchanged — wire = stream = disk. Every record's
+//! first field is `seq: u64` (the transport stamps it in place) and its size is
+//! locked at compile time with `const _` assertions. RSX-specific: reusable only
+//! alongside `rsx-cast` and `rsx-types`. See ARCHITECTURE.md and, in the wider
+//! rsx repo, `specs/2/18-messages.md` for the per-field reference.
 
 use rsx_cast::CastRecord;
 use rsx_cast::encode_record;
