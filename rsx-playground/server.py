@@ -3809,22 +3809,28 @@ def _order_age_s(ts, now: float):
 @app.get("/x/stale-orders", response_class=HTMLResponse)
 async def x_stale_orders():
     now = time.time()
-    terminal = {
-        "filled", "cancelled", "rejected",
-        "failed", "expired",
+    # "Resolved" = a real terminal state OR live resting liquidity.
+    # A resting order is healthy by design, NOT stale — flagging it
+    # made the count climb with every quote. Only orders stuck in a
+    # transient state (submitted/sent/pending/timeout/error) past the
+    # age threshold are genuinely hung.
+    resolved = {
+        "filled", "cancelled", "rejected", "failed", "expired",
+        "resting", "accepted", "done",
     }
     stale = [
         o for o in recent_orders
-        if o.get("status", "") not in terminal
+        if o.get("status", "") not in resolved
         and (age := _order_age_s(o.get("ts"), now)) is not None
         and age > 60]
     if not stale:
         return HTMLResponse(
             '<span class="text-emerald-400 text-xs">'
-            '0 stale orders</span>')
+            'no hung orders</span>')
     return HTMLResponse(
         f'<span class="text-amber-400 text-xs">'
-        f'{len(stale)} stale order(s)</span>')
+        f'{len(stale)} hung order(s) '
+        f'(&gt;60s, no terminal state)</span>')
 
 
 def _me_live(symbol_id: int) -> bool:

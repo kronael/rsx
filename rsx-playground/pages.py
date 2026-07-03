@@ -2749,7 +2749,7 @@ def orders_page():
         '</div>',
     )
     stale = _card(
-        "Stale Orders (>1 hour unfilled)",
+        "Hung Orders (>60s, no terminal state)",
         '<div hx-get="./x/stale-orders" '
         'hx-trigger="load, every 10s" '
         'hx-swap="innerHTML">'
