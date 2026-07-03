@@ -61,11 +61,7 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   route is byte-identical to session start (cf79e1d) and predates the
   rsx-webui removal. Fix is either the route (sidebar for bare names) or the
   test (hit the depth-2 URL). Deferred to a playground pass.
-- **MAKE-WAL-STALE-CRATE** (LOW) — `Makefile:300` `make wal` target runs
-  `cargo test -p rsx-dxs`, but `rsx-dxs` was renamed to `rsx-cast` in May.
-  The target errors ("package ID rsx-dxs did not match"). CLAUDE.md already
-  documents `make wal` = `cargo test -p rsx-cast`. One-word fix; logged not
-  patched per bug-triage protocol.
+
 - **BENCH-QUINN-ACCEPT-BI** (LOW, *unmasked by the KCP fix*) — with KCP no
   longer aborting the run, `compare_all` now panics at
   `benches/compare_all.rs:356`: `srv_conn.accept_bi().await.unwrap()`. QUIC
