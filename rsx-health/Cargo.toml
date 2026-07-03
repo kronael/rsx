@@ -2,6 +2,13 @@
 name = "rsx-health"
 version = "0.1.0"
 edition = "2021"
+description = "Dependency-light /health /ready /metrics HTTP endpoint for low-latency daemons, updated from the hot path with relaxed atomic stores only."
+repository = "https://github.com/kronael/rsx"
+license = "MIT OR Apache-2.0"
+keywords = ["health-check", "metrics", "kubernetes", "low-latency", "atomic"]
+categories = ["development-tools::debugging", "web-programming::http-server"]
+readme = "README.md"
+publish = false
 
 [dependencies]
 tracing = "0.1"
