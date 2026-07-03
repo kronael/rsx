@@ -66,13 +66,14 @@ Boot refuses to start if `RSX_GW_JWT_SECRET` is shorter than
 `JWT_SECRET_MIN_LEN = 32` bytes (HS256 floor). Empty secret
 also exits 2.
 
-`Claims` carries an optional `jti`. `JtiTracker` (FIFO-bounded
-HashSet) is implemented and unit-tested, but **currently dormant
-on the wire path**: `ws::extract_user_id` calls `validate_jwt`
-(user_id only), not `validate_jwt_with_claims`, so jti replay
-protection is not active. Tracked at `ws.rs:108`
-(`TODO(13-A16Z-FIXES T1.3)`). Wiring is pending a decision on
-per-process vs shared (Redis) replay state.
+`Claims` carries a `jti`. `JtiTracker` (FIFO-bounded, 16 K-entry cap)
+is **wired on the WS handshake path**: `ws.rs` holds a process-wide
+`JTI_TRACKER` and validates JWT + claims + rejects replay via
+`extract_user_and_record_jti` — a token missing `jti` is rejected, and
+a replayed `jti` is refused (401). Covered by `tests/jwt_ws_e2e_test.rs`.
+Replay state is **per-process**; a shared (Redis) tracker for multi-
+gateway deployments is a future option, not needed for the single-
+gateway topology today.
 
 ## Rate Limiting
 

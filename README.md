@@ -47,8 +47,9 @@ together they show how an exchange is wired end-to-end.
 
 ## Components worth studying
 
-Each is a separate process or crate, done and tested. Why each
-one repays a read:
+Each is a separate process or crate, built and tested (per-crate
+status in PROGRESS.md — some are still evolving). Why each one
+repays a read:
 
 - **`rsx-cast` — log-backed reliable UDP transport.** The
   load-bearing trick: the wire bytes, the on-disk WAL bytes,
