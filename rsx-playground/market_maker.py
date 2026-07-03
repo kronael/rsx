@@ -450,6 +450,32 @@ class DummyMarketMaker:
             if self._running:
                 await asyncio.sleep(self.refresh_sec)
 
+    def _handle_cycle_frame(self, data):
+        """Handle one async gateway frame seen during a quote cycle.
+
+        E[1005] ("order not found") is EXPECTED for a maker: a
+        resting quote filled by a taker between cycles is already
+        gone, so cancelling it returns 1005. That is normal churn,
+        not a placement error — swallow it silently. Any other E is
+        a real rejection worth surfacing. F frames mark an order
+        gone (referenced by order-id, so we can only best-effort
+        discard — the gateway sends no cid↔oid map for resting
+        quotes, and no resting ACK, so fills can't be mapped back to
+        a cid; the every-cycle cancel-all keeps active_cids honest).
+        """
+        if "F" in data or "D" in data:
+            ref = (data.get("F") or data.get("D", [None]))[0]
+            self.active_cids.discard(ref)
+            return
+        if "E" in data:
+            e = data["E"]
+            code = e[0] if isinstance(e, list) and e else None
+            if code == 1005:
+                return  # order already filled/gone — expected
+            self.errors.append(f"order: {e}")
+            if len(self.errors) > 20:
+                del self.errors[:10]
+
     async def _quote_cycle(self):
         """Cancel stale orders and place new quotes."""
         headers = self._gateway_headers()
@@ -459,18 +485,22 @@ class DummyMarketMaker:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as ws:
-                # cancel existing orders
-                for cid in list(self.active_cids):
+                # cancel existing orders, then drain acks/errors.
+                to_cancel = list(self.active_cids)
+                for cid in to_cancel:
                     await ws.send_str(json.dumps({
                         "C": [cid],
                     }))
                     self.cancels_sent += 1
-                    # drain response
+                for _ in to_cancel:
                     try:
-                        await asyncio.wait_for(
+                        resp = await asyncio.wait_for(
                             ws.receive(), timeout=0.1)
                     except asyncio.TimeoutError:
-                        pass
+                        break
+                    if resp.type == aiohttp.WSMsgType.TEXT:
+                        self._handle_cycle_frame(
+                            json.loads(resp.data))
                 self.active_cids.clear()
 
                 # place new orders
@@ -523,28 +553,17 @@ class DummyMarketMaker:
                         self.active_cids.add(ask_cid)
                         self.orders_placed += 1
 
-                        # drain responses; evict filled cids
-                        _sent = [bid_cid, ask_cid]
+                        # drain responses; E[1005] (order already
+                        # filled/gone) is swallowed as expected churn.
                         for _idx in range(2):
                             try:
                                 resp = await asyncio.wait_for(
                                     ws.receive(), timeout=0.2)
-                                if resp.type == aiohttp.WSMsgType.TEXT:
-                                    data = json.loads(resp.data)
-                                    # evict filled/done orders
-                                    if "F" in data or "D" in data:
-                                        cid = (data.get("F") or
-                                               data.get("D", [None]))[0]
-                                        self.active_cids.discard(cid)
-                                    if "E" in data:
-                                        self.errors.append(
-                                            f"order: {data['E']}")
-                                        if len(self.errors) > 20:
-                                            del self.errors[:10]
-                                        self.active_cids.discard(
-                                            _sent[_idx])
                             except asyncio.TimeoutError:
-                                pass
+                                continue
+                            if resp.type == aiohttp.WSMsgType.TEXT:
+                                self._handle_cycle_frame(
+                                    json.loads(resp.data))
 
 
 if __name__ == "__main__":
