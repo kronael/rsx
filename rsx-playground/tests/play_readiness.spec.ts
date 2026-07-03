@@ -3,7 +3,7 @@
  *
  * Runs sequentially (workers: 1 enforced globally) after infra-smoke.
  * All product shards that need a live exchange (process-control,
- * market-maker, trade-ui) depend on this project so they are skipped
+ * market-maker) depend on this project so they are skipped
  * immediately when the system is not ready — rather than failing
  * mid-test with obscure errors.
  *

@@ -34,7 +34,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
-from fastapi.staticfiles import StaticFiles
 
 import cast_demo
 import pages
@@ -79,7 +78,6 @@ MARKETDATA_WS = os.environ.get(
 AUTH_HTTP = os.environ.get(
     "AUTH_HTTP", "http://localhost:8082"
 )
-WEBUI_DIST = ROOT / "rsx-webui" / "dist"
 PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
@@ -2986,9 +2984,8 @@ tailwind.config = {{
     <div class="mt-6 pt-4 border-t border-slate-700">
       <a href="../../" class="text-slate-400 text-xs
         hover:text-white block py-1">Dashboard</a>
-      <a href="../../trade/" target="_blank" rel="noopener"
-        class="text-slate-400 text-xs hover:text-white block py-1"
-        >Trade UI ↗</a>
+      <span class="text-slate-500 text-xs block py-1"
+        >Trade via the rsx-tui terminal client</span>
     </div>
   </aside>
   <main class="flex-1 max-w-3xl p-8">
@@ -6889,9 +6886,10 @@ async def do_auth_start() -> bool:
         "RSX_AUTH_REDIRECT_URI": os.environ.get(
             "RSX_AUTH_REDIRECT_URI",
             "http://localhost:49171/oauth/github/callback"),
+        # rsx-tui is a terminal client, not a URL; auth's post-login
+        # redirect is unused for it. Kept for env var back-compat.
         "RSX_AUTH_TRADE_UI_URL": os.environ.get(
-            "RSX_AUTH_TRADE_UI_URL",
-            "http://localhost:49171/trade/"),
+            "RSX_AUTH_TRADE_UI_URL", ""),
         "RSX_AUTH_STARTER_COLLATERAL": os.environ.get(
             "RSX_AUTH_STARTER_COLLATERAL", "0"),
         "RSX_AUTH_JWT_TTL_S": os.environ.get(
@@ -8203,34 +8201,6 @@ async def v1_proxy(path: str, request: Request):
             status_code=502)
 
 
-# Serve trading UI SPA (must be last — catches /trade/*)
-if WEBUI_DIST.exists():
-    @app.get("/trade")
-    async def trade_redirect(request: Request):
-        # Relative redirect preserves proxy prefix (e.g. /rsx-play/)
-        prefix = request.headers.get(
-            "x-forwarded-prefix", "").rstrip("/")
-        return RedirectResponse(f"{prefix}/trade/")
-
-    app.mount(
-        "/trade",
-        StaticFiles(
-            directory=str(WEBUI_DIST),
-            html=True,
-        ),
-        name="webui",
-    )
-else:
-    @app.get("/trade")
-    @app.get("/trade/")
-    async def trade_not_built():
-        return HTMLResponse(
-            '<html><body style="font-family:monospace;background:#0b0e11;'
-            'color:#888;padding:2rem">'
-            '<h2>trading UI not built</h2>'
-            '<p>run <code>make webui</code> to build rsx-webui</p>'
-            '</body></html>'
-        )
 
 
 # ── main ────────────────────────────────────────────────
