@@ -6,6 +6,11 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **MAKE-WAL-STALE-CRATE** (LOW) — `Makefile:300` `make wal` target runs
+  `cargo test -p rsx-dxs`, but `rsx-dxs` was renamed to `rsx-cast` in May.
+  The target errors ("package ID rsx-dxs did not match"). CLAUDE.md already
+  documents `make wal` = `cargo test -p rsx-cast`. One-word fix; logged not
+  patched per bug-triage protocol.
 - **BENCH-KCP-FLUSH-NEEDUPDATE** `[FIXED]` — `compare_all` panicked on the
   KCP warmup `flush()` (`Err(NeedUpdate)`: kcp needs one `update()` to set
   its `updated` flag before the first flush). Fixed by priming `k.update(0)`
