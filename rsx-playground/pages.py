@@ -5535,8 +5535,13 @@ def stress_report_page(data):
     return layout(f"Stress Report: {ts_fmt}", content, active_tab="./stress")
 
 
-def maker_status_html(stats: dict, pid) -> str:
-    """Render maker-status HTMX partial with live fields."""
+def maker_status_html(stats: dict, pid, liquidity_live=True) -> str:
+    """Render maker-status HTMX partial with live fields.
+
+    liquidity_live=False (gateway or ME down) means active_orders is
+    local bookkeeping, not resting liquidity — flag it so a viewer
+    doesn't read a dead book as live depth.
+    """
     orders_placed = stats.get("orders_placed", "--")
     active_orders = stats.get("active_orders", "--")
     mid_prices = stats.get("mid_prices", {})
@@ -5548,6 +5553,15 @@ def maker_status_html(stats: dict, pid) -> str:
             mid_price = str(raw_v)
     else:
         mid_price = "--"
+    if not liquidity_live:
+        return (
+            f'<span class="text-amber-400 text-xs">'
+            f'running (pid {pid}) &mdash; '
+            f'gateway/ME down: {active_orders} local order(s) are '
+            f'NOT resting liquidity. '
+            f'orders_placed: {orders_placed}, mid_price: {mid_price}'
+            f'</span>'
+        )
     return (
         f'<span class="text-emerald-400 text-xs">'
         f'running (pid {pid}) &mdash; '
@@ -5565,9 +5579,23 @@ def maker_live_html(
     pid,
     restarts: int,
     stats: dict,
+    liquidity_live: bool = True,
 ) -> str:
-    """HTMX partial: live status + stats rows for maker page."""
-    if running:
+    """HTMX partial: live status + stats rows for maker page.
+
+    liquidity_live=False means the gateway or ME is down, so
+    "Active orders" is local bookkeeping, not resting liquidity.
+    """
+    if running and not liquidity_live:
+        badge = (
+            '<span class="inline-flex items-center gap-1">'
+            '<span class="w-2 h-2 rounded-full bg-amber-400'
+            ' animate-pulse"></span>'
+            '<span class="text-amber-400">running (no live book)'
+            '</span></span>'
+        )
+        pid_txt = html.escape(str(pid or "?"))
+    elif running:
         badge = (
             '<span class="inline-flex items-center gap-1">'
             '<span class="w-2 h-2 rounded-full bg-emerald-400'
@@ -5606,13 +5634,20 @@ def maker_live_html(
         '<span class="text-slate-600">none</span>'
     )
     spread_bps = stats.get("spread_bps", "--")
+    active_txt = str(active_orders)
+    if running and not liquidity_live:
+        active_txt = (
+            f'{active_orders} '
+            f'<span class="text-amber-400">'
+            f'(gateway/ME down — not resting)</span>'
+        )
 
     rows = [
         ("Status", badge),
         ("PID", pid_txt),
         ("Restarts", str(restarts)),
         ("Orders placed", str(orders_placed)),
-        ("Active orders", str(active_orders)),
+        ("Active orders", active_txt),
         ("Mid price", mid_txt),
         ("Spread (bps)", str(spread_bps)),
         ("Last error", last_err),
