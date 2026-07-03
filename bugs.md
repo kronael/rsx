@@ -6,6 +6,14 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **PLAYGROUND-DOCS-SIDEBAR-TEST** (LOW, pre-existing) — `api_e2e_test.py::
+  test_docs_has_sidebar` fails: GET `/docs/README` renders a client-side
+  `marked.parse` loader whose HTML lacks `href="./"`/`/docs/` sidebar links
+  the test asserts. Bare `/docs/README` (depth 1) likely skips the sidebar
+  branch that `/docs/guide/README` (depth 2) hits. Pre-existing — the docs
+  route is byte-identical to session start (cf79e1d) and predates the
+  rsx-webui removal. Fix is either the route (sidebar for bare names) or the
+  test (hit the depth-2 URL). Deferred to a playground pass.
 - **MAKE-WAL-STALE-CRATE** (LOW) — `Makefile:300` `make wal` target runs
   `cargo test -p rsx-dxs`, but `rsx-dxs` was renamed to `rsx-cast` in May.
   The target errors ("package ID rsx-dxs did not match"). CLAUDE.md already
