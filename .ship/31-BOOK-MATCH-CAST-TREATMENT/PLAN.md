@@ -118,3 +118,23 @@ Each phase is its own commit set, reviewed before the next starts.
   optimization is a separate, later decision.
 - No external publishing (per CLAUDE.md) — this is internal rigor +
   a GitHub-ready artifact, distribution is a founder call.
+
+## Execution workflow (codex + opus) — added 2026-07-03
+
+The lesson from cast: the *comparison* is where you fool yourself — cast's
+oracle pass caught a bench that handed one design a free uncounted core.
+So codex's role is **fairness**, not just prose.
+
+Per phase: **opus implements → codex (oracle) reviews adversarially → I
+integrate, run, verify numbers → commit → founder reviews the gate.**
+
+- **codex/oracle owns**: (a) are competitor baselines *fair* (real, not
+  strawmen)? (b) does the harness charge every contender equally (same
+  payload, core pinning, alloc discipline)? (c) a no-fluff prose pass.
+- **opus owns**: baseline competitor benches, `compare/` docs, README +
+  `notes/` uplift.
+- **I own**: running everything, reconciling to `reports/`, honesty
+  guardrails, commits.
+
+Applies to both crates. rsx-book first (its `compare/` dir is the only
+fully-missing piece; benches + README + notes already exist to build on).
