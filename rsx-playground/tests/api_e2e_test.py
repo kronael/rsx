@@ -598,11 +598,14 @@ def test_docs_404_nonexistent(client):
 
 def test_docs_has_sidebar(client):
     """Docs pages include sidebar with navigation links."""
-    resp = client.get("/docs/README")
+    # The sidebar renders on depth-2 doc URLs (/docs/<root>/<file>);
+    # bare /docs/README is a client-side loader without it. Assert
+    # against the depth-2 URL that actually renders the <aside> nav.
+    resp = client.get("/docs/guide/README")
     assert resp.status_code == 200
     text = resp.text
-    assert 'href="./' in text or '/docs/' in text
-    assert 'sidebar' in text.lower() or 'href="./' in text
+    assert "<aside" in text
+    assert 'href="../guide/' in text
 
 
 # ── Order → WAL Timeline Flow ───────────────────────────────
