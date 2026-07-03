@@ -81,7 +81,7 @@ export default defineConfig({
       ],
       dependencies: ["infra-smoke"],
     },
-    // Shard 1b: walkthrough — landing page + live depth (10 tests)
+    // Shard 1b: walkthrough — redirect to Overview + hint toggle
     {
       name: "walkthrough",
       testMatch: ["play_walkthrough.spec.ts"],
