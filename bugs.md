@@ -6,6 +6,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **BENCH-MOLD-SOUP-UNPINNED** (LOW, fairness) — `compare_moldudp64` +
+  `compare_soupbintcp` never pin their threads (`TODO(pinning)` never done)
+  while casting/raw-UDP/KCP/Aeron pin client→core2/echo→core3. Their numbers
+  (mold 8.8µs, soup 11.2µs on 2026-07-03) are not strictly comparable. Fix in
+  the uniform-harness refactor (.ship/31): shared harness pins all benches.
+- **CLUSTER-HEALTH-ADDR-UNSET** (LOW) — the `start` spawn plan never sets
+  `RSX_*_HEALTH_ADDR`, so no daemon /health/metrics server binds (only cast/
+  WS/replication ports listen). Playground cast-flows gw/risk counters fall
+  back to "—" (honest) instead of live numbers; /ready and HPA metrics also
+  unavailable. Fix: set health addrs in the spawn plan. Found during ceo-eval.
 - **PLAYGROUND-DOCS-SIDEBAR-TEST** (LOW, pre-existing) — `api_e2e_test.py::
   test_docs_has_sidebar` fails: GET `/docs/README` renders a client-side
   `marked.parse` loader whose HTML lacks `href="./"`/`/docs/` sidebar links
