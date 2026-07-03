@@ -3,7 +3,7 @@
 //! What this measures
 //! -----------------
 //! Clean-room implementation of just enough Nasdaq MoldUDP64
-//! framing to round-trip one 64-byte payload over **unicast**
+//! framing to round-trip one 128-byte payload over **unicast**
 //! `std::net::UdpSocket` on 127.0.0.1. Both directions perform
 //! a full parse + emit of the 20-byte downstream header plus
 //! one length-prefixed message.
@@ -13,9 +13,9 @@
 //!   10..18  sequence number (u64)
 //!   18..20  message count (u16)
 //!   20..22  message 0 length (u16)
-//!   22..86  message 0 payload (64 bytes)
+//!   22..150 message 0 payload (128 bytes)
 //!
-//! Total wire = 86 bytes per direction.
+//! Total wire = 150 bytes per direction.
 //!
 //! We bench unicast, not multicast: loopback multicast on Linux
 //! adds IGMP / IP_ADD_MEMBERSHIP / route-hint plumbing that
@@ -29,10 +29,6 @@
 //!   compare_soupbintcp  Nasdaq's TCP framing (~10–30 µs)
 //!
 //! See compare/moldudp64.md for protocol details.
-//!
-//! TODO(pinning): a parallel sub is adding core_affinity across
-//! the bench suite — this thread spawn picks up pinning in the
-//! follow-up merge.
 
 use core_affinity::CoreId;
 use criterion::black_box;
@@ -72,7 +68,7 @@ const RECV_BUF: usize = 256;
 const END_OF_SESSION: u16 = 0xFFFF;
 
 /// Pack a MoldUDP64 downstream packet carrying exactly one
-/// 64-byte message. Returns the framed slice length.
+/// 128-byte message. Returns the framed slice length.
 fn frame_packet(
     buf: &mut [u8],
     session: &[u8; 10],
