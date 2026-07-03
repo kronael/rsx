@@ -53,6 +53,9 @@ rsx-recorder/   Archival replication consumer (separate process)
 rsx-cli/        WAL dump/inspect tool (clap CLI)
 rsx-log/        Off-hot-path logging primitive (per-thread
                 SPSC ring → drain thread → tracing events)
+rsx-tui/        Trade surface: ratatui trading terminal
+                (orderbook ladder, order entry, positions/
+                fills over the gateway WS)
 ```
 
 Each process is a separate binary. Crates are libraries
@@ -63,7 +66,6 @@ Non-Rust subprojects (NOT in cargo workspace):
 ```
 rsx-playground/ Python/FastAPI dev dashboard + Playwright tests
                 (uv-managed; pyproject.toml; tests/api_*.py and play_*.spec.ts)
-rsx-webui/      Vite + React + Tailwind Trade UI SPA (bun)
 rsx-auth/       Python auth service (uv; sqlx migrations)
 ```
 

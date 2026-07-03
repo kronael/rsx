@@ -186,17 +186,11 @@ Trade.
 - v1 proxy: symbols, candles, funding, positions, fills
 - Gateway mode: /v1/gateway/mode
 
-## React WebUI (rsx-webui/)
+## Trade UI (rsx-tui/)
 
-Components: Orderbook, OrderEntry, OpenOrders, Positions,
-Funding, OrderHistory, Assets, TradesTape, DepthChart,
-Chart, TopBar, BottomTabs, TradeLayout, Toast,
-ErrorBoundary.
-
-Stores: market, trading, connection, settings.
-
-Hooks: usePublicWs, usePrivateWs, useRestApi, useKeyboard,
-useSoundAlerts.
+Terminal trading client (ratatui), replaces the discontinued
+React SPA (rsx-webui, removed). Reuses `rsx-types`/
+`rsx-messages` wire types, connects to the gateway WS.
 
 ## Spec Coverage
 
@@ -255,7 +249,7 @@ zero-sum, advisory-lock exclusivity).
 ## Stats
 
 - ~21k LOC Rust, ~25k LOC Python, ~5k LOC TypeScript
-- 12 Rust crates (+ rsx-playground, rsx-webui, rsx-auth
-  outside the cargo workspace), 8 binaries
+- 14 Rust crates (+ rsx-playground, rsx-auth outside the
+  cargo workspace), 8 binaries
 - 50+ specs, 88 Rust test files, 22 Playwright specs
 - ~28 `[refine]` commits + ~12 a16z-fixes commits since v0.1.0

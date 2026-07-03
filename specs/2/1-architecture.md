@@ -78,13 +78,13 @@ topology.
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
 | rsx-messages | Wire-record catalogue (`Fill` / `BBO` / `Order*` / ...) |
 | rsx-log | Off-hot-path logging primitive (per-thread SPSC ring) |
+| rsx-tui | Trade surface: ratatui trading terminal |
 
 Non-Rust supporting projects (not in Cargo workspace):
 
 | Project | Role |
 |-------|------|
 | rsx-playground | Dev dashboard (Python/FastAPI + Playwright tests) |
-| rsx-webui | Trade UI SPA (TypeScript/React/Vite, built to dist/) |
 
 Each process is a separate binary. Tile crates (rsx-book,
 rsx-matching, rsx-risk, etc.) are libraries linked into
