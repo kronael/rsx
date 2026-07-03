@@ -270,9 +270,12 @@ fn match_group(c: &mut Criterion, name: &str, sizes: &[u64]) {
     g.finish();
 }
 
-fn bench_insert_depth(c: &mut Criterion) {
+fn bench_insert_cancel_depth(c: &mut Criterion) {
     harness::pin();
-    insert_group(c, "insert_depth", &SIZES_CURVE);
+    // insert_group times an insert+cancel PAIR (net-neutral to hold
+    // depth constant), so the honest name is insert_cancel, not a pure
+    // insert latency.
+    insert_group(c, "insert_cancel_depth", &SIZES_CURVE);
 }
 
 fn bench_cancel_depth(c: &mut Criterion) {
@@ -362,7 +365,7 @@ criterion_group! {
     name = benches;
     config = harness::criterion();
     targets =
-        bench_insert_depth,
+        bench_insert_cancel_depth,
         bench_cancel_depth,
         bench_match_depth,
         bench_match_by_type,

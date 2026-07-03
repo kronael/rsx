@@ -134,9 +134,16 @@ pub fn draw_resting(rng: &mut Rng) -> (i64, i64, Side) {
 /// the same `n` always produces the same book. `insert_resting` rests
 /// directly (no match path, emits no events), so seeding never
 /// cross-matches — the book reaches exactly `n` resting orders.
+///
+/// Slab headroom: the depth benches sit a churn pool ON TOP of the
+/// n-deep book — cancel_group inserts up to 4096 cancelable handles
+/// before freeing them, and match_group transiently allocates the
+/// taker + replenish slots. Size for n + that peak (8192 covers the
+/// 4096 pool plus match churn) so the slab never exhausts. Additive,
+/// not multiplicative, so the 10M deep book stays RAM-bound at ~n.
 pub fn build(n: u64) -> Orderbook {
     let mut book =
-        Orderbook::new(config(), (n + 1024) as u32, MID);
+        Orderbook::new(config(), (n + 8192) as u32, MID);
     let mut rng = Rng::new(0x1234_5678_9abc_def0 ^ n);
     for i in 0..n {
         let (p, q, s) = draw_resting(&mut rng);

@@ -1,5 +1,6 @@
 //! Orderbook micro-ops: slab alloc/free, CompressionMap lookup +
-//! recenter, the '54 ns single fill', modify, BBO scan, event drain.
+//! recenter, a marketable IOC fill vs a 1k-ask book, modify, BBO
+//! scan, event drain.
 //! Depth-vs-latency curves and match-by-type live in
 //! `deep_book_bench.rs`; both route through the shared `harness`.
 //!
@@ -32,7 +33,7 @@ fn bench_slab_alloc_free(c: &mut Criterion) {
             );
             let start = std::time::Instant::now();
             for _ in 0..iters {
-                s.alloc();
+                black_box(s.alloc());
             }
             start.elapsed()
         });
@@ -47,8 +48,8 @@ fn bench_slab_alloc_free(c: &mut Criterion) {
             slab.free(h);
         }
         b.iter(|| {
-            let h = slab.alloc();
-            slab.free(h);
+            let h = black_box(slab.alloc());
+            slab.free(black_box(h));
         });
     });
 
@@ -72,19 +73,23 @@ fn bench_compression_map(c: &mut Criterion) {
     harness::pin();
     let map = CompressionMap::new(50000, 1);
     c.bench_function("compression_price_to_index_near", |b| {
-        b.iter(|| black_box(map.price_to_index(50010)));
+        b.iter(|| black_box(map.price_to_index(black_box(50010))));
     });
     c.bench_function("compression_price_to_index_far", |b| {
-        b.iter(|| black_box(map.price_to_index(65000)));
+        b.iter(|| black_box(map.price_to_index(black_box(65000))));
     });
     c.bench_function("compression_new", |b| {
         b.iter(|| black_box(CompressionMap::new(50000, 1)));
     });
 }
 
-fn bench_match_single_fill(c: &mut Criterion) {
+// Marketable IOC buy against a 1000-level ask book, with the consumed
+// level replenished each iteration. NOT an isolated single-fill latency
+// number: it times the full `process_new_order` path plus the replenish
+// insert against a deep resting book. Named for what it measures.
+fn bench_match_ioc_vs_1k_asks(c: &mut Criterion) {
     harness::pin();
-    c.bench_function("match_single_fill", |b| {
+    c.bench_function("match_ioc_vs_1k_asks", |b| {
         let mut book =
             Orderbook::new(harness::config(), 1_000_000, 50000);
         // Pre-fill asks
@@ -315,9 +320,12 @@ fn bench_modify_order_qty_down(c: &mut Criterion) {
             let mut book = Orderbook::new(
                 harness::config(), 1_000_000, 50000,
             );
-            // Large initial qty so we can reduce many
-            // times without exhausting
-            let n = iters.min(500_000) as i64;
+            // qty must strictly decrease each call, so seed the order
+            // with qty = iters+1 and step it down exactly `iters`
+            // times. Running exactly `iters` ops honors criterion's
+            // iter_custom contract — the old `min(500_000)` clamp ran
+            // fewer ops than `iters` divided by, reporting ~0 ps.
+            let n = iters as i64;
             let handle = book.insert_resting(
                 49500, n + 1, Side::Buy, 0, 1, false,
                 1000, 0, 1,
@@ -325,7 +333,7 @@ fn bench_modify_order_qty_down(c: &mut Criterion) {
             let start = std::time::Instant::now();
             for i in 0..n {
                 black_box(book.modify_order_qty_down(
-                    handle, n - i,
+                    black_box(handle), black_box(n - i),
                 ));
             }
             start.elapsed()
@@ -339,7 +347,7 @@ criterion_group! {
     targets =
         bench_slab_alloc_free,
         bench_compression_map,
-        bench_match_single_fill,
+        bench_match_ioc_vs_1k_asks,
         bench_price_to_index_bisection,
         bench_recenter_10k_orders,
         bench_recenter_lazy_per_access,
