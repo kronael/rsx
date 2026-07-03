@@ -2660,6 +2660,7 @@ dependencies = [
 name = "rsx-matching"
 version = "0.2.0"
 dependencies = [
+ "core_affinity",
  "criterion",
  "libc",
  "rsx-book",
