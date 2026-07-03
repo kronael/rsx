@@ -17,11 +17,13 @@ const MAX_TRADES: usize = 50;
 /// Rolling latency-sample window (for p50 / min).
 const MAX_LAT: usize = 128;
 
-/// One measured round-trip, split by where the time went (ns).
+/// One measured round-trip, split by where the time went (ns). `net_ns`
+/// is `None` when the client couldn't pair the report to a submitted
+/// order (so the display shows "—", never a fabricated 0).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Latency {
-    /// client ↔ gateway (QUIC leg).
-    pub net_ns: u64,
+    /// client ↔ gateway (QUIC leg); `None` if unmeasured.
+    pub net_ns: Option<u64>,
     /// casting GW→Risk→ME→Risk→GW (internal UDP).
     pub internal_ns: u64,
     /// ME match + risk processing.
@@ -29,10 +31,17 @@ pub struct Latency {
 }
 
 impl Latency {
+    /// Total round-trip. Counts the net leg only when it was measured.
     pub fn total_ns(&self) -> u64 {
         self.net_ns
+            .unwrap_or(0)
             .saturating_add(self.internal_ns)
             .saturating_add(self.engine_ns)
+    }
+
+    /// True once every leg (incl. net) is known — a complete sample.
+    pub fn is_complete(&self) -> bool {
+        self.net_ns.is_some()
     }
 }
 
@@ -91,8 +100,8 @@ pub struct App {
     pub asks: Vec<(i64, i64)>,
     /// Recent prints, newest first.
     pub trades: VecDeque<(Side, i64, i64)>,
-    /// (symbol, net_qty, entry_px, upnl).
-    pub positions: Vec<(&'static str, i64, i64, i64)>,
+    /// (symbol, net_qty, entry_px, upnl). Owned symbol (no leak).
+    pub positions: Vec<(String, i64, i64, i64)>,
     pub connected: bool,
     /// Last event, shown in the status bar.
     pub status: String,
@@ -186,17 +195,25 @@ impl App {
                 self.status = format!("rejected: {reason}");
             }
             GwEvent::Position { symbol, net_qty, entry_px, upnl } => {
-                let row = (symbol, net_qty, entry_px, upnl);
                 match self.positions.iter_mut().find(|p| p.0 == symbol) {
-                    Some(p) => *p = row,
-                    None => self.positions.push(row),
+                    Some(p) => {
+                        p.1 = net_qty;
+                        p.2 = entry_px;
+                        p.3 = upnl;
+                    }
+                    None => {
+                        self.positions.push((symbol, net_qty, entry_px, upnl))
+                    }
                 }
             }
             GwEvent::Latency { net_ns, internal_ns, engine_ns } => {
                 let lat = Latency { net_ns, internal_ns, engine_ns };
-                self.lat_totals.push_back(lat.total_ns());
-                if self.lat_totals.len() > MAX_LAT {
-                    self.lat_totals.pop_front();
+                // Only complete samples (net known) drive p50 / best.
+                if lat.is_complete() {
+                    self.lat_totals.push_back(lat.total_ns());
+                    if self.lat_totals.len() > MAX_LAT {
+                        self.lat_totals.pop_front();
+                    }
                 }
                 self.last_lat = Some(lat);
             }

@@ -66,11 +66,13 @@ async fn run_server(endpoint: Endpoint, got: mpsc::Sender<OrderReq>) {
         return;
     }
     // Timing report: the gateway knows internal (casting) + engine time;
-    // net is left 0 for the client to fill from the measured round-trip.
+    // net is `None` for the client to fill from the measured round-trip.
+    // Small stamps so the real loopback RTT always exceeds them and the
+    // derived net is deterministically `Some` (not underflow → None).
     let lat = GwEvent::Latency {
-        net_ns: 0,
-        internal_ns: 7_600,
-        engine_ns: 340,
+        net_ns: None,
+        internal_ns: 500,
+        engine_ns: 100,
     };
     if wire::write_event(&mut send, &lat).await.is_err() {
         return;
@@ -137,9 +139,10 @@ fn quic_loopback_roundtrips_order_and_event() {
     // server-stamped internal + engine components pass through unchanged.
     match saw_lat.expect("client never observed Latency") {
         GwEvent::Latency { net_ns, internal_ns, engine_ns } => {
-            assert_eq!(internal_ns, 7_600);
-            assert_eq!(engine_ns, 340);
-            assert!(net_ns > 0, "client measured the net (client↔gateway) leg");
+            assert_eq!(internal_ns, 500);
+            assert_eq!(engine_ns, 100);
+            let net = net_ns.expect("client measured the net leg");
+            assert!(net > 0, "net (client↔gateway) leg is a real measurement");
         }
         other => panic!("expected Latency, got {other:?}"),
     }

@@ -104,9 +104,12 @@ fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
             dim,
         )],
         Some(l) => {
-            let total = fmt_ns(l.total_ns());
-            let p50 = app.lat_p50_ns().map(fmt_ns).unwrap_or_default();
-            let best = app.lat_min_ns().map(fmt_ns).unwrap_or_default();
+            let dash = || "—".to_owned();
+            let total =
+                if l.is_complete() { fmt_ns(l.total_ns()) } else { dash() };
+            let net = l.net_ns.map(fmt_ns).unwrap_or_else(dash);
+            let p50 = app.lat_p50_ns().map(fmt_ns).unwrap_or_else(dash);
+            let best = app.lat_min_ns().map(fmt_ns).unwrap_or_else(dash);
             vec![
                 Span::styled(
                     format!(" ⚡ RTT {total} "),
@@ -115,7 +118,7 @@ fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(
                     format!(
                         "= net {} + internal {} + engine {}",
-                        fmt_ns(l.net_ns),
+                        net,
                         fmt_ns(l.internal_ns),
                         fmt_ns(l.engine_ns),
                     ),
@@ -258,7 +261,7 @@ fn draw_positions(f: &mut Frame, area: Rect, app: &App) {
             let pnl_color =
                 if *upnl >= 0 { Color::Green } else { Color::Red };
             Row::new(vec![
-                Cell::from(*sym),
+                Cell::from(sym.clone()),
                 Cell::from(net.to_string()),
                 Cell::from(entry.to_string()),
                 Cell::from(Span::styled(

@@ -186,6 +186,12 @@ async fn run_client(
     // `Latency` frame (which carries internal + engine time) is paired
     // FIFO with the matching order to derive the net (client↔gateway)
     // leg the server can't see: net = measured RTT − internal − engine.
+    // The pairing is exact only one-order-at-a-time (the frame carries
+    // no oid); it is bounded to MAX_PENDING so an order that never
+    // yields a `Latency` can only shift the window, never leak. When the
+    // queue is empty or the subtraction underflows, `net` is left `None`
+    // (rendered "—") rather than a fabricated 0.
+    const MAX_PENDING: usize = 256;
     let mut pending: VecDeque<Instant> = VecDeque::new();
 
     loop {
@@ -195,6 +201,9 @@ async fn run_client(
                     if wire::write_order(&mut send, &order).await.is_err() {
                         let _ = inbound.send(GwEvent::Disconnected);
                         return;
+                    }
+                    if pending.len() >= MAX_PENDING {
+                        pending.pop_front();
                     }
                     pending.push_back(Instant::now());
                 }
@@ -222,19 +231,20 @@ async fn run_client(
 
 /// For a server `Latency` frame, measure the round-trip against the
 /// oldest in-flight order and fill the `net` leg (RTT minus the
-/// server-reported internal + engine time). Other events pass through.
+/// server-reported internal + engine time). `net` stays `None` — never a
+/// fabricated 0 — when there is no order to pair against or the measured
+/// RTT is smaller than the server-reported time (clock skew / noise).
+/// Other events pass through unchanged.
 fn fill_net_leg(
     ev: GwEvent,
     pending: &mut VecDeque<Instant>,
 ) -> GwEvent {
     match ev {
         GwEvent::Latency { internal_ns, engine_ns, .. } => {
-            let rtt_ns = pending
-                .pop_front()
-                .map(|t| t.elapsed().as_nanos() as u64)
-                .unwrap_or(0);
-            let net_ns =
-                rtt_ns.saturating_sub(internal_ns.saturating_add(engine_ns));
+            let net_ns = pending.pop_front().and_then(|t| {
+                let rtt_ns = t.elapsed().as_nanos() as u64;
+                rtt_ns.checked_sub(internal_ns.saturating_add(engine_ns))
+            });
             GwEvent::Latency { net_ns, internal_ns, engine_ns }
         }
         other => other,
