@@ -1,4 +1,13 @@
-//! rsx-types: shared newtypes (`Price`, `Qty`, `Side`, `SymbolConfig`). See ARCHITECTURE.md.
+//! Fixed-point newtypes, order enums, and hot-thread setup helpers shared by
+//! every RSX exchange crate.
+//!
+//! The leaf crate: it depends on nothing in the project and everything else
+//! depends on it. It holds the primitives that need one wire-stable definition
+//! across processes — the `#[repr(transparent)]` i64 [`Price`]/[`Qty`] newtypes,
+//! the order-lifecycle enums with explicit discriminants, [`SymbolConfig`] +
+//! [`validate_order`], and (in the [`cpu`] and [`cache`] modules) the CPU/cache
+//! helpers a pinned busy-loop tile needs. No floats, no async runtime, no I/O
+//! beyond a single `/sys` read for core-isolation detection. See ARCHITECTURE.md.
 
 pub mod cache;
 pub mod cpu;
@@ -23,6 +32,7 @@ pub struct Price(pub i64);
 #[repr(transparent)]
 pub struct Qty(pub i64);
 
+/// Order side. Discriminants are wire-stable (`Buy = 0`, `Sell = 1`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum Side {
@@ -30,6 +40,7 @@ pub enum Side {
     Sell = 1,
 }
 
+/// Time-in-force policy. `GTC` rests; `IOC`/`FOK` are non-resting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum TimeInForce {
@@ -38,6 +49,7 @@ pub enum TimeInForce {
     FOK = 2,
 }
 
+/// Terminal outcome of an order that was accepted (no failure state).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum FinalStatus {
@@ -46,6 +58,7 @@ pub enum FinalStatus {
     Cancelled = 2,
 }
 
+/// Order outcome including the pre-trade `Failed` state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum OrderStatus {
@@ -55,6 +68,8 @@ pub enum OrderStatus {
     Failed = 3,
 }
 
+/// Reason an order was rejected. Wire-stable discriminants; surfaced to the
+/// client and recorded in the WAL.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum FailureReason {
@@ -76,6 +91,9 @@ pub enum FailureReason {
 /// Sentinel for "no index" in slab/level linked lists.
 pub const NONE: u32 = u32::MAX;
 
+/// Per-symbol tick/lot configuration. `tick_size` and `lot_size` are in raw
+/// units; `price_decimals`/`qty_decimals` drive human-readable formatting at
+/// the API boundary only.
 #[derive(Clone, Debug)]
 pub struct SymbolConfig {
     pub symbol_id: u32,
@@ -85,6 +103,9 @@ pub struct SymbolConfig {
     pub lot_size: i64,
 }
 
+/// Order-entry alignment gate: `true` iff `price > 0`, `qty > 0`, and both are
+/// exact multiples of the symbol's tick/lot size. The one validation point;
+/// the matching engine assumes its inputs already passed here.
 pub fn validate_order(
     config: &SymbolConfig,
     price: Price,
