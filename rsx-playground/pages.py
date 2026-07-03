@@ -2163,17 +2163,6 @@ def orders_page():
             cls,
         )
 
-    def _lmt(label, side, qty, pct):
-        cls = _buy_cls if side == "buy" else _sell_cls
-        return _qbtn(
-            label,
-            (
-                f'{{"side":"{side}","qty":"{qty}",'
-                f'"price_offset_pct":"{pct}"}}'
-            ),
-            cls,
-        )
-
     multipliers = ["1", "5", "20", "100"]
 
     buy_row = "".join(
