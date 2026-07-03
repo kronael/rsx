@@ -3,10 +3,10 @@
 **Date:** 2026-07-03
 **Crate:** `rsx-matching`
 **Sprint:** `.ship/31-BOOK-MATCH-CAST-TREATMENT` Phase 1 (Measure)
-**Status:** harness + bench set landed and compiling; **NUMBERS PENDING**
-(box under heavy docker load at capture time — see Caveats). Structure,
-methodology, and per-figure attribution are final; p50/throughput columns
-are to be filled on a quiet box.
+**Status:** harness + bench set + numbers captured (cluster off; indicative
+on a shared 4-core docker host). `match_by_depth` / dedup / WAL / accept are
+trusted; the order-type + sweep µs figures are measured but UNRECONCILED
+(fixture artifact — see Numbers) and flagged for the Phase-2 codex audit.
 
 ## What this is
 
@@ -72,66 +72,73 @@ to `rsx-book`'s bench set and would double-count here.
 
 ## Numbers
 
-**PENDING.** Not recorded in this run. See Caveats — the box was under
-heavy docker oversubscription at capture time, so a pinned-core microbench
-baseline would be contended noise, not a clean directly-comparable set
-(the whole point of Phase 1).
+Captured 2026-07-03, RSX cluster **STOPPED** (busy-spin tiles off), `sample_size
+50`, timed thread pinned to core 2. The box is a shared 4-core docker host with
+residual docker load, so these are **indicative** p50s (robust over 50 samples),
+not an isolated-box baseline — re-run on a quiet box for a citable baseline.
+Grouped by how much I trust each figure.
 
-| Group / point | p50 | throughput | bench |
-|---------------|-----|-----------|-------|
-| `match_by_depth/n=1` | _pending_ | — | `match_depth_bench.rs` |
-| `match_by_depth/n=100` | _pending_ | — | `match_depth_bench.rs` |
-| `match_by_depth/n=1000` | _pending_ | — | `match_depth_bench.rs` |
-| `match_by_depth/n=10000` | _pending_ | — | `match_depth_bench.rs` |
-| `match_by_depth/n=100000` | _pending_ | — | `match_depth_bench.rs` |
-| `match_by_order_type/gtc_full_cross` | _pending_ | — | `match_by_type_bench.rs` |
-| `match_by_order_type/ioc` | _pending_ | — | `match_by_type_bench.rs` |
-| `match_by_order_type/fok` | _pending_ | — | `match_by_type_bench.rs` |
-| `match_by_order_type/post_only_rest` | _pending_ | — | `match_by_type_bench.rs` |
-| `match_by_order_type/reduce_only` | _pending_ | — | `match_by_type_bench.rs` |
-| `sweep_n_levels/n={1,5,20,100}` | _pending_ | — | `match_n_levels_bench.rs` |
-| `dedup/{insert_new,hit_duplicate,cleanup_10k}` | _pending_ | — | `matching_bench.rs` |
-| `wal_events/{append_1_fill,drain_10,drain_100}` | _pending_ | — | `matching_bench.rs` |
-| `me_accept_path/full` | _pending_ | — | `process_order_bench.rs` |
-| `me_throughput/orders` | _pending_ | _pending_ orders/s | `process_order_bench.rs` |
-| `wal_replay_30k_records` | _pending_ | — | `wal_replay_bench.rs` |
+### Trusted (clean, single-op or well-scoped)
 
-### Indicative-only validation figures (NOT the baseline)
+| Point | p50 | Note |
+|---|---|---|
+| `match_by_depth/n=1` | **30.4 ns** | match algorithm only |
+| `match_by_depth/n=100` | 30.8 ns | |
+| `match_by_depth/n=1000` | 29.3 ns | |
+| `match_by_depth/n=10000` | 32.7 ns | |
+| `match_by_depth/n=100000` | **29.7 ns** | **depth-INDEPENDENT** |
+| `me_accept_path/full` | **266 ns** | full `Me::accept` (dedup+match+buffered WAL+index), 1 fill |
+| `me_throughput/orders` | 281 ns | ≈ **3.6M orders/s** (1 fill each) |
+| `dedup/insert_new` | 147 ns | FxHashMap insert |
+| `dedup/hit_duplicate` | **3.7 ns** | duplicate rejected |
+| `dedup/cleanup_10k` | 522 µs | bulk 10k prune |
+| `wal_events/append_1_fill` | 84 ns | serialize 1 fill (no fsync) |
+| `wal_events/drain_10_fills` | 518 ns | |
+| `wal_events/drain_100_fills` | 556 ns | |
+| `wal_replay_30k_records` | 32.8 ms | ≈ 915k records/s cold replay |
 
-To confirm the new fixtures execute correctly (no panic in the reduce-only
-position path, the post-only rest path, or the `Me` full path), a short
-contended run was taken (sample_size 10, 0.5s measurement, cluster tiles
-still up). These are **contended noise, deliberately withheld from the
-table above** and shown only to demonstrate the harness works and roughly
-where numbers land:
+**Headline:** the match itself is **~30 ns, flat across depth 1→100k**
+(depth-independent, consistent with the 52 ns deep-book figure in
+`20260530_component-benches.md`); a full single-order accept is **266 ns**;
+duplicate rejection is **3.7 ns**.
 
-- `match_by_depth`: ~28–33 ns **flat** across n=1 / 100 / 1k / 10k —
-  confirms depth-independence (consistent with the ~52 ns flat deep-book
-  match in `20260530_component-benches.md`; ours is a single-fill IOC,
-  slightly cheaper).
-- `me_accept_path/full`: ~220–280 ns — consistent with the ~210 ns
-  `me_process_order_full_path` floor recorded 2026-05-30.
-- order types: gtc/ioc/reduce_only ~400–550 ns (includes iter_batched
-  batching overhead), fok showed a 12 µs contended outlier — exactly the
-  kind of artifact that makes recording-under-load dishonest.
+### Measured but UNRECONCILED — do NOT cite as order-type latency
 
-Carried-over context (measured 2026-05-30, `20260530_component-benches.md`,
-not re-run): ME in-process match floor ~**210 ns** p50; deep-book match
-~**52 ns** flat at 100k/1m/10m resting (depth-independent, O(consumed));
-per-fill increment ~54 ns.
+| Point | p50 (raw) |
+|---|---|
+| `match_by_order_type/gtc_full_cross` | 120.7 µs |
+| `match_by_order_type/ioc` | 32.3 µs |
+| `match_by_order_type/fok` | 73.1 µs |
+| `match_by_order_type/post_only_rest` | 69.3 µs |
+| `match_by_order_type/reduce_only` | 64.8 µs |
+| `sweep_n_levels/n=1` | 34.5 µs |
+| `sweep_n_levels/n=5` | 38.3 µs |
+| `sweep_n_levels/n=20` | 147 µs |
+| `sweep_n_levels/n=100` | 578 µs |
+
+**ANOMALY — flagged for the Phase-2 codex faithfulness audit.**
+`post_only_rest` crosses nothing yet measures **69 µs** — 260× the 266 ns
+single-accept and 2000× the 30 ns match. The order-type/sweep benches use an
+`iter_batched` depth-10k book fixture; the µs scale is inconsistent with the
+match/accept floors and most likely reflects the **10k-level fixture's
+allocation/drop cost bleeding into the timed region** (or, less likely, a real
+O(depth) cost in the accept path — which would itself be a finding). Either
+way these numbers are NOT the per-order-type dispatch cost. Needs a
+shallow-book (or explicit-drop-excluded) rerun + codex review before use;
+`sweep_n_levels` scaling (34→578 µs for 1→100 levels) is directionally right
+(O(levels consumed)) but carries the same fixture caveat.
 
 ## Caveats (honesty guardrails)
 
 - **Single box, in-process microbench.** No UDP/WS/cross-process. These
   are compute floors; the full GW→ME→GW round-trip is transport-bound
   (~4 casting hops), not compute-bound — see `20260530_e2e-ws-probe.md`.
-- **Numbers withheld due to host contention.** At capture time the box (4
-  cores) was under docker oversubscription (load ~6.25; three docker
-  containers + dockerd consuming >1 core). The specific RSX busy-spin
-  tiles (`risk-0` / `me-*`) that peg cores 2/3 were down by the final
-  check, but the box was still oversubscribed, so a pinned-core baseline
-  would not be reproducible or directly comparable. Re-run on a quiet box
-  and fill the table.
+- **Indicative, not isolated-baseline.** Captured with the RSX cluster
+  stopped (busy-spin tiles off cores 2/3), but on a shared 4-core docker
+  host with residual load. p50 over 50 samples is robust for the trusted
+  single-op figures; the order-type/sweep µs figures are quarantined for a
+  different reason (fixture artifact, see Numbers), not host noise. Re-run
+  on a quiet box for a citable baseline.
 - **Reproduce:** `cargo bench -p rsx-matching` (all groups) or per file,
   e.g. `cargo bench -p rsx-matching --bench match_depth_bench`. Pins to
   core 2; ensure no busy-spin tile is pinned there.
