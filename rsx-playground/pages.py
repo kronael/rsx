@@ -4815,13 +4815,16 @@ def format_notional(raw_i64):
     return f"{sign}${whole:,}.{cents:02d}"
 
 
-def render_book_ladder(symbol_id, snap, source=None):
+def render_book_ladder(symbol_id, snap, source=None, stale=False):
     """Render orderbook ladder from depth snap.
 
     snap: {"bids": [{"px": int, "qty": int}, ...],
            "asks": [{"px": int, "qty": int}, ...]}
     Asks shown top (worst→best price), bids below.
     source: "synthetic" | "bbo" | "live" | None
+    stale: True when the ME for this symbol is down — the ladder is
+    the last known snapshot, not live liquidity, so it's badged and
+    greyed out to avoid showing a healthy book over a dead engine.
     """
     sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
     if snap is None:
@@ -4890,10 +4893,19 @@ def render_book_ladder(symbol_id, snap, source=None):
             'font-bold uppercase tracking-wider">'
             '[SYNTHETIC]</span>'
         )
+    if stale:
+        source_badge += (
+            '<span class="ml-2 text-red-400 text-xs '
+            'font-bold uppercase tracking-wider">'
+            '[STALE &mdash; ME down]</span>'
+        )
+    wrap_open = ('<div class="opacity-40 grayscale">' if stale
+                 else '')
+    wrap_close = '</div>' if stale else ''
     return f"""<div class="text-xs text-slate-400 mb-1">
   {sym}{source_badge}
 </div>
-<table class="w-full text-xs">
+{wrap_open}<table class="w-full text-xs">
 <tr class="text-slate-500">
   <th class="text-left">Side</th>
   <th class="text-right">Price</th>
@@ -4902,7 +4914,7 @@ def render_book_ladder(symbol_id, snap, source=None):
 {ask_rows}<tr class="text-slate-600 text-center">
   <td colspan="3">spread: {fp(spread)}</td>
 </tr>
-{bid_rows}</table>"""
+{bid_rows}</table>{wrap_close}"""
 
 
 def render_book_stats(symbols):
