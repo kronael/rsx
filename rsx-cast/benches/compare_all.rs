@@ -352,8 +352,15 @@ impl QuinnPersistentClient {
 
         // Open one persistent bidirectional stream.
         let (send, recv, srv_send, srv_recv) = rt.block_on(async {
-            let (cli_send, cli_recv) = cli_conn.open_bi().await.unwrap();
-            let (srv_send, srv_recv) = srv_conn.accept_bi().await.unwrap();
+            let (mut cli_send, cli_recv) = cli_conn.open_bi().await.unwrap();
+            // QUIC opens a bi stream lazily: open_bi() puts nothing on the
+            // wire until the first write, so the server's accept_bi() never
+            // resolves. Write one priming byte to flush the stream open.
+            cli_send.write_all(&[0u8]).await.unwrap();
+            let (srv_send, mut srv_recv) = srv_conn.accept_bi().await.unwrap();
+            // Discard the priming byte so the length-framed echo lines up.
+            let mut prime = [0u8; 1];
+            srv_recv.read_exact(&mut prime).await.unwrap();
             (cli_send, cli_recv, srv_send, srv_recv)
         });
 
