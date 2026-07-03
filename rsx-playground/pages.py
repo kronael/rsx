@@ -248,7 +248,7 @@ def _hint_bar(active_tab):
     return f"""
 <div class="max-w-7xl mx-auto px-2 sm:px-4 pt-3">
   <div class="rsx-hint flex items-start justify-between gap-3
-    border-l-4 border-blue-500 bg-slate-800/50 rounded
+    border-l-2 border-slate-600 bg-slate-800/50 rounded
     px-3 py-2">
     <p class="text-xs text-slate-300 leading-relaxed">{text}</p>
     <div class="flex items-center gap-3 shrink-0">
@@ -507,7 +507,7 @@ User          Gateway        Risk          ME
   rounded-lg overflow-hidden">
   <summary class="px-4 py-2 text-xs text-blue-400
     cursor-pointer hover:text-blue-300 select-none
-    border-l-4 border-blue-500 bg-slate-800/50">
+    border-l-2 border-slate-600 bg-slate-800/50">
     Architecture &amp; order lifecycle</summary>
   <div class="px-4 pb-4 space-y-4">
     <section id="big-picture" class="scroll-mt-12">
