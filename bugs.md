@@ -42,18 +42,24 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   `reports/20260704_book-bench.md` "post-scan-fix" section. `match_by_depth`
   (~60ns flat, never clears the touch level) was correctly unaffected all
   along.
-- **FOK-AVAILABLE-LIQUIDITY-ON-SCAN** (MED, bench, new 2026-07-04) —
-  `match_by_type/fok_full` is still ~296 µs after the occupancy-bitmap fix
-  (`da9a2b4`), unlike every other order type (now 60-145 ns). Cause:
-  `available_liquidity` (`rsx-book/src/matching.rs:399-431`) is a SEPARATE
-  O(N-resting-orders) full-book scan run on FOK's hot path to check
-  fill-or-kill feasibility BEFORE matching — it walks every active level and
-  every order on it, not gated by the occupancy bitmap (that only accelerates
-  next-best-level lookup, not "sum all crossable liquidity"). At depth 10,000
-  this is the dominant cost. Fix: needs its own data structure (e.g. a
-  per-side cumulative-qty-by-price-band index, or bound the scan to levels
-  the bitmap says are occupied within the crossable price range) — out of
-  scope for the occupancy-bitmap fix, tracked separately.
+- **FOK-AVAILABLE-LIQUIDITY-ON-SCAN** (MED, bench) — **Status: FIXED
+  2026-07-04.** `match_by_type/fok_full` was ~296 µs after the occupancy-
+  bitmap fix (`da9a2b4`), unlike every other order type (60-145 ns). Cause:
+  the old `available_liquidity` was a SEPARATE O(N-resting-orders) full-book
+  scan run on FOK's hot path — it walked every one of the ~100k active
+  levels and every order on each, summing crossable qty BEFORE matching.
+  Fix: no new structure. FOK is just "try to match it, take it or don't", so
+  `can_fill_fully` (`rsx-book/src/matching.rs`) now walks only the *crossing*
+  levels in price order — the same traversal a match performs, via the
+  book's existing best-level index — summing each level's already-maintained
+  `total_qty` and stopping the instant the running total reaches the order
+  size. O(levels crossed, early-exit) instead of O(slots + orders); a whole
+  level shares one price so `total_qty` counts it exactly (no per-order
+  walk). Pinned to brute-force by `tests/fok_liquidity_test.rs` (3000 FOK
+  probes over multi-zone random flow). Post-fix `fok_full`: ~118 ns
+  (was ~296 µs, −99.95% per Criterion) — now in the same band as every
+  other order type. (Number from a lightly-contended box; clean re-run
+  pending, but the 300x magnitude is unambiguous.)
 - **RECORDER-ARCHIVE-DEV-DISK** (MED, *reframed 2026-07-04*) — the recorder
   archives the FULL ME WAL stream (every order/fill/BBO/done record, verbatim)
   to `tmp/wal/archive/<sid>/<sid>_<date>.wal` as the permanent system-of-record.

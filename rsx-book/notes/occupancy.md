@@ -27,8 +27,11 @@ Measured cliff (this box, `cargo bench -p rsx-book`):
 | `match_depth/100000` (no clear)| 63 ns  | 62 ns   |
 
 `match_depth` is unchanged: it never clears the touch, so it never hit
-the scan, before or after. The FOK `available_liquidity` full-book scan
-(`matching.rs`) is a **separate** O(N) pass and is out of scope here.
+the scan, before or after. FOK's fill-or-kill feasibility check
+(`can_fill_fully` in `matching.rs`) was a separate O(N) full-book pass;
+it was fixed independently (2026-07-04) — not by this bitmap but by
+walking only the crossing levels in price order and summing their
+maintained `total_qty` (the "just try to match it" formulation).
 
 ## Structure
 
