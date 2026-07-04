@@ -25,15 +25,35 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   sequence (or make PG a compose service + the playground reconnect its md
   subscriber + not lose the process table on restart).
 
-- **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — `match_by_type_bench` +
-  `match_n_levels_bench` measure 32–120 µs where the match algo is ~30 ns and a
-  full single accept is 266 ns. `post_only_rest` (crosses nothing) at 69 µs is
-  the tell: the `iter_batched` depth-10k book fixture's alloc/drop cost bleeds
-  into the timed region (or, less likely, an O(depth) accept path — itself a
-  finding). Order-type/sweep numbers quarantined in the 20260703 report, NOT
-  cited as per-order-type latency. Fix: shallow-book fixture or exclude the
-  fixture drop from timing, then re-run under the Phase-2 codex faithfulness
-  audit. `match_by_depth` (~30ns flat) is unaffected + trusted.
+- **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — **Status: FIXED
+  2026-07-04 (`da9a2b4`).** `match_by_type` (`ioc_full`, `gtc_full_cross`,
+  `sweep_10_levels`) measured 32–120 µs where the match algo is ~30-60 ns. The
+  original triage guessed "`iter_batched` fixture alloc/drop bleed" — WRONG.
+  The real cause: `taker_fill` clears the touch level on every call (unlike
+  `match_ioc_vs_1k_asks`'s replenish-before-clear pattern), and `scan_next_bid`/
+  `scan_next_ask` were an O(compression-slots) linear scan that only ran when
+  a level actually emptied — so any bench whose op clears a level paid the
+  full ~100k-slot scan, while `post_only_reject` (crosses nothing, never
+  clears a level, 6 ns on the SAME depth-10k fixture) proved the fixture
+  itself was cheap. Fixed by `da9a2b4`: hierarchical occupancy bitmap
+  (`rsx-book/src/occupancy.rs`), O(depth=3) find-next/find-prev. Confirmed
+  2026-07-04 re-run: `match_ioc_vs_1k_asks` 4.37µs→145ns, `match_by_type/
+  ioc_full` ~80µs→79ns, `match_by_type/sweep_10_levels` ~1ms→700ns. See
+  `reports/20260704_book-bench.md` "post-scan-fix" section. `match_by_depth`
+  (~60ns flat, never clears the touch level) was correctly unaffected all
+  along.
+- **FOK-AVAILABLE-LIQUIDITY-ON-SCAN** (MED, bench, new 2026-07-04) —
+  `match_by_type/fok_full` is still ~296 µs after the occupancy-bitmap fix
+  (`da9a2b4`), unlike every other order type (now 60-145 ns). Cause:
+  `available_liquidity` (`rsx-book/src/matching.rs:399-431`) is a SEPARATE
+  O(N-resting-orders) full-book scan run on FOK's hot path to check
+  fill-or-kill feasibility BEFORE matching — it walks every active level and
+  every order on it, not gated by the occupancy bitmap (that only accelerates
+  next-best-level lookup, not "sum all crossable liquidity"). At depth 10,000
+  this is the dominant cost. Fix: needs its own data structure (e.g. a
+  per-side cumulative-qty-by-price-band index, or bound the scan to levels
+  the bitmap says are occupied within the crossable price range) — out of
+  scope for the occupancy-bitmap fix, tracked separately.
 - **RECORDER-ARCHIVE-DEV-DISK** (MED, *reframed 2026-07-04*) — the recorder
   archives the FULL ME WAL stream (every order/fill/BBO/done record, verbatim)
   to `tmp/wal/archive/<sid>/<sid>_<date>.wal` as the permanent system-of-record.
