@@ -125,19 +125,21 @@ pub fn process_new_order(
         }
     }
 
-    if order.tif == TimeInForce::FOK {
-        let avail = available_liquidity(
-            book, order.side, order.price,
-        );
-        if avail < order.remaining_qty {
-            book.emit(Event::OrderFailed {
-                user_id: order.user_id,
-                reason: FAIL_FOK,
-                order_id_hi: order.order_id_hi,
-                order_id_lo: order.order_id_lo,
-            });
-            return;
-        }
+    if order.tif == TimeInForce::FOK
+        && !can_fill_fully(
+            book,
+            order.side,
+            order.price,
+            order.remaining_qty,
+        )
+    {
+        book.emit(Event::OrderFailed {
+            user_id: order.user_id,
+            reason: FAIL_FOK,
+            order_id_hi: order.order_id_hi,
+            order_id_lo: order.order_id_lo,
+        });
+        return;
     }
 
     match order.side {
@@ -391,41 +393,68 @@ pub fn match_at_level(
     }
 }
 
-/// Total resting qty on the opposite side that an aggressor at
-/// `limit_price` would cross. The compression map is a sawtooth, so we
-/// cannot walk levels in price order via `scan_next_*`; instead do a
-/// single bounded pass over all levels and sum orders that satisfy the
-/// price predicate. No allocation.
-fn available_liquidity(
+/// True iff a FOK aggressor at `limit_price` can be filled completely —
+/// i.e. the resting qty on the opposite side that crosses `limit_price`
+/// is at least `needed`. This is just the "try to match it" question:
+/// walk the crossing levels in price order (the same order a match
+/// consumes them), summing each level's already-maintained `total_qty`,
+/// and stop the instant the running total reaches `needed`. Every order
+/// at a crossing level shares the level's price, so a whole level either
+/// crosses or does not — `total_qty` counts it exactly, no per-order
+/// walk. O(levels crossed, early-exit) via the book's own best-level
+/// index; never the full-slot / per-order scan the old pre-check did.
+fn can_fill_fully(
     book: &Orderbook,
     side: Side,
     limit_price: i64,
-) -> i64 {
+    needed: i64,
+) -> bool {
     let mut total: i64 = 0;
-    for level in book.active_levels.iter() {
-        if level.order_count == 0 {
-            continue;
-        }
-        let mut cursor = level.head;
-        while cursor != NONE {
-            let maker = book.orders.get(cursor);
-            let crosses = match side {
-                // aggressor buys asks priced <= limit
-                Side::Buy => {
-                    maker.side == Side::Sell as u8
-                        && maker.price.0 <= limit_price
+    match side {
+        // Aggressor buys: cross asks priced <= limit, ascending price.
+        Side::Buy => {
+            for &(lo, hi) in book.price_asc.iter() {
+                let mut cur = lo;
+                while let Some(t) =
+                    book.ask_occ.find_first_in(cur, hi)
+                {
+                    let lvl =
+                        &book.active_levels[t as usize];
+                    if book.orders.get(lvl.head).price.0
+                        > limit_price
+                    {
+                        return false; // asks now above limit
+                    }
+                    total += lvl.total_qty;
+                    if total >= needed {
+                        return true;
+                    }
+                    cur = t + 1;
                 }
-                // aggressor sells into bids priced >= limit
-                Side::Sell => {
-                    maker.side == Side::Buy as u8
-                        && maker.price.0 >= limit_price
-                }
-            };
-            if crosses {
-                total += maker.remaining_qty.0;
             }
-            cursor = maker.next;
+        }
+        // Aggressor sells: cross bids priced >= limit, descending price.
+        Side::Sell => {
+            for &(lo, hi) in book.price_asc.iter().rev() {
+                let mut top = hi;
+                while let Some(t) =
+                    book.bid_occ.find_last_in(lo, top)
+                {
+                    let lvl =
+                        &book.active_levels[t as usize];
+                    if book.orders.get(lvl.head).price.0
+                        < limit_price
+                    {
+                        return false; // bids now below limit
+                    }
+                    total += lvl.total_qty;
+                    if total >= needed {
+                        return true;
+                    }
+                    top = t;
+                }
+            }
         }
     }
-    total
+    false
 }
