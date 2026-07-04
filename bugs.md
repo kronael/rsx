@@ -324,3 +324,56 @@ timestamp, so they can't compose into the forward-leg profile without adding an
 origin-ts field to rsx-messages + WAL + parser; only the taker-fill leg
 (`FillRecord.taker_ts_ns`) composes today. GATEWAY-LATENCY egress is now
 measurable for fills; the bimodal tail is the next thing to chase.
+
+## RETURN-PATH-INTERMITTENT-DROP — fill/done confirmations sometimes never reach the client (HIGH, unconfirmed root cause)
+
+**Status: OPEN.** Found writing `.ship/33-TUI-SPEED-TESTS` T3
+(`rsx-tui/tests/e2e_orders.rs`) against the live minimal cluster
+(gw-0/risk-0/me-pengu, symbol_id=10). Repro: two separate WS connections
+(distinct seeded `user_id`s, e.g. 2 and 3), maker posts a resting GTC that
+rests fine (`me-pengu.log` `me_in..me_out` completes, gateway relays the
+`U` status=1 accept — confirmed working every time), then a second
+connection submits a lot-aligned crossing IOC. `me-pengu.log` shows the
+crossing order fully processed (`me_in -> me_dedup_done ->
+me_wal_accepted_done -> me_match_done -> me_wal_events_done ->
+me_index_done -> me_out` all present — ME believes it matched and emitted
+Fill+Done), but `risk-0.log` shows only the inbound `risk_in` for that
+oid and nothing after (no `risk_out`/`risk_cast_send_done`), and
+`gw-0.log` shows only `gateway_in`, no `gateway_cast_recv` — the taker's
+own `WsConn` never receives a `Fill` or terminal `U` frame and hangs until
+test timeout. Independently reproduced outside the Rust suite with raw
+`wscat` sessions against the same live cluster (see repro commands in the
+session that filed this entry): a first order on a fresh connection got
+no reply within 2s; an identical resubmit (same price, fresh cid, new
+connection) was acked within the same short window. Ruled out: not
+`InsufficientMargin` (all repros use `_SEED_USERS` with ample collateral),
+not tick/lot misalignment (validated multiples of `lot=100000`), not the
+gateway's `NewOrder` rate limiter (that path `send_error`s explicitly —
+code 1006 "rate limited" — before minting an oid or logging
+`gateway_in`; every failing oid here already has a `gateway_in` line, so
+it passed rate-limit/circuit checks). Root cause not isolated — candidates
+worth checking: WAL dedup replay on a resubmitted cid returning the
+original accept silently without re-emitting a cast event; the in-progress
+"risk return path RESPEC'd → ME→GW-direct" migration noted in project
+memory (partial, not fully implemented) leaving the old ME→Risk→GW leg
+half-wired for the fill/done case specifically (accept-path via risk
+still works; fill-path does not); or plain casting/UDP loss on the
+ME→Risk leg specifically for fills under the concurrent multi-connection
+load this test suite generates. `rsx-tui/tests/e2e_orders.rs`'s
+`submit_ioc_fills`/`order_lifecycle_accepted_then_done` work around this
+with a resubmit-once retry (matching `rsx-matching`'s own documented
+mitigation, "clients re-send dropped pre-ack orders (WAL dedup =
+exactly-once)"), but even that isn't always enough — both tests can still
+fail against this cluster instance. Not a T3 test-file defect; do not
+"fix" by weakening the test assertions.
+
+- **Severity:** high
+- **Scope:** rsx-risk / rsx-matching / rsx-gateway return-path (ME→Risk→GW)
+- **Affected:** fill/done confirmation delivery to the ordering client
+- **Source:** `log/me-pengu.log`, `log/risk-0.log`, `log/gw-0.log` around
+  2026-07-04T11:08-11:13 (oids `019f2cd110b679719c02d72391586007`,
+  `019f2cd4930f7121bea15cf37753ad93`, `019f2cd4c6ad7cd1829930d0494aa843`,
+  `019f2cd4da3b7ef3aea4fbf33401b3fa` and others); see also `.ship/
+  33-TUI-SPEED-TESTS` session transcript for the raw `wscat` repro
+- **Status:** open
+- **Fix:** —
