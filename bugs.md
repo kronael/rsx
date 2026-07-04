@@ -264,7 +264,17 @@ re-verified against source by the main agent. Recorded, not fixed (bug-triage
 protocol — awaiting prioritization).
 
 ### COMPRESSION-ZONE-TICK-UNIT — zones mis-sized for tick_size != 1 (HIGH, latent)
-**Status: OPEN.** `rsx-book/src/compression.rs:29-45` computes zone thresholds
+**Status: FIXED 2026-07-04 (`9089e50`).** `CompressionMap::new` now stores zone
+thresholds as RAW-price distances (matching `price_to_index`'s `price -
+mid_price`), and converts to slot counts by dividing by `compression_ticks *
+tick_size` — so a 5% move lands in the right zone for any tick_size, not the
+2-slot catch-all. Verified: `tick50_five_pct_lands_in_zone0_not_catchall`,
+`tick50_zone0_is_one_tick_per_slot`, `tick_size_stored_and_thresholds_raw`,
+`adversarial_tick_sizes_matching_and_recenter` (tick 1/10/50 through real
+matching + recenter). `migration.rs::should_recenter` checked too. Original
+triage below.
+
+**[Original triage — OPEN]** `rsx-book/src/compression.rs:29-45` computes zone thresholds
 in TICK units (`pct_5 = mid*5/(100*tick_size)`, comment line 24 "…/ tick_size
 ticks"), but `price_to_index` (`compression.rs:84-85`) compares them against a
 RAW-price distance (`distance = price - mid_price`, never divided by
