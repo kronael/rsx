@@ -51,15 +51,18 @@ pub fn connect(user_id: u32) -> Option<WsConn> {
     None
 }
 
-/// Post a resting maker order so a subsequent crossing order has
-/// something to fill against. Params mirror `scripts/demo-trade.sh`'s
-/// maker leg (buy 60000 @ qty 1_000_000, GTC) exactly, so book-seeded
-/// e2e tests reproduce the same fixture the shell demo verifies.
+/// Post a resting maker BUY so a subsequent crossing SELL has a bid to
+/// fill against. Price 49_000 sits below the demo/bench book's ~50_000
+/// resting asks so it RESTS (a buy at/above the best ask crosses it and
+/// never rests — the old `submit_ioc_fills` bug), and above the demo
+/// bids so it becomes the best bid. Qty matches the `submit_ioc_fills`
+/// taker (500_000) so the taker fully consumes it, leaving no resting
+/// bid to pollute the shared long-lived book for the next test.
 pub fn seed_book(conn: &mut WsConn) {
     conn.submit(OrderReq {
         side: Side::Buy,
-        price: 60_000,
-        qty: 1_000_000,
+        price: 49_000,
+        qty: 500_000,
         tif: Tif::Gtc,
     })
     .expect("seed_book: submit maker order");
