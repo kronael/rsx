@@ -53,10 +53,11 @@ constant-time, not a tree walk.
   network — this is the *algorithm*, not the exchange round-trip (that's the
   transport-bound ~1.1 ms cross-process figure, a different story).
 - Criterion closed-loop, quiet box, single run — re-run before quoting elsewhere.
-- `match_by_type/fok_full` is a separate, STILL-open finding (bugs.md
-  `FOK-AVAILABLE-LIQUIDITY-ON-SCAN`): FOK's `available_liquidity` pre-check
-  is its own O(N-resting) full-book scan, ~296 µs at depth 10k, not touched by
-  the occupancy-bitmap fix below.
+- `match_by_type/fok_full` was a separate finding (bugs.md
+  `FOK-AVAILABLE-LIQUIDITY-ON-SCAN`): FOK's old pre-check was its own
+  O(N-resting) full-book scan, ~296 µs at depth 10k, not touched by the
+  occupancy-bitmap fix. **Also fixed 2026-07-04** — see the FOK section below;
+  now ~118 ns.
 
 ## Post-scan-fix — occupancy bitmap (2026-07-04, commit `da9a2b4`)
 
@@ -85,7 +86,7 @@ on the same quiet box, same commit family:
 | `match_by_type/gtc_full_cross` | ~80 µs | **79.7 ns** | ~1000x |
 | `match_by_type/sweep_10_levels` | ~1 ms | **700 ns** | ~1400x |
 | `match_by_type/post_only_reject` | 5.96 ns (unaffected, never clears) | **6.17 ns** | — |
-| `match_by_type/fok_full` | in the quarantined 99-224 µs / 1 ms range | 296 µs | **not fixed** — separate bug (below) |
+| `match_by_type/fok_full` | in the quarantined 99-224 µs / 1 ms range | 296 µs → **118 ns** | fixed separately (FOK section below) |
 
 Happy path is unaffected, confirming it was never the fixture:
 `match_depth/1000` 61.0 ns → **61.3 ns**, `match_depth/10000` 60.2 ns →
@@ -133,3 +134,34 @@ HashMap lookup plus a BTreeMap tree descent plus a VecDeque scan, and that
 tree descent cost grows with depth. `insert+cancel` sits between the two
 (1.5x→2.0x, growing) since it's dominated by the same insert-side BTreeMap
 entry-or-default cost at both ends.
+
+## FOK fill-or-kill — no map, just "try to match it" (2026-07-04)
+
+FOK (fill-or-kill) must fill the whole order immediately or reject it. The
+old check (`available_liquidity`) answered "is there enough crossable
+liquidity?" with a SEPARATE O(N) pass: it iterated all ~100k active levels
+AND every resting order on each, summing crossable qty, *before* matching.
+At depth 10k that pre-check was the entire cost — `fok_full` sat at ~296 µs
+while every other order type was 60-145 ns.
+
+The fix is not a new structure (no histogram, no per-side liquidity index).
+FOK is just "try to match it, take it or don't", so `can_fill_fully` walks
+only the *crossing* levels in price order — the same traversal a real match
+performs, via the book's existing best-level index (`price_asc` +
+occupancy) — and sums each level's already-maintained `total_qty`, stopping
+the instant the running total reaches the order size. A whole price level
+shares one price, so it either crosses or it doesn't; `total_qty` counts it
+exactly with no per-order walk. Complexity: O(levels crossed, early-exit)
+instead of O(slots + orders).
+
+| bench | before | after | speedup |
+|---|---:|---:|---:|
+| `match_by_type/fok_full` (depth 10k) | 296 µs | **~118 ns** | ~2500x (−99.95%) |
+
+Correctness is pinned by `rsx-book/tests/fok_liquidity_test.rs`: 3000 FOK
+probes over multi-zone random flow, each compared to an independent
+brute-force sum over every resting order — the fast walk must fail (no
+fills) exactly when brute-force liquidity < order size, and fully fill
+otherwise. Caveat: the ~118 ns figure is from a lightly-contended box (a
+parallel bench was running); the −99.95% magnitude is unambiguous, but
+re-run on a fully quiet box before quoting the exact ns elsewhere.
