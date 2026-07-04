@@ -76,6 +76,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use support::cluster;
+use support::submit::SUBMIT_ATTEMPTS;
 
 /// Serializes this file's book-mutating tests against the shared live
 /// book (see `e2e_orders.rs`'s `LIVE_BOOK`) — each test seeds its own
@@ -83,13 +84,6 @@ use support::cluster;
 /// but held across the whole seed->cross window regardless, matching
 /// the established discipline.
 static LIVE_BOOK: Mutex<()> = Mutex::new(());
-
-/// Up to this many submit attempts before giving up — casting is UDP,
-/// an occasional dropped order/event is expected by design (see
-/// `e2e_orders.rs`'s module doc). A fresh cid each retry (same
-/// `OrderReq` value resent is a new attempt, not a WAL-deduped replay,
-/// because the client mints a new cid per `submit` call).
-const SUBMIT_ATTEMPTS: u32 = 2;
 
 /// The playground dashboard's base URL — same default as
 /// `scripts/demo-trade.sh`'s `PLAYGROUND_URL`.
@@ -202,6 +196,13 @@ fn submit_and_collect(
         conn.submit(order).expect("submit order");
         events = collect_events(conn, timeout);
         if done(&events) {
+            assert_eq!(
+                attempt, 1,
+                "return-path masking (finding 2): predicate met only on \
+                 attempt {attempt}; a resubmit papering over a dropped \
+                 first-attempt event is the ME-emits-but-risk-never-sees \
+                 signature — investigate, do not mask",
+            );
             return events;
         }
         eprintln!(

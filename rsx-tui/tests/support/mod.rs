@@ -10,4 +10,5 @@
 
 pub mod cluster;
 pub mod harness;
+pub mod submit;
 pub mod timing;
