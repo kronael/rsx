@@ -34,15 +34,20 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   cited as per-order-type latency. Fix: shallow-book fixture or exclude the
   fixture drop from timing, then re-run under the Phase-2 codex faithfulness
   audit. `match_by_depth` (~30ns flat) is unaffected + trusted.
-- **RECORDER-ARCHIVE-UNBOUNDED** (MED) — `tmp/wal/archive` grew to **59 GB**
-  during this session's demo runs (continuous maker quoting → BBO/fill records
-  archived with no retention), filling the disk → ENOSPC that failed cluster
-  stop/start via the playground API. WAL retention (`RETENTION_NS`=4h) covers
-  the hot tier (`tmp/wal/pengu` stayed 39 MB), but the recorder's ARCHIVE
-  stream has no rotation/GC — "ARCHIVE handles long-term durability" was taken
-  literally as keep-forever. Fix: archive rotation/retention (size or age cap),
-  or document that archive needs external lifecycle management + a dev cap.
-  Cleared manually (find -delete + kill recorder to release the fd) → 100 G free.
+- **RECORDER-ARCHIVE-DEV-DISK** (MED, *reframed 2026-07-04*) — the recorder
+  archives the FULL ME WAL stream (every order/fill/BBO/done record, verbatim)
+  to `tmp/wal/archive/<sid>/<sid>_<date>.wal` as the permanent system-of-record.
+  **Unbounded is BY DESIGN** — this is the exchange's audit trail + replay-from-
+  genesis tier ("ARCHIVE handles long-term durability", hot tier keeps only 4h).
+  Do NOT add retention/GC that deletes records — that destroys the point.
+  The actual defect is PLACEMENT: it writes to the local dev root (237 GB) with
+  no offload, so continuous maker quoting grew it to 59 GB and ENOSPC'd the box
+  (killed a subagent + failed cluster stop/start) twice this session. Fix is
+  storage, not deletion: put the archive on a separate/dedicated volume, offload
+  to object storage (S3/GCS) with local pruning of already-offloaded segments,
+  and/or a DEV-ONLY guard (cap or recorder-off in the playground) so the dev box
+  can't fill. Currently mitigated by keeping the recorder stopped in dev.
+  Cleared manually (find -delete + kill recorder to release the fd) → 85 G free.
 - **BENCH-MOLD-SOUP-UNPINNED** (LOW, fairness) — `compare_moldudp64` +
   `compare_soupbintcp` never pin their threads (`TODO(pinning)` never done)
   while casting/raw-UDP/KCP/Aeron pin client→core2/echo→core3. Their numbers
