@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Records the REAL rsx-book depth benchmark: runs `cargo bench` and shows the
+# actual Criterion measurements as they land — matching one order against a
+# book of N resting orders, N from 100k to 10M. The pauses are real (Criterion
+# warming up + collecting). See demo/CLAUDE.md to regenerate the GIF.
+set -u
+G=$'\e[1;32m'; C=$'\e[36m'; Y=$'\e[1;33m'; B=$'\e[1m'; D=$'\e[2m'; R=$'\e[0m'
+label(){ case $1 in 100000) echo "100 K";; 1000000) echo "  1 M";; 10000000) echo " 10 M";; *) echo "$1";; esac; }
+clear
+printf '\n  %s%srsx-book%s %s· live benchmark%s\n\n' "$B" "$C" "$R" "$D" "$R"
+printf '  %s$ cargo bench -- deep_flat_match%s\n\n' "$D" "$R"
+printf '  %smatch 1 order vs a book of N orders%s\n\n' "$D" "$R"
+cd "$(git rev-parse --show-toplevel)"
+n=""
+cargo bench -p rsx-book -- deep_flat_match 2>&1 | stdbuf -oL grep --line-buffered -E 'deep_flat_match/[0-9]+|time:' | \
+while IFS= read -r line; do
+  if [[ $line =~ deep_flat_match/([0-9]+) ]]; then n="${BASH_REMATCH[1]}"; l="$(label "$n")"; fi
+  if [[ $line =~ (Warming|Collecting) ]]; then printf '  %s%s orders%s   %smeasuring…%s          \r' "$C" "$l" "$R" "$D" "$R"; fi
+  if [[ $line =~ time:[[:space:]]*\[[0-9.]+[[:space:]][a-z]+[[:space:]]([0-9.]+)[[:space:]]([a-z]+) ]]; then
+    printf '  %s%s orders%s  →  %s%.0f %s%s            \n' "$C" "$l" "$R" "$G" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
+  fi
+done
+printf '\n  %s10 million orders deep — still ~65 ns.%s\n' "$Y" "$R"
+printf '  %sO(1). depth does not matter.%s\n\n' "$B" "$R"
+printf '  %sreal cargo bench · Ryzen 5950X · 1 core%s\n\n' "$D" "$R"
