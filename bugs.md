@@ -81,6 +81,10 @@ CLI-PTR-READ-UNALIGNED-UB (HIGH), CAST-SEND-RING-TOO-SMALL (MED),
 GW-CANCEL-NO-RATELIMIT (MED), GW-CANCEL-NOT-USER-SCOPED (MED),
 RISK-DEDUCT-FEE-UNCHECKED (LOW), MARK-PARSE-NEG-ZERO (LOW).
 
+**NEW 2026-07-04** (T4 `.ship/33-TUI-SPEED-TESTS`, `rsx-tui/tests/
+e2e_guarantees.rs` fixture debugging — detail at end): VERIFY-WAL-FILLS-
+ALWAYS-ZERO (LOW), DEMO-TRADE-SUBMIT-ORDER-404 (MED).
+
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
 BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY,
 BOOK-FAR-PRICE-BUCKETING. Detail below. (BOOK-BBO-COMPRESSED-INDEX +
@@ -396,5 +400,59 @@ fail against this cluster instance. Not a T3 test-file defect; do not
   `019f2cd4930f7121bea15cf37753ad93`, `019f2cd4c6ad7cd1829930d0494aa843`,
   `019f2cd4da3b7ef3aea4fbf33401b3fa` and others); see also `.ship/
   33-TUI-SPEED-TESTS` session transcript for the raw `wscat` repro
+- **Status:** open
+- **Fix:** —
+
+## VERIFY-WAL-FILLS-ALWAYS-ZERO — playground /api/verify never sees real WAL fills (LOW)
+
+**Status: OPEN.** `_run_invariant_checks`'s "Fills precede ORDER_DONE (per
+order)" check (`server.py:4631-4689`, `_wal_stream_dirs()` scan) reports
+`"WAL fills=0 but session fills=183 — sources disagree"` (status `fail`)
+even immediately after a real fill was driven through the gateway and
+confirmed on the wire (`GwEvent::Fill` observed by an `rsx-tui` `WsConn`
+client, T4 `.ship/33-TUI-SPEED-TESTS`). The ME's actual WAL directory is
+`RSX_ME_WAL_DIR=./tmp/wal/pengu` (confirmed via `/proc/<me-pid>/environ`
++ `find`, landing at `tmp/wal/pengu/10/10_active.wal`, which does grow on
+fills), but the playground's own WAL-dir resolution apparently looks
+elsewhere and finds nothing, permanently reporting 0. The "session fills"
+counter (Python-local, 183 in the same run) only counts orders submitted
+through the playground's own REST endpoints, not real WAL state, so it
+isn't a substitute either — net effect, this check is not a usable fill-
+durability oracle for orders submitted via any route today.
+
+- **Severity:** low
+- **Scope:** rsx-playground/server.py `_run_invariant_checks`
+- **Affected:** `/api/verify`, `/api/verify/run-json`, `/verify` page
+- **Source:** rsx-playground/server.py:4631-4689; observed via
+  `rsx-tui/tests/e2e_guarantees.rs`'s `fill_durability_recorded_in_wal`
+  test, which works around it by reading the ME's active WAL file size
+  directly instead of this endpoint.
+- **Status:** open
+- **Fix:** —
+
+## DEMO-TRADE-SUBMIT-ORDER-404 — scripts/demo-trade.sh posts to a route that no longer exists (MED)
+
+**Status: OPEN.** `scripts/demo-trade.sh` submits its maker/taker demo
+pair via `curl -sf -X POST "${PLAYGROUND}/api/submit-order" ...`, but no
+such route exists in `rsx-playground/server.py` today (`@app.post("/api`
+shows `/api/orders/test`, `/api/orders/quick`, `/api/orders/random`,
+`/api/orders/batch`, `/api/orders/{cid}/cancel` — no bare
+`/api/submit-order`). Live probe: `curl -s -w '%{http_code}'` against
+that exact path returns `404 {"detail":"Not Found"}`. The script's
+`curl -sf` swallows the 404 silently and falls back to `echo "{}"`, so
+its maker/taker submissions are silent no-ops; its actual pass/fail
+signal comes only from the later WAL-file-growth poll, which happens to
+still pass if something else already crossed the book on the shared
+long-lived book — otherwise it hangs to its own 30s timeout and reports
+`FAIL: no fill in WAL after 30s` with no hint the real cause was a 404 on
+the submit step. Likely the REST route was renamed/removed (to one of
+the `/api/orders/*` family above) without updating this script.
+
+- **Severity:** medium
+- **Scope:** scripts/demo-trade.sh
+- **Affected:** the demo-trade.sh maker/taker submission step
+- **Source:** scripts/demo-trade.sh:43-56; confirmed via direct curl
+  against a running playground (`start-all minimal`) during T4
+  (`.ship/33-TUI-SPEED-TESTS`) test debugging.
 - **Status:** open
 - **Fix:** —
