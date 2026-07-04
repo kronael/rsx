@@ -20,6 +20,13 @@ while IFS= read -r line; do
     printf '  %s%s orders%s  →  %s%.0f %s%s            \n' "$C" "$l" "$R" "$G" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
   fi
 done
-printf '\n  %s10 million orders deep — still ~65 ns.%s\n' "$Y" "$R"
-printf '  %sO(1). depth does not matter.%s\n\n' "$B" "$R"
-printf '  %sreal cargo bench · Ryzen 5950X · 1 core%s\n\n' "$D" "$R"
+printf '\n  %s10 M orders deep — flat.%s\n' "$Y" "$R"; sleep 1.0
+printf '\n  %sclears the touch level%s    %s145 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.9
+printf '  %s(was 100 us — cliff gone)%s\n' "$D" "$R"; sleep 1.1
+printf '\n  %scancel an order%s           %s18 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.7
+printf '  %s10x faster than a BTreeMap%s\n' "$D" "$R"; sleep 1.3
+printf '\n  %s%sO(1) match + next-best%s\n' "$B" "$Y" "$R"; sleep 0.8
+printf '  %son par with a tuned C++%s\n' "$D" "$R"
+printf '  %sITCH book (61 ns)%s\n\n' "$D" "$R"; sleep 1.3
+printf '  %s1 core · Ryzen 5950X%s\n' "$D" "$R"
+printf '  %slab microbench · real cargo bench%s\n\n' "$D" "$R"; sleep 1.5
