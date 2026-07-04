@@ -225,6 +225,23 @@ export default async function globalSetup() {
     console.warn("global-setup: warning: gateway not ready after 30s");
   }
 
+  // Start the market maker to seed the PENGU book. The minimal scenario
+  // spawns only core RSX processes; the maker is a client, so the harness
+  // starts it here. Non-fatal — the status poll below still guards.
+  try {
+    const makerHeaders: Record<string, string> = { "x-confirm": "yes" };
+    if (runId) makerHeaders["X-Run-Id"] = runId;
+    const r = await fetch(`${BASE}/api/maker/start?confirm=yes`, {
+      method: "POST",
+      headers: makerHeaders,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const t = (await r.text()).replace(/<[^>]+>/g, "").trim();
+    console.log("global-setup: maker start:", t);
+  } catch (e) {
+    console.warn("global-setup: maker start failed:", e);
+  }
+
   // Extra wait for market maker to seed the PENGU book
   await sleep(5000);
 
