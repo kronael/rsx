@@ -14,6 +14,15 @@ tracing = "0.1"
 [dev-dependencies]
 criterion = "0.5"
 core_affinity = "0.8"
+# Scoped dev-only dep for compare/hftbacktest.md cross-match bench.
+# Never used by rsx-book's own lib code (frozen-adjacent graph untouched).
+# default-features off: skips "live" (tokio/iceoryx2/chrono/...);
+# "backtest" is required because depth/*.rs imports
+# crate::backtest::BacktestError unconditionally.
+hftbacktest = { version = "0.9.4", default-features = false, features = ["backtest"] }
+# Scoped dev-only dep for compare/lob.md cross-match row in
+# compare_all_bench.rs. crates.io Rust orderbook implementation.
+lob = "0.1.0"
 
 [[bench]]
 name = "book_bench"
@@ -25,4 +34,8 @@ harness = false
 
 [[bench]]
 name = "compare_naive_bench"
+harness = false
+
+[[bench]]
+name = "compare_all_bench"
 harness = false
