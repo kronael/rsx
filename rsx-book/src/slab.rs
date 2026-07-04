@@ -78,6 +78,20 @@ impl<T: SlabItem + Default> Slab<T> {
         self.slots.len() as u32
     }
 
+    /// Number of slots currently on the freelist. Walks the freelist
+    /// (O(free)), so it is for introspection/tests, not the hot path.
+    /// Invariant #8 (no-leak) cross-check: `len() == free_count() +
+    /// active`, where `active` = live orders across the book.
+    pub fn free_count(&self) -> u32 {
+        let mut n = 0;
+        let mut cur = self.free_head;
+        while cur != NONE {
+            n += 1;
+            cur = self.slots[cur as usize].next();
+        }
+        n
+    }
+
     /// Set bump_next for snapshot restore.
     pub fn set_bump_next(&mut self, val: u32) {
         self.bump_next = val;
