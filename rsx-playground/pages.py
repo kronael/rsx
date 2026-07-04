@@ -254,7 +254,7 @@ def _hint_bar(active_tab):
     return f"""
 <div class="max-w-7xl mx-auto px-2 sm:px-4 pt-3">
   <div class="rsx-hint flex items-start justify-between gap-3
-    border-l-2 border-slate-600 bg-slate-800/50 rounded
+    border border-slate-600/60 bg-slate-800/50 rounded-[3px]
     px-3 py-2">
     <p class="text-xs text-slate-300 leading-relaxed">{text}</p>
     <div class="flex items-center gap-3 shrink-0">
@@ -513,7 +513,7 @@ User          Gateway        Risk          ME
   rounded-lg overflow-hidden">
   <summary class="px-4 py-2 text-xs text-blue-400
     cursor-pointer hover:text-blue-300 select-none
-    border-l-2 border-slate-600 bg-slate-800/50">
+    border border-slate-600/60 rounded-[3px] bg-slate-800/50">
     Architecture &amp; order lifecycle</summary>
   <div class="px-4 pb-4 space-y-4">
     <section id="big-picture" class="scroll-mt-12">
@@ -3444,14 +3444,14 @@ def render_verify(checks):
             badge = ("bg-red-950 text-red-400 "
                      "border border-red-900")
             label = "FAIL"
-            row_border = " border-l-2 border-red-800"
+            row_border = " border border-red-800/60 rounded-[3px]"
             summary_label = "show reason"
             summary_cls = "text-red-400"
         elif status == "warn":
             badge = ("bg-yellow-950 text-yellow-400 "
                      "border border-yellow-900")
             label = "WARN"
-            row_border = " border-l-2 border-yellow-800"
+            row_border = " border border-yellow-800/60 rounded-[3px]"
             summary_label = "show reason"
             summary_cls = "text-amber-400"
         else:
@@ -4741,7 +4741,7 @@ def render_order_trace(order, fills):
     return (
         f'<div class="font-mono text-xs text-slate-400 mb-1">'
         f'oid: {cid}</div>'
-        f'<div class="border-l-2 border-slate-700 pl-3">'
+        f'<div class="border border-slate-700/60 rounded-[3px] px-3 py-1">'
         f'{inner}</div>'
     )
 
@@ -5452,9 +5452,10 @@ CRATES: dict = {
     "rsx-book": {
         "name": "rsx-book",
         "tagline": (
-            "Shared orderbook library with slab-allocated orders, "
-            "compressed price levels, and price-time priority matching."
+            "The orderbook. Matching an order costs the same whether the "
+            "book holds a hundred orders or ten million."
         ),
+        "why": "rsx-book/WHY.md",
         "reports": ["20260704_book-bench.md"],
         "compare_dir": None,
         "compare_section": (
@@ -5580,13 +5581,16 @@ _MD_STYLE = """
 .md-content pre { background: #0f172a; border: 1px solid #1e293b;
   border-radius: 3px; padding: .6rem; overflow-x: auto; margin: .5rem 0; }
 .md-content pre code { background: none; padding: 0; }
+.md-content { overflow-wrap: break-word; }
 .md-content table { border-collapse: collapse; width: 100%;
-  margin: .5rem 0; font-size: .75rem; }
+  margin: .5rem 0; font-size: .75rem; display: block;
+  max-width: 100%; overflow-x: auto; }
 .md-content th, .md-content td { border: 1px solid #1e293b;
   padding: .3rem .5rem; text-align: left; }
 .md-content th { background: #1e293b; color: #94a3b8; }
-.md-content blockquote { border-left: 2px solid #334155;
-  padding-left: .75rem; margin: .5rem 0; color: #94a3b8; }
+.md-content blockquote { border: 1px solid #334155;
+  border-radius: 3px; padding: .5rem .75rem; margin: .5rem 0;
+  color: #94a3b8; }
 .md-content hr { border: none; border-top: 1px solid #1e293b;
   margin: 1rem 0; }
 .md-content img { max-width: 100%; }
@@ -5649,6 +5653,16 @@ def crate_page(key: str) -> str:
             'no ARCHITECTURE.md found for this crate.</p>')
     description_card = _card("Description", desc_body)
 
+    # ── Why it's built this way: crate WHY.md (optional) ────
+    why_card = ""
+    why_path = crate.get("why")
+    if why_path:
+        why_text = _read_repo_md(why_path)
+        if why_text:
+            why_card = _card(
+                "Why it's built this way",
+                f'<div class="md-content">{_md_to_html(why_text)}</div>')
+
     # ── Benchmarks: reports/*.md for this crate ─────────────
     bench_parts = []
     for report in crate["reports"]:
@@ -5700,8 +5714,8 @@ def crate_page(key: str) -> str:
                 f'reports/{html.escape(report_name)}.</p>')
     else:
         compare_body = (
-            f'<div class="border-l-4 border-amber-500 bg-slate-800/50 '
-            f'rounded px-3 py-2">'
+            f'<div class="border-2 border-amber-500/70 bg-slate-800/50 '
+            f'rounded-[3px] px-3 py-2">'
             f'<p class="text-xs text-amber-400">'
             f'{html.escape(compare_note or "no external comparison yet.")}'
             f'</p></div>')
@@ -5719,6 +5733,7 @@ def crate_page(key: str) -> str:
     content = (
         f"\n{header}\n"
         f"{description_card}\n"
+        f"{why_card}\n"
         f"{benchmarks_card}\n"
         f"{comparisons_card}\n"
         f"{demo_card}\n"
