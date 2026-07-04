@@ -297,24 +297,30 @@ defense-in-depth gap, not live-impact. Fix: `saturating_sub`.
 of `-frac` (sign flip). Dead on real CEX spot feeds (never negative); flagged as
 a latent edge only. Fix: track the sign separately from `whole_val`.
 
-### LATENCY-TRACE-RETURN-PATH-UNOBSERVABLE — egress stages don't aggregate (MED)
-**Status: OPEN.** Found 2026-07-04 driving the deferred gateway-latency measure.
-Built gw/risk/me `--features latency-trace`, restarted, fired 120 crossing fills,
-read `/api/latency-stages`. Two problems make the return leg unmeasurable:
-(1) **Sparse capture** — 120 fills produced only ~2 samples per stage in the raw
-logs (whole-file grep, not an endpoint-tail artifact); the vast majority of
-orders emit no samples, so no per-stage p50/p99 is possible. (2) **Return leg
-never emits** — `risk_out` (risk main.rs:551) and `gateway_out`
-(route.rs:68, in `route_fill`) show 0 samples, while forward stages
-(`gateway_in`/`risk_in`/`me_*`) do. Likely cause: a taker's completion reaches
-the client via `route_order_done` (U status=filled), not `route_fill` (the only
-path carrying the `gateway_out` sample), so the egress delta `me_out→gateway_out`
-— exactly the leg the gateway POLL_ADD readiness fix (946b71d) targeted — is
-never captured. Net: gateway egress latency is not observable on-demand, not
-just contended by box load. Forward-leg samples that DID land (n≈1–2, load ~5,
-untrustworthy): gateway→risk ~236µs, risk→ME ~hundreds µs, ME in→out tens–low-
-hundreds µs; e2e client RT p50 ~2.6ms (playground-Python-dominated, 30% probe
-capture). Fix options: emit `gateway_out` on the taker's OrderDone path too (not
-only `route_fill`), raise sample retention/parse window, and add an always-on
-latency histogram to `/metrics` (rsx-health) so p50/p99 per stage is continuous
-rather than rebuild-to-measure. Until then GATEWAY-LATENCY stays unverified.
+### LATENCY-TRACE-STAGES-AGGREGATION — mixed-population median subtraction (MED)
+**Status: FIXED 2026-07-04 (`8b33bbc`).** My initial diagnosis was WRONG: I
+claimed the return leg (`risk_out`/`gateway_out`) never emits and that taker
+completions bypass `route_fill`. An opus trace disproved both — 9/9 spaced taker
+FILLS emit `risk_out` (risk main.rs:560) AND `gateway_out` (route.rs:68 via the
+real fill path ME→risk RECORD_FILL→forward_to_gw→gateway route_fill), all
+anchored on the shared t0. The "zero samples" I saw were: (a) my probes RESTED
+(a resting limit / IOC-cancel emits no Fill → correctly no egress sample), and
+(b) the **real bug**: `/api/latency-stages` took independent per-stage medians
+across a MIXED oid population then subtracted them — cold/rested orders carry
+only forward stages (huge cold `me_in`≈5200µs), filled takers carry the return
+leg, so subtracting medians from different oid sets yielded a meaningless egress
+delta (`risk_out` clamped to 0, `me_out` polluted to ~5ms). Fix (Python only,
+server.py `_segment_deltas`/`_cumulative_from_deltas`): each segment's median is
+computed over exactly the oids carrying BOTH its endpoints. Sparse capture was
+the token-bucket rate limiter (state.rs:69, cap 10 / 1 token per 100ms) dropping
+rapid probes before `gateway_in` — space probes ≥1s. **Verified egress**
+`me_out→gateway_out` per-oid: `[35,41,43,45,231,1846,2662,3437,6541]µs` —
+BIMODAL: fast ~35-45µs (gateway spinning) + ms-scale parked tail (the
+POLL_ADD-relevant signal). Caveat: verified by running the exact new computation
+against real logs (the live playground couldn't be reloaded without risking the
+child trace daemons). **Remaining (deferred, wire change):** non-fill records
+(ORDER_INSERTED/DONE/CANCELLED/FAILED) carry only ME-emit `ts_ns`, not an origin
+timestamp, so they can't compose into the forward-leg profile without adding an
+origin-ts field to rsx-messages + WAL + parser; only the taker-fill leg
+(`FillRecord.taker_ts_ns`) composes today. GATEWAY-LATENCY egress is now
+measurable for fills; the bimodal tail is the next thing to chase.
