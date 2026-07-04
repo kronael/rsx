@@ -2733,13 +2733,19 @@ dependencies = [
 name = "rsx-tui"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "futures-util",
+ "jsonwebtoken",
  "quinn",
  "ratatui",
  "rcgen",
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]
