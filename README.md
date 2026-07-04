@@ -183,7 +183,8 @@ absorbs the offered rate in the left column until it saturates.
 | Part | sustained | p50 | p99 |
 |---|---:|---:|---:|
 | Risk: reject (not-in-shard) | 96 M/s | 30 ns | 40 ns |
-| Orderbook: match a resting fill (book 100k–10M deep) | — | 51 ns | — |
+| Orderbook: match, touch stays resting (book 100–10M deep) | — | 60-65 ns | — |
+| Orderbook: match that CLEARS the touch level | — | 145 ns | — |
 | Risk: reject (insufficient margin) | 26 M/s | 50 ns | 90 ns |
 | Risk: accept order (0 open/user) | 10.0 M/s | 110 ns | 181 ns |
 | ME: full accept (dedup + WAL + match + events + index) | — | 205 ns | — |
@@ -191,14 +192,20 @@ absorbs the offered rate in the left column until it saturates.
 | Risk: process fill (hot users) | 4.8 M/s | 200 ns | 351 ns |
 | Risk: accept order (512 open/user) | 1.1 M/s | 852 ns | 1313 ns |
 
-The orderbook match holds **~51 ns p50 whether the book has 100k, 1M, or
-10M resting orders** — the compressed slab is depth-independent. Risk
-accept cost scales with a user's *open-order* count (the frozen-margin
-sum), shown by the depth sweep. **Load curve** (open-loop, no coordinated
-omission): the risk shard holds flat **~0.16 µs p50 up to ~4 M orders/s**
-offered, then knees at **~6 M/s** (accept ratio → 91%, p99 → 34 ms,
-backlog unbounded). Under persist backpressure the fill path **stalls,
-never drops**.
+The orderbook match holds **~60-65 ns p50 whether the book has 100, 1M, or
+10M resting orders** — the compressed slab + occupancy bitmap
+(`rsx-book/src/occupancy.rs`) make level lookup and next-best-level find
+O(depth=3), not O(book size). That "O(1) in depth" claim covers the
+match/next-best primitive specifically — matching a marketable order and,
+when it clears the touch level, finding the new best level (145 ns, still
+depth-invariant). It does NOT cover every op: FOK's fill-or-kill
+feasibility check is a separate full-book scan, still O(N) (bugs.md
+`FOK-AVAILABLE-LIQUIDITY-ON-SCAN`). Risk accept cost scales with a user's
+*open-order* count (the frozen-margin sum), shown by the depth sweep.
+**Load curve** (open-loop, no coordinated omission): the risk shard holds
+flat **~0.16 µs p50 up to ~4 M orders/s** offered, then knees at **~6 M/s**
+(accept ratio → 91%, p99 → 34 ms, backlog unbounded). Under persist
+backpressure the fill path **stalls, never drops**.
 
 ### (B) Network stack — rsx-cast, loopback, pinned
 
@@ -221,8 +228,12 @@ Wire microbenchmarks (release): WAL append 31 ns, Nak/Heartbeat encode
 | REST `/health` (fresh conn) | ~115 µs | ~1.4 ms | measured |
 | **Target: <50 µs GW→ME→GW** | — | — | **aspirational** |
 
-Risk pre-trade (<5 µs budget) and ME match (<500 ns budget) are now *met*
-in the component numbers above (110 ns accept, 205 ns full accept). The
+Risk pre-trade (<5 µs budget) and ME match (<500 ns budget) are now
+*genuinely* met in the component numbers above (110 ns accept, 205 ns full
+accept, 145 ns even when a match clears the touch level) — before the
+occupancy-bitmap fix (`da9a2b4`, 2026-07-04) the <500 ns match budget was
+only met on the path that never clears a level; clearing one cost
+32-120 µs (bugs.md `MATCHING-BENCH-ORDERTYPE-FIXTURE`, now fixed). The
 open gap is the cross-process whole-e2e path. Parallel/flood whole-e2e is
 blocked by `ME-FAULTED-NO-REPLAY-ADDR` (bugs.md) — single-stream only.
 

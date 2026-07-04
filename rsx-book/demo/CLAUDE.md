@@ -6,9 +6,15 @@ REAL `cargo bench` and records it live; numbers are never fabricated.
 
 ## The story: matching is O(1) in book depth
 Matching one order stays **~60-65 ns whether the book holds 100 K or 10 M
-resting orders** (`deep_flat_match`). That depth-invariance is the hook — the
-compression map + slab arena keep level lookup constant-time. Full numbers +
-caveats: `reports/YYYYMMDD_book-bench.md`.
+resting orders** (`deep_flat_match`) — the happy path, where the touch level
+survives the fill. When a match CLEARS the touch level, next-best-level
+lookup stays O(depth=3) too (occupancy bitmap, `da9a2b4`): **145 ns**, still
+depth-invariant, no longer the O(compression-slots) scan that used to cost
+32-224 µs on that path (bugs.md `MATCHING-BENCH-ORDERTYPE-FIXTURE`, fixed).
+Qualify "O(1)": it's the match/next-best-level primitive specifically — FOK's
+separate fill-or-kill liquidity check is still O(N) (bugs.md
+`FOK-AVAILABLE-LIQUIDITY-ON-SCAN`). Full numbers + caveats:
+`reports/YYYYMMDD_book-bench.md`.
 
 ## Artifacts in this folder
 - `bench-live.sh` — runs the REAL `cargo bench -- deep_flat_match` and streams
@@ -37,7 +43,14 @@ bound ~1 ms story). The live numbers vary run-to-run in the ~59-66 ns band —
 that IS the honest picture; show the real per-run figures, not a rounded ideal.
 
 ## Do NOT
-- Cite `match_by_type/*full` / `sweep` numbers (99 µs-1 ms) as per-order latency
-  — fixture alloc bleed (MATCHING-BENCH-ORDERTYPE-FIXTURE in bugs.md). Use
-  `deep_flat_match` / `match_depth`.
-- Claim "faster than X" until `rsx-book/compare/` exists (no baseline yet).
+- Cite the OLD `match_by_type/*full` / `sweep` numbers (99 µs-1 ms) — those
+  were the pre-fix O(compression-slots) scan bug (MATCHING-BENCH-ORDERTYPE-
+  FIXTURE in bugs.md, fixed by `da9a2b4`), not a fixture artifact as first
+  triaged. Current numbers: `ioc_full`/`gtc_full_cross` ~80 ns,
+  `sweep_10_levels` ~700 ns. `fok_full` is STILL ~296 µs — a separate, still-
+  open bug (`FOK-AVAILABLE-LIQUIDITY-ON-SCAN`), do not lump it in with the
+  fixed order types.
+- "Faster than X" now has a baseline: `rsx-book/benches/compare_naive_bench.rs`
+  (rsx-book vs. a naive `BTreeMap<price, VecDeque<order>>` book, same
+  harness/box/depths). 1.5-2x on match/insert+cancel, 5.5-10x on cancel
+  (widening with depth). See `reports/20260704_book-bench.md` for the table.
