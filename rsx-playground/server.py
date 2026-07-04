@@ -6585,42 +6585,69 @@ def _join_latency_by_oid(rows):
     return by_oid
 
 
-def _stage_medians(by_oid):
-    """Compute median t_us per stage across all oids."""
-    per_stage: dict[str, list[int]] = {
-        s: [] for s in _STAGE_ORDER
-    }
-    for stages in by_oid.values():
-        for s, t in stages.items():
-            if s in per_stage:
-                per_stage[s].append(t)
-    out = {}
-    for s, vals in per_stage.items():
+def _segment_deltas(by_oid):
+    """Per-segment median delta over oids carrying BOTH endpoints.
+
+    Independent per-stage medians cross-pollinate populations: a
+    rested / cold order carries only the forward stages
+    (with a large cold me_in), a filled taker also carries the return
+    leg (risk_out, gateway_out). Subtracting medians drawn from two
+    different oid sets yields a meaningless egress delta — e.g. me_out
+    median dominated by cold orders while risk_out median comes only
+    from the one filled order, so the composed risk_out delta clamps to
+    0 and the me_out→gateway_out egress leg is unreadable.
+
+    Pairing WITHIN an oid keeps each segment coherent: every segment is
+    measured over exactly the orders that traversed both its endpoints,
+    so one filled order among many rested ones still yields a clean
+    egress delta. Returns {stage: delta_us_or_None}; the first stage is
+    the median offset from t0. A per-oid delta is clamped ≥0 before the
+    median (cross-process clock reads can make a downstream stage read
+    slightly earlier)."""
+    deltas = {}
+    for i, s in enumerate(_STAGE_ORDER):
+        if i == 0:
+            vals = [st[s] for st in by_oid.values() if s in st]
+        else:
+            prev = _STAGE_ORDER[i - 1]
+            vals = [
+                st[s] - st[prev]
+                for st in by_oid.values()
+                if s in st and prev in st
+            ]
         if not vals:
-            out[s] = None
+            deltas[s] = None
             continue
-        vs = sorted(vals)
-        mid = vs[len(vs) // 2]
-        out[s] = mid
-    return out
+        vs = sorted(max(0, v) for v in vals)
+        deltas[s] = vs[len(vs) // 2]
+    return deltas
+
+
+def _cumulative_from_deltas(deltas):
+    """Running sum of per-segment deltas → coherent from-t0 profile.
+
+    Cumulative is None from the first missing segment onward: without a
+    segment's delta the downstream offset from t0 is unknown."""
+    cum = {}
+    running = 0
+    broken = False
+    for s in _STAGE_ORDER:
+        d = deltas.get(s)
+        if broken or d is None:
+            broken = True
+            cum[s] = None
+            continue
+        running += d
+        cum[s] = running
+    return cum
 
 
 @app.get("/api/latency-stages")
 async def api_latency_stages():
     rows = _parse_latency_lines()
     by_oid = _join_latency_by_oid(rows)
-    medians = _stage_medians(by_oid)
-    # Per-segment delta: stage_n - stage_{n-1} when both
-    # present in median snapshot.
-    deltas = {}
-    prev = 0
-    for s in _STAGE_ORDER:
-        v = medians.get(s)
-        if v is None:
-            deltas[s] = None
-            continue
-        deltas[s] = max(0, v - prev)
-        prev = v
+    deltas = _segment_deltas(by_oid)
+    medians = _cumulative_from_deltas(deltas)
     return JSONResponse({
         "oids": len(by_oid),
         "lines": len(rows),
@@ -6634,18 +6661,14 @@ async def api_latency_stages():
 async def x_latency_stages():
     rows = _parse_latency_lines()
     by_oid = _join_latency_by_oid(rows)
-    medians = _stage_medians(by_oid)
+    deltas = _segment_deltas(by_oid)
+    medians = _cumulative_from_deltas(deltas)
     rows_html = []
-    prev = 0
     for s in _STAGE_ORDER:
         v = medians.get(s)
-        if v is None:
-            delta = "—"
-            cum = "—"
-        else:
-            delta = f"{max(0, v - prev)} µs"
-            cum = f"{v} µs"
-            prev = v
+        d = deltas.get(s)
+        cum = "—" if v is None else f"{v} µs"
+        delta = "—" if d is None else f"{d} µs"
         rows_html.append(
             f"<tr><td>{s}</td><td>{cum}</td>"
             f"<td>{delta}</td></tr>"
