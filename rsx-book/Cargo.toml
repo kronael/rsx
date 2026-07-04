@@ -22,3 +22,7 @@ harness = false
 [[bench]]
 name = "deep_book_bench"
 harness = false
+
+[[bench]]
+name = "compare_naive_bench"
+harness = false
