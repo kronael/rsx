@@ -1,5 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::event::REASON_CANCELLED;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
 use rsx_types::NONE;
@@ -34,6 +35,20 @@ use tracing::warn;
 /// Mirror of the type in `main.rs`. Kept here so replay can
 /// take ownership of the index without main.rs leaking it.
 pub type OrderKey = (u32, u64, u64);
+
+/// `OrderDoneRecord.final_status` is a webproto U-frame status
+/// (specs/2/49-webproto.md: 0=FILLED, 2=CANCELLED), NOT a raw matching
+/// reason. `REASON_CANCELLED` is 1, which collides with webproto
+/// RESTING(1) — a cancelled IOC would surface to the client as "resting"
+/// if the raw reason leaked through the gateway. Translate here so
+/// `final_status` always holds the webproto status the gateway forwards.
+/// OrderDone only ever carries `REASON_FILLED`(0) or `REASON_CANCELLED`(1).
+fn done_final_status(reason: u8) -> u8 {
+    match reason {
+        REASON_CANCELLED => 2, // webproto CANCELLED
+        _ => 0,                // REASON_FILLED -> webproto FILLED
+    }
+}
 
 /// Write all events from the book's event buffer to WAL.
 pub fn write_events_to_wal(
@@ -189,7 +204,7 @@ pub fn write_events_to_wal(
                     order_id_lo,
                     filled_qty,
                     remaining_qty,
-                    final_status: reason,
+                    final_status: done_final_status(reason),
                     reduce_only,
                     tif,
                     post_only: 0,
@@ -374,7 +389,7 @@ pub fn publish_events(
                     order_id_lo,
                     filled_qty,
                     remaining_qty,
-                    final_status: reason,
+                    final_status: done_final_status(reason),
                     reduce_only,
                     tif,
                     post_only: 0,
