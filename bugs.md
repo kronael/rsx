@@ -202,6 +202,25 @@ Founder: solve these when we next work the book. All verified against source;
   level → price-time priority is coarse far from mid. Intentional compressed-book
   tradeoff; logged as a known design risk, not a defect.
 
+### MIGRATE-SKIPS-NEW-MID-LEVEL — order resting at new_mid orphaned on recenter (HIGH)
+**Status: OPEN (found 2026-07-04, distribution tests).** `migration.rs` —
+`trigger_recenter` sets `bid_frontier = ask_frontier = new_mid`, then both
+`migrate_batch` and `advance_frontier_to` (lazy path) step the frontier AWAY
+from `new_mid` BEFORE migrating (bid: `bid_frontier -= tick` then migrate; ask:
+`ask_frontier += tick` then migrate). So the OLD level covering exactly
+`new_mid` is never visited — any order resting at `new_mid` is left in
+`old_levels` and dropped when `complete_migration` clears them. Loss is silent:
+one live order vanishes → violates invariant #8 (slab no-leak: allocated != free
++ active) and invariant #4 (position = sum of fills) downstream. Reproduced for
+tick_size ∈ {1,10,50}: rest a fat book, recenter to a `new_mid` that coincides
+with a resting level, migrate fully → exactly one order missing (len 800, free
+40, active 759). Not triggered when `new_mid` falls between levels (the common
+case), which is why it stayed latent. Fix: migrate the `new_mid` level once at
+`trigger_recenter` (or seed the frontier so the first step includes `new_mid` —
+e.g. migrate before decrement/increment). The distribution recenter test
+(`rsx-book/tests/distribution_test.rs`) sidesteps it by recentering off a level;
+remove that workaround once fixed.
+
 ## Dashboard stability + RSX process flapping (2026-05-31, task 29-#12)
 - Playground dashboard runs as a SINGLE uvicorn worker (server.py:8127,
   workers=1 reload=False) with no self-watchdog. Any kill = full outage
