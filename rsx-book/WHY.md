@@ -32,8 +32,8 @@ out of the most frequent operation there is.
 **Problem.** After a trade clears the best price level, matching needs the
 *next* resting level. With slots in a flat array, the naive way is to scan
 forward until you hit a non-empty one. When the nearby book is thin, that
-scan walks thousands of empty slots — we measured it costing **32–224 µs**
-on the level-clearing path. A cliff, right on the hot path.
+scan walks thousands of empty slots — O(price-range) — and it lands right
+on the level-clearing hot path, where the cost is most visible.
 
 **Fix.** Keep one bit per slot: 1 = something resting here, 0 = empty. Pack
 them 64 to a word, then put a second layer of bits summarising which words
@@ -50,8 +50,8 @@ The domain is already a dense pre-quantised grid — the slot index *is* the
 key — so a bitmap over that grid is both smaller and faster than a tree
 laid on top of it. (A single "pointer to the next filled slot" can't help:
 inserts arrive in any order and matching seeks in both directions, so you'd
-still need the search the bitmap gives you for free.) The measured result:
-that 32–224 µs cliff became **~145 ns, flat.**
+still need the search the bitmap gives you for free.) The bitmap answers
+next-best in **~145 ns, flat** — no matter how far the next order sits.
 
 ## The slab — allocation that isn't allocation
 

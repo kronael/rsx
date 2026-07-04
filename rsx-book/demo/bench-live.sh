@@ -23,7 +23,7 @@ done
 printf '\n  %s10 M orders — still ~60 ns · flat%s\n' "$Y" "$R"; sleep 1.2
 printf '\n  %sfrom the report:%s\n' "$D" "$R"; sleep 0.5
 printf '  %sclears the touch level%s    %s145 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.9
-printf '  %s(was 100 us — cliff gone)%s\n' "$D" "$R"; sleep 1.1
+printf '  %snext-best is O(depth), flat%s\n' "$D" "$R"; sleep 1.1
 printf '  %scancel an order%s           %s18 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.7
 printf '  %sup to 10x vs a BTreeMap%s\n' "$D" "$R"; sleep 1.3
 printf '\n  %scited only · C++ ITCH book%s\n' "$D" "$R"; sleep 0.6
