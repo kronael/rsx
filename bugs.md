@@ -60,16 +60,21 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   have the client write one priming byte after `open_bi()` before the server
   `accept_bi()`, or restructure the stream handshake. Bench-only. Flagged, not
   patched (separate from the KCP one-liner; QUIC stream-lifecycle surgery).
-- **ME-FAULTED-NO-REPLAY-ADDR** (MED) — parallel load FAULTs the ME → panic;
-  no replay source wired. Blocks parallel-load benchmarking. Detail below.
-- **IOC-NOT-HONORED** (MED) — empty-book IOC rests instead of cancelling; `tif`
-  lost on the GW→risk→ME propagation (matching core is correct). Detail below.
 - **GATEWAY-LATENCY** (MED, *readiness fix landed*) — the cast-recv yield-spin is
   gone: the gateway now awaits io_uring readiness on the CastReceiver fd
   (`946b71d` + `7454187` exposes the fd), event-driven not polled. Earlier
   500µs conn-side egress poll (`5a578d3`) may remain; re-measure with
   `ws_order_latency` on a QUIET box to confirm the win + whether the conn poll
   still shows. Detail below.
+
+**FIXED 2026-07-04** (detail sections below): ME-FAULTED-NO-REPLAY-ADDR,
+IOC-NOT-HONORED.
+
+**NEW 2026-07-04** (sonnet bug-hunt, all verified genuine — detail at end):
+COMPRESSION-ZONE-TICK-UNIT (HIGH, latent), WAL-ROTATE-PREWRITE-MISLABEL (HIGH),
+CLI-PTR-READ-UNALIGNED-UB (HIGH), CAST-SEND-RING-TOO-SMALL (MED),
+GW-CANCEL-NO-RATELIMIT (MED), GW-CANCEL-NOT-USER-SCOPED (MED),
+RISK-DEDUCT-FEE-UNCHECKED (LOW), MARK-PARSE-NEG-ZERO (LOW).
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
 BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY,
@@ -197,3 +202,92 @@ Founder: solve these when we next work the book. All verified against source;
   process stop through the intentional-flag path (like stop_process) even
   on the raw-PID branch, and surface the result. Confirm by clicking Stop
   and watching whether the process reappears.
+
+## Sonnet bug-hunt findings — 2026-07-04 (all verified genuine)
+
+Four read-only sonnet hunters over the whole tree; every finding below was
+re-verified against source by the main agent. Recorded, not fixed (bug-triage
+protocol — awaiting prioritization).
+
+### COMPRESSION-ZONE-TICK-UNIT — zones mis-sized for tick_size != 1 (HIGH, latent)
+**Status: OPEN.** `rsx-book/src/compression.rs:29-45` computes zone thresholds
+in TICK units (`pct_5 = mid*5/(100*tick_size)`, comment line 24 "…/ tick_size
+ticks"), but `price_to_index` (`compression.rs:84-85`) compares them against a
+RAW-price distance (`distance = price - mid_price`, never divided by
+tick_size). For `tick_size=1` they coincide (every test/bench uses tick_size=1,
+masking it). For `tick_size != 1` (BTC=50, ETH=10 in the symbol config) the
+units diverge: a price only 5% from mid lands in the 2-slot zone-4 catch-all →
+most of the book collapses into shared price levels → price-time priority
+broken, wrong fills. Same mismatch reachable via `migration.rs:16-22`
+(`should_recenter`) and recentering. Fix: divide `distance` by `tick_size` (or
+store raw-price thresholds). Latent because the demo trades PENGU (tick=1).
+
+### WAL-ROTATE-PREWRITE-MISLABEL — boundary records unreachable for NAK/replay (HIGH)
+**Status: OPEN (rsx-cast bugfix candidate).** `rsx-cast/src/wal.rs:220-224` the
+pre-write rotation fires before `write_all`, but `rotate()` (line 252-256) names
+the old file with `self.last_seq`, which `append_framed` (line 197) already
+advanced to include the still-buffered (unwritten) records. So the old file is
+labeled `[first_seq..last_seq]` while physically holding only up to the
+previously-flushed seq; the buffered records then go to the NEW file whose
+`first_seq` is set to `next_seq` (line 282) — above them. Those boundary records
+become unreachable via `read_record_at_seq` (NAK retransmit) and
+`open_from_seq` (TCP replication catch-up) → both silently return nothing for a
+record that exists. Pre-write is the PRIMARY rotation path (same threshold as
+post-write, fires first); the existing `write_rotate_read_across_files` test only
+hits the correct post-write path (file_size==0 on its single flush). Fix: label
+rotate with the last seq actually written to that file, not `self.last_seq`.
+
+### CAST-SEND-RING-TOO-SMALL — NAK fast-path dead for hot 128B records (MED)
+**Status: OPEN (rsx-cast bugfix candidate).** `rsx-cast/src/cast.rs:77`
+`SEND_RING_FRAME_BYTES=128`, but `FillRecord`/`BboRecord`/`OrderAcceptedRecord`
+are 128-byte payloads (rsx-messages asserts) → total 16+128=144 > 128 → the send
+path (cast.rs:261/318) takes the "large record" branch that zeroes the ring slot
+(never caches). Every NAK for those (the 3 most-sent record types) misses the
+in-memory ring and falls to a disk `read_record_at_seq`. The constant's comment
+(cast.rs:72-77 "all <= 64 bytes payload … with headroom") is stale/false. Not a
+correctness loss (disk fallback still works, modulo the WAL-ROTATE bug) but the
+documented fast-path recovery cache is silently inert for the hottest traffic.
+Fix: size the ring frame to cover current records (>=144).
+
+### CLI-PTR-READ-UNALIGNED-UB — aligned ptr::read on unaligned WAL buffer (HIGH, soundness)
+**Status: OPEN.** `rsx-cli/src/main.rs:343` (and every decode arm: 381,408,439,
+468,499,519,537,574,595,619,643,674,700) uses `std::ptr::read(payload.as_ptr()
+as *const _)` on `#[repr(C, align(64))]` records read from a `Vec<u8>` payload
+(heap alloc, 8–16-byte aligned) — `ptr::read` requires the source satisfy the
+type's alignment; violating it is UB. The canonical decoder
+`rsx-cast/src/encode_utils.rs:53-55` uses `std::ptr::read_unaligned` for exactly
+this reason; the CLI hand-rolled the decode with the wrong primitive. Can
+produce garbage fields / crash under non-16-aligning allocators or higher opt
+levels, undermining the WAL-inspection tool. Fix: `read_unaligned`.
+
+### GW-CANCEL-NO-RATELIMIT — Cancel bypasses rate limit + circuit breaker (MED)
+**Status: OPEN.** `rsx-gateway/src/handler.rs:547-649` the `WsFrame::Cancel` arm
+calls none of `ip_limiter`, per-user `RateLimiter`, or `circuit.allow()` — unlike
+the `NewOrder` arm (314-364). A client can flood `{"C":[...]}` frames straight to
+risk/ME casting with zero throttling, even while throttled/tripped on the order
+path. DoS gap on the casting channel. Fix: gate Cancel through the same limiters.
+
+### GW-CANCEL-NOT-USER-SCOPED — cid collision breaks self-cancel (MED)
+**Status: OPEN.** `rsx-gateway/src/handler.rs:580,618` `find_by_order_id` /
+`find_by_client_order_id` scan the process-global `pending` queue with NO user
+filter, and `build_cancel` (584,622) sends the requester's `user_id` + the found
+order's id. cid is client-chosen and unnamespaced, so two users can collide:
+user A's self-cancel-by-cid can find user B's same-cid order first → ME composite
+key `(A, B_oid)` misses → silent no-op → A cannot cancel its own resting order.
+Unauthorized cancel of B is blocked by the ME key (incidental), but the missing
+user-scope + self-cancel breakage are real. Fix: scope the pending lookup to
+`user_id`.
+
+### RISK-DEDUCT-FEE-UNCHECKED — lone non-saturating ledger op (LOW)
+**Status: OPEN.** `rsx-risk/src/account.rs:22` `deduct_fee` uses `self.collateral
+-= fee` while every other money op in the crate uses saturating/i128-widened
+arithmetic. If `collateral` and `fee` sit at opposite i64 extremes it overflows
+(debug panic = DoS; release wrap = manufactured solvency). Reaching it needs
+absurd values that order-entry notional caps prevent — latent consistency /
+defense-in-depth gap, not live-impact. Fix: `saturating_sub`.
+
+### MARK-PARSE-NEG-ZERO — sign lost for "-0.x" price strings (LOW, dead on real feeds)
+**Status: OPEN.** `rsx-mark/src/source.rs:275-303` `parse_price("-0.5")`: `whole
+= "-0"` parses to `0`, so `whole_val == 0` takes the add branch → `+frac` instead
+of `-frac` (sign flip). Dead on real CEX spot feeds (never negative); flagged as
+a latent edge only. Fix: track the sign separately from `whole_val`.
