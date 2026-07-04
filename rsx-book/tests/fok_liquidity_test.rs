@@ -87,7 +87,7 @@ fn submit_flow(
     };
     let price = if buy { mid - off } else { mid + off };
     let qty = rng.range(1, 500);
-    let tif = if rng.next() % 6 == 0 {
+    let tif = if rng.next().is_multiple_of(6) {
         TimeInForce::IOC
     } else {
         TimeInForce::GTC
@@ -179,7 +179,7 @@ fn fok_outcome_matches_bruteforce_under_random_flow() {
     }
 
     for _ in 0..3000 {
-        if rng.next() % 4 == 0 {
+        if rng.next().is_multiple_of(4) {
             probe_fok(&mut book, &mut rng, mid, oid);
         } else {
             submit_flow(&mut book, &mut rng, mid, oid);
