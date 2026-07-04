@@ -1,171 +1,262 @@
 # rsx-book Architecture
 
-Shared orderbook with slab-allocated orders, compressed price
-levels, and price-time priority matching.
-See `specs/2/21-orderbook.md`.
+The data structures behind a depth-invariant matching book, and how
+they compose. This is "how it is"; the "why" lives in
+[`notes/`](notes/) and the formal spec `specs/2/21-orderbook.md`.
 
-## Module Layout
+## Module layout (`rsx-book/src/`)
 
 | File | Purpose |
 |------|---------|
-| `book.rs` | `Orderbook` struct, insert/cancel/modify, BBA scan |
-| `matching.rs` | `process_new_order()`, `match_at_level()` -- GTC/IOC/FOK/post-only/reduce-only |
-| `slab.rs` | Generic `Slab<T>` arena allocator |
-| `compression.rs` | `CompressionMap` -- 5-zone price-to-index bisection |
-| `level.rs` | `PriceLevel` -- doubly-linked list node |
-| `order.rs` | `OrderSlot` -- 128-byte cache-aligned order |
-| `event.rs` | `Event` enum, event constants |
-| `user.rs` | `UserState`, position tracking within the book |
-| `migration.rs` | Lazy level migration during recentering |
-| `snapshot.rs` | Binary snapshot save/load with magic + version header |
+| `book.rs` | `Orderbook` struct; `insert_resting`, `unlink_order`, `cancel_order`, `modify_*`, best-bid/ask scan, occupancy maintenance, `price_asc` build. |
+| `matching.rs` | `process_new_order`, `match_at_level`, `can_fill_fully` — GTC / IOC / FOK / post-only / reduce-only, event emission. |
+| `slab.rs` | Generic `Slab<T>` arena: bump + free-list, O(1) alloc/free. |
+| `compression.rs` | `CompressionMap` — 5-zone sawtooth price→index bisection. |
+| `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` in O(depth). |
+| `level.rs` | `PriceLevel` — 24-byte level head (head/tail slab handle, total_qty, order_count). |
+| `order.rs` | `OrderSlot` — 128-byte `#[repr(C, align(64))]` order, hot fields in cache line 0. |
+| `event.rs` | `Event` enum + reason constants; `MAX_EVENTS = 65_536`. |
+| `user.rs` | `UserState` — per-user net position + active order count, tracked inside the book. |
+| `migration.rs` | Lazy incremental recentering when mid drifts. |
+| `snapshot.rs` | Binary save/load (magic `RXSN` + version). |
 
-## Key Types
-
-- `Orderbook` -- central struct: levels, slab, BBA tracking,
-  user state, migration state, event buffer
-- `BookState` -- `Normal` or `Migrating`
-- `OrderSlot` -- 128-byte `#[repr(C, align(64))]` order record,
-  hot fields in first cache line
-- `PriceLevel` -- head/tail slab handles, total qty, order
-  count (24 bytes)
-- `Slab<T>` -- generic arena allocator with free-list + bump
-- `CompressionMap` -- 5-zone price-to-index mapping
-- `Event` -- `Fill`, `OrderInserted`, `OrderCancelled`,
-  `OrderDone`, `OrderFailed`, `BBO`
-- `IncomingOrder` -- input to `process_new_order()`
-- `UserState` -- per-user net position and active order count
-
-## Orderbook Structure
+## How the pieces compose
 
 ```
-          Orderbook
-         /         \
-    Bid Levels      Ask Levels
-  (compressed)    (compressed)
-       |               |
-  [PriceLevel]    [PriceLevel]
-   head -> Order -> Order -> (tail)
-            |        |
-        (doubly linked, stored in slab)
+                        Orderbook
+   ┌──────────────┬──────────────┬───────────────────────────┐
+   │ active_levels│  orders       │  bid_occ / ask_occ         │
+   │ Vec<PriceLevel> Slab<OrderSlot>  Occupancy (per side)     │
+   │  (dense,     │  (arena,      │  (bitmap over the same     │
+   │  compressed) │  128B slots)  │   compression slots)       │
+   └──────┬───────┴──────┬────────┴────────────┬──────────────┘
+          │ index by     │ head/tail handle    │ bit set =
+          │ compression  │ into slab; orders    │ level non-empty
+          │ price→slot   │ doubly-linked (FIFO) │ (next-best find)
+          ▼              ▼                      ▼
+   CompressionMap    OrderSlot chain        find_next / find_prev
+   (price → u32)     head → … → tail        (O(depth) skip-empty)
 ```
 
-**PriceLevel** (24 bytes): head, tail (SlabIdx), total_qty
-(i64), order_count (u32).
+- A price maps to a **slot index** via `CompressionMap::price_to_index`
+  (bisection, ~2 ns).
+- `active_levels[slot]` is a `PriceLevel`: head/tail handles into the
+  slab, plus `total_qty` and `order_count`.
+- Orders at a level are a doubly-linked list threaded through the
+  slab (`next`/`prev` are slab handles), head→tail = time priority.
+- `bid_occ` / `ask_occ` mark which slots are non-empty, so
+  next-best-level is a bitmap find, never a scan.
 
-**OrderSlot** (128 bytes, `#[repr(C, align(64))]`):
-- Cache line 1 (hot): price, remaining_qty, side, flags,
-  tif, next/prev/tick_index
-- Cache line 2 (cold): user_id, sequence, original_qty,
-  timestamp_ns
+## Slab arena (`slab.rs`)
 
-## Slab Arena Allocator
+`Slab<OrderSlot>` is a preallocated `Vec<OrderSlot>` with a
+free-list head and a bump cursor.
 
-`Slab<OrderSlot>` -- pre-allocated Vec + free list. O(1)
-alloc and free. No heap allocation during matching. Free list
-chains through each slot's `next` field. Pre-allocated for
-~78M slots (~10 GB).
+- **alloc**: pop `free_head` (reuse) or bump `bump_next` (fresh).
+  O(1). Asserts on exhaustion.
+- **free**: push the slot onto `free_head`. O(1). The free-list
+  chains through each slot's `next` field.
+- **no-leak invariant**: `live = bump_next − |freelist|`. Every
+  `alloc` pairs with at most one `free`. `free_count()` walks the
+  list for test/introspection cross-checks (not the hot path).
 
-## CompressionMap (Price-to-Index)
+`OrderSlot` is 128 bytes, `#[repr(C, align(64))]` (compile-time
+asserted): cache line 0 is hot (price, remaining_qty, side, flags,
+tif, next/prev/tick_index), cache line 1 is cold (user_id, sequence,
+original_qty, timestamp_ns, order ids). Cancel and match touch only
+line 0.
 
-Distance-based compression zones centered on mid-price.
-Bounds the price level array to ~617K slots (~15 MB).
+## Compression map (`compression.rs`)
+
+A price→slot quantization centered on `mid_price`, so the whole
+tradeable range fits a bounded, dense level array instead of one
+slot per tick. Five zones by absolute distance from mid:
+
+| zone | distance from mid | ticks per slot |
+|---|---|---|
+| 0 | 0–5%   | 1  (1:1 near mid) |
+| 1 | 5–15%  | 10 |
+| 2 | 15–30% | 100 |
+| 3 | 30–50% | 1000 |
+| 4 | 50%+   | catch-all, 1 slot per side |
+
+`price_to_index` is a 2–3 comparison bisection over the four raw-price
+thresholds, then an in-zone offset. Each zone is a symmetric ± band
+around mid laid out at ascending index, so the index is a
+**sawtooth**: it is not globally price-monotonic across zone
+boundaries. Two consequences enforced everywhere:
+
+- **BBA is tracked by raw price, never by index.** `best_bid_px` /
+  `best_ask_px` are compared as prices; the tick index is only a
+  slot address.
+- **Next-best walks `price_asc`, not the raw bitmap.**
+  `build_price_asc` precomputes the ≤10 zone-half index sub-ranges
+  ordered by price band (within each, ascending index == ascending
+  price). Recomputed only on construction / recenter.
+
+Orders sharing a slot (zones 1–4) store their exact price; the
+matcher checks the real price per order.
+
+## Occupancy bitmap (`occupancy.rs`)
+
+Per-side hierarchical set-bit index over the compression slots: bit
+set = "this level holds ≥1 resting order of that side". `levels[0]`
+is one bit per slot; each higher level is one bit per word of the
+level below. ~120k slots ⇒ 3 levels (1929 + 31 + 1 words), ~15 KB.
+
+- **`set` / `clear`** — O(depth); climb up only while a word flips
+  empty↔non-empty, so a deep cancel is a couple of word writes.
+- **`find_next` / `find_prev`** — O(depth); climb summary words to
+  find a candidate, then descend via `trailing_zeros` /
+  `leading_zeros`.
+- **`find_first_in` / `find_last_in`** — bounded to a `price_asc`
+  sub-range.
+
+Maintained in lockstep with `PriceLevel::order_count` at every site
+that crosses the 0 boundary: `insert_resting` (0→1 sets),
+`unlink_order` (→0 clears — covers cancel and maker-fill),
+`migrate_single_level`, `trigger_recenter` (reset), and snapshot
+load (`rebuild_occupancy`). A stale bit would be a phantom or
+skipped level, i.e. a matching bug; `scan_reference_test.rs`
+cross-checks the bitmap path against a brute-force scan. Deep why:
+[`notes/occupancy.md`](notes/occupancy.md).
+
+## Best-bid / best-ask
+
+Cached as `(best_bid_tick, best_bid_px)` / `(best_ask_tick,
+best_ask_px)`. Updated on the fly during insert (compare raw price)
+and match. When a level empties, `scan_next_bid` / `scan_next_ask`
+walk `price_asc` in price order and take the extreme set bit per
+sub-range — the common near-BBO case returns after touching a few
+zone-0 summary words.
+
+## Matching algorithm (`matching.rs`)
+
+`process_new_order(book, order)` — one aggressor in, events out.
+Event buffer is reset at entry, so `book.events()` afterward is
+exactly this order's events.
 
 ```
-Zone  Distance from mid  Compression  Slot covers
-0     0-5%               1:1          1 market tick
-1     5-15%              1:10         10 market ticks
-2     15-30%             1:100        100 market ticks
-3     30-50%             1:1000       1000 market ticks
-4     50%+               CATCH-ALL    single slot/side
+process_new_order(book, order):
+    event_buf.reset()
+    validate tick/lot           -> OrderFailed(VALIDATION) on fail
+    reduce-only:                 clamp qty to net position,
+                                 or OrderFailed(REDUCE_ONLY)
+    post-only:                   OrderCancelled(POST_ONLY) if would cross
+    FOK:                         can_fill_fully()? else OrderFailed(FOK)
+                                 (pre-check — no partial, no rollback)
+
+    cross loop (Buy vs asks / Sell vs bids):
+        while remaining > 0 and touch level exists:
+            match_at_level(book, touch, order)
+            if touch emptied: best = scan_next_*()
+            if no progress or book side empty: break
+
+    residual:
+        remaining > 0 and IOC   -> OrderDone(CANCELLED, filled/remaining)
+        remaining > 0 otherwise -> insert_resting + OrderInserted
+        remaining == 0          -> OrderDone(FILLED)
+
+    if best bid/ask tick changed: emit BBO
 ```
 
-Lookup: bisection on 4 thresholds (~2-5ns).
-
-## Order Types
-
-| Type | Behavior |
-|------|----------|
-| GTC (Limit) | Match, rest remainder |
-| IOC | Match, cancel remainder |
-| FOK | Match all or reject (rollback fills) |
-| Post-Only | Reject if would take |
-| Reduce-Only | Clamp qty to position, reject if wrong side |
-
-## Matching Algorithm
+`match_at_level(book, tick, aggressor)` walks the level from `head`
+(FIFO), and per maker:
 
 ```
-process_new_order(book, incoming):
-    validate tick/lot
-    reduce-only enforcement (clamp qty)
-
-    Phase 1: match against opposite side
-        walk best levels, FIFO within each level
-        smooshed levels: scan, check exact price
-
-    Phase 1.5: TIF enforcement
-        FOK not fully filled -> rollback events, reject
-        IOC remainder -> emit OrderDone(CANCELLED)
-
-    Phase 2: insert remainder as resting GTC
-        slab alloc, link into price level
+    skip if maker price doesn't cross aggressor limit
+    fill_qty = min(aggressor.remaining, maker.remaining)
+    decrement both; decrement level.total_qty
+    emit Fill                       <-- fill precedes any OrderDone
+    update_positions_on_fill(taker, maker)
+    if maker fully filled:
+        unlink_order (clears occupancy if level empties)
+        emit OrderDone(FILLED) for the maker
+        slab.free(maker)
 ```
 
-## Smooshed Ticks
+Event ordering upholds invariant #1 (fills precede ORDER_DONE): the
+maker's `Fill` is emitted before its `OrderDone`, and both before
+the taker's terminal event at the end of `process_new_order`.
+Invariant #2 (exactly-one completion): every return path emits
+exactly one terminal event for the aggressor.
 
-In zones 1-4, multiple market prices share one slot. Each
-order stores its exact price. During matching, scanner checks
-actual price per order. O(k) per smooshed slot. Near mid
-(zone 0): 1:1, no smooshing.
+`can_fill_fully` (FOK) walks only the *crossing* levels in price
+order via `price_asc` + occupancy, summing each level's maintained
+`total_qty` and early-exiting the instant the running total reaches
+the order size — O(levels crossed), never a per-order or full-slot
+scan. A whole level shares one price, so `total_qty` counts it
+exactly.
 
-## Incremental Recentering
+## Incremental recentering (`migration.rs`)
 
-When mid drifts >50% of zone 0 width, migrate to new array:
-- Two pre-allocated arrays (active + staging)
-- Lazy: `resolve_level(price)` migrates on access
-- Proactive: `migrate_batch(100)` in idle cycles
-- No stop-the-world pause
+When mid drifts past 50% of zone-0 half-width, the book rebuilds its
+compression map without a stop-the-world pause:
 
-## Event Buffer and Fanout
+- `trigger_recenter(new_mid)` — swap in a fresh empty active array
+  and new `CompressionMap`; keep the old array as `old_levels`;
+  reset occupancy + `price_asc`; enter `Migrating`.
+- `resolve_level(price)` — lazy: migrate the old level covering
+  `price` on first access past the frontier.
+- `migrate_batch(n)` — proactive: migrate `n` levels per idle call,
+  advancing bid/ask frontiers until both cover the old range, then
+  `complete_migration` back to `Normal`.
 
-Fixed array `[Event; MAX_EVENTS]` (MAX_EVENTS = 65_536,
-heap-boxed) on Orderbook struct. Reset per cycle. `Orderbook::emit`
-asserts on overflow per the spec invariant "ME never drops events".
-Two independent CastSenders:
-- ME -> Risk: fills, BBO, order done/failed
-- ME -> Marketdata: inserts, cancels, fills
+During migration two arrays are live; `migrate_single_level`
+re-links each order into the new array and re-sets occupancy / BBA.
 
-## Memory Layout
+## Event buffer
 
-```
-Component          Sizing                      Memory
-Order slab         78M slots * 128B            ~10 GB
-Price levels (x2)  617K slots * 24B * 2        ~30 MB
-Event buffer       [Event; 65K] heap-boxed     ~8.4 MB
-Total per book                                 ~10 GB
-```
+Fixed `Box<[Event; 65_536]>` on the `Orderbook`, reset per
+`process_new_order`. `emit` asserts on overflow (invariant: ME never
+drops events). Worst case is a market order sweeping every resting
+order at ~3 events per fill (`Fill` + maker `OrderDone` + final
+`BBO`), so 65,536 slots covers ~21k fills in one cascade. The caller
+drains `book.events()` after each order and fans out to two
+transports (fills/BBO/done → risk; inserts/cancels/fills →
+marketdata); that fan-out lives in the ME process, not in this crate.
 
-## Operation Complexity
+## How it plugs into the ME tile
 
-| Operation | Time |
-|-----------|------|
-| Add order | O(1) (bisect + alloc + append) |
-| Cancel by handle | O(1) (lookup + unlink + free) |
-| Match (zone 0) | O(1) per fill |
-| Match (smooshed) | O(k) per slot |
-| Best bid/ask | O(1) (cached) |
+`rsx-book` is a library of pure data structures — no runtime, no
+threads, no I/O. The matching-engine process (`rsx-matching`) owns
+one `Orderbook` per symbol and drives it from a pinned tile loop:
+decode an incoming order off the transport, call
+`process_new_order`, drain `book.events()`, and publish. Because
+each book is single-owner state on one thread, it needs no locking;
+scale-out is one book (one core) per symbol. `rsx-marketdata` runs
+the same book as a shadow (fed inserts/cancels/fills) to serve L2 /
+BBO. The book makes no thread-safety claims because no caller shares
+it across threads.
 
-## Architectural Decisions
+## Memory layout (config-driven)
 
-**Runtime: none — pure data structures.** `rsx-book` is a
-library, not a process. No async runtime, no threading
-primitives, no I/O. The crate provides slab arenas,
-compressed price levels, and the matching algorithm; the
-caller owns the loop and the threading model.
+| Component | Sizing | Memory |
+|---|---|---|
+| Order slab | `capacity` × 128 B (constructor arg) | e.g. 78M slots ≈ 10 GB **virtual**; pages fault in on use |
+| Price levels (×2: active + staging) | ~120k slots × 24 B × 2 | ~6 MB (grows with range/tick) |
+| Occupancy (×2 sides) | ~15 KB each | negligible |
+| Event buffer | `[Event; 65_536]` heap-boxed | ~8 MB |
 
-Consumers today: `rsx-matching` (degenerate tile) and
-`rsx-marketdata` (shadow book inside a monoio reactor).
-Both treat the book as single-owner state on whatever
-thread happens to drive them — see
-[`../notes/tiles.md`](../notes/tiles.md) for the broader
-pattern. The book makes no claims about thread-safety
-because none of its callers share it across threads.
+Slab capacity is a caller choice; level-array and occupancy sizes
+follow from mid/tick via the compression map.
+
+## Operation complexity
+
+| operation | cost |
+|---|---|
+| Insert (rest) | O(1) — bisect + slab alloc + tail link + bit set |
+| Cancel by handle | O(1) — slab unlink + bit clear (+ O(depth) next-best only if the touch emptied) |
+| Match, touch survives | O(fills) — depth-invariant (~60–65 ns) |
+| Match, touch clears | O(fills) + O(depth) next-best find (~145 ns) |
+| Deep sweep of K levels | O(K · depth) — linear in levels swept, not in slots |
+| Best bid/ask read | O(1) — cached |
+| Recenter | amortized via lazy + batched migration; no global pause |
+
+## Architectural decisions
+
+**Runtime: none — pure data structures.** `rsx-book` is a library,
+not a process: no async runtime, no threading primitives, no I/O.
+The caller owns the loop and the threading model. Consumers today
+are `rsx-matching` (the ME tile) and `rsx-marketdata` (shadow book),
+both single-owner on whatever thread drives them.
