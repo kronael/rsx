@@ -2814,8 +2814,9 @@ tailwind.config = {{
 #content ol li {{ list-style: decimal; }}
 #content strong {{ color: #e2e8f0; }}
 #content blockquote {{
-  border-left: 3px solid #334155;
-  padding-left: 1rem;
+  border: 1px solid #334155;
+  border-radius: 3px;
+  padding: .5rem .75rem;
   margin: 0.75rem 0;
   color: #94a3b8;
 }}
@@ -2843,6 +2844,9 @@ tailwind.config = {{
   width: 100%;
   margin: 0.75rem 0;
   font-size: 0.875rem;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }}
 #content th, #content td {{
   border: 1px solid #334155;
@@ -2875,7 +2879,7 @@ tailwind.config = {{
         >Trade via the rsx-tui terminal client</span>
     </div>
   </aside>
-  <main class="flex-1 max-w-3xl p-8">
+  <main class="flex-1 min-w-0 max-w-3xl p-4 sm:p-8">
     <div id="content"></div>
   </main>
 </div>

@@ -262,7 +262,7 @@ def _retransmit():
     <div class="text-xs text-slate-400 mb-2 font-mono">
       receiver detects a gap → sends Nak(seq)</div>
     <div class="space-y-2">
-      <div class="border-l-4 border-emerald-500 pl-3 py-1">
+      <div class="border-2 border-emerald-500/70 rounded-[3px] px-3 py-1">
         <div class="text-emerald-400 text-xs font-bold">
           Tier 1 — hot ring (RAM)</div>
         <div class="text-xs text-slate-400">4 K most-recent frames,
@@ -270,7 +270,7 @@ def _retransmit():
           re-send.</span></div>
       </div>
       <div class="text-center text-slate-600 text-xs">↓ on miss</div>
-      <div class="border-l-4 border-amber-500 pl-3 py-1">
+      <div class="border-2 border-amber-500/70 rounded-[3px] px-3 py-1">
         <div class="text-amber-400 text-xs font-bold">
           Tier 2 — cold WAL (disk)</div>
         <div class="text-xs text-slate-400">pick the segment whose
