@@ -325,9 +325,30 @@ origin-ts field to rsx-messages + WAL + parser; only the taker-fill leg
 (`FillRecord.taker_ts_ns`) composes today. GATEWAY-LATENCY egress is now
 measurable for fills; the bimodal tail is the next thing to chase.
 
-## RETURN-PATH-INTERMITTENT-DROP — fill/done confirmations sometimes never reach the client (HIGH, unconfirmed root cause)
+## RETURN-PATH-INTERMITTENT-DROP — was a test-fixture bug, not a gateway/risk drop (RESOLVED)
 
-**Status: OPEN.** Found writing `.ship/33-TUI-SPEED-TESTS` T3
+**Status: RESOLVED 2026-07-04.** Root cause was a TEST FIXTURE bug, NOT a
+gateway/risk/casting defect. `cluster::seed_book` posted a maker BUY @ 60_000,
+but the shared long-lived book (rebuilt from WAL, never reset) already carries
+resting asks ~50_000 — so the "maker" CROSSED those asks and filled instead of
+resting as a bid. The crossing taker then had no resting bid to hit → no fill →
+`wait_for(fills==1)` timed out, which read as a dropped return-leg. Fixed by
+seeding the maker BELOW the asks (49_000) with qty matched to the taker so it
+rests as the best bid and self-cleans on the fill (`rsx-tui/tests/support/
+cluster.rs` + `e2e_orders.rs` price bands all <50_000 + a `LIVE_BOOK` mutex
+serialising the two book-sharing fill tests). Verified: `submit_ioc_fills` +
+`order_lifecycle_accepted_then_done` PASS against the live cluster. The
+mid-investigation "confirmed real, persistent-WS-specific" call was WRONG — the
+persistent-vs-transient difference was a coincidence (the playground probe used
+a correct maker-sell/taker-buy cross; the e2e used a broken maker-buy).
+Residual, NOT this bug: (a) casting is UDP so an occasional order/event
+genuinely drops by design (`rsx-matching` FAULTED, "clients re-send dropped
+pre-ack orders") — the tests carry a resubmit-once retry; (b) test-infra: the
+long-lived shared book means a mid-way-failed run can leave a resting bid that
+pollutes the next run's level — matched-qty self-cleaning avoids this in steady
+state; a fresh cluster is pollution-free. Original (wrong) triage below.
+
+**[SUPERSEDED — original triage guessed the root cause wrong]** Found writing `.ship/33-TUI-SPEED-TESTS` T3
 (`rsx-tui/tests/e2e_orders.rs`) against the live minimal cluster
 (gw-0/risk-0/me-pengu, symbol_id=10). Repro: two separate WS connections
 (distinct seeded `user_id`s, e.g. 2 and 3), maker posts a resting GTC that
