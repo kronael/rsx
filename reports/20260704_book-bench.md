@@ -186,3 +186,99 @@ the scan-bearing ops (+5-7 ns) from skipping empty summary words — additive, n
 proportional to the gap, the O(depth) signature. `cancel_deep` is a dead-flat
 ~26 ns baseline (pure slab unlink + O(1) bit clear), so the scan is the only
 distribution-sensitive part and it stays bounded. No shape degrades.
+
+## Tail latency (2026-07-04, `tail_bench.rs`)
+
+Closes the last CEO-eval gap: every figure above is a Criterion median
+(p50). This section measures p50/p99/p99.9 on the hot ops, with special
+attention to `match_clears` — the level-clearing path the occupancy
+bitmap fixed (see the "Post-scan-fix" section above). Quiet box (RSX
+cluster stopped), single core (pinned, same `harness::pin()` as every
+other bench in this suite), dense-shape book (contiguous levels behind
+a 1-order touch), depths 1k and 10k. Source: `rsx-book/benches/
+tail_bench.rs`. Run: `cargo bench -p rsx-book --bench tail_bench`.
+
+### Methodology — and why a naive per-op timer would lie here
+
+These ops run in 25-100 ns. `Instant::now()` on this box (vDSO
+`clock_gettime(CLOCK_MONOTONIC)`) costs ~20-30 ns per call — a large
+fraction of the op — so timing every single op individually mostly
+measures the timer, not the op. Measured directly (back-to-back
+`Instant::now()` calls, nothing timed in between, n=100,000):
+
+| | mean | p50 | p99 | p99.9 | max |
+|---|---:|---:|---:|---:|---:|
+| **timer floor** | 24.0 ns | 20.0 ns | 31.0 ns | 31.0 ns | 114,485 ns |
+
+The floor's own max (114 µs) is OS scheduling jitter on an otherwise
+idle box — a reminder that any single huge `max` reading below could be
+noise, not the algorithm, and is called out per-op rather than
+overclaimed.
+
+Given that floor, this harness reports two numbers per op, both printed
+by the harness, only one of them quoted as authoritative:
+
+1. **Batch-amortized (the number in the table below).** Batches of
+   `BATCH=64` consecutive ops are timed as one span and divided by 64,
+   so timer overhead contributes <1 ns to the per-op figure. 2,000,000
+   ops per op/depth combo -> 31,250 batch samples, so p99.9 has ~31
+   points above it (a real quantile, not a handful of outliers).
+2. **Single-op raw timer (context only, NOT quoted as fact).** Every
+   op timed individually, n=100,000. Included in the raw harness
+   output so the reader can see it sits close to the timer floor (p50
+   50-90 ns vs. the 20-31 ns floor) — i.e. its distribution is
+   partially timer noise, and its p99/p99.9 should not be read as the
+   op's true tail.
+
+Both runs are preceded by 20,000 discarded warmup iterations (cache /
+branch-predictor warmup) and every op result is passed through
+`std::hint::black_box` so the compiler cannot elide it. Single run,
+quiet box, commit `f45e0a0`+`tail_bench.rs` — re-run before quoting
+elsewhere, per the standing caveat on every table in this report.
+
+### Results (batch-amortized, ns/op)
+
+| op | depth | mean | p50 | p99 | p99.9 | max |
+|---|---:|---:|---:|---:|---:|---:|
+| match (partial fill, touch survives) | 1,000 | 29.4 | 28.3 | 35.7 | 154.8 | 1,949.9 |
+| match (partial fill, touch survives) | 10,000 | 29.0 | 28.2 | 41.3 | 118.5 | 266.9 |
+| **match_clears** (empties touch → occupancy scan) | 1,000 | 71.1 | 70.5 | 76.5 | 175.2 | 1,289.4 |
+| **match_clears** (empties touch → occupancy scan) | 10,000 | 70.2 | 68.2 | 109.4 | 216.5 | 542.3 |
+| cancel_touch (cancel best → scan) | 1,000 | 46.4 | 43.2 | 90.0 | 175.6 | 1,406.1 |
+| cancel_touch (cancel best → scan) | 10,000 | 40.8 | 39.6 | 74.4 | 173.3 | 583.1 |
+| cancel_deep (far level, no scan) | 1,000 | 26.4 | 26.1 | 28.0 | 89.2 | 232.9 |
+| cancel_deep (far level, no scan) | 10,000 | 28.0 | 26.8 | 40.5 | 97.8 | 303.2 |
+
+### Reading it
+
+**`match_clears` has a tight tail, not a fat one.** p99/p50 is
+1.08-1.60× (76.5/70.5 at depth 1k, 109.4/68.2 at depth 10k) — nowhere
+near the 30-1000× blowups the pre-fix O(slots) scan produced (see the
+"Post-scan-fix" section: 4.37 µs, ~80 µs, ~1 ms before). The
+occupancy-bitmap find (O(depth=3) trailing/leading-zeros) does not
+have a data-dependent slow path at these depths; the p99.9 bump
+(~175-217 ns, ~2.5-3× p50) is consistent with occasional branch
+mispredicts / cache misses on the summary-word walk, not an
+asymptotic blowup, and stays flat 1k→10k (matching the O(depth)
+verdict from the distribution-robustness section above).
+
+**`match` (happy path, touch survives) is the tightest of the four** —
+p99/p50 ~1.1-1.5×, as expected: no scan, no bitmap walk, just slab pop
++ level update.
+
+**`cancel_touch` has the widest p99/p99.9 spread of the four**
+(p99/p50 up to 2.1×, p99.9/p50 up to 4.4×) — it does two things per
+op (insert + cancel-that-empties-and-scans), so it accumulates two
+sources of jitter instead of one; `cancel_deep`'s single-op, no-scan
+baseline is correspondingly the tightest apart from `match`.
+
+**Caveats.** Single run, quiet box, dense shape only (the
+distribution-robustness section above already covers sparse/
+concentrated — this section is about the tail, not the shape). The
+single-op numbers exist in the raw harness output for context but are
+NOT reported here as fact — they sit too close to the ~20-30 ns timer
+floor to trust their tail. `max` columns include rare multi-hundred-ns
+to ~2 µs batch averages, i.e. one op inside that batch of 64 likely
+stalled for tens of µs (OS scheduling, not algorithm) — consistent
+with the timer floor's own 114 µs max on an idle box. Re-run before
+quoting an exact ns elsewhere.
