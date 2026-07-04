@@ -4,6 +4,11 @@
 //! `screen()` and `wait_for` observe the same buffer a real session
 //! would.
 
+// Dead-code is evaluated per test-binary crate; cluster-only test files
+// (e2e_*) never build the MockConn half of the harness, so its mock
+// helpers read as dead there. Mirror cluster.rs/timing.rs.
+#![allow(dead_code)]
+
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::Terminal;
