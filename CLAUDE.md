@@ -117,6 +117,18 @@ rsx-auth/       Python auth service (uv; sqlx migrations)
   (the entry-point binary / server loop), not to library
   helpers — those return Futures and let the caller spawn.
 
+## Frozen crates — do NOT modify without explicit sign-off
+
+**`rsx-cast` is finalized/frozen.** It accepts BUGFIXES ONLY (restoring
+documented/intended behavior). Any other change — new API, refactor,
+signature change, "simplification", complexity cleanup, perf rework,
+dependency bump — requires the user's **explicit sign-off BEFORE writing
+code**. This holds during audits/refactors of other crates too: if work
+elsewhere seems to need an rsx-cast change, STOP and ask — the fix is
+almost always in the caller (see the SEQ-1 precedent). Read-only analysis
+(reporting complexity/bug findings) is fine; editing is not. Full policy:
+`rsx-cast/CLAUDE.md`.
+
 ## Trust boundaries (read this before adding "security")
 
 When the spec explicitly delegates a concern to a different
