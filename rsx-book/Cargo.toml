@@ -49,3 +49,7 @@ harness = false
 [[bench]]
 name = "distribution_bench"
 harness = false
+
+[[bench]]
+name = "tail_bench"
+harness = false

@@ -136,9 +136,15 @@ stream. Full table + per-contender notes:
 Criterion microbenchmarks — the *algorithm*, not the exchange
 round-trip. The cross-process p50 is ~1.1 ms, dominated by
 transport and scheduling, not matching (a different story; see the
-transport crate). p99 is not published here. Re-run on a quiet box
-before quoting an exact ns elsewhere; the relative picture is
-stable, individual ns are not.
+transport crate). Re-run on a quiet box before quoting an exact ns
+elsewhere; the relative picture is stable, individual ns are not.
+
+**Tail latency.** p99 within ~1.1-1.6× of p50 on `match_clears` — the
+level-clearing path the occupancy bitmap fixed — batch-amortized,
+depths 1k/10k, `cargo bench -p rsx-book --bench tail_bench`; full
+methodology (timer-floor caveat included) in the
+["Tail latency"](../reports/20260704_book-bench.md#tail-latency-2026-07-04-tail_benchrs)
+section of the same report.
 
 ## What it gives you
 
