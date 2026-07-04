@@ -49,6 +49,16 @@ resting order's side. The first insert into an empty level sets the bit
 the old scan's `head.side` test exactly); the bit clears when the level
 empties.
 
+### Construction (`Occupancy::new`)
+
+Built bottom-up by size alone — no price knowledge. Level 0 is
+`ceil(n/64)` words; each next level is `ceil(prev_words/64)` words (one bit
+per word below); loop until the top is a single `u64`. So
+`depth = ceil(log64 n)` (3 for ~120k slots) and the whole index is ~15 KB
+— level 0 dominates, the summaries are a rounding error. `set`/`clear`
+short-circuit the upward climb the moment a word's empty↔non-empty state
+doesn't flip, so maintenance is O(1) in the common case, O(d) worst.
+
 ### The sawtooth
 
 The compression map is a **sawtooth**: tick index is not globally
@@ -60,6 +70,27 @@ index sub-ranges **ordered by price band** (within each, ascending index
 == ascending price). `scan_next_ask` walks them low→high price taking the
 first set bit; `scan_next_bid` walks high→low taking the last. Recomputed
 only on construction / recenter, never on the hot path.
+
+## Alternatives rejected
+
+**A BTree.** The key space is dense and pre-quantised — the compression map
+already assigns each price a fixed slot, so the slot index *is* the key: no
+keys to store or compare, no per-insert node allocation. Find-next is `tzcnt`
++ ~d contiguous summary reads (O(d) fixed) versus a BTree's O(log n)
+cache-missing pointer chases, comparisons, and allocation. And this is an
+*index beside* `active_levels`, not the container; a BTree would *be* the
+container. Closer to a fanout-64 radix tree over a dense domain than a
+comparison BTree over a sparse one.
+
+**A "next-filled" pointer / intrusive linked list.** Gives O(1) *walk* to
+next-best but breaks on the operations that matter: an ordered insert must
+first *find* its neighbours — the very next-occupied search you're avoiding
+(chicken-and-egg) — and a crossing limit needs "best level at/after price P",
+which a list reaches only by walking. Pointers also chase to scattered 24-byte
+`PriceLevel`s; the bitmap stays in dense summary words. A list solves one of
+{walk, ordered-insert, arbitrary-seek}; the bitmap solves all three
+branchlessly. (A list *plus* a bitmap index is possible — but then the bitmap
+does the hard part regardless.)
 
 ## Guarantees (complexity + cache)
 
