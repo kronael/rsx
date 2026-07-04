@@ -52,8 +52,39 @@ impl<T: SlabItem + Default> Slab<T> {
             "slab free: idx {} out of bounds",
             idx
         );
+        // Guard against corrupting the freelist. A never-allocated slot
+        // (>= bump_next) or an already-free slot would splice a cycle /
+        // alias into the freelist and hand the same slot out twice. The
+        // is-free walk is O(free) so it stays behind debug_assert (off in
+        // release; the ME bounds open orders upstream — see the crate's
+        // trust boundary). Callers must pair each `alloc` with at most one
+        // `free` for the same handle (invariant #8, slab no-leak).
+        debug_assert!(
+            idx < self.bump_next,
+            "slab free: idx {} never allocated (bump_next {})",
+            idx,
+            self.bump_next,
+        );
+        debug_assert!(
+            !self.is_free(idx),
+            "slab double-free: idx {} already on freelist",
+            idx,
+        );
         self.slots[idx as usize].set_next(self.free_head);
         self.free_head = idx;
+    }
+
+    /// True iff `idx` is already on the freelist. O(free); debug-only
+    /// double-free detection (see `free`), never called on the hot path.
+    fn is_free(&self, idx: u32) -> bool {
+        let mut cur = self.free_head;
+        while cur != NONE {
+            if cur == idx {
+                return true;
+            }
+            cur = self.slots[cur as usize].next();
+        }
+        false
     }
 
     #[inline]
