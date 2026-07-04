@@ -165,3 +165,24 @@ fills) exactly when brute-force liquidity < order size, and fully fill
 otherwise. Caveat: the ~118 ns figure is from a lightly-contended box (a
 parallel bench was running); the −99.95% magnitude is unambiguous, but
 re-run on a fully quiet box before quoting the exact ns elsewhere.
+
+## Distribution robustness (2026-07-04, `distribution_bench.rs`)
+
+Does the occupancy bitmap hold O(depth) regardless of how orders are laid out?
+Next-best / match-that-clears / cancel measured under dense (packed zone 0),
+sparse (gaps across zones), and concentrated (single wall) shapes, at depth 1k
+and 10k. Quiet box, single core, medians (ns):
+
+| op | dense 1k / 10k | sparse 1k / 10k | concentrated 1k / 10k |
+|---|---|---|---|
+| next_best (pure scan) | 21.7 / 21.8 | 29.0 / 26.6 | 25.3 / 25.0 |
+| match_clears (clear touch + scan) | 73.8 / 71.9 | 81.2 / 77.8 | 77.9 / 77.8 |
+| cancel_touch (cancel best → scan) | 41.8 / 43.3 | 46.0 / 48.7 | 42.9 / 43.2 |
+| cancel_deep (far level, no scan) | 26.6 / 26.8 | 26.3 / 25.8 | 26.2 / 25.9 |
+
+**Verdict: O(depth), not O(slots), in every shape.** Every op is flat 1k→10k
+(10× the orders, ~same latency). Sparse adds only a small *additive* constant to
+the scan-bearing ops (+5-7 ns) from skipping empty summary words — additive, not
+proportional to the gap, the O(depth) signature. `cancel_deep` is a dead-flat
+~26 ns baseline (pure slab unlink + O(1) bit clear), so the scan is the only
+distribution-sensitive part and it stays bounded. No shape degrades.
