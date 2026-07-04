@@ -83,23 +83,27 @@ DOWNSTREAM (each consumer recovers independently via its own replay).
 
 ---
 
-## ME-FAULTED-NO-REPLAY-ADDR — ME FAULTED recovery has no replay source (MED)
+## ME-FAULTED-NO-REPLAY-ADDR — ME panicked on a dropped-packet order gap (MED)
 
-**Status: OPEN.** Found 2026-05-30 during e2e re-measurement (parallel WS
-workload). Under parallel load a single dropped UDP packet on loopback (seq gap,
-e.g. 258→259) puts the ME's `CastReceiver` into FAULTED recovery. The ME then
-panics for two stacked reasons: (1) `RSX_ME_REPLICATION_ADDR` is unset in the
-ME spawn env — the `start` script gives that var to Risk (so Risk can replay
-from ME's WAL on Risk-side FAULTED) but not to the ME; and (2) Risk exposes no
-TCP replication server for the ME to pull from, so the ME's FAULTED→replay path
-is unimplementable as wired even if the addr were set. Single-stream is
-unaffected (no gaps). **Impact:** blocks any sustained parallel-load measurement
-(the GW→ME→GW p50/p99 under load that PROGRESS lists as not-done). **Fix
-sketch:** decide the ME's cold-path replay source (a Risk-side replication
-server, or replay from the ME's own WAL tip), then wire the corresponding
-`*_REPLICATION_ADDR` into the ME spawn env in `start`. Triage — design decision
-first. Companion to per-consumer FAULTED recovery (only `rsx-matching` has the
-POC path; risk/marketdata/gateway still panic).
+**Status: FIXED 2026-07-04.** Resolved by the founder-blessed fault model:
+the risk→ME **order** stream is drop-safe, so on FAULTED the ME now **skips the
+gap and resumes live** rather than replay-or-panic. Rationale: a dropped
+pre-ack order is re-sent by the client (no-ack-within-timeout,
+`specs/2/49-webproto.md`) and deduped on the ME's WAL (`RECORD_ORDER_ACCEPTED`)
+= exactly-once; and the ME re-sequences on output (its own WAL seq), so an
+inbound gap is never an output gap (risk/recorder/marketdata see a contiguous
+ME stream). The FAULTED handler (`rsx-matching/src/main.rs`) now counts skipped
+seqs into `gauges.drops`, WARNs the gap range, and calls
+`reset_after_replay(gap_end_inclusive)`. The dead consumer-side replay path
+(`RSX_ME_REPLICATION_ADDR` + `drain_dxs_replay_into_book` + `apply_replayed_
+record` + `replay_after_fault_test`) was removed (306-line `replay.rs` +
+its test). **Still in place (different, still-required):** the ME's WAL
+replication *server* (`RSX_ME_REPLICATION_BIND_ADDR`) that RISK pulls for
+**fill** recovery, and ME cold-start replay from its own local WAL. Found
+2026-05-30 under parallel-load e2e (single dropped UDP packet → FAULTED →
+panic because `RSX_ME_REPLICATION_ADDR` was unset). Note: risk/marketdata/
+gateway consumers still panic on FAULTED — those are separate streams with
+their own recovery needs, out of scope here.
 
 ## IOC-NOT-HONORED — cancelled IOC surfaced to client as "resting" (MED)
 
