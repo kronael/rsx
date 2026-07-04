@@ -470,12 +470,14 @@ fn adversarial_tick_sizes_matching_and_recenter() {
         }
         check(&book);
 
-        // Recenter up and migrate to completion, then keep trading.
-        // new_mid is deliberately OFF any resting level (offsets are
-        // multiples of 5*tick; 503*tick is not) — migration orphans an
-        // order resting exactly at new_mid (MIGRATE-SKIPS-NEW-MID-LEVEL
-        // in bugs.md), which would trip the slab no-leak check.
-        let new_mid = mid + 503 * tick;
+        // Recenter up ONTO a resting level and migrate to completion,
+        // then keep trading. new_mid = mid + 505*tick is an ask (step 101,
+        // off = 101*5*tick), NOT consumed by the takers above — so an
+        // order rests exactly at new_mid. This is the regression for
+        // MIGRATE-SKIPS-NEW-MID-LEVEL: `trigger_recenter` must migrate that
+        // one level up front or it's orphaned and the slab no-leak check
+        // (`check`) trips.
+        let new_mid = mid + 505 * tick;
         book.trigger_recenter(new_mid);
         book.migrate_batch(50_000_000);
         assert_eq!(book.state, BookState::Normal, "migration incomplete");
