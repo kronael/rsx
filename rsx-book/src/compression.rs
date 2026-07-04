@@ -2,8 +2,9 @@
 /// Recomputed once per recenter, not per order.
 pub struct CompressionMap {
     pub mid_price: i64,
-    /// Absolute distance thresholds for zones 0-3.
-    /// Zone 4 is everything beyond thresholds[3].
+    /// Absolute RAW-PRICE distance thresholds for zones 0-3 (same units
+    /// as `price - mid_price`, i.e. NOT divided by tick_size). Zone 4 is
+    /// everything beyond thresholds[3].
     pub thresholds: [i64; 4],
     /// Ticks-per-slot for each zone.
     pub compressions: [u32; 5],
@@ -11,6 +12,10 @@ pub struct CompressionMap {
     pub base_indices: [u32; 5],
     /// Number of slots per zone (both sides combined).
     pub zone_slots: [u32; 5],
+    /// Raw price units per tick. A slot in zone `z` spans
+    /// `compressions[z] * tick_size` raw price, which is the divisor
+    /// `price_to_index` uses to turn a raw distance into a slot offset.
+    pub tick_size: i64,
 }
 
 // Read on every order; keep it within ~2 cache lines.
@@ -20,41 +25,43 @@ const _: () = assert!(
 
 impl CompressionMap {
     pub fn new(mid_price: i64, tick_size: i64) -> Self {
-        // Zone boundaries as distance in ticks from mid
-        // Zone 0: 0-5% = mid * 0.05 / tick_size ticks
-        // Zone 1: 5-15%
-        // Zone 2: 15-30%
-        // Zone 3: 30-50%
-        // Zone 4: 50%+ (catch-all, 2 slots)
-        let denom = 100i64.saturating_mul(tick_size);
+        // Zone boundaries as RAW-PRICE distance from mid (percent of
+        // mid), matching `price_to_index`'s `price - mid_price`:
+        //   Zone 0: 0-5%   Zone 1: 5-15%   Zone 2: 15-30%
+        //   Zone 3: 30-50%  Zone 4: 50%+ (catch-all, 2 slots)
+        // Slot counts convert that raw distance to slots by dividing by
+        // the raw price a slot spans = compression_ticks * tick_size.
         let pct_5 = mid_price
             .checked_mul(5)
-            .and_then(|v| v.checked_div(denom))
+            .map(|v| v / 100)
             .unwrap_or(i64::MAX / 100);
         let pct_15 = mid_price
             .checked_mul(15)
-            .and_then(|v| v.checked_div(denom))
+            .map(|v| v / 100)
             .unwrap_or(i64::MAX / 100);
         let pct_30 = mid_price
             .checked_mul(30)
-            .and_then(|v| v.checked_div(denom))
+            .map(|v| v / 100)
             .unwrap_or(i64::MAX / 100);
         let pct_50 = mid_price
             .checked_mul(50)
-            .and_then(|v| v.checked_div(denom))
+            .map(|v| v / 100)
             .unwrap_or(i64::MAX / 100);
 
         let thresholds = [pct_5, pct_15, pct_30, pct_50];
         let compressions: [u32; 5] = [1, 10, 100, 1000, 1];
 
-        // Slots per zone (both sides)
-        let z0 = (pct_5 * 2).max(0) as u32;
+        // Raw price a slot spans in each zone = compression * tick_size.
+        // `.max(1)` guards a degenerate tick_size (div-by-zero on the
+        // hot path); the config validates tick_size >= 1 upstream.
+        let t = tick_size.max(1);
+        let z0 = ((pct_5 * 2) / t).max(0) as u32;
         let z1 =
-            (((pct_15 - pct_5) * 2) / 10).max(0) as u32;
+            (((pct_15 - pct_5) * 2) / (10 * t)).max(0) as u32;
         let z2 =
-            (((pct_30 - pct_15) * 2) / 100).max(0) as u32;
+            (((pct_30 - pct_15) * 2) / (100 * t)).max(0) as u32;
         let z3 =
-            (((pct_50 - pct_30) * 2) / 1000).max(0) as u32;
+            (((pct_50 - pct_30) * 2) / (1000 * t)).max(0) as u32;
         let z4 = 2u32; // one per side
 
         let zone_slots = [z0, z1, z2, z3, z4];
@@ -72,6 +79,7 @@ impl CompressionMap {
             compressions,
             base_indices,
             zone_slots,
+            tick_size: t,
         }
     }
 
@@ -81,12 +89,13 @@ impl CompressionMap {
         &self,
         price: i64,
     ) -> u32 {
-        let tick_dist = price - self.mid_price;
-        let distance = tick_dist.unsigned_abs()
+        let signed = price - self.mid_price;
+        // Raw-price distance from mid (thresholds are raw too).
+        let distance = signed.unsigned_abs()
             .min(i64::MAX as u64) as i64;
         // ask=0 (price >= mid), bid=1 (price < mid)
         let side: u32 =
-            if tick_dist >= 0 { 0 } else { 1 };
+            if signed >= 0 { 0 } else { 1 };
 
         let zone = if distance < self.thresholds[1] {
             if distance < self.thresholds[0] {
@@ -115,9 +124,10 @@ impl CompressionMap {
         if half == 0 {
             return self.base_indices[zone];
         }
-        let local_offset = ((distance - zone_start)
-            / self.compressions[zone] as i64)
-            as u32;
+        let raw_per_slot =
+            self.compressions[zone] as i64 * self.tick_size;
+        let local_offset =
+            ((distance - zone_start) / raw_per_slot) as u32;
         let local_offset = local_offset.min(half - 1);
 
         if side == 0 {

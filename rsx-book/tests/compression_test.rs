@@ -126,6 +126,82 @@ fn zone_boundary_0_1() {
     );
 }
 
+/// zone(idx): which zone a slot index falls in.
+fn zone_of(m: &CompressionMap, idx: u32) -> usize {
+    (0..5)
+        .rev()
+        .find(|&z| idx >= m.base_indices[z])
+        .unwrap()
+}
+
+// --- tick_size != 1: zones must be sized in RAW price, not ticks ---
+// (regression for COMPRESSION-ZONE-TICK-UNIT). Before the fix, thresholds
+// were tick-distances but compared against a raw-price distance, so with
+// tick_size 10/50 a price a few percent from mid collapsed into the
+// 2-slot zone-4 catch-all.
+
+#[test]
+fn tick50_five_pct_lands_in_zone0_not_catchall() {
+    // BTC-like: mid = 1,000,000 raw, tick_size = 50.
+    let mid = 1_000_000_i64;
+    let m = CompressionMap::new(mid, 50);
+    // 4% above mid is well inside zone 0 (0-5%). Pre-fix this landed in
+    // zone 4 because 40,000 raw >> the 1,000-TICK threshold[3].
+    let idx = m.price_to_index(mid + 40_000);
+    assert_eq!(
+        zone_of(&m, idx),
+        0,
+        "4%-from-mid must be zone 0, got zone {} (idx {})",
+        zone_of(&m, idx),
+        idx,
+    );
+    // Symmetric on the bid side.
+    let bid = m.price_to_index(mid - 40_000);
+    assert_eq!(zone_of(&m, bid), 0);
+    // Beyond 50% still lands in the catch-all.
+    let far = m.price_to_index(mid + 600_000);
+    assert_eq!(zone_of(&m, far), 4);
+}
+
+#[test]
+fn tick_size_stored_and_thresholds_raw() {
+    let mid = 1_000_000_i64;
+    let m = CompressionMap::new(mid, 50);
+    assert_eq!(m.tick_size, 50);
+    // thresholds are RAW price now: 5% / 15% / 30% / 50% of mid.
+    assert_eq!(m.thresholds, [50_000, 150_000, 300_000, 500_000]);
+    // min/max span the ±50% band in raw price.
+    assert_eq!(m.min_price(), mid - 500_000);
+    assert_eq!(m.max_price(), mid + 500_000);
+}
+
+#[test]
+fn tick50_zone0_is_one_tick_per_slot() {
+    // Inside zone 0, adjacent tradeable prices (tick apart) get adjacent
+    // slots; a sub-tick step shares the slot.
+    let mid = 1_000_000_i64;
+    let m = CompressionMap::new(mid, 50);
+    let a = m.price_to_index(mid + 50); // +1 tick
+    let b = m.price_to_index(mid + 100); // +2 ticks
+    assert_eq!(b - a, 1, "one tick == one slot in zone 0");
+}
+
+#[test]
+fn tick10_and_tick50_book_sizes_reasonable() {
+    // Slot totals must stay bounded (not blow up), and match the tick=1
+    // count divided by tick (raw span per slot scales with tick).
+    let mid = 1_000_000_i64;
+    let m1 = CompressionMap::new(mid, 1);
+    let m10 = CompressionMap::new(mid, 10);
+    let m50 = CompressionMap::new(mid, 50);
+    // tick=1: zone 0 half spans 50,000 raw at 1 raw/slot => 50,000 slots.
+    assert_eq!(m1.zone_slots[0], 100_000);
+    assert_eq!(m10.zone_slots[0], 10_000);
+    assert_eq!(m50.zone_slots[0], 2_000);
+    // All finite and small enough to allocate.
+    assert!(m50.total_slots() < 50_000);
+}
+
 #[test]
 fn zone_boundary_exact_edge() {
     let m = btc_map();
