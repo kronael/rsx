@@ -291,6 +291,17 @@ impl Orderbook {
     }
 
     /// Cancel an order by slab handle.
+    ///
+    /// The `is_active` guard makes a repeated cancel of the SAME handle a
+    /// harmless no-op, but it cannot detect a STALE handle whose slot was
+    /// freed and then reallocated to a different order (the slab reuses
+    /// indices). Such a handle would silently cancel the wrong order.
+    /// Cross-crate invariant rsx-matching must uphold: only call this with
+    /// a handle whose identity you have verified, or go through
+    /// `cancel_order_checked`, which re-checks `(user_id, order_id)`
+    /// against the slot before cancelling. (`rsx-matching`'s user-cancel
+    /// path already does this drift check inline; the WAL-replay path
+    /// trusts its own `order_index`.)
     pub fn cancel_order(&mut self, handle: u32) -> bool {
         let slot = self.orders.get(handle);
         if !slot.is_active() {
@@ -336,6 +347,33 @@ impl Orderbook {
         }
 
         true
+    }
+
+    /// Cancel an order only if the slab slot at `handle` still holds the
+    /// expected `(user_id, order_id_hi, order_id_lo)`. Returns `false`
+    /// (book untouched) if the slot is inactive or has been reused by a
+    /// different order — the stale-handle guard `cancel_order` alone
+    /// cannot provide. Prefer this at cross-crate boundaries where the
+    /// handle came from an external index that the slab may have recycled.
+    pub fn cancel_order_checked(
+        &mut self,
+        handle: u32,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+    ) -> bool {
+        if (handle as usize) >= self.orders.capacity() as usize {
+            return false;
+        }
+        let slot = self.orders.get(handle);
+        if !slot.is_active()
+            || slot.user_id != user_id
+            || slot.order_id_hi != order_id_hi
+            || slot.order_id_lo != order_id_lo
+        {
+            return false;
+        }
+        self.cancel_order(handle)
     }
 
     /// Modify order price: cancel at old price, reinsert

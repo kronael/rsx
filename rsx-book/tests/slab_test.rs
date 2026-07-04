@@ -99,3 +99,23 @@ fn slab_get_and_get_mut() {
     slab.get_mut(idx).value = 42;
     assert_eq!(slab.get(idx).value, 42);
 }
+
+// Double-freeing a handle would splice a cycle into the freelist and
+// hand the same slot out twice — caught in debug, not silently
+// corrupting (BOOK-SLAB-FREE-UNGUARDED).
+#[test]
+#[should_panic(expected = "double-free")]
+fn slab_double_free_panics() {
+    let mut slab: Slab<TestItem> = Slab::new(10);
+    let a = slab.alloc();
+    slab.free(a);
+    slab.free(a); // should panic in debug
+}
+
+#[test]
+#[should_panic(expected = "never allocated")]
+fn slab_free_never_allocated_panics() {
+    let mut slab: Slab<TestItem> = Slab::new(10);
+    slab.alloc(); // idx 0 live; idx 1 never allocated
+    slab.free(1); // should panic in debug
+}

@@ -20,6 +20,36 @@ fn test_book() -> Orderbook {
     Orderbook::new(test_config(), 1024, 50_000)
 }
 
+// A handle whose slab slot was freed and reallocated to a different
+// order must NOT be cancellable via the stale handle — the identity
+// check rejects it and leaves the reused order intact
+// (BOOK-STALE-HANDLE-REUSE).
+#[test]
+fn cancel_order_checked_rejects_stale_handle() {
+    let mut book = test_book();
+    // user 1 rests order A; cancel it so its slab slot is freed.
+    let h = book.insert_resting(
+        49_900, 100, Side::Buy, 0, 1, false, 0, 0xA, 0xA,
+    );
+    assert!(book.cancel_order(h));
+    // user 2 rests a different order; the slab reuses the same slot.
+    let h2 = book.insert_resting(
+        49_800, 200, Side::Buy, 0, 2, false, 0, 0xB, 0xB,
+    );
+    assert_eq!(h2, h, "slab should reuse the freed slot");
+
+    // A stale attempt using order A's identity must be rejected and must
+    // NOT cancel user 2's live order.
+    assert!(!book.cancel_order_checked(h, 1, 0xA, 0xA));
+    assert!(book.orders.get(h2).is_active());
+    assert_ne!(book.best_bid_tick, NONE);
+
+    // The matching identity cancels it for real.
+    assert!(book.cancel_order_checked(h2, 2, 0xB, 0xB));
+    assert!(!book.orders.get(h2).is_active());
+    assert_eq!(book.best_bid_tick, NONE);
+}
+
 #[test]
 fn insert_bid_updates_best_bid() {
     let mut book = test_book();
