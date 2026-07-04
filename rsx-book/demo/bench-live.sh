@@ -20,13 +20,15 @@ while IFS= read -r line; do
     printf '  %s%s orders%s  →  %s%.0f %s%s            \n' "$C" "$l" "$R" "$G" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
   fi
 done
-printf '\n  %s10 M orders deep — flat.%s\n' "$Y" "$R"; sleep 1.0
-printf '\n  %sclears the touch level%s    %s145 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.9
+printf '\n  %s10 M orders — still ~60 ns · flat%s\n' "$Y" "$R"; sleep 1.2
+printf '\n  %sfrom the report:%s\n' "$D" "$R"; sleep 0.5
+printf '  %sclears the touch level%s    %s145 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.9
 printf '  %s(was 100 us — cliff gone)%s\n' "$D" "$R"; sleep 1.1
-printf '\n  %scancel an order%s           %s18 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.7
-printf '  %s10x faster than a BTreeMap%s\n' "$D" "$R"; sleep 1.3
-printf '\n  %s%sO(1) match + next-best%s\n' "$B" "$Y" "$R"; sleep 0.8
-printf '  %son par with a tuned C++%s\n' "$D" "$R"
-printf '  %sITCH book (61 ns)%s\n\n' "$D" "$R"; sleep 1.3
+printf '  %scancel an order%s           %s18 ns%s\n' "$D" "$R" "$G$B" "$R"; sleep 0.7
+printf '  %sup to 10x vs a BTreeMap%s\n' "$D" "$R"; sleep 1.3
+printf '\n  %scited only · C++ ITCH book%s\n' "$D" "$R"; sleep 0.6
+printf '  %s61 ns/tick — 2012 HW,%s\n' "$D" "$R"
+printf '  %sbook-maintenance, not matching%s\n' "$D" "$R"
+printf '  %s(fair line: our insert+cancel)%s\n\n' "$D" "$R"; sleep 1.3
 printf '  %s1 core · Ryzen 5950X%s\n' "$D" "$R"
 printf '  %slab microbench · real cargo bench%s\n\n' "$D" "$R"; sleep 1.5

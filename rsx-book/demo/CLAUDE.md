@@ -23,7 +23,7 @@ Full numbers + caveats: `reports/YYYYMMDD_book-bench.md`.
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
 - `book-live.cast` / `book-live-opt.gif` — the recorded real run + the portrait
-  GIF (578×700, ~13 KB).
+  GIF (578×700, ~42 KB).
 
 ## Regenerate the GIF
 ```
@@ -41,6 +41,16 @@ Single core · AMD Ryzen 9 5950X · Criterion · **a lab microbenchmark, not
 system TPS** (the cross-process exchange round-trip is a separate, transport-
 bound ~1 ms story). The live numbers vary run-to-run in the ~59-66 ns band —
 that IS the honest picture; show the real per-run figures, not a rounded ideal.
+
+The sweep numbers are the ones measured live. The trailer numbers (145 ns
+clears-touch, 18 ns cancel) are **labeled "from the report"** on screen — they
+are cited from `reports/20260704_book-bench.md`, not measured in this run. The
+C++ ITCH `61 ns/tick` line is **cited only**: it is book-*maintenance* on
+~2012 hardware in another language, NOT a matching engine — so the fair
+rsx-book line to place next to it is insert/cancel, not `match_*`. The trailer
+says exactly this (`compare/cross-language-cited.md`); do not upgrade it to
+"on par with C++" or imply a head-to-head match comparison. The payoff line
+"10 M orders — still ~60 ns" is drawn from the live sweep just shown.
 
 ## Do NOT
 - Cite the OLD `match_by_type/*full` / `sweep` numbers (99 µs-1 ms) — those
