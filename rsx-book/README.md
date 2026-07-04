@@ -1,8 +1,32 @@
 # rsx-book
 
-A fixed-point limit-order book and matching engine whose match
-latency is **constant in book depth** — ~60-65 ns to match whether
-the book holds 100 thousand or 10 million resting orders.
+A matching engine is the core of any exchange: it pairs incoming buy
+and sell orders by price and then by time, deciding who trades with
+whom. The hard part is staying fast when the book is already full —
+millions of resting orders — because the obvious data structures slow
+down as they fill. rsx-book matches an order in about **60 nanoseconds**
+(roughly the time light takes to travel 18 metres) and holds that speed
+whether a hundred orders are resting or ten million.
+
+**Jargon, one line each** (used throughout below):
+
+- **symbol** — one tradeable market, e.g. BTC-PERP. One book per symbol.
+- **tick** — the smallest price increment a symbol allows.
+- **depth** — how many orders are currently resting in the book.
+- **depth-invariant** — same latency no matter how full the book is.
+- **compression map** — folds the huge tradeable price range into a
+  small, bounded, fixed table of levels (not one slot per tick).
+- **occupancy bitmap** — finds the next occupied price level in ~3
+  steps over summary words, not a linear scan of every level.
+
+---
+
+A fixed-point limit-order book and matching engine. Against the
+obvious baseline — a plain `BTreeMap` book — it cancels a resting
+order **5.5–10× faster** (the gap widening with depth) and matches on
+par; and it never slows down as the book fills (~60-65 ns to match at
+any depth). That depth-invariance is the point; the constant-factor
+cancel win is the payoff at realistic depths.
 
 One instance is the matching-engine tile for one symbol: a
 compression-mapped, slab-arena, i64 fixed-point order book plus the
@@ -138,17 +162,32 @@ stable, individual ns are not.
 
 ## Quick start
 
+The runnable version of this is
+[`examples/book_smoke.rs`](examples/book_smoke.rs) — copy it or run
+`cargo run -p rsx-book --example book_smoke`.
+
 ```rust
-use rsx_book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::Event;
+use rsx_book::Orderbook;
 use rsx_types::Side;
+use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
 
-// One book per symbol. `capacity` is the slab order-slot count;
-// `mid_price` seeds the compression map (raw i64 units).
-let mut book = Orderbook::new(config, 1_000_000, mid_price);
+// One book per symbol. tick_size = lot_size = 1 here, so raw i64
+// units are the human numbers; a real deployment converts at the
+// API boundary.
+let config = SymbolConfig {
+    symbol_id: 1,
+    price_decimals: 2,
+    qty_decimals: 2,
+    tick_size: 1,
+    lot_size: 1,
+};
+// capacity = slab order-slot count; mid_price seeds the compression
+// map (raw i64 units).
+let mut book = Orderbook::new(config, 1_000_000, 100);
 
 // A resting maker (GTC) — inserts, no cross.
 let mut maker = IncomingOrder {
@@ -158,6 +197,14 @@ let mut maker = IncomingOrder {
     timestamp_ns: 0, order_id_hi: 0, order_id_lo: 1,
 };
 process_new_order(&mut book, &mut maker);
+
+// Keep the slab handle from the OrderInserted event to cancel later.
+let mut maker_handle = 0u32;
+for event in book.events() {
+    if let Event::OrderInserted { handle, .. } = event {
+        maker_handle = *handle;
+    }
+}
 
 // A marketable taker (GTC) — crosses, fills, done.
 let mut taker = IncomingOrder {
@@ -172,13 +219,13 @@ process_new_order(&mut book, &mut taker);
 for event in book.events() {
     match event {
         Event::Fill { price, qty, .. } => { /* ... */ }
-        Event::OrderInserted { handle, .. } => { /* keep handle to cancel */ }
+        Event::OrderDone { .. } => { /* terminal for the taker */ }
         _ => {}
     }
 }
 
 // Cancel a resting order by its slab handle (O(1) unlink).
-book.cancel_order(handle);
+book.cancel_order(maker_handle);
 ```
 
 `process_new_order` resets the event buffer at the start of each
@@ -266,9 +313,24 @@ path.
 ## Install / MSRV
 
 Internal-use crate within the wider rsx exchange project; **not
-published on crates.io**. Depends only on `rsx-types` (plus
-`rustc-hash` and `tracing`). Rust stable, edition 2021, no nightly
-features. Crate version **0.2.0**.
+published on crates.io**. Use it as a git dependency and pin a commit
+so a future breaking change doesn't break your build:
+
+```toml
+[dependencies]
+rsx-book = { git = "https://github.com/kronael/rsx", rev = "abc1234" }
+```
+
+Depends only on `rsx-types` (plus `rustc-hash` and `tracing`). Rust
+stable, edition 2021, no nightly features. `rust-version` is not
+pinned in `Cargo.toml` — internal policy tracks current stable; an
+MSRV floor bump would land in a minor `0.x` version. Crate version
+**0.2.0**. A standalone working example lives in
+[`examples/book_smoke.rs`](examples/book_smoke.rs):
+
+```bash
+cargo run -p rsx-book --example book_smoke
+```
 
 ## Lineage / Acknowledgments
 
@@ -316,3 +378,12 @@ If rsx-book doesn't fit, the peers benched or surveyed in
 ## License
 
 Internal-use crate within the wider rsx exchange project.
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in rsx-book by
+you, as defined in the Apache-2.0 license, shall be dual licensed as
+above, without any additional terms or conditions.
