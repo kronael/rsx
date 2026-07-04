@@ -19,6 +19,11 @@
 //! `mint_jwt`). When `WsConn` drops, the outbound channel closes, the
 //! task closes the socket and returns, and the runtime thread exits.
 //!
+//! Liveness: the read loop echoes gateway heartbeats (reactive), and
+//! separately declares the link dead (`Disconnected`) if no inbound
+//! frame at all arrives within `DEAD_AFTER` — the echo alone can't
+//! tell a live-but-quiet link from a silently-dead socket.
+//!
 //! Internal casting (rsx-cast) is a separate transport and is
 //! untouched.
 
@@ -41,12 +46,15 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::mpsc::TryRecvError;
 use std::thread::JoinHandle;
+use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tokio::runtime::Builder;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::interval;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
@@ -57,6 +65,18 @@ pub const DEFAULT_GW_URL: &str = "ws://127.0.0.1:8080";
 /// Default JWT signing secret, used when `RSX_GW_JWT_SECRET` is
 /// unset. Matches the gateway's dev default (see rsx-gateway auth).
 pub const DEFAULT_JWT_SECRET: &str = "rsx-dev-secret-not-for-prod-padpad";
+
+/// How often the read loop wakes to check whether the link has gone
+/// silent (see `DEAD_AFTER`).
+const LIVENESS_CHECK: Duration = Duration::from_secs(5);
+
+/// Declare the socket dead — emit `Disconnected` — if no inbound frame
+/// (not even a gateway heartbeat, which webproto sends every ~10s)
+/// arrives within this window. The reactive heartbeat *echo* only
+/// proves *we* answered; it says nothing about a socket that silently
+/// stopped delivering. This is the missing liveness half: three missed
+/// heartbeat windows with zero inbound bytes means the link is dead.
+const DEAD_AFTER: Duration = Duration::from_secs(30);
 
 /// Gateway WS address from `RSX_GW_LISTEN`, or `DEFAULT_GW_URL`.
 pub fn gateway_url() -> String {
@@ -239,17 +259,23 @@ async fn run_client(
     // lifetime of one WsConn, which is all cid dedup needs here.
     let mut cid_counter: u64 = 0;
     // oid -> side for orders this connection submitted, resolved the
-    // first time a `U` frame names the oid (see `fold_order_update`).
-    // `F` frames carry oid but not side, so this is the only way to
-    // recover it without re-plumbing `OrderReq` (out of scope: conn.rs
-    // is frozen for this task).
+    // first time a `U`/`F` frame names the oid (see `fold_order_update`
+    // / `claim_pending`). `F` frames carry oid but not side, so this is
+    // the only way to recover it without re-plumbing `OrderReq` (out of
+    // scope: conn.rs is frozen for this task).
     let mut oid_side: HashMap<String, Side> = HashMap::new();
-    // Sides of orders submitted but not yet paired to an oid, oldest
-    // first. Gateway acks are FIFO per connection, so the first `U`
-    // seen after a submit pairs with that submit's side.
-    let mut pending_side: VecDeque<Side> = VecDeque::new();
+    // Orders submitted but not yet paired to an oid, oldest first. The
+    // `U` accept echoes the order's qty (`filled + remaining`), so a
+    // pending is claimed by qty first (`claim_pending`) — robust to a
+    // gateway that acks out of submission order (e.g. a fast reject of
+    // a later order before an earlier accept) — with FIFO the tiebreak.
+    let mut pending: VecDeque<PendingOrder> = VecDeque::new();
     let mut warned_unknown_frame = false;
-    let mut warned_unknown_side = false;
+    // Count of fills whose oid was never paired to a submitted side, so
+    // the Buy fallback is surfaced, not silent (see `fold_fill`).
+    let mut unknown_side_count: u64 = 0;
+    let mut last_inbound = Instant::now();
+    let mut liveness = interval(LIVENESS_CHECK);
 
     loop {
         tokio::select! {
@@ -262,7 +288,7 @@ async fn run_client(
                         let _ = inbound.send(GwEvent::Disconnected);
                         return;
                     }
-                    pending_side.push_back(order.side);
+                    pending.push_back(PendingOrder { qty: order.qty, side: order.side });
                 }
                 // WsConn dropped: close and exit cleanly.
                 None => {
@@ -272,6 +298,7 @@ async fn run_client(
             },
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
+                    last_inbound = Instant::now();
                     // Heartbeat: echo the {H:[ts]} frame back so the
                     // gateway does not drop this connection (spec 49-
                     // webproto: client must reply within 10s). Without
@@ -282,18 +309,15 @@ async fn run_client(
                             let _ = inbound.send(GwEvent::Disconnected);
                             return;
                         }
-                    } else {
-                        let events = fold_frame(
-                            &text,
-                            &mut oid_side,
-                            &mut pending_side,
-                            &mut warned_unknown_frame,
-                            &mut warned_unknown_side,
-                        );
-                        for ev in events {
-                            if inbound.send(ev).is_err() {
-                                return;
-                            }
+                    } else if let Some(ev) = fold_frame(
+                        &text,
+                        &mut oid_side,
+                        &mut pending,
+                        &mut warned_unknown_frame,
+                        &mut unknown_side_count,
+                    ) {
+                        if inbound.send(ev).is_err() {
+                            return;
                         }
                     }
                 }
@@ -301,9 +325,27 @@ async fn run_client(
                     let _ = inbound.send(GwEvent::Disconnected);
                     return;
                 }
-                // Ping/Pong/Binary/Frame: no webproto content, ignore.
-                Some(Ok(_)) => {}
+                // Ping/Pong/Binary/Frame: no webproto content, but still
+                // prove the link is alive.
+                Some(Ok(_)) => {
+                    last_inbound = Instant::now();
+                }
                 Some(Err(_)) => {
+                    let _ = inbound.send(GwEvent::Disconnected);
+                    return;
+                }
+            },
+            // Liveness: a socket that silently stops delivering leaks as
+            // "alive" under the reactive-echo heartbeat alone. Surface a
+            // Disconnected once no inbound frame has arrived for
+            // `DEAD_AFTER` (see the const).
+            _ = liveness.tick() => {
+                if last_inbound.elapsed() > DEAD_AFTER {
+                    tracing::warn!(
+                        idle_secs = last_inbound.elapsed().as_secs(),
+                        "WsConn: no inbound frame within the liveness window, \
+                         declaring the link dead",
+                    );
                     let _ = inbound.send(GwEvent::Disconnected);
                     return;
                 }
@@ -362,32 +404,26 @@ fn is_heartbeat(text: &str) -> bool {
     parse_frame(text).map(|(k, _)| k == "H").unwrap_or(false)
 }
 
-/// Fold one raw text frame into zero or more `GwEvent`s. `U` ->
+/// Fold one raw text frame into at most one `GwEvent`. `U` ->
 /// `Accepted`/`Done` (see `fold_order_update`), `F` -> `Fill`, `E` ->
 /// `Rejected`, `H` -> heartbeat (echoed by the read loop in
-/// `run_client` to stay connected; produces no event here). Any other frame type (the
-/// public/query channels: `T`/`BBO`/`B`/`D`/`Q`, or unimplemented
-/// `O`/`P`/`A`/`FL`/`FN`) has no corresponding `GwEvent` variant in
-/// conn.rs on this connection and is dropped, logged once.
+/// `run_client` to stay connected; produces no event here). Any other
+/// frame type (the public/query channels: `T`/`BBO`/`B`/`D`/`Q`, or
+/// unimplemented `O`/`P`/`A`/`FL`/`FN`) has no corresponding `GwEvent`
+/// variant in conn.rs on this connection and is dropped, logged once.
 fn fold_frame(
     text: &str,
     oid_side: &mut HashMap<String, Side>,
-    pending_side: &mut VecDeque<Side>,
+    pending: &mut VecDeque<PendingOrder>,
     warned_unknown_frame: &mut bool,
-    warned_unknown_side: &mut bool,
-) -> Vec<GwEvent> {
-    let Some((key, arr)) = parse_frame(text) else {
-        return Vec::new();
-    };
+    unknown_side_count: &mut u64,
+) -> Option<GwEvent> {
+    let (key, arr) = parse_frame(text)?;
     match key.as_str() {
-        "U" => fold_order_update(&arr, oid_side, pending_side)
-            .into_iter()
-            .collect(),
-        "F" => fold_fill(&arr, oid_side, warned_unknown_side)
-            .into_iter()
-            .collect(),
-        "E" => fold_error(&arr).into_iter().collect(),
-        "H" => Vec::new(),
+        "U" => fold_order_update(&arr, oid_side, pending),
+        "F" => fold_fill(&arr, oid_side, unknown_side_count),
+        "E" => fold_error(&arr),
+        "H" => None,
         other => {
             if !*warned_unknown_frame {
                 *warned_unknown_frame = true;
@@ -397,28 +433,57 @@ fn fold_frame(
                      connection, dropping (logged once)",
                 );
             }
-            Vec::new()
+            None
         }
     }
+}
+
+/// An order submitted on this connection but not yet paired to a
+/// gateway-assigned oid. The `U` accept frame echoes the order's qty
+/// (`filled + remaining`), so pairing on `qty` recovers the right side
+/// even when acks arrive out of submission order; `side` is what a
+/// later `F` fill for this oid is labeled with.
+struct PendingOrder {
+    qty: i64,
+    side: Side,
+}
+
+/// Claim the pending submitted order whose qty matches `qty` (oldest of
+/// an equal-qty group), else — no qty match — the oldest pending of any
+/// qty (FIFO). Returns its side, or `None` when nothing is pending.
+/// Keying on qty first is what makes side-pairing robust to a gateway
+/// that acks out of submission order (the FIFO-only pop mislabeled a
+/// Buy as a Sell when a later order was acked first).
+fn claim_pending(pending: &mut VecDeque<PendingOrder>, qty: i64) -> Option<Side> {
+    let idx = pending.iter().position(|p| p.qty == qty).or({
+        if pending.is_empty() { None } else { Some(0) }
+    })?;
+    pending.remove(idx).map(|p| p.side)
 }
 
 /// `{U:[oid, status, filled, remaining, reason]}`. `status`: 0 =
 /// FILLED, 1 = RESTING, 2 = CANCELLED, 3 = FAILED (specs/2/49
 /// "Order Status"; confirmed against rsx-gateway/src/route.rs, which
 /// emits status 1 on `OrderInserted`/accept, 0/2 on `OrderDone`/
-/// `OrderCancelled`, 3 on `OrderFailed`). The first `U` seen for an
-/// oid claims the oldest pending submitted side (FIFO — gateway acks
-/// orders on one connection in submission order).
+/// `OrderCancelled`, 3 on `OrderFailed`). The first non-reject `U` for
+/// an oid pairs it to a submitted side via `claim_pending` (by qty,
+/// FIFO tiebreak) so a later `F` fill can be labeled. A reject (status
+/// 3) carries no qty and needs no side, so it must NOT consume a
+/// pending — doing so would mis-shift every later pairing.
 fn fold_order_update(
     arr: &[Value],
     oid_side: &mut HashMap<String, Side>,
-    pending_side: &mut VecDeque<Side>,
+    pending: &mut VecDeque<PendingOrder>,
 ) -> Option<GwEvent> {
     let oid_hex = arr.first().map(value_str)?;
     let status = arr.get(1).and_then(Value::as_u64)?;
-    oid_side
-        .entry(oid_hex.clone())
-        .or_insert_with(|| pending_side.pop_front().unwrap_or(Side::Buy));
+    if status != 3 && !oid_side.contains_key(&oid_hex) {
+        let filled = arr.get(2).and_then(Value::as_i64).unwrap_or(0);
+        let remaining = arr.get(3).and_then(Value::as_i64).unwrap_or(0);
+        if let Some(side) = claim_pending(pending, filled + remaining) {
+            oid_side.insert(oid_hex.clone(), side);
+        }
+    }
     let oid = oid_to_u64(&oid_hex);
     match status {
         1 => Some(GwEvent::Accepted { oid }),
@@ -440,7 +505,7 @@ fn fold_order_update(
 fn fold_fill(
     arr: &[Value],
     oid_side: &HashMap<String, Side>,
-    warned_unknown_side: &mut bool,
+    unknown_side_count: &mut u64,
 ) -> Option<GwEvent> {
     let taker_oid = arr.first().map(value_str)?;
     let maker_oid = arr.get(1).map(value_str)?;
@@ -455,11 +520,15 @@ fn fold_fill(
         },
     };
     let side = side.unwrap_or_else(|| {
-        if !*warned_unknown_side {
-            *warned_unknown_side = true;
+        *unknown_side_count += 1;
+        // Surface the fallback rather than defaulting silently: log on
+        // every power-of-two so a persistent mispairing is visible in a
+        // busy session without flooding the log.
+        if unknown_side_count.is_power_of_two() {
             tracing::warn!(
-                "WsConn: Fill frame's oid was never seen in a U frame, \
-                 defaulting side to Buy (logged once)",
+                unknown_side_count = *unknown_side_count,
+                "WsConn: Fill frame's oid was never paired to a submitted \
+                 side, defaulting to Buy (count is cumulative)",
             );
         }
         Side::Buy
@@ -473,3 +542,7 @@ fn fold_error(arr: &[Value]) -> Option<GwEvent> {
     let msg = arr.get(1).map(value_str).unwrap_or_default();
     Some(GwEvent::Rejected { reason: format!("{code}: {msg}") })
 }
+
+#[cfg(test)]
+#[path = "ws_test.rs"]
+mod ws_test;
