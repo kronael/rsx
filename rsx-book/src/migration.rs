@@ -3,8 +3,10 @@ use rsx_types::Side;
 
 use crate::book::BookState;
 use crate::book::Orderbook;
+use crate::book::build_price_asc;
 use crate::compression::CompressionMap;
 use crate::level::PriceLevel;
+use crate::occupancy::Occupancy;
 
 impl Orderbook {
     /// Check if recentering is needed (mid drifted
@@ -71,6 +73,14 @@ impl Orderbook {
         self.bid_frontier = new_mid;
         self.ask_frontier = new_mid;
         self.state = BookState::Migrating;
+
+        // Fresh (empty) active array + new compression => reset the
+        // occupancy bitmaps and price-ordered ranges to match. Bits are
+        // re-set per order as `migrate_single_level` fills the new array.
+        let new_total = self.active_levels.len() as u32;
+        self.bid_occ = Occupancy::new(new_total);
+        self.ask_occ = Occupancy::new(new_total);
+        self.price_asc = build_price_asc(&self.compression);
 
         // Re-scan BBA in new array
         self.best_bid_tick = NONE;
@@ -169,7 +179,15 @@ impl Orderbook {
             // Unlink from old, insert into new
             let new_level = &mut self.active_levels
                 [new_idx as usize];
-            if new_level.order_count > 0 {
+            let was_empty = new_level.order_count == 0;
+            if was_empty {
+                new_level.head = cursor;
+                new_level.tail = cursor;
+                self.orders.get_mut(cursor).prev =
+                    NONE;
+                self.orders.get_mut(cursor).next =
+                    NONE;
+            } else {
                 let old_tail = new_level.tail;
                 self.orders.get_mut(old_tail).next =
                     cursor;
@@ -178,18 +196,20 @@ impl Orderbook {
                 self.orders.get_mut(cursor).next =
                     NONE;
                 new_level.tail = cursor;
-            } else {
-                new_level.head = cursor;
-                new_level.tail = cursor;
-                self.orders.get_mut(cursor).prev =
-                    NONE;
-                self.orders.get_mut(cursor).next =
-                    NONE;
             }
             new_level.total_qty += qty;
             new_level.order_count += 1;
             self.orders.get_mut(cursor).tick_index =
                 new_idx;
+
+            // First order into this new level: mark occupied.
+            if was_empty {
+                if side == Side::Buy as u8 {
+                    self.bid_occ.set(new_idx);
+                } else {
+                    self.ask_occ.set(new_idx);
+                }
+            }
 
             // Update BBA by RAW PRICE (index is a sawtooth).
             if side == Side::Buy as u8 {

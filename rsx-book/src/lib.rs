@@ -2,6 +2,7 @@
 
 pub mod slab;
 pub mod compression;
+pub mod occupancy;
 pub mod level;
 pub mod order;
 pub mod event;
