@@ -7,6 +7,7 @@ use rsx_book::event::REASON_CANCELLED;
 use rsx_book::event::REASON_FILLED;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::user::get_or_assign_user;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
@@ -47,6 +48,60 @@ fn incoming(
         order_id_hi: 0,
         order_id_lo: 0,
     }
+}
+
+// An empty-book reduce-only IOC with qty > position clamps remaining to
+// the position, then cancels with ZERO fills — the clamp must not be
+// reported as executed quantity (ME-REDUCEONLY-IOC-FILLEDQTY).
+#[test]
+fn reduce_only_ioc_empty_book_reports_zero_filled() {
+    let mut book = test_book();
+    // Give user 7 a long position of 30, no resting book to hit.
+    let uidx = get_or_assign_user(
+        &mut book.user_states,
+        &mut book.user_map,
+        &mut book.user_free_list,
+        &mut book.user_bump,
+        7,
+    );
+    book.user_states[uidx as usize].net_qty = 30;
+
+    let mut order = IncomingOrder {
+        price: 49_900,
+        qty: 100,
+        remaining_qty: 100,
+        side: Side::Sell,
+        tif: TimeInForce::IOC,
+        user_id: 7,
+        reduce_only: true,
+        post_only: false,
+        timestamp_ns: 0,
+        order_id_hi: 0,
+        order_id_lo: 1,
+    };
+    process_new_order(&mut book, &mut order);
+
+    assert!(
+        !book
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::Fill { .. })),
+        "empty-book reduce-only IOC must not fill",
+    );
+    let done = book.events().iter().find_map(|e| match e {
+        Event::OrderDone {
+            reason,
+            filled_qty,
+            remaining_qty,
+            ..
+        } => Some((*reason, filled_qty.0, remaining_qty.0)),
+        _ => None,
+    });
+    assert_eq!(
+        done,
+        Some((REASON_CANCELLED, 0, 30)),
+        "clamp must not count as fill: filled=0, remaining=30",
+    );
 }
 
 #[test]

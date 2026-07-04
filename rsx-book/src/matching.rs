@@ -142,6 +142,12 @@ pub fn process_new_order(
         return;
     }
 
+    // Effective size the order will actually try to fill: the original
+    // qty, except a reduce-only order clamped to the position above. Fills
+    // are measured against THIS, not `order.qty`, so the reduce-only clamp
+    // is never miscounted as execution (see the residual/`filled` sites).
+    let fillable = order.remaining_qty;
+
     match order.side {
         Side::Buy => {
             while order.remaining_qty > 0
@@ -192,45 +198,69 @@ pub fn process_new_order(
     }
 
     if order.remaining_qty > 0 {
-        if order.tif == TimeInForce::IOC {
-            let filled = order.qty - order.remaining_qty;
-            book.emit(Event::OrderDone {
-                handle: NONE,
-                user_id: order.user_id,
-                reason: REASON_CANCELLED,
-                filled_qty: Qty(filled),
-                remaining_qty: Qty(order.remaining_qty),
-                order_id_hi: order.order_id_hi,
-                order_id_lo: order.order_id_lo,
-            });
-        } else {
-            let handle = book.insert_resting(
-                order.price,
-                order.remaining_qty,
-                order.side,
-                order.tif as u8,
-                order.user_id,
-                order.reduce_only,
-                order.timestamp_ns,
-                order.order_id_hi,
-                order.order_id_lo,
-            );
-            book.emit(Event::OrderInserted {
-                handle,
-                user_id: order.user_id,
-                side: order.side as u8,
-                price: Price(order.price),
-                qty: Qty(order.remaining_qty),
-                order_id_hi: order.order_id_hi,
-                order_id_lo: order.order_id_lo,
-            });
+        match order.tif {
+            TimeInForce::IOC => {
+                let filled = fillable - order.remaining_qty;
+                book.emit(Event::OrderDone {
+                    handle: NONE,
+                    user_id: order.user_id,
+                    reason: REASON_CANCELLED,
+                    filled_qty: Qty(filled),
+                    remaining_qty: Qty(order.remaining_qty),
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
+                });
+            }
+            TimeInForce::FOK => {
+                // The FOK pre-check (`can_fill_fully`) is exact, so a FOK
+                // that entered the match loop always fully fills — a
+                // residual here means feasibility and matching disagreed.
+                // Defense in depth: a FOK is all-or-nothing and must NEVER
+                // rest, so reject rather than fall through to
+                // `insert_resting`. `can_fill_fully` guarantees no fills
+                // were emitted on this path.
+                debug_assert!(
+                    false,
+                    "FOK residual after can_fill_fully passed: \
+                     remaining={} of {}",
+                    order.remaining_qty, fillable,
+                );
+                book.emit(Event::OrderFailed {
+                    user_id: order.user_id,
+                    reason: FAIL_FOK,
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
+                });
+            }
+            TimeInForce::GTC => {
+                let handle = book.insert_resting(
+                    order.price,
+                    order.remaining_qty,
+                    order.side,
+                    order.tif as u8,
+                    order.user_id,
+                    order.reduce_only,
+                    order.timestamp_ns,
+                    order.order_id_hi,
+                    order.order_id_lo,
+                );
+                book.emit(Event::OrderInserted {
+                    handle,
+                    user_id: order.user_id,
+                    side: order.side as u8,
+                    price: Price(order.price),
+                    qty: Qty(order.remaining_qty),
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
+                });
+            }
         }
     } else {
         book.emit(Event::OrderDone {
             handle: NONE,
             user_id: order.user_id,
             reason: REASON_FILLED,
-            filled_qty: Qty(order.qty),
+            filled_qty: Qty(fillable),
             remaining_qty: Qty(0),
             order_id_hi: order.order_id_hi,
             order_id_lo: order.order_id_lo,
@@ -395,14 +425,20 @@ pub fn match_at_level(
 
 /// True iff a FOK aggressor at `limit_price` can be filled completely —
 /// i.e. the resting qty on the opposite side that crosses `limit_price`
-/// is at least `needed`. This is just the "try to match it" question:
-/// walk the crossing levels in price order (the same order a match
-/// consumes them), summing each level's already-maintained `total_qty`,
-/// and stop the instant the running total reaches `needed`. Every order
-/// at a crossing level shares the level's price, so a whole level either
-/// crosses or does not — `total_qty` counts it exactly, no per-order
-/// walk. O(levels crossed, early-exit) via the book's own best-level
-/// index; never the full-slot / per-order scan the old pre-check did.
+/// is at least `needed`. This is the "try to match it" question: walk the
+/// crossing levels in price order (the same order a match consumes them)
+/// and stop the instant the running total reaches `needed`.
+///
+/// Zone 0 holds one raw price per slot, so a whole level either crosses
+/// or does not — the maintained `total_qty` counts it in O(1), the happy
+/// near-BBO path. Compressed zones (≥1, and the zone-4 catch-all) pack
+/// DISTINCT raw prices into one level, so the `total_qty` shortcut would
+/// over-count non-crossing makers → feasibility would wrongly pass and a
+/// FOK could rest. There we walk the level's orders and sum only those
+/// whose actual raw price crosses `limit_price`. Early-exit is preserved:
+/// bands are visited in price order, so once a whole level sits beyond the
+/// limit (its nearest-to-mid order does not cross) all further levels are
+/// beyond it too — stop. O(levels + orders actually crossed).
 fn can_fill_fully(
     book: &Orderbook,
     side: Side,
@@ -410,6 +446,7 @@ fn can_fill_fully(
     needed: i64,
 ) -> bool {
     let mut total: i64 = 0;
+    let zone0_end = book.compression.zone_slots[0];
     match side {
         // Aggressor buys: cross asks priced <= limit, ascending price.
         Side::Buy => {
@@ -420,14 +457,38 @@ fn can_fill_fully(
                 {
                     let lvl =
                         &book.active_levels[t as usize];
-                    if book.orders.get(lvl.head).price.0
-                        > limit_price
-                    {
-                        return false; // asks now above limit
-                    }
-                    total += lvl.total_qty;
-                    if total >= needed {
-                        return true;
+                    if t < zone0_end {
+                        // Single price per slot: total_qty is exact.
+                        if book.orders.get(lvl.head).price.0
+                            > limit_price
+                        {
+                            return false; // asks now above limit
+                        }
+                        total += lvl.total_qty;
+                        if total >= needed {
+                            return true;
+                        }
+                    } else {
+                        // Compressed: sum only orders that truly cross.
+                        let mut min_px = i64::MAX;
+                        let mut c = lvl.head;
+                        while c != NONE {
+                            let o = book.orders.get(c);
+                            let px = o.price.0;
+                            if px < min_px {
+                                min_px = px;
+                            }
+                            if px <= limit_price {
+                                total += o.remaining_qty.0;
+                                if total >= needed {
+                                    return true;
+                                }
+                            }
+                            c = o.next;
+                        }
+                        if min_px > limit_price {
+                            return false; // whole band above limit
+                        }
                     }
                     cur = t + 1;
                 }
@@ -442,14 +503,38 @@ fn can_fill_fully(
                 {
                     let lvl =
                         &book.active_levels[t as usize];
-                    if book.orders.get(lvl.head).price.0
-                        < limit_price
-                    {
-                        return false; // bids now below limit
-                    }
-                    total += lvl.total_qty;
-                    if total >= needed {
-                        return true;
+                    if t < zone0_end {
+                        // Single price per slot: total_qty is exact.
+                        if book.orders.get(lvl.head).price.0
+                            < limit_price
+                        {
+                            return false; // bids now below limit
+                        }
+                        total += lvl.total_qty;
+                        if total >= needed {
+                            return true;
+                        }
+                    } else {
+                        // Compressed: sum only orders that truly cross.
+                        let mut max_px = i64::MIN;
+                        let mut c = lvl.head;
+                        while c != NONE {
+                            let o = book.orders.get(c);
+                            let px = o.price.0;
+                            if px > max_px {
+                                max_px = px;
+                            }
+                            if px >= limit_price {
+                                total += o.remaining_qty.0;
+                                if total >= needed {
+                                    return true;
+                                }
+                            }
+                            c = o.next;
+                        }
+                        if max_px < limit_price {
+                            return false; // whole band below limit
+                        }
                     }
                     top = t;
                 }
