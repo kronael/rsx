@@ -54,3 +54,21 @@ table unchanged (colours don't change). Keep the Playwright-green rule.
 Playwright gate stays green (nav/tab/redirect asserts shouldn't touch
 border classes, but re-run gate-4 after). Visual pass on mobile too (this
 folds into the docs-mobile-broken fix).
+
+## Also: present the "why" + humanize everything presented
+- **rsx-book WHY.md** (`rsx-book/WHY.md`, new humanized consolidation of
+  `notes/` — compression map / occupancy bitmap / slab / cache layout, plain
+  English no fluff) must be SHOWN on the playground crate page. Add a `"why"`
+  field to the `rsx-book` entry in `CRATES` (pages.py ~5452) and render it as a
+  section in `crate_page` (read via `_read_repo_md`, render with `_md_to_html`).
+  Put the "why" section high on the page (after the tagline/description, before
+  or alongside benchmarks) — it's the design rationale, the most interesting
+  read. `notes/` stays as the deep source; WHY.md is the presentable digest.
+- **Humanize all presented docs.** Everything the crate page surfaces
+  (ARCHITECTURE excerpt, tagline, compare, reports intro) must read as plain
+  language for a human browsing — no marketing fluff, no unexplained jargon,
+  terse. Where a presented doc is dense/acronym-heavy, humanize the presented
+  portion (not necessarily the source file). Same bar as the rsx-book README
+  preamble (plain-English, one concrete analogy, no fluff).
+- Generalise later: a `"why"` field can point other crates at their own
+  digest, but only rsx-book has WHY.md now.
