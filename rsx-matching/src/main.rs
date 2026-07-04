@@ -819,51 +819,32 @@ fn main() {
             gap_end_inclusive,
         } = recv
         {
-            // Per casting v4 contract: FAULTED means an
-            // unrecoverable gap inside the in-band recovery
-            // horizon. Recover out-of-band via DXS/TCP replay
-            // from `last_delivered_seq + 1`, then reset the
-            // cast receiver and resume live UDP delivery.
+            // Drop-safe skip. FAULTED = an unrecoverable gap in the
+            // risk->ME order stream. That stream is recovered at the
+            // APPLICATION layer, not the transport: a dropped pre-ack
+            // order is re-sent by the client (no-ack-within-timeout,
+            // spec 49-webproto) and deduped on the ME's WAL
+            // (RECORD_ORDER_ACCEPTED) => exactly-once. The ME
+            // re-sequences on output (its own WAL seq), so an inbound
+            // gap is NOT an output gap — risk/recorder/marketdata still
+            // see a contiguous ME stream. So skip the gap and resume
+            // live rather than replay-or-panic. (ME's WAL replication
+            // SERVER, RSX_ME_REPLICATION_BIND_ADDR, still lets RISK
+            // recover FILL delivery — a different, still-required path.)
+            let skipped =
+                gap_end_inclusive.saturating_sub(gap_start) + 1;
+            gauges.drops.fetch_add(skipped, Ordering::Relaxed);
             warn!(
-                "matching tile FAULTED at seq={}, opening \
-                 DXS replay from seq={} (gap=[{}..={}])",
-                last_delivered_seq,
-                last_delivered_seq + 1,
+                "matching tile FAULTED: skipping unrecoverable order \
+                 gap [{}..={}] ({} seq) after last_delivered={}; \
+                 clients re-send dropped pre-ack orders (WAL dedup = \
+                 exactly-once)",
                 gap_start,
                 gap_end_inclusive,
-            );
-            let replay_addr = env::var(
-                "RSX_ME_REPLICATION_ADDR",
-            )
-            .expect(
-                "FAULTED requires RSX_ME_REPLICATION_ADDR \
-                 pointing at the risk producer's replication server",
-            );
-            let tip_file = PathBuf::from(&wal_dir).join(
-                format!(
-                    "me_{}_replay_tip.bin", symbol_id,
-                ),
-            );
-            let new_tip = rsx_matching::replay::drain_dxs_replay_into_book(
-                &rt,
-                &mut book,
-                &mut order_index,
-                &mut dedup,
-                &mut wal_writer,
-                symbol_id,
-                replay_addr,
+                skipped,
                 last_delivered_seq,
-                tip_file,
-            )
-            .unwrap_or_else(|e| {
-                panic!("dxs replay drain failed: {e}");
-            });
-            cast_receiver.reset_after_replay(new_tip);
-            info!(
-                "matching tile recovered via DXS replay, \
-                 new_tip={}, resuming live UDP",
-                new_tip,
             );
+            cast_receiver.reset_after_replay(gap_end_inclusive);
             continue;
         }
         // Nothing delivered this tick (Empty/Reconnect): make
