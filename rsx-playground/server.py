@@ -2546,6 +2546,44 @@ async def x_component_logs(key: str):
     return HTMLResponse(pages.render_logs(lines))
 
 
+@app.get("/crates", response_class=HTMLResponse)
+async def crates_index():
+    """Index of the 7 documented Cargo crates (description +
+    benchmarks + comparisons + demo), distinct from the live
+    /components process view."""
+    return HTMLResponse(pages.crates_index_page())
+
+
+@app.get("/crate/{name}", response_class=HTMLResponse)
+async def crate_detail(name: str):
+    if name not in pages.CRATES:
+        return HTMLResponse(
+            f'<html><body style="font-family:monospace;'
+            f'background:#0b0e11;color:#888;padding:2rem">'
+            f'<h2>Unknown crate: {html.escape(name)}</h2>'
+            f'<p><a href="./crates" '
+            f'style="color:#60a5fa">Back to Crates</a></p>'
+            f'</body></html>',
+            status_code=404,
+        )
+    return HTMLResponse(pages.crate_page(name))
+
+
+@app.get("/x/crate-demo/{name}")
+async def x_crate_demo(name: str):
+    """Serve a crate's demo GIF locally (no external hosting)."""
+    crate = pages.CRATES.get(name)
+    demo_rel = crate.get("demo") if crate else None
+    if not demo_rel:
+        return Response(status_code=404)
+    repo_root = Path(__file__).resolve().parent.parent
+    path = (repo_root / demo_rel).resolve()
+    if (not str(path).startswith(str(repo_root))
+            or not path.is_file()):
+        return Response(status_code=404)
+    return Response(content=path.read_bytes(), media_type="image/gif")
+
+
 @app.get("/book", response_class=HTMLResponse)
 async def book():
     return HTMLResponse(pages.book_page())

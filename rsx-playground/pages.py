@@ -8,6 +8,11 @@ import html
 import os
 from pathlib import Path as _Path
 
+try:
+    import markdown as _markdown
+except ImportError:
+    _markdown = None
+
 # Use a local copy of the Tailwind Play CDN script if present so the
 # playground works without internet access.  Download it once with:
 #   curl -o rsx-playground/tailwind-play.js https://cdn.tailwindcss.com
@@ -24,6 +29,7 @@ TABS = [
     ("Overview", "./overview"),
     ("Topology", "./topology"),
     ("Components", "./components"),
+    ("Crates", "./crates"),
     ("Cast", "./cast"),
     ("Book", "./book"),
     ("Risk", "./risk"),
@@ -5420,6 +5426,305 @@ def maker_page(
 {config_card}
 {stats_card}"""
     return layout("Market Maker", content, "./maker")
+
+
+# ── Crate docs (description + benchmarks + comparisons + demo) ──
+# Distinct from COMPONENTS above: COMPONENTS is the live *process*
+# view (gateway/risk/matching/marketdata/mark/recorder/maker).
+# CRATES is the static *library* view — one page per Cargo crate,
+# reading ARCHITECTURE.md / reports/*.md / compare/*.md straight off
+# disk at request time. No doc text is duplicated into this file.
+
+_REPO_ROOT = _Path(__file__).resolve().parent.parent
+
+CRATES: dict = {
+    "rsx-cast": {
+        "name": "rsx-cast",
+        "tagline": (
+            "Reliable UDP whose retransmit source IS the WAL the "
+            "producer writes for audit and replay."
+        ),
+        "reports": ["20260703_cast-benches.md"],
+        "compare_dir": "rsx-cast/compare",
+        "compare_note": None,
+        "demo": None,
+    },
+    "rsx-book": {
+        "name": "rsx-book",
+        "tagline": (
+            "Shared orderbook library with slab-allocated orders, "
+            "compressed price levels, and price-time priority matching."
+        ),
+        "reports": ["20260704_book-bench.md"],
+        "compare_dir": None,
+        "compare_section": (
+            "20260704_book-bench.md",
+            "## rsx-book vs. the obvious baseline",
+        ),
+        "compare_note": None,
+        "demo": "rsx-book/demo/book-live-opt.gif",
+    },
+    "rsx-matching": {
+        "name": "rsx-matching",
+        "tagline": "Matching engine binary. One instance per symbol.",
+        "reports": ["20260703_matching-benches.md"],
+        "compare_dir": None,
+        "compare_note": (
+            "no external comparison yet — planned per "
+            ".ship/34-COMPARE-RESEARCH/PLAN.md (currently scoped to "
+            "rsx-book only)."
+        ),
+        "demo": None,
+    },
+    "rsx-risk": {
+        "name": "rsx-risk",
+        "tagline": "Risk engine binary. One instance per user shard.",
+        "reports": [
+            "20260530_component-benches.md",
+            "20260530_risk-capacity-flood.md",
+        ],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-gateway": {
+        "name": "rsx-gateway",
+        "tagline": "WebSocket gateway binary. Client-facing order entry point.",
+        "reports": ["20260530_gateway-ws-rest-latency.md"],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-marketdata": {
+        "name": "rsx-marketdata",
+        "tagline": (
+            "Market data binary. Publishes L2 depth, BBO, and trades "
+            "over WebSocket."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-mark": {
+        "name": "rsx-mark",
+        "tagline": "Mark price aggregator binary. Feeds mark prices to Risk.",
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+}
+
+
+def _md_to_html(text: str) -> str:
+    """Render Markdown to HTML with a local (no-CDN) extension set.
+
+    Falls back to preformatted raw text if the `markdown` package isn't
+    installed, so a missing dependency degrades a section rather than
+    500ing the whole page.
+    """
+    if _markdown is None:
+        return f'<pre class="whitespace-pre-wrap">{html.escape(text)}</pre>'
+    return _markdown.markdown(
+        text, extensions=["tables", "fenced_code", "sane_lists"])
+
+
+def _read_repo_md(rel_path: str) -> str | None:
+    """Read a Markdown file under the repo root. None if missing."""
+    path = (_REPO_ROOT / rel_path).resolve()
+    if not str(path).startswith(str(_REPO_ROOT)) or not path.is_file():
+        return None
+    return path.read_text()
+
+
+def _extract_md_section(text: str, heading: str) -> str | None:
+    """Return one `## heading ...` section (up to the next `## `)."""
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith(heading):
+            start = i
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("## "):
+            end = i
+            break
+    return "\n".join(lines[start:end])
+
+
+# CSS for rendered Markdown content -- scoped to .md-content, matches
+# the slate/blue palette used across the dashboard (CLAUDE.md palette).
+_MD_STYLE = """
+<style>
+.md-content h1 { font-size: 1.15rem; font-weight: 700; color: #67e8f9;
+  margin: .75rem 0 .5rem; }
+.md-content h2 { font-size: 1rem; font-weight: 700; color: #67e8f9;
+  margin: 1rem 0 .5rem; }
+.md-content h3 { font-size: .9rem; font-weight: 600; color: #67e8f9;
+  margin: .75rem 0 .35rem; }
+.md-content p { margin: .4rem 0; line-height: 1.6; color: #cbd5e1;
+  font-size: .8rem; }
+.md-content ul, .md-content ol { padding-left: 1.25rem; margin: .4rem 0;
+  color: #cbd5e1; font-size: .8rem; }
+.md-content li { margin: .2rem 0; }
+.md-content strong { color: #e2e8f0; }
+.md-content a { color: #60a5fa; }
+.md-content a:hover { text-decoration: underline; }
+.md-content code { font-family: 'SF Mono', 'Fira Code', monospace;
+  background: #1e293b; padding: 1px 5px; border-radius: 3px;
+  font-size: .75rem; }
+.md-content pre { background: #0f172a; border: 1px solid #1e293b;
+  border-radius: 3px; padding: .6rem; overflow-x: auto; margin: .5rem 0; }
+.md-content pre code { background: none; padding: 0; }
+.md-content table { border-collapse: collapse; width: 100%;
+  margin: .5rem 0; font-size: .75rem; }
+.md-content th, .md-content td { border: 1px solid #1e293b;
+  padding: .3rem .5rem; text-align: left; }
+.md-content th { background: #1e293b; color: #94a3b8; }
+.md-content blockquote { border-left: 2px solid #334155;
+  padding-left: .75rem; margin: .5rem 0; color: #94a3b8; }
+.md-content hr { border: none; border-top: 1px solid #1e293b;
+  margin: 1rem 0; }
+.md-content img { max-width: 100%; }
+</style>"""
+
+
+def crates_index_page() -> str:
+    """Index listing the 7 documented crates as links."""
+    cards = ""
+    for key, crate in CRATES.items():
+        cards += (
+            f'<a href="./crate/{key}" '
+            f'class="block bg-slate-900 border border-slate-800 '
+            f'rounded-lg p-4 hover:border-blue-600 '
+            f'transition-colors group">'
+            f'<div class="text-sm font-bold text-slate-200 '
+            f'group-hover:text-white mb-2">{html.escape(key)}</div>'
+            f'<p class="text-xs text-slate-500 leading-relaxed">'
+            f'{html.escape(crate["tagline"])}</p>'
+            f'</a>\n'
+        )
+    content = f"""
+<div class="mb-3">
+  <h1 class="text-lg font-bold text-white">RSX Crates</h1>
+  <p class="text-xs text-slate-500 mt-1">
+    Description, benchmarks, comparisons, and demo for each crate --
+    read live from ARCHITECTURE.md / reports/ / compare/ on disk.</p>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+{cards}
+</div>"""
+    return layout("Crates", content, "./crates")
+
+
+def crate_page(key: str) -> str:
+    """Aggregate page for one crate: description, benchmarks,
+    comparisons, demo -- all read from repo docs at request time."""
+    crate = CRATES[key]
+    name = crate["name"]
+
+    header = (
+        f'<div class="bg-slate-900 border border-slate-800 '
+        f'rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">'
+        f'<h1 class="text-lg font-bold text-white">{html.escape(name)}</h1>'
+        f'<span class="text-xs text-slate-500">'
+        f'{html.escape(crate["tagline"])}</span>'
+        f'<a href="./crates" '
+        f'class="ml-auto text-xs text-blue-400 hover:text-blue-300">'
+        f'&larr; All Crates</a>'
+        f'</div>'
+    )
+
+    # ── Description: crate ARCHITECTURE.md ──────────────────
+    arch_text = _read_repo_md(f"{key}/ARCHITECTURE.md")
+    if arch_text:
+        desc_body = f'<div class="md-content">{_md_to_html(arch_text)}</div>'
+    else:
+        desc_body = (
+            '<p class="text-xs text-slate-500">'
+            'no ARCHITECTURE.md found for this crate.</p>')
+    description_card = _card("Description", desc_body)
+
+    # ── Benchmarks: reports/*.md for this crate ─────────────
+    bench_parts = []
+    for report in crate["reports"]:
+        text = _read_repo_md(f"reports/{report}")
+        if text:
+            bench_parts.append(
+                f'<div class="mb-3 text-[10px] text-slate-600">'
+                f'source: reports/{html.escape(report)}</div>'
+                f'<div class="md-content">{_md_to_html(text)}</div>')
+    if bench_parts:
+        bench_body = "<hr class='border-slate-800 my-4'>".join(bench_parts)
+    else:
+        bench_body = (
+            '<p class="text-xs text-slate-500">'
+            'no benchmark report yet for this crate.</p>')
+    benchmarks_card = _card("Benchmarks", bench_body)
+
+    # ── Comparisons: compare/*.md, a report subsection, or an
+    # honest "not yet" note (never fabricated). ────────────────
+    compare_dir = crate.get("compare_dir")
+    compare_section = crate.get("compare_section")
+    compare_note = crate.get("compare_note")
+    if compare_dir:
+        dir_path = _REPO_ROOT / compare_dir
+        # compare/ docs live outside the docs/ tree the /docs route
+        # serves, so render each file inline instead of linking out.
+        parts = []
+        for f in sorted(dir_path.glob("*.md")):
+            text = f.read_text()
+            parts.append(
+                f'<details class="mb-2">'
+                f'<summary class="cursor-pointer text-xs text-blue-400 '
+                f'hover:text-blue-300">{html.escape(f.stem)}</summary>'
+                f'<div class="md-content mt-2">{_md_to_html(text)}</div>'
+                f'</details>')
+        compare_body = "".join(parts) if parts else (
+            '<p class="text-xs text-slate-500">'
+            f'{html.escape(compare_dir)} has no comparison docs.</p>')
+    elif compare_section:
+        report_name, heading = compare_section
+        text = _read_repo_md(f"reports/{report_name}")
+        section = _extract_md_section(text, heading) if text else None
+        if section:
+            compare_body = f'<div class="md-content">{_md_to_html(section)}</div>'
+        else:
+            compare_body = (
+                '<p class="text-xs text-slate-500">'
+                f'expected section "{html.escape(heading)}" not found in '
+                f'reports/{html.escape(report_name)}.</p>')
+    else:
+        compare_body = (
+            f'<div class="border-l-4 border-amber-500 bg-slate-800/50 '
+            f'rounded px-3 py-2">'
+            f'<p class="text-xs text-amber-400">'
+            f'{html.escape(compare_note or "no external comparison yet.")}'
+            f'</p></div>')
+    comparisons_card = _card("Comparisons", compare_body)
+
+    # ── Demo: crate's demo GIF, served locally ──────────────
+    demo_card = ""
+    if crate.get("demo"):
+        demo_card = _card(
+            "Demo",
+            f'<img src="./x/crate-demo/{key}" '
+            f'alt="{html.escape(key)} demo" '
+            f'class="max-w-xs rounded border border-slate-800">')
+
+    content = (
+        f"\n{header}\n"
+        f"{description_card}\n"
+        f"{benchmarks_card}\n"
+        f"{comparisons_card}\n"
+        f"{demo_card}\n"
+        f"{_MD_STYLE}"
+    )
+    return layout(f"Crate: {name}", content, "./crates")
 
 
 # ── Components index page ─────────────────────────────────
