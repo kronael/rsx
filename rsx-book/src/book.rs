@@ -9,6 +9,7 @@ use crate::compression::CompressionMap;
 use crate::event::Event;
 use crate::event::MAX_EVENTS;
 use crate::level::PriceLevel;
+use crate::occupancy::Occupancy;
 use crate::order::OrderSlot;
 use crate::slab::Slab;
 use crate::user::UserState;
@@ -32,6 +33,21 @@ pub struct Orderbook {
     pub best_bid_px: i64,
     pub best_ask_px: i64,
     pub compression: CompressionMap,
+    /// Per-side occupancy bitmaps over the compression slots: bit set =
+    /// that level holds ≥1 resting order of that side. `scan_next_*`
+    /// finds the next-best level by bitmap find-next-set instead of a
+    /// linear O(slots) pass. Kept in perfect sync with
+    /// `active_levels[t].order_count`: set on 0->non-empty, cleared on
+    /// non-empty->0. Keyed by ORDER side (a buy sets `bid_occ`), which
+    /// is what `scan_next_*` needs (a sell can rest below mid, i.e. in a
+    /// bid-region index — the sawtooth is handled by `price_asc`).
+    pub bid_occ: Occupancy,
+    pub ask_occ: Occupancy,
+    /// Index sub-ranges ordered by ascending price (see
+    /// `build_price_asc`). Encodes the compression sawtooth so
+    /// `scan_next_*` can walk occupied levels in true price order.
+    /// Recomputed only on `new`/recenter.
+    pub price_asc: Vec<(u32, u32)>,
     pub state: BookState,
     pub config: SymbolConfig,
     pub sequence: u64,
@@ -68,6 +84,9 @@ impl Orderbook {
             vec![PriceLevel::default(); total];
         let staging_levels =
             vec![PriceLevel::default(); total];
+        let bid_occ = Occupancy::new(total as u32);
+        let ask_occ = Occupancy::new(total as u32);
+        let price_asc = build_price_asc(&compression);
         Self {
             active_levels,
             staging_levels,
@@ -77,6 +96,9 @@ impl Orderbook {
             best_bid_px: 0,
             best_ask_px: 0,
             compression,
+            bid_occ,
+            ask_occ,
+            price_asc,
             state: BookState::Normal,
             config,
             sequence: 0,
@@ -174,7 +196,8 @@ impl Orderbook {
         // Link into level
         let level =
             &mut self.active_levels[tick as usize];
-        if level.order_count == 0 {
+        let was_empty = level.order_count == 0;
+        if was_empty {
             level.head = handle;
             level.tail = handle;
         } else {
@@ -185,6 +208,14 @@ impl Orderbook {
         }
         level.total_qty += qty;
         level.order_count += 1;
+
+        // Level went empty -> non-empty: mark occupied on this side.
+        if was_empty {
+            match side {
+                Side::Buy => self.bid_occ.set(tick),
+                Side::Sell => self.ask_occ.set(tick),
+            }
+        }
 
         // Update BBA by RAW PRICE (compression index is a sawtooth,
         // not a price proxy — see best_bid_px doc).
@@ -227,6 +258,7 @@ impl Orderbook {
     pub fn unlink_order(&mut self, handle: u32) {
         let slot = self.orders.get(handle);
         let tick = slot.tick_index;
+        let side = slot.side;
         let qty = slot.remaining_qty.0;
         let prev = slot.prev;
         let next = slot.next;
@@ -246,6 +278,16 @@ impl Orderbook {
             level.total_qty.saturating_sub(qty);
         level.order_count =
             level.order_count.saturating_sub(1);
+        let now_empty = level.order_count == 0;
+
+        // Level went non-empty -> empty: clear occupancy on this side.
+        if now_empty {
+            if side == Side::Buy as u8 {
+                self.bid_occ.clear(tick);
+            } else {
+                self.ask_occ.clear(tick);
+            }
+        }
     }
 
     /// Cancel an order by slab handle.
@@ -364,59 +406,116 @@ impl Orderbook {
         self.orders.get(head).price.0
     }
 
-    /// Find the tick of the highest-priced non-empty bid level.
+    /// Find the tick of the highest-priced non-empty BUY level.
     ///
     /// The compression map is a sawtooth: tick index is NOT globally
-    /// price-monotonic, so we cannot walk indices to find the next-best
-    /// bid. Instead do a single bounded linear pass over the fixed slot
-    /// array and take the max price among BUY levels. The just-vacated
-    /// best level (`_from`) is excluded implicitly (its `order_count` is
-    /// 0). No allocation. O(slots) worst case, but only runs when the
-    /// best bid level empties (cancel or full consumption), not per
-    /// order. `_from` is unused, kept for call-site symmetry.
+    /// price-monotonic, so a single find over the whole bitmap is wrong.
+    /// Instead walk `price_asc` in DESCENDING price order and, in each
+    /// sub-range (a zone half where ascending index == ascending price),
+    /// take the highest set bit in `bid_occ` — the first hit is the
+    /// max-price buy. In the common near-BBO case the first non-empty
+    /// range is zone 0, so this returns after touching a handful of
+    /// summary words. `_from` unused; kept for call-site symmetry.
     pub fn scan_next_bid(&self, _from: u32) -> u32 {
-        let mut best_tick = NONE;
-        let mut best_px = i64::MIN;
-        for (i, level) in
-            self.active_levels.iter().enumerate()
-        {
-            if level.order_count == 0 {
-                continue;
-            }
-            let head = self.orders.get(level.head);
-            if head.side != Side::Buy as u8 {
-                continue;
-            }
-            let px = head.price.0;
-            if best_tick == NONE || px > best_px {
-                best_tick = i as u32;
-                best_px = px;
+        for &(lo, hi) in self.price_asc.iter().rev() {
+            if let Some(b) = self.bid_occ.find_last_in(lo, hi) {
+                return b;
             }
         }
-        best_tick
+        NONE
     }
 
-    /// Find the tick of the lowest-priced non-empty ask level.
-    /// See `scan_next_bid` for why this scans by price, not index.
+    /// Find the tick of the lowest-priced non-empty SELL level. Mirror
+    /// of `scan_next_bid`: walk `price_asc` in ASCENDING price order and
+    /// take the lowest set bit in `ask_occ` per sub-range.
     pub fn scan_next_ask(&self, _from: u32) -> u32 {
-        let mut best_tick = NONE;
-        let mut best_px = i64::MAX;
-        for (i, level) in
-            self.active_levels.iter().enumerate()
-        {
+        for &(lo, hi) in self.price_asc.iter() {
+            if let Some(b) = self.ask_occ.find_first_in(lo, hi) {
+                return b;
+            }
+        }
+        NONE
+    }
+
+    /// Rebuild both occupancy bitmaps from `active_levels`. Used after a
+    /// snapshot load replaces the level array wholesale (the normal
+    /// insert/cancel/match paths maintain the bitmaps incrementally).
+    pub fn rebuild_occupancy(&mut self) {
+        let n = self.active_levels.len() as u32;
+        self.bid_occ = Occupancy::new(n);
+        self.ask_occ = Occupancy::new(n);
+        for i in 0..self.active_levels.len() {
+            let level = self.active_levels[i];
             if level.order_count == 0 {
                 continue;
             }
-            let head = self.orders.get(level.head);
-            if head.side != Side::Sell as u8 {
-                continue;
-            }
-            let px = head.price.0;
-            if best_tick == NONE || px < best_px {
-                best_tick = i as u32;
-                best_px = px;
+            let side = self.orders.get(level.head).side;
+            if side == Side::Buy as u8 {
+                self.bid_occ.set(i as u32);
+            } else {
+                self.ask_occ.set(i as u32);
             }
         }
-        best_tick
     }
+}
+
+/// Bid-side index sub-range `[lo, hi)` for compression zone `z`.
+/// Zone 4 is the catch-all (ask at `base`, bid at `base+1`, per
+/// `price_to_index`); zones 0-3 split their slots in half (bid lower,
+/// ask upper). A degenerate zone (`half == 0`) maps all its prices to
+/// `base`, so its bid and ask ranges both cover the whole zone.
+fn bid_region(comp: &CompressionMap, z: usize) -> (u32, u32) {
+    let base = comp.base_indices[z];
+    let slots = comp.zone_slots[z];
+    if z == 4 {
+        (base + 1, base + slots)
+    } else {
+        let half = slots / 2;
+        if half == 0 {
+            (base, base + slots)
+        } else {
+            (base, base + half)
+        }
+    }
+}
+
+/// Ask-side index sub-range `[lo, hi)` for zone `z`. See `bid_region`.
+fn ask_region(comp: &CompressionMap, z: usize) -> (u32, u32) {
+    let base = comp.base_indices[z];
+    let slots = comp.zone_slots[z];
+    if z == 4 {
+        (base, base + 1)
+    } else {
+        let half = slots / 2;
+        if half == 0 {
+            (base, base + slots)
+        } else {
+            (base + half, base + slots)
+        }
+    }
+}
+
+/// Build the price-ascending list of index sub-ranges. Each entry is a
+/// zone half in which ascending index == ascending price; the list
+/// orders those runs by price band so `scan_next_*` can find the true
+/// best level despite the compression sawtooth. Bids run zone 4
+/// (furthest below mid) up to zone 0; asks run zone 0 up to zone 4.
+/// Recomputed only on construction / recenter — never on the hot path.
+pub(crate) fn build_price_asc(
+    comp: &CompressionMap,
+) -> Vec<(u32, u32)> {
+    let mut v = Vec::with_capacity(10);
+    for z in (0..=4usize).rev() {
+        let (lo, hi) = bid_region(comp, z);
+        if lo < hi {
+            v.push((lo, hi));
+        }
+    }
+    for z in 0..=4usize {
+        let (lo, hi) = ask_region(comp, z);
+        if lo < hi {
+            v.push((lo, hi));
+        }
+    }
+    v
 }

@@ -35,7 +35,7 @@ fn recenter_swaps_active_staging() {
     book.trigger_recenter(52_000);
     assert_eq!(book.state, BookState::Migrating);
     // Active levels should be new size
-    assert!(book.active_levels.len() > 0);
+    assert!(!book.active_levels.is_empty());
 }
 
 #[test]

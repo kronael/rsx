@@ -298,6 +298,9 @@ pub fn load(
     );
     book.active_levels = active_levels;
     book.orders = slab;
+    // Level array replaced wholesale — rebuild occupancy bitmaps from it
+    // (price_asc is already correct: `new` built it for this mid_price).
+    book.rebuild_occupancy();
     book.best_bid_tick = best_bid_tick;
     book.best_ask_tick = best_ask_tick;
     // Derive raw BBA prices from restored levels (sawtooth index is
