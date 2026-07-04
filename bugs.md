@@ -101,19 +101,27 @@ server, or replay from the ME's own WAL tip), then wire the corresponding
 first. Companion to per-consumer FAULTED recovery (only `rsx-matching` has the
 POC path; risk/marketdata/gateway still panic).
 
-## IOC-NOT-HONORED — IOC order with no liquidity rests instead of cancelling (MED)
+## IOC-NOT-HONORED — cancelled IOC surfaced to client as "resting" (MED)
 
-**Status: OPEN.** A `{N:[10,0,1,100000,cid,1]}` (tif=1 = IOC) BUY submitted
-against a confirmed-empty book returns status RESTING / OrderInserted — it
-inserts into the book instead of immediately cancelling. Per
-`rsx-book/src/matching.rs:188-199`, a `remaining_qty > 0` IOC must emit
-`OrderDone` with `REASON_CANCELLED`. The matching **core is correct** (the
-empty-book IOC test covers it, residual → `OrderDone` at `matching.rs:188`), so
-the bug is in the GW→risk→ME *propagation* of `tif`: gateway parses arr[5]→tif
-(`records.rs:200`), risk forwards `tif: order.tif` (`main.rs:1059`), ME converts
-1→IOC (`wire.rs:36`) — yet the order rests, so a field is lost/defaulted to GTC
-at a shard boundary. Narrows to wire decode/encode at GW→risk→ME. Repro:
-empty-book IOC buy via WS. Triage only.
+**Status: FIXED 2026-07-04.** Root cause was NOT tif propagation (the original
+triage guessed that and was wrong). Verified on the live cluster with a runtime
+trace: `tif=1` reaches `risk_in` AND `me_in` intact, and the matching engine
+**correctly cancels** the residual IOC (`rsx-book/src/matching.rs` residual
+branch fires → `OrderDone { reason: REASON_CANCELLED }`). The order does NOT
+actually rest in the book. The bug was a code-space collision: the ME wrote
+`OrderDoneRecord.final_status = reason` (raw matching reason, `REASON_CANCELLED
+= 1`), but per `specs/2/49-webproto.md` `final_status` is a webproto U-frame
+status where **1 = RESTING, 2 = CANCELLED**. So a cancelled IOC's `final_status
+= 1` was forwarded by the gateway as status 1 → the client saw "resting".
+`REASON_FILLED = 0` happened to equal webproto FILLED(0), so fills looked fine
+and hid the collision. **Fix:** `rsx-matching/src/wal_integration.rs` now
+translates the matching reason → webproto status (`done_final_status`:
+CANCELLED→2, FILLED→0) at both OrderDone-build sites; the gateway
+`route_order_done` mapping was already spec-correct. Regression:
+`rsx-matching` `tests/wal_integration_test.rs::
+ioc_cancel_final_status_is_webproto_cancelled`. Live-verified: an empty-book /
+non-crossing IOC now reports "cancelled" (fills still "filled", resting GTC
+still "resting").
 
 ## GATEWAY-LATENCY — casting-recv poll-loop starvation dominates e2e (HIGH, mitigated)
 

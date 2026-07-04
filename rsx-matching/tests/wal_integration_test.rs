@@ -4,6 +4,9 @@ use rsx_book::book::Orderbook;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
 use rsx_messages::FillRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::RECORD_ORDER_DONE;
+use rsx_cast::decode_payload;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::wal_integration::flush_if_due;
@@ -95,6 +98,54 @@ fn wal_records_written_for_all_event_types() {
     }
     // Fill + OrderDone(taker) + OrderInserted = 3
     assert_eq!(count, 3);
+}
+
+#[test]
+fn ioc_cancel_final_status_is_webproto_cancelled() {
+    // An IOC that can't cross must cancel. The OrderDoneRecord's
+    // final_status is a webproto U-frame status (2 = CANCELLED per
+    // specs/2/49-webproto.md), NOT the raw matching reason
+    // (REASON_CANCELLED = 1, which the gateway forwards as RESTING).
+    // Regression for the "IOC surfaces to the client as resting" bug.
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(
+        1, tmp.path(), 64 * 1024 * 1024,
+    )
+    .unwrap();
+    let mut book = test_book();
+
+    // Empty book -> IOC buy can't match -> OrderDone CANCELLED.
+    let mut order = IncomingOrder {
+        price: 50_000,
+        qty: 10,
+        remaining_qty: 10,
+        side: Side::Buy,
+        tif: TimeInForce::IOC,
+        user_id: 1,
+        reduce_only: false,
+        post_only: false,
+        order_id_hi: 0,
+        order_id_lo: 42,
+        timestamp_ns: 1000,
+    };
+    process_new_order(&mut book, &mut order);
+    write_events_to_wal(&mut writer, &book, 1, 1000).unwrap();
+    writer.flush().unwrap();
+
+    let mut reader =
+        WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut done: Option<OrderDoneRecord> = None;
+    while let Ok(Some(rec)) = reader.next() {
+        if rec.header.record_type == RECORD_ORDER_DONE {
+            done = decode_payload::<OrderDoneRecord>(&rec.payload);
+        }
+    }
+    let done = done
+        .expect("expected an OrderDone record for the cancelled IOC");
+    assert_eq!(
+        done.final_status, 2,
+        "cancelled IOC must report webproto CANCELLED(2), not RESTING(1)",
+    );
 }
 
 #[test]
