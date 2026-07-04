@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 # The RSX trading terminal. ratatui (re-exports crossterm) is the UI
-# dep; quinn + tokio + rustls back the QUIC client transport (QuicConn),
-# the user-facing client↔gateway leg. serde carries the webproto-49
-# frame bodies. Internal casting (rsx-cast) is a separate transport and
-# is not a dep here.
+# dep; quinn + tokio + rustls back the QUIC client transport (QuicConn,
+# a transport bench, not the live gateway wire format); tokio-tungstenite
+# + jsonwebtoken back the WS client transport (WsConn), the real
+# user-facing client<->gateway leg (webproto-49, specs/2/49-webproto.md).
+# serde carries frame bodies. Internal casting (rsx-cast) is a separate
+# transport and is not a dep here.
 [dependencies]
 ratatui = "0.29"
 quinn = "0.11"
@@ -15,6 +17,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio-tungstenite = "0.24"
+jsonwebtoken = "9"
+futures-util = "0.3"
+tracing = "0.1"
 
 [dev-dependencies]
 rcgen = "0.13"
+criterion = "0.5"
+tempfile = "3"
