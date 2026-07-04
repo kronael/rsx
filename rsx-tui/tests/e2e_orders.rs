@@ -4,15 +4,29 @@
 //! `RSX_GW_LISTEN` (start one with
 //! `./rsx-playground/playground start-all minimal`).
 //!
-//! Each test uses its own price band so tests sharing the one live
-//! order book don't cross each other: `submit_gtc_rests` @ 1 (far below
-//! the demo symbol's ~50_000-60_000 trading range, so no leftover
-//! resting ask from prior runs/benches crosses it — this book is
-//! shared, long-lived state, not reset per test), `submit_ioc_fills`
-//! maker @ 60_000 / taker @ 59_000, `order_lifecycle_accepted_then_done`
-//! maker @ 58_000 / taker @ 57_000. `invalid_order_rejected` sends a
-//! malformed order directly (bypassing the entry form, which would
-//! never send it) so the real gateway's own validation rejects it.
+//! The book is shared, long-lived state (rebuilt from the WAL on every
+//! restart — a process restart does NOT clear it), so a seeded maker
+//! must actually REST, not cross. A resting BUY only rests when its
+//! price is BELOW the best ask; the demo/bench book carries resting
+//! asks around 50_000, so the maker buys must sit below that (a buy
+//! @ 60_000 crosses the 50_000 ask and never rests, leaving the
+//! crossing taker with no bid to hit — the old
+//! RETURN-PATH-INTERMITTENT-DROP symptom, which was this fixture bug,
+//! not a gateway/risk drop). Bands, all below 50_000:
+//! `submit_gtc_rests` buys @ 1 (rests deep, never crossed),
+//! `submit_ioc_fills` maker/taker @ 49_000, `order_lifecycle_
+//! accepted_then_done` maker/taker @ 48_000. Each fill test uses
+//! matched maker/taker qty (full consume, no leftover bid) and sells
+//! AT the maker price (crosses only bids >= that price — its own maker
+//! is the best bid). `invalid_order_rejected` sends a malformed order
+//! directly (bypassing the entry form, which would never send it) so
+//! the real gateway's own validation rejects it.
+//!
+//! The two fill tests share the one live book and each needs its own
+//! seeded maker to be the counterparty, so they hold `LIVE_BOOK` for
+//! their whole maker-seed → taker-cross window — otherwise, run in
+//! parallel, one test's low taker sell crosses the other test's
+//! higher resting maker (price priority) and steals its counterparty.
 //!
 //! user_ids are drawn from the playground's seeded demo accounts (`1,
 //! 2, 3, 4, 5, 99` — `rsx-playground/server.py`'s `_SEED_USERS`, the
@@ -43,11 +57,18 @@ use rsx_tui::App;
 use rsx_tui::Control;
 use rsx_tui::GatewayConn;
 use rsx_tui::WsConn;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use support::cluster;
 use support::harness::TuiHarness;
+
+/// Serializes the two book-seeding fill tests against the shared live
+/// book: each seeds its own maker as the best bid, and a parallel
+/// peer's lower taker sell would cross (steal) it by price priority.
+/// Held across the whole maker-seed → taker-cross window.
+static LIVE_BOOK: Mutex<()> = Mutex::new(());
 
 /// Up to this many submit attempts before giving up — see the module
 /// doc's casting-loss note. Observed empirically: the very first order
@@ -112,11 +133,13 @@ fn submit_gtc_rests() {
 }
 
 /// Seed a resting maker, then submit a crossing IOC that fully fills
-/// it: `Fill` then `Done`, `fills==1`/`open_orders==0`.
+/// it: `Fill` then `Done`, `fills==1`/`open_orders==0`. Taker sells at
+/// the maker's price (49_000) with matched qty — crosses exactly the
+/// maker (best bid), no leftover.
 #[test]
-#[ignore = "blocked on RETURN-PATH-INTERMITTENT-DROP (bugs.md): taker fill leg \
-            drops on the persistent WsConn path; run with --ignored once fixed"]
+#[ignore = "live-cluster gated (needs `start-all minimal`); run with --ignored"]
 fn submit_ioc_fills() {
+    let _serial = LIVE_BOOK.lock().unwrap_or_else(|e| e.into_inner());
     let mut maker = skip_if_no_cluster!(cluster::connect(2));
     cluster::seed_book(&mut maker);
 
@@ -124,7 +147,7 @@ fn submit_ioc_fills() {
     let mut harness = TuiHarness::new_with(Box::new(conn));
     submit_and_wait(
         &mut harness,
-        OrderReq { side: Side::Sell, price: 59_000, qty: 500_000, tif: Tif::Ioc },
+        OrderReq { side: Side::Sell, price: 49_000, qty: 500_000, tif: Tif::Ioc },
         |app| app.fills == 1 && app.open_orders == 0,
         Duration::from_secs(5),
     );
@@ -214,14 +237,14 @@ fn submit_and_record(
 /// fills it. Asserts the fold order is exactly `Fill -> Done` after
 /// that `Accepted` — invariant #1, "Fills precede ORDER_DONE".
 #[test]
-#[ignore = "blocked on RETURN-PATH-INTERMITTENT-DROP (bugs.md): taker fill leg \
-            drops on the persistent WsConn path; run with --ignored once fixed"]
+#[ignore = "live-cluster gated (needs `start-all minimal`); run with --ignored"]
 fn order_lifecycle_accepted_then_done() {
+    let _serial = LIVE_BOOK.lock().unwrap_or_else(|e| e.into_inner());
     let maker_conn = skip_if_no_cluster!(cluster::connect(5));
     let mut harness = TuiHarness::new_with(Box::new(maker_conn));
     submit_and_wait(
         &mut harness,
-        OrderReq { side: Side::Buy, price: 58_000, qty: 200_000, tif: Tif::Gtc },
+        OrderReq { side: Side::Buy, price: 48_000, qty: 200_000, tif: Tif::Gtc },
         |app| app.open_orders == 1,
         Duration::from_secs(5),
     );
@@ -230,7 +253,7 @@ fn order_lifecycle_accepted_then_done() {
     let seq = submit_and_record(
         &mut taker,
         &mut harness,
-        OrderReq { side: Side::Sell, price: 57_000, qty: 200_000, tif: Tif::Ioc },
+        OrderReq { side: Side::Sell, price: 48_000, qty: 200_000, tif: Tif::Ioc },
         Duration::from_secs(5),
     );
     harness.tick();
