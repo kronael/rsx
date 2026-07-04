@@ -203,7 +203,15 @@ Founder: solve these when we next work the book. All verified against source;
   tradeoff; logged as a known design risk, not a defect.
 
 ### MIGRATE-SKIPS-NEW-MID-LEVEL — order resting at new_mid orphaned on recenter (HIGH)
-**Status: OPEN (found 2026-07-04, distribution tests).** `migration.rs` —
+**Status: FIXED 2026-07-04.** `trigger_recenter` now migrates the `new_mid`
+level once, up front (no-op if empty, within-frontier so never migrated twice),
+so an order resting exactly at new_mid survives recenter. Covers both the lazy
+(`advance_frontier_to`) and eager (`migrate_batch`) paths — new_mid is empty in
+`old_levels` by the time either runs. Regression: the adversarial tick-size test
+now recenters ONTO a resting level (`new_mid = mid + 505*tick`) and asserts slab
+no-leak. Found by the distribution tests. Original triage below.
+
+**[Original — OPEN]** `migration.rs` —
 `trigger_recenter` sets `bid_frontier = ask_frontier = new_mid`, then both
 `migrate_batch` and `advance_frontier_to` (lazy path) step the frontier AWAY
 from `new_mid` BEFORE migrating (bid: `bid_frontier -= tick` then migrate; ask:
