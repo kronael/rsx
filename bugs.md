@@ -556,3 +556,24 @@ the `/api/orders/*` family above) without updating this script.
   (`.ship/33-TUI-SPEED-TESTS`) test debugging.
 - **Status:** open
 - **Fix:** —
+
+## MARKETDATA-SHADOW-BOOK-UNBOUNDED-LEVEL-ALLOC [OPEN]
+**Severity:** HIGH (crash-loop, takes cluster non-green)
+**Where:** rsx-marketdata shadow book construction/recenter — `shadow.rs:29`
+`Orderbook::new(config, capacity, mid_price, ...)` sizes the level array from
+`mid_price`+`tick_size` via the compression map. `mid_price` for a symbol's
+shadow book is derived from replayed events, and is NOT bounds-checked.
+**Symptom:** `memory allocation of 47962384944 bytes failed` (repeating) in
+`log/marketdata.log`, right after `replay bootstrap complete` (seq 11385).
+48 GB = 1,998,432,706 × 24 B (`PriceLevel`) → a ~2-billion-slot level array.
+**Root cause (suspected):** a torn/garbage WAL record (from the earlier
+ENOSPC + OOM crashes) decodes to an extreme price during replay; the shadow
+book is constructed/recentered around that price, so the compression map
+computes ~2 B slots instead of ~120k, and the level-array alloc aborts.
+**Immediate fix:** clean-state reset (fresh WAL) so replay has no poisoned
+record → marketdata bootstraps at mid=50000 (~120k slots). Unblocks the
+cluster; does NOT fix the underlying vulnerability.
+**Real fix (defer, record only):** bound the shadow book's derived
+mid_price / computed slot count — reject or clamp a replay-derived price that
+would size the level array beyond a sane cap (e.g. a few million slots), and
+harden replay record decode against torn records (length/price sanity).
