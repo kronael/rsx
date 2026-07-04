@@ -87,6 +87,16 @@ impl Orderbook {
         self.best_ask_tick = NONE;
         self.best_bid_px = 0;
         self.best_ask_px = 0;
+
+        // The frontier starts AT new_mid and every later step (lazy
+        // `advance_frontier_to`, eager full migration) moves it away from
+        // new_mid *before* migrating, so a level resting exactly at
+        // new_mid would never be migrated and its orders would be dropped
+        // when `old_levels` is cleared (MIGRATE-SKIPS-NEW-MID-LEVEL). So
+        // migrate that one level once, here. It's within the [new_mid,
+        // new_mid] frontier afterwards, so no later step migrates it
+        // again; a no-op if nothing rests at new_mid.
+        self.migrate_price(new_mid);
     }
 
     /// Resolve a level, migrating lazily if needed.
