@@ -2,6 +2,12 @@
 name = "rsx-book"
 version = "0.2.0"
 edition = "2021"
+description = "Depth-invariant fixed-point limit-order book + matching engine: compression-mapped levels, slab arena, occupancy bitmap. Zero heap on the hot path, no floats."
+repository = "https://github.com/kronael/rsx"
+license = "MIT OR Apache-2.0"
+keywords = ["orderbook", "matching-engine", "exchange", "low-latency", "fixed-point"]
+categories = ["data-structures", "finance"]
+readme = "README.md"
 # harness.rs is a shared module (#[path] include), not a bench target;
 # disable auto-discovery so only the explicit [[bench]] entries build.
 autobenches = false
