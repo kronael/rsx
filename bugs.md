@@ -112,8 +112,10 @@ e2e_guarantees.rs` fixture debugging — detail at end): VERIFY-WAL-FILLS-
 ALWAYS-ZERO (LOW), DEMO-TRADE-SUBMIT-ORDER-404 (MED).
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
-BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE, ME-REDUCEONLY-IOC-FILLEDQTY,
-BOOK-FAR-PRICE-BUCKETING. Detail below. (BOOK-BBO-COMPRESSED-INDEX +
+BOOK-FAR-PRICE-BUCKETING (`[D]` by-design, no action). Detail below.
+**FIXED 2026-07-04** (book session): FOK-RESTS-IN-COMPRESSED-ZONES (new,
+HIGH), BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE,
+ME-REDUCEONLY-IOC-FILLEDQTY — detail below. (BOOK-BBO-COMPRESSED-INDEX +
 BOOK-SCAN-NEXT-BID-OFFBY were fixed 2026-07-03 — see git/CHANGELOG.)
 
 **BY-DESIGN (no action):** RISK-FUNDING-CROSS-SHARD (global zero-sum not
@@ -186,17 +188,52 @@ e2e win; deferred per founder ("don't split now").
 Founder: solve these when we next work the book. All verified against source;
 `[V]` real, `[?]` needs one more check, `[D]` by-design/known-limitation.
 
-- **BOOK-SLAB-FREE-UNGUARDED `[V]` (hardening).** `slab.rs:49` — `free()` accepts
-  any in-bounds index → double-free / freelist cycle possible. Add a debug
-  assert (`idx < bump_next` and not already free).
-- **BOOK-STALE-HANDLE-REUSE `[?]`.** `book.rs:241` — `cancel_order` only checks
-  `is_active()`; the slab reuses freed indices, so a stale handle could alias a
-  reused slot. Safe only if the ME's `order_index` never retains a freed handle.
-  Fix (defensive): generational handles or `(handle, order_id)` check.
-- **ME-REDUCEONLY-IOC-FILLEDQTY `[?]`.** `rsx-book/src/matching.rs:190` —
-  `filled = order.qty - order.remaining_qty` counts the reduce-only clamp as an
-  execution, so an empty-book reduce-only IOC can report nonzero filled qty. Fix:
-  compute fills from actually-matched qty, separate from the clamp.
+- **FOK-RESTS-IN-COMPRESSED-ZONES (HIGH, latent correctness).** Status: FIXED
+  2026-07-04. `can_fill_fully` (`matching.rs`) summed a whole level's
+  `total_qty` but tested only the HEAD order's price against the taker limit. In
+  a compressed zone (≥1: 10/100/1000 ticks/slot, plus the zone-4 catch-all) a
+  level holds orders at DISTINCT raw prices, so it over-counted crossable
+  liquidity → FOK feasibility passed → `match_at_level` skipped the non-crossing
+  makers → residual > 0 → and the residual branch only cancelled IOC, so the FOK
+  fell through to `insert_resting` and RESTED (all-or-nothing violation, with a
+  partial fill). Two-part fix: (a) `can_fill_fully` now walks the level's orders
+  and sums only qty whose ACTUAL raw price crosses the limit whenever the slot
+  is in a compressed zone (`t >= zone_slots[0]`); zone 0 keeps the O(1)
+  `total_qty` shortcut (single price per slot, the near-BBO happy path), and
+  early-exit is preserved (stop once a whole band sits beyond the limit). (b)
+  the residual branch now rejects FOK (`OrderFailed(FAIL_FOK)`, book untouched)
+  instead of resting — defense in depth behind the now-exact pre-check
+  (`debug_assert!(false)` guards the can't-happen residual). Regression:
+  `tests/fok_liquidity_test.rs` (`fok_compressed_zone_insufficient_true_
+  liquidity_rejected`, `_tick50_insufficient_rejected`, `_sufficient_liquidity_
+  fills`), each fails on the old `matching.rs`.
+- **BOOK-SLAB-FREE-UNGUARDED `[V]` (hardening).** Status: FIXED 2026-07-04.
+  `slab.free` now `debug_assert`s `idx < bump_next` (never-allocated) and
+  `!is_free(idx)` (already on the freelist) — a double-free / freelist cycle is
+  caught in debug rather than aliasing a slot handed out twice. O(free)
+  is-free walk stays behind `debug_assert` (off in release; the ME bounds open
+  orders upstream). Regression: `tests/slab_test.rs::slab_double_free_panics`,
+  `slab_free_never_allocated_panics`.
+- **BOOK-STALE-HANDLE-REUSE `[?]`.** Status: FIXED 2026-07-04 (defensive).
+  Full generational handles would ripple the `u32` handle meaning across
+  matching/events/index (too invasive), so instead: added
+  `Orderbook::cancel_order_checked(handle, user_id, order_id_hi, order_id_lo)`
+  which re-checks the slot's identity before cancelling (returns false, book
+  untouched, on a reused/inactive slot), and documented on `cancel_order` the
+  exact cross-crate invariant rsx-matching must uphold (verify identity, or use
+  the checked path). rsx-matching's user-cancel path already does this drift
+  check inline (`main.rs:1002-1017`); the WAL-replay path trusts its own
+  `order_index`. Regression: `tests/book_test.rs::
+  cancel_order_checked_rejects_stale_handle`.
+- **ME-REDUCEONLY-IOC-FILLEDQTY `[?]`.** Status: FIXED 2026-07-04.
+  `matching.rs` computed `filled = order.qty - order.remaining_qty`, counting
+  the reduce-only clamp (remaining clamped down to the position) as execution —
+  an empty-book reduce-only IOC with qty > position reported `filled = qty -
+  position` with zero real fills. Fix: capture `fillable = order.remaining_qty`
+  AFTER the clamp (before matching) and measure fills against it at every
+  terminal site (IOC residual, FILLED). Regression:
+  `tests/matching_test.rs::reduce_only_ioc_empty_book_reports_zero_filled`
+  (old code reported filled=70, fixed reports 0).
 - **BOOK-FAR-PRICE-BUCKETING `[D]`.** `compression.rs:48,118` — compression
   buckets far prices (10/100/1000 ticks per slot), so distinct prices share a
   level → price-time priority is coarse far from mid. Intentional compressed-book
