@@ -53,7 +53,6 @@ use rsx_tui::conn::GwEvent;
 use rsx_tui::conn::OrderReq;
 use rsx_tui::conn::Side;
 use rsx_tui::conn::Tif;
-use rsx_tui::App;
 use rsx_tui::Control;
 use rsx_tui::GatewayConn;
 use rsx_tui::WsConn;
@@ -63,48 +62,14 @@ use std::time::Duration;
 use std::time::Instant;
 use support::cluster;
 use support::harness::TuiHarness;
+use support::submit::submit_and_wait;
+use support::submit::SUBMIT_ATTEMPTS;
 
 /// Serializes the two book-seeding fill tests against the shared live
 /// book: each seeds its own maker as the best bid, and a parallel
 /// peer's lower taker sell would cross (steal) it by price priority.
 /// Held across the whole maker-seed → taker-cross window.
 static LIVE_BOOK: Mutex<()> = Mutex::new(());
-
-/// Up to this many submit attempts before giving up — see the module
-/// doc's casting-loss note. Observed empirically: the very first order
-/// on a fresh connection occasionally needs a resubmit before its ack
-/// arrives (manually reproduced over a raw WS session outside this
-/// suite: a first submission got no reply within 2s, an identical
-/// resubmit on a new connection was acked immediately). See BUGS.md
-/// for the open item tracking the underlying return-path flakiness —
-/// this retry is a test-side accommodation, not a fix.
-const SUBMIT_ATTEMPTS: u32 = 2;
-
-/// Submit `order` over `harness.conn` and wait for `pred`, resubmitting
-/// (a fresh cid each time, so never a WAL-deduped replay) up to
-/// `SUBMIT_ATTEMPTS` times total before treating it as a real failure.
-fn submit_and_wait<F>(
-    harness: &mut TuiHarness,
-    order: OrderReq,
-    pred: F,
-    timeout: Duration,
-) -> Duration
-where
-    F: Fn(&App) -> bool,
-{
-    for attempt in 1..=SUBMIT_ATTEMPTS {
-        harness.conn.submit(order).expect("submit order");
-        if let Some(elapsed) = harness.wait_for(&pred, timeout) {
-            return elapsed;
-        }
-        eprintln!(
-            "attempt {attempt}/{SUBMIT_ATTEMPTS}: no ack within {timeout:?}; \
-             casting is UDP, an occasional dropped order/event is expected \
-             — see rsx-matching's FAULTED gap log",
-        );
-    }
-    panic!("order never acked after {SUBMIT_ATTEMPTS} attempts");
-}
 
 /// A resting GTC buy at a price band no other test crosses: `Accepted`
 /// folds into `App.open_orders`.
@@ -210,7 +175,10 @@ fn record_order_events(harness: &mut TuiHarness, timeout: Duration) -> Vec<&'sta
 
 /// Submit `order` on `taker` and record the raw event sequence folded
 /// into `harness`, resubmitting up to `SUBMIT_ATTEMPTS` times total (no
-/// `Done` seen) — see the module doc's casting-loss note.
+/// `Done` seen) — see the module doc's casting-loss note. Finding 2: a
+/// `Done` seen only after a resubmit FAILS the test rather than passing
+/// silently (a masked return-path drop); the retry stays to distinguish
+/// a transient from a total loss.
 fn submit_and_record(
     taker: &mut WsConn,
     harness: &mut TuiHarness,
@@ -222,6 +190,12 @@ fn submit_and_record(
         taker.submit(order).expect("submit taker order");
         seq = record_order_events(harness, timeout);
         if seq.last() == Some(&"Done") {
+            assert_eq!(
+                attempt, 1,
+                "return-path masking (finding 2): Done seen only on attempt \
+                 {attempt}; a resubmit papering over a dropped first-attempt \
+                 lifecycle is the ME-emits-but-risk-never-sees signature",
+            );
             return seq;
         }
         eprintln!(

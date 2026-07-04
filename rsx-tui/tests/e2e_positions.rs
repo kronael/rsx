@@ -30,7 +30,6 @@ use rsx_tui::conn::GwEvent;
 use rsx_tui::conn::OrderReq;
 use rsx_tui::conn::Side;
 use rsx_tui::conn::Tif;
-use rsx_tui::App;
 use rsx_tui::GatewayConn;
 use rsx_tui::WsConn;
 use std::sync::Mutex;
@@ -39,6 +38,9 @@ use std::time::Duration;
 use std::time::Instant;
 use support::cluster;
 use support::harness::TuiHarness;
+use support::submit::submit_and_wait;
+use support::submit::wait_or_skip_gap;
+use support::submit::SUBMIT_ATTEMPTS;
 
 /// Serializes this file's book-mutating tests against the shared live
 /// book (see `e2e_orders.rs`'s `LIVE_BOOK` for why: a parallel peer's
@@ -46,38 +48,6 @@ use support::harness::TuiHarness;
 /// Only one test uses it today; kept so a second fill test added later
 /// doesn't have to remember to add this.
 static LIVE_BOOK: Mutex<()> = Mutex::new(());
-
-/// Up to this many submit attempts before giving up on an ack —
-/// casting is UDP, an occasional dropped order/event is expected by
-/// design (see `e2e_orders.rs`'s module doc). A fresh cid each retry,
-/// so never a WAL-deduped replay.
-const SUBMIT_ATTEMPTS: u32 = 2;
-
-/// Submit `order` over `harness.conn` and wait for `pred`, resubmitting
-/// (fresh cid each attempt) up to `SUBMIT_ATTEMPTS` times before
-/// treating a timeout as a real failure. Ported from `e2e_orders.rs`
-/// (private to that file, so duplicated here rather than shared).
-fn submit_and_wait<F>(
-    harness: &mut TuiHarness,
-    order: OrderReq,
-    pred: F,
-    timeout: Duration,
-) -> Duration
-where
-    F: Fn(&App) -> bool,
-{
-    for attempt in 1..=SUBMIT_ATTEMPTS {
-        harness.conn.submit(order).expect("submit order");
-        if let Some(elapsed) = harness.wait_for(&pred, timeout) {
-            return elapsed;
-        }
-        eprintln!(
-            "attempt {attempt}/{SUBMIT_ATTEMPTS}: no ack within {timeout:?}; \
-             casting is UDP, an occasional dropped order/event is expected",
-        );
-    }
-    panic!("order never acked after {SUBMIT_ATTEMPTS} attempts");
-}
 
 /// Submit `order` on `conn` and wait for a raw `Accepted`, resubmitting
 /// (fresh cid each attempt) up to `SUBMIT_ATTEMPTS` times — the maker
@@ -91,6 +61,12 @@ fn seed_maker_and_wait_accepted(conn: &mut WsConn, order: OrderReq, timeout: Dur
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             if let Some(GwEvent::Accepted { .. }) = conn.poll_event() {
+                assert_eq!(
+                    attempt, 1,
+                    "return-path masking (finding 2): maker accepted only on \
+                     attempt {attempt}; a resubmit papering over a dropped \
+                     first-attempt ack is the return-path drop signature",
+                );
                 return;
             }
             thread::sleep(Duration::from_millis(5));
@@ -102,23 +78,6 @@ fn seed_maker_and_wait_accepted(conn: &mut WsConn, order: OrderReq, timeout: Dur
         );
     }
     panic!("maker order never accepted after {SUBMIT_ATTEMPTS} attempts");
-}
-
-/// `wait_for`, but a timeout is an explicit named skip (not a failure)
-/// for a signal known-unwired on `WsConn` today — ported from
-/// `e2e_book.rs`'s `wait_or_skip_gap` (private to that file).
-fn wait_or_skip_gap(
-    harness: &mut TuiHarness,
-    pred: impl Fn(&App) -> bool,
-    timeout: Duration,
-    gap: &str,
-) -> bool {
-    if harness.wait_for(pred, timeout).is_some() {
-        true
-    } else {
-        eprintln!("skip: {gap}");
-        false
-    }
 }
 
 /// A maker rests, a taker fully fills it, and (if the `P`-frame gap

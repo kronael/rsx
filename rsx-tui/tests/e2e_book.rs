@@ -22,26 +22,10 @@
 mod support;
 
 use ratatui::crossterm::event::KeyCode;
-use rsx_tui::app::App;
 use std::time::Duration;
 use support::cluster;
 use support::harness::TuiHarness;
-
-/// `wait_for`, but a timeout is an explicit skip (not a failure) for a
-/// signal known-unwired on `WsConn` today — see the module doc.
-fn wait_or_skip_gap(
-    harness: &mut TuiHarness,
-    pred: impl Fn(&App) -> bool,
-    timeout: Duration,
-    gap: &str,
-) -> bool {
-    if harness.wait_for(pred, timeout).is_some() {
-        true
-    } else {
-        eprintln!("skip: {gap}");
-        false
-    }
-}
+use support::submit::wait_or_skip_gap;
 
 /// After `seed_book`, the ladder should show a best bid/ask and no
 /// crossed book (invariant #6).
