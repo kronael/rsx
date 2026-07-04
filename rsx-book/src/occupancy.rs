@@ -22,6 +22,9 @@
 //! find over the whole bitmap — the caller walks the per-zone price-
 //! ordered sub-ranges (`Orderbook::price_asc`) and does a bounded find
 //! within each. See `book.rs`.
+//!
+//! Guarantees (complexity + cache-behavior table) and the sawtooth
+//! rationale: `rsx-book/notes/occupancy.md`.
 
 /// Set-bit occupancy over `n` slots with `u64` summary levels.
 pub struct Occupancy {
