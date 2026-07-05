@@ -83,8 +83,9 @@ PAGE_HINTS = {
         "./latency", "Latency",
     ),
     "./latency": (
-        "measures the gateway &rarr; matching &rarr; gateway "
-        "round-trip end to end.",
+        "measures the round-trip through this dashboard proxy "
+        "(browser &rarr; Python &rarr; gateway) &mdash; a demo "
+        "path, not the exchange&rsquo;s internal &micro;s round-trip.",
         "./orders", "Orders",
     ),
     "./orders": (
@@ -614,10 +615,22 @@ def render_latency_overview(e2e_lats: list, gw_lats: list) -> str:
             f'</div>'
         )
 
+    note = (
+        '<div class="mt-2 text-[10px] text-slate-500 leading-snug">'
+        'demo path: browser &rarr; this dashboard proxy (Python/HTTP)'
+        ' &rarr; gateway &rarr; ME &rarr; back. The ms-scale numbers'
+        ' are dominated by the Python proxy hop &mdash; NOT the'
+        ' exchange&rsquo;s internal round-trip'
+        ' (<span class="text-emerald-400">54&nbsp;ns</span> match,'
+        ' <span class="text-emerald-400">&lt;50&nbsp;µs</span>'
+        ' GW&rarr;ME&rarr;GW budget).'
+        '</div>'
+    )
     return (
         '<div>'
-        + row("e2e gw→me→gw", e2e_lats)
-        + row("gw-only", gw_lats)
+        + row("proxy→gw→me→gw", e2e_lats)
+        + row("proxy→gw (no ME)", gw_lats)
+        + note
         + '<div class="mt-2">' + probe_btn + '</div>'
         + '</div>'
     )
@@ -883,7 +896,7 @@ def overview_page():
         '</div>',
     )
     latency_ov = _card(
-        "Latency (live)",
+        "Latency (demo proxy path)",
         '<div hx-get="./x/latency-overview" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
