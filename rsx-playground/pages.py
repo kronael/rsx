@@ -1911,8 +1911,8 @@ def faults_page():
 
 # ── Recovery explorer ────────────────────────────────────
 # Inject a fault (left), watch the system heal in the live
-# feed (right). Kill→observe is always on; net + WAL faults
-# are gated behind RSX_PLAYGROUND_UNSAFE=1.
+# feed (right). All faults (crash, net, WAL) are always
+# available; each is a click-through guarded by hx-confirm.
 
 _RECOVERY_LEVEL = {
     "fault": ("bg-red-500", "text-red-400"),
@@ -1921,10 +1921,10 @@ _RECOVERY_LEVEL = {
 }
 
 
-def render_recovery_controls(processes, unsafe):
+def render_recovery_controls(processes):
     """Left pane: fault-inject controls. Kill buttons per
-    managed process; net + WAL faults disabled unless
-    unsafe."""
+    managed process; net + WAL faults always available (each
+    guarded by its own hx-confirm click-through)."""
     running = [
         p for p in processes if p.get("state") == "running"
     ]
@@ -1968,55 +1968,36 @@ def render_recovery_controls(processes, unsafe):
         + '</div>'
     )
 
-    if unsafe:
-        net_body = (
-            '<div class="flex gap-2 mt-2">'
-            + _btn(
-                "Add 50ms/10% loss", "amber",
-                'hx-post="./api/fault/net" '
-                'hx-vals=\'{"action":"apply"}\' '
-                'hx-target="#recovery-inject-result" '
-                'hx-swap="innerHTML" '
-                'hx-confirm="Add netem delay+loss on lo? '
-                'Degrades all loopback traffic on this box."')
-            + _btn(
-                "Clear", "blue",
-                'hx-post="./api/fault/net" '
-                'hx-vals=\'{"action":"clear"}\' '
-                'hx-target="#recovery-inject-result" '
-                'hx-swap="innerHTML" '
-                'hx-confirm="Clear the lo netem qdisc?"')
-            + '</div>'
-        )
-        wal_body = (
-            '<div class="mt-2">'
-            + _btn(
-                "Flip a WAL CRC byte", "red",
-                'hx-post="./api/fault/wal-corrupt" '
-                'hx-target="#recovery-inject-result" '
-                'hx-swap="innerHTML" '
-                'hx-confirm="Flip a payload byte in the newest '
-                'WAL file? Its CRC32C will fail on replay."')
-            + '</div>'
-        )
-    else:
-        gate_note = (
-            '<p class="text-[11px] text-amber-400 mt-2">'
-            'set <code class="bg-slate-800 px-1 rounded">'
-            'RSX_PLAYGROUND_UNSAFE=1</code> to enable</p>'
-        )
-        net_body = (
-            '<div class="flex gap-2 mt-2 opacity-40 '
-            'pointer-events-none">'
-            + _btn("Add 50ms/10% loss", "amber", "disabled")
-            + _btn("Clear", "blue", "disabled")
-            + '</div>' + gate_note
-        )
-        wal_body = (
-            '<div class="mt-2 opacity-40 pointer-events-none">'
-            + _btn("Flip a WAL CRC byte", "red", "disabled")
-            + '</div>' + gate_note
-        )
+    net_body = (
+        '<div class="flex gap-2 mt-2">'
+        + _btn(
+            "Add 50ms/10% loss", "amber",
+            'hx-post="./api/fault/net" '
+            'hx-vals=\'{"action":"apply"}\' '
+            'hx-target="#recovery-inject-result" '
+            'hx-swap="innerHTML" '
+            'hx-confirm="Add netem delay+loss on lo? '
+            'Degrades all loopback traffic on this box."')
+        + _btn(
+            "Clear", "blue",
+            'hx-post="./api/fault/net" '
+            'hx-vals=\'{"action":"clear"}\' '
+            'hx-target="#recovery-inject-result" '
+            'hx-swap="innerHTML" '
+            'hx-confirm="Clear the lo netem qdisc?"')
+        + '</div>'
+    )
+    wal_body = (
+        '<div class="mt-2">'
+        + _btn(
+            "Flip a WAL CRC byte", "red",
+            'hx-post="./api/fault/wal-corrupt" '
+            'hx-target="#recovery-inject-result" '
+            'hx-swap="innerHTML" '
+            'hx-confirm="Flip a payload byte in the newest '
+            'WAL file? Its CRC32C will fail on replay."')
+        + '</div>'
+    )
     net_card = (
         '<div class="border border-amber-500/60 rounded-[3px] '
         'bg-slate-800/50 p-3 mt-3">'
@@ -2037,8 +2018,26 @@ def render_recovery_controls(processes, unsafe):
         'replay.</p>'
         + wal_body + '</div>'
     )
+    reset_card = (
+        '<div class="border border-red-500/60 rounded-[3px] '
+        'bg-slate-800/50 p-3 mt-3">'
+        '<h3 class="text-xs font-semibold text-slate-300 mb-1">'
+        'reset everything</h3>'
+        '<p class="text-[11px] text-slate-500">Stop every '
+        'process and wipe all state (WAL, tips, pids) &mdash; '
+        'a clean slate. Does not restart; use Start All after.</p>'
+        + '<div class="mt-2">'
+        + _btn(
+            "Reset everything", "red",
+            'hx-post="./api/reset" '
+            'hx-target="#recovery-inject-result" '
+            'hx-swap="innerHTML" '
+            'hx-confirm="Stop all processes and DELETE all WAL '
+            'and state? This cannot be undone."')
+        + '</div></div>'
+    )
     return (
-        kill_card + net_card + wal_card
+        kill_card + net_card + wal_card + reset_card
         + '<div id="recovery-inject-result" '
         'class="text-xs mt-3 min-h-[1rem]"></div>'
     )
@@ -2076,7 +2075,7 @@ def render_recovery_feed(events):
     return f'<div class="font-mono">{rows}</div>'
 
 
-def recovery_page(unsafe=False):
+def recovery_page():
     hint = (
         '<div class="max-w-7xl mx-auto pt-1">'
         '<div class="border border-slate-600/60 bg-slate-800/50 '
@@ -2086,15 +2085,6 @@ def recovery_page(unsafe=False):
         'and heal it in the live feed on the right &mdash; red '
         'fault &rarr; amber recovering &rarr; green healed.</p>'
         '</div></div>'
-    )
-    gate_banner = "" if unsafe else (
-        '<div class="border border-amber-500/60 bg-slate-800/50 '
-        'rounded-[3px] px-3 py-2">'
-        '<p class="text-xs text-amber-400">destructive faults '
-        '(network, WAL) are disabled. Set '
-        '<code class="bg-slate-800 px-1 rounded">'
-        'RSX_PLAYGROUND_UNSAFE=1</code> to enable them. The '
-        'crash&rarr;observe flow below is always on.</p></div>'
     )
     inject = _card(
         "Inject fault",
@@ -2110,8 +2100,7 @@ def recovery_page(unsafe=False):
         '<span class="text-slate-600">loading...</span></div>',
     )
     body = (
-        (gate_banner if gate_banner else "")
-        + '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">'
+        '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">'
         + inject + feed + '</div>'
     )
     return layout("Recovery", hint + body, "./recovery")
