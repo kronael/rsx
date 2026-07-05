@@ -439,9 +439,11 @@ def _overview_intro():
   <h1 class="text-2xl font-bold text-white tracking-wide">
     RSX Exchange</h1>
   <p class="text-sm text-slate-400 mt-1">
-    Spec-first perpetuals exchange. Fixed-point.
-    Single-threaded matching. 54&nbsp;ns match (measured);
-    &lt;50us round-trip budget.</p>
+    The fastest demonstration exchange &mdash; perpetual
+    futures now, options and exotic derivatives next
+    (<a href="https://krons.fiu.wtf/pub/krons/sfdx/"
+    class="text-blue-400 hover:text-blue-300"
+    target="_blank" rel="noopener">krons derivatives</a>).</p>
   <p class="text-xs text-slate-500 mt-2">
     12 Rust crates &middot; ~880 unit tests &middot;
     54ns match &middot; 31ns WAL append</p>
