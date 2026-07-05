@@ -229,6 +229,14 @@ the same book as a shadow (fed inserts/cancels/fills) to serve L2 /
 BBO. The book makes no thread-safety claims because no caller shares
 it across threads.
 
+**Trust boundary.** The book is internal, single-owner, and never
+touches the network. Authentication, margin, and risk limits are
+enforced upstream (gateway JWT, risk tile) before an order reaches
+it — the book trusts that boundary and does not re-check caller
+identity or solvency on the hot path. It validates only structural
+well-formedness (tick / lot multiples, reduce-only / post-only
+semantics), the checks it needs to keep its own state consistent.
+
 ## Memory layout (config-driven)
 
 | Component | Sizing | Memory |

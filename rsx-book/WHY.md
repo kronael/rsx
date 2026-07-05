@@ -1,5 +1,11 @@
 # Why rsx-book is built this way
 
+An order book is the live list of every resting buy and sell order for one
+market; *matching* pairs an incoming order against the best ones already
+sitting there. A busy market can hold millions of resting orders at once, so
+the match has to stay fast no matter how full the book gets — that is the
+whole job of this crate.
+
 One goal: **matching an order costs the same whether the book holds a
 hundred orders or ten million.** A textbook book slows as it fills; this
 one stays flat. Here is the shape that buys that.
@@ -12,7 +18,8 @@ so every hot operation is array arithmetic, not a tree walk:
 - **price → level:** a sawtooth fold of the raw range onto the grid —
   O(1), no search, no pointers to chase.
 - **next-best level:** a 3-tier occupancy bitmap + count-trailing-zeros —
-  **~145 ns, flat**; O(1), not O(price-range).
+  O(1), not O(price-range); a match that clears a level stays **~145 ns,
+  flat** (the isolated next-best find is ~25 ns).
 - **orders:** a slab arena — ~1–5 ns alloc/free, zero heap on the hot path.
 - **layout:** `#[repr(C, align(64))]` with a hot/cold field split — a
   resting-order match touches **one cache line**.
@@ -65,8 +72,9 @@ The domain is already a dense pre-quantised grid — the slot index *is* the
 key — so a bitmap over that grid is both smaller and faster than a tree
 laid on top of it. (A single "pointer to the next filled slot" can't help:
 inserts arrive in any order and matching seeks in both directions, so you'd
-still need the search the bitmap gives you for free.) The bitmap answers
-next-best in **~145 ns, flat** — no matter how far the next order sits.
+still need the search the bitmap gives you for free.) The find itself is
+~25 ns; a full match that has to clear the touch level and find the next
+stays **~145 ns, flat** — no matter how far the next order sits.
 
 ## The slab — allocation that isn't allocation
 
