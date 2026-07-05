@@ -116,6 +116,7 @@ COMPONENTS: dict = {
             ("Concept: Sharding Axes",
              "./docs/concepts/sharding-axes"),
         ],
+        "crate": "rsx-gateway",
         "log_key": "gateway",
         "viz": None,
     },
@@ -136,6 +137,7 @@ COMPONENTS: dict = {
             ("Concept: Tiles &amp; Pinning",
              "./docs/concepts/tiles-and-pinning"),
         ],
+        "crate": "rsx-risk",
         "log_key": "risk",
         "viz": None,
     },
@@ -154,6 +156,7 @@ COMPONENTS: dict = {
             ("Concept: Slab &amp; Compression",
              "./docs/concepts/slab-and-compression"),
         ],
+        "crate": "rsx-matching",
         "log_key": "matching",
         "viz": "book",
     },
@@ -171,6 +174,7 @@ COMPONENTS: dict = {
             ("Concept: WAL = Wire = Stream",
              "./docs/concepts/wal-is-wire-is-stream"),
         ],
+        "crate": "rsx-marketdata",
         "log_key": "marketdata",
         "viz": None,
     },
@@ -189,6 +193,7 @@ COMPONENTS: dict = {
             ("Concept: Tiles &amp; Pinning",
              "./docs/concepts/tiles-and-pinning"),
         ],
+        "crate": "rsx-mark",
         "log_key": "mark",
         "viz": None,
     },
@@ -206,6 +211,7 @@ COMPONENTS: dict = {
             ("Concept: WAL = Wire = Stream",
              "./docs/concepts/wal-is-wire-is-stream"),
         ],
+        "crate": "rsx-recorder",
         "log_key": "recorder",
         "viz": None,
     },
@@ -221,6 +227,7 @@ COMPONENTS: dict = {
         "docs": [
             ("Guide: Scenarios", "./docs/guide/scenarios"),
         ],
+        "crate": None,
         "log_key": "maker",
         "viz": None,
     },
@@ -6279,12 +6286,26 @@ def component_page(key: str) -> str:
     # ── Header: name + links ─────────────────────────────
     # Live status shown in the health card below via the
     # topology partial (render_component_detail).
+    crate = comp.get("crate")
+    if crate:
+        # base is "../" on this nested page, so "crate/x" resolves
+        # against the app root (prefix-safe).
+        impl_link = (
+            f'<a href="crate/{html.escape(crate)}" '
+            f'class="text-xs text-blue-400 hover:text-blue-300">'
+            f'implemented by &rarr; {html.escape(crate)}</a>')
+    else:
+        impl_link = (
+            '<span class="text-xs text-slate-500">'
+            'implemented by market_maker.py (playground tool, '
+            'no Rust crate)</span>')
     header = (
         f'<div class="bg-slate-900 border border-slate-800 '
         f'rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">'
         f'<h1 class="text-lg font-bold text-white">'
         f'{html.escape(name)}</h1>'
         f'<span class="text-xs text-slate-500">{html.escape(key)}</span>'
+        f'{impl_link}'
         f'<a href="./topology" '
         f'class="ml-auto text-xs text-blue-400 hover:text-blue-300">'
         f'&larr; Topology</a>'
