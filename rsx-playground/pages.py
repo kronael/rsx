@@ -288,6 +288,9 @@ def layout(title, content, active_tab="./overview"):
 <html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
+<!-- Resolve all relative URLs from root so nested routes (/crate/*,
+     /component/*) load scripts/nav/HTMX correctly, not /crate/static/... -->
+<base href="/">
 <meta name="viewport"
   content="width=device-width, initial-scale=1">
 <title>RSX -- {title}</title>
