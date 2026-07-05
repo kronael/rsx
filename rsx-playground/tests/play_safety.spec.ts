@@ -87,6 +87,40 @@ async function ensureAll(request: any) {
   }
 }
 
+// Raw-fetch restore for afterAll hooks (no `request` fixture there):
+// bring the cluster back to health AND re-seed the maker, so downstream
+// shards inherit a populated book. Throw-proof — never fails the hook.
+async function restoreHealthy() {
+  await fetch(
+    `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+    { method: "POST" }
+  ).catch(() => {});
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(`${BASE}/api/processes`);
+      if (r.ok) {
+        const procs = await r.json();
+        const up = Array.isArray(procs)
+          ? procs.filter((p: any) => p.state === "running")
+          : [];
+        const gwUp = up.some(
+          (p: any) => p.name === "gw-0" || p.name.startsWith("gateway")
+        );
+        if (gwUp && up.length >= 4) break;
+      }
+    } catch {
+      // transient — retry
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  await fetch(`${BASE}/api/maker/start?confirm=yes`, {
+    method: "POST",
+    headers: { "x-confirm": "yes" },
+  }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 3000));
+}
+
 async function pollUntil(
   fn: () => Promise<boolean>,
   timeoutMs = 10000,
@@ -115,11 +149,7 @@ test.describe.serial("Safety: process crash & recovery",
     // see a healthy system. Without this, a single safety
     // failure cascades into 200+ "did not run" skips.
     test.afterAll(async () => {
-      await fetch(
-        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
-        { method: "POST" }
-      );
-      await new Promise((r) => setTimeout(r, 3000));
+      await restoreHealthy();
     });
 
     test("gateway crash shows error state in topology",
@@ -441,6 +471,27 @@ test.describe("Safety: session safety", () => {
 // ── 3. Operational Safety ────────────────────────────────
 
 test.describe("Safety: operational safety", () => {
+  // A prior test's all/stop leaves the cluster down; restore health
+  // (and re-seed the maker) before each so order tests don't race it.
+  test.beforeEach(async ({ request }) => {
+    test.setTimeout(60_000);
+    let healthy = false;
+    const r = await request.get("/api/processes").catch(() => null);
+    if (r && r.ok()) {
+      const procs = await r.json();
+      const up = Array.isArray(procs)
+        ? procs.filter((p: any) => p.state === "running")
+        : [];
+      healthy =
+        up.length >= 4 &&
+        up.some(
+          (p: any) => p.name === "gw-0" || p.name.startsWith("gateway")
+        );
+    }
+    if (!healthy) await ensureAll(request);
+    await ensureMaker(request);
+  });
+
   test("confirm=yes required for destructive actions",
     async ({ request }) => {
       // ensureAll may poll up to 30 s waiting for re-spawn
@@ -637,11 +688,7 @@ test.describe.serial("Safety: graceful degradation",
     // downstream shards see a seeded book regardless of which
     // graceful-degradation test (potentially) interrupted.
     test.afterAll(async () => {
-      await fetch(
-        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
-        { method: "POST" }
-      );
-      await new Promise((r) => setTimeout(r, 3000));
+      await restoreHealthy();
     });
 
     test("book page works with no processes",
