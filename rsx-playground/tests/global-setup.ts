@@ -140,14 +140,28 @@ export default async function globalSetup() {
 
   // ── Heartbeat: renew session every 2 min to stay within ──
   // the 5-min lease window and prevent stale-claim eviction.
+  //
+  // orch-smoke (play_orch.spec.ts) releases this session and
+  // re-allocates a fresh one mid-run, so the captured sessionId
+  // stops matching the active session. Renew against whatever id
+  // /api/sessions/status currently reports as active — otherwise
+  // the swapped-in session ages unrenewed, the lease expires, and
+  // the next allocate auto-releases it (a collision test then sees
+  // 200 instead of 409). Renew only checks id-match, and status
+  // exposes active_id, so adopting it is consistent with the model.
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   if (sessionId) {
     heartbeatTimer = setInterval(async () => {
       try {
+        const s = await fetch(`${BASE}/api/sessions/status`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        const st = await s.json().catch(() => ({}));
+        const activeId = st.active ? st.active_id : sessionId;
         await fetch(`${BASE}/api/sessions/renew`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: sessionId }),
+          body: JSON.stringify({ session_id: activeId }),
           signal: AbortSignal.timeout(3000),
         });
       } catch (e) {

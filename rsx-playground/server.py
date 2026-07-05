@@ -4437,15 +4437,21 @@ async def api_orders_test(request: Request):
         p["name"] for p in scan_processes()
         if p.get("state") == "running"
     }
+    # Graceful degradation: a stopped gateway/ME is a normal dev
+    # state (the safety suite kills them on purpose), not a server
+    # error. Return 200 with a descriptive body — same shape as the
+    # downstream "gateway not running" path — so the orders page
+    # keeps working and callers read the reason instead of a 503.
     if "gw-0" not in _running_names:
-        return JSONResponse(
-            {"error": "gateway (gw-0) not available"},
-            status_code=503)
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} error: gateway (gw-0) not available'
+            f'</span>')
     if _me_name and _me_name not in _running_names:
-        return JSONResponse(
-            {"error": f"matching engine for "
-                      f"{_sym_name} not available"},
-            status_code=503)
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} error: matching engine for '
+            f'{_sym_name} not available</span>')
 
     side_str = form.get("side", "buy")
     side_int = 0 if side_str == "buy" else 1
@@ -5788,10 +5794,22 @@ async def api_deposit(
         f'(balance: {bal})</span>')
 
 
+@app.post("/api/users/deposit")
+async def api_deposit_form(
+    request: Request,
+    user_id: int = Form(1, alias="risk-uid"),
+    amount: int = Form(100_000),
+):
+    # Body-form variant for the declarative Deposit button, which
+    # sends the uid via hx-include rather than in the path. The
+    # path-param route above stays for API callers.
+    return await api_deposit(request, user_id, amount)
+
+
 @app.post("/api/risk/liquidate")
 async def api_liquidate(
     request: Request,
-    user_id: int = Form(0),
+    user_id: int = Form(0, alias="risk-uid"),
     symbol_id: int = Form(10),
 ):
     denied = _require_admin_request(request)
@@ -6232,7 +6250,8 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
         body = book_resp
     asks = body.get("asks", []) if isinstance(body, dict) else []
     if not asks:
-        return {"ok": False, "error": "no asks; maker idle?"}
+        return {"ok": False, "error": "no asks; maker idle?",
+                "skipped_fills": 0}
     best_ask = int(asks[0]["px"])
 
     sym_resp = await v1_symbols()
@@ -6254,7 +6273,8 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
     secret = os.environ.get("RSX_GW_JWT_SECRET", "")
     if not secret:
         return {"ok": False,
-                "error": "RSX_GW_JWT_SECRET not configured"}
+                "error": "RSX_GW_JWT_SECRET not configured",
+                "skipped_fills": 0}
     token = pyjwt.encode(
         {
             "sub": "playground:1",
@@ -6417,9 +6437,11 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
                         }
     except aiohttp.ClientError as exc:
         return {"ok": False,
-                "error": f"gateway unreachable: {exc}"}
+                "error": f"gateway unreachable: {exc}",
+                "skipped_fills": skipped_fills}
     except Exception as exc:
-        return {"ok": False, "error": f"probe failed: {exc}"}
+        return {"ok": False, "error": f"probe failed: {exc}",
+                "skipped_fills": skipped_fills}
 
 
 @app.post("/api/latency-probe")

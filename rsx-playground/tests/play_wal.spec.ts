@@ -206,7 +206,7 @@ test.describe("WAL tab", () => {
     expect(walChecks.length).toBeGreaterThan(0);
     // For each stream verify reports, /x/wal-status must list it.
     for (const c of walChecks) {
-      const m = c.name.match(/WAL stream (\S+) has files/);
+      const m = c.name.match(/WAL stream (\S+) has data/);
       expect(m).not.toBeNull();
       const stream = m![1];
       expect(walHtml).toContain(stream);

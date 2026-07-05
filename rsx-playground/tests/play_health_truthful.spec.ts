@@ -80,6 +80,9 @@ test.describe("Health pill (F2)", () => {
   // success.
   test("pulse_proc_pill_not_green_on_partial_outage",
     async ({ request }) => {
+      // Baseline poll (up to 40s) + kill + observe (3s) exceeds the
+      // 15s default; budget 60s so the test runs to its assertions.
+      test.setTimeout(60_000);
       // Ensure a baseline full cluster, then kill one process.
       await request.post(
         "/api/processes/all/start" +

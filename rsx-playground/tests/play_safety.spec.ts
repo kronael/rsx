@@ -614,7 +614,7 @@ test.describe("Safety: operational safety", () => {
       const html = await res.text();
       // Before the fix this always read "0 stale orders". The
       // string-ts batch orders must now be counted.
-      const m = html.match(/(\d+)\s+stale order/);
+      const m = html.match(/(\d+)\s+hung order/);
       expect(m, "no stale-orders count rendered").not.toBeNull();
       expect(Number(m![1])).toBeGreaterThan(0);
     },
