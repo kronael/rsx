@@ -1516,14 +1516,20 @@ document.querySelectorAll('input[name="wal-filter-r"]')
             'border-blue-900 hover:bg-blue-900 '
             'cursor-pointer" '
             'hx-post="./api/wal/verify" '
-            'hx-swap="none">Verify</button>'
+            'hx-target="#wal-tools-result" '
+            'hx-swap="innerHTML">Verify</button>'
             '<button class="bg-slate-800 text-slate-400 '
             'px-3 py-1 rounded text-xs border '
             'border-slate-700 hover:bg-slate-700 '
             'cursor-pointer" '
             'hx-post="./api/wal/dump" '
-            'hx-swap="none">Dump JSON</button>'
+            'hx-target="#wal-tools-result" '
+            'hx-swap="innerHTML">Dump (tail)</button>'
         ),
+    )
+    tools_result = (
+        '<div id="wal-tools-result" '
+        'class="mt-3 text-xs"></div>'
     )
     content = f"""
 {state}
@@ -1532,7 +1538,8 @@ document.querySelectorAll('input[name="wal-filter-r"]')
 {rotation}
 </div>
 {timeline}
-{files}"""
+{files}
+{tools_result}"""
     return layout("WAL", content, "./wal")
 
 
@@ -2320,6 +2327,26 @@ not as the &lt;50 &micro;s claim.</p>
 {regression}
 </div>"""
     return layout("Latency", content, "./latency")
+
+
+def render_probe_result(result: dict) -> str:
+    """Format a latency-probe result as HTML (never raw JSON)."""
+    if not isinstance(result, dict):
+        return ('<span class="text-amber-400 text-xs">'
+                'probe returned no data</span>')
+    if not result.get("ok"):
+        err = html.escape(str(result.get("error", "probe failed")))
+        return (f'<span class="text-amber-400 text-xs">'
+                f'probe skipped: {err}</span>')
+    us = result.get("elapsed_us", result.get("e2e_us", "?"))
+    skipped = result.get("skipped_fills", 0)
+    extra = (f' &middot; skipped {skipped} unrelated fill(s)'
+             if skipped else '')
+    return (
+        f'<span class="text-emerald-400 text-xs">e2e round-trip '
+        f'<span class="font-mono">{html.escape(str(us))}us</span>'
+        f'</span><span class="text-slate-600 text-[10px]">{extra} '
+        f'&middot; demo proxy path</span>')
 
 
 def render_e2e_latency(latencies=None):
@@ -3837,53 +3864,45 @@ def render_gateway_mode_badge(reachable: bool) -> str:
 
 
 def render_latency_regression(latencies=None):
-    """Show latency regression vs baseline targets."""
-    baseline_gw_p99 = 50  # us
-    baseline_me_p99 = 0.5  # us (500ns)
+    """Show the measured proxy round-trip alongside the INTERNAL
+    design budgets — NOT a delta between them. The live number is the
+    demo proxy path (browser → Python dashboard → gateway → ME → back,
+    ms-scale, dominated by the Python hop). Subtracting an internal
+    <50µs budget from it (the old "+36806%") was apples-to-oranges;
+    the two measure different paths. Budgets shown as reference.
+    """
+    proxy_p99 = None
+    if latencies:
+        proxy_p99 = int(_percentile(sorted(latencies), 99))
 
-    if not latencies or len(latencies) == 0:
-        return (
-            '<div class="space-y-2">'
-            '<div class="flex items-center gap-3">'
-            '<span class="text-xs w-40">Order ack RTT p99</span>'
-            '<span class="text-slate-500 text-xs">--</span>'
-            '<span class="text-[10px] text-slate-600">'
-            f'(baseline {baseline_gw_p99}us)</span></div>'
-            '<div class="flex items-center gap-3">'
-            '<span class="text-xs w-40">ME match p99</span>'
-            '<span class="text-slate-500 text-xs">--</span>'
-            '<span class="text-[10px] text-slate-600">'
-            f'(baseline {int(baseline_me_p99*1000)}ns)</span></div>'
-            '</div>'
-        )
-
-    sorted_lat = sorted(latencies)
-    p99 = int(_percentile(sorted_lat, 99))
-    delta = p99 - baseline_gw_p99
-    pct_change = (delta / baseline_gw_p99) * 100 if baseline_gw_p99 > 0 else 0
-
-    if delta < 0:
-        delta_str = f'<span class="text-emerald-400">{delta}us ({pct_change:.0f}%)</span>'
-    elif delta < baseline_gw_p99 * 0.1:
-        delta_str = f'<span class="text-amber-400">+{delta}us (+{pct_change:.0f}%)</span>'
-    else:
-        delta_str = f'<span class="text-red-400">+{delta}us (+{pct_change:.0f}%)</span>'
-
-    return (
-        '<div class="space-y-2">'
+    proxy_val = (
+        f'{proxy_p99}us' if proxy_p99 is not None else '--')
+    rows = (
         '<div class="flex items-center gap-3">'
-        '<span class="text-xs w-40">Order ack RTT p99</span>'
-        f'<span class="text-slate-300 text-xs">{p99}us</span>'
-        f'{delta_str}'
-        '<span class="text-[10px] text-slate-600">'
-        f'(baseline {baseline_gw_p99}us)</span></div>'
-        '<div class="flex items-center gap-3">'
-        '<span class="text-xs w-40">ME match p99</span>'
-        '<span class="text-slate-500 text-xs">--</span>'
-        '<span class="text-[10px] text-slate-600">'
-        f'(baseline {int(baseline_me_p99*1000)}ns)</span></div>'
+        '<span class="text-xs w-52">Proxy round-trip p99 '
+        '<span class="text-slate-600">(demo path)</span></span>'
+        f'<span class="text-slate-300 text-xs font-mono">{proxy_val}</span>'
+        '<span class="text-[10px] text-slate-600">measured here</span>'
         '</div>'
+        '<div class="flex items-center gap-3">'
+        '<span class="text-xs w-52">GW &rarr; ME &rarr; GW '
+        '<span class="text-slate-600">(internal budget)</span></span>'
+        '<span class="text-slate-500 text-xs font-mono">&lt; 50us</span>'
+        '<span class="text-[10px] text-slate-600">target, separate '
+        'path</span></div>'
+        '<div class="flex items-center gap-3">'
+        '<span class="text-xs w-52">ME match '
+        '<span class="text-slate-600">(internal budget)</span></span>'
+        '<span class="text-slate-500 text-xs font-mono">&lt; 500ns</span>'
+        '<span class="text-[10px] text-slate-600">measured 54ns '
+        '(bench)</span></div>'
     )
+    note = (
+        '<div class="mt-2 text-[10px] text-slate-600 leading-snug">'
+        'the proxy number and the internal budgets measure different '
+        'paths &mdash; not comparable as a regression %.</div>'
+    )
+    return f'<div class="space-y-2">{rows}{note}</div>'
 
 
 # ── Orders ───────────────────────────────────────────────
@@ -3954,9 +3973,11 @@ def render_recent_orders(orders):
         latency_str = ""
         if o.get("latency_us"):
             lat = o["latency_us"]
-            if lat < 100:
-                color = "text-emerald-400"
-            elif lat < 500:
+            # demo proxy path (ms-scale expected); red only when
+            # genuinely pathological, not for normal proxy overhead.
+            if lat < 20_000:
+                color = "text-slate-300"
+            elif lat < 100_000:
                 color = "text-amber-400"
             else:
                 color = "text-red-400"
@@ -4654,6 +4675,11 @@ def render_risk_latency(latencies=None):
             + _metric("p99", "--", "slate-500")
             + _metric("max", "--", "slate-500")
             + '</div>'
+            '<div class="text-[10px] text-slate-600 mt-1">'
+            'populates once you submit an order from the '
+            '<a href="./orders" class="text-blue-400 hover:underline">'
+            'Orders</a> tab (the maker&rsquo;s own orders don&rsquo;t '
+            'route through this dashboard).</div>'
         )
 
     sorted_lat = sorted(latencies)
@@ -4662,10 +4688,13 @@ def render_risk_latency(latencies=None):
     p99 = int(_percentile(sorted_lat, 99))
     max_lat = sorted_lat[-1]
 
+    # This is the DEMO PROXY path (Python dashboard → gateway → back),
+    # inherently ms-scale — reserve red for genuinely pathological
+    # values, not for the expected proxy overhead (see #27).
     def color_for_lat(lat_us):
-        if lat_us < 100:
-            return "emerald-400"
-        elif lat_us < 500:
+        if lat_us < 20_000:
+            return "slate-300"
+        elif lat_us < 100_000:
             return "amber-400"
         else:
             return "red-400"

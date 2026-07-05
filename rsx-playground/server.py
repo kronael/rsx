@@ -4798,8 +4798,41 @@ async def api_orders_test(request: Request):
     try:
         human_price = float(
             form.get("price", "0") or "0")
-        if order_type == "market":
-            price_int = 0
+        # price 0 (or an explicit market order) = "market": send a
+        # marketable-limit sweep against the live book so it crosses,
+        # matching the form's "0 = market" hint. A bare price-0 limit
+        # is rejected by the gateway (tick 0), which is what made the
+        # default form submission fail.
+        is_market = order_type == "market" or human_price == 0
+        if is_market:
+            mid_raw = None
+            snap = _book_snap.get(symbol_id)
+            if snap:
+                bids = snap.get("bids", [])
+                asks = snap.get("asks", [])
+                if bids and asks:
+                    mid_raw = (bids[0]["px"] + asks[0]["px"]) // 2
+                elif bids:
+                    mid_raw = bids[0]["px"]
+                elif asks:
+                    mid_raw = asks[0]["px"]
+            if mid_raw is None:
+                bbo = parse_wal_bbo(symbol_id)
+                if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
+                    mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
+                elif bbo and bbo.get("bid_px"):
+                    mid_raw = bbo["bid_px"]
+                elif bbo and bbo.get("ask_px"):
+                    mid_raw = bbo["ask_px"]
+            if mid_raw is None:
+                price_int = tick_size
+            else:
+                sweep = (_MARKET_SWEEP_PCT if side_int == 0
+                         else -_MARKET_SWEEP_PCT)
+                raw = mid_raw * (1.0 + sweep / 100.0)
+                price_int = max(
+                    tick_size,
+                    int(round(raw / tick_size)) * tick_size)
         else:
             price_int = round(human_price * price_scale)
             if price_int % tick_size != 0:
@@ -4849,8 +4882,9 @@ async def api_orders_test(request: Request):
             or order_type == "post_only"
         ) else 0
     )
-    # market orders use IOC if tif is GTC (GTC market invalid)
-    if order_type == "market" and tif_int == 0:
+    # market orders cross immediately — force IOC (a GTC market is
+    # invalid; a resting GTC uses a real limit price).
+    if is_market and tif_int == 0:
         tif_int = 1
 
     # Gateway wire format: {"N": [sym, side, px, qty, cid, tif, ro, po]}
@@ -4866,8 +4900,11 @@ async def api_orders_test(request: Request):
         "user_id": user_id,
         "symbol": str(symbol_id),
         "side": side_str,
-        "price": form.get("price", "0") or "0",
-        "qty": form.get("qty", "0") or "0",
+        # human units in the recent-orders table (see #16); a market
+        # order shows "mkt" (it swept, no meaningful limit price).
+        "price": ("mkt" if is_market
+                  else pages.format_price(price_int, symbol_id)),
+        "qty": pages.format_qty(qty_int, symbol_id),
         "tif": tif_str,
         "reduce_only": bool(reduce_only),
         "post_only": bool(post_only),
@@ -5713,8 +5750,9 @@ async def do_stress_start(cfg: dict | None = None) -> bool:
             _scfg.get("duration", 60)),
         "RSX_STRESS_TARGET_P99": str(
             _scfg.get("target_p99", 50000)),
-        "RSX_STRESS_REPORT_DIR": str(
-            ROOT / "tmp" / "stress"),
+        # Must match the dir the reports list reads (STRESS_REPORTS_DIR)
+        # or a completed run never shows up under HISTORICAL REPORTS.
+        "RSX_STRESS_REPORT_DIR": str(STRESS_REPORTS_DIR),
     }
     full_env = {**os.environ, **env}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -5813,14 +5851,34 @@ async def api_stress_run(
                 "message": err_msg,
                 "context": {"gateway_url": target_url},
             })
-    # Reachable — start a short stress synchronously
+    # Reachable — kick off a real (short) stress run so it writes a
+    # report the HISTORICAL REPORTS list can pick up.
+    started = await do_stress_start({
+        "gw_url": target_url,
+        "rate": rate,
+        "duration": duration,
+    })
+    if is_htmx:
+        if not started:
+            return HTMLResponse(
+                '<span class="text-red-400 text-xs">'
+                'stress failed to start (already running?)</span>')
+        return HTMLResponse(
+            f'<div class="text-xs text-emerald-400">stress running '
+            f'&mdash; {rate}/s for {duration}s against {html.escape(target_url)}'
+            f'</div>'
+            f'<div class="text-slate-500 text-[11px] mt-1">a report '
+            f'appears under <a href="./stress" class="text-blue-400 '
+            f'hover:underline">Stress &rarr; historical reports</a> '
+            f'when it finishes.</div>')
     return JSONResponse({
         "code": "OK",
-        "message": "stress started",
+        "message": "stress started" if started else "stress busy",
         "context": {
             "rate": rate,
             "duration": duration,
             "gateway_url": target_url,
+            "started": started,
         },
     })
 
@@ -6185,6 +6243,10 @@ async def api_wal_verify():
         f'{total_files} files</span>')
 
 
+_WAL_DUMP_BYTE_CAP = 64 * 1024   # stop reading after 64 KiB
+_WAL_DUMP_LINE_CAP = 200         # ...or 200 records, whichever first
+
+
 @app.post("/api/wal/dump")
 async def api_wal_dump():
     files = scan_wal_files()
@@ -6193,27 +6255,81 @@ async def api_wal_dump():
             '<span class="text-slate-500 text-xs">'
             'no WAL files to dump</span>')
 
-    # Dump first 100 records from most recent WAL file
     latest_dict = max(files, key=lambda f: f.get("modified", ""))
     stream_name = latest_dict["stream"]
     file_name = latest_dict["name"]
     latest_path = WAL_DIR / stream_name / file_name
+    try:
+        file_size = latest_path.stat().st_size
+    except OSError:
+        file_size = 0
 
+    # rsx-cli `dump` prints the WHOLE file (no limit flag). A rotated
+    # archive can be gigabytes, so buffering all of stdout OOMs the
+    # dashboard. Instead: read the child's stdout incrementally, stop
+    # at a byte/line cap, then kill it — bounded RAM regardless of
+    # file size.
     proc = await asyncio.create_subprocess_exec(
-        str(ROOT / "target" / "debug" / "rsx-cli"), "dump", str(latest_path),
+        str(ROOT / "target" / "debug" / "rsx-cli"),
+        "dump", str(latest_path),
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
-    output = stdout.decode() if stdout else stderr.decode()
+    chunks: list[bytes] = []
+    total = 0
+    lines = 0
+    truncated = False
+    try:
+        assert proc.stdout is not None
+        while total < _WAL_DUMP_BYTE_CAP and lines < _WAL_DUMP_LINE_CAP:
+            line = await asyncio.wait_for(
+                proc.stdout.readline(), timeout=5.0)
+            if not line:
+                break
+            chunks.append(line)
+            total += len(line)
+            lines += 1
+        else:
+            truncated = True
+    except (asyncio.TimeoutError, AssertionError):
+        truncated = True
+    finally:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
 
+    output = b"".join(chunks).decode(errors="replace")
+    if not output:
+        try:
+            err = (await asyncio.wait_for(
+                proc.stderr.read(2000), timeout=1.0)).decode(
+                errors="replace")
+        except (asyncio.TimeoutError, AttributeError):
+            err = ""
+        return HTMLResponse(
+            f'<div class="text-amber-400 text-xs">no records '
+            f'read from {html.escape(file_name)}'
+            f'{(" — " + html.escape(err.strip())) if err.strip() else ""}'
+            f'</div>')
+
+    note = (
+        f' &middot; showing first {lines} records'
+        + (' (truncated)' if truncated else '')
+    )
     safe_name = html.escape(file_name)
-    safe_out = html.escape(output[:2000])
+    safe_out = html.escape(output)
     dump_html = (
         f'<div class="text-xs">'
         f'<div class="text-slate-400 mb-2">'
-        f'Latest: {safe_name}</div>'
-        f'<pre class="text-slate-300 whitespace-pre-wrap">'
+        f'{safe_name} &middot; {human_size(file_size)}{note}</div>'
+        f'<pre class="text-slate-300 whitespace-pre-wrap '
+        f'max-h-96 overflow-y-auto bg-slate-950 p-2 rounded">'
         f'{safe_out}</pre></div>')
 
     return HTMLResponse(dump_html)
@@ -6800,8 +6916,10 @@ async def api_latency_probe(
     against existing liquidity). Use this to populate the
     E2E block of /api/latency. Loopback only (no admin
     token required since it operates as user 1)."""
-    return JSONResponse(
-        await _run_latency_probe(symbol_id))
+    result = await _run_latency_probe(symbol_id)
+    if request.headers.get("hx-request") == "true":
+        return HTMLResponse(pages.render_probe_result(result))
+    return JSONResponse(result)
 
 
 # ── Gateway-only RTT probe (no ME, no risk) ─────────────
