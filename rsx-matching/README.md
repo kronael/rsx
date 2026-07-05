@@ -75,7 +75,7 @@ cargo test -p rsx-matching
 
 10 test files: config, config_poll, event, invariant,
 lifecycle, order_processing, position, smooshed,
-wal_integration, wire. Dedup boundary logic validated.
+wal, wire. Dedup boundary logic validated.
 See `specs/2/41-testing-matching.md`.
 
 ## Dependencies

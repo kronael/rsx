@@ -16,15 +16,17 @@ Specs: `specs/2/17-matching.md`, `specs/2/45-tiles.md` §3.1.
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 5-minute sliding-window duplicate detection |
 | `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` — Postgres config polling |
-| `wal_integration.rs` | `publish_events()`, `flush_if_due()`, `write_events_to_wal()` (replay + bench helper) |
+| `wal.rs` | `publish_events()`, `flush_if_due()`, `write_events_to_wal()` (replay + bench helper) |
 
-## Tile Shape (Degenerate Tile)
+## Execution: a single pinned loop
 
-Per `specs/2/45-tiles.md` §3.1, matching is a **degenerate
-tile**: one core-pinned thread, no SPSC rings. The whole
-process is one tile. All work — casting I/O, dedup, matching,
-WAL append, casting fan-out — happens on the pinned core. No
-intra-process IPC, no cross-thread queues on the hot path.
+Matching has no tile structure — it is **one core-pinned
+thread running a loop, with no SPSC rings** (what
+`specs/2/45-tiles.md` §3.1 calls a "degenerate tile"; with no
+rings between tiles, it is just a loop). All work — casting
+I/O, dedup, matching, WAL append, casting fan-out — happens
+inline on the pinned core. No intra-process IPC, no
+cross-thread queues on the hot path.
 
 Pinning: `RSX_ME_CORE_ID` selects the core
 (`core_affinity::set_for_current`, `main.rs:195-200`).
@@ -100,7 +102,7 @@ Two independent `CastSender`s:
 - ME → Risk: fills, BBO, order done/failed (all events)
 - ME → Marketdata: inserts, cancels, fills
 
-`publish_events` (`wal_integration.rs`) prepares each record once
+`publish_events` (`wal.rs`) prepares each record once
 (single CRC + seq) and fans the resulting `Framed` to WAL + cast
 + (optionally) mkt with `send_framed` / `append_framed` — no
 re-CRC per destination. Routing per event type:
@@ -134,7 +136,7 @@ changes live. On startup, the current version emits one
 
 ## Architectural Decisions
 
-**Runtime: tile (pinned thread) + tokio sidecar.** The
+**Runtime: a single pinned loop + tokio sidecar.** The
 matching loop is the lowest-latency stage of the system —
 ~340 ns p50 for dedup + WAL accept + match + WAL events.
 Network I/O multiplexing does not appear in the inner loop;
@@ -142,8 +144,9 @@ the only sockets are one `CastReceiver` (orders in) and two
 `CastSender`s (events to risk and marketdata). With nothing
 to multiplex, the cheapest reactor is no reactor: one
 pinned thread, busy-spin, all work inline on the cache-warm
-core. This is the **degenerate tile** in
-[`../specs/2/45-tiles.md`](../specs/2/45-tiles.md) §3.1.
+core — a loop, not a tile (the "degenerate tile" of
+[`../specs/2/45-tiles.md`](../specs/2/45-tiles.md) §3.1: no
+SPSC rings, so no tile structure).
 
 A tokio sidecar handles the cold path — `poll_scheduled_configs()`
 queries Postgres every 10 minutes for symbol config updates.
@@ -151,7 +154,7 @@ That is blocking I/O and explicitly off the hot loop. See
 [`../notes/tiles.md`](../notes/tiles.md) for the broader
 pattern.
 
-## Cold-start snapshot + WAL replay (wal_integration.rs)
+## Cold-start snapshot + WAL replay (wal.rs)
 
 Snapshots are written every 10 s with atomic rename
 (`snapshot.bin` + `wal_seq.txt` sidecar). Between snapshots,
@@ -172,7 +175,7 @@ writes never reuse a replayed seq.
 ## FAULTED → skip-the-gap (order stream is drop-safe)
 
 When `CastReceiver::try_recv` returns `CastRecv::Faulted` (a gap
-that outran in-band NAK recovery), the matching tile **skips the
+that outran in-band NAK recovery), the matching loop **skips the
 gap and resumes live** — it does NOT replay and does NOT panic.
 On FAULTED it counts the skipped seqs (`gauges.drops`), warns with
 the gap range, then calls `cast_receiver.reset_after_replay(
