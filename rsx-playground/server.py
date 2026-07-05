@@ -3995,9 +3995,21 @@ async def api_build(request: Request):
 @app.post("/api/processes/all/start")
 async def api_start_all(
     request: Request,
-    scenario: str = Query("minimal"),
+    scenario: str = Query(None),
 ):
-    """Build + start all processes."""
+    """Build + start all processes.
+
+    Scenario resolution: explicit ?scenario= query wins (curl,
+    tests, CLI). Otherwise read the checked radio from the form
+    body (the overview button uses hx-include, no JS eval, so it
+    works under a strict CSP). Falls back to minimal.
+    """
+    if scenario is None:
+        try:
+            form = await request.form()
+            scenario = form.get("scenario-ov") or "minimal"
+        except Exception:
+            scenario = "minimal"
     denied = _require_admin_request(request)
     if denied:
         return denied
