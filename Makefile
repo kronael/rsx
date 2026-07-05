@@ -312,8 +312,20 @@ local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 	-curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' -H 'x-confirm: yes' >/dev/null
 	@echo "-> local cluster up with a live PENGU book. Trade: make tui-local"
 
-tui: ## trade via the terminal UI against the hosted deployment (rsx.krons.cx)
-	cargo run -q -p rsx-tui
+# Guarded: rsx-tui defaults to wss://rsx.krons.cx (production) when
+# RSX_GW_URL is unset (see rsx-tui/src/main.rs DEPLOYMENT_URL). This
+# Makefile is dev-only (CLAUDE.md: no external publish/deploy one
+# `make` away) — production trading must be an explicit, deliberate
+# command, not a bare `make tui`. Use tui-local/tui-demo for dev.
+tui: ## disabled here — production trading is manual-only, see comment
+	@echo "make tui is disabled: it would connect to the hosted production" >&2
+	@echo "deployment (wss://rsx.krons.cx) by default. This Makefile is" >&2
+	@echo "dev-only; production trading must be explicit, not one 'make' away." >&2
+	@echo "" >&2
+	@echo "Dev alternatives: make tui-local (local cluster), make tui-demo (mock feed)." >&2
+	@echo "To trade against production intentionally, run directly:" >&2
+	@echo "  RSX_GW_URL=wss://rsx.krons.cx cargo run -q -p rsx-tui" >&2
+	@exit 1
 
 tui-local: ## trade against your local cluster (run 'make local' first)
 	RSX_GW_URL=ws://127.0.0.1:8080 cargo run -q -p rsx-tui
