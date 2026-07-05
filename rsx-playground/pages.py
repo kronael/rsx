@@ -5705,7 +5705,7 @@ CRATES: dict = {
             ".ship/34-COMPARE-RESEARCH/PLAN.md (currently scoped to "
             "rsx-book only)."
         ),
-        "demo": None,
+        "demo": "rsx-matching/demo/match-live-opt.gif",
     },
     "rsx-risk": {
         "name": "rsx-risk",
@@ -5720,7 +5720,7 @@ CRATES: dict = {
         ],
         "compare_dir": None,
         "compare_note": "no external comparison yet.",
-        "demo": None,
+        "demo": "rsx-risk/demo/risk-live-opt.gif",
     },
     "rsx-gateway": {
         "name": "rsx-gateway",
