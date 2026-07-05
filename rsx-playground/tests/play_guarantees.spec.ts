@@ -162,8 +162,12 @@ test.describe("Fill durability", () => {
 test.describe("Order at-most-once", () => {
   test("order returns ack", async ({ request }) => {
     const html = await (await order(request)).text();
+    // A valid ack is any acknowledged outcome: accepted/queued/
+    // submitted, filled (crossed), or resting (GTC rests in the book —
+    // the order was received, not lost). "error" tolerates a degraded
+    // cluster. The invariant is that the order is never silently dropped.
     expect(html).toMatch(
-      /accepted|queued|submitted|gateway|error/i,
+      /accepted|queued|submitted|gateway|error|resting|filled/i,
     );
   });
 

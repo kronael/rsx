@@ -4798,7 +4798,7 @@ async def api_orders_test(request: Request):
                 recent_orders.append(order)
                 _trim_recent_orders()
                 return HTMLResponse(
-                    f'<span class="text-emerald-400 text-xs">'
+                    f'<span class="text-blue-400 text-xs">'
                     f'order {cid} resting (limit rests in the book)'
                     f'</span>')
             order["status"] = "timeout"
