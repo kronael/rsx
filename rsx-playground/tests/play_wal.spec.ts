@@ -132,7 +132,7 @@ test.describe("WAL tab", () => {
     await expect(verifyBtn).toBeVisible();
     await expect(verifyBtn).toHaveAttribute("hx-post", "./api/wal/verify");
 
-    const dumpBtn = page.locator("button", { hasText: "Dump JSON" });
+    const dumpBtn = page.locator("button", { hasText: "Dump (tail)" });
     await expect(dumpBtn).toBeVisible();
     await expect(dumpBtn).toHaveAttribute("hx-post", "./api/wal/dump");
   });
@@ -150,7 +150,7 @@ test.describe("WAL tab", () => {
 
   test("dump JSON button triggers WAL dump action", async ({ page }) => {
     await page.goto("/wal");
-    const dumpBtn = page.locator("button", { hasText: "Dump JSON" });
+    const dumpBtn = page.locator("button", { hasText: "Dump (tail)" });
 
     await dumpBtn.click();
     await waitForHTMX(page);
