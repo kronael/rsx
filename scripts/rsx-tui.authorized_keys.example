@@ -1,0 +1,16 @@
+# Example authorized_keys for the shared `rsx-tui` SSH user.
+#
+# One line per registered trader. `restrict` denies everything (port /
+# agent / X11 forwarding, user-rc, and pty); `pty` re-adds the terminal
+# the full-screen ratatui app needs; `command=` forces this key's own
+# rsx-tui session and ignores whatever the client asked to run. The user
+# id after the dispatch path is that key's RSX_TUI_USER — the only thing
+# that varies per line. See specs/2/54-tui-access.md.
+#
+# Manage with: rsx-tui-authorize add <user_id> <pubkey> <comment>
+#
+# Format:
+#   restrict,pty,command="/usr/local/bin/rsx-tui-dispatch <user_id>" <pubkey> <comment>
+
+restrict,pty,command="/usr/local/bin/rsx-tui-dispatch 42" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleAliceKeyxxxxxxxxxxxxxxxxxxxxxxxx trader-alice
+restrict,pty,command="/usr/local/bin/rsx-tui-dispatch 7" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleBobKeyxxxxxxxxxxxxxxxxxxxxxxxxxx trader-bob
