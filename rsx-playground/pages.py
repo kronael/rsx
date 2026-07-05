@@ -5441,6 +5441,25 @@ CRATES: dict = {
         ),
         "reports": ["20260703_cast-benches.md"],
         "compare_dir": "rsx-cast/compare",
+        # Plain-English opener, shown before the comparison jargon.
+        "compare_lead": (
+            "How casting stacks up against the other ways to move records "
+            "between machines. The thing the table below can't show: casting "
+            "never loses a record, and the log it replays a lost one from is "
+            "the very same log it keeps for audit — no separate archive to "
+            "fall out of sync. Speed is only half the story."
+        ),
+        # Curated Comparisons: the at-a-glance table (extracted from
+        # compare/README.md) plus only the handful of protocols that
+        # matter; the rest are listed, not dumped.
+        "compare_summary": ("README.md", "## At a glance"),
+        "compare_curate": ["raw-udp", "moldudp64", "aeron", "kcp"],
+        "compare_more": (
+            "Full write-ups for the rest — Chronicle Queue, LBM "
+            "(Informatica UM), Quinn/QUIC, SoupBinTCP, TCP, and a "
+            "~70-project census (niche.md) — plus the feature matrix "
+            "live in rsx-cast/compare/README.md."
+        ),
         "compare_note": None,
         "demo": None,
     },
@@ -5685,14 +5704,50 @@ def crate_page(key: str) -> str:
         # compare/ docs live outside the docs/ tree the /docs route
         # serves, so render each file inline instead of linking out.
         parts = []
-        for f in sorted(dir_path.glob("*.md")):
-            text = f.read_text()
+        lead = crate.get("compare_lead")
+        if lead:
             parts.append(
-                f'<details class="mb-2">'
-                f'<summary class="cursor-pointer text-xs text-blue-400 '
-                f'hover:text-blue-300">{html.escape(f.stem)}</summary>'
-                f'<div class="md-content mt-2">{_md_to_html(text)}</div>'
-                f'</details>')
+                '<div class="border border-slate-600/60 rounded-[3px] '
+                'bg-slate-800/50 px-3 py-2 mb-3">'
+                '<p class="text-xs text-slate-300 leading-relaxed">'
+                f'{html.escape(lead)}</p></div>')
+        summary = crate.get("compare_summary")
+        curate = crate.get("compare_curate")
+        if summary and curate:
+            # Curated view: at-a-glance table + only the protocols
+            # that matter; the rest are named, not dumped.
+            sfile, sheading = summary
+            spath = dir_path / sfile
+            section = (_extract_md_section(spath.read_text(), sheading)
+                       if spath.is_file() else None)
+            if section:
+                parts.append(
+                    f'<div class="md-content">{_md_to_html(section)}</div>')
+            for stem in curate:
+                f = dir_path / f"{stem}.md"
+                if not f.is_file():
+                    continue
+                parts.append(
+                    f'<details class="mb-2">'
+                    f'<summary class="cursor-pointer text-xs text-blue-400 '
+                    f'hover:text-blue-300">{html.escape(stem)}</summary>'
+                    f'<div class="md-content mt-2">'
+                    f'{_md_to_html(f.read_text())}</div>'
+                    f'</details>')
+            more = crate.get("compare_more")
+            if more:
+                parts.append(
+                    '<p class="text-[11px] text-slate-500 mt-3">'
+                    f'{html.escape(more)}</p>')
+        else:
+            for f in sorted(dir_path.glob("*.md")):
+                text = f.read_text()
+                parts.append(
+                    f'<details class="mb-2">'
+                    f'<summary class="cursor-pointer text-xs text-blue-400 '
+                    f'hover:text-blue-300">{html.escape(f.stem)}</summary>'
+                    f'<div class="md-content mt-2">{_md_to_html(text)}</div>'
+                    f'</details>')
         compare_body = "".join(parts) if parts else (
             '<p class="text-xs text-slate-500">'
             f'{html.escape(compare_dir)} has no comparison docs.</p>')

@@ -1,5 +1,12 @@
 # rsx-cast Architecture
 
+**In plain terms:** this is the pipe that carries every order and fill
+between the exchange's machines without losing one. If a packet drops,
+the receiver asks for it again — and the resend comes from the same
+on-disk log the system already keeps for replay and audit, so there is
+no second copy to drift out of sync. One bytestream does three jobs:
+live wire, disk, replay.
+
 Domain-agnostic reliable transport. WAL writer/reader, replication
 TCP replay server/client, and casting (C Message Protocol)
 UDP sender/receiver.
@@ -210,31 +217,35 @@ Consumers dedup by `seq`. Risk treats any record with
 
 ## Measured performance
 
-All p50 unless noted. Host: AMD Ryzen 9 5950X (6-core
-slice), Linux 6.1, Rust release, threads pinned. See
+All p50 unless noted. Single 6-core box, Linux 6.1, loopback,
+closed-loop, casting/raw-UDP threads pinned. Headline latency and
+WAL-flush figures are the **2026-07-03** run
+(`reports/20260703_cast-benches.md`); encode/decode, sequential
+read, and cold-tier random-read are from `cast_bench` /
+`wal_random_read_bench` (earlier pass, same host). See
 [BENCHES.md](BENCHES.md) for per-bench attribution,
 [`compare/README.md`](compare/README.md) for the same-harness
 comparison against Aeron / MoldUDP64 / SoupBinTCP / Quinn / KCP /
 raw UDP / TCP, and
 [`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
-for the dated authoritative numbers. casting's loopback RTT
-(9.7 µs) sits at the raw-UDP floor (9.89 µs) — the protocol adds
-~0 µs; 99 % of the send body is the `sendto` syscall.
+for the dated attribution breakdown. casting's loopback RTT
+(8.80 µs) sits at the raw-UDP floor (8.75 µs) — the protocol adds
+~0 µs; ~99 % of the send body is the `sendto` syscall.
 
 | Operation | Measured | Bench |
 |---|---:|---|
 | Protocol-record encode (`Nak` / `CastHeartbeat`) | 43 ns | `cast_bench` |
 | Protocol-record decode | 9 ns | `cast_bench` |
-| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | 31 ns | `wal_bench` |
-| WAL flush + fsync, 1 record | 498 µs | `wal_fsync_bench` (real disk, core-pinned) |
-| WAL flush + fsync, 100 records | 627 µs | `wal_fsync_bench` — fsync dominates |
-| WAL flush + fsync, 1 000 records | 1.19 ms | `wal_fsync_bench` — fsync still dominant |
-| WAL flush + fsync, 10 000 records | 5.94 ms | `wal_fsync_bench` — append overhead visible |
+| `WalWriter::prepare` + `append_framed` (`Vec` extend, no disk I/O) | 36 ns | `wal_bench` |
+| WAL flush + fsync, 1 record | 363 µs | `wal_fsync_bench` (real disk, core-pinned) |
+| WAL flush + fsync, 100 records | 475 µs | `wal_fsync_bench` — fsync dominates |
+| WAL flush + fsync, 1 000 records | 940 µs | `wal_fsync_bench` — fsync still dominant |
+| WAL flush + fsync, 10 000 records | 4.82 ms | `wal_fsync_bench` — append overhead visible |
 | WAL sequential read | ~700 MB/s | `wal_bench` |
-| casting RTT, loopback, 128 B | 9.7 µs | `cast_rtt_bench` |
-| casting one-way, loopback, 128 B | ~5.3 µs | `cast_one_way_bench` |
-| Raw UDP RTT (baseline), loopback, 128 B | 9.89 µs | `compare_all::raw_udp_128b` |
-| `CastSender::send` body (per call) | ~4.0 µs (99 % `sendto`) | `cast_send_breakdown_bench` |
+| casting RTT, loopback, 128 B | 8.80 µs | `cast_rtt_bench` |
+| casting one-way, loopback, 128 B | 4.74 µs | `cast_one_way_bench` |
+| Raw UDP RTT (baseline), loopback, 128 B | 8.75 µs | `compare_all::raw_udp_128b` |
+| `CastSender::send` body (per call) | ~3.6 µs (~99 % `sendto`) | `cast_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 10 K records | 10.4 ms | `wal_random_read_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 100 K records | 80.6 ms | `wal_random_read_bench` |
 
