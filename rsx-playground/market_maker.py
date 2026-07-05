@@ -39,7 +39,7 @@ class DummyMarketMaker:
     def __init__(
         self,
         gateway_url="ws://localhost:8080",
-        marketdata_ws="ws://localhost:8081",
+        marketdata_ws="ws://localhost:8180",
         symbol_ids=None,
         spread_bps=10,
         qty_per_level=10,
