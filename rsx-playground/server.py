@@ -7768,6 +7768,31 @@ async def x_maker_live():
 # ── trading UI: WS proxy + REST proxy + static ─────────
 
 
+async def _safe_ws_close(
+    ws: WebSocket, code: int = 1000, reason: str = ""
+) -> None:
+    """Close a WebSocket at most once.
+
+    After the client disconnects, Starlette has already sent
+    (or received) the close frame, so a second `ws.close()`
+    raises RuntimeError('Unexpected ASGI message
+    "websocket.close" ...') and spams ERROR logs. Skip the
+    close when the socket is already disconnected, and swallow
+    the RuntimeError on the race where it disconnects between
+    the check and the send.
+    """
+    from starlette.websockets import WebSocketState
+    if (
+        ws.application_state == WebSocketState.DISCONNECTED
+        or ws.client_state == WebSocketState.DISCONNECTED
+    ):
+        return
+    try:
+        await ws.close(code=code, reason=reason)
+    except RuntimeError:
+        pass
+
+
 @app.websocket("/ws/private")
 async def ws_private_proxy(ws: WebSocket):
     """Proxy private WS to Gateway."""
@@ -7857,11 +7882,11 @@ async def ws_private_proxy(ws: WebSocket):
                 await asyncio.gather(
                     fwd_up(), fwd_down(),
                     return_exceptions=True)
-                await ws.close(
-                    code=close_code, reason=close_reason)
+                await _safe_ws_close(
+                    ws, code=close_code, reason=close_reason)
     except (ConnectionRefusedError, OSError):
-        await ws.close(code=1013,
-                       reason="gateway not running")
+        await _safe_ws_close(ws, code=1013,
+                             reason="gateway not running")
 
 
 @app.websocket("/ws/public")
@@ -7905,11 +7930,11 @@ async def ws_public_proxy(ws: WebSocket):
                 await asyncio.gather(
                     fwd_up(), fwd_down(),
                     return_exceptions=True)
-                await ws.close(
-                    code=close_code, reason=close_reason)
+                await _safe_ws_close(
+                    ws, code=close_code, reason=close_reason)
     except (ConnectionRefusedError, OSError):
-        await ws.close(code=1013,
-                       reason="marketdata not running")
+        await _safe_ws_close(ws, code=1013,
+                             reason="marketdata not running")
 
 
 async def _probe_gateway_tcp() -> bool:
