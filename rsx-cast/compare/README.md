@@ -15,6 +15,35 @@ LBM). Supporting protocols (TCP, raw UDP, KCP, SoupBinTCP) have
 their own benches and docs — see the supporting section at the
 bottom.
 
+## At a glance
+
+Loopback p50, one fixed 128-byte record, this 6-core box
+(2026-07-03 run, `reports/20260703_cast-benches.md`):
+
+| Transport | p50 RTT | Verdict |
+|---|---:|---|
+| **casting (rsx-cast)** | **8.80 µs** | at the raw-UDP floor — and the WAL it writes for replay/audit IS its retransmit source |
+| raw UDP (baseline) | 8.75 µs | the floor: `sendto`+`recvfrom`, no loss recovery, no durability |
+| MoldUDP64 | 8.81 µs | ties casting — Nasdaq's UDP shape (our clean-room reimpl) |
+| KCP (turbo) | 10.4 µs | userspace reliable-UDP from gaming; slower, no durability |
+| SoupBinTCP | 11.2 µs | TCP + 3-byte framing (our reimpl); head-of-line blocks under loss |
+| Aeron (UDP loopback) | 77.3 µs | HFT-grade, but built for multicast fan-out, not one loopback hop |
+
+One-way delivery — the true per-hop cost, since casting is
+fire-and-forget — is **4.74 µs** (`cast_one_way_bench`); the RTT
+above is a comparison metric (one clock, mirrors the order
+round-trip). Numbers are one loopback workload on one box, closed-loop
+and synthetic; the MoldUDP64 and SoupBinTCP rows are our own
+reimplementations (reference baselines, not the vendors' products) and
+are unpinned this run. Run `cargo bench -p rsx-cast --bench compare_all`
+yourself. Full write-ups and the feature matrix are below.
+
+**Trust boundary.** casting is intentionally unauthenticated
+(`specs/4-cast.md` §10.4, "trusted internal network"); external clients
+are authenticated at the gateway (JWT + TLS), internal peers isolated at
+L3 (firewall/VPC/namespace). "No auth on the wire" is a stated design
+choice, not a gap.
+
 ## What rsx-cast is
 
 - NAK-based reliable UDP unicast (the **casting** half),
