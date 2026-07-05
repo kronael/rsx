@@ -5776,7 +5776,7 @@ def crate_page(key: str) -> str:
     if crate.get("demo"):
         demo_card = _card(
             "Demo",
-            f'<img src="./x/crate-demo/{key}" '
+            f'<img src="/x/crate-demo/{key}" '
             f'alt="{html.escape(key)} demo" '
             f'class="max-w-xs rounded border border-slate-800">')
 
