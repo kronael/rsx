@@ -1,8 +1,8 @@
 """RSX-CAST demonstration page for the playground dashboard.
 
-Self-contained: renders a server-side HTML string (Tailwind CDN + a
-little vanilla JS, no htmx required) that makes rsx-cast's advantages
-visually apparent to a newcomer. Every number on the page is sourced
+Renders the page CONTENT only; server.py wraps it in the shared
+pages.layout() so the cast page gets the dashboard nav, palette, and
+<base href> like every other tab. Every number on the page is sourced
 from the project's own READMEs / benches (see SOURCES below) — nothing
 is invented. Bench vs live is labelled in the UI.
 
@@ -13,22 +13,9 @@ SOURCES (all repo docs, loopback p50 unless noted):
 - rsx-cast/README.md "Two-tier retransmit"           — ring -> WAL horizon
 - specs/2/4-cast.md / CLAUDE.md "Trust boundaries"   — unauthenticated by design
 
-Wire only with the snippet returned by the task; this module imports
-nothing from server.py / pages.py so it stays importable on its own.
+This module imports nothing from server.py / pages.py so it stays
+importable on its own.
 """
-
-# Match the dashboard's Tailwind source resolution without importing
-# pages.py (kept import-free so this module compiles standalone). If a
-# local CDN copy exists, use it; else fall back to the public CDN — same
-# logic pages.py uses.
-from pathlib import Path as _Path
-
-_TAILWIND_LOCAL = _Path(__file__).resolve().parent / "tailwind-play.js"
-_TAILWIND_SRC = (
-    "./static/tailwind-play.js"
-    if _TAILWIND_LOCAL.exists()
-    else "https://cdn.tailwindcss.com"
-)
 
 
 def _card(title, body):
@@ -46,8 +33,8 @@ def _card(title, body):
 
 def _hero():
     return f"""
-<div class="bg-gradient-to-br from-slate-900 to-slate-950
-  border border-blue-900/50 rounded-lg p-5">
+<div class="border-2 border-blue-500/70 rounded-[3px]
+  bg-slate-800/50 p-5">
   <div class="text-blue-400 text-xs font-semibold uppercase
     tracking-wider mb-1">rsx-cast</div>
   <h1 class="text-xl font-bold text-white">
@@ -98,9 +85,9 @@ _RTT = [
      "TCP + 3-byte framing"),
     ("KCP (turbo+spin)", 21, "compare_all::kcp_spin_flush_128b", "amber",
      "gaming RUDP, ARQ + congestion control"),
-    ("Quinn / QUIC", 37, "compare_all::quinn_persistent_128b", "rose",
+    ("Quinn / QUIC", 37, "compare_all::quinn_persistent_128b", "red",
      "TLS 1.3 handshake + congestion-control state"),
-    ("Aeron (UDP)", 305, "compare_aeron", "rose",
+    ("Aeron (UDP)", 305, "compare_aeron", "red",
      "networked UDP path; 21 µs on a tuned AWS c6in"),
 ]
 _RTT_MAX = 305.0
@@ -115,13 +102,13 @@ def _speed_bars():
             "emerald": "bg-emerald-500",
             "slate": "bg-slate-500",
             "amber": "bg-amber-500",
-            "rose": "bg-rose-500",
+            "red": "bg-red-500",
         }[color]
         txt = {
             "emerald": "text-emerald-400",
             "slate": "text-slate-300",
             "amber": "text-amber-400",
-            "rose": "text-rose-400",
+            "red": "text-red-400",
         }[color]
         rows += f"""
   <div class="grid grid-cols-12 items-center gap-2 py-1">
@@ -166,7 +153,7 @@ def _breakdown():
   <div>
     <div class="flex h-7 rounded overflow-hidden text-[10px]
       font-bold text-slate-900">
-      <div class="bg-rose-400 flex items-center justify-center"
+      <div class="bg-red-400 flex items-center justify-center"
         style="width:99%" title="kernel sendto syscall">
         sendto syscall ~99%</div>
       <div class="bg-emerald-400 flex items-center
@@ -176,7 +163,7 @@ def _breakdown():
     <p class="text-xs text-slate-400 mt-2">
       <code class="bg-slate-800 px-1 rounded">CastSender::send</code>
       body is <span class="text-emerald-400 font-bold">~4.0 µs</span>,
-      of which <span class="text-rose-400 font-bold">99% is the
+      of which <span class="text-red-400 font-bold">99% is the
       kernel <code>sendto</code></span>. The protocol's own work —
       assign seq, CRC32C, copy into the preallocated ring — rounds
       to zero. That is <em>why</em> casting sits at the raw-UDP
@@ -239,7 +226,7 @@ def _wire():
     <span class="text-slate-500">[u8;4] · @12</span></div>
 </div>
 <div class="flex gap-1 mt-1 text-[10px] text-center">
-  <div class="{cell} w-full" style="background:rgba(59,130,246,0.08)">
+  <div class="{cell} w-full !bg-blue-500/10">
     <span class="text-blue-300 font-bold">payload — repr(C, align(64)),
       ≤ 65535 B (seq = first u64 of every data record)</span></div>
 </div>
@@ -309,12 +296,12 @@ def _loss_visual():
         "What happens when a packet drops (seq 3 lost)",
         f"""<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
   <div>
-    <div class="text-xs text-rose-400 font-bold mb-2">
+    <div class="text-xs text-red-400 font-bold mb-2">
       TCP — head-of-line blocking</div>
     <div class="flex gap-1 items-center flex-wrap">
       <span class="{seq_box} bg-emerald-600 text-white">1</span>
       <span class="{seq_box} bg-emerald-600 text-white">2</span>
-      <span class="{seq_box} bg-rose-600 text-white">3</span>
+      <span class="{seq_box} bg-red-600 text-white">3</span>
       <span class="{seq_box} bg-slate-700 text-slate-500">4</span>
       <span class="{seq_box} bg-slate-700 text-slate-500">5</span>
     </div>
@@ -422,7 +409,7 @@ def _when_not():
     for head, body in items:
         li += f"""
     <li class="flex gap-2">
-      <span class="text-rose-400">✗</span>
+      <span class="text-red-400">✗</span>
       <span><span class="text-slate-300 font-semibold">{head}</span>
         <span class="text-slate-500"> — {body}</span></span></li>"""
     return _card(
@@ -437,19 +424,9 @@ rsx-cast/README.md</code> "When NOT to use this".</p>""",
 
 
 def cast_page() -> str:
-    """Full standalone HTML for the rsx-cast demonstration page."""
-    nav = """
-<nav class="flex flex-wrap items-center gap-1 px-2 sm:px-4 py-2
-  bg-slate-900 border-b border-slate-800">
-  <span class="text-sm font-bold text-blue-400 mr-4
-    tracking-wider">RSX</span>
-  <a href="./overview" class="text-slate-400 hover:text-white
-    hover:bg-slate-700 px-3 py-1.5 rounded text-xs font-mono">
-    ← Dashboard</a>
-  <span class="bg-slate-700 text-white px-3 py-1.5 rounded
-    text-xs font-mono">Cast</span>
-</nav>"""
-    content = f"""
+    """Content for the rsx-cast page; server.py wraps it in
+    pages.layout() (nav, palette, base href)."""
+    return f"""
 {_hero()}
 {_speed_bars()}
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -459,42 +436,9 @@ def cast_page() -> str:
 {_retransmit()}
 {_loss_visual()}
 {_feature_matrix()}
-{_when_not()}"""
-    return f"""<!DOCTYPE html>
-<html lang="en" class="dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RSX -- Cast</title>
-<script src="{_TAILWIND_SRC}"></script>
-<script>
-tailwind.config = {{
-  darkMode: 'class',
-  theme: {{ extend: {{ fontFamily: {{
-    mono: ['SF Mono', 'Cascadia Code', 'Fira Code',
-      'ui-monospace', 'monospace'],
-  }} }} }},
-}}
-</script>
-<style type="text/tailwindcss">
-  body {{ font-family: theme('fontFamily.mono'); }}
-</style>
-</head>
-<body class="bg-slate-950 text-slate-300 min-h-screen text-[13px]">
-{nav}
-<main class="p-2 sm:p-4 max-w-7xl mx-auto space-y-3">
-{content}
-</main>
-<footer class="mt-8 py-4 px-4 border-t border-slate-800
-  bg-slate-900 text-center text-xs text-slate-500">
+{_when_not()}
+<p class="text-xs text-slate-500 text-center pt-2">
   Every number sourced from repo docs / benches —
   loopback p50, Criterion release. Reproduce:
   <code class="bg-slate-800 px-1 rounded">cargo bench -p rsx-cast
-  --bench compare_all</code>
-</footer>
-</body>
-</html>"""
-
-
-if __name__ == "__main__":
-    print(cast_page())
+  --bench compare_all</code></p>"""

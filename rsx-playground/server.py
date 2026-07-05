@@ -2715,7 +2715,8 @@ async def orders():
 
 @app.get("/cast", response_class=HTMLResponse)
 async def cast_page():
-    return HTMLResponse(cast_demo.cast_page())
+    return HTMLResponse(
+        pages.layout("Cast", cast_demo.cast_page(), "./cast"))
 
 
 @app.get("/latency", response_class=HTMLResponse)
