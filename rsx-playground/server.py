@@ -6988,7 +6988,16 @@ def _maker_running() -> bool:
     info = managed.get(MAKER_NAME)
     if not info:
         return False
-    return info["proc"].returncode is None
+    if info["proc"].returncode is not None:
+        return False
+    # returncode stays None until the proc is awaited/reaped, so a maker
+    # SIGTERM'd by a cluster restart (start_all) still reads as "running"
+    # and never gets respawned. Verify the process is actually alive.
+    try:
+        os.kill(info["proc"].pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 @app.post("/api/maker/start")
