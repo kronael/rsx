@@ -30,8 +30,22 @@ callouts.
 ## Palette + semantics
 
 Dark theme, class-based (`html.dark`, synchronous `<head>` toggle to
-avoid flash). Base is slate; colour is reserved for meaning, used
-sparingly.
+avoid flash). Colour is reserved for meaning, used sparingly.
+
+**Palette: Ayam Cemani ("black iridescence").** The base is a
+green-tinged near-black; the accents are the bird's beetle-green +
+violet feather-sheen. The Tailwind scales are **retuned in one place**
+— `pages.py` `tailwind.config` `theme.extend.colors` — so class names
+below are unchanged; only the rendered colour moved:
+- `slate` → green-tinged near-black ramp (page `#040806`, panel
+  `#0d1712`, borders `#16211b`, body text `#a9bcb2`)
+- `emerald` → neon beetle-green `#22f5a1` (live / filled / speed ⚡)
+- `blue` + `cyan` → dark violet (`#a992ff` info, `#bd83ff` heading,
+  `#7c3aed` ring) — the purple sheen
+- `red` / `amber` → default (error / degraded keep their meaning)
+
+To change the theme, edit that one `colors` block — do NOT hand-swap
+classes across the file.
 
 | Role | Class | Use |
 |---|---|---|
