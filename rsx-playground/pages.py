@@ -3704,40 +3704,28 @@ def render_verify(checks):
                      "border border-emerald-900")
             label = "PASS"
             row_border = ""
-            summary_label = "details"
-            summary_cls = "text-slate-500"
         elif status == "fail":
             badge = ("bg-red-950 text-red-400 "
                      "border border-red-900")
             label = "FAIL"
             row_border = " border border-red-800/60 rounded-[3px]"
-            summary_label = "show reason"
-            summary_cls = "text-red-400"
         elif status == "warn":
             badge = ("bg-yellow-950 text-yellow-400 "
                      "border border-yellow-900")
             label = "WARN"
             row_border = " border border-yellow-800/60 rounded-[3px]"
-            summary_label = "show reason"
-            summary_cls = "text-amber-400"
         else:
             badge = ("bg-slate-800 text-slate-400 "
                      "border border-slate-700")
             label = "SKIP"
             row_border = ""
-            summary_label = "details"
-            summary_cls = "text-slate-500"
+        # reason always inline — no collapse toggle
         detail = ""
         if c.get("detail"):
             detail = (
-                f'<details class="mt-0.5">'
-                f'<summary class="cursor-pointer select-none '
-                f'hover:underline text-[10px] {summary_cls}">'
-                f'{summary_label}</summary>'
                 f'<div class="text-[10px] text-slate-400 '
                 f'whitespace-pre-wrap mt-0.5">'
                 f'{html.escape(str(c["detail"]))}</div>'
-                f'</details>'
             )
         rows += (
             f'<tr class="hover:bg-slate-800/50{row_border}">'
