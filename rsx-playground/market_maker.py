@@ -611,13 +611,26 @@ if __name__ == "__main__":
         maker.start()
         stop_event = asyncio.Event()
 
-        def _handle_sig(*_):
+        def _handle_sig(signum, *_):
+            logger.warning(
+                "maker received signal %s (%s); shutting down",
+                signum, signal.Signals(signum).name,
+            )
             stop_event.set()
 
         loop = asyncio.get_running_loop()
-        loop.add_signal_handler(signal.SIGTERM, _handle_sig)
-        loop.add_signal_handler(signal.SIGINT, _handle_sig)
+        loop.add_signal_handler(
+            signal.SIGTERM, _handle_sig, signal.SIGTERM)
+        loop.add_signal_handler(
+            signal.SIGINT, _handle_sig, signal.SIGINT)
         await stop_event.wait()
         await maker.stop()
 
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except BaseException as e:  # noqa: BLE001 — diagnostic: log any exit
+        logger.error(
+            "maker main exited via %s: %s", type(e).__name__, e)
+        raise
+    finally:
+        logger.warning("maker process exiting")
