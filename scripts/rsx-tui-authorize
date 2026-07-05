@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# Manage the shared rsx-tui SSH user's authorized_keys — the key->user
+# table. Each line pins one pubkey to one RSX_TUI_USER via a forced
+# command (specs/2/54-tui-access.md). Run as the `rsx-tui` user (or with
+# AUTHORIZED_KEYS pointed at its file).
+#
+# Usage:
+#   rsx-tui-authorize add <user_id> <pubkey-file|-> [comment]
+#   rsx-tui-authorize list
+#   rsx-tui-authorize remove <comment>
+#
+# `add` reads the pubkey from a file or stdin (`-`), the ssh-copy-id way.
+# The <comment> is the human label (e.g. trader-alice); it is how you
+# find a line again to remove it, so keep it unique per key.
+
+set -euo pipefail
+
+keys_file=${AUTHORIZED_KEYS:-$HOME/.ssh/authorized_keys}
+dispatch=${RSX_TUI_DISPATCH:-/usr/local/bin/rsx-tui-dispatch}
+# restrict = deny everything (port/agent/X11 forwarding, user-rc, pty),
+# forward-compatible with future OpenSSH restrictions. pty re-adds the one
+# thing a full-screen ratatui app needs. command= forces the dispatch.
+opts="restrict,pty"
+
+die() { echo "rsx-tui-authorize: $*" >&2; exit 1; }
+
+cmd_add() {
+  local user_id=${1:?add: missing user_id} src=${2:?add: missing pubkey} comment=${3:-}
+  case $user_id in '' | *[!0-9]*) die "invalid user_id '$user_id'";; esac
+  local key
+  if [ "$src" = "-" ]; then key=$(cat); else key=$(cat "$src"); fi
+  key=$(printf '%s' "$key" | sed 's/[[:space:]]*$//')
+  [ -n "$key" ] || die "empty pubkey"
+  # Take only the type+base64 (+ any trailing comment) of the first key.
+  local line="${opts},command=\"${dispatch} ${user_id}\" ${key}"
+  [ -n "$comment" ] && line="$line ${comment}"
+  mkdir -p "$(dirname "$keys_file")"
+  touch "$keys_file"
+  chmod 600 "$keys_file"
+  printf '%s\n' "$line" >>"$keys_file"
+  echo "added user_id=$user_id ${comment:+($comment) }to $keys_file"
+}
+
+cmd_list() {
+  [ -r "$keys_file" ] || die "no $keys_file"
+  grep -n "$dispatch" "$keys_file" || echo "(no rsx-tui keys)"
+}
+
+cmd_remove() {
+  local comment=${1:?remove: missing comment}
+  [ -r "$keys_file" ] || die "no $keys_file"
+  local tmp
+  tmp=$(mktemp)
+  grep -v -F -- "$comment" "$keys_file" >"$tmp" || true
+  if cmp -s "$keys_file" "$tmp"; then rm -f "$tmp"; die "no line matching '$comment'"; fi
+  cat "$tmp" >"$keys_file"
+  rm -f "$tmp"
+  echo "removed lines matching '$comment' from $keys_file"
+}
+
+main() {
+  local sub=${1:-}
+  shift || true
+  case $sub in
+    add) cmd_add "$@";;
+    list) cmd_list "$@";;
+    remove) cmd_remove "$@";;
+    *) die "usage: add <user_id> <pubkey|-> [comment] | list | remove <comment>";;
+  esac
+}
+
+main "$@"

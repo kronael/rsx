@@ -321,6 +321,19 @@ tui-local: ## trade against your local cluster (run 'make local' first)
 tui-demo: ## the TUI offline, mock feed (no cluster needed)
 	RSX_GW_URL=mock cargo run -q -p rsx-tui
 
+tui-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access.md)
+	@bash -n scripts/rsx-tui-dispatch && bash -n scripts/rsx-tui-authorize \
+	  && echo "wrappers: syntax ok"
+	@echo "-> install the shared SSH user + wrappers (run as root on the gateway host):"
+	@echo "   sudo useradd --system --create-home --shell /usr/sbin/nologin rsx-tui"
+	@echo "   sudo install -m 0755 scripts/rsx-tui-dispatch /usr/local/bin/"
+	@echo "   sudo install -m 0755 scripts/rsx-tui-authorize /usr/local/bin/"
+	@echo "   sudo install -m 0755 target/release/rsx-tui /usr/local/bin/rsx-tui"
+	@echo "   sudo install -d -o rsx-tui -g rsx-tui -m 0700 /etc/rsx-tui"
+	@echo "   # /etc/rsx-tui/env (mode 0400): RSX_GW_JWT_SECRET=... RSX_GW_URL=wss://rsx.krons.cx"
+	@echo "-> register a trader key: rsx-tui-authorize add <user_id> <pubkey> <comment>"
+	@echo "   example authorized_keys: scripts/rsx-tui.authorized_keys.example"
+
 # Reproducible end-to-end demo: start minimal cluster, submit one IOC
 # order, wait for a fill in the WAL. Exits 0 on success, 1 on timeout.
 # Pre: playground server running (./rsx-playground/playground start)

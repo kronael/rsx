@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# Forced-command target for the shared `rsx-tui` SSH user.
+#
+# sshd invokes this as `rsx-tui-dispatch <user_id>` — the user id is
+# baked into each key's authorized_keys line (the git-shell / gitolite
+# forced-command pattern). The client's PTY becomes that user's live
+# rsx-tui session against the deployment. Managing traders = adding /
+# removing authorized_keys lines, never unix accounts. Full design:
+# specs/2/54-tui-access.md.
+#
+# The authorized_keys file is the key->user table: one line per pubkey,
+# the forced command carries that key's RSX_TUI_USER. There is no second
+# table to drift out of sync.
+
+set -euo pipefail
+
+user_id=${1:?rsx-tui-dispatch: missing user_id (set it in the forced command)}
+
+# The user id is the one piece of input the key line controls. user ids
+# are u32 (CLAUDE.md naming) — reject anything that is not a bare
+# non-negative integer before it reaches rsx-tui's env. This is the trust
+# boundary for the authorized_keys arg.
+case $user_id in
+  '' | *[!0-9]*)
+    echo "rsx-tui-dispatch: invalid user_id '$user_id'" >&2
+    exit 1
+    ;;
+esac
+
+# A forced command still receives whatever the client tried to run, via
+# SSH_ORIGINAL_COMMAND. rsx-tui takes no arguments, so drop it — but say
+# so rather than swallowing it silently.
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  echo "rsx-tui-dispatch: ignoring client command '$SSH_ORIGINAL_COMMAND'" >&2
+fi
+
+# Secret + endpoint live in a root-installed env file (mode 0400, owned
+# by the rsx-tui user), never in authorized_keys. RSX_GW_JWT_SECRET must
+# be set there; RSX_GW_URL defaults to the deployment.
+env_file=${RSX_TUI_ENV_FILE:-/etc/rsx-tui/env}
+if [ -r "$env_file" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+fi
+
+export RSX_TUI_USER=$user_id
+export RSX_GW_URL=${RSX_GW_URL:-wss://rsx.krons.cx}
+
+# The client-supplied user id wins over any RSX_TUI_USER the env file set.
+exec "${RSX_TUI_BIN:-rsx-tui}"
