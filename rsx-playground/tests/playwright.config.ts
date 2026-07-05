@@ -160,5 +160,19 @@ export default defineConfig({
       timeout: 30_000,
       dependencies: ["readiness"],
     },
+    // Shard 8: audit-coverage — link/render/interaction/flow coverage for
+    // the class of bug a render-only suite misses (see .ship/40-*).
+    // Dependency-free: every live-cluster test self-gates on /healthz, so
+    // this lane runs standalone (fast) and also under the full e2e run.
+    {
+      name: "audit-coverage",
+      testMatch: [
+        "play_links.spec.ts",
+        "play_render.spec.ts",
+        "play_controls.spec.ts",
+        "play_flows.spec.ts",
+      ],
+      timeout: 60_000,
+    },
   ],
 });
