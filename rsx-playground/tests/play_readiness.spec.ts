@@ -26,7 +26,12 @@ test.describe("Readiness pipeline", () => {
   // than cascade-fail the 200+ downstream shards. Cheap when
   // already-running (server responds "already running").
   test.beforeAll(async () => {
-    let healthy = false;
+    // Ensure the maker (safety/fault shards stop it via all/stop).
+    // Idempotent + throw-proof so it never fails the hook.
+    await fetch(`${BASE}/api/maker/start?confirm=yes`, {
+      method: "POST",
+      headers: { "x-confirm": "yes" },
+    }).catch(() => {});
     try {
       const r = await fetch(`${BASE}/api/processes`);
       if (r.ok) {
@@ -36,25 +41,16 @@ test.describe("Readiness pipeline", () => {
         const gatewayUp = running.some(
           (p) => p.name.includes("gateway") || p.name.startsWith("gw"),
         );
-        healthy = gatewayUp && running.length >= 4;
+        if (gatewayUp && running.length >= 4) return;
       }
     } catch {
       // fall through to restore
     }
-    if (!healthy) {
-      await fetch(
-        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
-        { method: "POST" }
-      );
-      await new Promise((r) => setTimeout(r, 5000));
-    }
-    // Always ensure the maker: safety/fault shards stop it via all/stop
-    // and never restore it. Idempotent — "already running" if alive.
-    await fetch(`${BASE}/api/maker/start?confirm=yes`, {
-      method: "POST",
-      headers: { "x-confirm": "yes" },
-    });
-    await new Promise((r) => setTimeout(r, 3000));
+    await fetch(
+      `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+      { method: "POST" }
+    );
+    await new Promise((r) => setTimeout(r, 5000));
   });
 
   // ── 1. Core processes ──────────────────────────────────────
