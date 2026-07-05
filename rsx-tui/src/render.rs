@@ -209,7 +209,7 @@ fn draw_statusline(f: &mut Frame, area: Rect, app: &App) {
 fn draw_help(f: &mut Frame, area: Rect) {
     let line = Line::from(Span::styled(
         " q quit  b/s side  t tif  tab field  0-9 type  \
-         ⌫ del  enter submit ",
+         ⌫ del  enter submit  F3 trace ",
         Style::default().fg(Color::DarkGray),
     ));
     f.render_widget(Paragraph::new(line), area);
