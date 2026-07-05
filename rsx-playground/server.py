@@ -2087,6 +2087,21 @@ def strip_ansi(text):
     return _ANSI_RE.sub('', text)
 
 
+def _log_match(fname: str, prefixes) -> bool:
+    """Match a log filename stem to a source hint by component root.
+
+    fname stems are shard-numbered (gw-0, risk-0, me-pengu) or bare
+    (marketdata, mark, server). Compare the leading token before the
+    shard suffix so "mark" does NOT swallow "marketdata".
+    """
+    root = fname.split("-", 1)[0]
+    for p in prefixes:
+        p = p.rstrip("-")
+        if root == p or fname == p:
+            return True
+    return False
+
+
 def read_logs(process=None, level=None, search=None,
               max_lines=200):
     lines = []
@@ -2103,8 +2118,7 @@ def read_logs(process=None, level=None, search=None,
     )
     for lf in log_files:
         fname = lf.stem
-        if proc_prefixes and not any(
-                pref in fname for pref in proc_prefixes):
+        if proc_prefixes and not _log_match(fname, proc_prefixes):
             continue
         try:
             tail = lf.read_text().splitlines()[-max_lines:]
@@ -3538,7 +3552,9 @@ async def x_logs(
         level=level or None,
         search=search or None,
     )
-    return HTMLResponse(pages.render_logs(lines))
+    # newest-first so the freshest line is visible without scrolling
+    # (matches the live-tail prepend order).
+    return HTMLResponse(pages.render_logs(list(reversed(lines))))
 
 
 @app.get("/x/logs-tail", response_class=HTMLResponse)

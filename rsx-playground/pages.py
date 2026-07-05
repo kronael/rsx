@@ -1521,6 +1521,8 @@ def logs_page():
     <button id="fp-marketdata"class="log-fp log-pill"              onclick="setProc('marketdata')">mktdata</button>
     <button id="fp-mark"      class="log-fp log-pill"              onclick="setProc('mark')">mark</button>
     <button id="fp-recorder"  class="log-fp log-pill"              onclick="setProc('recorder')">rec</button>
+    <button id="fp-maker"     class="log-fp log-pill"              onclick="setProc('maker')">maker</button>
+    <button id="fp-server"    class="log-fp log-pill"              onclick="setProc('server')">server</button>
     <span class="text-slate-700 mx-1">|</span>
     <span class="text-xs text-slate-500 mr-1">level</span>
     <button id="fl-all"  class="log-fl log-pill log-pill-on"         onclick="setLevel('')">all</button>
@@ -3564,32 +3566,40 @@ def render_wal_timeline(records=None):
 # ── Logs ─────────────────────────────────────────────────
 
 def _parse_log_line(line):
-    """Split '[fname] <ISO ts> LEVEL target: msg' into parts.
+    """Split a read_logs line into (source, time_str, level, message).
 
-    Returns (source, time_str, level, message).  Falls back to
-    ('', '', '', line) when the format doesn't match.
+    read_logs always prefixes '[fname] '. After the source, both the
+    ISO timestamp and the level are OPTIONAL, and the level may be
+    space- OR colon-delimited so uvicorn access lines parse too:
+      [gw-0] 2026-05-31T12:34:56.789012Z INFO rsx_gateway::ws: up  (rust)
+      [server] INFO:     127.0.0.1 - "GET / HTTP/1.1" 200 OK        (uvicorn)
+      [maker] maker received signal 15                             (plain)
+    Falls back to ('', '', '', line) only when there is no [source].
     """
     import re
-    # [gw-0] 2026-05-31T12:34:56.789012Z INFO rsx_gateway::ws: connected
-    m = re.match(
-        r'^\[([^\]]+)\]\s+'          # [source]
-        r'(\S+)\s+'                   # timestamp
-        r'(ERROR|WARN|INFO|DEBUG|TRACE)\s+'  # level
-        r'(.*)$',                     # rest (target: msg)
-        line,
-    )
+    m = re.match(r'^\[([^\]]+)\]\s*(.*)$', line, re.S)
     if not m:
         return ('', '', '', line)
     src = m.group(1)
-    ts = m.group(2)
-    lvl = m.group(3)
-    msg = m.group(4)
-    # compact timestamp → HH:MM:SS.mmm
-    tm = re.sub(r'^.*T(\d{2}:\d{2}:\d{2})\.(\d{3}).*$',
-                r'\1.\2', ts)
-    if tm == ts:          # no match → keep short slice
-        tm = ts[11:23] if len(ts) > 23 else ts
-    return (src, tm, lvl, msg)
+    rest = m.group(2)
+    # optional ISO timestamp (rust tracing lines)
+    tm = ''
+    tsm = re.match(r'^(\S*T\d{2}:\d{2}:\d{2}\S*)\s+(.*)$', rest, re.S)
+    if tsm:
+        ts = tsm.group(1)
+        rest = tsm.group(2)
+        tm = re.sub(r'^.*T(\d{2}:\d{2}:\d{2})\.(\d{3}).*$',
+                    r'\1.\2', ts)
+        if tm == ts:      # no sub → keep short slice
+            tm = ts[11:23] if len(ts) > 23 else ts
+    # optional level, space- or colon-delimited
+    lvl = ''
+    lm = re.match(
+        r'^(ERROR|WARN|INFO|DEBUG|TRACE)[:\s]\s*(.*)$', rest, re.S)
+    if lm:
+        lvl = lm.group(1)
+        rest = lm.group(2)
+    return (src, tm, lvl, rest)
 
 
 def render_logs(lines):
@@ -3609,7 +3619,7 @@ def render_logs(lines):
     for line in lines:
         src, tm, lvl, msg = _parse_log_line(line)
         badge_cls, badge_lbl = _LVL_BADGE.get(
-            lvl, ('text-slate-500', lvl[:3] or '?'))
+            lvl, ('text-slate-600', lvl[:3] or '·'))
         safe_src  = html.escape(src  or '—')
         safe_tm   = html.escape(tm)
         safe_msg  = html.escape(msg or line)
