@@ -53,46 +53,37 @@ TABS = [
 # (see layout head script); the arc is walked in nav order.
 PAGE_HINTS = {
     "./overview": (
-        "start here: boot the exchange and watch it come alive. "
-        "next &rarr; Topology to see how the seven processes wire "
-        "together.",
+        "start here: boot the exchange and watch it come alive.",
         "./topology", "Topology",
     ),
     "./topology": (
         "the process map &mdash; an order routes gateway &rarr; "
-        "risk &rarr; matching and back. next &rarr; Components to "
-        "open up each box.",
+        "risk &rarr; matching and back.",
         "./components", "Components",
     ),
     "./cast": (
         "casting/UDP carries every order and fill between "
-        "processes, and the WAL records the same bytes for replay. "
-        "next &rarr; Book to watch the orderbook those messages "
-        "build.",
+        "processes; the WAL records the same bytes for replay.",
         "./book", "Book",
     ),
     "./book": (
         "the live orderbook where resting orders meet incoming "
-        "ones. next &rarr; Risk, which vets every order before it "
-        "lands here.",
+        "ones.",
         "./risk", "Risk",
     ),
     "./risk": (
         "risk checks margin before an order reaches the book and "
-        "updates positions on every fill. next &rarr; WAL to see "
-        "those events persisted.",
+        "updates positions on every fill.",
         "./wal", "WAL",
     ),
     "./wal": (
         "every order and fill is appended here &mdash; the same "
-        "bytes on disk, on the wire, and in the replay stream. "
-        "next &rarr; Latency to see how fast the round-trip runs.",
+        "bytes on disk, on the wire, and in the replay stream.",
         "./latency", "Latency",
     ),
     "./latency": (
         "measures the gateway &rarr; matching &rarr; gateway "
-        "round-trip end to end. next &rarr; Orders to send one "
-        "yourself.",
+        "round-trip end to end.",
         "./orders", "Orders",
     ),
     "./orders": (
