@@ -263,6 +263,18 @@ def _hint_bar(active_tab):
 </div>"""
 
 
+def nested_base(path: str) -> str:
+    """Return the <base href> for a page served at `path`.
+
+    The base must point from the page back to the app root so nav/static/
+    HTMX resolve under any deploy prefix. Depth = number of path segments:
+    a 1-segment root page (/overview) → "./"; a 2-segment nested page
+    (/crate/x, /stress/id) → "../"; 3-segment → "../../". NEVER absolute "/".
+    """
+    segments = [s for s in path.split("/") if s]
+    return "../" * (len(segments) - 1) or "./"
+
+
 def layout(title, content, active_tab="./overview", base="./"):
     """Wrap content in full page with nav tabs.
 
@@ -1010,7 +1022,7 @@ def render_component_detail(component, data):
     if component in COMPONENTS:
         comp_name = COMPONENTS[component]["name"]
         comp_link = (
-            f'<a href="../component/{html.escape(component)}" '
+            f'<a href="./component/{html.escape(component)}" '
             f'class="ml-3 text-xs text-blue-400 '
             f'hover:text-blue-300 shrink-0">'
             f'&rarr; open {html.escape(comp_name)} page</a>'
@@ -5407,7 +5419,7 @@ def stress_report_page(data):
 
     nav = f"""
 <div class="mb-4">
-  <a href="../stress" class="text-blue-400 hover:underline text-xs">
+  <a href="stress" class="text-blue-400 hover:underline text-xs">
     ← Back to Stress Tests
   </a>
 </div>
@@ -5423,7 +5435,10 @@ def stress_report_page(data):
 {latency_card}
     """
 
-    return layout(f"Stress Report: {ts_fmt}", content, active_tab="./stress")
+    return layout(
+        f"Stress Report: {ts_fmt}", content,
+        active_tab="./stress", base=nested_base("/stress/{report_id}"),
+    )
 
 
 def maker_status_html(stats: dict, pid, liquidity_live=True) -> str:
