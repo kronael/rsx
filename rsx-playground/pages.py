@@ -5481,7 +5481,11 @@ CRATES: dict = {
     },
     "rsx-matching": {
         "name": "rsx-matching",
-        "tagline": "Matching engine binary. One instance per symbol.",
+        "tagline": (
+            "The matching engine. Pairs each order against the resting "
+            "book, records the fills, fans them out — a flat ~30 ns "
+            "match, price-agnostic, one core-pinned loop per symbol."
+        ),
         "reports": ["20260703_matching-benches.md"],
         "compare_dir": None,
         "compare_note": (
@@ -5493,7 +5497,11 @@ CRATES: dict = {
     },
     "rsx-risk": {
         "name": "rsx-risk",
-        "tagline": "Risk engine binary. One instance per user shard.",
+        "tagline": (
+            "The pre-trade gate. Vets every order's margin before it can "
+            "reach the book, in ~110 ns — what stops one blown-up trader "
+            "from taking the exchange down; one instance per user shard."
+        ),
         "reports": [
             "20260530_component-benches.md",
             "20260530_risk-capacity-flood.md",
