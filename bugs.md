@@ -577,3 +577,36 @@ cluster; does NOT fix the underlying vulnerability.
 mid_price / computed slot count — reject or clamp a replay-derived price that
 would size the level array beyond a sane cap (e.g. a few million slots), and
 harden replay record decode against torn records (length/price sanity).
+
+## PLAYGROUND-MARKET-ORDER-REJECTED-BY-GATEWAY [OPEN]
+**Severity:** MED (a whole order type is unusable from the playground)
+**Where:** `rsx-playground/server.py` `api_orders_test` market path
+(`order_type == "market"` → `price_int = 0`) → gateway.
+**Symptom:** submitting a market order (`order_type=market`, `price=0`) via
+`/api/orders/test` returns `rejected: price not tick aligned`. The dashboard's
+own tick check is correctly skipped for market orders, so the rejection comes
+from the **gateway** (an E frame): it treats `price_raw=0` as non-tick-aligned
+rather than as a market marker.
+**Repro:** `curl -X POST .../api/orders/test -d 'side=buy&order_type=market&price=0&qty=10&user_id=1'`
+→ red "rejected: price not tick aligned" (200). A tick-aligned crossing LIMIT
+(e.g. buy 51000 vs asks ~50150) fills fine.
+**Impact:** market orders don't work end-to-end; the latency test was switched
+to a crossing limit as a workaround (`play_latency.spec.ts`).
+**Also observed:** an unaligned LIMIT (buy 50201, tick=50) FILLED — the gateway
+does NOT strictly enforce tick alignment for limits, yet rejects price-0 market
+orders for it. Inconsistent. Needs a spec decision: does the gateway support
+market orders (price 0 / a market flag), or is the exchange limit-only?
+**Fix (defer, record only):** either (a) gateway accepts a market order marker
+(price 0 or an explicit type) and matches at best-opposite, or (b) the
+playground sends a crossing tick-aligned limit for "market" and drops the
+price-0 path. Decide the product answer first.
+
+## PLAYGROUND-DASHBOARD-STALE-PID-RESTART-RACE [OPEN]
+**Severity:** LOW (dev ergonomics)
+**Where:** `rsx-playground/playground` restart vs a dashboard started outside
+the wrapper (no PID file).
+**Symptom:** if a dashboard is launched directly (not via `./playground
+start`), `./playground restart` can't see it (no PID file) and aborts on a
+stale-PID race; subs had to `kill` by PID and relaunch via the wrapper.
+**Fix (defer, record only):** have restart fall back to port-owner lookup
+(`ss -ltnp` on 49171) when the PID file is missing/stale.
