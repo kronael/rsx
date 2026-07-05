@@ -1292,11 +1292,34 @@ def check_confirm(request: Request, endpoint: str):
     return None
 
 
+def expected_process_names() -> set[str]:
+    """The ONE set of processes the running demo expects: the current
+    scenario's spawn plan (the cluster) PLUS the maker. The maker is a
+    first-class member of the running system, so it's counted the same
+    way everywhere — this is the single definition behind every
+    'running/expected' surface (nav chip, pulse, key metrics, verify,
+    healthz). Fixes the 7/7-vs-6/6-vs-7/6 disagreement (#11)."""
+    names = {n for n, _, _ in get_spawn_plan(current_scenario)}
+    names.add(MAKER_NAME)
+    return names
+
+
+def process_counts(procs=None) -> tuple[int, int]:
+    """(running, expected) using expected_process_names()."""
+    if procs is None:
+        procs = _cached_for("procs", 1.0, scan_processes)
+    expected = expected_process_names()
+    running = sum(
+        1 for p in procs
+        if p.get("state") == "running" and p["name"] in expected)
+    return running, len(expected)
+
+
 @app.get("/healthz")
 async def healthz():
     """Health check for CLI."""
     procs = scan_processes()
-    running = [p for p in procs if p.get("state") == "running"]
+    running, expected = process_counts(procs)
     gateway_up, marketdata_up = await asyncio.gather(
         _probe_gateway_tcp(),
         _probe_marketdata_tcp(),
@@ -1304,8 +1327,8 @@ async def healthz():
     return {
         "status": "ok",
         "port": 49171,
-        "processes_running": len(running),
-        "processes_total": len(procs),
+        "processes_running": running,
+        "processes_total": expected,
         "postgres": pg_pool is not None,
         "gateway": gateway_up,
         "marketdata": marketdata_up,
@@ -2556,6 +2579,7 @@ async def x_topology_summary():
     procs = scan_processes()
     running = [p for p in procs
                if p.get("state") == "running"]
+    run_count, exp_count = process_counts(procs)
     names = ", ".join(p["name"] for p in running)
     gw_up = any(
         any(h in p["name"] for h in PROC_HINTS["gateway"])
@@ -2582,7 +2606,7 @@ async def x_topology_summary():
         f'{_dot(md_up)} '
         f'<span class="text-slate-400">MD</span> '
         f'<span class="text-slate-500 ml-2">'
-        f'{len(running)}/{len(procs)} running</span>'
+        f'{run_count}/{exp_count} running</span>'
         f'<span class="text-slate-600 ml-auto truncate '
         f'max-w-[300px]">{names}</span>'
     )
@@ -3055,7 +3079,9 @@ async def x_processes():
 @app.get("/x/proc-chip", response_class=HTMLResponse)
 async def x_proc_chip():
     procs = _cached_for("procs", 1.0, scan_processes)
-    return HTMLResponse(pages.render_proc_chip(procs))
+    running, expected = process_counts(procs)
+    return HTMLResponse(
+        pages.render_proc_chip(procs, running, expected))
 
 
 _BENCH_BASELINE_FILE = ROOT / "bench-baseline.json"
@@ -3142,20 +3168,35 @@ def _compute_health() -> dict:
     # Recent error / panic lines across log files. Read only
     # the trailing 64 KB of each log (not the entire file) so
     # /x/health stays fast on multi-megabyte logs.
+    #
+    # Only dock for signals from a process that is CURRENTLY down —
+    # a "panicked at" line from a process that has since auto-restarted
+    # and is running again is stale (the restart COUNT already docks
+    # for that instability; double-docking pinned the gauge yellow on a
+    # healthy 7/7 cluster, #12). "fatal" was dropped — too broad, it
+    # matched benign lines. Broken-pipe WRN (client disconnects) is not
+    # an error (#14).
+    running_names = {
+        p["name"] for p in procs if p.get("state") == "running"
+    }
     err_count = 0
     panic_seen = False
     if LOG_DIR.exists():
         for lf in sorted(LOG_DIR.glob("*.log")):
+            if lf.stem in running_names:
+                continue  # process recovered — its log tail is stale
             for line in _tail_lines(lf, max_lines=200):
                 low = line.lower()
-                if "panicked at" in low or "fatal" in low:
+                if "broken pipe" in low:
+                    continue
+                if "panicked at" in low:
                     panic_seen = True
                     err_count += 1
                 elif " error " in low or " err " in low:
                     err_count += 1
     if panic_seen:
         score -= 25
-        reasons.append("-25 (panic in logs)")
+        reasons.append("-25 (panic in a down process)")
     elif err_count > 0:
         penalty = min(30, err_count)
         score -= penalty
@@ -3235,6 +3276,11 @@ def _count_recent_errors(max_lines: int = 200) -> int:
     for lf in LOG_DIR.glob("*.log"):
         for line in _tail_lines(lf, max_lines=max_lines):
             low = line.lower()
+            # Broken-pipe WRN = a client/peer disconnected mid-write;
+            # benign and high-volume (thousands of lines). Counting it
+            # made the Errors metric disagree with everything else (#14).
+            if "broken pipe" in low:
+                continue
             if (" error " in low or " err " in low
                     or " warn " in low
                     or "panicked at" in low):
@@ -3276,24 +3322,20 @@ async def x_key_metrics():
     errs = _cached_for(
         "recent_errors", 1.0, _count_recent_errors)
     procs = _cached_for("procs", 1.0, scan_processes)
+    proc_running, proc_expected = process_counts(procs)
     streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
     return HTMLResponse(
         pages.render_key_metrics(
             procs, streams,
             active_orders=ao, positions=pos_count,
-            msgs_sec=mps, error_count=errs))
+            msgs_sec=mps, error_count=errs,
+            proc_running=proc_running, proc_expected=proc_expected))
 
 
 @app.get("/x/pulse", response_class=HTMLResponse)
 async def x_pulse():
     procs = _cached_for("procs", 1.0, scan_processes)
-    plan_names = {
-        name for name, _, _ in get_spawn_plan(current_scenario)}
-    running = sum(
-        1 for p in procs
-        if p.get("state") == "running"
-        and p["name"] in plan_names)
-    expected = len(plan_names)
+    running, expected = process_counts(procs)
     streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
     wal_files = sum(s.get("files", 0) for s in streams)
     elapsed = max(1, time.time() - SERVER_START)
@@ -3360,7 +3402,8 @@ async def x_invariant_status():
 @app.get("/x/core-affinity", response_class=HTMLResponse)
 async def x_core_affinity():
     return HTMLResponse(
-        pages.render_core_affinity(scan_processes()))
+        pages.render_core_affinity(
+            _cached_for("procs", 1.0, scan_processes)))
 
 
 @app.get("/x/cast-flows", response_class=HTMLResponse)
@@ -3452,14 +3495,20 @@ def _cast_pipe_counts() -> dict:
 
 @app.get("/x/control-grid", response_class=HTMLResponse)
 async def x_control_grid():
+    # Share the 1s procs cache with every other CPU-bearing surface
+    # (process table, resource usage) so CPU% reads identically across
+    # Control and Overview instead of resampling a stateful
+    # cpu_percent() per endpoint (#31).
     return HTMLResponse(
-        pages.render_control_grid(scan_processes()))
+        pages.render_control_grid(
+            _cached_for("procs", 1.0, scan_processes)))
 
 
 @app.get("/x/resource-usage", response_class=HTMLResponse)
 async def x_resource_usage():
     return HTMLResponse(
-        pages.render_resource_usage(scan_processes()))
+        pages.render_resource_usage(
+            _cached_for("procs", 1.0, scan_processes)))
 
 
 @app.get("/x/faults-grid", response_class=HTMLResponse)
@@ -3591,8 +3640,12 @@ async def x_book_stats():
             bbo = _snap_to_bbo(sid, snap)
             if bbo:
                 stats[sid] = bbo
+    # Mark which symbols have a LIVE matching engine so the stats
+    # table can badge the rest as stale instead of presenting a dead
+    # symbol's last BBO as live liquidity (#17).
+    live = {sid for sid in stats if _me_live(sid)}
     return HTMLResponse(
-        pages.render_book_stats(stats))
+        pages.render_book_stats(stats, live_symbols=live))
 
 
 @app.get("/x/live-fills", response_class=HTMLResponse)
@@ -5025,17 +5078,19 @@ async def _run_invariant_checks() -> list[dict]:
             })
 
     procs = scan_processes()
-    running = [p for p in procs if p.get("state") == "running"]
-    expected = get_spawn_plan(current_scenario)
-    expected_count = len(expected)
-    all_running = (
-        len(running) >= expected_count > 0
-    )
-    running_names = {p["name"] for p in running}
-    expected_names = [name for name, _, _ in expected]
-    down = [n for n in expected_names if n not in running_names]
+    # Same (running/expected) definition as every other surface (#11):
+    # cluster spawn plan + maker. Counting ALL running procs against a
+    # maker-less expected produced the impossible "7/6 running".
+    expected_names = expected_process_names()
+    expected_count = len(expected_names)
+    running_names = {
+        p["name"] for p in procs
+        if p.get("state") == "running"}
+    running_count = len(running_names & expected_names)
+    all_running = running_count >= expected_count > 0
+    down = sorted(expected_names - running_names)
     if procs:
-        proc_detail = f"{len(running)}/{expected_count} running"
+        proc_detail = f"{running_count}/{expected_count} running"
         if down:
             proc_detail += "; down: " + ", ".join(down)
     else:
@@ -6243,8 +6298,8 @@ async def api_wal_verify():
         f'{total_files} files</span>')
 
 
-_WAL_DUMP_BYTE_CAP = 64 * 1024   # stop reading after 64 KiB
-_WAL_DUMP_LINE_CAP = 200         # ...or 200 records, whichever first
+_WAL_DUMP_HEAD = 512 * 1024      # bytes of the file to feed rsx-cli
+_WAL_DUMP_LINE_CAP = 200         # records rendered, whichever first
 
 
 @app.post("/api/wal/dump")
@@ -6264,54 +6319,54 @@ async def api_wal_dump():
     except OSError:
         file_size = 0
 
-    # rsx-cli `dump` prints the WHOLE file (no limit flag). A rotated
-    # archive can be gigabytes, so buffering all of stdout OOMs the
-    # dashboard. Instead: read the child's stdout incrementally, stop
-    # at a byte/line cap, then kill it — bounded RAM regardless of
-    # file size.
-    proc = await asyncio.create_subprocess_exec(
-        str(ROOT / "target" / "debug" / "rsx-cli"),
-        "dump", str(latest_path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    chunks: list[bytes] = []
-    total = 0
-    lines = 0
-    truncated = False
+    # rsx-cli `dump` read_to_end()s the WHOLE file — a rotated archive
+    # can be gigabytes and OOMs the CLI before it prints a line. But
+    # dump_file breaks cleanly on a partial trailing record, so we can
+    # feed it just the HEAD of the file: copy the first _WAL_DUMP_HEAD
+    # bytes to a temp file and dump that. Bounded RAM regardless of
+    # the source file size.
+    head = b""
     try:
-        assert proc.stdout is not None
-        while total < _WAL_DUMP_BYTE_CAP and lines < _WAL_DUMP_LINE_CAP:
-            line = await asyncio.wait_for(
-                proc.stdout.readline(), timeout=5.0)
-            if not line:
-                break
-            chunks.append(line)
-            total += len(line)
-            lines += 1
-        else:
-            truncated = True
-    except (asyncio.TimeoutError, AssertionError):
-        truncated = True
-    finally:
-        if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                pass
+        with open(latest_path, "rb") as fp:
+            head = fp.read(_WAL_DUMP_HEAD)
+    except OSError as e:
+        return HTMLResponse(
+            f'<div class="text-amber-400 text-xs">cannot read '
+            f'{html.escape(file_name)}: {html.escape(str(e))}</div>')
+    truncated = len(head) < file_size
 
-    output = b"".join(chunks).decode(errors="replace")
-    if not output:
+    tmp_dump = TMP / f"waldump-{os.getpid()}-{int(time.time()*1e6)}.wal"
+    output = ""
+    err = ""
+    try:
+        tmp_dump.write_bytes(head)
+        proc = await asyncio.create_subprocess_exec(
+            str(ROOT / "target" / "debug" / "rsx-cli"),
+            "dump", str(tmp_dump),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         try:
-            err = (await asyncio.wait_for(
-                proc.stderr.read(2000), timeout=1.0)).decode(
-                errors="replace")
-        except (asyncio.TimeoutError, AttributeError):
-            err = ""
+            out_b, err_b = await asyncio.wait_for(
+                proc.communicate(), timeout=10.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            out_b, err_b = b"", b"timeout"
+        output = out_b.decode(errors="replace")
+        err = err_b.decode(errors="replace")
+    finally:
+        tmp_dump.unlink(missing_ok=True)
+
+    # cap the rendered records
+    all_lines = [ln for ln in output.splitlines() if ln.strip()]
+    lines = len(all_lines)
+    if lines > _WAL_DUMP_LINE_CAP:
+        all_lines = all_lines[:_WAL_DUMP_LINE_CAP]
+        truncated = True
+        lines = _WAL_DUMP_LINE_CAP
+    output = "\n".join(all_lines)
+
+    if not output:
         return HTMLResponse(
             f'<div class="text-amber-400 text-xs">no records '
             f'read from {html.escape(file_name)}'
