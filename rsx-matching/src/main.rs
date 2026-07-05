@@ -18,12 +18,12 @@ use rsx_cast::wal::WalWriter;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
-use rsx_matching::wal_integration::flush_if_due;
-use rsx_matching::wal_integration::load_snapshot;
-use rsx_matching::wal_integration::load_wal_seq;
-use rsx_matching::wal_integration::replay_wal_after_snapshot;
-use rsx_matching::wal_integration::save_snapshot;
-use rsx_matching::wal_integration::publish_events;
+use rsx_matching::wal::flush_if_due;
+use rsx_matching::wal::load_snapshot;
+use rsx_matching::wal::load_wal_seq;
+use rsx_matching::wal::replay_wal_after_snapshot;
+use rsx_matching::wal::save_snapshot;
+use rsx_matching::wal::publish_events;
 use rsx_book::event::CANCEL_USER;
 use rsx_book::event::REASON_CANCELLED;
 use rsx_matching::wire::OrderMessage;
@@ -835,7 +835,7 @@ fn main() {
                 gap_end_inclusive.saturating_sub(gap_start) + 1;
             gauges.drops.fetch_add(skipped, Ordering::Relaxed);
             warn!(
-                "matching tile FAULTED: skipping unrecoverable order \
+                "matching loop FAULTED: skipping unrecoverable order \
                  gap [{}..={}] ({} seq) after last_delivered={}; \
                  clients re-send dropped pre-ack orders (WAL dedup = \
                  exactly-once)",
