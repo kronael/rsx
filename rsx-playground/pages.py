@@ -5736,8 +5736,8 @@ def crate_page(key: str) -> str:
 
     content = (
         f"\n{header}\n"
-        f"{description_card}\n"
         f"{why_card}\n"
+        f"{description_card}\n"
         f"{benchmarks_card}\n"
         f"{comparisons_card}\n"
         f"{demo_card}\n"
