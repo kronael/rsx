@@ -118,7 +118,29 @@ async function restoreHealthy() {
     method: "POST",
     headers: { "x-confirm": "yes" },
   }).catch(() => {});
-  await new Promise((r) => setTimeout(r, 3000));
+  await waitForBook();
+}
+
+// Poll until the maker has re-seeded both sides of the book — proof the
+// full order path (gateway → risk → ME → book) is live, not just that
+// the processes are up. Order tests hang / return empty if they submit
+// before this.
+async function waitForBook() {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(`${BASE}/api/book/10`);
+      if (r.ok) {
+        const b = await r.json();
+        if ((b.bids?.length ?? 0) >= 1 && (b.asks?.length ?? 0) >= 1) {
+          return;
+        }
+      }
+    } catch {
+      // transient — retry
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 }
 
 async function pollUntil(
@@ -326,6 +348,9 @@ test.describe.serial("Safety: process crash & recovery",
         // immediately start without waiting
         await startProcess(request, "gw-0");
         await new Promise((r) => setTimeout(r, 2000));
+        // wait for the order path to recover before submitting (a cold
+        // gateway restart + re-seed can take longer than 2 s)
+        await waitForBook();
         // no duplicate process entries
         const res = await request.get("/api/processes");
         const procs = await res.json();
@@ -490,6 +515,7 @@ test.describe("Safety: operational safety", () => {
     }
     if (!healthy) await ensureAll(request);
     await ensureMaker(request);
+    await waitForBook();
   });
 
   test("confirm=yes required for destructive actions",
