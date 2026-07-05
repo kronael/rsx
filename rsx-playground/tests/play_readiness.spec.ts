@@ -26,6 +26,7 @@ test.describe("Readiness pipeline", () => {
   // than cascade-fail the 200+ downstream shards. Cheap when
   // already-running (server responds "already running").
   test.beforeAll(async () => {
+    let healthy = false;
     try {
       const r = await fetch(`${BASE}/api/processes`);
       if (r.ok) {
@@ -35,16 +36,25 @@ test.describe("Readiness pipeline", () => {
         const gatewayUp = running.some(
           (p) => p.name.includes("gateway") || p.name.startsWith("gw"),
         );
-        if (gatewayUp && running.length >= 4) return;
+        healthy = gatewayUp && running.length >= 4;
       }
     } catch {
       // fall through to restore
     }
-    await fetch(
-      `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
-      { method: "POST" }
-    );
-    await new Promise((r) => setTimeout(r, 5000));
+    if (!healthy) {
+      await fetch(
+        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+        { method: "POST" }
+      );
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    // Always ensure the maker: safety/fault shards stop it via all/stop
+    // and never restore it. Idempotent — "already running" if alive.
+    await fetch(`${BASE}/api/maker/start?confirm=yes`, {
+      method: "POST",
+      headers: { "x-confirm": "yes" },
+    });
+    await new Promise((r) => setTimeout(r, 3000));
   });
 
   // ── 1. Core processes ──────────────────────────────────────
