@@ -7054,7 +7054,7 @@ async def api_maker_status():
             "pid": None,
             "name": MAKER_NAME,
             "levels": 0,
-            "errors": None,
+            "errors": [],
             "stale": True,
         }
     stats = _read_maker_stats()
