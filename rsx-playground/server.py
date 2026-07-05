@@ -67,16 +67,16 @@ PG_URL = os.environ.get(
 )
 
 GATEWAY_URL = os.environ.get(
-    "GATEWAY_URL", "ws://localhost:8080"
+    "GATEWAY_URL", "ws://127.0.0.1:8080"
 )
 GATEWAY_HTTP = os.environ.get(
-    "GATEWAY_HTTP", "http://localhost:8080"
+    "GATEWAY_HTTP", "http://127.0.0.1:8080"
 )
 MARKETDATA_WS = os.environ.get(
-    "MARKETDATA_WS", "ws://localhost:8180"
+    "MARKETDATA_WS", "ws://127.0.0.1:8180"
 )
 AUTH_HTTP = os.environ.get(
-    "AUTH_HTTP", "http://localhost:8082"
+    "AUTH_HTTP", "http://127.0.0.1:8082"
 )
 PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""

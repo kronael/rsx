@@ -38,8 +38,8 @@ class DummyMarketMaker:
 
     def __init__(
         self,
-        gateway_url="ws://localhost:8080",
-        marketdata_ws="ws://localhost:8180",
+        gateway_url="ws://127.0.0.1:8080",
+        marketdata_ws="ws://127.0.0.1:8180",
         symbol_ids=None,
         spread_bps=10,
         qty_per_level=10,
@@ -130,7 +130,7 @@ class DummyMarketMaker:
         port = os.environ.get(
             "RSX_PLAYGROUND_PORT", "49171"
         )
-        url = f"http://localhost:{port}/api/mark/prices"
+        url = f"http://127.0.0.1:{port}/api/mark/prices"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -595,9 +595,9 @@ if __name__ == "__main__":
 
     maker = DummyMarketMaker(
         gateway_url=os.environ.get(
-            "GATEWAY_URL", "ws://localhost:8080"),
+            "GATEWAY_URL", "ws://127.0.0.1:8080"),
         marketdata_ws=os.environ.get(
-            "MARKETDATA_WS", "ws://localhost:8180"),
+            "MARKETDATA_WS", "ws://127.0.0.1:8180"),
         spread_bps=_env_int("RSX_MAKER_SPREAD_BPS", 10),
         qty_per_level=_env_int("RSX_MAKER_QTY", 10),
         num_levels=_env_int("RSX_MAKER_LEVELS", 5),
