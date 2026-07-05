@@ -2945,10 +2945,15 @@ def render_health(procs, pg_ok):
 def render_key_metrics(
     procs, wal_streams,
     active_orders=0, positions=0, msgs_sec=0,
-    error_count=0,
+    error_count=0, proc_running=None, proc_expected=None,
 ):
-    running = sum(
-        1 for p in procs if p.get("state") == "running")
+    # Prefer the single shared (running/expected) definition; fall
+    # back to scanning procs only if the caller didn't pass it.
+    if proc_running is None or proc_expected is None:
+        proc_running = sum(
+            1 for p in procs if p.get("state") == "running")
+        proc_expected = len(procs)
+    running = proc_running
     wal_files = sum(s.get("files", 0) for s in wal_streams)
     ao_color = "blue-400" if active_orders else "slate-500"
     pos_color = "amber-400" if positions else "slate-500"
@@ -2957,8 +2962,9 @@ def render_key_metrics(
     return (
         '<div class="grid grid-cols-2 sm:grid-cols-3 '
         'md:grid-cols-6 gap-4">'
-        + _metric("Processes", f"{running}/{len(procs)}",
-                  "emerald-400")
+        + _metric("Processes", f"{running}/{proc_expected}",
+                  "emerald-400" if running == proc_expected
+                  else "amber-400")
         + _metric("Active Orders",
                   str(active_orders), ao_color)
         + _metric("Positions",
@@ -2971,8 +2977,12 @@ def render_key_metrics(
     )
 
 
-def render_proc_chip(procs):
-    """Small nav chip: 'procs N/M · gw●' with link to Control."""
+def render_proc_chip(procs, running=None, total=None):
+    """Small nav chip: 'procs N/M · gw●' with link to Control.
+
+    running/total come from the shared process_counts() definition so
+    the chip agrees with pulse / key-metrics / healthz (#11).
+    """
     if not procs:
         return (
             '<a id="proc-chip" href="./control" '
@@ -2982,8 +2992,9 @@ def render_proc_chip(procs):
             'hx-swap="outerHTML">'
             'procs ?</a>'
         )
-    total = len(procs)
-    running = sum(1 for p in procs if p.get("state") == "running")
+    if running is None or total is None:
+        total = len(procs)
+        running = sum(1 for p in procs if p.get("state") == "running")
     # detect gateway by name prefix
     gw = next(
         (p for p in procs if "gw" in p["name"]
@@ -4901,8 +4912,14 @@ def render_book_ladder(symbol_id, snap, source=None, stale=False):
 {bid_rows}</table>{wrap_close}"""
 
 
-def render_book_stats(symbols):
-    """Render book stats from BBO records per symbol."""
+def render_book_stats(symbols, live_symbols=None):
+    """Render book stats from BBO records per symbol.
+
+    live_symbols: set of symbol_ids whose matching engine is running.
+    Symbols not in it are the last-known BBO from a down engine — badge
+    them [stale] and grey the row so a dead symbol isn't presented as
+    live liquidity (#17).
+    """
     if not symbols:
         return (
             '<span class="text-slate-500 text-xs">'
@@ -4915,6 +4932,7 @@ def render_book_stats(symbols):
         if sid not in SYMBOL_CONFIG:
             continue
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        is_live = live_symbols is None or sid in live_symbols
         bid_raw = bbo.get("bid_px", 0)
         ask_raw = bbo.get("ask_px", 0)
         spread_raw = ask_raw - bid_raw if (
@@ -4926,8 +4944,14 @@ def render_book_stats(symbols):
         orders = (
             bbo.get("bid_count", 0) + bbo.get("ask_count", 0)
         )
+        sym_cell = html.escape(sym)
+        if not is_live:
+            sym_cell += (
+                ' <span class="text-amber-400 text-[10px]">'
+                '[stale]</span>')
+        row_cls = '' if is_live else ' class="opacity-40"'
         rows.append(
-            f'<tr><td>{sym}</td>'
+            f'<tr{row_cls}><td>{sym_cell}</td>'
             f'<td class="text-right font-mono">'
             f'{bid_fmt}</td>'
             f'<td class="text-right font-mono">'
@@ -5631,12 +5655,24 @@ def maker_live_html(
     else:
         mid_txt = "--"
     errors = stats.get("errors", [])
-    last_err = (
-        f'<span class="text-red-400">'
-        f'{html.escape(errors[-1])}</span>'
-        if errors else
-        '<span class="text-slate-600">none</span>'
-    )
+    # A maker that is running AND placing orders has clearly
+    # reconnected — a leftover startup error ("gw: Cannot connect")
+    # is stale, not an active alarm. Mute it in that case instead of
+    # showing a red "Last error" over a healthy maker (#13).
+    if not errors:
+        last_err = '<span class="text-slate-600">none</span>'
+    elif running and orders_placed > 0:
+        last_err = (
+            f'<span class="text-slate-500">'
+            f'{html.escape(errors[-1])} '
+            f'<span class="text-slate-600">(stale — maker is '
+            f'placing orders)</span></span>'
+        )
+    else:
+        last_err = (
+            f'<span class="text-red-400">'
+            f'{html.escape(errors[-1])}</span>'
+        )
     spread_bps = stats.get("spread_bps", "--")
     active_txt = str(active_orders)
     if running and not liquidity_live:
