@@ -113,3 +113,65 @@ test.describe("Overview tab", () => {
     await expect(startResult).toBeAttached();
   });
 });
+
+// Exercises the REAL button → hx-post → cluster path (the e2e the
+// visible-only assertions above skip). Clicking drives the actual
+// build/start and stop of the exchange processes, so it needs a
+// live harness; skipped when the dashboard is unreachable. Leaves
+// the cluster running (+ maker) so downstream shards find it up.
+test.describe("Start/Stop All buttons drive the cluster", () => {
+  test("click Build & Start All → 6/6, Stop All → 0", async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(240_000);
+    const health = await request.get("/healthz").catch(() => null);
+    test.skip(
+      !health || !health.ok(),
+      "dashboard/cluster harness not reachable",
+    );
+
+    const running = async (): Promise<number> => {
+      const r = await page.request.get("/healthz");
+      if (!r.ok()) return -1;
+      const j = await r.json();
+      return j.processes_running;
+    };
+    const waitRunning = async (
+      target: number,
+      ms: number,
+    ): Promise<number> => {
+      const deadline = Date.now() + ms;
+      let last = -1;
+      while (Date.now() < deadline) {
+        last = await running();
+        if (last === target) return last;
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+      return last;
+    };
+
+    await page.goto("/overview");
+
+    // Build & Start All → cluster comes up 6/6.
+    await page
+      .locator("button", { hasText: "Build & Start All" })
+      .click();
+    expect(await waitRunning(6, 180_000)).toBe(6);
+
+    // Stop All → cluster drops to 0.
+    await page.locator("button", { hasText: "Stop All" }).click();
+    expect(await waitRunning(0, 60_000)).toBe(0);
+
+    // Restore so the rest of the suite / the user find it running.
+    await page
+      .locator("button", { hasText: "Build & Start All" })
+      .click();
+    expect(await waitRunning(6, 180_000)).toBe(6);
+    await request
+      .post("/api/maker/start?confirm=yes", {
+        headers: { "x-confirm": "yes" },
+      })
+      .catch(() => {});
+  });
+});
