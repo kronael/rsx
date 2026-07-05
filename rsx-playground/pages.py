@@ -5738,6 +5738,13 @@ CRATES: dict = {
         ),
         "compare_note": None,
         "demo": "rsx-book/demo/book-live-opt.gif",
+        "demo_caption": (
+            "the real cargo bench, recorded live: matching one order "
+            "against a book of 100 K, then 10 M resting orders.",
+            "why it matters: the match stays ~60 ns at both depths -- "
+            "matching cost does not grow with book depth (single core, "
+            "Criterion lab microbenchmark)."
+        ),
     },
     "rsx-matching": {
         "name": "rsx-matching",
@@ -5754,6 +5761,13 @@ CRATES: dict = {
             "rsx-book only)."
         ),
         "demo": "rsx-matching/demo/match-live-opt.gif",
+        "demo_caption": (
+            "the real cargo bench, recorded live: match latency as "
+            "resting depth grows from 1 to 100 K orders.",
+            "why it matters: the match holds flat ~30 ns at every "
+            "depth -- a fuller book does not slow the match (single "
+            "core, Criterion lab microbenchmark)."
+        ),
     },
     "rsx-risk": {
         "name": "rsx-risk",
@@ -5769,6 +5783,13 @@ CRATES: dict = {
         "compare_dir": None,
         "compare_note": "no external comparison yet.",
         "demo": "rsx-risk/demo/risk-live-opt.gif",
+        "demo_caption": (
+            "the real cargo bench, recorded live: the critical-path "
+            "risk checks, headlined by the full pre-trade margin gate.",
+            "why it matters: the gate costs ~110 ns against a 5 us "
+            "per-order budget -- ~45x headroom before risk slows an "
+            "order (single core, Criterion lab microbenchmark)."
+        ),
     },
     "rsx-gateway": {
         "name": "rsx-gateway",
@@ -6151,19 +6172,28 @@ def crate_page(key: str) -> str:
     # ── Demo: crate's demo GIF, served locally ──────────────
     demo_card = ""
     if crate.get("demo"):
+        caption = ""
+        if crate.get("demo_caption"):
+            what, why = crate["demo_caption"]
+            caption = (
+                f'<p class="text-xs text-slate-300 mt-3 max-w-md '
+                f'leading-relaxed">{html.escape(what)}</p>'
+                f'<p class="text-xs text-slate-500 mt-1 max-w-md '
+                f'leading-relaxed">{html.escape(why)}</p>')
         demo_card = _card(
-            "Demo",
-            f'<img src="/x/crate-demo/{key}" '
+            "Demo -- real bench, recorded live",
+            f'<img src="x/crate-demo/{key}" '
             f'alt="{html.escape(key)} demo" '
-            f'class="max-w-xs rounded border border-slate-800">')
+            f'class="max-w-sm w-full rounded border border-slate-800">'
+            + caption)
 
     content = (
         f"\n{header}\n"
+        f"{demo_card}\n"
         f"{why_card}\n"
         f"{description_card}\n"
         f"{benchmarks_card}\n"
         f"{comparisons_card}\n"
-        f"{demo_card}\n"
         f"{_MD_STYLE}"
     )
     # nested route /crate/{name} — base "../" reaches the app root
