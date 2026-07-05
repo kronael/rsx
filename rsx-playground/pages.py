@@ -5788,7 +5788,115 @@ CRATES: dict = {
         "compare_note": "no external comparison yet.",
         "demo": None,
     },
+    "rsx-types": {
+        "name": "rsx-types",
+        "tagline": (
+            "Foundation crate: fixed-point Price/Qty newtypes, order "
+            "enums, symbol config, panic handling, and the cache/CPU "
+            "helpers every pinned tile needs."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-messages": {
+        "name": "rsx-messages",
+        "tagline": (
+            "The RSX wire records (Fill/BBO/Order*/…): fixed-layout "
+            "#[repr(C, align(64))] structs with one CastRecord impl "
+            "each, on top of rsx-cast. No runtime, no I/O."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-recorder": {
+        "name": "rsx-recorder",
+        "tagline": (
+            "Archival replication consumer process. Receives all WAL "
+            "records over TCP replication and writes date-partitioned "
+            "archive files for long-term durability."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-cli": {
+        "name": "rsx-cli",
+        "tagline": (
+            "WAL dump/inspect tool (clap CLI) — read and decode records "
+            "off disk for debugging and audit."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-log": {
+        "name": "rsx-log",
+        "tagline": (
+            "Off-hot-path logging primitive: many hot threads push "
+            "fixed-shape records onto wait-free SPSC rings; one drain "
+            "thread sweeps them into tracing events."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-health": {
+        "name": "rsx-health",
+        "tagline": (
+            "Health/metrics primitive: a shared Arc<LoadGauges> the "
+            "daemon writes on its hot path and a separate thread reads "
+            "to serve /health /ready /metrics."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
+    "rsx-tui": {
+        "name": "rsx-tui",
+        "tagline": (
+            "Trade surface: a ratatui trading terminal — orderbook "
+            "ladder, order entry, positions/fills over the gateway WS."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
 }
+
+
+def _rewrite_doc_links(rendered: str) -> str:
+    """Rewrite/strip repo-relative links so crate docs have no 404s.
+
+    Markdown carries links relative to the file's on-disk location
+    (../notes/x.md, specs/4-cast.md, BENCHES.md); none of those resolve
+    under the app's routes. Spec files ARE served at docs/spec/<name>,
+    so point spec links there (relative, so the base-href deploy prefix
+    still applies). Every other relative link is downgraded to plain
+    text. External, anchor, and app-absolute links pass through.
+    """
+    import re
+
+    def repl(m):
+        href, text = m.group(1), m.group(2)
+        if re.match(r'(?:https?:)?//|https?:|mailto:|#|/', href):
+            return m.group(0)
+        sm = re.search(r'specs/(?:2/)?([^/]+?)\.md$', href)
+        if sm and (_REPO_ROOT / "specs" / "2"
+                   / f"{sm.group(1)}.md").is_file():
+            return f'<a href="docs/spec/{sm.group(1)}">{text}</a>'
+        return text
+
+    return re.sub(
+        r'<a href="([^"]*)">(.*?)</a>', repl, rendered, flags=re.S)
 
 
 def _md_to_html(text: str) -> str:
@@ -5800,8 +5908,9 @@ def _md_to_html(text: str) -> str:
     """
     if _markdown is None:
         return f'<pre class="whitespace-pre-wrap">{html.escape(text)}</pre>'
-    return _markdown.markdown(
+    rendered = _markdown.markdown(
         text, extensions=["tables", "fenced_code", "sane_lists"])
+    return _rewrite_doc_links(rendered)
 
 
 def _read_repo_md(rel_path: str) -> str | None:
@@ -5871,7 +5980,7 @@ _MD_STYLE = """
 
 
 def crates_index_page() -> str:
-    """Index listing the 7 documented crates as links."""
+    """Index listing every workspace crate as a link."""
     cards = ""
     for key, crate in CRATES.items():
         cards += (
