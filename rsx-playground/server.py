@@ -2142,6 +2142,12 @@ def read_logs(process=None, level=None, search=None,
     )
     for lf in log_files:
         fname = lf.stem
+        # The dashboard's own log (server.log) is uvicorn access noise
+        # (thousands of "GET /x/... 200" from the panels' own polling).
+        # Hide it from the default "all" view; only show it when the
+        # user explicitly picks the "server" source (#25).
+        if fname == "server" and process != "server":
+            continue
         if proc_prefixes and not _log_match(fname, proc_prefixes):
             continue
         try:
@@ -2272,6 +2278,7 @@ PROC_HINTS: dict[str, list[str]] = {
     "recorder": ["recorder"],
     "maker": ["maker"],
     "stress": ["stress"],
+    "server": ["server"],
 }
 
 
@@ -2640,7 +2647,7 @@ async def component_detail(key: str):
             f'background:#0b0e11;color:#888;padding:2rem">'
             f'<h2>Unknown component: {html.escape(key)}</h2>'
             f'<p><a href="./components" '
-            f'style="color:#60a5fa">Back to Components</a></p>'
+            f'style="color:#a992ff">Back to Components</a></p>'
             f'</body></html>',
             status_code=404,
         )
@@ -2670,7 +2677,7 @@ async def crate_detail(name: str):
             f'background:#0b0e11;color:#888;padding:2rem">'
             f'<h2>Unknown crate: {html.escape(name)}</h2>'
             f'<p><a href="./crates" '
-            f'style="color:#60a5fa">Back to Crates</a></p>'
+            f'style="color:#a992ff">Back to Crates</a></p>'
             f'</body></html>',
             status_code=404,
         )
@@ -2890,27 +2897,27 @@ tailwind.config = {{
   font-size: 1.75rem;
   font-weight: 700;
   margin: 1.5rem 0 0.75rem;
-  color: #60a5fa;
+  color: #a992ff;
 }}
 #content h2 {{
   font-size: 1.35rem;
   font-weight: 600;
   margin: 1.25rem 0 0.5rem;
-  color: #60a5fa;
+  color: #a992ff;
 }}
 #content h3 {{
   font-size: 1.1rem;
   font-weight: 600;
   margin: 1rem 0 0.5rem;
-  color: #60a5fa;
+  color: #a992ff;
 }}
 #content h4, #content h5, #content h6 {{
   font-size: 1rem;
   font-weight: 600;
   margin: 0.75rem 0 0.5rem;
-  color: #60a5fa;
+  color: #a992ff;
 }}
-#content a {{ color: #60a5fa; }}
+#content a {{ color: #a992ff; }}
 #content a:hover {{ text-decoration: underline; }}
 #content p {{ margin: 0.5rem 0; line-height: 1.6; }}
 #content ul {{
@@ -2926,9 +2933,9 @@ tailwind.config = {{
   list-style: disc;
 }}
 #content ol li {{ list-style: decimal; }}
-#content strong {{ color: #e2e8f0; }}
+#content strong {{ color: #a9bcb2; }}
 #content blockquote {{
-  border: 1px solid #334155;
+  border: 1px solid #16211b;
   border-radius: 3px;
   padding: .5rem .75rem;
   margin: 0.75rem 0;
@@ -2949,7 +2956,7 @@ tailwind.config = {{
 #content :not(pre) > code {{
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85em;
-  background: #1e293b;
+  background: #0d1712;
   padding: 2px 6px;
   border-radius: 3px;
 }}
@@ -2963,32 +2970,41 @@ tailwind.config = {{
   overflow-x: auto;
 }}
 #content th, #content td {{
-  border: 1px solid #334155;
+  border: 1px solid #16211b;
   padding: 0.5rem 0.75rem;
   text-align: left;
 }}
 #content th {{
-  background: #1e293b;
+  background: #0d1712;
   font-weight: 600;
 }}
 #content hr {{
   border: none;
-  border-top: 1px solid #334155;
+  border-top: 1px solid #16211b;
   margin: 1.5rem 0;
 }}
 #content img {{ max-width: 100%; }}
 </style>
 </head>
-<body class="bg-[#0f172a] text-slate-300">
+<body class="bg-[#040806] text-slate-300">
+<header class="sticky top-0 z-10 flex items-center gap-4
+  bg-[#0d1712] border-b border-[#16211b] px-4 py-2">
+  <a href="../../" class="text-[#bd83ff] font-bold text-sm
+    hover:opacity-80">&larr; RSX Playground</a>
+  <nav class="flex items-center gap-3 text-xs text-slate-400">
+    <a href="../../" class="hover:text-white">Dashboard</a>
+    <a href="../guide/README" class="hover:text-white">Docs</a>
+  </nav>
+</header>
 <div class="flex min-h-screen">
-  <aside class="w-52 bg-[#0b1120] border-r
-    border-slate-700 p-4 shrink-0">
+  <aside class="w-52 bg-[#0d1712] border-r
+    border-[#16211b] p-4 shrink-0">
     <a href="../../" class="text-white font-bold text-sm
       block mb-4">RSX Playground</a>
     {sidebar}
-    <div class="mt-6 pt-4 border-t border-slate-700">
+    <div class="mt-6 pt-4 border-t border-[#16211b]">
       <a href="../../" class="text-slate-400 text-xs
-        hover:text-white block py-1">Dashboard</a>
+        hover:text-white block py-1">&larr; Back to dashboard</a>
       <span class="text-slate-500 text-xs block py-1"
         >Trade via the rsx-tui terminal client</span>
     </div>
@@ -3654,7 +3670,7 @@ async def x_fills():
     if not fills:
         fills = list(reversed(recent_fills[-50:]))
     return HTMLResponse(
-        pages.render_live_fills(fills))
+        pages.render_live_fills(fills, maker_running=_maker_running()))
 
 
 @app.get("/x/trade-agg", response_class=HTMLResponse)
@@ -3944,7 +3960,8 @@ async def x_book(symbol_id: int = Query(10)):
             pages.render_book_ladder(symbol_id, maker_snap,
                                      source="synthetic", stale=stale))
     return HTMLResponse(
-        pages.render_book_ladder(symbol_id, None))
+        pages.render_book_ladder(symbol_id, None,
+                                 maker_running=_maker_running()))
 
 
 @app.get("/x/risk-user", response_class=HTMLResponse)

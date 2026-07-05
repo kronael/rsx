@@ -464,7 +464,7 @@ def _overview_intro():
     class="text-blue-400 hover:text-blue-300"
     target="_blank" rel="noopener">krons derivatives</a>).</p>
   <p class="text-xs text-slate-500 mt-2">
-    12 Rust crates &middot; ~880 unit tests &middot;
+    14 Rust crates &middot; ~880 unit tests &middot;
     54ns match &middot; 31ns WAL append</p>
 </div>"""
 
@@ -1378,31 +1378,15 @@ function riskAction(action) {
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
-    funding = _card(
-        "Funding",
-        '<div hx-get="./x/funding" '
-        'hx-trigger="load, every 2s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
-    )
-    liq_queue = _card(
-        "Liquidation Queue",
-        '<div hx-get="./x/liquidations" '
-        'hx-trigger="load, every 2s" '
-        'hx-swap="innerHTML">'
-        '<span class="text-slate-600">loading...</span>'
-        '</div>',
-    )
+    # Funding + Liquidation Queue live in the overview above (panels 4
+    # and 5, sourced from real funding/liq records). The old standalone
+    # cards duplicated them AND showed a contradictory spread-proxy
+    # funding number, so they were removed (#19).
     content = f"""
 {overview}
 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 {heatmap}
 {ladder}
-</div>
-<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-{funding}
-{liq_queue}
 </div>
 {latency}
 {actions}"""
@@ -1947,14 +1931,14 @@ def faults_page():
     info = _card(
         "Recovery Notes",
         '<div class="text-xs text-slate-500 space-y-1">'
-        '<p>After killing a process, observe recovery via '
-        'Overview screen.</p>'
-        '<p>For network faults: use '
-        '<code class="bg-slate-800 px-1 rounded">'
-        'iptables</code> / '
-        '<code class="bg-slate-800 px-1 rounded">'
-        'tc</code> directly.</p>'
-        '<p>WAL corruption: manual hex editing.</p>'
+        '<p>This page kills/stops processes; after killing one, watch '
+        'it auto-restart on the <a href="./" class="text-blue-400 '
+        'hover:underline">Overview</a>.</p>'
+        '<p>Network faults (partition / delay) and WAL corruption are '
+        'one click each on the <a href="./recovery" '
+        'class="text-blue-400 hover:underline">Recovery</a> page &mdash; '
+        'no manual <code class="bg-slate-800 px-1 rounded">iptables</code>'
+        ' or hex editing needed.</p>'
         '</div>',
     )
     return layout("Faults", grid + info, "./faults")
@@ -3698,7 +3682,7 @@ def render_logs(lines):
         badge_cls, badge_lbl = _LVL_BADGE.get(
             lvl, ('text-slate-600', lvl[:3] or '·'))
         safe_src  = html.escape(src  or '—')
-        safe_tm   = html.escape(tm)
+        safe_tm   = html.escape(tm) or '—'
         safe_msg  = html.escape(msg or line)
         safe_raw  = html.escape(line)
         # truncate summary to ~120 chars
@@ -4810,7 +4794,8 @@ def format_notional(raw_i64):
     return f"{sign}${whole:,}.{cents:02d}"
 
 
-def render_book_ladder(symbol_id, snap, source=None, stale=False):
+def render_book_ladder(symbol_id, snap, source=None, stale=False,
+                       maker_running=False):
     """Render orderbook ladder from depth snap.
 
     snap: {"bids": [{"px": int, "qty": int}, ...],
@@ -4822,32 +4807,33 @@ def render_book_ladder(symbol_id, snap, source=None, stale=False):
     greyed out to avoid showing a healthy book over a dead engine.
     """
     sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
-    if snap is None:
+
+    def _empty():
+        # Don't tell the user to "start maker" when it's already
+        # running — condition the CTA on actual state (#32).
+        maker_cta = (
+            '<span class="text-slate-600">maker is running &mdash; '
+            'waiting for quotes</span>'
+            if maker_running else
+            '<a href="./maker" class="text-blue-400 '
+            'hover:underline">start maker</a>'
+        )
         return (
             f'<div class="text-slate-500 text-xs space-y-1">'
             f'<span>{sym}: no book data yet</span>'
             f'<span class="ml-2">'
             f'<a href="./orders" class="text-blue-400 '
             f'hover:underline">&rarr; place a test order</a>'
-            f' &nbsp;·&nbsp; '
-            f'<a href="./maker" class="text-blue-400 '
-            f'hover:underline">start maker</a>'
+            f' &nbsp;·&nbsp; {maker_cta}'
             f'</span>'
             f'</div>')
+
+    if snap is None:
+        return _empty()
     bids = snap.get("bids", [])
     asks = snap.get("asks", [])
     if not bids and not asks:
-        return (
-            f'<div class="text-slate-500 text-xs space-y-1">'
-            f'<span>{sym}: no book data yet</span>'
-            f'<span class="ml-2">'
-            f'<a href="./orders" class="text-blue-400 '
-            f'hover:underline">&rarr; place a test order</a>'
-            f' &nbsp;·&nbsp; '
-            f'<a href="./maker" class="text-blue-400 '
-            f'hover:underline">start maker</a>'
-            f'</span>'
-            f'</div>')
+        return _empty()
     best_bid = bids[0].get("px", 0) if bids else 0
     best_ask = asks[0].get("px", 0) if asks else 0
     spread = (
@@ -4977,9 +4963,17 @@ def render_book_stats(symbols, live_symbols=None):
 </table>"""
 
 
-def render_live_fills(fills):
+def render_live_fills(fills, maker_running=False):
     """Render recent fills list."""
     if not fills:
+        if maker_running:
+            return (
+                '<span class="text-slate-500 text-xs">'
+                'no fills yet &mdash; maker is running; '
+                '<a href="./orders" class="text-blue-400 '
+                'hover:underline">place an order</a> to cross it'
+                '</span>'
+            )
         return (
             '<span class="text-slate-500 text-xs">'
             'no fills yet &mdash; '
@@ -6063,8 +6057,35 @@ def _rewrite_doc_links(rendered: str) -> str:
             return f'<a href="docs/spec/{sm.group(1)}">{text}</a>'
         return text
 
-    return re.sub(
+    rendered = re.sub(
         r'<a href="([^"]*)">(.*?)</a>', repl, rendered, flags=re.S)
+
+    # Crate ARCHITECTURE.md files cite specs as BARE paths
+    # ("specs/2/28-risk.md"), not markdown links, so they render as
+    # dead text. Linkify those bare paths too — but only in text
+    # OUTSIDE existing <a>/<code> spans, so we never double-link or
+    # rewrite a path inside a code sample (#30).
+    bare = re.compile(r'\bspecs/(?:2/)?([0-9][\w-]*)\.md\b')
+
+    def _bare_repl(m):
+        name = m.group(1)
+        if (_REPO_ROOT / "specs" / "2" / f"{name}.md").is_file():
+            return (
+                f'<a href="docs/spec/{name}" '
+                f'class="text-blue-400 hover:underline">'
+                f'{m.group(0)}</a>')
+        return m.group(0)
+
+    # Split into <a>…</a> / <code>…</code> spans (kept intact) and the
+    # plain text between them (linkified).
+    protected = re.compile(r'(<a\b.*?</a>|<code\b.*?</code>)', re.S)
+    out = []
+    for i, seg in enumerate(protected.split(rendered)):
+        if i % 2 == 1:  # a protected span — leave untouched
+            out.append(seg)
+        else:
+            out.append(bare.sub(_bare_repl, seg))
+    return "".join(out)
 
 
 def _md_to_html(text: str) -> str:
