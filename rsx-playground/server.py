@@ -2510,7 +2510,7 @@ async def x_topology_flow():
         return (
             "bg-emerald-400" if s == "running"
             else "bg-red-500" if s == "stopped"
-            else "bg-zinc-600"
+            else "bg-slate-500"
         )
 
     gw = _status(PROC_HINTS["gateway"])
@@ -2536,7 +2536,7 @@ async def x_topology_flow():
     # don't masquerade as cluster throughput — matching the topo
     # detail panels.
     nodes = [
-        {"key": "client", "dot": "bg-zinc-600",
+        {"key": "client", "dot": "bg-slate-500",
          "rate": f"{len(recent_orders)} ord (session)"},
         {"key": "gateway", "dot": _dot(gw),
          "rate": f"{len(recent_fills)} fills (session)"},
@@ -2582,14 +2582,14 @@ async def x_topology_summary():
 
     return HTMLResponse(
         f'{_dot(gw_up)} '
-        f'<span class="text-zinc-400">GW</span> '
+        f'<span class="text-slate-400">GW</span> '
         f'{_dot(me_up)} '
-        f'<span class="text-zinc-400">ME</span> '
+        f'<span class="text-slate-400">ME</span> '
         f'{_dot(md_up)} '
-        f'<span class="text-zinc-400">MD</span> '
-        f'<span class="text-zinc-500 ml-2">'
+        f'<span class="text-slate-400">MD</span> '
+        f'<span class="text-slate-500 ml-2">'
         f'{len(running)}/{len(procs)} running</span>'
-        f'<span class="text-zinc-600 ml-auto truncate '
+        f'<span class="text-slate-600 ml-auto truncate '
         f'max-w-[300px]">{names}</span>'
     )
 
