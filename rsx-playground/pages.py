@@ -262,8 +262,15 @@ def _hint_bar(active_tab):
 </div>"""
 
 
-def layout(title, content, active_tab="./overview"):
-    """Wrap content in full page with nav tabs."""
+def layout(title, content, active_tab="./overview", base="./"):
+    """Wrap content in full page with nav tabs.
+
+    `base` is the relative path from THIS page to the app root, used for
+    <base href>. Root pages (one path segment, e.g. /overview) pass "./";
+    nested pages (/crate/*, /component/*) pass "../". Relative + depth-aware
+    so assets/nav/HTMX resolve against the app root under ANY deployment
+    prefix (reverse-proxy subpath) — never absolute "/".
+    """
     tabs = ""
     for tab_item in TABS:
         if len(tab_item) == 3:
@@ -289,9 +296,11 @@ def layout(title, content, active_tab="./overview"):
 <html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
-<!-- Resolve all relative URLs from root so nested routes (/crate/*,
-     /component/*) load scripts/nav/HTMX correctly, not /crate/static/... -->
-<base href="/">
+<!-- Relative, depth-aware base: resolves assets/nav/HTMX against the app
+     root under ANY deployment prefix (reverse-proxy subpath). Root pages
+     pass "./"; nested /crate/* /component/* pass "../". Never absolute "/"
+     — that ignores the prefix and 404s every asset behind a proxy. -->
+<base href="{base}">
 <meta name="viewport"
   content="width=device-width, initial-scale=1">
 <title>RSX -- {title}</title>
@@ -6031,7 +6040,8 @@ def crate_page(key: str) -> str:
         f"{demo_card}\n"
         f"{_MD_STYLE}"
     )
-    return layout(f"Crate: {name}", content, "./crates")
+    # nested route /crate/{name} — base "../" reaches the app root
+    return layout(f"Crate: {name}", content, "./crates", base="../")
 
 
 # ── Components index page ─────────────────────────────────
@@ -6229,8 +6239,10 @@ def component_page(key: str) -> str:
         f"{log_card}\n"
         f"{viz_card}\n"
     )
+    # nested route /component/{key} — base "../" reaches the app root
     return layout(
         f"Component: {name}",
         content,
         "./components",
+        base="../",
     )
