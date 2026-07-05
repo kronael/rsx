@@ -2460,13 +2460,15 @@ def orders_page():
             cls,
         )
 
-    multipliers = ["1", "5", "20", "100"]
+    # PENGU lot forces order sizes to multiples of 10 contracts, so
+    # these ARE the sizes sent (not opaque multipliers).
+    sizes = ["10", "20", "50", "100"]
 
     buy_row = "".join(
-        _mkt(f"{q}x", "buy", q) for q in multipliers
+        _mkt(f"{q}", "buy", q) for q in sizes
     )
     sell_row = "".join(
-        _mkt(f"{q}x", "sell", q) for q in multipliers
+        _mkt(f"{q}", "sell", q) for q in sizes
     )
     rand_row = (
         _qbtn(
@@ -2476,13 +2478,17 @@ def orders_page():
         )
         + _qbtn(
             "\U0001f3b2 Rand Side",
-            '{"rand_side":"true","qty":"5"}',
+            '{"rand_side":"true","qty":"10"}',
             _rand_cls,
         )
     )
 
     matrix_html = (
         '<div hx-on::response-error="quickOrderError(event)">'
+        '<div class="text-[10px] text-slate-500 mb-2">'
+        'one-click market orders on PENGU. the number is the order '
+        'size <span class="text-slate-400">(contracts, e.g. 20 = 20 '
+        'contracts)</span>, swept against the live book.</div>'
         '<div class="space-y-2 mb-2">'
         '<div class="text-[10px] text-slate-500 uppercase'
         ' tracking-wider">Buy (up)</div>'
@@ -2561,7 +2567,7 @@ def orders_page():
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Price</label>
+      tracking-wider block mb-1">Price (human, e.g. 0.05)</label>
     <input type="text" name="price" value="0"
       placeholder="0 = market"
       class="w-full sm:w-28 bg-slate-950 border
@@ -2570,8 +2576,8 @@ def orders_page():
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Qty</label>
-    <input type="text" name="qty" value="1.0"
+      tracking-wider block mb-1">Qty (human, e.g. 10)</label>
+    <input type="text" name="qty" value="10"
       class="w-full sm:w-20 bg-slate-950 border
         border-slate-700 text-slate-300 px-2 py-1
         rounded text-xs">
@@ -4002,8 +4008,21 @@ def render_risk_user(data):
     return _table(["Field", "Value"], rows)
 
 
-def render_risk_user_wal(user_id: int, fills: list):
-    """Render net positions for a user from WAL fill records."""
+def render_risk_user_wal(user_id: int, fills: list, collateral=None):
+    """Render net positions for a user from WAL fill records.
+
+    WAL fills are the single source of truth for the position (same
+    source as the Risk dashboard) so the two views can't disagree.
+    `collateral` (raw i64 from the accounts table) is persisted state,
+    shown as context — not derived from fills.
+    """
+    coll_line = ""
+    if collateral is not None:
+        coll_line = (
+            f'<div class="text-xs text-slate-500 mb-2">collateral '
+            f'<span class="text-slate-300 font-mono">'
+            f'{format_notional(collateral)}</span></div>'
+        )
     positions: dict[int, dict] = {}
     for f in fills:
         sid = f.get("symbol_id", 0)
@@ -4022,8 +4041,10 @@ def render_risk_user_wal(user_id: int, fills: list):
         entry["net"] += signed
         entry["fills"] += 1
     if not positions:
-        return ('<span class="text-slate-500 text-xs">'
-                f'user {user_id} — no fills in WAL</span>')
+        return (
+            coll_line
+            + '<span class="text-slate-500 text-xs">'
+            f'user {user_id} — flat (no fills in WAL)</span>')
     rows = ""
     for sid, info in sorted(positions.items()):
         sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
@@ -4047,7 +4068,7 @@ def render_risk_user_wal(user_id: int, fills: list):
             f'<td {_TD} class="text-slate-500">{n}</td>'
             f'</tr>'
         )
-    return _table(
+    return coll_line + _table(
         ["Symbol", "Net (WAL)", "Fills"], rows,
     )
 
@@ -4994,32 +5015,49 @@ def render_order_trace(order, fills):
              f"{sym} {side} {qty}@{price} at {ts}"),
     ]
 
-    if status == "accepted":
+    lat = order.get("latency_us")
+    lat_str = f" ({lat}us)" if lat is not None else ""
+    # "routed" is the common first hop for any order that reached the
+    # gateway (everything except a pre-gateway error / still-pending).
+    if status not in ("pending", "error", "sent", "submitted", None):
         steps.append(
-            step("emerald", "routed",
-                 f"gateway accepted ({order.get('latency_us', '-')}us)")
-        )
+            step("emerald", "routed", f"gateway → risk → ME{lat_str}"))
+
+    if status == "filled":
         if fills:
-            fill_count = len(fills)
+            sid = int(order.get("symbol", "10") or 10)
             fill_qty = sum(f.get("qty", 0) for f in fills)
-            steps.append(
-                step("emerald", "filled",
-                     f"{fill_count} fill(s), total qty {fill_qty}")
-            )
+            steps.append(step(
+                "emerald", "filled",
+                f"{len(fills)} fill(s), total qty "
+                f"{format_qty(fill_qty, sid)}"))
         else:
-            tif = order.get("tif", "GTC")
-            if tif in ("IOC", "FOK"):
-                steps.append(step(
-                    "amber", "expired",
-                    f"{tif} order — no fill received "
-                    f"(risk may have rejected post-ack)"))
-            else:
-                steps.append(step("amber", "open", "resting in book"))
+            steps.append(step("emerald", "filled", "matched"))
+        steps.append(step("emerald", "done", "ORDER_DONE"))
+    elif status == "resting":
+        steps.append(step("blue", "resting", "limit rests in the book"))
+    elif status == "cancelled":
+        steps.append(step("amber", "cancelled", "ORDER_DONE (cancelled)"))
     elif status == "rejected":
-        reason = html.escape(order.get("reason", "unknown"))
-        steps.append(step("red", "rejected", reason))
+        reason = html.escape(str(order.get("reason", "unknown")))
+        steps.append(step("red", "rejected", f"ORDER_FAILED — {reason}"))
+    elif status == "timeout":
+        steps.append(step(
+            "amber", "no response",
+            "no matching-engine frame in 2s (may still rest)"))
+    elif status == "accepted":
+        # ack with an unrecognised status code; show fills if any
+        if fills:
+            sid = int(order.get("symbol", "10") or 10)
+            fill_qty = sum(f.get("qty", 0) for f in fills)
+            steps.append(step(
+                "emerald", "filled",
+                f"{len(fills)} fill(s), total qty "
+                f"{format_qty(fill_qty, sid)}"))
+        else:
+            steps.append(step("blue", "accepted", "gateway ack"))
     elif status == "error":
-        err = html.escape(order.get("error", "unknown"))
+        err = html.escape(str(order.get("error", "unknown")))
         steps.append(step("red", "error", err))
     else:
         steps.append(step("slate", "pending", "awaiting gateway"))
