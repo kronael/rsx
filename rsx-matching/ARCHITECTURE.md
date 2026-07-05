@@ -1,12 +1,73 @@
 # rsx-matching Architecture
 
-Matching engine process. One instance per symbol. Receives
-orders from Risk via casting/UDP, matches against the orderbook,
-fans out events to Risk and Marketdata. Authoritative writer
-of fills, accepts, cancels, order-failed, and config-applied
-records to the WAL.
+A matching engine is the part of an exchange that pairs orders.
+An incoming buy that meets a resting sell (or a sell that meets a
+resting buy) becomes a **fill** — a trade; anything that doesn't
+cross rests in the book and waits. This process does exactly that
+for one symbol: it takes orders from Risk, matches them against
+the resting orderbook, decides the fills, records them, and tells
+Risk and Marketdata what happened.
+
+The match is **price-agnostic** — it pairs orders on their own
+limit prices alone, with no notion of mark or index price (those
+live in Risk and Mark). And it is **flat**: the 2026-07-03 bench
+measures the match at ~30 ns whether the book holds one resting
+order or 100 000 (depth-independent — see Measured Performance
+below). Scale-out is by symbol: one matching-engine instance per
+tradeable symbol, added independently of user-shard (Risk)
+scale-out.
+
+Matching is the authoritative writer of fills, accepts, cancels,
+order-failed, and config-applied records to the WAL: once it
+persists a fill, that fill happened.
 
 Specs: `specs/2/17-matching.md`, `specs/2/45-tiles.md` §3.1.
+
+## Trust Boundary
+
+The matching engine **does not validate user input** — by design.
+By the time an order reaches this process it has already passed
+two upstream gates: the **gateway** authenticates the client (JWT,
+TLS) and checks structural well-formedness, and the **risk tile**
+checks margin and position (`rsx-risk`, the pre-trade authority).
+ME assumes its inputs are well-formed and in-shard, and does not
+re-validate on the hot path. This is the single-owner rule from
+the repo trust-boundary policy ("The matching engine doesn't
+validate user input" — `CLAUDE.md`; `specs/2/47-validation-edge-cases.md`
+owns where each check lives). Adding re-validation here would
+duplicate an upstream owner and slow the hot loop for no
+correctness gain.
+
+The one thing ME *is* strict about is its own output: every WAL
+append on the fill path crashes on failure rather than silently
+dropping a record (see WAL Append below), because ME is the
+authoritative writer and a lost fill is unrecoverable.
+
+## Measured Performance
+
+In-process microbenchmarks, single box, no UDP/WS — compute
+floors, not wire-to-wire latencies. Captured 2026-07-03
+(`reports/20260703_matching-benches.md`, `cargo bench -p
+rsx-matching`, p50 over 50 samples, timed thread pinned to core 2).
+
+| Point | p50 | What |
+|---|---|---|
+| `match_by_depth/n=1` | ~30 ns | the match itself |
+| `match_by_depth/n=100000` | ~30 ns | **same at 100k resting — depth-independent** |
+| `dedup/hit_duplicate` | 3.7 ns | duplicate order rejected |
+| `dedup/insert_new` | 147 ns | FxHashMap insert |
+| `wal_events/append_1_fill` | 84 ns | serialize 1 fill (no fsync) |
+| `me_accept_path/full` | **266 ns** | full accept: dedup + WAL accept + match + WAL events + index, 1 fill |
+| `me_throughput/orders` | 281 ns | ≈ **3.6M orders/s** (1 fill each) |
+| `wal_replay_30k_records` | 32.8 ms | ≈ 915k records/s cold replay |
+
+The order-type and multi-level-sweep figures in that report are
+quarantined (a 10k-level fixture artifact, flagged for a Phase-2
+audit) — do not cite them as per-order-type latency. The
+single-op and full-accept figures above are the trusted set. These
+are indicative (shared 4-core docker host, cluster stopped); re-run
+on a quiet box for a citable baseline. The full GW→ME→GW
+round-trip is transport-bound (~4 casting hops), not compute-bound.
 
 ## Module Layout
 
@@ -138,7 +199,9 @@ changes live. On startup, the current version emits one
 
 **Runtime: a single pinned loop + tokio sidecar.** The
 matching loop is the lowest-latency stage of the system —
-~340 ns p50 for dedup + WAL accept + match + WAL events.
+~266 ns p50 for the full accept path (dedup + WAL accept +
+match + WAL events + order-index update), per the 2026-07-03
+bench (`me_accept_path/full`; see Measured Performance).
 Network I/O multiplexing does not appear in the inner loop;
 the only sockets are one `CastReceiver` (orders in) and two
 `CastSender`s (events to risk and marketdata). With nothing
