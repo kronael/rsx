@@ -791,30 +791,30 @@ def overview_page():
             'class="sr-only peer" checked>'
             '<span title="1 symbol (PENGU), no replication — '
             'fastest startup" '
-            'class="peer-checked:bg-zinc-500 '
-            'peer-checked:text-white bg-zinc-700 '
-            'text-zinc-300 px-2 py-1 rounded text-xs '
-            'font-medium hover:bg-zinc-600 '
+            'class="peer-checked:bg-slate-500 '
+            'peer-checked:text-white bg-slate-700 '
+            'text-slate-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-slate-600 '
             'transition-colors block">minimal</span>'
             '</label>'
             '<label class="cursor-pointer">'
             '<input type="radio" name="scenario-ov" '
             'value="duo" class="sr-only peer">'
             '<span title="2 symbols (PENGU + SOL), no replication" '
-            'class="peer-checked:bg-zinc-500 '
-            'peer-checked:text-white bg-zinc-700 '
-            'text-zinc-300 px-2 py-1 rounded text-xs '
-            'font-medium hover:bg-zinc-600 '
+            'class="peer-checked:bg-slate-500 '
+            'peer-checked:text-white bg-slate-700 '
+            'text-slate-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-slate-600 '
             'transition-colors block">duo</span>'
             '</label>'
             '<label class="cursor-pointer">'
             '<input type="radio" name="scenario-ov" '
             'value="full" class="sr-only peer">'
             '<span title="3 symbols + recorder replication" '
-            'class="peer-checked:bg-zinc-500 '
-            'peer-checked:text-white bg-zinc-700 '
-            'text-zinc-300 px-2 py-1 rounded text-xs '
-            'font-medium hover:bg-zinc-600 '
+            'class="peer-checked:bg-slate-500 '
+            'peer-checked:text-white bg-slate-700 '
+            'text-slate-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-slate-600 '
             'transition-colors block">full</span>'
             '</label>'
             '<label class="cursor-pointer">'
@@ -822,9 +822,9 @@ def overview_page():
             'value="stress" class="sr-only peer">'
             '<span title="High-rate order flood — requires make tune-host first" '
             'class="peer-checked:bg-amber-600 '
-            'peer-checked:text-white bg-zinc-700 '
-            'text-zinc-300 px-2 py-1 rounded text-xs '
-            'font-medium hover:bg-zinc-600 '
+            'peer-checked:text-white bg-slate-700 '
+            'text-slate-300 px-2 py-1 rounded text-xs '
+            'font-medium hover:bg-slate-600 '
             'transition-colors block">stress</span>'
             '</label>'
             '</div>'
@@ -970,14 +970,14 @@ def render_topology_node(name, key, status, rate_label):
     dot = (
         "bg-emerald-400" if status == "running"
         else "bg-red-500" if status == "stopped"
-        else "bg-zinc-600"
+        else "bg-slate-500"
     )
     return (
         f'<button hx-get="./x/topology/{key}" '
         f'hx-target="#component-detail" hx-swap="innerHTML" '
         f'id="topo-node-{key}" '
-        f'class="component-node bg-zinc-800 border-2 '
-        f'border-zinc-600 rounded-lg p-3 '
+        f'class="component-node bg-slate-800 border-2 '
+        f'border-slate-600 rounded-lg p-3 '
         f'hover:border-emerald-500 cursor-pointer text-left '
         f'min-w-[110px] transition-colors">'
         f'<div class="flex items-center gap-2 mb-1">'
@@ -987,7 +987,7 @@ def render_topology_node(name, key, status, rate_label):
         f'text-slate-200">{html.escape(name)}</span>'
         f"</div>"
         f'<div id="topo-rate-{key}" '
-        f'class="text-xs text-zinc-400 font-mono">'
+        f'class="text-xs text-slate-400 font-mono">'
         f"{html.escape(rate_label)}</div>"
         f"</button>"
     )
@@ -1004,15 +1004,15 @@ def render_component_detail(component, data):
     dot = (
         "bg-emerald-400" if status == "running"
         else "bg-red-500" if status == "stopped"
-        else "bg-zinc-600"
+        else "bg-slate-500"
     )
 
     rows_html = "".join(
         f'<div class="flex justify-between gap-4 py-0.5 '
-        f'border-b border-zinc-800 last:border-0">'
-        f'<span class="text-zinc-500">'
+        f'border-b border-slate-800 last:border-0">'
+        f'<span class="text-slate-500">'
         f"{html.escape(str(k))}</span>"
-        f'<span class="text-zinc-200 font-mono">'
+        f'<span class="text-slate-200 font-mono">'
         f"{html.escape(str(v))}</span>"
         f"</div>"
         for k, v in rows
@@ -1029,15 +1029,15 @@ def render_component_detail(component, data):
         )
 
     return (
-        f'<div class="bg-zinc-900 border border-zinc-700 '
+        f'<div class="bg-slate-900 border border-slate-700 '
         f'rounded-lg p-4">'
         f'<div class="flex items-center gap-3 mb-3 flex-wrap">'
         f'<span class="w-2.5 h-2.5 rounded-full {dot}"></span>'
         f'<span class="text-sm font-mono font-bold '
         f'text-slate-200">{html.escape(name)}</span>'
-        f'<span class="text-xs text-zinc-500 ml-1">'
+        f'<span class="text-xs text-slate-500 ml-1">'
         f"{html.escape(status)}</span>"
-        f'<span class="ml-auto text-xs text-zinc-500 font-mono">'
+        f'<span class="ml-auto text-xs text-slate-500 font-mono">'
         f"pid: {html.escape(str(pid))}"
         f"&nbsp;&nbsp;uptime: {html.escape(str(uptime))}"
         f"</span>"
@@ -1075,32 +1075,32 @@ def topology_page():
     )
 
     diagram = f"""
-<div class="bg-zinc-950 border border-zinc-800 rounded-lg
+<div class="bg-slate-950 border border-slate-800 rounded-lg
   p-4 overflow-x-auto"
   hx-get="./x/topology/flow"
   hx-trigger="load, every 2s"
   hx-swap="none"
   hx-on::after-request="applyTopoFlow(event)">
 
-  <div class="text-xs text-zinc-600 mb-3 uppercase
+  <div class="text-xs text-slate-600 mb-3 uppercase
     tracking-wider">RSX System Topology \u2014 click a node</div>
 
   <div class="flex flex-wrap items-center gap-1 mb-3">
     {client}
-    <span class="text-zinc-600 text-xs self-center
+    <span class="text-slate-600 text-xs self-center
       select-none px-1" title="WebSocket">&#x21C4; WS</span>
     {gateway}
-    <span class="text-zinc-600 text-xs self-center
+    <span class="text-slate-600 text-xs self-center
       select-none px-1"
       title="casting: UDP multicast with NAK retransmit">
       &#x2192; cast</span>
     {risk}
-    <span class="text-zinc-600 text-xs self-center
+    <span class="text-slate-600 text-xs self-center
       select-none px-1"
       title="casting: UDP multicast with NAK retransmit">
       &#x2192; cast</span>
     {matching}
-    <span class="text-zinc-600 text-xs self-center
+    <span class="text-slate-600 text-xs self-center
       select-none px-1"
       title="WAL replication: TCP stream of WAL records">
       &#x2192; WAL</span>
@@ -1135,19 +1135,19 @@ function applyTopoFlow(evt) {{
 
     detail = (
         '<div id="component-detail" '
-        'class="text-xs text-zinc-500 italic">'
+        'class="text-xs text-slate-500 italic">'
         "Click a component above to see details."
         "</div>"
     )
 
     status_bar = (
-        '<div class="bg-zinc-900 border border-zinc-800 '
+        '<div class="bg-slate-900 border border-slate-800 '
         'rounded px-3 py-2 text-xs font-mono '
         'flex flex-wrap gap-4" '
         'hx-get="./x/topology/summary" '
         'hx-trigger="load, every 2s" '
         'hx-swap="innerHTML">'
-        '<span class="text-zinc-600">loading...</span>'
+        '<span class="text-slate-600">loading...</span>'
         '</div>'
     )
     affinity = _card(
@@ -1405,46 +1405,46 @@ def wal_page():
   <label class="cursor-pointer">
     <input type="radio" name="wal-filter-r" value=""
       id="wal-filter" class="sr-only peer" checked>
-    <span class="peer-checked:bg-zinc-500
-      peer-checked:text-white bg-zinc-700 text-zinc-300
+    <span class="peer-checked:bg-slate-500
+      peer-checked:text-white bg-slate-700 text-slate-300
       px-2 py-1 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
+      hover:bg-slate-600 transition-colors block">
       all</span>
   </label>
   <label class="cursor-pointer">
     <input type="radio" name="wal-filter-r"
       value="ORDER_ACCEPTED" class="sr-only peer">
     <span class="peer-checked:bg-emerald-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
+      peer-checked:text-white bg-slate-700 text-slate-300
       px-2 py-1 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
+      hover:bg-slate-600 transition-colors block">
       ORDER_ACCEPTED</span>
   </label>
   <label class="cursor-pointer">
     <input type="radio" name="wal-filter-r"
       value="FILL" class="sr-only peer">
     <span class="peer-checked:bg-blue-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
+      peer-checked:text-white bg-slate-700 text-slate-300
       px-2 py-1 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
+      hover:bg-slate-600 transition-colors block">
       FILL</span>
   </label>
   <label class="cursor-pointer">
     <input type="radio" name="wal-filter-r"
       value="MARK_PRICE" class="sr-only peer">
-    <span class="peer-checked:bg-purple-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
+    <span class="peer-checked:bg-cyan-500
+      peer-checked:text-white bg-slate-700 text-slate-300
       px-2 py-1 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
+      hover:bg-slate-600 transition-colors block">
       MARK_PRICE</span>
   </label>
   <label class="cursor-pointer">
     <input type="radio" name="wal-filter-r"
       value="ORDER_DONE" class="sr-only peer">
     <span class="peer-checked:bg-amber-600
-      peer-checked:text-white bg-zinc-700 text-zinc-300
+      peer-checked:text-white bg-slate-700 text-slate-300
       px-2 py-1 rounded text-xs font-medium
-      hover:bg-zinc-600 transition-colors block">
+      hover:bg-slate-600 transition-colors block">
       ORDER_DONE</span>
   </label>
 </div>
@@ -2396,8 +2396,8 @@ def orders_page():
         "text-white border-red-700"
     )
     _rand_cls = (
-        "bg-violet-600 hover:bg-violet-500 "
-        "text-white border-violet-700"
+        "bg-blue-600 hover:bg-blue-500 "
+        "text-white border-blue-600"
     )
     _btn_base = (
         "text-sm font-bold py-3 px-2 rounded border "
@@ -2508,18 +2508,18 @@ def orders_page():
         <input type="radio" name="side" value="buy"
           class="sr-only peer" checked>
         <span class="peer-checked:bg-emerald-600
-          peer-checked:text-white bg-zinc-700
-          text-zinc-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-zinc-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
           transition-colors block">Buy</span>
       </label>
       <label class="cursor-pointer">
         <input type="radio" name="side" value="sell"
           class="sr-only peer">
         <span class="peer-checked:bg-red-600
-          peer-checked:text-white bg-zinc-700
-          text-zinc-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-zinc-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
           transition-colors block">Sell</span>
       </label>
     </div>
@@ -2549,18 +2549,18 @@ def orders_page():
         <input type="radio" name="tif" value="GTC"
           class="sr-only peer" checked>
         <span class="peer-checked:bg-blue-600
-          peer-checked:text-white bg-zinc-700
-          text-zinc-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-zinc-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
           transition-colors block">GTC</span>
       </label>
       <label class="cursor-pointer">
         <input type="radio" name="tif" value="IOC"
           class="sr-only peer">
         <span class="peer-checked:bg-amber-600
-          peer-checked:text-white bg-zinc-700
-          text-zinc-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-zinc-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
           transition-colors block">IOC</span>
       </label>
     </div>
@@ -2578,13 +2578,13 @@ def orders_page():
       min-h-[44px]">
       <input type="checkbox" name="reduce_only"
         class="sr-only peer">
-      <div class="w-8 h-4 bg-zinc-600 rounded-full
+      <div class="w-8 h-4 bg-slate-600 rounded-full
         peer-checked:bg-emerald-500 relative
         after:absolute after:top-0.5 after:left-0.5
         after:w-3 after:h-3 after:bg-white
         after:rounded-full after:transition-all
         peer-checked:after:translate-x-4"></div>
-      <span class="text-xs text-zinc-300">Reduce Only</span>
+      <span class="text-xs text-slate-300">Reduce Only</span>
     </label>
   </div>
   <button type="submit"
@@ -3519,7 +3519,7 @@ def render_wal_timeline(records=None):
             detail = (f'{s} px={rec.get("price", 0)} '
                       f'qty={rec.get("qty", 0)}')
         elif rtype == "order_inserted":
-            color = "text-teal-400"
+            color = "text-blue-400"
             s = "buy" if rec.get("side") == 0 else "sell"
             detail = (f'{s} px={rec.get("price", 0)} '
                       f'qty={rec.get("qty", 0)}')
@@ -3529,11 +3529,11 @@ def render_wal_timeline(records=None):
                 f'filled={rec.get("filled_qty", 0)} '
                 f'rem={rec.get("remaining_qty", 0)}')
         elif rtype == "order_cancelled":
-            color = "text-orange-400"
+            color = "text-amber-400"
             detail = (
                 f'rem={rec.get("remaining_qty", 0)}')
         elif rtype == "mark_price":
-            color = "text-purple-400"
+            color = "text-cyan-400"
             detail = (
                 f'mark={rec.get("mark_price", 0)} '
                 f'srcs={rec.get("source_count", 0)}')
@@ -3708,10 +3708,10 @@ def render_verify(checks):
             label = "FAIL"
             row_border = " border border-red-800/60 rounded-[3px]"
         elif status == "warn":
-            badge = ("bg-yellow-950 text-yellow-400 "
-                     "border border-yellow-900")
+            badge = ("bg-amber-950 text-amber-400 "
+                     "border border-amber-900")
             label = "WARN"
-            row_border = " border border-yellow-800/60 rounded-[3px]"
+            row_border = " border border-amber-800/60 rounded-[3px]"
         else:
             badge = ("bg-slate-800 text-slate-400 "
                      "border border-slate-700")
@@ -3854,7 +3854,7 @@ SYMBOL_NAMES_STR = {
 
 _ORDER_STATUS_COLOR = {
     "filled": "text-emerald-400",
-    "resting": "text-sky-400",
+    "resting": "text-blue-400",
     "accepted": "text-emerald-400",
     "submitted": "text-slate-400",
     "pending": "text-slate-400",
@@ -5046,7 +5046,7 @@ def render_stress_scenarios(scenario_states: dict) -> str:
         dot = (
             '<span class="text-emerald-400">&#9679;</span>'
             if running
-            else '<span class="text-zinc-600">&#9675;</span>'
+            else '<span class="text-slate-600">&#9675;</span>'
         )
         if running:
             btn = (
