@@ -2282,15 +2282,9 @@ def _topo_gateway() -> dict:
         "pid": p.get("pid", "-"),
         "uptime": p.get("uptime", "-"),
         "rows": [
-            ('<abbr title="Orders submitted since this'
-             ' dashboard session started">orders (session)</abbr>',
-             len(recent_orders)),
-            ('<abbr title="Fills received since this'
-             ' dashboard session started">fills (session)</abbr>',
-             len(recent_fills)),
-            ('<abbr title="Highest WAL sequence number seen'
-             ' per symbol — monotonically increasing">WAL tips</abbr>',
-             wal_tips),
+            ("orders (session)", len(recent_orders)),
+            ("fills (session)", len(recent_fills)),
+            ("WAL tips", wal_tips),
         ],
     }
 
