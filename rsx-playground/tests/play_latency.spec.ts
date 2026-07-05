@@ -83,9 +83,14 @@ test.describe("Latency", () => {
     request,
   }) => {
     const start = Date.now();
+    // A crossing limit (buy above the maker's asks; tick grid = 50)
+    // fills fast (fast ack). A resting GTC limit below the ask gets
+    // no ack and burns the full 2s ack-wait, eating the budget.
+    // (Market orders — price 0 — are rejected by the gateway as
+    // non-tick-aligned, so a high crossing limit is the fill path.)
     const resp = await request.post(
       "/api/orders/test",
-      { form: ORDER_DATA }
+      { form: { ...ORDER_DATA, price: "51000" } }
     );
     const elapsed = Date.now() - start;
     expect(resp.ok()).toBeTruthy();

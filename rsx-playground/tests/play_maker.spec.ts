@@ -190,6 +190,7 @@ test.describe("Market maker e2e", () => {
         (s: { id: number }) => s.id === SYMBOL_ID,
       );
       const lotSize: number = sym?.lot_size ?? 100000;
+      const tickSize: number = sym?.tick_size ?? 1;
 
       const frames = await new Promise<string[]>((resolve) => {
         const collected: string[] = [];
@@ -199,15 +200,18 @@ test.describe("Market maker e2e", () => {
         });
 
         ws.on("open", () => {
-          // Buy 1% above bestAsk so the order crosses past
+          // Buy ~1% above bestAsk so the order crosses past
           // multiple maker levels even if the BBO drifts a
-          // tick during refresh cycles. bestAsk+1 is the
-          // marginal cross and was flaky.
-          const crossPx = Math.floor(bestAsk * 101 / 100);
+          // tick during refresh cycles, but snap to the tick
+          // grid -- an unaligned price is rejected by the
+          // gateway and never fills (bestAsk*101/100 was off
+          // the tick=50 grid).
+          const crossPx =
+            Math.floor(bestAsk * 101 / 100 / tickSize) * tickSize;
           ws.send(
             JSON.stringify(
               { N: [SYMBOL_ID, 0, crossPx, lotSize,
-                    "test9001", 0] },
+                    `t${Date.now()}`, 0] },
             ),
           );
         });

@@ -4782,14 +4782,25 @@ async def api_orders_test(request: Request):
     result = await send_order_to_gateway(order_msg, user_id)
     err = result[1]
     if err:
-        # Timeout: gateway WS opened but no U/F/E frame in 2s. For IOC/FOK
-        # that's an unambiguous error (must respond with one of the three).
-        # For GTC it MAY be a legitimate resting order (spec 49-webproto.md
-        # §54: "no accepted ACK"), but we cannot distinguish "resting" from
-        # "lost in the pipeline" -- prior behaviour stamped both green and
-        # hid the F-N1 failure mode. Surface as amber + HTTP 504 so the
-        # caller sees the gap.
+        # Timeout: gateway WS opened but no U/F/E frame in 2s. Split by TIF:
+        #   GTC (tif_int == 0): a resting limit gets NO accepted-ack by
+        #     design (spec 49-webproto.md §54), so no-ack is the normal,
+        #     expected outcome -- the order rests in the book. Return 200
+        #     "resting". Genuine lost-order detection is a reconciliation
+        #     concern (compare submitted vs WAL), NOT this 2s timeout, so
+        #     F-N1 is no longer conflated per-order.
+        #   IOC/FOK (tif_int != 0): they MUST respond with one of U/F/E;
+        #     a no-ack IS a real error. Keep amber + HTTP 504 (F-N1 honesty
+        #     preserved for the must-ack case).
         if err == "timeout waiting for response":
+            if tif_int == 0:
+                order["status"] = "resting"
+                recent_orders.append(order)
+                _trim_recent_orders()
+                return HTMLResponse(
+                    f'<span class="text-emerald-400 text-xs">'
+                    f'order {cid} resting (limit rests in the book)'
+                    f'</span>')
             order["status"] = "timeout"
             recent_orders.append(order)
             _trim_recent_orders()
