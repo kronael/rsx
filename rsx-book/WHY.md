@@ -1,13 +1,28 @@
 # Why rsx-book is built this way
 
-`ARCHITECTURE.md` says *what* the orderbook is. This says *why* each piece
-is shaped the way it is — the problem that forced the choice, and what it
-buys. No structure here is clever for its own sake; each one removes a cost
-that a naive orderbook pays on every single order.
+One goal: **matching an order costs the same whether the book holds a
+hundred orders or ten million.** A textbook book slows as it fills; this
+one stays flat. Here is the shape that buys that.
 
-The one goal behind all of it: **matching an order should cost the same
-whether the book holds a hundred orders or ten million.** A textbook book
-gets slower as it fills. This one doesn't. Here's how, and why.
+## In one breath (if you already know orderbooks)
+
+Not a `BTreeMap`. A flat, pre-quantised price grid — ~120 000 tick slots —
+so every hot operation is array arithmetic, not a tree walk:
+
+- **price → level:** a sawtooth fold of the raw range onto the grid —
+  O(1), no search, no pointers to chase.
+- **next-best level:** a 3-tier occupancy bitmap + count-trailing-zeros —
+  **~145 ns, flat**; O(1), not O(price-range).
+- **orders:** a slab arena — ~1–5 ns alloc/free, zero heap on the hot path.
+- **layout:** `#[repr(C, align(64))]` with a hot/cold field split — a
+  resting-order match touches **one cache line**.
+
+Net: every operation is O(1) and cache-resident, so match latency is flat
+from 100 to 10 M resting orders (measured below). `i64` fixed-point
+throughout — no floats, exact prices.
+
+The sections below are the *why* behind each choice — the cost each one
+removes that a naive orderbook pays on every order.
 
 ## The price map — arithmetic instead of a search
 
