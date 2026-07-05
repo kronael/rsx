@@ -6030,7 +6030,10 @@ async def api_stress_reports():
                     data = json.load(fp)
                 reports.append({
                     "id": report_id,
-                    "timestamp": data.get("timestamp", "unknown"),
+                    # stress.py doesn't write a timestamp field; the
+                    # report_id IS the YYYYMMDD-HHMMSS from the filename,
+                    # which the list formats. Fall back to it (#9).
+                    "timestamp": data.get("timestamp") or report_id,
                     "rate": data["config"]["target_rate"],
                     "duration": data["config"]["duration"],
                     "submitted": data["metrics"]["submitted"],
