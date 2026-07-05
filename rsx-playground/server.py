@@ -3897,43 +3897,27 @@ async def x_book(symbol_id: int = Query(10)):
 @app.get("/x/risk-user", response_class=HTMLResponse)
 async def x_risk_user(
     risk_uid: int = Query(1, alias="risk-uid"),
+    user_id: int | None = Query(None),
 ):
-    # try postgres first
-    data = await pg_query(
-        "SELECT * FROM positions "
-        "WHERE user_id = $1 LIMIT 20",
-        risk_uid,
+    # Accept either ?risk-uid= (the form field) or the more natural
+    # ?user_id= (both name the same user; user_id wins if both given).
+    uid = user_id if user_id is not None else risk_uid
+    # ONE source of truth for the position: WAL fills — the same
+    # source the Risk dashboard (api_risk_overview) uses, so the two
+    # never contradict. The persisted `positions` table can hold rows
+    # left over from a prior run (stale after a WAL wipe); we no longer
+    # present those as the live position. Collateral IS legitimately
+    # persisted (not derived from fills), so we surface it separately.
+    fills = parse_wal_fills_for_user_all(uid)
+    collateral = None
+    acct = await pg_query(
+        "SELECT collateral FROM accounts WHERE user_id = $1",
+        uid,
     )
-    if data is None:
-        data = await pg_query(
-            "SELECT * FROM accounts "
-            "WHERE user_id = $1 LIMIT 20",
-            risk_uid,
-        )
-    if data and isinstance(data, list) and data:
-        rows = ""
-        for row in data:
-            cells = "".join(
-                f'<td class="py-1.5 px-2 text-xs '
-                f'border-b border-slate-800/50">'
-                f'{html.escape(str(v))}</td>'
-                for v in row.values()
-            )
-            rows += f"<tr>{cells}</tr>"
-        headers = list(data[0].keys())
-        return HTMLResponse(pages._table(headers, rows))
-    if data and isinstance(data, dict) and "error" in data:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'query error: {data["error"]}</span>')
-    # fallback: aggregate net position from WAL fills
-    fills = parse_wal_fills_for_user_all(risk_uid)
-    if fills:
-        return HTMLResponse(
-            pages.render_risk_user_wal(risk_uid, fills))
+    if acct and isinstance(acct, list) and acct:
+        collateral = acct[0].get("collateral")
     return HTMLResponse(
-        '<span class="text-slate-600">'
-        f'user {risk_uid} — no data</span>')
+        pages.render_risk_user_wal(uid, fills, collateral))
 
 
 @app.get("/x/liquidations", response_class=HTMLResponse)
@@ -4094,6 +4078,14 @@ async def api_reset(request: Request):
             else:
                 child.unlink(missing_ok=True)
         cleared.append("wal")
+    # Wipe persisted risk state so the Lookup can't show a position
+    # with no backing fills after the WAL is gone (see #10). Positions
+    # are rebuilt from fills; accounts keep their seeded collateral.
+    pg_res = await pg_query("DELETE FROM positions")
+    if pg_res is not None and not (
+        isinstance(pg_res, dict) and "error" in pg_res
+    ):
+        cleared.append("positions")
     # replay tips
     (TMP / "md.tip").unlink(missing_ok=True)
     for tip in TMP.glob("recorder-tip-*"):
@@ -4647,6 +4639,36 @@ def _trim_recent_orders():
         del recent_orders[:100]
 
 
+# FailureReason discriminants (rsx-types/src/lib.rs). The gateway
+# U-frame carries the raw u8; map it to a human string so the UI
+# never surfaces a bare "reason=4". Notional overflow at the risk
+# boundary is reported as InsufficientMargin (4).
+REJECT_REASONS = {
+    0: "invalid tick size",
+    1: "invalid lot size",
+    2: "symbol not found",
+    3: "duplicate order id",
+    4: "insufficient margin",
+    5: "overloaded",
+    6: "internal error",
+    7: "reduce-only violation",
+    8: "network error",
+    9: "rate limited",
+    10: "timeout",
+    11: "user in liquidation",
+    12: "wrong shard",
+}
+
+
+def reject_reason_str(reason) -> str:
+    """Human string for a FailureReason u8 (falls back to code)."""
+    try:
+        code = int(reason)
+    except (ValueError, TypeError):
+        return str(reason)
+    return REJECT_REASONS.get(code, f"reason {code}")
+
+
 # Gateway webproto response frames (see specs/2/49-webproto.md):
 #   {U:[oid,status,filled,remaining,reason]}  status 0=FILLED
 #     1=RESTING 2=CANCELLED 3=FAILED
@@ -4668,7 +4690,7 @@ def _classify_order_response(msg) -> tuple[str, str]:
         code = u[1] if len(u) > 1 else -1
         if code == 3:
             reason = u[4] if len(u) > 4 else 0
-            return "rejected", f"reason={reason}"
+            return "rejected", reject_reason_str(reason)
         return {0: "filled", 1: "resting",
                 2: "cancelled"}.get(code, "accepted"), ""
     if "F" in msg:
@@ -4803,6 +4825,21 @@ async def api_orders_test(request: Request):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
             'invalid qty</span>')
+
+    # Notional = price * qty must fit in i64 (the risk boundary
+    # checks this too and rejects as InsufficientMargin, but catching
+    # it here gives a precise message instead of a bare "reason=4").
+    # Inputs are HUMAN units; a value big enough to overflow means the
+    # user pasted raw fixed-point back into the form (units are labeled
+    # on the form to prevent this).
+    I64_MAX = 2**63 - 1
+    if price_int != 0 and qty_int != 0:
+        if abs(price_int) > I64_MAX // abs(qty_int):
+            return HTMLResponse(
+                '<span class="text-red-400 text-xs">'
+                'notional too large: price &times; qty overflows i64 '
+                '&mdash; enter human units (e.g. price 0.05, qty 10), '
+                'not raw fixed-point</span>')
 
     reduce_only = 1 if form.get("reduce_only") == "on" else 0
     # post_only can come from checkbox or order_type dropdown
@@ -5415,8 +5452,9 @@ async def api_orders_batch(count: int = Query(10)):
             "cid": f"bat-{int(time.time()*1000)%100000+i:05d}",
             "symbol": "10",
             "side": "buy" if i % 2 == 0 else "sell",
-            "price": str(50000 + i * 10),
-            "qty": "1.0", "status": "submitted",
+            "price": pages.format_price(50000 + i * 10, 10),
+            "qty": pages.format_qty(100000, 10),
+            "status": "submitted",
             "ts": datetime.now().strftime("%H:%M:%S"),
         })
     _trim_recent_orders()
@@ -5431,10 +5469,12 @@ async def api_orders_random():
     for _ in range(5):
         recent_orders.append({
             "cid": f"rnd-{random.randint(10000,99999)}",
-            "symbol": str(random.choice([1, 2, 3, 10])),
+            "symbol": "10",
             "side": random.choice(["buy", "sell"]),
-            "price": str(random.randint(40000, 60000)),
-            "qty": f"{random.uniform(0.1, 5.0):.1f}",
+            "price": pages.format_price(
+                random.randint(40000, 60000), 10),
+            "qty": pages.format_qty(
+                random.choice([100000, 200000, 500000]), 10),
             "status": "submitted",
             "ts": datetime.now().strftime("%H:%M:%S"),
         })
@@ -5472,7 +5512,7 @@ async def api_orders_quick(request: Request):
     randomize = form.get("randomize", "false").lower() == "true"
     rand_side = form.get("rand_side", "false").lower() == "true"
 
-    qty_choices = [1, 5, 10, 25]
+    qty_choices = [10, 20, 50, 100]
 
     if randomize:
         side_str = random.choice(["buy", "sell"])
@@ -5578,8 +5618,10 @@ async def api_orders_quick(request: Request):
         "user_id": 1,
         "symbol": str(symbol_id),
         "side": side_str,
-        "price": str(price_int),
-        "qty": str(qty_int),
+        # human units in the orders table (see #16); the raw ints went
+        # to the gateway in order_msg["N"] above.
+        "price": pages.format_price(price_int, symbol_id),
+        "qty": pages.format_qty(qty_int, symbol_id),
         "tif": "IOC" if tif_int == 1 else "GTC",
         "reduce_only": False,
         "post_only": False,
