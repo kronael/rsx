@@ -1085,27 +1085,55 @@ def topology_page():
   <div class="text-xs text-slate-600 mb-3 uppercase
     tracking-wider">RSX System Topology \u2014 click a node</div>
 
-  <div class="flex flex-wrap items-center gap-1 mb-3">
+  <div class="flex flex-wrap items-center gap-1 mb-1">
     {client}
-    <span class="text-slate-600 text-xs self-center
-      select-none px-1" title="WebSocket">&#x21C4; WS</span>
+    <span class="flex flex-col text-xs self-center select-none
+      px-1 leading-tight text-center">
+      <span class="text-slate-500"
+        title="order in: client WebSocket">order &#x2192;</span>
+      <span class="text-emerald-500/80"
+        title="fill out: ack + fills on the same WebSocket">
+        &#x2190; fill</span>
+      <span class="text-slate-600 text-[10px]">WS</span>
+    </span>
     {gateway}
-    <span class="text-slate-600 text-xs self-center
-      select-none px-1"
-      title="casting: UDP multicast with NAK retransmit">
-      &#x2192; cast</span>
+    <span class="flex flex-col text-xs self-center select-none
+      px-1 leading-tight text-center">
+      <span class="text-slate-500"
+        title="order in: casting (UDP with NAK retransmit)">
+        order &#x2192;</span>
+      <span class="text-emerald-500/80"
+        title="fill back: Risk applies the fill, forwards to GW">
+        &#x2190; fill</span>
+      <span class="text-slate-600 text-[10px]">cast</span>
+    </span>
     {risk}
-    <span class="text-slate-600 text-xs self-center
-      select-none px-1"
-      title="casting: UDP multicast with NAK retransmit">
-      &#x2192; cast</span>
+    <span class="flex flex-col text-xs self-center select-none
+      px-1 leading-tight text-center">
+      <span class="text-slate-500"
+        title="order in: casting (UDP with NAK retransmit)">
+        order &#x2192;</span>
+      <span class="text-emerald-500/80"
+        title="fill back: ME emits fills to Risk">
+        &#x2190; fill</span>
+      <span class="text-slate-600 text-[10px]">cast</span>
+    </span>
     {matching}
     <span class="text-slate-600 text-xs self-center
       select-none px-1"
-      title="WAL replication: TCP stream of WAL records">
+      title="WAL replication: TCP stream of WAL records
+(one-way, off the order round-trip)">
       &#x2192; WAL</span>
     {marketdata}
   </div>
+
+  <div class="text-[10px] text-slate-500 mb-3 px-1">
+    round-trip: an order flows
+    <span class="text-slate-400">left &#x2192; right</span>
+    (client &#x2192; GW &#x2192; Risk &#x2192; ME); after a match the
+    <span class="text-emerald-500/90">fill returns right &#x2192; left</span>
+    (ME &#x2192; Risk &#x2192; GW &#x2192; client).
+    WAL &#x2192; Marketdata is one-way, off the round-trip.</div>
 
   <div class="flex flex-wrap items-center gap-3">
     {mark}
