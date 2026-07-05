@@ -3336,6 +3336,19 @@ async def x_ring_pressure():
 @app.get("/x/invariant-status",
          response_class=HTMLResponse)
 async def x_invariant_status():
+    # Run checks lazily so the card reflects live status instead
+    # of "UNKNOWN" until someone visits the Verify tab. Cached for
+    # 5s (matches the card's refresh cadence) to avoid re-scanning
+    # every poll.
+    stale = (
+        verify_last_run is None
+        or (time.time() - verify_last_run) > 5.0
+    )
+    if stale:
+        try:
+            await _run_invariant_checks()
+        except Exception:
+            pass
     return HTMLResponse(
         pages.render_invariant_status(
             verify_results, last_run=verify_last_run))
