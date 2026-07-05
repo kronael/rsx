@@ -610,3 +610,25 @@ start`), `./playground restart` can't see it (no PID file) and aborts on a
 stale-PID race; subs had to `kill` by PID and relaunch via the wrapper.
 **Fix (defer, record only):** have restart fall back to port-owner lookup
 (`ss -ltnp` on 49171) when the PID file is missing/stale.
+
+## GATEWAY-CRASH-UNDER-WS-CHURN (F20) [OPEN]
+**Severity:** MED (gateway stability under load; cascades into other tests)
+**Where:** rsx-gateway, exercised by `play_readiness.spec.ts:189` "gw-0 survives
+WS connection churn (F20)".
+**Symptom:** during rapid WS connect/disconnect churn the test asserts gw-0 is
+still running and it is NOT (`gw-0 not running during churn`). gw-0 died under
+the churn. This also degrades the cluster for whatever test runs next
+(`play_overview` button test then sees <4 baseline and fails a cascade — not a
+button bug; the buttons work, cluster is 7/7 after).
+**Unknowns:** whether the churn goes gateway-direct or via the dashboard
+`/ws/*` proxy; whether it's a gateway accept-loop / fd-exhaustion issue or a
+proxy-side amplification. NOT confirmed to be caused by recent changes — F20 is
+a long-standing @long test.
+**Also:** `--grep-invert "@long"` did NOT exclude the @long readiness soak/churn
+tests in a `bunx playwright test <files>` run — the tag filter isn't scoping as
+expected, so these heavy tests run (and destabilize) even when meant to be
+skipped. Worth fixing the filter/tagging separately.
+**Fix (defer, record only):** reproduce the churn in isolation, capture gw-0's
+exit (panic vs OOM vs fd limit), harden the accept/close path. Separately, make
+the button test establish its own clean baseline (Stop All → 0 first) so it
+can't cascade-fail from a prior test's damage.
