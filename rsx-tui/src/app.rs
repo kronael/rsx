@@ -114,6 +114,10 @@ pub struct App {
     pub last_lat: Option<Latency>,
     /// Rolling window of round-trip totals (ns) for p50 / min.
     pub lat_totals: VecDeque<u64>,
+    /// Gateway endpoint (for the header + trace overlay).
+    pub endpoint: String,
+    /// Trace overlay toggle (F3) — a diagnostic HUD over the UI.
+    pub show_trace: bool,
 }
 
 impl App {
@@ -132,7 +136,14 @@ impl App {
             fills: 0,
             last_lat: None,
             lat_totals: VecDeque::new(),
+            endpoint: String::new(),
+            show_trace: false,
         }
+    }
+
+    /// Record the gateway endpoint (shown in the header + trace HUD).
+    pub fn set_endpoint(&mut self, url: &str) {
+        self.endpoint = url.to_owned();
     }
 
     /// p50 of the round-trip totals in the rolling window (ns).

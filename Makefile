@@ -303,6 +303,24 @@ tune-host:
 	@echo "net.core.rmem_max/wmem_max set to 25 MB"
 	@echo "To persist: echo 'net.core.rmem_max=26214400' | sudo tee /etc/sysctl.d/99-rsx.conf"
 
+# ── Local trading: spin up a cluster, then trade via the TUI ──
+local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
+	-$(MAKE) tune-host
+	./rsx-playground/playground start
+	./rsx-playground/playground start-all minimal
+	@sleep 3
+	-curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' -H 'x-confirm: yes' >/dev/null
+	@echo "-> local cluster up with a live PENGU book. Trade: make tui-local"
+
+tui: ## trade via the terminal UI against the hosted deployment (rsx.krons.cx)
+	cargo run -q -p rsx-tui
+
+tui-local: ## trade against your local cluster (run 'make local' first)
+	RSX_GW_URL=ws://127.0.0.1:8080 cargo run -q -p rsx-tui
+
+tui-demo: ## the TUI offline, mock feed (no cluster needed)
+	RSX_GW_URL=mock cargo run -q -p rsx-tui
+
 # Reproducible end-to-end demo: start minimal cluster, submit one IOC
 # order, wait for a fill in the WAL. Exits 0 on success, 1 on timeout.
 # Pre: playground server running (./rsx-playground/playground start)

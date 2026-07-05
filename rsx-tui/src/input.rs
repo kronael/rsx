@@ -32,6 +32,8 @@ pub fn handle_key(
         KeyCode::Enter => {
             app.submit_order(conn);
         }
+        // F3: toggle the trace HUD (diagnostic overlay).
+        KeyCode::F(3) => app.show_trace = !app.show_trace,
         _ => {}
     }
     Control::Continue

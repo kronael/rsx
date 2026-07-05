@@ -17,6 +17,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Block;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Cell;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Row;
 use ratatui::widgets::Table;
@@ -51,6 +52,68 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_book(f, cols[0], app);
     draw_order_entry(f, cols[1], app);
     draw_right(f, cols[2], app);
+
+    // Diagnostic HUD, drawn over everything (F3 toggles it).
+    if app.show_trace {
+        draw_trace_hud(f, app);
+    }
+}
+
+/// A game-style diagnostic overlay: a bordered box pinned top-right,
+/// drawn over the UI. Toggled with F3.
+fn draw_trace_hud(f: &mut Frame, app: &App) {
+    let full = f.area();
+    let w = 46u16.min(full.width);
+    let h = 13u16.min(full.height);
+    let area = Rect {
+        x: full.width.saturating_sub(w),
+        y: 0,
+        width: w,
+        height: h,
+    };
+    let us = |n: Option<u64>| {
+        n.map(|v| format!("{:.2} µs", v as f64 / 1000.0))
+            .unwrap_or_else(|| "—".to_owned())
+    };
+    let row = |k: &str, v: String| {
+        Line::from(vec![
+            Span::styled(
+                format!("{k:<9}"),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(v),
+        ])
+    };
+    let lines = vec![
+        Line::from(Span::styled(
+            "TRACE — F3 to hide",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        row("endpoint", app.endpoint.clone()),
+        row(
+            "link",
+            if app.connected { "connected" } else { "down" }
+                .to_owned(),
+        ),
+        row("rtt p50", us(app.lat_p50_ns())),
+        row("rtt min", us(app.lat_min_ns())),
+        row("open", app.open_orders.to_string()),
+        row("fills", app.fills.to_string()),
+        row("spread", app.spread().to_string()),
+        row(
+            "depth",
+            format!("{} bid / {} ask", app.bids.len(), app.asks.len()),
+        ),
+        row("last", app.status.clone()),
+    ];
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("hud")
+        .border_style(Style::default().fg(Color::Cyan));
+    f.render_widget(Clear, area);
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
