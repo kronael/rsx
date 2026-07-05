@@ -11,7 +11,7 @@ use rsx_cast::decode_payload;
 use rsx_cast::records::CastRecord;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
-use rsx_matching::wal_integration::write_events_to_wal;
+use rsx_matching::wal::write_events_to_wal;
 use rsx_matching::wire::OrderMessage;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
