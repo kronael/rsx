@@ -100,7 +100,7 @@ test.describe("Overview tab", () => {
 
   test("ring backpressure card displays", async ({ page }) => {
     await page.goto("/overview");
-    await expect(page.getByRole("heading", { name: "Ring Backpressure" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /WAL stream lag/ })).toBeVisible();
     await page.waitForSelector("div[hx-get='./x/ring-pressure']", { timeout: 5000 });
     await page.waitForTimeout(500);
     const ringContent = await page.locator("div[hx-get='./x/ring-pressure']").innerHTML();

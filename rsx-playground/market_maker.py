@@ -280,13 +280,16 @@ class DummyMarketMaker:
                 if len(self.errors) > 20:
                     del self.errors[:10]
 
-            if consec_errors >= circuit_at:
+            # Do NOT give up permanently: marketdata may be down
+            # transiently (restart, handshake race). Keep reconnecting
+            # at the capped backoff so live BBO resumes when it
+            # returns — quoting falls back to mark prices meanwhile.
+            if consec_errors == circuit_at:
                 logger.warning(
-                    "marketdata circuit breaker: %d consecutive "
-                    "failures; stopping md subscription",
-                    consec_errors,
+                    "marketdata unreachable: %d consecutive failures; "
+                    "retrying at %.0fs backoff (quoting off mark)",
+                    consec_errors, max_delay,
                 )
-                break
 
             if self._running:
                 await asyncio.sleep(delay)
@@ -404,10 +407,15 @@ class DummyMarketMaker:
                     self.mid_prices[sid] = defaults.get(
                         sid, 50000)
 
-        # Main quoting loop: circuit trips after 10 consecutive
-        # infra errors to avoid thrashing on a broken gateway.
+        # Main quoting loop. On a run of infra errors (e.g. a gateway
+        # restart, which is down for 30+s of do_build) the maker backs
+        # off instead of aborting — the harness restarts the gateway
+        # mid-run and expects the maker to still be up and quoting when
+        # it returns. quote_backoff is the threshold at which we widen
+        # the sleep to avoid thrashing a dead gateway.
         quote_errors = 0
-        quote_circuit = 10
+        quote_backoff = 10
+        backoff_delay = 8.0
         while self._running:
             # refresh mid from mark API for symbols
             # without live BBO
@@ -437,18 +445,21 @@ class DummyMarketMaker:
                 if len(self.errors) > 20:
                     del self.errors[:10]
 
-            if quote_errors >= quote_circuit:
-                logger.error(
-                    "quote circuit breaker: %d consecutive "
-                    "errors; aborting maker",
-                    quote_errors,
-                )
-                self._running = False
-                break
-
             self._write_status()
             if self._running:
-                await asyncio.sleep(self.refresh_sec)
+                # Widen the sleep once errors pile up (gateway likely
+                # down) so we don't thrash, but keep the maker alive to
+                # resume when it recovers.
+                if quote_errors >= quote_backoff:
+                    if quote_errors == quote_backoff:
+                        logger.warning(
+                            "quote errors: %d consecutive; gateway may "
+                            "be down, backing off %.0fs (maker stays up)",
+                            quote_errors, backoff_delay,
+                        )
+                    await asyncio.sleep(backoff_delay)
+                else:
+                    await asyncio.sleep(self.refresh_sec)
 
     def _handle_cycle_frame(self, data):
         """Handle one async gateway frame seen during a quote cycle.

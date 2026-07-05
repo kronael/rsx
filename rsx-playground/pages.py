@@ -1241,11 +1241,15 @@ def risk_page():
   <button class="bg-emerald-900/60 text-emerald-400
     px-3 py-1 rounded text-xs border border-emerald-800
     hover:bg-emerald-800 cursor-pointer"
-    onclick="riskAction('create')">Create User</button>
+    hx-post="./api/users/create"
+    hx-target="#risk-action-result"
+    hx-swap="innerHTML">Create User</button>
   <button class="bg-blue-900/40 text-blue-400
     px-3 py-1 rounded text-xs border border-blue-900
     hover:bg-blue-900 cursor-pointer"
-    onclick="riskAction('deposit')">Deposit</button>
+    hx-post="./api/users/deposit" hx-include="#risk-uid"
+    hx-target="#risk-action-result"
+    hx-swap="innerHTML">Deposit</button>
   <button class="bg-slate-800 text-slate-400
     px-3 py-1 rounded text-xs border border-slate-700
     hover:bg-slate-700 cursor-pointer"
@@ -1257,20 +1261,20 @@ def risk_page():
   <button class="bg-red-900/40 text-red-400
     px-3 py-1 rounded text-xs border border-red-900
     hover:bg-red-900 cursor-pointer"
-    onclick="riskAction('liquidate')">Liquidate</button>
+    hx-post="./api/risk/liquidate" hx-include="#risk-uid"
+    hx-target="#risk-action-result"
+    hx-swap="innerHTML">Liquidate</button>
 </div>
 <div id="risk-action-result" class="mt-2 text-xs"></div>
 <script>
 function riskAction(action) {
+  // freeze/unfreeze only — create/deposit/liquidate are declarative
+  // hx-post buttons above. These two need the uid in the path, which
+  // HTMX can't template, so they stay on this helper.
   var uid = (document.getElementById('risk-uid').value || '1').trim();
-  var path, values = {};
-  if (action === 'create') { path = './api/users/create'; }
-  else if (action === 'deposit') { path = './api/users/' + uid + '/deposit'; }
-  else if (action === 'liquidate') {
-    path = './api/risk/liquidate'; values = {user_id: uid};
-  } else { path = './api/risk/users/' + uid + '/' + action; }
+  var path = './api/risk/users/' + uid + '/' + action;
   htmx.ajax('POST', path, {
-    target: '#risk-action-result', swap: 'innerHTML', values: values,
+    target: '#risk-action-result', swap: 'innerHTML',
   });
 }
 </script>

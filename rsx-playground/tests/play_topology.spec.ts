@@ -62,7 +62,9 @@ test.describe("Topology tab", () => {
 
     // Should show core mapping or "no processes"
     const content = await affinity.textContent();
-    expect(content).toMatch(/Core|no processes/i);
+    // Dev boxes don't pin cores, so the map honestly reads "cpus N"
+    // or "no pinning" per process; "no processes" only when empty.
+    expect(content).toMatch(/cpus|Core|no pinning|no processes/i);
   });
 
   test("cast connections card auto-refreshes every 2s", async ({ page }) => {
@@ -154,8 +156,8 @@ test.describe("Topology tab", () => {
       // non-zero (cold start), but ME->Mktdata must never be
       // strictly less than the BBO+fill total — that was the
       // bug shape.
-      expect(html).toContain("ME -&gt; Mktdata");
-      expect(html).toContain("Gateway -&gt; Risk");
+      expect(html).toContain("ME -> Mktdata");
+      expect(html).toContain("Gateway -> Risk");
     },
   );
 
