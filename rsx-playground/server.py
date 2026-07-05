@@ -2120,6 +2120,88 @@ def read_logs(process=None, level=None, search=None,
     return lines[-max_lines:]
 
 
+# ── recovery explorer ───────────────────────────────────
+# Fault injection + live recovery feed. Destructive faults
+# (net, wal) shell out to sudo tc/iptables and mangle WAL
+# files, so they are gated behind RSX_PLAYGROUND_UNSAFE=1.
+# The kill→observe flow and the feed are always on.
+
+def _unsafe_enabled() -> bool:
+    return os.environ.get(
+        "RSX_PLAYGROUND_UNSAFE", ""
+    ).lower() in {"1", "true", "yes", "on"}
+
+
+# Log substrings that mark a recovery-relevant event. Matched
+# case-insensitively against read_logs() output.
+_RECOVERY_KEYS = (
+    "faulted", "opening replay", "replay", "caught up",
+    "caughtup", "caught-up", "crc", "nak", "circuit open",
+    "process watcher", "restart", "reconnect", "backoff",
+    "re-sync", "resync", "rcvbuferror", "failover",
+)
+
+
+def _classify_recovery(low: str) -> str:
+    """Map a lowercased recovery line to a semantic level."""
+    if any(k in low for k in (
+        "faulted", "crc", "circuit open", "panic",
+        "rcvbuferror", "failed",
+    )):
+        return "fault"
+    if any(k in low for k in (
+        "caught up", "caughtup", "caught-up", "re-sync",
+        "resync", "restarted", "started", "listening",
+        "ready", "healthy",
+    )):
+        return "healed"
+    return "recovering"
+
+
+def recovery_feed_events(limit: int = 40) -> list[dict]:
+    """Build the newest-first recovery event feed.
+
+    Freshest block = current process states (scan_processes);
+    below it = recovery-relevant log lines (FAULTED / replay /
+    caught-up / CRC), newest-first.
+    """
+    events: list[dict] = []
+    now = datetime.now().strftime("%b %d %H:%M:%S")
+    for p in scan_processes():
+        st = p.get("state")
+        name = p["name"]
+        tr = p.get("total_restarts", 0)
+        if st == "running":
+            events.append({
+                "stamp": now, "level": "healed", "src": "proc",
+                "text": f"{name} healthy — pid {p.get('pid')}, "
+                        f"{tr} restarts",
+            })
+        elif st == "blocked":
+            events.append({
+                "stamp": now, "level": "fault", "src": "proc",
+                "text": f"{name} circuit open — auto-restart "
+                        f"blocked after repeated crashes",
+            })
+        else:
+            events.append({
+                "stamp": now, "level": "recovering", "src": "proc",
+                "text": f"{name} down — watcher restarting "
+                        f"({tr} total)",
+            })
+    matched = []
+    for line in read_logs(max_lines=500):
+        low = line.lower()
+        if any(k in low for k in _RECOVERY_KEYS):
+            matched.append({
+                "stamp": "", "level": _classify_recovery(low),
+                "src": "log", "text": line,
+            })
+    for m in reversed(matched[-limit:]):
+        events.append(m)
+    return events
+
+
 # ── page routes ─────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -2612,6 +2694,11 @@ async def control():
 @app.get("/faults", response_class=HTMLResponse)
 async def faults():
     return HTMLResponse(pages.faults_page())
+
+
+@app.get("/recovery", response_class=HTMLResponse)
+async def recovery():
+    return HTMLResponse(pages.recovery_page(_unsafe_enabled()))
 
 
 @app.get("/verify", response_class=HTMLResponse)
@@ -3363,6 +3450,19 @@ async def x_resource_usage():
 async def x_faults_grid():
     return HTMLResponse(
         pages.render_faults_grid(scan_processes()))
+
+
+@app.get("/x/recovery-controls", response_class=HTMLResponse)
+async def x_recovery_controls():
+    return HTMLResponse(
+        pages.render_recovery_controls(
+            scan_processes(), _unsafe_enabled()))
+
+
+@app.get("/x/recovery-feed", response_class=HTMLResponse)
+async def x_recovery_feed():
+    return HTMLResponse(
+        pages.render_recovery_feed(recovery_feed_events()))
 
 
 @app.get("/x/wal-status", response_class=HTMLResponse)
@@ -4149,6 +4249,139 @@ async def api_process_action(
             f'{result.get("error", "failed")}</span>')
 
     return {"status": "ok"}
+
+
+@app.post("/api/fault/kill/{name}")
+async def api_fault_kill(request: Request, name: str):
+    """Crash a process (SIGKILL) WITHOUT marking it intentional,
+    so _process_watcher auto-restarts it. Distinct from
+    /api/processes/{name}/kill, which suppresses the restart."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    audit_log(f"/api/fault/kill/{name}",
+              "crash sim (SIGKILL, watcher will restart)")
+    pid = None
+    info = managed.get(name)
+    if info and info["proc"].returncode is None:
+        pid = info["proc"].pid
+    else:
+        proc = next(
+            (p for p in scan_processes()
+             if p["name"] == name and p["pid"] != "-"),
+            None)
+        if proc:
+            pid = int(proc["pid"])
+    if pid is None:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{name} not running</span>')
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError) as e:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'Kill failed: {e}</span>')
+    return HTMLResponse(
+        f'<span class="text-red-400 text-xs">'
+        f'crashed {name} (pid {pid}) &mdash; watch it '
+        f'restart &rarr; green</span>')
+
+
+@app.post("/api/fault/net")
+async def api_fault_net(
+    request: Request,
+    action: str = Form(default="apply"),
+):
+    """Inject/clear a loopback network fault via sudo tc netem.
+    Gated behind RSX_PLAYGROUND_UNSAFE=1 (runs sudo, degrades
+    the box's lo device)."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    if not _unsafe_enabled():
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'disabled &mdash; set RSX_PLAYGROUND_UNSAFE=1 '
+            'to enable</span>', status_code=403)
+    audit_log("/api/fault/net", f"net fault {action}")
+    if action == "clear":
+        cmd = ["sudo", "tc", "qdisc", "del", "dev", "lo", "root"]
+    else:
+        cmd = ["sudo", "tc", "qdisc", "add", "dev", "lo", "root",
+               "netem", "delay", "50ms", "loss", "10%"]
+    try:
+        r = await asyncio.to_thread(
+            subprocess.run, cmd,
+            capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'Failed: {e}</span>')
+    if r.returncode != 0:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'Failed: {strip_ansi(r.stderr).strip()[:200]}'
+            f'</span>')
+    if action == "clear":
+        return HTMLResponse(
+            '<span class="text-emerald-400 text-xs">'
+            'lo netem cleared &mdash; links healing, watch '
+            'catch-up</span>')
+    return HTMLResponse(
+        '<span class="text-amber-400 text-xs">'
+        'lo: +50ms delay, 10% loss &mdash; watch casting '
+        'FAULTED &rarr; NAK/replay</span>')
+
+
+@app.post("/api/fault/wal-corrupt")
+async def api_fault_wal_corrupt(request: Request):
+    """Flip a payload byte in the newest WAL file so its
+    CRC32C fails on replay. Gated behind
+    RSX_PLAYGROUND_UNSAFE=1 (mutates WAL on disk)."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    if not _unsafe_enabled():
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'disabled &mdash; set RSX_PLAYGROUND_UNSAFE=1 '
+            'to enable</span>', status_code=403)
+    audit_log("/api/fault/wal-corrupt", "flip a WAL payload byte")
+    files = (
+        sorted(WAL_DIR.rglob("*.wal"),
+               key=lambda p: p.stat().st_mtime)
+        if WAL_DIR.exists() else []
+    )
+    if not files:
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'no WAL files found &mdash; start the cluster '
+            'first</span>')
+    target = files[-1]
+    size = target.stat().st_size
+    # WalHeader is 16 bytes; CRC32C covers the payload (offset
+    # 16+), so flipping a payload byte guarantees a mismatch.
+    offset = 24
+    if size <= offset:
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'newest WAL has no record payload yet</span>')
+    try:
+        with open(target, "r+b") as f:
+            f.seek(offset)
+            b = f.read(1)
+            f.seek(offset)
+            f.write(bytes([b[0] ^ 0xFF]))
+    except OSError as e:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'Failed: {e}</span>')
+    rel = target.relative_to(ROOT)
+    return HTMLResponse(
+        f'<span class="text-red-400 text-xs">'
+        f'flipped payload byte @ offset {offset} in {rel} '
+        f'&mdash; CRC32C fails on replay</span>')
 
 
 @app.post("/api/scenario/switch")
