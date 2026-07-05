@@ -66,6 +66,7 @@ phase-1 historical specs.
 | 23 | [23-playground-dashboard.md](23-playground-dashboard.md) | draft | Playground (dev/test control plane) |
 | 27 | [27-risk-dashboard.md](27-risk-dashboard.md) | draft | Risk ops |
 | 46 | [46-trade-ui.md](46-trade-ui.md) | partial | Trade UI |
+| 54 | [54-tui-access.md](54-tui-access.md) | partial | TUI access — SSH forced-command dispatch (done) + web terminal (deferred) |
 
 ## REST + deploy
 
