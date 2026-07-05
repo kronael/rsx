@@ -16,6 +16,8 @@ use rsx_tui::drain;
 use rsx_tui::draw;
 use rsx_tui::handle_key;
 use rsx_tui::Control;
+use rsx_tui::GatewayConn;
+use rsx_tui::WsConn;
 use std::io;
 use std::time::Duration;
 
@@ -33,24 +35,57 @@ fn run<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
 ) -> io::Result<()> {
     let mut app = App::new("PENGU-PERP");
-    // Offline demo transport. The live path is `rsx_tui::QuicConn`:
-    //   let roots = rsx_tui::quic::roots([gateway_cert])?;
-    //   let mut conn = QuicConn::connect(addr, "gateway", roots)?;
-    // Both implement `GatewayConn`, so the loop below is unchanged. The
-    // mock keeps `cargo run -p rsx-tui` working with no live gateway.
-    let mut conn = MockConn::new();
-    conn.push_events(demo_events());
+
+    // One knob: RSX_GW_URL. Unset → the hosted deployment; `mock` → the
+    // offline demo feed; any `ws://`/`wss://` → that gateway (e.g. a
+    // local cluster at ws://127.0.0.1:8080). Trades as RSX_TUI_USER
+    // (default 1) on PENGU; JWT minted with RSX_GW_JWT_SECRET.
+    let mut conn: Box<dyn GatewayConn> = match resolve_url() {
+        Some(url) => {
+            app.set_endpoint(&url);
+            let user_id = env_u32("RSX_TUI_USER", 1);
+            let token = rsx_tui::ws::mint_jwt(
+                user_id, &rsx_tui::ws::jwt_secret());
+            Box::new(WsConn::connect(url, token, PENGU)?)
+        }
+        None => {
+            let mut mock = MockConn::new();
+            mock.push_events(demo_events());
+            app.set_endpoint("mock://demo");
+            Box::new(mock)
+        }
+    };
 
     loop {
-        drain(&mut app, &mut conn);
+        drain(&mut app, conn.as_mut());
         terminal.draw(|f| draw(f, &app))?;
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
         if let Event::Key(key) = event::read()? {
-            if handle_key(&mut app, key.code, &mut conn) == Control::Quit {
+            if handle_key(&mut app, key.code, conn.as_mut()) == Control::Quit {
                 return Ok(());
             }
         }
     }
+}
+
+/// Hosted deployment — the default target. Override with `RSX_GW_URL`.
+const DEPLOYMENT_URL: &str = "wss://rsx.krons.cx";
+
+/// PENGU-PERP symbol id — the TUI's single market.
+const PENGU: u32 = 10;
+
+/// Resolve the gateway URL from `RSX_GW_URL`, or `None` for the offline
+/// mock. Unset → the deployment; `mock` → demo; else → the given URL.
+fn resolve_url() -> Option<String> {
+    match std::env::var("RSX_GW_URL") {
+        Ok(u) if u == "mock" => None,
+        Ok(u) => Some(u),
+        Err(_) => Some(DEPLOYMENT_URL.to_owned()),
+    }
+}
+
+fn env_u32(key: &str, default: u32) -> u32 {
+    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
