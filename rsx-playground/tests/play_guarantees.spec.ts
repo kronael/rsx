@@ -63,6 +63,37 @@ const sleep = (ms: number) =>
   new Promise((r) => setTimeout(r, ms));
 
 test.describe("Invariants", () => {
+  // These verify invariants GIVEN a healthy system (crash-recovery is
+  // tested separately, below). A prior shard's crash-tests can leave
+  // the cluster degraded (e.g. 3/6), which would fail the
+  // "RSX processes running" invariant — restore full health first.
+  test.beforeAll(async () => {
+    const BASE = "http://localhost:49171";
+    const countUp = async (): Promise<number> => {
+      try {
+        const r = await fetch(`${BASE}/api/processes`);
+        if (!r.ok) return 0;
+        const procs = await r.json();
+        return Array.isArray(procs)
+          ? procs.filter((p: { state: string }) => p.state === "running").length
+          : 0;
+      } catch {
+        return 0;
+      }
+    };
+    if ((await countUp()) < 6) {
+      await fetch(
+        `${BASE}/api/processes/all/start?scenario=minimal&confirm=yes`,
+        { method: "POST" },
+      ).catch(() => {});
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if ((await countUp()) >= 6) break;
+      }
+    }
+  });
+
   test("no non-DB invariant fails", async ({ request }) => {
     const checks = await runChecks(request);
     const failed = nonDbFails(checks);
