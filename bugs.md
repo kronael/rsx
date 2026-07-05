@@ -632,3 +632,45 @@ skipped. Worth fixing the filter/tagging separately.
 exit (panic vs OOM vs fd limit), harden the accept/close path. Separately, make
 the button test establish its own clean baseline (Stop All → 0 first) so it
 can't cascade-fail from a prior test's damage.
+
+## RECORDER-DEAD-BUT-HEALTHY (durability + false health) [OPEN]
+**Severity:** HIGH (a durability demo whose durability is silently broken)
+**Where:** rsx-recorder + rsx-health; found by the 2026-07-05 playground audit
+(`.ship/40-PLAYGROUND-AUDIT/FINDINGS.md` #1).
+**Symptom:** recorder process table / topology / `/component/recorder` / recovery
+feed all report **running / healthy / "WAL files found"**, but the recorder log
+ends with `BLOCKED: 21 consecutive stream errors exhausted retry budget (20): No
+such file or directory` — ME replication (`127.0.0.1:9710`) can't serve old seq
+(`56844…58462`), recorder fell behind retention and gave up. ~29 min silent
+while every health surface said "fine". Archival replication is dead + invisible.
+**Fix (defer, record only):** (1) health must reflect **replication liveness**
+(last-consumed-seq advancing), not just pid-alive; a recorder that's BLOCKED must
+surface as degraded/red. (2) recorder must **catch up from cold WAL random-access**
+when it starts behind the hot retention horizon, instead of exhausting a 20-retry
+budget on the live stream. Part of Phase-2 recorder/marketdata → cast quality.
+
+## MKTDATA-DROPS-SHADOW-BOOK-DIVERGENCE [OPEN]
+**Severity:** MED-HIGH (real correctness divergence, surfaced by Verify)
+**Where:** rsx-marketdata; audit #3/#26.
+**Symptom:** Verify FAILs `WAL self-consistency (shadow vs WAL BBO) 1/1 mismatch`;
+marketdata logs continuous `WRN seq gap sym=10 expected=N got=N+1` (dropped
+casts) and me-pengu `flush took 10-14ms` (>10ms target). The shadow book is
+missing events it dropped, so its BBO diverges from the WAL-derived BBO.
+**Fix (defer):** mktdata rcvbuf/keep-up (drain the ME casting firehose without
+RcvbufErrors); investigate the flush latency; surface a drops/gaps metric.
+
+## MARK-PRODUCES-NO-INDEX / RISK-PHANTOM-POSITIONS / ARCHIVE-WAL-BALLOON [OPEN]
+**Severity:** MED (grouped audit findings — see FINDINGS.md #18, #10, #28, #29)
+- **#18 mark:** connects Binance but never writes/produces an index — Verify
+  SKIPs "no index (mark down)", mark WAL 0 bytes, Risk INDEX 0, while mark shows
+  "running" everywhere. Make mark produce/persist, or make health say "no index yet".
+- **#10 risk phantom positions:** Risk Lookup shows a large long + PnL for user 1
+  with **zero backing fills** (WAL FILL = "no WAL events yet") — stale persisted
+  position data. One source of truth; clear/reconcile persisted positions on Reset.
+- **#28 archive WAL balloon:** 6.9→10.2 GB in ~7 min from maker quote churn with
+  no crosses — drives the Dump OOM + slow flushes + fills disk. Need archive
+  retention/rotation so a demo doesn't accrue GB/min.
+- **#29 high auto-restart counts** on a "healthy" cluster (gw-0 11, others 7) —
+  surface as instability rather than buried in the recovery feed.
+**Fix (defer, record only):** these are the Phase-2 recorder/marketdata/gateway
+→ cast-quality work; fix carefully, not as dashboard patches.
