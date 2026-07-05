@@ -1603,7 +1603,16 @@ let _tailTimer = null;
 let _expandedRow = null;
 
 function _sync() {
-  htmx.trigger('#log-view', 'load');
+  // Re-issue the filtered request. htmx.trigger(...,'load') does NOT
+  // re-fire a request, so drive the ajax explicitly with the current
+  // filter values as query params.
+  const p = new URLSearchParams({
+    'log-process': document.getElementById('log-process').value,
+    'log-level':   document.getElementById('log-level').value,
+    'log-search':  document.getElementById('log-search').value,
+  });
+  htmx.ajax('GET', './x/logs?' + p.toString(),
+    {target: '#log-view', swap: 'innerHTML'});
   _restartTail();
 }
 
