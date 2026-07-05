@@ -1269,6 +1269,7 @@ DESTRUCTIVE_ENDPOINTS = {
     "/api/processes/all/stop",
     "/api/processes/all/start",
     "/api/scenario/switch",
+    "/api/reset",
 }
 
 
@@ -2135,16 +2136,9 @@ def read_logs(process=None, level=None, search=None,
 
 
 # ── recovery explorer ───────────────────────────────────
-# Fault injection + live recovery feed. Destructive faults
-# (net, wal) shell out to sudo tc/iptables and mangle WAL
-# files, so they are gated behind RSX_PLAYGROUND_UNSAFE=1.
-# The kill→observe flow and the feed are always on.
-
-def _unsafe_enabled() -> bool:
-    return os.environ.get(
-        "RSX_PLAYGROUND_UNSAFE", ""
-    ).lower() in {"1", "true", "yes", "on"}
-
+# Fault injection + live recovery feed. All faults (crash,
+# net, wal) are always available; each is a click-through
+# guarded by an hx-confirm dialog in the UI.
 
 # Log substrings that mark a recovery-relevant event. Matched
 # case-insensitively against read_logs() output.
@@ -2712,7 +2706,7 @@ async def faults():
 
 @app.get("/recovery", response_class=HTMLResponse)
 async def recovery():
-    return HTMLResponse(pages.recovery_page(_unsafe_enabled()))
+    return HTMLResponse(pages.recovery_page())
 
 
 @app.get("/verify", response_class=HTMLResponse)
@@ -3482,8 +3476,7 @@ async def x_faults_grid():
 @app.get("/x/recovery-controls", response_class=HTMLResponse)
 async def x_recovery_controls():
     return HTMLResponse(
-        pages.render_recovery_controls(
-            scan_processes(), _unsafe_enabled()))
+        pages.render_recovery_controls(scan_processes()))
 
 
 @app.get("/x/recovery-feed", response_class=HTMLResponse)
@@ -4084,6 +4077,46 @@ async def api_stop_all(request: Request):
         f'stopped {len(result["stopped"])} processes</span>')
 
 
+@app.post("/api/reset")
+async def api_reset(request: Request):
+    """Stop everything and wipe state to a clean slate — mirrors
+    `./rsx-playground/playground reset`. Does NOT restart; the user
+    starts the cluster again from Control/Overview afterwards."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    denied = check_confirm(request, "/api/reset")
+    if denied:
+        return denied
+    audit_log("/api/reset", "stop all + wipe state")
+    result = await stop_all()
+    cleared = []
+    # wipe WAL (keep the wal/ dir itself, like find -mindepth 1 -delete)
+    if WAL_DIR.exists():
+        for child in WAL_DIR.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        cleared.append("wal")
+    # replay tips
+    (TMP / "md.tip").unlink(missing_ok=True)
+    for tip in TMP.glob("recorder-tip-*"):
+        tip.unlink(missing_ok=True)
+    cleared.append("tips")
+    # leftover pid files (never our own server)
+    if PID_DIR.exists():
+        for pid_file in PID_DIR.glob("*.pid"):
+            if pid_file.stem != SELF_PID_NAME:
+                pid_file.unlink(missing_ok=True)
+        cleared.append("pids")
+    return HTMLResponse(
+        f'<span class="text-emerald-400 text-xs">'
+        f'reset done &mdash; stopped {len(result["stopped"])} '
+        f'processes, cleared {", ".join(cleared)}. Start the '
+        f'cluster again from Control.</span>')
+
+
 @app.post("/api/processes/{name}/{action}")
 async def api_process_action(
     request: Request,
@@ -4334,17 +4367,12 @@ async def api_fault_net(
     request: Request,
     action: str = Form(default="apply"),
 ):
-    """Inject/clear a loopback network fault via sudo tc netem.
-    Gated behind RSX_PLAYGROUND_UNSAFE=1 (runs sudo, degrades
-    the box's lo device)."""
+    """Inject/clear a loopback network fault via sudo tc netem
+    (runs sudo, degrades the box's lo device). Guarded by the
+    UI's hx-confirm click-through, not an env var."""
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if not _unsafe_enabled():
-        return HTMLResponse(
-            '<span class="text-amber-400 text-xs">'
-            'disabled &mdash; set RSX_PLAYGROUND_UNSAFE=1 '
-            'to enable</span>', status_code=403)
     audit_log("/api/fault/net", f"net fault {action}")
     if action == "clear":
         cmd = ["sudo", "tc", "qdisc", "del", "dev", "lo", "root"]
@@ -4378,16 +4406,11 @@ async def api_fault_net(
 @app.post("/api/fault/wal-corrupt")
 async def api_fault_wal_corrupt(request: Request):
     """Flip a payload byte in the newest WAL file so its
-    CRC32C fails on replay. Gated behind
-    RSX_PLAYGROUND_UNSAFE=1 (mutates WAL on disk)."""
+    CRC32C fails on replay (mutates WAL on disk). Guarded by
+    the UI's hx-confirm click-through, not an env var."""
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if not _unsafe_enabled():
-        return HTMLResponse(
-            '<span class="text-amber-400 text-xs">'
-            'disabled &mdash; set RSX_PLAYGROUND_UNSAFE=1 '
-            'to enable</span>', status_code=403)
     audit_log("/api/fault/wal-corrupt", "flip a WAL payload byte")
     files = (
         sorted(WAL_DIR.rglob("*.wal"),
