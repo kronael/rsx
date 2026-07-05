@@ -306,6 +306,28 @@ tailwind.config = {{
         mono: ['SF Mono', 'Cascadia Code', 'Fira Code',
           'ui-monospace', 'monospace'],
       }},
+      // Ayam Cemani palette — fully-black plumage with an iridescent
+      // beetle-green + violet sheen. Base = green-tinged near-black
+      // (slate retuned); highlights = neon green (live/speed) + dark
+      // violet (info/headings). red/amber keep their meaning. Overriding
+      // the scales re-themes every existing class in one place.
+      colors: {{
+        slate: {{
+          100: '#e7eeea', 200: '#cddad3', 300: '#a9bcb2',
+          400: '#7c9389', 500: '#586b62', 600: '#243029',
+          700: '#16211b', 800: '#0d1712', 900: '#080f0b',
+          950: '#040806',
+        }},
+        emerald: {{
+          300: '#5dffb9', 400: '#22f5a1', 500: '#10cf88',
+          600: '#0a9d68',
+        }},
+        blue: {{
+          300: '#c9b8ff', 400: '#a992ff', 500: '#7c3aed',
+          600: '#6d28d9',
+        }},
+        cyan: {{ 300: '#d4a5ff', 400: '#bd83ff', 500: '#9d4edd' }},
+      }},
       // krons design system: flat, 3px radius on cards/buttons/
       // inputs/tags (rounded-full stays for status dots + toggles).
       borderRadius: {{ DEFAULT: '3px', md: '3px', lg: '3px' }},
