@@ -1038,9 +1038,13 @@ async def start_all(scenario="minimal"):
 
 
 async def stop_all():
-    """Stop all managed processes and PID-file-only processes."""
+    """Stop cluster processes. The maker is a client tool with its own
+    lifecycle — resilient to cluster restarts, so it is not swept here
+    (safety/fault tests stop the cluster but readiness still needs it)."""
     stopped = []
     for name in list(managed.keys()):
+        if name == MAKER_NAME:
+            continue
         await stop_process(name)
         stopped.append(name)
     # Also terminate processes known only from PID files
@@ -1048,8 +1052,8 @@ async def stop_all():
     if PID_DIR.exists():
         for pid_file in sorted(PID_DIR.glob("*.pid")):
             name = pid_file.stem
-            if name == SELF_PID_NAME:
-                # never SIGTERM our own server process
+            if name in (SELF_PID_NAME, MAKER_NAME):
+                # never SIGTERM the server itself or the client-side maker
                 continue
             if name in stopped:
                 continue
