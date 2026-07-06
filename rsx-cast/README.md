@@ -24,13 +24,13 @@ client + echoer pinned to cores 2/3, same Criterion harness.
 
 | Protocol | p50 RTT | Bench |
 |---|---:|---|
-| **casting (rsx-cast)** | **~10 µs** | `cast_rtt_bench` |
-| raw UDP (floor) | ~10 µs | `compare_all::raw_udp_128b` |
-| MoldUDP64 | ~10 µs | `compare_moldudp64::moldudp64_rtt_loopback_128b` |
+| **casting (rsx-cast)** | **~9 µs** | `cast_rtt_bench` |
+| raw UDP (floor) | ~9 µs | `compare_all::raw_udp_128b` |
+| MoldUDP64 | ~9 µs | `compare_moldudp64::moldudp64_rtt_loopback_128b` |
 | TCP_NODELAY | ~14 µs | `compare_all::tcp_nodelay_128b` |
-| SoupBinTCP | ~14 µs | `compare_soupbintcp::soupbintcp_rtt_loopback_128b` |
-| KCP (turbo + spin) | ~21 µs | `compare_all::kcp_spin_flush_128b` |
-| Quinn / QUIC | ~37 µs | `compare_all::quinn_persistent_128b` |
+| SoupBinTCP | ~13 µs | `compare_soupbintcp::soupbintcp_rtt_loopback_128b` |
+| KCP (turbo + spin) | ~11 µs | `compare_all::kcp_spin_flush_128b` |
+| Quinn / QUIC | ~36 µs | `compare_all::quinn_persistent_128b` |
 | Aeron (UDP) | ~305 µs | `compare_aeron::aeron_rtt_udp_loopback_128b` |
 | Aeron (IPC, not network) | ~830 ns | `compare_aeron::aeron_rtt_ipc_128b` |
 
@@ -53,7 +53,7 @@ directly:
 
 | Operation | p50 | Bench |
 |---|---:|---|
-| `CastSender::send` body | **~4.0 µs** (99 % kernel `sendto`) | `cast_send_breakdown_bench`, 128 B + 16 B header |
+| frame + send body (`Framed::pack` + `send_framed`) | **~3.6 µs** (99 % kernel `sendto`) | `cast_send_breakdown_bench`, 128 B + 16 B header |
 | casting one-way (send → recv) | **~5.3 µs** | `cast_one_way_bench` |
 | `WalWriter::prepare` + `append_framed` (in-memory) | **~31 ns** | `wal_bench`, single thread |
 | `WalWriter::flush + fsync`, 1 record | **498 µs** | `wal_fsync_bench` (real disk, core-pinned) |

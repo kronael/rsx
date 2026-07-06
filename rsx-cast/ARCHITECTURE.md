@@ -258,7 +258,7 @@ for the dated attribution breakdown. casting's loopback RTT
 | casting RTT, loopback, 128 B | 8.80 µs | `cast_rtt_bench` |
 | casting one-way, loopback, 128 B | 4.74 µs | `cast_one_way_bench` |
 | Raw UDP RTT (baseline), loopback, 128 B | 8.75 µs | `compare_all::raw_udp_128b` |
-| `CastSender::send` body (per call) | ~3.6 µs (~99 % `sendto`) | `cast_send_breakdown_bench` |
+| frame + send body (`Framed::pack` + `send_framed`) | ~3.6 µs (~99 % `sendto`) | `cast_send_breakdown_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 10 K records | 10.4 ms | `wal_random_read_bench` |
 | Cold-tier NAK retransmit (`read_record_at_seq`), 100 K records | 80.6 ms | `wal_random_read_bench` |
 
