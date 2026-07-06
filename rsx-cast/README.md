@@ -542,7 +542,7 @@ or pin a git rev.
   HFT space; gap-fill via a separate retransmit server,
   sequence per session. https://www.nasdaq.com/docs/MoldUDP64.pdf
 - **rtrb** (mgeier) — wait-free SPSC ring buffer that
-  inspired our preallocated send-ring + the planned v4
+  inspired our preallocated send-ring and receiver
   reorder-ring. https://github.com/mgeier/rtrb
 - **`crc32c`** — what casting uses for payload CRC. SSE4.2
   hardware path (`_mm_crc32_u64`, ~1 cycle / 8 B); Castagnoli
@@ -576,14 +576,12 @@ Subscribe, ZeroMQ patterns, …).
 
 ## Breaking Changes
 
-This crate has no public stable API yet. The
-[CHANGELOG](https://github.com/kronael/rsx/blob/master/CHANGELOG.md)
-in the wider rsx exchange repo is the source of truth for
-rename maps, env-var changes, and wire-format bumps.
-Current crate version is **0.5.2**. The reliability primitives
-(`Faulted` / `Reconnect` escalation, NAK debounce, retransmit
-dedup window) are present in the current API; see the CHANGELOG
-for the version each landed in.
+Unpublished — not on crates.io, no stable API, no releases yet.
+Depend on it as a git dependency pinned to a specific commit (or a
+repo tag, per [Install](#install)); anything can change between
+commits until a 1.0. The reliability primitives (`Faulted` /
+`Reconnect` escalation, NAK debounce, retransmit dedup window) are
+in the current API.
 
 ## How to read this crate
 
