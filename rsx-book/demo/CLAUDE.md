@@ -19,7 +19,10 @@ Full numbers + caveats: `reports/YYYYMMDD_book-bench.md`.
 ## Artifacts in this folder
 - `bench-live.sh` — runs the REAL `cargo bench -- deep_flat_match` and streams
   the actual Criterion results into a clean narrow view as they land (the
-  "measuring…" pauses are real). This is the demo source of truth.
+  "measuring…" pauses are real). Opens on the thesis as a claim ("One order
+  matches in ~60 ns — whether the book holds 100 K or 10 M.") and closes on a
+  single CTA ("Read the code." / github.com/kronael/rsx). This is the demo
+  source of truth.
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
 - `book-live.cast` / `book-live-opt.gif` — the recorded real run + the portrait
@@ -30,11 +33,18 @@ Full numbers + caveats: `reports/YYYYMMDD_book-bench.md`.
 cd rsx-book/demo
 # 1. box must be QUIET — stop the RSX cluster first (its ME+Risk busy-spin
 #    poisons Criterion). Then record the real bench (~1 min):
-TERM=xterm-256color asciinema rec --overwrite -c "bash bench-live.sh" book-live.cast
-# 2. portrait GIF, trimming the real measuring pauses:
-agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 book-live.cast book-live.gif
-gifsicle -O3 book-live.gif -o book-live-opt.gif
+make rec
+# 2. portrait GIF (renders with agg --theme monokai), trimming measuring pauses:
+make gif
 ```
+
+## Palette
+Uses the project's canonical **"Cemani"** palette — the sampled hexes and the
+meaning of each hue are documented once in `rsx-cast/demo/CLAUDE.md` (don't
+duplicate them here). The mapping in this demo: **teal** = the live/fast
+benchmark result numbers, **gold** = the headline claim + the closing CTA,
+**rust** = the thing being beaten (BTreeMap, the cited C++ ITCH line), **dim**
+= captions/caveats, all on a warm-dark **`agg --theme monokai`** base.
 
 ## Honesty (on screen + in the caption)
 Single core · AMD Ryzen 9 5950X · Criterion · **a lab microbenchmark, not
