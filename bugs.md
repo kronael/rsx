@@ -25,6 +25,18 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   sequence (or make PG a compose service + the playground reconnect its md
   subscriber + not lose the process table on restart).
 
+- **HEALTH-PORT-BAND-OVERLAP-AT-SID-10** (MED, config) — flagged by the deploy
+  authoring (2026-07-06). The `start`/spawn-plan health-port band math
+  (`base + sid` / `base + shard`) collides at sid≥10: PENGU sid=10 → health
+  `9810` overlaps the risk health base `9810`. Harmless for minimal (PENGU
+  runs alone) but a real conflict for a multi-symbol prod set that includes
+  sid 10. The deploy spec dodged it by choosing BTC(1)/ETH(2)/SOL(3). Fix:
+  widen/segment the health-port bands so no `base+sid` overlaps another tier.
+- **RISK-ENV-VARS-SET-NOT-READ** (LOW, config hygiene) — `RSX_RISK_RESET_FROZEN_
+  ON_START` and `RSX_RISK_IS_REPLICA` are set by the `start` module but not read
+  anywhere in `rsx-risk/src`. Dead config: either wire them up or drop them from
+  the spawn plan so operators aren't misled.
+
 - **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — **Status: FIXED
   2026-07-04 (`da9a2b4`).** `match_by_type` (`ioc_full`, `gtc_full_cross`,
   `sweep_10_levels`) measured 32–120 µs where the match algo is ~30-60 ns. The
