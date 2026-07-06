@@ -100,6 +100,20 @@ done
 # BEFORE first run (deploy/README.md). We only create the dir.
 run install -d -o rsx -g rsx -m 0750 "$ARCHIVE_DIR"
 
+# ── 2b. replication TLS certs (mandatory; casting/UDP stays plaintext) ──
+# Replication is TLS-only. Provision snakeoil certs so the cluster boots;
+# replace with real certs in prod (deploy/README.md). Idempotent: the
+# script skips if certs already exist.
+CERT_DIR="$DATA_DIR/certs"
+run install -d -o rsx -g rsx -m 0750 "$CERT_DIR"
+if [[ $APPLY -eq 1 ]]; then
+  RSX_REPL_CERT_DIR="$CERT_DIR" sh scripts/gen-snakeoil-certs.sh
+  chown -R rsx:rsx "$CERT_DIR"
+  say "replication certs in $CERT_DIR (snakeoil — replace with real certs)"
+else
+  echo "  would: generate snakeoil replication certs into $CERT_DIR"
+fi
+
 # ── 3. install binaries ──
 say "installing binaries to $BIN_DIR"
 for b in rsx-matching rsx-risk rsx-gateway rsx-marketdata rsx-mark rsx-recorder; do

@@ -44,11 +44,21 @@ See `specs/2/9-deploy.md` "Core Pinning".
    archive is the exchange's audit / replay-from-genesis tier and is
    **unbounded by design** — never point it at the root fs (it will
    ENOSPC the box). See "Archive offload" below.
-4. **TLS + DNS**: point `rsx.krons.cx` at the host; terminate TLS at
-   nginx/caddy and reverse-proxy `wss://rsx.krons.cx` → gateway
-   `127.0.0.1:8080` and the public market-data WS →
-   `127.0.0.1:8180`. casting/replication ports stay on loopback and
-   are never exposed (firewall inbound to 443/22 only).
+4. **Edge TLS + DNS** (client-facing): point `rsx.krons.cx` at the
+   host; terminate TLS at nginx/caddy and reverse-proxy
+   `wss://rsx.krons.cx` → gateway `127.0.0.1:8080` and the public
+   market-data WS → `127.0.0.1:8180`. casting/replication ports stay
+   on loopback and are never exposed (firewall inbound to 443/22
+   only).
+   - **Internal replication TLS** is separate and **mandatory**:
+     `deploy.sh` auto-provisions snakeoil certs into
+     `${PREFIX:-/srv}/data/rsx/certs` and the env files point
+     `RSX_REPL_CERT_PATH` / `RSX_REPL_KEY_PATH` / `RSX_REPL_CA_PATH`
+     at them. For real prod, replace those PEM files with proper
+     certs (same paths) — regenerate any time with
+     `RSX_REPL_CERT_DIR=/srv/data/rsx/certs sh
+     scripts/gen-snakeoil-certs.sh --force`. The casting/UDP order
+     path stays plaintext by design (trusted LAN, spec 4-cast §10.4).
 5. **JWT secret**: mint one and stage it (never committed, never in a
    unit):
    ```
