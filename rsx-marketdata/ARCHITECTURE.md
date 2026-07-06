@@ -58,19 +58,26 @@ casting port. Marketdata opens **one `CastReceiver` per ME**:
 - The main loop iterates over the receiver vector each tick,
   draining all available records before sleeping
 
-Per-symbol sequence tracking lets one ME's gaps be detected
-independently of the others.
+Per-stream sequence tracking (one expectation per CastReceiver)
+detects a genuine loss on a stream independently of the others.
 
 ## Sequence Gap Detection & Recovery
 
-For every record carrying a `seq`, `state.check_seq(symbol_id,
-seq)` compares against the per-symbol `expected_seq`:
+Seq continuity is tracked per stream in the main loop
+(`stream_expected[ri]`), not per symbol. ME's SEQ-1 fan-out puts
+every record type on one monotonic per-stream seq -- including
+the `ORDER_DONE` / `ORDER_FAILED` / `BBO` / `CONFIG_APPLIED`
+records marketdata receives but ignores -- so the counter
+advances on EVERY record, not only the handled ones. For each
+record's `seq` vs the stream's `expected`:
 
 - First record initializes the expectation
 - `seq == expected` -> advance
-- `seq > expected` -> gap; bump `gap_count`, log warning,
-  call `resend_snapshot` which broadcasts a fresh L2 snapshot
-  to every depth subscriber on that symbol
+- `seq > expected` -> gap; the `CastReceiver` delivers
+  contiguously or FAULTs, so a hole here is a genuine
+  unrecoverable loss. Bump `gap_count` (`note_gap`), log a
+  warning, and `resend_all_snapshots` -- broadcast a fresh L2
+  snapshot on every symbol so clients rebuild.
 - `seq < expected` -> duplicate, ignored
 
 `resend_snapshot` also fires when a per-client outbound queue
