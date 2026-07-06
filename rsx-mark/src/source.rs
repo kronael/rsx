@@ -186,6 +186,22 @@ fn handle_binance_msg(
             }
         }
         serde_json::Value::Object(map) => {
+            // Combined-stream envelope ({"stream":..,"data":{..}}) —
+            // the /stream?streams= endpoint wraps each trade under
+            // "data". Raw single-stream (/ws/<s>) carries s/p directly,
+            // so only unwrap when the payload isn't already flat.
+            if !map.contains_key("s") {
+                if let Some(data) = map.get("data") {
+                    handle_binance_msg(
+                        data,
+                        source_id,
+                        price_scale,
+                        symbol_map,
+                        tx,
+                    );
+                }
+                return;
+            }
             let symbol = match map.get("s").and_then(|v| v.as_str()) {
                 Some(s) => s,
                 None => return,
@@ -271,6 +287,10 @@ fn is_power_of_10(n: i64) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+#[path = "source_test.rs"]
+mod source_test;
 
 fn parse_price(raw: &str, scale: i64) -> Option<i64> {
     if !is_power_of_10(scale) {
