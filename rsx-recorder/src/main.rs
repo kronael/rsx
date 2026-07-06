@@ -299,6 +299,7 @@ async fn main() -> io::Result<()> {
                     1, Ordering::Relaxed,
                 );
             }
+            true
         })
         .await?;
 

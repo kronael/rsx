@@ -352,11 +352,10 @@ covers both historical catch-up and live streaming, indefinitely.
 use rsx_cast::ReplicationConsumer;
 
 let mut dxs = ReplicationConsumer::new(stream_id, endpoints, tip_file, None)?;
-dxs.run(|record| {
-    process(record);
-}).await?;
-// Never returns under normal operation; reconnects with
-// exponential backoff on TCP errors.
+// The closure returns `true` to keep streaming, `false` to stop.
+dxs.run(|record| process(record)).await?;
+// Reconnects with exponential backoff on TCP errors; returns only
+// when the closure returns false (or the retry budget is exhausted).
 ```
 
 `rsx-recorder` ships as the canonical Pattern B consumer.

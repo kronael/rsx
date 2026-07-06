@@ -76,14 +76,16 @@ impl ReplicationConsumer {
         })
     }
 
-    /// Connect with reconnect + backoff. Callback receives
-    /// every record; never returns.
+    /// Connect with reconnect + backoff, streaming live. The
+    /// callback returns `true` to keep streaming, `false` to stop
+    /// and return `Ok(())`. Reconnects on connection errors; only a
+    /// `false` return (or the retry budget) ends it.
     pub async fn run<F>(
         &mut self,
         mut callback: F,
     ) -> io::Result<()>
     where
-        F: FnMut(RawWalRecord),
+        F: FnMut(RawWalRecord) -> bool,
     {
         const BACKOFF_SECS: [u64; 5] = [1, 2, 4, 8, 30];
         const MAX_RETRIES: u32 = 20;
@@ -92,12 +94,15 @@ impl ReplicationConsumer {
         let mut consec_errors: u32 = 0;
 
         loop {
-            let mut wrap = |r| { callback(r); true };
-            match self.connect_and_stream(&mut wrap).await {
-                Ok(()) => {
+            match self.connect_and_stream(&mut callback).await {
+                Ok(true) => {
                     info!("stream ended, reconnecting");
                     backoff_idx = 0;
                     consec_errors = 0;
+                }
+                Ok(false) => {
+                    info!("consumer callback requested stop");
+                    return Ok(());
                 }
                 Err(e) => {
                     consec_errors += 1;
@@ -140,13 +145,18 @@ impl ReplicationConsumer {
     where
         F: FnMut(RawWalRecord) -> bool,
     {
-        self.connect_and_stream(&mut callback).await
+        // No reconnect. Discard the stop/end distinction — it only
+        // matters to `run`'s reconnect loop.
+        self.connect_and_stream(&mut callback).await.map(|_| ())
     }
 
+    /// Streams one connection (federating over endpoints). Returns
+    /// `Ok(true)` if the stream ended on its own (caller may
+    /// reconnect), `Ok(false)` if the callback returned `false`.
     async fn connect_and_stream<F>(
         &mut self,
         callback: &mut F,
-    ) -> io::Result<()>
+    ) -> io::Result<bool>
     where
         F: FnMut(RawWalRecord) -> bool,
     {
@@ -218,7 +228,7 @@ impl ReplicationConsumer {
         &mut self,
         mut stream: S,
         callback: &mut F,
-    ) -> io::Result<()>
+    ) -> io::Result<bool>
     where
         S: AsyncReadExt + AsyncWriteExt + Unpin,
         F: FnMut(RawWalRecord) -> bool,
@@ -248,6 +258,9 @@ impl ReplicationConsumer {
         stream.write_all(payload).await?;
 
         let mut hdr_buf = [0u8; WalHeader::SIZE];
+        // Stays true unless the callback returns false (stop). An
+        // EOF break leaves it true — a reconnectable stream end.
+        let mut reconnectable = true;
         loop {
             match stream.read_exact(&mut hdr_buf).await {
                 Ok(_) => {}
@@ -307,12 +320,13 @@ impl ReplicationConsumer {
             }
 
             if !keep_going {
+                reconnectable = false;
                 break;
             }
         }
 
         persist_tip(&self.tip_file, self.tip)?;
-        Ok(())
+        Ok(reconnectable)
     }
 }
 
