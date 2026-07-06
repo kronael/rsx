@@ -1011,6 +1011,31 @@ async def do_maker_start() -> bool:
     return True
 
 
+def _ensure_repl_certs():
+    """Provision snakeoil replication certs if ./certs is absent.
+
+    TLS is mandatory on the replication TCP hop, so the RSX
+    processes need cert/key/ca PEMs at ./certs (their cwd is the
+    repo root; from_env's default). casting/UDP stays plaintext.
+    Idempotent: skips when certs already exist.
+    """
+    if (ROOT / "certs" / "cert.pem").exists():
+        return
+    result = subprocess.run(
+        ["sh", str(ROOT / "scripts" / "gen-snakeoil-certs.sh")],
+        cwd=str(ROOT),
+        capture_output=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        print(
+            "Failed to generate replication certs: "
+            f"{result.stderr.decode(errors='replace').strip()}"
+        )
+    else:
+        print("generated snakeoil replication certs in ./certs")
+
+
 async def start_all(scenario="minimal"):
     """Build + start all processes for a scenario."""
     global current_scenario
@@ -1028,6 +1053,10 @@ async def start_all(scenario="minimal"):
     (ROOT / "tmp" / "wal" / "mark").mkdir(
         parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Replication is TLS-mandatory: make sure certs exist so the
+    # cluster boots (dev snakeoil; real certs replace ./certs).
+    _ensure_repl_certs()
 
     # Idempotent teardown before respawn. Three failure modes this
     # guards against (SYS #29):
