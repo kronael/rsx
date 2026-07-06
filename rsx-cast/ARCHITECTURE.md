@@ -11,9 +11,10 @@ Domain-agnostic reliable transport. WAL writer/reader, replication
 TCP replay server/client, and casting (C Message Protocol)
 UDP sender/receiver.
 
-Specs: [`specs/4-cast.md`](specs/4-cast.md),
-[`specs/10-replication.md`](specs/10-replication.md),
-[`specs/48-wal.md`](specs/48-wal.md).
+Byte-exact protocol specs live in the exchange repo:
+[4-cast](https://github.com/kronael/rsx/blob/master/specs/2/4-cast.md) (UDP/NAK),
+[10-replication](https://github.com/kronael/rsx/blob/master/specs/2/10-replication.md) (TCP catch-up),
+[48-wal](https://github.com/kronael/rsx/blob/master/specs/2/48-wal.md) (on-disk format).
 
 ## Domain-agnostic transport
 
@@ -170,9 +171,8 @@ stream.
 
 ## Trust model
 
-casting is **intentionally unauthenticated**. See
-[`specs/4-cast.md`](specs/4-cast.md) §10.4 ("Trusted internal
-network. No authentication, no encryption.").
+casting is **intentionally unauthenticated** — "trusted internal
+network, no authentication, no encryption" (spec 4-cast §10.4).
 
 - External clients are authenticated at the **gateway**
   (JWT + TLS).
