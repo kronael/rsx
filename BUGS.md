@@ -6,6 +6,43 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **CAST-RECOVERY-UNDER-LOSS-NEEDS-BENCH+INVESTIGATION** (MED, perf/correctness)
+  — flagged 2026-07-06 while building a loss-degradation bench (WIP parked at
+  `rsx-cast/notes/loss_degradation.rs.wip`; 0%-loss baseline works, ~136k rec/s
+  to deliver 50k in order). Two findings surfaced:
+  (1) **Fills bypass the send ring.** A `FillRecord` frame is 144 B (128 B
+  payload + 16 B header) > `SEND_RING_FRAME_BYTES` (128), so it takes the
+  ring-bypass path — NAK retransmits for fills come ONLY from the WAL
+  (`read_record_at_seq`), never the hot ring. The 4 K send-ring is effectively
+  for sub-112-B-payload control records. Not a bug, but load-bearing and
+  undocumented; a loss bench must WAL-persist + flush to be retransmittable.
+  (2) **Possible receiver frontier anomaly under sustained lossy retransmit.**
+  The WIP harness observed the delivered in-order frontier (by record seq)
+  advancing *past* a seq while the receiver returned a sticky `Faulted` naming
+  that same seq as the gap — which shouldn't be reachable without a reset.
+  Could be a real edge in NAK recovery under rapid drop+retransmit, or a
+  harness artifact (duplicate deliveries mis-drive the driver). Needs a
+  focused repro. Recommend finishing as a **single-injected-gap
+  recovery-latency** micro-bench (drop one seq, time recovery; hot-ring vs
+  cold-WAL tier) rather than a sustained-loss sweep — robust and sidesteps
+  these dynamics. (codex unavailable on this account for the minimize step.)
+  UPDATE 2026-07-06: single-gap micro-bench DONE + committed
+  (`rsx-cast/benches/loss_recovery.rs`): hot-ring ~250 µs, cold-WAL ~600 µs on
+  a contended box; the ~300 µs delta = the `read_record_at_seq` WAL scan (fills
+  bypass the 128 B ring). Two MORE findings from a WIP **outage** bench
+  (`rsx-cast/notes/outage_recovery.rs.wip`, parked):
+  (a) **The receiver NAK-grinds a large gap** seq-by-seq (each fill retransmit
+  is a WAL scan) and does NOT escalate to the TCP-replay cold path just because
+  the gap is huge — `Reconnect` fires only on actual reorder-ring overflow
+  (a burst of >2048 fresh far-ahead packets), which is hard to force while the
+  NAK path drains the oldest gap. So a big accumulated gap recovers glacially
+  (observed ~130 rec/s) unless the ring genuinely overflows. Arguably a design
+  gap: a gap far beyond the ring/retention could proactively escalate to
+  replication instead of grinding.
+  (b) When Reconnect DID fire, the harness's TCP-replay `run_once` **hung**
+  (no progress, no panic) — the replication-catch-up path (TLS handshake /
+  WalReader stream of ~130k records) didn't complete in the bench; needs a
+  focused repro to tell harness-bug from a real replication stall.
 - **TIME-NS-HOTPATH-AUDIT** (LOW, perf) — flagged 2026-07-06 during the
   rsx-cast review. `time_ns()` (clock_gettime via vDSO, ~15-30 ns) is called
   per-record in a few spots (replication-server CaughtUp/record stamping, WAL
@@ -22,6 +59,17 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   highest + active-file offset, scan only new bytes); (2) producer-published
   highest-tip file (~10 ms stale is fine for the refusal check); (3) shared
   atomic if server+writer co-located (most coupling). Leave for now.
+- **CAST-RTT-BENCH-DEADLOCKS-ON-LOSS** (MED, bench) — flagged 2026-07-06.
+  `cast_rtt_bench`'s A-side echo-wait is `loop { try_recv; spin_loop }` with NO
+  in-loop NAK recovery: A sends seq=N, spins until B echoes. If that datagram
+  (or its echo) drops on loopback, B never echoes, A never advances `iter`, so A
+  never reaches its `iter & 0x3FF == 0` recv_control/tick — B's NAK goes
+  unanswered → permanent deadlock (observed: 50 min stuck in a 3 s warmup).
+  Pre-existing (predates the send<T>→send_framed migration, which only changed
+  the seq source, values identical); earlier runs got lucky on a loss-free
+  window. Fix: recv_control()/tick() *inside* the echo-wait spin (with a bounded
+  spin count) so a lost frame retransmits, or add a per-iter deadline. Until
+  then the casting-RTT row is measured opportunistically (~9.6 µs, 2026-07-06).
 - **STARTUP-ORDERING-FRAGILITY** (MED, ops) — "can't start the system via the
   playground" traced to a chain of order-dependencies, none self-healing:
   (1) **Postgres must be up first** — if the `rsx-postgres` container is stopped/
@@ -729,4 +777,3 @@ confirmed root-caused.
 **Fix (defer, record only):** re-run after the in-flight cast.rs refactor
 settles; if it still hangs, bisect `cast_rtt_bench.rs`'s client/server ping
 loop against pre-`bb6c1a0` to find where the reply stops arriving. Do not
-debug live while another session is mid-edit on the same file.
