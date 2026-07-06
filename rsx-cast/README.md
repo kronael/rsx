@@ -132,7 +132,10 @@ invention is small, the packaging difference is the point.
   the retransmit cache in the same producer.
 - **replication/TCP** — same record bytes, reliable transport. Used
   for cold-start replay (`ReplicationConsumer::run`) and
-  archival/replication. Optional rustls TLS.
+  archival/replication. **TLS is mandatory** here (rustls +
+  aws-lc-rs); the casting/UDP path stays plaintext (trusted LAN,
+  spec 4-cast §10.4). The asymmetry is deliberate: the hot UDP
+  path is unencrypted; TLS guards only the cold TCP replay hop.
 - **Domain-agnostic.** `rsx-cast` knows nothing about
   fills/orders/marks. It moves bytes that implement
   [`CastRecord`]. The wider rsx exchange project layers its
@@ -312,9 +315,11 @@ use rsx_cast::{ReplicationConsumer, CastReceiver, CastRecv};
 // through to the next on ReplicationNotAvailable.
 // `tip_file` — path persisting the last-applied seq; makes restart
 //   idempotent (resume from tip+1; a missing file starts at 0).
-// `None` — no TLS on the replication TCP (`Some(TlsConfig)` enables it).
+// TLS is mandatory on the replication TCP: `TlsConfig::from_env()`
+//   reads the cert/key/CA PEM paths (see Environment variables).
+let tls = rsx_cast::TlsConfig::from_env()?;
 let mut dxs = ReplicationConsumer::new(stream_id, endpoints.clone(),
-                               tip_file.clone(), None)?;
+                               tip_file.clone(), tls)?;
 // Closure returns `true` to keep draining, `false` to stop early
 // (bounded replay). `run_once` drains to CaughtUp then returns —
 // no reconnect.
@@ -515,8 +520,12 @@ or pin a git rev.
   - `RSX_CAST_SENDER_BIND_ADDR` (unset by default) — pins the
     sender to a known port so receivers know where to send
     NAKs.
-  - `RSX_REPL_TLS`, `RSX_REPL_CERT_PATH`, `RSX_REPL_KEY_PATH`
-    — TLS on the replication TCP socket.
+  - `RSX_REPL_CERT_PATH` (default `./certs/cert.pem`),
+    `RSX_REPL_KEY_PATH` (`./certs/key.pem`),
+    `RSX_REPL_CA_PATH` (`./certs/ca.pem`) — replication TLS is
+    **mandatory**; `TlsConfig::from_env` errors if any file is
+    missing. For a co-located server+consumer the self-signed
+    cert doubles as its own CA (single-box self-trust).
 - **Metrics.** No Prometheus. Counters (drops, NAK retransmits,
   reorder overflows) emit as structured `tracing` log lines;
   a separate shipper turns them into metrics out-of-band.

@@ -45,7 +45,7 @@ ride the same transport.
 | `encode_utils.rs` | Generic helpers: `compute_crc32` (CRC32C / Castagnoli), `as_bytes`, `encode_record`, `decode_payload<T: Copy>`. No domain knowledge. |
 | `cast.rs` | `CastSender` + `CastReceiver` (UDP, sync). Two-tier NAK: preallocated send_ring (hot) → WAL `read_record_at_seq` (cold). |
 | `wal.rs` | `WalWriter` (10ms flush, 64MB rotate, 4h retention GC) + `WalReader` + `read_record_at_seq`. |
-| `replication_server.rs` | `ReplicationService` (TCP, optional TLS). Sends `ReplicationNotAvailable` when `from_seq` precedes oldest WAL seq. |
+| `replication_server.rs` | `ReplicationService` (TCP, TLS mandatory). Sends `ReplicationNotAvailable` when `from_seq` precedes oldest WAL seq. |
 | `replication_client.rs` | `ReplicationConsumer` (TCP replay, sync). Multi-endpoint: tries endpoints newest→oldest; advances on `ReplicationNotAvailable`. Backoff 1/2/4/8/30s ±20% jitter. |
 | `config.rs` | `CastConfig`, `TlsConfig`. Every field documents its env var. |
 
@@ -150,7 +150,7 @@ one file for the record. No file header, no index.
 ## Replay Protocol (replication) — server.rs
 
 ```
-1. Consumer connects (optional TLS).
+1. Consumer connects over TLS (mandatory; rustls + aws-lc-rs).
 2. Consumer sends ReplicationRequest { stream_id, from_seq }
    as one framed record.
 3. Server validates header version, validates CRC, then
@@ -171,8 +171,21 @@ stream.
 
 ## Trust model
 
-casting is **intentionally unauthenticated** — "trusted internal
-network, no authentication, no encryption" (spec 4-cast §10.4).
+The two transports are asymmetric by design:
+
+- **casting/UDP is intentionally unauthenticated and plaintext**
+  — "trusted internal network, no authentication, no encryption"
+  (spec 4-cast §10.4). This is the hot order-flow path; adding
+  per-frame crypto there would tax the zero-copy ingress for no
+  gain on a trusted LAN.
+- **replication/TCP mandates TLS** (rustls + aws-lc-rs). The cold
+  catch-up/federation hop can cross a wider trust boundary
+  (cross-host, cross-DC replay), and it is off the latency
+  critical path, so encrypting it is cheap insurance. There is no
+  plaintext fallback: `ReplicationService::new` /
+  `ReplicationConsumer::new` require a cert (server) / CA
+  (client), and `TlsConfig::from_env` errors when certs are
+  absent.
 
 - External clients are authenticated at the **gateway**
   (JWT + TLS).
