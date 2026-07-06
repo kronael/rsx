@@ -1,0 +1,38 @@
+# Recorder: archives one ME replication stream verbatim to the audit
+# tier, one instance per symbol.
+#   systemctl enable --now rsx-recorder@btc rsx-recorder@sol rsx-recorder@pengu
+# Off-path (streams over TCP, sleeps); shares core 0. Writes to the
+# dedicated archive volume (RSX_RECORDER_ARCHIVE_DIR), NOT the root fs
+# — the archive is unbounded by design (bugs.md RECORDER-ARCHIVE-DEV-
+# DISK / SYS #28). RSX_RECORDER_RETAIN_DAYS keeps only a rolling local
+# window; the permanent audit tier is the object-store offload.
+[Unit]
+Description=RSX recorder (archive stream %i)
+Documentation=file:///opt/rsx/specs/2/9-deploy.md
+After=network-online.target rsx-me@%i.service
+Wants=network-online.target
+Requires=rsx-me@%i.service
+PartOf=rsx.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rsx
+Group=rsx
+WorkingDirectory=/srv/data/rsx
+EnvironmentFile=/opt/rsx/env/recorder-%i.env
+ExecStart=/opt/rsx/bin/rsx-recorder
+Restart=on-failure
+RestartSec=2
+CPUAffinity=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# The archive lives on its own mount; grant both the data dir and the
+# archive volume (they may be the same path if not yet split out).
+ReadWritePaths=/srv/data/rsx /srv/data/rsx/archive
+
+[Install]
+WantedBy=rsx.target

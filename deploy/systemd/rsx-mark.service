@@ -1,0 +1,32 @@
+# Mark price aggregator: median of external CEX feeds → risk. Off the
+# order critical path (sleeps, ~0% CPU); shares core 0 with the OS and
+# must NOT busy-spin. Reaches the internet for the exchange feeds, so
+# it starts after network-online but depends on nothing internal.
+[Unit]
+Description=RSX mark price aggregator
+Documentation=file:///opt/rsx/specs/2/9-deploy.md
+After=network-online.target
+Wants=network-online.target
+PartOf=rsx.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rsx
+Group=rsx
+WorkingDirectory=/srv/data/rsx
+EnvironmentFile=/opt/rsx/env/mark.env
+ExecStart=/opt/rsx/bin/rsx-mark
+Restart=on-failure
+RestartSec=2
+# Off-path: pinned to the OS core, never a hot core.
+CPUAffinity=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/data/rsx
+
+[Install]
+WantedBy=rsx.target

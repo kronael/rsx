@@ -3,7 +3,7 @@
        play-book play-risk play-wal play-logs \
        play-control play-faults play-verify \
        play-infra play-orders play-nav play-api \
-       play-full \
+       play-full deploy-help \
        api-unit api-integration api-stress \
        bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help check-progress acceptance-bundle \
        gen-release-truth release-gate \
@@ -345,6 +345,18 @@ tui-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access
 	@echo "   # /etc/rsx-tui/env (mode 0400): RSX_GW_JWT_SECRET=... RSX_GW_URL=wss://rsx.krons.cx"
 	@echo "-> register a trader key: rsx-tui-authorize add <user_id> <pubkey> <comment>"
 	@echo "   example authorized_keys: scripts/rsx-tui.authorized_keys.example"
+
+# Print the single-machine production deploy steps. Guarded like
+# tui-ssh-setup: this dev Makefile never runs the production deploy —
+# deploy/deploy.sh runs ON the target (rsx.krons.cx), by the founder.
+deploy-help: ## print single-machine production deploy steps (deploy/README.md)
+	@bash -n deploy/deploy.sh && echo "deploy/deploy.sh: syntax ok"
+	@echo "-> production deploy is manual, on the target host (deploy/README.md):"
+	@echo "   1. mount a dedicated volume at /srv/data/rsx/archive"
+	@echo "   2. Postgres up as rsx-postgres.service; stage /opt/rsx/env/secret.env (0400)"
+	@echo "   3. nginx/caddy TLS -> 127.0.0.1:8080 (gateway) + :8180 (marketdata)"
+	@echo "   4. sudo RSX_DEPLOY_HOST=\$$(hostname -f) ./deploy/deploy.sh --apply"
+	@echo "-> dry run first (no --apply) prints every action and changes nothing."
 
 # Reproducible end-to-end demo: start minimal cluster, submit one IOC
 # order, wait for a fill in the WAL. Exits 0 on success, 1 on timeout.

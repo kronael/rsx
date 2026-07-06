@@ -1,0 +1,18 @@
+# Aggregate target: `systemctl start rsx.target` brings the whole
+# single-machine cluster up in dependency order; `stop` tears it down.
+# Individual units declare PartOf=rsx.target so a target stop/restart
+# propagates. Ordering between units comes from their own After=/
+# Requires= lines, not from this target.
+[Unit]
+Description=RSX exchange (single-machine cluster)
+Documentation=file:///opt/rsx/specs/2/9-deploy.md
+Wants=rsx-me@btc.service rsx-me@eth.service rsx-me@sol.service
+Wants=rsx-mark.service
+Wants=rsx-risk@0.service
+Wants=rsx-gateway.service
+Wants=rsx-marketdata.service
+Wants=rsx-recorder@btc.service rsx-recorder@eth.service rsx-recorder@sol.service
+After=rsx-postgres.service
+
+[Install]
+WantedBy=multi-user.target
