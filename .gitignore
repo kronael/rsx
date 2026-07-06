@@ -26,3 +26,6 @@ playwright-report/
 docs/site/
 .mkdocs-venv/
 refs/
+
+# Replication snakeoil certs (private keys — never commit)
+/certs/
