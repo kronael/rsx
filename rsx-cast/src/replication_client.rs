@@ -338,24 +338,32 @@ fn jitter_factor() -> f64 {
     0.8 + 0.4 * ((ns % 1000) as f64 / 1000.0)
 }
 
+/// The tip is stored as a JSON number — a bare decimal integer
+/// (e.g. `42`), which is a valid JSON document — so the file is
+/// human-readable and inspectable with `cat`. A missing, empty, or
+/// unparseable file reads as tip 0 (replay from the start;
+/// idempotent, so a format change just re-replays).
 fn load_tip(path: &Path) -> io::Result<u64> {
-    let data = fs::read(path)?;
-    if data.len() < 8 {
-        return Ok(0);
-    }
-    let bytes: [u8; 8] =
-        data[..8].try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "bad tip file",
-            )
-        })?;
-    Ok(u64::from_le_bytes(bytes))
+    let data = match fs::read(path) {
+        Ok(d) => d,
+        Err(ref e)
+            if e.kind() == io::ErrorKind::NotFound =>
+        {
+            return Ok(0);
+        }
+        Err(e) => return Err(e),
+    };
+    let tip = std::str::from_utf8(&data)
+        .map(str::trim)
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    Ok(tip)
 }
 
 fn persist_tip(path: &Path, tip: u64) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, tip.to_le_bytes())?;
+    fs::write(&tmp, tip.to_string().as_bytes())?;
     fs::rename(&tmp, path)?;
     if let Some(parent) = path.parent() {
         let dir = File::open(parent)?;
