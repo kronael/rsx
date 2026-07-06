@@ -115,8 +115,8 @@ invention is small, the packaging difference is the point.
   undetected at the tail of an idle stream. **No flow control,
   no congestion control** — receivers stall their consumer or
   drop reordered packets on overflow; senders never pause.
-  **Zero heap allocation on the send path**: `CastSender::send`
-  and `send_framed` write into a preallocated ring and call
+  **Zero heap allocation on the send path**: `send_framed`
+  writes into a preallocated ring and calls
   `sendto` without any `Vec`. The receive path's
   `try_recv_with` callback delivers a `&[u8]` directly from the
   receiver's internal buffer; the convenience `try_recv` (which
@@ -170,7 +170,7 @@ first `u64` of every data record (per the [`CastRecord`] trait).
 
 **The entire hot path is zero-allocation.**
 
-- **Send path** (`CastSender::send`): the preallocated `send_ring`
+- **Send path** (`send_framed`): the preallocated `send_ring`
   holds the 4 K most-recent frames; every send is a copy into an
   already-owned slot + one `sendto` syscall. No heap traffic.
 - **Receive path** (`CastReceiver::try_recv_with`): the `FnOnce`

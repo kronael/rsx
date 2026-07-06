@@ -28,9 +28,9 @@ Criterion writes per-bench results to
 | Bench | Measures | What it isolates |
 |---|---|---|
 | `compare_all::raw_udp_128b` | Raw UDP loopback RTT, 128 B payload, two non-blocking sockets spinning. **Absolute floor.** | Baseline: no protocol work |
-| `cast_one_way_bench` | `CastSender::send` → `CastReceiver::try_recv` one direction | Hot send → hot recv |
+| `cast_one_way_bench` | `send_framed` → `CastReceiver::try_recv` one direction | Hot send → hot recv |
 | `cast_rtt_bench` | casting echo RTT (A → B → A), two paired senders + receivers | Full sender → echo → sender triangle |
-| `cast_send_breakdown_bench` | Each step inside `CastSender::send` separately: CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs `send` body — 99 % is `sendto` |
+| `cast_send_breakdown_bench` | Each step of the frame+send path (`Framed::pack` + `send_framed`): CRC, header build, buf pack, `sendto`, NAK ring copy | Attributes the ~4 µs send body — 99 % is `sendto` |
 | `wal_bench` | `WalWriter::append` in-memory, flush + fsync 64 KB, sequential read 10 K records | Append (31 ns) + sequential reader throughput |
 | `wal_fsync_bench` | `WalWriter::append` + explicit flush + fsync to disk | Durability cost: 498 µs p50 single-record |
 | `wal_random_read_bench` | `read_record_at_seq(random)` over a pre-populated WAL | Cold-tier NAK retransmit path; in-file scan, 10.4 ms @ 10 K records |
@@ -44,7 +44,7 @@ benches pin their worker to core 2. See
 [`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md)
 § "The pinning gap" for the before/after distributions.
 
-## CastSender::send sub-attribution (`cast_send_breakdown_bench`)
+## Send-path sub-attribution (`cast_send_breakdown_bench`)
 
 Per-stage median, 128 B payload + 16 B header, post-pinning:
 
@@ -57,7 +57,7 @@ Per-stage median, 128 B payload + 16 B header, post-pinning:
 | `ring_cache_copy_128b` | 3.1 ns |
 | **Sum** | **~4.07 µs** |
 
-If every line of Rust in `CastSender::send` were eliminated, you'd
+If every line of Rust in the send path were eliminated, you'd
 save ~26 ns out of ~4 070 ns — 0.6 % improvement. The remaining
 99.4 % is the `sendto` syscall, which is kernel code we don't
 own. To reduce it: io_uring SQE submission, `sendmmsg` batching,
