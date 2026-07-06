@@ -22,6 +22,30 @@ fn reserve_port() -> SocketAddr {
     a
 }
 
+/// Self-signed cert used as BOTH server identity and client CA
+/// (single-box self-trust). Replication is TLS-mandatory.
+fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
+    let _ = rustls::crypto::aws_lc_rs::default_provider()
+        .install_default();
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .unwrap();
+    let cert_path = dir.join("repl_cert.pem");
+    let key_path = dir.join("repl_key.pem");
+    std::fs::write(&cert_path, cert.cert.pem()).unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem())
+        .unwrap();
+    rsx_cast::TlsConfig {
+        server: Some(rsx_cast::TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: Some(rsx_cast::TlsClient { cert_path }),
+    }
+}
+
 fn fill(seq: u64) -> FillRecord {
     FillRecord {
         seq,
@@ -64,15 +88,17 @@ fn drain_replay_walks_wal_and_invokes_apply() {
     let last_seq = writer.last_seq();
     assert_eq!(last_seq, 3);
 
+    let tls = test_tls(tmp.path());
     let replay_addr = reserve_port();
     let wal_dir_srv = wal_dir.clone();
+    let tls_srv = tls.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
         let service = ReplicationService::new(
-            wal_dir_srv, None,
+            wal_dir_srv, tls_srv,
         )
         .unwrap();
         rt.block_on(async move {
@@ -96,6 +122,7 @@ fn drain_replay_walks_wal_and_invokes_apply() {
         replay_addr.to_string(),
         0,
         tip_file,
+        tls,
         |raw| {
             let seq = rsx_cast::wal::extract_seq(&raw.payload)
                 .unwrap_or(0);

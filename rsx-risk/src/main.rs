@@ -299,6 +299,9 @@ fn run_main(
         .to_str()
         // SAFETY: fail-fast at startup
         .expect("RSX_RISK_WAL_DIR must be valid UTF-8");
+    // Replication is TLS-mandatory: read the cert paths once at
+    // startup so warm-catchup + every FAULTED replay reuse them.
+    let tls = rsx_cast::TlsConfig::from_env()?;
     let db_url = &cfg.db_url;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -384,6 +387,7 @@ fn run_main(
         &me_repl_addr,
         &wal_dir,
         lease_poll_interval_ms,
+        &tls,
     )?;
     // Past this point this node is the SOLE advisory-lock holder
     // (invariant #10) and the shard is warm + final-drained.
@@ -696,6 +700,7 @@ fn run_main(
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         &wal_dir,
+                        &tls,
                     );
                     me_receiver.reset_after_replay(new_tip);
                 }
@@ -707,6 +712,7 @@ fn run_main(
                         last_delivered_seq,
                         None,
                         &wal_dir,
+                        &tls,
                     );
                     me_receiver.reset_after_replay(new_tip);
                 }
@@ -809,6 +815,7 @@ fn run_main(
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         &wal_dir,
+                        &tls,
                     );
                     gw_receiver.reset_after_replay(new_tip);
                 }
@@ -820,6 +827,7 @@ fn run_main(
                         last_delivered_seq,
                         None,
                         &wal_dir,
+                        &tls,
                     );
                     gw_receiver.reset_after_replay(new_tip);
                 }
@@ -852,6 +860,7 @@ fn run_main(
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         &wal_dir,
+                        &tls,
                     );
                     mark_receiver.reset_after_replay(new_tip);
                 }
@@ -863,6 +872,7 @@ fn run_main(
                         last_delivered_seq,
                         None,
                         &wal_dir,
+                        &tls,
                     );
                     mark_receiver.reset_after_replay(new_tip);
                 }

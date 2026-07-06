@@ -7,6 +7,7 @@
 //! debug log — see `main.rs::handle_replay`).
 
 use rsx_cast::ReplicationConsumer;
+use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_cast::wal::RawWalRecord;
 use rsx_cast::wal::extract_seq;
@@ -25,6 +26,7 @@ pub fn drain_replay<F>(
     replay_addr: String,
     last_delivered_seq: u64,
     tip_file: PathBuf,
+    tls: TlsConfig,
     mut apply: F,
 ) -> io::Result<u64>
 where
@@ -37,7 +39,7 @@ where
         stream_id,
         vec![replay_addr],
         tip_file,
-        None,
+        tls,
     )?;
     consumer.tip = last_delivered_seq;
 

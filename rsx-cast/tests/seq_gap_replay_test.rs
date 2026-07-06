@@ -58,6 +58,30 @@ fn reserve_tcp_port() -> SocketAddr {
     a
 }
 
+/// Self-signed cert used as BOTH server identity and client CA
+/// (single-box self-trust). SAN covers 127.0.0.1 for loopback.
+fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
+    let _ = rustls::crypto::aws_lc_rs::default_provider()
+        .install_default();
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .unwrap();
+    let cert_path = dir.join("repl_cert.pem");
+    let key_path = dir.join("repl_key.pem");
+    std::fs::write(&cert_path, cert.cert.pem()).unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem())
+        .unwrap();
+    rsx_cast::TlsConfig {
+        server: Some(rsx_cast::TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: Some(rsx_cast::TlsClient { cert_path }),
+    }
+}
+
 fn fill(seq: u64) -> FillRecord {
     FillRecord {
         seq,
@@ -213,8 +237,10 @@ fn seq_gap_faults_then_tcp_replay_resumes() {
     // 3. TCP replay from tip+1. Stand up the replication
     //    service against the producer WAL; consumer tip=1 →
     //    requests from_seq=2, drains the contiguous tail 2,3.
+    let tls = test_tls(tmp.path());
     let replay_addr = reserve_tcp_port();
     let wal_dir_srv = wal_dir.clone();
+    let tls_srv = tls.clone();
     thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -222,7 +248,7 @@ fn seq_gap_faults_then_tcp_replay_resumes() {
             .unwrap();
         rt.block_on(async move {
             let service = ReplicationService::new(
-                wal_dir_srv, None,
+                wal_dir_srv, tls_srv,
             )
             .unwrap();
             service.serve(replay_addr).await.unwrap();
@@ -242,6 +268,7 @@ fn seq_gap_faults_then_tcp_replay_resumes() {
     let replayed: Arc<Mutex<Vec<u64>>> =
         Arc::new(Mutex::new(Vec::new()));
     let replayed_cb = replayed.clone();
+    let tls_cli = tls.clone();
     let new_tip = thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -252,7 +279,7 @@ fn seq_gap_faults_then_tcp_replay_resumes() {
                 STREAM_ID,
                 vec![replay_addr.to_string()],
                 tip_file,
-                None,
+                tls_cli,
             )
             .unwrap();
             let _ = tokio::time::timeout(

@@ -59,9 +59,38 @@ fn fill(seq: u64) -> FillRecord {
     }
 }
 
-async fn serve(wal_dir: std::path::PathBuf, addr: SocketAddr) {
+/// Self-signed cert usable as BOTH server identity and client CA
+/// (single-box self-trust). SAN covers localhost + 127.0.0.1 so a
+/// consumer connecting to either verifies.
+fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
+    let _ = rustls::crypto::aws_lc_rs::default_provider()
+        .install_default();
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .unwrap();
+    let cert_path = dir.join("repl_cert.pem");
+    let key_path = dir.join("repl_key.pem");
+    std::fs::write(&cert_path, cert.cert.pem()).unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem())
+        .unwrap();
+    rsx_cast::TlsConfig {
+        server: Some(rsx_cast::TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: Some(rsx_cast::TlsClient { cert_path }),
+    }
+}
+
+async fn serve(
+    wal_dir: std::path::PathBuf,
+    addr: SocketAddr,
+    tls: rsx_cast::TlsConfig,
+) {
     let service =
-        ReplicationService::new(wal_dir, None).unwrap();
+        ReplicationService::new(wal_dir, tls).unwrap();
     service.serve(addr).await.unwrap();
 }
 
@@ -104,10 +133,11 @@ async fn not_available_falls_through_to_next_endpoint() {
     writer.flush().unwrap();
     drop(writer);
 
+    let tls = test_tls(tmp.path());
     let addr_a = reserve_port();
     let addr_b = reserve_port();
-    tokio::spawn(serve(dir_a, addr_a));
-    tokio::spawn(serve(dir_b, addr_b));
+    tokio::spawn(serve(dir_a, addr_a, tls.clone()));
+    tokio::spawn(serve(dir_b, addr_b, tls.clone()));
     wait_bind(addr_a).await;
     wait_bind(addr_b).await;
 
@@ -121,7 +151,7 @@ async fn not_available_falls_through_to_next_endpoint() {
             format!("127.0.0.1:{}", addr_b.port()),
         ],
         tip_file,
-        None,
+        tls,
     )
     .unwrap();
 

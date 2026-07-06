@@ -34,18 +34,21 @@ use tracing::warn;
 #[derive(Clone)]
 pub struct ReplicationService {
     pub wal_dir: PathBuf,
-    pub tls_acceptor: Option<TlsAcceptor>,
+    pub tls_acceptor: TlsAcceptor,
 }
 
 impl ReplicationService {
     pub fn new(
         wal_dir: PathBuf,
-        tls: Option<TlsConfig>,
+        tls: TlsConfig,
     ) -> io::Result<Self> {
-        let tls_acceptor = tls
-            .and_then(|c| c.server)
-            .map(|s| build_acceptor(&s))
-            .transpose()?;
+        let server = tls.server.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "replication requires TLS: server cert/key missing",
+            )
+        })?;
+        let tls_acceptor = build_acceptor(&server)?;
 
         Ok(Self {
             wal_dir,
@@ -58,10 +61,9 @@ impl ReplicationService {
         addr: SocketAddr,
     ) -> std::io::Result<()> {
         let listener = TcpListener::bind(addr).await?;
-        let tls_enabled = self.tls_acceptor.is_some();
         info!(
-            "dxs replay server listening on {} (tls={})",
-            addr, tls_enabled
+            "dxs replay server listening on {} (tls)",
+            addr
         );
         let svc = Arc::new(self);
         loop {
@@ -84,17 +86,13 @@ async fn dispatch_client(
     peer: SocketAddr,
     stream: tokio::net::TcpStream,
 ) {
-    let result = if let Some(ref acceptor) = svc.tls_acceptor {
-        match acceptor.accept(stream).await {
-            Ok(tls_stream) => {
-                handle_client(svc, tls_stream).await
-            }
-            Err(e) => Err(io::Error::other(format!(
-                "tls handshake failed: {}", e,
-            ))),
+    let result = match svc.tls_acceptor.accept(stream).await {
+        Ok(tls_stream) => {
+            handle_client(svc, tls_stream).await
         }
-    } else {
-        handle_client(svc, stream).await
+        Err(e) => Err(io::Error::other(format!(
+            "tls handshake failed: {}", e,
+        ))),
     };
     if let Err(e) = result {
         warn!("dxs client {} error: {}", peer, e);
