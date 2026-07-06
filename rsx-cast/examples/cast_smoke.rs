@@ -1,6 +1,7 @@
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::wal::Framed;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -39,7 +40,7 @@ fn main() {
         _pad1: [0; 4], taker_ts_ns: 0,
     };
     eprintln!("sending...");
-    sender.send(&mut rec).unwrap();
+    sender.send_framed(&Framed::pack(&mut rec, 1)).unwrap();
     eprintln!("send returned");
 
     // Try to recv with retries

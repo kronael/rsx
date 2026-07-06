@@ -12,6 +12,7 @@ use rsx_cast::compute_crc32;
 use rsx_cast::CastRecv;
 use rsx_cast::CastReceiver;
 use rsx_cast::CastSender;
+use rsx_cast::Framed;
 use rsx_cast::Nak;
 use rsx_cast::WalHeader;
 use rsx_cast::WalWriter;
@@ -85,9 +86,11 @@ fn nak_wal_fallback_delivers_evicted_seq() {
     // slot for seq=1 (slot = seq & 4095) has been overwritten.
     // Drain the receiver each batch so its reorder buffer doesn't
     // fill.
+    let mut seq = 0u64;
     for _ in 0..5_000u64 {
         let mut rec = fill(0);
-        sender.send(&mut rec).unwrap();
+        seq += 1;
+        sender.send_framed(&Framed::pack(&mut rec, seq)).unwrap();
         while matches!(
             receiver.try_recv(),
             CastRecv::Data(_, _)

@@ -6,7 +6,6 @@ use crate::encode_utils::compute_crc32;
 use crate::encode_utils::decode_payload;
 use crate::header::WalHeader;
 use crate::records::CastHeartbeat;
-use crate::records::CastRecord;
 use crate::records::Nak;
 use crate::records::RECORD_HEARTBEAT;
 use crate::records::RECORD_NAK;
@@ -227,75 +226,6 @@ impl CastSender {
             wal_dir: wal_dir.to_path_buf(),
             buf: [0u8; PACKET_BUF_SIZE],
         })
-    }
-
-    /// Send a typed casting record. Assigns seq via
-    /// CastRecord::set_seq.
-    ///
-    /// No flow control: casting has no backpressure. If the
-    /// receiver can't keep up, recovery is via NAK (small
-    /// gaps) or DXS replay (large gaps), not by stalling
-    /// the producer.
-    ///
-    /// Hot send path: zero heap allocations. For small records
-    /// (≤ SEND_RING_FRAME_BYTES) the frame is written directly
-    /// into the ring slot, then sent from there — single
-    /// intermediate user-space copy, no self.buf on the hot
-    /// path.
-    pub fn send<T: CastRecord>(
-        &mut self,
-        record: &mut T,
-    ) -> io::Result<()> {
-        let seq = self.next_seq;
-        record.set_seq(seq);
-
-        let payload = as_bytes(record);
-        let total = WalHeader::SIZE + payload.len();
-        let crc = compute_crc32(payload);
-        let header = WalHeader::new(
-            T::record_type(),
-            payload.len() as u16,
-            crc,
-        );
-
-        if total <= SEND_RING_FRAME_BYTES {
-            // Write directly into the ring slot; send from
-            // there. Populates the NAK cache in the same
-            // pass — no extra buf→ring copy.
-            let slot = (seq & SEND_RING_MASK) as usize;
-            let off = slot * SEND_RING_FRAME_BYTES;
-            self.ring_frames[off..off + WalHeader::SIZE]
-                .copy_from_slice(header.to_bytes());
-            self.ring_frames
-                [off + WalHeader::SIZE..off + total]
-                .copy_from_slice(payload);
-            self.ring_seqs[slot] = seq;
-            self.ring_lens[slot] = total as u16;
-            self.socket.send_to(
-                &self.ring_frames[off..off + total],
-                self.dest,
-            )?;
-        } else {
-            // Large record: fall back to self.buf; mark
-            // slot dirty so NAK falls through to WAL.
-            let slot = (seq & SEND_RING_MASK) as usize;
-            self.ring_seqs[slot] = 0;
-            self.ring_lens[slot] = 0;
-            self.buf[..WalHeader::SIZE]
-                .copy_from_slice(header.to_bytes());
-            self.buf[WalHeader::SIZE..total]
-                .copy_from_slice(payload);
-            self.socket
-                .send_to(&self.buf[..total], self.dest)?;
-        }
-
-        self.next_seq += 1;
-        // Data send doubles as a liveness signal: the receiver
-        // sees seq via the data record, no separate heartbeat
-        // needed. Reset the timer; tick() will skip until the
-        // stream goes idle.
-        self.last_heartbeat = Instant::now();
-        Ok(())
     }
 
     /// Publish a record framed by `WalWriter::prepare`. No CRC

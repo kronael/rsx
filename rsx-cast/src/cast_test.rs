@@ -6,12 +6,13 @@ use crate::cast::CastSender;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::Nak;
+use crate::wal::Framed;
 use rsx_messages::FillRecord;
 use crate::records::RECORD_NAK;
 use rsx_messages::RECORD_FILL;
 use std::net::SocketAddr;
 
-// Impl crate-local CastRecord for FillRecord so sender.send() works
+// Impl crate-local CastRecord for FillRecord so Framed::pack works
 // inside unit-test context where crate::records::CastRecord and
 // the external rsx_cast::CastRecord are different types.
 impl crate::records::CastRecord for rsx_messages::FillRecord {
@@ -81,7 +82,7 @@ fn send_recv_roundtrip() {
     let _tmp = TempDir::new().unwrap();
     let (mut sender, mut receiver) = loopback_pair(_tmp.path());
     let mut fill = fill_payload(1);
-    sender.send(&mut fill).unwrap();
+    sender.send_framed(&Framed::pack(&mut fill, 1)).unwrap();
 
     thread::sleep(Duration::from_millis(10));
 
@@ -111,10 +112,10 @@ fn sender_seq_increments() {
     let (mut sender, _receiver) = loopback_pair(_tmp.path());
     assert_eq!(sender.next_seq(), 1);
     let mut fill = fill_payload(1);
-    sender.send(&mut fill).unwrap();
+    sender.send_framed(&Framed::pack(&mut fill, 1)).unwrap();
     assert_eq!(sender.next_seq(), 2);
     let mut fill2 = fill_payload(2);
-    sender.send(&mut fill2).unwrap();
+    sender.send_framed(&Framed::pack(&mut fill2, 2)).unwrap();
     assert_eq!(sender.next_seq(), 3);
 }
 
@@ -131,7 +132,7 @@ fn receiver_expected_seq_advances() {
     assert_eq!(receiver.expected_seq(), 0);
 
     let mut fill = fill_payload(1);
-    sender.send(&mut fill).unwrap();
+    sender.send_framed(&Framed::pack(&mut fill, 1)).unwrap();
     thread::sleep(Duration::from_millis(10));
     receiver.try_recv();
     assert_eq!(receiver.expected_seq(), 2);
@@ -143,7 +144,7 @@ fn multiple_records_in_order() {
     let (mut sender, mut receiver) = loopback_pair(_tmp.path());
     for i in 1..=5u64 {
         let mut fill = fill_payload(i);
-        sender.send(&mut fill).unwrap();
+        sender.send_framed(&Framed::pack(&mut fill, i)).unwrap();
     }
     thread::sleep(Duration::from_millis(20));
 
@@ -211,7 +212,7 @@ fn nak_retransmit_from_wal() {
     // Send seq=1 so it lands in the send ring;
     // do not drain receiver so expected_seq stays 1
     let mut fill = fill_payload(0);
-    sender.send(&mut fill).unwrap();
+    sender.send_framed(&Framed::pack(&mut fill, 1)).unwrap();
 
     // Send NAK for seq=1 to trigger ring retransmit
     let nak = Nak { from_seq: 1, count: 1, _pad1: [0u8; 48] };

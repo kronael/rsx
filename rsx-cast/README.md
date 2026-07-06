@@ -202,6 +202,7 @@ cargo run --example cast_smoke
 
 ```rust
 use rsx_cast::CastSender;
+use rsx_cast::Framed;
 use rsx_cast::WalWriter;
 
 // One WAL per stream. `CastSender` takes `wal_dir` to READ from
@@ -231,9 +232,13 @@ sender.recv_control();               // drains incoming NAKs, retransmits as nee
 ```
 
 For a publish-only stream (no persistence, no NAK fallback to
-disk), skip the `WalWriter` and call `sender.send(&mut fill)?` —
-that assigns the seq, computes the CRC, sends, and caches in the
-ring, but a NAK for an aged-out seq cannot be served.
+disk), skip the `WalWriter` and frame the record yourself with
+`Framed::pack(&mut fill, seq)`, then `sender.send_framed(&framed)?`.
+The caller owns the seq counter (a monotonic `u64` per stream);
+`pack` assigns the seq and computes the CRC + header, and
+`send_framed` sends and caches the frame in the ring — but a NAK
+for an aged-out seq cannot be served (there is no WAL to fall
+back to).
 
 `tick()` and `recv_control()` are non-optional in steady state.
 Heartbeats are how the **receiver** detects a stalled tail (no

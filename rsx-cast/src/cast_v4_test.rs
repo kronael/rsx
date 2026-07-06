@@ -12,6 +12,7 @@ use crate::records::CastHeartbeat;
 use crate::records::Nak;
 use crate::records::RECORD_HEARTBEAT;
 use crate::records::RECORD_NAK;
+use crate::wal::Framed;
 use rsx_messages::FillRecord;
 use rsx_messages::RECORD_FILL;
 use rsx_types::Price;
@@ -166,7 +167,7 @@ fn nak_recovers_single_packet() {
 
     // Send seq=1 normally (delivered).
     let mut f1 = fill(1);
-    sender.send(&mut f1).unwrap();
+    sender.send_framed(&Framed::pack(&mut f1, 1)).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
     assert!(matches!(r, CastRecv::Data(_, _)));
@@ -176,7 +177,7 @@ fn nak_recovers_single_packet() {
     // flight. The send_ring still has the seq=2 frame
     // cached for the retransmit.
     let mut f2 = fill(2);
-    sender.send(&mut f2).unwrap();
+    sender.send_framed(&Framed::pack(&mut f2, 2)).unwrap();
     // Drain socket of seq=2 BEFORE the receiver sees it:
     // we just discard it via a fresh receiver isn't easy.
     // Instead, simulate loss by skipping the recv: send
@@ -185,7 +186,7 @@ fn nak_recovers_single_packet() {
     // first. Workaround: process all packets but check
     // what state we end up in.
     let mut f3 = fill(3);
-    sender.send(&mut f3).unwrap();
+    sender.send_framed(&Framed::pack(&mut f3, 3)).unwrap();
     thread::sleep(Duration::from_millis(10));
 
     // Drain everything the receiver got.
@@ -231,7 +232,7 @@ fn oldest_missing_run_naks_sequentially() {
 
     // Send seq=1 (delivered, sets expected_seq=2).
     let mut f1 = fill(1);
-    sender.send(&mut f1).unwrap();
+    sender.send_framed(&Framed::pack(&mut f1, 1)).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
     assert!(matches!(r, CastRecv::Data(_, _)));
@@ -242,9 +243,9 @@ fn oldest_missing_run_naks_sequentially() {
     // are out-of-order. The ring should hold seq=5 and
     // seq=8 with gaps [2..5] and [6..8].
     let mut f5 = fill(5);
-    sender.send(&mut f5).unwrap();
+    sender.send_framed(&Framed::pack(&mut f5, 2)).unwrap();
     let mut f8 = fill(8);
-    sender.send(&mut f8).unwrap();
+    sender.send_framed(&Framed::pack(&mut f8, 3)).unwrap();
     // Skip seq 2,3,4,6,7 by NOT sending them. (They
     // were never enqueued, so the sender's next_seq is
     // now 9 — but that's fine: highest_seen on the
@@ -253,11 +254,11 @@ fn oldest_missing_run_naks_sequentially() {
     thread::sleep(Duration::from_millis(5));
 
     // Drive one try_recv to ingest both stages.
-    // Actually next_seq was 2 before f5; calling
-    // sender.send(&mut f5) USES next_seq=2 (not 5).
-    // Let me adjust: the sender always assigns seq from
-    // next_seq via set_seq. So the wire seqs are
-    // contiguous. To get out-of-order, we'd have to drop
+    // Actually next_seq was 2 before f5; framing f5 with
+    // Framed::pack(&mut f5, 2) sends wire seq=2 (not 5).
+    // Let me adjust: to keep the wire seqs contiguous the
+    // send-order counter (1, 2, 3 …) is what is framed, not
+    // the record's nominal id. To get out-of-order, we'd have to drop
     // on the wire. Skip this test variant; oldest_run is
     // exercised by ring_overflow_faults and the unit
     // method tests instead.
@@ -453,7 +454,7 @@ fn handle_nak_dedups_within_window() {
 
     // Prime the send: assigns seq=1, sends to listener.
     let mut f1 = fill(1);
-    sender.send(&mut f1).unwrap();
+    sender.send_framed(&Framed::pack(&mut f1, 1)).unwrap();
 
     // Drain the initial send so it's not counted.
     let mut drain = [0u8; 256];
@@ -591,13 +592,13 @@ fn drain_reorder_resets_nak_retries() {
 
     // Seq=1: in-order.
     let mut f1 = fill(1);
-    sender.send(&mut f1).unwrap();
+    sender.send_framed(&Framed::pack(&mut f1, 1)).unwrap();
     thread::sleep(Duration::from_millis(5));
     let _ = receiver.try_recv();
 
     // Seq=2 (in-order, advances).
     let mut f2 = fill(2);
-    sender.send(&mut f2).unwrap();
+    sender.send_framed(&Framed::pack(&mut f2, 2)).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
     assert!(matches!(r, CastRecv::Data(_, _)));
@@ -609,7 +610,7 @@ fn drain_reorder_resets_nak_retries() {
     // (e.g. NAK + retransmit on the wire) cycles through
     // maybe_nak without flipping us to Faulted.
     let mut f3 = fill(3);
-    sender.send(&mut f3).unwrap();
+    sender.send_framed(&Framed::pack(&mut f3, 3)).unwrap();
     thread::sleep(Duration::from_millis(5));
     let r = receiver.try_recv();
     assert!(matches!(r, CastRecv::Data(_, _)));

@@ -39,6 +39,7 @@ use criterion::Criterion;
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::wal::Framed;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -146,7 +147,8 @@ fn bench_cmp_one_way(c: &mut Criterion) {
                 let _ = sender.tick();
                 sender.recv_control();
             }
-            if let Err(e) = sender.send(black_box(&mut rec)) {
+            let framed = Framed::pack(black_box(&mut rec), iter);
+            if let Err(e) = sender.send_framed(&framed) {
                 panic!("send: {e}");
             }
             while recv_count.load(Ordering::Acquire) == before {

@@ -1,6 +1,7 @@
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::wal::Framed;
 use rsx_messages::BboRecord;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::RECORD_BBO;
@@ -82,7 +83,7 @@ fn mark_cast_updates_risk_mark_prices() {
         source_count: 1,
         _pad1: [0; 24],
     };
-    sender.send(&mut rec).unwrap();
+    sender.send_framed(&Framed::pack(&mut rec, 1)).unwrap();
 
     thread::sleep(Duration::from_millis(10));
     loop {
@@ -138,7 +139,7 @@ fn bbo_cast_updates_risk_index_price() {
         ask_count: 1,
         _pad2: 0,
     };
-    sender.send(&mut rec).unwrap();
+    sender.send_framed(&Framed::pack(&mut rec, 1)).unwrap();
 
     thread::sleep(Duration::from_millis(10));
     loop {
