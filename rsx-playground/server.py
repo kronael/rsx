@@ -939,7 +939,7 @@ async def start_all(scenario="minimal"):
     # the F1 graceful WAL drain runs; escalate to SIGKILL only for survivors.
     _rsx_bins = [
         "rsx-gateway", "rsx-risk", "rsx-matching",
-        "rsx-marketdata", "rsx-mark",
+        "rsx-marketdata", "rsx-mark", "rsx-recorder",
     ]
     for bin_name in _rsx_bins:
         pat = f"target/debug/{bin_name}"
