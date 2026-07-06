@@ -12,6 +12,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   timestamps). Audit call frequency; if any is a true per-record hot path,
   stamp once per batch or use a coarser/cached clock. Not correctness — record
   + reconsider later.
+- **REPLAY-RESCAN-PER-CONNECTION** (MED, perf) — flagged 2026-07-06. The
+  replication server's `oldest_and_highest_seq` full-scans the *active* WAL
+  file end-to-end (≤64 MB) on **every** replay connection to validate the
+  request range. Fine for occasional bootstraps, but under a **reconnect
+  storm** (a consumer fault-looping) it re-scans repeatedly — disk replay
+  becomes I/O-bound / near-impractical. Server is a stateless dir-reader by
+  design, so options that keep that: (1) incremental tail-scan (cache
+  highest + active-file offset, scan only new bytes); (2) producer-published
+  highest-tip file (~10 ms stale is fine for the refusal check); (3) shared
+  atomic if server+writer co-located (most coupling). Leave for now.
 - **STARTUP-ORDERING-FRAGILITY** (MED, ops) — "can't start the system via the
   playground" traced to a chain of order-dependencies, none self-healing:
   (1) **Postgres must be up first** — if the `rsx-postgres` container is stopped/
