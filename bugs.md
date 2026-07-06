@@ -611,27 +611,37 @@ stale-PID race; subs had to `kill` by PID and relaunch via the wrapper.
 **Fix (defer, record only):** have restart fall back to port-owner lookup
 (`ss -ltnp` on 49171) when the PID file is missing/stale.
 
-## GATEWAY-CRASH-UNDER-WS-CHURN (F20) [OPEN]
+## GATEWAY-CRASH-UNDER-WS-CHURN (F20) [RESOLVED]
 **Severity:** MED (gateway stability under load; cascades into other tests)
 **Where:** rsx-gateway, exercised by `play_readiness.spec.ts:189` "gw-0 survives
 WS connection churn (F20)".
-**Symptom:** during rapid WS connect/disconnect churn the test asserts gw-0 is
-still running and it is NOT (`gw-0 not running during churn`). gw-0 died under
-the churn. This also degrades the cluster for whatever test runs next
-(`play_overview` button test then sees <4 baseline and fails a cascade — not a
-button bug; the buttons work, cluster is 7/7 after).
-**Unknowns:** whether the churn goes gateway-direct or via the dashboard
-`/ws/*` proxy; whether it's a gateway accept-loop / fd-exhaustion issue or a
-proxy-side amplification. NOT confirmed to be caused by recent changes — F20 is
-a long-standing @long test.
-**Also:** `--grep-invert "@long"` did NOT exclude the @long readiness soak/churn
-tests in a `bunx playwright test <files>` run — the tag filter isn't scoping as
-expected, so these heavy tests run (and destabilize) even when meant to be
-skipped. Worth fixing the filter/tagging separately.
-**Fix (defer, record only):** reproduce the churn in isolation, capture gw-0's
-exit (panic vs OOM vs fd limit), harden the accept/close path. Separately, make
-the button test establish its own clean baseline (Stop All → 0 first) so it
-can't cascade-fail from a prior test's damage.
+**Root cause (verified from `log/gw-0.log`):** NOT a connection-handling bug.
+The gateway's per-connection path is robust — a direct churn driver ran ~30k
+full authed connects + ~20k mid-handshake aborts across distinct users; gw-0
+never died, fd peaked at 129 and returned to baseline 9 (no leak on any
+disconnect path, including mid-handshake abort and broken-pipe writes). The ONLY
+crash signature ever recorded is `main.rs:269` — the cast-receiver UDP rebind
+failing with `AddrInUse` (94 occurrences, all one restart storm). Chain: a
+supervisor restart overlaps the prior gw-0's `RSX_GW_CAST_ADDR` (:9300) socket
+release → fresh gw-0 hits `AddrInUse` on `CastReceiver::new` → retried only
+30×200ms=6s then **panicked** → `install_panic_handler` `exit(1)` → supervisor
+respawns → re-races the port → tight ~6s crash-storm the test catches as "gw-0
+not running during churn" (and pid-churn cascades into the next test).
+**Fix:** the overlap trigger was fixed in the supervisor (`f1f2d11`,
+start_all idempotency: derive port clear-set from spawn plan incl. 9300/98xx,
+poll-for-port-free, detach-before-pkill, reap orphans — verified zero AddrInUse).
+Gateway-side hardening (this change): the cast rebind retry budget went 30→100
+(6s→20s) with a clearer terminal message, so a transient handover self-heals
+instead of hard-crash-storming; a genuinely permanent conflict (two gateways on
+one port) still fails fast. See `rsx-gateway/src/main.rs` (`CAST_REBIND_RETRIES`).
+**Verified:** churn test PASSES (`play_readiness.spec.ts --grep churn` → 18
+passed, gw-0 pid stable through the 90s churn); new binary boots clean (binds
+:9300/:8080/:9820 first try); rebind path exercised in isolation reaches
+`retry 40/100` with zero panic (old binary died at `retry 30/30` → main.rs:269).
+**Also (still open, separate):** `--grep-invert "@long"` did NOT exclude the
+@long readiness soak/churn tests in a `bunx playwright test <files>` run — the
+tag filter isn't scoping as expected. And make the `play_overview` button test
+establish its own clean baseline (Stop All → 0 first) so it can't cascade-fail.
 
 ## RECORDER-DEAD-BUT-HEALTHY (durability + false health) [OPEN]
 **Severity:** HIGH (a durability demo whose durability is silently broken)

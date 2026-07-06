@@ -46,6 +46,19 @@ use tracing::warn;
 const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
 const NS_PER_MS: u64 = 1_000_000;
 
+/// How long the gateway keeps retrying the cast-receiver bind
+/// when RSX_GW_CAST_ADDR is transiently held (AddrInUse). A fast
+/// supervisor restart can race the prior instance's UDP socket
+/// release; retrying rides that out instead of crashing. The
+/// budget is generous enough to self-heal a slow handover (was
+/// 6s — too tight, so an overlapping restart hard-crashed here,
+/// got respawned, re-raced the port, and stormed) yet still
+/// bounded so a genuinely permanent conflict (two gateways
+/// configured on one port) fails fast rather than hanging.
+const CAST_REBIND_RETRIES: u32 = 100; // 100 * 200ms = 20s
+const CAST_REBIND_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(200);
+
 /// Idle wakeup cadence for the casting loop. When no datagram
 /// is arriving, the loop still wakes this often to run
 /// housekeeping (heartbeat broadcast, sender NAK control,
@@ -258,15 +271,21 @@ fn main() {
                 Ok(r) => break r,
                 Err(e)
                     if e.kind() == std::io::ErrorKind::AddrInUse
-                        && attempt < 30 =>
+                        && attempt < CAST_REBIND_RETRIES =>
                 {
                     attempt += 1;
                     tracing::warn!(
-                        "gateway cast bind {gw_addr} in use, retry {attempt}/30"
+                        "gateway cast bind {gw_addr} in use, \
+                         retry {attempt}/{CAST_REBIND_RETRIES} \
+                         (prior instance still holds the socket?)"
                     );
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    std::thread::sleep(CAST_REBIND_DELAY);
                 }
-                Err(e) => panic!("failed to bind cast receiver: {e}"),
+                Err(e) => panic!(
+                    "failed to bind cast receiver on {gw_addr}: {e} \
+                     (still held after {attempt} retries — another \
+                     gateway on this RSX_GW_CAST_ADDR?)"
+                ),
             }
         }
     };
