@@ -36,6 +36,44 @@ pub struct Framed {
     pub seq: u64,
 }
 
+impl Framed {
+    /// Assign `seq`, compute CRC, and pack `[header | payload]`
+    /// into a `Framed`. The single point at which a record is
+    /// encoded for the wire, shared by `WalWriter::prepare`
+    /// (persist + publish) and WAL-free publishers that frame
+    /// a record without a `WalWriter` and hand it to
+    /// `CastSender::send_framed`.
+    pub fn pack<T: CastRecord>(
+        record: &mut T,
+        seq: u64,
+    ) -> Framed {
+        let payload_len = std::mem::size_of::<T>();
+        let total = WalHeader::SIZE + payload_len;
+        assert!(
+            total <= FRAMED_WIRE_BYTES,
+            "record too large for Framed wire buffer: {} > {}",
+            total,
+            FRAMED_WIRE_BYTES,
+        );
+
+        record.set_seq(seq);
+
+        let payload = as_bytes(record);
+        let crc = compute_crc32(payload);
+        let header = WalHeader::new(
+            T::record_type(),
+            payload_len as u16,
+            crc,
+        );
+
+        let mut wire = [0u8; FRAMED_WIRE_BYTES];
+        wire[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
+        wire[WalHeader::SIZE..total].copy_from_slice(payload);
+
+        Framed { wire, total: total as u16, seq }
+    }
+}
+
 /// Records buffered between flushes before `should_flush` returns
 /// `true`. Producers call `should_flush` after each `append_framed`
 /// to decide when to drain the buffer to disk. Sized to amortise
@@ -136,45 +174,21 @@ impl WalWriter {
         }
     }
 
-    /// Assign seq, compute CRC, pack `[header | payload]` into
-    /// the returned `Framed`. The single point at which a record
-    /// is encoded for both WAL persistence and live UDP send.
+    /// Assign the next WAL seq and frame the record via
+    /// `Framed::pack`. The single point at which a record is
+    /// encoded for both WAL persistence and live UDP send.
     ///
     /// Paired callers (those that both persist AND publish the
-    /// same record) MUST use this entry point — calling
-    /// `append` and `CastSender::send` separately on the same
-    /// record recomputes CRC and the seq counters can drift.
-    /// See `notes/crc.md`.
+    /// same record) MUST use this entry point — framing the
+    /// same record twice recomputes CRC and the seq counters
+    /// can drift. See `notes/crc.md`.
     pub fn prepare<T: CastRecord>(
         &mut self,
         record: &mut T,
     ) -> io::Result<Framed> {
-        let payload_len = std::mem::size_of::<T>();
-        let total = WalHeader::SIZE + payload_len;
-        assert!(
-            total <= FRAMED_WIRE_BYTES,
-            "record too large for Framed wire buffer: {} > {}",
-            total,
-            FRAMED_WIRE_BYTES,
-        );
-
-        let seq = self.next_seq;
+        let framed = Framed::pack(record, self.next_seq);
         self.next_seq += 1;
-        record.set_seq(seq);
-
-        let payload = as_bytes(record);
-        let crc = compute_crc32(payload);
-        let header = WalHeader::new(
-            T::record_type(),
-            payload_len as u16,
-            crc,
-        );
-
-        let mut wire = [0u8; FRAMED_WIRE_BYTES];
-        wire[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
-        wire[WalHeader::SIZE..total].copy_from_slice(payload);
-
-        Ok(Framed { wire, total: total as u16, seq })
+        Ok(framed)
     }
 
     /// Append a pre-framed record to the in-memory buffer.
