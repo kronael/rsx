@@ -47,7 +47,9 @@ workload and beats the networked peers because it does no
 serialization, no per-frame negotiation, and no congestion-control
 bookkeeping.
 
-Internal latencies (same host, same pinning):
+Internal latencies — each row runs through one Criterion harness,
+fixed 128 B payload, single pinned core, so the numbers compare
+directly:
 
 | Operation | p50 | Bench |
 |---|---:|---|
