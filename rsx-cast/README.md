@@ -64,11 +64,9 @@ directly:
 Host: AMD Ryzen 9 5950X (6-core slice), Linux 6.1, Rust release.
 Reproduce: `cargo bench -p rsx-cast --bench compare_all` (+ the
 standalone `compare_aeron` / `compare_moldudp64` / `compare_soupbintcp`).
-Authoritative dated measurements:
-[`facts/cast-vs-udp-overhead.md`](https://github.com/kronael/rsx/blob/master/facts/cast-vs-udp-overhead.md).
-Per-bench attribution: [BENCHES.md](BENCHES.md). Comparison harness
-and feature matrix: [`compare/README.md`](compare/README.md).
-Architectural walk-through: [ARCHITECTURE.md](ARCHITECTURE.md).
+Per-bench attribution and dated numbers: [BENCHES.md](BENCHES.md);
+comparison harness and feature matrix: [compare/README.md](compare/README.md);
+design walk-through: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Footnotes.**
 - **p50 only; p99 not yet measured.** Aeron and Chronicle Queue
@@ -185,12 +183,12 @@ first `u64` of every data record (per the [`CastRecord`] trait).
 ## Install
 
 Internal-use crate; not published on crates.io. Use as a git
-dependency and pin to a commit so future breaking changes
-don't break your build:
+dependency pinned to a release tag (or a `rev` for an
+unreleased commit):
 
 ```toml
 [dependencies]
-rsx-cast = { git = "https://github.com/kronael/rsx", rev = "abc1234" }
+rsx-cast = { git = "https://github.com/kronael/rsx", tag = "v0.6.1" }
 ```
 
 A standalone working example lives in
@@ -340,9 +338,9 @@ and again only on the (rare) FAULTED escalation.
 ### Pattern B — TCP-only consumer
 
 For consumers that don't need µs latency (archivers, replay
-tools, analytics, cross-DC replication). replication Phase 2 supports
-a live tail over TCP, so a single `ReplicationConsumer` covers both
-historical catch-up and live streaming, indefinitely.
+tools, analytics, cross-DC replication). The replication service
+supports a live tail over TCP, so a single `ReplicationConsumer`
+covers both historical catch-up and live streaming, indefinitely.
 
 ```rust
 use rsx_cast::ReplicationConsumer;
@@ -445,9 +443,11 @@ latency measurements justify the extra moving parts.
   sender → one receiver per stream. Multicast fan-out is v2
   (specced, not shipped).
 - **Slow consumers don't pace the sender.** There is no
-  flow control. A slow receiver overflows its reorder buffer
-  and silently drops; a slow consumer of the upstream
-  receiver-side queue is the application's problem.
+  flow control. A slow receiver that overruns its reorder
+  ring surfaces a sticky `Reconnect` (escalate to TCP replay
+  + reset, per Pattern A) rather than dropping silently; a
+  slow consumer of the upstream receiver-side queue is the
+  application's problem.
 
 ## When NOT to use this
 
