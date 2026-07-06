@@ -11,6 +11,7 @@ import random
 import re
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -413,6 +414,103 @@ async def _wait_for_pid_exit(
             return True
         await asyncio.sleep(0.05)
     return False
+
+
+# RSX daemon binary basenames (target/<profile>/rsx-<x>). Used for
+# pkill-by-path, duplicate detection, and orphan reaping in start_all.
+_RSX_BINS = [
+    "rsx-gateway", "rsx-risk", "rsx-matching",
+    "rsx-marketdata", "rsx-mark", "rsx-recorder",
+]
+
+
+def _plan_ports(plan) -> list[int]:
+    """Every local port the spawn plan binds, derived from its env.
+
+    We scan bare host:port env values (127.0.0.1:9100 / 0.0.0.0:8080)
+    and skip URL values (postgres://, http://, wss://) so Postgres
+    (5432), the dashboard (49171), and the Binance feed (9443) are
+    never in the clear-set. This replaces the old hardcoded list that
+    missed the health (98xx), replication (97xx), and mark (9830)
+    ports."""
+    ports: set[int] = set()
+    for _name, _binary, env in plan:
+        for v in env.values():
+            v = str(v)
+            if "://" in v:
+                continue
+            for m in re.finditer(r":(\d+)", v):
+                p = int(m.group(1))
+                if 1024 <= p <= 65535:
+                    ports.add(p)
+    return sorted(ports)
+
+
+def _port_free(port: int) -> bool:
+    """True iff an RSX daemon could bind this port right now (TCP+UDP).
+
+    TCP mirrors app rebind semantics (SO_REUSEADDR clears TIME_WAIT but
+    still fails against a live LISTEN); UDP has no reuse so an active
+    cast bind is detected."""
+    t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        t.bind(("", port))
+    except OSError:
+        return False
+    finally:
+        t.close()
+    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        u.bind(("", port))
+    except OSError:
+        return False
+    finally:
+        u.close()
+    return True
+
+
+def _pids_for_binary(bin_name: str) -> list[int]:
+    """PIDs whose argv[0] is target/{debug,release}/<bin_name>.
+
+    endswith on the exact basename so rsx-mark does NOT match
+    rsx-marketdata."""
+    pids: list[int] = []
+    tails = (f"target/debug/{bin_name}", f"target/release/{bin_name}")
+    for p in psutil.process_iter(["pid", "cmdline"]):
+        cmd = p.info.get("cmdline") or []
+        if any(arg.endswith(tails) for arg in cmd):
+            pids.append(p.info["pid"])
+    return pids
+
+
+def _free_ports(ports) -> None:
+    """Kill whatever holds any of these ports (tcp+udp)."""
+    if shutil.which("fuser"):
+        for port in ports:
+            for proto in ("tcp", "udp"):
+                try:
+                    subprocess.run(
+                        ["fuser", "-k", f"{port}/{proto}"],
+                        capture_output=True, timeout=2,
+                    )
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    pass
+        return
+    for port in ports:
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, timeout=2, text=True,
+            )
+            for pid in result.stdout.strip().split():
+                if pid and pid.strip().isdigit():
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except (ProcessLookupError, ValueError):
+                        pass
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
 
 
 def _close_process_transport(
@@ -931,73 +1029,75 @@ async def start_all(scenario="minimal"):
         parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Clear stale RSX binaries from a *previous* run before respawning.
-    # Match on the full build path (target/<profile>/rsx-<bin>) -- a bare
-    # "rsx-gateway" pattern also matches log tails, editors, agent sessions
-    # that merely mention the name, and sibling checkouts, so a stray
-    # start_all would SIGKILL unrelated processes (F20). Prefer SIGTERM so
-    # the F1 graceful WAL drain runs; escalate to SIGKILL only for survivors.
-    _rsx_bins = [
-        "rsx-gateway", "rsx-risk", "rsx-matching",
-        "rsx-marketdata", "rsx-mark", "rsx-recorder",
-    ]
-    for bin_name in _rsx_bins:
-        pat = f"target/debug/{bin_name}"
-        try:
-            subprocess.run(
-                ["pkill", "-TERM", "-f", pat],
-                capture_output=True, timeout=2,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    await asyncio.sleep(0.5)  # let SIGTERM handlers drain + release sockets
-    for bin_name in _rsx_bins:
-        pat = f"target/debug/{bin_name}"
-        try:
-            subprocess.run(
-                ["pkill", "-KILL", "-f", pat],
-                capture_output=True, timeout=2,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    await asyncio.sleep(0.5)  # let OS release sockets
+    # Idempotent teardown before respawn. Three failure modes this
+    # guards against (SYS #29):
+    #   (a) fixed sleeps raced port release -> "Address already in use"
+    #       on respawn. We now POLL until every port the plan binds is
+    #       actually free instead of sleeping a guessed interval.
+    #   (b) the old clear-set was a hardcoded 8-port list that missed
+    #       the health (98xx), replication (97xx), and mark (9830)
+    #       ports, so those survivors collided. Ports are now derived
+    #       from the spawn plan's env (_plan_ports).
+    #   (c) the 2 s auto-restart watcher would respawn a daemon we'd
+    #       just pkilled (it stays in `managed`, intentional=False)
+    #       DURING the multi-second build window -> a duplicate PID
+    #       racing start_all's own spawn. We detach every tracked RSX
+    #       daemon from the watcher first, and reap any surviving
+    #       orphan (incl. from a previous dashboard instance) after
+    #       spawn.
+    ports = _plan_ports(plan)
 
-    # kill stale processes on known ports (belt + suspenders)
-    if shutil.which("fuser"):
-        # fuser available, use it
-        for port in [8080, 8180, 9110, 9200, 9300, 9400, 9510, 9600]:
-            try:
-                subprocess.run(
-                    ["fuser", "-k", f"{port}/tcp"],
-                    capture_output=True, timeout=2,
-                )
-            except subprocess.TimeoutExpired:
-                pass
-        for port in [9110, 9200, 9300, 9400, 9510, 9600]:
-            try:
-                subprocess.run(
-                    ["fuser", "-k", f"{port}/udp"],
-                    capture_output=True, timeout=2,
-                )
-            except subprocess.TimeoutExpired:
-                pass
-    else:
-        # fallback: check with lsof and kill by PID
-        for port in [8080, 8180, 9110, 9200, 9300, 9400, 9510, 9600]:
-            try:
-                result = subprocess.run(
-                    ["lsof", "-ti", f":{port}"],
-                    capture_output=True, timeout=2, text=True,
-                )
-                for pid in result.stdout.strip().split():
-                    if pid and pid.strip().isdigit():
-                        try:
-                            os.kill(int(pid), signal.SIGTERM)
-                        except (ProcessLookupError, ValueError):
-                            pass
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
-    await asyncio.sleep(2.0)  # Give OS time to release ports
+    # Detach currently-tracked RSX daemons from the auto-restart
+    # watcher so it can't respawn them mid-teardown. Maker/auth/stress
+    # (non-rsx binaries) are left managed and untouched.
+    for name in [
+        n for n, info in managed.items()
+        if any(b in info.get("binary", "") for b in _RSX_BINS)
+    ]:
+        rs = _restart_state.get(name)
+        if rs:
+            rs["intentional"] = True
+        await _remove_managed_process(name)
+        _restart_state.pop(name, None)
+
+    # SIGTERM by build path (target/<profile>/rsx-<bin>) so the F1
+    # graceful WAL drain runs; matching the full path avoids SIGKILLing
+    # log tails / editors / sibling checkouts that merely mention the
+    # name (F20). Covers orphans from a previous dashboard instance too.
+    for bin_name in _RSX_BINS:
+        try:
+            subprocess.run(
+                ["pkill", "-TERM", "-f", f"target/debug/{bin_name}"],
+                capture_output=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    # Poll for graceful exit (up to 3 s), then SIGKILL survivors.
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        if not any(_pids_for_binary(b) for b in _RSX_BINS):
+            break
+        await asyncio.sleep(0.1)
+    for bin_name in _RSX_BINS:
+        try:
+            subprocess.run(
+                ["pkill", "-KILL", "-f", f"target/debug/{bin_name}"],
+                capture_output=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    # Free any port still held, then POLL until all are bindable (up to
+    # 5 s). Proceeding after the timeout is safe: spawn surfaces a bind
+    # error if one is genuinely stuck.
+    _free_ports(ports)
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        busy = [p for p in ports if not _port_free(p)]
+        if not busy:
+            break
+        _free_ports(busy)
+        await asyncio.sleep(0.1)
 
     # build
     ok = await do_build()
@@ -1016,6 +1116,21 @@ async def start_all(scenario="minimal"):
         await asyncio.sleep(0.1)
     if started:
         current_scenario = scenario
+
+    # Reap duplicates/orphans: any rsx build-path PID we did NOT just
+    # spawn (not in `managed`) is a stray -> SIGKILL. Precise regardless
+    # of instance count (N ME per symbol etc): the good PIDs are exactly
+    # the managed set. Closes SYS #29 (b)/(c).
+    managed_pids = {
+        info["proc"].pid for info in managed.values()
+    }
+    for bin_name in _RSX_BINS:
+        for pid in _pids_for_binary(bin_name):
+            if pid not in managed_pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, ValueError):
+                    pass
 
     # wait for processes to stabilize, then auto-start auth.
     # Maker is NOT auto-started: it generates ~40 ord/s which
