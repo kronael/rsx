@@ -9,6 +9,7 @@ use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::records::CastRecord;
+use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::write_events_to_wal;
@@ -177,6 +178,7 @@ fn main() {
     // ME worker.
     let me = thread::spawn(move || {
         let mut tick_count: u64 = 0;
+        let mut me_seq: u64 = 0;
         loop {
             // Periodic tick → keep flow-control windows open.
             tick_count = tick_count.wrapping_add(1);
@@ -287,7 +289,9 @@ fn main() {
                 _pad1: [0; 4],
                 taker_ts_ns: order_msg.timestamp_ns,
             };
-            if let Err(e) = me_sender.send(&mut fill) {
+            me_seq += 1;
+            let framed = Framed::pack(&mut fill, me_seq);
+            if let Err(e) = me_sender.send_framed(&framed) {
                 panic!("me_sender: {e}");
             }
             let t5 = now_ns();
@@ -308,6 +312,7 @@ fn main() {
     let mut samples: Vec<[u64; N_STAGES]> =
         Vec::with_capacity(total);
     let mut gw_tick: u64 = 0;
+    let mut gw_seq: u64 = 0;
     for i in 0..total {
         let oid_lo = i as u64 + 1; // skip 0 (sentinel)
         gw_tick = gw_tick.wrapping_add(1);
@@ -335,7 +340,9 @@ fn main() {
         let mut wire = OrderRequestWire { inner: order };
 
         let s0 = now_ns(); // gw_send_start
-        if let Err(e) = gw_sender.send(&mut wire) {
+        gw_seq += 1;
+        let framed = Framed::pack(&mut wire, gw_seq);
+        if let Err(e) = gw_sender.send_framed(&framed) {
             panic!("gw_sender: {e}");
         }
         let s1 = now_ns(); // gw_send_done

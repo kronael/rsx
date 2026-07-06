@@ -12,6 +12,7 @@
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::wal::Framed;
 use rsx_marketdata::state::MarketDataState;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -134,14 +135,14 @@ fn multi_me_streams_aggregate_per_symbol() {
         // ME-A: symbol 1. Insert two orders.
         let mut ins_a1 = insert_record(1, 1, 1000, 10);
         let mut ins_a2 = insert_record(1, 2, 1001, 20);
-        me_a.sender.send(&mut ins_a1).unwrap();
-        me_a.sender.send(&mut ins_a2).unwrap();
+        me_a.sender.send_framed(&Framed::pack(&mut ins_a1, 1)).unwrap();
+        me_a.sender.send_framed(&Framed::pack(&mut ins_a2, 2)).unwrap();
 
         // ME-B: symbol 2. Insert one order then fill it.
         let mut ins_b1 = insert_record(2, 1, 2000, 50);
-        me_b.sender.send(&mut ins_b1).unwrap();
+        me_b.sender.send_framed(&Framed::pack(&mut ins_b1, 1)).unwrap();
         let mut fill_b1 = fill_record(2, 2, 1, 30);
-        me_b.sender.send(&mut fill_b1).unwrap();
+        me_b.sender.send_framed(&Framed::pack(&mut fill_b1, 2)).unwrap();
 
         // UDP delivery is async; give the loopback a beat.
         thread::sleep(Duration::from_millis(20));

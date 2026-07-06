@@ -14,6 +14,7 @@
 use crate::cast::CastRecv;
 use crate::cast::CastReceiver;
 use crate::cast::CastSender;
+use crate::wal::Framed;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -127,15 +128,18 @@ fn cmp_send_50k_under_one_second() {
     });
 
     // Warmup — first send paths through dirty cache lines.
+    let mut seq = 0u64;
     for i in 1..=64u64 {
         let mut rec = fill(i);
-        let _ = sender.send(&mut rec).unwrap();
+        seq += 1;
+        sender.send_framed(&Framed::pack(&mut rec, seq)).unwrap();
     }
 
     let t0 = Instant::now();
     for _ in 0..N {
         let mut rec = fill(0);
-        sender.send(&mut rec).unwrap();
+        seq += 1;
+        sender.send_framed(&Framed::pack(&mut rec, seq)).unwrap();
     }
     let elapsed = t0.elapsed();
 

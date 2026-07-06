@@ -42,6 +42,7 @@ use criterion::Criterion;
 use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::wal::Framed;
 use rsx_messages::FillRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -153,10 +154,13 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     let handle = thread::spawn(move || {
         core_affinity::set_for_current(b_core);
         let mut echo = fill_record();
+        let mut b_seq: u64 = 0;
         let mut i: u64 = 0;
         while !stop_b.load(Ordering::Relaxed) {
             if let CastRecv::Data(_, _) = b_receiver.try_recv() {
-                if let Err(e) = b_sender.send(&mut echo) {
+                b_seq += 1;
+                let framed = Framed::pack(&mut echo, b_seq);
+                if let Err(e) = b_sender.send_framed(&framed) {
                     panic!("b send: {e}");
                 }
                 echoes_b.fetch_add(1, Ordering::Release);
@@ -185,7 +189,8 @@ fn bench_cmp_rtt(c: &mut Criterion) {
                 let _ = a_sender.tick();
                 a_sender.recv_control();
             }
-            if let Err(e) = a_sender.send(black_box(&mut req)) {
+            let framed = Framed::pack(black_box(&mut req), iter);
+            if let Err(e) = a_sender.send_framed(&framed) {
                 panic!("a send: {e}");
             }
             loop {

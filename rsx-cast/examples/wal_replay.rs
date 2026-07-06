@@ -1,7 +1,8 @@
 //! Write a handful of records to a fresh WAL, then read them
 //! back via `WalReader`. Demonstrates the "wire = disk" claim:
-//! the same `repr(C)` bytes you'd `sender.send(&mut rec)` are
-//! the bytes sitting in the WAL file.
+//! the same `repr(C)` bytes you'd frame via `Framed::pack` and
+//! publish with `sender.send_framed` are the bytes sitting in
+//! the WAL file.
 //!
 //! Run:
 //!   cargo run --example wal_replay -p rsx-cast
