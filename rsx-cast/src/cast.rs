@@ -1,4 +1,4 @@
-//! `CastSender` + `CastReceiver`: the casting (live UDP) half. See `specs/4-cast.md`.
+//! `CastSender` + `CastReceiver`: the casting (live UDP) half. See `specs/2/4-cast.md`.
 
 use crate::config::CastConfig;
 use crate::encode_utils::as_bytes;

@@ -1,4 +1,4 @@
-//! `WalWriter` + `WalReader` + `read_record_at_seq`. See `specs/48-wal.md`.
+//! `WalWriter` + `WalReader` + `read_record_at_seq`. See `specs/2/48-wal.md`.
 
 use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;

@@ -1,4 +1,4 @@
-//! `ReplicationConsumer`: TCP catch-up client. See `specs/10-replication.md`.
+//! `ReplicationConsumer`: TCP catch-up client. See `specs/2/10-replication.md`.
 
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
