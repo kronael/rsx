@@ -16,7 +16,12 @@ real supporting numbers too: applying a fill 3.7 ns, exposure lookup 1.6 ns
 - `bench-live.sh` — runs the REAL `cargo bench -p rsx-risk --bench risk_bench`
   filtered to the four critical-path checks, streams the actual Criterion
   medians as they land (the "measuring…" pauses are real), then clears to a
-  compact headline card. This is the demo source of truth.
+  compact headline card. Opens on the thesis as a claim ("Every order pays a
+  risk check. Ours costs ~110 ns — 45x under budget.") and closes on a single
+  CTA ("Read the code." / github.com/kronael/rsx). This is the demo source
+  of truth.
+- `Makefile` — `make rec` (asciinema, pinned --cols 46 --rows 24) →
+  `make gif` (agg --theme monokai + gifsicle).
 - `risk-live.cast` / `risk-live-opt.gif` — the recorded real run + the portrait
   GIF (578×700, ~20 KB).
 
@@ -25,11 +30,18 @@ real supporting numbers too: applying a fill 3.7 ns, exposure lookup 1.6 ns
 cd rsx-risk/demo
 # 1. box should be QUIET — stop the RSX cluster first (its ME+Risk busy-spin
 #    poisons Criterion). Then record the real bench (~35 s):
-TERM=xterm-256color asciinema rec --overwrite -c "bash bench-live.sh" risk-live.cast
-# 2. portrait GIF, trimming the real measuring pauses:
-agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 risk-live.cast risk-live.gif
-gifsicle -O3 risk-live.gif -o risk-live-opt.gif && rm risk-live.gif
+make rec
+# 2. portrait GIF (renders with agg --theme monokai), trimming measuring pauses:
+make gif
 ```
+
+## Palette
+Uses the project's canonical **"Cemani"** palette — sampled hexes + hue
+meanings documented once in `rsx-cast/demo/CLAUDE.md` (don't duplicate here).
+Mapping in this demo: **teal** = the supporting live check numbers, **gold** =
+the claim opener, the pre-trade-gate headline number, the 45×-under payoff,
+and the CTA, **rust** = the 5 µs budget (the cost being beaten), **dim** =
+captions/caveats, on a warm-dark **`agg --theme monokai`** base.
 
 ## Honesty (on screen + in the caption)
 Single core · shared docker host · Criterion · **a lab microbench, not system
