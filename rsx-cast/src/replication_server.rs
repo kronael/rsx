@@ -1,6 +1,7 @@
 //! `ReplicationService`: TCP catch-up server. See `specs/2/10-replication.md`.
 
 use crate::config::TlsConfig;
+use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::encode_utils::decode_payload;
 use crate::encode_utils::encode_record;
@@ -170,13 +171,7 @@ where
             stream_id,
             _pad: [0; 36],
         };
-        let payload = unsafe {
-            std::slice::from_raw_parts(
-                &na as *const ReplicationNotAvailable
-                    as *const u8,
-                std::mem::size_of::<ReplicationNotAvailable>(),
-            )
-        };
+        let payload = as_bytes(&na);
         let encoded = encode_record(
             RECORD_REPLICATION_NOT_AVAILABLE,
             payload,
@@ -222,13 +217,7 @@ where
         live_seq: last_seq,
         _pad1: [0; 40],
     };
-    let payload = unsafe {
-        std::slice::from_raw_parts(
-            &caught_up as *const CaughtUpRecord
-                as *const u8,
-            std::mem::size_of::<CaughtUpRecord>(),
-        )
-    };
+    let payload = as_bytes(&caught_up);
     let encoded = encode_record(
         RECORD_CAUGHT_UP,
         payload,
