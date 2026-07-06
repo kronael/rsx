@@ -50,16 +50,16 @@ Per-stage median, 128 B payload + 16 B header, post-pinning:
 
 | Sub-step | p50 |
 |---|---:|
-| `crc32_128b` | 15.5 ns |
-| `header_build` | 4.2 ns |
-| `buf_pack_144b` (two memcpys → buf) | 3.6 ns |
-| **`sendto_144b_loopback`** | **4.04 µs** ← 99 % |
-| `ring_cache_copy_128b` | 3.1 ns |
-| **Sum** | **~4.07 µs** |
+| `crc32_128b` | 29.4 ns |
+| `header_build` | 0.7 ns |
+| `buf_pack_144b` (two memcpys → buf) | 3.3 ns |
+| **`sendto_144b_loopback`** | **3.59 µs** ← 99 % |
+| `ring_cache_copy_128b` | 2.9 ns |
+| **Sum** | **~3.63 µs** |
 
 If every line of Rust in the send path were eliminated, you'd
-save ~26 ns out of ~4 070 ns — 0.6 % improvement. The remaining
-99.4 % is the `sendto` syscall, which is kernel code we don't
+save ~36 ns out of ~3 630 ns — ~1 % improvement. The remaining
+~99 % is the `sendto` syscall, which is kernel code we don't
 own. To reduce it: io_uring SQE submission, `sendmmsg` batching,
 or kernel bypass (DPDK / AF_XDP). See
 [`facts/syscall-latency.md`](facts/syscall-latency.md) for the
