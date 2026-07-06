@@ -370,36 +370,48 @@ fn main() {
         let mut last_evict_ns = time_ns();
         const BOOK_TTL_NS: u64 = 60_000_000_000;
 
+        // Per-stream expected seq (one CastReceiver per ME stream).
+        let mut stream_expected: Vec<u64> =
+            vec![0; cast_receivers.len()];
+
         loop {
-            for cast_receiver in &mut cast_receivers {
+            for (ri, cast_receiver) in
+                cast_receivers.iter_mut().enumerate()
+            {
             loop {
+                let expected = &mut stream_expected[ri];
                 let recv = cast_receiver.try_recv_with(|hdr, payload| {
-                    // Seq gap detection: extract seq from payload
-                    // and check for gaps. On gap, resend snapshot.
+                    // Stream-level seq continuity. ME's SEQ-1 fan-out
+                    // puts every record type on one monotonic
+                    // per-stream seq — including ORDER_DONE /
+                    // ORDER_FAILED / BBO / CONFIG_APPLIED that
+                    // marketdata receives but ignores. Advance the
+                    // counter on EVERY record: a per-symbol counter
+                    // over only the handled types fabricated a gap for
+                    // each ignored record (the delta=1 warn storm) and
+                    // fired a needless snapshot resend each time. The
+                    // CastReceiver delivers contiguously or FAULTs, so
+                    // a gap seen here is a genuine unrecoverable loss —
+                    // resend snapshots so clients rebuild.
                     if let Some(seq) = extract_seq(payload) {
-                        let symbol_id = extract_symbol_id(
-                            hdr.record_type,
-                            payload,
-                        );
-                        if let Some(sid) = symbol_id {
-                            let gap = state
-                                .borrow_mut()
-                                .check_seq(sid, seq);
-                            if let Some((expected, got)) = gap {
-                                tracing::warn!(
-                                    "marketdata seq gap sym={} \
-                                     expected={} got={}",
-                                    sid,
-                                    expected,
-                                    got,
-                                );
-                                state.borrow_mut().resend_snapshot(
-                                    sid,
-                                    config.snapshot_depth,
-                                    config.max_outbound,
-                                );
-                            }
+                        if *expected != 0 && seq > *expected {
+                            tracing::warn!(
+                                "marketdata stream seq gap \
+                                 expected={} got={}",
+                                *expected,
+                                seq,
+                            );
+                            let mut st = state.borrow_mut();
+                            st.note_gap();
+                            st.resend_all_snapshots(
+                                config.snapshot_depth,
+                                config.max_outbound,
+                            );
                         }
+                        if seq >= *expected {
+                            *expected = seq + 1;
+                        }
+                        // seq < expected: already-delivered dup, ignore
                     }
 
                     match hdr.record_type {
@@ -511,31 +523,6 @@ fn main() {
             monoio::time::sleep(Duration::ZERO).await;
         }
     });
-}
-
-/// Extract symbol_id from casting record payload.
-/// All records have seq(8) + ts_ns(8) + symbol_id(4) layout.
-fn extract_symbol_id(
-    record_type: u16,
-    payload: &[u8],
-) -> Option<u32> {
-    match record_type {
-        RECORD_ORDER_INSERTED
-        | RECORD_ORDER_CANCELLED
-        | RECORD_FILL => {
-            if payload.len() >= 20 {
-                Some(u32::from_le_bytes([
-                    payload[16],
-                    payload[17],
-                    payload[18],
-                    payload[19],
-                ]))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
 }
 
 fn handle_insert(

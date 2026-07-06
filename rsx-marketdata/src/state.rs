@@ -19,7 +19,6 @@ pub struct MarketDataState {
     subs: SubscriptionManager,
     books: Vec<Option<ShadowBook>>,
     last_bbo: Vec<Option<BboUpdate>>,
-    expected_seq: Vec<u64>,
     gap_count: u64,
     base_config: SymbolConfig,
     book_capacity: u32,
@@ -41,7 +40,6 @@ impl MarketDataState {
             subs: SubscriptionManager::new(),
             books: (0..max_symbols).map(|_| None).collect(),
             last_bbo: (0..max_symbols).map(|_| None).collect(),
-            expected_seq: vec![0; max_symbols],
             gap_count: 0,
             base_config,
             book_capacity,
@@ -233,38 +231,33 @@ impl MarketDataState {
         self.last_bbo.get_mut(symbol_id as usize)
     }
 
-    /// Track sequence for a symbol. Returns Some((expected,
-    /// got)) on gap, None otherwise.
-    pub fn check_seq(
-        &mut self,
-        symbol_id: u32,
-        seq: u64,
-    ) -> Option<(u64, u64)> {
-        let idx = symbol_id as usize;
-        if idx >= self.expected_seq.len() {
-            return None;
-        }
-        let expected = self.expected_seq[idx];
-        if expected == 0 {
-            self.expected_seq[idx] = seq + 1;
-            return None;
-        }
-        if seq == expected {
-            self.expected_seq[idx] = seq + 1;
-            return None;
-        }
-        if seq > expected {
-            // gap detected
-            self.gap_count += 1;
-            self.expected_seq[idx] = seq + 1;
-            return Some((expected, seq));
-        }
-        // seq < expected: duplicate, ignore
-        None
+    /// Record a genuine stream-seq gap (unrecoverable loss). Seq
+    /// continuity is tracked per stream in the main loop; this just
+    /// bumps the health counter.
+    pub fn note_gap(&mut self) {
+        self.gap_count += 1;
     }
 
     pub fn gap_count(&self) -> u64 {
         self.gap_count
+    }
+
+    /// Resend an L2 snapshot for every active book. Used after a
+    /// stream-seq gap when the lost record's symbol is unknown.
+    pub fn resend_all_snapshots(
+        &mut self,
+        depth: u32,
+        max_outbound: usize,
+    ) {
+        for sid in 0..self.books.len() {
+            if self.books[sid].is_some() {
+                self.resend_snapshot(
+                    sid as u32,
+                    depth,
+                    max_outbound,
+                );
+            }
+        }
     }
 
     /// Broadcast L2 snapshot to all depth subscribers
