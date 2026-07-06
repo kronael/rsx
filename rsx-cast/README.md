@@ -288,15 +288,15 @@ For consumers that need µs-class latency on the live tail
 (risk shards, marketdata, mark). Lifecycle:
 
 ```
-                                              fault?
-                                                ▲
- ┌──────────────┐    ┌──────────────┐    ┌─────┴────────┐
- │ TCP catch-up │───►│ UDP live     │───►│ TCP catch-up │──► UDP live ─►
- │ (ReplicationConsumer)│    │ (CastReceiver)│    │ from new tip │
- └──────────────┘    └──────────────┘    └──────────────┘
-   Phase 1, until        steady state         on FAULTED:
-   CaughtUpRecord        — listen UDP         drain TCP to
-                                              current, resume UDP
+ bootstrap (cold/warm start)             steady state (live tail)
+ ┌───────────────────────────┐       ┌───────────────────────────┐
+ │ ReplicationConsumer        │       │ CastReceiver               │
+ │ drain TCP → CaughtUp tip   │──────►│ listen UDP; NAK recovers   │
+ │                            │  tip  │ small gaps from the sender │
+ └───────────────────────────┘       └───────────────────────────┘
+              ▲                                                   │
+              └── on Faulted/Reconnect: re-drain ──┘
+                  TCP from tip, then resume UDP
 ```
 
 ```rust
@@ -305,9 +305,15 @@ use rsx_cast::{ReplicationConsumer, CastReceiver, CastRecv};
 // 1. Bootstrap: drain historical via TCP from last-persisted tip.
 // `endpoints: Vec<String>` — tried in order; federation falls
 // through to the next on ReplicationNotAvailable.
+// `tip_file` — path persisting the last-applied seq; makes restart
+//   idempotent (resume from tip+1; a missing file starts at 0).
+// `None` — no TLS on the replication TCP (`Some(TlsConfig)` enables it).
 let mut dxs = ReplicationConsumer::new(stream_id, endpoints.clone(),
                                tip_file.clone(), None)?;
-dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
+// Closure returns `true` to keep draining, `false` to stop early
+// (bounded replay). `run_once` drains to CaughtUp then returns —
+// no reconnect.
+dxs.run_once(|rec| { process(rec); true }).await?;
 // TCP closes here. Steady state has zero TCP per consumer.
 
 // 2. Live: listen UDP. (sender_addr is where NAKs are sent.)
@@ -324,7 +330,7 @@ loop {
             //    current, reset, resume UDP.
             let mut dxs = ReplicationConsumer::new(stream_id, endpoints.clone(),
                                            tip_file.clone(), None)?;
-            dxs.run_once(|rec| { process(rec.header, rec.payload); true }).await?;
+            dxs.run_once(|rec| { process(rec); true }).await?;
             rx.reset_after_replay(dxs.tip);
         }
     }
@@ -347,7 +353,7 @@ use rsx_cast::ReplicationConsumer;
 
 let mut dxs = ReplicationConsumer::new(stream_id, endpoints, tip_file, None)?;
 dxs.run(|record| {
-    process(record.header, record.payload);
+    process(record);
 }).await?;
 // Never returns under normal operation; reconnects with
 // exponential backoff on TCP errors.
@@ -428,7 +434,7 @@ latency measurements justify the extra moving parts.
   internal network (VPC, namespace, or dedicated L2 segment).
   Trust is delegated upward (to a gateway with JWT + TLS for
   external clients) and downward (to L3 — firewall, VPC,
-  namespace — for internal peers). See `specs/4-cast.md` §10.4.
+  namespace — for internal peers).
   For public-internet transport, use QUIC.
 - **Stable network.** casting is tuned for loss rate ≤ 0.01% and
   jitter ≤ 100 µs. On a lossy WAN, retransmit storms will
@@ -570,11 +576,11 @@ for the version each landed in.
 
 The docs are split by question, not by file size:
 
-- **What** — this README, plus the byte-exact specs in
-  [`specs/`](specs/):
-  [`4-cast.md`](specs/4-cast.md) (UDP / NAK protocol),
-  [`10-replication.md`](specs/10-replication.md) (TCP catch-up),
-  [`48-wal.md`](specs/48-wal.md) (on-disk format).
+- **What / protocol** — this README (orientation), plus the
+  byte-exact specs in the exchange repo:
+  [4-cast](https://github.com/kronael/rsx/blob/master/specs/2/4-cast.md) (UDP / NAK),
+  [10-replication](https://github.com/kronael/rsx/blob/master/specs/2/10-replication.md) (TCP catch-up),
+  [48-wal](https://github.com/kronael/rsx/blob/master/specs/2/48-wal.md) (on-disk format).
 - **How** — [ARCHITECTURE.md](ARCHITECTURE.md): internal
   module layout, threading model, WAL flush loop, NAK
   two-tier behaviour. Read this before changing `cast.rs`

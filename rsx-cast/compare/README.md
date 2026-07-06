@@ -39,7 +39,7 @@ are unpinned this run. Run `cargo bench -p rsx-cast --bench compare_all`
 yourself. Full write-ups and the feature matrix are below.
 
 **Trust boundary.** casting is intentionally unauthenticated
-(`specs/4-cast.md` §10.4, "trusted internal network"); external clients
+(spec 4-cast §10.4, "trusted internal network"); external clients
 are authenticated at the gateway (JWT + TLS), internal peers isolated at
 L3 (firewall/VPC/namespace). "No auth on the wire" is a stated design
 choice, not a gap.
