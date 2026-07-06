@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed (BREAKING)
+
+- **Replication (TCP catch-up) now mandates TLS.** rustls +
+  aws-lc-rs. `ReplicationService::new` and
+  `ReplicationConsumer::new` take a `TlsConfig` (was
+  `Option<TlsConfig>`) and require a cert (server) / CA (client);
+  the plaintext code paths are gone. `TlsConfig::from_env` returns
+  `io::Result` (was `Option`) and no longer gates on
+  `RSX_REPL_TLS` — that env var is removed. It reads
+  `RSX_REPL_CERT_PATH` / `RSX_REPL_KEY_PATH` / `RSX_REPL_CA_PATH`
+  (defaulting to `./certs/{cert,key,ca}.pem`) and errors when any
+  file is missing. The casting/UDP order-flow path stays plaintext
+  by design (trusted LAN, spec 4-cast §10.4).
+- **Migration.** Run `scripts/gen-snakeoil-certs.sh` to write
+  self-signed dev certs into `./certs/`, or point the env vars at
+  real certs. Deploy env templates and the playground now provision
+  these automatically.
+
 ## [v0.6.1] — 20260706
 
 > RSX v0.6.1 — turnkey deploy + an honest dashboard
