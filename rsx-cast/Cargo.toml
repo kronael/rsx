@@ -82,3 +82,7 @@ harness = false
 [[bench]]
 name = "compare_soupbintcp"
 harness = false
+
+[[bench]]
+name = "loss_recovery"
+harness = false
