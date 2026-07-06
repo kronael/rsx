@@ -128,6 +128,7 @@ async fn tls_client_server_connection() {
                 let mut recs =
                     records_clone.lock().unwrap();
                 recs.push(record);
+                true
             }),
         )
         .await;
@@ -231,9 +232,7 @@ async fn tls_disabled_falls_back_to_plain() {
                 let mut recs =
                     records_clone.lock().unwrap();
                 recs.push(record);
-                if recs.len() >= 1 {
-                    return;
-                }
+                recs.len() < 1
             }),
         )
         .await;
