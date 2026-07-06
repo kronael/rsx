@@ -1,6 +1,7 @@
 //! `CastConfig` + `TlsConfig`: runtime knobs. Read once at process start.
 
 use std::env;
+use std::io;
 use std::path::PathBuf;
 
 fn env_var<T: std::str::FromStr>(key: &str, default: T) -> T {
@@ -87,12 +88,17 @@ pub struct TlsClient {
     pub cert_path: PathBuf,
 }
 
-/// Combined TLS configuration — `Some` means TLS is active.
+/// Combined TLS configuration for replication (TCP catch-up).
 ///
-/// `.server` is set when `RSX_REPL_KEY_PATH` is present;
-/// `.client` is set whenever `RSX_REPL_CERT_PATH` is present.
-/// Pass `Option<TlsConfig>` to both `ReplicationService::new`
-/// and `ReplicationConsumer::new`; each side picks its field.
+/// Replication is TLS-mandatory (rustls + aws-lc-rs). `.server`
+/// holds the cert+key a `ReplicationService` presents; `.client`
+/// holds the CA a `ReplicationConsumer` trusts. `from_env`
+/// populates BOTH from one `certs/` dir so a co-located
+/// server+consumer self-trusts (the self-signed cert IS the CA).
+///
+/// The casting/UDP path stays plaintext by design (trusted LAN,
+/// spec 4-cast §10.4); TLS protects only the cold TCP replay/
+/// federation hop.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub server: Option<TlsServer>,
@@ -100,24 +106,51 @@ pub struct TlsConfig {
 }
 
 impl TlsConfig {
-    /// Returns `None` if `RSX_REPL_TLS != "true"`.
-    pub fn from_env() -> Option<Self> {
-        if env::var("RSX_REPL_TLS").as_deref() != Ok("true") {
-            return None;
+    /// Load replication TLS paths from the environment.
+    ///
+    /// Env vars (each defaults under a repo-root `certs/` dir):
+    /// - `RSX_REPL_CERT_PATH` → `./certs/cert.pem` (server chain)
+    /// - `RSX_REPL_KEY_PATH`  → `./certs/key.pem`  (server key)
+    /// - `RSX_REPL_CA_PATH`   → `./certs/ca.pem`   (client trust)
+    ///
+    /// Errors if any file is missing — replication is
+    /// TLS-mandatory, so there is no plaintext fallback.
+    pub fn from_env() -> io::Result<Self> {
+        let cert_path = env_path(
+            "RSX_REPL_CERT_PATH", "./certs/cert.pem");
+        let key_path = env_path(
+            "RSX_REPL_KEY_PATH", "./certs/key.pem");
+        let ca_path = env_path(
+            "RSX_REPL_CA_PATH", "./certs/ca.pem");
+
+        for path in [&cert_path, &key_path, &ca_path] {
+            if !path.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "replication requires TLS but {} is \
+                         missing — run \
+                         scripts/gen-snakeoil-certs.sh (or point \
+                         RSX_REPL_CERT_PATH/KEY_PATH/CA_PATH at \
+                         real certs)",
+                        path.display(),
+                    ),
+                ));
+            }
         }
-        let cert_path = PathBuf::from(
-            env::var("RSX_REPL_CERT_PATH")
-                .expect("RSX_REPL_CERT_PATH required when RSX_REPL_TLS=true"),
-        );
-        let server = env::var("RSX_REPL_KEY_PATH")
-            .ok()
-            .map(|kp| TlsServer {
+
+        Ok(Self {
+            server: Some(TlsServer {
                 cert_path: cert_path.clone(),
-                key_path: PathBuf::from(kp),
-            });
-        Some(Self {
-            server,
-            client: Some(TlsClient { cert_path }),
+                key_path,
+            }),
+            client: Some(TlsClient { cert_path: ca_path }),
         })
     }
+}
+
+fn env_path(key: &str, default: &str) -> PathBuf {
+    PathBuf::from(
+        env::var(key).unwrap_or_else(|_| default.to_string()),
+    )
 }

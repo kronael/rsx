@@ -34,7 +34,7 @@ pub struct ReplicationConsumer {
     pub tip_file: PathBuf,
     last_tip_persist: Instant,
     tip_persist_interval: Duration,
-    tls_connector: Option<TlsConnector>,
+    tls_connector: TlsConnector,
 }
 
 impl ReplicationConsumer {
@@ -47,7 +47,7 @@ impl ReplicationConsumer {
         stream_id: u32,
         endpoints: Vec<String>,
         tip_file: PathBuf,
-        tls: Option<TlsConfig>,
+        tls: TlsConfig,
     ) -> io::Result<Self> {
         if endpoints.is_empty() {
             return Err(io::Error::new(
@@ -61,10 +61,13 @@ impl ReplicationConsumer {
             stream_id, tip, endpoints
         );
 
-        let tls_connector = tls
-            .and_then(|c| c.client)
-            .map(|cl| build_connector(&cl))
-            .transpose()?;
+        let client = tls.client.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "replication requires TLS: client CA cert missing",
+            )
+        })?;
+        let tls_connector = build_connector(&client)?;
 
         Ok(Self {
             stream_id,
@@ -172,32 +175,26 @@ impl ReplicationConsumer {
                         continue;
                     }
                 };
-            let result = if let Some(connector) =
-                &self.tls_connector
-            {
-                match extract_server_name(endpoint) {
-                    Ok(server_name) => {
-                        match connector
-                            .connect(server_name, tcp_stream)
-                            .await
-                        {
-                            Ok(tls) => {
-                                self.handle_stream(
-                                    tls, callback,
-                                )
+            let result = match extract_server_name(endpoint) {
+                Ok(server_name) => {
+                    match self
+                        .tls_connector
+                        .clone()
+                        .connect(server_name, tcp_stream)
+                        .await
+                    {
+                        Ok(tls) => {
+                            self.handle_stream(tls, callback)
                                 .await
-                            }
-                            Err(e) => Err(io::Error::other(
-                                format!(
-                                    "tls handshake failed: {e}"
-                                ),
-                            )),
                         }
+                        Err(e) => Err(io::Error::other(
+                            format!(
+                                "tls handshake failed: {e}"
+                            ),
+                        )),
                     }
-                    Err(e) => Err(e),
                 }
-            } else {
-                self.handle_stream(tcp_stream, callback).await
+                Err(e) => Err(e),
             };
             match result {
                 Err(ref e)

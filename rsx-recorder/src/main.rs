@@ -279,7 +279,7 @@ async fn main() -> io::Result<()> {
         config.stream_id,
         vec![config.producer_addr],
         config.tip_file,
-        None,
+        rsx_cast::TlsConfig::from_env()?,
     )?;
 
     let state_clone = state.clone();

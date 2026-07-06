@@ -29,6 +29,8 @@ base64 = "0.22"
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
+rcgen = "0.13"
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
 
 [[bench]]
 name = "marketdata_bench"

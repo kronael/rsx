@@ -20,6 +20,30 @@ fn reserve_port() -> SocketAddr {
     addr
 }
 
+/// Self-signed cert used as BOTH server identity and client CA
+/// (single-box self-trust). Replication is TLS-mandatory.
+fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
+    let _ = rustls::crypto::aws_lc_rs::default_provider()
+        .install_default();
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+    ])
+    .unwrap();
+    let cert_path = dir.join("repl_cert.pem");
+    let key_path = dir.join("repl_key.pem");
+    std::fs::write(&cert_path, cert.cert.pem()).unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem())
+        .unwrap();
+    rsx_cast::TlsConfig {
+        server: Some(rsx_cast::TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: Some(rsx_cast::TlsClient { cert_path }),
+    }
+}
+
 /// Async test helper. Runs on a dedicated thread with
 /// enough stack for debug-mode async state machines.
 fn run_async_test<F>(f: F)
@@ -51,6 +75,7 @@ fn dxs_replay_rebuilds_shadow_book() {
             let tmp = TempDir::new().unwrap();
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
+            let tls = test_tls(tmp.path());
 
             let stream_id = 1u32;
             let mut writer = WalWriter::new(
@@ -126,7 +151,7 @@ taker_ts_ns: 0,
             writer.flush().unwrap();
 
             let server =
-                ReplicationService::new(wal_dir, None)
+                ReplicationService::new(wal_dir, tls.clone())
                     .unwrap();
 
             tokio::spawn(async move {
@@ -142,6 +167,7 @@ taker_ts_ns: 0,
                 stream_id,
                 replay_addr.to_string(),
                 tip_file,
+                tls,
             )
             .await
             .unwrap();
@@ -220,6 +246,7 @@ fn recovery_from_me_wal_then_live() {
             let tmp = TempDir::new().unwrap();
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
+            let tls = test_tls(tmp.path());
 
             let stream_id = 1u32;
             let mut writer = WalWriter::new(
@@ -250,7 +277,7 @@ fn recovery_from_me_wal_then_live() {
             writer.flush().unwrap();
 
             let server =
-                ReplicationService::new(wal_dir, None)
+                ReplicationService::new(wal_dir, tls.clone())
                     .unwrap();
 
             tokio::spawn(async move {
@@ -266,6 +293,7 @@ fn recovery_from_me_wal_then_live() {
                 stream_id,
                 replay_addr.to_string(),
                 tip_file,
+                tls,
             )
             .await
             .unwrap();
@@ -284,6 +312,7 @@ fn recovery_snapshot_sent_after_catchup() {
             let tmp = TempDir::new().unwrap();
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
+            let tls = test_tls(tmp.path());
 
             let stream_id = 1u32;
             let mut writer = WalWriter::new(
@@ -314,7 +343,7 @@ fn recovery_snapshot_sent_after_catchup() {
             writer.flush().unwrap();
 
             let server =
-                ReplicationService::new(wal_dir, None)
+                ReplicationService::new(wal_dir, tls.clone())
                     .unwrap();
 
             tokio::spawn(async move {
@@ -330,6 +359,7 @@ fn recovery_snapshot_sent_after_catchup() {
                 stream_id,
                 replay_addr.to_string(),
                 tip_file,
+                tls,
             )
             .await
             .unwrap();

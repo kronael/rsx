@@ -17,6 +17,7 @@ use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::CaughtUpRecord;
 use rsx_cast::ReplicationConsumer;
+use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::RECORD_MARK_PRICE;
@@ -49,6 +50,7 @@ pub fn handle_replay(
     last_delivered_seq: u64,
     gap: Option<(u64, u64)>,
     wal_dir: &str,
+    tls: &TlsConfig,
 ) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
@@ -82,6 +84,7 @@ pub fn handle_replay(
             replay_addr.clone(),
             last_delivered_seq,
             tip_file.clone(),
+            tls.clone(),
             |raw| {
                 let seq = rsx_cast::wal::extract_seq(
                     &raw.payload,
@@ -189,6 +192,7 @@ pub fn run_warm_catchup(
     me_repl_addr: &str,
     wal_dir: &str,
     lease_poll_interval_ms: u64,
+    tls: &TlsConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tip_file = std::path::PathBuf::from(wal_dir).join(
         format!("risk_warm_me_{me_stream_id}_tip.bin"),
@@ -197,7 +201,7 @@ pub fn run_warm_catchup(
         me_stream_id,
         vec![me_repl_addr.to_owned()],
         tip_file,
-        None,
+        tls.clone(),
     )?;
     // Resume the ME stream from the shard's persisted per-symbol
     // tip so we don't re-request records already folded into the

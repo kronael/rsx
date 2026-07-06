@@ -471,6 +471,14 @@ fn main() {
             // SAFETY: fail-fast at startup
             .expect("invalid RSX_ME_REPLICATION_BIND_ADDR");
         let wal_path = PathBuf::from(&wal_dir);
+        // Replication is TLS-mandatory; read certs before the
+        // thread so a missing cert fails fast at startup.
+        let tls = rsx_cast::TlsConfig::from_env()
+            // SAFETY: fail-fast at startup
+            .expect(
+                "replication requires TLS \
+                 (run scripts/gen-snakeoil-certs.sh)",
+            );
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder
                 ::new_multi_thread()
@@ -479,7 +487,7 @@ fn main() {
                 // SAFETY: fail-fast at startup
                 .expect("tokio runtime for dxs");
             let service =
-                rsx_cast::ReplicationService::new(wal_path, None)
+                rsx_cast::ReplicationService::new(wal_path, tls)
                     // SAFETY: fail-fast at startup
                     .expect("failed to create dxs service");
             rt.block_on(async {

@@ -1,6 +1,7 @@
 use rsx_cast::CaughtUpRecord;
 use rsx_cast::decode_payload;
 use rsx_cast::ReplicationConsumer;
+use rsx_cast::TlsConfig;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -26,6 +27,7 @@ pub fn drain_replay<F>(
     replay_addr: String,
     last_delivered_seq: u64,
     tip_file: PathBuf,
+    tls: TlsConfig,
     mut apply: F,
 ) -> io::Result<u64>
 where
@@ -38,7 +40,7 @@ where
         stream_id,
         vec![replay_addr],
         tip_file,
-        None,
+        tls,
     )?;
     consumer.tip = last_delivered_seq;
 
@@ -98,6 +100,7 @@ pub fn run_replay_bootstrap_blocking(
     stream_id: u32,
     replay_addr: String,
     tip_file: PathBuf,
+    tls: TlsConfig,
 ) -> std::io::Result<ReplayResult> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -106,6 +109,7 @@ pub fn run_replay_bootstrap_blocking(
         stream_id,
         replay_addr,
         tip_file,
+        tls,
     ))
 }
 
@@ -115,12 +119,13 @@ pub async fn run_replay_bootstrap(
     stream_id: u32,
     replay_addr: String,
     tip_file: PathBuf,
+    tls: TlsConfig,
 ) -> std::io::Result<ReplayResult> {
     let mut consumer = ReplicationConsumer::new(
         stream_id,
         vec![replay_addr],
         tip_file,
-        None,
+        tls,
     )?;
 
     let mut events = Vec::new();

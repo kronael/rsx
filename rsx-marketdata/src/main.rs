@@ -78,12 +78,16 @@ fn handle_replay(
     let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
     const MAX_TIP_RETRIES: u8 = 5;
     let mut tip_retries = 0u8;
+    let tls = rsx_cast::TlsConfig::from_env().unwrap_or_else(
+        |e| panic!("marketdata replay requires TLS: {e}"),
+    );
     let new_tip = loop {
         let tip = rsx_marketdata::replay::drain_replay(
             stream_id,
             addr.to_string(),
             last_delivered_seq,
             tip_file.clone(),
+            tls.clone(),
             |raw| {
                 let seq = rsx_cast::wal::extract_seq(&raw.payload)
                     .unwrap_or(0);
@@ -171,10 +175,15 @@ fn main() {
             replay_addr
         );
         let tip_file = PathBuf::from(&config.tip_file);
+        let tls = rsx_cast::TlsConfig::from_env().expect(
+            "marketdata replay requires TLS \
+             (run scripts/gen-snakeoil-certs.sh)",
+        );
         match run_replay_bootstrap_blocking(
             config.stream_id,
             replay_addr.clone(),
             tip_file,
+            tls,
         ) {
             Ok(result) => {
                 info!(

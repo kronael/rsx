@@ -24,7 +24,10 @@ fn generate_test_certs(
     let key_path = dir.join("key.pem");
 
     let cert = rcgen::generate_simple_self_signed(
-        vec!["localhost".to_string()],
+        vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+        ],
     )
     .unwrap();
     let cert_pem = cert.cert.pem();
@@ -63,7 +66,7 @@ async fn tls_client_server_connection() {
 
     let service = ReplicationService::new(
         wal_dir.clone(),
-        Some(server_tls),
+        server_tls,
     )
     .unwrap();
 
@@ -114,7 +117,7 @@ async fn tls_client_server_connection() {
         stream_id,
         vec![consumer_addr],
         tip_file,
-        Some(client_tls),
+        client_tls,
     )
     .unwrap();
 
@@ -161,99 +164,45 @@ async fn tls_client_server_connection() {
     );
 }
 
-#[tokio::test]
-async fn tls_disabled_falls_back_to_plain() {
+/// Replication is TLS-mandatory: a server config without the
+/// `.server` (cert+key) half is rejected at construction.
+#[test]
+fn service_new_requires_server_cert() {
     let tmp = TempDir::new().unwrap();
-    let wal_dir = tmp.path().join("wal");
-    std::fs::create_dir(&wal_dir).unwrap();
-
-    let service =
-        ReplicationService::new(wal_dir.clone(), None)
-            .unwrap();
-
-    let service_addr: SocketAddr =
-        "127.0.0.1:19301".parse().unwrap();
-    let service_task = tokio::spawn(async move {
-        service.serve(service_addr).await
-    });
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let stream_id = 1u32;
-    let mut wal = WalWriter::new(
-        stream_id, &wal_dir, 64 * 1024 * 1024,
-    )
-    .unwrap();
-
-    let mut fill = FillRecord {
-        seq: 0,
-        ts_ns: 1000,
-        symbol_id: 1,
-        taker_user_id: 100,
-        maker_user_id: 200,
-        _pad0: 0,
-        taker_order_id_hi: 0,
-        taker_order_id_lo: 1,
-        maker_order_id_hi: 0,
-        maker_order_id_lo: 2,
-        price: Price(50000),
-        qty: Qty(1000),
-        taker_side: 0,
-        reduce_only: 0,
-        tif: 0,
-        post_only: 0,
-        _pad1: [0; 4],
-        taker_ts_ns: 0,
+    let client_only = TlsConfig {
+        server: None,
+        client: Some(TlsClient {
+            cert_path: tmp.path().join("ca.pem"),
+        }),
     };
-    {
-        let framed = wal.prepare(&mut fill).unwrap();
-        wal.append_framed(&framed).unwrap();
-    }
-    wal.flush().unwrap();
-
-    let tip_file = tmp.path().join("tip");
-    let consumer_addr =
-        format!("127.0.0.1:{}", service_addr.port());
-    let mut consumer = ReplicationConsumer::new(
-        stream_id,
-        vec![consumer_addr],
-        tip_file,
-        None,
+    let err = ReplicationService::new(
+        tmp.path().to_path_buf(),
+        client_only,
     )
-    .unwrap();
+    .err()
+    .expect("expected TLS-mandatory construction error");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
 
-    let records = Arc::new(Mutex::new(Vec::new()));
-    let records_clone = records.clone();
-
-    let consumer_task = tokio::spawn(async move {
-        let result = timeout(
-            Duration::from_secs(2),
-            consumer.run(move |record| {
-                let mut recs =
-                    records_clone.lock().unwrap();
-                recs.push(record);
-                recs.len() < 1
-            }),
-        )
-        .await;
-
-        match result {
-            Ok(_) => {}
-            Err(_) => {}
-        }
-    });
-
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    consumer_task.abort();
-    service_task.abort();
-
-    let recs = records.lock().unwrap();
-    assert!(
-        !recs.is_empty(),
-        "expected at least one record via plain TCP"
-    );
-
-    let first = &recs[0];
-    assert_eq!(first.header.record_type, RECORD_FILL);
+/// A consumer config without the `.client` (CA) half is
+/// rejected at construction — no plaintext fallback.
+#[test]
+fn consumer_new_requires_client_ca() {
+    let tmp = TempDir::new().unwrap();
+    let server_only = TlsConfig {
+        server: Some(TlsServer {
+            cert_path: tmp.path().join("cert.pem"),
+            key_path: tmp.path().join("key.pem"),
+        }),
+        client: None,
+    };
+    let err = ReplicationConsumer::new(
+        1,
+        vec!["127.0.0.1:1".to_string()],
+        tmp.path().join("tip"),
+        server_only,
+    )
+    .err()
+    .expect("expected TLS-mandatory construction error");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }

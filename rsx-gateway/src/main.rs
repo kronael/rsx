@@ -106,11 +106,15 @@ fn handle_replay(
     // risk gw_sender.
     let tip_file = PathBuf::from(wal_dir)
         .join("gateway_replay_tip.bin");
+    let tls = rsx_cast::TlsConfig::from_env().unwrap_or_else(
+        |e| panic!("gateway replay requires TLS: {e}"),
+    );
     let new_tip = rsx_gateway::drain_replay(
         0,
         replay_addr.clone(),
         last_delivered_seq,
         tip_file,
+        tls,
         |raw| {
             let seq = rsx_cast::wal::extract_seq(&raw.payload)
                 .unwrap_or(0);
