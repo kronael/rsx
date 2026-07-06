@@ -1,17 +1,74 @@
 # Changelog
 
-## [Unreleased]
+## [v0.6.1] — 20260706
+
+> RSX v0.6.1 — turnkey deploy + an honest dashboard
+>
+> RSX now installs on a single box with one command, and the dev dashboard finally does what its buttons say.
+>
+> • Single-machine deploy — systemd units and a dry-run-by-default installer bring the whole exchange up.
+> • Recorder stops lying — a watchdog faults its health when replication stalls, and old archive segments prune.
+> • Mark price works again — it unwraps Binance's combined-stream envelope, so the index actually updates.
+> • Marketdata stops crying wolf — per-stream sequence tracking kills false-positive retransmit storms.
+> • Gateway rides out a transient port-in-use on cast rebind instead of crashing under WS churn.
+> • Dashboard overhaul — one honest process count, human units, reject reasons in words, prefix-safe links.
+>
+> Full notes: CHANGELOG.md
 
 ### Added
 
+- **Single-machine production deploy** (`deploy/`): systemd units for
+  every process, an env template, and `deploy.sh` — a dry-run-by-default
+  installer (`--apply` to mutate). Completes the single-machine sections
+  of `specs/2/9-deploy.md`. Multi-server topology + Postgres-HA stay
+  founder-owned.
+- **Recorder archive retention** — `RSX_RECORDER_RETAIN_DAYS` prunes
+  archive segments older than the window (the hot tier already retained
+  4h; the archive tier had none and grew unbounded under maker churn).
+- **Recorder health watchdog** — `/health` faults when the replication
+  stream stalls, instead of reporting a startup constant forever
+  ("healthy while dead" is gone).
+- **Marketdata stream-level seq-gap detection** — tracks sequence
+  per-stream so ignored record types no longer read as gaps.
+- **Playwright interaction coverage** — 4 new specs (`play_links`,
+  `play_render`, `play_controls`, `play_flows`) that click controls and
+  assert effects, not just that pages render.
 - rsx-cast: `impl AsRawFd for CastReceiver` — a founder-authorized,
-  purely additive read-only accessor exposing the receiver's UDP fd
-  so a caller on an async runtime (gateway on monoio/io_uring) can
-  await readiness on its own reactor instead of polling `try_recv_with`.
-  No runtime dep, no behavior change, no signature change — the recv
-  still goes through the receiver's std socket. The gateway now parks
-  on POLL_ADD and wakes the instant a casting datagram lands, dropping
-  the old `sleep(ZERO)` yield-spin from the response path.
+  purely additive read-only accessor exposing the receiver's UDP fd so a
+  caller on an async runtime (gateway on monoio/io_uring) can await
+  readiness on its own reactor instead of polling `try_recv_with`. No
+  runtime dep, no behavior change, no signature change. The gateway now
+  parks on POLL_ADD and wakes the instant a casting datagram lands,
+  dropping the old `sleep(ZERO)` yield-spin from the response path.
+
+### Changed
+
+- **Playground dashboard overhaul** — one authoritative process count
+  everywhere; human units and reject reasons rendered as words; honest
+  health / CPU / error surfaces (no cached or startup-constant values);
+  WAL dump/verify and stress reports actually render their output;
+  base-href is prefix-safe and depth-aware so the dashboard works behind
+  a deploy prefix; topology graph shows the fill return-route; crate
+  pages link their implementing crate and carry captioned demo GIFs;
+  Ayam Cemani palette unified across every page.
+- `start-all` is genuinely idempotent — ports derived from the spawn
+  plan, daemons detached from the watcher before cleanup, port-free
+  polled (not slept), orphans reaped; one PID per binary. Also reaps a
+  stale `rsx-recorder` that previously survived to cause port conflicts.
+- `make`: the `tui` target is guarded off the production default build.
+- Docs: latency verification is stated to live in benches + the
+  regression gate, never the Playwright playtests (CLAUDE.md + gate).
+
+### Fixed
+
+- **Mark produced no index** — the Binance *combined* stream wraps trades
+  as `{stream, data:{s,p}}` but the handler read `s`/`p` at top level and
+  early-returned, writing a 0-byte WAL. Now unwraps `data`; index updates.
+- **Gateway crashed under WS churn (F20)** — cast rebind now rides out a
+  transient `AddrInUse` instead of faulting the gateway.
+- **Marketdata false-positive resends** — per-symbol seq tracking counted
+  every ignored record type as a gap (11.3 gap-warns/s → 0); fixed by
+  tracking per-stream.
 
 ## [v0.6.0] — 2026-05-30
 
