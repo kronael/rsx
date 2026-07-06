@@ -6,6 +6,12 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **TIME-NS-HOTPATH-AUDIT** (LOW, perf) — flagged 2026-07-06 during the
+  rsx-cast review. `time_ns()` (clock_gettime via vDSO, ~15-30 ns) is called
+  per-record in a few spots (replication-server CaughtUp/record stamping, WAL
+  timestamps). Audit call frequency; if any is a true per-record hot path,
+  stamp once per batch or use a coarser/cached clock. Not correctness — record
+  + reconsider later.
 - **STARTUP-ORDERING-FRAGILITY** (MED, ops) — "can't start the system via the
   playground" traced to a chain of order-dependencies, none self-healing:
   (1) **Postgres must be up first** — if the `rsx-postgres` container is stopped/
