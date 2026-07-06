@@ -2913,6 +2913,7 @@ dependencies = [
  "rsx-messages",
  "rsx-types",
  "serde",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
