@@ -1180,8 +1180,5 @@ mod cast_test;
 #[path = "cast_v4_test.rs"]
 mod cast_v4_test;
 #[cfg(test)]
-#[path = "nak_fallback_latency_test.rs"]
-mod nak_fallback_latency_test;
-#[cfg(test)]
 #[path = "sustained_throughput_test.rs"]
 mod sustained_throughput_test;
