@@ -26,6 +26,23 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   recovery-latency** micro-bench (drop one seq, time recovery; hot-ring vs
   cold-WAL tier) rather than a sustained-loss sweep — robust and sidesteps
   these dynamics. (codex unavailable on this account for the minimize step.)
+  UPDATE 2026-07-06: single-gap micro-bench DONE + committed
+  (`rsx-cast/benches/loss_recovery.rs`): hot-ring ~250 µs, cold-WAL ~600 µs on
+  a contended box; the ~300 µs delta = the `read_record_at_seq` WAL scan (fills
+  bypass the 128 B ring). Two MORE findings from a WIP **outage** bench
+  (`rsx-cast/notes/outage_recovery.rs.wip`, parked):
+  (a) **The receiver NAK-grinds a large gap** seq-by-seq (each fill retransmit
+  is a WAL scan) and does NOT escalate to the TCP-replay cold path just because
+  the gap is huge — `Reconnect` fires only on actual reorder-ring overflow
+  (a burst of >2048 fresh far-ahead packets), which is hard to force while the
+  NAK path drains the oldest gap. So a big accumulated gap recovers glacially
+  (observed ~130 rec/s) unless the ring genuinely overflows. Arguably a design
+  gap: a gap far beyond the ring/retention could proactively escalate to
+  replication instead of grinding.
+  (b) When Reconnect DID fire, the harness's TCP-replay `run_once` **hung**
+  (no progress, no panic) — the replication-catch-up path (TLS handshake /
+  WalReader stream of ~130k records) didn't complete in the bench; needs a
+  focused repro to tell harness-bug from a real replication stall.
 - **TIME-NS-HOTPATH-AUDIT** (LOW, perf) — flagged 2026-07-06 during the
   rsx-cast review. `time_ns()` (clock_gettime via vDSO, ~15-30 ns) is called
   per-record in a few spots (replication-server CaughtUp/record stamping, WAL
