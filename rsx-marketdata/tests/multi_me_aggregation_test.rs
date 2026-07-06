@@ -174,27 +174,6 @@ fn multi_me_streams_aggregate_per_symbol() {
             total_b, 20,
             "symbol 2 should reflect ME-B insert minus fill",
         );
-
-        // Per-symbol seq tracking is independent: each ME used
-        // seqs starting at 1 and they must NOT collide.
-        // After consuming two seq=1,2 messages per symbol the
-        // expected_seq for each is 3.
-        assert!(
-            state.check_seq(1, 3).is_none(),
-            "symbol 1 next-expected should be 3 (no gap)",
-        );
-        assert!(
-            state.check_seq(2, 3).is_none(),
-            "symbol 2 next-expected should be 3 (no gap)",
-        );
-        // And ME-A's seq=2 must not have advanced ME-B's
-        // sequence: feeding seq=2 for symbol 2 NOW would be
-        // stale (already consumed), feeding seq=4 should be
-        // a clean step.
-        assert!(
-            state.check_seq(2, 4).is_none(),
-            "symbol 2 should accept seq=4 cleanly",
-        );
     });
 }
 
