@@ -261,6 +261,26 @@ Gate ordering: `gate-1-startup` (server imports) → `gate-2-partials`
 - Criterion for benchmarks with regression detection (>10% = fail)
 - Property tests: proptest for order sequence invariants (future)
 
+## Latency & performance verification (ONE home — don't spread it)
+
+Latency is verified by **Criterion benches + a regression gate. That's the
+whole story.** Do NOT assert latency in the Playwright playtests — those are
+functional/UI only. The dashboard's "e2e latency" card is the browser →
+Python-proxy → gateway path (~ms); it is a demo aid, NOT the exchange's µs
+internal latency, and it must never be treated as a latency test.
+
+- **Benches** (`make perf` = `cargo bench`): the per-component latency numbers.
+  Key ones: `rsx-matching/benches/{match_depth,process_order}_bench.rs`
+  (match ~30 ns, depth-independent), `rsx-gateway/benches/ws_order_latency.rs`
+  (order round-trip), `rsx-cast` benches (transport RTT).
+- **Gate** (`make bench-gate` → `scripts/bench-gate.sh`): Criterion regression
+  detection (>10% = fail, baseline in `tmp/`); plus the F1 e2e latency probe
+  that drives real load and writes GW→ME→GW p50/p99 to `bench-baseline.json`.
+  Spec: `specs/2/22-perf-verification.md`.
+
+So: to check or change a latency claim, run/extend the **benches + gate** — the
+playtests stay functional, the benches+gate own performance.
+
 ## Fixed-Point Arithmetic
 
 All values are i64 in smallest units. Conversion at API boundary only.
