@@ -9,6 +9,9 @@ pub(crate) struct RecorderConfig {
     pub(crate) producer_addr: String,
     pub(crate) archive_dir: PathBuf,
     pub(crate) tip_file: PathBuf,
+    /// Archive segments dated older than `today - retain_days`
+    /// are pruned at startup and after each daily rotation.
+    pub(crate) retain_days: i64,
 }
 
 impl RecorderConfig {
@@ -20,12 +23,15 @@ impl RecorderConfig {
             get_env_path("RSX_RECORDER_ARCHIVE_DIR")?;
         let tip_file =
             get_env_path("RSX_RECORDER_TIP_FILE")?;
+        let retain_days =
+            get_env_u64_or("RSX_RECORDER_RETAIN_DAYS", 3)? as i64;
 
         Ok(Self {
             stream_id,
             producer_addr,
             archive_dir,
             tip_file,
+            retain_days,
         })
     }
 }
@@ -51,4 +57,16 @@ fn get_env_u32(key: &str) -> io::Result<u32> {
             format!("invalid {}: {}", key, raw),
         )
     })
+}
+
+fn get_env_u64_or(key: &str, default: u64) -> io::Result<u64> {
+    match env::var(key) {
+        Ok(raw) => raw.parse().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid {}: {}", key, raw),
+            )
+        }),
+        Err(_) => Ok(default),
+    }
 }

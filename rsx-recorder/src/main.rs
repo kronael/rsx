@@ -16,6 +16,7 @@ use std::fs::OpenOptions;
 use std::io;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -27,6 +28,7 @@ struct RecorderState {
     archive_dir: PathBuf,
     stream_id: u32,
     current_date: NaiveDate,
+    retain_days: i64,
     file: File,
     buf: Vec<u8>,
     record_count: u64,
@@ -36,6 +38,7 @@ impl RecorderState {
     fn new(
         archive_dir: &std::path::Path,
         stream_id: u32,
+        retain_days: i64,
     ) -> io::Result<Self> {
         let today = Utc::now().date_naive();
         let dir = archive_dir.join(stream_id.to_string());
@@ -51,10 +54,13 @@ impl RecorderState {
 
         info!("recording to {}", path.display());
 
+        prune_archive(&dir, stream_id, today, retain_days);
+
         Ok(Self {
             archive_dir: archive_dir.to_path_buf(),
             stream_id,
             current_date: today,
+            retain_days,
             file,
             buf: Vec::with_capacity(64 * 1024),
             record_count: 0,
@@ -109,7 +115,65 @@ impl RecorderState {
             .open(&path)?;
         self.current_date = new_date;
         info!("rotated archive to {}", path.display());
+        prune_archive(&dir, self.stream_id, new_date, self.retain_days);
         Ok(())
+    }
+}
+
+/// Parse the date from a `{stream_id}_{YYYY-MM-DD}.wal` segment
+/// name. Returns `None` for any file that doesn't match the
+/// exact archive naming pattern for this stream — the prune only
+/// ever touches files it can positively identify.
+fn segment_date(name: &str, stream_id: u32) -> Option<NaiveDate> {
+    let prefix = format!("{}_", stream_id);
+    let date_str = name
+        .strip_prefix(&prefix)?
+        .strip_suffix(".wal")?;
+    NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()
+}
+
+/// Delete archive segments in `dir` whose date is older than
+/// `today - retain_days`. Best-effort: a bad read_dir or unlink
+/// is logged, not fatal. Only files matching the exact
+/// `{stream_id}_{date}.wal` pattern are considered, so the
+/// active (today's) file is always kept — `today` is never
+/// `< today - retain_days` for `retain_days >= 0`.
+fn prune_archive(
+    dir: &Path,
+    stream_id: u32,
+    today: NaiveDate,
+    retain_days: i64,
+) {
+    let cutoff = today - chrono::Duration::days(retain_days);
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("prune: read_dir {} failed: {}", dir.display(), e);
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let date = match segment_date(name, stream_id) {
+            Some(d) => d,
+            None => continue,
+        };
+        if date < cutoff {
+            match fs::remove_file(&path) {
+                Ok(()) => info!(
+                    "pruned archive segment {} (date {}, cutoff {})",
+                    path.display(), date, cutoff
+                ),
+                Err(e) => warn!(
+                    "prune: remove_file {} failed: {}",
+                    path.display(), e
+                ),
+            }
+        }
     }
 }
 
@@ -155,6 +219,7 @@ async fn main() -> io::Result<()> {
     let state = Arc::new(Mutex::new(RecorderState::new(
         &config.archive_dir,
         config.stream_id,
+        config.retain_days,
     )?));
 
     let mut consumer = ReplicationConsumer::new(
@@ -186,3 +251,7 @@ async fn main() -> io::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "main_test.rs"]
+mod main_test;
