@@ -17,7 +17,11 @@ the same report, not measured in this run.
 - `bench-live.sh` — runs the REAL `cargo bench -p rsx-matching --bench
   match_depth_bench` and streams the actual Criterion medians as they land
   (the "measuring…" pauses are real), then clears to a compact headline card.
-  This is the demo source of truth.
+  Opens on the thesis as a claim ("One order matches in ~30 ns — 1 resting
+  order or 100 K, same.") and closes on a single CTA ("Read the code." /
+  github.com/kronael/rsx). This is the demo source of truth.
+- `Makefile` — `make rec` (asciinema, pinned --cols 46 --rows 24) →
+  `make gif` (agg --theme monokai + gifsicle).
 - `match-live.cast` / `match-live-opt.gif` — the recorded real run + the
   portrait GIF (578×700, ~22 KB).
 
@@ -26,11 +30,17 @@ the same report, not measured in this run.
 cd rsx-matching/demo
 # 1. box should be QUIET — stop the RSX cluster first (its ME+Risk busy-spin
 #    poisons Criterion). Then record the real bench (~45 s):
-TERM=xterm-256color asciinema rec --overwrite -c "bash bench-live.sh" match-live.cast
-# 2. portrait GIF, trimming the real measuring pauses:
-agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 match-live.cast match-live.gif
-gifsicle -O3 match-live.gif -o match-live-opt.gif && rm match-live.gif
+make rec
+# 2. portrait GIF (renders with agg --theme monokai), trimming measuring pauses:
+make gif
 ```
+
+## Palette
+Uses the project's canonical **"Cemani"** palette — sampled hexes + hue
+meanings documented once in `rsx-cast/demo/CLAUDE.md` (don't duplicate here).
+Mapping in this demo: **teal** = live/cited result numbers, **gold** = the
+claim opener, the flat-across-depth payoff, and the CTA, **dim** =
+captions/caveats, on a warm-dark **`agg --theme monokai`** base.
 
 ## Honesty (on screen + in the caption)
 Single core · shared docker host · Criterion · **a lab microbench, not system
