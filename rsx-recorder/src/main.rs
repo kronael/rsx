@@ -6,6 +6,7 @@ use config::RecorderConfig;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::RawWalRecord;
 use rsx_health::CounterGauge;
+use rsx_health::DaemonState;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_types::install_panic_handler;
@@ -21,6 +22,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
@@ -177,6 +180,51 @@ fn prune_archive(
     }
 }
 
+/// Health watchdog. The recorder's liveness IS its replication
+/// progress: if no records land for `stall` seconds, the
+/// replication consumer is BLOCKED (behind the producer's WAL
+/// retention horizon and unable to catch up), so flip health to
+/// faulted → `/health` returns 503 and the dashboard shows red.
+/// Restore live/ready when progress resumes.
+///
+/// Idle caveat: `ReplicationConsumer` exposes no read-only
+/// blocked-vs-idle signal (its public API is `new`/`run`/
+/// `run_once` + a `tip` that only advances with records, i.e.
+/// the same signal as `publishes`). So this is a pure write-stall
+/// heuristic: a genuinely idle market with no new records would
+/// false-degrade. For this demo the maker quotes constantly, so
+/// write-stall ≈ blocked, which is acceptable.
+async fn watchdog(gauges: Arc<LoadGauges>, stall: Duration) {
+    let mut last_count = gauges.publishes.load(Ordering::Relaxed);
+    let mut last_progress = Instant::now();
+    let poll = Duration::from_secs(1).min(stall);
+    loop {
+        tokio::time::sleep(poll).await;
+        let count = gauges.publishes.load(Ordering::Relaxed);
+        if count != last_count {
+            last_count = count;
+            last_progress = Instant::now();
+            if !gauges.live.load(Ordering::Relaxed) {
+                gauges.live.store(true, Ordering::Relaxed);
+                gauges.ready.store(true, Ordering::Relaxed);
+                gauges.set_state(DaemonState::Running);
+                info!("recorder recovered: records advancing again");
+            }
+        } else if last_progress.elapsed() >= stall
+            && gauges.live.load(Ordering::Relaxed)
+        {
+            gauges.live.store(false, Ordering::Relaxed);
+            gauges.ready.store(false, Ordering::Relaxed);
+            gauges.set_state(DaemonState::Faulted);
+            warn!(
+                "recorder stalled: no records written for {}s, \
+                 replication likely BLOCKED -> faulted",
+                stall.as_secs()
+            );
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     install_panic_handler();
@@ -215,6 +263,11 @@ async fn main() -> io::Result<()> {
             warn!("RSX_RECORDER_HEALTH_ADDR: invalid addr '{addr_str}'");
         }
     }
+
+    tokio::spawn(watchdog(
+        gauges.clone(),
+        Duration::from_secs(config.stall_secs),
+    ));
 
     let state = Arc::new(Mutex::new(RecorderState::new(
         &config.archive_dir,
