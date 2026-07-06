@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # bench-gate.sh — Criterion regression gate
+#
+# This + the Criterion benches are the ONE home for latency/performance
+# verification. Latency is NOT asserted in the Playwright playtests (those are
+# functional/UI). To check or change a latency claim, run/extend the benches
+# and this gate. See CLAUDE.md "Latency & performance verification" and
+# specs/2/22-perf-verification.md.
+#
 # Usage: bash scripts/bench-gate.sh [--save-baseline]
 #
 # Runs cargo bench --workspace, walks target/criterion/*/new/estimates.json,
