@@ -1,6 +1,7 @@
 //! `ReplicationConsumer`: TCP catch-up client. See `specs/2/10-replication.md`.
 
 use crate::config::TlsConfig;
+use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::ReplicationRequest;
@@ -239,15 +240,7 @@ impl ReplicationConsumer {
             from_seq: self.tip + 1,
             _pad1: [0u8; 48],
         };
-        let req_size =
-            std::mem::size_of::<ReplicationRequest>();
-        let payload = unsafe {
-            std::slice::from_raw_parts(
-                &req as *const ReplicationRequest
-                    as *const u8,
-                req_size,
-            )
-        };
+        let payload = as_bytes(&req);
         let crc = compute_crc32(payload);
         let hdr = WalHeader::new(
             RECORD_REPLICATION_REQUEST,
