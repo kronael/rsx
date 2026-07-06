@@ -1,4 +1,4 @@
-//! Transport protocol records + `CastRecord` trait. See `specs/4-cast.md`.
+//! Transport protocol records + `CastRecord` trait. See `specs/2/4-cast.md`.
 //!
 //! Wire-format discipline: every record is `#[repr(C, align(64))]` with explicit
 //! `_pad…` fields so `mem::size_of::<T>()` lands on the documented wire size.

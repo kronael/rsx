@@ -1,4 +1,4 @@
-/// 16-byte WAL record header. See `specs/48-wal.md` for field layout and version policy.
+/// 16-byte WAL record header. See `specs/2/48-wal.md` for field layout and version policy.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct WalHeader {

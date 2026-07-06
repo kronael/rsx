@@ -1,4 +1,4 @@
-//! `ReplicationService`: TCP catch-up server. See `specs/10-replication.md`.
+//! `ReplicationService`: TCP catch-up server. See `specs/2/10-replication.md`.
 
 use crate::config::TlsConfig;
 use crate::encode_utils::compute_crc32;
