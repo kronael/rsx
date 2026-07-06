@@ -6,6 +6,26 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **CAST-RECOVERY-UNDER-LOSS-NEEDS-BENCH+INVESTIGATION** (MED, perf/correctness)
+  — flagged 2026-07-06 while building a loss-degradation bench (WIP parked at
+  `rsx-cast/notes/loss_degradation.rs.wip`; 0%-loss baseline works, ~136k rec/s
+  to deliver 50k in order). Two findings surfaced:
+  (1) **Fills bypass the send ring.** A `FillRecord` frame is 144 B (128 B
+  payload + 16 B header) > `SEND_RING_FRAME_BYTES` (128), so it takes the
+  ring-bypass path — NAK retransmits for fills come ONLY from the WAL
+  (`read_record_at_seq`), never the hot ring. The 4 K send-ring is effectively
+  for sub-112-B-payload control records. Not a bug, but load-bearing and
+  undocumented; a loss bench must WAL-persist + flush to be retransmittable.
+  (2) **Possible receiver frontier anomaly under sustained lossy retransmit.**
+  The WIP harness observed the delivered in-order frontier (by record seq)
+  advancing *past* a seq while the receiver returned a sticky `Faulted` naming
+  that same seq as the gap — which shouldn't be reachable without a reset.
+  Could be a real edge in NAK recovery under rapid drop+retransmit, or a
+  harness artifact (duplicate deliveries mis-drive the driver). Needs a
+  focused repro. Recommend finishing as a **single-injected-gap
+  recovery-latency** micro-bench (drop one seq, time recovery; hot-ring vs
+  cold-WAL tier) rather than a sustained-loss sweep — robust and sidesteps
+  these dynamics. (codex unavailable on this account for the minimize step.)
 - **TIME-NS-HOTPATH-AUDIT** (LOW, perf) — flagged 2026-07-06 during the
   rsx-cast review. `time_ns()` (clock_gettime via vDSO, ~15-30 ns) is called
   per-record in a few spots (replication-server CaughtUp/record stamping, WAL
