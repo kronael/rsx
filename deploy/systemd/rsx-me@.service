@@ -1,0 +1,41 @@
+# Matching engine, one instance per symbol.
+#   systemctl enable --now rsx-me@btc rsx-me@sol rsx-me@pengu
+# %i is the symbol slug (btc/sol/pengu); its env file carries the
+# symbol id, tick/lot, cast/replication/health ports, and core id.
+[Unit]
+Description=RSX matching engine (symbol %i)
+Documentation=file:///opt/rsx/specs/2/9-deploy.md
+After=network-online.target rsx-postgres.service
+Wants=network-online.target
+Requires=rsx-postgres.service
+PartOf=rsx.target
+# Crash-loop guard: 5 restarts / 60 s, then stop and page. A tighter
+# loop means a real fault (Postgres down, port taken) — not something
+# an infinite restart will fix (bugs.md STARTUP-ORDERING-FRAGILITY).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rsx
+Group=rsx
+WorkingDirectory=/srv/data/rsx
+EnvironmentFile=/opt/rsx/env/me-%i.env
+ExecStart=/opt/rsx/bin/rsx-matching
+Restart=on-failure
+RestartSec=1
+# ME cores are 3-5 (one per symbol). The app pins itself to the exact
+# core via RSX_ME_CORE_ID; this bounds the whole pool at the OS level
+# so a hot spinner can never drift onto the gateway/risk cores.
+CPUAffinity=3 4 5
+# Hot path busy-spins; do not let the OS think it is idle.
+Nice=-5
+LimitNOFILE=1048576
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/data/rsx
+
+[Install]
+WantedBy=rsx.target

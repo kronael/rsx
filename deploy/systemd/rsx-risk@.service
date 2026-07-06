@@ -1,0 +1,36 @@
+# Risk engine, one instance per user shard. Single-machine prod runs
+# shard 0 only (no replicas — a same-box replica shares the failure
+# domain; durability comes from the WAL + recorder + Postgres).
+#   systemctl enable --now rsx-risk@0
+# On core 2. Multi-shard hosts add a per-instance drop-in to move the
+# affinity (systemctl edit rsx-risk@1 → CPUAffinity=<core>).
+[Unit]
+Description=RSX risk engine (shard %i)
+Documentation=file:///opt/rsx/specs/2/9-deploy.md
+After=network-online.target rsx-postgres.service rsx-mark.service rsx-me@btc.service rsx-me@eth.service rsx-me@sol.service
+Wants=network-online.target rsx-mark.service
+Requires=rsx-postgres.service
+PartOf=rsx.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rsx
+Group=rsx
+WorkingDirectory=/srv/data/rsx
+EnvironmentFile=/opt/rsx/env/risk-%i.env
+ExecStart=/opt/rsx/bin/rsx-risk
+Restart=on-failure
+RestartSec=1
+CPUAffinity=2
+Nice=-5
+LimitNOFILE=262144
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/data/rsx
+
+[Install]
+WantedBy=rsx.target
