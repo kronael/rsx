@@ -6,17 +6,10 @@ fn tip_persistence_roundtrip() {
     let tmp = TempDir::new().unwrap();
     let tip_file = tmp.path().join("tip");
 
-    // write tip
-    let tip: u64 = 42;
-    let tmp_path = tip_file.with_extension("tmp");
-    fs::write(&tmp_path, &tip.to_le_bytes()).unwrap();
-    fs::rename(&tmp_path, &tip_file).unwrap();
-
-    // read tip
-    let data = fs::read(&tip_file).unwrap();
-    let bytes: [u8; 8] = data[..8].try_into().unwrap();
-    let loaded = u64::from_le_bytes(bytes);
-    assert_eq!(loaded, 42);
+    super::persist_tip(&tip_file, 42).unwrap();
+    // Stored as a JSON number (bare decimal), human-readable.
+    assert_eq!(fs::read_to_string(&tip_file).unwrap(), "42");
+    assert_eq!(super::load_tip(&tip_file).unwrap(), 42);
 }
 
 #[test]
@@ -24,10 +17,7 @@ fn tip_missing_returns_zero() {
     let tmp = TempDir::new().unwrap();
     let tip_file = tmp.path().join("nonexistent_tip");
 
-    // should fail to read (file doesn't exist)
-    let result = fs::read(&tip_file);
-    assert!(result.is_err());
-    // consumer defaults to 0 when file missing
+    assert_eq!(super::load_tip(&tip_file).unwrap(), 0);
 }
 
 #[test]
@@ -99,13 +89,8 @@ fn backoff_schedule() {
 fn consumer_loads_tip_from_file() {
     let tmp = tempfile::TempDir::new().unwrap();
     let tip_file = tmp.path().join("tip");
-    let tip: u64 = 42;
-    std::fs::write(&tip_file, &tip.to_le_bytes()).unwrap();
-
-    let data = std::fs::read(&tip_file).unwrap();
-    let bytes: [u8; 8] = data[..8].try_into().unwrap();
-    let loaded = u64::from_le_bytes(bytes);
-    assert_eq!(loaded, 42);
+    super::persist_tip(&tip_file, 42).unwrap();
+    assert_eq!(super::load_tip(&tip_file).unwrap(), 42);
 }
 
 #[test]
