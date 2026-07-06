@@ -445,9 +445,17 @@ latency measurements justify the extra moving parts.
   external clients) and downward (to L3 — firewall, VPC,
   namespace — for internal peers).
   For public-internet transport, use QUIC.
-- **Stable network.** casting is tuned for loss rate ≤ 0.01% and
-  jitter ≤ 100 µs. On a lossy WAN, retransmit storms will
-  dominate; throughput collapses. Use KCP or QUIC there.
+- **Low-loss LAN, not a WAN.** No congestion control — on a genuinely
+  lossy or high-jitter WAN use KCP/QUIC. On its target LAN casting
+  tolerates far more loss than a "≤ 0.01%" rule of thumb implies: it's
+  point-to-point, so there is **no NAK implosion** (retransmit storms
+  are a v2 *multicast* concern, not this path); each gap recovers in
+  sub-ms (see the loss-recovery bench), so steady loss costs linear
+  retransmit *bandwidth*, not a throughput collapse; and a gap large
+  enough to overrun the 2048-slot reorder ring escalates to the
+  TCP-replication cold path, which absorbs even a total outage. The
+  practical limits are retransmit bandwidth and tail latency, not a
+  hard loss cliff.
 - **Fixed-size, stable `repr(C)` payloads.** Wire format =
   disk format. Fields cannot be added without bumping
   `WalHeader.version`. If your schema changes often, use a
@@ -468,8 +476,11 @@ latency measurements justify the extra moving parts.
 
 - **Public internet** — no TLS on casting, no congestion control.
   Use QUIC (Quinn) or HTTP/2.
-- **Lossy or high-jitter paths** — NAK retransmit assumes
-  ≤ 0.01% loss. WAN paths cause retransmit storms. Use KCP.
+- **Lossy or high-jitter WAN** — no congestion control, so on a WAN
+  prefer KCP/QUIC. (Point-to-point on a LAN, casting tolerates well
+  beyond 0.01% loss: no NAK implosion, sub-ms per-gap recovery, and a
+  reorder-ring overflow escalates to TCP replication — the WAN caveat
+  is congestion control and tail latency, not a 0.01% cliff.)
 - **Schema that changes often** — wire = disk = repr(C)
   means changes are coordinated stop-redeploy events. Use
   protobuf / FlatBuffers / Cap'n Proto.
