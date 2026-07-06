@@ -22,6 +22,17 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   highest + active-file offset, scan only new bytes); (2) producer-published
   highest-tip file (~10 ms stale is fine for the refusal check); (3) shared
   atomic if server+writer co-located (most coupling). Leave for now.
+- **CAST-RTT-BENCH-DEADLOCKS-ON-LOSS** (MED, bench) — flagged 2026-07-06.
+  `cast_rtt_bench`'s A-side echo-wait is `loop { try_recv; spin_loop }` with NO
+  in-loop NAK recovery: A sends seq=N, spins until B echoes. If that datagram
+  (or its echo) drops on loopback, B never echoes, A never advances `iter`, so A
+  never reaches its `iter & 0x3FF == 0` recv_control/tick — B's NAK goes
+  unanswered → permanent deadlock (observed: 50 min stuck in a 3 s warmup).
+  Pre-existing (predates the send<T>→send_framed migration, which only changed
+  the seq source, values identical); earlier runs got lucky on a loss-free
+  window. Fix: recv_control()/tick() *inside* the echo-wait spin (with a bounded
+  spin count) so a lost frame retransmits, or add a per-iter deadline. Until
+  then the casting-RTT row is measured opportunistically (~9.6 µs, 2026-07-06).
 - **STARTUP-ORDERING-FRAGILITY** (MED, ops) — "can't start the system via the
   playground" traced to a chain of order-dependencies, none self-healing:
   (1) **Postgres must be up first** — if the `rsx-postgres` container is stopped/
