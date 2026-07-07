@@ -98,6 +98,14 @@ def fill(inner, inner_h):
     return Padding(inner, (top, 0, bot, 0))
 
 
+def fill_bottom(inner, inner_h, bot=1):
+    """Bottom-anchor `inner` in the ROWS-tall block with exactly `bot` blank
+    lines beneath it -- so the final frame ends on one empty line (Twitter
+    crops a pointer that sits flush at the very bottom edge)."""
+    top = max(ROWS - inner_h - bot, 0)
+    return Padding(inner, (top, 0, bot, 0))
+
+
 # ── Act 1: flowing narrative (no clear, real cursor trails) ──────────────────
 
 # Word-level meaning colors, not whole-sentence blocks: speed words TEAL,
@@ -218,7 +226,9 @@ def cta(cursor_on):
         f"[bold {GOLD}]Read the code.[/bold {GOLD}]\n"
         f"[bold {FG}]github.com/kronael/rsx[/bold {FG}] {c}"
     )
-    return fill(Align.center(lines), 2)
+    # bot=0: agg renders one blank row below the region, which IS the single
+    # empty line we want under the pointer (verified by extracting the frame).
+    return fill_bottom(Align.center(lines), 2, 0)
 
 
 console.clear()
@@ -248,5 +258,10 @@ try:
             on = int((time.monotonic() - t0) / BLINK) % 2 == 0
             live.update(cta(on), refresh=True)
             time.sleep(0.1)
+        live.update(cta(True), refresh=True)  # rest on a lit pointer
 finally:
-    console.show_cursor(True)
+    # Keep the real cursor hidden: the payoff ends on the drawn pointer with one
+    # empty line below it, and a restored real cursor would land on that line
+    # and re-flush the bottom. The following shell prompt restores a cursor.
+    out.write("\x1b[?25l")
+    out.flush()

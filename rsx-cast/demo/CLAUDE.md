@@ -55,6 +55,15 @@ make gif   # agg --theme monokai --font-size 28, then gifsicle
 ```
 `--cols`/`--rows` must match between `rec` and `gif`.
 
+## Final frame — one empty line at the bottom (Twitter)
+The last frame must end on ONE blank line, with the pointer (cursor) on the
+row above it — never flush at the very bottom edge, which Twitter crops/crowds.
+Two things enforce this: `cta()` uses `fill_bottom(..., bot=1)` (pointer on the
+second-to-last row), and the `finally` keeps the real terminal cursor HIDDEN
+(`\x1b[?25l`) — a restored real cursor parks right below the Live region and
+re-flushes the bottom. Verify by extracting the last frame (PIL
+`ImageSequence`) and eyeballing it, not by trusting the code.
+
 ## Palette — "Cemani"
 Project-wide palette, sampled from a black-rooster-in-spring photo
 (Shutterstock 2160144679), lifted to UI-legible brightness. Playground and
