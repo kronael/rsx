@@ -22,7 +22,8 @@ real supporting numbers too: applying a fill 3.7 ns, exposure lookup 1.6 ns
   of truth.
 - `Makefile` — `make rec` (asciinema, pinned --cols 46 --rows 24) →
   `make gif` (agg --theme monokai + gifsicle).
-- `risk-live.cast` / `risk-live-opt.gif` — the recorded real run + the portrait
+- `risk-live-opt.gif` — the tracked postable GIF (raw `.gif` and
+  `.cast` are gitignored intermediates; `make rec gif` regenerates). The portrait
   GIF (578×700, ~20 KB).
 
 ## Regenerate the GIF

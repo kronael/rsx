@@ -29,3 +29,7 @@ refs/
 
 # Replication snakeoil certs (private keys — never commit)
 /certs/
+
+# demo build intermediates: only the optimized GIF is tracked
+rsx-*/demo/*-live.gif
+rsx-*/demo/*-live.cast
