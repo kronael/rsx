@@ -166,7 +166,7 @@ def _lerp(a, b, t):
 RACE_SECS = 10.0
 
 
-def results(frame):
+def results(frame, cursor_on=True):
     """A packet-count race: each row counts packets moved in the elapsed
     time (count = 1/latency * elapsed -- linear, a real counter, not an
     eased rate). Row colors saturate from DIM toward each hue as the gap
@@ -195,7 +195,10 @@ def results(frame):
             mark,
         )
     scope = f"[{DIM}]2 pinned cores, 128B, loopback[/{DIM}]"
-    timer = f"[{DIM}]packets moved in {elapsed:4.1f} s[/{DIM}]"
+    # blinking cursor on the timer while landed: keeps the hold emitting
+    # real frames so agg's --idle-time-limit can't compress the payoff away
+    c = CURSOR if (landed and cursor_on) else " "
+    timer = f"[{DIM}]packets moved in {elapsed:4.1f} s[/{DIM}] {c}"
     # compact: 2 borders + scope + 4 rows + timer = 8 rows, fits ROWS=12.
     # (derivation/citation notes live in demo/CLAUDE.md, not on screen.)
     panel = Panel(
@@ -237,7 +240,7 @@ try:
         t0 = time.monotonic()
         while time.monotonic() - t0 < 15.0:
             on = int((time.monotonic() - t0) / BLINK) % 2 == 0
-            live.update(results(FRAMES), refresh=True)
+            live.update(results(FRAMES, on), refresh=True)
             time.sleep(0.1)
         # one clear call to action
         t0 = time.monotonic()
