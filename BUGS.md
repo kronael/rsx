@@ -5,6 +5,30 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## Status — 2026-07-07 — rsx-book compressed-level audit (fable)
 
+**RESOLVED 2026-07-07 — all five below FIXED.** The compressed / mixed-slot
+class is fixed independent of zone, and recentering is wired into the live
+ME. Commits: `69c81dc` (zone-0 exact 1:1 sizing), `40b3252` (per-side
+occupancy + BBA + matching side-predicate + FOK side-guard), `fcfbcdf`
+(regression tests — `rsx-book/tests/mixed_slot_test.rs`), `7af7438`
+(`recenter_now` eager migration + `rsx-book/tests/recenter_wiring_test.rs`),
+`b8e9ef2` (ME `maybe_recenter` wiring + cancel-path BBO). Per bug:
+- BOOK-RECENTER-UNWIRED → wired via `maybe_recenter`/`recenter_now`
+  (eager, not lazy — see BOOK-MIGRATION-PARTIAL-BOOK below).
+- BOOK-MIXED-SIDE-SELF-TRADE → `match_at_level` matches only opposite-side
+  crossing makers; `can_fill_fully` compressed walk is side-guarded.
+- BOOK-STALE-OCC-ME-CRASH → `PriceLevel.{bid,ask}_count`; per-side
+  occupancy set/clear; `emit_bbo` tripwire.
+- BOOK-FOK-CLAMP-DIVERGENCE → zone 0 sized `2*ceil(pct_5/tick)` (no
+  clamp aliasing) + side-correct FOK feasibility.
+- BOOK-STALE-BBA-WRONGFUL-POSTONLY → cancel + match loop refresh best via
+  scan + true best price in the slot (partial-empty aware).
+- BOOK-MIGRATION-PARTIAL-BOOK → moot for the live ME (it uses the eager
+  `recenter_now`, never a partially-migrated book); the incremental
+  `trigger_recenter` + `migrate_batch` API still has the partial-book
+  property but has no live caller.
+
+Original triage (kept for the record):
+
 **OPEN (triage) — one PRIMARY cause, four downstream symptoms.**
 
 - **BOOK-RECENTER-UNWIRED** (CRITICAL, integration — the real defect) — the
