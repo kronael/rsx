@@ -6,6 +6,14 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-05-30
 
 **OPEN (triage):**
+- **ENV-TEST-PARALLEL-RACE** (LOW, test-isolation) — flagged 2026-07-07.
+  `me_cast_addrs_test.rs` exists in BOTH rsx-marketdata and rsx-risk and each
+  sets/reads process-wide env vars (`RSX_ME_CAST_ADDRS` etc.). Under a parallel
+  `cargo test --workspace`, the two binaries race → intermittent failures
+  (`env_addrs_takes_priority`, `env_singular_addr_no_default`); each passes
+  alone (`--test-threads=1`). Fix: serialize env-mutating tests (a shared
+  `Mutex`/`serial_test`) or give each a unique var namespace. Not a product
+  bug — a flaky gate; fix so `make test` is deterministic.
 - **CAST-BIG-GAP-ESCALATION** (LOW, design) — a NAK gap that stays *under* the
   2048 reorder ring recovers seq-by-seq (each fill retransmit is a WAL scan);
   only ring overflow escalates to the TCP-replay cold path. A gap far beyond
