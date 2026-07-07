@@ -103,7 +103,7 @@ fn test_wal_roundtrip() {
         crc,
     );
 
-    file.write_all(&header.to_bytes()).unwrap();
+    file.write_all(header.to_bytes()).unwrap();
     file.write_all(&payload).unwrap();
     file.sync_all().unwrap();
     drop(file);

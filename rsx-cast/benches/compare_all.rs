@@ -160,7 +160,7 @@ fn make_kcp(conv: u32, queue: OutQueue) -> Kcp<UdpOutput> {
     // kcp requires one update() to set its `updated` flag before the
     // first flush(), else flush() returns Err(NeedUpdate). Loopback has
     // no loss so the retransmit clock is irrelevant; prime once at 0.
-    k.update(0);
+    let _ = k.update(0);
     k
 }
 

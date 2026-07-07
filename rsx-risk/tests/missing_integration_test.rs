@@ -1,10 +1,10 @@
-/// Integration tests for missing coverage per TESTING-RISK.md.
-///
-/// Covers:
-///   - position = sum of fills (margin recalc on fill)
-///   - crash recovery from WAL tip (no Postgres)
-///   - liquidation cascade (multiple users underwater)
-///   - insurance fund absorbs deficit (shard integration)
+//! Integration tests for missing coverage per TESTING-RISK.md.
+//!
+//! Covers:
+//!   - position = sum of fills (margin recalc on fill)
+//!   - crash recovery from WAL tip (no Postgres)
+//!   - liquidation cascade (multiple users underwater)
+//!   - insurance fund absorbs deficit (shard integration)
 
 use rsx_risk::Account;
 use rsx_risk::FillEvent;

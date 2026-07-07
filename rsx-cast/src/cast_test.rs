@@ -193,7 +193,7 @@ fn crc_mismatch_rejected() {
     );
     let hdr_bytes = preamble.to_bytes();
     let mut buf = vec![0u8; 16 + payload.len()];
-    buf[..16].copy_from_slice(&hdr_bytes);
+    buf[..16].copy_from_slice(hdr_bytes);
     buf[16..].copy_from_slice(payload);
     sock.send_to(&buf, recv_local).unwrap();
 
@@ -225,7 +225,7 @@ fn nak_retransmit_from_wal() {
     );
     let hdr_bytes = hdr.to_bytes();
     let mut buf = vec![0u8; 16 + payload.len()];
-    buf[..16].copy_from_slice(&hdr_bytes);
+    buf[..16].copy_from_slice(hdr_bytes);
     buf[16..].copy_from_slice(payload);
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     sock.send_to(&buf, sender_addr).unwrap();
@@ -264,7 +264,7 @@ fn cast_heartbeat_sent_on_idle() {
         ..Default::default()
     };
     let mut sender = CastSender::with_config(
-        recv_addr, 1, &wal_dir, &config,
+        recv_addr, 1, wal_dir, &config,
     )
     .unwrap();
 

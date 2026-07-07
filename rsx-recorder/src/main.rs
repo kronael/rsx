@@ -80,7 +80,7 @@ impl RecorderState {
         }
 
         self.buf.extend_from_slice(
-            &record.header.to_bytes(),
+            record.header.to_bytes(),
         );
         self.buf.extend_from_slice(&record.payload);
         self.record_count += 1;

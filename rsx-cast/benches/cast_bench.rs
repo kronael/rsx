@@ -142,7 +142,6 @@ fn bench_reorder_buf_insert_lookup(
                 buf.insert(black_box(key), payload);
                 let entry = buf.first_entry();
                 black_box(&entry);
-                drop(entry);
                 // Reclaim the Vec so the next iter doesn't alloc.
                 if let Some(v) = buf.remove(&key) {
                     stash = v;

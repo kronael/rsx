@@ -120,7 +120,7 @@ fn nak_wal_fallback_delivers_evicted_seq() {
     );
     let hdr_bytes = hdr.to_bytes();
     let mut buf = vec![0u8; WalHeader::SIZE + payload.len()];
-    buf[..WalHeader::SIZE].copy_from_slice(&hdr_bytes);
+    buf[..WalHeader::SIZE].copy_from_slice(hdr_bytes);
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     let probe = UdpSocket::bind("127.0.0.1:0").unwrap();
     probe.send_to(&buf, sender_addr).unwrap();

@@ -574,7 +574,7 @@ fn fill_interleaved_symbols() {
     // Interleave fills across symbols 0, 1, 2
     for i in 1..=30u64 {
         let sym = ((i - 1) % 3) as u32;
-        let seq = (i + 2) / 3; // 1,1,1,2,2,2,...
+        let seq = i.div_ceil(3); // 1,1,1,2,2,2,...
         s.process_fill(&fill(0, 1, sym, 100, 1, seq));
     }
     assert_eq!(s.positions[&(0, 0)].long_qty, 10);

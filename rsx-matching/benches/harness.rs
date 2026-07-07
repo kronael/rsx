@@ -227,7 +227,7 @@ impl Me {
         // Drain the WAL buffer periodically WITHOUT fsync so it stays
         // bounded across the run; the per-order hot path is only the
         // memcpy into the buffer (fsync is batched off-path every 10ms).
-        if self.counter % 1024 == 0 {
+        if self.counter.is_multiple_of(1024) {
             self.wal.reset_write_buf();
         }
 

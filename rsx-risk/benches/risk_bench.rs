@@ -222,7 +222,7 @@ fn bench_pretrade_check_latency(c: &mut Criterion) {
     let mut oid = 1u64;
     c.bench_function("pretrade_check_latency", |b| {
         b.iter(|| {
-            let mut o = order.clone();
+            let mut o = order;
             oid += 1;
             o.order_id_lo = oid;
             let resp = black_box(

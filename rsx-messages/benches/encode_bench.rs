@@ -82,7 +82,7 @@ fn bench_header_encode_decode(c: &mut Criterion) {
 
     let bytes = header.to_bytes();
     c.bench_function("header_decode", |b| {
-        b.iter(|| WalHeader::from_bytes(&bytes));
+        b.iter(|| WalHeader::from_bytes(bytes));
     });
 }
 

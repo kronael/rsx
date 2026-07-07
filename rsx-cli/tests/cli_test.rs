@@ -34,7 +34,7 @@ fn write_record_bytes<T: Copy>(
 ) {
     let bytes = as_bytes(record);
     let header = WalHeader::new(rt, bytes.len() as u16, 0xAABBCCDD);
-    file.write_all(&header.to_bytes()).unwrap();
+    file.write_all(header.to_bytes()).unwrap();
     file.write_all(bytes).unwrap();
 }
 
@@ -43,7 +43,7 @@ fn write_test_wal(path: &PathBuf, records: usize) {
     for i in 0..records {
         let header = WalHeader::new(RECORD_BBO, 8, i as u32);
         let payload = vec![i as u8; 8];
-        file.write_all(&header.to_bytes()).unwrap();
+        file.write_all(header.to_bytes()).unwrap();
         file.write_all(&payload).unwrap();
     }
     file.sync_all().unwrap();
@@ -94,7 +94,7 @@ fn test_multiple_records_in_file() {
     for i in 0..3 {
         let header = WalHeader::new(RECORD_BBO, 4, i);
         let payload = vec![i as u8; 4];
-        file.write_all(&header.to_bytes()).unwrap();
+        file.write_all(header.to_bytes()).unwrap();
         file.write_all(&payload).unwrap();
     }
     file.sync_all().unwrap();
@@ -341,7 +341,7 @@ fn write_raw_record(
     let crc = compute_crc32(payload);
     let header =
         WalHeader::new(rt, payload.len() as u16, crc);
-    file.write_all(&header.to_bytes()).unwrap();
+    file.write_all(header.to_bytes()).unwrap();
     file.write_all(payload).unwrap();
 }
 
@@ -602,7 +602,7 @@ fn test_follow_next_seq_advances_past_filtered_records() {
             let crc = compute_crc32(&payload);
             let header =
                 WalHeader::new(rt, 16, crc);
-            f.write_all(&header.to_bytes()).unwrap();
+            f.write_all(header.to_bytes()).unwrap();
             f.write_all(&payload).unwrap();
         };
 

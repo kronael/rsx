@@ -1,3 +1,5 @@
+// Bench doc-comments aren't rendered to docs; skip the markdown lint.
+#![allow(clippy::doc_lazy_continuation)]
 //! Loop-architecture load benchmark: where does the round-trip time go?
 //! ====================================================================
 //!
@@ -408,7 +410,7 @@ fn raise_nofile() -> u64 {
         let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &rl);
         let mut after = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
         let _ = libc::getrlimit(libc::RLIMIT_NOFILE, &mut after);
-        after.rlim_cur as u64
+        after.rlim_cur
     }
 }
 
@@ -627,8 +629,8 @@ fn drive_conns(
         // stagger each conn's first fire across one gap so the thread doesn't
         // emit all n at the same instant.
         let base = now_ns();
-        for i in 0..n {
-            next_fire[i] = base + (gap_ns / n.max(1) as u64) * i as u64;
+        for (i, slot) in next_fire.iter_mut().enumerate().take(n) {
+            *slot = base + (gap_ns / n.max(1) as u64) * i as u64;
         }
     } else {
         // CLOSED-LOOP: prime each conn to `pipeline` in-flight requests.
@@ -809,8 +811,7 @@ mod monoio_stub {
         stop: Arc<AtomicBool>,
     ) -> Vec<JoinHandle<()>> {
         let mut handles = Vec::with_capacity(n);
-        for i in 0..n {
-            let core = cores[i];
+        for (i, &core) in cores.iter().enumerate().take(n) {
             let counters = counters.clone();
             let stop = stop.clone();
             let handle = thread::Builder::new()
@@ -1680,11 +1681,14 @@ mod batched_stub {
                 (*s) | ((idx as u64) << 48)
             };
             // SUBMIT into the per-reactor submit ring (batch thread sendmmsg's).
-            {
-                let mut tx = inbox.submit_tx.borrow_mut();
-                while tx.push(Submit { idx, req_id }).is_err() {
-                    monoio::time::sleep(Duration::ZERO).await;
+            loop {
+                {
+                    let mut tx = inbox.submit_tx.borrow_mut();
+                    if tx.push(Submit { idx, req_id }).is_ok() {
+                        break;
+                    }
                 }
+                monoio::time::sleep(Duration::ZERO).await;
             }
             // AWAIT routed reply via the done-map (filled from reply ring).
             loop {

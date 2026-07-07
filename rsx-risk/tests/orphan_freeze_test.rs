@@ -226,7 +226,7 @@ fn confirmed_freeze_is_durable() {
     // Recovery loads that durable record -> freeze present.
     let mut recovered = make_shard();
     let mut fo = FxHashMap::default();
-    let key = (0u128 << 64) | frozen.order_id_lo as u128;
+    let key = frozen.order_id_lo as u128;
     fo.insert(key, (frozen.user_id, frozen.amount));
     recovered.set_state(ColdStartState {
         accounts: FxHashMap::default(),

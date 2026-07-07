@@ -421,15 +421,12 @@ impl CastSender {
                     };
                     let payload =
                         &cbuf[WalHeader::SIZE..n];
-                    match hdr.record_type {
-                        RECORD_NAK => {
-                            if let Some(nak) =
-                                decode_payload::<Nak>(payload)
-                            {
-                                self.handle_nak(&nak);
-                            }
+                    if hdr.record_type == RECORD_NAK {
+                        if let Some(nak) =
+                            decode_payload::<Nak>(payload)
+                        {
+                            self.handle_nak(&nak);
                         }
-                        _ => {}
                     }
                 }
                 Err(ref e)
@@ -1040,7 +1037,7 @@ impl CastReceiver {
     /// .ship/27 attack scenario A.
     pub(crate) fn oldest_missing_run(&self) -> Option<(u64, u64)> {
         if self.expected_seq == 0
-            || self.expected_seq >= self.highest_seen + 1
+            || self.expected_seq > self.highest_seen
         {
             return None;
         }

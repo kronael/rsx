@@ -284,7 +284,7 @@ fn run_window<F: FnMut()>(mut op: F, warmup: Duration, window: Duration, sample_
     const CHECK: u64 = 256;
     loop {
         for _ in 0..CHECK {
-            if ops % sample_every == 0 {
+            if ops.is_multiple_of(sample_every) {
                 let s = Instant::now();
                 op();
                 let dt = s.elapsed().as_nanos() as u64;
@@ -432,13 +432,13 @@ fn bench_order_mixed(cfg: &Cfg, depth: usize) -> RepResult {
         shard.accounts.insert(uid, Account::new(uid, COLLATERAL));
     }
     // broke user: even (in shard) but ABOVE the hot accept set, collateral=1.
-    let broke: u32 = ((cfg.hot_users + 4) * 2) as u32;
+    let broke: u32 = (cfg.hot_users + 4) * 2;
     shard.accounts.insert(broke, Account::new(broke, 1));
     // resting depth on hot even users
     {
         let mut oid: u64 = 1;
         for k in 0..cfg.hot_users {
-            let u = (k * 2) as u32; // even
+            let u = k * 2; // even
             for d in 0..depth {
                 let sid = (d % cfg.symbols) as u32;
                 let o = order_template(u, sid, oid);

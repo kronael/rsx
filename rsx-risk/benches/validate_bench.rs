@@ -103,7 +103,7 @@ fn bench_validate_and_forward(c: &mut Criterion) {
     c.bench_function("risk_validate_and_forward", |b| {
         b.iter(|| {
             oid += 1;
-            let mut o = template.clone();
+            let mut o = template;
             o.order_id_lo = oid;
             let resp = black_box(
                 shard.process_order(black_box(&o)),

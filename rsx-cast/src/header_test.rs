@@ -5,7 +5,7 @@ use crate::header::WalVersion;
 fn header_encode_decode_roundtrip() {
     let header = WalHeader::new(1, 64, 0xDEADBEEF);
     let bytes = header.to_bytes();
-    let decoded = WalHeader::from_bytes(&bytes).unwrap();
+    let decoded = WalHeader::from_bytes(bytes).unwrap();
     assert_eq!(decoded.version, WalVersion::V1 as u8);
     assert_eq!(decoded.record_type, 1);
     assert_eq!(decoded.len, 64);

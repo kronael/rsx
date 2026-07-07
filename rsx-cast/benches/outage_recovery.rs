@@ -173,7 +173,7 @@ fn run_pattern(rt: &Runtime, outages: &[Duration]) -> Vec<Cycle> {
         let framed = writer.prepare(&mut rec).unwrap();
         writer.append_framed(&framed).unwrap();
         sender.send_framed(&framed).unwrap();
-        if framed.seq % FLUSH_EVERY == 0 {
+        if framed.seq.is_multiple_of(FLUSH_EVERY) {
             writer.flush().unwrap();
         }
         framed.seq
