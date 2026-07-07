@@ -330,9 +330,15 @@ its own core.
 
 Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/
 `CORE_MD`). Off-path services (`mark`, `recorder`) sleep instead
-of spinning and stay unpinned. The hot-path processes need a
-dedicated core each — on a host with fewer cores than that, you
-can't run them without starving each other.
+of spinning and stay unpinned.
+
+The dedicated cores are a **latency** requirement, not a
+correctness one. For testing on a small host you can pin several
+hot-path processes to the same core (or leave them unpinned) and
+everything still works — the scheduler time-slices the
+busy-spinners at millisecond quanta, so expect millisecond
+round-trips instead of microseconds. Fine for functional tests;
+meaningless for benchmarks.
 
 **From source:**
 
