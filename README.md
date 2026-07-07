@@ -189,7 +189,8 @@ Three transports tie it together:
 - **Within a tile-architected process**: rtrb SPSC rings,
   50–170 ns per hop.
 
-Public API to the world is WebSocket JSON (`rsx-gateway`).
+Public API to the world is WebSocket JSON (`rsx-gateway`),
+with a protobuf-over-QUIC feed (`rsx-tui`) planned.
 
 ## How fast
 
