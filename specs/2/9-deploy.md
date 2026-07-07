@@ -376,11 +376,11 @@ Single-machine health ports (loopback):
 | Process | Health addr |
 |---|---|
 | ME BTC / ETH / SOL | 127.0.0.1:9801 / :9802 / :9803 |
-| risk shard 0 | 127.0.0.1:9810 |
-| gateway | 127.0.0.1:9820 |
-| mark | 127.0.0.1:9830 |
-| marketdata | 127.0.0.1:9840 |
-| recorder BTC / ETH / SOL | 127.0.0.1:9851 / :9852 / :9853 |
+| risk shard 0 | 127.0.0.1:9900 |
+| gateway | 127.0.0.1:10000 |
+| mark | 127.0.0.1:10100 |
+| marketdata | 127.0.0.1:10200 |
+| recorder BTC / ETH / SOL | 127.0.0.1:10301 / :10302 / :10303 |
 
 ## Process Supervision
 
