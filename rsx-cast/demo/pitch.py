@@ -15,7 +15,7 @@ Two acts:
      Rendered via a single rich.Live region so callout -> results -> CTA swap
      in place with no further clears.
 
-Recorded via: asciinema rec --overwrite --cols 44 --rows 24 -c "uv run pitch.py" cast-live.cast
+Recorded via: asciinema rec --overwrite --cols 44 --rows 12 -c "uv run pitch.py" cast-live.cast
 Colors: the "Cemani" palette (see CLAUDE.md, "Palette").
 """
 import random
@@ -148,7 +148,7 @@ def callout(cursor_on):
     return fill(Align.center(line), 1)
 
 
-def results(frame, cursor_on):
+def results(frame):
     table = Table.grid(padding=(0, 1))
     table.add_column(width=4)
     table.add_column(width=11, justify="right")
@@ -165,23 +165,19 @@ def results(frame, cursor_on):
             f"[{DIM}]{us:>4.1f}µs[/{DIM}]",
             mark,
         )
-    c = CURSOR if (landed and cursor_on) else " "
     scope = f"[{DIM}]2 pinned cores, 128B, loopback[/{DIM}]"
-    # compact: no blank rows, no vertical padding -- the whole panel is
-    # 2 borders + scope + 4 rows + 2-line caption = 10 rows, fits ROWS=12
-    body = Group(scope, table) if not landed else Group(
-        scope, table,
-        f"[{DIM}]derived: 1/latency; cited from\ncompare/README.md {c}[/{DIM}]",
-    )
+    # compact: no blank rows, no vertical padding, no caption -- the whole
+    # panel is 2 borders + scope + 4 rows = 7 rows, fits ROWS=12.
+    # (derivation/citation notes live in demo/CLAUDE.md, not on screen.)
     panel = Panel(
-        body,
+        Group(scope, table),
         title="[bold]throughput · latency[/bold]",
         title_align="left",
         border_style=GOLD,
         width=WIDTH - 2,
         padding=(0, 2),
     )
-    return fill(panel, 10)
+    return fill(panel, 7)
 
 
 def cta(cursor_on):
@@ -206,13 +202,13 @@ try:
             time.sleep(0.1)
         # numbers climb in (bigger = better, intuitive)
         for frame in range(1, FRAMES + 1):
-            live.update(results(frame, True), refresh=True)
+            live.update(results(frame), refresh=True)
             time.sleep(0.05)
         # hold on the landed result, blinking -- long enough to actually read
         t0 = time.monotonic()
         while time.monotonic() - t0 < 15.0:
             on = int((time.monotonic() - t0) / BLINK) % 2 == 0
-            live.update(results(FRAMES, on), refresh=True)
+            live.update(results(FRAMES), refresh=True)
             time.sleep(0.1)
         # one clear call to action
         t0 = time.monotonic()
