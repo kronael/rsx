@@ -25,6 +25,32 @@ the order payload so Risk can forward to the correct ME. Adding
 gateway instances scales connection capacity without any
 coordination.
 
+## Why matching can't shard finer than a symbol
+
+A symbol is one market. Every buy and sell order for BTC-PERP has
+to meet in a single book, because that is the only way to hold
+price-time priority: the best bid must trade with the best ask,
+and the order that arrived first at a price must fill first. Split
+one symbol's book across two machines and you lose that — a taker
+could match a worse price on shard A while a better resting order
+sits on shard B, and no amount of cross-shard chatter fixes it
+without serializing back into one place. So within a symbol the
+book is centralized and single-threaded by necessity, not by
+choice.
+
+That is why the only clean matching axis is *across* symbols —
+one engine per instrument. You add BTC-PERP and ETH-PERP as
+separate engines; you cannot add "half of BTC-PERP."
+
+And it is why matching has to be fast. A symbol's whole order flow
+funnels through one core with no parallelism to hide behind, so
+that core's per-order time is the symbol's throughput ceiling. A
+100 ns match is ~10M orders/sec for that symbol; a 10 µs match is
+100k. There is no scaling around it — you make the one book fast,
+which is the entire point of `rsx-book`. Users scale out on the
+Risk axis; a single hot symbol scales only by getting the match
+itself cheaper.
+
 ## The path of an order
 
 User U sends an order on symbol S:
