@@ -732,6 +732,13 @@ fn main() {
                         order_msg.order_id_lo,
                         order_msg.timestamp_ns
                     );
+
+                    // Keep the touch inside the 1:1 zone 0: recenter the
+                    // compression map when the mid drifts past half of
+                    // zone 0. Migration then proceeds lazily
+                    // (resolve_level per touched price) and on idle
+                    // cycles (migrate_batch below).
+                    maybe_recenter(&mut book);
                 }
             } // end if let Some(order_msg)
             } else if hdr.record_type == RECORD_CANCEL_REQUEST {
@@ -894,6 +901,26 @@ fn emit_config_applied(
     );
 }
 
+/// Recenter the compression map on the current mid when it has drifted
+/// past half of zone 0, so the touch stays in the 1:1 zone (strict
+/// price-time priority; keeps the compressed-slot slow paths cold).
+/// Skips while one-sided (no mid to center on).
+///
+/// Uses `recenter_now` (eager: swap + full migration in one shot). Lazy
+/// per-order migration is NOT correct for live matching — a marketable
+/// order's crossing liquidity can sit outside the migrated band, so the
+/// ME must never trade against a partially-migrated book. The swap +
+/// migration is O(old book size) but recenters are rare (>2.5% drift).
+fn maybe_recenter(book: &mut Orderbook) {
+    if book.best_bid_tick == NONE || book.best_ask_tick == NONE {
+        return;
+    }
+    let mid = (book.best_bid_px + book.best_ask_px) / 2;
+    if book.should_recenter(mid) {
+        book.recenter_now(mid);
+    }
+}
+
 /// Cancel a resting order by order_id, emit events,
 /// write WAL, and send cast to risk + marketdata.
 ///
@@ -946,6 +973,8 @@ fn process_cancel(
     let remaining_qty = slot.remaining_qty;
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
+    let old_bid_px = book.best_bid_px;
+    let old_ask_px = book.best_ask_px;
 
     book.event_len = 0;
 
@@ -969,22 +998,16 @@ fn process_cancel(
         order_id_lo,
     });
 
-    // Emit BBO if best bid or ask changed
-    if book.best_bid_tick != old_bid || book.best_ask_tick != old_ask {
-        let (bid_px, bid_qty) = if book.best_bid_tick != NONE {
-            let lvl = &book.active_levels[book.best_bid_tick as usize];
-            let px = book.orders.get(lvl.head).price.0;
-            (px, lvl.total_qty)
-        } else {
-            (0, 0)
-        };
-        let (ask_px, ask_qty) = if book.best_ask_tick != NONE {
-            let lvl = &book.active_levels[book.best_ask_tick as usize];
-            let px = book.orders.get(lvl.head).price.0;
-            (px, lvl.total_qty)
-        } else {
-            (0, 0)
-        };
+    // Emit BBO if best bid or ask changed (tick OR price). `current_bbo`
+    // reads the maintained best px and the side-correct qty at that price
+    // — a compressed best level can hold the other side / other prices, so
+    // the FIFO head is not the BBO.
+    if book.best_bid_tick != old_bid
+        || book.best_ask_tick != old_ask
+        || book.best_bid_px != old_bid_px
+        || book.best_ask_px != old_ask_px
+    {
+        let (bid_px, bid_qty, ask_px, ask_qty) = book.current_bbo();
         book.emit(rsx_book::event::Event::BBO {
             bid_px: Price(bid_px),
             bid_qty: Qty(bid_qty),
