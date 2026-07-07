@@ -30,9 +30,11 @@ for arg in "$@"; do
     esac
 done
 
-# Run benchmarks
+# Run benchmarks. Wrapped in `timeout` so a hung bench (e.g. a
+# deadlocked receiver) exits 124 -> gate FAILs, instead of just
+# reading as "slow" forever (BENCH-NO-TIMEOUT-GATE).
 echo "==> running cargo bench --workspace"
-cargo bench --workspace
+timeout 600 cargo bench --workspace
 
 # Collect current results
 declare -A CURRENT=()
