@@ -1,5 +1,5 @@
 .PHONY: check test e2e integration wal smoke perf \
-       lint clean play play-overview play-topology \
+       lint fmt fmt-check clean play play-overview play-topology \
        play-book play-risk play-wal play-logs \
        play-control play-faults play-verify \
        play-infra play-orders play-nav play-api \
@@ -51,7 +51,9 @@ help:
 	@echo "  make gate-4-playwright - Gate 4: Playwright 421/421 (requires gate-3 first)"
 	@echo ""
 	@echo "Quality:"
-	@echo "  make lint          - Run clippy with warnings as errors"
+	@echo "  make lint          - clippy --all-targets, warnings as errors"
+	@echo "  make fmt-check     - verify default rustfmt formatting"
+	@echo "  make fmt           - apply default rustfmt formatting"
 	@echo "  make check-progress    - Validate PROGRESS.md accounting (fail CI if broken)"
 	@echo "  make publish-progress  - Regenerate PROGRESS.md header from artifacts; fail on divergence"
 	@echo "  make task-report       - Rewrite PROGRESS.md from tasks.json (truth source)"
@@ -516,9 +518,17 @@ meta-guard-status:
 meta-guard-tests:
 	python3 -m pytest scripts/tests/test_meta_guard.py -v
 
-# Lint
+# Lint — all targets so warnings can't hide in tests/benches.
 lint:
-	cargo clippy --workspace -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
+
+# Format check — default rustfmt is the source of truth (no rustfmt.toml).
+fmt-check:
+	cargo fmt --all --check
+
+# Apply formatting.
+fmt:
+	cargo fmt --all
 
 # Clean build artifacts
 clean:
