@@ -120,6 +120,9 @@ NARRATIVE = [
     ("same bytes", TEAL), (" on the\nwire, on disk, on replay. ", FG),
     ("NAK", GOLD), ("\nrecovers a live gap; the ", FG),
     ("batched\nWAL", GOLD), (" is the fallback — off the\ncritical send path.\n\n", FG),
+    ("One library, one binary:", GOLD), (" the WAL\nand the ", FG),
+    ("replay server", GOLD), (" can run in\nyour process. ", FG),
+    ("Nothing to deploy.", TEAL), ("\n\n", FG),
     ("Ties raw UDP. Beats TCP and QUIC.", GOLD),
     ("\n", FG),
 ]
