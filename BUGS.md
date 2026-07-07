@@ -5,13 +5,32 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## Status — 2026-07-07 — rsx-book compressed-level audit (fable)
 
-**OPEN (triage) — one root cause, four confirmed symptoms.** A compressed
-("smooshed") level can hold orders of **both sides and multiple raw prices**,
-but `match_at_level`, the per-side occupancy maintenance, and the best-bid/ask
-price cache each silently assume **one side / one price per level**. Existing
-smooshed-tick tests (`tests/matching_test.rs:447-520`) only ever put same-side
-orders in a band, so none of this is covered. Verified with a runnable repro
-(compiles against real `rsx-book`; #2 panics live). NOT fixed — recording only.
+**OPEN (triage) — one PRIMARY cause, four downstream symptoms.**
+
+- **BOOK-RECENTER-UNWIRED** (CRITICAL, integration — the real defect) — the
+  compression map is only 1:1 within zone 0 (±5% of mid); past that it merges
+  ticks, and a merged slot can hold **both order sides and multiple raw
+  prices**. The design keeps the touch inside zone 0 by *recentering* the mid
+  as the market drifts — and that state machine is fully built AND unit-tested
+  (`should_recenter` → `trigger_recenter` → `resolve_level`/`advance_frontier_to`
+  → `migrate_batch` → `complete_migration`; see `migration.rs`,
+  `tests/{recentering,migration,distribution}_test.rs`). **But it is never
+  wired into the live ME.** `should_recenter`/`trigger_recenter`/`resolve_level`
+  have ZERO callers in `src/` (tests + benches only); `rsx-matching/src/main.rs`
+  calls only `migrate_batch(100)` on idle, which `return`s immediately because
+  `state` is never `Migrating` (nothing calls `trigger_recenter`). So the mid
+  is pinned at the seed forever; a stale seed or a >5% move parks the touch in a
+  coarsened zone, and the four symptoms below become reachable. With the touch
+  in zone 0 (1:1) none of them can fire. Fix: wire the trigger into the ME loop
+  (plan: `.ship/plan-book-recenter-wiring.md`).
+
+The four symptoms below are **only reachable once the touch leaves zone 0**
+(i.e. only because BOOK-RECENTER-UNWIRED lets the mid go stale). Mechanism:
+`match_at_level`, per-side occupancy maintenance, and the BBA px cache each
+assume one side / one price per level. Existing smooshed-tick tests
+(`tests/matching_test.rs:447-520`) only used same-side bands, so the class was
+uncovered. Verified with a runnable repro (compiles against real `rsx-book`;
+#2 panics live). NOT fixed — recording only.
 
 - **BOOK-MIXED-SIDE-SELF-TRADE** (CRITICAL, correctness) — a taker fills a
   resting order of the **same side** (position corruption). `matching.rs:287-300`
