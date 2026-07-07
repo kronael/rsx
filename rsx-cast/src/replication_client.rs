@@ -37,6 +37,15 @@ pub struct ReplicationConsumer {
     tls_connector: TlsConnector,
 }
 
+/// How a single streamed connection ended — the signal
+/// `run`'s reconnect loop acts on. `run_once` discards it.
+enum StreamEnd {
+    /// The peer closed the stream (EOF). `run` reconnects.
+    Eof,
+    /// The callback returned `false`. `run` stops.
+    Stopped,
+}
+
 impl ReplicationConsumer {
     /// Create a consumer that tries `endpoints` in order on
     /// each connect attempt. The first endpoint that can
@@ -99,12 +108,12 @@ impl ReplicationConsumer {
 
         loop {
             match self.connect_and_stream(&mut callback).await {
-                Ok(true) => {
+                Ok(StreamEnd::Eof) => {
                     info!("stream ended, reconnecting");
                     backoff_idx = 0;
                     consec_errors = 0;
                 }
-                Ok(false) => {
+                Ok(StreamEnd::Stopped) => {
                     info!("consumer callback requested stop");
                     return Ok(());
                 }
@@ -154,13 +163,12 @@ impl ReplicationConsumer {
         self.connect_and_stream(&mut callback).await.map(|_| ())
     }
 
-    /// Streams one connection (federating over endpoints). Returns
-    /// `Ok(true)` if the stream ended on its own (caller may
-    /// reconnect), `Ok(false)` if the callback returned `false`.
+    /// Streams one connection (federating over endpoints). See
+    /// [`StreamEnd`] for the two success outcomes.
     async fn connect_and_stream<F>(
         &mut self,
         callback: &mut F,
-    ) -> io::Result<bool>
+    ) -> io::Result<StreamEnd>
     where
         F: FnMut(RawWalRecord) -> bool,
     {
@@ -226,7 +234,7 @@ impl ReplicationConsumer {
         &mut self,
         mut stream: S,
         callback: &mut F,
-    ) -> io::Result<bool>
+    ) -> io::Result<StreamEnd>
     where
         S: AsyncReadExt + AsyncWriteExt + Unpin,
         F: FnMut(RawWalRecord) -> bool,
@@ -248,9 +256,8 @@ impl ReplicationConsumer {
         stream.write_all(payload).await?;
 
         let mut hdr_buf = [0u8; WalHeader::SIZE];
-        // Stays true unless the callback returns false (stop). An
-        // EOF break leaves it true — a reconnectable stream end.
-        let mut reconnectable = true;
+        // Stays `Eof` unless the callback returns false (`Stopped`).
+        let mut end = StreamEnd::Eof;
         loop {
             match stream.read_exact(&mut hdr_buf).await {
                 Ok(_) => {}
@@ -310,13 +317,13 @@ impl ReplicationConsumer {
             }
 
             if !keep_going {
-                reconnectable = false;
+                end = StreamEnd::Stopped;
                 break;
             }
         }
 
         persist_tip(&self.tip_file, self.tip)?;
-        Ok(reconnectable)
+        Ok(end)
     }
 }
 
