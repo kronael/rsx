@@ -27,11 +27,14 @@ Colors on individual words of meaning, not sentences (mapping in Palette).
 7. **"Ties raw UDP. Beats TCP and QUIC."**
 
 **Act 2 — the benchmark.** The one screen clear → centered "See for
-yourself." (~2.6 s) → numbers climb 10 s → held 15 s → CTA "Read the
-code." / `github.com/kronael/rsx`. All in one `rich.Live` region. The
-bordered panel shows throughput (counting up) and latency per row, cast
-starred. On screen only the scope line ("2 pinned cores, 128B, loopback");
-derivation (throughput = 1/latency, not a separate bench) and citation
+yourself." (~2.6 s) → a 10 s packet-count race → held 15 s → CTA "Read
+the code." / `github.com/kronael/rsx`. All in one `rich.Live` region.
+The bordered panel counts packets moved in the elapsed time (count =
+1/latency × elapsed, linear — a real counter, not an eased rate), with a
+live "packets moved in N s" timer and latency per row; cast starred at
+the end. Row colors saturate from DIM toward each hue as the race opens
+up. On screen only the scope line ("2 pinned cores, 128B, loopback");
+derivation (counts = 1/latency × 10 s, not a separate bench) and citation
 stay here, not in the panel.
 
 ## Artifacts
