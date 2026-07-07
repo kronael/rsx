@@ -233,5 +233,5 @@ The gateway is NOT a tile in the strict sense: the inner
 loop is `select!` over many sockets, not a busy-spin on
 one SPSC ring. Tiles are for compute-bound stages; monoio
 is for I/O-multiplex-bound stages. See
-[`../notes/tiles.md`](../notes/tiles.md) for when each is
+[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for when each is
 appropriate.

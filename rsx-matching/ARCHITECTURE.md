@@ -214,7 +214,7 @@ SPSC rings, so no tile structure).
 A tokio sidecar handles the cold path — `poll_scheduled_configs()`
 queries Postgres every 10 minutes for symbol config updates.
 That is blocking I/O and explicitly off the hot loop. See
-[`../notes/tiles.md`](../notes/tiles.md) for the broader
+[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for the broader
 pattern.
 
 ## Cold-start snapshot + WAL replay (wal.rs)

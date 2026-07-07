@@ -25,5 +25,5 @@ on EOF). tokio is the boring choice and matches what the
 inspected components already use. There is no hot loop here
 and no latency budget — the CLI runs offline, not on the
 GW→ME→GW critical path. See
-[`../notes/tiles.md`](../notes/tiles.md) for when tiles or
+[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for when tiles or
 monoio apply instead.
