@@ -43,7 +43,9 @@ stay here, not in the panel.
   numbers cited (see Honesty) — the four-protocol comparison can't run
   live in one process.
 - `Makefile` — `make rec` → `make gif`.
-- `cast-live.cast` / `cast-live-opt.gif` — the output.
+- `cast-live-opt.gif` — the tracked output (the postable artifact).
+  The raw `.gif` and the `.cast` recording are gitignored build
+  intermediates — regenerate with `make rec gif`.
 
 ## Regenerate
 ```

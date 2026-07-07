@@ -12,6 +12,7 @@ gif: risk-live.cast
 	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 \
 		--theme monokai risk-live.cast risk-live.gif
 	gifsicle -O3 risk-live.gif -o risk-live-opt.gif
+	rm risk-live.gif
 
 clean:
 	rm -f risk-live.cast risk-live.gif risk-live-opt.gif

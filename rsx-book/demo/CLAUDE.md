@@ -21,7 +21,8 @@ Full numbers + caveats: `reports/20260704_book-bench.md`.
   source of truth.
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
-- `book-live.cast` / `book-live-opt.gif` — the recorded real run + the portrait
+- `book-live-opt.gif` — the tracked postable GIF (raw `.gif` and
+  `.cast` are gitignored intermediates; `make rec gif` regenerates). The portrait
   GIF (578×700, ~42 KB).
 
 ## Regenerate the GIF

@@ -22,7 +22,8 @@ the same report, not measured in this run.
   github.com/kronael/rsx). This is the demo source of truth.
 - `Makefile` — `make rec` (asciinema, pinned --cols 46 --rows 24) →
   `make gif` (agg --theme monokai + gifsicle).
-- `match-live.cast` / `match-live-opt.gif` — the recorded real run + the
+- `match-live-opt.gif` — the tracked postable GIF (raw `.gif` and
+  `.cast` are gitignored intermediates; `make rec gif` regenerates). The
   portrait GIF (578×700, ~22 KB).
 
 ## Regenerate the GIF
