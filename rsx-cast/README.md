@@ -397,6 +397,18 @@ latency measurements justify the extra moving parts.
   Records are on disk before any downstream consumer sees them
   via the TCP replay path. Bounded loss on crash: up to one
   flush interval (10 ms default) of pre-fsync records.
+- **Effective durability comes from replicas, not per-record
+  fsync.** Every record fans out over casting/UDP the moment it
+  is sent, so live consumers (an archiver, a replica on another
+  host) hold their own copy within microseconds — the sync is
+  continuous, not periodic. Losing a record therefore requires
+  the producer's disk AND every live consumer to fail inside
+  the same ≤10 ms flush window: a tiny probability. Every other
+  failure — single crash, restart, lagging consumer — recovers
+  everything, because replay is idempotent and resumes from
+  `tip + 1`. This is why the WAL batches instead of fsyncing
+  per record: per-record fsync costs milliseconds on the send
+  path to insure against a failure mode replicas already cover.
 - **Retransmit horizon**: bounded by WAL retention (default
   4 h; segments pruned at rotation), not by RAM. Cold
   retransmits read directly from log files via

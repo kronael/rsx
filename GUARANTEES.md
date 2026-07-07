@@ -10,6 +10,11 @@ various failure scenarios.
 - Single component failure: 0ms loss (redundancy covers)
 - Dual component failure: bounded 100ms loss acceptable
 - Backpressure enforced (never drop data silently)
+- Durability comes from replicas + a continuously-spinning sync (live
+  casting/UDP fan-out, 10ms-batched WAL, TCP replay), not per-record
+  fsync. Loss requires the producer's disk AND every replica to fail
+  within one ≤10ms flush window — tiny probability; every other
+  scenario replays back to zero loss (idempotent, from tip+1).
 
 Cross-references: [specs/2/6-consistency.md](specs/2/6-consistency.md),
 [specs/2/48-wal.md](specs/2/48-wal.md),
