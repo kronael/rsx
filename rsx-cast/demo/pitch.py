@@ -45,7 +45,10 @@ DIM = "#8f8672"   # muted warm grey-brown -- captions
 # comparison gradient: teal best -> gold middle -> rust worst
 
 WIDTH = 44
-ROWS = 24
+# Half-height terminal, rendered at font-size 28 (Makefile) -- fewer, denser
+# rows: same-ish GIF width, ~half the height, ~40% more pixels per glyph.
+# Act 1 scrolls naturally (real terminals scroll); act 2 fits 12 rows exactly.
+ROWS = 12
 CURSOR = "█"
 # Reading pace, not typing-demo pace: ~45 ms/char ≈ 22 chars/s ≈ 250 wpm,
 # so a viewer reads along as it types instead of chasing the cursor.
@@ -97,16 +100,23 @@ def fill(inner, inner_h):
 
 # ── Act 1: flowing narrative (no clear, real cursor trails) ──────────────────
 
+# Word-level meaning colors, not whole-sentence blocks: speed words TEAL,
+# durability/brand words GOLD, costs RUST, connective prose FG.
 NARRATIVE = [
     ("rsx-cast", GOLD),
-    (" — move every byte fast,\nand never lose one.\n\n", FG),
-    ("But reliability always costs\nyou something:", RUST),
-    (" a broker and its\nhops, or hand-rolled UDP you\npatch yourself.\n\n", FG),
-    ("rsx-cast is as fast as it goes,\nand as reliable as it gets.", TEAL),
-    (" How?\n\n", FG),
-    ("By making it minimal.", TEAL),
-    (" Peer-to-peer,\nnot pub/sub. The same bytes on the\nwire, on disk, on replay. NAK\n"
-     "recovers a live gap; the batched\nWAL is the fallback — off the\ncritical send path.\n\n", FG),
+    (" — move every byte ", FG), ("fast", TEAL), (",\n", FG),
+    ("never lose one", GOLD), (".\n\n", FG),
+    ("Reliability always ", FG), ("costs", RUST), (" you\nsomething: ", FG),
+    ("a broker", RUST), (" and its hops,\nor ", FG),
+    ("hand-rolled UDP", RUST), (" you patch\nyourself.\n\n", FG),
+    ("rsx-cast", GOLD), (" is as ", FG), ("fast", TEAL),
+    (" as it goes,\nand as ", FG), ("reliable", TEAL),
+    (" as it gets.\nHow?\n\n", FG),
+    ("By making it ", FG), ("minimal", TEAL), (". ", FG),
+    ("Multicast", GOLD), (",\nnot pub/sub. The ", FG),
+    ("same bytes", TEAL), (" on the\nwire, on disk, on replay. ", FG),
+    ("NAK", GOLD), ("\nrecovers a live gap; the ", FG),
+    ("batched\nWAL", GOLD), (" is the fallback — off the\ncritical send path.\n\n", FG),
     ("Ties raw UDP. Beats TCP and QUIC.", GOLD),
     ("\n", FG),
 ]
@@ -157,8 +167,10 @@ def results(frame, cursor_on):
         )
     c = CURSOR if (landed and cursor_on) else " "
     scope = f"[{DIM}]2 pinned cores, 128B, loopback[/{DIM}]"
-    body = Group(scope, "", table) if not landed else Group(
-        scope, "", table, "",
+    # compact: no blank rows, no vertical padding -- the whole panel is
+    # 2 borders + scope + 4 rows + 2-line caption = 10 rows, fits ROWS=12
+    body = Group(scope, table) if not landed else Group(
+        scope, table,
         f"[{DIM}]derived: 1/latency; cited from\ncompare/README.md {c}[/{DIM}]",
     )
     panel = Panel(
@@ -167,9 +179,9 @@ def results(frame, cursor_on):
         title_align="left",
         border_style=GOLD,
         width=WIDTH - 2,
-        padding=(1, 2),
+        padding=(0, 2),
     )
-    return fill(panel, 15)
+    return fill(panel, 10)
 
 
 def cta(cursor_on):
