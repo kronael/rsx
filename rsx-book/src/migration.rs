@@ -227,4 +227,32 @@ impl Orderbook {
         self.old_compression = None;
         self.state = BookState::Normal;
     }
+
+    /// Finish an in-flight migration synchronously: migrate every remaining
+    /// old level, then return to Normal. Iterating old slots (O(old slot
+    /// count)) is cheaper than tick-stepping `migrate_batch` — compressed
+    /// zones pack many ticks per slot — and an empty old level is skipped
+    /// in O(1).
+    pub fn complete_migration_eager(&mut self) {
+        if self.state != BookState::Migrating {
+            return;
+        }
+        let old_len = self.old_levels.as_ref().map_or(0, |l| l.len());
+        for old_idx in 0..old_len as u32 {
+            self.migrate_single_level(old_idx);
+        }
+        self.complete_migration();
+    }
+
+    /// Recenter the compression map on `new_mid` AND fully migrate, in one
+    /// shot. Correct for live matching: there is no partial-book window,
+    /// so the matcher never misses unmigrated crossing liquidity (which a
+    /// lazy `resolve_level(order.price)` scheme would, since a marketable
+    /// order's crossing prices can lie outside the migrated band). The
+    /// incremental `trigger_recenter` + `migrate_batch` path is retained
+    /// for tests and non-live callers.
+    pub fn recenter_now(&mut self, new_mid: i64) {
+        self.trigger_recenter(new_mid);
+        self.complete_migration_eager();
+    }
 }
