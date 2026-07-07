@@ -199,7 +199,10 @@ fn tick3_zone0_distinct_prices_never_alias() {
     let b = m.price_to_index(52_500); // distance 2499, still < 2500
     assert_eq!(zone_of(&m, a), 0);
     assert_eq!(zone_of(&m, b), 0);
-    assert_ne!(a, b, "distinct tick-aligned zone-0 prices aliased to one slot");
+    assert_ne!(
+        a, b,
+        "distinct tick-aligned zone-0 prices aliased to one slot"
+    );
     // Every tick-aligned price across zone 0 maps to a unique slot.
     let mut seen = std::collections::HashSet::new();
     let mut px = mid + tick;
