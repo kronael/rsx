@@ -160,7 +160,6 @@ def stack(tmp_path_factory):
         "RSX_RISK_WAL_DIR": wal_risk,
         "RSX_RISK_SHARD_ID": "0",
         "RSX_RISK_SHARD_COUNT": "1",
-        "RSX_RISK_IS_REPLICA": "false",
         # Mark not started; risk binds these but no data arrives.
         "RSX_RISK_MARK_CAST_ADDR": "127.0.0.1:28105",
         "RSX_MARK_CAST_ADDR": "127.0.0.1:28106",

@@ -90,17 +90,34 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   sequence (or make PG a compose service + the playground reconnect its md
   subscriber + not lose the process table on restart).
 
-- **HEALTH-PORT-BAND-OVERLAP-AT-SID-10** (MED, config) — flagged by the deploy
-  authoring (2026-07-06). The `start`/spawn-plan health-port band math
-  (`base + sid` / `base + shard`) collides at sid≥10: PENGU sid=10 → health
-  `9810` overlaps the risk health base `9810`. Harmless for minimal (PENGU
-  runs alone) but a real conflict for a multi-symbol prod set that includes
-  sid 10. The deploy spec dodged it by choosing BTC(1)/ETH(2)/SOL(3). Fix:
-  widen/segment the health-port bands so no `base+sid` overlaps another tier.
-- **RISK-ENV-VARS-SET-NOT-READ** (LOW, config hygiene) — `RSX_RISK_RESET_FROZEN_
-  ON_START` and `RSX_RISK_IS_REPLICA` are set by the `start` module but not read
-  anywhere in `rsx-risk/src`. Dead config: either wire them up or drop them from
-  the spawn plan so operators aren't misled.
+- **HEALTH-PORT-BAND-OVERLAP-AT-SID-10** (FIXED 2026-07-07) — flagged by the
+  deploy authoring (2026-07-06). The `start`/spawn-plan health-port band math
+  (`base + sid` / `base + shard`) collided at sid≥10: PENGU sid=10 → health
+  `9810` overlapped the risk health base `9810`. Fix: widened the per-tier
+  stride from 10 to 100 ports (`BASE_ME_HEALTH=9800`, `BASE_RISK_HEALTH=9900`,
+  `BASE_GW_HEALTH=10000`, `BASE_MARK_HEALTH=10100`, `BASE_MD_HEALTH=10200`,
+  `BASE_RECORDER_HEALTH=10300` in `./start`) — no `base+sid`/`base+shard`
+  offset below 100 can now cross into another tier's band. Verified by
+  simulating sid/shard 0..15 across all tiers: zero cross-tier collisions
+  (see RISK-REPLICA-HEALTH-INTRATIER-OVERLAP below for a pre-existing,
+  separate intra-tier collision this did NOT touch).
+- **RISK-ENV-VARS-SET-NOT-READ** (FIXED 2026-07-07) — `RSX_RISK_RESET_FROZEN_
+  ON_START` and `RSX_RISK_IS_REPLICA` were set by the `start` spawn plan (and
+  `RSX_RISK_IS_REPLICA` also by `rsx-playground/tests/acceptance_test.py`)
+  but read nowhere in `rsx-risk/src`. Fix: dropped both from `./start` and the
+  acceptance test's risk env dict; also scrubbed `rsx-risk/README.md`'s
+  now-false claim that `RSX_RISK_IS_REPLICA=true` selects replica mode
+  (role is decided by advisory-lock acquisition at startup, per
+  `specs/2/28-risk.md`'s own description of `main()`'s state machine).
+- **RISK-REPLICA-HEALTH-INTRATIER-OVERLAP** (LOW, config, newly noticed
+  2026-07-07 while verifying the fix above) — inside the risk health band
+  itself, the replica offset formula (`BASE_RISK_HEALTH + 10 + shard*2 + r`)
+  can collide with a *primary* shard's health port (`BASE_RISK_HEALTH +
+  shard`) once `risk_shards` gets into double digits, e.g. shard=10 primary
+  == shard=0,r=0 replica (`base+10`). Pre-existing (not introduced by the
+  100-port-stride fix above, just carried the same shape forward); latent
+  because current scenarios use ≤3-4 risk shards. Not fixed here — separate
+  from the requested sid≥10 cross-tier bug, recorded for later triage.
 
 - **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — **Status: FIXED
   2026-07-04 (`da9a2b4`).** `match_by_type` (`ioc_full`, `gtc_full_cross`,
