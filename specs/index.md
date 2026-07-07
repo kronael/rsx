@@ -57,7 +57,6 @@ Active specs. Source of truth for system design.
 | [2/11-gateway.md](2/11-gateway.md) | shipped | Gateway adapts external clients to internal casting. It owns |
 | [2/12-health-dashboard.md](2/12-health-dashboard.md) | draft | Systems operations dashboard for platform health: |
 | [2/13-liquidator.md](2/13-liquidator.md) | partial | - [Context](#context) |
-| [2/14-management-dashboard.md](2/14-management-dashboard.md) | draft | This spec is intentionally split into four separate dashboards: |
 | [2/15-mark.md](2/15-mark.md) | shipped | Standalone network service. Aggregates mark prices from external |
 | [2/16-marketdata.md](2/16-marketdata.md) | shipped | Market data is served by a dedicated service. It consumes orderbook |
 | [2/17-matching.md](2/17-matching.md) | shipped | Matching is per-symbol, single-threaded, and stateless with |

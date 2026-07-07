@@ -155,7 +155,7 @@ dev box in this pass, so it is specified, not half-built.
   front-end build.
 - **TLS + WS:** nginx terminates TLS at `rsx.krons.cx` and proxies the ttyd
   WebSocket, forwarding `Upgrade`/`Connection` (the same nginx WS-upgrade
-  requirement that bit the old React trade UI — spec 46-trade-ui).
+  requirement that bit the old React trade UI, since removed).
 - **Per-session identity — the open design point.** ttyd runs one command
   per instance. Two ways to give each browser its own `RSX_TUI_USER`:
   - **(a) Auth proxy + spawn-per-session.** A small front service
@@ -188,7 +188,7 @@ ttyd --once --port 7681 --interface 127.0.0.1 \
      /usr/local/bin/rsx-tui-dispatch <user_id>
 ```
 
-nginx front (WS upgrade is mandatory — see spec 46-trade-ui §1):
+nginx front (WS upgrade is mandatory):
 
 ```nginx
 location /tui/ {
@@ -226,5 +226,4 @@ location /tui/ {
 | Gateway JWT auth | 11-gateway.md |
 | WS wire protocol | 49-webproto.md |
 | casting trust boundary | 4-cast.md §10.4 |
-| nginx WS upgrade (prior art) | 46-trade-ui.md |
 | Deployment topology | 9-deploy.md |
