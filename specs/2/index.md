@@ -60,12 +60,10 @@ phase-1 historical specs.
 
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
-| 14 | [14-management-dashboard.md](14-management-dashboard.md) | draft | Management dashboards (split into 4) |
 | 7 | [7-dashboard.md](7-dashboard.md) | draft | User management (support) |
 | 12 | [12-health-dashboard.md](12-health-dashboard.md) | draft | Health (systems ops) |
 | 23 | [23-playground-dashboard.md](23-playground-dashboard.md) | draft | Playground (dev/test control plane) |
 | 27 | [27-risk-dashboard.md](27-risk-dashboard.md) | draft | Risk ops |
-| 46 | [46-trade-ui.md](46-trade-ui.md) | partial | Trade UI |
 | 54 | [54-tui-access.md](54-tui-access.md) | partial | TUI access — SSH forced-command dispatch (done) + web terminal (deferred) |
 
 ## REST + deploy
