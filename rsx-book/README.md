@@ -8,7 +8,7 @@ down as they fill. rsx-book matches an order in about **60 nanoseconds**
 (roughly the time light takes to travel 18 metres) and holds that speed
 whether a hundred orders are resting or ten million.
 
-**Jargon, one line each** (used throughout below):
+A few terms that come up throughout:
 
 - **symbol** — one tradeable market, e.g. BTC-PERP. One book per symbol.
 - **tick** — the smallest price increment a symbol allows.
@@ -28,10 +28,10 @@ par; and it never slows down as the book fills (~60-65 ns to match at
 any depth). That depth-invariance is the point; the constant-factor
 cancel win is the payoff at realistic depths.
 
-One instance is the matching-engine tile for one symbol: a
-compression-mapped, slab-arena, i64 fixed-point order book plus the
-cross/rest/cancel algorithm over it (`rsx-matching` wraps it in a
-process; `rsx-marketdata` runs it as a shadow book). Zero heap on
+One instance is one symbol's order book: a compression-mapped,
+slab-arena, i64 fixed-point book plus the cross/rest/cancel
+algorithm over it. `rsx-matching` wraps it in a process (one per
+symbol); `rsx-marketdata` runs it as a shadow book. Zero heap on
 the hot path, no floats, cache locality as the first design
 priority.
 
