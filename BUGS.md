@@ -761,19 +761,26 @@ RcvbufErrors); investigate the flush latency; surface a drops/gaps metric.
 **Fix (defer, record only):** these are the Phase-2 recorder/marketdata/gateway
 → cast-quality work; fix carefully, not as dashboard patches.
 
-## CAST-RTT-BENCH-HANGS-AFTER-SEND-REMOVAL [OPEN]
-**Severity:** MED (blocks a live re-run of the headline latency number, not a
-correctness bug in the shipped library).
-**Where:** `rsx-cast/benches/cast_rtt_bench.rs`.
-**Symptom:** `cargo bench -p rsx-cast --bench cast_rtt_bench -- cmp_rtt_fill_echo`
-compiles clean but never completes — observed spinning at "Warming up for
-3.0000 s" for 12+ min at ~176% CPU (killed manually). No RSX cluster processes
-were running (ruled out the usual "noisy box poisons Criterion" cause). Compiles
-fine post-`bb6c1a0` (`[cast] remove no-WAL typed CastSender::send<T>`), so the
-bench file was updated to compile against the new API, but something in the
-replacement call path (likely `send_framed`/`send_raw` swapped in for the old
-typed `send`) doesn't return — a probable regression from that removal, not
-confirmed root-caused.
+## CAST-RTT-BENCH-HANGS-AFTER-SEND-REMOVAL [ROOT-CAUSED — duplicate of CAST-RTT-BENCH-DEADLOCKS-ON-LOSS]
+**Severity:** MED (bench-only; the shipped library is fine).
+**Where:** `rsx-cast/benches/cast_rtt_bench.rs:196-203`.
+**Root cause (2026-07-06 read-only audit):** the original hypothesis here
+(a `send<T>`-removal regression) is WRONG — `send_framed` populates the NAK
+ring byte-identically to the removed path (verified against `git show
+bb6c1a0`). The real cause: side A's reply-wait is an unbounded
+`loop { if Data break; spin_loop() }` with no timeout, no `tick()`, no
+`recv_control()`. One dropped A→B loopback datagram under Criterion's
+high-rate warmup → B never echoes → A blocks forever, emitting no heartbeat
+and serving no NAK retransmit → permanent two-thread spin-deadlock (matches
+the observed ~176% CPU at "Warming up"). Same finding as the other session's
+CAST-RTT-BENCH-DEADLOCKS-ON-LOSS (commit 01754ef). Fix belongs in the BENCH
+(bound the wait; pump `tick`+`recv_control` inside it), not the frozen lib.
+Also noted (LOW, frozen — record only): stale flow-control comment at
+cast_rtt_bench.rs:145-149; dangling `CastReceiver::poll` doc links at
+cast.rs:510,993-994,1096 (method is `try_recv_with`); `read_record_at_seq`
+re-export has 0 external callers; manual header+payload framing duplicates
+`encode_record` at replication_client.rs:242-248, replication_server.rs:193-197
+and :250-254.
 **Fix (defer, record only):** re-run after the in-flight cast.rs refactor
 settles; if it still hangs, bisect `cast_rtt_bench.rs`'s client/server ping
 loop against pre-`bb6c1a0` to find where the reply stops arriving. Do not
