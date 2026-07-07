@@ -17,14 +17,19 @@ speed words teal, durability/brand words gold, cost words rust, connective
 prose warm off-white. The arc is a tension → resolution → mechanism:
 
 1. **"rsx-cast — move every byte fast, never lose one."** (the promise)
-2. **"Reliability always costs you something:"** a broker and its hops, or
-   hand-rolled UDP you patch yourself (the tension; costs in rust)
-3. **"rsx-cast is as fast as it goes, and as reliable as it gets. How?"**
+2. **"Reliability always costs you:"** a broker adds hops, hand-rolled UDP
+   needs endless patching, and fsync on every byte costs milliseconds — a
+   thousand times the network hop (the tension; three concrete costs, rust)
+3. **"Yet your servers never all die at once. Why pay for that?"** (the
+   pivot, in teal — total reliability prices in an apocalypse that doesn't
+   happen; founder-signed formulation)
+4. **"rsx-cast is as fast as it goes, and as reliable as it gets. How?"**
    (the resolution)
-4. **"By making it minimal."** — multicast, not pub/sub; same bytes on
+5. **"By making it minimal."** — multicast, not pub/sub; same bytes on
    wire/disk/replay; NAK recovers a live gap, the batched WAL is the
-   fallback, off the critical send path (the mechanism)
-5. **"Ties raw UDP. Beats TCP and QUIC."** (the punch, in gold)
+   fallback, off the critical send path (the mechanism — and the direct
+   answer to the fsync cost: batched, off-path, not per-byte)
+6. **"Ties raw UDP. Beats TCP and QUIC."** (the punch, in gold)
 
 **Act 2 — the benchmark.** The ONE screen clear. Opens on a weighty centered
 callout **"See for yourself."** (held ~2.6s), then the numbers climb in, then
