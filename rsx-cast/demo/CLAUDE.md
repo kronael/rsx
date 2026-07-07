@@ -17,12 +17,15 @@ speed words teal, durability/brand words gold, cost words rust, connective
 prose warm off-white. The arc is a tension → resolution → mechanism:
 
 1. **"rsx-cast — move every byte fast, never lose one."** (the promise)
-2. **"Reliability always costs you:"** a broker adds hops, hand-rolled UDP
-   needs endless patching, and fsync on every byte costs milliseconds — a
-   thousand times the network hop (the tension; three concrete costs, rust)
-3. **"Yet your servers never all die at once. Why pay for that?"** (the
-   pivot, in teal — total reliability prices in an apocalypse that doesn't
-   happen; founder-signed formulation)
+2. **"Total reliability costs latency:"** a broker adds hops, and fsync on
+   every byte costs milliseconds — a hundred times the network hop (the
+   tension; costs in rust. "a hundred" is the honest multiple: 1 ms /
+   ~9.3 µs hop ≈ 107×. Do NOT say "a thousand" — wrong by 10×. No
+   "hand-rolled UDP" cost either: rsx-cast IS hand-rolled UDP, the line
+   undercut the pitch)
+3. **"If your servers never all die at once, don't pay for it."** (the
+   pivot: conditional in teal, imperative in gold — total reliability
+   prices in an apocalypse that doesn't happen; founder-dictated wording)
 4. **"rsx-cast is as fast as it goes, and as reliable as it gets. How?"**
    (the resolution)
 5. **"By making it minimal."** — multicast, not pub/sub; same bytes on
