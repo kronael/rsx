@@ -23,8 +23,8 @@
 //!
 //! Public API only, rsx-cast untouched. `harness = false`.
 
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_cast::wal::Framed;
@@ -94,12 +94,9 @@ fn ephemeral_port() -> u16 {
 /// the outcome. `seed` fixes the loss pattern for reproducibility.
 fn run_trial(loss: f64, seed: u64) -> Outcome {
     let tmp = TempDir::new().unwrap();
-    let sender_addr: SocketAddr =
-        format!("127.0.0.1:{}", ephemeral_port()).parse().unwrap();
-    let relay_addr: SocketAddr =
-        format!("127.0.0.1:{}", ephemeral_port()).parse().unwrap();
-    let recv_addr: SocketAddr =
-        format!("127.0.0.1:{}", ephemeral_port()).parse().unwrap();
+    let sender_addr: SocketAddr = format!("127.0.0.1:{}", ephemeral_port()).parse().unwrap();
+    let relay_addr: SocketAddr = format!("127.0.0.1:{}", ephemeral_port()).parse().unwrap();
+    let recv_addr: SocketAddr = format!("127.0.0.1:{}", ephemeral_port()).parse().unwrap();
 
     // Default 8-retry budget. The debounce must exceed a worst-case
     // retransmit round-trip (including scheduling jitter on a loaded box),
@@ -115,10 +112,8 @@ fn run_trial(loss: f64, seed: u64) -> Outcome {
         max_nak_retries: 8,
         ..CastConfig::default()
     };
-    let mut sender =
-        CastSender::with_config(relay_addr, 1, tmp.path(), &cfg).unwrap();
-    let mut receiver =
-        CastReceiver::with_config(recv_addr, sender_addr, &cfg).unwrap();
+    let mut sender = CastSender::with_config(relay_addr, 1, tmp.path(), &cfg).unwrap();
+    let mut receiver = CastReceiver::with_config(recv_addr, sender_addr, &cfg).unwrap();
 
     // Lossy relay: relay_addr -> recv_addr, Bernoulli-drop every datagram
     // (first tx and retransmits alike) with probability `loss`.
@@ -136,8 +131,7 @@ fn run_trial(loss: f64, seed: u64) -> Outcome {
         let mut rng = seed | 1;
         while !stop_r.load(Ordering::Relaxed) {
             if let Ok((n, _)) = relay.recv_from(&mut buf) {
-                let r = (xorshift(&mut rng) >> 11) as f64
-                    / (1u64 << 53) as f64;
+                let r = (xorshift(&mut rng) >> 11) as f64 / (1u64 << 53) as f64;
                 if r >= loss {
                     let _ = relay.send_to(&buf[..n], recv_addr);
                 }
@@ -146,7 +140,10 @@ fn run_trial(loss: f64, seed: u64) -> Outcome {
     });
     thread::sleep(Duration::from_millis(2)); // let the relay spin up
 
-    let mut rec = SmallRec { seq: 0, _pad: [0; 56] };
+    let mut rec = SmallRec {
+        seq: 0,
+        _pad: [0; 56],
+    };
     let start = Instant::now();
     let mut send_seq = 0u64;
     let mut delivered = 0u64;
@@ -165,9 +162,7 @@ fn run_trial(loss: f64, seed: u64) -> Outcome {
         loop {
             match receiver.try_recv() {
                 CastRecv::Data(_, payload) => {
-                    let seq = u64::from_le_bytes(
-                        payload[0..8].try_into().unwrap(),
-                    );
+                    let seq = u64::from_le_bytes(payload[0..8].try_into().unwrap());
                     if seq == delivered + 1 {
                         delivered = seq;
                     }
@@ -196,9 +191,7 @@ fn run_trial(loss: f64, seed: u64) -> Outcome {
 }
 
 fn main() {
-    println!(
-        "# casting loss tolerance ({N} records in order, {TRIALS} trials/rate)\n"
-    );
+    println!("# casting loss tolerance ({N} records in order, {TRIALS} trials/rate)\n");
     println!(
         "One-way-lossy forward link (retransmits drop too); 64 B ring-served \
          records; default 8-retry budget, loopback-fast debounce; \

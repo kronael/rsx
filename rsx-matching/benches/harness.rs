@@ -47,10 +47,7 @@ pub const BIG_QTY: i64 = 1_000_000_000;
 /// box has fewer cores.
 pub fn pin() {
     let ids = core_affinity::get_core_ids().unwrap_or_default();
-    let core = ids
-        .get(BENCH_CORE)
-        .copied()
-        .unwrap_or(CoreId { id: 0 });
+    let core = ids.get(BENCH_CORE).copied().unwrap_or(CoreId { id: 0 });
     core_affinity::set_for_current(core);
 }
 
@@ -129,17 +126,7 @@ pub fn build_book(depth: u64) -> Orderbook {
 /// by the by-order-type benches that need exactly one level to cross.
 pub fn single_ask(qty: i64) -> Orderbook {
     let mut book = Orderbook::new(config(), 1_024, MID);
-    book.insert_resting(
-        MID + 1,
-        qty,
-        Side::Sell,
-        0,
-        200,
-        false,
-        1,
-        0,
-        2_000,
-    );
+    book.insert_resting(MID + 1, qty, Side::Sell, 0, 200, false, 1, 0, 2_000);
     book
 }
 
@@ -163,9 +150,7 @@ impl Me {
     /// `BIG_QTY` each) so `accept()` always does one non-draining fill.
     pub fn new(depth: u64) -> Self {
         let tmp = TempDir::new().expect("tempdir");
-        let wal =
-            WalWriter::new(SYMBOL_ID, tmp.path(), 64 * 1024 * 1024)
-                .expect("wal");
+        let wal = WalWriter::new(SYMBOL_ID, tmp.path(), 64 * 1024 * 1024).expect("wal");
         Me {
             book: build_book(depth),
             wal,
@@ -206,14 +191,7 @@ impl Me {
             self.wal.append_framed(&framed).expect("append");
         }
 
-        let mut incoming = order(
-            MID + 1,
-            1,
-            Side::Buy,
-            TimeInForce::IOC,
-            user_id,
-            oid,
-        );
+        let mut incoming = order(MID + 1, 1, Side::Buy, TimeInForce::IOC, user_id, oid);
         process_new_order(&mut self.book, &mut incoming);
 
         write_events_to_wal(
@@ -238,10 +216,7 @@ impl Me {
 /// Mirror of the production `update_order_index` helper in
 /// rsx-matching/src/main.rs: a successful insert puts the handle into
 /// the index; a Done removes it.
-pub fn update_index(
-    events: &[rsx_book::event::Event],
-    index: &mut FxHashMap<OrderKey, u32>,
-) {
+pub fn update_index(events: &[rsx_book::event::Event], index: &mut FxHashMap<OrderKey, u32>) {
     use rsx_book::event::Event;
     for event in events {
         match *event {
@@ -252,10 +227,7 @@ pub fn update_index(
                 order_id_lo,
                 ..
             } => {
-                index.insert(
-                    (user_id, order_id_hi, order_id_lo),
-                    handle,
-                );
+                index.insert((user_id, order_id_hi, order_id_lo), handle);
             }
             Event::OrderDone {
                 user_id,

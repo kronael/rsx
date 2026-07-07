@@ -1,8 +1,8 @@
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
-use rsx_messages::RECORD_BBO;
 use rsx_cast::wal::WalReader;
 use rsx_cast::RawWalRecord;
+use rsx_messages::RECORD_BBO;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -17,11 +17,7 @@ fn make_test_dir(name: &str) -> PathBuf {
 
 #[test]
 fn test_wal_record_serialization() {
-    let header = WalHeader::new(
-        RECORD_BBO,
-        32,
-        0x12345678,
-    );
+    let header = WalHeader::new(RECORD_BBO, 32, 0x12345678);
     let payload = vec![0u8; 32];
     let _record = RawWalRecord { header, payload };
 
@@ -97,19 +93,14 @@ fn test_wal_roundtrip() {
 
     let payload = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
     let crc = compute_crc32(&payload);
-    let header = WalHeader::new(
-        RECORD_BBO,
-        8,
-        crc,
-    );
+    let header = WalHeader::new(RECORD_BBO, 8, crc);
 
     file.write_all(header.to_bytes()).unwrap();
     file.write_all(&payload).unwrap();
     file.sync_all().unwrap();
     drop(file);
 
-    let mut reader =
-        WalReader::open_from_seq(99, 1, &dir).unwrap();
+    let mut reader = WalReader::open_from_seq(99, 1, &dir).unwrap();
     let record = reader.next().unwrap().unwrap();
 
     assert_eq!(record.header.record_type, RECORD_BBO);

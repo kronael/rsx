@@ -16,8 +16,7 @@ fn ws_bbo_frame_includes_u_seq_field() {
     };
     let s = serialize_bbo(&bbo);
     assert!(s.contains("42"));
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["BBO"].as_array().unwrap();
     assert_eq!(arr.len(), 9);
     assert_eq!(arr[8], 42);
@@ -41,8 +40,7 @@ fn ws_b_snapshot_includes_u_seq_field() {
         seq: 99,
     };
     let s = serialize_l2_snapshot(&snap);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["B"].as_array().unwrap();
     assert_eq!(arr.len(), 5);
     assert_eq!(arr[4], 99);
@@ -60,8 +58,7 @@ fn ws_d_delta_includes_u_seq_field() {
         seq: 77,
     };
     let s = serialize_l2_delta(&delta);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["D"].as_array().unwrap();
     assert_eq!(arr.len(), 7);
     assert_eq!(arr[6], 77);
@@ -69,8 +66,7 @@ fn ws_d_delta_includes_u_seq_field() {
 
 #[test]
 fn ws_s_subscribe_frame_parsed() {
-    let frame =
-        parse_client_frame("{\"S\":[1,3]}").unwrap();
+    let frame = parse_client_frame("{\"S\":[1,3]}").unwrap();
     assert_eq!(
         frame,
         MdFrame::Subscribe {
@@ -82,8 +78,7 @@ fn ws_s_subscribe_frame_parsed() {
 
 #[test]
 fn ws_x_unsubscribe_frame_parsed() {
-    let frame =
-        parse_client_frame("{\"X\":[1,1]}").unwrap();
+    let frame = parse_client_frame("{\"X\":[1,1]}").unwrap();
     assert_eq!(
         frame,
         MdFrame::Unsubscribe {
@@ -95,8 +90,7 @@ fn ws_x_unsubscribe_frame_parsed() {
 
 #[test]
 fn ws_x_unsubscribe_all_parsed() {
-    let frame =
-        parse_client_frame("{\"X\":[0,0]}").unwrap();
+    let frame = parse_client_frame("{\"X\":[0,0]}").unwrap();
     assert_eq!(
         frame,
         MdFrame::Unsubscribe {
@@ -120,8 +114,7 @@ fn bbo_serialize_contains_all_fields() {
         seq: 10,
     };
     let s = serialize_bbo(&bbo);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["BBO"].as_array().unwrap();
     assert_eq!(arr[0], 5);
     assert_eq!(arr[1], 1000);
@@ -139,18 +132,27 @@ fn snapshot_serialize_contains_levels() {
     let snap = L2Snapshot {
         symbol_id: 2,
         bids: vec![
-            L2Level { price: 100, qty: 10, count: 1 },
-            L2Level { price: 99, qty: 20, count: 2 },
+            L2Level {
+                price: 100,
+                qty: 10,
+                count: 1,
+            },
+            L2Level {
+                price: 99,
+                qty: 20,
+                count: 2,
+            },
         ],
-        asks: vec![
-            L2Level { price: 101, qty: 30, count: 3 },
-        ],
+        asks: vec![L2Level {
+            price: 101,
+            qty: 30,
+            count: 3,
+        }],
         timestamp_ns: 5000,
         seq: 55,
     };
     let s = serialize_l2_snapshot(&snap);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["B"].as_array().unwrap();
     assert_eq!(arr[0], 2);
     let bids = arr[1].as_array().unwrap();
@@ -173,8 +175,7 @@ fn delta_serialize_contains_all_fields() {
         seq: 88,
     };
     let s = serialize_l2_delta(&delta);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["D"].as_array().unwrap();
     assert_eq!(arr[0], 3);
     assert_eq!(arr[1], 1);
@@ -200,8 +201,7 @@ fn ws_u_field_equals_quic_seq() {
         seq: 777, // QUIC seq
     };
     let s = serialize_bbo(&bbo);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     // Last element (u) must equal seq
     let arr = v["BBO"].as_array().unwrap();
     assert_eq!(arr[8].as_u64().unwrap(), 777);
@@ -216,8 +216,7 @@ fn ws_u_field_equals_quic_seq() {
         seq: 888,
     };
     let s = serialize_l2_delta(&delta);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["D"].as_array().unwrap();
     assert_eq!(arr[6].as_u64().unwrap(), 888);
 }
@@ -262,8 +261,7 @@ fn trade_serialize_format() {
         seq: 66,
     };
     let s = serialize_trade(&trade);
-    let v: serde_json::Value =
-        serde_json::from_str(&s).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     let arr = v["T"].as_array().unwrap();
     assert_eq!(arr.len(), 6);
     assert_eq!(arr[0], 4);
@@ -273,11 +271,12 @@ fn trade_serialize_format() {
 
 #[test]
 fn ws_h_heartbeat_frame_parsed() {
-    let frame =
-        parse_client_frame("{\"H\":[12345]}").unwrap();
+    let frame = parse_client_frame("{\"H\":[12345]}").unwrap();
     assert_eq!(
         frame,
-        MdFrame::Heartbeat { timestamp_ms: 12345 }
+        MdFrame::Heartbeat {
+            timestamp_ms: 12345
+        }
     );
 }
 

@@ -1,34 +1,33 @@
 use rsx_cast::as_bytes;
-use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_cast::decode_payload;
-use std::collections::HashMap;
-use rsx_messages::ConfigAppliedRecord;
+use rsx_health::DaemonState;
+use rsx_health::LoadGauges;
+use rsx_matching::wire::OrderMessage;
 use rsx_messages::BboRecord;
+use rsx_messages::CancelRequest;
+use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::MarkPriceRecord;
+use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
-use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::RECORD_BBO;
-use rsx_messages::RECORD_ORDER_ACCEPTED;
+use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_MARK_PRICE;
+use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use rsx_messages::CancelRequest;
-use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
-use rsx_matching::wire::OrderMessage;
-use rsx_health::DaemonState;
-use rsx_health::LoadGauges;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::config::RuntimeConfig;
 use rsx_risk::failover::forward_to_gw;
@@ -36,21 +35,22 @@ use rsx_risk::failover::handle_replay;
 use rsx_risk::failover::run_warm_catchup;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
+use rsx_risk::persist::PersistEvent;
 use rsx_risk::replay::load_from_postgres;
-use rsx_risk::schema::run_migrations;
 use rsx_risk::replay::replay_from_wal;
 use rsx_risk::rings::ShardRings;
+use rsx_risk::schema::run_migrations;
 use rsx_risk::shard::RiskShard;
-use rsx_risk::ShardConfig;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
 use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
 use rsx_risk::RejectReason;
-use rsx_risk::persist::PersistEvent;
+use rsx_risk::ShardConfig;
 use rsx_types::install_panic_handler;
-use rsx_types::FailureReason;
 use rsx_types::time_utils::time;
+use rsx_types::FailureReason;
+use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -66,9 +66,7 @@ mod db;
 mod metrics;
 
 /// Backoff schedule (seconds) for shard crash-restarts.
-const RESTART_BACKOFF_SECS: &[u64] = &[
-    5, 10, 20, 40, 60, 60,
-];
+const RESTART_BACKOFF_SECS: &[u64] = &[5, 10, 20, 40, 60, 60];
 /// Max consecutive crashes before the shard gives up.
 const MAX_RESTARTS: usize = 8;
 
@@ -117,8 +115,7 @@ fn log_effective_risk_config(config: &ShardConfig) {
 
     info!(
         "risk shard_routing rule='user_id % shard_count == shard_id' shard_id={} shard_count={}",
-        config.shard_id,
-        config.shard_count,
+        config.shard_id, config.shard_count,
     );
     for user_id in 0u32..8 {
         let owner = user_id % config.shard_count;
@@ -144,8 +141,7 @@ fn main() {
     rsx_log::start_drainer(100);
 
     // SAFETY: fail-fast at startup
-    let config = load_shard_config()
-        .expect("failed to load shard config");
+    let config = load_shard_config().expect("failed to load shard config");
     let shard_id = config.shard_id;
     let shard_count = config.shard_count;
     let max_symbols = config.max_symbols;
@@ -189,9 +185,8 @@ fn main() {
     // PG client, catchup consumer, persist worker, and lease
     // thread, and tears them all down before returning.
     loop {
-        let err: Box<dyn std::error::Error> = match run_main(
-            shard_id, max_symbols, gauges.clone(),
-        ) {
+        let err: Box<dyn std::error::Error> = match run_main(shard_id, max_symbols, gauges.clone())
+        {
             // Ok(()) means demoted (lease lost); re-enter warm
             // catchup and re-try the non-blocking advisory lock.
             Ok(()) => {
@@ -219,19 +214,14 @@ fn main() {
             .saturating_sub(1)
             .min(RESTART_BACKOFF_SECS.len() - 1)];
         // ±20% jitter
-        let jitter_ms = (backoff_secs as f64
-            * 200.0
-            * (rand_jitter() - 0.5)) as i64;
-        let sleep_ms =
-            (backoff_secs * 1000) as i64 + jitter_ms;
+        let jitter_ms = (backoff_secs as f64 * 200.0 * (rand_jitter() - 0.5)) as i64;
+        let sleep_ms = (backoff_secs * 1000) as i64 + jitter_ms;
         error!(
             "crashed ({}/{} attempts): \
              {err}; restart in {sleep_ms}ms",
             attempts, MAX_RESTARTS,
         );
-        std::thread::sleep(Duration::from_millis(
-            sleep_ms.max(100) as u64,
-        ));
+        std::thread::sleep(Duration::from_millis(sleep_ms.max(100) as u64));
     }
 }
 
@@ -256,13 +246,7 @@ fn persist_thread_body(
             .await
             // SAFETY: fail-fast at startup
             .expect("pg connect for persist");
-        run_persist_worker_with_shutdown(
-            persist_cons,
-            client,
-            sid,
-            Some(shutdown),
-        )
-        .await;
+        run_persist_worker_with_shutdown(persist_cons, client, sid, Some(shutdown)).await;
     });
 }
 
@@ -319,25 +303,14 @@ fn run_main(
         // version-guarded + idempotent DDL + ON CONFLICT), so every
         // node can run them at boot with no lock. See migrations/CLAUDE.md.
         run_migrations(&client).await?;
-        let state = load_from_postgres(
-            &client,
-            shard_id,
-            shard_count,
-            max_symbols,
-        )
-        .await?;
+        let state = load_from_postgres(&client, shard_id, shard_count, max_symbols).await?;
         shard.set_state(state);
         info!("loaded accounts from postgres (warm candidate)");
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;
 
-    let symbol_ids: Vec<u32> =
-        (0..max_symbols as u32).collect();
-    let replayed = replay_from_wal(
-        &mut shard,
-        std::path::Path::new(wal_dir),
-        &symbol_ids,
-    )?;
+    let symbol_ids: Vec<u32> = (0..max_symbols as u32).collect();
+    let replayed = replay_from_wal(&mut shard, std::path::Path::new(wal_dir), &symbol_ids)?;
     if replayed > 0 {
         info!("replayed {} fills from boot wal", replayed);
     }
@@ -361,12 +334,9 @@ fn run_main(
     let me_repl_addr = &cfg.me_repl_addr;
 
     // Mark stream addresses (consumed in warm AND live).
-    let mut mark_receiver = CastReceiver::new(
-        cfg.mark_addr,
-        cfg.mark_sender_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind mark cast receiver");
+    let mut mark_receiver = CastReceiver::new(cfg.mark_addr, cfg.mark_sender_addr)
+        // SAFETY: fail-fast at startup
+        .expect("failed to bind mark cast receiver");
 
     // ===== WARM CATCHUP =====
     // Consume the main's authoritative ME replication stream into
@@ -409,8 +379,7 @@ fn run_main(
         lease_stop.clone(),
     );
 
-    let (persist_prod, persist_cons) =
-        rtrb::RingBuffer::<PersistEvent>::new(8192);
+    let (persist_prod, persist_cons) = rtrb::RingBuffer::<PersistEvent>::new(8192);
     gauges.persist_ring_cap.store(8192, Ordering::Relaxed);
     shard.set_persist_producer(persist_prod);
 
@@ -424,30 +393,23 @@ fn run_main(
         let url = db_url.clone();
         let sid = shard_id;
         let shutdown = persist_shutdown.clone();
-        std::thread::spawn(move || {
-            persist_thread_body(url, sid, persist_cons, shutdown)
-        })
+        std::thread::spawn(move || persist_thread_body(url, sid, persist_cons, shutdown))
     };
 
     if let Some(core_id) = cfg.core_id {
         let setup = rsx_types::cpu::setup_hot_thread(core_id);
         info!("risk {}", setup);
         if setup.isolated == Some(false) {
-            tracing::warn!(
-                "risk core {} not isolated — expect tail spikes",
-                core_id
-            );
+            tracing::warn!("risk core {} not isolated — expect tail spikes", core_id);
         }
     }
 
     let risk_addr = cfg.risk_addr;
     let gw_addr = cfg.gw_addr;
 
-    let mut gw_receiver = CastReceiver::new(
-        risk_addr, gw_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind risk cast receiver");
+    let mut gw_receiver = CastReceiver::new(risk_addr, gw_addr)
+        // SAFETY: fail-fast at startup
+        .expect("failed to bind risk cast receiver");
 
     // Receive fills/events from ME (separate port).
     // All MEs send to this single recv addr.
@@ -462,12 +424,9 @@ fn run_main(
         .next()
         .copied()
         .expect("INVARIANT: me_addrs non-empty (checked above)");
-    let mut me_receiver = CastReceiver::new(
-        risk_me_recv_addr,
-        first_me_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind ME fill receiver");
+    let mut me_receiver = CastReceiver::new(risk_me_recv_addr, first_me_addr)
+        // SAFETY: fail-fast at startup
+        .expect("failed to bind ME fill receiver");
 
     // mark_receiver was bound + drained during warm catchup; the
     // same socket carries on into the live loop below.
@@ -478,36 +437,24 @@ fn run_main(
         sender_bind_addr: cfg.me_send_bind.clone(),
         ..Default::default()
     };
-    let mut me_senders: HashMap<u32, CastSender> =
-        HashMap::new();
+    let mut me_senders: HashMap<u32, CastSender> = HashMap::new();
     for (&sid, &addr) in &me_addrs {
-        let sender = CastSender::with_config(
-            addr,
-            0,
-            Path::new(&wal_dir),
-            &me_sender_cfg,
-        )
-        // SAFETY: fail-fast at startup
-        .expect("failed to create ME cast sender");
+        let sender = CastSender::with_config(addr, 0, Path::new(&wal_dir), &me_sender_cfg)
+            // SAFETY: fail-fast at startup
+            .expect("failed to create ME cast sender");
         me_senders.insert(sid, sender);
     }
 
     // Send responses to Gateway
-    let mut gw_sender = CastSender::new(
-        gw_addr,
-        0,
-        Path::new(&wal_dir),
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to create GW cast sender");
+    let mut gw_sender = CastSender::new(gw_addr, 0, Path::new(&wal_dir))
+        // SAFETY: fail-fast at startup
+        .expect("failed to create GW cast sender");
 
     // Egress SPSC rings. Input rings removed: the recv loop
     // calls shard.process_* directly (same thread). These two
     // carry shard output back to this loop's casting senders.
-    let (resp_prod, mut resp_cons) =
-        rtrb::RingBuffer::<OrderResponse>::new(2048);
-    let (accepted_prod, mut accepted_cons) =
-        rtrb::RingBuffer::<OrderRequest>::new(2048);
+    let (resp_prod, mut resp_cons) = rtrb::RingBuffer::<OrderResponse>::new(2048);
+    let (accepted_prod, mut accepted_cons) = rtrb::RingBuffer::<OrderRequest>::new(2048);
     gauges.resp_ring_cap.store(2048, Ordering::Relaxed);
     gauges.accept_ring_cap.store(2048, Ordering::Relaxed);
 
@@ -527,163 +474,157 @@ fn run_main(
         // (capital efficiency; fills-before-orders invariant).
         loop {
             let recv = me_receiver.try_recv_with(|hdr, payload| {
-            match hdr.record_type {
-                RECORD_BBO => if let Some(rec) =
-                    decode_payload::<BboRecord>(payload)
-                {
-                    // BBO is a "latest wins" state snapshot.
-                    // Stash (coalesces per symbol); the tick
-                    // drains + runs the per-BBO margin scan.
-                    shard.stash_bbo(BboUpdate {
-                        seq: rec.seq,
-                        symbol_id: rec.symbol_id,
-                        bid_px: rec.bid_px.0,
-                        bid_qty: rec.bid_qty.0,
-                        ask_px: rec.ask_px.0,
-                        ask_qty: rec.ask_qty.0,
-                    });
-                    // BBO is consumed only by risk (margin scan). It is
-                    // NOT forwarded to the gateway: the gateway has no BBO
-                    // handler, and forward_to_gw re-sequences with gw's own
-                    // counter, so dropping it leaves no seq gap. Public BBO
-                    // reaches clients via the marketdata process.
-                }
-                RECORD_FILL => if let Some(fill) =
-                    decode_payload::<FillRecord>(payload)
-                {
-                    // F4.3 — per-stage latency trace.
-                    // Stage `risk_out` = fill received from
-                    // ME and about to be forwarded to gateway.
-                    // Anchor against the taker's gateway-ingress
-                    // timestamp (fill.taker_ts_ns) so this delta
-                    // composes with gateway_in / risk_in / me_in
-                    // on the same clock origin. Fall back to
-                    // ts_ns if the field is missing (legacy WAL
-                    // record predating the FillRecord layout
-                    // change).
-                    rsx_log::latency_sample!(
-                        "risk_out",
-                        fill.taker_order_id_hi,
-                        fill.taker_order_id_lo,
-                        if fill.taker_ts_ns == 0 {
-                            fill.ts_ns
-                        } else {
-                            fill.taker_ts_ns
+                match hdr.record_type {
+                    RECORD_BBO => {
+                        if let Some(rec) = decode_payload::<BboRecord>(payload) {
+                            // BBO is a "latest wins" state snapshot.
+                            // Stash (coalesces per symbol); the tick
+                            // drains + runs the per-BBO margin scan.
+                            shard.stash_bbo(BboUpdate {
+                                seq: rec.seq,
+                                symbol_id: rec.symbol_id,
+                                bid_px: rec.bid_px.0,
+                                bid_qty: rec.bid_qty.0,
+                                ask_px: rec.ask_px.0,
+                                ask_qty: rec.ask_qty.0,
+                            });
+                            // BBO is consumed only by risk (margin scan). It is
+                            // NOT forwarded to the gateway: the gateway has no BBO
+                            // handler, and forward_to_gw re-sequences with gw's own
+                            // counter, so dropping it leaves no seq gap. Public BBO
+                            // reaches clients via the marketdata process.
                         }
-                    );
-                    // Fills are correctness-critical:
-                    // position == sum(fills). Process
-                    // directly on this thread (no input
-                    // ring) — process_fill only touches
-                    // shard state and the persist ring,
-                    // which has its own stall path.
-                    let event = FillEvent {
-                        seq: fill.seq,
-                        symbol_id: fill.symbol_id,
-                        taker_user_id: fill
-                            .taker_user_id,
-                        maker_user_id: fill
-                            .maker_user_id,
-                        price: fill.price.0,
-                        qty: fill.qty.0,
-                        taker_side: fill.taker_side,
-                        timestamp_ns: fill.ts_ns,
-                    };
-                    shard.process_fill(&event);
-                    gauges.fills_processed.fetch_add(
-                        1, Ordering::Relaxed,
-                    );
-                    // LIQUIDATOR.md §10: a fill means the
-                    // symbol is accepting orders again, so any
-                    // halt from a prior ORDER_FAILED is lifted.
-                    shard.resume_liquidation(fill.symbol_id);
-                    // Forward fill to GW
-                    forward_to_gw(&mut gw_sender, RECORD_FILL, payload);
-                    // Sub-stage: cast send to gateway completed.
-                    // Anchor on the same taker_ts_ns used by
-                    // risk_out (with the >2024 plausibility
-                    // guard).
-                    rsx_log::latency_sample!(
-                        "risk_cast_send_done",
-                        fill.taker_order_id_hi,
-                        fill.taker_order_id_lo,
-                        if fill.taker_ts_ns == 0 {
-                            fill.ts_ns
-                        } else {
-                            fill.taker_ts_ns
-                        }
-                    );
-                }
-                RECORD_ORDER_DONE => if let Some(rec) =
-                    decode_payload::<OrderDoneRecord>(payload)
-                {
-                    shard.release_frozen_for_order(
-                        rec.user_id,
-                        rec.order_id_hi,
-                        rec.order_id_lo,
-                    );
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_DONE, payload);
-                }
-                RECORD_ORDER_CANCELLED => if let Some(rec) =
-                    decode_payload::<OrderCancelledRecord>(payload)
-                {
-                    shard.release_frozen_for_order(
-                        rec.user_id,
-                        rec.order_id_hi,
-                        rec.order_id_lo,
-                    );
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_CANCELLED, payload);
-                }
-                RECORD_ORDER_INSERTED => if decode_payload::<OrderInsertedRecord>(payload).is_some() {
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_INSERTED, payload);
-                }
-                RECORD_ORDER_ACCEPTED => if let Some(rec) =
-                    decode_payload::<OrderAcceptedRecord>(payload)
-                {
-                    // ME confirmed the order: now (and only now)
-                    // write the durable freeze. Reduce-only orders
-                    // reserve no margin, so nothing to persist.
-                    if rec.reduce_only == 0 {
-                        shard.confirm_freeze(
-                            rec.user_id,
-                            rec.order_id_hi,
-                            rec.order_id_lo,
-                            rec.symbol_id,
-                        );
                     }
+                    RECORD_FILL => {
+                        if let Some(fill) = decode_payload::<FillRecord>(payload) {
+                            // F4.3 — per-stage latency trace.
+                            // Stage `risk_out` = fill received from
+                            // ME and about to be forwarded to gateway.
+                            // Anchor against the taker's gateway-ingress
+                            // timestamp (fill.taker_ts_ns) so this delta
+                            // composes with gateway_in / risk_in / me_in
+                            // on the same clock origin. Fall back to
+                            // ts_ns if the field is missing (legacy WAL
+                            // record predating the FillRecord layout
+                            // change).
+                            rsx_log::latency_sample!(
+                                "risk_out",
+                                fill.taker_order_id_hi,
+                                fill.taker_order_id_lo,
+                                if fill.taker_ts_ns == 0 {
+                                    fill.ts_ns
+                                } else {
+                                    fill.taker_ts_ns
+                                }
+                            );
+                            // Fills are correctness-critical:
+                            // position == sum(fills). Process
+                            // directly on this thread (no input
+                            // ring) — process_fill only touches
+                            // shard state and the persist ring,
+                            // which has its own stall path.
+                            let event = FillEvent {
+                                seq: fill.seq,
+                                symbol_id: fill.symbol_id,
+                                taker_user_id: fill.taker_user_id,
+                                maker_user_id: fill.maker_user_id,
+                                price: fill.price.0,
+                                qty: fill.qty.0,
+                                taker_side: fill.taker_side,
+                                timestamp_ns: fill.ts_ns,
+                            };
+                            shard.process_fill(&event);
+                            gauges.fills_processed.fetch_add(1, Ordering::Relaxed);
+                            // LIQUIDATOR.md §10: a fill means the
+                            // symbol is accepting orders again, so any
+                            // halt from a prior ORDER_FAILED is lifted.
+                            shard.resume_liquidation(fill.symbol_id);
+                            // Forward fill to GW
+                            forward_to_gw(&mut gw_sender, RECORD_FILL, payload);
+                            // Sub-stage: cast send to gateway completed.
+                            // Anchor on the same taker_ts_ns used by
+                            // risk_out (with the >2024 plausibility
+                            // guard).
+                            rsx_log::latency_sample!(
+                                "risk_cast_send_done",
+                                fill.taker_order_id_hi,
+                                fill.taker_order_id_lo,
+                                if fill.taker_ts_ns == 0 {
+                                    fill.ts_ns
+                                } else {
+                                    fill.taker_ts_ns
+                                }
+                            );
+                        }
+                    }
+                    RECORD_ORDER_DONE => {
+                        if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
+                            shard.release_frozen_for_order(
+                                rec.user_id,
+                                rec.order_id_hi,
+                                rec.order_id_lo,
+                            );
+                            forward_to_gw(&mut gw_sender, RECORD_ORDER_DONE, payload);
+                        }
+                    }
+                    RECORD_ORDER_CANCELLED => {
+                        if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
+                            shard.release_frozen_for_order(
+                                rec.user_id,
+                                rec.order_id_hi,
+                                rec.order_id_lo,
+                            );
+                            forward_to_gw(&mut gw_sender, RECORD_ORDER_CANCELLED, payload);
+                        }
+                    }
+                    RECORD_ORDER_INSERTED => {
+                        if decode_payload::<OrderInsertedRecord>(payload).is_some() {
+                            forward_to_gw(&mut gw_sender, RECORD_ORDER_INSERTED, payload);
+                        }
+                    }
+                    RECORD_ORDER_ACCEPTED => {
+                        if let Some(rec) = decode_payload::<OrderAcceptedRecord>(payload) {
+                            // ME confirmed the order: now (and only now)
+                            // write the durable freeze. Reduce-only orders
+                            // reserve no margin, so nothing to persist.
+                            if rec.reduce_only == 0 {
+                                shard.confirm_freeze(
+                                    rec.user_id,
+                                    rec.order_id_hi,
+                                    rec.order_id_lo,
+                                    rec.symbol_id,
+                                );
+                            }
+                        }
+                    }
+                    RECORD_ORDER_FAILED => {
+                        if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
+                            shard.release_frozen_for_order(
+                                rec.user_id,
+                                rec.order_id_hi,
+                                rec.order_id_lo,
+                            );
+                            // LIQUIDATOR.md §10: order rejected (symbol
+                            // halted) pauses liquidation for that symbol.
+                            // OrderFailedRecord carries no symbol_id, so
+                            // halt the symbols this user is being
+                            // liquidated on (the failed order is one).
+                            shard.halt_liquidation_for_user(rec.user_id);
+                            forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, payload);
+                        }
+                    }
+                    RECORD_CONFIG_APPLIED => {
+                        if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
+                            shard.process_config_applied(rec.symbol_id, rec.config_version);
+                            info!(
+                                "config_applied: symbol={} v={}",
+                                rec.symbol_id, rec.config_version,
+                            );
+                            forward_to_gw(&mut gw_sender, RECORD_CONFIG_APPLIED, payload);
+                        }
+                    }
+                    _ => {}
                 }
-                RECORD_ORDER_FAILED => if let Some(rec) =
-                    decode_payload::<OrderFailedRecord>(payload)
-                {
-                    shard.release_frozen_for_order(
-                        rec.user_id,
-                        rec.order_id_hi,
-                        rec.order_id_lo,
-                    );
-                    // LIQUIDATOR.md §10: order rejected (symbol
-                    // halted) pauses liquidation for that symbol.
-                    // OrderFailedRecord carries no symbol_id, so
-                    // halt the symbols this user is being
-                    // liquidated on (the failed order is one).
-                    shard.halt_liquidation_for_user(rec.user_id);
-                    forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, payload);
-                }
-                RECORD_CONFIG_APPLIED => if let Some(rec) =
-                    decode_payload::<ConfigAppliedRecord>(payload)
-                {
-                    shard.process_config_applied(
-                        rec.symbol_id,
-                        rec.config_version,
-                    );
-                    info!(
-                        "config_applied: symbol={} v={}",
-                        rec.symbol_id,
-                        rec.config_version,
-                    );
-                    forward_to_gw(&mut gw_sender, RECORD_CONFIG_APPLIED, payload);
-                }
-                _ => {}
-            }
             });
             match recv {
                 CastRecvWith::Data => {}
@@ -728,77 +669,61 @@ fn run_main(
             // absorbs, the main loop drains the output rings
             // below, and we resume next iteration. Same end
             // state as the old order_prod stall, no drop.
-            if rings.response_producer.is_full()
-                || rings.accepted_producer.is_full()
-            {
+            if rings.response_producer.is_full() || rings.accepted_producer.is_full() {
                 break;
             }
             let recv = gw_receiver.try_recv_with(|hdr, payload| {
-            match hdr.record_type {
-                RECORD_ORDER_REQUEST => if let Some(order) =
-                    decode_payload::<OrderRequest>(payload)
-                {
-                    // F4.3 — per-stage latency trace.
-                    // Stage `risk_in` = order arrived from
-                    // gateway. t_us measured against the
-                    // gateway's submit timestamp.
-                    rsx_log::latency_sample!(
-                        "risk_in",
-                        order.order_id_hi,
-                        order.order_id_lo,
-                        order.timestamp_ns
-                    );
-                    // Process directly on this thread (no input
-                    // ring). The loop head guarantees both output
-                    // rings have a free slot, so neither push can
-                    // fail — a dropped response/accepted would be
-                    // a silent ghost order (gateway thinks it's
-                    // pending, ME never sees it). R-N2.
-                    gauges.orders_processed.fetch_add(
-                        1, Ordering::Relaxed,
-                    );
-                    let resp = shard.process_order(&order);
-                    if matches!(
-                        resp,
-                        OrderResponse::Accepted { .. }
-                    ) {
-                        rings.accepted_producer
-                            .push(order)
-                            .expect(
-                                "INVARIANT: accepted_producer \
-                                 capacity checked at loop head",
+                match hdr.record_type {
+                    RECORD_ORDER_REQUEST => {
+                        if let Some(order) = decode_payload::<OrderRequest>(payload) {
+                            // F4.3 — per-stage latency trace.
+                            // Stage `risk_in` = order arrived from
+                            // gateway. t_us measured against the
+                            // gateway's submit timestamp.
+                            rsx_log::latency_sample!(
+                                "risk_in",
+                                order.order_id_hi,
+                                order.order_id_lo,
+                                order.timestamp_ns
                             );
-                    }
-                    rings.response_producer
-                        .push(resp)
-                        .expect(
-                            "INVARIANT: response_producer \
+                            // Process directly on this thread (no input
+                            // ring). The loop head guarantees both output
+                            // rings have a free slot, so neither push can
+                            // fail — a dropped response/accepted would be
+                            // a silent ghost order (gateway thinks it's
+                            // pending, ME never sees it). R-N2.
+                            gauges.orders_processed.fetch_add(1, Ordering::Relaxed);
+                            let resp = shard.process_order(&order);
+                            if matches!(resp, OrderResponse::Accepted { .. }) {
+                                rings.accepted_producer.push(order).expect(
+                                    "INVARIANT: accepted_producer \
+                                 capacity checked at loop head",
+                                );
+                            }
+                            rings.response_producer.push(resp).expect(
+                                "INVARIANT: response_producer \
                              capacity checked at loop head",
-                        );
-                }
-                RECORD_CANCEL_REQUEST => if let Some(cancel) =
-                    decode_payload::<CancelRequest>(payload)
-                {
-                    // Forward cancel to correct ME.
-                    if let Some(s) = me_senders
-                        .get_mut(&cancel.symbol_id)
-                    {
-                        if let Err(e) = s.send_raw(
-                            RECORD_CANCEL_REQUEST,
-                            payload,
-                        ) {
-                            warn!("risk: forward cancel to me failed: {e}");
+                            );
                         }
-                    } else {
-                        warn!(
-                            "cancel for unknown \
-                             symbol_id={}",
-                            cancel.symbol_id
-                        );
                     }
+                    RECORD_CANCEL_REQUEST => {
+                        if let Some(cancel) = decode_payload::<CancelRequest>(payload) {
+                            // Forward cancel to correct ME.
+                            if let Some(s) = me_senders.get_mut(&cancel.symbol_id) {
+                                if let Err(e) = s.send_raw(RECORD_CANCEL_REQUEST, payload) {
+                                    warn!("risk: forward cancel to me failed: {e}");
+                                }
+                            } else {
+                                warn!(
+                                    "cancel for unknown \
+                             symbol_id={}",
+                                    cancel.symbol_id
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
             });
             match recv {
                 CastRecvWith::Data => {}
@@ -837,13 +762,13 @@ fn run_main(
         // Mark prices from Mark process
         loop {
             let recv = mark_receiver.try_recv_with(|preamble, payload| {
-            if preamble.record_type == RECORD_MARK_PRICE {
-                if let Some(rec) = decode_payload::<MarkPriceRecord>(payload) {
-                    // Latest-wins state; applied directly on the
-                    // tile (no ring — recv and shard share a thread).
-                    shard.update_mark(rec.symbol_id, rec.mark_price.0);
+                if preamble.record_type == RECORD_MARK_PRICE {
+                    if let Some(rec) = decode_payload::<MarkPriceRecord>(payload) {
+                        // Latest-wins state; applied directly on the
+                        // tile (no ring — recv and shard share a thread).
+                        shard.update_mark(rec.symbol_id, rec.mark_price.0);
+                    }
                 }
-            }
             });
             match recv {
                 CastRecvWith::Data => {}
@@ -886,14 +811,12 @@ fn run_main(
 
         // Publish load gauges (relaxed stores; once per loop
         // iteration, not per message — zero hot-path syscall cost).
-        gauges.resp_ring_used.store(
-            resp_cons.slots() as u64,
-            Ordering::Relaxed,
-        );
-        gauges.accept_ring_used.store(
-            accepted_cons.slots() as u64,
-            Ordering::Relaxed,
-        );
+        gauges
+            .resp_ring_used
+            .store(resp_cons.slots() as u64, Ordering::Relaxed);
+        gauges
+            .accept_ring_used
+            .store(accepted_cons.slots() as u64, Ordering::Relaxed);
 
         // Drain responses: send ORDER_FAILED to GW
         while let Ok(resp) = resp_cons.pop() {
@@ -906,15 +829,9 @@ fn run_main(
             {
                 gauges.rejects.fetch_add(1, Ordering::Relaxed);
                 let reason_u8 = match reason {
-                    RejectReason::InsufficientMargin => {
-                        FailureReason::InsufficientMargin as u8
-                    }
-                    RejectReason::UserInLiquidation => {
-                        FailureReason::UserInLiquidation as u8
-                    }
-                    RejectReason::NotInShard => {
-                        FailureReason::WrongShard as u8
-                    }
+                    RejectReason::InsufficientMargin => FailureReason::InsufficientMargin as u8,
+                    RejectReason::UserInLiquidation => FailureReason::UserInLiquidation as u8,
+                    RejectReason::NotInShard => FailureReason::WrongShard as u8,
                 };
                 let rec = OrderFailedRecord {
                     seq: 0,
@@ -931,11 +848,7 @@ fn run_main(
                 // no place in the forwarded-ME seq space. Route
                 // through forward_to_gw so it gets gw_sender's
                 // next contiguous seq like every other gw record.
-                forward_to_gw(
-                    &mut gw_sender,
-                    RECORD_ORDER_FAILED,
-                    as_bytes(&rec),
-                );
+                forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
             }
         }
 
@@ -947,16 +860,8 @@ fn run_main(
                 qty: order.qty,
                 side: order.side,
                 tif: order.tif,
-                reduce_only: if order.reduce_only {
-                    1
-                } else {
-                    0
-                },
-                post_only: if order.post_only {
-                    1
-                } else {
-                    0
-                },
+                reduce_only: if order.reduce_only { 1 } else { 0 },
+                post_only: if order.post_only { 1 } else { 0 },
                 _pad1: [0; 4],
                 user_id: order.user_id,
                 _pad2: 0,
@@ -964,14 +869,9 @@ fn run_main(
                 order_id_hi: order.order_id_hi,
                 order_id_lo: order.order_id_lo,
             };
-            let send_failed = match me_senders
-                .get_mut(&order.symbol_id)
-            {
+            let send_failed = match me_senders.get_mut(&order.symbol_id) {
                 Some(s) => {
-                    if let Err(e) = s.send_raw(
-                        RECORD_ORDER_REQUEST,
-                        as_bytes(&msg),
-                    ) {
+                    if let Err(e) = s.send_raw(RECORD_ORDER_REQUEST, as_bytes(&msg)) {
                         warn!("risk: forward order to me failed: {e}");
                         true
                     } else {
@@ -979,10 +879,7 @@ fn run_main(
                     }
                 }
                 None => {
-                    warn!(
-                        "order for unknown symbol_id={}",
-                        order.symbol_id
-                    );
+                    warn!("order for unknown symbol_id={}", order.symbol_id);
                     true
                 }
             };
@@ -994,11 +891,7 @@ fn run_main(
             // (The durable PG freeze is only written by confirm_freeze
             // on OrderAccepted, so there is nothing durable to undo.)
             if send_failed {
-                shard.release_frozen_for_order(
-                    order.user_id,
-                    order.order_id_hi,
-                    order.order_id_lo,
-                );
+                shard.release_frozen_for_order(order.user_id, order.order_id_hi, order.order_id_lo);
                 let rec = OrderFailedRecord {
                     seq: 0,
                     ts_ns: now_secs * 1_000_000_000,
@@ -1009,11 +902,7 @@ fn run_main(
                     reason: FailureReason::NetworkError as u8,
                     _pad: [0; 23],
                 };
-                forward_to_gw(
-                    &mut gw_sender,
-                    RECORD_ORDER_FAILED,
-                    as_bytes(&rec),
-                );
+                forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
             }
         }
 
@@ -1037,9 +926,7 @@ fn run_main(
             stop_persist_worker(&persist_shutdown, persist_handle);
             rsx_risk::lease::stop_lease_thread(&lease_stop, lease_thread);
             if lease_error.load(Ordering::Relaxed) {
-                return Err(
-                    "lease check failed after 3 consecutive errors".into()
-                );
+                return Err("lease check failed after 3 consecutive errors".into());
             } else {
                 warn!("lease lost, re-acquiring advisory lock");
                 // Ok(()) = demoted; main() re-enters warm catchup.
@@ -1054,10 +941,7 @@ fn run_main(
 /// successful transition out of the Main role so that the
 /// next promote spawns a fresh worker without doubling up
 /// on PG connections.
-fn stop_persist_worker(
-    shutdown: &Arc<AtomicBool>,
-    handle: std::thread::JoinHandle<()>,
-) {
+fn stop_persist_worker(shutdown: &Arc<AtomicBool>, handle: std::thread::JoinHandle<()>) {
     shutdown.store(true, Ordering::Relaxed);
     // Bounded wait so a stuck worker can't hang the demote. Poll
     // the handle directly (no watchdog thread). The worker drains
@@ -1070,10 +954,7 @@ fn stop_persist_worker(
     loop {
         if handle.is_finished() {
             if let Err(e) = handle.join() {
-                warn!(
-                    "persist worker thread panicked: {:?}",
-                    e,
-                );
+                warn!("persist worker thread panicked: {:?}", e,);
             }
             info!("persist worker stopped");
             return;

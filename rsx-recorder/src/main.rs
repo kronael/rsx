@@ -3,8 +3,8 @@ mod config;
 use chrono::NaiveDate;
 use chrono::Utc;
 use config::RecorderConfig;
-use rsx_cast::ReplicationConsumer;
 use rsx_cast::RawWalRecord;
+use rsx_cast::ReplicationConsumer;
 use rsx_health::CounterGauge;
 use rsx_health::DaemonState;
 use rsx_health::HealthSnapshot;
@@ -19,9 +19,9 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
@@ -38,22 +38,13 @@ struct RecorderState {
 }
 
 impl RecorderState {
-    fn new(
-        archive_dir: &std::path::Path,
-        stream_id: u32,
-        retain_days: i64,
-    ) -> io::Result<Self> {
+    fn new(archive_dir: &std::path::Path, stream_id: u32, retain_days: i64) -> io::Result<Self> {
         let today = Utc::now().date_naive();
         let dir = archive_dir.join(stream_id.to_string());
         fs::create_dir_all(&dir)?;
 
-        let path = dir.join(format!(
-            "{}_{}.wal", stream_id, today
-        ));
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let path = dir.join(format!("{}_{}.wal", stream_id, today));
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         info!("recording to {}", path.display());
 
@@ -70,18 +61,13 @@ impl RecorderState {
         })
     }
 
-    fn write_record(
-        &mut self,
-        record: &RawWalRecord,
-    ) -> io::Result<()> {
+    fn write_record(&mut self, record: &RawWalRecord) -> io::Result<()> {
         let today = Utc::now().date_naive();
         if today != self.current_date {
             self.rotate(today)?;
         }
 
-        self.buf.extend_from_slice(
-            record.header.to_bytes(),
-        );
+        self.buf.extend_from_slice(record.header.to_bytes());
         self.buf.extend_from_slice(&record.payload);
         self.record_count += 1;
 
@@ -102,20 +88,11 @@ impl RecorderState {
         Ok(())
     }
 
-    fn rotate(
-        &mut self,
-        new_date: NaiveDate,
-    ) -> io::Result<()> {
+    fn rotate(&mut self, new_date: NaiveDate) -> io::Result<()> {
         self.flush()?;
-        let dir = self.archive_dir
-            .join(self.stream_id.to_string());
-        let path = dir.join(format!(
-            "{}_{}.wal", self.stream_id, new_date
-        ));
-        self.file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let dir = self.archive_dir.join(self.stream_id.to_string());
+        let path = dir.join(format!("{}_{}.wal", self.stream_id, new_date));
+        self.file = OpenOptions::new().create(true).append(true).open(&path)?;
         self.current_date = new_date;
         info!("rotated archive to {}", path.display());
         prune_archive(&dir, self.stream_id, new_date, self.retain_days);
@@ -129,9 +106,7 @@ impl RecorderState {
 /// ever touches files it can positively identify.
 fn segment_date(name: &str, stream_id: u32) -> Option<NaiveDate> {
     let prefix = format!("{}_", stream_id);
-    let date_str = name
-        .strip_prefix(&prefix)?
-        .strip_suffix(".wal")?;
+    let date_str = name.strip_prefix(&prefix)?.strip_suffix(".wal")?;
     NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()
 }
 
@@ -141,12 +116,7 @@ fn segment_date(name: &str, stream_id: u32) -> Option<NaiveDate> {
 /// `{stream_id}_{date}.wal` pattern are considered, so the
 /// active (today's) file is always kept — `today` is never
 /// `< today - retain_days` for `retain_days >= 0`.
-fn prune_archive(
-    dir: &Path,
-    stream_id: u32,
-    today: NaiveDate,
-    retain_days: i64,
-) {
+fn prune_archive(dir: &Path, stream_id: u32, today: NaiveDate, retain_days: i64) {
     let cutoff = today - chrono::Duration::days(retain_days);
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -169,12 +139,11 @@ fn prune_archive(
             match fs::remove_file(&path) {
                 Ok(()) => info!(
                     "pruned archive segment {} (date {}, cutoff {})",
-                    path.display(), date, cutoff
+                    path.display(),
+                    date,
+                    cutoff
                 ),
-                Err(e) => warn!(
-                    "prune: remove_file {} failed: {}",
-                    path.display(), e
-                ),
+                Err(e) => warn!("prune: remove_file {} failed: {}", path.display(), e),
             }
         }
     }
@@ -210,9 +179,7 @@ async fn watchdog(gauges: Arc<LoadGauges>, stall: Duration) {
                 gauges.set_state(DaemonState::Running);
                 info!("recorder recovered: records advancing again");
             }
-        } else if last_progress.elapsed() >= stall
-            && gauges.live.load(Ordering::Relaxed)
-        {
+        } else if last_progress.elapsed() >= stall && gauges.live.load(Ordering::Relaxed) {
             gauges.live.store(false, Ordering::Relaxed);
             gauges.ready.store(false, Ordering::Relaxed);
             gauges.set_state(DaemonState::Faulted);
@@ -244,20 +211,16 @@ async fn main() -> io::Result<()> {
     if let Ok(addr_str) = env::var("RSX_RECORDER_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             let g = gauges.clone();
-            rsx_health::spawn_health_server(addr, move || {
-                HealthSnapshot {
-                    live: g.live.load(Ordering::Relaxed),
-                    ready: g.ready.load(Ordering::Relaxed),
-                    saturation: 0.0,
-                    queues: vec![],
-                    counters: vec![
-                        CounterGauge {
-                            name: "records_written",
-                            value: g.publishes.load(Ordering::Relaxed),
-                        },
-                    ],
-                    state: g.state_label(),
-                }
+            rsx_health::spawn_health_server(addr, move || HealthSnapshot {
+                live: g.live.load(Ordering::Relaxed),
+                ready: g.ready.load(Ordering::Relaxed),
+                saturation: 0.0,
+                queues: vec![],
+                counters: vec![CounterGauge {
+                    name: "records_written",
+                    value: g.publishes.load(Ordering::Relaxed),
+                }],
+                state: g.state_label(),
             });
         } else {
             warn!("RSX_RECORDER_HEALTH_ADDR: invalid addr '{addr_str}'");
@@ -287,17 +250,11 @@ async fn main() -> io::Result<()> {
     consumer
         .run(move |record: RawWalRecord| {
             // SAFETY: recover from mutex poison
-            let mut s = state_clone
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut s = state_clone.lock().unwrap_or_else(|e| e.into_inner());
             if let Err(e) = s.write_record(&record) {
-                tracing::error!(
-                    "write archive error: {}", e
-                );
+                tracing::error!("write archive error: {}", e);
             } else {
-                gauges_rec.publishes.fetch_add(
-                    1, Ordering::Relaxed,
-                );
+                gauges_rec.publishes.fetch_add(1, Ordering::Relaxed);
             }
             true
         })

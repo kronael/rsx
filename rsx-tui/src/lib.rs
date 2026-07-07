@@ -25,11 +25,11 @@ pub use conn::MockConn;
 pub use conn::OrderReq;
 pub use conn::Side;
 pub use conn::Tif;
-pub use quic::QuicConn;
-pub use ws::WsConn;
 pub use input::handle_key;
 pub use input::Control;
+pub use quic::QuicConn;
 pub use render::draw;
+pub use ws::WsConn;
 
 /// A scripted offline demo feed — the events `main` seeds into a
 /// `MockConn` so `cargo run -p rsx-tui` shows a live-looking book
@@ -38,21 +38,19 @@ pub fn demo_events() -> Vec<GwEvent> {
     vec![
         GwEvent::Connected,
         GwEvent::Book {
-            bids: vec![
-                (10_000, 7),
-                (9_999, 15),
-                (9_998, 9),
-                (9_997, 30),
-            ],
-            asks: vec![
-                (10_001, 5),
-                (10_002, 20),
-                (10_003, 8),
-                (10_004, 12),
-            ],
+            bids: vec![(10_000, 7), (9_999, 15), (9_998, 9), (9_997, 30)],
+            asks: vec![(10_001, 5), (10_002, 20), (10_003, 8), (10_004, 12)],
         },
-        GwEvent::Trade { side: Side::Buy, px: 10_001, qty: 5 },
-        GwEvent::Trade { side: Side::Sell, px: 10_000, qty: 3 },
+        GwEvent::Trade {
+            side: Side::Buy,
+            px: 10_001,
+            qty: 5,
+        },
+        GwEvent::Trade {
+            side: Side::Sell,
+            px: 10_000,
+            qty: 3,
+        },
         GwEvent::Position {
             symbol: "PENGU-PERP".to_owned(),
             net_qty: 14,

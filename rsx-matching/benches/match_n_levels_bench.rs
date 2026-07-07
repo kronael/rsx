@@ -24,8 +24,7 @@ mod harness;
 /// `n` distinct ask levels, one resting order of qty 1 per level, from
 /// `MID+1` up. An aggressive bid at `MID+n` sweeps all of them.
 fn book_with_ladder(n: usize) -> Orderbook {
-    let mut book =
-        Orderbook::new(harness::config(), 65_536, harness::MID);
+    let mut book = Orderbook::new(harness::config(), 65_536, harness::MID);
     for i in 0..n {
         book.insert_resting(
             harness::MID + 1 + i as i64,
@@ -58,10 +57,7 @@ fn bench_sweep_n_levels(c: &mut Criterion) {
                         1,
                         9_999,
                     );
-                    process_new_order(
-                        black_box(&mut book),
-                        black_box(&mut bid),
-                    );
+                    process_new_order(black_box(&mut book), black_box(&mut bid));
                 },
                 BatchSize::SmallInput,
             );

@@ -11,8 +11,8 @@
 //! receiver saw fewer than 10% of datagrams the receive path is
 //! silently broken and the throughput number is meaningless.
 
-use crate::cast::CastRecv;
 use crate::cast::CastReceiver;
+use crate::cast::CastRecv;
 use crate::cast::CastSender;
 use crate::wal::Framed;
 use rsx_messages::FillRecord;
@@ -46,7 +46,7 @@ fn fill(seq: u64) -> FillRecord {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     }
 }
 
@@ -62,8 +62,7 @@ fn cmp_send_50k_under_one_second() {
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
 
-    let mut sender =
-        CastSender::new(recv_addr, 1, wal_dir).unwrap();
+    let mut sender = CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
     // Throughput-only test: the sender never calls
     // recv_control here, so receiver NAKs never close
@@ -75,21 +74,13 @@ fn cmp_send_50k_under_one_second() {
         max_nak_retries: u16::MAX,
         ..Default::default()
     };
-    let mut receiver = CastReceiver::with_config(
-        recv_addr,
-        sender_addr,
-        &recv_cfg,
-    )
-    .unwrap();
+    let mut receiver = CastReceiver::with_config(recv_addr, sender_addr, &recv_cfg).unwrap();
 
     // Drain thread: keeps the receive buffer empty so the OS
     // doesn't drop datagrams (which the sender wouldn't see
     // as failures but would silently distort the throughput
     // measurement).
-    let drain_stop =
-        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-            false,
-        ));
+    let drain_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let drain_flag = drain_stop.clone();
     let drainer = thread::spawn(move || {
         let mut count: u64 = 0;
@@ -103,24 +94,18 @@ fn cmp_send_50k_under_one_second() {
                     count += 1;
                 }
                 CastRecv::Empty => {
-                    if drain_flag.load(
-                        std::sync::atomic::Ordering::Relaxed,
-                    ) {
+                    if drain_flag.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }
-                    thread::sleep(
-                        Duration::from_micros(50),
-                    );
+                    thread::sleep(Duration::from_micros(50));
                 }
-                CastRecv::Faulted { gap_end_inclusive, .. } => {
-                    receiver.reset_after_replay(
-                        gap_end_inclusive,
-                    );
+                CastRecv::Faulted {
+                    gap_end_inclusive, ..
+                } => {
+                    receiver.reset_after_replay(gap_end_inclusive);
                 }
                 CastRecv::Reconnect { last_delivered_seq } => {
-                    receiver.reset_after_replay(
-                        last_delivered_seq,
-                    );
+                    receiver.reset_after_replay(last_delivered_seq);
                 }
             }
         }

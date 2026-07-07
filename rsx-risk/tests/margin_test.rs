@@ -11,7 +11,7 @@ fn make_pm(n: usize) -> PortfolioMargin {
     PortfolioMargin {
         symbol_params: vec![
             SymbolRiskParams {
-                initial_margin_rate: 1000, // 10%
+                initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
             };
@@ -20,13 +20,7 @@ fn make_pm(n: usize) -> PortfolioMargin {
     }
 }
 
-fn make_order(
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-    side: u8,
-) -> OrderRequest {
+fn make_order(user_id: u32, symbol_id: u32, price: i64, qty: i64, side: u8) -> OrderRequest {
     OrderRequest {
         seq: 1,
         user_id,
@@ -102,8 +96,7 @@ fn check_order_sufficient_margin_accepts() {
     let a = Account::new(1, 10000);
     let marks = vec![100];
     let order = make_order(1, 0, 100, 1, 0);
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
     assert!(result.is_ok());
 }
 
@@ -113,12 +106,8 @@ fn check_order_insufficient_margin_rejects() {
     let a = Account::new(1, 5); // tiny collateral
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
-    assert_eq!(
-        result,
-        Err(RejectReason::InsufficientMargin)
-    );
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    assert_eq!(result, Err(RejectReason::InsufficientMargin));
 }
 
 #[test]
@@ -156,8 +145,7 @@ fn check_order_exactly_at_margin_limit_accepts() {
     let a = Account::new(1, 101);
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
     assert!(result.is_ok());
 }
 
@@ -168,12 +156,8 @@ fn check_order_one_unit_over_limit_rejects() {
     let a = Account::new(1, 100);
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
-    assert_eq!(
-        result,
-        Err(RejectReason::InsufficientMargin)
-    );
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    assert_eq!(result, Err(RejectReason::InsufficientMargin));
 }
 
 #[test]
@@ -182,12 +166,8 @@ fn margin_with_zero_collateral_rejects_all() {
     let a = Account::new(1, 0);
     let marks = vec![100];
     let order = make_order(1, 0, 100, 1, 0);
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
-    assert_eq!(
-        result,
-        Err(RejectReason::InsufficientMargin)
-    );
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    assert_eq!(result, Err(RejectReason::InsufficientMargin));
 }
 
 #[test]
@@ -221,8 +201,7 @@ fn margin_mark_price_unavailable_uses_index() {
     p.apply_fill(0, 100, 10, 1);
     let a = Account::new(1, 5000);
     let index_as_mark = vec![105];
-    let s =
-        pm.calculate(&a, std::iter::once(&p), &index_as_mark, 0);
+    let s = pm.calculate(&a, std::iter::once(&p), &index_as_mark, 0);
     assert_eq!(s.unrealized_pnl, 50); // 10*(105-100)
 }
 
@@ -300,7 +279,6 @@ fn margin_max_leverage_enforced() {
     assert_eq!(s.initial_margin, 500);
 }
 
-
 #[test]
 fn fee_reserve_included_in_pretrade_check() {
     let pm = make_pm(1);
@@ -309,17 +287,12 @@ fn fee_reserve_included_in_pretrade_check() {
     let a = Account::new(1, 105);
     let marks = vec![100];
     let order = make_order(1, 0, 100, 10, 0);
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 50, 0);
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 50, 0);
     assert!(result.is_ok());
     // With 104, should fail
     let a2 = Account::new(1, 104);
-    let result2 =
-        pm.check_order(&a2, std::iter::empty(), &order, &marks, 50, 0);
-    assert_eq!(
-        result2,
-        Err(RejectReason::InsufficientMargin)
-    );
+    let result2 = pm.check_order(&a2, std::iter::empty(), &order, &marks, 50, 0);
+    assert_eq!(result2, Err(RejectReason::InsufficientMargin));
 }
 
 // -- exposure index --
@@ -386,8 +359,7 @@ fn check_order_reduce_only_bypasses_margin() {
     let marks = vec![100];
     let mut order = make_order(1, 0, 100, 10, 0);
     order.reduce_only = true;
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
     assert_eq!(result, Ok(0));
 }
 
@@ -398,8 +370,7 @@ fn check_order_liquidation_order_skips_margin_check() {
     let marks = vec![100];
     let mut order = make_order(1, 0, 100, 10, 0);
     order.is_liquidation = true;
-    let result =
-        pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
+    let result = pm.check_order(&a, std::iter::empty(), &order, &marks, 10, 0);
     assert_eq!(result, Ok(0));
 }
 
@@ -422,16 +393,11 @@ fn funding_uses_latest_mark_price() {
         taker_fee_bps: vec![5],
         maker_fee_bps: vec![-1],
         funding_config: FundingConfig::default(),
-        liquidation_config:
-            LiquidationConfig::default(),
-        replication_config:
-            ReplicationConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig::default(),
     };
     let mut s = RiskShard::new(config);
-    s.accounts.insert(
-        0,
-        Account::new(0, 1_000_000_000),
-    );
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.update_mark(0, 10_000);
     s.index_prices[0].price = 9_900;
     s.index_prices[0].valid = true;

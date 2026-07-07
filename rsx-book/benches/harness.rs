@@ -27,10 +27,7 @@ pub const MID: i64 = 1_000_000;
 /// box has fewer cores.
 pub fn pin() {
     let ids = core_affinity::get_core_ids().unwrap_or_default();
-    let core = ids
-        .get(BENCH_CORE)
-        .copied()
-        .unwrap_or(CoreId { id: 0 });
+    let core = ids.get(BENCH_CORE).copied().unwrap_or(CoreId { id: 0 });
     core_affinity::set_for_current(core);
 }
 
@@ -93,8 +90,7 @@ impl Rng {
     pub fn normal(&mut self) -> f64 {
         let u1 = self.unif().max(1e-12);
         let u2 = self.unif();
-        (-2.0 * u1.ln()).sqrt()
-            * (std::f64::consts::TAU * u2).cos()
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
     /// Exponential with given mean.
     pub fn exp(&mut self, mean: f64) -> f64 {
@@ -116,15 +112,12 @@ impl Rng {
 /// Draw one resting order: fat-tailed price around mid, side by coin
 /// flip, size that grows with distance from the mean.
 pub fn draw_resting(rng: &mut Rng) -> (i64, i64, Side) {
-    let raw =
-        (rng.student_t(NU).abs() * SCALE).round() as i64;
+    let raw = (rng.student_t(NU).abs() * SCALE).round() as i64;
     let off = (HALF_SPREAD + raw).min(MAX_OFF);
     let buy = rng.next_u64() & 1 == 0;
     let price = if buy { MID - off } else { MID + off };
     let noise = 0.5 + rng.unif(); // [0.5, 1.5)
-    let qty = (BASE
-        * (1.0 + SIZE_K * off as f64 / SCALE)
-        * noise)
+    let qty = (BASE * (1.0 + SIZE_K * off as f64 / SCALE) * noise)
         .round()
         .max(1.0) as i64;
     (price, qty, if buy { Side::Buy } else { Side::Sell })
@@ -142,22 +135,11 @@ pub fn draw_resting(rng: &mut Rng) -> (i64, i64, Side) {
 /// 4096 pool plus match churn) so the slab never exhausts. Additive,
 /// not multiplicative, so the 10M deep book stays RAM-bound at ~n.
 pub fn build(n: u64) -> Orderbook {
-    let mut book =
-        Orderbook::new(config(), (n + 8192) as u32, MID);
+    let mut book = Orderbook::new(config(), (n + 8192) as u32, MID);
     let mut rng = Rng::new(0x1234_5678_9abc_def0 ^ n);
     for i in 0..n {
         let (p, q, s) = draw_resting(&mut rng);
-        book.insert_resting(
-            p,
-            q,
-            s,
-            0,
-            (i % 100_000) as u32 + 1,
-            false,
-            1,
-            0,
-            i + 1,
-        );
+        book.insert_resting(p, q, s, 0, (i % 100_000) as u32 + 1, false, 1, 0, i + 1);
     }
     book
 }

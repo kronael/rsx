@@ -1,24 +1,30 @@
-use rsx_types::Price;
-use rsx_types::Qty;
-use crate::cast::CastRecv;
 use crate::cast::CastReceiver;
+use crate::cast::CastRecv;
 use crate::cast::CastSender;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::Nak;
+use crate::records::RECORD_NAK;
 use crate::wal::Framed;
 use rsx_messages::FillRecord;
-use crate::records::RECORD_NAK;
 use rsx_messages::RECORD_FILL;
+use rsx_types::Price;
+use rsx_types::Qty;
 use std::net::SocketAddr;
 
 // Impl crate-local CastRecord for FillRecord so Framed::pack works
 // inside unit-test context where crate::records::CastRecord and
 // the external rsx_cast::CastRecord are different types.
 impl crate::records::CastRecord for rsx_messages::FillRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, s: u64) { self.seq = s; }
-    fn record_type() -> u16 { RECORD_FILL }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, s: u64) {
+        self.seq = s;
+    }
+    fn record_type() -> u16 {
+        RECORD_FILL
+    }
 }
 use std::net::UdpSocket;
 use std::thread;
@@ -36,11 +42,7 @@ fn loopback_pair(wal_dir: &std::path::Path) -> (CastSender, CastReceiver) {
     let sender_addr = sender.local_addr().unwrap();
 
     // Create receiver with sender's actual address
-    let receiver = CastReceiver::new(
-        recv_addr,
-        sender_addr,
-    )
-    .unwrap();
+    let receiver = CastReceiver::new(recv_addr, sender_addr).unwrap();
 
     (sender, receiver)
 }
@@ -64,17 +66,12 @@ fn fill_payload(seq: u64) -> FillRecord {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     }
 }
 
 fn as_bytes<T>(val: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            val as *const T as *const u8,
-            std::mem::size_of::<T>(),
-        )
-    }
+    unsafe { std::slice::from_raw_parts(val as *const T as *const u8, std::mem::size_of::<T>()) }
 }
 
 #[test]
@@ -92,15 +89,8 @@ fn send_recv_roundtrip() {
         other => panic!("expected Data, got {other:?}"),
     };
     assert_eq!(preamble.record_type, RECORD_FILL);
-    assert_eq!(
-        payload.len(),
-        std::mem::size_of::<FillRecord>(),
-    );
-    let decoded = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr() as *const FillRecord,
-        )
-    };
+    assert_eq!(payload.len(), std::mem::size_of::<FillRecord>(),);
+    let decoded = unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const FillRecord) };
     assert_eq!(decoded.seq, 1);
     assert_eq!(decoded.price, Price(50000));
     assert_eq!(decoded.qty, Qty(100));
@@ -149,14 +139,8 @@ fn multiple_records_in_order() {
     thread::sleep(Duration::from_millis(20));
 
     let mut seqs = Vec::new();
-    while let CastRecv::Data(_, payload) =
-        receiver.try_recv()
-    {
-        let decoded = unsafe {
-            std::ptr::read_unaligned(
-                payload.as_ptr() as *const FillRecord,
-            )
-        };
+    while let CastRecv::Data(_, payload) = receiver.try_recv() {
+        let decoded = unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const FillRecord) };
         seqs.push(decoded.seq);
     }
     assert_eq!(seqs, vec![1, 2, 3, 4, 5]);
@@ -164,33 +148,20 @@ fn multiple_records_in_order() {
 
 #[test]
 fn crc_mismatch_rejected() {
-    let recv_addr: SocketAddr =
-        "127.0.0.1:0".parse().unwrap();
+    let recv_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let sender_addr = sock.local_addr().unwrap();
 
-    let tmp = CastReceiver::new(
-        recv_addr,
-        sender_addr,
-    )
-    .unwrap();
+    let tmp = CastReceiver::new(recv_addr, sender_addr).unwrap();
     let recv_local = tmp.local_addr().unwrap();
     drop(tmp);
 
-    let mut receiver = CastReceiver::new(
-        recv_local,
-        sender_addr,
-    )
-    .unwrap();
+    let mut receiver = CastReceiver::new(recv_local, sender_addr).unwrap();
 
     let fill = fill_payload(1);
     let payload = as_bytes(&fill);
     let bad_crc = 0xDEADBEEFu32;
-    let preamble = WalHeader::new(
-        RECORD_FILL,
-        payload.len() as u16,
-        bad_crc,
-    );
+    let preamble = WalHeader::new(RECORD_FILL, payload.len() as u16, bad_crc);
     let hdr_bytes = preamble.to_bytes();
     let mut buf = vec![0u8; 16 + payload.len()];
     buf[..16].copy_from_slice(hdr_bytes);
@@ -205,8 +176,7 @@ fn crc_mismatch_rejected() {
 #[test]
 fn nak_retransmit_from_wal() {
     let tmp = TempDir::new().unwrap();
-    let (mut sender, mut receiver) =
-        loopback_pair(tmp.path());
+    let (mut sender, mut receiver) = loopback_pair(tmp.path());
     let sender_addr = sender.local_addr().unwrap();
 
     // Send seq=1 so it lands in the send ring;
@@ -215,14 +185,14 @@ fn nak_retransmit_from_wal() {
     sender.send_framed(&Framed::pack(&mut fill, 1)).unwrap();
 
     // Send NAK for seq=1 to trigger ring retransmit
-    let nak = Nak { from_seq: 1, count: 1, _pad1: [0u8; 48] };
+    let nak = Nak {
+        from_seq: 1,
+        count: 1,
+        _pad1: [0u8; 48],
+    };
     let payload = as_bytes(&nak);
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(
-        RECORD_NAK,
-        payload.len() as u16,
-        crc,
-    );
+    let hdr = WalHeader::new(RECORD_NAK, payload.len() as u16, crc);
     let hdr_bytes = hdr.to_bytes();
     let mut buf = vec![0u8; 16 + payload.len()];
     buf[..16].copy_from_slice(hdr_bytes);
@@ -239,11 +209,7 @@ fn nak_retransmit_from_wal() {
         other => panic!("expected Data, got {other:?}"),
     };
     assert_eq!(hdr.record_type, RECORD_FILL);
-    let decoded = unsafe {
-        std::ptr::read_unaligned(
-            payload.as_ptr() as *const FillRecord,
-        )
-    };
+    let decoded = unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const FillRecord) };
     assert_eq!(decoded.seq, 1);
 }
 
@@ -263,23 +229,16 @@ fn cast_heartbeat_sent_on_idle() {
         heartbeat_interval_ms: 5,
         ..Default::default()
     };
-    let mut sender = CastSender::with_config(
-        recv_addr, 1, wal_dir, &config,
-    )
-    .unwrap();
+    let mut sender = CastSender::with_config(recv_addr, 1, wal_dir, &config).unwrap();
 
     thread::sleep(Duration::from_millis(10));
     sender.tick().unwrap();
 
     let mut buf = [0u8; 256];
     let result = tmp_recv.recv_from(&mut buf);
-    assert!(
-        result.is_ok(),
-        "should have received heartbeat"
-    );
+    assert!(result.is_ok(), "should have received heartbeat");
     let (n, _) = result.unwrap();
     assert!(n >= WalHeader::SIZE);
     let hdr = WalHeader::from_bytes(&buf[..16]).unwrap();
     assert_eq!(hdr.record_type, crate::records::RECORD_HEARTBEAT);
 }
-

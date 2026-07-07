@@ -114,8 +114,7 @@ impl Occupancy {
             if word >= self.levels[lvl].len() {
                 return None;
             }
-            let masked =
-                self.levels[lvl][word] & (u64::MAX << (idx & 63));
+            let masked = self.levels[lvl][word] & (u64::MAX << (idx & 63));
             if masked != 0 {
                 found = word * 64 + masked.trailing_zeros() as usize;
                 break;
@@ -159,8 +158,7 @@ impl Occupancy {
             };
             let masked = self.levels[lvl][word] & mask;
             if masked != 0 {
-                found =
-                    word * 64 + (63 - masked.leading_zeros() as usize);
+                found = word * 64 + (63 - masked.leading_zeros() as usize);
                 break;
             }
             if word == 0 {

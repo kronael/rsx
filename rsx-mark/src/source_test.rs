@@ -25,8 +25,7 @@ fn drain(cons: &mut rtrb::Consumer<SourcePrice>) -> Vec<SourcePrice> {
 
 #[test]
 fn combined_stream_envelope_unwrapped() {
-    let (mut prod, mut cons) =
-        rtrb::RingBuffer::<SourcePrice>::new(8);
+    let (mut prod, mut cons) = rtrb::RingBuffer::<SourcePrice>::new(8);
     let val: serde_json::Value = serde_json::from_str(
         r#"{"stream":"penguusdt@trade",
             "data":{"e":"trade","s":"PENGUUSDT","p":"0.00664200"}}"#,
@@ -41,12 +40,9 @@ fn combined_stream_envelope_unwrapped() {
 
 #[test]
 fn raw_stream_flat_still_parsed() {
-    let (mut prod, mut cons) =
-        rtrb::RingBuffer::<SourcePrice>::new(8);
-    let val: serde_json::Value = serde_json::from_str(
-        r#"{"e":"trade","s":"PENGUUSDT","p":"0.00664200"}"#,
-    )
-    .unwrap();
+    let (mut prod, mut cons) = rtrb::RingBuffer::<SourcePrice>::new(8);
+    let val: serde_json::Value =
+        serde_json::from_str(r#"{"e":"trade","s":"PENGUUSDT","p":"0.00664200"}"#).unwrap();
     handle_binance_msg(&val, 0, SCALE, &symbol_map(), &mut prod);
     let got = drain(&mut cons);
     assert_eq!(got.len(), 1, "raw-stream trade must still parse");
@@ -55,12 +51,9 @@ fn raw_stream_flat_still_parsed() {
 
 #[test]
 fn unknown_symbol_dropped() {
-    let (mut prod, mut cons) =
-        rtrb::RingBuffer::<SourcePrice>::new(8);
-    let val: serde_json::Value = serde_json::from_str(
-        r#"{"data":{"s":"BTCUSDT","p":"60000.00"}}"#,
-    )
-    .unwrap();
+    let (mut prod, mut cons) = rtrb::RingBuffer::<SourcePrice>::new(8);
+    let val: serde_json::Value =
+        serde_json::from_str(r#"{"data":{"s":"BTCUSDT","p":"60000.00"}}"#).unwrap();
     handle_binance_msg(&val, 0, SCALE, &symbol_map(), &mut prod);
     assert!(drain(&mut cons).is_empty());
 }

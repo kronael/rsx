@@ -107,7 +107,10 @@ fn parse_packet(buf: &[u8]) -> (u64, u16, &[u8]) {
     );
     let msg_len = u16::from_be_bytes([buf[20], buf[21]]) as usize;
     let end = MOLD_HDR + MSG_LEN_PREFIX + msg_len;
-    assert!(buf.len() >= end, "MoldUDP64 packet truncated before payload");
+    assert!(
+        buf.len() >= end,
+        "MoldUDP64 packet truncated before payload"
+    );
     (seq, count, &buf[MOLD_HDR + MSG_LEN_PREFIX..end])
 }
 
@@ -151,21 +154,15 @@ fn bench_moldudp64_rtt(c: &mut Criterion) {
                         // (what we'd assign to the NEXT data packet)
                         // and do NOT bump it — heartbeats consume no
                         // message sequence per spec.
-                        let len = frame_packet(
-                            &mut tx, &session, echo_seq, 0, &[],
-                        );
+                        let len = frame_packet(&mut tx, &session, echo_seq, 0, &[]);
                         echoer
                             .send_to(&tx[..len], src)
                             .expect("echoer heartbeat send");
                         continue;
                     }
-                    let len = frame_packet(
-                        &mut tx, &session, echo_seq, 1, payload,
-                    );
+                    let len = frame_packet(&mut tx, &session, echo_seq, 1, payload);
                     assert_eq!(len, WIRE_BYTES, "echoer wire size");
-                    echoer
-                        .send_to(&tx[..len], src)
-                        .expect("echoer data send");
+                    echoer.send_to(&tx[..len], src).expect("echoer data send");
                     echo_seq += 1;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -183,13 +180,7 @@ fn bench_moldudp64_rtt(c: &mut Criterion) {
 
     c.bench_function("moldudp64_rtt_loopback_128b", |b| {
         b.iter(|| {
-            let len = frame_packet(
-                &mut tx,
-                &session,
-                ping_seq,
-                1,
-                black_box(&payload),
-            );
+            let len = frame_packet(&mut tx, &session, ping_seq, 1, black_box(&payload));
             assert_eq!(len, WIRE_BYTES, "pinger wire size");
             pinger
                 .send_to(&tx[..len], echoer_addr)
@@ -198,16 +189,13 @@ fn bench_moldudp64_rtt(c: &mut Criterion) {
             loop {
                 match pinger.recv_from(&mut rx) {
                     Ok((n, _)) => {
-                        let (_seq, count, echo_payload) =
-                            parse_packet(&rx[..n]);
+                        let (_seq, count, echo_payload) = parse_packet(&rx[..n]);
                         assert_eq!(count, 1, "echoed msg_count");
                         assert_eq!(echo_payload.len(), PAYLOAD);
                         black_box(echo_payload);
                         break;
                     }
-                    Err(ref e)
-                        if e.kind() == std::io::ErrorKind::WouldBlock =>
-                    {
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::hint::spin_loop();
                     }
                     Err(e) => panic!("pinger recv: {e}"),
@@ -220,13 +208,7 @@ fn bench_moldudp64_rtt(c: &mut Criterion) {
     // Tell the echoer to exit (end-of-session packet, header only).
     stop.store(true, Ordering::Release);
     let mut shutdown_buf = [0u8; MOLD_HDR];
-    let n = frame_packet(
-        &mut shutdown_buf,
-        &session,
-        ping_seq,
-        END_OF_SESSION,
-        &[],
-    );
+    let n = frame_packet(&mut shutdown_buf, &session, ping_seq, END_OF_SESSION, &[]);
     let _ = pinger.send_to(&shutdown_buf[..n], echoer_addr);
     let _ = handle.join();
 }

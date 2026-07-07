@@ -24,12 +24,8 @@ pub async fn drive_pg_connection(
 /// Connect to Postgres and spawn the connection driver task.
 /// Must be called from within a tokio runtime (the driver is
 /// spawned via `tokio::spawn`).
-pub async fn connect(
-    url: &str,
-) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
-    let (client, connection) =
-        tokio_postgres::connect(url, tokio_postgres::NoTls)
-            .await?;
+pub async fn connect(url: &str) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
+    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
     tokio::spawn(drive_pg_connection(connection));
     Ok(client)
 }

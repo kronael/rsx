@@ -89,11 +89,17 @@ fn env_str(k: &str, d: &str) -> String {
 }
 
 fn env_u64(k: &str, d: u64) -> u64 {
-    std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+    std::env::var(k)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(d)
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 fn mint_jwt(secret: &str, user_id: u32) -> String {
@@ -169,7 +175,10 @@ impl WsConn {
              Authorization: Bearer {jwt}\r\n\
              \r\n",
         );
-        let mut conn = WsConn { stream, rbuf: Vec::with_capacity(4096) };
+        let mut conn = WsConn {
+            stream,
+            rbuf: Vec::with_capacity(4096),
+        };
         conn.stream.write_all(req.as_bytes())?;
         conn.stream.flush()?;
         // Read the 101 response up to the header terminator.
@@ -304,8 +313,7 @@ fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Compact `{N:[sym,side,px,qty,cid,tif]}` order frame.
 fn order_frame(sym: u64, side: u8, px: i64, qty: i64, cid: &str, tif: u8) -> Vec<u8> {
-    format!("{{\"N\":[{sym},{side},{px},{qty},\"{cid}\",{tif}]}}")
-        .into_bytes()
+    format!("{{\"N\":[{sym},{side},{px},{qty},\"{cid}\",{tif}]}}").into_bytes()
 }
 
 fn cid20(seed: &str) -> String {
@@ -512,7 +520,10 @@ fn print_table(label: &str, s: &Stats, out: &Outcome, achieved_rate: f64, mode: 
         }
     );
     println!("  RTT us  min={} mean={}", s.min, s.mean);
-    println!("          p50={}  p99={}  p999={}  max={}", s.p50, s.p99, s.p999, s.max);
+    println!(
+        "          p50={}  p99={}  p999={}  max={}",
+        s.p50, s.p99, s.p999, s.max
+    );
 }
 
 // ── REST baseline ──────────────────────────────────────────
@@ -581,8 +592,13 @@ fn calibrate_client_overhead(iters: u64) -> Stats {
     });
     let stream = TcpStream::connect(addr).unwrap();
     stream.set_nodelay(true).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    let mut conn = WsConn { stream, rbuf: Vec::new() };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut conn = WsConn {
+        stream,
+        rbuf: Vec::new(),
+    };
     let payload = b"{\"N\":[10,0,1,100000,\"calib00000000000000\",0]}";
     let mut rtts = Vec::with_capacity(iters as usize);
     for _ in 0..iters {
@@ -714,9 +730,8 @@ fn main() {
         let jwt = mint_jwt(&secret, 1);
         match WsConn::connect(&ws_addr, &jwt) {
             Ok(mut conn) => {
-                let (rtts, out, dur) = run_stream(
-                    &mut conn, sym, 0, px, qty, TIF_GTC,"s1-", warmup, single_n,
-                );
+                let (rtts, out, dur) =
+                    run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, "s1-", warmup, single_n);
                 let rate = rtts.len() as f64 / dur.as_secs_f64().max(1e-9);
                 let s = percentiles(rtts);
                 print_table(
@@ -754,11 +769,30 @@ fn main() {
                     Err(_) => return (Vec::new(), Outcome::default(), Duration::ZERO),
                 };
                 // Per-connection warmup BEFORE the barrier.
-                let _ = run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, &format!("w{c}-"), 0, par_warmup);
+                let _ = run_stream(
+                    &mut conn,
+                    sym,
+                    0,
+                    px,
+                    qty,
+                    TIF_GTC,
+                    &format!("w{c}-"),
+                    0,
+                    par_warmup,
+                );
                 barrier.wait();
                 let start = Instant::now();
-                let (rtts, out, _) =
-                    run_stream(&mut conn, sym, 0, px, qty, TIF_GTC,&format!("p{c}-"), 0, par_n);
+                let (rtts, out, _) = run_stream(
+                    &mut conn,
+                    sym,
+                    0,
+                    px,
+                    qty,
+                    TIF_GTC,
+                    &format!("p{c}-"),
+                    0,
+                    par_n,
+                );
                 (rtts, out, start.elapsed())
             }));
         }

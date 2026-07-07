@@ -2,13 +2,13 @@ use crate::encode_utils::as_bytes;
 use crate::encode_utils::compute_crc32;
 use crate::header::WalHeader;
 use crate::records::CastHeartbeat;
-use rsx_messages::FillRecord;
 use crate::records::Nak;
-use rsx_messages::RECORD_FILL;
+use crate::records::ReplicationRequest;
 use crate::records::RECORD_HEARTBEAT;
 use crate::records::RECORD_NAK;
 use crate::records::RECORD_REPLICATION_REQUEST;
-use crate::records::ReplicationRequest;
+use rsx_messages::FillRecord;
+use rsx_messages::RECORD_FILL;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
@@ -23,11 +23,7 @@ fn nak_encode_decode_roundtrip() {
         _pad1: [0u8; 48],
     };
     let bytes = as_bytes(&nak);
-    let decoded = unsafe {
-        std::ptr::read_unaligned(
-            bytes.as_ptr() as *const Nak,
-        )
-    };
+    let decoded = unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const Nak) };
     assert_eq!(decoded.from_seq, 100);
     assert_eq!(decoded.count, 5);
 }
@@ -61,11 +57,7 @@ fn heartbeat_encode_decode_roundtrip() {
         _pad1: [0u8; 56],
     };
     let bytes = as_bytes(&hb);
-    let decoded = unsafe {
-        std::ptr::read_unaligned(
-            bytes.as_ptr() as *const CastHeartbeat,
-        )
-    };
+    let decoded = unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const CastHeartbeat) };
     assert_eq!(decoded.highest_seq, 999);
 }
 
@@ -142,15 +134,11 @@ fn crc32_covers_payload_not_header() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     let payload = as_bytes(&fill);
     let crc = compute_crc32(payload);
-    let header = WalHeader::new(
-        RECORD_FILL,
-        payload.len() as u16,
-        crc,
-    );
+    let header = WalHeader::new(RECORD_FILL, payload.len() as u16, crc);
     assert_eq!(header.crc32, crc);
 
     // Mutate header bytes -- CRC unchanged
@@ -178,11 +166,7 @@ fn replay_request_encode_decode_roundtrip() {
         _pad1: [0u8; 48],
     };
     let bytes = as_bytes(&req);
-    let decoded = unsafe {
-        std::ptr::read_unaligned(
-            bytes.as_ptr() as *const ReplicationRequest,
-        )
-    };
+    let decoded = unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const ReplicationRequest) };
     assert_eq!(decoded.stream_id, 7);
     assert_eq!(decoded.from_seq, 42);
 }

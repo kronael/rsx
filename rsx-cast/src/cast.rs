@@ -79,8 +79,7 @@ const SEND_RING_FRAME_BYTES: usize = 128;
 /// bitwise AND. Drives the recovery horizon for NAK on the
 /// hot tier; older NAKs fall through to WAL random-access.
 const SEND_RING_CAPACITY: usize = 4096;
-const SEND_RING_MASK: u64 =
-    SEND_RING_CAPACITY as u64 - 1;
+const SEND_RING_MASK: u64 = SEND_RING_CAPACITY as u64 - 1;
 
 /// Receiver reorder-ring capacity. Power of two so
 /// seq -> slot is a bitwise AND. Sizes the in-flight gap
@@ -89,8 +88,7 @@ const SEND_RING_MASK: u64 =
 /// comfortable margin above realistic LAN hiccups; bigger
 /// gaps are recovered via DXS/TCP replay anyway.
 const REORDER_CAPACITY: usize = 2048;
-const REORDER_MASK: u64 =
-    REORDER_CAPACITY as u64 - 1;
+const REORDER_MASK: u64 = REORDER_CAPACITY as u64 - 1;
 /// Per-slot frame size. Sized to hold every current casting
 /// record (FillRecord, BboRecord, OrderAcceptedRecord and
 /// CaughtUpRecord are 128 B payload; everything else is
@@ -109,11 +107,7 @@ fn frame_and_send(
     dest: SocketAddr,
 ) -> io::Result<usize> {
     let crc = compute_crc32(payload);
-    let header = WalHeader::new(
-        record_type,
-        payload.len() as u16,
-        crc,
-    );
+    let header = WalHeader::new(record_type, payload.len() as u16, crc);
     let total = WalHeader::SIZE + payload.len();
     buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..total].copy_from_slice(payload);
@@ -165,17 +159,8 @@ pub struct CastSender {
 }
 
 impl CastSender {
-    pub fn new(
-        dest: SocketAddr,
-        stream_id: u32,
-        wal_dir: &std::path::Path,
-    ) -> io::Result<Self> {
-        Self::with_config(
-            dest,
-            stream_id,
-            wal_dir,
-            &CastConfig::default(),
-        )
+    pub fn new(dest: SocketAddr, stream_id: u32, wal_dir: &std::path::Path) -> io::Result<Self> {
+        Self::with_config(dest, stream_id, wal_dir, &CastConfig::default())
     }
 
     pub fn with_config(
@@ -184,10 +169,7 @@ impl CastSender {
         wal_dir: &std::path::Path,
         config: &CastConfig,
     ) -> io::Result<Self> {
-        let bind_str = config
-            .sender_bind_addr
-            .as_deref()
-            .unwrap_or("0.0.0.0:0");
+        let bind_str = config.sender_bind_addr.as_deref().unwrap_or("0.0.0.0:0");
         let bind: SocketAddr = bind_str.parse().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -200,28 +182,13 @@ impl CastSender {
             dest,
             next_seq: 1,
             last_heartbeat: Instant::now(),
-            heartbeat_interval: Duration::from_millis(
-                config.heartbeat_interval_ms,
-            ),
-            ring_seqs: vec![0u64; SEND_RING_CAPACITY]
-                .into_boxed_slice(),
-            ring_lens: vec![0u16; SEND_RING_CAPACITY]
-                .into_boxed_slice(),
-            ring_frames: vec![
-                0u8;
-                SEND_RING_CAPACITY
-                    * SEND_RING_FRAME_BYTES
-            ]
-            .into_boxed_slice(),
-            ring_last_retx_ns: vec![
-                0u64;
-                SEND_RING_CAPACITY
-            ]
-            .into_boxed_slice(),
+            heartbeat_interval: Duration::from_millis(config.heartbeat_interval_ms),
+            ring_seqs: vec![0u64; SEND_RING_CAPACITY].into_boxed_slice(),
+            ring_lens: vec![0u16; SEND_RING_CAPACITY].into_boxed_slice(),
+            ring_frames: vec![0u8; SEND_RING_CAPACITY * SEND_RING_FRAME_BYTES].into_boxed_slice(),
+            ring_last_retx_ns: vec![0u64; SEND_RING_CAPACITY].into_boxed_slice(),
             start_instant: Instant::now(),
-            retx_dedup_window_ns: config
-                .retx_dedup_window_us
-                .saturating_mul(1000),
+            retx_dedup_window_ns: config.retx_dedup_window_us.saturating_mul(1000),
             stream_id,
             wal_dir: wal_dir.to_path_buf(),
             buf: [0u8; PACKET_BUF_SIZE],
@@ -237,10 +204,7 @@ impl CastSender {
     /// Paired callers (those that both persist AND publish the
     /// same record) MUST use this entry point. See
     /// `notes/crc.md` and the rsx-cast crate docs.
-    pub fn send_framed(
-        &mut self,
-        framed: &Framed,
-    ) -> io::Result<()> {
+    pub fn send_framed(&mut self, framed: &Framed) -> io::Result<()> {
         let seq = framed.seq;
         let total = framed.total as usize;
         let wire = &framed.wire[..total];
@@ -251,14 +215,11 @@ impl CastSender {
             // header+payload packing.
             let slot = (seq & SEND_RING_MASK) as usize;
             let off = slot * SEND_RING_FRAME_BYTES;
-            self.ring_frames[off..off + total]
-                .copy_from_slice(wire);
+            self.ring_frames[off..off + total].copy_from_slice(wire);
             self.ring_seqs[slot] = seq;
             self.ring_lens[slot] = total as u16;
-            self.socket.send_to(
-                &self.ring_frames[off..off + total],
-                self.dest,
-            )?;
+            self.socket
+                .send_to(&self.ring_frames[off..off + total], self.dest)?;
         } else {
             // Large record: send directly from framed.wire;
             // mark ring slot dirty (NAK falls to WAL).
@@ -279,12 +240,9 @@ impl CastSender {
 
     pub fn tick(&mut self) -> io::Result<()> {
         let now = Instant::now();
-        if now.duration_since(self.last_heartbeat)
-            >= self.heartbeat_interval
-        {
+        if now.duration_since(self.last_heartbeat) >= self.heartbeat_interval {
             let hb = CastHeartbeat {
-                highest_seq: self.next_seq
-                    .saturating_sub(1),
+                highest_seq: self.next_seq.saturating_sub(1),
                 _pad1: [0u8; 56],
             };
             frame_and_send(
@@ -305,13 +263,9 @@ impl CastSender {
         // we'd be reading WAL anyway; cap at capacity.
         let count = nak.count.min(SEND_RING_CAPACITY as u64);
         if count != nak.count {
-            warn!(
-                "nak count={} clamped to {}",
-                nak.count, count
-            );
+            warn!("nak count={} clamped to {}", nak.count, count);
         }
-        let now_ns =
-            self.start_instant.elapsed().as_nanos() as u64;
+        let now_ns = self.start_instant.elapsed().as_nanos() as u64;
         for i in 0..count {
             let seq = nak.from_seq.saturating_add(i);
             // Dedup: if this slot was retransmitted within
@@ -320,10 +274,7 @@ impl CastSender {
             // legitimate retries fall through.
             let slot = (seq & SEND_RING_MASK) as usize;
             let last = self.ring_last_retx_ns[slot];
-            if last != 0
-                && now_ns.saturating_sub(last)
-                    < self.retx_dedup_window_ns
-            {
+            if last != 0 && now_ns.saturating_sub(last) < self.retx_dedup_window_ns {
                 continue;
             }
             // Hot tier: preallocated ring lookup. Slot may
@@ -331,16 +282,13 @@ impl CastSender {
             // seq the ring has wrapped past (cache miss
             // via seq mismatch), or be unused
             // (ring_seqs[slot] == 0).
-            if seq != 0
-                && self.ring_seqs[slot] == seq
-                && self.ring_lens[slot] > 0
-            {
+            if seq != 0 && self.ring_seqs[slot] == seq && self.ring_lens[slot] > 0 {
                 let len = self.ring_lens[slot] as usize;
                 let off = slot * SEND_RING_FRAME_BYTES;
-                if let Err(e) = self.socket.send_to(
-                    &self.ring_frames[off..off + len],
-                    self.dest,
-                ) {
+                if let Err(e) = self
+                    .socket
+                    .send_to(&self.ring_frames[off..off + len], self.dest)
+                {
                     warn!(
                         "nak retransmit send \
                          failed seq={seq}: {e}"
@@ -354,14 +302,9 @@ impl CastSender {
             // every seq we've ever appended (until GC), so
             // NAK retransmit works for records older than
             // send_ring_limit.
-            match read_record_at_seq(
-                self.stream_id,
-                seq,
-                &self.wal_dir,
-            ) {
+            match read_record_at_seq(self.stream_id, seq, &self.wal_dir) {
                 Ok(Some(rec)) => {
-                    let total = WalHeader::SIZE
-                        + rec.payload.len();
+                    let total = WalHeader::SIZE + rec.payload.len();
                     if total > self.buf.len() {
                         warn!(
                             "nak wal record too large \
@@ -370,17 +313,9 @@ impl CastSender {
                         );
                         continue;
                     }
-                    self.buf[..WalHeader::SIZE]
-                        .copy_from_slice(rec.header.to_bytes());
-                    self.buf
-                        [WalHeader::SIZE..total]
-                        .copy_from_slice(&rec.payload);
-                    if let Err(e) = self
-                        .socket
-                        .send_to(
-                            &self.buf[..total], self.dest,
-                        )
-                    {
+                    self.buf[..WalHeader::SIZE].copy_from_slice(rec.header.to_bytes());
+                    self.buf[WalHeader::SIZE..total].copy_from_slice(&rec.payload);
+                    if let Err(e) = self.socket.send_to(&self.buf[..total], self.dest) {
                         warn!(
                             "nak wal-retransmit send \
                              failed seq={seq}: {e}"
@@ -413,26 +348,18 @@ impl CastSender {
                     if n < WalHeader::SIZE {
                         continue;
                     }
-                    let hdr = match WalHeader::from_bytes(
-                        &cbuf[..WalHeader::SIZE],
-                    ) {
+                    let hdr = match WalHeader::from_bytes(&cbuf[..WalHeader::SIZE]) {
                         Some(h) => h,
                         None => continue,
                     };
-                    let payload =
-                        &cbuf[WalHeader::SIZE..n];
+                    let payload = &cbuf[WalHeader::SIZE..n];
                     if hdr.record_type == RECORD_NAK {
-                        if let Some(nak) =
-                            decode_payload::<Nak>(payload)
-                        {
+                        if let Some(nak) = decode_payload::<Nak>(payload) {
                             self.handle_nak(&nak);
                         }
                     }
                 }
-                Err(ref e)
-                    if e.kind()
-                        == io::ErrorKind::WouldBlock =>
-                {
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(_) => break,
@@ -442,18 +369,8 @@ impl CastSender {
 
     /// Send raw bytes with explicit record_type.
     /// Does NOT assign seq (for non-CastRecord payloads).
-    pub fn send_raw(
-        &mut self,
-        record_type: u16,
-        payload: &[u8],
-    ) -> io::Result<()> {
-        frame_and_send(
-            &self.socket,
-            &mut self.buf,
-            record_type,
-            payload,
-            self.dest,
-        )?;
+    pub fn send_raw(&mut self, record_type: u16, payload: &[u8]) -> io::Result<()> {
+        frame_and_send(&self.socket, &mut self.buf, record_type, payload, self.dest)?;
         self.last_heartbeat = Instant::now();
         Ok(())
     }
@@ -498,9 +415,7 @@ pub enum CastRecv {
     /// slots). Consumer must do a full DXS/TCP cold-start from
     /// `last_delivered_seq + 1`, then call
     /// `reset_after_replay(new_tip)` to resume.
-    Reconnect {
-        last_delivered_seq: u64,
-    },
+    Reconnect { last_delivered_seq: u64 },
 }
 
 /// Zero-copy counterpart to [`CastRecv`], returned by
@@ -564,15 +479,8 @@ pub struct CastReceiver {
 }
 
 impl CastReceiver {
-    pub fn new(
-        bind_addr: SocketAddr,
-        sender_addr: SocketAddr,
-    ) -> io::Result<Self> {
-        Self::with_config(
-            bind_addr,
-            sender_addr,
-            &CastConfig::default(),
-        )
+    pub fn new(bind_addr: SocketAddr, sender_addr: SocketAddr) -> io::Result<Self> {
+        Self::with_config(bind_addr, sender_addr, &CastConfig::default())
     }
 
     pub fn with_config(
@@ -595,23 +503,14 @@ impl CastReceiver {
             fault_gap_end_inclusive: 0,
             needs_reconnect: false,
             reconnect_last_delivered_seq: 0,
-            nak_sent_at: vec![0u64; REORDER_CAPACITY]
-                .into_boxed_slice(),
+            nak_sent_at: vec![0u64; REORDER_CAPACITY].into_boxed_slice(),
             nak_retries_on_oldest: 0,
-            nak_debounce_ns: config
-                .nak_debounce_us
-                .saturating_mul(1000),
+            nak_debounce_ns: config.nak_debounce_us.saturating_mul(1000),
             max_nak_retries: config.max_nak_retries,
             start_instant: Instant::now(),
-            reorder_seqs: vec![0u64; REORDER_CAPACITY]
-                .into_boxed_slice(),
-            reorder_lens: vec![0u16; REORDER_CAPACITY]
-                .into_boxed_slice(),
-            reorder_frames: vec![
-                0u8;
-                REORDER_CAPACITY * REORDER_FRAME_BYTES
-            ]
-            .into_boxed_slice(),
+            reorder_seqs: vec![0u64; REORDER_CAPACITY].into_boxed_slice(),
+            reorder_lens: vec![0u16; REORDER_CAPACITY].into_boxed_slice(),
+            reorder_frames: vec![0u8; REORDER_CAPACITY * REORDER_FRAME_BYTES].into_boxed_slice(),
             buf: [0u8; PACKET_BUF_SIZE],
         })
     }
@@ -672,25 +571,18 @@ impl CastReceiver {
 
     /// Transition the receiver to FAULTED (NAK retry budget
     /// exhausted). Sticky until reset_after_replay().
-    fn fault(
-        &mut self,
-        gap_start: u64,
-        gap_end_inclusive: u64,
-    ) {
+    fn fault(&mut self, gap_start: u64, gap_end_inclusive: u64) {
         if self.faulted {
             return;
         }
         self.faulted = true;
-        self.fault_last_delivered_seq =
-            self.expected_seq.saturating_sub(1);
+        self.fault_last_delivered_seq = self.expected_seq.saturating_sub(1);
         self.fault_gap_start = gap_start;
         self.fault_gap_end_inclusive = gap_end_inclusive;
         warn!(
             "cmp receiver FAULTED: last_delivered={} \
              gap=[{}..={}]",
-            self.fault_last_delivered_seq,
-            gap_start,
-            gap_end_inclusive,
+            self.fault_last_delivered_seq, gap_start, gap_end_inclusive,
         );
     }
 
@@ -703,8 +595,7 @@ impl CastReceiver {
         if self.faulted || self.needs_reconnect {
             return;
         }
-        let Some((from, count)) = self.oldest_missing_run()
-        else {
+        let Some((from, count)) = self.oldest_missing_run() else {
             return;
         };
         // Per-gap debounce: only re-NAK if debounce window
@@ -712,16 +603,12 @@ impl CastReceiver {
         // (slot value == 0).
         let slot = (from & REORDER_MASK) as usize;
         let last = self.nak_sent_at[slot];
-        if last != 0
-            && now_ns.saturating_sub(last)
-                < self.nak_debounce_ns
-        {
+        if last != 0 && now_ns.saturating_sub(last) < self.nak_debounce_ns {
             return;
         }
         self.send_nak(from, count);
         self.nak_sent_at[slot] = now_ns;
-        self.nak_retries_on_oldest =
-            self.nak_retries_on_oldest.saturating_add(1);
+        self.nak_retries_on_oldest = self.nak_retries_on_oldest.saturating_add(1);
         if self.nak_retries_on_oldest > self.max_nak_retries {
             self.fault(from, from + count - 1);
         }
@@ -742,17 +629,14 @@ impl CastReceiver {
     {
         if self.needs_reconnect {
             return CastRecvWith::Reconnect {
-                last_delivered_seq: self
-                    .reconnect_last_delivered_seq,
+                last_delivered_seq: self.reconnect_last_delivered_seq,
             };
         }
         if self.faulted {
             return CastRecvWith::Faulted {
-                last_delivered_seq: self
-                    .fault_last_delivered_seq,
+                last_delivered_seq: self.fault_last_delivered_seq,
                 gap_start: self.fault_gap_start,
-                gap_end_inclusive: self
-                    .fault_gap_end_inclusive,
+                gap_end_inclusive: self.fault_gap_end_inclusive,
             };
         }
         // Option<F> lets the compiler verify f is called at
@@ -764,16 +648,11 @@ impl CastReceiver {
                     if n < WalHeader::SIZE {
                         continue;
                     }
-                    let hdr = match WalHeader::from_bytes(
-                        &self.buf[..WalHeader::SIZE],
-                    ) {
+                    let hdr = match WalHeader::from_bytes(&self.buf[..WalHeader::SIZE]) {
                         Some(h) => h,
                         None => {
                             let now = Instant::now();
-                            if now.duration_since(
-                                self.last_drop_warn,
-                            ) >= Duration::from_secs(5)
-                            {
+                            if now.duration_since(self.last_drop_warn) >= Duration::from_secs(5) {
                                 warn!(
                                     "cmp: dropped datagram \
                                      with unrecognized \
@@ -792,10 +671,7 @@ impl CastReceiver {
                     if WalHeader::SIZE + payload_len > n {
                         continue;
                     }
-                    let payload = &self.buf
-                        [WalHeader::SIZE
-                            ..WalHeader::SIZE
-                                + payload_len];
+                    let payload = &self.buf[WalHeader::SIZE..WalHeader::SIZE + payload_len];
                     let crc = compute_crc32(payload);
                     if crc != hdr.crc32 {
                         continue;
@@ -803,22 +679,11 @@ impl CastReceiver {
 
                     match hdr.record_type {
                         RECORD_HEARTBEAT => {
-                            if let Some(hb) =
-                                decode_payload::<CastHeartbeat>(
-                                    payload,
-                                )
-                            {
-                                if hb.highest_seq
-                                    > self.highest_seen
-                                {
-                                    self.highest_seen =
-                                        hb.highest_seq;
+                            if let Some(hb) = decode_payload::<CastHeartbeat>(payload) {
+                                if hb.highest_seq > self.highest_seen {
+                                    self.highest_seen = hb.highest_seq;
                                 }
-                                let now_ns = self
-                                    .start_instant
-                                    .elapsed()
-                                    .as_nanos()
-                                    as u64;
+                                let now_ns = self.start_instant.elapsed().as_nanos() as u64;
                                 self.maybe_nak(now_ns);
                             }
                             continue;
@@ -846,9 +711,7 @@ impl CastReceiver {
                         self.expected_seq = seq;
                     }
 
-                    if seq < self.expected_seq
-                        && self.expected_seq - seq > 100
-                    {
+                    if seq < self.expected_seq && self.expected_seq - seq > 100 {
                         warn!(
                             "cmp sender reset detected: \
                              seq={} expected={}, re-sync",
@@ -870,35 +733,24 @@ impl CastReceiver {
                     if seq == self.expected_seq {
                         self.expected_seq += 1;
                         self.nak_retries_on_oldest = 0;
-                        let slot =
-                            (seq & REORDER_MASK) as usize;
+                        let slot = (seq & REORDER_MASK) as usize;
                         self.nak_sent_at[slot] = 0;
                         // Zero-copy: payload points into
                         // self.buf; f receives it directly.
                         f.take().unwrap()(hdr, payload);
                         return CastRecvWith::Data;
                     } else {
-                        let total = WalHeader::SIZE
-                            + payload.len();
+                        let total = WalHeader::SIZE + payload.len();
                         let mut conflict = false;
                         if total <= REORDER_FRAME_BYTES {
-                            let slot = (seq & REORDER_MASK)
-                                as usize;
-                            let existing =
-                                self.reorder_seqs[slot];
-                            if existing == 0
-                                || existing == seq
-                            {
+                            let slot = (seq & REORDER_MASK) as usize;
+                            let existing = self.reorder_seqs[slot];
+                            if existing == 0 || existing == seq {
                                 self.reorder_seqs[slot] = seq;
-                                self.reorder_lens[slot] =
-                                    total as u16;
-                                let off = slot
-                                    * REORDER_FRAME_BYTES;
-                                self.reorder_frames
-                                    [off..off + total]
-                                    .copy_from_slice(
-                                        &self.buf[..total],
-                                    );
+                                self.reorder_lens[slot] = total as u16;
+                                let off = slot * REORDER_FRAME_BYTES;
+                                self.reorder_frames[off..off + total]
+                                    .copy_from_slice(&self.buf[..total]);
                             } else {
                                 conflict = true;
                             }
@@ -913,46 +765,32 @@ impl CastReceiver {
                             if !self.needs_reconnect {
                                 self.needs_reconnect = true;
                                 self.reconnect_last_delivered_seq =
-                                    self.expected_seq
-                                        .saturating_sub(1);
+                                    self.expected_seq.saturating_sub(1);
                                 warn!(
                                     "cmp reorder ring \
                                      overflow: \
                                      last_delivered={} \
                                      seq={} gap>{}",
-                                    self.reconnect_last_delivered_seq,
-                                    seq,
-                                    REORDER_CAPACITY,
+                                    self.reconnect_last_delivered_seq, seq, REORDER_CAPACITY,
                                 );
                             }
                             return CastRecvWith::Reconnect {
-                                last_delivered_seq: self
-                                    .reconnect_last_delivered_seq,
+                                last_delivered_seq: self.reconnect_last_delivered_seq,
                             };
                         }
-                        let now_ns = self
-                            .start_instant
-                            .elapsed()
-                            .as_nanos()
-                            as u64;
+                        let now_ns = self.start_instant.elapsed().as_nanos() as u64;
                         self.maybe_nak(now_ns);
                         if self.faulted {
                             return CastRecvWith::Faulted {
-                                last_delivered_seq: self
-                                    .fault_last_delivered_seq,
-                                gap_start: self
-                                    .fault_gap_start,
-                                gap_end_inclusive: self
-                                    .fault_gap_end_inclusive,
+                                last_delivered_seq: self.fault_last_delivered_seq,
+                                gap_start: self.fault_gap_start,
+                                gap_end_inclusive: self.fault_gap_end_inclusive,
                             };
                         }
                         continue;
                     }
                 }
-                Err(ref e)
-                    if e.kind()
-                        == io::ErrorKind::WouldBlock =>
-                {
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(_) => break,
@@ -961,19 +799,15 @@ impl CastReceiver {
         // Drain reorder ring: if the slot at expected_seq holds
         // a buffered packet, deliver it zero-copy via callback.
         if self.expected_seq != 0 {
-            let slot =
-                (self.expected_seq & REORDER_MASK) as usize;
+            let slot = (self.expected_seq & REORDER_MASK) as usize;
             if self.reorder_seqs[slot] == self.expected_seq {
-                let len =
-                    self.reorder_lens[slot] as usize;
+                let len = self.reorder_lens[slot] as usize;
                 let off = slot * REORDER_FRAME_BYTES;
-                if let Some(hdr) = WalHeader::from_bytes(
-                    &self.reorder_frames
-                        [off..off + WalHeader::SIZE],
-                ) {
+                if let Some(hdr) =
+                    WalHeader::from_bytes(&self.reorder_frames[off..off + WalHeader::SIZE])
+                {
                     {
-                        let payload = &self.reorder_frames
-                            [off + WalHeader::SIZE..off + len];
+                        let payload = &self.reorder_frames[off + WalHeader::SIZE..off + len];
                         f.take().unwrap()(hdr, payload);
                     }
                     self.reorder_seqs[slot] = 0;
@@ -1036,9 +870,7 @@ impl CastReceiver {
     /// forever on attacker-controllable input." See CTO audit
     /// .ship/27 attack scenario A.
     pub(crate) fn oldest_missing_run(&self) -> Option<(u64, u64)> {
-        if self.expected_seq == 0
-            || self.expected_seq > self.highest_seen
-        {
+        if self.expected_seq == 0 || self.expected_seq > self.highest_seen {
             return None;
         }
         let from = self.expected_seq;

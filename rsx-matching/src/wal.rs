@@ -1,18 +1,15 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::REASON_CANCELLED;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
-use rsx_types::NONE;
-use rsx_types::Side;
-use rsx_types::TimeInForce;
+use rsx_book::matching::IncomingOrder;
 use rsx_book::snapshot;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
+use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
-use rsx_cast::wal::extract_seq;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
@@ -21,6 +18,9 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_CANCELLED;
+use rsx_types::Side;
+use rsx_types::TimeInForce;
+use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 use std::fs;
 use std::io;
@@ -72,15 +72,12 @@ pub fn write_events_to_wal(
                 taker_order_id_lo,
                 taker_ts_ns,
             } => {
-                let (reduce_only, tif) =
-                    if maker_handle != NONE {
-                        let slot =
-                            book.orders.get(maker_handle);
-                        (slot.is_reduce_only() as u8,
-                         slot.tif)
-                    } else {
-                        (0, 0)
-                    };
+                let (reduce_only, tif) = if maker_handle != NONE {
+                    let slot = book.orders.get(maker_handle);
+                    (slot.is_reduce_only() as u8, slot.tif)
+                } else {
+                    (0, 0)
+                };
                 let mut record = FillRecord {
                     seq: 0,
                     ts_ns,
@@ -115,14 +112,12 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif) =
-                    if handle != NONE {
-                        let slot = book.orders.get(handle);
-                        (slot.is_reduce_only() as u8,
-                         slot.tif)
-                    } else {
-                        (0, 0)
-                    };
+                let (reduce_only, tif) = if handle != NONE {
+                    let slot = book.orders.get(handle);
+                    (slot.is_reduce_only() as u8, slot.tif)
+                } else {
+                    (0, 0)
+                };
                 let mut record = OrderInsertedRecord {
                     seq: 0,
                     ts_ns,
@@ -151,14 +146,12 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif, post_only) =
-                    if handle != NONE {
-                        let slot = book.orders.get(handle);
-                        (slot.is_reduce_only() as u8,
-                         slot.tif, 0u8)
-                    } else {
-                        (0, 0, 0)
-                    };
+                let (reduce_only, tif, post_only) = if handle != NONE {
+                    let slot = book.orders.get(handle);
+                    (slot.is_reduce_only() as u8, slot.tif, 0u8)
+                } else {
+                    (0, 0, 0)
+                };
                 let mut record = OrderCancelledRecord {
                     seq: 0,
                     ts_ns,
@@ -187,14 +180,12 @@ pub fn write_events_to_wal(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif) =
-                    if handle != NONE {
-                        let slot = book.orders.get(handle);
-                        (slot.is_reduce_only() as u8,
-                         slot.tif)
-                    } else {
-                        (0, 0)
-                    };
+                let (reduce_only, tif) = if handle != NONE {
+                    let slot = book.orders.get(handle);
+                    (slot.is_reduce_only() as u8, slot.tif)
+                } else {
+                    (0, 0)
+                };
                 let mut record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
@@ -269,14 +260,12 @@ pub fn publish_events(
                 taker_order_id_lo,
                 taker_ts_ns,
             } => {
-                let (reduce_only, tif) =
-                    if maker_handle != NONE {
-                        let slot =
-                            book.orders.get(maker_handle);
-                        (slot.is_reduce_only() as u8, slot.tif)
-                    } else {
-                        (0, 0)
-                    };
+                let (reduce_only, tif) = if maker_handle != NONE {
+                    let slot = book.orders.get(maker_handle);
+                    (slot.is_reduce_only() as u8, slot.tif)
+                } else {
+                    (0, 0)
+                };
                 let mut record = FillRecord {
                     seq: 0,
                     ts_ns,
@@ -308,13 +297,12 @@ pub fn publish_events(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif) =
-                    if handle != NONE {
-                        let slot = book.orders.get(handle);
-                        (slot.is_reduce_only() as u8, slot.tif)
-                    } else {
-                        (0, 0)
-                    };
+                let (reduce_only, tif) = if handle != NONE {
+                    let slot = book.orders.get(handle);
+                    (slot.is_reduce_only() as u8, slot.tif)
+                } else {
+                    (0, 0)
+                };
                 let mut record = OrderInsertedRecord {
                     seq: 0,
                     ts_ns,
@@ -340,14 +328,12 @@ pub fn publish_events(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif, post_only) =
-                    if handle != NONE {
-                        let slot = book.orders.get(handle);
-                        (slot.is_reduce_only() as u8,
-                         slot.tif, 0u8)
-                    } else {
-                        (0, 0, 0)
-                    };
+                let (reduce_only, tif, post_only) = if handle != NONE {
+                    let slot = book.orders.get(handle);
+                    (slot.is_reduce_only() as u8, slot.tif, 0u8)
+                } else {
+                    (0, 0, 0)
+                };
                 let mut record = OrderCancelledRecord {
                     seq: 0,
                     ts_ns,
@@ -373,13 +359,12 @@ pub fn publish_events(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif) =
-                    if handle != NONE {
-                        let slot = book.orders.get(handle);
-                        (slot.is_reduce_only() as u8, slot.tif)
-                    } else {
-                        (0, 0)
-                    };
+                let (reduce_only, tif) = if handle != NONE {
+                    let slot = book.orders.get(handle);
+                    (slot.is_reduce_only() as u8, slot.tif)
+                } else {
+                    (0, 0)
+                };
                 let mut record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
@@ -481,13 +466,9 @@ fn fan_out<T: rsx_cast::CastRecord>(
 
 /// Flush WAL if 10ms have elapsed since last flush.
 #[inline]
-pub fn flush_if_due(
-    writer: &mut WalWriter,
-    last_flush: &mut Instant,
-) -> io::Result<()> {
+pub fn flush_if_due(writer: &mut WalWriter, last_flush: &mut Instant) -> io::Result<()> {
     let now = Instant::now();
-    if now.duration_since(*last_flush).as_millis() >= 10
-    {
+    if now.duration_since(*last_flush).as_millis() >= 10 {
         writer.flush()?;
         *last_flush = now;
     }
@@ -497,10 +478,7 @@ pub fn flush_if_due(
 /// Load book snapshot from
 /// `{wal_dir}/{symbol_id}/snapshot.bin`.
 /// Returns None if not found or corrupted.
-pub fn load_snapshot(
-    wal_dir: &str,
-    symbol_id: u32,
-) -> Option<Box<Orderbook>> {
+pub fn load_snapshot(wal_dir: &str, symbol_id: u32) -> Option<Box<Orderbook>> {
     let path = PathBuf::from(wal_dir)
         .join(symbol_id.to_string())
         .join("snapshot.bin");
@@ -510,10 +488,7 @@ pub fn load_snapshot(
     };
     match snapshot::load(&mut file) {
         Ok(book) => {
-            info!(
-                "loaded snapshot from {}",
-                path.display(),
-            );
+            info!("loaded snapshot from {}", path.display(),);
             Some(book)
         }
         Err(e) => {
@@ -534,8 +509,7 @@ pub fn save_snapshot(
     symbol_id: u32,
     wal_last_seq: u64,
 ) -> io::Result<()> {
-    let dir = PathBuf::from(wal_dir)
-        .join(symbol_id.to_string());
+    let dir = PathBuf::from(wal_dir).join(symbol_id.to_string());
     let tmp = dir.join("snapshot.bin.tmp");
     let dest = dir.join("snapshot.bin");
     let mut file = fs::File::create(&tmp)?;
@@ -555,10 +529,7 @@ pub fn save_snapshot(
 /// Load the WAL seq sidecar written by [`save_snapshot`].
 /// Returns `None` if missing or unparseable; the caller must
 /// then fall back to "no snapshot" (full replay from seq 1).
-pub fn load_wal_seq(
-    wal_dir: &str,
-    symbol_id: u32,
-) -> Option<u64> {
+pub fn load_wal_seq(wal_dir: &str, symbol_id: u32) -> Option<u64> {
     let path = PathBuf::from(wal_dir)
         .join(symbol_id.to_string())
         .join("wal_seq.txt");
@@ -578,9 +549,7 @@ pub fn replay_wal_after_snapshot(
     start_seq: u64,
 ) -> io::Result<u64> {
     let wal_path = PathBuf::from(wal_dir);
-    let mut reader = WalReader::open_from_seq(
-        symbol_id, start_seq, &wal_path,
-    )?;
+    let mut reader = WalReader::open_from_seq(symbol_id, start_seq, &wal_path)?;
     let mut last_seq = start_seq.saturating_sub(1);
     let mut accepted = 0u64;
     let mut cancelled = 0u64;
@@ -598,23 +567,17 @@ pub fn replay_wal_after_snapshot(
         }
         match raw.header.record_type {
             t if t == RECORD_ORDER_ACCEPTED => {
-                let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) else { continue; };
+                let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) else {
+                    continue;
+                };
                 // Re-record dedup so a duplicate that arrives
                 // post-restart is still rejected.
-                let _ = dedup.check_and_insert(
-                    rec.user_id,
-                    rec.order_id_hi,
-                    rec.order_id_lo,
-                );
+                let _ = dedup.check_and_insert(rec.user_id, rec.order_id_hi, rec.order_id_lo);
                 let mut incoming = IncomingOrder {
                     price: rec.price,
                     qty: rec.qty,
                     remaining_qty: rec.qty,
-                    side: if rec.side == 0 {
-                        Side::Buy
-                    } else {
-                        Side::Sell
-                    },
+                    side: if rec.side == 0 { Side::Buy } else { Side::Sell },
                     tif: match rec.tif {
                         1 => TimeInForce::IOC,
                         2 => TimeInForce::FOK,
@@ -628,19 +591,14 @@ pub fn replay_wal_after_snapshot(
                     order_id_lo: rec.order_id_lo,
                 };
                 process_new_order(book, &mut incoming);
-                update_order_index_local(
-                    book.events(),
-                    order_index,
-                );
+                update_order_index_local(book.events(), order_index);
                 accepted += 1;
             }
             t if t == RECORD_ORDER_CANCELLED => {
-                let Some(rec) = decode_payload::<OrderCancelledRecord>(&raw.payload) else { continue; };
-                let key: OrderKey = (
-                    rec.user_id,
-                    rec.order_id_hi,
-                    rec.order_id_lo,
-                );
+                let Some(rec) = decode_payload::<OrderCancelledRecord>(&raw.payload) else {
+                    continue;
+                };
+                let key: OrderKey = (rec.user_id, rec.order_id_hi, rec.order_id_lo);
                 if let Some(&handle) = order_index.get(&key) {
                     book.cancel_order(handle);
                     order_index.remove(&key);
@@ -662,10 +620,7 @@ pub fn replay_wal_after_snapshot(
 /// doesn't need to import a private symbol. Keeps the same
 /// shape: a successful insert/restore puts the handle into
 /// the index; a Done removes it.
-fn update_order_index_local(
-    events: &[Event],
-    index: &mut FxHashMap<OrderKey, u32>,
-) {
+fn update_order_index_local(events: &[Event], index: &mut FxHashMap<OrderKey, u32>) {
     for ev in events {
         match *ev {
             Event::OrderInserted {
@@ -675,10 +630,7 @@ fn update_order_index_local(
                 order_id_lo,
                 ..
             } => {
-                index.insert(
-                    (user_id, order_id_hi, order_id_lo),
-                    handle,
-                );
+                index.insert((user_id, order_id_hi, order_id_lo), handle);
             }
             Event::OrderDone {
                 user_id,
@@ -686,11 +638,7 @@ fn update_order_index_local(
                 order_id_lo,
                 ..
             } => {
-                index.remove(&(
-                    user_id,
-                    order_id_hi,
-                    order_id_lo,
-                ));
+                index.remove(&(user_id, order_id_hi, order_id_lo));
             }
             _ => {}
         }

@@ -23,25 +23,41 @@ fn dump(step: &str, book: &Orderbook) {
     println!("\n{step}");
     for event in book.events() {
         match event {
-            Event::Fill { price, qty, maker_handle, .. } => {
+            Event::Fill {
+                price,
+                qty,
+                maker_handle,
+                ..
+            } => {
                 println!(
                     "  Fill        px={} qty={} maker_handle={maker_handle}",
                     price.0, qty.0
                 );
             }
-            Event::OrderInserted { handle, price, qty, .. } => {
+            Event::OrderInserted {
+                handle, price, qty, ..
+            } => {
                 println!(
                     "  OrderInserted  handle={handle} px={} qty={}",
                     price.0, qty.0
                 );
             }
-            Event::OrderCancelled { handle, remaining_qty, .. } => {
+            Event::OrderCancelled {
+                handle,
+                remaining_qty,
+                ..
+            } => {
                 println!(
                     "  OrderCancelled handle={handle} remaining={}",
                     remaining_qty.0
                 );
             }
-            Event::OrderDone { handle, filled_qty, remaining_qty, .. } => {
+            Event::OrderDone {
+                handle,
+                filled_qty,
+                remaining_qty,
+                ..
+            } => {
                 println!(
                     "  OrderDone   handle={handle} filled={} remaining={}",
                     filled_qty.0, remaining_qty.0
@@ -50,7 +66,13 @@ fn dump(step: &str, book: &Orderbook) {
             Event::OrderFailed { reason, .. } => {
                 println!("  OrderFailed reason={reason}");
             }
-            Event::BBO { bid_px, bid_qty, ask_px, ask_qty, .. } => {
+            Event::BBO {
+                bid_px,
+                bid_qty,
+                ask_px,
+                ask_qty,
+                ..
+            } => {
                 println!(
                     "  BBO         bid {}x{}  ask {}x{}",
                     bid_px.0, bid_qty.0, ask_px.0, ask_qty.0

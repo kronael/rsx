@@ -30,9 +30,8 @@ fn to_io<E: std::fmt::Display>(e: E) -> io::Error {
 }
 
 async fn write_frame(send: &mut SendStream, body: &[u8]) -> io::Result<()> {
-    let len = u32::try_from(body.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "frame too large")
-    })?;
+    let len = u32::try_from(body.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame too large"))?;
     send.write_all(&len.to_be_bytes()).await.map_err(to_io)?;
     send.write_all(body).await.map_err(to_io)?;
     Ok(())
@@ -54,10 +53,7 @@ async fn read_frame(recv: &mut RecvStream) -> io::Result<Vec<u8>> {
 }
 
 /// Client→server: encode and send one order frame.
-pub async fn write_order(
-    send: &mut SendStream,
-    order: &OrderReq,
-) -> io::Result<()> {
+pub async fn write_order(send: &mut SendStream, order: &OrderReq) -> io::Result<()> {
     let body = serde_json::to_vec(order).map_err(to_io)?;
     write_frame(send, &body).await
 }
@@ -70,10 +66,7 @@ pub async fn read_order(recv: &mut RecvStream) -> io::Result<OrderReq> {
 }
 
 /// Server→client: encode and send one event frame.
-pub async fn write_event(
-    send: &mut SendStream,
-    ev: &GwEvent,
-) -> io::Result<()> {
+pub async fn write_event(send: &mut SendStream, ev: &GwEvent) -> io::Result<()> {
     let body = serde_json::to_vec(ev).map_err(to_io)?;
     write_frame(send, &body).await
 }

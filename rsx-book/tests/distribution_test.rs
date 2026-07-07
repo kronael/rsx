@@ -101,8 +101,7 @@ fn level_occ(book: &Orderbook, want_buy: bool) -> Vec<u32> {
         if lvl.order_count == 0 {
             continue;
         }
-        let is_buy =
-            book.orders.get(lvl.head).side == Side::Buy as u8;
+        let is_buy = book.orders.get(lvl.head).side == Side::Buy as u8;
         if is_buy == want_buy {
             v.push(i as u32);
         }
@@ -137,10 +136,7 @@ fn check_slab_noleak(book: &Orderbook) {
             walked += 1;
             cur = book.orders.get(cur).next;
         }
-        assert_eq!(
-            walked, lvl.order_count,
-            "level chain length != order_count",
-        );
+        assert_eq!(walked, lvl.order_count, "level chain length != order_count",);
     }
     let active = seen.len() as u32;
     assert_eq!(
@@ -177,10 +173,16 @@ fn check(book: &Orderbook) {
     );
 
     if rb != NONE && ra != NONE {
-        let bid_px =
-            book.orders.get(book.active_levels[rb as usize].head).price.0;
-        let ask_px =
-            book.orders.get(book.active_levels[ra as usize].head).price.0;
+        let bid_px = book
+            .orders
+            .get(book.active_levels[rb as usize].head)
+            .price
+            .0;
+        let ask_px = book
+            .orders
+            .get(book.active_levels[ra as usize].head)
+            .price
+            .0;
         assert!(
             bid_px < ask_px,
             "crossed book: bid {} >= ask {}",
@@ -191,26 +193,13 @@ fn check(book: &Orderbook) {
     check_slab_noleak(book);
 }
 
-fn rest(
-    book: &mut Orderbook,
-    buy: bool,
-    price: i64,
-    qty: i64,
-    oid: u64,
-) -> u32 {
+fn rest(book: &mut Orderbook, buy: bool, price: i64, qty: i64, oid: u64) -> u32 {
     let side = if buy { Side::Buy } else { Side::Sell };
     book.insert_resting(price, qty, side, 0, 1, false, 1, 0, oid)
 }
 
 /// Aggressor through the real matching path.
-fn taker(
-    book: &mut Orderbook,
-    buy: bool,
-    price: i64,
-    qty: i64,
-    tif: TimeInForce,
-    oid: u64,
-) {
+fn taker(book: &mut Orderbook, buy: bool, price: i64, qty: i64, tif: TimeInForce, oid: u64) {
     let mut o = IncomingOrder {
         price,
         qty,
@@ -333,8 +322,7 @@ fn concentrated_wall_heavy_churn() {
     }
 
     // Fully clear the ask wall in one shot: best ask -> NONE.
-    let ask_count =
-        book.active_levels[book.best_ask_tick as usize].order_count as i64;
+    let ask_count = book.active_levels[book.best_ask_tick as usize].order_count as i64;
     taker(&mut book, true, mid + 5, ask_count, TimeInForce::IOC, oid);
     assert_eq!(book.best_ask_tick, NONE);
     check(&book);

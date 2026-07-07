@@ -19,10 +19,7 @@ fn cid20() -> String {
 /// tif, reduce_only, post_only). Sized to match what the WS
 /// client actually emits.
 fn new_order_frame() -> String {
-    format!(
-        "{{\"N\":[1,0,5000000,100000,\"{}\",0,0,0]}}",
-        cid20(),
-    )
+    format!("{{\"N\":[1,0,5000000,100000,\"{}\",0,0,0]}}", cid20(),)
 }
 
 /// C frame: cancel by 20-char client_order_id.

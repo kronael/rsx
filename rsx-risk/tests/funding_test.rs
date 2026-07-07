@@ -188,16 +188,11 @@ fn funding_zero_sum_many_users_pathological_marks() {
     for &mark in &[1, 7, 333, 99_991, 1_000_003] {
         for &rate in &[1, 3, 17, 50, -1, -37, -100] {
             // 5 longs summing to +37, 4 shorts summing to -37.
-            let net_qtys =
-                [3, 7, 11, 5, 11, -13, -9, -8, -7];
+            let net_qtys = [3, 7, 11, 5, 11, -13, -9, -8, -7];
             assert_eq!(net_qtys.iter().sum::<i64>(), 0);
-            let payments =
-                settle_symbol(&net_qtys, mark, rate);
+            let payments = settle_symbol(&net_qtys, mark, rate);
             let total: i64 = payments.iter().sum();
-            assert_eq!(
-                total, 0,
-                "zero-sum failed at mark={mark} rate={rate}"
-            );
+            assert_eq!(total, 0, "zero-sum failed at mark={mark} rate={rate}");
         }
     }
 }

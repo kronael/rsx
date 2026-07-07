@@ -23,11 +23,7 @@ fn fee_zero_qty_is_zero() {
 #[test]
 fn fee_large_values_no_overflow() {
     // i128 intermediate prevents overflow
-    let fee = calculate_fee(
-        1_000_000_000,
-        1_000_000_000,
-        100,
-    );
+    let fee = calculate_fee(1_000_000_000, 1_000_000_000, 100);
     // 1e9 * 1e9 * 100 / 10000 = 1e16
     assert_eq!(fee, 10_000_000_000_000_000);
 }
@@ -43,21 +39,13 @@ fn fee_rebate_overflow_saturates_negative() {
     // Huge rebate (negative bps, giant notional) must saturate
     // toward i64::MIN, NOT invert into a giant positive fee.
     // 1e11 * 1e11 * -1000 / 10000 = -1e21 < i64::MIN.
-    let fee = calculate_fee(
-        100_000_000_000,
-        100_000_000_000,
-        -1000,
-    );
+    let fee = calculate_fee(100_000_000_000, 100_000_000_000, -1000);
     assert_eq!(fee, i64::MIN);
 }
 
 #[test]
 fn fee_cost_overflow_saturates_positive() {
     // Huge positive fee saturates to i64::MAX (sign preserved).
-    let fee = calculate_fee(
-        100_000_000_000,
-        100_000_000_000,
-        1000,
-    );
+    let fee = calculate_fee(100_000_000_000, 100_000_000_000, 1000);
     assert_eq!(fee, i64::MAX);
 }

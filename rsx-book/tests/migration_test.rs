@@ -1,8 +1,8 @@
 use rsx_book::book::BookState;
 use rsx_book::book::Orderbook;
-use rsx_types::NONE;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
+use rsx_types::NONE;
 
 fn test_config() -> SymbolConfig {
     SymbolConfig {
@@ -49,9 +49,7 @@ fn frontier_starts_at_new_mid() {
 #[test]
 fn resolve_level_migrates_on_access() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.trigger_recenter(50_500);
     // Access a price outside frontier
     book.resolve_level(49_900);
@@ -71,9 +69,7 @@ fn migrate_empty_level_is_noop() {
 #[test]
 fn cancel_during_migration() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.trigger_recenter(50_500);
 
     // Resolve first so order is in new array
@@ -89,21 +85,15 @@ fn insert_during_migration_goes_to_new() {
     book.trigger_recenter(52_000);
 
     // Insert goes to new active array
-    let _h = book.insert_resting(
-        52_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    let _h = book.insert_resting(52_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     assert_ne!(book.best_ask_tick, NONE);
 }
 
 #[test]
 fn best_bid_ask_correct_after_recenter() {
     let mut book = test_book();
-    book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        50_050, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_050, 100, Side::Sell, 0, 2, false, 0, 0, 0);
 
     book.trigger_recenter(50_500);
 
@@ -128,9 +118,7 @@ fn snapshot_blocked_during_migration() {
 #[test]
 fn batch_migration() {
     let mut book = test_book();
-    book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.trigger_recenter(50_500);
 
     // Run enough batches to complete migration

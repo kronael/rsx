@@ -8,9 +8,7 @@ pub struct PriceLevel {
     pub order_count: u32,
 }
 
-const _: () = assert!(
-    std::mem::size_of::<PriceLevel>() == 24
-);
+const _: () = assert!(std::mem::size_of::<PriceLevel>() == 24);
 
 impl Default for PriceLevel {
     fn default() -> Self {

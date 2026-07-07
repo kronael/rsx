@@ -54,8 +54,14 @@ const WIRE_BYTES: usize = SOUP_HDR + PAYLOAD;
 /// numbers are comparable across the protocol survey.
 fn pick_cores() -> (core_affinity::CoreId, core_affinity::CoreId) {
     let ids = core_affinity::get_core_ids().unwrap_or_default();
-    let p = ids.get(2).copied().unwrap_or(core_affinity::CoreId { id: 0 });
-    let e = ids.get(3).copied().unwrap_or(core_affinity::CoreId { id: 1 });
+    let p = ids
+        .get(2)
+        .copied()
+        .unwrap_or(core_affinity::CoreId { id: 0 });
+    let e = ids
+        .get(3)
+        .copied()
+        .unwrap_or(core_affinity::CoreId { id: 1 });
     (p, e)
 }
 /// SoupBin `U` packet: client → server, unsequenced data (OUCH-side).
@@ -173,11 +179,7 @@ fn bench_soupbintcp_rtt(c: &mut Criterion) {
 
     c.bench_function("soupbintcp_rtt_loopback_128b", |b| {
         b.iter(|| {
-            let n = frame_packet(
-                &mut tx,
-                PKT_UNSEQUENCED,
-                black_box(&payload),
-            );
+            let n = frame_packet(&mut tx, PKT_UNSEQUENCED, black_box(&payload));
             assert_eq!(n, WIRE_BYTES);
             write_all_spin(&mut pinger, &tx[..n]);
             read_exact_spin(&mut pinger, &mut rx_hdr);

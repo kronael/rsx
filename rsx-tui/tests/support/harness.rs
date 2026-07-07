@@ -17,8 +17,8 @@ use rsx_tui::conn::GatewayConn;
 use rsx_tui::conn::GwEvent;
 use rsx_tui::conn::MockConn;
 use rsx_tui::conn::OrderReq;
-use rsx_tui::draw;
 use rsx_tui::drain;
+use rsx_tui::draw;
 use rsx_tui::handle_key;
 use rsx_tui::Control;
 use std::cell::RefCell;
@@ -82,10 +82,14 @@ impl TuiHarness {
     /// `screen()` reflects the initial (pre-`Connected`) state right
     /// away, without the caller needing a throwaway `tick()` first.
     pub fn new_with(conn: Box<dyn GatewayConn>) -> Self {
-        let terminal = Terminal::new(TestBackend::new(COLS, ROWS))
-            .expect("build TestBackend terminal");
-        let mut harness =
-            TuiHarness { app: App::new(SYMBOL), conn, terminal, mock: None };
+        let terminal =
+            Terminal::new(TestBackend::new(COLS, ROWS)).expect("build TestBackend terminal");
+        let mut harness = TuiHarness {
+            app: App::new(SYMBOL),
+            conn,
+            terminal,
+            mock: None,
+        };
         harness.tick();
         harness
     }

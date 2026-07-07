@@ -3,9 +3,9 @@
 use clap::Parser;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
+use jsonwebtoken::encode;
 use jsonwebtoken::EncodingKey;
 use jsonwebtoken::Header;
-use jsonwebtoken::encode;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -20,10 +20,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 use tokio_tungstenite::client_async;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::http::Request;
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Parser, Debug)]
 #[command(name = "bench-probe", about = "Native Rust E2E latency probe")]
@@ -127,7 +127,8 @@ fn mint_jwt(secret: &str, user_id: u32) -> String {
 /// Minimal blocking HTTP GET that returns the body bytes.
 /// Only supports http:// (loopback). Used to read /api/book.
 async fn http_get(url: &str) -> Result<Vec<u8>, String> {
-    let stripped = url.strip_prefix("http://")
+    let stripped = url
+        .strip_prefix("http://")
         .ok_or_else(|| format!("only http:// supported: {}", url))?;
     let slash = stripped.find('/').unwrap_or(stripped.len());
     let host = &stripped[..slash];
@@ -164,10 +165,7 @@ async fn http_get(url: &str) -> Result<Vec<u8>, String> {
     Ok(buf[idx + 4..].to_vec())
 }
 
-async fn fetch_best_ask(
-    playground: &str,
-    symbol_id: u32,
-) -> Result<i64, String> {
+async fn fetch_best_ask(playground: &str, symbol_id: u32) -> Result<i64, String> {
     let url = format!(
         "{}/api/book/{}",
         playground.trim_end_matches('/'),
@@ -175,8 +173,7 @@ async fn fetch_best_ask(
     );
     let body = http_get(&url).await?;
     let snap: BookSnap = serde_json::from_slice(&body)
-        .map_err(|e| format!("parse book: {} body={}",
-            e, String::from_utf8_lossy(&body)))?;
+        .map_err(|e| format!("parse book: {} body={}", e, String::from_utf8_lossy(&body)))?;
     snap.asks
         .first()
         .map(|a| a.px)
@@ -229,10 +226,7 @@ async fn one_probe(
             .parse()
             .map_err(|e| format!("ws key: {}", e))?,
     );
-    headers.insert(
-        "Sec-WebSocket-Version",
-        "13".parse().unwrap(),
-    );
+    headers.insert("Sec-WebSocket-Version", "13".parse().unwrap());
     headers.insert("Connection", "Upgrade".parse().unwrap());
     headers.insert("Upgrade", "websocket".parse().unwrap());
 
@@ -241,10 +235,7 @@ async fn one_probe(
         .strip_prefix("ws://")
         .or_else(|| ws_url.strip_prefix("wss://"))
         .ok_or_else(|| format!("bad ws url: {}", ws_url))?;
-    let host_part = url_no_scheme
-        .split('/')
-        .next()
-        .unwrap_or(url_no_scheme);
+    let host_part = url_no_scheme.split('/').next().unwrap_or(url_no_scheme);
     let addr = if host_part.contains(':') {
         host_part.to_string()
     } else {
@@ -439,17 +430,19 @@ async fn main() {
             );
             println!(
                 "{:<14} {:>14.0} {:>14} {:>10.0}",
-                "p99_us", py_p99, p99, py_p99 - p99 as f64,
+                "p99_us",
+                py_p99,
+                p99,
+                py_p99 - p99 as f64,
             );
             println!("{:<14} {:>14} {:>14}", "n", py_n, n);
-            println!(
-                "python overhead at p50 ≈ {:.1}% of Python total",
-                pct,
-            );
+            println!("python overhead at p50 ≈ {:.1}% of Python total", pct,);
         }
         None => {
-            println!("(no e2e_us block in {} — run `make latency-publish` first)",
-                args.baseline.display());
+            println!(
+                "(no e2e_us block in {} — run `make latency-publish` first)",
+                args.baseline.display()
+            );
         }
     }
 }

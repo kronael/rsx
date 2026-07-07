@@ -94,9 +94,7 @@ struct Percentiles {
 /// Nearest-rank (no interpolation) — simplest defensible method at
 /// these sample sizes.
 fn percentiles(mut samples_ns: Vec<f64>) -> Percentiles {
-    samples_ns.sort_by(|a, b| {
-        a.partial_cmp(b).expect("INVARIANT: no NaN timings")
-    });
+    samples_ns.sort_by(|a, b| a.partial_cmp(b).expect("INVARIANT: no NaN timings"));
     let n = samples_ns.len();
     let at = |q: f64| samples_ns[((n as f64 * q) as usize).min(n - 1)];
     let mean = samples_ns.iter().sum::<f64>() / n as f64;
@@ -158,13 +156,7 @@ fn print_row(name: &str, kind: &str, p: &Percentiles) {
     );
 }
 
-fn rest(
-    book: &mut Orderbook,
-    buy: bool,
-    price: i64,
-    qty: i64,
-    oid: u64,
-) -> u32 {
+fn rest(book: &mut Orderbook, buy: bool, price: i64, qty: i64, oid: u64) -> u32 {
     let side = if buy { Side::Buy } else { Side::Sell };
     book.insert_resting(price, qty, side, 0, 1, false, 1, 0, oid)
 }
@@ -219,9 +211,7 @@ fn bench_op(label: &str, mut op: impl FnMut()) {
 fn main() {
     harness::pin();
 
-    println!(
-        "timer floor: back-to-back Instant::now(), n={FLOOR_SAMPLES}"
-    );
+    println!("timer floor: back-to-back Instant::now(), n={FLOOR_SAMPLES}");
     let floor = measure_floor();
     print_row("timer_floor", "single", &floor);
     println!();

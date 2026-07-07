@@ -1,9 +1,9 @@
 //! Integration tests for liquidation record persistence.
 
-use rsx_risk::persist::LiquidationRecord;
-use rsx_risk::persist::PersistEvent;
 use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::insert_liquidations;
+use rsx_risk::persist::LiquidationRecord;
+use rsx_risk::persist::PersistEvent;
 use rsx_risk::schema::run_migrations;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
@@ -20,10 +20,7 @@ async fn setup_pg() -> (
         "host=localhost port={port} user=postgres \
          password=postgres dbname=postgres"
     );
-    let (client, conn) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .unwrap();
+    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
     tokio::spawn(async move {
         if let Err(e) = conn.await {
             eprintln!("pg conn error: {e}");
@@ -70,10 +67,7 @@ async fn liquidation_record_persists() {
     assert_eq!(row.get::<_, i64>(5), 1_000i64);
     assert_eq!(row.get::<_, i32>(6), 25i32);
     assert_eq!(row.get::<_, i16>(7), 0i16);
-    assert_eq!(
-        row.get::<_, i64>(8),
-        1_700_000_000_000_000_000i64,
-    );
+    assert_eq!(row.get::<_, i64>(8), 1_700_000_000_000_000_000i64,);
 }
 
 #[tokio::test]
@@ -141,15 +135,11 @@ async fn liquidation_status_variants_persist() {
             qty: 1_000,
             slippage_bps: 0,
             status,
-            timestamp_ns: 1_700_000_000_000_000_000
-                + i as u64,
+            timestamp_ns: 1_700_000_000_000_000_000 + i as u64,
         })
         .collect();
 
-    let events: Vec<PersistEvent> = records
-        .into_iter()
-        .map(PersistEvent::Liquidation)
-        .collect();
+    let events: Vec<PersistEvent> = records.into_iter().map(PersistEvent::Liquidation).collect();
     flush_batch(&mut client, 0, &events).await.unwrap();
 
     let rows = client

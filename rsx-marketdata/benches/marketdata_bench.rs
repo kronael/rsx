@@ -32,12 +32,8 @@ fn new_book() -> ShadowBook {
 fn populated_book(levels: usize) -> ShadowBook {
     let mut book = new_book();
     for i in 0..levels {
-        book.apply_insert(
-            49990 - i as i64, 100, 0, 1, 1000 + i as u64,
-        );
-        book.apply_insert(
-            50010 + i as i64, 100, 1, 2, 2000 + i as u64,
-        );
+        book.apply_insert(49990 - i as i64, 100, 0, 1, 1000 + i as u64);
+        book.apply_insert(50010 + i as i64, 100, 1, 2, 2000 + i as u64);
     }
     book
 }
@@ -68,9 +64,7 @@ fn bench_shadow_book_fill(c: &mut Criterion) {
             let mut total = std::time::Duration::ZERO;
             for batch in 0..iters {
                 let mut book = new_book();
-                let h = book.apply_insert(
-                    49990, 1_000_000_000, 0, 1, 1000,
-                );
+                let h = book.apply_insert(49990, 1_000_000_000, 0, 1, 1000);
                 let start = std::time::Instant::now();
                 book.apply_fill(
                     black_box(h),
@@ -110,9 +104,7 @@ fn bench_l2_snapshot_50_levels(c: &mut Criterion) {
     let book = populated_book(60);
     c.bench_function("l2_snapshot_50_levels", |b| {
         b.iter(|| {
-            black_box(
-                book.derive_l2_snapshot(black_box(50)),
-            );
+            black_box(book.derive_l2_snapshot(black_box(50)));
         });
     });
 }
@@ -122,9 +114,7 @@ fn bench_l2_delta_generation(c: &mut Criterion) {
     let book = populated_book(10);
     c.bench_function("l2_delta_generation", |b| {
         b.iter(|| {
-            black_box(
-                book.derive_l2_delta(black_box(0), black_box(49990)),
-            );
+            black_box(book.derive_l2_delta(black_box(0), black_box(49990)));
         });
     });
 }
@@ -138,9 +128,7 @@ fn bench_event_processing_throughput(c: &mut Criterion) {
             for i in 0..iters {
                 let price = 49000 + (i % 1000) as i64;
                 let side = (i % 2) as u8;
-                let h = book.apply_insert(
-                    price, 100, side, 1, i,
-                );
+                let h = book.apply_insert(price, 100, side, 1, i);
                 book.apply_fill(h, 50, side, i + 1);
                 let _ = book.derive_bbo();
             }
@@ -211,8 +199,7 @@ fn bench_event_routing_filter(c: &mut Criterion) {
             black_box(has);
             let has = mgr.has_depth(black_box(2), black_box(1));
             black_box(has);
-            let has =
-                mgr.has_trades(black_box(3), black_box(1));
+            let has = mgr.has_trades(black_box(3), black_box(1));
             black_box(has);
         });
     });

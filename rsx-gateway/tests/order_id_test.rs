@@ -31,9 +31,7 @@ fn uuid_v7_globally_unique_across_instances() {
 #[test]
 fn uuid_v7_time_sortable() {
     let id1 = generate_order_id();
-    std::thread::sleep(
-        std::time::Duration::from_millis(2),
-    );
+    std::thread::sleep(std::time::Duration::from_millis(2));
     let id2 = generate_order_id();
     let ts1 = order_id_timestamp_ms(&id1);
     let ts2 = order_id_timestamp_ms(&id2);

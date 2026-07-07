@@ -247,17 +247,27 @@ impl Variant {
 }
 
 fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(default)
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(default)
 }
 
 fn load_cfg() -> Cfg {
     let ns = std::env::var("LAB_NS")
         .ok()
-        .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect::<Vec<usize>>())
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse().ok())
+                .collect::<Vec<usize>>()
+        })
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| vec![2, 4]);
     let variants = std::env::var("LAB_VARIANTS")
@@ -302,10 +312,10 @@ fn load_cfg() -> Cfg {
 
 #[derive(Default)]
 struct Counters {
-    echo_sends: AtomicU64,    // sendto / sendmmsg CALL count (syscalls)
-    echo_recvs: AtomicU64,    // recvfrom / recvmmsg CALL count (syscalls)
+    echo_sends: AtomicU64,     // sendto / sendmmsg CALL count (syscalls)
+    echo_recvs: AtomicU64,     // recvfrom / recvmmsg CALL count (syscalls)
     echo_datagrams: AtomicU64, // datagrams actually moved (for batch amortization)
-    requests: AtomicU64,      // server-side completed requests
+    requests: AtomicU64,       // server-side completed requests
 }
 
 impl Counters {
@@ -348,12 +358,18 @@ fn calibrate_calc_ns() -> f64 {
     let mut dst = vec![0u8; FRAME];
     // warm caches
     for _ in 0..10_000 {
-        std::hint::black_box(calc(std::hint::black_box(&src), std::hint::black_box(&mut dst)));
+        std::hint::black_box(calc(
+            std::hint::black_box(&src),
+            std::hint::black_box(&mut dst),
+        ));
     }
     let iters = 1_000_000u64;
     let t0 = Instant::now();
     for _ in 0..iters {
-        std::hint::black_box(calc(std::hint::black_box(&src), std::hint::black_box(&mut dst)));
+        std::hint::black_box(calc(
+            std::hint::black_box(&src),
+            std::hint::black_box(&mut dst),
+        ));
     }
     t0.elapsed().as_nanos() as f64 / iters as f64
 }
@@ -402,13 +418,19 @@ fn core_ids() -> Vec<CoreId> {
 
 fn raise_nofile() -> u64 {
     unsafe {
-        let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        let mut rl = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) != 0 {
             return 0;
         }
         rl.rlim_cur = rl.rlim_max;
         let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &rl);
-        let mut after = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        let mut after = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
         let _ = libc::getrlimit(libc::RLIMIT_NOFILE, &mut after);
         after.rlim_cur
     }
@@ -587,7 +609,12 @@ fn run_load(
             completed += c;
         }
     }
-    LoadResult { hist, completed, conns: achieved, window }
+    LoadResult {
+        hist,
+        completed,
+        conns: achieved,
+        window,
+    }
 }
 
 fn drive_conns(
@@ -621,7 +648,11 @@ fn drive_conns(
 
     let open_loop = open_rate > 0;
     // OPEN-LOOP: per-conn inter-arrival gap in ns; next scheduled fire per conn.
-    let gap_ns: u64 = if open_loop { 1_000_000_000 / open_rate } else { 0 };
+    let gap_ns: u64 = if open_loop {
+        1_000_000_000 / open_rate
+    } else {
+        0
+    };
     let mut next_fire: Vec<u64> = vec![0; n];
 
     start_barrier.wait();
@@ -656,8 +687,8 @@ fn drive_conns(
                     let sched = next_fire[i];
                     put_u32(&mut send_buf, 0, FRAME as u32);
                     put_u64(&mut send_buf, 4, sched); // stamp = SCHEDULED time
-                    // open-loop write_all: finish the frame (closed-loop's
-                    // skip-on-WouldBlock would distort a fixed-rate model).
+                                                      // open-loop write_all: finish the frame (closed-loop's
+                                                      // skip-on-WouldBlock would distort a fixed-rate model).
                     if write_full(&mut conns[i], &send_buf).is_ok() {
                         in_flight[i] += 1;
                     }
@@ -718,12 +749,12 @@ fn drive_conns(
 fn send_request(stream: &mut TcpStream, send_buf: &mut [u8]) -> std::io::Result<()> {
     let now = now_ns();
     put_u64(send_buf, 4, now); // client_send_ns at payload[0..8]
-    // Nonblocking write. A PARTIAL write must NOT silently corrupt the in-flight
-    // accounting (the old code dropped a half-emitted frame): spin-retry the
-    // remaining tail until the whole frame is on the socket, bounded so one
-    // wedged conn can't hang the generator. On genuine error -> propagate as a
-    // real failure (the caller does NOT increment in_flight). If the very first
-    // byte WouldBlocks (socket buf full, nothing sent) -> skip this refill.
+                               // Nonblocking write. A PARTIAL write must NOT silently corrupt the in-flight
+                               // accounting (the old code dropped a half-emitted frame): spin-retry the
+                               // remaining tail until the whole frame is on the socket, bounded so one
+                               // wedged conn can't hang the generator. On genuine error -> propagate as a
+                               // real failure (the caller does NOT increment in_flight). If the very first
+                               // byte WouldBlocks (socket buf full, nothing sent) -> skip this refill.
     let mut off = 0usize;
     let total = send_buf.len();
     let mut spins = 0u32;
@@ -796,10 +827,10 @@ mod monoio_stub {
     use super::*;
     use monoio::io::AsyncReadRentExt;
     use monoio::io::AsyncWriteRentExt;
+    use monoio::net::udp::UdpSocket as MonoUdp;
     use monoio::net::ListenerOpts;
     use monoio::net::TcpListener;
     use monoio::net::TcpStream as MonoStream;
-    use monoio::net::udp::UdpSocket as MonoUdp;
     use std::rc::Rc;
 
     pub fn spawn_reactors(
@@ -1170,7 +1201,9 @@ mod tile_stub {
                         .enable_timer()
                         .build()
                         .expect("monoio rt");
-                    rt.block_on(reactor_main(bind, i as u32, reply_fd, inbox, counters, stop));
+                    rt.block_on(reactor_main(
+                        bind, i as u32, reply_fd, inbox, counters, stop,
+                    ));
                 })
                 .expect("spawn tile reactor");
             handles.push(h);
@@ -1453,8 +1486,8 @@ mod batched_stub {
         let mut recv_bufs = vec![[0u8; ECHO_PAYLOAD]; BATCH];
         let n = submit_rx.len();
         let mut rr = 0usize; // round-robin start across submit rings for fairness
-        // tiny backlog for submits a partial sendmmsg didn't accept (re-flushed
-        // promptly next turn so no request is silently dropped).
+                             // tiny backlog for submits a partial sendmmsg didn't accept (re-flushed
+                             // promptly next turn so no request is silently dropped).
         let mut backlog: Vec<Submit> = Vec::with_capacity(BATCH);
 
         while !stop.load(Ordering::Relaxed) {
@@ -1493,7 +1526,9 @@ mod batched_stub {
                 let sent = sendmmsg_batch(echo_fd, &mut send_bufs[..m]);
                 counters.echo_sends.fetch_add(1, Ordering::Relaxed); // ONE syscall (even on err)
                 if sent > 0 {
-                    counters.echo_datagrams.fetch_add(sent as u64, Ordering::Relaxed);
+                    counters
+                        .echo_datagrams
+                        .fetch_add(sent as u64, Ordering::Relaxed);
                 }
                 // If sendmmsg accepted fewer than m, re-queue the tail so those
                 // requests are not silently lost (would wedge the closed loop).
@@ -1521,7 +1556,9 @@ mod batched_stub {
                 counters.echo_sends.fetch_add(1, Ordering::Relaxed);
                 let ok = sent.max(0) as usize;
                 if ok > 0 {
-                    counters.echo_datagrams.fetch_add(ok as u64, Ordering::Relaxed);
+                    counters
+                        .echo_datagrams
+                        .fetch_add(ok as u64, Ordering::Relaxed);
                 }
                 backlog.drain(..ok.min(backlog.len()));
             }
@@ -1534,7 +1571,9 @@ mod batched_stub {
             let got = recvmmsg_batch(echo_fd, &mut recv_bufs[..BATCH]);
             if got > 0 {
                 counters.echo_recvs.fetch_add(1, Ordering::Relaxed); // ONE syscall
-                counters.echo_datagrams.fetch_add(got as u64, Ordering::Relaxed);
+                counters
+                    .echo_datagrams
+                    .fetch_add(got as u64, Ordering::Relaxed);
                 for buf in recv_bufs.iter().take(got) {
                     let idx = get_u32(buf, 0) as usize;
                     let req_id = get_u64(buf, 8);
@@ -1566,7 +1605,10 @@ mod batched_stub {
             let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
             hdr.msg_iov = iov as *mut libc::iovec;
             hdr.msg_iovlen = 1;
-            msgs.push(libc::mmsghdr { msg_hdr: hdr, msg_len: 0 });
+            msgs.push(libc::mmsghdr {
+                msg_hdr: hdr,
+                msg_len: 0,
+            });
         }
         // SAFETY: msgs/iovs live for the call; fd is a valid connected UDP
         // socket; m == msgs.len(). recvmmsg/sendmmsg are POSIX-shaped.
@@ -1588,7 +1630,10 @@ mod batched_stub {
             let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
             hdr.msg_iov = iov as *mut libc::iovec;
             hdr.msg_iovlen = 1;
-            msgs.push(libc::mmsghdr { msg_hdr: hdr, msg_len: 0 });
+            msgs.push(libc::mmsghdr {
+                msg_hdr: hdr,
+                msg_len: 0,
+            });
         }
         // SAFETY: as above; MSG_DONTWAIT so the call returns immediately with
         // however many datagrams are queued (0 if none).
@@ -1774,17 +1819,37 @@ fn run_variant(variant: Variant, k: usize, cfg: &Cfg, layout: &CoreLayout, calc_
 
     let server_handles: Vec<JoinHandle<()>> = match variant {
         Variant::MonoioSharded => monoio_stub::spawn_reactors(
-            server_addr, echo_addr, reactors, reactor_cores, counters.clone(), stop.clone(),
+            server_addr,
+            echo_addr,
+            reactors,
+            reactor_cores,
+            counters.clone(),
+            stop.clone(),
         ),
         Variant::Tokio => vec![tokio_stub::spawn_runtime(
-            server_addr, echo_addr, reactors, reactor_cores.to_vec(), counters.clone(), stop.clone(),
+            server_addr,
+            echo_addr,
+            reactors,
+            reactor_cores.to_vec(),
+            counters.clone(),
+            stop.clone(),
         )],
         Variant::BusySpinTile => tile_stub::spawn_tile(
-            server_addr, echo_addr, reactors, reactor_cores, helper_core, counters.clone(),
+            server_addr,
+            echo_addr,
+            reactors,
+            reactor_cores,
+            helper_core,
+            counters.clone(),
             stop.clone(),
         ),
         Variant::BatchedSyscall => batched_stub::spawn_batched(
-            server_addr, echo_addr, reactors, reactor_cores, helper_core, counters.clone(),
+            server_addr,
+            echo_addr,
+            reactors,
+            reactor_cores,
+            helper_core,
+            counters.clone(),
             stop.clone(),
         ),
     };
@@ -1828,7 +1893,11 @@ fn run_variant(variant: Variant, k: usize, cfg: &Cfg, layout: &CoreLayout, calc_
     // tile/batched are charged for their always-hot helper core. K cores busy
     // for the whole window completing `completed` requests => K/throughput
     // core-seconds per request. Work-rate view, NOT response time.
-    let service_us = if throughput > 0.0 { k as f64 / throughput * 1e6 } else { 0.0 };
+    let service_us = if throughput > 0.0 {
+        k as f64 / throughput * 1e6
+    } else {
+        0.0
+    };
 
     Row {
         variant,
@@ -1922,9 +1991,15 @@ fn print_tables(rows: &[Row], achieved_conns: usize, nofile: u64, cfg: &Cfg) {
     );
     println!(" calc=512B memcpy+xor-fold   echo=1 UDP datagram round-trip (own core, outside K)");
     let mode = if cfg.open_rate > 0 {
-        format!("OPEN-LOOP @ {} req/s/conn (RTT vs scheduled send)", cfg.open_rate)
+        format!(
+            "OPEN-LOOP @ {} req/s/conn (RTT vs scheduled send)",
+            cfg.open_rate
+        )
     } else {
-        format!("CLOSED-LOOP @ concurrency = conns x pipeline = {}", cfg.conns * cfg.pipeline)
+        format!(
+            "CLOSED-LOOP @ concurrency = conns x pipeline = {}",
+            cfg.conns * cfg.pipeline
+        )
     };
     println!(" load model: {mode}");
     println!(" EQUAL CORE BUDGET K: every variant occupies K logical CPUs (cores/split below)");
@@ -1966,7 +2041,11 @@ fn print_tables(rows: &[Row], achieved_conns: usize, nofile: u64, cfg: &Cfg) {
         // (helper included). calc-ns is the pure work; (service-us - calc) is
         // dominated by the echo syscalls + client frame read/write + scheduling.
         let calc_us = r.calc_ns / 1000.0;
-        let calc_frac = if r.service_us > 0.0 { calc_us / r.service_us } else { 0.0 };
+        let calc_frac = if r.service_us > 0.0 {
+            calc_us / r.service_us
+        } else {
+            0.0
+        };
         let verdict = if r.syscalls_per_req < 1.5 {
             "syscall-amortized"
         } else if calc_frac > 0.25 {

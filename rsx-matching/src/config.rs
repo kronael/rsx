@@ -15,10 +15,7 @@ pub struct ScheduledConfig {
 }
 
 impl ScheduledConfig {
-    pub fn to_symbol_config(
-        &self,
-        symbol_id: u32,
-    ) -> SymbolConfig {
+    pub fn to_symbol_config(&self, symbol_id: u32) -> SymbolConfig {
         SymbolConfig {
             symbol_id,
             tick_size: self.tick_size,
@@ -44,14 +41,14 @@ pub async fn poll_scheduled_configs(
                AND config_version > $2 \
                AND effective_at_ms <= $3 \
              ORDER BY config_version ASC",
-            &[&(symbol_id as i32), &(current_version as i64), &(now_ms as i64)],
+            &[
+                &(symbol_id as i32),
+                &(current_version as i64),
+                &(now_ms as i64),
+            ],
         )
         .await
-        .map_err(|e| {
-            io::Error::other(
-                format!("poll_scheduled_configs: {}", e),
-            )
-        })?;
+        .map_err(|e| io::Error::other(format!("poll_scheduled_configs: {}", e)))?;
 
     let mut configs = Vec::new();
     for row in rows {
@@ -103,11 +100,7 @@ pub async fn write_applied_config(
             ],
         )
         .await
-        .map_err(|e| {
-            io::Error::other(
-                format!("write_applied_config: {}", e),
-            )
-        })?;
+        .map_err(|e| io::Error::other(format!("write_applied_config: {}", e)))?;
 
     info!(
         "wrote applied config v{} for symbol {}",
@@ -129,11 +122,7 @@ pub async fn load_applied_config(
             &[&(symbol_id as i32)],
         )
         .await
-        .map_err(|e| {
-            io::Error::other(
-                format!("load_applied_config: {}", e),
-            )
-        })?;
+        .map_err(|e| io::Error::other(format!("load_applied_config: {}", e)))?;
 
     Ok(row.map(|r| ScheduledConfig {
         config_version: r.get::<_, i64>(0) as u64,

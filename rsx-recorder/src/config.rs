@@ -20,16 +20,11 @@ pub(crate) struct RecorderConfig {
 impl RecorderConfig {
     pub(crate) fn from_env() -> io::Result<Self> {
         let stream_id = get_env_u32("RSX_RECORDER_STREAM_ID")?;
-        let producer_addr =
-            get_env_string("RSX_RECORDER_PRODUCER_ADDR")?;
-        let archive_dir =
-            get_env_path("RSX_RECORDER_ARCHIVE_DIR")?;
-        let tip_file =
-            get_env_path("RSX_RECORDER_TIP_FILE")?;
-        let retain_days =
-            get_env_u64_or("RSX_RECORDER_RETAIN_DAYS", 3)? as i64;
-        let stall_secs =
-            get_env_u64_or("RSX_RECORDER_STALL_SECS", 30)?;
+        let producer_addr = get_env_string("RSX_RECORDER_PRODUCER_ADDR")?;
+        let archive_dir = get_env_path("RSX_RECORDER_ARCHIVE_DIR")?;
+        let tip_file = get_env_path("RSX_RECORDER_TIP_FILE")?;
+        let retain_days = get_env_u64_or("RSX_RECORDER_RETAIN_DAYS", 3)? as i64;
+        let stall_secs = get_env_u64_or("RSX_RECORDER_STALL_SECS", 30)?;
 
         Ok(Self {
             stream_id,

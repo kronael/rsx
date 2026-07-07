@@ -26,8 +26,7 @@ fn type_digits(app: &mut App, conn: &mut MockConn, s: &str) {
 }
 
 fn screen(app: &App) -> String {
-    let mut terminal =
-        Terminal::new(TestBackend::new(120, 30)).expect("terminal");
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("terminal");
     terminal.draw(|f| draw(f, app)).expect("draw");
     terminal
         .backend()
@@ -118,10 +117,7 @@ fn q_and_esc_quit() {
         handle_key(&mut app, KeyCode::Char('q'), &mut conn),
         Control::Quit,
     );
-    assert_eq!(
-        handle_key(&mut app, KeyCode::Esc, &mut conn),
-        Control::Quit,
-    );
+    assert_eq!(handle_key(&mut app, KeyCode::Esc, &mut conn), Control::Quit,);
 }
 
 #[test]

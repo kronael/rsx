@@ -2,9 +2,9 @@ use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use rtrb::Consumer;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio_postgres::Client;
 use tokio_postgres::Error;
 use tracing::error;
@@ -16,7 +16,10 @@ pub enum PersistEvent {
     Position(Position),
     Account(Account),
     Fill(FillRecord),
-    Tip { symbol_id: u32, seq: u64 },
+    Tip {
+        symbol_id: u32,
+        seq: u64,
+    },
     Funding(FundingRecord),
     InsuranceFund(InsuranceFund),
     Liquidation(LiquidationRecord),
@@ -120,11 +123,7 @@ pub async fn upsert_accounts(
              ON CONFLICT (user_id) \
              DO UPDATE SET \
                collateral = $2, version = $3",
-            &[
-                &(a.user_id as i32),
-                &a.collateral,
-                &(a.version as i64),
-            ],
+            &[&(a.user_id as i32), &a.collateral, &(a.version as i64)],
         )
         .await?;
     }
@@ -167,11 +166,7 @@ pub async fn delete_frozen_orders(
              WHERE user_id = $1 \
                AND order_id_hi = $2 \
                AND order_id_lo = $3",
-            &[
-                &(user_id as i32),
-                &(hi as i64),
-                &(lo as i64),
-            ],
+            &[&(user_id as i32), &(hi as i64), &(lo as i64)],
         )
         .await?;
     }
@@ -219,11 +214,7 @@ pub async fn upsert_tips(
              VALUES ($1,$2,$3) \
              ON CONFLICT (instance_id, symbol_id) \
              DO UPDATE SET last_seq = $3",
-            &[
-                &(instance_id as i32),
-                &(symbol_id as i32),
-                &(seq as i64),
-            ],
+            &[&(instance_id as i32), &(symbol_id as i32), &(seq as i64)],
         )
         .await?;
     }
@@ -264,11 +255,7 @@ pub async fn upsert_insurance_funds(
              VALUES ($1,$2,$3) \
              ON CONFLICT (symbol_id) \
              DO UPDATE SET balance = $2, version = $3",
-            &[
-                &(f.symbol_id as i32),
-                &f.balance,
-                &(f.version as i64),
-            ],
+            &[&(f.symbol_id as i32), &f.balance, &(f.version as i64)],
         )
         .await?;
     }
@@ -322,39 +309,19 @@ pub async fn flush_batch(
     let mut frozen_removes = Vec::new();
     for e in events {
         match e {
-            PersistEvent::Position(p) => {
-                positions.push(p.clone())
-            }
-            PersistEvent::Account(a) => {
-                accounts.push(a.clone())
-            }
-            PersistEvent::Fill(f) => {
-                fills.push(f.clone())
-            }
-            PersistEvent::Tip { symbol_id, seq } => {
-                tips.push((*symbol_id, *seq))
-            }
-            PersistEvent::Funding(fp) => {
-                funding.push(fp.clone())
-            }
-            PersistEvent::InsuranceFund(fund) => {
-                insurance_funds.push(fund.clone())
-            }
-            PersistEvent::Liquidation(liq) => {
-                liquidations.push(liq.clone())
-            }
-            PersistEvent::FrozenInsert(f) => {
-                frozen_inserts.push(f.clone())
-            }
+            PersistEvent::Position(p) => positions.push(p.clone()),
+            PersistEvent::Account(a) => accounts.push(a.clone()),
+            PersistEvent::Fill(f) => fills.push(f.clone()),
+            PersistEvent::Tip { symbol_id, seq } => tips.push((*symbol_id, *seq)),
+            PersistEvent::Funding(fp) => funding.push(fp.clone()),
+            PersistEvent::InsuranceFund(fund) => insurance_funds.push(fund.clone()),
+            PersistEvent::Liquidation(liq) => liquidations.push(liq.clone()),
+            PersistEvent::FrozenInsert(f) => frozen_inserts.push(f.clone()),
             PersistEvent::FrozenRemove {
                 user_id,
                 order_id_hi,
                 order_id_lo,
-            } => frozen_removes.push((
-                *user_id,
-                *order_id_hi,
-                *order_id_lo,
-            )),
+            } => frozen_removes.push((*user_id, *order_id_hi, *order_id_lo)),
         }
     }
 
@@ -381,18 +348,8 @@ const BACKOFF_MAX_MS: u64 = 30_000;
 /// Consecutive flush failures before circuit opens.
 const CIRCUIT_AT: u32 = 8;
 
-pub async fn run_persist_worker(
-    consumer: Consumer<PersistEvent>,
-    client: Client,
-    shard_id: u32,
-) {
-    run_persist_worker_with_shutdown(
-        consumer,
-        client,
-        shard_id,
-        None,
-    )
-    .await
+pub async fn run_persist_worker(consumer: Consumer<PersistEvent>, client: Client, shard_id: u32) {
+    run_persist_worker_with_shutdown(consumer, client, shard_id, None).await
 }
 
 /// Same as `run_persist_worker` but polls a shutdown flag
@@ -414,12 +371,7 @@ pub async fn run_persist_worker_with_shutdown(
     let mut backoff_ms: u64 = BACKOFF_INIT_MS;
 
     loop {
-        tokio::time::sleep(
-            std::time::Duration::from_millis(
-                FLUSH_INTERVAL_MS,
-            ),
-        )
-        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_INTERVAL_MS)).await;
 
         let stopping = shutdown
             .as_ref()
@@ -443,11 +395,7 @@ pub async fn run_persist_worker_with_shutdown(
             continue;
         }
 
-        match flush_batch(
-            &mut client, shard_id, &pending,
-        )
-        .await
-        {
+        match flush_batch(&mut client, shard_id, &pending).await {
             Ok(()) => {
                 consec_errors = 0;
                 backoff_ms = BACKOFF_INIT_MS;
@@ -481,22 +429,14 @@ pub async fn run_persist_worker_with_shutdown(
                     return;
                 }
                 // ±20% jitter on exponential backoff
-                let jitter = backoff_ms as f64
-                    * (0.8 + 0.4 * rand_jitter());
+                let jitter = backoff_ms as f64 * (0.8 + 0.4 * rand_jitter());
                 warn!(
                     "persist flush error ({}/{CIRCUIT_AT}), \
                      retry in {:.0}ms: {e}",
-                    consec_errors,
-                    jitter,
+                    consec_errors, jitter,
                 );
-                tokio::time::sleep(
-                    std::time::Duration::from_millis(
-                        jitter as u64,
-                    ),
-                )
-                .await;
-                backoff_ms =
-                    (backoff_ms * 2).min(BACKOFF_MAX_MS);
+                tokio::time::sleep(std::time::Duration::from_millis(jitter as u64)).await;
+                backoff_ms = (backoff_ms * 2).min(BACKOFF_MAX_MS);
             }
         }
     }

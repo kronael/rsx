@@ -75,9 +75,9 @@ use rusteron_media_driver::AeronDriver;
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::IntoCString;
 use std::hint::black_box;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -185,16 +185,22 @@ fn setup(ping_channel: &str, pong_channel: &str, pong_core: CoreId) -> AeronRig 
     // collide on /dev/shm/aeron-$USER.
     let ctx = AeronDriverContext::new().expect("driver context");
     let unique_dir = format!("{}-{}", ctx.get_dir(), Aeron::nano_clock());
-    ctx.set_dir(&unique_dir.clone().into_c_string()).expect("set_dir");
+    ctx.set_dir(&unique_dir.clone().into_c_string())
+        .expect("set_dir");
     ctx.set_dir_delete_on_start(true).expect("delete_on_start");
-    ctx.set_dir_delete_on_shutdown(true).expect("delete_on_shutdown");
+    ctx.set_dir_delete_on_shutdown(true)
+        .expect("delete_on_shutdown");
 
     let (driver_stop, driver_handle) = AeronDriver::launch_embedded(ctx.clone(), false);
 
     // Driver is up. PING client connects.
     let cli_ctx = AeronContext::new().expect("client context");
-    cli_ctx.set_dir(&unique_dir.clone().into_c_string()).expect("client set_dir");
-    cli_ctx.set_idle_sleep_duration_ns(0).expect("zero idle sleep");
+    cli_ctx
+        .set_dir(&unique_dir.clone().into_c_string())
+        .expect("client set_dir");
+    cli_ctx
+        .set_idle_sleep_duration_ns(0)
+        .expect("zero idle sleep");
     let aeron = Aeron::new(&cli_ctx).expect("client new");
     aeron.start().expect("client start");
 
@@ -229,7 +235,8 @@ fn setup(ping_channel: &str, pong_channel: &str, pong_core: CoreId) -> AeronRig 
         .spawn(move || {
             core_affinity::set_for_current(pong_core);
             let ctx = AeronContext::new().expect("pong context");
-            ctx.set_dir(&pong_dir.into_c_string()).expect("pong set_dir");
+            ctx.set_dir(&pong_dir.into_c_string())
+                .expect("pong set_dir");
             ctx.set_idle_sleep_duration_ns(0).expect("pong zero idle");
             let aeron = Aeron::new(&ctx).expect("pong aeron");
             aeron.start().expect("pong start");
@@ -333,7 +340,12 @@ fn bench_aeron_udp(c: &mut Criterion) {
 
     // Warmup: prime the term buffers + JIT-free FFI paths.
     for _ in 0..WARMUP_ITERS {
-        let _ = record_rtt(&rig.ping_publication, &rig.pong_subscription, &mut buffer, &mut handler);
+        let _ = record_rtt(
+            &rig.ping_publication,
+            &rig.pong_subscription,
+            &mut buffer,
+            &mut handler,
+        );
     }
 
     c.bench_function("aeron_rtt_udp_loopback_128b", |b| {
@@ -373,7 +385,12 @@ fn bench_aeron_ipc(c: &mut Criterion) {
     let mut handler = Handler::leak(PingHandler { last_rtt_ns: 0 });
 
     for _ in 0..WARMUP_ITERS {
-        let _ = record_rtt(&rig.ping_publication, &rig.pong_subscription, &mut buffer, &mut handler);
+        let _ = record_rtt(
+            &rig.ping_publication,
+            &rig.pong_subscription,
+            &mut buffer,
+            &mut handler,
+        );
     }
 
     c.bench_function("aeron_rtt_ipc_128b", |b| {

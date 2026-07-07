@@ -81,13 +81,8 @@ fn run_ws_loop<F>(
     mut tx: rtrb::Producer<SourcePrice>,
     handler: F,
 ) where
-    F: Fn(
-            &serde_json::Value,
-            u8,
-            i64,
-            &SymbolMap,
-            &mut rtrb::Producer<SourcePrice>,
-        ) + Send
+    F: Fn(&serde_json::Value, u8, i64, &SymbolMap, &mut rtrb::Producer<SourcePrice>)
+        + Send
         + 'static,
 {
     // Hard retry budget; reset on each successful connection.
@@ -97,24 +92,18 @@ fn run_ws_loop<F>(
         let mut backoff = base;
         let mut consec_errors: u32 = 0;
         loop {
-            tracing::info!(
-                "ws connecting to {}", ws_url,
-            );
+            tracing::info!("ws connecting to {}", ws_url,);
             match connect_async(&ws_url).await {
                 Ok((mut ws, _)) => {
                     // Connected — reset budget and backoff.
-                    tracing::info!(
-                        "ws connected to {}", ws_url,
-                    );
+                    tracing::info!("ws connected to {}", ws_url,);
                     backoff = base;
                     consec_errors = 0;
                     while let Some(msg) = ws.next().await {
                         let msg = match msg {
                             Ok(m) => m,
                             Err(e) => {
-                                tracing::warn!(
-                                    "ws read error: {e}",
-                                );
+                                tracing::warn!("ws read error: {e}",);
                                 break;
                             }
                         };
@@ -122,25 +111,13 @@ fn run_ws_loop<F>(
                             continue;
                         }
                         let text = msg.to_text().unwrap_or("");
-                        if let Ok(val) =
-                            serde_json::from_str::<
-                                serde_json::Value,
-                            >(text)
-                        {
-                            handler(
-                                &val,
-                                source_id,
-                                price_scale,
-                                &symbol_map,
-                                &mut tx,
-                            );
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+                            handler(&val, source_id, price_scale, &symbol_map, &mut tx);
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "ws connect error: {e}",
-                    );
+                    tracing::warn!("ws connect error: {e}",);
                     consec_errors += 1;
                 }
             }
@@ -155,12 +132,8 @@ fn run_ws_loop<F>(
                 return;
             }
 
-            let sleep_ms = (backoff as f64
-                * jitter_factor()) as u64;
-            tokio::time::sleep(
-                Duration::from_millis(sleep_ms),
-            )
-            .await;
+            let sleep_ms = (backoff as f64 * jitter_factor()) as u64;
+            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
             backoff = (backoff * 2).min(max);
         }
     });
@@ -176,13 +149,7 @@ fn handle_binance_msg(
     match val {
         serde_json::Value::Array(arr) => {
             for item in arr {
-                handle_binance_msg(
-                    item,
-                    source_id,
-                    price_scale,
-                    symbol_map,
-                    tx,
-                );
+                handle_binance_msg(item, source_id, price_scale, symbol_map, tx);
             }
         }
         serde_json::Value::Object(map) => {
@@ -192,13 +159,7 @@ fn handle_binance_msg(
             // so only unwrap when the payload isn't already flat.
             if !map.contains_key("s") {
                 if let Some(data) = map.get("data") {
-                    handle_binance_msg(
-                        data,
-                        source_id,
-                        price_scale,
-                        symbol_map,
-                        tx,
-                    );
+                    handle_binance_msg(data, source_id, price_scale, symbol_map, tx);
                 }
                 return;
             }
@@ -218,17 +179,17 @@ fn handle_binance_msg(
                 Some(p) => p,
                 None => return,
             };
-            tracing::debug!(
-                "binance price: sym={} px={}",
-                symbol, price,
-            );
+            tracing::debug!("binance price: sym={} px={}", symbol, price,);
             // ring full = drop newest (intentional backpressure)
-            if tx.push(SourcePrice {
-                source_id,
-                price,
-                timestamp_ns: time_ns(),
-                symbol_id,
-            }).is_err() {
+            if tx
+                .push(SourcePrice {
+                    source_id,
+                    price,
+                    timestamp_ns: time_ns(),
+                    symbol_id,
+                })
+                .is_err()
+            {
                 tracing::trace!("binance ring full, dropping update");
             }
         }
@@ -264,12 +225,15 @@ fn handle_coinbase_msg(
         None => return,
     };
     // ring full = drop newest (intentional backpressure)
-    if tx.push(SourcePrice {
-        source_id,
-        price,
-        timestamp_ns: time_ns(),
-        symbol_id,
-    }).is_err() {
+    if tx
+        .push(SourcePrice {
+            source_id,
+            price,
+            timestamp_ns: time_ns(),
+            symbol_id,
+        })
+        .is_err()
+    {
         tracing::trace!("coinbase ring full, dropping update");
     }
 }

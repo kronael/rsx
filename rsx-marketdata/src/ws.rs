@@ -8,15 +8,11 @@ use sha1::Sha1;
 use std::io;
 use tracing::info;
 
-const WS_MAGIC: &str =
-    "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Accept WebSocket connections on the given address.
 /// Calls `handler` for each accepted connection.
-pub async fn ws_accept_loop<F>(
-    addr: &str,
-    handler: F,
-) -> io::Result<()>
+pub async fn ws_accept_loop<F>(addr: &str, handler: F) -> io::Result<()>
 where
     F: Fn(TcpStream) + 'static,
 {
@@ -31,9 +27,7 @@ where
 
 /// Perform WebSocket upgrade handshake on a raw
 /// TcpStream. Returns Ok(key) if upgrade succeeded.
-pub async fn ws_handshake(
-    stream: &mut TcpStream,
-) -> io::Result<String> {
+pub async fn ws_handshake(stream: &mut TcpStream) -> io::Result<String> {
     let buf = vec![0u8; 4096];
     let (res, buf) = stream.read(buf).await;
     let n = res?;
@@ -46,12 +40,8 @@ pub async fn ws_handshake(
 
     let request = String::from_utf8_lossy(&buf[..n]);
 
-    let key = extract_ws_key(&request).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "missing Sec-WebSocket-Key",
-        )
-    })?;
+    let key = extract_ws_key(&request)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Sec-WebSocket-Key"))?;
 
     let accept = compute_accept_key(&key);
 
@@ -73,9 +63,7 @@ fn extract_ws_key(request: &str) -> Option<String> {
     for line in request.lines() {
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("sec-websocket-key:") {
-            let val = line
-                .split_once(':')
-                .map(|(_, v)| v.trim().to_string());
+            let val = line.split_once(':').map(|(_, v)| v.trim().to_string());
             return val;
         }
     }
@@ -88,16 +76,13 @@ fn compute_accept_key(key: &str) -> String {
     hasher.update(WS_MAGIC.as_bytes());
     let result = hasher.finalize();
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .encode(result)
+    base64::engine::general_purpose::STANDARD.encode(result)
 }
 
 /// Read a single WebSocket frame from the stream.
 /// Returns (opcode, payload).
 /// Only handles frames up to 64KB.
-pub async fn ws_read_frame(
-    stream: &mut TcpStream,
-) -> io::Result<(u8, Vec<u8>)> {
+pub async fn ws_read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> {
     let preamble = vec![0u8; 2];
     let (res, preamble) = stream.read_exact(preamble).await;
     res?;
@@ -119,9 +104,9 @@ pub async fn ws_read_frame(
         res?;
         // SAFETY: ext is exactly 8 bytes from read_exact
         usize::from_be_bytes(
-            ext[..8].try_into().expect(
-                "INVARIANT: ext is exactly 8 bytes from read_exact",
-            ),
+            ext[..8]
+                .try_into()
+                .expect("INVARIANT: ext is exactly 8 bytes from read_exact"),
         )
     };
 
@@ -144,8 +129,7 @@ pub async fn ws_read_frame(
 
     let mut payload = vec![0u8; payload_len];
     if payload_len > 0 {
-        let (res, p) =
-            stream.read_exact(payload).await;
+        let (res, p) = stream.read_exact(payload).await;
         res?;
         payload = p;
     }
@@ -160,12 +144,8 @@ pub async fn ws_read_frame(
 }
 
 /// Write a WebSocket text frame.
-pub async fn ws_write_text(
-    stream: &mut TcpStream,
-    data: &[u8],
-) -> io::Result<()> {
-    let mut frame =
-        Vec::with_capacity(10 + data.len());
+pub async fn ws_write_text(stream: &mut TcpStream, data: &[u8]) -> io::Result<()> {
+    let mut frame = Vec::with_capacity(10 + data.len());
     frame.push(0x81); // FIN + text opcode
 
     if data.len() <= 125 {
@@ -187,10 +167,7 @@ pub async fn ws_write_text(
 }
 
 /// Write a raw WebSocket frame payload (already framed).
-pub async fn ws_write_raw(
-    stream: &mut TcpStream,
-    data: &[u8],
-) -> io::Result<()> {
+pub async fn ws_write_raw(stream: &mut TcpStream, data: &[u8]) -> io::Result<()> {
     let (res, _) = stream.write_all(data.to_vec()).await;
     res?;
     Ok(())

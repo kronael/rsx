@@ -5,8 +5,8 @@ use rsx_book::event::FAIL_REDUCE_ONLY;
 use rsx_book::event::FAIL_VALIDATION;
 use rsx_book::event::REASON_CANCELLED;
 use rsx_book::event::REASON_FILLED;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_book::user::get_or_assign_user;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -28,13 +28,7 @@ fn test_book() -> Orderbook {
     Orderbook::new(test_config(), 1024, 50_000)
 }
 
-fn incoming(
-    price: i64,
-    qty: i64,
-    side: Side,
-    tif: TimeInForce,
-    user_id: u32,
-) -> IncomingOrder {
+fn incoming(price: i64, qty: i64, side: Side, tif: TimeInForce, user_id: u32) -> IncomingOrder {
     IncomingOrder {
         price,
         qty,
@@ -107,11 +101,8 @@ fn reduce_only_ioc_empty_book_reports_zero_filled() {
 #[test]
 fn match_buy_against_single_ask() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     let events = book.events();
@@ -125,11 +116,8 @@ fn match_buy_against_single_ask() {
 #[test]
 fn match_sell_against_single_bid() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(49_900, 100, Side::Sell, TimeInForce::GTC, 2);
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(49_900, 100, Side::Sell, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     assert!(book.events().iter().any(|e| matches!(
@@ -142,14 +130,9 @@ fn match_sell_against_single_bid() {
 #[test]
 fn match_multiple_makers_same_level() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 3);
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_100, 50, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     let fills: Vec<_> = book
@@ -163,14 +146,9 @@ fn match_multiple_makers_same_level() {
 #[test]
 fn match_crosses_multiple_levels() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_101, 100, Side::Buy, TimeInForce::GTC, 3);
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut order = incoming(50_101, 100, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     let fills: Vec<_> = book
@@ -184,11 +162,8 @@ fn match_crosses_multiple_levels() {
 #[test]
 fn match_partial_fill_maker_remains() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        50_100, 200, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    let h = book.insert_resting(50_100, 200, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     // Maker still in book with 100 remaining
@@ -199,11 +174,8 @@ fn match_partial_fill_maker_remains() {
 #[test]
 fn match_partial_fill_taker_rests() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     // Taker should have been inserted as resting
@@ -217,11 +189,8 @@ fn match_partial_fill_taker_rests() {
 #[test]
 fn match_no_cross_taker_rests() {
     let mut book = test_book();
-    book.insert_resting(
-        50_200, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    book.insert_resting(50_200, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     let fills: Vec<_> = book
@@ -230,22 +199,19 @@ fn match_no_cross_taker_rests() {
         .filter(|e| matches!(e, Event::Fill { .. }))
         .collect();
     assert_eq!(fills.len(), 0);
-    assert!(book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 }
 
 #[test]
 fn match_fill_price_is_maker_price() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     // Taker buys at 50_200, but fill should be at
     // maker's 50_100
-    let mut order =
-        incoming(50_200, 100, Side::Buy, TimeInForce::GTC, 2);
+    let mut order = incoming(50_200, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     assert!(book.events().iter().any(|e| matches!(
@@ -258,20 +224,13 @@ fn match_fill_price_is_maker_price() {
 #[test]
 fn match_fifo_within_level() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let _h2 = book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 3);
+    let h1 = book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let _h2 = book.insert_resting(50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     // First fill should be against h1 (first maker)
-    if let Event::Fill { maker_handle, .. } =
-        book.events()[0]
-    {
+    if let Event::Fill { maker_handle, .. } = book.events()[0] {
         assert_eq!(maker_handle, h1);
     } else {
         panic!("expected fill");
@@ -281,11 +240,8 @@ fn match_fifo_within_level() {
 #[test]
 fn ioc_cancels_remainder() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 2);
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 2);
     process_new_order(&mut book, &mut order);
 
     // Should have fill + OrderDone(cancelled)
@@ -296,20 +252,17 @@ fn ioc_cancels_remainder() {
         } if *reason == REASON_CANCELLED
     )));
     // No OrderInserted
-    assert!(!book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(!book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 }
 
 #[test]
 fn fok_rejects_if_not_full() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::FOK, 2);
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::FOK, 2);
     process_new_order(&mut book, &mut order);
 
     // Should have OrderFailed(FOK)
@@ -320,26 +273,23 @@ fn fok_rejects_if_not_full() {
         } if *reason == FAIL_FOK
     )));
     // No fills in final events (rolled back)
-    assert!(!book.events().iter().any(|e| matches!(
-        e,
-        Event::Fill { .. }
-    )));
+    assert!(!book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::Fill { .. })));
 }
 
 #[test]
 fn fok_succeeds_when_full() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::FOK, 2);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::FOK, 2);
     process_new_order(&mut book, &mut order);
 
-    assert!(book.events().iter().any(|e| matches!(
-        e,
-        Event::Fill { .. }
-    )));
+    assert!(book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::Fill { .. })));
     assert!(book.events().iter().any(|e| matches!(
         e,
         Event::OrderDone {
@@ -351,11 +301,8 @@ fn fok_succeeds_when_full() {
 #[test]
 fn fills_precede_order_done() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     let events = book.events();
@@ -365,9 +312,7 @@ fn fills_precede_order_done() {
         .unwrap();
     let done_pos = events
         .iter()
-        .rposition(|e| {
-            matches!(e, Event::OrderDone { .. })
-        })
+        .rposition(|e| matches!(e, Event::OrderDone { .. }))
         .unwrap();
     assert!(fill_pos < done_pos);
 }
@@ -375,22 +320,21 @@ fn fills_precede_order_done() {
 #[test]
 fn exactly_one_completion() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     // Taker gets exactly one OrderDone
     let taker_dones: Vec<_> = book
         .events()
         .iter()
-        .filter(|e| matches!(
-            e,
-            Event::OrderDone { user_id, .. }
-                if *user_id == 2
-        ))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::OrderDone { user_id, .. }
+                    if *user_id == 2
+            )
+        })
         .collect();
     assert_eq!(taker_dones.len(), 1);
 }
@@ -398,8 +342,7 @@ fn exactly_one_completion() {
 #[test]
 fn reduce_only_rejected_if_no_position() {
     let mut book = test_book();
-    let mut order =
-        incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
+    let mut order = incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
     order.reduce_only = true;
     process_new_order(&mut book, &mut order);
 
@@ -415,17 +358,13 @@ fn reduce_only_rejected_if_no_position() {
 fn reduce_only_buy_rejected_if_long() {
     let mut book = test_book();
     // Create a long position: buy fills
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut buy =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 1);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut buy = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut buy);
 
     // Now try reduce-only buy (user is long, so
     // buying more is rejected)
-    let mut ro =
-        incoming(49_900, 50, Side::Buy, TimeInForce::GTC, 1);
+    let mut ro = incoming(49_900, 50, Side::Buy, TimeInForce::GTC, 1);
     ro.reduce_only = true;
     process_new_order(&mut book, &mut ro);
 
@@ -441,63 +380,46 @@ fn reduce_only_buy_rejected_if_long() {
 fn reduce_only_sell_accepted_if_long() {
     let mut book = test_book();
     // Create a long position
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut buy =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 1);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut buy = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut buy);
 
     // Reduce-only sell should be accepted (closing)
-    book.insert_resting(
-        50_050, 100, Side::Buy, 0, 3, false, 0, 0, 0,
-    );
-    let mut ro =
-        incoming(50_050, 50, Side::Sell, TimeInForce::GTC, 1);
+    book.insert_resting(50_050, 100, Side::Buy, 0, 3, false, 0, 0, 0);
+    let mut ro = incoming(50_050, 50, Side::Sell, TimeInForce::GTC, 1);
     ro.reduce_only = true;
     process_new_order(&mut book, &mut ro);
 
     // Should NOT be OrderFailed
-    assert!(!book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderFailed { .. }
-    )));
+    assert!(!book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderFailed { .. })));
 }
 
 #[test]
 fn position_tracking_on_fills() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     // User 2 bought 100 -> net_qty = +100
     let u2_idx = book.user_map.get(&2).unwrap();
-    assert_eq!(
-        book.user_states[*u2_idx as usize].net_qty,
-        100
-    );
+    assert_eq!(book.user_states[*u2_idx as usize].net_qty, 100);
     // User 1 sold 100 -> net_qty = -100
     let u1_idx = book.user_map.get(&1).unwrap();
-    assert_eq!(
-        book.user_states[*u1_idx as usize].net_qty,
-        -100
-    );
+    assert_eq!(book.user_states[*u1_idx as usize].net_qty, -100);
 }
 
 #[test]
 fn event_buffer_reset_each_cycle() {
     let mut book = test_book();
-    let mut o1 =
-        incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
+    let mut o1 = incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut o1);
     let _len1 = book.event_len;
 
-    let mut o2 =
-        incoming(49_800, 100, Side::Buy, TimeInForce::GTC, 2);
+    let mut o2 = incoming(49_800, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut o2);
 
     // event_len should have been reset at start of
@@ -509,8 +431,7 @@ fn event_buffer_reset_each_cycle() {
 fn validation_failure_emits_order_failed() {
     let mut book = test_book();
     // qty=0 should fail validation
-    let mut order =
-        incoming(50_100, 0, Side::Buy, TimeInForce::GTC, 1);
+    let mut order = incoming(50_100, 0, Side::Buy, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut order);
 
     assert!(book.events().iter().any(|e| matches!(
@@ -531,12 +452,8 @@ fn smooshed_level_orders_with_different_prices() {
     // Zone 1 has compression=10, so prices 52_500 and
     // 52_509 map to the same slot.
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        52_500, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let h2 = book.insert_resting(
-        52_509, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
+    let h1 = book.insert_resting(52_500, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    let h2 = book.insert_resting(52_509, 100, Side::Sell, 0, 2, false, 0, 0, 0);
     let t1 = book.orders.get(h1).tick_index;
     let t2 = book.orders.get(h2).tick_index;
     assert_eq!(t1, t2); // same tick slot
@@ -551,13 +468,9 @@ fn smooshed_level_orders_with_different_prices() {
 fn smooshed_match_skips_orders_outside_limit() {
     let mut book = test_book();
     // Resting sell at 52_509 in zone 1 (compression=10)
-    book.insert_resting(
-        52_509, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(52_509, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     // Buy at 52_500 -- can't afford 52_509
-    let mut order = incoming(
-        52_500, 100, Side::Buy, TimeInForce::GTC, 2,
-    );
+    let mut order = incoming(52_500, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     let fills: Vec<_> = book
@@ -573,16 +486,10 @@ fn smooshed_match_skips_orders_outside_limit() {
 #[test]
 fn smooshed_match_fills_qualifying_orders_only() {
     let mut book = test_book();
-    book.insert_resting(
-        52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        52_509, 50, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(52_509, 50, Side::Sell, 0, 2, false, 0, 0, 0);
     // Buy at 52_505: fills 52_500 maker, skips 52_509
-    let mut order = incoming(
-        52_505, 100, Side::Buy, TimeInForce::GTC, 3,
-    );
+    let mut order = incoming(52_505, 100, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     let fills: Vec<_> = book
@@ -597,22 +504,14 @@ fn smooshed_match_fills_qualifying_orders_only() {
 #[test]
 fn smooshed_match_preserves_time_priority() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let _h2 = book.insert_resting(
-        52_501, 50, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
+    let h1 = book.insert_resting(52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    let _h2 = book.insert_resting(52_501, 50, Side::Sell, 0, 2, false, 0, 0, 0);
     // Both at same tick. Buy enough for one fill.
-    let mut order = incoming(
-        52_501, 50, Side::Buy, TimeInForce::GTC, 3,
-    );
+    let mut order = incoming(52_501, 50, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     // First fill should be h1 (earlier insert)
-    if let Event::Fill { maker_handle, .. } =
-        book.events()[0]
-    {
+    if let Event::Fill { maker_handle, .. } = book.events()[0] {
         assert_eq!(maker_handle, h1);
     } else {
         panic!("expected fill");
@@ -627,15 +526,9 @@ fn smooshed_match_preserves_time_priority() {
 fn event_buffer_multiple_fills_single_order() {
     let mut book = test_book();
     // Two sells at different levels
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut order = incoming(
-        50_101, 100, Side::Buy, TimeInForce::GTC, 3,
-    );
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut order = incoming(50_101, 100, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     let fills: Vec<_> = book
@@ -650,15 +543,9 @@ fn event_buffer_multiple_fills_single_order() {
 #[test]
 fn event_buffer_fills_before_done() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let h2 = book.insert_resting(
-        50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
-    let mut order = incoming(
-        50_101, 100, Side::Buy, TimeInForce::GTC, 3,
-    );
+    let h1 = book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    let h2 = book.insert_resting(50_101, 50, Side::Sell, 0, 2, false, 0, 0, 0);
+    let mut order = incoming(50_101, 100, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
     let events = book.events();
@@ -666,24 +553,30 @@ fn event_buffer_fills_before_done() {
     for handle in [h1, h2] {
         let fill_pos = events
             .iter()
-            .position(|e| matches!(
-                e,
-                Event::Fill { maker_handle, .. }
-                    if *maker_handle == handle
-            ))
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::Fill { maker_handle, .. }
+                        if *maker_handle == handle
+                )
+            })
             .unwrap();
         let done_pos = events
             .iter()
-            .position(|e| matches!(
-                e,
-                Event::OrderDone { handle: h, .. }
-                    if *h == handle
-            ))
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::OrderDone { handle: h, .. }
+                        if *h == handle
+                )
+            })
             .unwrap();
         assert!(
             fill_pos < done_pos,
             "fill at {} should precede done at {} for handle {}",
-            fill_pos, done_pos, handle,
+            fill_pos,
+            done_pos,
+            handle,
         );
     }
 }
@@ -693,9 +586,7 @@ fn event_buffer_fills_before_done() {
 #[test]
 fn bbo_emitted_after_new_best_bid() {
     let mut book = test_book();
-    let mut order = incoming(
-        49_900, 100, Side::Buy, TimeInForce::GTC, 1,
-    );
+    let mut order = incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut order);
 
     let bbo: Vec<_> = book
@@ -705,7 +596,10 @@ fn bbo_emitted_after_new_best_bid() {
         .collect();
     assert_eq!(bbo.len(), 1);
     if let Event::BBO {
-        bid_px, bid_qty, ask_px, ask_qty,
+        bid_px,
+        bid_qty,
+        ask_px,
+        ask_qty,
     } = bbo[0]
     {
         assert_eq!(*bid_px, Price(49_900));
@@ -718,14 +612,9 @@ fn bbo_emitted_after_new_best_bid() {
 #[test]
 fn bbo_emitted_after_fill_removes_best() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false,
-        0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     // Buy sweeps the only ask level
-    let mut order = incoming(
-        50_100, 100, Side::Buy, TimeInForce::GTC, 2,
-    );
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     let bbo: Vec<_> = book
@@ -735,8 +624,9 @@ fn bbo_emitted_after_fill_removes_best() {
         .collect();
     assert_eq!(bbo.len(), 1);
     // Ask should now be empty
-    if let Event::BBO { ask_px, ask_qty, .. } =
-        bbo[0]
+    if let Event::BBO {
+        ask_px, ask_qty, ..
+    } = bbo[0]
     {
         assert_eq!(*ask_px, Price(0));
         assert_eq!(*ask_qty, Qty(0));
@@ -747,14 +637,9 @@ fn bbo_emitted_after_fill_removes_best() {
 fn bbo_not_emitted_when_best_unchanged() {
     let mut book = test_book();
     // Insert best bid at 49_900
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     // Insert worse bid at 49_800 -- best unchanged
-    let mut order = incoming(
-        49_800, 50, Side::Buy, TimeInForce::GTC, 2,
-    );
+    let mut order = incoming(49_800, 50, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut order);
 
     let bbo_count = book
@@ -768,9 +653,7 @@ fn bbo_not_emitted_when_best_unchanged() {
 #[test]
 fn bbo_emitted_after_new_best_ask() {
     let mut book = test_book();
-    let mut order = incoming(
-        50_100, 100, Side::Sell, TimeInForce::GTC, 1,
-    );
+    let mut order = incoming(50_100, 100, Side::Sell, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut order);
 
     assert!(book.events().iter().any(|e| matches!(
@@ -785,9 +668,7 @@ fn bbo_emitted_after_new_best_ask() {
 #[test]
 fn double_cancel() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     assert!(book.cancel_order(h));
     assert!(!book.cancel_order(h));
 }
@@ -795,8 +676,7 @@ fn double_cancel() {
 #[test]
 fn ioc_on_empty_book() {
     let mut book = test_book();
-    let mut order =
-        incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 1);
+    let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 1);
     process_new_order(&mut book, &mut order);
 
     let events = book.events();
@@ -811,20 +691,16 @@ fn ioc_on_empty_book() {
             reason, ..
         } if *reason == REASON_CANCELLED
     )));
-    assert!(!events.iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 }
 
 #[test]
 fn fok_insufficient_liquidity() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 3, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    let mut order =
-        incoming(50_100, 10, Side::Buy, TimeInForce::FOK, 2);
+    book.insert_resting(50_100, 3, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut order = incoming(50_100, 10, Side::Buy, TimeInForce::FOK, 2);
     process_new_order(&mut book, &mut order);
 
     let events = book.events();
@@ -834,31 +710,18 @@ fn fok_insufficient_liquidity() {
             reason, ..
         } if *reason == FAIL_FOK
     )));
-    assert!(!events.iter().any(|e| matches!(
-        e,
-        Event::Fill { .. }
-    )));
+    assert!(!events.iter().any(|e| matches!(e, Event::Fill { .. })));
 }
 
 #[test]
 fn modify_price_loses_time_priority_round_trip() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let h2 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
-    let h1b = book.modify_order_price(
-        h1, 49_800, Side::Buy, 0, 1, false, 1, 0, 0,
-    );
-    let h1c = book.modify_order_price(
-        h1b, 49_900, Side::Buy, 0, 1, false, 2, 0, 0,
-    );
-    let tick =
-        book.compression.price_to_index(49_900);
-    let level =
-        &book.active_levels[tick as usize];
+    let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h2 = book.insert_resting(49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0);
+    let h1b = book.modify_order_price(h1, 49_800, Side::Buy, 0, 1, false, 1, 0, 0);
+    let h1c = book.modify_order_price(h1b, 49_900, Side::Buy, 0, 1, false, 2, 0, 0);
+    let tick = book.compression.price_to_index(49_900);
+    let level = &book.active_levels[tick as usize];
     assert_eq!(level.head, h2);
     assert_eq!(level.tail, h1c);
 }
@@ -866,9 +729,7 @@ fn modify_price_loses_time_priority_round_trip() {
 #[test]
 fn modify_qty_down_to_zero_cancels() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     assert!(book.modify_order_qty_down(h, 0));
     assert!(!book.orders.get(h).is_active());
     assert_eq!(book.best_bid_tick, rsx_types::NONE);
@@ -877,26 +738,19 @@ fn modify_qty_down_to_zero_cancels() {
 #[test]
 fn reduce_only_clamped_to_position() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 5, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
-    let mut sell =
-        incoming(50_100, 5, Side::Sell, TimeInForce::GTC, 1);
+    book.insert_resting(50_100, 5, Side::Buy, 0, 2, false, 0, 0, 0);
+    let mut sell = incoming(50_100, 5, Side::Sell, TimeInForce::GTC, 1);
     process_new_order(&mut book, &mut sell);
 
-    book.insert_resting(
-        50_050, 5, Side::Sell, 0, 3, false, 0, 0, 0,
-    );
-    let mut ro =
-        incoming(50_050, 10, Side::Buy, TimeInForce::GTC, 1);
+    book.insert_resting(50_050, 5, Side::Sell, 0, 3, false, 0, 0, 0);
+    let mut ro = incoming(50_050, 10, Side::Buy, TimeInForce::GTC, 1);
     ro.reduce_only = true;
     process_new_order(&mut book, &mut ro);
 
     let events = book.events();
-    assert!(!events.iter().any(|e| matches!(
-        e,
-        Event::OrderFailed { .. }
-    )));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::OrderFailed { .. })));
     let fill_qty: i64 = events
         .iter()
         .filter_map(|e| match e {

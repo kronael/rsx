@@ -22,17 +22,17 @@
 //! All three tests need Docker; gated with #[ignore], run
 //! under `make integration`.
 
-use rsx_risk::persist::PersistEvent;
 use rsx_risk::persist::run_persist_worker;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
+use rsx_risk::persist::PersistEvent;
 use rsx_risk::schema::run_migrations;
 use rtrb::RingBuffer;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
-use testcontainers::ContainerAsync;
 use testcontainers::runners::AsyncRunner;
+use testcontainers::ContainerAsync;
 use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::Client;
 use tokio_postgres::NoTls;
@@ -54,10 +54,7 @@ async fn connect(port: u16) -> Client {
         "host=localhost port={port} user=postgres \
          password=postgres dbname=postgres"
     );
-    let (client, conn) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .unwrap();
+    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
     tokio::spawn(async move {
         if let Err(e) = conn.await {
             warn!("pg conn closed: {e}");
@@ -90,8 +87,7 @@ async fn persist_survives_pg_outage_without_dropping() {
     // The worker owns its own client.
     let worker_client = connect(port).await;
 
-    let (mut producer, consumer) =
-        RingBuffer::<PersistEvent>::new(1024);
+    let (mut producer, consumer) = RingBuffer::<PersistEvent>::new(1024);
 
     // Spawn the persist worker.
     let worker = tokio::spawn(async move {
@@ -100,7 +96,10 @@ async fn persist_survives_pg_outage_without_dropping() {
 
     // Phase 1: normal write while DB is up.
     producer
-        .push(PersistEvent::Tip { symbol_id: 0, seq: 1 })
+        .push(PersistEvent::Tip {
+            symbol_id: 0,
+            seq: 1,
+        })
         .unwrap();
     wait_for_tip(&verify_client, 0, 1).await;
 
@@ -130,11 +129,7 @@ async fn persist_survives_pg_outage_without_dropping() {
     // assert that the buffered tips (2..=6) reach PG — the
     // worker has no reconnection logic; see module docs.
     drop(producer);
-    let _ = tokio::time::timeout(
-        Duration::from_secs(60),
-        worker,
-    )
-    .await;
+    let _ = tokio::time::timeout(Duration::from_secs(60), worker).await;
 }
 
 /// Gap 2 — circuit opens after CIRCUIT_AT consecutive failures.
@@ -150,8 +145,7 @@ async fn persist_circuit_opens_on_sustained_failure() {
 
     let (container, port, _verify) = pg_setup().await;
     let worker_client = connect(port).await;
-    let (mut producer, consumer) =
-        RingBuffer::<PersistEvent>::new(1024);
+    let (mut producer, consumer) = RingBuffer::<PersistEvent>::new(1024);
 
     let worker = tokio::spawn(async move {
         run_persist_worker(consumer, worker_client, 0).await;
@@ -177,11 +171,7 @@ async fn persist_circuit_opens_on_sustained_failure() {
     // ~100+200+400+800+1600+3200+6400+12800 ms = ~25s worst
     // case. Allow generous wait — but each retry doubles, so
     // commonly the loop exits well before the wall clock.
-    let result = tokio::time::timeout(
-        Duration::from_secs(60),
-        worker,
-    )
-    .await;
+    let result = tokio::time::timeout(Duration::from_secs(60), worker).await;
 
     assert!(
         result.is_ok(),
@@ -206,37 +196,29 @@ async fn persist_worker_exits_on_shutdown_signal() {
 
     let (_container, port, verify_client) = pg_setup().await;
     let worker_client = connect(port).await;
-    let (mut producer, consumer) =
-        RingBuffer::<PersistEvent>::new(64);
+    let (mut producer, consumer) = RingBuffer::<PersistEvent>::new(64);
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let worker = {
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            run_persist_worker_with_shutdown(
-                consumer,
-                worker_client,
-                0,
-                Some(shutdown),
-            )
-            .await;
+            run_persist_worker_with_shutdown(consumer, worker_client, 0, Some(shutdown)).await;
         })
     };
 
     // Prove the worker is alive and flushing.
     producer
-        .push(PersistEvent::Tip { symbol_id: 0, seq: 1 })
+        .push(PersistEvent::Tip {
+            symbol_id: 0,
+            seq: 1,
+        })
         .unwrap();
     wait_for_tip(&verify_client, 0, 1).await;
 
     // Signal shutdown and assert the worker exits within the
     // demote budget used by `stop_persist_worker` (5s).
     shutdown.store(true, Ordering::Relaxed);
-    let result = tokio::time::timeout(
-        Duration::from_secs(5),
-        worker,
-    )
-    .await;
+    let result = tokio::time::timeout(Duration::from_secs(5), worker).await;
     assert!(
         result.is_ok(),
         "worker did not exit within 5s of shutdown signal; \
@@ -249,13 +231,8 @@ async fn persist_worker_exits_on_shutdown_signal() {
 
 /// Poll the `tips` table until a given seq appears.
 /// Bounded wait so a hang in the worker doesn't hang the test.
-async fn wait_for_tip(
-    client: &Client,
-    symbol_id: u32,
-    expected_seq: u64,
-) {
-    let deadline = std::time::Instant::now()
-        + Duration::from_secs(30);
+async fn wait_for_tip(client: &Client, symbol_id: u32, expected_seq: u64) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         if std::time::Instant::now() > deadline {
             panic!(

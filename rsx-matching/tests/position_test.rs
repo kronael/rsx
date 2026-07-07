@@ -1,8 +1,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::FAIL_REDUCE_ONLY;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -24,9 +24,7 @@ fn test_book() -> Orderbook {
 fn user_net_qty(book: &Orderbook, user_id: u32) -> i64 {
     book.user_map
         .get(&user_id)
-        .map(|&idx| {
-            book.user_states[idx as usize].net_qty
-        })
+        .map(|&idx| book.user_states[idx as usize].net_qty)
         .unwrap_or(0)
 }
 
@@ -34,9 +32,7 @@ fn user_net_qty(book: &Orderbook, user_id: u32) -> i64 {
 fn fill_updates_taker_and_maker_net_qty() {
     let mut book = test_book();
     // Maker sell at 50100
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     // Taker buy crosses
     let mut order = IncomingOrder {
         price: 50_100,
@@ -61,9 +57,7 @@ fn fill_updates_taker_and_maker_net_qty() {
 #[test]
 fn position_buy_increases_net_qty() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
     let mut order = IncomingOrder {
         price: 50_100,
         qty: 50,
@@ -84,9 +78,7 @@ fn position_buy_increases_net_qty() {
 #[test]
 fn position_sell_decreases_net_qty() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 50, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(49_900, 50, Side::Buy, 0, 1, false, 0, 0, 0);
     let mut order = IncomingOrder {
         price: 49_900,
         qty: 50,
@@ -129,9 +121,7 @@ fn user_state_assigned_on_first_order() {
 fn reduce_only_order_closes_long_position() {
     let mut book = test_book();
     // Build a long position for user 2: buy 100 from user 1
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     let mut buy = IncomingOrder {
         price: 50_100,
         qty: 100,
@@ -149,9 +139,7 @@ fn reduce_only_order_closes_long_position() {
     assert_eq!(user_net_qty(&book, 2), 100);
 
     // Now reduce-only sell to close
-    book.insert_resting(
-        50_100, 100, Side::Buy, 0, 3, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Buy, 0, 3, false, 0, 0, 0);
     let mut sell = IncomingOrder {
         price: 50_100,
         qty: 100,
@@ -173,9 +161,7 @@ fn reduce_only_order_closes_long_position() {
 fn reduce_only_order_clamped_to_position_size() {
     let mut book = test_book();
     // Build long 50 for user 2
-    book.insert_resting(
-        50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
     let mut buy = IncomingOrder {
         price: 50_100,
         qty: 50,
@@ -193,9 +179,7 @@ fn reduce_only_order_clamped_to_position_size() {
     assert_eq!(user_net_qty(&book, 2), 50);
 
     // Reduce-only sell 200 (should be clamped to 50)
-    book.insert_resting(
-        50_100, 200, Side::Buy, 0, 3, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 200, Side::Buy, 0, 3, false, 0, 0, 0);
     let mut sell = IncomingOrder {
         price: 50_100,
         qty: 200,

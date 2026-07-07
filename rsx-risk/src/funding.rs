@@ -15,19 +15,12 @@ impl Default for FundingConfig {
 }
 
 /// RISK.md §5. Rate in bps.
-pub fn calculate_rate(
-    mark: i64,
-    index: i64,
-    config: &FundingConfig,
-) -> i64 {
+pub fn calculate_rate(mark: i64, index: i64, config: &FundingConfig) -> i64 {
     if index == 0 {
         return 0;
     }
-    let premium_raw = (mark as i128 - index as i128)
-        * 10_000
-        / index as i128;
-    let premium = premium_raw
-        .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+    let premium_raw = (mark as i128 - index as i128) * 10_000 / index as i128;
+    let premium = premium_raw.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
     premium.clamp(-config.rate_cap, config.rate_cap)
 }
 
@@ -37,11 +30,7 @@ pub fn calculate_rate(
 /// Rounds toward negative infinity (project rule: "floor always").
 /// Rust's `/` truncates toward zero, so a negative scaled value with a
 /// nonzero remainder would round the wrong way; `div_euclid` floors.
-pub fn calculate_payment(
-    net_qty: i64,
-    mark: i64,
-    rate: i64,
-) -> i64 {
+pub fn calculate_payment(net_qty: i64, mark: i64, rate: i64) -> i64 {
     let scaled = net_qty as i128 * mark as i128 * rate as i128;
     floor_div_10k(scaled)
 }
@@ -70,24 +59,15 @@ fn floor_div_10k(x: i128) -> i64 {
 /// by rounding alone; we park it on the largest-magnitude
 /// position. Globally (Σ over shards) `Σ net_qty == 0`
 /// (invariant #4), so the aggregate-based payments cancel.
-pub fn settle_symbol(
-    net_qtys: &[i64],
-    mark: i64,
-    rate: i64,
-) -> Vec<i64> {
+pub fn settle_symbol(net_qtys: &[i64], mark: i64, rate: i64) -> Vec<i64> {
     let mut payments: Vec<i64> = net_qtys
         .iter()
         .map(|&q| calculate_payment(q, mark, rate))
         .collect();
-    let sum_rounded: i128 =
-        payments.iter().map(|&p| p as i128).sum();
-    let net_total: i128 =
-        net_qtys.iter().map(|&q| q as i128).sum();
-    let agg_payment =
-        calculate_payment_i128(net_total, mark, rate);
-    let residual = (sum_rounded - agg_payment)
-        .clamp(i64::MIN as i128, i64::MAX as i128)
-        as i64;
+    let sum_rounded: i128 = payments.iter().map(|&p| p as i128).sum();
+    let net_total: i128 = net_qtys.iter().map(|&q| q as i128).sum();
+    let agg_payment = calculate_payment_i128(net_total, mark, rate);
+    let residual = (sum_rounded - agg_payment).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
     if residual != 0 {
         if let Some(i) = largest_idx(net_qtys) {
             payments[i] = payments[i].saturating_sub(residual);
@@ -99,11 +79,7 @@ pub fn settle_symbol(
 /// floor(net_qty * mark * rate / 10_000) at i128 width, clamped into
 /// i128's i64 range. The aggregate truncation that per-user payments
 /// are reconciled against in `settle_symbol`.
-fn calculate_payment_i128(
-    net_qty: i128,
-    mark: i64,
-    rate: i64,
-) -> i128 {
+fn calculate_payment_i128(net_qty: i128, mark: i64, rate: i64) -> i128 {
     (net_qty * mark as i128 * rate as i128)
         .div_euclid(10_000)
         .clamp(i64::MIN as i128, i64::MAX as i128)
@@ -124,20 +100,13 @@ fn largest_idx(net_qtys: &[i64]) -> Option<usize> {
     best.map(|(i, _)| i)
 }
 
-pub fn interval_id(
-    unix_secs: u64,
-    interval_secs: u64,
-) -> u64 {
+pub fn interval_id(unix_secs: u64, interval_secs: u64) -> u64 {
     if interval_secs == 0 {
         return 0;
     }
     unix_secs / interval_secs
 }
 
-pub fn is_settlement_due(
-    last_id: u64,
-    current_secs: u64,
-    interval_secs: u64,
-) -> bool {
+pub fn is_settlement_due(last_id: u64, current_secs: u64, interval_secs: u64) -> bool {
     interval_id(current_secs, interval_secs) > last_id
 }

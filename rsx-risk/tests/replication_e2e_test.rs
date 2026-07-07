@@ -19,13 +19,13 @@
 //! The advisory-lock tests are `#[ignore]`d (need a live PG; run
 //! under `make integration`).
 
+use rsx_cast::decode_payload;
+use rsx_cast::wal::extract_seq;
+use rsx_cast::CaughtUpRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::ReplicationService;
 use rsx_cast::WalWriter;
-use rsx_cast::CaughtUpRecord;
 use rsx_cast::RECORD_CAUGHT_UP;
-use rsx_cast::decode_payload;
-use rsx_cast::wal::extract_seq;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_risk::account::Account;
@@ -36,8 +36,8 @@ use rsx_risk::funding::FundingConfig;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::margin::SymbolRiskParams;
 use rsx_risk::position::Position;
-use rsx_risk::replay::ColdStartState;
 use rsx_risk::replay::apply_record;
+use rsx_risk::replay::ColdStartState;
 use rsx_risk::shard::RiskShard;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -93,10 +93,9 @@ fn test_config() -> ShardConfig {
 #[ignore]
 async fn lease_renewal_keeps_main_alive() {
     let (_pg, connstr) = pg_container().await;
-    let (client, conn) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .expect("failed to connect");
+    let (client, conn) = tokio_postgres::connect(&connstr, NoTls)
+        .await
+        .expect("failed to connect");
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -106,8 +105,7 @@ async fn lease_renewal_keeps_main_alive() {
     lease.acquire(&client).await.expect("acquire");
 
     for _ in 0..5 {
-        tokio::time::sleep(Duration::from_millis(500))
-            .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
         let held = lease.renew(&client).await.expect("renew");
         assert!(held);
     }
@@ -119,18 +117,16 @@ async fn lease_renewal_keeps_main_alive() {
 #[ignore]
 async fn standby_detects_main_crash_via_lock() {
     let (_pg, connstr) = pg_container().await;
-    let (client_main, conn_main) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .expect("failed to connect");
+    let (client_main, conn_main) = tokio_postgres::connect(&connstr, NoTls)
+        .await
+        .expect("failed to connect");
     tokio::spawn(async move {
         let _ = conn_main.await;
     });
 
-    let (client_standby, conn_standby) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .expect("failed to connect");
+    let (client_standby, conn_standby) = tokio_postgres::connect(&connstr, NoTls)
+        .await
+        .expect("failed to connect");
     tokio::spawn(async move {
         let _ = conn_standby.await;
     });
@@ -228,18 +224,16 @@ async fn cold_start_from_postgres() {
 #[ignore]
 async fn split_brain_prevented_by_advisory_lock() {
     let (_pg, connstr) = pg_container().await;
-    let (client1, conn1) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .expect("failed to connect");
+    let (client1, conn1) = tokio_postgres::connect(&connstr, NoTls)
+        .await
+        .expect("failed to connect");
     tokio::spawn(async move {
         let _ = conn1.await;
     });
 
-    let (client2, conn2) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .expect("failed to connect");
+    let (client2, conn2) = tokio_postgres::connect(&connstr, NoTls)
+        .await
+        .expect("failed to connect");
     tokio::spawn(async move {
         let _ = conn2.await;
     });
@@ -250,15 +244,11 @@ async fn split_brain_prevented_by_advisory_lock() {
     lease1.acquire(&client1).await.expect("lease1");
 
     let mut lease2 = AdvisoryLease::new(shard_id);
-    let acquired =
-        lease2.try_acquire(&client2).await.expect("try");
+    let acquired = lease2.try_acquire(&client2).await.expect("try");
     assert!(!acquired);
 
     for _ in 0..10 {
-        let acquired = lease2
-            .try_acquire(&client2)
-            .await
-            .expect("try");
+        let acquired = lease2.try_acquire(&client2).await.expect("try");
         assert!(!acquired);
     }
 
@@ -277,18 +267,14 @@ fn reserve_port() -> SocketAddr {
 /// Self-signed cert used as BOTH server identity and client CA
 /// (single-box self-trust). Replication is TLS-mandatory.
 fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
-    let _ = rustls::crypto::aws_lc_rs::default_provider()
-        .install_default();
-    let cert = rcgen::generate_simple_self_signed(vec![
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-    ])
-    .unwrap();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .unwrap();
     let cert_path = dir.join("repl_cert.pem");
     let key_path = dir.join("repl_key.pem");
     std::fs::write(&cert_path, cert.cert.pem()).unwrap();
-    std::fs::write(&key_path, cert.key_pair.serialize_pem())
-        .unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem()).unwrap();
     rsx_cast::TlsConfig {
         server: Some(rsx_cast::TlsServer {
             cert_path: cert_path.clone(),
@@ -358,9 +344,7 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
     // then an ORDER_ACCEPTED that freezes margin for a resting
     // order. live_seq after this is 3.
     let stream_id = 1u32;
-    let mut writer =
-        WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024)
-            .unwrap();
+    let mut writer = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
     let mut f1 = warm_fill(1, 4, 8);
     let fr = writer.prepare(&mut f1).unwrap();
     writer.append_framed(&fr).unwrap();
@@ -383,15 +367,12 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
             .enable_all()
             .build()
             .unwrap();
-        let service =
-            ReplicationService::new(wal_dir_srv, tls_srv)
-                .unwrap();
+        let service = ReplicationService::new(wal_dir_srv, tls_srv).unwrap();
         rt.block_on(async move {
             service.serve(replay_addr).await.unwrap();
         });
     });
-    let deadline =
-        std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while std::net::TcpStream::connect(replay_addr).is_err() {
         if std::time::Instant::now() > deadline {
             panic!("replication server failed to bind");
@@ -405,17 +386,16 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
     let mut shard = RiskShard::new(test_config());
     shard.accounts.insert(
         4u32,
-        Account { user_id: 4, collateral: 10_000_000_000, version: 0 },
+        Account {
+            user_id: 4,
+            collateral: 10_000_000_000,
+            version: 0,
+        },
     );
 
     let tip_file = tmp.path().join("risk_warm_tip.bin");
-    let mut consumer = ReplicationConsumer::new(
-        stream_id,
-        vec![replay_addr.to_string()],
-        tip_file,
-        tls,
-    )
-    .unwrap();
+    let mut consumer =
+        ReplicationConsumer::new(stream_id, vec![replay_addr.to_string()], tip_file, tls).unwrap();
 
     // Drive the warm-catchup loop body (mirrors
     // main.rs::run_warm_catchup): apply each record via
@@ -425,9 +405,7 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
     consumer
         .run_once(|raw| {
             if raw.header.record_type == RECORD_CAUGHT_UP {
-                if let Some(rec) =
-                    decode_payload::<CaughtUpRecord>(&raw.payload)
-                {
+                if let Some(rec) = decode_payload::<CaughtUpRecord>(&raw.payload) {
                     caught_live_seq = Some(rec.live_seq);
                 }
                 return false;
@@ -436,11 +414,7 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
             if seq > applied_seq {
                 applied_seq = seq;
             }
-            apply_record(
-                &mut shard,
-                raw.header.record_type,
-                &raw.payload,
-            );
+            apply_record(&mut shard, raw.header.record_type, &raw.payload);
             true
         })
         .await

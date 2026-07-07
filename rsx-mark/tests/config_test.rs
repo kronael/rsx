@@ -27,14 +27,8 @@ fn clear_env() {
 fn config_parse_valid_env() {
     let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
-    env::set_var(
-        "RSX_MARK_SOURCE_BINANCE_ENABLED",
-        "1",
-    );
-    env::set_var(
-        "RSX_MARK_SOURCE_BINANCE_WS_URL",
-        "wss://example.com/ws",
-    );
+    env::set_var("RSX_MARK_SOURCE_BINANCE_ENABLED", "1");
+    env::set_var("RSX_MARK_SOURCE_BINANCE_WS_URL", "wss://example.com/ws");
     let cfg = load_mark_config().unwrap();
     assert_eq!(cfg.listen_addr, "0.0.0.0:9200");
     assert_eq!(cfg.wal_dir, "./wal/mark");
@@ -59,14 +53,8 @@ fn config_staleness_ns_overrides_default() {
 fn config_source_enabled_false_skipped() {
     let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
-    env::set_var(
-        "RSX_MARK_SOURCE_BINANCE_ENABLED",
-        "0",
-    );
-    env::set_var(
-        "RSX_MARK_SOURCE_COINBASE_ENABLED",
-        "0",
-    );
+    env::set_var("RSX_MARK_SOURCE_BINANCE_ENABLED", "0");
+    env::set_var("RSX_MARK_SOURCE_COINBASE_ENABLED", "0");
     let cfg = load_mark_config().unwrap();
     assert_eq!(cfg.sources.len(), 0);
     clear_env();
@@ -76,10 +64,7 @@ fn config_source_enabled_false_skipped() {
 fn config_listen_addr_and_wal_dir() {
     let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
-    env::set_var(
-        "RSX_MARK_LISTEN_ADDR",
-        "127.0.0.1:9300",
-    );
+    env::set_var("RSX_MARK_LISTEN_ADDR", "127.0.0.1:9300");
     env::set_var("RSX_MARK_WAL_DIR", "/data/wal/mark");
     let cfg = load_mark_config().unwrap();
     assert_eq!(cfg.listen_addr, "127.0.0.1:9300");
@@ -101,18 +86,9 @@ fn config_stream_id_set() {
 fn config_reconnect_base_and_max_ms() {
     let _lock = ENV_LOCK.lock().unwrap();
     clear_env();
-    env::set_var(
-        "RSX_MARK_SOURCE_BINANCE_ENABLED",
-        "1",
-    );
-    env::set_var(
-        "RSX_MARK_SOURCE_BINANCE_RECONNECT_BASE_MS",
-        "2000",
-    );
-    env::set_var(
-        "RSX_MARK_SOURCE_BINANCE_RECONNECT_MAX_MS",
-        "60000",
-    );
+    env::set_var("RSX_MARK_SOURCE_BINANCE_ENABLED", "1");
+    env::set_var("RSX_MARK_SOURCE_BINANCE_RECONNECT_BASE_MS", "2000");
+    env::set_var("RSX_MARK_SOURCE_BINANCE_RECONNECT_MAX_MS", "60000");
     let cfg = load_mark_config().unwrap();
     assert_eq!(cfg.sources[0].reconnect_base_ms, 2000);
     assert_eq!(cfg.sources[0].reconnect_max_ms, 60000);

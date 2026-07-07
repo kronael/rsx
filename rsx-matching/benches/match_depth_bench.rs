@@ -25,18 +25,9 @@ fn bench_match_by_depth(c: &mut Criterion) {
         group.bench_function(format!("n={n}"), |b| {
             let mut book = harness::build_book(n);
             b.iter(|| {
-                let mut taker = harness::order(
-                    harness::MID + 1,
-                    1,
-                    Side::Buy,
-                    TimeInForce::IOC,
-                    1,
-                    0,
-                );
-                process_new_order(
-                    black_box(&mut book),
-                    black_box(&mut taker),
-                );
+                let mut taker =
+                    harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::IOC, 1, 0);
+                process_new_order(black_box(&mut book), black_box(&mut taker));
             });
         });
     }

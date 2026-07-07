@@ -28,11 +28,7 @@ pub fn hex_to_order_id(hex: &str) -> Option<[u8; 16]> {
     }
     let mut id = [0u8; 16];
     for i in 0..16 {
-        id[i] = u8::from_str_radix(
-            &hex[i * 2..i * 2 + 2],
-            16,
-        )
-        .ok()?;
+        id[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
     }
     Some(id)
 }

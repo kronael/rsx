@@ -35,16 +35,10 @@ pub fn median(sorted: &[i64]) -> i64 {
 }
 
 /// Compute bitmask of fresh (non-stale) sources.
-pub fn compute_mask(
-    state: &SymbolMarkState,
-    now_ns: u64,
-    staleness_ns: u64,
-) -> u32 {
+pub fn compute_mask(state: &SymbolMarkState, now_ns: u64, staleness_ns: u64) -> u32 {
     let mut mask: u32 = 0;
     for sp in state.sources.iter().flatten() {
-        if now_ns.saturating_sub(sp.timestamp_ns)
-            < staleness_ns
-        {
+        if now_ns.saturating_sub(sp.timestamp_ns) < staleness_ns {
             mask |= 1 << sp.source_id;
         }
     }
@@ -61,15 +55,12 @@ pub fn reaggregate(
 ) -> Option<MarkPriceEvent> {
     let mut fresh: Vec<i64> = Vec::with_capacity(MAX_SOURCES);
     for sp in state.sources.iter().flatten() {
-        if now_ns.saturating_sub(sp.timestamp_ns)
-            < staleness_ns
-        {
+        if now_ns.saturating_sub(sp.timestamp_ns) < staleness_ns {
             fresh.push(sp.price);
         }
     }
 
-    state.source_mask =
-        compute_mask(state, now_ns, staleness_ns);
+    state.source_mask = compute_mask(state, now_ns, staleness_ns);
     state.source_count = fresh.len() as u8;
 
     match fresh.len() {
@@ -86,11 +77,7 @@ pub fn reaggregate(
     }
 }
 
-fn make_event(
-    state: &SymbolMarkState,
-    symbol_id: u32,
-    now_ns: u64,
-) -> MarkPriceEvent {
+fn make_event(state: &SymbolMarkState, symbol_id: u32, now_ns: u64) -> MarkPriceEvent {
     MarkPriceEvent {
         seq: 0,
         ts_ns: now_ns,

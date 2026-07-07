@@ -16,9 +16,7 @@ use std::time::Duration;
 // ── helpers ───────────────────────────────────────
 
 fn empty_state() -> Rc<RefCell<GatewayState>> {
-    Rc::new(RefCell::new(GatewayState::new(
-        64, 10, 1000, vec![],
-    )))
+    Rc::new(RefCell::new(GatewayState::new(64, 10, 1000, vec![])))
 }
 
 fn state_with_symbols() -> Rc<RefCell<GatewayState>> {
@@ -38,44 +36,28 @@ fn state_with_symbols() -> Rc<RefCell<GatewayState>> {
             qty_decimals: 1,
         },
     ];
-    Rc::new(RefCell::new(GatewayState::new(
-        64, 10, 1000, syms,
-    )))
+    Rc::new(RefCell::new(GatewayState::new(64, 10, 1000, syms)))
 }
 
 /// Send a raw request to handle_rest via loopback.
 /// Returns the full response string.
-async fn round_trip(
-    request: &str,
-    state: Rc<RefCell<GatewayState>>,
-) -> String {
-    let listener =
-        monoio::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap();
+async fn round_trip(request: &str, state: Rc<RefCell<GatewayState>>) -> String {
+    let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let req = request.to_string();
 
     monoio::spawn(async move {
-        let (mut stream, _) =
-            listener.accept().await.unwrap();
+        let (mut stream, _) = listener.accept().await.unwrap();
         handle_rest(&mut stream, &req, &state).await;
     });
 
-    monoio::time::sleep(
-        Duration::from_millis(5),
-    )
-    .await;
+    monoio::time::sleep(Duration::from_millis(5)).await;
 
-    let mut client =
-        TcpStream::connect(addr).await.unwrap();
-    monoio::time::sleep(
-        Duration::from_millis(20),
-    )
-    .await;
+    let mut client = TcpStream::connect(addr).await.unwrap();
+    monoio::time::sleep(Duration::from_millis(20)).await;
 
     let buf = vec![0u8; 4096];
-    let (res, buf): (_, Vec<u8>) =
-        client.read(buf).await;
+    let (res, buf): (_, Vec<u8>) = client.read(buf).await;
     let n = res.unwrap_or(0);
     String::from_utf8_lossy(&buf[..n]).into_owned()
 }
@@ -122,12 +104,10 @@ fn ws_upgrade_not_detected_missing_key() {
 
 #[test]
 fn health_returns_200_ok() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /health HTTP/1.1\r\n\
@@ -143,12 +123,10 @@ fn health_returns_200_ok() {
 
 #[test]
 fn health_body_is_status_ok() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /health HTTP/1.1\r\n\
@@ -164,12 +142,10 @@ fn health_body_is_status_ok() {
 
 #[test]
 fn health_has_json_content_type() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /health HTTP/1.1\r\n\
@@ -177,9 +153,7 @@ fn health_has_json_content_type() {
             \r\n";
         let resp = round_trip(req, state).await;
         assert!(
-            resp.contains(
-                "Content-Type: application/json"
-            ),
+            resp.contains("Content-Type: application/json"),
             "missing json content-type: {resp}"
         );
     });
@@ -187,12 +161,10 @@ fn health_has_json_content_type() {
 
 #[test]
 fn health_has_content_length_header() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /health HTTP/1.1\r\n\
@@ -208,12 +180,10 @@ fn health_has_content_length_header() {
 
 #[test]
 fn health_has_connection_close() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /health HTTP/1.1\r\n\
@@ -231,12 +201,10 @@ fn health_has_connection_close() {
 
 #[test]
 fn health_query_string_stripped() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /health?foo=bar HTTP/1.1\r\n\
@@ -254,12 +222,10 @@ fn health_query_string_stripped() {
 
 #[test]
 fn symbols_returns_200() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = state_with_symbols();
         let req = "GET /v1/symbols HTTP/1.1\r\n\
@@ -275,33 +241,26 @@ fn symbols_returns_200() {
 
 #[test]
 fn symbols_body_contains_symbols_key() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = state_with_symbols();
         let req = "GET /v1/symbols HTTP/1.1\r\n\
             Host: localhost\r\n\
             \r\n";
         let resp = round_trip(req, state).await;
-        assert!(
-            resp.contains("\"symbols\""),
-            "missing symbols key: {resp}"
-        );
+        assert!(resp.contains("\"symbols\""), "missing symbols key: {resp}");
     });
 }
 
 #[test]
 fn symbols_body_has_correct_count() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = state_with_symbols();
         let req = "GET /v1/symbols HTTP/1.1\r\n\
@@ -309,48 +268,34 @@ fn symbols_body_has_correct_count() {
             \r\n";
         let resp = round_trip(req, state).await;
         // Two symbol entries: count "\"id\":" occurrences
-        let count =
-            resp.matches("\"id\":").count();
-        assert_eq!(
-            count, 2,
-            "expected 2 symbols in body: {resp}"
-        );
+        let count = resp.matches("\"id\":").count();
+        assert_eq!(count, 2, "expected 2 symbols in body: {resp}");
     });
 }
 
 #[test]
 fn symbols_body_contains_tick_and_lot() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = state_with_symbols();
         let req = "GET /v1/symbols HTTP/1.1\r\n\
             Host: localhost\r\n\
             \r\n";
         let resp = round_trip(req, state).await;
-        assert!(
-            resp.contains("\"tick_size\""),
-            "missing tick_size: {resp}"
-        );
-        assert!(
-            resp.contains("\"lot_size\""),
-            "missing lot_size: {resp}"
-        );
+        assert!(resp.contains("\"tick_size\""), "missing tick_size: {resp}");
+        assert!(resp.contains("\"lot_size\""), "missing lot_size: {resp}");
     });
 }
 
 #[test]
 fn symbols_empty_state_returns_empty_array() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /v1/symbols HTTP/1.1\r\n\
@@ -366,16 +311,13 @@ fn symbols_empty_state_returns_empty_array() {
 
 #[test]
 fn symbols_query_string_stripped() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = state_with_symbols();
-        let req =
-            "GET /v1/symbols?active=true HTTP/1.1\r\n\
+        let req = "GET /v1/symbols?active=true HTTP/1.1\r\n\
             Host: localhost\r\n\
             \r\n";
         let resp = round_trip(req, state).await;
@@ -390,12 +332,10 @@ fn symbols_query_string_stripped() {
 
 #[test]
 fn unknown_path_returns_404() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /nonexistent HTTP/1.1\r\n\
@@ -411,12 +351,10 @@ fn unknown_path_returns_404() {
 
 #[test]
 fn unknown_path_404_body_is_json() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         let req = "GET /v2/orders HTTP/1.1\r\n\
@@ -424,9 +362,7 @@ fn unknown_path_404_body_is_json() {
             \r\n";
         let resp = round_trip(req, state).await;
         assert!(
-            resp.contains(
-                "Content-Type: application/json"
-            ),
+            resp.contains("Content-Type: application/json"),
             "404 missing json content-type: {resp}"
         );
         assert!(
@@ -438,12 +374,10 @@ fn unknown_path_404_body_is_json() {
 
 #[test]
 fn malformed_request_returns_404() {
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let state = empty_state();
         // No space-separated path in request line.
@@ -499,31 +433,22 @@ fn ws_handshake_responds_101() {
     )
     .unwrap();
 
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
-        let listener =
-            monoio::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
+            let (mut stream, _) = listener.accept().await.unwrap();
             let _ = ws_handshake(&mut stream, secret).await;
         });
 
-        monoio::time::sleep(
-            Duration::from_millis(5),
-        )
-        .await;
+        monoio::time::sleep(Duration::from_millis(5)).await;
 
-        let mut client =
-            TcpStream::connect(addr).await.unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
 
         let req = format!(
             "GET /ws/private HTTP/1.1\r\n\
@@ -536,28 +461,18 @@ fn ws_handshake_responds_101() {
             \r\n",
             token,
         );
-        let (res, _) = client
-            .write_all(req.into_bytes())
-            .await;
+        let (res, _) = client.write_all(req.into_bytes()).await;
         res.unwrap();
 
-        monoio::time::sleep(
-            Duration::from_millis(20),
-        )
-        .await;
+        monoio::time::sleep(Duration::from_millis(20)).await;
 
         let buf = vec![0u8; 4096];
-        let (res, buf): (_, Vec<u8>) =
-            client.read(buf).await;
+        let (res, buf): (_, Vec<u8>) = client.read(buf).await;
         let n = res.unwrap_or(0);
-        let resp =
-            String::from_utf8_lossy(&buf[..n])
-                .into_owned();
+        let resp = String::from_utf8_lossy(&buf[..n]).into_owned();
 
         assert!(
-            resp.starts_with(
-                "HTTP/1.1 101 Switching Protocols"
-            ),
+            resp.starts_with("HTTP/1.1 101 Switching Protocols"),
             "expected 101, got: {resp}"
         );
         assert!(
@@ -574,60 +489,41 @@ fn ws_handshake_responds_101() {
 #[test]
 fn ws_handshake_401_without_auth() {
     use rsx_gateway::ws::ws_handshake;
-    let mut rt = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
     rt.block_on(async {
-        let listener =
-            monoio::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
+            let (mut stream, _) = listener.accept().await.unwrap();
             // Non-empty secret = JWT required.
-            let _ =
-                ws_handshake(&mut stream, "secret").await;
+            let _ = ws_handshake(&mut stream, "secret").await;
         });
 
-        monoio::time::sleep(
-            Duration::from_millis(5),
-        )
-        .await;
+        monoio::time::sleep(Duration::from_millis(5)).await;
 
-        let mut client =
-            TcpStream::connect(addr).await.unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
 
         // No Authorization or X-User-Id header.
-        let req =
-            "GET /ws/private HTTP/1.1\r\n\
+        let req = "GET /ws/private HTTP/1.1\r\n\
             Host: localhost\r\n\
             Upgrade: websocket\r\n\
             Connection: Upgrade\r\n\
             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
             Sec-WebSocket-Version: 13\r\n\
             \r\n";
-        let (res, _) = client
-            .write_all(req.as_bytes().to_vec())
-            .await;
+        let (res, _) = client.write_all(req.as_bytes().to_vec()).await;
         res.unwrap();
 
-        monoio::time::sleep(
-            Duration::from_millis(20),
-        )
-        .await;
+        monoio::time::sleep(Duration::from_millis(20)).await;
 
         let buf = vec![0u8; 4096];
-        let (res, buf): (_, Vec<u8>) =
-            client.read(buf).await;
+        let (res, buf): (_, Vec<u8>) = client.read(buf).await;
         let n = res.unwrap_or(0);
-        let resp =
-            String::from_utf8_lossy(&buf[..n])
-                .into_owned();
+        let resp = String::from_utf8_lossy(&buf[..n]).into_owned();
 
         assert!(
             resp.starts_with("HTTP/1.1 401"),

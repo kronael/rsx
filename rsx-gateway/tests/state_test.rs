@@ -19,8 +19,7 @@ fn circuit_breaker_default_closed() {
 
 #[test]
 fn broadcast_heartbeat_adds_to_outbound() {
-    let mut state =
-        GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
     let c1 = state.add_connection(1).unwrap();
     let c2 = state.add_connection(2).unwrap();
     state.broadcast_heartbeat(12345);
@@ -34,8 +33,7 @@ fn broadcast_heartbeat_adds_to_outbound() {
 
 #[test]
 fn stale_connections_detected() {
-    let mut state =
-        GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
     let c1 = state.add_connection(1).unwrap();
     let c2 = state.add_connection(2).unwrap();
     // c1 active long ago, c2 recent
@@ -48,15 +46,18 @@ fn stale_connections_detected() {
 
 #[test]
 fn config_applied_tracks_monotonic_version() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![
-        rsx_types::SymbolConfig {
+    let mut state = GatewayState::new(
+        100,
+        10,
+        30_000,
+        vec![rsx_types::SymbolConfig {
             symbol_id: 0,
             price_decimals: 8,
             qty_decimals: 8,
             tick_size: 1,
             lot_size: 1,
-        },
-    ]);
+        }],
+    );
     assert!(state.apply_config_applied(0, 5));
     assert_eq!(state.config_versions[0], 5);
     // stale version ignored
@@ -66,8 +67,7 @@ fn config_applied_tracks_monotonic_version() {
 
 #[test]
 fn per_user_connection_limit_different_users() {
-    let mut state =
-        GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
     for _ in 0..5 {
         assert!(state.add_connection(1).is_ok());
     }
@@ -79,15 +79,18 @@ fn per_user_connection_limit_different_users() {
 fn config_applied_reloads_symbol_overrides() {
     std::env::set_var("RSX_SYMBOL_0_TICK_SIZE", "5");
     std::env::set_var("RSX_SYMBOL_0_LOT_SIZE", "7");
-    let mut state = GatewayState::new(100, 10, 30_000, vec![
-        rsx_types::SymbolConfig {
+    let mut state = GatewayState::new(
+        100,
+        10,
+        30_000,
+        vec![rsx_types::SymbolConfig {
             symbol_id: 0,
             price_decimals: 8,
             qty_decimals: 8,
             tick_size: 1,
             lot_size: 1,
-        },
-    ]);
+        }],
+    );
     assert!(state.apply_config_applied(0, 1));
     assert_eq!(state.symbol_configs[0].tick_size, 5);
     assert_eq!(state.symbol_configs[0].lot_size, 7);
@@ -126,10 +129,7 @@ fn concurrent_sessions_isolated() {
     state.user_limiters.insert(1, limiter);
     // user 2 has no limiter -- unaffected
     assert!(!state.user_limiters.contains_key(&2));
-    assert_eq!(
-        state.user_limiters[&1].tokens_remaining(),
-        0
-    );
+    assert_eq!(state.user_limiters[&1].tokens_remaining(), 0);
 }
 
 #[test]
@@ -162,17 +162,14 @@ fn ip_limiter_map_is_bounded() {
     assert_eq!(state.ip_limiters.len(), IP_LIMITER_MAX);
 
     // The very first IP should have been evicted.
-    let first_ip: std::net::IpAddr =
-        std::net::Ipv4Addr::from(0u32).into();
+    let first_ip: std::net::IpAddr = std::net::Ipv4Addr::from(0u32).into();
     assert!(
         !state.ip_limiters.contains_key(&first_ip),
         "oldest IP should have been evicted"
     );
 
     // The last-inserted IP should still be present.
-    let last_ip: std::net::IpAddr =
-        std::net::Ipv4Addr::from((IP_LIMITER_MAX + 4) as u32)
-            .into();
+    let last_ip: std::net::IpAddr = std::net::Ipv4Addr::from((IP_LIMITER_MAX + 4) as u32).into();
     assert!(
         state.ip_limiters.contains_key(&last_ip),
         "newest IP should be present"

@@ -9,8 +9,8 @@ use crate::records::RECORD_REPLICATION_NOT_AVAILABLE;
 use crate::records::RECORD_REPLICATION_REQUEST;
 use crate::tls::build_connector;
 use crate::tls::extract_server_name;
-use crate::wal::RawWalRecord;
 use crate::wal::extract_seq;
+use crate::wal::RawWalRecord;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -93,10 +93,7 @@ impl ReplicationConsumer {
     /// callback returns `true` to keep streaming, `false` to stop
     /// and return `Ok(())`. Reconnects on connection errors; only a
     /// `false` return (or the retry budget) ends it.
-    pub async fn run<F>(
-        &mut self,
-        mut callback: F,
-    ) -> io::Result<()>
+    pub async fn run<F>(&mut self, mut callback: F) -> io::Result<()>
     where
         F: FnMut(RawWalRecord) -> bool,
     {
@@ -125,22 +122,13 @@ impl ReplicationConsumer {
                              exhausted retry budget ({MAX_RETRIES}): {e}",
                         )));
                     }
-                    let base_secs = BACKOFF_SECS[backoff_idx
-                        .min(BACKOFF_SECS.len() - 1)];
-                    let sleep_ms = (base_secs as f64
-                        * 1000.0
-                        * jitter_factor()) as u64;
+                    let base_secs = BACKOFF_SECS[backoff_idx.min(BACKOFF_SECS.len() - 1)];
+                    let sleep_ms = (base_secs as f64 * 1000.0 * jitter_factor()) as u64;
                     warn!(
                         "stream error ({}/{}): {}, retry in {}ms",
-                        consec_errors,
-                        MAX_RETRIES,
-                        e,
-                        sleep_ms,
+                        consec_errors, MAX_RETRIES, e, sleep_ms,
                     );
-                    tokio::time::sleep(
-                        Duration::from_millis(sleep_ms),
-                    )
-                    .await;
+                    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
                     if backoff_idx < BACKOFF_SECS.len() - 1 {
                         backoff_idx += 1;
                     }
@@ -151,10 +139,7 @@ impl ReplicationConsumer {
 
     /// Connect once and stream until the connection ends
     /// or the callback returns `false`. No reconnect.
-    pub async fn run_once<F>(
-        &mut self,
-        mut callback: F,
-    ) -> io::Result<()>
+    pub async fn run_once<F>(&mut self, mut callback: F) -> io::Result<()>
     where
         F: FnMut(RawWalRecord) -> bool,
     {
@@ -165,24 +150,20 @@ impl ReplicationConsumer {
 
     /// Streams one connection (federating over endpoints). See
     /// [`StreamEnd`] for the two success outcomes.
-    async fn connect_and_stream<F>(
-        &mut self,
-        callback: &mut F,
-    ) -> io::Result<StreamEnd>
+    async fn connect_and_stream<F>(&mut self, callback: &mut F) -> io::Result<StreamEnd>
     where
         F: FnMut(RawWalRecord) -> bool,
     {
         let mut last_err: Option<io::Error> = None;
         for endpoint in &self.endpoints.clone() {
-            let tcp_stream =
-                match TcpStream::connect(endpoint).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!("dxs: connect to {endpoint} failed: {e}");
-                        last_err = Some(e);
-                        continue;
-                    }
-                };
+            let tcp_stream = match TcpStream::connect(endpoint).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("dxs: connect to {endpoint} failed: {e}");
+                    last_err = Some(e);
+                    continue;
+                }
+            };
             let result = match extract_server_name(endpoint) {
                 Ok(server_name) => {
                     match self
@@ -191,42 +172,26 @@ impl ReplicationConsumer {
                         .connect(server_name, tcp_stream)
                         .await
                     {
-                        Ok(tls) => {
-                            self.handle_stream(tls, callback)
-                                .await
-                        }
-                        Err(e) => Err(io::Error::other(
-                            format!(
-                                "tls handshake failed: {e}"
-                            ),
-                        )),
+                        Ok(tls) => self.handle_stream(tls, callback).await,
+                        Err(e) => Err(io::Error::other(format!("tls handshake failed: {e}"))),
                     }
                 }
                 Err(e) => Err(e),
             };
             match result {
-                Err(ref e)
-                    if e.kind()
-                        == io::ErrorKind::NotFound =>
-                {
+                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
                     warn!(
                         "dxs: {endpoint} cannot serve seq={}, trying next",
                         self.tip + 1
                     );
-                    last_err = Some(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        e.to_string(),
-                    ));
+                    last_err = Some(io::Error::new(io::ErrorKind::NotFound, e.to_string()));
                     continue;
                 }
                 other => return other,
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotConnected,
-                "all dxs endpoints exhausted",
-            )
+            io::Error::new(io::ErrorKind::NotConnected, "all dxs endpoints exhausted")
         }))
     }
 
@@ -247,11 +212,7 @@ impl ReplicationConsumer {
         };
         let payload = as_bytes(&req);
         let crc = compute_crc32(payload);
-        let hdr = WalHeader::new(
-            RECORD_REPLICATION_REQUEST,
-            payload.len() as u16,
-            crc,
-        );
+        let hdr = WalHeader::new(RECORD_REPLICATION_REQUEST, payload.len() as u16, crc);
         stream.write_all(hdr.to_bytes()).await?;
         stream.write_all(payload).await?;
 
@@ -261,30 +222,18 @@ impl ReplicationConsumer {
         loop {
             match stream.read_exact(&mut hdr_buf).await {
                 Ok(_) => {}
-                Err(ref e)
-                    if e.kind()
-                        == io::ErrorKind::UnexpectedEof =>
-                {
+                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                     break;
                 }
                 Err(e) => return Err(e),
             }
 
-            let header =
-                WalHeader::from_bytes(&hdr_buf)
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "bad header",
-                        )
-                    })?;
+            let header = WalHeader::from_bytes(&hdr_buf)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad header"))?;
             if header.record_type == RECORD_REPLICATION_NOT_AVAILABLE {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!(
-                        "replay not available from seq={}",
-                        self.tip + 1
-                    ),
+                    format!("replay not available from seq={}", self.tip + 1),
                 ));
             }
 
@@ -294,24 +243,16 @@ impl ReplicationConsumer {
 
             let computed = compute_crc32(&payload);
             if computed != header.crc32 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "crc mismatch",
-                ));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "crc mismatch"));
             }
 
             if let Some(seq) = extract_seq(&payload) {
                 self.tip = self.tip.max(seq);
             }
 
-            let keep_going = callback(RawWalRecord {
-                header,
-                payload,
-            });
+            let keep_going = callback(RawWalRecord { header, payload });
 
-            if self.last_tip_persist.elapsed()
-                >= self.tip_persist_interval
-            {
+            if self.last_tip_persist.elapsed() >= self.tip_persist_interval {
                 persist_tip(&self.tip_file, self.tip)?;
                 self.last_tip_persist = Instant::now();
             }
@@ -343,9 +284,7 @@ fn jitter_factor() -> f64 {
 fn load_tip(path: &Path) -> io::Result<u64> {
     let data = match fs::read(path) {
         Ok(d) => d,
-        Err(ref e)
-            if e.kind() == io::ErrorKind::NotFound =>
-        {
+        Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
             return Ok(0);
         }
         Err(e) => return Err(e),

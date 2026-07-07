@@ -16,11 +16,7 @@ pub enum Control {
 
 /// Apply one key. Digits go to the focused field, letters are
 /// commands, Enter submits over `conn`.
-pub fn handle_key(
-    app: &mut App,
-    code: KeyCode,
-    conn: &mut dyn GatewayConn,
-) -> Control {
+pub fn handle_key(app: &mut App, code: KeyCode, conn: &mut dyn GatewayConn) -> Control {
     match code {
         KeyCode::Char('q') | KeyCode::Esc => return Control::Quit,
         KeyCode::Char(c) if c.is_ascii_digit() => app.input_digit(c),

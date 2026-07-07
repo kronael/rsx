@@ -86,6 +86,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use hdrhistogram::Histogram;
+use rsx_risk::types::FillEvent;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
@@ -94,7 +95,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::types::FillEvent;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -112,13 +112,20 @@ struct Cfg {
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(default)
 }
 
 fn load_cfg() -> Cfg {
     let depths = std::env::var("RTB_DEPTHS")
         .ok()
-        .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect::<Vec<usize>>())
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse().ok())
+                .collect::<Vec<usize>>()
+        })
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| vec![0, 8, 64, 512]);
     Cfg {
@@ -269,7 +276,12 @@ fn new_hist() -> Histogram<u64> {
 
 /// Run `op` in a closed loop for `window`, sampling latency 1-in-N.
 /// `op` returns () and advances its own state via the &mut captured env.
-fn run_window<F: FnMut()>(mut op: F, warmup: Duration, window: Duration, sample_every: u64) -> RepResult {
+fn run_window<F: FnMut()>(
+    mut op: F,
+    warmup: Duration,
+    window: Duration,
+    sample_every: u64,
+) -> RepResult {
     // warmup
     let w0 = Instant::now();
     while w0.elapsed() < warmup {
@@ -653,9 +665,14 @@ fn main() {
         cfg.reps,
         cfg.sample_every,
     );
-    println!("Instant::now()+elapsed overhead ~= {:.1} ns/sample (latency cols include this)", timer_ns);
+    println!(
+        "Instant::now()+elapsed overhead ~= {:.1} ns/sample (latency cols include this)",
+        timer_ns
+    );
     println!("NOTE: ops/s is the engine SERVICE ceiling (no transport/decode/UDP). Latency cols");
-    println!("      are per-op SERVICE time (no queue) -- load tail + knee are in risk_flood_bench.");
+    println!(
+        "      are per-op SERVICE time (no queue) -- load tail + knee are in risk_flood_bench."
+    );
     println!();
     println!(
         "{:<26} {:>12} {:>10} {:>10} {:>9} {:>9} {:>9} {:>9}",
@@ -700,6 +717,8 @@ fn main() {
 
     println!();
     println!("Read: ops/s(med) is the per-shard capacity for that workload. order-accept rises in");
-    println!("cost (falls in ops/s) as resting-order depth grows -- frozen_for_user sums the user's");
+    println!(
+        "cost (falls in ops/s) as resting-order depth grows -- frozen_for_user sums the user's"
+    );
     println!("open orders each pre-trade check. NotInShard is the cheap early-exit floor.");
 }

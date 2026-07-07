@@ -1,8 +1,8 @@
-use rsx_types::NONE;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
+use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 
 use crate::compression::CompressionMap;
@@ -72,18 +72,11 @@ pub struct Orderbook {
 }
 
 impl Orderbook {
-    pub fn new(
-        config: SymbolConfig,
-        capacity: u32,
-        mid_price: i64,
-    ) -> Self {
-        let compression =
-            CompressionMap::new(mid_price, config.tick_size);
+    pub fn new(config: SymbolConfig, capacity: u32, mid_price: i64) -> Self {
+        let compression = CompressionMap::new(mid_price, config.tick_size);
         let total = compression.total_slots() as usize;
-        let active_levels =
-            vec![PriceLevel::default(); total];
-        let staging_levels =
-            vec![PriceLevel::default(); total];
+        let active_levels = vec![PriceLevel::default(); total];
+        let staging_levels = vec![PriceLevel::default(); total];
         let bid_occ = Occupancy::new(total as u32);
         let ask_occ = Occupancy::new(total as u32);
         let price_asc = build_price_asc(&compression);
@@ -170,8 +163,7 @@ impl Orderbook {
         order_id_hi: u64,
         order_id_lo: u64,
     ) -> u32 {
-        let tick =
-            self.compression.price_to_index(price);
+        let tick = self.compression.price_to_index(price);
         let handle = self.orders.alloc();
         let slot = self.orders.get_mut(handle);
         slot.price = Price(price);
@@ -194,8 +186,7 @@ impl Orderbook {
         slot.sequence = self.sequence as u32;
 
         // Link into level
-        let level =
-            &mut self.active_levels[tick as usize];
+        let level = &mut self.active_levels[tick as usize];
         let was_empty = level.order_count == 0;
         if was_empty {
             level.head = handle;
@@ -221,17 +212,13 @@ impl Orderbook {
         // not a price proxy — see best_bid_px doc).
         match side {
             Side::Buy => {
-                if self.best_bid_tick == NONE
-                    || price > self.best_bid_px
-                {
+                if self.best_bid_tick == NONE || price > self.best_bid_px {
                     self.best_bid_tick = tick;
                     self.best_bid_px = price;
                 }
             }
             Side::Sell => {
-                if self.best_ask_tick == NONE
-                    || price < self.best_ask_px
-                {
+                if self.best_ask_tick == NONE || price < self.best_ask_px {
                     self.best_ask_tick = tick;
                     self.best_ask_px = price;
                 }
@@ -246,8 +233,7 @@ impl Orderbook {
             &mut self.user_bump,
             user_id,
         );
-        self.user_states[uidx as usize].order_count
-            += 1;
+        self.user_states[uidx as usize].order_count += 1;
 
         handle
     }
@@ -262,8 +248,7 @@ impl Orderbook {
         let qty = slot.remaining_qty.0;
         let prev = slot.prev;
         let next = slot.next;
-        let level =
-            &mut self.active_levels[tick as usize];
+        let level = &mut self.active_levels[tick as usize];
         if prev != NONE {
             self.orders.get_mut(prev).next = next;
         } else {
@@ -274,10 +259,8 @@ impl Orderbook {
         } else {
             level.tail = prev;
         }
-        level.total_qty =
-            level.total_qty.saturating_sub(qty);
-        level.order_count =
-            level.order_count.saturating_sub(1);
+        level.total_qty = level.total_qty.saturating_sub(qty);
+        level.order_count = level.order_count.saturating_sub(1);
         let now_empty = level.order_count == 0;
 
         // Level went non-empty -> empty: clear occupancy on this side.
@@ -315,20 +298,12 @@ impl Orderbook {
 
         // Update BBA if needed
         if self.active_levels[tick as usize].order_count == 0 {
-            if side == Side::Buy as u8
-                && tick == self.best_bid_tick
-            {
-                self.best_bid_tick =
-                    self.scan_next_bid(tick);
-                self.best_bid_px = self
-                    .price_at_tick(self.best_bid_tick);
-            } else if side == Side::Sell as u8
-                && tick == self.best_ask_tick
-            {
-                self.best_ask_tick =
-                    self.scan_next_ask(tick);
-                self.best_ask_px = self
-                    .price_at_tick(self.best_ask_tick);
+            if side == Side::Buy as u8 && tick == self.best_bid_tick {
+                self.best_bid_tick = self.scan_next_bid(tick);
+                self.best_bid_px = self.price_at_tick(self.best_bid_tick);
+            } else if side == Side::Sell as u8 && tick == self.best_ask_tick {
+                self.best_ask_tick = self.scan_next_ask(tick);
+                self.best_ask_px = self.price_at_tick(self.best_ask_tick);
             }
         }
 
@@ -336,14 +311,10 @@ impl Orderbook {
         self.orders.free(handle);
 
         // Decrement user order count
-        if let Some(&uidx) =
-            self.user_map.get(&user_id)
-        {
-            self.user_states[uidx as usize]
-                .order_count =
-                self.user_states[uidx as usize]
-                    .order_count
-                    .saturating_sub(1);
+        if let Some(&uidx) = self.user_map.get(&user_id) {
+            self.user_states[uidx as usize].order_count = self.user_states[uidx as usize]
+                .order_count
+                .saturating_sub(1);
         }
 
         true
@@ -395,20 +366,22 @@ impl Orderbook {
         let qty = self.orders.get(handle).remaining_qty.0;
         self.cancel_order(handle);
         self.insert_resting(
-            new_price, qty, side, tif, user_id,
-            reduce_only, timestamp_ns,
-            order_id_hi, order_id_lo,
+            new_price,
+            qty,
+            side,
+            tif,
+            user_id,
+            reduce_only,
+            timestamp_ns,
+            order_id_hi,
+            order_id_lo,
         )
     }
 
     /// Reduce remaining qty in-place. Preserves time
     /// priority. If new_qty == 0, cancels the order.
     /// Returns true if order was active.
-    pub fn modify_order_qty_down(
-        &mut self,
-        handle: u32,
-        new_qty: i64,
-    ) -> bool {
+    pub fn modify_order_qty_down(&mut self, handle: u32, new_qty: i64) -> bool {
         let slot = self.orders.get(handle);
         if !slot.is_active() {
             return false;
@@ -422,12 +395,10 @@ impl Orderbook {
         }
         let tick = slot.tick_index;
         let diff = old_qty - new_qty;
-        self.orders.get_mut(handle).remaining_qty =
-            Qty(new_qty);
-        self.active_levels[tick as usize].total_qty =
-            self.active_levels[tick as usize]
-                .total_qty
-                .saturating_sub(diff);
+        self.orders.get_mut(handle).remaining_qty = Qty(new_qty);
+        self.active_levels[tick as usize].total_qty = self.active_levels[tick as usize]
+            .total_qty
+            .saturating_sub(diff);
         true
     }
 
@@ -539,9 +510,7 @@ fn ask_region(comp: &CompressionMap, z: usize) -> (u32, u32) {
 /// best level despite the compression sawtooth. Bids run zone 4
 /// (furthest below mid) up to zone 0; asks run zone 0 up to zone 4.
 /// Recomputed only on construction / recenter — never on the hot path.
-pub(crate) fn build_price_asc(
-    comp: &CompressionMap,
-) -> Vec<(u32, u32)> {
+pub(crate) fn build_price_asc(comp: &CompressionMap) -> Vec<(u32, u32)> {
     let mut v = Vec::with_capacity(10);
     for z in (0..=4usize).rev() {
         let (lo, hi) = bid_region(comp, z);

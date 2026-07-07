@@ -14,8 +14,8 @@
 //! known bind port; only the data path (through the relay) drops. Public API
 //! only, rsx-cast untouched. `harness = false`.
 
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_cast::wal::Framed;
@@ -59,7 +59,10 @@ impl CastRecord for SmallRec {
 }
 
 fn small() -> SmallRec {
-    SmallRec { seq: 0, _pad: [0; 56] }
+    SmallRec {
+        seq: 0,
+        _pad: [0; 56],
+    }
 }
 
 fn fill() -> FillRecord {
@@ -107,9 +110,7 @@ fn spawn_relay(
             match relay.recv_from(&mut buf) {
                 Ok((n, _)) => {
                     if !dropped && n >= 24 {
-                        let seq = u64::from_le_bytes(
-                            buf[16..24].try_into().unwrap(),
-                        );
+                        let seq = u64::from_le_bytes(buf[16..24].try_into().unwrap());
                         if seq == drop_seq {
                             dropped = true;
                             continue; // drop this one, once
@@ -139,10 +140,8 @@ fn single_gap_recovery(wal_backed: bool) -> Duration {
         max_nak_retries: 1000,
         ..CastConfig::default()
     };
-    let mut sender =
-        CastSender::with_config(relay_addr, 1, tmp.path(), &cfg).unwrap();
-    let mut receiver =
-        CastReceiver::with_config(recv_addr, sender_addr, &cfg).unwrap();
+    let mut sender = CastSender::with_config(relay_addr, 1, tmp.path(), &cfg).unwrap();
+    let mut receiver = CastReceiver::with_config(recv_addr, sender_addr, &cfg).unwrap();
 
     let relay = UdpSocket::bind(relay_addr).unwrap();
     // Blocking recv with a short timeout: wakes the instant a packet lands
@@ -151,8 +150,7 @@ fn single_gap_recovery(wal_backed: bool) -> Duration {
         .set_read_timeout(Some(Duration::from_millis(5)))
         .unwrap();
     let stop = Arc::new(AtomicBool::new(false));
-    let handle =
-        spawn_relay(relay, recv_addr, TARGET, Arc::clone(&stop));
+    let handle = spawn_relay(relay, recv_addr, TARGET, Arc::clone(&stop));
     thread::sleep(Duration::from_millis(2));
 
     let mut writer = if wal_backed {
@@ -165,9 +163,7 @@ fn single_gap_recovery(wal_backed: bool) -> Duration {
 
     // Send 1..=TARGET (the relay drops TARGET). For the WAL tier, persist +
     // flush so TARGET is on disk before it can be NAK'd.
-    let mut send = |seq: u64,
-                    sender: &mut CastSender,
-                    writer: &mut Option<WalWriter>| {
+    let mut send = |seq: u64, sender: &mut CastSender, writer: &mut Option<WalWriter>| {
         if let Some(w) = writer {
             let framed = w.prepare(&mut fill_rec).unwrap();
             debug_assert_eq!(framed.seq, seq);
@@ -195,9 +191,7 @@ fn single_gap_recovery(wal_backed: bool) -> Duration {
         loop {
             match receiver.try_recv() {
                 CastRecv::Data(_, payload) => {
-                    let seq = u64::from_le_bytes(
-                        payload[0..8].try_into().unwrap(),
-                    );
+                    let seq = u64::from_le_bytes(payload[0..8].try_into().unwrap());
                     if seq == delivered + 1 {
                         delivered = seq;
                     }
@@ -229,8 +223,7 @@ fn main() {
         ("hot-ring", "64 B SmallRec", false),
         ("cold-WAL", "144 B FillRecord", true),
     ] {
-        let times: Vec<Duration> =
-            (0..TRIALS).map(|_| single_gap_recovery(wal)).collect();
+        let times: Vec<Duration> = (0..TRIALS).map(|_| single_gap_recovery(wal)).collect();
         let med = median(times);
         println!("| {label} | {rec} | {:.1} µs |", med.as_secs_f64() * 1e6);
     }

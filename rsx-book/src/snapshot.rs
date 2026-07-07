@@ -18,14 +18,9 @@ const SNAPSHOT_VERSION: u32 = 1;
 
 /// Save orderbook snapshot to writer.
 /// Returns Err if book is migrating.
-pub fn save(
-    book: &Orderbook,
-    w: &mut dyn Write,
-) -> io::Result<()> {
+pub fn save(book: &Orderbook, w: &mut dyn Write) -> io::Result<()> {
     if book.state == BookState::Migrating {
-        return Err(io::Error::other(
-            "cannot snapshot during migration",
-        ));
+        return Err(io::Error::other("cannot snapshot during migration"));
     }
 
     // Header
@@ -34,34 +29,18 @@ pub fn save(
     w.write_all(&book.sequence.to_le_bytes())?;
 
     // Config
-    w.write_all(
-        &book.config.symbol_id.to_le_bytes(),
-    )?;
-    w.write_all(
-        &[book.config.price_decimals],
-    )?;
-    w.write_all(
-        &[book.config.qty_decimals],
-    )?;
-    w.write_all(
-        &book.config.tick_size.to_le_bytes(),
-    )?;
-    w.write_all(
-        &book.config.lot_size.to_le_bytes(),
-    )?;
+    w.write_all(&book.config.symbol_id.to_le_bytes())?;
+    w.write_all(&[book.config.price_decimals])?;
+    w.write_all(&[book.config.qty_decimals])?;
+    w.write_all(&book.config.tick_size.to_le_bytes())?;
+    w.write_all(&book.config.lot_size.to_le_bytes())?;
 
     // Compression map
-    w.write_all(
-        &book.compression.mid_price.to_le_bytes(),
-    )?;
+    w.write_all(&book.compression.mid_price.to_le_bytes())?;
 
     // BBA
-    w.write_all(
-        &book.best_bid_tick.to_le_bytes(),
-    )?;
-    w.write_all(
-        &book.best_ask_tick.to_le_bytes(),
-    )?;
+    w.write_all(&book.best_bid_tick.to_le_bytes())?;
+    w.write_all(&book.best_ask_tick.to_le_bytes())?;
 
     // Slab metadata
     let capacity = book.orders.capacity();
@@ -87,8 +66,7 @@ pub fn save(
     }
 
     // Non-empty levels: count then entries
-    let total_levels =
-        book.active_levels.len() as u32;
+    let total_levels = book.active_levels.len() as u32;
     w.write_all(&total_levels.to_le_bytes())?;
     let mut level_count: u32 = 0;
     for lvl in &book.active_levels {
@@ -98,13 +76,9 @@ pub fn save(
     }
     w.write_all(&level_count.to_le_bytes())?;
 
-    for (idx, lvl) in
-        book.active_levels.iter().enumerate()
-    {
+    for (idx, lvl) in book.active_levels.iter().enumerate() {
         if lvl.order_count > 0 {
-            w.write_all(
-                &(idx as u32).to_le_bytes(),
-            )?;
+            w.write_all(&(idx as u32).to_le_bytes())?;
             write_level(w, lvl)?;
         }
     }
@@ -118,13 +92,10 @@ pub fn save(
         w.write_all(&idx.to_le_bytes())?;
         let us = &book.user_states[idx as usize];
         w.write_all(&us.net_qty.to_le_bytes())?;
-        w.write_all(
-            &us.order_count.to_le_bytes(),
-        )?;
+        w.write_all(&us.order_count.to_le_bytes())?;
     }
 
-    let free_count =
-        book.user_free_list.len() as u32;
+    let free_count = book.user_free_list.len() as u32;
     w.write_all(&free_count.to_le_bytes())?;
     for &idx in &book.user_free_list {
         w.write_all(&idx.to_le_bytes())?;
@@ -135,9 +106,7 @@ pub fn save(
 
 /// Load orderbook from snapshot. Returns Box
 /// to avoid stack overflow from event_buf.
-pub fn load(
-    r: &mut dyn Read,
-) -> io::Result<Box<Orderbook>> {
+pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
     // Header
     let magic = read_u32(r)?;
     if magic != SNAPSHOT_MAGIC {
@@ -150,10 +119,7 @@ pub fn load(
     if version != SNAPSHOT_VERSION {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "unsupported snapshot version {}",
-                version,
-            ),
+            format!("unsupported snapshot version {}", version,),
         ));
     }
     let sequence = read_u64(r)?;
@@ -174,8 +140,7 @@ pub fn load(
 
     // Compression
     let mid_price = read_i64(r)?;
-    let compression =
-        CompressionMap::new(mid_price, tick_size);
+    let compression = CompressionMap::new(mid_price, tick_size);
 
     // BBA
     let best_bid_tick = read_u32(r)?;
@@ -189,14 +154,10 @@ pub fn load(
     if bump > capacity {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "slab bump {} exceeds capacity {}",
-                bump, capacity,
-            ),
+            format!("slab bump {} exceeds capacity {}", bump, capacity,),
         ));
     }
-    let mut slab: Slab<OrderSlot> =
-        Slab::new(capacity);
+    let mut slab: Slab<OrderSlot> = Slab::new(capacity);
     // We need to set bump_next to match the
     // original. We'll rebuild the free list.
     slab.set_bump_next(bump);
@@ -230,8 +191,7 @@ pub fn load(
             "level count mismatch",
         ));
     }
-    let mut active_levels =
-        vec![PriceLevel::default(); total];
+    let mut active_levels = vec![PriceLevel::default(); total];
     let level_count = read_u32(r)?;
     for _ in 0..level_count {
         let idx = read_u32(r)?;
@@ -248,14 +208,9 @@ pub fn load(
     // User state
     let user_bump = read_u16(r)?;
     let user_count = read_u32(r)?;
-    let mut user_states =
-        Vec::with_capacity(user_bump as usize);
-    user_states.resize_with(
-        user_bump as usize,
-        UserState::default,
-    );
-    let mut user_map: FxHashMap<u32, u16> =
-        FxHashMap::default();
+    let mut user_states = Vec::with_capacity(user_bump as usize);
+    user_states.resize_with(user_bump as usize, UserState::default);
+    let mut user_map: FxHashMap<u32, u16> = FxHashMap::default();
 
     for _ in 0..user_count {
         let uid = read_u32(r)?;
@@ -276,8 +231,7 @@ pub fn load(
     }
 
     let free_count = read_u32(r)?;
-    let mut user_free_list =
-        Vec::with_capacity(free_count as usize);
+    let mut user_free_list = Vec::with_capacity(free_count as usize);
     for _ in 0..free_count {
         let fidx = read_u16(r)?;
         if (fidx as usize) >= user_bump as usize {
@@ -293,9 +247,7 @@ pub fn load(
 
     // Box::new to heap-allocate immediately,
     // avoiding stack overflow from event_buf.
-    let mut book = Box::new(
-        Orderbook::new(config, capacity, mid_price),
-    );
+    let mut book = Box::new(Orderbook::new(config, capacity, mid_price));
     book.active_levels = active_levels;
     book.orders = slab;
     // Level array replaced wholesale — rebuild occupancy bitmaps from it
@@ -315,14 +267,9 @@ pub fn load(
     Ok(book)
 }
 
-fn write_order(
-    w: &mut dyn Write,
-    s: &OrderSlot,
-) -> io::Result<()> {
+fn write_order(w: &mut dyn Write, s: &OrderSlot) -> io::Result<()> {
     w.write_all(&s.price.0.to_le_bytes())?;
-    w.write_all(
-        &s.remaining_qty.0.to_le_bytes(),
-    )?;
+    w.write_all(&s.remaining_qty.0.to_le_bytes())?;
     w.write_all(&[s.side])?;
     w.write_all(&[s.flags])?;
     w.write_all(&[s.tif])?;
@@ -331,18 +278,14 @@ fn write_order(
     w.write_all(&s.tick_index.to_le_bytes())?;
     w.write_all(&s.user_id.to_le_bytes())?;
     w.write_all(&s.sequence.to_le_bytes())?;
-    w.write_all(
-        &s.original_qty.0.to_le_bytes(),
-    )?;
+    w.write_all(&s.original_qty.0.to_le_bytes())?;
     w.write_all(&s.timestamp_ns.to_le_bytes())?;
     w.write_all(&s.order_id_hi.to_le_bytes())?;
     w.write_all(&s.order_id_lo.to_le_bytes())?;
     Ok(())
 }
 
-fn read_order(
-    r: &mut dyn Read,
-) -> io::Result<OrderSlot> {
+fn read_order(r: &mut dyn Read) -> io::Result<OrderSlot> {
     let price = Price(read_i64(r)?);
     let remaining_qty = Qty(read_i64(r)?);
     let side = read_u8(r)?;
@@ -378,10 +321,7 @@ fn read_order(
     })
 }
 
-fn write_level(
-    w: &mut dyn Write,
-    lvl: &PriceLevel,
-) -> io::Result<()> {
+fn write_level(w: &mut dyn Write, lvl: &PriceLevel) -> io::Result<()> {
     w.write_all(&lvl.head.to_le_bytes())?;
     w.write_all(&lvl.tail.to_le_bytes())?;
     w.write_all(&lvl.total_qty.to_le_bytes())?;
@@ -389,9 +329,7 @@ fn write_level(
     Ok(())
 }
 
-fn read_level(
-    r: &mut dyn Read,
-) -> io::Result<PriceLevel> {
+fn read_level(r: &mut dyn Read) -> io::Result<PriceLevel> {
     Ok(PriceLevel {
         head: read_u32(r)?,
         tail: read_u32(r)?,

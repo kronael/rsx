@@ -1,8 +1,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::MAX_EVENTS;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -100,19 +100,16 @@ fn event_len_reset_per_cycle_single_store() {
     let events = book.events();
     assert!(!events.is_empty());
     // No leftover from previous cycle
-    assert!(!events.iter().any(|e| matches!(
-        e,
-        Event::OrderFailed { user_id: 1, .. }
-    )));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::OrderFailed { user_id: 1, .. })));
 }
 
 #[test]
 fn fills_precede_order_done_always() {
     let mut book = test_book();
     // Resting sell, aggressive buy -> fill then done
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     let mut order = IncomingOrder {
         price: 50_100,
         qty: 100,
@@ -136,10 +133,7 @@ fn fills_precede_order_done_always() {
                 saw_fill = true;
             }
             Event::OrderDone { .. } => {
-                assert!(
-                    saw_fill,
-                    "OrderDone before any Fill"
-                );
+                assert!(saw_fill, "OrderDone before any Fill");
             }
             _ => {}
         }
@@ -151,9 +145,7 @@ fn fills_precede_order_done_always() {
 fn exactly_one_completion_per_order() {
     let mut book = test_book();
     // Full fill: taker fully matched
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     let mut order = IncomingOrder {
         price: 50_100,
         qty: 100,
@@ -171,26 +163,16 @@ fn exactly_one_completion_per_order() {
 
     let events = book.events();
     // Count completions for taker (user 2)
-    let taker_dones = events.iter().filter(|e| {
-        matches!(
-            e,
-            Event::OrderDone { user_id: 2, .. }
-        )
-    }).count();
-    assert_eq!(
-        taker_dones, 1,
-        "taker should have exactly one OrderDone"
-    );
+    let taker_dones = events
+        .iter()
+        .filter(|e| matches!(e, Event::OrderDone { user_id: 2, .. }))
+        .count();
+    assert_eq!(taker_dones, 1, "taker should have exactly one OrderDone");
 
     // Count completions for maker (user 1)
-    let maker_dones = events.iter().filter(|e| {
-        matches!(
-            e,
-            Event::OrderDone { user_id: 1, .. }
-        )
-    }).count();
-    assert_eq!(
-        maker_dones, 1,
-        "maker should have exactly one OrderDone"
-    );
+    let maker_dones = events
+        .iter()
+        .filter(|e| matches!(e, Event::OrderDone { user_id: 1, .. }))
+        .count();
+    assert_eq!(maker_dones, 1, "maker should have exactly one OrderDone");
 }

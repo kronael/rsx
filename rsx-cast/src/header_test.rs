@@ -17,11 +17,20 @@ fn header_little_endian_verified() {
     let raw: [u8; 16] = [
         WalVersion::V1 as u8, // version
         0x00,                 // _pad0
-        0x02, 0x01,           // record_type = 0x0102 LE
-        0x03, 0x04,           // len = 0x0403 LE
-        0x00, 0x00,           // _pad1
-        0x05, 0x06, 0x07, 0x08, // crc32 LE
-        0x00, 0x00, 0x00, 0x00, // _reserved
+        0x02,
+        0x01, // record_type = 0x0102 LE
+        0x03,
+        0x04, // len = 0x0403 LE
+        0x00,
+        0x00, // _pad1
+        0x05,
+        0x06,
+        0x07,
+        0x08, // crc32 LE
+        0x00,
+        0x00,
+        0x00,
+        0x00, // _reserved
     ];
     let h = WalHeader::from_bytes(&raw).unwrap();
     assert_eq!(h.version, WalVersion::V1 as u8);

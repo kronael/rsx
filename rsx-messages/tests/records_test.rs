@@ -1,10 +1,10 @@
-use rsx_messages::*;
-use rsx_cast::CaughtUpRecord;
-use rsx_cast::CastRecord;
-use rsx_cast::WalHeader;
+use rsx_cast::as_bytes;
 use rsx_cast::compute_crc32;
 use rsx_cast::encode_record;
-use rsx_cast::as_bytes;
+use rsx_cast::CastRecord;
+use rsx_cast::CaughtUpRecord;
+use rsx_cast::WalHeader;
+use rsx_messages::*;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
@@ -69,7 +69,7 @@ fn fill_record_encode_decode_roundtrip() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-            taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     let encoded = encode_fill_record(&record);
     let header = WalHeader::from_bytes(&encoded).unwrap();
@@ -129,8 +129,7 @@ fn order_inserted_encode_decode_roundtrip() {
     };
     let encoded = encode_order_inserted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
-    let decoded =
-        decode_order_inserted_record(payload).unwrap();
+    let decoded = decode_order_inserted_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 999);
     assert_eq!(decoded.side, 1);
     assert_eq!(decoded.user_id, 42);
@@ -154,8 +153,7 @@ fn order_cancelled_encode_decode_roundtrip() {
     };
     let encoded = encode_order_cancelled_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
-    let decoded =
-        decode_order_cancelled_record(payload).unwrap();
+    let decoded = decode_order_cancelled_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 888);
     assert_eq!(decoded.reason, 2);
     assert_eq!(decoded.remaining_qty, Qty(50));
@@ -200,8 +198,7 @@ fn config_applied_encode_decode_roundtrip() {
     };
     let encoded = encode_config_applied_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
-    let decoded =
-        decode_config_applied_record(payload).unwrap();
+    let decoded = decode_config_applied_record(payload).unwrap();
     assert_eq!(decoded.config_version, 5);
     assert_eq!(decoded.effective_at_ms, 1000);
     assert_eq!(decoded.applied_at_ns, 2000);
@@ -242,8 +239,7 @@ fn order_accepted_encode_decode_roundtrip() {
     };
     let encoded = encode_order_accepted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
-    let decoded =
-        decode_order_accepted_record(payload).unwrap();
+    let decoded = decode_order_accepted_record(payload).unwrap();
     assert_eq!(decoded.order_id_lo, 555);
     assert_eq!(decoded.user_id, 42);
     assert_eq!(decoded.symbol_id, 1);
@@ -271,7 +267,7 @@ fn crc32_mismatch_detected() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-            taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     let mut encoded = encode_fill_record(&record);
     // corrupt a payload byte
@@ -333,7 +329,7 @@ fn record_truncated_payload_detected() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-            taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     let payload_bytes = as_bytes(&record);
     let truncated = &payload_bytes[..10];
@@ -367,7 +363,7 @@ fn cmp_record_trait_set_seq_roundtrip() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-            taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     assert_eq!(fill.seq(), 0);
     fill.set_seq(42);
@@ -382,34 +378,16 @@ fn header_reserved_bytes_zeroed() {
 
 #[test]
 fn cancel_request_layout() {
-    assert_eq!(
-        std::mem::size_of::<CancelRequest>(),
-        64,
-    );
-    assert_eq!(
-        std::mem::align_of::<CancelRequest>(),
-        64,
-    );
-    assert_eq!(
-        CancelRequest::record_type(),
-        RECORD_CANCEL_REQUEST,
-    );
+    assert_eq!(std::mem::size_of::<CancelRequest>(), 64,);
+    assert_eq!(std::mem::align_of::<CancelRequest>(), 64,);
+    assert_eq!(CancelRequest::record_type(), RECORD_CANCEL_REQUEST,);
 }
 
 #[test]
 fn order_failed_record_layout() {
-    assert_eq!(
-        mem::size_of::<OrderFailedRecord>(),
-        64,
-    );
-    assert_eq!(
-        mem::align_of::<OrderFailedRecord>(),
-        64,
-    );
-    assert_eq!(
-        OrderFailedRecord::record_type(),
-        RECORD_ORDER_FAILED,
-    );
+    assert_eq!(mem::size_of::<OrderFailedRecord>(), 64,);
+    assert_eq!(mem::align_of::<OrderFailedRecord>(), 64,);
+    assert_eq!(OrderFailedRecord::record_type(), RECORD_ORDER_FAILED,);
 }
 
 #[test]
@@ -430,8 +408,7 @@ fn order_failed_record_seq() {
 
     let encoded = encode_order_failed_record(&rec);
     let payload = &encoded[WalHeader::SIZE..];
-    let decoded =
-        decode_order_failed_record(payload).unwrap();
+    let decoded = decode_order_failed_record(payload).unwrap();
     assert_eq!(decoded.seq(), 77);
     assert_eq!(decoded.user_id, 42);
     assert_eq!(decoded.order_id_lo, 999);

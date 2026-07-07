@@ -31,16 +31,10 @@ impl AdvisoryLease {
         }
     }
 
-    pub async fn try_acquire(
-        &mut self,
-        client: &Client,
-    ) -> Result<bool, Error> {
+    pub async fn try_acquire(&mut self, client: &Client) -> Result<bool, Error> {
         let key = self.shard_id as i64;
         let row = client
-            .query_one(
-                "SELECT pg_try_advisory_lock($1) AS acquired",
-                &[&key],
-            )
+            .query_one("SELECT pg_try_advisory_lock($1) AS acquired", &[&key])
             .await?;
         let acquired: bool = row.get(0);
         self.lease_acquired = acquired;
@@ -50,10 +44,7 @@ impl AdvisoryLease {
         Ok(acquired)
     }
 
-    pub async fn acquire(
-        &mut self,
-        client: &Client,
-    ) -> Result<(), Error> {
+    pub async fn acquire(&mut self, client: &Client) -> Result<(), Error> {
         let key = self.shard_id as i64;
         client
             .execute("SELECT pg_advisory_lock($1)", &[&key])
@@ -63,19 +54,13 @@ impl AdvisoryLease {
         Ok(())
     }
 
-    pub async fn release(
-        &mut self,
-        client: &Client,
-    ) -> Result<(), Error> {
+    pub async fn release(&mut self, client: &Client) -> Result<(), Error> {
         if !self.lease_acquired {
             return Ok(());
         }
         let key = self.shard_id as i64;
         let row = client
-            .query_one(
-                "SELECT pg_advisory_unlock($1) AS released",
-                &[&key],
-            )
+            .query_one("SELECT pg_advisory_unlock($1) AS released", &[&key])
             .await?;
         let released: bool = row.get(0);
         if !released {
@@ -84,19 +69,13 @@ impl AdvisoryLease {
                 "attempted to release lock not held"
             );
         } else {
-            info!(
-                shard_id = self.shard_id,
-                "released advisory lock"
-            );
+            info!(shard_id = self.shard_id, "released advisory lock");
         }
         self.lease_acquired = false;
         Ok(())
     }
 
-    pub async fn renew(
-        &self,
-        client: &Client,
-    ) -> Result<bool, Error> {
+    pub async fn renew(&self, client: &Client) -> Result<bool, Error> {
         if !self.lease_acquired {
             return Ok(false);
         }
@@ -112,10 +91,7 @@ impl AdvisoryLease {
             .await?;
         let held: bool = row.get(0);
         if !held {
-            warn!(
-                shard_id = self.shard_id,
-                "lease lost unexpectedly"
-            );
+            warn!(shard_id = self.shard_id, "lease lost unexpectedly");
         }
         Ok(held)
     }
@@ -180,7 +156,9 @@ fn lease_thread_body(
                 return;
             }
             match lease.renew(&pg_client).await {
-                Ok(true) => { consec_errors = 0; }
+                Ok(true) => {
+                    consec_errors = 0;
+                }
                 Ok(false) => {
                     warn!("lease lost (shard {})", lease.shard_id());
                     lease_held.store(false, Ordering::Release);
@@ -201,10 +179,7 @@ fn lease_thread_body(
 }
 
 /// Signal the lease thread to stop and join it.
-pub fn stop_lease_thread(
-    stop: &Arc<AtomicBool>,
-    handle: std::thread::JoinHandle<()>,
-) {
+pub fn stop_lease_thread(stop: &Arc<AtomicBool>, handle: std::thread::JoinHandle<()>) {
     stop.store(true, Ordering::Relaxed);
     if let Err(e) = handle.join() {
         warn!("lease thread panicked on join: {:?}", e);

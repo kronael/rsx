@@ -112,7 +112,12 @@ fn submit_ioc_fills() {
     let mut harness = TuiHarness::new_with(Box::new(conn));
     submit_and_wait(
         &mut harness,
-        OrderReq { side: Side::Sell, price: 49_000, qty: 500_000, tif: Tif::Ioc },
+        OrderReq {
+            side: Side::Sell,
+            price: 49_000,
+            qty: 500_000,
+            tif: Tif::Ioc,
+        },
         |app| app.fills == 1 && app.open_orders == 0,
         Duration::from_secs(5),
     );
@@ -133,7 +138,12 @@ fn invalid_order_rejected() {
     let mut harness = TuiHarness::new_with(Box::new(conn));
     submit_and_wait(
         &mut harness,
-        OrderReq { side: Side::Buy, price: 12_345, qty: 0, tif: Tif::Gtc },
+        OrderReq {
+            side: Side::Buy,
+            price: 12_345,
+            qty: 0,
+            tif: Tif::Gtc,
+        },
         |app| app.status.contains("rejected"),
         Duration::from_secs(5),
     );
@@ -218,7 +228,12 @@ fn order_lifecycle_accepted_then_done() {
     let mut harness = TuiHarness::new_with(Box::new(maker_conn));
     submit_and_wait(
         &mut harness,
-        OrderReq { side: Side::Buy, price: 48_000, qty: 200_000, tif: Tif::Gtc },
+        OrderReq {
+            side: Side::Buy,
+            price: 48_000,
+            qty: 200_000,
+            tif: Tif::Gtc,
+        },
         |app| app.open_orders == 1,
         Duration::from_secs(5),
     );
@@ -227,7 +242,12 @@ fn order_lifecycle_accepted_then_done() {
     let seq = submit_and_record(
         &mut taker,
         &mut harness,
-        OrderReq { side: Side::Sell, price: 48_000, qty: 200_000, tif: Tif::Ioc },
+        OrderReq {
+            side: Side::Sell,
+            price: 48_000,
+            qty: 200_000,
+            tif: Tif::Ioc,
+        },
         Duration::from_secs(5),
     );
     harness.tick();

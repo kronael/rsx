@@ -39,8 +39,8 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::Framed;
 use rsx_messages::FillRecord;
@@ -115,8 +115,7 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     .unwrap();
 
     // A.receiver expects traffic from B.sender
-    let mut a_receiver =
-        CastReceiver::new(a_recv_bind, b_send_bind).unwrap();
+    let mut a_receiver = CastReceiver::new(a_recv_bind, b_send_bind).unwrap();
 
     // B.sender -> A.receiver
     let mut b_sender = CastSender::with_config(
@@ -131,8 +130,7 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     .unwrap();
 
     // B.receiver expects traffic from A.sender
-    let mut b_receiver =
-        CastReceiver::new(b_recv_bind, a_send_bind).unwrap();
+    let mut b_receiver = CastReceiver::new(b_recv_bind, a_send_bind).unwrap();
 
     // B-side echo thread: try_recv → b_sender.send back.
     let stop = Arc::new(AtomicBool::new(false));

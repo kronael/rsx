@@ -61,13 +61,11 @@ fn slab_alloc_exhausts_free_list_then_bumps() {
 #[test]
 fn slab_free_all_then_realloc_all() {
     let mut slab: Slab<TestItem> = Slab::new(5);
-    let indices: Vec<u32> =
-        (0..5).map(|_| slab.alloc()).collect();
+    let indices: Vec<u32> = (0..5).map(|_| slab.alloc()).collect();
     for &idx in &indices {
         slab.free(idx);
     }
-    let mut realloc: Vec<u32> =
-        (0..5).map(|_| slab.alloc()).collect();
+    let mut realloc: Vec<u32> = (0..5).map(|_| slab.alloc()).collect();
     realloc.sort();
     assert_eq!(realloc, vec![0, 1, 2, 3, 4]);
 }

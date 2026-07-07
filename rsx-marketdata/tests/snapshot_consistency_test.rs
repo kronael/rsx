@@ -47,18 +47,12 @@ fn snapshot_point_in_time_consistent() {
 /// pending deltas and queues a B frame as first message.
 #[test]
 fn snapshot_before_deltas_on_subscribe() {
-    let mut state = MarketDataState::new(
-        4, base_config(), 100, 50000,
-    );
+    let mut state = MarketDataState::new(4, base_config(), 100, 50000);
     let conn = state.add_connection();
     state.subscribe(conn, 1, CHANNEL_DEPTH, 10);
 
     // Push a delta before snapshot (simulates race)
-    state.push_to_client(
-        conn,
-        "{\"D\":[1,0,49990,50,1,1000,1]}".into(),
-        100,
-    );
+    state.push_to_client(conn, "{\"D\":[1,0,49990,50,1,1000,1]}".into(), 100);
 
     // send_snapshot_to_client clears queue, pushes
     // snapshot as first message (no book = empty snap)

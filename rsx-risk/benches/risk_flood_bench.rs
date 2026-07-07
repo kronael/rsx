@@ -91,6 +91,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use hdrhistogram::Histogram;
+use rsx_risk::persist::PersistEvent;
+use rsx_risk::types::FillEvent;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
@@ -99,8 +101,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::persist::PersistEvent;
-use rsx_risk::types::FillEvent;
 
 const COLLATERAL: i64 = 1_000_000_000_000;
 const MARK: i64 = 50_000;
@@ -120,13 +120,20 @@ struct Cfg {
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(default)
 }
 
 fn env_rates(key: &str, default: Vec<u64>) -> Vec<u64> {
     std::env::var(key)
         .ok()
-        .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect::<Vec<u64>>())
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse().ok())
+                .collect::<Vec<u64>>()
+        })
         .filter(|v| !v.is_empty())
         .unwrap_or(default)
 }
@@ -586,16 +593,31 @@ fn main() {
         "users={} symbols={} hot_users={} depth={} orders/rate={} max={}ms warmup={}",
         cfg.users, cfg.symbols, cfg.hot_users, cfg.depth, cfg.orders, cfg.max_ms, cfg.warmup,
     );
-    println!("Engine-only (no UDP/decode), single shard. Latency = completion - SCHEDULED-due time");
-    println!("(open-loop, coordinated-omission-free). Knee = first rate where achieved/offered<0.95.");
+    println!(
+        "Engine-only (no UDP/decode), single shard. Latency = completion - SCHEDULED-due time"
+    );
+    println!(
+        "(open-loop, coordinated-omission-free). Knee = first rate where achieved/offered<0.95."
+    );
     println!();
     println!("--- Table A: ORDER FLOOD (process_order, pre-trade margin + freeze) ---");
     println!(
         "{:>12} {:>12} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>5}",
-        "offered/s", "achieved/s", "a/o%", "p50 us", "p99 us", "p999 us", "max us", "backlog", "knee",
+        "offered/s",
+        "achieved/s",
+        "a/o%",
+        "p50 us",
+        "p99 us",
+        "p999 us",
+        "max us",
+        "backlog",
+        "knee",
     );
 
-    let orders = build_orders(&cfg, (cfg.orders.min(4_000_000) as usize).max(cfg.warmup as usize + 1));
+    let orders = build_orders(
+        &cfg,
+        (cfg.orders.min(4_000_000) as usize).max(cfg.warmup as usize + 1),
+    );
     let mut knee_found = false;
     for &rate in &cfg.rates {
         let r = order_flood_at_rate(&cfg, &orders, rate);
@@ -623,11 +645,21 @@ fn main() {
         );
     }
     println!();
-    println!("Read: a/o% (achieved/offered) ~100% below capacity. The KNEE row is where the engine");
-    println!("can no longer keep the schedule -- a/o drops and scheduled-latency p99 climbs; past it,");
-    println!("achieved plateaus while backlog grows. NOTE: this plateau is the flood-HARNESS ceiling");
-    println!("(per op it also paces the schedule + times + records a histogram), so it sits BELOW the");
-    println!("pure engine ceiling reported by risk_throughput_bench order-accept. Same shape, lower");
+    println!(
+        "Read: a/o% (achieved/offered) ~100% below capacity. The KNEE row is where the engine"
+    );
+    println!(
+        "can no longer keep the schedule -- a/o drops and scheduled-latency p99 climbs; past it,"
+    );
+    println!(
+        "achieved plateaus while backlog grows. NOTE: this plateau is the flood-HARNESS ceiling"
+    );
+    println!(
+        "(per op it also paces the schedule + times + records a histogram), so it sits BELOW the"
+    );
+    println!(
+        "pure engine ceiling reported by risk_throughput_bench order-accept. Same shape, lower"
+    );
     println!("absolute number -- use throughput for the ceiling, this for the degradation curve.");
 
     if cfg.skip_fill {
@@ -635,8 +667,12 @@ fn main() {
     }
     println!();
     println!("--- Table B: FILL FLOOD + PERSIST BACKPRESSURE (drain rate swept) ---");
-    println!("process_fill pushes ~6 persist events/fill (Fill + taker pos/acct + maker pos/acct +");
-    println!("Tip) onto a 16384-slot ring; drain throttled. Engine STALLS (does not drop) when full.");
+    println!(
+        "process_fill pushes ~6 persist events/fill (Fill + taker pos/acct + maker pos/acct +"
+    );
+    println!(
+        "Tip) onto a 16384-slot ring; drain throttled. Engine STALLS (does not drop) when full."
+    );
     println!(
         "{:>14} {:>12} {:>9} {:>6} {:>12} {:>11} {:>11}",
         "drain ev/s", "achieved/s", "p99 us", "bp?", "1st-bp ms", "bp-time ms", "persist hwm",
@@ -644,7 +680,11 @@ fn main() {
     let fills = cfg.orders.min(2_000_000);
     for &dr in &cfg.fill_rates {
         let r = fill_flood(&cfg, dr, fills);
-        let drain_lbl = if dr == u64::MAX { "unthrottled".to_string() } else { format!("{}", dr) };
+        let drain_lbl = if dr == u64::MAX {
+            "unthrottled".to_string()
+        } else {
+            format!("{}", dr)
+        };
         println!(
             "{:>14} {:>12.0} {:>9.3} {:>6} {:>12.2} {:>11.2} {:>11}",
             drain_lbl,
@@ -658,14 +698,30 @@ fn main() {
         std::hint::black_box(r.completed);
     }
     println!();
-    println!("Read: achieved fill/s tracks drain_rate / ~6 (each fill needs ~6 persist slots): the");
-    println!("hot path STALLS when the ring fills and resumes when the sidecar drains it (the WAL.md");
-    println!("persist-ring-full stall), so a slower sidecar directly throttles the fill engine -- NOT");
-    println!("the inversion of dropping events to fake higher throughput. NOTE the 'unthrottled'/fast");
-    println!("rows do NOT reach the pure process_fill CPU rate: they are bounded by the cross-core");
+    println!(
+        "Read: achieved fill/s tracks drain_rate / ~6 (each fill needs ~6 persist slots): the"
+    );
+    println!(
+        "hot path STALLS when the ring fills and resumes when the sidecar drains it (the WAL.md"
+    );
+    println!(
+        "persist-ring-full stall), so a slower sidecar directly throttles the fill engine -- NOT"
+    );
+    println!(
+        "the inversion of dropping events to fake higher throughput. NOTE the 'unthrottled'/fast"
+    );
+    println!(
+        "rows do NOT reach the pure process_fill CPU rate: they are bounded by the cross-core"
+    );
     println!("SPSC persist HANDOFF ceiling in THIS harness (~0.7M events/s = ~115k fills/s on a");
-    println!("6-core dev box, one producer + one consumer bouncing the ring head/tail cache line).");
-    println!("In production the persist consumer is the tokio PG sidecar, whose real drain rate is the");
-    println!("throttled rows -- so read those as the operative backpressure regime, and the throughput");
+    println!(
+        "6-core dev box, one producer + one consumer bouncing the ring head/tail cache line)."
+    );
+    println!(
+        "In production the persist consumer is the tokio PG sidecar, whose real drain rate is the"
+    );
+    println!(
+        "throttled rows -- so read those as the operative backpressure regime, and the throughput"
+    );
     println!("bench's fill row (no persist producer = pure engine CPU) for the engine-side cost.");
 }

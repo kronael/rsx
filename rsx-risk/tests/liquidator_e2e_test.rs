@@ -30,8 +30,8 @@ fn shard() -> RiskShard {
         max_symbols: 4,
         symbol_params: vec![
             SymbolRiskParams {
-                initial_margin_rate: 1000,       // 10%
-                maintenance_margin_rate: 500,    // 5%
+                initial_margin_rate: 1000,    // 10%
+                maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
             };
             4
@@ -44,15 +44,7 @@ fn shard() -> RiskShard {
     })
 }
 
-fn fill(
-    taker: u32,
-    maker: u32,
-    sym: u32,
-    price: i64,
-    qty: i64,
-    side: u8,
-    seq: u64,
-) -> FillEvent {
+fn fill(taker: u32, maker: u32, sym: u32, price: i64, qty: i64, side: u8, seq: u64) -> FillEvent {
     FillEvent {
         seq,
         symbol_id: sym,
@@ -65,12 +57,7 @@ fn fill(
     }
 }
 
-fn order(
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-) -> OrderRequest {
+fn order(user_id: u32, symbol_id: u32, price: i64, qty: i64) -> OrderRequest {
     OrderRequest {
         seq: 1,
         user_id,
@@ -125,20 +112,15 @@ fn largest_position_order_qty_reflects_position_size() {
 
     assert_eq!(orders.len(), 3);
 
-    let mut qty_by_sym: Vec<(u32, i64)> =
-        orders.iter().map(|o| (o.symbol_id, o.qty)).collect();
+    let mut qty_by_sym: Vec<(u32, i64)> = orders.iter().map(|o| (o.symbol_id, o.qty)).collect();
     qty_by_sym.sort_by_key(|&(sid, _)| sid);
 
     assert_eq!(qty_by_sym[0], (0, 500)); // largest
     assert_eq!(qty_by_sym[1], (1, 50));
-    assert_eq!(qty_by_sym[2], (2, 10));  // smallest
+    assert_eq!(qty_by_sym[2], (2, 10)); // smallest
 
     // Notional = qty * mark; largest notional = sym 0
-    let max_notional = qty_by_sym
-        .iter()
-        .map(|&(_, q)| q * mark)
-        .max()
-        .unwrap();
+    let max_notional = qty_by_sym.iter().map(|&(_, q)| q * mark).max().unwrap();
     assert_eq!(max_notional, 500 * mark);
 }
 
@@ -151,14 +133,9 @@ fn multi_symbol_all_get_liquidation_orders() {
     e.enqueue(1, 1, 0);
     e.enqueue(1, 2, 0);
 
-    let (orders, _) = e.maybe_process(
-        0,
-        &|_, _| 100,
-        &|_| 50_000,
-    );
+    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50_000);
 
-    let syms: Vec<u32> =
-        orders.iter().map(|o| o.symbol_id).collect();
+    let syms: Vec<u32> = orders.iter().map(|o| o.symbol_id).collect();
     assert_eq!(orders.len(), 3);
     assert!(syms.contains(&0));
     assert!(syms.contains(&1));
@@ -179,26 +156,15 @@ fn partial_fill_sends_remaining_qty_next_round() {
     e.enqueue(1, 0, 0);
 
     // Round 1: full position = 200
-    let (orders, _) = e.maybe_process(
-        0,
-        &|_, _| 200,
-        &|_| 10_000,
-    );
+    let (orders, _) = e.maybe_process(0, &|_, _| 200, &|_| 10_000);
     assert_eq!(orders[0].qty, 200);
 
     // Partial fill: position reduced to 80
-    let (orders, _) = e.maybe_process(
-        1,
-        &|_, _| 80,
-        &|_| 10_000,
-    );
+    let (orders, _) = e.maybe_process(1, &|_, _| 80, &|_| 10_000);
     assert_eq!(orders[0].qty, 80);
 
     // State still Active (position not zero yet)
-    assert_eq!(
-        e.active[0].status,
-        LiquidationStatus::Active
-    );
+    assert_eq!(e.active[0].status, LiquidationStatus::Active);
 }
 
 #[test]
@@ -207,29 +173,14 @@ fn position_reaches_zero_marks_done_no_further_orders() {
     e.enqueue(1, 0, 0);
 
     // Round 1
-    let (_, _) = e.maybe_process(
-        0,
-        &|_, _| 100,
-        &|_| 10_000,
-    );
+    let (_, _) = e.maybe_process(0, &|_, _| 100, &|_| 10_000);
     // Position fully filled (reduced to 0)
-    let (orders, _) = e.maybe_process(
-        1,
-        &|_, _| 0,
-        &|_| 10_000,
-    );
+    let (orders, _) = e.maybe_process(1, &|_, _| 0, &|_| 10_000);
     assert_eq!(orders.len(), 0);
-    assert_eq!(
-        e.active[0].status,
-        LiquidationStatus::Done
-    );
+    assert_eq!(e.active[0].status, LiquidationStatus::Done);
 
     // No more orders after Done
-    let (orders, _) = e.maybe_process(
-        2,
-        &|_, _| 0,
-        &|_| 10_000,
-    );
+    let (orders, _) = e.maybe_process(2, &|_, _| 0, &|_| 10_000);
     assert_eq!(orders.len(), 0);
 }
 
@@ -241,19 +192,11 @@ fn partial_recovery_one_symbol_continues_others() {
     e.enqueue(1, 1, 0);
 
     // Round 1: both have positions
-    let (orders, _) = e.maybe_process(
-        0,
-        &|_, sid| if sid == 0 { 50 } else { 100 },
-        &|_| 10_000,
-    );
+    let (orders, _) = e.maybe_process(0, &|_, sid| if sid == 0 { 50 } else { 100 }, &|_| 10_000);
     assert_eq!(orders.len(), 2);
 
     // Round 2: sym 0 position closed, sym 1 still open
-    let (orders, _) = e.maybe_process(
-        1,
-        &|_, sid| if sid == 0 { 0 } else { 100 },
-        &|_| 10_000,
-    );
+    let (orders, _) = e.maybe_process(1, &|_, sid| if sid == 0 { 0 } else { 100 }, &|_| 10_000);
     // Only sym 1 order generated
     assert_eq!(orders.len(), 1);
     assert_eq!(orders[0].symbol_id, 1);
@@ -435,8 +378,7 @@ fn slippage_round_1_value() {
     let mut e = LiquidationEngine::new(0, 10, 10, 9999);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
-    let (orders, _) =
-        e.maybe_process(0, &|_, _| 100, &|_| mark);
+    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| mark);
     // round=1, slip=1*1*10=10 bps
     // sell price = 100000*(10000-10)/10000 = 99900
     assert_eq!(orders[0].price, 99_900);
@@ -452,8 +394,7 @@ fn slippage_round_2_value() {
     let (_, _) = e.maybe_process(0, &|_, _| 100, &|_| mark);
     // Round 2: slip=2*2*10=40 bps
     // sell price = 100000*(10000-40)/10000 = 99600
-    let (orders, _) =
-        e.maybe_process(1, &|_, _| 100, &|_| mark);
+    let (orders, _) = e.maybe_process(1, &|_, _| 100, &|_| mark);
     assert_eq!(orders[0].price, 99_600);
 }
 
@@ -467,8 +408,7 @@ fn slippage_round_3_value() {
     e.maybe_process(1, &|_, _| 100, &|_| mark);
     // Round 3: slip=3*3*10=90 bps
     // sell price = 100000*(10000-90)/10000 = 99100
-    let (orders, _) =
-        e.maybe_process(2, &|_, _| 100, &|_| mark);
+    let (orders, _) = e.maybe_process(2, &|_, _| 100, &|_| mark);
     assert_eq!(orders[0].price, 99_100);
 }
 
@@ -479,11 +419,7 @@ fn slippage_monotonically_increases_across_rounds() {
     let mark = 1_000_000i64;
     let mut last_price = mark; // sell price starts at mark or below
     for i in 0..10 {
-        let (orders, _) = e.maybe_process(
-            i as u64,
-            &|_, _| 100,
-            &|_| mark,
-        );
+        let (orders, _) = e.maybe_process(i as u64, &|_, _| 100, &|_| mark);
         if orders.is_empty() {
             break;
         }
@@ -509,11 +445,7 @@ fn slippage_capped_at_9999_bps() {
     // Run enough rounds that round^2*1000 > 9999
     // round 4: 16*1000=16000 > 9999, so capped
     for i in 0..4 {
-        let (orders, _) = e.maybe_process(
-            i as u64,
-            &|_, _| 100,
-            &|_| mark,
-        );
+        let (orders, _) = e.maybe_process(i as u64, &|_, _| 100, &|_| mark);
         if i == 3 {
             // slip capped at 9999: price = 100000*1/10000 = 10
             assert_eq!(orders[0].price, 10);
@@ -536,27 +468,21 @@ fn order_failed_halt_resume_uses_higher_slippage() {
     let mark = 100_000i64;
 
     // Round 1 fires: slip=10bps -> price=99900
-    let (orders, _) =
-        e.maybe_process(0, &|_, _| 100, &|_| mark);
+    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| mark);
     assert_eq!(orders[0].price, 99_900);
 
     // Simulate ORDER_FAILED: halt the symbol
     e.halt_symbol(0);
 
     // While halted: no orders emitted
-    let (orders, _) =
-        e.maybe_process(1, &|_, _| 100, &|_| mark);
+    let (orders, _) = e.maybe_process(1, &|_, _| 100, &|_| mark);
     assert!(orders.is_empty());
     // State still Active
-    assert_eq!(
-        e.active[0].status,
-        LiquidationStatus::Active
-    );
+    assert_eq!(e.active[0].status, LiquidationStatus::Active);
 
     // Resume: round is now 2 (already incremented after r1)
     e.resume_symbol(0);
-    let (orders, _) =
-        e.maybe_process(2, &|_, _| 100, &|_| mark);
+    let (orders, _) = e.maybe_process(2, &|_, _| 100, &|_| mark);
     // Round 2: slip=40bps -> price=99600 (higher slippage)
     assert_eq!(orders[0].price, 99_600);
     assert!(!e.is_halted(0));
@@ -584,8 +510,7 @@ fn order_failed_round_not_reset_on_resume() {
     assert_eq!(e.active[0].round, round_before);
 
     // Next order uses round 3 slippage (90bps)
-    let (orders, _) =
-        e.maybe_process(2, &|_, _| 10, &|_| mark);
+    let (orders, _) = e.maybe_process(2, &|_, _| 10, &|_| mark);
     // slip=3^2*10=90bps -> 100000*(10000-90)/10000=99100
     assert_eq!(orders[0].price, 99_100);
 }
@@ -598,22 +523,14 @@ fn multiple_symbols_halt_only_failed_symbol() {
     e.enqueue(1, 1, 0);
 
     // Round 1: both get orders
-    let (orders, _) = e.maybe_process(
-        0,
-        &|_, _| 100,
-        &|_| 50_000,
-    );
+    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50_000);
     assert_eq!(orders.len(), 2);
 
     // Sym 0 order failed -> halt sym 0
     e.halt_symbol(0);
 
     // Round 2: only sym 1 gets an order
-    let (orders, _) = e.maybe_process(
-        1,
-        &|_, _| 100,
-        &|_| 50_000,
-    );
+    let (orders, _) = e.maybe_process(1, &|_, _| 100, &|_| 50_000);
     assert_eq!(orders.len(), 1);
     assert_eq!(orders[0].symbol_id, 1);
 }

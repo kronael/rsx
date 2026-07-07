@@ -1,13 +1,13 @@
-use rsx_cast::CaughtUpRecord;
 use rsx_cast::decode_payload;
+use rsx_cast::wal::extract_seq;
+use rsx_cast::CaughtUpRecord;
+use rsx_cast::RawWalRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
+use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
-use rsx_cast::RawWalRecord;
-use rsx_cast::RECORD_CAUGHT_UP;
-use rsx_cast::wal::extract_seq;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_INSERTED;
@@ -36,35 +36,28 @@ where
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut consumer = ReplicationConsumer::new(
-        stream_id,
-        vec![replay_addr],
-        tip_file,
-        tls,
-    )?;
+    let mut consumer = ReplicationConsumer::new(stream_id, vec![replay_addr], tip_file, tls)?;
     consumer.tip = last_delivered_seq;
 
     let mut new_tip = last_delivered_seq;
     let mut applied = 0u64;
     let mut skipped = 0u64;
-    let result = rt.block_on(consumer.run_once(
-        |raw: RawWalRecord| -> bool {
-            if raw.header.record_type == RECORD_CAUGHT_UP {
-                return false;
-            }
-            let seq = extract_seq(&raw.payload).unwrap_or(0);
-            if seq <= last_delivered_seq {
-                skipped += 1;
-                return true;
-            }
-            if seq > new_tip {
-                new_tip = seq;
-            }
-            apply(&raw);
-            applied += 1;
-            true
-        },
-    ));
+    let result = rt.block_on(consumer.run_once(|raw: RawWalRecord| -> bool {
+        if raw.header.record_type == RECORD_CAUGHT_UP {
+            return false;
+        }
+        let seq = extract_seq(&raw.payload).unwrap_or(0);
+        if seq <= last_delivered_seq {
+            skipped += 1;
+            return true;
+        }
+        if seq > new_tip {
+            new_tip = seq;
+        }
+        apply(&raw);
+        applied += 1;
+        true
+    }));
     if let Err(e) = result {
         warn!(
             "marketdata replay stream ended with error: {e} \
@@ -105,12 +98,7 @@ pub fn run_replay_bootstrap_blocking(
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(run_replay_bootstrap(
-        stream_id,
-        replay_addr,
-        tip_file,
-        tls,
-    ))
+    rt.block_on(run_replay_bootstrap(stream_id, replay_addr, tip_file, tls))
 }
 
 /// Async replay: connect once, consume records until
@@ -121,12 +109,7 @@ pub async fn run_replay_bootstrap(
     tip_file: PathBuf,
     tls: TlsConfig,
 ) -> std::io::Result<ReplayResult> {
-    let mut consumer = ReplicationConsumer::new(
-        stream_id,
-        vec![replay_addr],
-        tip_file,
-        tls,
-    )?;
+    let mut consumer = ReplicationConsumer::new(stream_id, vec![replay_addr], tip_file, tls)?;
 
     let mut events = Vec::new();
     let mut caught_up = false;
@@ -153,8 +136,7 @@ pub async fn run_replay_bootstrap(
                 RECORD_ORDER_INSERTED => {
                     if let Some(rec) = decode_payload::<OrderInsertedRecord>(&record.payload) {
                         evs.push(ReplayEvent {
-                            record_type:
-                                RECORD_ORDER_INSERTED,
+                            record_type: RECORD_ORDER_INSERTED,
                             insert: Some(rec),
                             cancel: None,
                             fill: None,
@@ -165,8 +147,7 @@ pub async fn run_replay_bootstrap(
                 RECORD_ORDER_CANCELLED => {
                     if let Some(rec) = decode_payload::<OrderCancelledRecord>(&record.payload) {
                         evs.push(ReplayEvent {
-                            record_type:
-                                RECORD_ORDER_CANCELLED,
+                            record_type: RECORD_ORDER_CANCELLED,
                             insert: None,
                             cancel: Some(rec),
                             fill: None,

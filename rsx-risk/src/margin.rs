@@ -43,9 +43,7 @@ impl PortfolioMargin {
         let mut mm = 0i64;
         for pos in positions {
             let sid = pos.symbol_id as usize;
-            if sid >= self.symbol_params.len()
-                || sid >= mark_prices.len()
-            {
+            if sid >= self.symbol_params.len() || sid >= mark_prices.len() {
                 continue;
             }
             let mark = mark_prices[sid];
@@ -58,34 +56,22 @@ impl PortfolioMargin {
                 i64::MIN
             });
             upnl = upnl.saturating_add(pos_upnl);
-            let notional =
-                pos.notional(mark).unwrap_or_else(|_| {
-                    error!(
-                        "notional overflow: \
+            let notional = pos.notional(mark).unwrap_or_else(|_| {
+                error!(
+                    "notional overflow: \
                          user={} symbol={} mark={}",
-                        pos.user_id, pos.symbol_id, mark
-                    );
-                    i64::MAX
-                });
+                    pos.user_id, pos.symbol_id, mark
+                );
+                i64::MAX
+            });
             let params = &self.symbol_params[sid];
-            let im_calc = notional as i128
-                * params.initial_margin_rate as i128
-                / 10_000;
-            im = im.saturating_add(
-                i64::try_from(im_calc).unwrap_or(i64::MAX)
-            );
-            let mm_calc = notional as i128
-                * params.maintenance_margin_rate as i128
-                / 10_000;
-            mm = mm.saturating_add(
-                i64::try_from(mm_calc).unwrap_or(i64::MAX)
-            );
+            let im_calc = notional as i128 * params.initial_margin_rate as i128 / 10_000;
+            im = im.saturating_add(i64::try_from(im_calc).unwrap_or(i64::MAX));
+            let mm_calc = notional as i128 * params.maintenance_margin_rate as i128 / 10_000;
+            mm = mm.saturating_add(i64::try_from(mm_calc).unwrap_or(i64::MAX));
         }
-        let equity =
-            account.collateral.saturating_add(upnl);
-        let available = equity
-            .saturating_sub(im)
-            .saturating_sub(frozen);
+        let equity = account.collateral.saturating_add(upnl);
+        let available = equity.saturating_sub(im).saturating_sub(frozen);
         MarginState {
             equity,
             unrealized_pnl: upnl,
@@ -111,43 +97,31 @@ impl PortfolioMargin {
         if order.reduce_only {
             return Ok(0);
         }
-        let state =
-            self.calculate(account, positions, mark_prices, frozen);
-        let notional_128 = order.price as i128
-            * order.qty as i128;
-        let order_notional = i64::try_from(notional_128)
-            .unwrap_or_else(|_| {
-                error!(
-                    "order notional overflow: \
+        let state = self.calculate(account, positions, mark_prices, frozen);
+        let notional_128 = order.price as i128 * order.qty as i128;
+        let order_notional = i64::try_from(notional_128).unwrap_or_else(|_| {
+            error!(
+                "order notional overflow: \
                      user={} price={} qty={}",
-                    order.user_id, order.price, order.qty
-                );
-                i64::MAX
-            });
+                order.user_id, order.price, order.qty
+            );
+            i64::MAX
+        });
         let sid = order.symbol_id as usize;
         if sid >= self.symbol_params.len() {
             return Err(RejectReason::InsufficientMargin);
         }
         let params = &self.symbol_params[sid];
-        let order_im_128 = order_notional as i128
-            * params.initial_margin_rate as i128
-            / 10_000;
-        let order_im = i64::try_from(order_im_128)
-            .unwrap_or_else(|_| {
-                error!(
-                    "order_im overflow: \
+        let order_im_128 = order_notional as i128 * params.initial_margin_rate as i128 / 10_000;
+        let order_im = i64::try_from(order_im_128).unwrap_or_else(|_| {
+            error!(
+                "order_im overflow: \
                      user={} symbol={} notional={}",
-                    order.user_id,
-                    order.symbol_id,
-                    order_notional
-                );
-                i64::MAX
-            });
-        let order_fee = calculate_fee(
-            order.qty,
-            order.price,
-            taker_fee_bps,
-        );
+                order.user_id, order.symbol_id, order_notional
+            );
+            i64::MAX
+        });
+        let order_fee = calculate_fee(order.qty, order.price, taker_fee_bps);
         let margin_needed = order_im.saturating_add(order_fee);
         if state.available_margin < margin_needed {
             return Err(RejectReason::InsufficientMargin);
@@ -156,10 +130,7 @@ impl PortfolioMargin {
     }
 
     /// RISK.md §7.
-    pub fn needs_liquidation(
-        &self,
-        state: &MarginState,
-    ) -> bool {
+    pub fn needs_liquidation(&self, state: &MarginState) -> bool {
         state.equity < state.maintenance_margin
     }
 }
@@ -176,30 +147,19 @@ impl ExposureIndex {
         }
     }
 
-    pub fn add_user(
-        &mut self,
-        symbol_idx: usize,
-        user_id: u32,
-    ) {
+    pub fn add_user(&mut self, symbol_idx: usize, user_id: u32) {
         let users = &mut self.exposure[symbol_idx];
         if !users.contains(&user_id) {
             users.push(user_id);
         }
     }
 
-    pub fn remove_user(
-        &mut self,
-        symbol_idx: usize,
-        user_id: u32,
-    ) {
+    pub fn remove_user(&mut self, symbol_idx: usize, user_id: u32) {
         let users = &mut self.exposure[symbol_idx];
         users.retain(|&u| u != user_id);
     }
 
-    pub fn users_for_symbol(
-        &self,
-        symbol_idx: usize,
-    ) -> &[u32] {
+    pub fn users_for_symbol(&self, symbol_idx: usize) -> &[u32] {
         &self.exposure[symbol_idx]
     }
 }

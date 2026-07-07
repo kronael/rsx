@@ -10,9 +10,9 @@
 //! alongside `rsx-cast` and `rsx-types`. See ARCHITECTURE.md and, in the wider
 //! rsx repo, `specs/2/18-messages.md` for the per-field reference.
 
-use rsx_cast::CastRecord;
-use rsx_cast::encode_record;
 use rsx_cast::as_bytes;
+use rsx_cast::encode_record;
+use rsx_cast::CastRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
@@ -73,9 +73,15 @@ pub struct FillRecord {
 }
 
 impl CastRecord for FillRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_FILL }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_FILL
+    }
 }
 
 const _: () = assert!(mem::size_of::<FillRecord>() == 128);
@@ -100,9 +106,15 @@ pub struct BboRecord {
 }
 
 impl CastRecord for BboRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_BBO }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_BBO
+    }
 }
 
 const _: () = assert!(mem::size_of::<BboRecord>() == 128);
@@ -128,9 +140,15 @@ pub struct OrderInsertedRecord {
 }
 
 impl CastRecord for OrderInsertedRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_ORDER_INSERTED }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_INSERTED
+    }
 }
 
 const _: () = assert!(mem::size_of::<OrderInsertedRecord>() == 64);
@@ -155,9 +173,15 @@ pub struct OrderCancelledRecord {
 }
 
 impl CastRecord for OrderCancelledRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_ORDER_CANCELLED }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_CANCELLED
+    }
 }
 
 const _: () = assert!(mem::size_of::<OrderCancelledRecord>() == 64);
@@ -183,9 +207,15 @@ pub struct OrderDoneRecord {
 }
 
 impl CastRecord for OrderDoneRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_ORDER_DONE }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_DONE
+    }
 }
 
 const _: () = assert!(mem::size_of::<OrderDoneRecord>() == 64);
@@ -205,9 +235,15 @@ pub struct ConfigAppliedRecord {
 }
 
 impl CastRecord for ConfigAppliedRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_CONFIG_APPLIED }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_CONFIG_APPLIED
+    }
 }
 
 const _: () = assert!(mem::size_of::<ConfigAppliedRecord>() == 64);
@@ -236,9 +272,15 @@ pub struct OrderAcceptedRecord {
 }
 
 impl CastRecord for OrderAcceptedRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_ORDER_ACCEPTED }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_ACCEPTED
+    }
 }
 
 const _: () = assert!(mem::size_of::<OrderAcceptedRecord>() == 128);
@@ -259,9 +301,15 @@ pub struct MarkPriceRecord {
 }
 
 impl CastRecord for MarkPriceRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_MARK_PRICE }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_MARK_PRICE
+    }
 }
 
 const _: () = assert!(mem::size_of::<MarkPriceRecord>() == 64);
@@ -283,9 +331,15 @@ pub struct OrderFailedRecord {
 }
 
 impl CastRecord for OrderFailedRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_ORDER_FAILED }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_FAILED
+    }
 }
 
 const _: () = assert!(mem::size_of::<OrderFailedRecord>() == 64);
@@ -305,9 +359,15 @@ pub struct CancelRequest {
 }
 
 impl CastRecord for CancelRequest {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_CANCEL_REQUEST }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_CANCEL_REQUEST
+    }
 }
 
 const _: () = assert!(mem::size_of::<CancelRequest>() == 64);
@@ -331,9 +391,15 @@ pub struct LiquidationRecord {
 }
 
 impl CastRecord for LiquidationRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_LIQUIDATION }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_LIQUIDATION
+    }
 }
 
 const _: () = assert!(mem::size_of::<LiquidationRecord>() == 64);
@@ -350,39 +416,27 @@ pub fn encode_bbo_record(record: &BboRecord) -> Vec<u8> {
     encode_record(RECORD_BBO, as_bytes(record))
 }
 
-pub fn encode_order_inserted_record(
-    record: &OrderInsertedRecord,
-) -> Vec<u8> {
+pub fn encode_order_inserted_record(record: &OrderInsertedRecord) -> Vec<u8> {
     encode_record(RECORD_ORDER_INSERTED, as_bytes(record))
 }
 
-pub fn encode_order_cancelled_record(
-    record: &OrderCancelledRecord,
-) -> Vec<u8> {
+pub fn encode_order_cancelled_record(record: &OrderCancelledRecord) -> Vec<u8> {
     encode_record(RECORD_ORDER_CANCELLED, as_bytes(record))
 }
 
-pub fn encode_order_done_record(
-    record: &OrderDoneRecord,
-) -> Vec<u8> {
+pub fn encode_order_done_record(record: &OrderDoneRecord) -> Vec<u8> {
     encode_record(RECORD_ORDER_DONE, as_bytes(record))
 }
 
-pub fn encode_config_applied_record(
-    record: &ConfigAppliedRecord,
-) -> Vec<u8> {
+pub fn encode_config_applied_record(record: &ConfigAppliedRecord) -> Vec<u8> {
     encode_record(RECORD_CONFIG_APPLIED, as_bytes(record))
 }
 
-pub fn encode_order_accepted_record(
-    record: &OrderAcceptedRecord,
-) -> Vec<u8> {
+pub fn encode_order_accepted_record(record: &OrderAcceptedRecord) -> Vec<u8> {
     encode_record(RECORD_ORDER_ACCEPTED, as_bytes(record))
 }
 
-pub fn encode_order_failed_record(
-    record: &OrderFailedRecord,
-) -> Vec<u8> {
+pub fn encode_order_failed_record(record: &OrderFailedRecord) -> Vec<u8> {
     encode_record(RECORD_ORDER_FAILED, as_bytes(record))
 }
 
@@ -392,11 +446,7 @@ macro_rules! decode_record {
             if payload.len() < mem::size_of::<$ty>() {
                 return None;
             }
-            Some(unsafe {
-                std::ptr::read_unaligned(
-                    payload.as_ptr() as *const $ty,
-                )
-            })
+            Some(unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const $ty) })
         }
     };
 }

@@ -77,10 +77,7 @@ fn draw_trace_hud(f: &mut Frame, app: &App) {
     };
     let row = |k: &str, v: String| {
         Line::from(vec![
-            Span::styled(
-                format!("{k:<9}"),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(format!("{k:<9}"), Style::default().fg(Color::DarkGray)),
             Span::raw(v),
         ])
     };
@@ -94,8 +91,7 @@ fn draw_trace_hud(f: &mut Frame, app: &App) {
         row("endpoint", app.endpoint.clone()),
         row(
             "link",
-            if app.connected { "connected" } else { "down" }
-                .to_owned(),
+            if app.connected { "connected" } else { "down" }.to_owned(),
         ),
         row("rtt p50", us(app.lat_p50_ns())),
         row("rtt min", us(app.lat_min_ns())),
@@ -120,10 +116,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let conn = if app.connected {
         Span::styled("● live", Style::default().fg(Color::Green))
     } else {
-        Span::styled(
-            "● offline",
-            Style::default().fg(Color::Yellow),
-        )
+        Span::styled("● offline", Style::default().fg(Color::Yellow))
     };
     let line = Line::from(vec![
         Span::styled(
@@ -168,8 +161,11 @@ fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
         )],
         Some(l) => {
             let dash = || "—".to_owned();
-            let total =
-                if l.is_complete() { fmt_ns(l.total_ns()) } else { dash() };
+            let total = if l.is_complete() {
+                fmt_ns(l.total_ns())
+            } else {
+                dash()
+            };
             let net = l.net_ns.map(fmt_ns).unwrap_or_else(dash);
             let p50 = app.lat_p50_ns().map(fmt_ns).unwrap_or_else(dash);
             let best = app.lat_min_ns().map(fmt_ns).unwrap_or_else(dash);
@@ -187,10 +183,7 @@ fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
                     ),
                     Style::default().fg(Color::Gray),
                 ),
-                Span::styled(
-                    format!("   p50 {p50} · best {best}"),
-                    dim,
-                ),
+                Span::styled(format!("   p50 {p50} · best {best}"), dim),
             ]
         }
     };
@@ -287,8 +280,7 @@ fn draw_order_entry(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::DarkGray),
         )),
     ];
-    let p = Paragraph::new(body)
-        .block(Block::default().borders(Borders::ALL).title(" order "));
+    let p = Paragraph::new(body).block(Block::default().borders(Borders::ALL).title(" order "));
     f.render_widget(p, area);
 }
 
@@ -300,7 +292,9 @@ fn field_span(label: &str, value: &str, focused: bool) -> Line<'static> {
         format!("  {label}: {value}")
     };
     let style = if focused {
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Gray)
     };
@@ -321,8 +315,7 @@ fn draw_positions(f: &mut Frame, area: Rect, app: &App) {
         .positions
         .iter()
         .map(|(sym, net, entry, upnl)| {
-            let pnl_color =
-                if *upnl >= 0 { Color::Green } else { Color::Red };
+            let pnl_color = if *upnl >= 0 { Color::Green } else { Color::Red };
             Row::new(vec![
                 Cell::from(sym.clone()),
                 Cell::from(net.to_string()),
@@ -344,8 +337,7 @@ fn draw_positions(f: &mut Frame, area: Rect, app: &App) {
         ],
     )
     .header(
-        Row::new(vec!["sym", "net", "entry", "upnl"])
-            .style(Style::default().fg(Color::DarkGray)),
+        Row::new(vec!["sym", "net", "entry", "upnl"]).style(Style::default().fg(Color::DarkGray)),
     )
     .block(Block::default().borders(Borders::ALL).title(" positions "));
     f.render_widget(table, area);
@@ -361,15 +353,11 @@ fn draw_trades(f: &mut Frame, area: Rect, app: &App) {
                 Side::Sell => Color::Red,
             };
             Line::from(vec![
-                Span::styled(
-                    format!("{px:>7}"),
-                    Style::default().fg(color),
-                ),
+                Span::styled(format!("{px:>7}"), Style::default().fg(color)),
                 Span::raw(format!("  {qty}")),
             ])
         })
         .collect();
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" trades "));
+    let p = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" trades "));
     f.render_widget(p, area);
 }

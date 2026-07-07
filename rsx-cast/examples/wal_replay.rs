@@ -45,10 +45,7 @@ fn main() {
     eprintln!("WAL dir: {}", dir.display());
 
     {
-        let mut wal = WalWriter::new(
-        STREAM_ID, dir, ROTATE_BYTES,
-    )
-        .unwrap();
+        let mut wal = WalWriter::new(STREAM_ID, dir, ROTATE_BYTES).unwrap();
         for i in 1..=5 {
             let mut rec = fill(1000 + i, 50_000 + i as i64, 100);
             let framed = wal.prepare(&mut rec).unwrap();

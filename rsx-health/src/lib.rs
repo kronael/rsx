@@ -101,10 +101,7 @@ impl HealthSnapshot {
         out.push_str(&format!(
             "\"live\":{},\"ready\":{},\
              \"saturation\":{:.4},\"state\":\"{}\"",
-            self.live,
-            self.ready,
-            self.saturation,
-            self.state,
+            self.live, self.ready, self.saturation, self.state,
         ));
 
         out.push_str(",\"queues\":[");
@@ -268,10 +265,7 @@ where
                     return;
                 }
             };
-            tracing::info!(
-                "health: listening on {}",
-                addr,
-            );
+            tracing::info!("health: listening on {}", addr,);
             for stream in listener.incoming() {
                 let stream = match stream {
                     Ok(s) => s,
@@ -286,10 +280,8 @@ where
         .expect("health thread spawn failed");
 }
 
-fn serve_one<F>(
-    mut stream: std::net::TcpStream,
-    snapshot: &F,
-) where
+fn serve_one<F>(mut stream: std::net::TcpStream, snapshot: &F)
+where
     F: Fn() -> HealthSnapshot,
 {
     let mut buf = [0u8; 256];
@@ -338,7 +330,7 @@ fn parse_path(request: &str) -> Option<&str> {
     let line = request.lines().next()?;
     let mut parts = line.splitn(3, ' ');
     parts.next(); // method
-    parts.next()  // path
+    parts.next() // path
 }
 
 fn http_200(body: &str) -> Vec<u8> {
@@ -393,21 +385,20 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    fn make_snapshot(
-        live: bool,
-        ready: bool,
-        saturation: f64,
-    ) -> HealthSnapshot {
+    fn make_snapshot(live: bool, ready: bool, saturation: f64) -> HealthSnapshot {
         HealthSnapshot {
             live,
             ready,
             saturation,
-            queues: vec![
-                QueueGauge { name: "resp", used: 10, cap: 100 },
-            ],
-            counters: vec![
-                CounterGauge { name: "orders", value: 42 },
-            ],
+            queues: vec![QueueGauge {
+                name: "resp",
+                used: 10,
+                cap: 100,
+            }],
+            counters: vec![CounterGauge {
+                name: "orders",
+                value: 42,
+            }],
             state: "live",
         }
     }
@@ -454,10 +445,7 @@ mod tests {
         g.orders_processed.fetch_add(5, Ordering::Relaxed);
         g.live.store(true, Ordering::Relaxed);
         g.state_idx.store(2, Ordering::Relaxed);
-        assert_eq!(
-            g.orders_processed.load(Ordering::Relaxed),
-            5
-        );
+        assert_eq!(g.orders_processed.load(Ordering::Relaxed), 5);
         assert!(g.live.load(Ordering::Relaxed));
         assert_eq!(g.state_label(), "live");
     }
@@ -465,12 +453,9 @@ mod tests {
     #[test]
     fn test_server_responds() {
         // Bind to a dynamic port, send requests via TcpStream.
-        let addr: SocketAddr =
-            "127.0.0.1:0".parse().expect("parse addr");
-        let listener = TcpListener::bind(addr)
-            .expect("bind test listener");
-        let bound = listener.local_addr()
-            .expect("local_addr");
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("parse addr");
+        let listener = TcpListener::bind(addr).expect("bind test listener");
+        let bound = listener.local_addr().expect("local_addr");
 
         let gauges = LoadGauges::new();
         gauges.live.store(true, Ordering::Relaxed);
@@ -526,8 +511,7 @@ mod tests {
     }
 
     fn do_get(addr: SocketAddr, req: &str) -> String {
-        let mut s = TcpStream::connect(addr)
-            .expect("connect to test health server");
+        let mut s = TcpStream::connect(addr).expect("connect to test health server");
         s.write_all(req.as_bytes()).expect("write request");
         s.shutdown(std::net::Shutdown::Write)
             .expect("shutdown write");

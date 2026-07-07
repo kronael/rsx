@@ -2,8 +2,8 @@ use crate::records::serialize_l2_snapshot;
 use crate::shadow::ShadowBook;
 use crate::subscription::SubscriptionManager;
 use crate::types::BboUpdate;
-use rsx_types::SymbolConfig;
 use rsx_types::time_utils::time_ns;
+use rsx_types::SymbolConfig;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -70,14 +70,8 @@ impl MarketDataState {
         self.subs.unsubscribe_all(conn_id);
     }
 
-    pub fn push_to_client(
-        &mut self,
-        conn_id: u64,
-        msg: Arc<str>,
-        max_outbound: usize,
-    ) -> bool {
-        if let Some(conn) = self.connections.get_mut(&conn_id)
-        {
+    pub fn push_to_client(&mut self, conn_id: u64, msg: Arc<str>, max_outbound: usize) -> bool {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
             if conn.outbound.len() >= max_outbound {
                 return false;
             }
@@ -87,33 +81,19 @@ impl MarketDataState {
         false
     }
 
-    pub fn drain_outbound(
-        &mut self,
-        conn_id: u64,
-    ) -> Vec<Arc<str>> {
-        if let Some(conn) = self.connections.get_mut(&conn_id)
-        {
+    pub fn drain_outbound(&mut self, conn_id: u64) -> Vec<Arc<str>> {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.outbound.drain(..).collect()
         } else {
             Vec::new()
         }
     }
 
-    pub fn subscribe(
-        &mut self,
-        conn_id: u64,
-        symbol_id: u32,
-        channels: u32,
-        depth: u32,
-    ) -> bool {
+    pub fn subscribe(&mut self, conn_id: u64, symbol_id: u32, channels: u32, depth: u32) -> bool {
         self.subs.subscribe(conn_id, symbol_id, channels, depth)
     }
 
-    pub fn unsubscribe(
-        &mut self,
-        conn_id: u64,
-        symbol_id: u32,
-    ) {
+    pub fn unsubscribe(&mut self, conn_id: u64, symbol_id: u32) {
         self.subs.unsubscribe(conn_id, symbol_id);
     }
 
@@ -129,42 +109,28 @@ impl MarketDataState {
         self.subs.has_bbo(conn_id, symbol_id)
     }
 
-    pub fn has_depth(
-        &self,
-        conn_id: u64,
-        symbol_id: u32,
-    ) -> bool {
+    pub fn has_depth(&self, conn_id: u64, symbol_id: u32) -> bool {
         self.subs.has_depth(conn_id, symbol_id)
     }
 
-    pub fn has_trades(
-        &self,
-        conn_id: u64,
-        symbol_id: u32,
-    ) -> bool {
+    pub fn has_trades(&self, conn_id: u64, symbol_id: u32) -> bool {
         self.subs.has_trades(conn_id, symbol_id)
     }
 
-    pub fn snapshot_msg(
-        &self,
-        symbol_id: u32,
-        depth: u32,
-    ) -> Option<String> {
+    pub fn snapshot_msg(&self, symbol_id: u32, depth: u32) -> Option<String> {
         let book = self.books.get(symbol_id as usize)?;
         if let Some(book) = book.as_ref() {
             return Some(serialize_l2_snapshot(
                 &book.derive_l2_snapshot(depth as usize),
             ));
         }
-        Some(serialize_l2_snapshot(
-            &crate::types::L2Snapshot {
-                symbol_id,
-                bids: Vec::new(),
-                asks: Vec::new(),
-                timestamp_ns: 0,
-                seq: 0,
-            },
-        ))
+        Some(serialize_l2_snapshot(&crate::types::L2Snapshot {
+            symbol_id,
+            bids: Vec::new(),
+            asks: Vec::new(),
+            timestamp_ns: 0,
+            seq: 0,
+        }))
     }
 
     pub fn client_depth(&self, conn_id: u64) -> u32 {
@@ -184,11 +150,7 @@ impl MarketDataState {
             } else {
                 self.mid_price_default
             };
-            self.books[idx] = Some(ShadowBook::new(
-                cfg,
-                self.book_capacity,
-                mid,
-            ));
+            self.books[idx] = Some(ShadowBook::new(cfg, self.book_capacity, mid));
         }
         if idx < self.last_book_access.len() {
             self.last_book_access[idx] = time_ns();
@@ -218,8 +180,7 @@ impl MarketDataState {
             if now.saturating_sub(last) < ttl_ns {
                 continue;
             }
-            let subs = self.subs
-                .clients_for_symbol(idx as u32);
+            let subs = self.subs.clients_for_symbol(idx as u32);
             if subs.is_empty() {
                 self.books[idx] = None;
                 self.last_book_access[idx] = 0;
@@ -244,32 +205,18 @@ impl MarketDataState {
 
     /// Resend an L2 snapshot for every active book. Used after a
     /// stream-seq gap when the lost record's symbol is unknown.
-    pub fn resend_all_snapshots(
-        &mut self,
-        depth: u32,
-        max_outbound: usize,
-    ) {
+    pub fn resend_all_snapshots(&mut self, depth: u32, max_outbound: usize) {
         for sid in 0..self.books.len() {
             if self.books[sid].is_some() {
-                self.resend_snapshot(
-                    sid as u32,
-                    depth,
-                    max_outbound,
-                );
+                self.resend_snapshot(sid as u32, depth, max_outbound);
             }
         }
     }
 
     /// Broadcast L2 snapshot to all depth subscribers
     /// for a symbol (used after seq gap detection).
-    pub fn resend_snapshot(
-        &mut self,
-        symbol_id: u32,
-        depth: u32,
-        max_outbound: usize,
-    ) {
-        if let Some(snapshot) = self.snapshot_msg(symbol_id, depth)
-        {
+    pub fn resend_snapshot(&mut self, symbol_id: u32, depth: u32, max_outbound: usize) {
+        if let Some(snapshot) = self.snapshot_msg(symbol_id, depth) {
             let snapshot: Arc<str> = snapshot.into();
             let clients = self.subs.clients_for_symbol(symbol_id);
             for client_id in clients {
@@ -279,11 +226,7 @@ impl MarketDataState {
                     // is full. Snapshot resend is a
                     // best-effort recovery hint -- the
                     // next snapshot tick will retry.
-                    let _accepted = self.push_to_client(
-                        client_id,
-                        snapshot.clone(),
-                        max_outbound,
-                    );
+                    let _accepted = self.push_to_client(client_id, snapshot.clone(), max_outbound);
                 }
             }
         }
@@ -296,21 +239,15 @@ impl MarketDataState {
         depth: u32,
         max_outbound: usize,
     ) {
-        if let Some(conn) = self.connections.get_mut(&client_id)
-        {
+        if let Some(conn) = self.connections.get_mut(&client_id) {
             conn.outbound.clear();
         }
-        if let Some(snapshot) = self.snapshot_msg(symbol_id, depth)
-        {
+        if let Some(snapshot) = self.snapshot_msg(symbol_id, depth) {
             // SAFETY: returns false on full outbound;
             // we just cleared the buffer above so this
             // is only ever full for an explicitly
             // disconnected client, which is acceptable.
-            let _accepted = self.push_to_client(
-                client_id,
-                snapshot.into(),
-                max_outbound,
-            );
+            let _accepted = self.push_to_client(client_id, snapshot.into(), max_outbound);
         }
     }
 

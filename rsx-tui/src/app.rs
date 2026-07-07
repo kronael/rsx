@@ -87,7 +87,12 @@ impl OrderEntry {
         if price <= 0 || qty <= 0 {
             return None;
         }
-        Some(OrderReq { side: self.side, price, qty, tif: self.tif })
+        Some(OrderReq {
+            side: self.side,
+            price,
+            qty,
+            tif: self.tif,
+        })
     }
 }
 
@@ -205,20 +210,29 @@ impl App {
             GwEvent::Rejected { reason } => {
                 self.status = format!("rejected: {reason}");
             }
-            GwEvent::Position { symbol, net_qty, entry_px, upnl } => {
-                match self.positions.iter_mut().find(|p| p.0 == symbol) {
-                    Some(p) => {
-                        p.1 = net_qty;
-                        p.2 = entry_px;
-                        p.3 = upnl;
-                    }
-                    None => {
-                        self.positions.push((symbol, net_qty, entry_px, upnl))
-                    }
+            GwEvent::Position {
+                symbol,
+                net_qty,
+                entry_px,
+                upnl,
+            } => match self.positions.iter_mut().find(|p| p.0 == symbol) {
+                Some(p) => {
+                    p.1 = net_qty;
+                    p.2 = entry_px;
+                    p.3 = upnl;
                 }
-            }
-            GwEvent::Latency { net_ns, internal_ns, engine_ns } => {
-                let lat = Latency { net_ns, internal_ns, engine_ns };
+                None => self.positions.push((symbol, net_qty, entry_px, upnl)),
+            },
+            GwEvent::Latency {
+                net_ns,
+                internal_ns,
+                engine_ns,
+            } => {
+                let lat = Latency {
+                    net_ns,
+                    internal_ns,
+                    engine_ns,
+                };
                 // Only complete samples (net known) drive p50 / best.
                 if lat.is_complete() {
                     self.lat_totals.push_back(lat.total_ns());

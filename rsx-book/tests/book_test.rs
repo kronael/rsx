@@ -1,10 +1,9 @@
 use rsx_book::book::Orderbook;
-use rsx_types::NONE;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
-
+use rsx_types::NONE;
 
 fn test_config() -> SymbolConfig {
     SymbolConfig {
@@ -28,14 +27,10 @@ fn test_book() -> Orderbook {
 fn cancel_order_checked_rejects_stale_handle() {
     let mut book = test_book();
     // user 1 rests order A; cancel it so its slab slot is freed.
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0xA, 0xA,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0xA, 0xA);
     assert!(book.cancel_order(h));
     // user 2 rests a different order; the slab reuses the same slot.
-    let h2 = book.insert_resting(
-        49_800, 200, Side::Buy, 0, 2, false, 0, 0xB, 0xB,
-    );
+    let h2 = book.insert_resting(49_800, 200, Side::Buy, 0, 2, false, 0, 0xB, 0xB);
     assert_eq!(h2, h, "slab should reuse the freed slot");
 
     // A stale attempt using order A's identity must be rejected and must
@@ -53,43 +48,31 @@ fn cancel_order_checked_rejects_stale_handle() {
 #[test]
 fn insert_bid_updates_best_bid() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     assert_ne!(book.best_bid_tick, NONE);
 }
 
 #[test]
 fn insert_ask_updates_best_ask() {
     let mut book = test_book();
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     assert_ne!(book.best_ask_tick, NONE);
 }
 
 #[test]
 fn insert_below_best_bid_no_change() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let best = book.best_bid_tick;
-    book.insert_resting(
-        49_800, 100, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(49_800, 100, Side::Buy, 0, 2, false, 0, 0, 0);
     assert_eq!(book.best_bid_tick, best);
 }
 
 #[test]
 fn cancel_updates_best_bid() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let _h2 = book.insert_resting(
-        49_800, 100, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let _h2 = book.insert_resting(49_800, 100, Side::Buy, 0, 2, false, 0, 0, 0);
     let old_best = book.best_bid_tick;
     book.cancel_order(h1);
     assert_ne!(book.best_bid_tick, old_best);
@@ -99,9 +82,7 @@ fn cancel_updates_best_bid() {
 #[test]
 fn empty_book_after_all_cancels() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.cancel_order(h);
     assert_eq!(book.best_bid_tick, NONE);
 }
@@ -109,14 +90,9 @@ fn empty_book_after_all_cancels() {
 #[test]
 fn level_head_tail_count_qty_correct() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let h2 = book.insert_resting(
-        49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
-    let tick =
-        book.compression.price_to_index(49_900);
+    let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h2 = book.insert_resting(49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0);
+    let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     assert_eq!(level.head, h1);
     assert_eq!(level.tail, h2);
@@ -127,25 +103,17 @@ fn level_head_tail_count_qty_correct() {
 #[test]
 fn slab_reuse_after_cancel() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.cancel_order(h);
-    let h2 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    let h2 = book.insert_resting(49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0);
     assert_eq!(h2, h); // reused
 }
 
 #[test]
 fn best_bid_less_than_best_ask() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0);
     assert!(book.best_bid_tick < book.best_ask_tick);
 }
 
@@ -153,48 +121,27 @@ fn best_bid_less_than_best_ask() {
 fn modify_price_cancels_and_reinserts() {
     let mut book = test_book();
     // Insert two orders so slab won't reuse h1 as h2
-    let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let _h_extra = book.insert_resting(
-        49_800, 50, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
-    let h2 = book.modify_order_price(
-        h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let _h_extra = book.insert_resting(49_800, 50, Side::Buy, 0, 2, false, 0, 0, 0);
+    let h2 = book.modify_order_price(h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0);
     // h1 was freed and reused as h2 (slab reuse)
     // Just verify the new order has correct state
     assert!(book.orders.get(h2).is_active());
     assert_eq!(book.orders.get(h2).price, Price(49_700));
-    assert_eq!(
-        book.orders.get(h2).remaining_qty,
-        Qty(100)
-    );
+    assert_eq!(book.orders.get(h2).remaining_qty, Qty(100));
     // Old tick level should have lost the order
-    let old_tick =
-        book.compression.price_to_index(49_900);
-    assert_eq!(
-        book.active_levels[old_tick as usize].order_count,
-        0,
-    );
+    let old_tick = book.compression.price_to_index(49_900);
+    assert_eq!(book.active_levels[old_tick as usize].order_count, 0,);
 }
 
 #[test]
 fn modify_price_loses_time_priority() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let h2 = book.insert_resting(
-        49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h2 = book.insert_resting(49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0);
     // Move h1 to same price -- should go behind h2
-    let h3 = book.modify_order_price(
-        h1, 49_900, Side::Buy, 0, 1, false, 1,
-        0, 0,
-    );
-    let tick =
-        book.compression.price_to_index(49_900);
+    let h3 = book.modify_order_price(h1, 49_900, Side::Buy, 0, 1, false, 1, 0, 0);
+    let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     assert_eq!(level.head, h2);
     assert_eq!(level.tail, h3);
@@ -203,9 +150,7 @@ fn modify_price_loses_time_priority() {
 #[test]
 fn modify_qty_down_in_place() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     assert!(book.modify_order_qty_down(h, 60));
     assert_eq!(book.orders.get(h).remaining_qty, Qty(60));
 }
@@ -213,15 +158,10 @@ fn modify_qty_down_in_place() {
 #[test]
 fn modify_qty_down_keeps_time_priority() {
     let mut book = test_book();
-    let h1 = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let h2 = book.insert_resting(
-        49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h2 = book.insert_resting(49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0);
     book.modify_order_qty_down(h1, 50);
-    let tick =
-        book.compression.price_to_index(49_900);
+    let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     // h1 still at head (time priority preserved)
     assert_eq!(level.head, h1);
@@ -231,24 +171,16 @@ fn modify_qty_down_keeps_time_priority() {
 #[test]
 fn modify_qty_down_updates_level_total_qty() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.modify_order_qty_down(h, 40);
-    let tick =
-        book.compression.price_to_index(49_900);
-    assert_eq!(
-        book.active_levels[tick as usize].total_qty,
-        40,
-    );
+    let tick = book.compression.price_to_index(49_900);
+    assert_eq!(book.active_levels[tick as usize].total_qty, 40,);
 }
 
 #[test]
 fn modify_qty_down_to_zero_removes_order() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     assert!(book.modify_order_qty_down(h, 0));
     assert!(!book.orders.get(h).is_active());
     assert_eq!(book.best_bid_tick, NONE);
@@ -262,14 +194,12 @@ fn modify_qty_down_to_zero_removes_order() {
 // must be chosen by raw price, not by comparing tick indices.
 
 fn price_at_best_bid(book: &Orderbook) -> i64 {
-    let lvl = &book.active_levels
-        [book.best_bid_tick as usize];
+    let lvl = &book.active_levels[book.best_bid_tick as usize];
     book.orders.get(lvl.head).price.0
 }
 
 fn price_at_best_ask(book: &Orderbook) -> i64 {
-    let lvl = &book.active_levels
-        [book.best_ask_tick as usize];
+    let lvl = &book.active_levels[book.best_ask_tick as usize];
     book.orders.get(lvl.head).price.0
 }
 
@@ -278,10 +208,8 @@ fn best_bid_is_highest_price_across_zones() {
     let mut book = test_book();
     // 45_000 sits in a deeper compression zone -> higher tick index
     // than 49_900, but 49_900 is the better (higher) bid.
-    let deep_tick =
-        book.compression.price_to_index(45_000);
-    let near_tick =
-        book.compression.price_to_index(49_900);
+    let deep_tick = book.compression.price_to_index(45_000);
+    let near_tick = book.compression.price_to_index(49_900);
     assert!(
         deep_tick > near_tick,
         "precondition: sawtooth (deep {} > near {})",
@@ -289,12 +217,8 @@ fn best_bid_is_highest_price_across_zones() {
         near_tick,
     );
     // Insert the deep (worse) bid first, then the near (better) bid.
-    book.insert_resting(
-        45_000, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(45_000, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    book.insert_resting(49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0);
     assert_eq!(
         price_at_best_bid(&book),
         49_900,
@@ -312,12 +236,8 @@ fn best_ask_is_lowest_price() {
     // the lowest-priced ask. The bid-side and crossing tests carry the
     // fail-before/pass-after evidence.
     let mut book = test_book();
-    book.insert_resting(
-        55_000, 100, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
-    book.insert_resting(
-        50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(55_000, 100, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0);
     assert_eq!(
         price_at_best_ask(&book),
         50_100,
@@ -333,19 +253,16 @@ fn post_only_sell_crossing_bid_across_zones_cancelled() {
     // check compared ticks: sell tick (5249, deep zone) > bid tick
     // (2399), so it wrongly saw "no cross" and would rest the order --
     // producing a crossed book. This asserts the price-based fix.
-    use rsx_book::event::CANCEL_POST_ONLY;
     use rsx_book::event::Event;
-    use rsx_book::matching::IncomingOrder;
+    use rsx_book::event::CANCEL_POST_ONLY;
     use rsx_book::matching::process_new_order;
+    use rsx_book::matching::IncomingOrder;
     use rsx_types::TimeInForce;
 
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let bid_tick = book.best_bid_tick;
-    let sell_tick =
-        book.compression.price_to_index(45_000);
+    let sell_tick = book.compression.price_to_index(45_000);
     assert!(
         sell_tick > bid_tick,
         "precondition: sawtooth (sell tick {} > bid tick {})",
@@ -403,21 +320,14 @@ fn cancel_best_bid_at_tick_one_keeps_tick_zero() {
         px_tick1,
     );
     // Rest a bid at tick 0 and a (better) bid at tick 1.
-    book.insert_resting(
-        px_tick0, 100, Side::Buy, 0, 1, false, 0, 0, 0,
-    );
-    let h1 = book.insert_resting(
-        px_tick1, 100, Side::Buy, 0, 2, false, 0, 0, 0,
-    );
+    book.insert_resting(px_tick0, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h1 = book.insert_resting(px_tick1, 100, Side::Buy, 0, 2, false, 0, 0, 0);
     // Cancel the best bid at tick 1; tick 0's bid must survive as BBA.
     book.cancel_order(h1);
     assert_ne!(
         book.best_bid_tick, NONE,
         "cancelling tick-1 best must not drop the tick-0 bid",
     );
-    assert_eq!(
-        book.best_bid_tick, 0,
-        "tick 0 must become the new best bid",
-    );
+    assert_eq!(book.best_bid_tick, 0, "tick 0 must become the new best bid",);
     assert_eq!(price_at_best_bid(&book), px_tick0);
 }

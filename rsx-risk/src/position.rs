@@ -23,26 +23,16 @@ impl Position {
     }
 
     /// RISK.md §1. side: 0=Buy, 1=Sell.
-    pub fn apply_fill(
-        &mut self,
-        side: u8,
-        price: i64,
-        qty: i64,
-        seq: u64,
-    ) {
+    pub fn apply_fill(&mut self, side: u8, price: i64, qty: i64, seq: u64) {
         if side == 0 {
             // Buy fill
             if self.short_qty > 0 {
                 // Opposing: reduce short
                 let close_qty = qty.min(self.short_qty);
-                let close_cost = (self.short_entry_cost
-                    as i128
-                    * close_qty as i128
-                    / self.short_qty as i128)
-                    .clamp(i64::MIN as i128, i64::MAX as i128)
-                    as i64;
-                self.realized_pnl += (close_cost as i128
-                    - price as i128 * close_qty as i128)
+                let close_cost =
+                    (self.short_entry_cost as i128 * close_qty as i128 / self.short_qty as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+                self.realized_pnl += (close_cost as i128 - price as i128 * close_qty as i128)
                     .clamp(i64::MIN as i128, i64::MAX as i128)
                     as i64;
                 self.short_qty -= close_qty;
@@ -50,52 +40,41 @@ impl Position {
                 let remaining = qty - close_qty;
                 if remaining > 0 {
                     self.long_qty += remaining;
-                    self.long_entry_cost +=
-                        (price as i128 * remaining as i128)
-                            .clamp(i64::MIN as i128, i64::MAX as i128)
-                            as i64;
+                    self.long_entry_cost += (price as i128 * remaining as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128)
+                        as i64;
                 }
             } else {
                 // Accumulate long
                 self.long_qty += qty;
                 self.long_entry_cost +=
-                    (price as i128 * qty as i128)
-                        .clamp(i64::MIN as i128, i64::MAX as i128)
-                        as i64;
+                    (price as i128 * qty as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
             }
         } else {
             // Sell fill
             if self.long_qty > 0 {
                 // Opposing: reduce long
                 let close_qty = qty.min(self.long_qty);
-                let close_cost = (self.long_entry_cost
-                    as i128
-                    * close_qty as i128
-                    / self.long_qty as i128)
+                let close_cost =
+                    (self.long_entry_cost as i128 * close_qty as i128 / self.long_qty as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+                self.realized_pnl += (price as i128 * close_qty as i128 - close_cost as i128)
                     .clamp(i64::MIN as i128, i64::MAX as i128)
                     as i64;
-                self.realized_pnl +=
-                    (price as i128 * close_qty as i128
-                        - close_cost as i128)
-                        .clamp(i64::MIN as i128, i64::MAX as i128)
-                        as i64;
                 self.long_qty -= close_qty;
                 self.long_entry_cost -= close_cost;
                 let remaining = qty - close_qty;
                 if remaining > 0 {
                     self.short_qty += remaining;
-                    self.short_entry_cost +=
-                        (price as i128 * remaining as i128)
-                            .clamp(i64::MIN as i128, i64::MAX as i128)
-                            as i64;
+                    self.short_entry_cost += (price as i128 * remaining as i128)
+                        .clamp(i64::MIN as i128, i64::MAX as i128)
+                        as i64;
                 }
             } else {
                 // Accumulate short
                 self.short_qty += qty;
                 self.short_entry_cost +=
-                    (price as i128 * qty as i128)
-                        .clamp(i64::MIN as i128, i64::MAX as i128)
-                        as i64;
+                    (price as i128 * qty as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
             }
         }
         self.version += 1;
@@ -107,23 +86,22 @@ impl Position {
     }
 
     /// RISK.md §3.
-    pub fn notional(
-        &self,
-        mark_price: i64,
-    ) -> Result<i64, &'static str> {
-        let v = self.net_qty().abs() as i128
-            * mark_price as i128;
-        i64::try_from(v)
-            .map_err(|_| "notional overflow")
+    pub fn notional(&self, mark_price: i64) -> Result<i64, &'static str> {
+        let v = self.net_qty().abs() as i128 * mark_price as i128;
+        i64::try_from(v).map_err(|_| "notional overflow")
     }
 
     pub fn avg_entry(&self) -> i64 {
         let nq = self.net_qty();
         if nq > 0 {
-            if self.long_qty == 0 { return 0; }
+            if self.long_qty == 0 {
+                return 0;
+            }
             self.long_entry_cost / self.long_qty
         } else if nq < 0 {
-            if self.short_qty == 0 { return 0; }
+            if self.short_qty == 0 {
+                return 0;
+            }
             self.short_entry_cost / self.short_qty
         } else {
             0
@@ -131,18 +109,13 @@ impl Position {
     }
 
     /// RISK.md §3.
-    pub fn unrealized_pnl(
-        &self,
-        mark_price: i64,
-    ) -> Result<i64, &'static str> {
+    pub fn unrealized_pnl(&self, mark_price: i64) -> Result<i64, &'static str> {
         let nq = self.net_qty();
         if nq == 0 {
             return Ok(0);
         }
-        let v = nq as i128
-            * (mark_price - self.avg_entry()) as i128;
-        i64::try_from(v)
-            .map_err(|_| "unrealized_pnl overflow")
+        let v = nq as i128 * (mark_price - self.avg_entry()) as i128;
+        i64::try_from(v).map_err(|_| "unrealized_pnl overflow")
     }
 
     pub fn is_empty(&self) -> bool {

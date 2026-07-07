@@ -3,10 +3,13 @@
 //! See `docs/benches.md` for the full bench index +
 //! production-leg attribution.
 
+use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use criterion::black_box;
+use rsx_risk::liquidation::LiquidationEngine;
+use rsx_risk::price::calculate_index;
+use rsx_risk::types::BboUpdate;
 use rsx_risk::Account;
 use rsx_risk::ExposureIndex;
 use rsx_risk::FundingConfig;
@@ -18,9 +21,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::liquidation::LiquidationEngine;
-use rsx_risk::price::calculate_index;
-use rsx_risk::types::BboUpdate;
 
 fn make_shard(max_symbols: usize) -> RiskShard {
     let mut params = Vec::with_capacity(max_symbols);
@@ -53,20 +53,17 @@ fn make_shard(max_symbols: usize) -> RiskShard {
 fn bench_apply_fill_to_position(c: &mut Criterion) {
     let mut pos = Position::new(1, 0);
     let mut seq = 1u64;
-    c.bench_function(
-        "apply_fill_to_position",
-        |b| {
-            b.iter(|| {
-                seq += 1;
-                black_box(&mut pos).apply_fill(
-                    black_box(0),
-                    black_box(50_000),
-                    black_box(100),
-                    black_box(seq),
-                );
-            })
-        },
-    );
+    c.bench_function("apply_fill_to_position", |b| {
+        b.iter(|| {
+            seq += 1;
+            black_box(&mut pos).apply_fill(
+                black_box(0),
+                black_box(50_000),
+                black_box(100),
+                black_box(seq),
+            );
+        })
+    });
 }
 
 fn bench_portfolio_margin_10(c: &mut Criterion) {
@@ -88,24 +85,19 @@ fn bench_portfolio_margin_10(c: &mut Criterion) {
             p
         })
         .collect();
-    let pos_refs: Vec<&Position> =
-        positions.iter().collect();
-    let marks: Vec<i64> =
-        (0..10).map(|_| 50_000i64).collect();
+    let pos_refs: Vec<&Position> = positions.iter().collect();
+    let marks: Vec<i64> = (0..10).map(|_| 50_000i64).collect();
 
-    c.bench_function(
-        "portfolio_margin_10_positions",
-        |b| {
-            b.iter(|| {
-                black_box(pm.calculate(
-                    black_box(&account),
-                    pos_refs.iter().copied(),
-                    black_box(&marks),
-                    0,
-                ))
-            })
-        },
-    );
+    c.bench_function("portfolio_margin_10_positions", |b| {
+        b.iter(|| {
+            black_box(pm.calculate(
+                black_box(&account),
+                pos_refs.iter().copied(),
+                black_box(&marks),
+                0,
+            ))
+        })
+    });
 }
 
 fn bench_portfolio_margin_50(c: &mut Criterion) {
@@ -127,24 +119,19 @@ fn bench_portfolio_margin_50(c: &mut Criterion) {
             p
         })
         .collect();
-    let pos_refs: Vec<&Position> =
-        positions.iter().collect();
-    let marks: Vec<i64> =
-        (0..50).map(|_| 50_000i64).collect();
+    let pos_refs: Vec<&Position> = positions.iter().collect();
+    let marks: Vec<i64> = (0..50).map(|_| 50_000i64).collect();
 
-    c.bench_function(
-        "portfolio_margin_50_positions",
-        |b| {
-            b.iter(|| {
-                black_box(pm.calculate(
-                    black_box(&account),
-                    pos_refs.iter().copied(),
-                    black_box(&marks),
-                    0,
-                ))
-            })
-        },
-    );
+    c.bench_function("portfolio_margin_50_positions", |b| {
+        b.iter(|| {
+            black_box(pm.calculate(
+                black_box(&account),
+                pos_refs.iter().copied(),
+                black_box(&marks),
+                0,
+            ))
+        })
+    });
 }
 
 fn bench_index_price_calculation(c: &mut Criterion) {
@@ -166,16 +153,9 @@ fn bench_exposure_lookup_100(c: &mut Criterion) {
     for uid in 0..100u32 {
         idx.add_user(0, uid);
     }
-    c.bench_function(
-        "exposure_lookup_100_users",
-        |b| {
-            b.iter(|| {
-                black_box(idx.users_for_symbol(
-                    black_box(0),
-                ))
-            })
-        },
-    );
+    c.bench_function("exposure_lookup_100_users", |b| {
+        b.iter(|| black_box(idx.users_for_symbol(black_box(0))))
+    });
 }
 
 fn bench_exposure_lookup_1000(c: &mut Criterion) {
@@ -183,16 +163,9 @@ fn bench_exposure_lookup_1000(c: &mut Criterion) {
     for uid in 0..1000u32 {
         idx.add_user(0, uid);
     }
-    c.bench_function(
-        "exposure_lookup_1000_users",
-        |b| {
-            b.iter(|| {
-                black_box(idx.users_for_symbol(
-                    black_box(0),
-                ))
-            })
-        },
-    );
+    c.bench_function("exposure_lookup_1000_users", |b| {
+        b.iter(|| black_box(idx.users_for_symbol(black_box(0))))
+    });
 }
 
 // --- Phase 2: Shard-level, mocked ---
@@ -225,13 +198,9 @@ fn bench_pretrade_check_latency(c: &mut Criterion) {
             let mut o = order;
             oid += 1;
             o.order_id_lo = oid;
-            let resp = black_box(
-                shard.process_order(black_box(&o)),
-            );
+            let resp = black_box(shard.process_order(black_box(&o)));
             // Release frozen margin to keep it passing
-            shard.release_frozen_for_order(
-                0, 0, oid,
-            );
+            shard.release_frozen_for_order(0, 0, oid);
             resp
         })
     });
@@ -259,20 +228,14 @@ fn bench_bbo_processing(c: &mut Criterion) {
 fn bench_enqueue_liquidation(c: &mut Criterion) {
     c.bench_function("enqueue_liquidation", |b| {
         b.iter(|| {
-            let mut engine =
-                LiquidationEngine::new(100_000_000, 1, 10, 9999);
-            engine.enqueue(
-                black_box(1),
-                black_box(0),
-                black_box(1_000_000),
-            );
+            let mut engine = LiquidationEngine::new(100_000_000, 1, 10, 9999);
+            engine.enqueue(black_box(1), black_box(0), black_box(1_000_000));
         })
     });
 }
 
 fn bench_round_escalation(c: &mut Criterion) {
-    let mut engine =
-        LiquidationEngine::new(100_000_000, 1, 10, 9999);
+    let mut engine = LiquidationEngine::new(100_000_000, 1, 10, 9999);
     engine.enqueue(1, 0, 0);
 
     let get_pos = |_uid: u32, _sid: u32| -> i64 { 100 };
@@ -285,11 +248,7 @@ fn bench_round_escalation(c: &mut Criterion) {
                 s.round = 1;
                 s.last_order_ns = 0;
             }
-            black_box(engine.maybe_process(
-                black_box(1_000_000_000),
-                &get_pos,
-                &get_mark,
-            ))
+            black_box(engine.maybe_process(black_box(1_000_000_000), &get_pos, &get_mark))
         })
     });
 }
@@ -304,11 +263,7 @@ criterion_group!(
     bench_exposure_lookup_1000,
 );
 
-criterion_group!(
-    phase2,
-    bench_pretrade_check_latency,
-    bench_bbo_processing,
-);
+criterion_group!(phase2, bench_pretrade_check_latency, bench_bbo_processing,);
 
 criterion_group!(
     liquidation,

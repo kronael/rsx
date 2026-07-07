@@ -32,14 +32,9 @@ impl SubscriptionManager {
 
     /// Subscribe a client to a symbol with given channels.
     /// Returns true if this is a new subscription.
-    pub fn subscribe(
-        &mut self,
-        client_id: u64,
-        symbol_id: u32,
-        channels: u32,
-        depth: u32,
-    ) -> bool {
-        let entry = self.clients
+    pub fn subscribe(&mut self, client_id: u64, symbol_id: u32, channels: u32, depth: u32) -> bool {
+        let entry = self
+            .clients
             .entry(client_id)
             .or_insert_with(|| ClientSubscription {
                 symbols: HashMap::new(),
@@ -56,17 +51,11 @@ impl SubscriptionManager {
     }
 
     /// Unsubscribe a client from a symbol.
-    pub fn unsubscribe(
-        &mut self,
-        client_id: u64,
-        symbol_id: u32,
-    ) {
+    pub fn unsubscribe(&mut self, client_id: u64, symbol_id: u32) {
         if let Some(sub) = self.clients.get_mut(&client_id) {
             sub.symbols.remove(&symbol_id);
         }
-        if let Some(set) =
-            self.symbol_clients.get_mut(&symbol_id)
-        {
+        if let Some(set) = self.symbol_clients.get_mut(&symbol_id) {
             set.remove(&client_id);
         }
     }
@@ -75,9 +64,7 @@ impl SubscriptionManager {
     pub fn unsubscribe_all(&mut self, client_id: u64) {
         if let Some(sub) = self.clients.remove(&client_id) {
             for symbol_id in sub.symbols.keys() {
-                if let Some(set) =
-                    self.symbol_clients.get_mut(symbol_id)
-                {
+                if let Some(set) = self.symbol_clients.get_mut(symbol_id) {
                     set.remove(&client_id);
                 }
             }
@@ -85,10 +72,7 @@ impl SubscriptionManager {
     }
 
     /// Get all client IDs subscribed to a symbol.
-    pub fn clients_for_symbol(
-        &self,
-        symbol_id: u32,
-    ) -> Vec<u64> {
+    pub fn clients_for_symbol(&self, symbol_id: u32) -> Vec<u64> {
         self.symbol_clients
             .get(&symbol_id)
             .map(|s| s.iter().copied().collect())
@@ -96,11 +80,7 @@ impl SubscriptionManager {
     }
 
     /// Check if client is subscribed to BBO for a symbol.
-    pub fn has_bbo(
-        &self,
-        client_id: u64,
-        symbol_id: u32,
-    ) -> bool {
+    pub fn has_bbo(&self, client_id: u64, symbol_id: u32) -> bool {
         self.clients
             .get(&client_id)
             .and_then(|s| s.symbols.get(&symbol_id))
@@ -109,11 +89,7 @@ impl SubscriptionManager {
     }
 
     /// Check if client is subscribed to depth for a symbol.
-    pub fn has_depth(
-        &self,
-        client_id: u64,
-        symbol_id: u32,
-    ) -> bool {
+    pub fn has_depth(&self, client_id: u64, symbol_id: u32) -> bool {
         self.clients
             .get(&client_id)
             .and_then(|s| s.symbols.get(&symbol_id))
@@ -122,11 +98,7 @@ impl SubscriptionManager {
     }
 
     /// Check if client is subscribed to trades for a symbol.
-    pub fn has_trades(
-        &self,
-        client_id: u64,
-        symbol_id: u32,
-    ) -> bool {
+    pub fn has_trades(&self, client_id: u64, symbol_id: u32) -> bool {
         self.clients
             .get(&client_id)
             .and_then(|s| s.symbols.get(&symbol_id))
@@ -135,14 +107,8 @@ impl SubscriptionManager {
     }
 
     /// Get the depth parameter for a client.
-    pub fn client_depth(
-        &self,
-        client_id: u64,
-    ) -> u32 {
-        self.clients
-            .get(&client_id)
-            .map(|s| s.depth)
-            .unwrap_or(10)
+    pub fn client_depth(&self, client_id: u64) -> u32 {
+        self.clients.get(&client_id).map(|s| s.depth).unwrap_or(10)
     }
 
     pub fn client_count(&self) -> usize {

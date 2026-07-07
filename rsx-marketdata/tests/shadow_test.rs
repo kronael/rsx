@@ -375,9 +375,7 @@ fn bbo_derived_from_shadow_book_not_me_bbo() {
 fn snapshot_top_25_levels_correct() {
     let mut book = new_book();
     for i in 0..30 {
-        book.apply_insert(
-            49990 - i, 10, 0, 1, 1000 + i as u64,
-        );
+        book.apply_insert(49990 - i, 10, 0, 1, 1000 + i as u64);
     }
     let snap = book.derive_l2_snapshot(25);
     assert_eq!(snap.bids.len(), 25);
@@ -389,9 +387,7 @@ fn snapshot_top_25_levels_correct() {
 fn snapshot_top_50_levels_correct() {
     let mut book = new_book();
     for i in 0..60 {
-        book.apply_insert(
-            49990 - i, 10, 0, 1, 1000 + i as u64,
-        );
+        book.apply_insert(49990 - i, 10, 0, 1, 1000 + i as u64);
     }
     let snap = book.derive_l2_snapshot(50);
     assert_eq!(snap.bids.len(), 50);
