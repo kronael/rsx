@@ -367,9 +367,10 @@ deploy-help: ## print single-machine production deploy steps (deploy/README.md)
 demo-trade:
 	bash scripts/demo-trade.sh
 
-# Performance benchmarks (Rust)
+# Performance benchmarks (Rust). timeout: a hung bench must FAIL
+# (exit 124), not just read as "slow" (BENCH-NO-TIMEOUT-GATE).
 perf:
-	cargo bench
+	timeout 600 cargo bench
 
 # Criterion regression gate (developer-local, baseline in tmp/)
 bench-gate:

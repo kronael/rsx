@@ -45,13 +45,13 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   constant ~7.5 k-record gap drifts 262 → 786 ms across six cycles purely
   because the active WAL grows and each connection re-scans it.
 - **BENCH-NO-TIMEOUT-GATE** (FIXED 2026-07-07) — flagged 2026-07-07;
-  fixed same day: `bench-gate.sh` wraps `cargo bench` in `timeout 600`. Nothing
-  time-bounds bench execution: no `timeout` in `scripts/bench-gate.sh` or the
-  Makefile bench targets, and Criterion has no per-bench deadline. A hanging
-  bench (CAST-RTT-BENCH-DEADLOCKS-ON-LOSS hung 50 min, then 240 s again
-  2026-07-07) reads as "slow", not FAILED — a hang no clock converts into a
-  failure is invisible to automation. Fix: wrap each bench invocation in
-  `timeout <N>m` in bench-gate.sh / `make perf` so a hang goes red.
+  nothing time-bounded bench execution (no `timeout` in
+  `scripts/bench-gate.sh` or the Makefile bench targets, Criterion has no
+  per-bench deadline), so a hanging bench (CAST-RTT-BENCH-DEADLOCKS-ON-LOSS
+  hung 50 min, then 240 s again 2026-07-07) read as "slow", not FAILED.
+  Fixed: `scripts/bench-gate.sh` wraps its `cargo bench --workspace` in
+  `timeout 600`; `make perf` wraps its `cargo bench` the same way. A hang now
+  exits 124 -> gate fails.
 - **CAST-RTT-BENCH-DEADLOCKS-ON-LOSS** (FIXED 2026-07-07) — flagged 2026-07-06.
   TWO stacked hangs, both fixed in the bench: (1) deterministic — the
   send<T> removal (bb6c1a0) moved seq ownership to the caller, and the
@@ -151,11 +151,12 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   and/or a DEV-ONLY guard (cap or recorder-off in the playground) so the dev box
   can't fill. Currently mitigated by keeping the recorder stopped in dev.
   Cleared manually (find -delete + kill recorder to release the fd) → 85 G free.
-- **BENCH-MOLD-SOUP-UNPINNED** (LOW, fairness) — `compare_moldudp64` +
-  `compare_soupbintcp` never pin their threads (`TODO(pinning)` never done)
-  while casting/raw-UDP/KCP/Aeron pin client→core2/echo→core3. Their numbers
-  (mold 8.8µs, soup 11.2µs on 2026-07-03) are not strictly comparable. Fix in
-  the uniform-harness refactor (.ship/31): shared harness pins all benches.
+- **BENCH-MOLD-SOUP-UNPINNED** (FIXED 2026-07-07) — flagged as `compare_moldudp64`
+  + `compare_soupbintcp` never pinning their threads while casting/raw-UDP/
+  KCP/Aeron pin client->core2/echo->core3. Verified already fixed by
+  `cad490d`/`aa6ff17`/`e48a36c` (both benches call the same `pick_cores()` +
+  `core_affinity::set_for_current` pattern as `compare_all`) — no code change
+  needed, entry closed.
 
 - **BENCH-QUINN-ACCEPT-BI** (LOW, *unmasked by the KCP fix*) — with KCP no
   longer aborting the run, `compare_all` now panics at
