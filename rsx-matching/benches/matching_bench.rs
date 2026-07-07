@@ -121,7 +121,7 @@ fn bench_wal_events(c: &mut Criterion) {
             )
             .expect("write");
             n += 1;
-            if n % 1024 == 0 {
+            if n.is_multiple_of(1024) {
                 writer.reset_write_buf();
             }
         });

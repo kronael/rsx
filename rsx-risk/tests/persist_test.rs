@@ -361,7 +361,7 @@ async fn upsert_idempotent_on_replay() {
     let acct = Account::new(1, 1000);
     for _ in 0..3 {
         let tx = client.transaction().await.unwrap();
-        upsert_accounts(&tx, &[acct.clone()])
+        upsert_accounts(&tx, std::slice::from_ref(&acct))
             .await
             .unwrap();
         tx.commit().await.unwrap();

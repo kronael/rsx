@@ -384,8 +384,8 @@ fn run_main(
         &mut shard,
         &mut mark_receiver,
         me_stream_id,
-        &me_repl_addr,
-        &wal_dir,
+        me_repl_addr,
+        wal_dir,
         lease_poll_interval_ms,
         &tls,
     )?;
@@ -699,7 +699,7 @@ fn run_main(
                         me_stream_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
+                        wal_dir,
                         &tls,
                     );
                     me_receiver.reset_after_replay(new_tip);
@@ -711,7 +711,7 @@ fn run_main(
                         me_stream_id,
                         last_delivered_seq,
                         None,
-                        &wal_dir,
+                        wal_dir,
                         &tls,
                     );
                     me_receiver.reset_after_replay(new_tip);
@@ -814,7 +814,7 @@ fn run_main(
                         shard_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
+                        wal_dir,
                         &tls,
                     );
                     gw_receiver.reset_after_replay(new_tip);
@@ -826,7 +826,7 @@ fn run_main(
                         shard_id,
                         last_delivered_seq,
                         None,
-                        &wal_dir,
+                        wal_dir,
                         &tls,
                     );
                     gw_receiver.reset_after_replay(new_tip);
@@ -859,7 +859,7 @@ fn run_main(
                         shard_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
-                        &wal_dir,
+                        wal_dir,
                         &tls,
                     );
                     mark_receiver.reset_after_replay(new_tip);
@@ -871,7 +871,7 @@ fn run_main(
                         shard_id,
                         last_delivered_seq,
                         None,
-                        &wal_dir,
+                        wal_dir,
                         &tls,
                     );
                     mark_receiver.reset_after_replay(new_tip);

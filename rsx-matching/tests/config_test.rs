@@ -61,7 +61,7 @@ fn config_applied_can_be_written_to_wal() {
 
 #[test]
 fn config_version_increments() {
-    let versions = vec![1u64, 2, 3, 4, 5];
+    let versions = [1u64, 2, 3, 4, 5];
     for (i, &v) in versions.iter().enumerate() {
         assert_eq!(v, (i + 1) as u64);
     }

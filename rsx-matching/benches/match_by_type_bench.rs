@@ -8,9 +8,9 @@
 //! - `ioc`            — IOC taker, one fill then OrderDone (residual 0).
 //! - `fok`            — FOK taker, liquidity check then fill.
 //! - `post_only_rest` — post-only that does NOT cross, so it rests
-//!                      (OrderInserted).
+//!   (OrderInserted).
 //! - `reduce_only`    — reduce-only sell for a user already long,
-//!                      matching a resting bid (a real reducing fill).
+//!   matching a resting bid (a real reducing fill).
 //!
 //! Reported as `match_by_order_type/<type>`.
 

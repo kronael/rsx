@@ -1,4 +1,4 @@
-/// E2E tests for insurance fund integration with liquidation engine.
+//! E2E tests for insurance fund integration with liquidation engine.
 
 use rsx_risk::insurance::InsuranceFund;
 use rsx_risk::liquidation::LiquidationEngine;

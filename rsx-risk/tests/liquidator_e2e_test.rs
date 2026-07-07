@@ -1,9 +1,9 @@
-/// E2E liquidator tests for the 6 required behaviors.
-/// Complements liquidation_test.rs (unit) and
-/// shard_e2e_test.rs (shard integration).
-///
-/// Also covers recovery: underwater positions loaded via
-/// cold-start state trigger liquidation on first order.
+//! E2E liquidator tests for the 6 required behaviors.
+//! Complements liquidation_test.rs (unit) and
+//! shard_e2e_test.rs (shard integration).
+//!
+//! Also covers recovery: underwater positions loaded via
+//! cold-start state trigger liquidation on first order.
 
 use rsx_risk::liquidation::LiquidationEngine;
 use rsx_risk::liquidation::LiquidationStatus;

@@ -1,4 +1,4 @@
-/// LIQUIDATOR.md §9. Insurance fund unit tests.
+//! LIQUIDATOR.md §9. Insurance fund unit tests.
 
 use rsx_risk::insurance::InsuranceFund;
 

@@ -150,8 +150,13 @@ async fn standby_detects_main_crash_via_lock() {
         .expect("standby try");
     assert!(!acquired);
 
-    drop(client_main);
-    drop(lease_main);
+    // Release the main's PG client (closes its connection → PG drops the
+    // session advisory lock) and its lease before the standby retries.
+    #[allow(clippy::drop_non_drop)]
+    {
+        drop(client_main);
+        drop(lease_main);
+    }
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -181,6 +186,8 @@ async fn cold_start_from_postgres() {
     );
 
     let mut positions = FxHashMap::default();
+    // Fixed-point literals: `<integer>_<4-decimal>` grouping, not thousands.
+    #[allow(clippy::inconsistent_digit_grouping)]
     positions.insert(
         (100u32, 0u32),
         Position {

@@ -1,4 +1,4 @@
-/// Integration tests for insurance fund persistence.
+//! Integration tests for insurance fund persistence.
 
 use rsx_risk::insurance::InsuranceFund;
 use rsx_risk::persist::flush_batch;

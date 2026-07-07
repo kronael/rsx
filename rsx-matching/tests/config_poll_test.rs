@@ -213,7 +213,7 @@ async fn write_applied_config_inserts_new() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
-    let ts_ns = (now * 1_000_000) as u64;
+    let ts_ns = now * 1_000_000 ;
 
     let cfg = ScheduledConfig {
         config_version: 1,
@@ -244,7 +244,7 @@ async fn write_applied_config_updates_existing() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
-    let ts_ns = (now * 1_000_000) as u64;
+    let ts_ns = now * 1_000_000 ;
 
     let cfg1 = ScheduledConfig {
         config_version: 1,

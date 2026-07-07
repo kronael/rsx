@@ -136,10 +136,7 @@ async fn tls_client_server_connection() {
         )
         .await;
 
-        match result {
-            Ok(_) => {}
-            Err(_) => {}
-        }
+        if result.is_ok() {}
     });
 
     tokio::time::sleep(Duration::from_secs(2)).await;

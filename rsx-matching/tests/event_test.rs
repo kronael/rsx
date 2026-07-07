@@ -98,7 +98,7 @@ fn event_len_reset_per_cycle_single_store() {
     process_new_order(&mut book, &mut order);
     // Old event gone; new events from this cycle only
     let events = book.events();
-    assert!(events.len() >= 1);
+    assert!(!events.is_empty());
     // No leftover from previous cycle
     assert!(!events.iter().any(|e| matches!(
         e,

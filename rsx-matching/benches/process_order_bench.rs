@@ -1,3 +1,5 @@
+// Bench doc-comments aren't rendered to docs; skip the markdown lint.
+#![allow(clippy::doc_lazy_continuation)]
 //! Full ME accept path + throughput, via the shared `harness::Me`
 //! fixture. `Me::accept()` runs everything the matching-engine main loop
 //! runs between `me_in` and `me_out` (sans cast send / latency probes):

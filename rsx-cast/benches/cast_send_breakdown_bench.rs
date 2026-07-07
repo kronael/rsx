@@ -114,7 +114,7 @@ fn bench_buf_pack(c: &mut Criterion) {
     c.bench_function("send.buf_pack_144b", |b| {
         b.iter(|| {
             buf[..WalHeader::SIZE]
-                .copy_from_slice(black_box(&hdr_bytes));
+                .copy_from_slice(black_box(hdr_bytes));
             buf[WalHeader::SIZE
                 ..WalHeader::SIZE + 128]
                 .copy_from_slice(black_box(payload));
@@ -178,7 +178,7 @@ fn bench_sendto_loopback(c: &mut Criterion) {
 fn bench_ring_cache_copy(c: &mut Criterion) {
     pin_worker();
     let mut ring = vec![0u8; 4096 * 128];
-    let frame = vec![0xAAu8; 144];
+    let frame = [0xAAu8; 144];
     let mut slot: usize = 0;
     c.bench_function("send.ring_cache_copy_128b", |b| {
         b.iter(|| {

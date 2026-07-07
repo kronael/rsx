@@ -1,4 +1,4 @@
-/// Integration tests for liquidation record persistence.
+//! Integration tests for liquidation record persistence.
 
 use rsx_risk::persist::LiquidationRecord;
 use rsx_risk::persist::PersistEvent;
