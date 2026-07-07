@@ -50,10 +50,14 @@ together they show how an exchange is wired end-to-end.
 ## Components worth studying
 
 Each is a separate process or crate, built and tested (per-crate
-status in PROGRESS.md — some are still evolving). Why each one
-repays a read:
+status in PROGRESS.md). Maturity is marked per component:
+**finalized** — API frozen, bugfixes only, safe to build on;
+**release candidate** — benched, demoed, and settling, the shape
+won't change much; **in development** — working but still being
+reshaped. Why each one repays a read:
 
-- **`rsx-cast` — log-backed reliable UDP transport.** The
+- **`rsx-cast` — log-backed reliable UDP transport.**
+  *Finalized: API frozen, bugfixes only.* The
   load-bearing trick: the wire bytes, the on-disk WAL bytes,
   and the TCP replay-stream bytes are *the same bytes* —
   `repr(C)` records, no serialization step. Domain-agnostic
@@ -63,29 +67,34 @@ repays a read:
   slow consumers recover via TCP replay, never by stalling the
   producer. [specs/2/4-cast.md](specs/2/4-cast.md),
   [rsx-cast/README.md](rsx-cast/README.md).
-- **`rsx-matching` — the matching engine.** Single-threaded,
+- **`rsx-matching` — the matching engine.** *Release
+  candidate.* Single-threaded,
   core-pinned, bare busy-spin, zero heap on the hot path —
   54 ns per single fill. Read it for how a price-time-priority
   book runs with no allocation, no locks, no async runtime.
   [specs/2/21-orderbook.md](specs/2/21-orderbook.md).
-- **`rsx-book` — slab + CompressionMap orderbook.** 65 536
+- **`rsx-book` — slab + CompressionMap orderbook.** *Release
+  candidate.* 65 536
   pre-allocated `OrderSlot`s per symbol; sparse-to-dense price
   compression via five distance-based zones (1:1 near mid, up
   to 1000:1 far). How you fit a 20M-level book in ~15 MB and
   look a price up in 2–5 ns.
-- **`rsx-risk` — per-user-shard risk tile.** The full tile
+- **`rsx-risk` — per-user-shard risk tile.** *Release
+  candidate.* The full tile
   arrangement: one core-pinned busy-spin loop, SPSC rings, and
   a tokio sidecar for Postgres write-behind *off* the hot path.
   The cross-margin check iterates positions via a zero-alloc
   index iterator. How to keep solvency-critical state in RAM on
   the critical path while persisting asynchronously.
   [specs/2/28-risk.md](specs/2/28-risk.md).
-- **`rsx-gateway` — WebSocket ingress + cast bridge.** monoio /
+- **`rsx-gateway` — WebSocket ingress + cast bridge.** *In
+  development.* monoio /
   io_uring for many concurrent WS fds, a hardened JWT
   handshake, then a bridge onto the cast/UDP hot path. Where
   async I/O multiplexing belongs vs where a pinned tile does.
   [specs/2/20-network.md](specs/2/20-network.md).
-- **`rsx-marketdata` — shadow book + fan-out.** monoio, off the
+- **`rsx-marketdata` — shadow book + fan-out.** *In
+  development.* monoio, off the
   order critical path; drains ME's casting firehose and fans
   L2 / BBO / trades out to public subscribers. The keep-up
   problem: a slow consumer here must never back-pressure

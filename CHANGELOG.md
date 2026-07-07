@@ -2,8 +2,26 @@
 
 ## [Unreleased]
 
+## [v0.7.0] — 20260707
+
+> RSX v0.7.0 — TLS-everywhere replication, a measured recovery envelope, and the cast pitch
+>
+> The transport now proves its reliability claims with numbers, the cold path is encrypted by default, and rsx-cast has a demo you can post.
+>
+> • Replication mandates TLS — the plaintext TCP catch-up path is gone (casting/UDP stays plaintext by design, trusted LAN).
+> • Measured recovery envelope — casting delivers reliably through 30% sustained packet loss (5/5, 8-retry budget); a 52k-record outage replays over TCP in ~1s.
+> • The cast demo — a two-act terminal pitch GIF (flowing narrative, 10s packet-count race, all four numbers measured same-day); book/matching/risk demos aligned on the same palette.
+> • QA gate enforced — workspace clippy `-D warnings` green, default rustfmt (no config), `make fmt`/`fmt-check` wired.
+
 ### Changed (BREAKING)
 
+- **`CastSender::send<T>` removed.** One framing entry point:
+  `WalWriter::prepare` → `append_framed` + `send_framed` for paired
+  persist-and-publish; WAL-free publishers use `Framed::pack` +
+  `send_framed`; `send_raw` remains the manual-seq escape hatch.
+  Callers own seq monotonicity — a counter must survive the caller's
+  own loop/phase boundaries (see the RTT-bench fix below for the
+  failure mode).
 - **Replication (TCP catch-up) now mandates TLS.** rustls +
   aws-lc-rs. `ReplicationService::new` and
   `ReplicationConsumer::new` take a `TlsConfig` (was
@@ -19,6 +37,36 @@
   self-signed dev certs into `./certs/`, or point the env vars at
   real certs. Deploy env templates and the playground now provision
   these automatically.
+
+### Added
+
+- **Measured recovery envelope** (`loss_degradation`,
+  `outage_recovery` benches): reliable delivery through 30%
+  sustained loss (collapse at 40%); 52k-record gap replays over
+  TCP in ~1s. `reports/20260707_cast-loss-recovery.md`.
+- **Per-crate demo GIFs** on the shared "Cemani" palette; the
+  rsx-cast two-act pitch (`rsx-cast/demo/`) with a 10s
+  packet-count race — all four comparison numbers measured
+  2026-07-07.
+- **Durability model documented** (rsx-cast README, GUARANTEES.md):
+  replicas + continuously-spinning sync, not per-record fsync.
+
+### Changed
+
+- **QA gate enforced**: workspace `clippy -D warnings` green,
+  default rustfmt (no rustfmt.toml), `make fmt`/`fmt-check`,
+  `make lint --all-targets`.
+- Replication stream-end signal is a named `StreamEnd { Eof,
+  Stopped }` (internal; was `Ok(bool)`).
+
+### Fixed
+
+- **`cast_rtt_bench` double-hang**: a Criterion-phase seq reset
+  (caller-owned counter declared inside the `|b|` closure) and a
+  loss-deadlock in the echo wait (no in-loop NAK service). All
+  four comparison rows re-measured same-day: casting ~9.5µs,
+  raw UDP ~9.0µs (statistical tie — the floor), TCP ~15.2µs,
+  QUIC ~36.3µs.
 
 ## [v0.6.1] — 20260706
 
