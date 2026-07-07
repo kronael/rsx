@@ -154,36 +154,54 @@ def callout(cursor_on):
     return fill(Align.center(line), 1)
 
 
+def _lerp(a, b, t):
+    """Hex color a -> b at fraction t."""
+    ch = lambda i: round(
+        int(a[i:i+2], 16) + (int(b[i:i+2], 16) - int(a[i:i+2], 16)) * t
+    )
+    return f"#{ch(1):02x}{ch(3):02x}{ch(5):02x}"
+
+
+RACE_SECS = 10.0
+
+
 def results(frame):
+    """A packet-count race: each row counts packets moved in the elapsed
+    time (count = 1/latency * elapsed -- linear, a real counter, not an
+    eased rate). Row colors saturate from DIM toward each hue as the gap
+    opens, so the separation gets more extreme as it becomes visible."""
     table = Table.grid(padding=(0, 1))
     table.add_column(width=4)
     table.add_column(width=11, justify="right")
     table.add_column(width=7, justify="right")
     table.add_column(width=2)
-    t = 1 - (1 - frame / FRAMES) ** 2  # ease-out
+    t = min(frame / FRAMES, 1.0)
+    elapsed = t * RACE_SECS
     landed = t >= 1.0
-    for label, us, color, best in PROTOS:
-        cur = (1_000_000 / us) * min(t, 1.0)
+    for label, us, hue, best in PROTOS:
+        count = (1_000_000 / us) * elapsed
+        # quantized ramp: 8 steps keeps the GIF palette global/small
+        color = _lerp(DIM, hue, round(t * 8) / 8)
         mark = f"[bold {TEAL}]★[/bold {TEAL}]" if (best and landed) else ""
         table.add_row(
             f"[bold]{label}[/bold]",
-            f"[{color}]{cur:,.0f}/s[/{color}]",
+            f"[bold {color}]{count:,.0f}[/bold {color}]",
             f"[{DIM}]{us:>4.1f}µs[/{DIM}]",
             mark,
         )
     scope = f"[{DIM}]2 pinned cores, 128B, loopback[/{DIM}]"
-    # compact: no blank rows, no vertical padding, no caption -- the whole
-    # panel is 2 borders + scope + 4 rows = 7 rows, fits ROWS=12.
+    timer = f"[{DIM}]packets moved in {elapsed:4.1f} s[/{DIM}]"
+    # compact: 2 borders + scope + 4 rows + timer = 8 rows, fits ROWS=12.
     # (derivation/citation notes live in demo/CLAUDE.md, not on screen.)
     panel = Panel(
-        Group(scope, table),
-        title="[bold]throughput · latency[/bold]",
+        Group(scope, table, timer),
+        title="[bold]packets · latency[/bold]",
         title_align="left",
         border_style=GOLD,
         width=WIDTH - 2,
         padding=(0, 2),
     )
-    return fill(panel, 7)
+    return fill(panel, 8)
 
 
 def cta(cursor_on):
