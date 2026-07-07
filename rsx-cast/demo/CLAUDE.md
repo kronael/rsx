@@ -70,18 +70,21 @@ renders it light) or `github-dark` (too cool); `--theme custom` is broken
 in agg 1.9.0. Never invent a hue the palette lacks — tied rows share one.
 
 ## Honesty
-All four numbers are cited from `compare/README.md`, not live-measured:
-- casting ~9.3µs (`cast_rtt_bench`, 2026-07-01) — live re-run blocked,
-  `BUGS.md` CAST-RTT-BENCH-DEADLOCKS-ON-LOSS
-- raw UDP ~9.9µs (`compare_all::raw_udp_128b`, 2026-07-01)
-- TCP_NODELAY ~14µs (`compare_all::tcp_nodelay_128b`, 2026-05-24)
-- Quinn/QUIC ~37µs (`compare_all::quinn_persistent_128b`, 2026-05-24)
+All four numbers measured 2026-07-07, two paired runs each (full criterion
+triples in `compare/README.md`):
+- raw UDP ~9.0µs (`compare_all::raw_udp_128b`) — shown DIM + "floor":
+  the unprotected reference, no reliability, not a competitor
+- casting ~9.5µs (`cast_rtt_bench`) — ★ = fastest reliable transport.
+  cast and udp medians swap run-to-run (statistical tie; casting = UDP +
+  ~26ns userspace, so the floor edging it by ~0.5µs is honest noise)
+- TCP_NODELAY ~15.2µs (`compare_all::tcp_nodelay_128b`)
+- Quinn/QUIC ~36.3µs (`compare_all::quinn_persistent_128b`)
 
-`compare_all` panics on KCP warmup before quinn/tcp (`BUGS.md`
-BENCH-KCP-FLUSH-NEEDUPDATE), so a live run gets raw_udp only. 2 pinned
-cores, 128B record, loopback — not the ~1.1ms cross-process figure
-(`ARCHITECTURE.md`). Network transports only; shared-memory IPC (Aeron
-IPC, Chronicle) is a different category, not shown.
+Run non-KCP rows via Criterion name filters (the KCP warmup panic,
+`BUGS.md` BENCH-KCP-FLUSH-NEEDUPDATE, fires only when KCP is selected).
+2 pinned cores, 128B record, loopback — not the ~1.1ms cross-process
+figure (`ARCHITECTURE.md`). Network transports only; shared-memory IPC
+(Aeron IPC, Chronicle) is a different category, not shown.
 
 ## MoldUDP64 — off-screen deliberately
 MoldUDP64 (`compare_moldudp64.rs`) ties or edges casting on raw speed

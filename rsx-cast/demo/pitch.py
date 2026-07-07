@@ -137,13 +137,14 @@ out.flush()
 
 # ── Act 2: the ONE clear, then callout -> results -> CTA (all in-place) ──────
 
-# label, us, color, is_best -- all cited from compare/README.md; cast_rtt_bench's
-# live re-run is blocked by CAST-RTT-BENCH-HANGS-AFTER-SEND-REMOVAL (BUGS.md).
+# label, us, hue, tag -- measured 2026-07-07, two paired runs each
+# (compare/README.md). udp is the unprotected floor: reference, no
+# reliability, shown dim and first; ★ = fastest reliable transport.
 PROTOS = [
-    ("cast", 9.3, TEAL, True),
-    ("udp ", 9.9, TEAL, False),
-    ("tcp ", 14.0, GOLD, False),
-    ("quic", 37.0, RUST, False),
+    ("udp ", 9.0, DIM, "floor"),
+    ("cast", 9.5, TEAL, "★"),
+    ("tcp ", 15.2, GOLD, ""),
+    ("quic", 36.3, RUST, ""),
 ]
 FRAMES = 200  # 200 * 0.05s = 10s count-up
 
@@ -174,15 +175,19 @@ def results(frame):
     table.add_column(width=4)
     table.add_column(width=11, justify="right")
     table.add_column(width=7, justify="right")
-    table.add_column(width=2)
+    table.add_column(width=5)
     t = min(frame / FRAMES, 1.0)
     elapsed = t * RACE_SECS
     landed = t >= 1.0
-    for label, us, hue, best in PROTOS:
+    for label, us, hue, tag in PROTOS:
         count = (1_000_000 / us) * elapsed
         # quantized ramp: 8 steps keeps the GIF palette global/small
         color = _lerp(DIM, hue, round(t * 8) / 8)
-        mark = f"[bold {TEAL}]★[/bold {TEAL}]" if (best and landed) else ""
+        mark = ""
+        if landed and tag == "★":
+            mark = f"[bold {TEAL}]★[/bold {TEAL}]"
+        elif tag == "floor":
+            mark = f"[{DIM}]floor[/{DIM}]"
         table.add_row(
             f"[bold]{label}[/bold]",
             f"[bold {color}]{count:,.0f}[/bold {color}]",
