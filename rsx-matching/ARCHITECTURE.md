@@ -47,8 +47,9 @@ authoritative writer and a lost fill is unrecoverable.
 
 In-process microbenchmarks, single box, no UDP/WS — compute
 floors, not wire-to-wire latencies. Captured 2026-07-03
-(`reports/20260703_matching-benches.md`, `cargo bench -p
-rsx-matching`, p50 over 50 samples, timed thread pinned to core 2).
+([`../reports/20260703_matching-benches.md`](../reports/20260703_matching-benches.md),
+`cargo bench -p rsx-matching`, p50 over 50 samples, timed thread
+pinned to core 2).
 
 | Point | p50 | What |
 |---|---|---|
