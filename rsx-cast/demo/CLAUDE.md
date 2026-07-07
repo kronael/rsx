@@ -4,7 +4,7 @@ How to demo `rsx-cast` (casting + WAL + replication). Read the `speed-demo`
 skill first for the general method.
 
 ## The pitch
-X/Twitter-feed friendly (portrait). Two acts, NOT a slideshow:
+X/Twitter-feed friendly. Two acts, NOT a slideshow:
 
 **Act 1 — flowing narrative.** Typed to stdout and LEFT there — it flows
 top-down and fills the screen like a real terminal session, NO clear and
@@ -59,8 +59,8 @@ a card line).
 ## Regenerate
 ```
 cd rsx-cast/demo
-make rec   # records pitch.py (via uv run) through asciinema, --cols 44 --rows 24
-make gif   # renders (agg --theme github-dark) + optimizes the portrait GIF
+make rec   # records pitch.py (via uv run) through asciinema, --cols 44 --rows 12 (half-height, font-size 28 = hi-DPI glyphs)
+make gif   # renders (agg --theme monokai) + optimizes the GIF
 ```
 `--cols`/`--rows` MUST match between `rec` and `gif` exactly (see `speed-demo`
 skill's recording gotcha) — if you change one, change both.
