@@ -184,6 +184,32 @@ fn tick10_and_tick50_book_sizes_reasonable() {
     assert!(m50.total_slots() < 50_000);
 }
 
+/// Regression for BOOK-FOK-CLAMP-DIVERGENCE: when `(mid*5/100) % tick != 0`
+/// the old floor-division zone-0 sizing aliased two distinct tick-aligned
+/// prices into one slot. Zone 0 must stay strictly 1 tick == 1 slot.
+#[test]
+fn tick3_zone0_distinct_prices_never_alias() {
+    // mid=50_001, tick=3: pct_5 = 2500, not a multiple of 3.
+    let mid = 50_001_i64;
+    let tick = 3_i64;
+    let m = CompressionMap::new(mid, tick);
+    // The two edge-of-zone-0 ask prices from the bug repro must land in
+    // DISTINCT slots (pre-fix both mapped to the clamped last slot).
+    let a = m.price_to_index(52_497); // distance 2496
+    let b = m.price_to_index(52_500); // distance 2499, still < 2500
+    assert_eq!(zone_of(&m, a), 0);
+    assert_eq!(zone_of(&m, b), 0);
+    assert_ne!(a, b, "distinct tick-aligned zone-0 prices aliased to one slot");
+    // Every tick-aligned price across zone 0 maps to a unique slot.
+    let mut seen = std::collections::HashSet::new();
+    let mut px = mid + tick;
+    while px - mid < 2500 {
+        let idx = m.price_to_index(px);
+        assert!(seen.insert(idx), "alias at price {px} (idx {idx})");
+        px += tick;
+    }
+}
+
 #[test]
 fn zone_boundary_exact_edge() {
     let m = btc_map();

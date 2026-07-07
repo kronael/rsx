@@ -53,7 +53,17 @@ impl CompressionMap {
         // `.max(1)` guards a degenerate tick_size (div-by-zero on the
         // hot path); the config validates tick_size >= 1 upstream.
         let t = tick_size.max(1);
-        let z0 = ((pct_5 * 2) / t).max(0) as u32;
+        // Zone 0 must be EXACTLY one tick per slot: no two distinct
+        // tick-aligned prices may share a slot (strict price-time priority
+        // at the touch, and the single-price invariant the BBA / FOK
+        // fast paths rely on). Size each half to ceil(pct_5 / t) slots so
+        // the outer-edge price never clamps into its neighbour's slot.
+        // Floor-division `(pct_5*2)/t` (the old form) left the last slot
+        // absorbing two prices when `pct_5 % t != 0`, aliasing them
+        // (BOOK-FOK-CLAMP-DIVERGENCE). For tick_size==1 this equals the
+        // old value, so tick-1 books are byte-for-byte unchanged.
+        let half0 = (pct_5.max(0) + t - 1) / t; // ceil(pct_5 / t), pct_5 >= 0
+        let z0 = (half0 * 2).max(0) as u32;
         let z1 = (((pct_15 - pct_5) * 2) / (10 * t)).max(0) as u32;
         let z2 = (((pct_30 - pct_15) * 2) / (100 * t)).max(0) as u32;
         let z3 = (((pct_50 - pct_30) * 2) / (1000 * t)).max(0) as u32;
