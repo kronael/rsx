@@ -33,8 +33,11 @@ in place with NO further clears. The combined data panel (bordered — the one
 place a box belongs, since it's structured data, not prose) shows throughput
 (round-trips/sec, counting up over 10s, bigger = better/intuitive) and
 latency (µs) **side by side per row**, cast starred as best, held 15s once
-landed, labeled "derived: 1/latency; cited from compare/README.md". Ends on
-ONE call to action: "Read the code." / `github.com/kronael/rsx`.
+landed. On screen only the scope line ("2 pinned cores, 128B, loopback") —
+the derivation (throughput = 1/latency, not a separate bench) and the
+citation (compare/README.md) live HERE, per founder: no caption clutter in
+the panel. Ends on ONE call to action: "Read the code." /
+`github.com/kronael/rsx`.
 
 casting and raw UDP share the same **teal** (they genuinely tie); TCP is
 **gold**, QUIC is **rust** — a best→worst gradient using only real palette
