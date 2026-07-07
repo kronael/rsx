@@ -10,17 +10,21 @@ X/Twitter-feed friendly. Two acts, NOT a slideshow:
 top-down and fills the screen like a real terminal session, NO clear and
 NO re-centering between claims (that "reshow" reads as slides and kills the
 terminal illusion). The real terminal cursor trails the typing. Organic
-pacing: jittered per-char delay + a stop at sentence-ending `.!?` only (not
-commas/colons/every word). The arc is a tension → resolution → mechanism:
+pacing: reading-speed typing (~45 ms/char) with a stop at sentence-ending
+`.!?` only (not commas/colons/every word) and a beat at paragraph breaks.
+Colors are applied to individual words of meaning, NOT whole sentences:
+speed words teal, durability/brand words gold, cost words rust, connective
+prose warm off-white. The arc is a tension → resolution → mechanism:
 
-1. **"Reliability always costs you something."** — a broker and its hops, or
-   hand-rolled UDP you patch yourself (the tension, in rust)
-2. **"We built it to be as fast as possible, and as reliable as it can get.
-   How?"** — the resolution (in teal)
-3. **"By making it minimal."** — peer-to-peer not pub/sub; same bytes on
+1. **"rsx-cast — move every byte fast, never lose one."** (the promise)
+2. **"Reliability always costs you something:"** a broker and its hops, or
+   hand-rolled UDP you patch yourself (the tension; costs in rust)
+3. **"rsx-cast is as fast as it goes, and as reliable as it gets. How?"**
+   (the resolution)
+4. **"By making it minimal."** — multicast, not pub/sub; same bytes on
    wire/disk/replay; NAK recovers a live gap, the batched WAL is the
-   fallback, off the critical send path (the mechanism, in teal)
-4. **"Ties raw UDP. Beats TCP and QUIC."** (in gold)
+   fallback, off the critical send path (the mechanism)
+5. **"Ties raw UDP. Beats TCP and QUIC."** (the punch, in gold)
 
 **Act 2 — the benchmark.** The ONE screen clear. Opens on a weighty centered
 callout **"See for yourself."** (held ~2.6s), then the numbers climb in, then
