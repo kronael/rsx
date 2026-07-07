@@ -51,7 +51,15 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   2026-07-07) reads as "slow", not FAILED — a hang no clock converts into a
   failure is invisible to automation. Fix: wrap each bench invocation in
   `timeout <N>m` in bench-gate.sh / `make perf` so a hang goes red.
-- **CAST-RTT-BENCH-DEADLOCKS-ON-LOSS** (MED, bench) — flagged 2026-07-06.
+- **CAST-RTT-BENCH-DEADLOCKS-ON-LOSS** (FIXED 2026-07-07) — flagged 2026-07-06.
+  TWO stacked hangs, both fixed in the bench: (1) deterministic — the
+  send<T> removal (bb6c1a0) moved seq ownership to the caller, and the
+  bench's counter lived inside Criterion's |b| closure, which re-invokes
+  per phase → counter reset → receiver dedup-drops everything → deadlock
+  at warmup→collection (100% repro). Hoisted the counter out. (2) the
+  original probabilistic loss-deadlock below — echo-wait now pumps
+  tick+recv_control on a coarse cadence. Verified 3 clean runs
+  (~9.4-9.7 µs). Original analysis:
   `cast_rtt_bench`'s A-side echo-wait is `loop { try_recv; spin_loop }` with NO
   in-loop NAK recovery: A sends seq=N, spins until B echoes. If that datagram
   (or its echo) drops on loopback, B never echoes, A never advances `iter`, so A
