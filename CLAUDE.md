@@ -209,7 +209,12 @@ gives false confidence. Don't do it.
 - Single test: `cargo test -p rsx-book -- test_name`
 - Single test file (unit): `cargo test -p rsx-cast --lib wal_test`
 - Debug builds default (~3x faster compile than release)
-- 80 char line width, max 120
+- **Formatting: default `rustfmt`, no `rustfmt.toml`.** Run `make fmt`
+  (`cargo fmt --all`); `make fmt-check` gates it. Don't hand-format or
+  add a fmt config — default rustfmt is the single source of truth.
+- **`make lint` (`clippy --all-targets -D warnings`) must be green.** A
+  warning is fixed or `#[allow]`ed with a reason at the narrowest scope,
+  never carried as "known red". See the `software` skill's `rust-ci.md`.
 - `make test`: Rust unit tests (`--lib` only) <5s, every commit
 - `make e2e`: Rust + API + Playwright (~3min), every PR
 - `make integration`: testcontainers, 1-5min (uses `--ignored`)
