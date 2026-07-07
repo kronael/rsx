@@ -1,5 +1,11 @@
 use rsx_risk::me_cast_addrs_from_env;
 use rsx_risk::parse_me_cast_addrs;
+use std::sync::Mutex;
+
+// Env is process-global; the env_* tests mutate RSX_ME_CAST_ADDR(S) and run
+// on parallel threads, so serialize them. Poison-tolerant: a panicking test
+// still releases the env to the next.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Singular RSX_ME_CAST_ADDR produces exactly one entry with
 /// the correct symbol_id derived from port - 9100.
@@ -47,6 +53,7 @@ fn empty_string_empty_map() {
 /// Must not silently fall back to 127.0.0.1:9110 default.
 #[test]
 fn env_singular_addr_no_default() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("RSX_ME_CAST_ADDRS");
     std::env::set_var("RSX_ME_CAST_ADDR", "127.0.0.1:9103");
     let map = me_cast_addrs_from_env();
@@ -59,6 +66,7 @@ fn env_singular_addr_no_default() {
 /// RSX_ME_CAST_ADDRS takes priority over RSX_ME_CAST_ADDR.
 #[test]
 fn env_addrs_takes_priority() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("RSX_ME_CAST_ADDRS", "127.0.0.1:9110");
     std::env::set_var("RSX_ME_CAST_ADDR", "127.0.0.1:9103");
     let map = me_cast_addrs_from_env();

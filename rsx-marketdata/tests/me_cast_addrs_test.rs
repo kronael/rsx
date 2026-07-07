@@ -1,5 +1,11 @@
 use rsx_marketdata::config::me_cast_addrs_from_env;
 use rsx_marketdata::config::parse_me_cast_addrs;
+use std::sync::Mutex;
+
+// Env is process-global; the env_* tests mutate RSX_ME_CAST_ADDR(S) and run
+// on parallel threads, so serialize them. Poison-tolerant: a panicking test
+// still releases the env to the next.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Singular RSX_ME_CAST_ADDR value produces exactly one addr.
 #[test]
@@ -37,6 +43,7 @@ fn empty_string_empty_vec() {
 /// Must not silently return the default 127.0.0.1:9100.
 #[test]
 fn env_singular_addr_no_default() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("RSX_ME_CAST_ADDRS");
     std::env::set_var("RSX_ME_CAST_ADDR", "127.0.0.1:9110");
     let addrs = me_cast_addrs_from_env();
@@ -49,6 +56,7 @@ fn env_singular_addr_no_default() {
 /// RSX_ME_CAST_ADDRS takes priority over RSX_ME_CAST_ADDR.
 #[test]
 fn env_addrs_takes_priority() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("RSX_ME_CAST_ADDRS", "127.0.0.1:9110,127.0.0.1:9103");
     std::env::set_var("RSX_ME_CAST_ADDR", "127.0.0.1:9101");
     let addrs = me_cast_addrs_from_env();
