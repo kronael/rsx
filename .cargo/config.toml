@@ -1,2 +1,21 @@
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# Debug builds use the cranelift codegen backend (faster codegen than LLVM).
+# Release (`--release`) is untouched -> LLVM, optimized. Toolchain pinned to
+# nightly in rust-toolchain.toml (cranelift is nightly-only).
+[unstable]
+codegen-backend = true
+
+[profile.dev]
+codegen-backend = "cranelift"
+
+# aws-lc's C+asm symbols don't link under cranelift; keep the TLS stack on LLVM.
+[profile.dev.package.aws-lc-sys]
+codegen-backend = "llvm"
+
+[profile.dev.package.aws-lc-rs]
+codegen-backend = "llvm"
+
+[profile.dev.package.rustls]
+codegen-backend = "llvm"

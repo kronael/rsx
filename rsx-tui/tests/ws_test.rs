@@ -48,6 +48,9 @@ async fn run_server(
         return;
     };
     let auth_header = std::sync::Mutex::new(None::<String>);
+    // Err variant (tungstenite ErrorResponse) is fixed by the accept_hdr_async
+    // callback signature, not ours.
+    #[allow(clippy::result_large_err)]
     let callback = |req: &Request, resp: Response| {
         let auth = req
             .headers()
