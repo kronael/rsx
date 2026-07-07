@@ -136,6 +136,11 @@ invention is small, the packaging difference is the point.
   aws-lc-rs); the casting/UDP path stays plaintext (trusted LAN,
   spec 4-cast §10.4). The asymmetry is deliberate: the hot UDP
   path is unencrypted; TLS guards only the cold TCP replay hop.
+- **Nothing to deploy.** The WAL writer, the retransmit cache, and
+  the TCP replay server (`ReplicationService`) are library types —
+  they can run inside the producer's process, or next to it as a
+  plain binary built from the same types. One deployment unit; no
+  broker cluster, no separate archive fleet.
 - **Domain-agnostic.** `rsx-cast` knows nothing about
   fills/orders/marks. It moves bytes that implement
   [`CastRecord`]. The wider rsx exchange project layers its
