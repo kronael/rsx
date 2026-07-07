@@ -37,6 +37,9 @@ Criterion writes per-bench results to
 | `cast_bench` | Protocol record encode/decode (NAK, Heartbeat) | Wire-level primitives only — not on the per-packet send path |
 | `compare_all` | Same RTT harness against raw UDP + KCP + Quinn (QUIC) + raw TCP, one process | Apples-to-apples comparisons; bench IDs `raw_udp_128b` / `kcp_spin_flush_128b` / `quinn_persistent_128b` / `tcp_nodelay_128b`; see `compare/README.md` |
 | `compare_aeron` / `compare_moldudp64` / `compare_soupbintcp` | Same RTT harness against Aeron, MoldUDP64, SoupBinTCP | Vendor-protocol comparisons |
+| `loss_recovery` | Single injected gap; time from detectable to delivered, hot-ring vs cold-WAL tier | Per-gap recovery latency (~250 µs ring, ~600 µs WAL) |
+| `loss_degradation` | In-order delivery through sustained loss (retransmits drop too), 0–40% | Live NAK loss ceiling: reliable through ~30% (default 8-retry budget) |
+| `outage_recovery` | Dark-link outage → reorder-ring overflow → TCP-replication catch-up | Cold-path recovery latency (~1 s for a 52 k-record gap) |
 
 All Criterion benches in this crate pin sender + echoer threads to
 cores 2 and 3 (`core_affinity = "0.8"` dev-dep). Single-thread
