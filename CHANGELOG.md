@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [v0.7.1] — 20260707
+
+> RSX v0.7.1 — QA hardening + config hygiene
+>
+> Patch release: the release gate now catches a hung bench, dead and colliding config is cleaned up, and a flaky test is made deterministic.
+>
+> • Bench gate fails a hang red — `timeout` on bench runs, so a stuck bench is FAILED, not "slow".
+> • Health ports no longer collide — widened per-tier bands so a symbol at sid≥10 can't land on another tier's port (dev + deploy aligned).
+> • Dropped dead risk env vars — `RSX_RISK_RESET_FROZEN_ON_START` / `RSX_RISK_IS_REPLICA` were set but never read.
+> • Deterministic tests — the env-var cast-addr tests no longer race under parallel `cargo test`.
+
+### Fixed
+
+- **Bench timeout gate** — `scripts/bench-gate.sh` and `make perf` wrap
+  `cargo bench` in `timeout 600`; a hung bench now exits 124 (red)
+  instead of reading as slow.
+- **Health-port band overlap** — widened the per-tier stride 10→100 so
+  ME `base + sid` can't collide with another tier at sid≥10; propagated
+  to `deploy.sh` / README / spec so dev and prod share one scheme.
+- **Dead risk env vars** — removed `RSX_RISK_RESET_FROZEN_ON_START` and
+  `RSX_RISK_IS_REPLICA` from the spawn plan (set, never read in rsx-risk).
+- **Flaky env tests** — serialized the `env_*` cast-addr tests in
+  marketdata + risk with a file-local `Mutex` (they mutate process-global
+  env and raced under parallel `cargo test`).
+
+### Changed
+
+- Demo polish: cast GIF hold/blink on the timer line; track only the
+  optimized GIF (`.cast` / raw `.gif` are build intermediates).
+- Docs: README notes (mold linker prerequisite, shared-core testing,
+  planned protobuf-over-QUIC feed for rsx-tui, specs-vs-ARCHITECTURE).
+
 ## [v0.7.0] — 20260707
 
 > RSX v0.7.0 — TLS-everywhere replication, a measured recovery envelope, and the cast pitch
