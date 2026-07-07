@@ -68,27 +68,28 @@ carried-over rows have not been re-run since.
 
 | Protocol | Loopback p50 | Bench | When | Published / off-box |
 |---|---:|---|---|---|
-| **casting (rsx-cast)** | **~9.3 µs** | `cast_rtt_bench` | 2026-07-01 | — |
-| **raw UDP** (baseline) | ~9.9 µs | `compare_all::raw_udp_128b` | 2026-07-01 | floor: `sendto + recvfrom`, no framing |
+| **casting (rsx-cast)** | **~9.5 µs** | `cast_rtt_bench` | 2026-07-07 | — |
+| **raw UDP** (baseline) | ~9.0 µs | `compare_all::raw_udp_128b` | 2026-07-07 | floor: `sendto + recvfrom`, no framing |
 | **MoldUDP64** | ~10 µs | `compare_moldudp64` | 2026-05-24 | matches casting shape, NAK + separate request server |
-| **TCP_NODELAY** | ~14 µs | `compare_all::tcp_nodelay_128b` | 2026-05-24 | persistent connection, read_exact |
+| **TCP_NODELAY** | ~15 µs | `compare_all::tcp_nodelay_128b` | 2026-07-07 | persistent connection, read_exact |
 | **SoupBinTCP** | ~14 µs | `compare_soupbintcp` | 2026-05-24 | TCP + 3-byte framing |
 | **Aeron** (UDP) | ~305 µs | `compare_aeron` | 2026-05-24 | 21 µs on AWS c6in.16xlarge (pinned) |
 | **Aeron** (IPC) | ~830 ns | `compare_aeron` | 2026-05-24 | sub-µs shared-memory IPC |
-| **Quinn / QUIC** | ~37 µs | `compare_all::quinn_persistent_128b` | 2026-05-24 | 25–400 µs (published QUIC loopback) |
+| **Quinn / QUIC** | ~36 µs | `compare_all::quinn_persistent_128b` | 2026-07-07 | 25–400 µs (published QUIC loopback) |
 | **KCP** (turbo) | ~21 µs | `compare_all::kcp_spin_flush_128b` | 2026-05-24 | turbo mode + spin-flush |
 | **Chronicle Queue** (Java) | — (doc only) | — | — | sub-µs IPC published, mmap-shared |
 | **LBM** (commercial) | — (closed-source) | — | — | ~1–5 µs LAN, vendor whitepapers |
 
-Re-run 2026-07-01: `cast_rtt_bench` (`cmp_rtt_fill_echo
-[8.36 µs 9.29 µs 10.47 µs]`, criterion low/median/high) and
-`compare_all::raw_udp_128b` (`[8.90 µs 9.91 µs 11.01 µs]`) both
-reproduce their documented ~9–10 µs. The rest of `compare_all`
-(KCP → Quinn → TCP) currently aborts on a KCP warmup panic
-(`flush()` before `update()`; see `bugs.md`
-BENCH-KCP-FLUSH-NEEDUPDATE), so the `kcp`/`quinn`/`tcp` rows are
-the last-measured 2026-05-24 figures, not re-run today. The
-harness is otherwise unchanged.
+Re-run 2026-07-07, two paired runs each: `cast_rtt_bench`
+`[8.42 9.72 11.29]` and `[8.48 9.35 10.55]`;
+`raw_udp_128b` `[8.06 9.42 11.44]` and `[7.74 8.50 9.47]`
+(criterion low/median/high, µs). Medians swap order run-to-run —
+casting and raw UDP are a statistical tie, as the overhead model
+requires (casting = UDP + ~26 ns userspace). `tcp_nodelay_128b`
+`[14.48 15.15 16.18]` and `quinn_persistent_128b`
+`[35.38 36.32 37.37]` re-run the same day via Criterion's name
+filter (the KCP warmup panic, BUGS.md BENCH-KCP-FLUSH-NEEDUPDATE,
+only fires when the KCP bench itself is selected).
 
 For this workload, casting's RTT sits at the raw-UDP floor: the
 per-send breakdown attributes ~26 ns of userspace work (CRC32C +
