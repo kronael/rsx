@@ -12,7 +12,6 @@ gif: book-live.cast
 	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 \
 		--theme monokai book-live.cast book-live.gif
 	gifsicle -O3 book-live.gif -o book-live-opt.gif
-	rm book-live.gif
 
 clean:
 	rm -f book-live.cast book-live.gif book-live-opt.gif

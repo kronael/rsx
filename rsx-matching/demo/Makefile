@@ -12,7 +12,6 @@ gif: match-live.cast
 	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 \
 		--theme monokai match-live.cast match-live.gif
 	gifsicle -O3 match-live.gif -o match-live-opt.gif
-	rm match-live.gif
 
 clean:
 	rm -f match-live.cast match-live.gif match-live-opt.gif
