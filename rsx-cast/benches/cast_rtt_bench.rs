@@ -139,12 +139,11 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     let stop_b = Arc::clone(&stop);
     let echoes_b = Arc::clone(&echoes);
 
-    // B-side echo: spin try_recv → send back. Periodic tick
-    // on both receiver and sender keeps the flow-control
-    // windows open across sustained Criterion measurement
-    // (~100k+ iterations) — without it the senders' windows
-    // close around iter 65536 and `send` returns Ok(false)
-    // forever.
+    // B-side echo: spin try_recv → send back. Periodic
+    // tick + recv_control on the sender keeps NAK service and
+    // idle heartbeats running across sustained Criterion
+    // measurement, so a dropped datagram retransmits instead
+    // of stalling the stream.
     //
     // The echo record is pre-built outside the inner loop and
     // re-used (seq is set by the sender). This shaves the
@@ -179,8 +178,13 @@ fn bench_cmp_rtt(c: &mut Criterion) {
     // Pre-build the request record outside b.iter (seq is
     // overwritten on send).
     let mut req = fill_record();
+    // seq counter OUTSIDE bench_function: Criterion re-invokes the
+    // |b| closure per phase (warmup -> collection); a counter declared
+    // inside it resets to 0, the receiver dedup-drops every re-sent
+    // low seq, and the bench deadlocks. The removed typed send<T>
+    // was immune (its counter lived in the sender).
+    let mut iter: u64 = 0;
     c.bench_function("cmp_rtt_fill_echo", |b| {
-        let mut iter: u64 = 0;
         b.iter(|| {
             iter = iter.wrapping_add(1);
             if iter & 0x3FF == 0 {
@@ -191,10 +195,24 @@ fn bench_cmp_rtt(c: &mut Criterion) {
             if let Err(e) = a_sender.send_framed(&framed) {
                 panic!("a send: {e}");
             }
+            // Echo wait pumps recovery on a coarse cadence: if the
+            // request or the echo drops, tick's idle heartbeat lets
+            // the other side detect the gap and NAK, and
+            // recv_control serves the retransmit. The happy path
+            // (reply in ~5 µs) never reaches the pump, so the
+            // measurement is unaffected; without it one lost
+            // datagram deadlocks both spin loops
+            // (BUGS.md CAST-RTT-BENCH-DEADLOCKS-ON-LOSS).
+            let mut spins: u32 = 0;
             loop {
                 if let CastRecv::Data(_, reply) = a_receiver.try_recv() {
                     black_box(reply);
                     break;
+                }
+                spins = spins.wrapping_add(1);
+                if spins & 0xFFFF == 0 {
+                    let _ = a_sender.tick();
+                    a_sender.recv_control();
                 }
                 std::hint::spin_loop();
             }
