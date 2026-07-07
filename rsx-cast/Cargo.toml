@@ -86,3 +86,7 @@ harness = false
 [[bench]]
 name = "loss_recovery"
 harness = false
+
+[[bench]]
+name = "outage_recovery"
+harness = false
