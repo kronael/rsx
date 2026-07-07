@@ -291,7 +291,7 @@ dashboard + Playwright), `rsx-auth/` (Python OAuth service).
 | Tool | Why |
 |---|---|
 | Linux 5.6+ | io_uring (gateway, marketdata) |
-| Rust stable | `cargo build --workspace` |
+| Rust nightly | pinned in `rust-toolchain.toml`; auto-installs |
 | Postgres 14+ | Risk write-behind, accounts |
 | Python 3.14+ | `rsx-playground` (managed via `uv`) |
 | `uv`, `bun` | Python deps, webui build + Playwright |
@@ -342,7 +342,9 @@ meaningless for benchmarks.
 
 **From source:**
 
-Prerequisites: stable Rust, and the **mold** linker —
+Prerequisites: **nightly** Rust (pinned in `rust-toolchain.toml`; the
+cranelift codegen backend and clippy/rustfmt auto-install on first build),
+and the **mold** linker —
 `.cargo/config.toml` links every crate with `-fuse-ld=mold`
 (`sudo apt install mold`, or `brew install mold`). Without it
 builds fail at link time with `cannot find 'mold'`; either
@@ -360,10 +362,10 @@ make lint         # clippy -D warnings
 Single crate: `cargo test -p rsx-book`. Single test:
 `cargo test -p rsx-book -- test_name`.
 
-Faster debug builds (optional): `make build-fast` / `make test-fast` use the
-cranelift codegen backend (~7× faster codegen on heavy crates). Nightly-only,
-opt-in — stable `make` is untouched. One-time:
-`rustup component add rustc-codegen-cranelift-preview --toolchain nightly`.
+Debug builds use the **cranelift** codegen backend (~7× faster codegen on
+heavy crates than LLVM); `make build` / `cargo build`. `make release`
+(`--release`) uses LLVM, optimized. Configured in `.cargo/config.toml` +
+`rust-toolchain.toml` — no flags, nothing to remember.
 
 ## What's not done
 

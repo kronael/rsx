@@ -1,0 +1,3 @@
+[toolchain]
+channel = "nightly-2026-01-22"
+components = ["rustc-codegen-cranelift-preview", "clippy", "rustfmt"]
