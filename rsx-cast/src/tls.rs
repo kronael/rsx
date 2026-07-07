@@ -14,9 +14,7 @@ use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::TlsConnector;
 
-pub fn build_connector(
-    cfg: &TlsClient,
-) -> io::Result<TlsConnector> {
+pub fn build_connector(cfg: &TlsClient) -> io::Result<TlsConnector> {
     let mut root_store = RootCertStore::empty();
     let ca_pem = fs::read(&cfg.cert_path)?;
     for cert in load_certs(&ca_pem)? {
@@ -34,9 +32,7 @@ pub fn build_connector(
     Ok(TlsConnector::from(Arc::new(config)))
 }
 
-pub fn build_acceptor(
-    cfg: &TlsServer,
-) -> io::Result<TlsAcceptor> {
+pub fn build_acceptor(cfg: &TlsServer) -> io::Result<TlsAcceptor> {
     let certs = load_certs(&fs::read(&cfg.cert_path)?)?;
     let key = load_private_key(&fs::read(&cfg.key_path)?)?;
 
@@ -52,18 +48,11 @@ pub fn build_acceptor(
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-pub fn extract_server_name(
-    addr: &str,
-) -> io::Result<ServerName<'static>> {
+pub fn extract_server_name(addr: &str) -> io::Result<ServerName<'static>> {
     let host = addr
         .split(':')
         .next()
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid address format",
-            )
-        })?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid address format"))?
         .to_string();
 
     ServerName::try_from(host)
@@ -76,35 +65,16 @@ pub fn extract_server_name(
         .map(|name| name.to_owned())
 }
 
-fn load_certs(
-    pem: &[u8],
-) -> io::Result<Vec<CertificateDer<'static>>> {
+fn load_certs(pem: &[u8]) -> io::Result<Vec<CertificateDer<'static>>> {
     let mut cursor = io::Cursor::new(pem);
     rustls_pemfile::certs(&mut cursor)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("bad cert pem: {}", e),
-            )
-        })
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad cert pem: {}", e)))
 }
 
-fn load_private_key(
-    pem: &[u8],
-) -> io::Result<PrivateKeyDer<'static>> {
+fn load_private_key(pem: &[u8]) -> io::Result<PrivateKeyDer<'static>> {
     let mut cursor = io::Cursor::new(pem);
     rustls_pemfile::private_key(&mut cursor)
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("bad key pem: {}", e),
-            )
-        })?
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "no private key found",
-            )
-        })
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad key pem: {}", e)))?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no private key found"))
 }

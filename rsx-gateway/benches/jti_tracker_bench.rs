@@ -43,9 +43,5 @@ fn bench_record_duplicate(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_record_steady_state,
-    bench_record_duplicate,
-);
+criterion_group!(benches, bench_record_steady_state, bench_record_duplicate,);
 criterion_main!(benches);

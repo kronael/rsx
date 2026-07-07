@@ -69,9 +69,15 @@ pub struct CaughtUpRecord {
 }
 
 impl CastRecord for CaughtUpRecord {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, seq: u64) { self.seq = seq; }
-    fn record_type() -> u16 { RECORD_CAUGHT_UP }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_CAUGHT_UP
+    }
 }
 
 /// ReplicationNotAvailable — wire size 64 bytes.

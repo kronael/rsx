@@ -65,9 +65,9 @@ fn run_bench(c: &mut Criterion, name: &str, client: &mut dyn EchoClient) {
 // ── Raw UDP ───────────────────────────────────────────────────────────────────
 
 use std::net::UdpSocket;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::thread;
 
 struct RawUdpClient {
@@ -108,7 +108,9 @@ impl RawUdpClient {
             while !stop2.load(Ordering::Relaxed) {
                 match srv.recv_from(&mut buf) {
                     Ok((n, src)) => {
-                        if n >= 1 && buf[0] == 0xFF { return; }
+                        if n >= 1 && buf[0] == 0xFF {
+                            return;
+                        }
                         let _ = srv.send_to(&buf[..n], src);
                     }
                     Err(_) => std::hint::spin_loop(),
@@ -116,7 +118,12 @@ impl RawUdpClient {
             }
         });
 
-        Self { sock: cli, srv_addr, stop, handle: Some(handle) }
+        Self {
+            sock: cli,
+            srv_addr,
+            stop,
+            handle: Some(handle),
+        }
     }
 }
 
@@ -142,14 +149,18 @@ use std::time::Instant;
 
 type OutQueue = Arc<Mutex<VecDeque<Vec<u8>>>>;
 
-struct UdpOutput { queue: OutQueue }
+struct UdpOutput {
+    queue: OutQueue,
+}
 
 impl io::Write for UdpOutput {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.queue.lock().unwrap().push_back(buf.to_vec());
         Ok(buf.len())
     }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn make_kcp(conv: u32, queue: OutQueue) -> Kcp<UdpOutput> {
@@ -166,7 +177,9 @@ fn make_kcp(conv: u32, queue: OutQueue) -> Kcp<UdpOutput> {
 
 fn drain(q: &OutQueue, sock: &UdpSocket, dest: std::net::SocketAddr) {
     let mut lock = q.lock().unwrap();
-    while let Some(pkt) = lock.pop_front() { let _ = sock.send_to(&pkt, dest); }
+    while let Some(pkt) = lock.pop_front() {
+        let _ = sock.send_to(&pkt, dest);
+    }
 }
 
 struct KcpSpinClient {
@@ -218,7 +231,9 @@ impl KcpSpinClient {
                     got = true;
                 }
                 if got {
-                    while let Ok(n) = kcp.recv(&mut msg) { let _ = kcp.send(&msg[..n]); }
+                    while let Ok(n) = kcp.recv(&mut msg) {
+                        let _ = kcp.send(&msg[..n]);
+                    }
                     kcp.flush().unwrap();
                     drain(&srv_out, &srv_sock2, cli_addr);
                 } else {
@@ -237,9 +252,15 @@ impl KcpSpinClient {
         let mut wbuf = [0u8; 2048];
         let mut mbuf = [0u8; 2048];
         loop {
-            if Instant::now() > deadline { break; }
-            while let Ok((n, _)) = cli_sock.recv_from(&mut wbuf) { let _ = kcp.input(&wbuf[..n]); }
-            if kcp.recv(&mut mbuf).is_ok() { break; }
+            if Instant::now() > deadline {
+                break;
+            }
+            while let Ok((n, _)) = cli_sock.recv_from(&mut wbuf) {
+                let _ = kcp.input(&wbuf[..n]);
+            }
+            if kcp.recv(&mut mbuf).is_ok() {
+                break;
+            }
             std::hint::spin_loop();
         }
 
@@ -262,13 +283,17 @@ impl EchoClient for KcpSpinClient {
         drain(&self.out, &self.sock, self.srv_addr);
         let deadline = Instant::now() + std::time::Duration::from_millis(100);
         loop {
-            if Instant::now() > deadline { return 0; }
+            if Instant::now() > deadline {
+                return 0;
+            }
             while let Ok((n, _)) = self.sock.recv_from(buf) {
                 let _ = self.kcp.input(&buf[..n]);
             }
             // Return the actual decoded length so payload-size
             // changes (e.g. 64 → 128) don't silently mis-measure.
-            if let Ok(n) = self.kcp.recv(buf) { return n; }
+            if let Ok(n) = self.kcp.recv(buf) {
+                return n;
+            }
             std::hint::spin_loop();
         }
     }
@@ -276,19 +301,23 @@ impl EchoClient for KcpSpinClient {
 
 // ── Quinn persistent stream ───────────────────────────────────────────────────
 
+use quinn::ClientConfig;
 use quinn::Endpoint;
 use quinn::RecvStream;
 use quinn::SendStream;
 use quinn::ServerConfig;
-use quinn::ClientConfig;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio::runtime::Builder;
 
 async fn read_framed(recv: &mut RecvStream, buf: &mut [u8]) -> usize {
     let mut len_buf = [0u8; 4];
-    if recv.read_exact(&mut len_buf).await.is_err() { return 0; }
+    if recv.read_exact(&mut len_buf).await.is_err() {
+        return 0;
+    }
     let n = u32::from_le_bytes(len_buf) as usize;
-    if recv.read_exact(&mut buf[..n]).await.is_err() { return 0; }
+    if recv.read_exact(&mut buf[..n]).await.is_err() {
+        return 0;
+    }
     n
 }
 
@@ -313,18 +342,18 @@ impl QuinnPersistentClient {
         let rt = Builder::new_current_thread().enable_all().build().unwrap();
 
         let (server_ep, client_ep, cli_conn, srv_conn) = rt.block_on(async {
-            let cert =
-                rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+            let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             let cert_der = cert.cert.der().clone();
             let key_der = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
 
-            let srv_cfg = ServerConfig::with_single_cert(
-                vec![cert_der.clone()], key_der.into(),
-            ).unwrap();
+            let srv_cfg =
+                ServerConfig::with_single_cert(vec![cert_der.clone()], key_der.into()).unwrap();
 
             let server_ep = Endpoint::server(
-                srv_cfg, "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
-            ).unwrap();
+                srv_cfg,
+                "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
+            )
+            .unwrap();
             let srv_addr = server_ep.local_addr().unwrap();
 
             // Accept exactly one connection.
@@ -332,18 +361,23 @@ impl QuinnPersistentClient {
             let (tx, rx) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
                 if let Some(inc) = server_ep2.accept().await {
-                    if let Ok(conn) = inc.await { let _ = tx.send(conn); }
+                    if let Ok(conn) = inc.await {
+                        let _ = tx.send(conn);
+                    }
                 }
             });
 
             let mut roots = rustls::RootCertStore::empty();
             roots.add(cert_der).unwrap();
             let cli_cfg = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
-            let mut client_ep = Endpoint::client(
-                "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
-            ).unwrap();
+            let mut client_ep =
+                Endpoint::client("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
             client_ep.set_default_client_config(cli_cfg);
-            let cli_conn = client_ep.connect(srv_addr, "localhost").unwrap().await.unwrap();
+            let cli_conn = client_ep
+                .connect(srv_addr, "localhost")
+                .unwrap()
+                .await
+                .unwrap();
 
             // Wait for server to accept.
             let srv_conn = rx.await.expect("server accept");
@@ -371,7 +405,9 @@ impl QuinnPersistentClient {
             let mut buf = [0u8; 256];
             loop {
                 let n = read_framed(&mut r, &mut buf).await;
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 write_framed(&mut s, &buf[..n]).await;
             }
         });
@@ -424,8 +460,12 @@ impl TcpNodelay {
                         // with the framed PAYLOAD_LEN sends.
                         let mut buf = [0u8; PAYLOAD_LEN];
                         loop {
-                            if sock.read_exact(&mut buf).await.is_err() { break; }
-                            if sock.write_all(&buf).await.is_err() { break; }
+                            if sock.read_exact(&mut buf).await.is_err() {
+                                break;
+                            }
+                            if sock.write_all(&buf).await.is_err() {
+                                break;
+                            }
                         }
                     });
                 }
@@ -445,7 +485,10 @@ impl EchoClient for TcpNodelay {
             // read_exact: TCP is a byte stream, a single read() can
             // return a short prefix, leaving trailing bytes for the
             // next iter and under-measuring RTT.
-            self.stream.read_exact(&mut buf[..PAYLOAD_LEN]).await.unwrap();
+            self.stream
+                .read_exact(&mut buf[..PAYLOAD_LEN])
+                .await
+                .unwrap();
             PAYLOAD_LEN
         })
     }
@@ -456,10 +499,14 @@ impl EchoClient for TcpNodelay {
 fn bench_all(c: &mut Criterion) {
     let (cli_core, _) = pick_cores();
     core_affinity::set_for_current(cli_core);
-    run_bench(c, "raw_udp_128b",            &mut RawUdpClient::new());
-    run_bench(c, "kcp_spin_flush_128b",     &mut KcpSpinClient::new());
-    run_bench(c, "quinn_persistent_128b",   &mut QuinnPersistentClient::new());
-    run_bench(c, "tcp_nodelay_128b",        &mut TcpNodelay::new());
+    run_bench(c, "raw_udp_128b", &mut RawUdpClient::new());
+    run_bench(c, "kcp_spin_flush_128b", &mut KcpSpinClient::new());
+    run_bench(
+        c,
+        "quinn_persistent_128b",
+        &mut QuinnPersistentClient::new(),
+    );
+    run_bench(c, "tcp_nodelay_128b", &mut TcpNodelay::new());
 }
 
 criterion_group! {

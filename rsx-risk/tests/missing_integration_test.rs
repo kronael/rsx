@@ -6,6 +6,9 @@
 //!   - liquidation cascade (multiple users underwater)
 //!   - insurance fund absorbs deficit (shard integration)
 
+use rsx_risk::insurance::InsuranceFund;
+use rsx_risk::liquidation::LiquidationEngine;
+use rsx_risk::types::RejectReason;
 use rsx_risk::Account;
 use rsx_risk::FillEvent;
 use rsx_risk::FundingConfig;
@@ -16,9 +19,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::insurance::InsuranceFund;
-use rsx_risk::liquidation::LiquidationEngine;
-use rsx_risk::types::RejectReason;
 
 fn config_single() -> ShardConfig {
     ShardConfig {
@@ -41,15 +41,7 @@ fn config_single() -> ShardConfig {
     }
 }
 
-fn fill(
-    taker: u32,
-    maker: u32,
-    sym: u32,
-    price: i64,
-    qty: i64,
-    side: u8,
-    seq: u64,
-) -> FillEvent {
+fn fill(taker: u32, maker: u32, sym: u32, price: i64, qty: i64, side: u8, seq: u64) -> FillEvent {
     FillEvent {
         seq,
         symbol_id: sym,
@@ -62,12 +54,7 @@ fn fill(
     }
 }
 
-fn order(
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-) -> OrderRequest {
+fn order(user_id: u32, symbol_id: u32, price: i64, qty: i64) -> OrderRequest {
     OrderRequest {
         seq: 1,
         user_id,
@@ -182,17 +169,14 @@ fn margin_recalculated_after_fill_detects_liquidation() {
 
 #[test]
 fn wal_replay_rebuilds_positions_from_tip() {
-    use rsx_messages::FillRecord;
     use rsx_cast::WalWriter;
+    use rsx_messages::FillRecord;
     use rsx_risk::replay::replay_from_wal;
 
     let wal_dir = tempfile::tempdir().unwrap();
 
     // Write fills for symbol 0: seqs 1-5
-    let mut writer = WalWriter::new(
-        0, wal_dir.path(), 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(0, wal_dir.path(), 64 * 1024 * 1024).unwrap();
 
     for i in 1..=5u64 {
         let mut rec = FillRecord {
@@ -213,7 +197,7 @@ fn wal_replay_rebuilds_positions_from_tip() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-taker_ts_ns: 0,
+            taker_ts_ns: 0,
         };
         {
             let framed = writer.prepare(&mut rec).unwrap();
@@ -227,8 +211,7 @@ taker_ts_ns: 0,
     shard.accounts.insert(0, Account::new(0, 10_000_000));
     shard.accounts.insert(1, Account::new(1, 10_000_000));
 
-    let replayed =
-        replay_from_wal(&mut shard, wal_dir.path(), &[0]).unwrap();
+    let replayed = replay_from_wal(&mut shard, wal_dir.path(), &[0]).unwrap();
 
     assert_eq!(replayed, 5, "all 5 fills replayed");
     assert_eq!(shard.tips[0], 5, "tip advanced to last seq");
@@ -244,17 +227,14 @@ taker_ts_ns: 0,
 
 #[test]
 fn wal_replay_resumes_from_tip_skips_already_applied() {
-    use rsx_messages::FillRecord;
     use rsx_cast::WalWriter;
+    use rsx_messages::FillRecord;
     use rsx_risk::replay::replay_from_wal;
 
     let wal_dir = tempfile::tempdir().unwrap();
 
     // Write fills seqs 1-10
-    let mut writer = WalWriter::new(
-        0, wal_dir.path(), 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(0, wal_dir.path(), 64 * 1024 * 1024).unwrap();
     for i in 1..=10u64 {
         let mut rec = FillRecord {
             seq: i,
@@ -274,7 +254,7 @@ fn wal_replay_resumes_from_tip_skips_already_applied() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-taker_ts_ns: 0,
+            taker_ts_ns: 0,
         };
         {
             let framed = writer.prepare(&mut rec).unwrap();
@@ -293,8 +273,7 @@ taker_ts_ns: 0,
     // process_fill deduplicates seqs <= tip. Fills 1-5 are
     // skipped by dedup; fills 6-10 are applied.
     // replayed counter reflects all RECORD_FILL records read.
-    let replayed =
-        replay_from_wal(&mut shard, wal_dir.path(), &[0]).unwrap();
+    let replayed = replay_from_wal(&mut shard, wal_dir.path(), &[0]).unwrap();
 
     assert_eq!(replayed, 10, "all 10 fill records read from active wal");
     assert_eq!(shard.tips[0], 10, "tip advanced to last seq");
@@ -325,7 +304,8 @@ fn liquidation_cascade_multiple_users_all_queued() {
     for uid in 0..3u32 {
         assert!(
             s.liquidation.is_in_liquidation(uid, 0),
-            "user {} must be queued for liquidation", uid
+            "user {} must be queued for liquidation",
+            uid
         );
     }
 
@@ -340,7 +320,8 @@ fn liquidation_cascade_multiple_users_all_queued() {
                     ..
                 }
             ),
-            "user {} order should be rejected", uid
+            "user {} order should be rejected",
+            uid
         );
     }
 }
@@ -370,7 +351,7 @@ fn liquidation_cascade_independent_per_user_symbol() {
     s.mark_prices[0] = 10_000;
 
     s.process_fill(&fill(0, 1, 0, 10_000, 1000, 0, 1)); // user 0 underwater
-    s.process_fill(&fill(1, 0, 0, 10_000, 1, 0, 2));    // user 1 healthy (small)
+    s.process_fill(&fill(1, 0, 0, 10_000, 1, 0, 2)); // user 1 healthy (small)
 
     assert!(s.liquidation.is_in_liquidation(0, 0));
     assert!(!s.liquidation.is_in_liquidation(1, 0));
@@ -390,14 +371,12 @@ fn insurance_fund_debited_on_socialized_loss() {
     engine.enqueue(1, 0, 0);
 
     // Round 1: issues liquidation order
-    let (orders1, losses1) =
-        engine.maybe_process(0, &|_, _| 100, &|_| 10_000);
+    let (orders1, losses1) = engine.maybe_process(0, &|_, _| 100, &|_| 10_000);
     assert_eq!(orders1.len(), 1, "round 1 issues order");
     assert_eq!(losses1.len(), 0);
 
     // Round 2 (max_rounds exceeded): socialized loss emitted
-    let (orders2, losses2) =
-        engine.maybe_process(1, &|_, _| 100, &|_| 10_000);
+    let (orders2, losses2) = engine.maybe_process(1, &|_, _| 100, &|_| 10_000);
     assert_eq!(orders2.len(), 0);
     assert_eq!(losses2.len(), 1, "socialized loss after max rounds");
 
@@ -433,8 +412,7 @@ fn insurance_fund_shard_integration_socialized_loss() {
     s.mark_prices[0] = 10_000;
 
     // Give the shard an insurance fund for symbol 0
-    s.insurance_funds
-        .insert(0, InsuranceFund::new(0, 500_000));
+    s.insurance_funds.insert(0, InsuranceFund::new(0, 500_000));
 
     // Position puts user 0 underwater (long 1000 at 10_000)
     s.process_fill(&fill(0, 1, 0, 10_000, 1000, 0, 1));
@@ -444,10 +422,7 @@ fn insurance_fund_shard_integration_socialized_loss() {
     // (simulating what the main loop does after max rounds)
     let deficit = 1000i64 * 10_000; // qty * mark
     let before = s.insurance_funds[&0].balance;
-    s.insurance_funds
-        .get_mut(&0)
-        .unwrap()
-        .deduct(deficit);
+    s.insurance_funds.get_mut(&0).unwrap().deduct(deficit);
 
     let after = s.insurance_funds[&0].balance;
     assert_eq!(after, before - deficit);

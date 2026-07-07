@@ -54,10 +54,8 @@ fn bench_dedup(c: &mut Criterion) {
             for i in 0..10_000_u64 {
                 dedup.check_and_insert(1, 0, i);
             }
-            dedup.cleanup_with_cutoff(
-                std::time::Instant::now()
-                    + std::time::Duration::from_secs(1),
-            );
+            dedup
+                .cleanup_with_cutoff(std::time::Instant::now() + std::time::Duration::from_secs(1));
         });
     });
 
@@ -70,8 +68,7 @@ fn bench_dedup(c: &mut Criterion) {
 /// serialized. Built by resting `k` asks then sweeping them with one
 /// taker; `process_new_order` leaves the events in `book.events()`.
 fn crossed_book(k: usize) -> rsx_book::book::Orderbook {
-    let mut book =
-        rsx_book::book::Orderbook::new(harness::config(), 65_536, harness::MID);
+    let mut book = rsx_book::book::Orderbook::new(harness::config(), 65_536, harness::MID);
     for i in 0..k {
         book.insert_resting(
             harness::MID + 1 + i as i64,
@@ -104,12 +101,8 @@ fn bench_wal_events(c: &mut Criterion) {
     // Serialize one match's events (1 fill) to WAL, per iter.
     group.bench_function("append_1_fill", |b| {
         let tmp = TempDir::new().expect("tempdir");
-        let mut writer = WalWriter::new(
-            harness::SYMBOL_ID,
-            tmp.path(),
-            64 * 1024 * 1024,
-        )
-        .expect("wal");
+        let mut writer =
+            WalWriter::new(harness::SYMBOL_ID, tmp.path(), 64 * 1024 * 1024).expect("wal");
         let book = crossed_book(1);
         let mut n = 0_u64;
         b.iter(|| {

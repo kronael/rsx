@@ -47,12 +47,7 @@ pub struct LiquidationEngine {
 }
 
 impl LiquidationEngine {
-    pub fn new(
-        base_delay_ns: u64,
-        base_slip_bps: i64,
-        max_rounds: u32,
-        max_slip_bps: i64,
-    ) -> Self {
+    pub fn new(base_delay_ns: u64, base_slip_bps: i64, max_rounds: u32, max_slip_bps: i64) -> Self {
         Self {
             active: Vec::new(),
             halted_symbols: Vec::new(),
@@ -82,20 +77,12 @@ impl LiquidationEngine {
 
     pub fn is_halted(&self, symbol_id: u32) -> bool {
         let idx = symbol_id as usize;
-        idx < self.halted_symbols.len()
-            && self.halted_symbols[idx]
+        idx < self.halted_symbols.len() && self.halted_symbols[idx]
     }
 
-    pub fn enqueue(
-        &mut self,
-        user_id: u32,
-        symbol_id: u32,
-        now_ns: u64,
-    ) {
+    pub fn enqueue(&mut self, user_id: u32, symbol_id: u32, now_ns: u64) {
         let already = self.active.iter().any(|s| {
-            s.user_id == user_id
-                && s.symbol_id == symbol_id
-                && s.status != LiquidationStatus::Done
+            s.user_id == user_id && s.symbol_id == symbol_id && s.status != LiquidationStatus::Done
         });
         if already {
             return;
@@ -127,9 +114,7 @@ impl LiquidationEngine {
                 continue;
             }
             let sid = state.symbol_id as usize;
-            if sid < self.halted_symbols.len()
-                && self.halted_symbols[sid]
-            {
+            if sid < self.halted_symbols.len() && self.halted_symbols[sid] {
                 continue;
             }
             // round == 1 means no order has been placed yet:
@@ -140,17 +125,11 @@ impl LiquidationEngine {
             // at 0). With the old check, last_order_ns staying 0
             // made every later round look like the first and skip
             // the backoff entirely.
-            let delay = (state.round as u64)
-                .saturating_mul(self.base_delay_ns);
-            if state.round > 1
-                && now_ns
-                    < state.last_order_ns
-                        .saturating_add(delay)
-            {
+            let delay = (state.round as u64).saturating_mul(self.base_delay_ns);
+            if state.round > 1 && now_ns < state.last_order_ns.saturating_add(delay) {
                 continue;
             }
-            let net_qty =
-                get_position_fn(state.user_id, state.symbol_id);
+            let net_qty = get_position_fn(state.user_id, state.symbol_id);
             if net_qty == 0 {
                 state.status = LiquidationStatus::Done;
                 continue;
@@ -212,28 +191,16 @@ impl LiquidationEngine {
         (orders, socialized)
     }
 
-    pub fn cancel_if_recovered(
-        &mut self,
-        user_id: u32,
-        symbol_id: u32,
-    ) {
-        self.active.retain(|s| {
-            !(s.user_id == user_id
-                && s.symbol_id == symbol_id)
-        });
+    pub fn cancel_if_recovered(&mut self, user_id: u32, symbol_id: u32) {
+        self.active
+            .retain(|s| !(s.user_id == user_id && s.symbol_id == symbol_id));
     }
 
     pub fn remove_done(&mut self) {
-        self.active.retain(|s| {
-            s.status != LiquidationStatus::Done
-        });
+        self.active.retain(|s| s.status != LiquidationStatus::Done);
     }
 
-    pub fn is_in_liquidation(
-        &self,
-        user_id: u32,
-        symbol_id: u32,
-    ) -> bool {
+    pub fn is_in_liquidation(&self, user_id: u32, symbol_id: u32) -> bool {
         self.active.iter().any(|s| {
             s.user_id == user_id
                 && s.symbol_id == symbol_id

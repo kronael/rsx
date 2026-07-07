@@ -16,12 +16,12 @@ use rtrb::Producer;
 use rtrb::PushError;
 use rtrb::RingBuffer;
 use std::cell::RefCell;
-use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::time::SystemTime;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::SystemTime;
 
 /// Fixed-shape log record. Kept small so each push is a
 /// few hundred bits, not heap-pointer machinery.
@@ -58,8 +58,7 @@ pub enum Kind {
 /// slots is 1.3 s of headroom per thread.
 const RING_CAP: usize = 8_192;
 
-static CONSUMERS: OnceLock<Mutex<Vec<Consumer<Record>>>> =
-    OnceLock::new();
+static CONSUMERS: OnceLock<Mutex<Vec<Consumer<Record>>>> = OnceLock::new();
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
@@ -73,8 +72,7 @@ thread_local! {
 }
 
 fn init_thread_ring() -> Producer<Record> {
-    let (prod, cons) =
-        RingBuffer::<Record>::new(RING_CAP);
+    let (prod, cons) = RingBuffer::<Record>::new(RING_CAP);
     // SAFETY: registry mutex is held briefly on the slow
     // path (first push per thread). Poisoning implies a
     // panic during another thread's init — fail fast.
@@ -147,12 +145,7 @@ pub mod latency {
     /// directly — the macro compiles the call (and its clock read) away unless
     /// the `latency-trace` feature is enabled.
     #[inline]
-    pub fn emit(
-        stage: &'static str,
-        oid_hi: u64,
-        oid_lo: u64,
-        t0_ns: u64,
-    ) {
+    pub fn emit(stage: &'static str, oid_hi: u64, oid_lo: u64, t0_ns: u64) {
         let t_us = super::now_ns().saturating_sub(t0_ns) / 1000;
         super::push(Record {
             kind: Kind::Latency,
@@ -174,9 +167,7 @@ pub fn start_drainer(interval_ms: u64) {
     std::thread::Builder::new()
         .name("rsx-log-drain".into())
         .spawn(move || {
-            let mut batch: Vec<Record> = Vec::with_capacity(
-                RING_CAP,
-            );
+            let mut batch: Vec<Record> = Vec::with_capacity(RING_CAP);
             loop {
                 std::thread::sleep(interval);
                 {
@@ -191,8 +182,7 @@ pub fn start_drainer(interval_ms: u64) {
                         }
                     }
                 }
-                let dropped =
-                    DROPPED.swap(0, Ordering::Relaxed);
+                let dropped = DROPPED.swap(0, Ordering::Relaxed);
                 if dropped > 0 {
                     tracing::warn!(
                         target: "latency",
@@ -238,9 +228,7 @@ mod tests {
 
     #[test]
     fn latency_sample_round_trips_via_ring() {
-        let _g = TEST_GUARD
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = TEST_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         push(Record {
             kind: Kind::Latency,
             stage_or_target: "test_stage",
@@ -268,9 +256,7 @@ mod tests {
 
     #[test]
     fn drop_counter_increments_on_full_ring() {
-        let _g = TEST_GUARD
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _g = TEST_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let rec = |a: u64, stage| Record {
             kind: Kind::Latency,
             stage_or_target: stage,
@@ -285,9 +271,6 @@ mod tests {
         let before = DROPPED.load(Ordering::Relaxed);
         push(rec(0, "overflow"));
         let after = DROPPED.load(Ordering::Relaxed);
-        assert!(
-            after > before,
-            "drop counter did not increment on overflow",
-        );
+        assert!(after > before, "drop counter did not increment on overflow",);
     }
 }

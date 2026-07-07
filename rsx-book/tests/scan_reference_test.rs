@@ -103,13 +103,7 @@ fn check(book: &Orderbook) {
     }
 }
 
-fn submit(
-    book: &mut Orderbook,
-    live: &mut Vec<u32>,
-    rng: &mut Rng,
-    mid: i64,
-    oid: u64,
-) {
+fn submit(book: &mut Orderbook, live: &mut Vec<u32>, rng: &mut Rng, mid: i64, oid: u64) {
     let buy = rng.next() & 1 == 0;
     // Fat-ish offset spanning several zones (mid=1_000_000, tick 1:
     // zone 0 ~<50k, out to ~450k). Occasionally price through the

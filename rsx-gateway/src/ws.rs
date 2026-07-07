@@ -13,8 +13,7 @@ use tracing::warn;
 
 use crate::jwt::JtiTracker;
 
-const WS_MAGIC: &str =
-    "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Per-process JWT-ID replay tracker. 16 K-entry FIFO cap.
 /// Tokens without `jti` are rejected upstream in
@@ -25,10 +24,7 @@ static JTI_TRACKER: LazyLock<Mutex<JtiTracker>> =
 
 /// Accept WebSocket connections on the given address.
 /// Calls `handler` for each accepted connection.
-pub async fn ws_accept_loop<F>(
-    addr: &str,
-    handler: F,
-) -> io::Result<()>
+pub async fn ws_accept_loop<F>(addr: &str, handler: F) -> io::Result<()>
 where
     F: Fn(TcpStream, std::net::SocketAddr) + 'static,
 {
@@ -42,9 +38,7 @@ where
 }
 
 /// Read the initial HTTP request from a TcpStream.
-pub async fn read_http_request(
-    stream: &mut TcpStream,
-) -> io::Result<(String, Vec<u8>)> {
+pub async fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
     let buf = vec![0u8; 4096];
     let (res, buf) = stream.read(buf).await;
     let n = res?;
@@ -61,19 +55,16 @@ pub async fn read_http_request(
         .position(|w| w == b"\r\n\r\n")
         .map(|p| p + 4)
         .unwrap_or(n);
-    let request =
-        String::from_utf8_lossy(&data[..header_end])
-            .into_owned();
+    let request = String::from_utf8_lossy(&data[..header_end]).into_owned();
     let leftover = data[header_end..].to_vec();
     Ok((request, leftover))
 }
 
 /// Returns true if the request is a WS upgrade.
 pub fn is_ws_upgrade(request: &str) -> bool {
-    request.lines().any(|line| {
-        line.to_ascii_lowercase()
-            .starts_with("sec-websocket-key:")
-    })
+    request
+        .lines()
+        .any(|line| line.to_ascii_lowercase().starts_with("sec-websocket-key:"))
 }
 
 /// Perform WS handshake on an already-read request.
@@ -92,11 +83,8 @@ pub async fn ws_handshake(
     stream: &mut TcpStream,
     jwt_secret: &str,
 ) -> io::Result<(String, u32, Vec<u8>)> {
-    let (request, leftover) =
-        read_http_request(stream).await?;
-    let (key, uid) =
-        ws_handshake_inner(stream, &request, jwt_secret)
-            .await?;
+    let (request, leftover) = read_http_request(stream).await?;
+    let (key, uid) = ws_handshake_inner(stream, &request, jwt_secret).await?;
     Ok((key, uid, leftover))
 }
 
@@ -105,37 +93,25 @@ async fn ws_handshake_inner(
     request: &str,
     jwt_secret: &str,
 ) -> io::Result<(String, u32)> {
-
     // Extract Sec-WebSocket-Key
-    let key = extract_ws_key(request).ok_or_else(
-        || {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "missing Sec-WebSocket-Key",
-            )
-        },
-    )?;
+    let key = extract_ws_key(request)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Sec-WebSocket-Key"))?;
 
     // Validate JWT, extract user_id + claims, reject replay
     // via the process-wide JtiTracker.
-    let (user_id, jti) =
-        match extract_user_and_record_jti(request, jwt_secret) {
-            Ok(pair) => pair,
-            Err(reason) => {
-                let resp = b"HTTP/1.1 401 Unauthorized\r\n\
+    let (user_id, jti) = match extract_user_and_record_jti(request, jwt_secret) {
+        Ok(pair) => pair,
+        Err(reason) => {
+            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
 Connection: close\r\n\
 \r\n";
-                let (res, _) =
-                    stream.write_all(resp.to_vec()).await;
-                if let Err(e) = res {
-                    warn!("gateway: 401 response write failed: {e}");
-                }
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    reason,
-                ));
+            let (res, _) = stream.write_all(resp.to_vec()).await;
+            if let Err(e) = res {
+                warn!("gateway: 401 response write failed: {e}");
             }
-        };
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
+        }
+    };
 
     // Compute accept key
     let accept = compute_accept_key(&key);
@@ -183,19 +159,12 @@ fn extract_user_and_record_jti(
                 .strip_prefix("Bearer ")
                 .or_else(|| val.strip_prefix("bearer "))
                 .ok_or("bearer scheme missing")?;
-            let (user_id, claims) =
-                crate::jwt::validate_jwt_with_claims(
-                    token.trim(),
-                    jwt_secret,
-                )
+            let (user_id, claims) = crate::jwt::validate_jwt_with_claims(token.trim(), jwt_secret)
                 .map_err(|_| "jwt invalid")?;
             // Reject tokens without a jti BEFORE touching the
             // tracker — without this guard, the replay
             // defence is null-defeated for every legacy token.
-            let jti = claims
-                .jti
-                .as_deref()
-                .ok_or("missing jti")?;
+            let jti = claims.jti.as_deref().ok_or("missing jti")?;
             // SAFETY: tracker mutex is never held across an
             // await; poisoning would imply a prior panic
             // inside this critical section — fail-fast.
@@ -216,9 +185,7 @@ fn extract_ws_key(request: &str) -> Option<String> {
     for line in request.lines() {
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("sec-websocket-key:") {
-            let val = line
-                .split_once(':')
-                .map(|(_, v)| v.trim().to_string());
+            let val = line.split_once(':').map(|(_, v)| v.trim().to_string());
             return val;
         }
     }
@@ -231,16 +198,13 @@ fn compute_accept_key(key: &str) -> String {
     hasher.update(WS_MAGIC.as_bytes());
     let result = hasher.finalize();
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .encode(result)
+    base64::engine::general_purpose::STANDARD.encode(result)
 }
 
 /// Read a single WebSocket frame from the stream.
 /// Returns (opcode, payload).
 /// Only handles frames up to 64KB.
-pub async fn ws_read_frame(
-    stream: &mut TcpStream,
-) -> io::Result<(u8, Vec<u8>)> {
+pub async fn ws_read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> {
     // Read first 2 bytes
     let preamble = vec![0u8; 2];
     let (res, preamble) = stream.read_exact(preamble).await;
@@ -263,9 +227,9 @@ pub async fn ws_read_frame(
         res?;
         // SAFETY: ext is exactly 8 bytes from read_exact
         usize::from_be_bytes(
-            ext[..8].try_into().expect(
-                "INVARIANT: ext is exactly 8 bytes from read_exact",
-            ),
+            ext[..8]
+                .try_into()
+                .expect("INVARIANT: ext is exactly 8 bytes from read_exact"),
         )
     };
 
@@ -287,15 +251,13 @@ pub async fn ws_read_frame(
 
     let mut payload = vec![0u8; payload_len];
     if payload_len > 0 {
-        let (res, p) =
-            stream.read_exact(payload).await;
+        let (res, p) = stream.read_exact(payload).await;
         res?;
         payload = p;
     }
 
     if let Some(mask) = mask_key {
-        for (i, byte) in payload.iter_mut().enumerate()
-        {
+        for (i, byte) in payload.iter_mut().enumerate() {
             *byte ^= mask[i % 4];
         }
     }
@@ -371,8 +333,7 @@ pub async fn ws_read_frame_buf(
             if out.len() < n {
                 let needed = n - out.len();
                 let tmp = vec![0u8; needed];
-                let (res, tmp) =
-                    stream.read_exact(tmp).await;
+                let (res, tmp) = stream.read_exact(tmp).await;
                 res?;
                 out.extend_from_slice(&tmp);
             }
@@ -389,9 +350,9 @@ pub async fn ws_read_frame_buf(
         let ext = read_n!(8);
         // SAFETY: read_n!(8) returns exactly 8 bytes
         usize::from_be_bytes(
-            ext[..8].try_into().expect(
-                "INVARIANT: ext is exactly 8 bytes from read_n!(8)",
-            ),
+            ext[..8]
+                .try_into()
+                .expect("INVARIANT: ext is exactly 8 bytes from read_n!(8)"),
         )
     };
 
@@ -416,8 +377,7 @@ pub async fn ws_read_frame_buf(
     };
 
     if let Some(mask) = mask_key {
-        for (i, byte) in payload.iter_mut().enumerate()
-        {
+        for (i, byte) in payload.iter_mut().enumerate() {
             *byte ^= mask[i % 4];
         }
     }
@@ -426,21 +386,13 @@ pub async fn ws_read_frame_buf(
 }
 
 /// Write a WebSocket text frame.
-pub async fn ws_write_text(
-    stream: &mut TcpStream,
-    data: &[u8],
-) -> io::Result<()> {
+pub async fn ws_write_text(stream: &mut TcpStream, data: &[u8]) -> io::Result<()> {
     ws_write_frame(stream, 0x1, data).await
 }
 
 /// Write a WebSocket frame with provided opcode.
-pub async fn ws_write_frame(
-    stream: &mut TcpStream,
-    opcode: u8,
-    data: &[u8],
-) -> io::Result<()> {
-    let mut frame =
-        Vec::with_capacity(10 + data.len());
+pub async fn ws_write_frame(stream: &mut TcpStream, opcode: u8, data: &[u8]) -> io::Result<()> {
+    let mut frame = Vec::with_capacity(10 + data.len());
     frame.push(0x80 | (opcode & 0x0F)); // FIN + opcode
 
     if data.len() <= 125 {

@@ -1,8 +1,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::FAIL_VALIDATION;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -21,11 +21,7 @@ fn test_book() -> Orderbook {
     Orderbook::new(test_config(), 1024, 50_000)
 }
 
-fn incoming(
-    price: i64,
-    qty: i64,
-    side: Side,
-) -> IncomingOrder {
+fn incoming(price: i64, qty: i64, side: Side) -> IncomingOrder {
     IncomingOrder {
         price,
         qty,
@@ -48,10 +44,10 @@ fn config_tick_size_change_validates_new_orders() {
     // Order at price 50_100 passes with tick_size=1
     let mut o1 = incoming(50_100, 10, Side::Buy);
     process_new_order(&mut book, &mut o1);
-    assert!(book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 
     // Change tick_size to 100
     let new_config = SymbolConfig {
@@ -73,10 +69,10 @@ fn config_tick_size_change_validates_new_orders() {
     // Price 50_100 divisible by 100 -> accepted
     let mut o3 = incoming(50_100, 10, Side::Buy);
     process_new_order(&mut book, &mut o3);
-    assert!(book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 }
 
 #[test]
@@ -86,10 +82,10 @@ fn config_lot_size_change_validates_new_orders() {
     // qty=7 passes with lot_size=1
     let mut o1 = incoming(50_100, 7, Side::Buy);
     process_new_order(&mut book, &mut o1);
-    assert!(book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 
     // Change lot_size to 10
     let new_config = SymbolConfig {
@@ -111,10 +107,10 @@ fn config_lot_size_change_validates_new_orders() {
     // qty=10 divisible by 10 -> accepted
     let mut o3 = incoming(50_100, 10, Side::Buy);
     process_new_order(&mut book, &mut o3);
-    assert!(book.events().iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(book
+        .events()
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 }
 
 #[test]

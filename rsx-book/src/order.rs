@@ -1,7 +1,7 @@
-use rsx_types::NONE;
+use crate::slab::SlabItem;
 use rsx_types::Price;
 use rsx_types::Qty;
-use crate::slab::SlabItem;
+use rsx_types::NONE;
 
 #[repr(C, align(64))]
 pub struct OrderSlot {
@@ -9,7 +9,7 @@ pub struct OrderSlot {
     pub price: Price,
     pub remaining_qty: Qty,
     pub side: u8,
-    pub flags: u8,       // bit 0: active, bit 1: reduce_only
+    pub flags: u8, // bit 0: active, bit 1: reduce_only
     pub tif: u8,
     pub _pad1: [u8; 5],
     pub next: u32,
@@ -26,12 +26,8 @@ pub struct OrderSlot {
     pub _pad4: [u8; 24],
 }
 
-const _: () = assert!(
-    std::mem::size_of::<OrderSlot>() == 128
-);
-const _: () = assert!(
-    std::mem::align_of::<OrderSlot>() == 64
-);
+const _: () = assert!(std::mem::size_of::<OrderSlot>() == 128);
+const _: () = assert!(std::mem::align_of::<OrderSlot>() == 64);
 
 impl OrderSlot {
     pub fn is_active(&self) -> bool {

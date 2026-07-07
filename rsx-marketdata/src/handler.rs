@@ -82,20 +82,10 @@ pub async fn handle_connection(
                 channels,
             }) => {
                 let mut st = state.borrow_mut();
-                let is_new = st.subscribe(
-                    conn_id,
-                    symbol_id,
-                    channels,
-                    snapshot_depth,
-                );
+                let is_new = st.subscribe(conn_id, symbol_id, channels, snapshot_depth);
                 if (channels & 2) != 0 {
                     st.ensure_book(symbol_id, 0);
-                    st.send_snapshot_to_client(
-                        conn_id,
-                        symbol_id,
-                        snapshot_depth,
-                        max_outbound,
-                    );
+                    st.send_snapshot_to_client(conn_id, symbol_id, snapshot_depth, max_outbound);
                 }
                 // SAFETY: is_new only matters for first-
                 // time subscribers; we already sent a
@@ -116,16 +106,11 @@ pub async fn handle_connection(
             Ok(MdFrame::Heartbeat { timestamp_ms }) => {
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
-                let echo: Arc<str> =
-                    format!("{{\"H\":[{}]}}", timestamp_ms).into();
+                let echo: Arc<str> = format!("{{\"H\":[{}]}}", timestamp_ms).into();
                 // SAFETY: heartbeat echo is best-effort;
                 // a slow client with full outbound has
                 // bigger problems than a missed pong.
-                let _accepted = st.push_to_client(
-                    conn_id,
-                    echo,
-                    max_outbound,
-                );
+                let _accepted = st.push_to_client(conn_id, echo, max_outbound);
             }
             Err(MdParseError::InvalidJson) => continue,
             Err(_) => continue,

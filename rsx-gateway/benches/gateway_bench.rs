@@ -12,10 +12,10 @@ use rsx_gateway::convert::qty_to_fixed;
 use rsx_gateway::order_id::generate_order_id;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingOrders;
+use rsx_gateway::rate_limit::RateLimiter;
 use rsx_gateway::records::parse;
 use rsx_gateway::records::serialize;
 use rsx_gateway::records::WsFrame;
-use rsx_gateway::rate_limit::RateLimiter;
 use rsx_types::SymbolConfig;
 
 fn cid20() -> String {
@@ -27,10 +27,7 @@ fn oid32() -> String {
 }
 
 fn make_n_frame_json() -> String {
-    format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,0,0]}}",
-        cid20(),
-    )
+    format!("{{\"N\":[1,0,50000,100,\"{}\",0,0,0]}}", cid20(),)
 }
 
 fn make_c_frame_json() -> String {
@@ -74,9 +71,7 @@ fn make_pending_order(i: u32) -> PendingOrder {
 /// <500ns: parse new order frame
 fn bench_ws_parse_n_frame(c: &mut Criterion) {
     let json = make_n_frame_json();
-    c.bench_function("ws_parse_n_frame", |b| {
-        b.iter(|| parse(black_box(&json)))
-    });
+    c.bench_function("ws_parse_n_frame", |b| b.iter(|| parse(black_box(&json))));
 }
 
 /// <500ns: serialize fill frame
@@ -96,48 +91,42 @@ fn bench_uuid_v7_generation(c: &mut Criterion) {
 
 /// <100ns: LIFO pop from 5 pending orders
 fn bench_pending_lifo_pop_5_orders(c: &mut Criterion) {
-    c.bench_function(
-        "pending_lifo_pop_5_orders",
-        |b| {
-            b.iter_batched(
-                || {
-                    let mut p = PendingOrders::new(100);
-                    for i in 0..5 {
-                        p.push(make_pending_order(i));
-                    }
-                    let target = make_pending_order(4);
-                    (p, target.order_id)
-                },
-                |(mut p, oid)| {
-                    black_box(p.remove(black_box(&oid)));
-                },
-                criterion::BatchSize::SmallInput,
-            )
-        },
-    );
+    c.bench_function("pending_lifo_pop_5_orders", |b| {
+        b.iter_batched(
+            || {
+                let mut p = PendingOrders::new(100);
+                for i in 0..5 {
+                    p.push(make_pending_order(i));
+                }
+                let target = make_pending_order(4);
+                (p, target.order_id)
+            },
+            |(mut p, oid)| {
+                black_box(p.remove(black_box(&oid)));
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
 }
 
 /// <100ns: linear scan of 10 pending orders
 fn bench_pending_linear_scan_10(c: &mut Criterion) {
-    c.bench_function(
-        "pending_linear_scan_10",
-        |b| {
-            b.iter_batched(
-                || {
-                    let mut p = PendingOrders::new(100);
-                    for i in 0..10 {
-                        p.push(make_pending_order(i));
-                    }
-                    let target = make_pending_order(0);
-                    (p, target.order_id)
-                },
-                |(mut p, oid)| {
-                    black_box(p.remove(black_box(&oid)));
-                },
-                criterion::BatchSize::SmallInput,
-            )
-        },
-    );
+    c.bench_function("pending_linear_scan_10", |b| {
+        b.iter_batched(
+            || {
+                let mut p = PendingOrders::new(100);
+                for i in 0..10 {
+                    p.push(make_pending_order(i));
+                }
+                let target = make_pending_order(0);
+                (p, target.order_id)
+            },
+            |(mut p, oid)| {
+                black_box(p.remove(black_box(&oid)));
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
 }
 
 /// <50ns: rate limit check
@@ -151,17 +140,13 @@ fn bench_rate_limit_check(c: &mut Criterion) {
 /// <200ns: parse cancel frame
 fn bench_ws_parse_c_frame(c: &mut Criterion) {
     let json = make_c_frame_json();
-    c.bench_function("ws_parse_c_frame", |b| {
-        b.iter(|| parse(black_box(&json)))
-    });
+    c.bench_function("ws_parse_c_frame", |b| b.iter(|| parse(black_box(&json))));
 }
 
 /// <500ns: parse auth/subscribe frame
 fn bench_ws_parse_a_frame(c: &mut Criterion) {
     let json = make_a_frame_json();
-    c.bench_function("ws_parse_a_frame", |b| {
-        b.iter(|| parse(black_box(&json)))
-    });
+    c.bench_function("ws_parse_a_frame", |b| b.iter(|| parse(black_box(&json))));
 }
 
 /// <100ns: backpressure reject (pending full)
@@ -176,8 +161,7 @@ fn bench_backpressure_reject(c: &mut Criterion) {
                 p
             },
             |mut p| {
-                let rejected =
-                    !p.push(make_pending_order(99));
+                let rejected = !p.push(make_pending_order(99));
                 black_box(rejected);
             },
             criterion::BatchSize::SmallInput,
@@ -213,10 +197,8 @@ fn bench_fixed_point_conversion(c: &mut Criterion) {
     };
     c.bench_function("fixed_point_conversion", |b| {
         b.iter(|| {
-            let px =
-                price_to_fixed(black_box(500.25), &config);
-            let qty =
-                qty_to_fixed(black_box(1.5), &config);
+            let px = price_to_fixed(black_box(500.25), &config);
+            let qty = qty_to_fixed(black_box(1.5), &config);
             black_box((px, qty));
         })
     });

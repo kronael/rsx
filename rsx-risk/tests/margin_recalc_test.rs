@@ -9,7 +9,7 @@ fn make_pm(n: usize) -> PortfolioMargin {
     PortfolioMargin {
         symbol_params: vec![
             SymbolRiskParams {
-                initial_margin_rate: 1000, // 10%
+                initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
             };
@@ -23,9 +23,9 @@ fn margin_check_detects_undercollateralized() {
     let pm = make_pm(1);
     let mut p = Position::new(1, 0);
     p.apply_fill(0, 100, 100, 1); // long 100@100
-    // mark drops to 10 -> upnl = 100*(10-100) = -9000
-    // equity = 1000 + (-9000) = -8000
-    // notional = 100*10 = 1000, mm = 50
+                                  // mark drops to 10 -> upnl = 100*(10-100) = -9000
+                                  // equity = 1000 + (-9000) = -8000
+                                  // notional = 100*10 = 1000, mm = 50
     let a = Account::new(1, 1000);
     let state = pm.calculate(&a, std::iter::once(&p), &[10], 0);
     assert!(state.equity < state.maintenance_margin);

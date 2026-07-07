@@ -90,10 +90,7 @@ impl XorShift64 {
 fn bench_wal_random_read_10k(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
-    let mut writer = WalWriter::new(
-        1, tmp.path(), 1024 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1024 * 1024 * 1024).unwrap();
     for _ in 0..10_000u64 {
         let mut rec = fill_record();
         {
@@ -108,8 +105,7 @@ fn bench_wal_random_read_10k(c: &mut Criterion) {
     c.bench_function("wal_random_read_10k", |b| {
         b.iter(|| {
             let seq = (rng.next() % 10_000) + 1;
-            let rec = read_record_at_seq(1, black_box(seq), tmp.path())
-            .unwrap();
+            let rec = read_record_at_seq(1, black_box(seq), tmp.path()).unwrap();
             black_box(rec);
         });
     });
@@ -118,10 +114,7 @@ fn bench_wal_random_read_10k(c: &mut Criterion) {
 fn bench_wal_random_read_100k(c: &mut Criterion) {
     pin_worker();
     let tmp = TempDir::new().unwrap();
-    let mut writer = WalWriter::new(
-        1, tmp.path(), 1024 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1024 * 1024 * 1024).unwrap();
     for _ in 0..100_000u64 {
         let mut rec = fill_record();
         {
@@ -136,8 +129,7 @@ fn bench_wal_random_read_100k(c: &mut Criterion) {
     c.bench_function("wal_random_read_100k", |b| {
         b.iter(|| {
             let seq = (rng.next() % 100_000) + 1;
-            let rec = read_record_at_seq(1, black_box(seq), tmp.path())
-            .unwrap();
+            let rec = read_record_at_seq(1, black_box(seq), tmp.path()).unwrap();
             black_box(rec);
         });
     });

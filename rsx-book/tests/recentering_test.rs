@@ -1,9 +1,9 @@
 use rsx_book::book::BookState;
 use rsx_book::book::Orderbook;
 use rsx_book::snapshot;
-use rsx_types::NONE;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
+use rsx_types::NONE;
 
 fn test_config() -> SymbolConfig {
     SymbolConfig {
@@ -20,8 +20,7 @@ fn test_book() -> Orderbook {
 }
 
 #[test]
-fn recenter_triggers_when_mid_drifts_beyond_zone_0()
-{
+fn recenter_triggers_when_mid_drifts_beyond_zone_0() {
     let book = test_book();
     // Zone 0 = 5% of 50_000 = 2_500 ticks.
     // Trigger threshold = zone0_half / 2 = 1_250.
@@ -48,26 +47,18 @@ fn recenter_frontier_starts_at_new_mid() {
 }
 
 #[test]
-fn resolve_level_migrates_on_access_outside_frontier()
-{
+fn resolve_level_migrates_on_access_outside_frontier() {
     let mut book = test_book();
-    book.insert_resting(
-        49_900, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
+    book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.trigger_recenter(50_500);
     book.resolve_level(49_900);
     assert!(book.bid_frontier <= 49_900);
 }
 
 #[test]
-fn migrate_single_level_moves_orders_to_new_indices()
-{
+fn migrate_single_level_moves_orders_to_new_indices() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
+    let h = book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let old_tick = book.orders.get(h).tick_index;
 
     book.trigger_recenter(50_500);
@@ -76,19 +67,12 @@ fn migrate_single_level_moves_orders_to_new_indices()
     // Order should now have a new tick index in the
     // new compression map
     let new_tick = book.orders.get(h).tick_index;
-    let expected =
-        book.compression.price_to_index(49_950);
+    let expected = book.compression.price_to_index(49_950);
     assert_eq!(new_tick, expected);
     // Old and new tick may differ due to new mid
-    assert!(
-        new_tick != old_tick || old_tick == expected
-    );
+    assert!(new_tick != old_tick || old_tick == expected);
     // Level at new tick should have the order
-    assert_eq!(
-        book.active_levels[new_tick as usize]
-            .order_count,
-        1,
-    );
+    assert_eq!(book.active_levels[new_tick as usize].order_count, 1,);
 }
 
 #[test]
@@ -119,14 +103,8 @@ fn migrate_batch_expands_frontiers() {
 #[test]
 fn migrate_completes_when_all_levels_drained() {
     let mut book = test_book();
-    book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
-    book.insert_resting(
-        50_050, 100, Side::Sell, 0, 2, false,
-        0, 0, 0,
-    );
+    book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_050, 100, Side::Sell, 0, 2, false, 0, 0, 0);
     book.trigger_recenter(50_500);
     assert!(book.is_migrating());
 
@@ -145,10 +123,7 @@ fn migrate_completes_when_all_levels_drained() {
 #[test]
 fn cancel_during_migration_resolves_first() {
     let mut book = test_book();
-    let h = book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
+    let h = book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.trigger_recenter(50_500);
     // Resolve first so order is in new array
     book.resolve_level(49_950);
@@ -159,24 +134,15 @@ fn cancel_during_migration_resolves_first() {
 fn insert_during_migration_goes_to_new_array() {
     let mut book = test_book();
     book.trigger_recenter(52_000);
-    let _h = book.insert_resting(
-        52_100, 100, Side::Sell, 0, 1, false,
-        0, 0, 0,
-    );
+    let _h = book.insert_resting(52_100, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     assert_ne!(book.best_ask_tick, NONE);
 }
 
 #[test]
 fn best_bid_ask_correct_after_recenter() {
     let mut book = test_book();
-    book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
-    book.insert_resting(
-        50_050, 100, Side::Sell, 0, 2, false,
-        0, 0, 0,
-    );
+    book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
+    book.insert_resting(50_050, 100, Side::Sell, 0, 2, false, 0, 0, 0);
     book.trigger_recenter(50_500);
     book.resolve_level(49_950);
     book.resolve_level(50_050);
@@ -199,10 +165,7 @@ fn snapshot_blocked_during_migration() {
 #[test]
 fn snapshot_runs_after_migration_completes() {
     let mut book = test_book();
-    book.insert_resting(
-        49_950, 100, Side::Buy, 0, 1, false,
-        0, 0, 0,
-    );
+    book.insert_resting(49_950, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     book.trigger_recenter(50_500);
 
     // Complete migration

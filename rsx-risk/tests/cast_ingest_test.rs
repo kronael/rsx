@@ -1,5 +1,5 @@
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::Framed;
 use rsx_messages::BboRecord;
@@ -17,10 +17,10 @@ use rsx_risk::shard::RiskShard;
 use rsx_risk::types::BboUpdate;
 use rtrb::RingBuffer;
 use std::net::SocketAddr;
+use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
-use std::net::UdpSocket;
 
 fn test_config(max_symbols: usize) -> ShardConfig {
     ShardConfig {
@@ -47,10 +47,8 @@ fn test_config(max_symbols: usize) -> ShardConfig {
 }
 
 fn make_rings() -> ShardRings {
-    let (resp_prod, _resp_cons) =
-        RingBuffer::<OrderResponse>::new(8);
-    let (acc_prod, _acc_cons) =
-        RingBuffer::<rsx_risk::types::OrderRequest>::new(8);
+    let (resp_prod, _resp_cons) = RingBuffer::<OrderResponse>::new(8);
+    let (acc_prod, _acc_cons) = RingBuffer::<rsx_risk::types::OrderRequest>::new(8);
 
     ShardRings {
         response_producer: resp_prod,
@@ -94,14 +92,10 @@ fn mark_cast_updates_risk_mark_prices() {
             CastRecv::Reconnect { .. } => panic!("unexpected reconnect"),
         };
         if hdr.record_type == RECORD_MARK_PRICE
-            && payload.len()
-                >= std::mem::size_of::<MarkPriceRecord>()
+            && payload.len() >= std::mem::size_of::<MarkPriceRecord>()
         {
-            let decoded = unsafe {
-                std::ptr::read_unaligned(
-                    payload.as_ptr() as *const MarkPriceRecord,
-                )
-            };
+            let decoded =
+                unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const MarkPriceRecord) };
             shard.update_mark(decoded.symbol_id, decoded.mark_price.0);
         }
     }
@@ -149,15 +143,8 @@ fn bbo_cast_updates_risk_index_price() {
             CastRecv::Faulted { .. } => panic!("unexpected fault"),
             CastRecv::Reconnect { .. } => panic!("unexpected reconnect"),
         };
-        if hdr.record_type == RECORD_BBO
-            && payload.len()
-                >= std::mem::size_of::<BboRecord>()
-        {
-            let decoded = unsafe {
-                std::ptr::read_unaligned(
-                    payload.as_ptr() as *const BboRecord,
-                )
-            };
+        if hdr.record_type == RECORD_BBO && payload.len() >= std::mem::size_of::<BboRecord>() {
+            let decoded = unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const BboRecord) };
             shard.stash_bbo(BboUpdate {
                 seq: decoded.seq,
                 symbol_id: decoded.symbol_id,

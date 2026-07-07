@@ -110,8 +110,7 @@ pub fn mlock_all() -> bool {
 /// `/sys/devices/system/cpu/isolated` (the effective isolcpus list). `None`
 /// if the file cannot be read.
 pub fn core_is_isolated(core: usize) -> Option<bool> {
-    let raw =
-        std::fs::read_to_string("/sys/devices/system/cpu/isolated").ok()?;
+    let raw = std::fs::read_to_string("/sys/devices/system/cpu/isolated").ok()?;
     Some(parse_cpu_list(raw.trim()).contains(&core))
 }
 
@@ -123,9 +122,7 @@ pub fn parse_cpu_list(s: &str) -> Vec<usize> {
     }
     for part in s.split(',') {
         if let Some((a, b)) = part.split_once('-') {
-            if let (Ok(a), Ok(b)) =
-                (a.parse::<usize>(), b.parse::<usize>())
-            {
+            if let (Ok(a), Ok(b)) = (a.parse::<usize>(), b.parse::<usize>()) {
                 out.extend(a..=b);
             }
         } else if let Ok(c) = part.parse::<usize>() {

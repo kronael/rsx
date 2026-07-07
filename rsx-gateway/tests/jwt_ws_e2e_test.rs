@@ -35,11 +35,7 @@ fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
 
 /// Mint a token deliberately missing the `jti` claim — used
 /// to assert that the gateway rejects such tokens (F2.2).
-fn make_jwt_no_jti(
-    user_id: u32,
-    exp: u64,
-    secret: &str,
-) -> String {
+fn make_jwt_no_jti(user_id: u32, exp: u64, secret: &str) -> String {
     let claims = Claims {
         sub: format!("github:{user_id}"),
         user_id: Some(user_id),
@@ -64,38 +60,26 @@ fn test_ws_handshake_with_valid_jwt() {
     let exp = now_secs() + 3600;
     let token = make_jwt(user_id, exp, secret);
 
-    let mut runtime = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut runtime = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
-            "127.0.0.1:0",
-        )
-        .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
-            let result =
-                ws_handshake(&mut stream, secret).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let result = ws_handshake(&mut stream, secret).await;
             assert!(result.is_ok());
             let (_key, uid, _leftover) = result.unwrap();
             assert_eq!(uid, user_id);
         });
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(10),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let mut client = TcpStream::connect(local_addr)
-            .await
-            .unwrap();
+        let mut client = TcpStream::connect(local_addr).await.unwrap();
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
@@ -110,14 +94,10 @@ Sec-WebSocket-Version: 13\r\n\
         );
 
         use monoio::io::AsyncWriteRentExt;
-        let (res, _) =
-            client.write_all(request.into_bytes()).await;
+        let (res, _) = client.write_all(request.into_bytes()).await;
         res.unwrap();
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(100),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(100)).await;
     });
 }
 
@@ -128,36 +108,24 @@ fn test_ws_handshake_with_expired_jwt() {
     let exp = now_secs().saturating_sub(3600);
     let token = make_jwt(user_id, exp, secret);
 
-    let mut runtime = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut runtime = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
-            "127.0.0.1:0",
-        )
-        .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
-            let result =
-                ws_handshake(&mut stream, secret).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let result = ws_handshake(&mut stream, secret).await;
             assert!(result.is_err());
         });
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(10),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let mut client = TcpStream::connect(local_addr)
-            .await
-            .unwrap();
+        let mut client = TcpStream::connect(local_addr).await.unwrap();
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
@@ -172,14 +140,10 @@ Sec-WebSocket-Version: 13\r\n\
         );
 
         use monoio::io::AsyncWriteRentExt;
-        let (res, _) =
-            client.write_all(request.into_bytes()).await;
+        let (res, _) = client.write_all(request.into_bytes()).await;
         res.unwrap();
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(100),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(100)).await;
     });
 }
 
@@ -187,39 +151,26 @@ Sec-WebSocket-Version: 13\r\n\
 fn test_ws_handshake_missing_auth() {
     let secret = "test-secret-padded-to-32-bytes-minlen!";
 
-    let mut runtime = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut runtime = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
-            "127.0.0.1:0",
-        )
-        .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
-            let result =
-                ws_handshake(&mut stream, secret).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let result = ws_handshake(&mut stream, secret).await;
             assert!(result.is_err());
         });
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(10),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let mut client = TcpStream::connect(local_addr)
-            .await
-            .unwrap();
+        let mut client = TcpStream::connect(local_addr).await.unwrap();
 
-        let request =
-            "GET / HTTP/1.1\r\n\
+        let request = "GET / HTTP/1.1\r\n\
 Host: localhost\r\n\
 Upgrade: websocket\r\n\
 Connection: Upgrade\r\n\
@@ -228,27 +179,16 @@ Sec-WebSocket-Version: 13\r\n\
 \r\n";
 
         use monoio::io::AsyncWriteRentExt;
-        let (res, _) = client
-            .write_all(request.as_bytes().to_vec())
-            .await;
+        let (res, _) = client.write_all(request.as_bytes().to_vec()).await;
         res.unwrap();
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(100),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(100)).await;
     });
 }
 
-
 /// Mint a JWT with an explicit `jti` claim — used by the
 /// replay test below.
-fn make_jwt_with_jti(
-    user_id: u32,
-    exp: u64,
-    jti: &str,
-    secret: &str,
-) -> String {
+fn make_jwt_with_jti(user_id: u32, exp: u64, jti: &str, secret: &str) -> String {
     let claims = Claims {
         sub: format!("github:{user_id}"),
         user_id: Some(user_id),
@@ -279,40 +219,28 @@ fn test_ws_handshake_rejects_jti_replay() {
     let jti = format!("replay-test-{}", now_secs());
     let token = make_jwt_with_jti(user_id, exp, &jti, secret);
 
-    let mut runtime = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut runtime = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
-            "127.0.0.1:0",
-        )
-        .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = listener.local_addr().unwrap();
 
         // Serve two consecutive handshakes; first ok, second err.
         monoio::spawn(async move {
             // First.
-            let (mut s1, _) =
-                listener.accept().await.unwrap();
+            let (mut s1, _) = listener.accept().await.unwrap();
             let r1 = ws_handshake(&mut s1, secret).await;
-            assert!(r1.is_ok(),
-                "first handshake should succeed");
+            assert!(r1.is_ok(), "first handshake should succeed");
             // Second uses the same jti.
-            let (mut s2, _) =
-                listener.accept().await.unwrap();
+            let (mut s2, _) = listener.accept().await.unwrap();
             let r2 = ws_handshake(&mut s2, secret).await;
-            assert!(r2.is_err(),
-                "second handshake should reject jti replay");
+            assert!(r2.is_err(), "second handshake should reject jti replay");
         });
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(10),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
@@ -329,27 +257,17 @@ Sec-WebSocket-Version: 13\r\n\
         use monoio::io::AsyncWriteRentExt;
 
         // First connection.
-        let mut c1 = TcpStream::connect(local_addr)
-            .await.unwrap();
-        let (r1, _) =
-            c1.write_all(request.clone().into_bytes()).await;
+        let mut c1 = TcpStream::connect(local_addr).await.unwrap();
+        let (r1, _) = c1.write_all(request.clone().into_bytes()).await;
         r1.unwrap();
-        monoio::time::sleep(
-            std::time::Duration::from_millis(50),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(50)).await;
         drop(c1);
 
         // Second connection: same token, same jti.
-        let mut c2 = TcpStream::connect(local_addr)
-            .await.unwrap();
-        let (r2, _) =
-            c2.write_all(request.into_bytes()).await;
+        let mut c2 = TcpStream::connect(local_addr).await.unwrap();
+        let (r2, _) = c2.write_all(request.into_bytes()).await;
         r2.unwrap();
-        monoio::time::sleep(
-            std::time::Duration::from_millis(100),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(100)).await;
     });
 }
 
@@ -364,29 +282,19 @@ fn test_ws_handshake_rejects_missing_jti() {
     let exp = now_secs() + 3600;
     let token = make_jwt_no_jti(user_id, exp, secret);
 
-    let mut runtime = monoio::RuntimeBuilder::<
-        monoio::FusionDriver,
-    >::new()
-    .enable_timer()
-    .build()
-    .unwrap();
+    let mut runtime = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
 
     runtime.block_on(async move {
-        let listener = monoio::net::TcpListener::bind(
-            "127.0.0.1:0",
-        )
-        .unwrap();
+        let listener = monoio::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = listener.local_addr().unwrap();
 
         monoio::spawn(async move {
-            let (mut stream, _) =
-                listener.accept().await.unwrap();
-            let result =
-                ws_handshake(&mut stream, secret).await;
-            assert!(
-                result.is_err(),
-                "token without jti must be rejected"
-            );
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let result = ws_handshake(&mut stream, secret).await;
+            assert!(result.is_err(), "token without jti must be rejected");
             let err = result.unwrap_err();
             assert!(
                 err.to_string().contains("missing jti"),
@@ -394,14 +302,9 @@ fn test_ws_handshake_rejects_missing_jti() {
             );
         });
 
-        monoio::time::sleep(
-            std::time::Duration::from_millis(10),
-        )
-        .await;
+        monoio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let mut client = TcpStream::connect(local_addr)
-            .await
-            .unwrap();
+        let mut client = TcpStream::connect(local_addr).await.unwrap();
 
         let request = format!(
             "GET / HTTP/1.1\r\n\
@@ -416,8 +319,7 @@ Sec-WebSocket-Version: 13\r\n\
         );
 
         use monoio::io::AsyncWriteRentExt;
-        let (res, _) =
-            client.write_all(request.into_bytes()).await;
+        let (res, _) = client.write_all(request.into_bytes()).await;
         res.unwrap();
 
         // Read the 401 response to demonstrate the negative

@@ -17,18 +17,12 @@ pub mod time_utils;
 pub use macros::install_panic_handler;
 
 /// Price in smallest tick units. 1 = one tick.
-#[derive(
-    Clone, Copy, PartialEq, Eq, PartialOrd, Ord,
-    Hash, Debug, Default,
-)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct Price(pub i64);
 
 /// Quantity in smallest lot units. 1 = one lot.
-#[derive(
-    Clone, Copy, PartialEq, Eq, PartialOrd, Ord,
-    Hash, Debug, Default,
-)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct Qty(pub i64);
 
@@ -106,13 +100,6 @@ pub struct SymbolConfig {
 /// Order-entry alignment gate: `true` iff `price > 0`, `qty > 0`, and both are
 /// exact multiples of the symbol's tick/lot size. The one validation point;
 /// the matching engine assumes its inputs already passed here.
-pub fn validate_order(
-    config: &SymbolConfig,
-    price: Price,
-    qty: Qty,
-) -> bool {
-    price.0 > 0
-        && qty.0 > 0
-        && price.0 % config.tick_size == 0
-        && qty.0 % config.lot_size == 0
+pub fn validate_order(config: &SymbolConfig, price: Price, qty: Qty) -> bool {
+    price.0 > 0 && qty.0 > 0 && price.0 % config.tick_size == 0 && qty.0 % config.lot_size == 0
 }

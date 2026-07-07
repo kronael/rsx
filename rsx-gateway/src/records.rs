@@ -91,76 +91,59 @@ impl std::error::Error for ParseError {}
 fn as_u32(v: &Value, field: &str) -> Result<u32, ParseError> {
     v.as_u64()
         .and_then(|n| {
-            if n <= u32::MAX as u64 { Some(n as u32) } else { None }
+            if n <= u32::MAX as u64 {
+                Some(n as u32)
+            } else {
+                None
+            }
         })
-        .ok_or_else(|| {
-            ParseError::InvalidValue(field.to_string())
-        })
+        .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
 fn as_i64(v: &Value, field: &str) -> Result<i64, ParseError> {
-    v.as_i64().ok_or_else(|| {
-        ParseError::InvalidValue(field.to_string())
-    })
+    v.as_i64()
+        .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
 fn as_u64(v: &Value, field: &str) -> Result<u64, ParseError> {
-    v.as_u64().ok_or_else(|| {
-        ParseError::InvalidValue(field.to_string())
-    })
+    v.as_u64()
+        .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
-fn as_str<'a>(
-    v: &'a Value,
-    field: &str,
-) -> Result<&'a str, ParseError> {
-    v.as_str().ok_or_else(|| {
-        ParseError::InvalidValue(field.to_string())
-    })
+fn as_str<'a>(v: &'a Value, field: &str) -> Result<&'a str, ParseError> {
+    v.as_str()
+        .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
 fn as_u8(v: &Value, field: &str) -> Result<u8, ParseError> {
     v.as_u64()
-        .and_then(|n| {
-            if n <= 255 { Some(n as u8) } else { None }
-        })
-        .ok_or_else(|| {
-            ParseError::InvalidValue(field.to_string())
-        })
+        .and_then(|n| if n <= 255 { Some(n as u8) } else { None })
+        .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
-fn arr_get<'a>(
-    arr: &'a [Value],
-    idx: usize,
-    field: &str,
-) -> Result<&'a Value, ParseError> {
-    arr.get(idx).ok_or_else(|| {
-        ParseError::MissingField(field.to_string())
-    })
+fn arr_get<'a>(arr: &'a [Value], idx: usize, field: &str) -> Result<&'a Value, ParseError> {
+    arr.get(idx)
+        .ok_or_else(|| ParseError::MissingField(field.to_string()))
 }
 
 pub fn parse(text: &str) -> Result<WsFrame, ParseError> {
-    let val: Value = serde_json::from_str(text)
-        .map_err(|_| ParseError::InvalidJson)?;
-    let obj = val
-        .as_object()
-        .ok_or(ParseError::InvalidJson)?;
+    let val: Value = serde_json::from_str(text).map_err(|_| ParseError::InvalidJson)?;
+    let obj = val.as_object().ok_or(ParseError::InvalidJson)?;
     if obj.len() != 1 {
         return Err(ParseError::MultipleKeys);
     }
     // SAFETY: obj.len()==1 checked above
-    let (key, value) = obj.iter().next().expect(
-        "INVARIANT: obj has exactly one entry (len==1 checked above)",
-    );
+    let (key, value) = obj
+        .iter()
+        .next()
+        .expect("INVARIANT: obj has exactly one entry (len==1 checked above)");
 
     // Validate key is alphabetic
     if !key.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(ParseError::UnknownType(key.clone()));
     }
 
-    let arr = value
-        .as_array()
-        .ok_or(ParseError::InvalidJson)?;
+    let arr = value.as_array().ok_or(ParseError::InvalidJson)?;
 
     match key.as_str() {
         "N" => parse_new_order(arr),
@@ -170,15 +153,11 @@ pub fn parse(text: &str) -> Result<WsFrame, ParseError> {
         "E" => parse_error(arr),
         "H" => parse_heartbeat(arr),
         "Q" => parse_liquidation(arr),
-        other => {
-            Err(ParseError::UnknownType(other.to_string()))
-        }
+        other => Err(ParseError::UnknownType(other.to_string())),
     }
 }
 
-fn parse_new_order(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_new_order(arr: &[Value]) -> Result<WsFrame, ParseError> {
     if arr.len() < 6 {
         return Err(ParseError::MissingField(
             "N requires at least 6 fields".to_string(),
@@ -187,9 +166,7 @@ fn parse_new_order(
     let symbol_id = as_u32(&arr[0], "sym")?;
     let side = as_u8(&arr[1], "side")?;
     if side > 1 {
-        return Err(ParseError::InvalidValue(
-            "side must be 0 or 1".to_string(),
-        ));
+        return Err(ParseError::InvalidValue("side must be 0 or 1".to_string()));
     }
     let price = as_i64(&arr[2], "px")?;
     let qty = as_i64(&arr[3], "qty")?;
@@ -227,9 +204,7 @@ fn parse_new_order(
     })
 }
 
-fn parse_cancel(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_cancel(arr: &[Value]) -> Result<WsFrame, ParseError> {
     let v = arr_get(arr, 0, "cid_or_oid")?;
     let s = as_str(v, "cid_or_oid")?.to_string();
     let key = if s.len() == 20 {
@@ -238,40 +213,29 @@ fn parse_cancel(
         CancelKey::OrderId(s)
     } else {
         return Err(ParseError::InvalidValue(
-            "cancel key must be 20 (cid) or 32 (oid) chars"
-                .to_string(),
+            "cancel key must be 20 (cid) or 32 (oid) chars".to_string(),
         ));
     };
     Ok(WsFrame::Cancel { key })
 }
 
-fn parse_order_update(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_order_update(arr: &[Value]) -> Result<WsFrame, ParseError> {
     if arr.len() < 5 {
-        return Err(ParseError::MissingField(
-            "U requires 5 fields".to_string(),
-        ));
+        return Err(ParseError::MissingField("U requires 5 fields".to_string()));
     }
     let oid = as_str(&arr[0], "oid")?.to_string();
     if oid.len() != 32 {
-        return Err(ParseError::InvalidValue(
-            "oid must be 32 chars".to_string(),
-        ));
+        return Err(ParseError::InvalidValue("oid must be 32 chars".to_string()));
     }
     let status = as_u8(&arr[1], "status")?;
     if status > 3 {
-        return Err(ParseError::InvalidValue(
-            "status must be 0-3".to_string(),
-        ));
+        return Err(ParseError::InvalidValue("status must be 0-3".to_string()));
     }
     let filled_qty = as_i64(&arr[2], "filled")?;
     let remaining_qty = as_i64(&arr[3], "remaining")?;
     let reason = as_u8(&arr[4], "reason")?;
     if reason > 12 {
-        return Err(ParseError::InvalidValue(
-            "reason must be 0-12".to_string(),
-        ));
+        return Err(ParseError::InvalidValue("reason must be 0-12".to_string()));
     }
     Ok(WsFrame::OrderUpdate {
         order_id: oid,
@@ -282,13 +246,9 @@ fn parse_order_update(
     })
 }
 
-fn parse_fill(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_fill(arr: &[Value]) -> Result<WsFrame, ParseError> {
     if arr.len() < 6 {
-        return Err(ParseError::MissingField(
-            "F requires 6 fields".to_string(),
-        ));
+        return Err(ParseError::MissingField("F requires 6 fields".to_string()));
     }
     let taker = as_str(&arr[0], "taker_oid")?.to_string();
     let maker = as_str(&arr[1], "maker_oid")?.to_string();
@@ -306,34 +266,24 @@ fn parse_fill(
     })
 }
 
-fn parse_error(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_error(arr: &[Value]) -> Result<WsFrame, ParseError> {
     if arr.len() < 2 {
-        return Err(ParseError::MissingField(
-            "E requires 2 fields".to_string(),
-        ));
+        return Err(ParseError::MissingField("E requires 2 fields".to_string()));
     }
     let code = as_u32(&arr[0], "code")?;
     let msg = as_str(&arr[1], "msg")?.to_string();
     Ok(WsFrame::Error { code, message: msg })
 }
 
-fn parse_heartbeat(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_heartbeat(arr: &[Value]) -> Result<WsFrame, ParseError> {
     let v = arr_get(arr, 0, "ts")?;
     let ts = as_u64(v, "ts")?;
     Ok(WsFrame::Heartbeat { timestamp_ms: ts })
 }
 
-fn parse_liquidation(
-    arr: &[Value],
-) -> Result<WsFrame, ParseError> {
+fn parse_liquidation(arr: &[Value]) -> Result<WsFrame, ParseError> {
     if arr.len() < 7 {
-        return Err(ParseError::MissingField(
-            "Q requires 7 fields".to_string(),
-        ));
+        return Err(ParseError::MissingField("Q requires 7 fields".to_string()));
     }
     let symbol_id = as_u32(&arr[0], "sym")?;
     let status = as_u8(&arr[1], "status")?;
@@ -345,9 +295,7 @@ fn parse_liquidation(
     let round = as_u32(&arr[2], "round")?;
     let side = as_u8(&arr[3], "side")?;
     if side > 1 {
-        return Err(ParseError::InvalidValue(
-            "side must be 0 or 1".to_string(),
-        ));
+        return Err(ParseError::InvalidValue("side must be 0 or 1".to_string()));
     }
     let qty = as_i64(&arr[4], "qty")?;
     let price = as_i64(&arr[5], "price")?;
@@ -379,8 +327,7 @@ pub fn serialize(frame: &WsFrame) -> String {
             let po = if *post_only { 1 } else { 0 };
             format!(
                 "{{\"N\":[{},{},{},{},\"{}\",{},{},{}]}}",
-                symbol_id, side, price, qty,
-                client_order_id, tif, ro, po,
+                symbol_id, side, price, qty, client_order_id, tif, ro, po,
             )
         }
         WsFrame::Cancel { key } => {
@@ -399,8 +346,7 @@ pub fn serialize(frame: &WsFrame) -> String {
         } => {
             format!(
                 "{{\"U\":[\"{}\",{},{},{},{}]}}",
-                order_id, status, filled_qty,
-                remaining_qty, reason,
+                order_id, status, filled_qty, remaining_qty, reason,
             )
         }
         WsFrame::Fill {
@@ -413,15 +359,11 @@ pub fn serialize(frame: &WsFrame) -> String {
         } => {
             format!(
                 "{{\"F\":[\"{}\",\"{}\",{},{},{},{}]}}",
-                taker_order_id, maker_order_id,
-                price, qty, timestamp_ns, fee,
+                taker_order_id, maker_order_id, price, qty, timestamp_ns, fee,
             )
         }
         WsFrame::Error { code, message } => {
-            format!(
-                "{{\"E\":[{},\"{}\"]}}",
-                code, message,
-            )
+            format!("{{\"E\":[{},\"{}\"]}}", code, message,)
         }
         WsFrame::Heartbeat { timestamp_ms } => {
             format!("{{\"H\":[{}]}}", timestamp_ms)
@@ -437,8 +379,7 @@ pub fn serialize(frame: &WsFrame) -> String {
         } => {
             format!(
                 "{{\"Q\":[{},{},{},{},{},{},{}]}}",
-                symbol_id, status, round, side,
-                qty, price, slip_bps,
+                symbol_id, status, round, side, qty, price, slip_bps,
             )
         }
     }

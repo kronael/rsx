@@ -53,10 +53,7 @@ fn bench_validate_no_jti(c: &mut Criterion) {
     let token = mint_token(None);
     c.bench_function("jwt_validate_no_jti", |b| {
         b.iter(|| {
-            let r = validate_jwt_with_claims(
-                black_box(&token),
-                black_box(SECRET),
-            );
+            let r = validate_jwt_with_claims(black_box(&token), black_box(SECRET));
             black_box(r.unwrap());
         });
     });
@@ -64,23 +61,14 @@ fn bench_validate_no_jti(c: &mut Criterion) {
 
 /// Validation with jti — same path plus the jti claim parse.
 fn bench_validate_with_jti(c: &mut Criterion) {
-    let token = mint_token(Some(
-        "01HXYZ1234567890ABCDEF".to_string(),
-    ));
+    let token = mint_token(Some("01HXYZ1234567890ABCDEF".to_string()));
     c.bench_function("jwt_validate_with_jti", |b| {
         b.iter(|| {
-            let r = validate_jwt_with_claims(
-                black_box(&token),
-                black_box(SECRET),
-            );
+            let r = validate_jwt_with_claims(black_box(&token), black_box(SECRET));
             black_box(r.unwrap());
         });
     });
 }
 
-criterion_group!(
-    benches,
-    bench_validate_no_jti,
-    bench_validate_with_jti,
-);
+criterion_group!(benches, bench_validate_no_jti, bench_validate_with_jti,);
 criterion_main!(benches);

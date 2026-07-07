@@ -75,15 +75,15 @@ type Factory = fn() -> Box<dyn BenchBook>;
 fn all_contenders() -> Vec<(&'static str, Factory)> {
     vec![
         ("rsx_book", || Box::new(rsx_book_impl::RsxBook::new())),
-        ("naive_btree", || Box::new(naive_btree_impl::NaiveBtree::new())),
-        (
-            "hftbacktest_btree",
-            || Box::new(hftbacktest_impl::HftBtree::new()),
-        ),
-        (
-            "hftbacktest_hashmap",
-            || Box::new(hftbacktest_impl::HftHashMap::new()),
-        ),
+        ("naive_btree", || {
+            Box::new(naive_btree_impl::NaiveBtree::new())
+        }),
+        ("hftbacktest_btree", || {
+            Box::new(hftbacktest_impl::HftBtree::new())
+        }),
+        ("hftbacktest_hashmap", || {
+            Box::new(hftbacktest_impl::HftHashMap::new())
+        }),
         ("lob", || Box::new(lob_impl::LobBook::new())),
         // "orderbook" (inv2004, crates.io "orderbook" v0.1.9) is
         // deliberately NOT in this list: it panics with an internal
@@ -153,9 +153,9 @@ mod rsx_book_impl {
     impl BenchBook for RsxBook {
         fn insert(&mut self, side: Side, level: i64, qty: i64) -> bool {
             let px = price(side, level);
-            let h = self.book.insert_resting(
-                px, qty, side, 0, 1, false, 1000, 0, level as u64,
-            );
+            let h = self
+                .book
+                .insert_resting(px, qty, side, 0, 1, false, 1000, 0, level as u64);
             self.handles(side)[level as usize] = Some(h);
             true
         }
@@ -179,7 +179,11 @@ mod rsx_book_impl {
                 Side::Buy => self.book.best_bid_tick,
                 Side::Sell => self.book.best_ask_tick,
             };
-            if t == NONE { None } else { Some(t as i64) }
+            if t == NONE {
+                None
+            } else {
+                Some(t as i64)
+            }
         }
 
         fn match_touch(&mut self, side: Side, qty: i64) -> Option<i64> {
@@ -234,7 +238,10 @@ mod naive_btree_impl {
 
     impl NaiveBtree {
         pub fn new() -> Self {
-            NaiveBtree { bids: BTreeMap::new(), asks: BTreeMap::new() }
+            NaiveBtree {
+                bids: BTreeMap::new(),
+                asks: BTreeMap::new(),
+            }
         }
 
         fn map(&mut self, side: Side) -> &mut BTreeMap<i64, VecDeque<i64>> {
@@ -346,7 +353,9 @@ mod hftbacktest_impl {
 
             impl $name {
                 pub fn new() -> Self {
-                    $name { depth: <$inner>::new(1.0, 1.0) }
+                    $name {
+                        depth: <$inner>::new(1.0, 1.0),
+                    }
                 }
             }
 
@@ -378,8 +387,7 @@ mod hftbacktest_impl {
                         Side::Buy => self.depth.best_bid_tick,
                         Side::Sell => self.depth.best_ask_tick,
                     };
-                    if t == hftbacktest::depth::INVALID_MIN
-                        || t == hftbacktest::depth::INVALID_MAX
+                    if t == hftbacktest::depth::INVALID_MIN || t == hftbacktest::depth::INVALID_MAX
                     {
                         None
                     } else {
@@ -443,7 +451,11 @@ mod lob_impl {
 
     impl LobBook {
         pub fn new() -> Self {
-            LobBook { book: OrderBook::default(), live: HashMap::new(), seq: 0 }
+            LobBook {
+                book: OrderBook::default(),
+                live: HashMap::new(),
+                seq: 0,
+            }
         }
 
         fn key(side: Side, level: i64) -> (u8, i64) {
@@ -551,9 +563,17 @@ fn gen_full_cycle_ops(m: i64) -> Vec<Op> {
     let step = BASE_QTY / (REDUCE_STEPS + 1);
     for level in 0..m {
         for side in [Side::Buy, Side::Sell] {
-            ops.push(Op::Insert { side, level, qty: BASE_QTY });
+            ops.push(Op::Insert {
+                side,
+                level,
+                qty: BASE_QTY,
+            });
             for k in 1..=REDUCE_STEPS {
-                ops.push(Op::Reduce { side, level, qty: BASE_QTY - k * step });
+                ops.push(Op::Reduce {
+                    side,
+                    level,
+                    qty: BASE_QTY - k * step,
+                });
             }
             ops.push(Op::Cancel { side, level });
         }
@@ -567,7 +587,11 @@ fn gen_insert_cancel_ops(m: i64) -> Vec<Op> {
     let mut ops = Vec::new();
     for level in 0..m {
         for side in [Side::Buy, Side::Sell] {
-            ops.push(Op::Insert { side, level, qty: BASE_QTY });
+            ops.push(Op::Insert {
+                side,
+                level,
+                qty: BASE_QTY,
+            });
             ops.push(Op::Cancel { side, level });
         }
     }

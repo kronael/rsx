@@ -136,39 +136,25 @@ fn bench_wal_read(c: &mut Criterion) {
     pin_worker();
     let mut group = c.benchmark_group("wal_read");
 
-    let counts: &[(u64, &str)] = &[
-        (10_000, "10k"),
-        (100_000, "100k"),
-        (1_000_000, "1m"),
-    ];
+    let counts: &[(u64, &str)] = &[(10_000, "10k"), (100_000, "100k"), (1_000_000, "1m")];
 
     for &(count, label) in counts {
         let tmp = TempDir::new().unwrap();
-        let mut writer = WalWriter::new(
-            1, tmp.path(), 512 * 1024 * 1024,
-        )
-        .unwrap();
+        let mut writer = WalWriter::new(1, tmp.path(), 512 * 1024 * 1024).unwrap();
         write_records(&mut writer, count);
         writer.flush().unwrap();
 
         group.throughput(Throughput::Elements(count));
-        group.bench_with_input(
-            BenchmarkId::new("replay", label),
-            &count,
-            |b, &expected| {
-                b.iter(|| {
-                    let mut reader = WalReader::open_from_seq(
-                        1, 0, tmp.path(),
-                    )
-                    .unwrap();
-                    let mut n = 0u64;
-                    while let Ok(Some(_)) = reader.next() {
-                        n += 1;
-                    }
-                    assert_eq!(n, expected);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("replay", label), &count, |b, &expected| {
+            b.iter(|| {
+                let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+                let mut n = 0u64;
+                while let Ok(Some(_)) = reader.next() {
+                    n += 1;
+                }
+                assert_eq!(n, expected);
+            });
+        });
     }
 
     group.finish();

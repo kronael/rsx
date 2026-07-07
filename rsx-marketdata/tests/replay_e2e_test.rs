@@ -1,11 +1,11 @@
-use rsx_types::Price;
-use rsx_types::Qty;
 use rsx_cast::ReplicationService;
-use rsx_messages::FillRecord;
-use rsx_messages::OrderInsertedRecord;
 use rsx_cast::WalWriter;
 use rsx_marketdata::replay::run_replay_bootstrap;
 use rsx_marketdata::state::MarketDataState;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderInsertedRecord;
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_types::SymbolConfig;
 use std::net::SocketAddr;
 use std::net::TcpListener;
@@ -13,8 +13,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 fn reserve_port() -> SocketAddr {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
     addr
@@ -23,18 +22,14 @@ fn reserve_port() -> SocketAddr {
 /// Self-signed cert used as BOTH server identity and client CA
 /// (single-box self-trust). Replication is TLS-mandatory.
 fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
-    let _ = rustls::crypto::aws_lc_rs::default_provider()
-        .install_default();
-    let cert = rcgen::generate_simple_self_signed(vec![
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-    ])
-    .unwrap();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .unwrap();
     let cert_path = dir.join("repl_cert.pem");
     let key_path = dir.join("repl_key.pem");
     std::fs::write(&cert_path, cert.cert.pem()).unwrap();
-    std::fs::write(&key_path, cert.key_pair.serialize_pem())
-        .unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem()).unwrap();
     rsx_cast::TlsConfig {
         server: Some(rsx_cast::TlsServer {
             cert_path: cert_path.clone(),
@@ -48,10 +43,7 @@ fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
 /// enough stack for debug-mode async state machines.
 fn run_async_test<F>(f: F)
 where
-    F: FnOnce() -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = ()>>,
-        > + Send
-        + 'static,
+    F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> + Send + 'static,
 {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -78,10 +70,7 @@ fn dxs_replay_rebuilds_shadow_book() {
             let tls = test_tls(tmp.path());
 
             let stream_id = 1u32;
-            let mut writer = WalWriter::new(
-        stream_id, &wal_dir, 64 * 1024 * 1024,
-    )
-            .unwrap();
+            let mut writer = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
 
             let mut insert1 = OrderInsertedRecord {
                 seq: 0,
@@ -133,7 +122,7 @@ fn dxs_replay_rebuilds_shadow_book() {
                 tif: 0,
                 post_only: 0,
                 _pad1: [0; 4],
-taker_ts_ns: 0,
+                taker_ts_ns: 0,
             };
 
             {
@@ -150,27 +139,15 @@ taker_ts_ns: 0,
             }
             writer.flush().unwrap();
 
-            let server =
-                ReplicationService::new(wal_dir, tls.clone())
-                    .unwrap();
+            let server = ReplicationService::new(wal_dir, tls.clone()).unwrap();
 
-            tokio::spawn(async move {
-                server.serve(replay_addr).await
-            });
-            tokio::time::sleep(
-                Duration::from_millis(100),
-            )
-            .await;
+            tokio::spawn(async move { server.serve(replay_addr).await });
+            tokio::time::sleep(Duration::from_millis(100)).await;
 
             let tip_file = tmp.path().join("tip");
-            let result = run_replay_bootstrap(
-                stream_id,
-                replay_addr.to_string(),
-                tip_file,
-                tls,
-            )
-            .await
-            .unwrap();
+            let result = run_replay_bootstrap(stream_id, replay_addr.to_string(), tip_file, tls)
+                .await
+                .unwrap();
 
             assert_eq!(result.events.len(), 3);
             assert!(result.caught_up);
@@ -183,22 +160,12 @@ taker_ts_ns: 0,
                 tick_size: 1,
                 lot_size: 1,
             };
-            let mut state = MarketDataState::new(
-                64,
-                base_config,
-                256,
-                100,
-            );
+            let mut state = MarketDataState::new(64, base_config, 256, 100);
 
             for event in result.events {
                 if let Some(rec) = event.insert {
-                    state.ensure_book(
-                        rec.symbol_id,
-                        rec.price.0,
-                    );
-                    if let Some(book) =
-                        state.book_mut(rec.symbol_id)
-                    {
+                    state.ensure_book(rec.symbol_id, rec.price.0);
+                    if let Some(book) = state.book_mut(rec.symbol_id) {
                         book.apply_insert_by_id(
                             rec.price.0,
                             rec.qty.0,
@@ -210,9 +177,7 @@ taker_ts_ns: 0,
                         );
                     }
                 } else if let Some(rec) = event.fill {
-                    if let Some(book) =
-                        state.book_mut(rec.symbol_id)
-                    {
+                    if let Some(book) = state.book_mut(rec.symbol_id) {
                         book.apply_fill_by_order_id(
                             rec.maker_order_id_hi,
                             rec.maker_order_id_lo,
@@ -249,10 +214,7 @@ fn recovery_from_me_wal_then_live() {
             let tls = test_tls(tmp.path());
 
             let stream_id = 1u32;
-            let mut writer = WalWriter::new(
-        stream_id, &wal_dir, 64 * 1024 * 1024,
-    )
-            .unwrap();
+            let mut writer = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
 
             let mut insert = OrderInsertedRecord {
                 seq: 0,
@@ -276,27 +238,15 @@ fn recovery_from_me_wal_then_live() {
             }
             writer.flush().unwrap();
 
-            let server =
-                ReplicationService::new(wal_dir, tls.clone())
-                    .unwrap();
+            let server = ReplicationService::new(wal_dir, tls.clone()).unwrap();
 
-            tokio::spawn(async move {
-                server.serve(replay_addr).await
-            });
-            tokio::time::sleep(
-                Duration::from_millis(100),
-            )
-            .await;
+            tokio::spawn(async move { server.serve(replay_addr).await });
+            tokio::time::sleep(Duration::from_millis(100)).await;
 
             let tip_file = tmp.path().join("tip");
-            let result = run_replay_bootstrap(
-                stream_id,
-                replay_addr.to_string(),
-                tip_file,
-                tls,
-            )
-            .await
-            .unwrap();
+            let result = run_replay_bootstrap(stream_id, replay_addr.to_string(), tip_file, tls)
+                .await
+                .unwrap();
 
             assert!(result.caught_up);
             assert_eq!(result.last_seq, 1);
@@ -315,10 +265,7 @@ fn recovery_snapshot_sent_after_catchup() {
             let tls = test_tls(tmp.path());
 
             let stream_id = 1u32;
-            let mut writer = WalWriter::new(
-        stream_id, &wal_dir, 64 * 1024 * 1024,
-    )
-            .unwrap();
+            let mut writer = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
 
             let mut insert = OrderInsertedRecord {
                 seq: 0,
@@ -342,27 +289,15 @@ fn recovery_snapshot_sent_after_catchup() {
             }
             writer.flush().unwrap();
 
-            let server =
-                ReplicationService::new(wal_dir, tls.clone())
-                    .unwrap();
+            let server = ReplicationService::new(wal_dir, tls.clone()).unwrap();
 
-            tokio::spawn(async move {
-                server.serve(replay_addr).await
-            });
-            tokio::time::sleep(
-                Duration::from_millis(100),
-            )
-            .await;
+            tokio::spawn(async move { server.serve(replay_addr).await });
+            tokio::time::sleep(Duration::from_millis(100)).await;
 
             let tip_file = tmp.path().join("tip");
-            let result = run_replay_bootstrap(
-                stream_id,
-                replay_addr.to_string(),
-                tip_file,
-                tls,
-            )
-            .await
-            .unwrap();
+            let result = run_replay_bootstrap(stream_id, replay_addr.to_string(), tip_file, tls)
+                .await
+                .unwrap();
 
             assert!(result.caught_up);
 
@@ -373,22 +308,12 @@ fn recovery_snapshot_sent_after_catchup() {
                 tick_size: 1,
                 lot_size: 1,
             };
-            let mut state = MarketDataState::new(
-                64,
-                base_config,
-                256,
-                100,
-            );
+            let mut state = MarketDataState::new(64, base_config, 256, 100);
 
             for event in result.events {
                 if let Some(rec) = event.insert {
-                    state.ensure_book(
-                        rec.symbol_id,
-                        rec.price.0,
-                    );
-                    if let Some(book) =
-                        state.book_mut(rec.symbol_id)
-                    {
+                    state.ensure_book(rec.symbol_id, rec.price.0);
+                    if let Some(book) = state.book_mut(rec.symbol_id) {
                         book.apply_insert_by_id(
                             rec.price.0,
                             rec.qty.0,

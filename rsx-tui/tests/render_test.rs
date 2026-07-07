@@ -19,8 +19,7 @@ fn demo_app() -> App {
 
 /// Flatten a rendered buffer into one string of cell symbols.
 fn render(app: &App, w: u16, h: u16) -> String {
-    let mut terminal =
-        Terminal::new(TestBackend::new(w, h)).expect("test terminal");
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("test terminal");
     terminal.draw(|f| draw(f, app)).expect("draw");
     terminal
         .backend()

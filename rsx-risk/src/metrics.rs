@@ -28,9 +28,21 @@ pub fn health_snapshot(g: &LoadGauges) -> HealthSnapshot {
         ready: g.ready.load(Ordering::Relaxed),
         saturation,
         queues: vec![
-            QueueGauge { name: "resp_ring", used: resp_used, cap: resp_cap },
-            QueueGauge { name: "accept_ring", used: acc_used, cap: acc_cap },
-            QueueGauge { name: "persist_ring", used: persist_used, cap: persist_cap },
+            QueueGauge {
+                name: "resp_ring",
+                used: resp_used,
+                cap: resp_cap,
+            },
+            QueueGauge {
+                name: "accept_ring",
+                used: acc_used,
+                cap: acc_cap,
+            },
+            QueueGauge {
+                name: "persist_ring",
+                used: persist_used,
+                cap: persist_cap,
+            },
         ],
         counters: vec![
             CounterGauge {
@@ -41,7 +53,10 @@ pub fn health_snapshot(g: &LoadGauges) -> HealthSnapshot {
                 name: "fills_processed",
                 value: g.fills_processed.load(Ordering::Relaxed),
             },
-            CounterGauge { name: "rejects", value: g.rejects.load(Ordering::Relaxed) },
+            CounterGauge {
+                name: "rejects",
+                value: g.rejects.load(Ordering::Relaxed),
+            },
         ],
         state: g.state_label(),
     }

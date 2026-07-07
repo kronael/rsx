@@ -1,7 +1,7 @@
 use rsx_cast::encode_utils::as_bytes;
+use rsx_matching::wire::OrderMessage;
 use rsx_messages::decode_config_applied_record;
 use rsx_messages::ConfigAppliedRecord;
-use rsx_matching::wire::OrderMessage;
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 
@@ -67,8 +67,7 @@ fn config_applied_record_roundtrip() {
         applied_at_ns: 1_000_000_000,
     };
     let bytes = as_bytes(&record);
-    let decoded =
-        decode_config_applied_record(bytes).unwrap();
+    let decoded = decode_config_applied_record(bytes).unwrap();
     assert_eq!(decoded.seq, 42);
     assert_eq!(decoded.symbol_id, 7);
     assert_eq!(decoded.config_version, 3);

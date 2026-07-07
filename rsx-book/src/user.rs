@@ -50,8 +50,7 @@ pub fn get_or_assign_user(
         return idx;
     }
     let idx = if let Some(free) = user_free_list.pop() {
-        user_states[free as usize] =
-            UserState::new(user_id);
+        user_states[free as usize] = UserState::new(user_id);
         free
     } else {
         let idx = *user_bump;
@@ -59,8 +58,7 @@ pub fn get_or_assign_user(
         if idx as usize >= user_states.len() {
             user_states.push(UserState::new(user_id));
         } else {
-            user_states[idx as usize] =
-                UserState::new(user_id);
+            user_states[idx as usize] = UserState::new(user_id);
         }
         idx
     };
@@ -122,10 +120,9 @@ pub(crate) fn update_positions_on_fill(
         user_bump,
         taker_user_id,
     );
-    user_states[taker_idx as usize].net_qty =
-        user_states[taker_idx as usize]
-            .net_qty
-            .saturating_add(sign * qty);
+    user_states[taker_idx as usize].net_qty = user_states[taker_idx as usize]
+        .net_qty
+        .saturating_add(sign * qty);
     let maker_idx = get_or_assign_user(
         user_states,
         user_map,
@@ -133,8 +130,7 @@ pub(crate) fn update_positions_on_fill(
         user_bump,
         maker_user_id,
     );
-    user_states[maker_idx as usize].net_qty =
-        user_states[maker_idx as usize]
-            .net_qty
-            .saturating_add(-(sign * qty));
+    user_states[maker_idx as usize].net_qty = user_states[maker_idx as usize]
+        .net_qty
+        .saturating_add(-(sign * qty));
 }

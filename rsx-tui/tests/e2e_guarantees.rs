@@ -233,11 +233,21 @@ fn no_crossed_book() {
 
     let mut maker = skip_if_no_cluster!(cluster::connect(1));
     maker
-        .submit(OrderReq { side: Side::Buy, price: 43_000, qty: 100_000, tif: Tif::Gtc })
+        .submit(OrderReq {
+            side: Side::Buy,
+            price: 43_000,
+            qty: 100_000,
+            tif: Tif::Gtc,
+        })
         .expect("submit resting bid");
     let mut asker = skip_if_no_cluster!(cluster::connect(2));
     asker
-        .submit(OrderReq { side: Side::Sell, price: 95_000, qty: 100_000, tif: Tif::Gtc })
+        .submit(OrderReq {
+            side: Side::Sell,
+            price: 95_000,
+            qty: 100_000,
+            tif: Tif::Gtc,
+        })
         .expect("submit resting ask");
     thread::sleep(Duration::from_millis(500));
 
@@ -266,36 +276,57 @@ fn exactly_one_completion() {
     let mut maker = skip_if_no_cluster!(cluster::connect(3));
     let maker_accept = submit_and_collect(
         &mut maker,
-        OrderReq { side: Side::Buy, price: 46_000, qty: 300_000, tif: Tif::Gtc },
+        OrderReq {
+            side: Side::Buy,
+            price: 46_000,
+            qty: 300_000,
+            tif: Tif::Gtc,
+        },
         Duration::from_secs(3),
         |evs| evs.iter().any(|e| matches!(e, GwEvent::Accepted { .. })),
     );
     assert!(
-        maker_accept.iter().any(|e| matches!(e, GwEvent::Accepted { .. })),
+        maker_accept
+            .iter()
+            .any(|e| matches!(e, GwEvent::Accepted { .. })),
         "maker order never accepted: {maker_accept:?}",
     );
 
     let mut taker = skip_if_no_cluster!(cluster::connect(4));
     let taker_events = submit_and_collect(
         &mut taker,
-        OrderReq { side: Side::Sell, price: 46_000, qty: 300_000, tif: Tif::Ioc },
+        OrderReq {
+            side: Side::Sell,
+            price: 46_000,
+            qty: 300_000,
+            tif: Tif::Ioc,
+        },
         Duration::from_secs(5),
         |evs| evs.iter().any(|e| matches!(e, GwEvent::Done { .. })),
     );
     assert!(
-        taker_events.iter().any(|e| matches!(e, GwEvent::Done { .. })),
+        taker_events
+            .iter()
+            .any(|e| matches!(e, GwEvent::Done { .. })),
         "taker IOC never reached Done: {taker_events:?}",
     );
     // The maker's own connection observes its Fill/Done separately.
     let maker_completion = collect_events(&mut maker, Duration::from_secs(2));
 
     let mut done_counts: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
-    for ev in maker_accept.iter().chain(maker_completion.iter()).chain(taker_events.iter()) {
+    for ev in maker_accept
+        .iter()
+        .chain(maker_completion.iter())
+        .chain(taker_events.iter())
+    {
         if let GwEvent::Done { oid } = ev {
             *done_counts.entry(*oid).or_insert(0) += 1;
         }
     }
-    assert!(!done_counts.is_empty(), "expected at least one completed oid");
+    assert!(
+        !done_counts.is_empty(),
+        "expected at least one completed oid"
+    );
     assert!(
         done_counts.values().all(|&n| n == 1),
         "an oid completed more than once: {done_counts:?}",
@@ -304,14 +335,23 @@ fn exactly_one_completion() {
     let mut rejector = skip_if_no_cluster!(cluster::connect(5));
     let reject_events = submit_and_collect(
         &mut rejector,
-        OrderReq { side: Side::Buy, price: 12_345, qty: 0, tif: Tif::Gtc },
+        OrderReq {
+            side: Side::Buy,
+            price: 12_345,
+            qty: 0,
+            tif: Tif::Gtc,
+        },
         Duration::from_secs(3),
         |evs| evs.iter().any(|e| matches!(e, GwEvent::Rejected { .. })),
     );
-    let reject_count =
-        reject_events.iter().filter(|e| matches!(e, GwEvent::Rejected { .. })).count();
-    let done_on_reject_conn =
-        reject_events.iter().filter(|e| matches!(e, GwEvent::Done { .. })).count();
+    let reject_count = reject_events
+        .iter()
+        .filter(|e| matches!(e, GwEvent::Rejected { .. }))
+        .count();
+    let done_on_reject_conn = reject_events
+        .iter()
+        .filter(|e| matches!(e, GwEvent::Done { .. }))
+        .count();
     assert_eq!(
         reject_count, 1,
         "malformed order must be rejected exactly once: {reject_events:?}",
@@ -345,19 +385,31 @@ fn fill_durability_recorded_in_wal() {
 
     let mut maker = skip_if_no_cluster!(cluster::connect(99));
     maker
-        .submit(OrderReq { side: Side::Buy, price: 44_500, qty: 200_000, tif: Tif::Gtc })
+        .submit(OrderReq {
+            side: Side::Buy,
+            price: 44_500,
+            qty: 200_000,
+            tif: Tif::Gtc,
+        })
         .expect("submit maker order");
     thread::sleep(Duration::from_millis(500));
 
     let mut taker = skip_if_no_cluster!(cluster::connect(1));
     let taker_events = submit_and_collect(
         &mut taker,
-        OrderReq { side: Side::Sell, price: 44_500, qty: 200_000, tif: Tif::Ioc },
+        OrderReq {
+            side: Side::Sell,
+            price: 44_500,
+            qty: 200_000,
+            tif: Tif::Ioc,
+        },
         Duration::from_secs(5),
         |evs| evs.iter().any(|e| matches!(e, GwEvent::Fill { .. })),
     );
     assert!(
-        taker_events.iter().any(|e| matches!(e, GwEvent::Fill { .. })),
+        taker_events
+            .iter()
+            .any(|e| matches!(e, GwEvent::Fill { .. })),
         "taker IOC never filled: {taker_events:?}",
     );
 

@@ -1,16 +1,16 @@
 //! rsx-book: shared orderbook. See ARCHITECTURE.md and `specs/2/21-orderbook.md`.
 
-pub mod slab;
-pub mod compression;
-pub mod occupancy;
-pub mod level;
-pub mod order;
-pub mod event;
-pub mod user;
 pub mod book;
+pub mod compression;
+pub mod event;
+pub mod level;
 pub mod matching;
 pub mod migration;
+pub mod occupancy;
+pub mod order;
+pub mod slab;
 pub mod snapshot;
+pub mod user;
 
 pub use book::Orderbook;
 pub use compression::CompressionMap;

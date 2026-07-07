@@ -56,14 +56,7 @@ fn positioned_book(qty: i64) -> Orderbook {
         2_001,
     );
     // User 7 buys to establish a long position of `qty`.
-    let mut buy = harness::order(
-        harness::MID + 1,
-        qty,
-        Side::Buy,
-        TimeInForce::GTC,
-        7,
-        9_000,
-    );
+    let mut buy = harness::order(harness::MID + 1, qty, Side::Buy, TimeInForce::GTC, 7, 9_000);
     process_new_order(&mut book, &mut buy);
     book
 }
@@ -76,14 +69,7 @@ fn bench_by_type(c: &mut Criterion) {
         b.iter_batched(
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
-                let mut o = harness::order(
-                    harness::MID + 1,
-                    1,
-                    Side::Buy,
-                    TimeInForce::GTC,
-                    1,
-                    1,
-                );
+                let mut o = harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::GTC, 1, 1);
                 process_new_order(black_box(&mut book), black_box(&mut o));
             },
             BatchSize::SmallInput,
@@ -94,14 +80,7 @@ fn bench_by_type(c: &mut Criterion) {
         b.iter_batched(
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
-                let mut o = harness::order(
-                    harness::MID + 1,
-                    1,
-                    Side::Buy,
-                    TimeInForce::IOC,
-                    1,
-                    1,
-                );
+                let mut o = harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::IOC, 1, 1);
                 process_new_order(black_box(&mut book), black_box(&mut o));
             },
             BatchSize::SmallInput,
@@ -112,14 +91,7 @@ fn bench_by_type(c: &mut Criterion) {
         b.iter_batched(
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
-                let mut o = harness::order(
-                    harness::MID + 1,
-                    1,
-                    Side::Buy,
-                    TimeInForce::FOK,
-                    1,
-                    1,
-                );
+                let mut o = harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::FOK, 1, 1);
                 process_new_order(black_box(&mut book), black_box(&mut o));
             },
             BatchSize::SmallInput,
@@ -131,14 +103,8 @@ fn bench_by_type(c: &mut Criterion) {
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
                 // Below best ask -> does not cross -> rests.
-                let mut o = harness::order(
-                    harness::MID - 100,
-                    1,
-                    Side::Buy,
-                    TimeInForce::GTC,
-                    1,
-                    1,
-                );
+                let mut o =
+                    harness::order(harness::MID - 100, 1, Side::Buy, TimeInForce::GTC, 1, 1);
                 o.post_only = true;
                 process_new_order(black_box(&mut book), black_box(&mut o));
             },
@@ -151,14 +117,8 @@ fn bench_by_type(c: &mut Criterion) {
             || positioned_book(10),
             |mut book| {
                 // User 7 is long 10; reduce-only sell hits resting bid.
-                let mut o = harness::order(
-                    harness::MID - 1,
-                    10,
-                    Side::Sell,
-                    TimeInForce::GTC,
-                    7,
-                    1,
-                );
+                let mut o =
+                    harness::order(harness::MID - 1, 10, Side::Sell, TimeInForce::GTC, 7, 1);
                 o.reduce_only = true;
                 process_new_order(black_box(&mut book), black_box(&mut o));
             },

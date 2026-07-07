@@ -61,16 +61,11 @@ impl Default for CastConfig {
 impl CastConfig {
     pub fn from_env() -> Self {
         Self {
-            heartbeat_interval_ms: env_var(
-                "RSX_CAST_HEARTBEAT_INTERVAL_MS", 100),
-            sender_bind_addr: env::var(
-                "RSX_CAST_SENDER_BIND_ADDR").ok(),
-            max_nak_retries: env_var(
-                "RSX_CAST_MAX_NAK_RETRIES", 8),
-            retx_dedup_window_us: env_var(
-                "RSX_CAST_RETX_DEDUP_WINDOW_US", 1000),
-            nak_debounce_us: env_var(
-                "RSX_CAST_NAK_DEBOUNCE_US", 50_000),
+            heartbeat_interval_ms: env_var("RSX_CAST_HEARTBEAT_INTERVAL_MS", 100),
+            sender_bind_addr: env::var("RSX_CAST_SENDER_BIND_ADDR").ok(),
+            max_nak_retries: env_var("RSX_CAST_MAX_NAK_RETRIES", 8),
+            retx_dedup_window_us: env_var("RSX_CAST_RETX_DEDUP_WINDOW_US", 1000),
+            nak_debounce_us: env_var("RSX_CAST_NAK_DEBOUNCE_US", 50_000),
         }
     }
 }
@@ -116,12 +111,9 @@ impl TlsConfig {
     /// Errors if any file is missing — replication is
     /// TLS-mandatory, so there is no plaintext fallback.
     pub fn from_env() -> io::Result<Self> {
-        let cert_path = env_path(
-            "RSX_REPL_CERT_PATH", "./certs/cert.pem");
-        let key_path = env_path(
-            "RSX_REPL_KEY_PATH", "./certs/key.pem");
-        let ca_path = env_path(
-            "RSX_REPL_CA_PATH", "./certs/ca.pem");
+        let cert_path = env_path("RSX_REPL_CERT_PATH", "./certs/cert.pem");
+        let key_path = env_path("RSX_REPL_KEY_PATH", "./certs/key.pem");
+        let ca_path = env_path("RSX_REPL_CA_PATH", "./certs/ca.pem");
 
         for path in [&cert_path, &key_path, &ca_path] {
             if !path.exists() {
@@ -150,7 +142,5 @@ impl TlsConfig {
 }
 
 fn env_path(key: &str, default: &str) -> PathBuf {
-    PathBuf::from(
-        env::var(key).unwrap_or_else(|_| default.to_string()),
-    )
+    PathBuf::from(env::var(key).unwrap_or_else(|_| default.to_string()))
 }

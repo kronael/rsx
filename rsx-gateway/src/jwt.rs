@@ -31,10 +31,7 @@ pub struct Claims {
 /// Validate a JWT and return the user_id it carries.
 /// Convenience wrapper around [`validate_jwt_with_claims`] for
 /// callers that don't need the full claim set.
-pub fn validate_jwt(
-    token: &str,
-    secret: &str,
-) -> Result<u32, String> {
+pub fn validate_jwt(token: &str, secret: &str) -> Result<u32, String> {
     validate_jwt_with_claims(token, secret).map(|(uid, _)| uid)
 }
 
@@ -47,10 +44,7 @@ pub fn validate_jwt(
 /// - `nbf` (not-before, when present in the token)
 /// - `aud == "rsx-gateway"`
 /// - `iss == "rsx-auth"`
-pub fn validate_jwt_with_claims(
-    token: &str,
-    secret: &str,
-) -> Result<(u32, Claims), String> {
+pub fn validate_jwt_with_claims(token: &str, secret: &str) -> Result<(u32, Claims), String> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
     validation.validate_nbf = true;
@@ -129,9 +123,7 @@ impl JtiTracker {
     /// CTO-REPORT.md R-N5.
     pub fn rollback(&mut self, jti: &str) {
         if self.seen.remove(jti) {
-            if let Some(pos) =
-                self.order.iter().position(|x| x == jti)
-            {
+            if let Some(pos) = self.order.iter().position(|x| x == jti) {
                 self.order.remove(pos);
             }
         }

@@ -104,18 +104,20 @@ impl Filters {
         for s in &record_types {
             match name_to_record_type(s.as_str()) {
                 Some(rt) => rts.push(rt),
-                None => misuse(format!(
-                    "unknown record type: {}", s,
-                )),
+                None => misuse(format!("unknown record type: {}", s,)),
             }
         }
-        Filters { record_types: rts, symbol, user, from_ts, to_ts }
+        Filters {
+            record_types: rts,
+            symbol,
+            user,
+            from_ts,
+            to_ts,
+        }
     }
 
     fn matches(&self, rt: u16, payload: &[u8]) -> bool {
-        if !self.record_types.is_empty()
-            && !self.record_types.contains(&rt)
-        {
+        if !self.record_types.is_empty() && !self.record_types.contains(&rt) {
             return false;
         }
         let ts = extract_ts_ns(payload);
@@ -231,9 +233,9 @@ fn extract_symbol_id(rt: u16, payload: &[u8]) -> Option<u32> {
         | RECORD_CONFIG_APPLIED
         | RECORD_MARK_PRICE => read_u32_le(payload, 16),
         // seq(8) + ts_ns(8) + user_id(4) + symbol_id(4) at 20
-        RECORD_ORDER_ACCEPTED
-        | RECORD_CANCEL_REQUEST
-        | RECORD_LIQUIDATION => read_u32_le(payload, 20),
+        RECORD_ORDER_ACCEPTED | RECORD_CANCEL_REQUEST | RECORD_LIQUIDATION => {
+            read_u32_le(payload, 20)
+        }
         // seq(8) + ts_ns(8) + user_id(4) + symbol_id(4) at 20
         RECORD_ORDER_RESPONSE => read_u32_le(payload, 20),
         // seq(8) + user_id(4) + symbol_id(4) at 12
@@ -248,9 +250,9 @@ fn extract_symbol_id(rt: u16, payload: &[u8]) -> Option<u32> {
 fn extract_user_id(rt: u16, payload: &[u8]) -> Option<u32> {
     match rt {
         // seq(8) + ts_ns(8) + symbol_id(4) + user_id(4) at 20
-        RECORD_ORDER_INSERTED
-        | RECORD_ORDER_CANCELLED
-        | RECORD_ORDER_DONE => read_u32_le(payload, 20),
+        RECORD_ORDER_INSERTED | RECORD_ORDER_CANCELLED | RECORD_ORDER_DONE => {
+            read_u32_le(payload, 20)
+        }
         // seq(8) + ts_ns(8) + taker_user_id(4) at 20 (fill)
         RECORD_FILL => read_u32_le(payload, 20),
         // seq(8) + ts_ns(8) + user_id(4) at 16
@@ -328,19 +330,11 @@ fn oid_hex(hi: u64, lo: u64) -> String {
 /// Decode payload bytes into record-specific fields.
 /// Returns (text_suffix, json_fields) for the record type.
 /// text_suffix uses scale for price/qty display; JSON always raw.
-fn decode_payload(
-    rt: u16,
-    payload: &[u8],
-    scale: &DisplayScale,
-) -> (String, Value) {
+fn decode_payload(rt: u16, payload: &[u8], scale: &DisplayScale) -> (String, Value) {
     unsafe {
         match rt {
-            RECORD_FILL
-                if payload.len()
-                    >= std::mem::size_of::<FillRecord>() =>
-            {
-                let r: FillRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_FILL if payload.len() >= std::mem::size_of::<FillRecord>() => {
+                let r: FillRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} taker={} maker={} px={} \
                      qty={} side={} oid={}",
@@ -350,10 +344,7 @@ fn decode_payload(
                     scale.px(r.price.0),
                     scale.qty(r.qty.0),
                     r.taker_side,
-                    oid_hex(
-                        r.taker_order_id_hi,
-                        r.taker_order_id_lo,
-                    ),
+                    oid_hex(r.taker_order_id_hi, r.taker_order_id_lo,),
                 );
                 let j = json!({
                     "symbol_id": r.symbol_id,
@@ -373,12 +364,8 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_BBO
-                if payload.len()
-                    >= std::mem::size_of::<BboRecord>() =>
-            {
-                let r: BboRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_BBO if payload.len() >= std::mem::size_of::<BboRecord>() => {
+                let r: BboRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} bid={}x{} ask={}x{}",
                     r.symbol_id,
@@ -399,13 +386,9 @@ fn decode_payload(
                 (txt, j)
             }
             RECORD_ORDER_INSERTED
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderInsertedRecord,
-                    >() =>
+                if payload.len() >= std::mem::size_of::<OrderInsertedRecord>() =>
             {
-                let r: OrderInsertedRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+                let r: OrderInsertedRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} px={} qty={} \
                      side={} oid={}",
@@ -430,13 +413,9 @@ fn decode_payload(
                 (txt, j)
             }
             RECORD_ORDER_CANCELLED
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderCancelledRecord,
-                    >() =>
+                if payload.len() >= std::mem::size_of::<OrderCancelledRecord>() =>
             {
-                let r: OrderCancelledRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+                let r: OrderCancelledRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} remain={} reason={} \
                      oid={}",
@@ -458,14 +437,8 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_ORDER_DONE
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderDoneRecord,
-                    >() =>
-            {
-                let r: OrderDoneRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_ORDER_DONE if payload.len() >= std::mem::size_of::<OrderDoneRecord>() => {
+                let r: OrderDoneRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} filled={} remain={} \
                      status={} oid={}",
@@ -490,17 +463,10 @@ fn decode_payload(
                 (txt, j)
             }
             RECORD_CONFIG_APPLIED
-                if payload.len()
-                    >= std::mem::size_of::<
-                        ConfigAppliedRecord,
-                    >() =>
+                if payload.len() >= std::mem::size_of::<ConfigAppliedRecord>() =>
             {
-                let r: ConfigAppliedRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
-                let txt = format!(
-                    " sym={} version={}",
-                    r.symbol_id, r.config_version,
-                );
+                let r: ConfigAppliedRecord = std::ptr::read(payload.as_ptr() as *const _);
+                let txt = format!(" sym={} version={}", r.symbol_id, r.config_version,);
                 let j = json!({
                     "symbol_id": r.symbol_id,
                     "config_version": r.config_version,
@@ -509,18 +475,9 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_CAUGHT_UP
-                if payload.len()
-                    >= std::mem::size_of::<
-                        CaughtUpRecord,
-                    >() =>
-            {
-                let r: CaughtUpRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
-                let txt = format!(
-                    " stream={} live_seq={}",
-                    r.stream_id, r.live_seq,
-                );
+            RECORD_CAUGHT_UP if payload.len() >= std::mem::size_of::<CaughtUpRecord>() => {
+                let r: CaughtUpRecord = std::ptr::read(payload.as_ptr() as *const _);
+                let txt = format!(" stream={} live_seq={}", r.stream_id, r.live_seq,);
                 let j = json!({
                     "stream_id": r.stream_id,
                     "live_seq": r.live_seq,
@@ -528,13 +485,9 @@ fn decode_payload(
                 (txt, j)
             }
             RECORD_ORDER_ACCEPTED
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderAcceptedRecord,
-                    >() =>
+                if payload.len() >= std::mem::size_of::<OrderAcceptedRecord>() =>
             {
-                let r: OrderAcceptedRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+                let r: OrderAcceptedRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let cid_str = std::str::from_utf8(&r.cid)
                     .unwrap_or("")
                     .trim_end_matches('\0')
@@ -564,19 +517,9 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_MARK_PRICE
-                if payload.len()
-                    >= std::mem::size_of::<
-                        MarkPriceRecord,
-                    >() =>
-            {
-                let r: MarkPriceRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
-                let txt = format!(
-                    " sym={} mark={}",
-                    r.symbol_id,
-                    scale.px(r.mark_price.0),
-                );
+            RECORD_MARK_PRICE if payload.len() >= std::mem::size_of::<MarkPriceRecord>() => {
+                let r: MarkPriceRecord = std::ptr::read(payload.as_ptr() as *const _);
+                let txt = format!(" sym={} mark={}", r.symbol_id, scale.px(r.mark_price.0),);
                 let j = json!({
                     "symbol_id": r.symbol_id,
                     "mark_price": r.mark_price.0,
@@ -585,14 +528,8 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_CANCEL_REQUEST
-                if payload.len()
-                    >= std::mem::size_of::<
-                        CancelRequest,
-                    >() =>
-            {
-                let r: CancelRequest =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_CANCEL_REQUEST if payload.len() >= std::mem::size_of::<CancelRequest>() => {
+                let r: CancelRequest = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} oid={}",
                     r.symbol_id,
@@ -609,14 +546,8 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_ORDER_FAILED
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderFailedRecord,
-                    >() =>
-            {
-                let r: OrderFailedRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_ORDER_FAILED if payload.len() >= std::mem::size_of::<OrderFailedRecord>() => {
+                let r: OrderFailedRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " user={} reason={} oid={}",
                     r.user_id,
@@ -633,14 +564,8 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_ORDER_REQUEST
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderRequestRecord,
-                    >() =>
-            {
-                let r: OrderRequestRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_ORDER_REQUEST if payload.len() >= std::mem::size_of::<OrderRequestRecord>() => {
+                let r: OrderRequestRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} px={} qty={} \
                      side={} oid={}",
@@ -665,13 +590,9 @@ fn decode_payload(
                 (txt, j)
             }
             RECORD_ORDER_RESPONSE
-                if payload.len()
-                    >= std::mem::size_of::<
-                        OrderResponseRecord,
-                    >() =>
+                if payload.len() >= std::mem::size_of::<OrderResponseRecord>() =>
             {
-                let r: OrderResponseRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+                let r: OrderResponseRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} status={} oid={}",
                     r.symbol_id,
@@ -690,14 +611,8 @@ fn decode_payload(
                 });
                 (txt, j)
             }
-            RECORD_LIQUIDATION
-                if payload.len()
-                    >= std::mem::size_of::<
-                        LiquidationRecord,
-                    >() =>
-            {
-                let r: LiquidationRecord =
-                    std::ptr::read(payload.as_ptr() as *const _);
+            RECORD_LIQUIDATION if payload.len() >= std::mem::size_of::<LiquidationRecord>() => {
+                let r: LiquidationRecord = std::ptr::read(payload.as_ptr() as *const _);
                 let txt = format!(
                     " sym={} user={} status={} side={} \
                      round={} qty={} px={} slip={}",
@@ -733,9 +648,7 @@ fn install_ctrlc_handler() -> Arc<AtomicBool> {
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
     })
-    .unwrap_or_else(|e| {
-        die(format!("failed to install signal handler: {}", e))
-    });
+    .unwrap_or_else(|e| die(format!("failed to install signal handler: {}", e)));
     running
 }
 
@@ -749,27 +662,17 @@ fn wal_dump(
     filters: Filters,
     scale: DisplayScale,
 ) {
-    let mut reader = WalReader::open_from_seq(
-        stream_id, from_seq, &wal_dir,
-    )
-    .unwrap_or_else(|e| {
-        die(format!("failed to open wal: {}", e))
-    });
+    let mut reader = WalReader::open_from_seq(stream_id, from_seq, &wal_dir)
+        .unwrap_or_else(|e| die(format!("failed to open wal: {}", e)));
 
     if stats {
         dump_stats(&mut reader, &filters);
     } else if follow {
         let running = install_ctrlc_handler();
         if json {
-            dump_follow_json(
-                stream_id, &wal_dir, from_seq, &filters,
-                &running,
-            );
+            dump_follow_json(stream_id, &wal_dir, from_seq, &filters, &running);
         } else {
-            dump_follow_text(
-                stream_id, &wal_dir, from_seq, &filters,
-                &running, &scale,
-            );
+            dump_follow_text(stream_id, &wal_dir, from_seq, &filters, &running, &scale);
         }
     } else if json {
         dump_json(&mut reader, &filters);
@@ -789,12 +692,8 @@ fn dump_follow_text(
     scale: &DisplayScale,
 ) {
     let mut next_seq = from_seq;
-    let mut reader = WalReader::open_from_seq(
-        stream_id, next_seq, wal_dir,
-    )
-    .unwrap_or_else(|e| {
-        die(format!("failed to open wal: {}", e))
-    });
+    let mut reader = WalReader::open_from_seq(stream_id, next_seq, wal_dir)
+        .unwrap_or_else(|e| die(format!("failed to open wal: {}", e)));
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -803,15 +702,13 @@ fn dump_follow_text(
         match reader.next() {
             Ok(Some(raw)) => {
                 let rt = raw.header.record_type;
-                let seq =
-                    extract_seq(&raw.payload).unwrap_or(0);
+                let seq = extract_seq(&raw.payload).unwrap_or(0);
                 // Always advance next_seq so filtered-out
                 // records don't cause replay on reopen.
                 next_seq = seq + 1;
                 if filters.matches(rt, &raw.payload) {
                     let len = raw.header.len;
-                    let (fields, _) =
-                        decode_payload(rt, &raw.payload, scale);
+                    let (fields, _) = decode_payload(rt, &raw.payload, scale);
                     println!(
                         "seq={:<8} type={:<18} len={:<4} \
                          crc=0x{:08x}{}",
@@ -829,15 +726,11 @@ fn dump_follow_text(
                 if !running.load(Ordering::SeqCst) {
                     break;
                 }
-                reader = match WalReader::open_from_seq(
-                    stream_id, next_seq, wal_dir,
-                ) {
+                reader = match WalReader::open_from_seq(stream_id, next_seq, wal_dir) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("wal reopen error: {}", e);
-                        thread::sleep(Duration::from_millis(
-                            100,
-                        ));
+                        thread::sleep(Duration::from_millis(100));
                         continue;
                     }
                 };
@@ -860,12 +753,8 @@ fn dump_follow_json(
 ) {
     let scale = DisplayScale::new(None, None);
     let mut next_seq = from_seq;
-    let mut reader = WalReader::open_from_seq(
-        stream_id, next_seq, wal_dir,
-    )
-    .unwrap_or_else(|e| {
-        die(format!("failed to open wal: {}", e))
-    });
+    let mut reader = WalReader::open_from_seq(stream_id, next_seq, wal_dir)
+        .unwrap_or_else(|e| die(format!("failed to open wal: {}", e)));
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -874,15 +763,13 @@ fn dump_follow_json(
         match reader.next() {
             Ok(Some(raw)) => {
                 let rt = raw.header.record_type;
-                let seq =
-                    extract_seq(&raw.payload).unwrap_or(0);
+                let seq = extract_seq(&raw.payload).unwrap_or(0);
                 // Always advance next_seq so filtered-out
                 // records don't cause replay on reopen.
                 next_seq = seq + 1;
                 if filters.matches(rt, &raw.payload) {
                     let len = raw.header.len;
-                    let (_, fields) =
-                        decode_payload(rt, &raw.payload, &scale);
+                    let (_, fields) = decode_payload(rt, &raw.payload, &scale);
                     let mut obj = json!({
                         "seq": seq,
                         "type": record_name(rt),
@@ -893,9 +780,7 @@ fn dump_follow_json(
                         ),
                     });
                     if let Value::Object(m) = fields {
-                        if let Value::Object(ref mut base) =
-                            obj
-                        {
+                        if let Value::Object(ref mut base) = obj {
                             base.extend(m);
                         }
                     }
@@ -907,15 +792,11 @@ fn dump_follow_json(
                 if !running.load(Ordering::SeqCst) {
                     break;
                 }
-                reader = match WalReader::open_from_seq(
-                    stream_id, next_seq, wal_dir,
-                ) {
+                reader = match WalReader::open_from_seq(stream_id, next_seq, wal_dir) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("wal reopen error: {}", e);
-                        thread::sleep(Duration::from_millis(
-                            100,
-                        ));
+                        thread::sleep(Duration::from_millis(100));
                         continue;
                     }
                 };
@@ -937,8 +818,7 @@ fn dump_stats(reader: &mut WalReader, filters: &Filters) {
         }
         *counts.entry(record_name(rt)).or_insert(0) += 1;
     }
-    let mut pairs: Vec<(&str, u64)> =
-        counts.into_iter().collect();
+    let mut pairs: Vec<(&str, u64)> = counts.into_iter().collect();
     pairs.sort_by_key(|(name, _)| *name);
     let total: u64 = pairs.iter().map(|(_, c)| c).sum();
     for (name, count) in &pairs {
@@ -947,11 +827,7 @@ fn dump_stats(reader: &mut WalReader, filters: &Filters) {
     println!("{:<20} {}", "total", total);
 }
 
-fn dump_text(
-    reader: &mut WalReader,
-    filters: &Filters,
-    scale: &DisplayScale,
-) {
+fn dump_text(reader: &mut WalReader, filters: &Filters, scale: &DisplayScale) {
     let mut count: u64 = 0;
     while let Ok(Some(raw)) = reader.next() {
         let rt = raw.header.record_type;
@@ -960,8 +836,7 @@ fn dump_text(
         }
         let len = raw.header.len;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
-        let (fields, _) =
-            decode_payload(rt, &raw.payload, scale);
+        let (fields, _) = decode_payload(rt, &raw.payload, scale);
 
         println!(
             "seq={:<8} type={:<18} len={:<4} \
@@ -987,8 +862,7 @@ fn dump_json(reader: &mut WalReader, filters: &Filters) {
         }
         let len = raw.header.len;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
-        let (_, fields) =
-            decode_payload(rt, &raw.payload, &scale);
+        let (_, fields) = decode_payload(rt, &raw.payload, &scale);
 
         let mut obj = json!({
             "seq": seq,
@@ -1011,38 +885,23 @@ fn dump_file(file: PathBuf) {
     use std::fs::File;
     use std::io::Read;
 
-    let mut f = File::open(&file).unwrap_or_else(|e| {
-        die(format!(
-            "failed to open {}: {}", file.display(), e,
-        ))
-    });
+    let mut f = File::open(&file)
+        .unwrap_or_else(|e| die(format!("failed to open {}: {}", file.display(), e,)));
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf).unwrap_or_else(|e| {
-        die(format!(
-            "failed to read {}: {}", file.display(), e,
-        ))
-    });
+    f.read_to_end(&mut buf)
+        .unwrap_or_else(|e| die(format!("failed to read {}: {}", file.display(), e,)));
 
     let mut offset = 0;
     let mut count = 0;
 
     while offset + 16 <= buf.len() {
         let header = &buf[offset..offset + 16];
-        let rt = u16::from_le_bytes(
-            [header[2], header[3]],
-        );
-        let len = u16::from_le_bytes(
-            [header[4], header[5]],
-        ) as usize;
-        let crc32 = u32::from_le_bytes([
-            header[8], header[9], header[10], header[11],
-        ]);
+        let rt = u16::from_le_bytes([header[2], header[3]]);
+        let len = u16::from_le_bytes([header[4], header[5]]) as usize;
+        let crc32 = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
 
         if len > 1_000_000 {
-            eprintln!(
-                "corrupt: record len {} at offset {}",
-                len, offset,
-            );
+            eprintln!("corrupt: record len {} at offset {}", len, offset,);
             break;
         }
         if offset + 16 + len > buf.len() {
@@ -1091,17 +950,10 @@ fn main() {
             tick_size,
             lot_size,
         } => {
-            let filters = Filters::from_args(
-                record_types,
-                symbol,
-                user,
-                from_ts,
-                to_ts,
-            );
+            let filters = Filters::from_args(record_types, symbol, user, from_ts, to_ts);
             let scale = DisplayScale::new(tick_size, lot_size);
             wal_dump(
-                stream_id, wal_dir, from_seq, json, stats,
-                follow, filters, scale,
+                stream_id, wal_dir, from_seq, json, stats, follow, filters, scale,
             );
         }
         Commands::Dump { file } => dump_file(file),

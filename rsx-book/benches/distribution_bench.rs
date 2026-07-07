@@ -58,12 +58,7 @@ impl Shape {
     }
 }
 
-fn rest(
-    book: &mut Orderbook,
-    buy: bool,
-    price: i64,
-    oid: u64,
-) -> u32 {
+fn rest(book: &mut Orderbook, buy: bool, price: i64, oid: u64) -> u32 {
     let side = if buy { Side::Buy } else { Side::Sell };
     book.insert_resting(price, 10, side, 0, 1, false, 1, 0, oid)
 }
@@ -135,11 +130,9 @@ fn bench_next_best(c: &mut Criterion) {
         for &n in &DEPTHS {
             let (mut book, touch) = build(shape, n);
             book.cancel_order(touch); // clear the touch once
-            g.bench_with_input(
-                BenchmarkId::new(shape.name(), n),
-                &n,
-                |b, _| b.iter(|| black_box(book.scan_next_ask(0))),
-            );
+            g.bench_with_input(BenchmarkId::new(shape.name(), n), &n, |b, _| {
+                b.iter(|| black_box(book.scan_next_ask(0)))
+            });
         }
     }
     g.finish();
@@ -154,18 +147,14 @@ fn bench_match_clears(c: &mut Criterion) {
         for &n in &DEPTHS {
             let (mut book, _) = build(shape, n);
             let mut oid = 1_000_000u64;
-            g.bench_with_input(
-                BenchmarkId::new(shape.name(), n),
-                &n,
-                |b, _| {
-                    b.iter(|| {
-                        taker_clear_touch(&mut book, oid);
-                        oid += 1;
-                        rest(&mut book, false, MID + 1, oid);
-                        oid += 1;
-                    });
-                },
-            );
+            g.bench_with_input(BenchmarkId::new(shape.name(), n), &n, |b, _| {
+                b.iter(|| {
+                    taker_clear_touch(&mut book, oid);
+                    oid += 1;
+                    rest(&mut book, false, MID + 1, oid);
+                    oid += 1;
+                });
+            });
         }
     }
     g.finish();
@@ -180,17 +169,13 @@ fn bench_cancel_touch(c: &mut Criterion) {
         for &n in &DEPTHS {
             let (mut book, _) = build(shape, n);
             let mut oid = 2_000_000u64;
-            g.bench_with_input(
-                BenchmarkId::new(shape.name(), n),
-                &n,
-                |b, _| {
-                    b.iter(|| {
-                        let h = rest(&mut book, false, MID, oid);
-                        oid += 1;
-                        black_box(book.cancel_order(h));
-                    });
-                },
-            );
+            g.bench_with_input(BenchmarkId::new(shape.name(), n), &n, |b, _| {
+                b.iter(|| {
+                    let h = rest(&mut book, false, MID, oid);
+                    oid += 1;
+                    black_box(book.cancel_order(h));
+                });
+            });
         }
     }
     g.finish();
@@ -205,17 +190,13 @@ fn bench_cancel_deep(c: &mut Criterion) {
         for &n in &DEPTHS {
             let (mut book, _) = build(shape, n);
             let mut oid = 3_000_000u64;
-            g.bench_with_input(
-                BenchmarkId::new(shape.name(), n),
-                &n,
-                |b, _| {
-                    b.iter(|| {
-                        let h = rest(&mut book, false, DEEP_ASK, oid);
-                        oid += 1;
-                        black_box(book.cancel_order(h));
-                    });
-                },
-            );
+            g.bench_with_input(BenchmarkId::new(shape.name(), n), &n, |b, _| {
+                b.iter(|| {
+                    let h = rest(&mut book, false, DEEP_ASK, oid);
+                    oid += 1;
+                    black_box(book.cancel_order(h));
+                });
+            });
         }
     }
     g.finish();

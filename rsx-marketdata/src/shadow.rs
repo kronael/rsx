@@ -19,16 +19,10 @@ pub struct ShadowBook {
 }
 
 impl ShadowBook {
-    pub fn new(
-        config: SymbolConfig,
-        capacity: u32,
-        mid_price: i64,
-    ) -> Self {
+    pub fn new(config: SymbolConfig, capacity: u32, mid_price: i64) -> Self {
         let symbol_id = config.symbol_id;
         Self {
-            book: Orderbook::new(
-                config, capacity, mid_price,
-            ),
+            book: Orderbook::new(config, capacity, mid_price),
             symbol_id,
             seq: 0,
             timestamp_ns: 0,
@@ -37,25 +31,15 @@ impl ShadowBook {
     }
 
     /// Apply a Fill event: reduce maker order qty.
-    pub fn apply_fill(
-        &mut self,
-        maker_handle: u32,
-        qty: i64,
-        _side: u8,
-        timestamp_ns: u64,
-    ) {
+    pub fn apply_fill(&mut self, maker_handle: u32, qty: i64, _side: u8, timestamp_ns: u64) {
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
-        let remaining =
-            self.book.orders.get(maker_handle)
-                .remaining_qty.0;
+        let remaining = self.book.orders.get(maker_handle).remaining_qty.0;
         let new_qty = remaining - qty;
         if new_qty <= 0 {
             self.book.cancel_order(maker_handle);
         } else {
-            self.book.modify_order_qty_down(
-                maker_handle, new_qty,
-            );
+            self.book.modify_order_qty_down(maker_handle, new_qty);
         }
     }
 
@@ -70,23 +54,13 @@ impl ShadowBook {
     ) -> u32 {
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
-        let side_enum = if side == 0 {
-            Side::Buy
-        } else {
-            Side::Sell
-        };
-        self.book.insert_resting(
-            price, qty, side_enum, 0, user_id, false,
-            timestamp_ns, 0, 0,
-        )
+        let side_enum = if side == 0 { Side::Buy } else { Side::Sell };
+        self.book
+            .insert_resting(price, qty, side_enum, 0, user_id, false, timestamp_ns, 0, 0)
     }
 
     /// Apply an OrderCancelled event.
-    pub fn apply_cancel(
-        &mut self,
-        handle: u32,
-        timestamp_ns: u64,
-    ) {
+    pub fn apply_cancel(&mut self, handle: u32, timestamp_ns: u64) {
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
         self.book.cancel_order(handle);
@@ -103,13 +77,7 @@ impl ShadowBook {
         order_id_hi: u64,
         order_id_lo: u64,
     ) -> u32 {
-        let handle = self.apply_insert(
-            price,
-            qty,
-            side,
-            user_id,
-            timestamp_ns,
-        );
+        let handle = self.apply_insert(price, qty, side, user_id, timestamp_ns);
         self.order_map
             .insert(order_key(order_id_hi, order_id_lo), handle);
         handle
@@ -166,22 +134,18 @@ impl ShadowBook {
         }
         let (bid_px, bid_qty, bid_count) = if has_bid {
             let tick = self.book.best_bid_tick;
-            let level =
-                &self.book.active_levels[tick as usize];
+            let level = &self.book.active_levels[tick as usize];
             let head = level.head;
-            let price =
-                self.book.orders.get(head).price.0;
+            let price = self.book.orders.get(head).price.0;
             (price, level.total_qty, level.order_count)
         } else {
             (0, 0, 0)
         };
         let (ask_px, ask_qty, ask_count) = if has_ask {
             let tick = self.book.best_ask_tick;
-            let level =
-                &self.book.active_levels[tick as usize];
+            let level = &self.book.active_levels[tick as usize];
             let head = level.head;
-            let price =
-                self.book.orders.get(head).price.0;
+            let price = self.book.orders.get(head).price.0;
             (price, level.total_qty, level.order_count)
         } else {
             (0, 0, 0)
@@ -200,10 +164,7 @@ impl ShadowBook {
     }
 
     /// Generate L2 snapshot up to `depth` levels per side.
-    pub fn derive_l2_snapshot(
-        &self,
-        depth: usize,
-    ) -> L2Snapshot {
+    pub fn derive_l2_snapshot(&self, depth: usize) -> L2Snapshot {
         let bids = self.collect_levels_bid(depth);
         let asks = self.collect_levels_ask(depth);
         L2Snapshot {
@@ -216,15 +177,9 @@ impl ShadowBook {
     }
 
     /// Generate L2 delta for a specific price level.
-    pub fn derive_l2_delta(
-        &self,
-        side: u8,
-        price: i64,
-    ) -> L2Delta {
-        let tick =
-            self.book.compression.price_to_index(price);
-        let level =
-            &self.book.active_levels[tick as usize];
+    pub fn derive_l2_delta(&self, side: u8, price: i64) -> L2Delta {
+        let tick = self.book.compression.price_to_index(price);
+        let level = &self.book.active_levels[tick as usize];
         L2Delta {
             symbol_id: self.symbol_id,
             side,
@@ -262,10 +217,7 @@ impl ShadowBook {
         self.symbol_id
     }
 
-    fn collect_levels_bid(
-        &self,
-        depth: usize,
-    ) -> Vec<L2Level> {
+    fn collect_levels_bid(&self, depth: usize) -> Vec<L2Level> {
         let mut levels = self.side_levels(Side::Buy);
         // Bids best-first = highest price first.
         levels.sort_by(|a, b| b.price.cmp(&a.price));
@@ -273,10 +225,7 @@ impl ShadowBook {
         levels
     }
 
-    fn collect_levels_ask(
-        &self,
-        depth: usize,
-    ) -> Vec<L2Level> {
+    fn collect_levels_ask(&self, depth: usize) -> Vec<L2Level> {
         let mut levels = self.side_levels(Side::Sell);
         // Asks best-first = lowest price first.
         levels.sort_by(|a, b| a.price.cmp(&b.price));

@@ -2,8 +2,8 @@
 //! FAULTED + sender-side retransmit dedup. See
 //! `.ship/26-CMP-RELIABILITY-V4/SPEC.md`.
 
-use crate::cast::CastRecv;
 use crate::cast::CastReceiver;
+use crate::cast::CastRecv;
 use crate::cast::CastSender;
 use crate::config::CastConfig;
 use crate::encode_utils::compute_crc32;
@@ -47,47 +47,23 @@ fn fill(seq: u64) -> FillRecord {
 }
 
 fn as_bytes<T>(val: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            val as *const T as *const u8,
-            std::mem::size_of::<T>(),
-        )
-    }
+    unsafe { std::slice::from_raw_parts(val as *const T as *const u8, std::mem::size_of::<T>()) }
 }
 
 /// Build sender + receiver bound to loopback for tests
 /// that exercise debounce + retransmit behavior.
-fn loopback_with(
-    wal_dir: &std::path::Path,
-    config: CastConfig,
-) -> (CastSender, CastReceiver) {
+fn loopback_with(wal_dir: &std::path::Path, config: CastConfig) -> (CastSender, CastReceiver) {
     let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
 
-    let sender = CastSender::with_config(
-        recv_addr,
-        1,
-        wal_dir,
-        &config,
-    )
-    .unwrap();
+    let sender = CastSender::with_config(recv_addr, 1, wal_dir, &config).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let receiver = CastReceiver::with_config(
-        recv_addr,
-        sender_addr,
-        &config,
-    )
-    .unwrap();
+    let receiver = CastReceiver::with_config(recv_addr, sender_addr, &config).unwrap();
     (sender, receiver)
 }
 
-fn send_nak_from(
-    src: &UdpSocket,
-    dest: std::net::SocketAddr,
-    from_seq: u64,
-    count: u64,
-) {
+fn send_nak_from(src: &UdpSocket, dest: std::net::SocketAddr, from_seq: u64, count: u64) {
     let nak = Nak {
         from_seq,
         count,
@@ -95,22 +71,14 @@ fn send_nak_from(
     };
     let payload = as_bytes(&nak);
     let crc = compute_crc32(payload);
-    let header = WalHeader::new(
-        RECORD_NAK,
-        payload.len() as u16,
-        crc,
-    );
-    let mut buf =
-        vec![0u8; WalHeader::SIZE + payload.len()];
+    let header = WalHeader::new(RECORD_NAK, payload.len() as u16, crc);
+    let mut buf = vec![0u8; WalHeader::SIZE + payload.len()];
     buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     src.send_to(&buf, dest).unwrap();
 }
 
-fn count_retransmits_for_seq(
-    listener: &UdpSocket,
-    target_seq: u64,
-) -> usize {
+fn count_retransmits_for_seq(listener: &UdpSocket, target_seq: u64) -> usize {
     let mut buf = [0u8; 256];
     let mut count = 0;
     let start = std::time::Instant::now();
@@ -120,35 +88,23 @@ fn count_retransmits_for_seq(
                 if n < WalHeader::SIZE {
                     continue;
                 }
-                let Some(hdr) = WalHeader::from_bytes(
-                    &buf[..WalHeader::SIZE],
-                ) else {
+                let Some(hdr) = WalHeader::from_bytes(&buf[..WalHeader::SIZE]) else {
                     continue;
                 };
                 if hdr.record_type != RECORD_FILL {
                     continue;
                 }
-                let payload =
-                    &buf[WalHeader::SIZE..n];
-                if payload.len()
-                    < std::mem::size_of::<FillRecord>()
-                {
+                let payload = &buf[WalHeader::SIZE..n];
+                if payload.len() < std::mem::size_of::<FillRecord>() {
                     continue;
                 }
-                let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const FillRecord,
-                    )
-                };
+                let rec =
+                    unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const FillRecord) };
                 if rec.seq == target_seq {
                     count += 1;
                 }
             }
-            Err(ref e)
-                if e.kind()
-                    == std::io::ErrorKind::WouldBlock =>
-            {
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::hint::spin_loop();
             }
             Err(_) => break,
@@ -162,8 +118,7 @@ fn count_retransmits_for_seq(
 fn nak_recovers_single_packet() {
     let tmp = TempDir::new().unwrap();
     let cfg = CastConfig::default();
-    let (mut sender, mut receiver) =
-        loopback_with(tmp.path(), cfg);
+    let (mut sender, mut receiver) = loopback_with(tmp.path(), cfg);
 
     // Send seq=1 normally (delivered).
     let mut f1 = fill(1);
@@ -194,11 +149,7 @@ fn nak_recovers_single_packet() {
     loop {
         match receiver.try_recv() {
             CastRecv::Data(_, p) => {
-                let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        p.as_ptr() as *const FillRecord,
-                    )
-                };
+                let rec = unsafe { std::ptr::read_unaligned(p.as_ptr() as *const FillRecord) };
                 got.push(rec.seq);
                 sender.recv_control();
                 thread::sleep(Duration::from_millis(2));
@@ -213,22 +164,15 @@ fn nak_recovers_single_packet() {
     // round-trip with debounce: this verifies the path is
     // wired without inducing artificial drops. A separate
     // test exercises debounce directly.
-    assert!(
-        got.contains(&2),
-        "missing seq=2; got={got:?}"
-    );
-    assert!(
-        got.contains(&3),
-        "missing seq=3; got={got:?}"
-    );
+    assert!(got.contains(&2), "missing seq=2; got={got:?}");
+    assert!(got.contains(&3), "missing seq=3; got={got:?}");
 }
 
 // 2. Multiple gaps; oldest-run-first NAK pattern.
 #[test]
 fn oldest_missing_run_naks_sequentially() {
     let tmp = TempDir::new().unwrap();
-    let (mut sender, mut receiver) =
-        loopback_with(tmp.path(), CastConfig::default());
+    let (mut sender, mut receiver) = loopback_with(tmp.path(), CastConfig::default());
 
     // Send seq=1 (delivered, sets expected_seq=2).
     let mut f1 = fill(1);
@@ -278,27 +222,17 @@ fn receiver_only() -> (CastReceiver, std::net::SocketAddr, UdpSocket) {
     // point it at the probe socket so the test can also
     // observe outgoing NAKs.
     let sender_addr = probe.local_addr().unwrap();
-    let receiver =
-        CastReceiver::new(recv_addr, sender_addr).unwrap();
+    let receiver = CastReceiver::new(recv_addr, sender_addr).unwrap();
     (receiver, recv_addr, probe)
 }
 
-fn send_fill_at(
-    probe: &UdpSocket,
-    recv_addr: std::net::SocketAddr,
-    seq: u64,
-) {
+fn send_fill_at(probe: &UdpSocket, recv_addr: std::net::SocketAddr, seq: u64) {
     let mut f = fill(seq);
     f.seq = seq;
     let payload = as_bytes(&f);
     let crc = compute_crc32(payload);
-    let header = WalHeader::new(
-        RECORD_FILL,
-        payload.len() as u16,
-        crc,
-    );
-    let mut buf =
-        vec![0u8; WalHeader::SIZE + payload.len()];
+    let header = WalHeader::new(RECORD_FILL, payload.len() as u16, crc);
+    let mut buf = vec![0u8; WalHeader::SIZE + payload.len()];
     buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     probe.send_to(&buf, recv_addr).unwrap();
@@ -323,10 +257,7 @@ fn ring_overflow_faults() {
     send_fill_at(&probe, recv_addr, 2050);
     thread::sleep(Duration::from_millis(10));
     let r = receiver.try_recv();
-    assert!(
-        matches!(r, CastRecv::Empty | CastRecv::Data(_, _)),
-        "{r:?}"
-    );
+    assert!(matches!(r, CastRecv::Empty | CastRecv::Data(_, _)), "{r:?}");
 
     send_fill_at(&probe, recv_addr, 4098);
     thread::sleep(Duration::from_millis(10));
@@ -355,19 +286,13 @@ fn reconnect_state_blocks_further_recv() {
     let _ = receiver.try_recv();
     send_fill_at(&probe, recv_addr, 4098);
     thread::sleep(Duration::from_millis(10));
-    assert!(matches!(
-        receiver.try_recv(),
-        CastRecv::Reconnect { .. }
-    ));
+    assert!(matches!(receiver.try_recv(), CastRecv::Reconnect { .. }));
 
     // Subsequent calls keep returning Reconnect, even
     // after a brand new in-order packet arrives.
     send_fill_at(&probe, recv_addr, 2);
     thread::sleep(Duration::from_millis(10));
-    assert!(matches!(
-        receiver.try_recv(),
-        CastRecv::Reconnect { .. }
-    ));
+    assert!(matches!(receiver.try_recv(), CastRecv::Reconnect { .. }));
     assert!(receiver.is_reconnect_pending());
     assert!(!receiver.is_faulted());
 }
@@ -385,10 +310,7 @@ fn reset_after_replay_clears_reconnect() {
     let _ = receiver.try_recv();
     send_fill_at(&probe, recv_addr, 4098);
     thread::sleep(Duration::from_millis(10));
-    assert!(matches!(
-        receiver.try_recv(),
-        CastRecv::Reconnect { .. }
-    ));
+    assert!(matches!(receiver.try_recv(), CastRecv::Reconnect { .. }));
 
     // Simulate consumer doing a DXS replay up through
     // seq=4097; reset and resume.
@@ -401,16 +323,10 @@ fn reset_after_replay_clears_reconnect() {
     let r = receiver.try_recv();
     match r {
         CastRecv::Data(_, p) => {
-            let rec = unsafe {
-                std::ptr::read_unaligned(
-                    p.as_ptr() as *const FillRecord,
-                )
-            };
+            let rec = unsafe { std::ptr::read_unaligned(p.as_ptr() as *const FillRecord) };
             assert_eq!(rec.seq, 4098);
         }
-        other => panic!(
-            "expected Data after reset, got {other:?}"
-        ),
+        other => panic!("expected Data after reset, got {other:?}"),
     }
 }
 
@@ -418,8 +334,7 @@ fn reset_after_replay_clears_reconnect() {
 #[test]
 fn handle_nak_dedups_within_window() {
     let tmp = TempDir::new().unwrap();
-    let listener =
-        UdpSocket::bind("127.0.0.1:0").unwrap();
+    let listener = UdpSocket::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let listener_addr = listener.local_addr().unwrap();
 
@@ -428,10 +343,7 @@ fn handle_nak_dedups_within_window() {
     // through to WAL. Populate the WAL so the fallback
     // path can serve the seq=1 retransmit.
     let stream_id = 1u32;
-    let mut writer = crate::wal::WalWriter::new(
-        stream_id, tmp.path(), 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = crate::wal::WalWriter::new(stream_id, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut f_wal = fill(1);
     {
         let framed = writer.prepare(&mut f_wal).unwrap();
@@ -443,13 +355,7 @@ fn handle_nak_dedups_within_window() {
         retx_dedup_window_us: 50_000, // 50 ms
         ..CastConfig::default()
     };
-    let mut sender = CastSender::with_config(
-        listener_addr,
-        stream_id,
-        tmp.path(),
-        &cfg,
-    )
-    .unwrap();
+    let mut sender = CastSender::with_config(listener_addr, stream_id, tmp.path(), &cfg).unwrap();
     let sender_addr = sender.local_addr().unwrap();
 
     // Prime the send: assigns seq=1, sends to listener.
@@ -459,9 +365,7 @@ fn handle_nak_dedups_within_window() {
     // Drain the initial send so it's not counted.
     let mut drain = [0u8; 256];
     let drain_start = std::time::Instant::now();
-    while drain_start.elapsed()
-        < Duration::from_millis(20)
-    {
+    while drain_start.elapsed() < Duration::from_millis(20) {
         if listener.recv_from(&mut drain).is_err() {
             std::hint::spin_loop();
         }
@@ -478,8 +382,7 @@ fn handle_nak_dedups_within_window() {
         sender.recv_control();
     }
 
-    let retransmits =
-        count_retransmits_for_seq(&listener, 1);
+    let retransmits = count_retransmits_for_seq(&listener, 1);
     assert_eq!(
         retransmits, 1,
         "expected 1 dedup'd retransmit, got {retransmits}",
@@ -491,8 +394,7 @@ fn handle_nak_dedups_within_window() {
     send_nak_from(&probe, sender_addr, 1, 1);
     thread::sleep(Duration::from_micros(500));
     sender.recv_control();
-    let after_window =
-        count_retransmits_for_seq(&listener, 1);
+    let after_window = count_retransmits_for_seq(&listener, 1);
     assert_eq!(
         after_window, 1,
         "expected 1 retransmit after window, got \
@@ -533,13 +435,8 @@ fn heartbeat_triggers_nak_on_idle_gap() {
     };
     let payload = as_bytes(&hb);
     let crc = compute_crc32(payload);
-    let header = WalHeader::new(
-        RECORD_HEARTBEAT,
-        payload.len() as u16,
-        crc,
-    );
-    let mut buf =
-        vec![0u8; WalHeader::SIZE + payload.len()];
+    let header = WalHeader::new(RECORD_HEARTBEAT, payload.len() as u16, crc);
+    let mut buf = vec![0u8; WalHeader::SIZE + payload.len()];
     buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
     buf[WalHeader::SIZE..].copy_from_slice(payload);
     probe.send_to(&buf, recv_addr).unwrap();
@@ -553,9 +450,7 @@ fn heartbeat_triggers_nak_on_idle_gap() {
     while start.elapsed() < Duration::from_millis(200) {
         if let Ok((n, _)) = probe.recv_from(&mut rbuf) {
             if n >= WalHeader::SIZE {
-                if let Some(h) = WalHeader::from_bytes(
-                    &rbuf[..WalHeader::SIZE],
-                ) {
+                if let Some(h) = WalHeader::from_bytes(&rbuf[..WalHeader::SIZE]) {
                     if h.record_type == RECORD_NAK {
                         got_nak = true;
                         break;
@@ -587,8 +482,7 @@ fn drain_reorder_resets_nak_retries() {
         max_nak_retries: 4,
         ..CastConfig::default()
     };
-    let (mut sender, mut receiver) =
-        loopback_with(tmp.path(), cfg);
+    let (mut sender, mut receiver) = loopback_with(tmp.path(), cfg);
 
     // Seq=1: in-order.
     let mut f1 = fill(1);

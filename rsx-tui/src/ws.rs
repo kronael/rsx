@@ -85,8 +85,7 @@ pub fn gateway_url() -> String {
 
 /// JWT signing secret from `RSX_GW_JWT_SECRET`, or `DEFAULT_JWT_SECRET`.
 pub fn jwt_secret() -> String {
-    std::env::var("RSX_GW_JWT_SECRET")
-        .unwrap_or_else(|_| DEFAULT_JWT_SECRET.to_owned())
+    std::env::var("RSX_GW_JWT_SECRET").unwrap_or_else(|_| DEFAULT_JWT_SECRET.to_owned())
 }
 
 /// HS256 claims, matching `rsx-cli/src/bench_probe.rs::Claims` (same
@@ -165,7 +164,11 @@ impl WsConn {
             .name("rsx-tui-ws".to_owned())
             .spawn(move || run_thread(url, token, symbol_id, out_rx, in_tx))
             .map_err(io::Error::other)?;
-        Ok(WsConn { out, inbound, _thread: thread })
+        Ok(WsConn {
+            out,
+            inbound,
+            _thread: thread,
+        })
     }
 
     /// Connect using `RSX_GW_LISTEN`/`RSX_GW_JWT_SECRET` (or their
@@ -178,9 +181,9 @@ impl WsConn {
 
 impl GatewayConn for WsConn {
     fn submit(&mut self, order: OrderReq) -> io::Result<()> {
-        self.out.send(order).map_err(|_| {
-            io::Error::new(io::ErrorKind::NotConnected, "ws link down")
-        })
+        self.out
+            .send(order)
+            .map_err(|_| io::Error::new(io::ErrorKind::NotConnected, "ws link down"))
     }
 
     fn poll_event(&mut self) -> Option<GwEvent> {
@@ -395,7 +398,9 @@ fn parse_frame(text: &str) -> Option<(String, Vec<Value>)> {
 }
 
 fn value_str(v: &Value) -> String {
-    v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())
+    v.as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| v.to_string())
 }
 
 /// True if `text` is a webproto heartbeat frame `{H:[...]}`. The read
@@ -456,7 +461,11 @@ struct PendingOrder {
 /// Buy as a Sell when a later order was acked first).
 fn claim_pending(pending: &mut VecDeque<PendingOrder>, qty: i64) -> Option<Side> {
     let idx = pending.iter().position(|p| p.qty == qty).or({
-        if pending.is_empty() { None } else { Some(0) }
+        if pending.is_empty() {
+            None
+        } else {
+            Some(0)
+        }
     })?;
     pending.remove(idx).map(|p| p.side)
 }
@@ -490,7 +499,9 @@ fn fold_order_update(
         0 | 2 => Some(GwEvent::Done { oid }),
         3 => {
             let reason = arr.get(4).and_then(Value::as_u64).unwrap_or(0);
-            Some(GwEvent::Rejected { reason: format!("failure_reason={reason}") })
+            Some(GwEvent::Rejected {
+                reason: format!("failure_reason={reason}"),
+            })
         }
         _ => None,
     }
@@ -533,14 +544,21 @@ fn fold_fill(
         }
         Side::Buy
     });
-    Some(GwEvent::Fill { oid: oid_to_u64(own_oid), px, qty, side })
+    Some(GwEvent::Fill {
+        oid: oid_to_u64(own_oid),
+        px,
+        qty,
+        side,
+    })
 }
 
 /// `{E:[code, msg]}`.
 fn fold_error(arr: &[Value]) -> Option<GwEvent> {
     let code = arr.first().map(value_str).unwrap_or_default();
     let msg = arr.get(1).map(value_str).unwrap_or_default();
-    Some(GwEvent::Rejected { reason: format!("{code}: {msg}") })
+    Some(GwEvent::Rejected {
+        reason: format!("{code}: {msg}"),
+    })
 }
 
 #[cfg(test)]

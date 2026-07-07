@@ -6,10 +6,10 @@
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
+use rsx_types::validate_order;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::SymbolConfig;
-use rsx_types::validate_order;
 
 fn bench_price_arithmetic(c: &mut Criterion) {
     let a = Price(50000);
@@ -32,14 +32,10 @@ fn bench_validate_order(c: &mut Criterion) {
         lot_size: 10,
     };
     c.bench_function("validate_order_pass", |bench| {
-        bench.iter(|| {
-            validate_order(&config, Price(50000), Qty(100))
-        });
+        bench.iter(|| validate_order(&config, Price(50000), Qty(100)));
     });
     c.bench_function("validate_order_fail_tick", |bench| {
-        bench.iter(|| {
-            validate_order(&config, Price(50001), Qty(100))
-        });
+        bench.iter(|| validate_order(&config, Price(50001), Qty(100)));
     });
 }
 

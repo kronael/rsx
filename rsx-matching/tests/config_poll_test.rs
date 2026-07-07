@@ -19,10 +19,7 @@ async fn setup_db() -> (
         "host=localhost port={port} user=postgres \
          password=postgres dbname=postgres"
     );
-    let (client, conn) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .unwrap();
+    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
     tokio::spawn(async move {
         let _ = conn.await;
     });
@@ -72,23 +69,26 @@ async fn poll_returns_config_when_effective() {
     let now = now_ms();
     let past = now - 60_000;
 
-    client.execute(
-        "INSERT INTO symbol_config_schedule \
+    client
+        .execute(
+            "INSERT INTO symbol_config_schedule \
          (symbol_id, config_version, effective_at_ms, tick_size, lot_size, \
           price_decimals, qty_decimals, status, created_at_ms) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        &[
-            &(symbol_id as i32),
-            &1i64,
-            &(past as i64),
-            &1i64,
-            &1000i64,
-            &8i16,
-            &8i16,
-            &"active",
-            &(now as i64),
-        ],
-    ).await.expect("insert");
+            &[
+                &(symbol_id as i32),
+                &1i64,
+                &(past as i64),
+                &1i64,
+                &1000i64,
+                &8i16,
+                &8i16,
+                &"active",
+                &(now as i64),
+            ],
+        )
+        .await
+        .expect("insert");
 
     let configs = poll_scheduled_configs(&client, symbol_id, 0, now)
         .await
@@ -108,23 +108,26 @@ async fn poll_ignores_future_configs() {
     let now = now_ms();
     let future = now + 60_000;
 
-    client.execute(
-        "INSERT INTO symbol_config_schedule \
+    client
+        .execute(
+            "INSERT INTO symbol_config_schedule \
          (symbol_id, config_version, effective_at_ms, tick_size, lot_size, \
           price_decimals, qty_decimals, status, created_at_ms) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        &[
-            &(symbol_id as i32),
-            &1i64,
-            &(future as i64),
-            &1i64,
-            &1000i64,
-            &8i16,
-            &8i16,
-            &"active",
-            &(now as i64),
-        ],
-    ).await.expect("insert");
+            &[
+                &(symbol_id as i32),
+                &1i64,
+                &(future as i64),
+                &1i64,
+                &1000i64,
+                &8i16,
+                &8i16,
+                &"active",
+                &(now as i64),
+            ],
+        )
+        .await
+        .expect("insert");
 
     let configs = poll_scheduled_configs(&client, symbol_id, 0, now)
         .await
@@ -143,23 +146,26 @@ async fn poll_returns_multiple_configs_in_order() {
     let past2 = now - 60_000;
 
     for (version, effective) in [(1, past1), (2, past2)] {
-        client.execute(
-            "INSERT INTO symbol_config_schedule \
+        client
+            .execute(
+                "INSERT INTO symbol_config_schedule \
              (symbol_id, config_version, effective_at_ms, tick_size, lot_size, \
               price_decimals, qty_decimals, status, created_at_ms) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            &[
-                &(symbol_id as i32),
-                &(version as i64),
-                &(effective as i64),
-                &(version as i64),
-                &1000i64,
-                &8i16,
-                &8i16,
-                &"active",
-                &(now as i64),
-            ],
-        ).await.expect("insert");
+                &[
+                    &(symbol_id as i32),
+                    &(version as i64),
+                    &(effective as i64),
+                    &(version as i64),
+                    &1000i64,
+                    &8i16,
+                    &8i16,
+                    &"active",
+                    &(now as i64),
+                ],
+            )
+            .await
+            .expect("insert");
     }
 
     let configs = poll_scheduled_configs(&client, symbol_id, 0, now)
@@ -180,23 +186,26 @@ async fn poll_filters_by_current_version() {
     let past = now - 60_000;
 
     for version in 1..=3 {
-        client.execute(
-            "INSERT INTO symbol_config_schedule \
+        client
+            .execute(
+                "INSERT INTO symbol_config_schedule \
              (symbol_id, config_version, effective_at_ms, tick_size, lot_size, \
               price_decimals, qty_decimals, status, created_at_ms) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            &[
-                &(symbol_id as i32),
-                &(version as i64),
-                &(past as i64),
-                &1i64,
-                &1000i64,
-                &8i16,
-                &8i16,
-                &"active",
-                &(now as i64),
-            ],
-        ).await.expect("insert");
+                &[
+                    &(symbol_id as i32),
+                    &(version as i64),
+                    &(past as i64),
+                    &1i64,
+                    &1000i64,
+                    &8i16,
+                    &8i16,
+                    &"active",
+                    &(now as i64),
+                ],
+            )
+            .await
+            .expect("insert");
     }
 
     let configs = poll_scheduled_configs(&client, symbol_id, 2, now)
@@ -213,7 +222,7 @@ async fn write_applied_config_inserts_new() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
-    let ts_ns = now * 1_000_000 ;
+    let ts_ns = now * 1_000_000;
 
     let cfg = ScheduledConfig {
         config_version: 1,
@@ -244,7 +253,7 @@ async fn write_applied_config_updates_existing() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
     let now = now_ms();
-    let ts_ns = now * 1_000_000 ;
+    let ts_ns = now * 1_000_000;
 
     let cfg1 = ScheduledConfig {
         config_version: 1,
@@ -286,9 +295,7 @@ async fn load_applied_config_returns_none_when_empty() {
     let (_c, client) = setup_db().await;
     let symbol_id = 1u32;
 
-    let loaded = load_applied_config(&client, symbol_id)
-        .await
-        .expect("load");
+    let loaded = load_applied_config(&client, symbol_id).await.expect("load");
 
     assert!(loaded.is_none());
 }

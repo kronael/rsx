@@ -8,9 +8,7 @@ use rustc_hash::FxHashMap;
 fn make_engine_with_max_rounds(max_rounds: u32) -> LiquidationEngine {
     LiquidationEngine::new(
         0, // no delay
-        10,
-        max_rounds,
-        500,
+        10, max_rounds, 500,
     )
 }
 
@@ -23,17 +21,12 @@ fn socialized_loss_emitted_after_max_rounds() {
 
     // Rounds 1,2,3
     for i in 0..3 {
-        let (_, losses) = e.maybe_process(
-            i as u64,
-            &|_, _| 10,
-            &|_| 50_000,
-        );
+        let (_, losses) = e.maybe_process(i as u64, &|_, _| 10, &|_| 50_000);
         assert_eq!(losses.len(), 0);
     }
 
     // Round 4 exceeds max, emit socialized loss
-    let (_, losses) =
-        e.maybe_process(100, &|_, _| 10, &|_| 50_000);
+    let (_, losses) = e.maybe_process(100, &|_, _| 10, &|_| 50_000);
     assert_eq!(losses.len(), 1);
     assert_eq!(losses[0].user_id, 1);
     assert_eq!(losses[0].symbol_id, 100);
@@ -46,8 +39,7 @@ fn socialized_loss_contains_position_details() {
     e.enqueue(1, 100, 0);
 
     let (_, _) = e.maybe_process(0, &|_, _| 10, &|_| 50_000);
-    let (_, losses) =
-        e.maybe_process(100, &|_, _| 10, &|_| 50_000);
+    let (_, losses) = e.maybe_process(100, &|_, _| 10, &|_| 50_000);
 
     assert_eq!(losses[0].qty, 10);
     assert_eq!(losses[0].price, 50_000);
@@ -60,8 +52,7 @@ fn socialized_loss_short_position() {
     e.enqueue(1, 100, 0);
 
     let (_, _) = e.maybe_process(0, &|_, _| -10, &|_| 50_000);
-    let (_, losses) =
-        e.maybe_process(100, &|_, _| -10, &|_| 50_000);
+    let (_, losses) = e.maybe_process(100, &|_, _| -10, &|_| 50_000);
 
     assert_eq!(losses[0].qty, 10);
     assert_eq!(losses[0].side, 0); // buy for short
@@ -188,8 +179,7 @@ fn no_socialized_loss_if_position_closes_before_max_rounds() {
     let (_, _) = e.maybe_process(0, &|_, _| 10, &|_| 50_000);
 
     // Position closes (filled)
-    let (_, losses) =
-        e.maybe_process(100, &|_, _| 0, &|_| 50_000);
+    let (_, losses) = e.maybe_process(100, &|_, _| 0, &|_| 50_000);
     assert_eq!(losses.len(), 0);
 }
 
@@ -202,8 +192,7 @@ fn no_socialized_loss_if_margin_recovered() {
 
     e.cancel_if_recovered(1, 100);
 
-    let (orders, losses) =
-        e.maybe_process(100, &|_, _| 10, &|_| 50_000);
+    let (orders, losses) = e.maybe_process(100, &|_, _| 10, &|_| 50_000);
     assert_eq!(orders.len(), 0);
     assert_eq!(losses.len(), 0);
 }
@@ -261,8 +250,7 @@ fn zero_price_socialized_loss() {
 
 #[test]
 fn large_socialized_loss() {
-    let mut fund =
-        InsuranceFund::new(100, 100_000_000_000);
+    let mut fund = InsuranceFund::new(100, 100_000_000_000);
     let loss = SocializedLoss {
         user_id: 1,
         symbol_id: 100,

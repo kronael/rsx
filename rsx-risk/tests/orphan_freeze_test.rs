@@ -15,6 +15,8 @@ use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
+use rsx_risk::replay::replay_from_wal;
+use rsx_risk::replay::ColdStartState;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
@@ -24,8 +26,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::replay::ColdStartState;
-use rsx_risk::replay::replay_from_wal;
 use rsx_types::Qty;
 use rustc_hash::FxHashMap;
 use tempfile::TempDir;
@@ -55,13 +55,7 @@ fn make_shard() -> RiskShard {
     RiskShard::new(default_config())
 }
 
-fn order(
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-    oid_lo: u64,
-) -> OrderRequest {
+fn order(user_id: u32, symbol_id: u32, price: i64, qty: i64, oid_lo: u64) -> OrderRequest {
     OrderRequest {
         seq: 1,
         user_id,
@@ -140,8 +134,7 @@ fn orphan_freeze_not_durable_without_order_accepted() {
     // Observe the shard's durable-persist stream so the recovery
     // snapshot is DERIVED from what the shard actually persisted —
     // not a hand-picked empty map (which would make this circular).
-    let (prod, mut cons) =
-        rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(16);
+    let (prod, mut cons) = rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(16);
     s.set_persist_producer(prod);
 
     // Order passes the pre-trade gate -> in-memory freeze.
@@ -157,8 +150,7 @@ fn orphan_freeze_not_durable_without_order_accepted() {
     let mut fo = FxHashMap::default();
     while let Ok(ev) = cons.pop() {
         if let rsx_risk::persist::PersistEvent::FrozenInsert(f) = ev {
-            let key = ((f.order_id_hi as u128) << 64)
-                | f.order_id_lo as u128;
+            let key = ((f.order_id_hi as u128) << 64) | f.order_id_lo as u128;
             fo.insert(key, (f.user_id, f.amount));
         }
     }
@@ -194,8 +186,7 @@ fn confirmed_freeze_is_durable() {
     s.mark_prices[0] = 10_000;
 
     // Wire a persist ring so confirm_freeze has somewhere to push.
-    let (prod, mut cons) =
-        rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(16);
+    let (prod, mut cons) = rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(16);
     s.set_persist_producer(prod);
 
     let o = order(0, 0, 10_000, 10, 42);
@@ -271,8 +262,7 @@ fn replay_order_cancelled_releases_freeze() {
     let wal_dir = tmp.path().join("wal");
     std::fs::create_dir_all(&wal_dir).unwrap();
 
-    let mut writer =
-        WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
     let mut acc = accepted(0, 0, 0, 10_000, 10, 42);
     let f = writer.prepare(&mut acc).unwrap();
     writer.append_framed(&f).unwrap();
@@ -299,9 +289,12 @@ fn replay_order_cancelled_releases_freeze() {
     {
         let cdir = tmp.path().join("ctrl");
         std::fs::create_dir_all(&cdir).unwrap();
-        write_wal(&cdir, 0, vec![accepted(0, 0, 0, 10_000, 10, 42)], |r, seq| {
-            r.seq = seq
-        });
+        write_wal(
+            &cdir,
+            0,
+            vec![accepted(0, 0, 0, 10_000, 10, 42)],
+            |r, seq| r.seq = seq,
+        );
         let mut c = make_shard();
         c.accounts.insert(0, Account::new(0, 1_000_000_000));
         replay_from_wal(&mut c, &cdir, &[0]).unwrap();
@@ -324,8 +317,7 @@ fn replay_order_failed_releases_freeze() {
     let wal_dir = tmp.path().join("wal");
     std::fs::create_dir_all(&wal_dir).unwrap();
 
-    let mut writer =
-        WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
     let mut acc = accepted(0, 0, 0, 10_000, 10, 42);
     let f = writer.prepare(&mut acc).unwrap();
     writer.append_framed(&f).unwrap();
@@ -348,9 +340,12 @@ fn replay_order_failed_releases_freeze() {
     {
         let cdir = tmp.path().join("ctrl");
         std::fs::create_dir_all(&cdir).unwrap();
-        write_wal(&cdir, 0, vec![accepted(0, 0, 0, 10_000, 10, 42)], |r, seq| {
-            r.seq = seq
-        });
+        write_wal(
+            &cdir,
+            0,
+            vec![accepted(0, 0, 0, 10_000, 10, 42)],
+            |r, seq| r.seq = seq,
+        );
         let mut c = make_shard();
         c.accounts.insert(0, Account::new(0, 1_000_000_000));
         replay_from_wal(&mut c, &cdir, &[0]).unwrap();
@@ -403,8 +398,7 @@ fn duplicate_fill_seq_positions_once() {
 
     // OrderAccepted then a Fill (same symbol). Replaying twice
     // must apply the fill once (seq dedup) and the freeze once.
-    let mut writer =
-        WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
     let mut acc = accepted(0, 0, 0, 10_000, 10, 42);
     let f = writer.prepare(&mut acc).unwrap();
     writer.append_framed(&f).unwrap();
@@ -453,8 +447,7 @@ fn double_replay_identical_state() {
     std::fs::create_dir_all(&wal_dir).unwrap();
 
     // accepted(42) + accepted(43) + done(42).
-    let mut writer =
-        WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(0, &wal_dir, 64 * 1024 * 1024).unwrap();
     let mut a1 = accepted(0, 0, 0, 10_000, 10, 42);
     let f = writer.prepare(&mut a1).unwrap();
     writer.append_framed(&f).unwrap();
@@ -497,8 +490,5 @@ fn double_replay_identical_state() {
         frozen_after_1,
         "double replay must not change frozen",
     );
-    assert_eq!(
-        s.tips, tips_after_1,
-        "double replay must not change tips",
-    );
+    assert_eq!(s.tips, tips_after_1, "double replay must not change tips",);
 }

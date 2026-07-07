@@ -87,10 +87,7 @@ fn price_to_index_extreme_distance_catchall() {
     let m = btc_map();
     // Way beyond 50%
     let idx = m.price_to_index(10_000_000);
-    assert!(
-        idx >= m.base_indices[4]
-            && idx < m.base_indices[4] + 2
-    );
+    assert!(idx >= m.base_indices[4] && idx < m.base_indices[4] + 2);
 }
 
 #[test]
@@ -106,32 +103,17 @@ fn total_slot_count_reasonable() {
 fn zone_boundary_0_1() {
     let m = btc_map();
     // Zone 0 edge: 5% of 5M = 250K ticks
-    let in_z0 =
-        m.price_to_index(5_000_000 + 249_999);
-    let in_z1 =
-        m.price_to_index(5_000_000 + 250_001);
+    let in_z0 = m.price_to_index(5_000_000 + 249_999);
+    let in_z1 = m.price_to_index(5_000_000 + 250_001);
     // z0 index should be in zone 0 range
-    assert!(
-        in_z0 >= m.base_indices[0]
-            && in_z0
-                < m.base_indices[0]
-                    + m.zone_slots[0]
-    );
+    assert!(in_z0 >= m.base_indices[0] && in_z0 < m.base_indices[0] + m.zone_slots[0]);
     // z1 index should be in zone 1 range
-    assert!(
-        in_z1 >= m.base_indices[1]
-            && in_z1
-                < m.base_indices[1]
-                    + m.zone_slots[1]
-    );
+    assert!(in_z1 >= m.base_indices[1] && in_z1 < m.base_indices[1] + m.zone_slots[1]);
 }
 
 /// zone(idx): which zone a slot index falls in.
 fn zone_of(m: &CompressionMap, idx: u32) -> usize {
-    (0..5)
-        .rev()
-        .find(|&z| idx >= m.base_indices[z])
-        .unwrap()
+    (0..5).rev().find(|&z| idx >= m.base_indices[z]).unwrap()
 }
 
 // --- tick_size != 1: zones must be sized in RAW price, not ticks ---
@@ -210,10 +192,8 @@ fn zone_boundary_exact_edge() {
     let idx = m.price_to_index(exactly_at_boundary);
 
     // Should map to either zone 0 or zone 1 consistently
-    let in_z0 = idx >= m.base_indices[0]
-        && idx < m.base_indices[0] + m.zone_slots[0];
-    let in_z1 = idx >= m.base_indices[1]
-        && idx < m.base_indices[1] + m.zone_slots[1];
+    let in_z0 = idx >= m.base_indices[0] && idx < m.base_indices[0] + m.zone_slots[0];
+    let in_z1 = idx >= m.base_indices[1] && idx < m.base_indices[1] + m.zone_slots[1];
 
     assert!(
         in_z0 || in_z1,

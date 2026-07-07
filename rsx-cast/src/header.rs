@@ -36,11 +36,7 @@ impl TryFrom<u8> for WalVersion {
 impl WalHeader {
     pub const SIZE: usize = 16;
 
-    pub fn new(
-        record_type: u16,
-        len: u16,
-        crc32: u32,
-    ) -> Self {
+    pub fn new(record_type: u16, len: u16, crc32: u32) -> Self {
         Self {
             version: WalVersion::V1 as u8,
             _pad0: 0,
@@ -59,20 +55,11 @@ impl WalHeader {
             return None;
         }
         WalVersion::try_from(buf[0]).ok()?;
-        Some(unsafe {
-            std::ptr::read_unaligned(
-                buf.as_ptr() as *const Self,
-            )
-        })
+        Some(unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const Self) })
     }
 
     pub fn to_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                Self::SIZE,
-            )
-        }
+        unsafe { std::slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
 

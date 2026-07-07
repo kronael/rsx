@@ -86,17 +86,25 @@ fn out_of_order_acks_keep_correct_side() {
 
     // Each order fills; the fill must carry the side that was submitted,
     // not the FIFO-popped one.
-    let sell_fill =
-        f.fold(&json!({ "F": [sell, oid(999), 49_000, 7, 0, 0] }).to_string());
-    let buy_fill =
-        f.fold(&json!({ "F": [buy, oid(999), 51_000, 5, 0, 0] }).to_string());
+    let sell_fill = f.fold(&json!({ "F": [sell, oid(999), 49_000, 7, 0, 0] }).to_string());
+    let buy_fill = f.fold(&json!({ "F": [buy, oid(999), 51_000, 5, 0, 0] }).to_string());
     assert_eq!(
         sell_fill,
-        Some(GwEvent::Fill { oid: 7, px: 49_000, qty: 7, side: Side::Sell }),
+        Some(GwEvent::Fill {
+            oid: 7,
+            px: 49_000,
+            qty: 7,
+            side: Side::Sell
+        }),
     );
     assert_eq!(
         buy_fill,
-        Some(GwEvent::Fill { oid: 5, px: 51_000, qty: 5, side: Side::Buy }),
+        Some(GwEvent::Fill {
+            oid: 5,
+            px: 51_000,
+            qty: 5,
+            side: Side::Buy
+        }),
     );
 }
 
@@ -123,7 +131,12 @@ fn fast_reject_before_accept_does_not_shift_side() {
     );
     assert_eq!(
         f.fold(&json!({ "F": [a, oid(999), 50_000, 5, 0, 0] }).to_string()),
-        Some(GwEvent::Fill { oid: 5, px: 50_000, qty: 5, side: Side::Buy }),
+        Some(GwEvent::Fill {
+            oid: 5,
+            px: 50_000,
+            qty: 5,
+            side: Side::Buy
+        }),
     );
 }
 
@@ -132,11 +145,15 @@ fn fast_reject_before_accept_does_not_shift_side() {
 #[test]
 fn unpaired_fill_counts_the_fallback() {
     let mut f = Folder::new();
-    let ev =
-        f.fold(&json!({ "F": [oid(1), oid(2), 50_000, 3, 0, 0] }).to_string());
+    let ev = f.fold(&json!({ "F": [oid(1), oid(2), 50_000, 3, 0, 0] }).to_string());
     assert_eq!(
         ev,
-        Some(GwEvent::Fill { oid: 1, px: 50_000, qty: 3, side: Side::Buy }),
+        Some(GwEvent::Fill {
+            oid: 1,
+            px: 50_000,
+            qty: 3,
+            side: Side::Buy
+        }),
     );
     assert_eq!(f.unknown_side_count, 1, "the Buy fallback must be counted");
 }
@@ -213,7 +230,12 @@ fn order_frame_encodes_webproto_new_order() {
     assert_eq!(arr[7].as_u64(), Some(0), "post-only 0");
 
     // Buy/Gtc/Fok mappings on a second order.
-    let buy = OrderReq { side: Side::Buy, price: 1, qty: 1, tif: Tif::Fok };
+    let buy = OrderReq {
+        side: Side::Buy,
+        price: 1,
+        qty: 1,
+        tif: Tif::Fok,
+    };
     let f2 = order_frame(10, &buy, "x");
     let v2: Value = serde_json::from_str(&f2).unwrap();
     let a2 = v2.get("N").and_then(Value::as_array).unwrap();

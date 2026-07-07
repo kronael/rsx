@@ -66,12 +66,7 @@ fn fill_record() -> FillRecord {
 }
 
 fn as_bytes<T>(val: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            val as *const T as *const u8,
-            mem::size_of::<T>(),
-        )
-    }
+    unsafe { std::slice::from_raw_parts(val as *const T as *const u8, mem::size_of::<T>()) }
 }
 
 /// Sub-step 1: CRC32 over a 128-byte FillRecord payload.
@@ -92,11 +87,7 @@ fn bench_header_build(c: &mut Criterion) {
     pin_worker();
     c.bench_function("send.header_build", |b| {
         b.iter(|| {
-            let hdr = WalHeader::new(
-                RECORD_FILL,
-                128,
-                black_box(0xdeadbeefu32),
-            );
+            let hdr = WalHeader::new(RECORD_FILL, 128, black_box(0xdeadbeefu32));
             black_box(hdr.to_bytes());
         });
     });
@@ -113,11 +104,8 @@ fn bench_buf_pack(c: &mut Criterion) {
     let mut buf = vec![0u8; WalHeader::SIZE + 128];
     c.bench_function("send.buf_pack_144b", |b| {
         b.iter(|| {
-            buf[..WalHeader::SIZE]
-                .copy_from_slice(black_box(hdr_bytes));
-            buf[WalHeader::SIZE
-                ..WalHeader::SIZE + 128]
-                .copy_from_slice(black_box(payload));
+            buf[..WalHeader::SIZE].copy_from_slice(black_box(hdr_bytes));
+            buf[WalHeader::SIZE..WalHeader::SIZE + 128].copy_from_slice(black_box(payload));
             black_box(&buf);
         });
     });
@@ -136,21 +124,16 @@ fn bench_sendto_loopback(c: &mut Criterion) {
     // Pin the drain to a different core than the sender so the
     // two contexts don't time-slice the same core (which would
     // serialize the sendto with the drain and inflate latency).
-    let stop =
-        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop_clone = std::sync::Arc::clone(&stop);
     let handle = std::thread::spawn(move || {
         core_affinity::set_for_current(drain_core);
         let mut buf = [0u8; 256];
         recv.set_nonblocking(true).unwrap();
-        while !stop_clone.load(
-            std::sync::atomic::Ordering::Relaxed,
-        ) {
+        while !stop_clone.load(std::sync::atomic::Ordering::Relaxed) {
             match recv.recv_from(&mut buf) {
                 Ok(_) => {}
-                Err(ref e)
-                    if e.kind()
-                        == std::io::ErrorKind::WouldBlock => {
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::hint::spin_loop();
                 }
                 Err(_) => return,
@@ -161,8 +144,7 @@ fn bench_sendto_loopback(c: &mut Criterion) {
     let payload = vec![0xAAu8; 144];
     c.bench_function("send.sendto_144b_loopback", |b| {
         b.iter(|| {
-            send.send_to(black_box(&payload), recv_addr)
-                .unwrap();
+            send.send_to(black_box(&payload), recv_addr).unwrap();
         });
     });
     stop.store(true, std::sync::atomic::Ordering::Release);
@@ -183,8 +165,7 @@ fn bench_ring_cache_copy(c: &mut Criterion) {
     c.bench_function("send.ring_cache_copy_128b", |b| {
         b.iter(|| {
             let off = (slot & 4095) * 128;
-            ring[off..off + 128]
-                .copy_from_slice(&frame[..128]);
+            ring[off..off + 128].copy_from_slice(&frame[..128]);
             slot = slot.wrapping_add(1);
             black_box(&ring);
         });

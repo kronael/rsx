@@ -12,10 +12,7 @@ fn oid32() -> String {
 
 #[test]
 fn parse_n_frame_all_fields() {
-    let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,1,1]}}",
-        cid20()
-    );
+    let json = format!("{{\"N\":[1,0,50000,100,\"{}\",0,1,1]}}", cid20());
     let f = parse(&json).unwrap();
     assert_eq!(
         f,
@@ -34,13 +31,16 @@ fn parse_n_frame_all_fields() {
 
 #[test]
 fn parse_n_frame_reduce_only_default_0() {
-    let json = format!(
-        "{{\"N\":[1,1,50000,100,\"{}\",2]}}",
-        cid20()
-    );
+    let json = format!("{{\"N\":[1,1,50000,100,\"{}\",2]}}", cid20());
     let f = parse(&json).unwrap();
     match f {
-        WsFrame::NewOrder { reduce_only, post_only, tif, side, .. } => {
+        WsFrame::NewOrder {
+            reduce_only,
+            post_only,
+            tif,
+            side,
+            ..
+        } => {
             assert!(!reduce_only);
             assert!(!post_only);
             assert_eq!(tif, 2);
@@ -52,10 +52,7 @@ fn parse_n_frame_reduce_only_default_0() {
 
 #[test]
 fn parse_n_frame_reduce_only_1() {
-    let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,1,0]}}",
-        cid20()
-    );
+    let json = format!("{{\"N\":[1,0,50000,100,\"{}\",0,1,0]}}", cid20());
     match parse(&json).unwrap() {
         WsFrame::NewOrder { reduce_only, .. } => {
             assert!(reduce_only);
@@ -66,10 +63,7 @@ fn parse_n_frame_reduce_only_1() {
 
 #[test]
 fn parse_n_frame_post_only_1() {
-    let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,0,1]}}",
-        cid20()
-    );
+    let json = format!("{{\"N\":[1,0,50000,100,\"{}\",0,0,1]}}", cid20());
     match parse(&json).unwrap() {
         WsFrame::NewOrder { post_only, .. } => {
             assert!(post_only);
@@ -80,35 +74,20 @@ fn parse_n_frame_post_only_1() {
 
 #[test]
 fn parse_n_frame_invalid_side_rejected() {
-    let json = format!(
-        "{{\"N\":[1,2,50000,100,\"{}\",0]}}",
-        cid20()
-    );
-    assert!(matches!(
-        parse(&json),
-        Err(ParseError::InvalidValue(_))
-    ));
+    let json = format!("{{\"N\":[1,2,50000,100,\"{}\",0]}}", cid20());
+    assert!(matches!(parse(&json), Err(ParseError::InvalidValue(_))));
 }
 
 #[test]
 fn parse_n_frame_symbol_id_over_u32_rejected() {
     // u32::MAX + 1 must not truncate to 0 (wrong routing).
-    let json = format!(
-        "{{\"N\":[4294967296,0,50000,100,\"{}\",0]}}",
-        cid20()
-    );
-    assert!(matches!(
-        parse(&json),
-        Err(ParseError::InvalidValue(_))
-    ));
+    let json = format!("{{\"N\":[4294967296,0,50000,100,\"{}\",0]}}", cid20());
+    assert!(matches!(parse(&json), Err(ParseError::InvalidValue(_))));
 }
 
 #[test]
 fn parse_n_frame_symbol_id_u32_max_ok() {
-    let json = format!(
-        "{{\"N\":[4294967295,0,50000,100,\"{}\",0]}}",
-        cid20()
-    );
+    let json = format!("{{\"N\":[4294967295,0,50000,100,\"{}\",0]}}", cid20());
     match parse(&json).unwrap() {
         WsFrame::NewOrder { symbol_id, .. } => {
             assert_eq!(symbol_id, u32::MAX);
@@ -120,10 +99,7 @@ fn parse_n_frame_symbol_id_u32_max_ok() {
 #[test]
 fn parse_n_frame_missing_field_rejected() {
     let json = r#"{"N":[1,0,50000]}"#;
-    assert!(matches!(
-        parse(json),
-        Err(ParseError::MissingField(_))
-    ));
+    assert!(matches!(parse(json), Err(ParseError::MissingField(_))));
 }
 
 #[test]
@@ -166,10 +142,7 @@ fn parse_h_frame_server_initiated() {
 fn parse_h_frame_client_echo() {
     let json = r#"{"H":[9999]}"#;
     let f = parse(json).unwrap();
-    assert_eq!(
-        f,
-        WsFrame::Heartbeat { timestamp_ms: 9999 }
-    );
+    assert_eq!(f, WsFrame::Heartbeat { timestamp_ms: 9999 });
 }
 
 #[test]
@@ -188,10 +161,7 @@ fn parse_e_frame_error_code_and_msg() {
 #[test]
 fn parse_q_frame_liquidation_all_statuses() {
     for status in 0..=4u8 {
-        let json = format!(
-            "{{\"Q\":[1,{},10,0,500,49000,50]}}",
-            status,
-        );
+        let json = format!("{{\"Q\":[1,{},10,0,500,49000,50]}}", status,);
         let f = parse(&json).unwrap();
         match f {
             WsFrame::Liquidation { status: s, .. } => {
@@ -208,31 +178,19 @@ fn parse_q_frame_liquidation_all_statuses() {
 #[test]
 fn parse_frame_rejects_multiple_keys() {
     let json = r#"{"N":[],"C":[]}"#;
-    assert!(matches!(
-        parse(json),
-        Err(ParseError::MultipleKeys)
-    ));
+    assert!(matches!(parse(json), Err(ParseError::MultipleKeys)));
 }
 
 #[test]
 fn parse_frame_rejects_non_letter_key() {
     let json = r#"{"1":[123]}"#;
-    assert!(matches!(
-        parse(json),
-        Err(ParseError::UnknownType(_))
-    ));
+    assert!(matches!(parse(json), Err(ParseError::UnknownType(_))));
 }
 
 #[test]
 fn parse_n_frame_invalid_tif_rejected() {
-    let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",5]}}",
-        cid20()
-    );
-    assert!(matches!(
-        parse(&json),
-        Err(ParseError::InvalidValue(_))
-    ));
+    let json = format!("{{\"N\":[1,0,50000,100,\"{}\",5]}}", cid20());
+    assert!(matches!(parse(&json), Err(ParseError::InvalidValue(_))));
 }
 
 // --- Serialization tests ---
@@ -308,68 +266,40 @@ fn serialize_q_frame_liquidation() {
 #[test]
 fn enum_side_valid_0_1_only() {
     for side in 0..=1u8 {
-        let json = format!(
-            "{{\"N\":[1,{},50000,100,\"{}\",0]}}",
-            side,
-            cid20(),
-        );
+        let json = format!("{{\"N\":[1,{},50000,100,\"{}\",0]}}", side, cid20(),);
         assert!(parse(&json).is_ok());
     }
-    let json = format!(
-        "{{\"N\":[1,2,50000,100,\"{}\",0]}}",
-        cid20(),
-    );
+    let json = format!("{{\"N\":[1,2,50000,100,\"{}\",0]}}", cid20(),);
     assert!(parse(&json).is_err());
 }
 
 #[test]
 fn enum_tif_valid_0_1_2_only() {
     for tif in 0..=2u8 {
-        let json = format!(
-            "{{\"N\":[1,0,50000,100,\"{}\",{}]}}",
-            cid20(),
-            tif,
-        );
+        let json = format!("{{\"N\":[1,0,50000,100,\"{}\",{}]}}", cid20(), tif,);
         assert!(parse(&json).is_ok());
     }
-    let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",3]}}",
-        cid20(),
-    );
+    let json = format!("{{\"N\":[1,0,50000,100,\"{}\",3]}}", cid20(),);
     assert!(parse(&json).is_err());
 }
 
 #[test]
 fn enum_order_status_valid_0_1_2_3() {
     for st in 0..=3u8 {
-        let json = format!(
-            "{{\"U\":[\"{}\",{},100,0,0]}}",
-            oid32(),
-            st,
-        );
+        let json = format!("{{\"U\":[\"{}\",{},100,0,0]}}", oid32(), st,);
         assert!(parse(&json).is_ok());
     }
-    let json = format!(
-        "{{\"U\":[\"{}\",4,100,0,0]}}",
-        oid32(),
-    );
+    let json = format!("{{\"U\":[\"{}\",4,100,0,0]}}", oid32(),);
     assert!(parse(&json).is_err());
 }
 
 #[test]
 fn enum_failure_reason_valid_0_through_12() {
     for r in 0..=12u8 {
-        let json = format!(
-            "{{\"U\":[\"{}\",3,0,100,{}]}}",
-            oid32(),
-            r,
-        );
+        let json = format!("{{\"U\":[\"{}\",3,0,100,{}]}}", oid32(), r,);
         assert!(parse(&json).is_ok());
     }
-    let json = format!(
-        "{{\"U\":[\"{}\",3,0,100,13]}}",
-        oid32(),
-    );
+    let json = format!("{{\"U\":[\"{}\",3,0,100,13]}}", oid32(),);
     assert!(parse(&json).is_err());
 }
 
@@ -379,10 +309,7 @@ fn enum_failure_reason_valid_0_through_12() {
 fn enum_unknown_value_rejected() {
     // Unknown message type
     let json = r#"{"Z":[1,2,3]}"#;
-    assert!(matches!(
-        parse(json),
-        Err(ParseError::UnknownType(_))
-    ));
+    assert!(matches!(parse(json), Err(ParseError::UnknownType(_))));
 }
 
 // --- Fill fee ---
@@ -446,10 +373,7 @@ fn fill_fee_forwarded_in_f_frame() {
 
 #[test]
 fn n_frame_ro_1_maps_to_quic_reduce_only() {
-    let json = format!(
-        "{{\"N\":[1,0,50000,100,\"{}\",0,1]}}",
-        cid20()
-    );
+    let json = format!("{{\"N\":[1,0,50000,100,\"{}\",0,1]}}", cid20());
     match parse(&json).unwrap() {
         WsFrame::NewOrder { reduce_only, .. } => {
             assert!(reduce_only);

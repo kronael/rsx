@@ -1,35 +1,29 @@
-use rsx_types::Price;
-use rsx_types::Qty;
+use crate::config::TlsClient;
 use crate::config::TlsConfig;
 use crate::config::TlsServer;
-use crate::config::TlsClient;
-use rsx_messages::FillRecord;
 use crate::records::RECORD_CAUGHT_UP;
-use rsx_messages::RECORD_FILL;
 use crate::replication_client::ReplicationConsumer;
 use crate::replication_server::ReplicationService;
 use crate::wal::WalWriter;
+use rsx_messages::FillRecord;
+use rsx_messages::RECORD_FILL;
+use rsx_types::Price;
+use rsx_types::Qty;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tempfile::TempDir;
-use tokio::time::Duration;
 use tokio::time::timeout;
+use tokio::time::Duration;
 
-fn generate_test_certs(
-    dir: &std::path::Path,
-) -> (PathBuf, PathBuf) {
+fn generate_test_certs(dir: &std::path::Path) -> (PathBuf, PathBuf) {
     let cert_path = dir.join("cert.pem");
     let key_path = dir.join("key.pem");
 
-    let cert = rcgen::generate_simple_self_signed(
-        vec![
-            "localhost".to_string(),
-            "127.0.0.1".to_string(),
-        ],
-    )
-    .unwrap();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .unwrap();
     let cert_pem = cert.cert.pem();
     let key_pem = cert.key_pair.serialize_pem();
 
@@ -46,8 +40,7 @@ async fn tls_client_server_connection() {
     let wal_dir = tmp.path().join("wal");
     std::fs::create_dir(&wal_dir).unwrap();
 
-    let (cert_path, key_path) =
-        generate_test_certs(tmp.path());
+    let (cert_path, key_path) = generate_test_certs(tmp.path());
 
     let server_tls = TlsConfig {
         server: Some(TlsServer {
@@ -64,25 +57,15 @@ async fn tls_client_server_connection() {
         }),
     };
 
-    let service = ReplicationService::new(
-        wal_dir.clone(),
-        server_tls,
-    )
-    .unwrap();
+    let service = ReplicationService::new(wal_dir.clone(), server_tls).unwrap();
 
-    let service_addr: SocketAddr =
-        "127.0.0.1:19300".parse().unwrap();
-    let service_task = tokio::spawn(async move {
-        service.serve(service_addr).await
-    });
+    let service_addr: SocketAddr = "127.0.0.1:19300".parse().unwrap();
+    let service_task = tokio::spawn(async move { service.serve(service_addr).await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let stream_id = 1u32;
-    let mut wal = WalWriter::new(
-        stream_id, &wal_dir, 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut wal = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
 
     let mut fill = FillRecord {
         seq: 0,
@@ -111,15 +94,9 @@ async fn tls_client_server_connection() {
     wal.flush().unwrap();
 
     let tip_file = tmp.path().join("tip");
-    let consumer_addr =
-        format!("localhost:{}", service_addr.port());
-    let mut consumer = ReplicationConsumer::new(
-        stream_id,
-        vec![consumer_addr],
-        tip_file,
-        client_tls,
-    )
-    .unwrap();
+    let consumer_addr = format!("localhost:{}", service_addr.port());
+    let mut consumer =
+        ReplicationConsumer::new(stream_id, vec![consumer_addr], tip_file, client_tls).unwrap();
 
     let records = Arc::new(Mutex::new(Vec::new()));
     let records_clone = records.clone();
@@ -128,8 +105,7 @@ async fn tls_client_server_connection() {
         let result = timeout(
             Duration::from_secs(3),
             consumer.run(move |record| {
-                let mut recs =
-                    records_clone.lock().unwrap();
+                let mut recs = records_clone.lock().unwrap();
                 recs.push(record);
                 true
             }),
@@ -151,14 +127,10 @@ async fn tls_client_server_connection() {
         recs.len()
     );
 
-    let has_fill_or_caught_up = recs.iter().any(|r| {
-        r.header.record_type == RECORD_FILL
-            || r.header.record_type == RECORD_CAUGHT_UP
-    });
-    assert!(
-        has_fill_or_caught_up,
-        "expected FILL or CAUGHT_UP record"
-    );
+    let has_fill_or_caught_up = recs
+        .iter()
+        .any(|r| r.header.record_type == RECORD_FILL || r.header.record_type == RECORD_CAUGHT_UP);
+    assert!(has_fill_or_caught_up, "expected FILL or CAUGHT_UP record");
 }
 
 /// Replication is TLS-mandatory: a server config without the
@@ -172,12 +144,9 @@ fn service_new_requires_server_cert() {
             cert_path: tmp.path().join("ca.pem"),
         }),
     };
-    let err = ReplicationService::new(
-        tmp.path().to_path_buf(),
-        client_only,
-    )
-    .err()
-    .expect("expected TLS-mandatory construction error");
+    let err = ReplicationService::new(tmp.path().to_path_buf(), client_only)
+        .err()
+        .expect("expected TLS-mandatory construction error");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
 

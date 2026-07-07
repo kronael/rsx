@@ -13,13 +13,23 @@ struct TestFill {
 }
 
 impl crate::records::CastRecord for TestFill {
-    fn seq(&self) -> u64 { self.seq }
-    fn set_seq(&mut self, s: u64) { self.seq = s; }
-    fn record_type() -> u16 { rsx_messages::RECORD_FILL }
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, s: u64) {
+        self.seq = s;
+    }
+    fn record_type() -> u16 {
+        rsx_messages::RECORD_FILL
+    }
 }
 
 fn make_fill(seq: u64) -> TestFill {
-    TestFill { seq: 0, ts_ns: seq * 1000, _pad: [0u8; 48] }
+    TestFill {
+        seq: 0,
+        ts_ns: seq * 1000,
+        _pad: [0u8; 48],
+    }
 }
 
 fn extract_seq(payload: &[u8]) -> Option<u64> {
@@ -34,8 +44,7 @@ fn extract_seq(payload: &[u8]) -> Option<u64> {
 #[test]
 fn writer_assigns_monotonic_seq() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill1 = make_fill(0);
     let mut fill2 = make_fill(0);
     let seq1 = {
@@ -58,8 +67,7 @@ fn writer_assigns_monotonic_seq() {
 #[test]
 fn writer_append_to_buffer_no_io() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -73,8 +81,7 @@ fn writer_append_to_buffer_no_io() {
 #[test]
 fn writer_flush_writes_to_file() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -99,8 +106,10 @@ fn writer_rotation_at_threshold() {
     }
     writer.flush().unwrap();
     let dir = tmp.path().join("1");
-    let files: Vec<_> =
-        std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
     assert!(
         files.len() >= 2,
         "expected rotation, got {} files",
@@ -134,8 +143,7 @@ fn writer_backpressure_stalls() {
 #[test]
 fn reader_sequential_iteration_all_records() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     for i in 0..10 {
         let mut fill = make_fill(i);
         {
@@ -155,8 +163,7 @@ fn reader_sequential_iteration_all_records() {
 #[test]
 fn reader_returns_none_at_eof() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -171,8 +178,7 @@ fn reader_returns_none_at_eof() {
 #[test]
 fn reader_crc32_invalid_truncates_stream() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -192,8 +198,7 @@ fn reader_crc32_invalid_truncates_stream() {
 #[test]
 fn reader_unknown_record_type_handled() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -256,8 +261,7 @@ fn reader_open_from_seq_finds_correct_file() {
 #[test]
 fn reader_skips_to_target_seq_within_file() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     for i in 0..10 {
         let mut fill = make_fill(i);
         {
@@ -277,8 +281,7 @@ fn reader_skips_to_target_seq_within_file() {
 #[test]
 fn record_max_payload_64kb() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     let framed = writer.prepare(&mut fill).unwrap();
     assert!(writer.append_framed(&framed).is_ok());
@@ -287,8 +290,7 @@ fn record_max_payload_64kb() {
 #[test]
 fn writer_empty_flush_no_io() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     writer.flush().unwrap();
     let active = tmp.path().join("1").join("1_active.wal");
     let size = std::fs::metadata(&active).unwrap().len();
@@ -298,8 +300,7 @@ fn writer_empty_flush_no_io() {
 #[test]
 fn writer_seq_starts_at_1() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     assert_eq!(writer.next_seq, 1);
     let mut fill = make_fill(0);
     let seq = {
@@ -314,8 +315,7 @@ fn writer_seq_starts_at_1() {
 #[test]
 fn writer_flush_calls_fsync() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -340,14 +340,14 @@ fn writer_rotation_renames_with_seq_range() {
     }
     writer.flush().unwrap();
     let dir = tmp.path().join("1");
-    let entries: Vec<_> =
-        std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
+    let entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
     let has_rotated = entries.iter().any(|e| {
         let name = e.file_name();
         let name_str = name.to_string_lossy();
-        name_str.contains('_')
-            && name_str.ends_with(".wal")
-            && !name_str.contains("active")
+        name_str.contains('_') && name_str.ends_with(".wal") && !name_str.contains("active")
     });
     assert!(has_rotated);
 }
@@ -355,8 +355,7 @@ fn writer_rotation_renames_with_seq_range() {
 #[test]
 fn writer_active_file_uses_temp_name() {
     let tmp = TempDir::new().unwrap();
-    let _writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let _writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let active = tmp.path().join("1").join("1_active.wal");
     assert!(active.exists());
 }
@@ -364,8 +363,7 @@ fn writer_active_file_uses_temp_name() {
 #[test]
 fn reader_open_from_seq_0_starts_at_beginning() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     for i in 0..5 {
         let mut fill = make_fill(i);
         {
@@ -392,8 +390,7 @@ fn reader_handles_empty_wal_directory() {
 #[test]
 fn reader_handles_single_file() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -451,8 +448,7 @@ fn reader_file_transition_seamless() {
 #[test]
 fn reader_returns_none_when_caught_up() {
     let tmp = TempDir::new().unwrap();
-    let mut writer =
-        WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut fill = make_fill(1);
     {
         let framed = writer.prepare(&mut fill).unwrap();
@@ -481,8 +477,10 @@ fn wal_rotate_at_64mb() {
     }
     writer.flush().unwrap();
     let dir = tmp.path().join("1");
-    let files: Vec<_> =
-        std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).collect();
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
     assert!(
         files.len() >= 2,
         "expected rotation at 64MB, got {} files",
@@ -577,13 +575,9 @@ fn rotation_prunes_segments_older_than_retention() {
         .collect();
     assert!(!backdated_paths.is_empty(), "expected rotated segments");
 
-    let old = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(5 * 60 * 60);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 60 * 60);
     for path in &backdated_paths {
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(path)
-            .unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_modified(old).unwrap();
     }
 

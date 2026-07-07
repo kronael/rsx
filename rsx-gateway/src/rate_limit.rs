@@ -32,14 +32,9 @@ impl RateLimiter {
 
     fn refill(&mut self) {
         let now = Instant::now();
-        let elapsed_micros = now
-            .duration_since(self.last_refill)
-            .as_micros() as i64;
-        let refill_amount = elapsed_micros
-            .saturating_mul(self.refill_rate);
-        self.tokens =
-            self.tokens.saturating_add(refill_amount)
-                .min(self.capacity);
+        let elapsed_micros = now.duration_since(self.last_refill).as_micros() as i64;
+        let refill_amount = elapsed_micros.saturating_mul(self.refill_rate);
+        self.tokens = self.tokens.saturating_add(refill_amount).min(self.capacity);
         self.last_refill = now;
     }
 
@@ -47,17 +42,11 @@ impl RateLimiter {
         self.tokens / MICROS_PER_SEC
     }
 
-    pub fn advance_time_by(
-        &mut self,
-        duration: std::time::Duration,
-    ) {
+    pub fn advance_time_by(&mut self, duration: std::time::Duration) {
         let now = self.last_refill + duration;
         let elapsed_micros = duration.as_micros() as i64;
-        let refill_amount = elapsed_micros
-            .saturating_mul(self.refill_rate);
-        self.tokens =
-            self.tokens.saturating_add(refill_amount)
-                .min(self.capacity);
+        let refill_amount = elapsed_micros.saturating_mul(self.refill_rate);
+        self.tokens = self.tokens.saturating_add(refill_amount).min(self.capacity);
         self.last_refill = now;
     }
 }

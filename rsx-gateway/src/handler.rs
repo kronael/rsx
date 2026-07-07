@@ -9,8 +9,8 @@ use crate::records::parse;
 use crate::records::serialize;
 use crate::records::CancelKey;
 use crate::records::WsFrame;
-use crate::state::GatewayState;
 use crate::rest::handle_rest;
+use crate::state::GatewayState;
 use crate::ws::is_ws_upgrade;
 use crate::ws::read_http_request;
 use crate::ws::ws_handshake_from_request;
@@ -41,14 +41,13 @@ pub async fn handle_connection(
     heartbeat_interval_ms: u64,
     heartbeat_timeout_ms: u64,
 ) {
-    let (request, mut leftover) =
-        match read_http_request(&mut stream).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("read request failed: {e}");
-                return;
-            }
-        };
+    let (request, mut leftover) = match read_http_request(&mut stream).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("read request failed: {e}");
+            return;
+        }
+    };
     if !leftover.is_empty() {
         info!("conn leftover {} bytes", leftover.len());
     }
@@ -58,13 +57,7 @@ pub async fn handle_connection(
         return;
     }
 
-    let user_id = match ws_handshake_from_request(
-        &mut stream,
-        &request,
-        jwt_secret,
-    )
-    .await
-    {
+    let user_id = match ws_handshake_from_request(&mut stream, &request, jwt_secret).await {
         Ok((_key, uid)) => uid,
         Err(e) => {
             warn!("handshake failed: {e}");
@@ -72,34 +65,22 @@ pub async fn handle_connection(
         }
     };
 
-    let conn_id = match state
-        .borrow_mut()
-        .add_connection(user_id)
-    {
+    let conn_id = match state.borrow_mut().add_connection(user_id) {
         Ok(id) => id,
         Err(e) => {
             warn!("rejected connection: {e}");
             return;
         }
     };
-    state.borrow_mut().touch_connection(
-        conn_id,
-        time_ns(),
-    );
+    state.borrow_mut().touch_connection(conn_id, time_ns());
     info!("connection {} user {}", conn_id, user_id);
 
     loop {
-        let msgs =
-            state.borrow_mut().drain_outbound(conn_id);
+        let msgs = state.borrow_mut().drain_outbound(conn_id);
         for msg in msgs {
-            if let Err(e) =
-                ws_write_text(&mut stream, msg.as_bytes())
-                    .await
-            {
+            if let Err(e) = ws_write_text(&mut stream, msg.as_bytes()).await {
                 warn!("write error conn {}: {e}", conn_id);
-                state
-                    .borrow_mut()
-                    .remove_connection(conn_id);
+                state.borrow_mut().remove_connection(conn_id);
                 return;
             }
         }
@@ -108,56 +89,29 @@ pub async fn handle_connection(
         {
             let now = time_ns();
             let st = state.borrow();
-            let should_send = st.should_send_heartbeat(
-                conn_id,
-                now,
-                heartbeat_interval_ms,
-            );
-            let timed_out = st.is_heartbeat_timeout(
-                conn_id,
-                now,
-                heartbeat_timeout_ms,
-            );
+            let should_send = st.should_send_heartbeat(conn_id, now, heartbeat_interval_ms);
+            let timed_out = st.is_heartbeat_timeout(conn_id, now, heartbeat_timeout_ms);
             drop(st);
 
             if timed_out {
-                info!(
-                    "conn {} heartbeat timeout",
-                    conn_id
-                );
-                state
-                    .borrow_mut()
-                    .remove_connection(conn_id);
+                info!("conn {} heartbeat timeout", conn_id);
+                state.borrow_mut().remove_connection(conn_id);
                 return;
             }
 
             if should_send {
                 let ts = time_ms();
-                let msg = serialize(
-                    &WsFrame::Heartbeat {
-                        timestamp_ms: ts,
-                    },
-                );
-                if let Err(e) = ws_write_text(
-                    &mut stream,
-                    msg.as_bytes(),
-                )
-                .await
-                {
+                let msg = serialize(&WsFrame::Heartbeat { timestamp_ms: ts });
+                if let Err(e) = ws_write_text(&mut stream, msg.as_bytes()).await {
                     warn!(
                         "heartbeat write failed conn \
                          {}: {e}",
                         conn_id
                     );
-                    state
-                        .borrow_mut()
-                        .remove_connection(conn_id);
+                    state.borrow_mut().remove_connection(conn_id);
                     return;
                 }
-                state.borrow_mut().mark_heartbeat_sent(
-                    conn_id,
-                    time_ns(),
-                );
+                state.borrow_mut().mark_heartbeat_sent(conn_id, time_ns());
             }
         }
 
@@ -187,49 +141,25 @@ pub async fn handle_connection(
         }
 
         // Data is available; read the frame without timeout.
-        let (opcode, payload) = match ws_read_frame_buf(
-            &mut stream,
-            &mut leftover,
-        )
-        .await
-        {
+        let (opcode, payload) = match ws_read_frame_buf(&mut stream, &mut leftover).await {
             Ok(f) => f,
             Err(e) => {
-                info!(
-                    "conn {} closed: {e}",
-                    conn_id
-                );
-                state
-                    .borrow_mut()
-                    .remove_connection(conn_id);
+                info!("conn {} closed: {e}", conn_id);
+                state.borrow_mut().remove_connection(conn_id);
                 return;
             }
         };
 
-        state.borrow_mut().touch_connection(
-            conn_id,
-            time_ns(),
-        );
+        state.borrow_mut().touch_connection(conn_id, time_ns());
 
         if opcode == 8 {
-            state
-                .borrow_mut()
-                .remove_connection(conn_id);
+            state.borrow_mut().remove_connection(conn_id);
             return;
         }
 
         if opcode == 9 {
-            if let Err(e) = ws_write_frame(
-                &mut stream,
-                0xA,
-                &payload,
-            )
-            .await
-            {
-                warn!(
-                    "ws write failed conn {}: {e}",
-                    conn_id
-                );
+            if let Err(e) = ws_write_frame(&mut stream, 0xA, &payload).await {
+                warn!("ws write failed conn {}: {e}", conn_id);
             }
             continue;
         }
@@ -240,37 +170,20 @@ pub async fn handle_connection(
         }
 
         if opcode != 1 {
-            info!(
-                "conn {} frame rejected opcode={}",
-                conn_id, opcode
-            );
-            state
-                .borrow_mut()
-                .remove_connection(conn_id);
+            info!("conn {} frame rejected opcode={}", conn_id, opcode);
+            state.borrow_mut().remove_connection(conn_id);
             return;
         }
 
-        let text = match std::str::from_utf8(&payload)
-        {
+        let text = match std::str::from_utf8(&payload) {
             Ok(s) => s,
             Err(_) => {
-                let err = serialize(
-                    &WsFrame::Error {
-                        code: 1001,
-                        message: "invalid utf8"
-                            .to_string(),
-                    },
-                );
-                if let Err(e) = ws_write_text(
-                    &mut stream,
-                    err.as_bytes(),
-                )
-                .await
-                {
-                    warn!(
-                        "ws write failed conn {}: {e}",
-                        conn_id
-                    );
+                let err = serialize(&WsFrame::Error {
+                    code: 1001,
+                    message: "invalid utf8".to_string(),
+                });
+                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                    warn!("ws write failed conn {}: {e}", conn_id);
                 }
                 continue;
             }
@@ -279,22 +192,12 @@ pub async fn handle_connection(
         let frame = match parse(text) {
             Ok(f) => f,
             Err(e) => {
-                let err = serialize(
-                    &WsFrame::Error {
-                        code: 1002,
-                        message: e.to_string(),
-                    },
-                );
-                if let Err(e) = ws_write_text(
-                    &mut stream,
-                    err.as_bytes(),
-                )
-                .await
-                {
-                    warn!(
-                        "ws write failed conn {}: {e}",
-                        conn_id
-                    );
+                let err = serialize(&WsFrame::Error {
+                    code: 1002,
+                    message: e.to_string(),
+                });
+                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                    warn!("ws write failed conn {}: {e}", conn_id);
                 }
                 continue;
             }
@@ -313,16 +216,10 @@ pub async fn handle_connection(
             } => {
                 {
                     let mut st = state.borrow_mut();
-                    let ip_limiter =
-                        st.ip_limiter_for(peer.ip());
+                    let ip_limiter = st.ip_limiter_for(peer.ip());
                     if !ip_limiter.try_consume() {
                         drop(st);
-                        send_error(
-                            &mut stream,
-                            1006,
-                            "rate limited",
-                        )
-                        .await;
+                        send_error(&mut stream, 1006, "rate limited").await;
                         continue;
                     }
                 }
@@ -333,18 +230,10 @@ pub async fn handle_connection(
                     let limiter = st
                         .user_limiters
                         .entry(user_id)
-                        .or_insert_with(|| {
-                            crate::rate_limit::RateLimiter::new(
-                                cap, cap)
-                        });
+                        .or_insert_with(|| crate::rate_limit::RateLimiter::new(cap, cap));
                     if !limiter.try_consume() {
                         drop(st);
-                        send_error(
-                            &mut stream,
-                            1006,
-                            "rate limited",
-                        )
-                        .await;
+                        send_error(&mut stream, 1006, "rate limited").await;
                         continue;
                     }
                 }
@@ -353,12 +242,7 @@ pub async fn handle_connection(
                     let mut st = state.borrow_mut();
                     if !st.circuit.allow() {
                         drop(st);
-                        send_error(
-                            &mut stream,
-                            5,
-                            "overloaded",
-                        )
-                        .await;
+                        send_error(&mut stream, 5, "overloaded").await;
                         continue;
                     }
                 }
@@ -369,49 +253,24 @@ pub async fn handle_connection(
                     let sid = symbol_id as usize;
                     if sid >= st.symbol_configs.len() {
                         drop(st);
-                        send_error(
-                            &mut stream,
-                            1007,
-                            "unknown symbol",
-                        )
-                        .await;
+                        send_error(&mut stream, 1007, "unknown symbol").await;
                         continue;
                     }
                     let cfg = &st.symbol_configs[sid];
-                    if !validate_tick_alignment(
-                        price,
-                        cfg.tick_size,
-                    ) {
+                    if !validate_tick_alignment(price, cfg.tick_size) {
                         drop(st);
-                        send_error(
-                            &mut stream,
-                            1008,
-                            "price not tick aligned",
-                        )
-                        .await;
+                        send_error(&mut stream, 1008, "price not tick aligned").await;
                         continue;
                     }
-                    if !validate_lot_alignment(
-                        qty, cfg.lot_size,
-                    ) {
+                    if !validate_lot_alignment(qty, cfg.lot_size) {
                         drop(st);
-                        send_error(
-                            &mut stream,
-                            1009,
-                            "qty not lot aligned",
-                        )
-                        .await;
+                        send_error(&mut stream, 1009, "qty not lot aligned").await;
                         continue;
                     }
                 }
 
                 if client_order_id.len() > 20 {
-                    send_error(
-                        &mut stream,
-                        1010,
-                        "client_order_id too long",
-                    )
-                    .await;
+                    send_error(&mut stream, 1010, "client_order_id too long").await;
                     continue;
                 }
 
@@ -420,16 +279,13 @@ pub async fn handle_connection(
 
                 let mut cid_bytes = [0u8; 20];
                 let src = client_order_id.as_bytes();
-                cid_bytes[..src.len()]
-                    .copy_from_slice(src);
+                cid_bytes[..src.len()].copy_from_slice(src);
 
                 let oid_hi = u64::from_be_bytes([
-                    oid[0], oid[1], oid[2], oid[3], oid[4],
-                    oid[5], oid[6], oid[7],
+                    oid[0], oid[1], oid[2], oid[3], oid[4], oid[5], oid[6], oid[7],
                 ]);
                 let oid_lo = u64::from_be_bytes([
-                    oid[8], oid[9], oid[10], oid[11],
-                    oid[12], oid[13], oid[14], oid[15],
+                    oid[8], oid[9], oid[10], oid[11], oid[12], oid[13], oid[14], oid[15],
                 ]);
 
                 // F4.3 — per-stage latency trace. Stage
@@ -437,8 +293,7 @@ pub async fn handle_connection(
                 // order; t_us ≈ 0 by definition.
                 rsx_log::latency_sample!("gateway_in", oid_hi, oid_lo, now_ns);
 
-                let seq =
-                    cast_sender.borrow().next_seq();
+                let seq = cast_sender.borrow().next_seq();
                 let order = OrderRequest {
                     seq,
                     user_id,
@@ -468,19 +323,10 @@ pub async fn handle_connection(
                 if state.borrow().pending.is_full() {
                     let err = serialize(&WsFrame::Error {
                         code: 1003,
-                        message: "pending queue full"
-                            .to_string(),
+                        message: "pending queue full".to_string(),
                     });
-                    if let Err(e) = ws_write_text(
-                        &mut stream,
-                        err.as_bytes(),
-                    )
-                    .await
-                    {
-                        warn!(
-                            "ws write failed conn {}: {e}",
-                            conn_id
-                        );
+                    if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                        warn!("ws write failed conn {}: {e}", conn_id);
                     }
                     continue;
                 }
@@ -491,12 +337,8 @@ pub async fn handle_connection(
                 // the error to the client, trip the circuit.
                 let bytes = as_bytes(&order);
                 let sent = {
-                    let mut sender =
-                        cast_sender.borrow_mut();
-                    match sender.send_raw(
-                        RECORD_ORDER_REQUEST,
-                        bytes,
-                    ) {
+                    let mut sender = cast_sender.borrow_mut();
+                    match sender.send_raw(RECORD_ORDER_REQUEST, bytes) {
                         Ok(_) => {
                             sender.advance_seq();
                             true
@@ -516,19 +358,10 @@ pub async fn handle_connection(
                     }
                     let err = serialize(&WsFrame::Error {
                         code: 1006,
-                        message: "order forward failed"
-                            .to_string(),
+                        message: "order forward failed".to_string(),
                     });
-                    if let Err(e) = ws_write_text(
-                        &mut stream,
-                        err.as_bytes(),
-                    )
-                    .await
-                    {
-                        warn!(
-                            "ws write failed conn {}: {e}",
-                            conn_id
-                        );
+                    if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                        warn!("ws write failed conn {}: {e}", conn_id);
                     }
                     continue;
                 }
@@ -548,157 +381,79 @@ pub async fn handle_connection(
                 let st = state.borrow();
                 match key {
                     CancelKey::OrderId(ref hex) => {
-                        let oid_bytes =
-                            match hex_to_order_id(hex) {
-                                Some(b) => b,
-                                None => {
-                                    drop(st);
-                                    let err = serialize(
-                                        &WsFrame::Error {
-                                            code: 1005,
-                                            message:
-                                                "invalid order id"
-                                                    .to_string(),
-                                        },
-                                    );
-                                    if let Err(e) =
-                                        ws_write_text(
-                                            &mut stream,
-                                            err.as_bytes(),
-                                        )
-                                        .await
-                                    {
-                                        warn!(
-                                            "ws write failed \
+                        let oid_bytes = match hex_to_order_id(hex) {
+                            Some(b) => b,
+                            None => {
+                                drop(st);
+                                let err = serialize(&WsFrame::Error {
+                                    code: 1005,
+                                    message: "invalid order id".to_string(),
+                                });
+                                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                                    warn!(
+                                        "ws write failed \
                                              conn {}: {e}",
-                                            conn_id
-                                        );
-                                    }
-                                    continue;
+                                        conn_id
+                                    );
                                 }
-                            };
-                        let found = st
-                            .pending
-                            .find_by_order_id(&oid_bytes);
+                                continue;
+                            }
+                        };
+                        let found = st.pending.find_by_order_id(&oid_bytes);
                         if let Some(p) = found {
-                            let mut cancel = build_cancel(
-                                user_id,
-                                p.symbol_id,
-                                &p.order_id,
-                            );
+                            let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
-                            if !send_cancel(
-                                &cast_sender, &mut cancel,
-                            ) {
-                                send_error(
-                                    &mut stream,
-                                    1006,
-                                    "cancel forward failed",
-                                )
-                                .await;
+                            if !send_cancel(&cast_sender, &mut cancel) {
+                                send_error(&mut stream, 1006, "cancel forward failed").await;
                             }
                         } else {
                             drop(st);
-                            send_error(
-                                &mut stream,
-                                1005,
-                                "order not found",
-                            )
-                            .await;
+                            send_error(&mut stream, 1005, "order not found").await;
                         }
                     }
-                    CancelKey::ClientOrderId(
-                        ref cid_str,
-                    ) => {
+                    CancelKey::ClientOrderId(ref cid_str) => {
                         let mut cid = [0u8; 20];
                         let src = cid_str.as_bytes();
                         let len = src.len().min(20);
-                        cid[..len]
-                            .copy_from_slice(&src[..len]);
-                        let found = st
-                            .pending
-                            .find_by_client_order_id(&cid);
+                        cid[..len].copy_from_slice(&src[..len]);
+                        let found = st.pending.find_by_client_order_id(&cid);
                         if let Some(p) = found {
-                            let mut cancel = build_cancel(
-                                user_id,
-                                p.symbol_id,
-                                &p.order_id,
-                            );
+                            let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
-                            if !send_cancel(
-                                &cast_sender, &mut cancel,
-                            ) {
-                                send_error(
-                                    &mut stream,
-                                    1006,
-                                    "cancel forward failed",
-                                )
-                                .await;
+                            if !send_cancel(&cast_sender, &mut cancel) {
+                                send_error(&mut stream, 1006, "cancel forward failed").await;
                             }
                         } else {
                             drop(st);
-                            send_error(
-                                &mut stream,
-                                1005,
-                                "order not found",
-                            )
-                            .await;
+                            send_error(&mut stream, 1005, "order not found").await;
                         }
                     }
                 }
             }
-            WsFrame::Heartbeat {..} => {
-                state.borrow_mut().heartbeat_recv(
-                    conn_id,
-                    time_ns(),
-                );
+            WsFrame::Heartbeat { .. } => {
+                state.borrow_mut().heartbeat_recv(conn_id, time_ns());
                 let now_ms = time_ms();
-                let resp = serialize(
-                    &WsFrame::Heartbeat {
-                        timestamp_ms: now_ms,
-                    },
-                );
-                if let Err(e) = ws_write_text(
-                    &mut stream,
-                    resp.as_bytes(),
-                )
-                .await
-                {
-                    warn!(
-                        "ws write failed conn {}: {e}",
-                        conn_id
-                    );
+                let resp = serialize(&WsFrame::Heartbeat {
+                    timestamp_ms: now_ms,
+                });
+                if let Err(e) = ws_write_text(&mut stream, resp.as_bytes()).await {
+                    warn!("ws write failed conn {}: {e}", conn_id);
                 }
             }
             _ => {
-                let err = serialize(
-                    &WsFrame::Error {
-                        code: 1004,
-                        message: "unsupported"
-                            .to_string(),
-                    },
-                );
-                if let Err(e) = ws_write_text(
-                    &mut stream,
-                    err.as_bytes(),
-                )
-                .await
-                {
-                    warn!(
-                        "ws write failed conn {}: {e}",
-                        conn_id
-                    );
+                let err = serialize(&WsFrame::Error {
+                    code: 1004,
+                    message: "unsupported".to_string(),
+                });
+                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                    warn!("ws write failed conn {}: {e}", conn_id);
                 }
             }
         }
     }
 }
 
-fn build_cancel(
-    user_id: u32,
-    symbol_id: u32,
-    order_id: &[u8; 16],
-) -> CancelRequest {
+fn build_cancel(user_id: u32, symbol_id: u32, order_id: &[u8; 16]) -> CancelRequest {
     let oid_hi = u64::from_be_bytes([
         order_id[0],
         order_id[1],
@@ -735,10 +490,7 @@ fn build_cancel(
 /// failed send leaves no local seq gap (NAK ring + peer's
 /// expected-seq stay aligned). On failure the caller surfaces
 /// the error to the client.
-fn send_cancel(
-    cast_sender: &Rc<RefCell<CastSender>>,
-    cancel: &mut CancelRequest,
-) -> bool {
+fn send_cancel(cast_sender: &Rc<RefCell<CastSender>>, cancel: &mut CancelRequest) -> bool {
     let mut sender = cast_sender.borrow_mut();
     cancel.seq = sender.next_seq();
     let bytes = as_bytes(cancel);
@@ -754,18 +506,12 @@ fn send_cancel(
     }
 }
 
-async fn send_error(
-    stream: &mut TcpStream,
-    code: u32,
-    message: &str,
-) {
+async fn send_error(stream: &mut TcpStream, code: u32, message: &str) {
     let err = serialize(&WsFrame::Error {
         code,
         message: message.to_string(),
     });
-    if let Err(e) =
-        ws_write_text(stream, err.as_bytes()).await
-    {
+    if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
         warn!("ws write failed: {e}");
     }
 }

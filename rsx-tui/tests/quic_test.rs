@@ -92,8 +92,7 @@ fn quic_loopback_roundtrips_order_and_event() {
 
     let (der, key) = self_signed();
     let srv_cfg =
-        ServerConfig::with_single_cert(vec![der.clone()], key.into())
-            .expect("server config");
+        ServerConfig::with_single_cert(vec![der.clone()], key.into()).expect("server config");
     let endpoint = rt.block_on(async {
         let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
         Endpoint::server(srv_cfg, addr).expect("server endpoint")
@@ -104,19 +103,21 @@ fn quic_loopback_roundtrips_order_and_event() {
     rt.spawn(run_server(endpoint, order_tx));
 
     let store = roots([der]).expect("root store");
-    let mut conn = QuicConn::connect(addr, "localhost", store)
-        .expect("connect QuicConn");
+    let mut conn = QuicConn::connect(addr, "localhost", store).expect("connect QuicConn");
 
-    let want = OrderReq { side: Side::Buy, price: 10_001, qty: 5, tif: Tif::Ioc };
+    let want = OrderReq {
+        side: Side::Buy,
+        price: 10_001,
+        qty: 5,
+        tif: Tif::Ioc,
+    };
     conn.submit(want).expect("submit order");
 
     let mut saw_connected = false;
     let mut saw_fill: Option<GwEvent> = None;
     let mut saw_lat: Option<GwEvent> = None;
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline
-        && (!saw_connected || saw_fill.is_none() || saw_lat.is_none())
-    {
+    while Instant::now() < deadline && (!saw_connected || saw_fill.is_none() || saw_lat.is_none()) {
         while let Some(ev) = conn.poll_event() {
             match ev {
                 GwEvent::Connected => saw_connected = true,
@@ -132,13 +133,22 @@ fn quic_loopback_roundtrips_order_and_event() {
     let fill = saw_fill.expect("client never observed Fill");
     assert_eq!(
         fill,
-        GwEvent::Fill { oid: 7, px: 10_001, qty: 5, side: Side::Buy },
+        GwEvent::Fill {
+            oid: 7,
+            px: 10_001,
+            qty: 5,
+            side: Side::Buy
+        },
     );
 
     // The client filled the net leg from its measured round-trip; the
     // server-stamped internal + engine components pass through unchanged.
     match saw_lat.expect("client never observed Latency") {
-        GwEvent::Latency { net_ns, internal_ns, engine_ns } => {
+        GwEvent::Latency {
+            net_ns,
+            internal_ns,
+            engine_ns,
+        } => {
             assert_eq!(internal_ns, 500);
             assert_eq!(engine_ns, 100);
             let net = net_ns.expect("client measured the net leg");
@@ -160,7 +170,12 @@ fn mock_conn_still_round_trips() {
     let mut conn = MockConn::new();
     conn.push_events([GwEvent::Connected, GwEvent::Accepted { oid: 1 }]);
 
-    let order = OrderReq { side: Side::Sell, price: 9_999, qty: 3, tif: Tif::Gtc };
+    let order = OrderReq {
+        side: Side::Sell,
+        price: 9_999,
+        qty: 3,
+        tif: Tif::Gtc,
+    };
     conn.submit(order).expect("mock submit");
     assert_eq!(conn.submitted, vec![order]);
 

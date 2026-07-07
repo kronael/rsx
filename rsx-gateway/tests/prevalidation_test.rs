@@ -15,8 +15,7 @@ fn make_configs() -> Vec<SymbolConfig> {
 
 #[test]
 fn symbol_not_found_rejects_early() {
-    let state =
-        GatewayState::new(100, 10, 30_000, make_configs());
+    let state = GatewayState::new(100, 10, 30_000, make_configs());
     // symbol 0 exists
     let sid0 = 0usize;
     assert!(sid0 < state.symbol_configs.len());
@@ -33,8 +32,7 @@ fn config_cache_updated_on_config_applied() {
     std::env::set_var("RSX_SYMBOL_0_TICK_SIZE", "20");
     std::env::set_var("RSX_SYMBOL_0_LOT_SIZE", "10");
 
-    let mut state =
-        GatewayState::new(100, 10, 30_000, make_configs());
+    let mut state = GatewayState::new(100, 10, 30_000, make_configs());
     assert_eq!(state.symbol_configs[0].tick_size, 10);
     assert_eq!(state.symbol_configs[0].lot_size, 5);
 

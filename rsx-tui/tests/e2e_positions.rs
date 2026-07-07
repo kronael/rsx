@@ -95,7 +95,12 @@ fn position_updates_after_fill() {
     let mut maker = skip_if_no_cluster!(cluster::connect(2));
     seed_maker_and_wait_accepted(
         &mut maker,
-        OrderReq { side: Side::Buy, price: 44_000, qty: 200_000, tif: Tif::Gtc },
+        OrderReq {
+            side: Side::Buy,
+            price: 44_000,
+            qty: 200_000,
+            tif: Tif::Gtc,
+        },
         Duration::from_secs(3),
     );
 
@@ -103,7 +108,12 @@ fn position_updates_after_fill() {
     let mut harness = TuiHarness::new_with(Box::new(conn));
     submit_and_wait(
         &mut harness,
-        OrderReq { side: Side::Sell, price: 44_000, qty: 200_000, tif: Tif::Ioc },
+        OrderReq {
+            side: Side::Sell,
+            price: 44_000,
+            qty: 200_000,
+            tif: Tif::Ioc,
+        },
         |app| app.fills == 1 && app.open_orders == 0,
         Duration::from_secs(5),
     );
@@ -121,12 +131,13 @@ fn position_updates_after_fill() {
         return;
     }
 
-    harness.assert_state("exactly one position entry", |app| {
-        app.positions.len() == 1
-    });
+    harness.assert_state("exactly one position entry", |app| app.positions.len() == 1);
     let (_symbol, net_qty, entry_px, upnl) = harness.app.positions[0].clone();
     assert_ne!(net_qty, 0, "net_qty should reflect the fill, got 0");
-    assert!(entry_px > 0, "entry_px should be set from the fill price, got {entry_px}");
+    assert!(
+        entry_px > 0,
+        "entry_px should be set from the fill price, got {entry_px}"
+    );
     // render.rs draw_positions: pnl_color = if upnl >= 0 { Green } else
     // { Red } — asserting the sign here is equivalent to asserting the
     // resulting color without a terminal-buffer introspection API.

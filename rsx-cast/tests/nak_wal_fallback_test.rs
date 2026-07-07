@@ -9,8 +9,8 @@
 
 use rsx_cast::as_bytes;
 use rsx_cast::compute_crc32;
-use rsx_cast::CastRecv;
 use rsx_cast::CastReceiver;
+use rsx_cast::CastRecv;
 use rsx_cast::CastSender;
 use rsx_cast::Framed;
 use rsx_cast::Nak;
@@ -59,10 +59,7 @@ fn nak_wal_fallback_delivers_evicted_seq() {
     // disk after the in-memory send ring has wrapped past them.
     // SEND_RING_CAPACITY is 4096.
     let stream_id = 1u32;
-    let mut writer = WalWriter::new(
-        stream_id, wal_dir, 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(stream_id, wal_dir, 64 * 1024 * 1024).unwrap();
     for i in 1..=5_000u64 {
         let mut rec = fill(i);
         {
@@ -76,11 +73,9 @@ fn nak_wal_fallback_delivers_evicted_seq() {
     let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
-    let mut sender =
-        CastSender::new(recv_addr, stream_id, wal_dir).unwrap();
+    let mut sender = CastSender::new(recv_addr, stream_id, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver =
-        CastReceiver::new(recv_addr, sender_addr).unwrap();
+    let mut receiver = CastReceiver::new(recv_addr, sender_addr).unwrap();
 
     // Push 5000 sends through the in-memory ring so the sender's
     // slot for seq=1 (slot = seq & 4095) has been overwritten.
@@ -91,16 +86,10 @@ fn nak_wal_fallback_delivers_evicted_seq() {
         let mut rec = fill(0);
         seq += 1;
         sender.send_framed(&Framed::pack(&mut rec, seq)).unwrap();
-        while matches!(
-            receiver.try_recv(),
-            CastRecv::Data(_, _)
-        ) {}
+        while matches!(receiver.try_recv(), CastRecv::Data(_, _)) {}
     }
     thread::sleep(Duration::from_millis(20));
-    while matches!(
-        receiver.try_recv(),
-        CastRecv::Data(_, _)
-    ) {}
+    while matches!(receiver.try_recv(), CastRecv::Data(_, _)) {}
 
     // NAK seq=1 from a third-party socket — its ring slot has been
     // overwritten by seq=4097, so the sender must fall through to
@@ -113,11 +102,7 @@ fn nak_wal_fallback_delivers_evicted_seq() {
     };
     let payload = as_bytes(&nak);
     let crc = compute_crc32(payload);
-    let hdr = WalHeader::new(
-        RECORD_NAK,
-        payload.len() as u16,
-        crc,
-    );
+    let hdr = WalHeader::new(RECORD_NAK, payload.len() as u16, crc);
     let hdr_bytes = hdr.to_bytes();
     let mut buf = vec![0u8; WalHeader::SIZE + payload.len()];
     buf[..WalHeader::SIZE].copy_from_slice(hdr_bytes);
@@ -132,18 +117,12 @@ fn nak_wal_fallback_delivers_evicted_seq() {
     let mut got_seq: Option<u64> = None;
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if let CastRecv::Data(rhdr, rpayload) =
-            receiver.try_recv()
-        {
+        if let CastRecv::Data(rhdr, rpayload) = receiver.try_recv() {
             if rhdr.record_type == RECORD_FILL
-                && rpayload.len()
-                    >= std::mem::size_of::<FillRecord>()
+                && rpayload.len() >= std::mem::size_of::<FillRecord>()
             {
-                let decoded = unsafe {
-                    std::ptr::read_unaligned(
-                        rpayload.as_ptr() as *const FillRecord,
-                    )
-                };
+                let decoded =
+                    unsafe { std::ptr::read_unaligned(rpayload.as_ptr() as *const FillRecord) };
                 if decoded.seq == target_seq {
                     got_seq = Some(decoded.seq);
                     break;

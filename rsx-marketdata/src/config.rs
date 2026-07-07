@@ -19,8 +19,7 @@ pub struct MarketDataConfig {
 }
 
 fn env_str(key: &str, default: &str) -> String {
-    std::env::var(key)
-        .unwrap_or_else(|_| default.to_string())
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
 fn env_u32(key: &str, default: u32) -> u32 {
@@ -59,51 +58,23 @@ fn env_u64(key: &str, default: u64) -> u64 {
 }
 
 pub fn load_marketdata_config() -> MarketDataConfig {
-    let replay_addr = std::env::var("RSX_MD_REPLAY_ADDR")
-        .ok();
+    let replay_addr = std::env::var("RSX_MD_REPLAY_ADDR").ok();
     MarketDataConfig {
-        listen_addr: env_str(
-            "RSX_MD_LISTEN",
-            "0.0.0.0:8081",
-        ),
-        max_symbols: env_usize(
-            "RSX_MD_MAX_SYMBOLS",
-            64,
-        ),
-        snapshot_depth: env_u32(
-            "RSX_MD_SNAPSHOT_DEPTH",
-            10,
-        ),
-        book_capacity: env_u32(
-            "RSX_MD_BOOK_CAPACITY",
-            65_536,
-        ),
-        mid_price: env_i64(
-            "RSX_MD_BOOK_MID_PRICE",
-            50_000,
-        ),
+        listen_addr: env_str("RSX_MD_LISTEN", "0.0.0.0:8081"),
+        max_symbols: env_usize("RSX_MD_MAX_SYMBOLS", 64),
+        snapshot_depth: env_u32("RSX_MD_SNAPSHOT_DEPTH", 10),
+        book_capacity: env_u32("RSX_MD_BOOK_CAPACITY", 65_536),
+        mid_price: env_i64("RSX_MD_BOOK_MID_PRICE", 50_000),
         tick_size: env_i64("RSX_MD_TICK_SIZE", 1),
         lot_size: env_i64("RSX_MD_LOT_SIZE", 1),
-        price_decimals: env_u8(
-            "RSX_MD_PRICE_DECIMALS",
-            0,
-        ),
+        price_decimals: env_u8("RSX_MD_PRICE_DECIMALS", 0),
         qty_decimals: env_u8("RSX_MD_QTY_DECIMALS", 0),
-        max_outbound: env_usize(
-            "RSX_MD_MAX_OUTBOUND",
-            1024,
-        ),
+        max_outbound: env_usize("RSX_MD_MAX_OUTBOUND", 1024),
         replay_addr,
         stream_id: env_u32("RSX_MD_STREAM_ID", 1),
         tip_file: env_str("RSX_MD_TIP_FILE", "./tmp/md.tip"),
-        heartbeat_interval_ms: env_u64(
-            "RSX_MD_HEARTBEAT_INTERVAL_S",
-            5,
-        ) * 1000,
-        heartbeat_timeout_ms: env_u64(
-            "RSX_MD_IDLE_TIMEOUT_S",
-            10,
-        ) * 1000,
+        heartbeat_interval_ms: env_u64("RSX_MD_HEARTBEAT_INTERVAL_S", 5) * 1000,
+        heartbeat_timeout_ms: env_u64("RSX_MD_IDLE_TIMEOUT_S", 10) * 1000,
     }
 }
 
@@ -114,10 +85,7 @@ pub fn parse_me_cast_addrs(raw: &str) -> Vec<SocketAddr> {
         .filter(|s| !s.is_empty())
         .map(|s| {
             s.parse().unwrap_or_else(|_| {
-                eprintln!(
-                    "rsx-marketdata: invalid ME cast addr: {}",
-                    s
-                );
+                eprintln!("rsx-marketdata: invalid ME cast addr: {}", s);
                 std::process::exit(2);
             })
         })

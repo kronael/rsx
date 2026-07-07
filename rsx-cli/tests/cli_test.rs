@@ -2,6 +2,8 @@ use rsx_cast::as_bytes;
 use rsx_cast::decode_payload;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
+use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::WalReader;
 use rsx_messages::BboRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
@@ -10,8 +12,6 @@ use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_LIQUIDATION;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use rsx_cast::wal::extract_seq;
-use rsx_cast::wal::WalReader;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::fs;
@@ -20,18 +20,13 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn make_test_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!("rsx_cli_test_{}", name));
+    let dir = std::env::temp_dir().join(format!("rsx_cli_test_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
 }
 
-fn write_record_bytes<T: Copy>(
-    file: &mut File,
-    rt: u16,
-    record: &T,
-) {
+fn write_record_bytes<T: Copy>(file: &mut File, rt: u16, record: &T) {
     let bytes = as_bytes(record);
     let header = WalHeader::new(rt, bytes.len() as u16, 0xAABBCCDD);
     file.write_all(header.to_bytes()).unwrap();
@@ -62,22 +57,15 @@ fn test_dump_file_parsing() {
 
 #[test]
 fn test_wal_header_format() {
-    let header = WalHeader::new(
-        RECORD_FILL,
-        100,
-        0xDEADBEEF,
-    );
+    let header = WalHeader::new(RECORD_FILL, 100, 0xDEADBEEF);
 
     let bytes = header.to_bytes();
     assert_eq!(bytes.len(), 16);
 
     let version = bytes[0];
-    let record_type =
-        u16::from_le_bytes([bytes[2], bytes[3]]);
+    let record_type = u16::from_le_bytes([bytes[2], bytes[3]]);
     let len = u16::from_le_bytes([bytes[4], bytes[5]]);
-    let crc32 = u32::from_le_bytes([
-        bytes[8], bytes[9], bytes[10], bytes[11],
-    ]);
+    let crc32 = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
 
     assert_eq!(version, 1, "WalVersion::V1");
     assert_eq!(record_type, RECORD_FILL);
@@ -110,8 +98,7 @@ fn test_json_output_format() {
         r#"{"seq":123,"type":"BBO","len":32,"#,
         r#""crc32":"0x12345678"}"#,
     );
-    let parsed: serde_json::Value =
-        serde_json::from_str(json_str).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
 
     assert_eq!(parsed["seq"], 123);
     assert_eq!(parsed["type"], "BBO");
@@ -153,7 +140,7 @@ fn test_dump_file_decodes_fill_fields() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     write_record_bytes(&mut file, RECORD_FILL, &fill);
     file.sync_all().unwrap();
@@ -231,11 +218,7 @@ fn test_dump_file_decodes_order_inserted_fields() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    write_record_bytes(
-        &mut file,
-        RECORD_ORDER_INSERTED,
-        &rec,
-    );
+    write_record_bytes(&mut file, RECORD_ORDER_INSERTED, &rec);
     file.sync_all().unwrap();
     drop(file);
 
@@ -268,11 +251,7 @@ fn test_dump_file_decodes_liquidation_fields() {
         price: 5500,
         slip_bps: 25,
     };
-    write_record_bytes(
-        &mut file,
-        RECORD_LIQUIDATION,
-        &rec,
-    );
+    write_record_bytes(&mut file, RECORD_LIQUIDATION, &rec);
     file.sync_all().unwrap();
     drop(file);
 
@@ -331,16 +310,11 @@ fn run_dump(file: &std::path::Path) -> String {
 }
 
 /// Write a 16-byte WAL header + `payload` to a file.
-fn write_raw_record(
-    file: &mut File,
-    rt: u16,
-    payload: &[u8],
-) {
+fn write_raw_record(file: &mut File, rt: u16, payload: &[u8]) {
     use rsx_cast::encode_utils::compute_crc32;
     use rsx_cast::header::WalHeader;
     let crc = compute_crc32(payload);
-    let header =
-        WalHeader::new(rt, payload.len() as u16, crc);
+    let header = WalHeader::new(rt, payload.len() as u16, crc);
     file.write_all(header.to_bytes()).unwrap();
     file.write_all(payload).unwrap();
 }
@@ -405,14 +379,8 @@ fn test_dump_order_request_decodes() {
     let dir = make_test_dir("dump_order_request");
     let path = dir.join("req.wal");
     let mut file = File::create(&path).unwrap();
-    let payload = order_request_bytes(
-        5, 10, 2, 50000, 100, 0xAA, 0xBB, 1,
-    );
-    write_raw_record(
-        &mut file,
-        rsx_messages::RECORD_ORDER_REQUEST,
-        &payload,
-    );
+    let payload = order_request_bytes(5, 10, 2, 50000, 100, 0xAA, 0xBB, 1);
+    write_raw_record(&mut file, rsx_messages::RECORD_ORDER_REQUEST, &payload);
     file.sync_all().unwrap();
     drop(file);
 
@@ -420,20 +388,24 @@ fn test_dump_order_request_decodes() {
     // Must decode ORDER_REQUEST, not fall through to UNKNOWN.
     assert!(
         out.contains("ORDER_REQUEST"),
-        "expected ORDER_REQUEST in output, got: {}", out
+        "expected ORDER_REQUEST in output, got: {}",
+        out
     );
     // sym and user fields must appear.
     assert!(
         out.contains("\"symbol_id\":2"),
-        "expected symbol_id=2, got: {}", out
+        "expected symbol_id=2, got: {}",
+        out
     );
     assert!(
         out.contains("\"user_id\":10"),
-        "expected user_id=10, got: {}", out
+        "expected user_id=10, got: {}",
+        out
     );
     assert!(
         out.contains("\"price\":50000"),
-        "expected price=50000, got: {}", out
+        "expected price=50000, got: {}",
+        out
     );
 }
 
@@ -443,33 +415,31 @@ fn test_dump_order_response_decodes() {
     let dir = make_test_dir("dump_order_response");
     let path = dir.join("resp.wal");
     let mut file = File::create(&path).unwrap();
-    let payload = order_response_bytes(
-        6, 2000, 20, 3, 0xCC, 0xDD, 1,
-    );
-    write_raw_record(
-        &mut file,
-        rsx_messages::RECORD_ORDER_RESPONSE,
-        &payload,
-    );
+    let payload = order_response_bytes(6, 2000, 20, 3, 0xCC, 0xDD, 1);
+    write_raw_record(&mut file, rsx_messages::RECORD_ORDER_RESPONSE, &payload);
     file.sync_all().unwrap();
     drop(file);
 
     let out = run_dump(&path);
     assert!(
         out.contains("ORDER_RESPONSE"),
-        "expected ORDER_RESPONSE in output, got: {}", out
+        "expected ORDER_RESPONSE in output, got: {}",
+        out
     );
     assert!(
         out.contains("\"symbol_id\":3"),
-        "expected symbol_id=3, got: {}", out
+        "expected symbol_id=3, got: {}",
+        out
     );
     assert!(
         out.contains("\"user_id\":20"),
-        "expected user_id=20, got: {}", out
+        "expected user_id=20, got: {}",
+        out
     );
     assert!(
         out.contains("\"status\":1"),
-        "expected status=1, got: {}", out
+        "expected status=1, got: {}",
+        out
     );
 }
 
@@ -490,7 +460,8 @@ fn test_dump_unknown_type_not_skipped() {
     assert!(
         out.contains("UNKNOWN"),
         "expected UNKNOWN in output for unrecognised rt, \
-         got: {}", out
+         got: {}",
+        out
     );
 }
 
@@ -524,14 +495,11 @@ fn test_dump_three_new_types_combined() {
     write_record_bytes(&mut file, RECORD_LIQUIDATION, &liq);
 
     // ORDER_REQUEST
-    let req = order_request_bytes(
-        2, 7, 1, 4000, 50, 0x11, 0x22, 0,
-    );
+    let req = order_request_bytes(2, 7, 1, 4000, 50, 0x11, 0x22, 0);
     write_raw_record(&mut file, RECORD_ORDER_REQUEST, &req);
 
     // ORDER_RESPONSE
-    let resp =
-        order_response_bytes(3, 3000, 7, 1, 0x11, 0x22, 0);
+    let resp = order_response_bytes(3, 3000, 7, 1, 0x11, 0x22, 0);
     write_raw_record(&mut file, RECORD_ORDER_RESPONSE, &resp);
 
     file.sync_all().unwrap();
@@ -541,29 +509,28 @@ fn test_dump_three_new_types_combined() {
 
     assert!(
         out.contains("LIQUIDATION"),
-        "expected LIQUIDATION, got: {}", out
+        "expected LIQUIDATION, got: {}",
+        out
     );
     assert!(
         out.contains("ORDER_REQUEST"),
-        "expected ORDER_REQUEST, got: {}", out
+        "expected ORDER_REQUEST, got: {}",
+        out
     );
     assert!(
         out.contains("ORDER_RESPONSE"),
-        "expected ORDER_RESPONSE, got: {}", out
+        "expected ORDER_RESPONSE, got: {}",
+        out
     );
     // Ensure none are falling through to UNKNOWN.
     assert!(
         !out.contains("UNKNOWN"),
-        "unexpected UNKNOWN in output: {}", out
+        "unexpected UNKNOWN in output: {}",
+        out
     );
     // All three records must be present (3 JSON lines in stdout).
-    let lines: Vec<&str> =
-        out.lines().filter(|l| l.starts_with('{')).collect();
-    assert_eq!(
-        lines.len(),
-        3,
-        "expected 3 decoded records, got: {}", out
-    );
+    let lines: Vec<&str> = out.lines().filter(|l| l.starts_with('{')).collect();
+    assert_eq!(lines.len(), 3, "expected 3 decoded records, got: {}", out);
 }
 
 /// Regression: in --follow mode next_seq must advance even when
@@ -593,18 +560,14 @@ fn test_follow_next_seq_advances_past_filtered_records() {
     // Helper: write a minimal record with a given seq.
     // 16-byte payload: seq(8) + ts_ns(8). CRC computed
     // from payload so WalReader's CRC check passes.
-    let write_mini =
-        |f: &mut File, rt: u16, seq: u64| {
-            let mut payload = [0u8; 16];
-            payload[..8].copy_from_slice(
-                &seq.to_le_bytes(),
-            );
-            let crc = compute_crc32(&payload);
-            let header =
-                WalHeader::new(rt, 16, crc);
-            f.write_all(header.to_bytes()).unwrap();
-            f.write_all(&payload).unwrap();
-        };
+    let write_mini = |f: &mut File, rt: u16, seq: u64| {
+        let mut payload = [0u8; 16];
+        payload[..8].copy_from_slice(&seq.to_le_bytes());
+        let crc = compute_crc32(&payload);
+        let header = WalHeader::new(rt, 16, crc);
+        f.write_all(header.to_bytes()).unwrap();
+        f.write_all(&payload).unwrap();
+    };
 
     write_mini(&mut file, RECORD_FILL, 1);
     write_mini(&mut file, RECORD_BBO, 2);
@@ -614,8 +577,7 @@ fn test_follow_next_seq_advances_past_filtered_records() {
     drop(file);
 
     // Simulate the fixed follow loop.
-    let mut reader =
-        WalReader::open_from_seq(1, 0, &dir).unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, &dir).unwrap();
     let mut next_seq: u64 = 0;
     let mut matched_seqs: Vec<u64> = Vec::new();
 
@@ -623,8 +585,7 @@ fn test_follow_next_seq_advances_past_filtered_records() {
         match reader.next() {
             Ok(Some(raw)) => {
                 let rt = raw.header.record_type;
-                let seq =
-                    extract_seq(&raw.payload).unwrap_or(0);
+                let seq = extract_seq(&raw.payload).unwrap_or(0);
                 // Fixed: always advance before filter check.
                 next_seq = seq + 1;
                 if rt == RECORD_FILL {
@@ -639,10 +600,7 @@ fn test_follow_next_seq_advances_past_filtered_records() {
     // next_seq must be 5 (past the last record seq=4),
     // not 2 (which the buggy code would leave it at after
     // matching seq=1 and then hitting filtered-out seq=2,3).
-    assert_eq!(
-        next_seq, 5,
-        "next_seq should advance past filtered records"
-    );
+    assert_eq!(next_seq, 5, "next_seq should advance past filtered records");
 
     // Exactly the two FILLs, in order, no duplicates.
     assert_eq!(matched_seqs, vec![1, 4]);

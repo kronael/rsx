@@ -55,14 +55,8 @@ fn brute_crossing(book: &Orderbook, side: Side, limit: i64) -> i64 {
         while cur != rsx_types::NONE {
             let m = book.orders.get(cur);
             let crosses = match side {
-                Side::Buy => {
-                    m.side == Side::Sell as u8
-                        && m.price.0 <= limit
-                }
-                Side::Sell => {
-                    m.side == Side::Buy as u8
-                        && m.price.0 >= limit
-                }
+                Side::Buy => m.side == Side::Sell as u8 && m.price.0 <= limit,
+                Side::Sell => m.side == Side::Buy as u8 && m.price.0 >= limit,
             };
             if crosses {
                 total += m.remaining_qty.0;
@@ -73,12 +67,7 @@ fn brute_crossing(book: &Orderbook, side: Side, limit: i64) -> i64 {
     total
 }
 
-fn submit_flow(
-    book: &mut Orderbook,
-    rng: &mut Rng,
-    mid: i64,
-    oid: u64,
-) {
+fn submit_flow(book: &mut Orderbook, rng: &mut Rng, mid: i64, oid: u64) {
     let buy = rng.next() & 1 == 0;
     let off = match rng.next() % 10 {
         0..=5 => rng.range(1, 40_000),
@@ -111,12 +100,7 @@ fn submit_flow(
 /// Run one FOK probe and assert its outcome matches the brute-force
 /// reference. Mutation from a successful fill is left in place (part of
 /// the ongoing flow); the reference is recomputed fresh each probe.
-fn probe_fok(
-    book: &mut Orderbook,
-    rng: &mut Rng,
-    mid: i64,
-    oid: u64,
-) {
+fn probe_fok(book: &mut Orderbook, rng: &mut Rng, mid: i64, oid: u64) {
     let buy = rng.next() & 1 == 0;
     // Reach well past the touch on both sides so we hit fully-fill,
     // partial (kill), and no-cross cases.
@@ -151,16 +135,10 @@ fn probe_fok(
         .any(|e| matches!(e, Event::Fill { .. }));
 
     if avail < qty {
-        assert!(
-            failed_fok,
-            "FOK should kill: avail {avail} < qty {qty}",
-        );
+        assert!(failed_fok, "FOK should kill: avail {avail} < qty {qty}",);
         assert!(!had_fill, "killed FOK must not fill");
     } else {
-        assert!(
-            !failed_fok,
-            "FOK should fill: avail {avail} >= qty {qty}",
-        );
+        assert!(!failed_fok, "FOK should fill: avail {avail} >= qty {qty}",);
         assert!(had_fill, "filled FOK must emit fills");
     }
 }
@@ -189,12 +167,8 @@ fn fok_compressed_zone_insufficient_true_liquidity_rejected() {
     let mut book = Orderbook::new(config(), 200_000, mid);
     // Two asks in the SAME zone-1 slot (10 ticks/slot) at DISTINCT
     // prices: one crosses a buy @1_060_000, one does not.
-    let crossing = book.insert_resting(
-        1_060_000, 10, Side::Sell, 0, 1, false, 0, 1, 1,
-    );
-    let non_crossing = book.insert_resting(
-        1_060_009, 100, Side::Sell, 0, 2, false, 0, 2, 2,
-    );
+    let crossing = book.insert_resting(1_060_000, 10, Side::Sell, 0, 1, false, 0, 1, 1);
+    let non_crossing = book.insert_resting(1_060_009, 100, Side::Sell, 0, 2, false, 0, 2, 2);
     assert_eq!(
         book.orders.get(crossing).tick_index,
         book.orders.get(non_crossing).tick_index,
@@ -239,12 +213,8 @@ fn fok_compressed_zone_tick50_insufficient_rejected() {
     let mid = 1_000_000_i64;
     let mut book = Orderbook::new(cfg, 200_000, mid);
     // zone-1 slot spans 10*50 = 500 raw price; both asks land in it.
-    let crossing = book.insert_resting(
-        1_060_000, 10, Side::Sell, 0, 1, false, 0, 1, 1,
-    );
-    let non_crossing = book.insert_resting(
-        1_060_450, 100, Side::Sell, 0, 2, false, 0, 2, 2,
-    );
+    let crossing = book.insert_resting(1_060_000, 10, Side::Sell, 0, 1, false, 0, 1, 1);
+    let non_crossing = book.insert_resting(1_060_450, 100, Side::Sell, 0, 2, false, 0, 2, 2);
     assert_eq!(
         book.orders.get(crossing).tick_index,
         book.orders.get(non_crossing).tick_index,
@@ -279,12 +249,8 @@ fn fok_compressed_zone_sufficient_liquidity_fills() {
     let mid = 1_000_000_i64;
     let mut book = Orderbook::new(config(), 200_000, mid);
     // Two asks in one zone-1 slot, BOTH crossing a buy @1_060_009.
-    book.insert_resting(
-        1_060_000, 30, Side::Sell, 0, 1, false, 0, 1, 1,
-    );
-    book.insert_resting(
-        1_060_009, 40, Side::Sell, 0, 2, false, 0, 2, 2,
-    );
+    book.insert_resting(1_060_000, 30, Side::Sell, 0, 1, false, 0, 1, 1);
+    book.insert_resting(1_060_009, 40, Side::Sell, 0, 2, false, 0, 2, 2);
     let mut order = IncomingOrder {
         price: 1_060_009,
         qty: 50,

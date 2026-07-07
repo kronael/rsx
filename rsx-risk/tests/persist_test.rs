@@ -1,3 +1,16 @@
+use rsx_risk::persist::flush_batch;
+use rsx_risk::persist::insert_fills;
+use rsx_risk::persist::insert_funding;
+use rsx_risk::persist::upsert_accounts;
+use rsx_risk::persist::upsert_positions;
+use rsx_risk::persist::upsert_tips;
+use rsx_risk::persist::FillRecord;
+use rsx_risk::persist::FundingRecord;
+use rsx_risk::persist::PersistEvent;
+use rsx_risk::replay::acquire_advisory_lock;
+use rsx_risk::replay::load_from_postgres;
+use rsx_risk::replay::replay_from_wal;
+use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
@@ -6,19 +19,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::persist::FundingRecord;
-use rsx_risk::persist::FillRecord;
-use rsx_risk::persist::PersistEvent;
-use rsx_risk::persist::flush_batch;
-use rsx_risk::persist::insert_fills;
-use rsx_risk::persist::insert_funding;
-use rsx_risk::persist::upsert_accounts;
-use rsx_risk::persist::upsert_positions;
-use rsx_risk::persist::upsert_tips;
-use rsx_risk::replay::acquire_advisory_lock;
-use rsx_risk::replay::load_from_postgres;
-use rsx_risk::replay::replay_from_wal;
-use rsx_risk::schema::run_migrations;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::NoTls;
@@ -34,10 +34,7 @@ async fn pg_client() -> (
         "host=localhost port={port} user=postgres \
          password=postgres dbname=postgres"
     );
-    let (client, conn) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .unwrap();
+    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
     tokio::spawn(async move {
         if let Err(e) = conn.await {
             eprintln!("pg conn error: {e}");
@@ -168,9 +165,7 @@ async fn persist_fills_symbol_seq_is_unique() {
 async fn persist_tips_roundtrip() {
     let (_c, mut client) = pg_client().await;
     let tx = client.transaction().await.unwrap();
-    upsert_tips(&tx, 0, &[(0, 100), (1, 200)])
-        .await
-        .unwrap();
+    upsert_tips(&tx, 0, &[(0, 100), (1, 200)]).await.unwrap();
     tx.commit().await.unwrap();
 
     let rows = client
@@ -211,10 +206,7 @@ async fn persist_funding_payments_append() {
     tx.commit().await.unwrap();
 
     let rows = client
-        .query(
-            "SELECT count(*) FROM funding",
-            &[],
-        )
+        .query("SELECT count(*) FROM funding", &[])
         .await
         .unwrap();
     assert_eq!(rows[0].get::<_, i64>(0), 2);
@@ -297,10 +289,7 @@ async fn cold_start_loads_positions() {
     upsert_positions(&tx, &[pos]).await.unwrap();
     tx.commit().await.unwrap();
 
-    let state =
-        load_from_postgres(&client, 0, 1, 4)
-            .await
-            .unwrap();
+    let state = load_from_postgres(&client, 0, 1, 4).await.unwrap();
     let p = &state.positions[&(0, 0)];
     assert_eq!(p.long_qty, 50);
     assert_eq!(p.version, 2);
@@ -315,10 +304,7 @@ async fn cold_start_loads_accounts() {
     upsert_accounts(&tx, &[acct]).await.unwrap();
     tx.commit().await.unwrap();
 
-    let state =
-        load_from_postgres(&client, 0, 1, 4)
-            .await
-            .unwrap();
+    let state = load_from_postgres(&client, 0, 1, 4).await.unwrap();
     assert_eq!(state.accounts[&0].collateral, 5000);
 }
 
@@ -327,15 +313,10 @@ async fn cold_start_loads_accounts() {
 async fn cold_start_loads_tips() {
     let (_c, mut client) = pg_client().await;
     let tx = client.transaction().await.unwrap();
-    upsert_tips(&tx, 0, &[(0, 42), (2, 99)])
-        .await
-        .unwrap();
+    upsert_tips(&tx, 0, &[(0, 42), (2, 99)]).await.unwrap();
     tx.commit().await.unwrap();
 
-    let state =
-        load_from_postgres(&client, 0, 1, 4)
-            .await
-            .unwrap();
+    let state = load_from_postgres(&client, 0, 1, 4).await.unwrap();
     assert_eq!(state.tips[0], 42);
     assert_eq!(state.tips[1], 0);
     assert_eq!(state.tips[2], 99);
@@ -345,10 +326,7 @@ async fn cold_start_loads_tips() {
 #[ignore]
 async fn cold_start_with_empty_postgres() {
     let (_c, client) = pg_client().await;
-    let state =
-        load_from_postgres(&client, 0, 1, 4)
-            .await
-            .unwrap();
+    let state = load_from_postgres(&client, 0, 1, 4).await.unwrap();
     assert!(state.accounts.is_empty());
     assert!(state.positions.is_empty());
     assert_eq!(state.tips, vec![0u64; 4]);
@@ -390,18 +368,14 @@ async fn advisory_lock_exclusive() {
 #[tokio::test]
 #[ignore]
 async fn replay_from_wal_rebuilds_positions() {
-    use rsx_messages::FillRecord;
     use rsx_cast::WalWriter;
+    use rsx_messages::FillRecord;
 
-    let wal_dir =
-        tempfile::tempdir().unwrap();
+    let wal_dir = tempfile::tempdir().unwrap();
     let wal_path = wal_dir.path();
 
     // Write 3 fills for symbol 0
-    let mut writer = WalWriter::new(
-        0, wal_path, 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(0, wal_path, 64 * 1024 * 1024).unwrap();
     for i in 1..=3u64 {
         let mut fill = FillRecord {
             seq: i,
@@ -421,7 +395,7 @@ async fn replay_from_wal_rebuilds_positions() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-taker_ts_ns: 0,
+            taker_ts_ns: 0,
         };
         {
             let framed = writer.prepare(&mut fill).unwrap();
@@ -445,25 +419,15 @@ taker_ts_ns: 0,
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
         funding_config: FundingConfig::default(),
-        liquidation_config:
-            LiquidationConfig::default(),
-        replication_config:
-            ReplicationConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig::default(),
     };
     let mut shard = RiskShard::new(config);
     // Give user 0 collateral so account exists
-    shard.accounts.insert(
-        0,
-        Account::new(0, 1_000_000),
-    );
-    shard.accounts.insert(
-        2,
-        Account::new(2, 1_000_000),
-    );
+    shard.accounts.insert(0, Account::new(0, 1_000_000));
+    shard.accounts.insert(2, Account::new(2, 1_000_000));
 
-    let replayed =
-        replay_from_wal(&mut shard, wal_path, &[0])
-            .unwrap();
+    let replayed = replay_from_wal(&mut shard, wal_path, &[0]).unwrap();
     assert_eq!(replayed, 3);
     assert_eq!(shard.tips[0], 3);
 
@@ -479,17 +443,14 @@ taker_ts_ns: 0,
 #[tokio::test]
 #[ignore]
 async fn replay_from_wal_releases_frozen_on_order_done() {
-    use rsx_messages::OrderDoneRecord;
     use rsx_cast::WalWriter;
+    use rsx_messages::OrderDoneRecord;
     use rsx_risk::types::OrderRequest;
 
     let wal_dir = tempfile::tempdir().unwrap();
     let wal_path = wal_dir.path();
 
-    let mut writer = WalWriter::new(
-        0, wal_path, 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(0, wal_path, 64 * 1024 * 1024).unwrap();
 
     let config = ShardConfig {
         shard_id: 0,
@@ -506,10 +467,8 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
         funding_config: FundingConfig::default(),
-        liquidation_config:
-            LiquidationConfig::default(),
-        replication_config:
-            ReplicationConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig::default(),
     };
     let mut shard = RiskShard::new(config);
     shard.accounts.insert(0, Account::new(0, 1_000_000));
@@ -601,8 +560,7 @@ async fn persist_fills_partitioning_by_symbol() {
 #[ignore]
 async fn persist_backpressure_ring_full() {
     // Create a tiny ring (capacity 2)
-    let (mut producer, _consumer) =
-        rtrb::RingBuffer::<PersistEvent>::new(2);
+    let (mut producer, _consumer) = rtrb::RingBuffer::<PersistEvent>::new(2);
 
     // Fill the ring
     producer

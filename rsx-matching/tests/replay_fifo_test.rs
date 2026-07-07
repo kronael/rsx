@@ -12,8 +12,8 @@
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::replay_wal_after_snapshot;
@@ -109,10 +109,7 @@ fn replay_preserves_intra_level_fifo() {
     let wal_dir = tmp.path().to_str().unwrap();
 
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
-    let mut writer = WalWriter::new(
-        SYM, tmp.path(), 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(SYM, tmp.path(), 64 * 1024 * 1024).unwrap();
 
     // Five sells at the SAME price, distinct users, strictly
     // increasing timestamps → arrival order is the FIFO order.
@@ -134,8 +131,7 @@ fn replay_preserves_intra_level_fifo() {
 
     // Replay into a FRESH book from seq 1 (no snapshot).
     let mut recovered = Orderbook::new(cfg(), 1024, 50_000);
-    let mut order_index: FxHashMap<OrderKey, u32> =
-        FxHashMap::default();
+    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
     let mut dedup = DedupTracker::new();
     replay_wal_after_snapshot(
         &mut recovered,
@@ -156,9 +152,7 @@ fn replay_preserves_intra_level_fifo() {
         .events()
         .iter()
         .filter_map(|e| match e {
-            Event::Fill { maker_user_id, .. } => {
-                Some(*maker_user_id)
-            }
+            Event::Fill { maker_user_id, .. } => Some(*maker_user_id),
             _ => None,
         })
         .collect();

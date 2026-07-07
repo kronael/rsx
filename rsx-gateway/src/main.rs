@@ -2,20 +2,6 @@ use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
-use rsx_messages::ConfigAppliedRecord;
-use rsx_messages::FillRecord;
-use rsx_messages::LiquidationRecord;
-use rsx_messages::OrderCancelledRecord;
-use rsx_messages::OrderDoneRecord;
-use rsx_messages::OrderFailedRecord;
-use rsx_messages::OrderInsertedRecord;
-use rsx_messages::RECORD_CONFIG_APPLIED;
-use rsx_messages::RECORD_FILL;
-use rsx_messages::RECORD_ORDER_CANCELLED;
-use rsx_messages::RECORD_ORDER_DONE;
-use rsx_messages::RECORD_LIQUIDATION;
-use rsx_messages::RECORD_ORDER_FAILED;
-use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::route::route_fill;
@@ -25,10 +11,24 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
-use rsx_health::CounterGauge;
+use rsx_messages::ConfigAppliedRecord;
+use rsx_messages::FillRecord;
+use rsx_messages::LiquidationRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
+use rsx_messages::OrderInsertedRecord;
+use rsx_messages::RECORD_CONFIG_APPLIED;
+use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_LIQUIDATION;
+use rsx_messages::RECORD_ORDER_CANCELLED;
+use rsx_messages::RECORD_ORDER_DONE;
+use rsx_messages::RECORD_ORDER_FAILED;
+use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_types::install_panic_handler;
 use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
@@ -38,8 +38,8 @@ use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tracing::info;
 use tracing::warn;
 
@@ -56,16 +56,14 @@ const NS_PER_MS: u64 = 1_000_000;
 /// bounded so a genuinely permanent conflict (two gateways
 /// configured on one port) fails fast rather than hanging.
 const CAST_REBIND_RETRIES: u32 = 100; // 100 * 200ms = 20s
-const CAST_REBIND_DELAY: std::time::Duration =
-    std::time::Duration::from_millis(200);
+const CAST_REBIND_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// Idle wakeup cadence for the casting loop. When no datagram
 /// is arriving, the loop still wakes this often to run
 /// housekeeping (heartbeat broadcast, sender NAK control,
 /// pending sweep, stale-connection reap). Inbound datagrams
 /// wake the loop immediately via POLL_ADD, independent of this.
-const HOUSEKEEPING_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(1);
+const HOUSEKEEPING_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// Drain the risk producer's replication stream after the
 /// gateway's cast receiver hit a sticky FAULTED or RECONNECT.
@@ -73,11 +71,7 @@ const HOUSEKEEPING_INTERVAL: std::time::Duration =
 /// just logs records; the gateway's outbound state (per-user
 /// pending map, position cache) recovers indirectly via
 /// risk re-emitting after its own replay completes.
-fn handle_replay(
-    last_delivered_seq: u64,
-    gap: Option<(u64, u64)>,
-    wal_dir: &str,
-) -> u64 {
+fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
             "gateway cast_receiver FAULTED at \
@@ -104,11 +98,9 @@ fn handle_replay(
     // Gateway sees a merged stream from risk (response side);
     // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
     // risk gw_sender.
-    let tip_file = PathBuf::from(wal_dir)
-        .join("gateway_replay_tip.bin");
-    let tls = rsx_cast::TlsConfig::from_env().unwrap_or_else(
-        |e| panic!("gateway replay requires TLS: {e}"),
-    );
+    let tip_file = PathBuf::from(wal_dir).join("gateway_replay_tip.bin");
+    let tls = rsx_cast::TlsConfig::from_env()
+        .unwrap_or_else(|e| panic!("gateway replay requires TLS: {e}"));
     let new_tip = rsx_gateway::drain_replay(
         0,
         replay_addr.clone(),
@@ -116,11 +108,11 @@ fn handle_replay(
         tip_file,
         tls,
         |raw| {
-            let seq = rsx_cast::wal::extract_seq(&raw.payload)
-                .unwrap_or(0);
+            let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
             tracing::debug!(
                 "gateway replay applied record_type={} seq={}",
-                raw.header.record_type, seq,
+                raw.header.record_type,
+                seq,
             );
         },
     )
@@ -130,15 +122,11 @@ fn handle_replay(
              {replay_addr}: {e}",
         )
     });
-    info!(
-        "gateway replay drained, new_tip={new_tip}, resuming",
-    );
+    info!("gateway replay drained, new_tip={new_tip}, resuming",);
     new_tip
 }
 
-fn log_effective_gateway_config(
-    config: &rsx_gateway::config::GatewayConfig,
-) {
+fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
     info!(
         "gateway effective config: listen={} risk_addr={} max_pending={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
         config.listen_addr,
@@ -173,9 +161,7 @@ fn main() {
     // and greppable (structured latency lines).
     tracing_subscriber::fmt()
         .with_ansi(std::io::stdout().is_terminal())
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env(),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
     // Drain hot-path latency samples out-of-band
@@ -205,19 +191,16 @@ fn main() {
                 } else {
                     0.0
                 };
-                let ready = g.live.load(Ordering::Relaxed)
-                    && saturation < 0.9;
+                let ready = g.live.load(Ordering::Relaxed) && saturation < 0.9;
                 HealthSnapshot {
                     live: g.live.load(Ordering::Relaxed),
                     ready,
                     saturation,
-                    queues: vec![
-                        QueueGauge {
-                            name: "pending",
-                            used: pending,
-                            cap: max_p,
-                        },
-                    ],
+                    queues: vec![QueueGauge {
+                        name: "pending",
+                        used: pending,
+                        cap: max_p,
+                    }],
                     counters: vec![
                         CounterGauge {
                             name: "connections",
@@ -240,29 +223,22 @@ fn main() {
         }
     }
 
-    let risk_addr: SocketAddr =
-        env::var("RSX_RISK_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9101".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_CAST_ADDR");
-    let gw_addr: SocketAddr =
-        env::var("RSX_GW_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9102".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_GW_CAST_ADDR");
-    let wal_dir = env::var("RSX_GW_WAL_DIR")
-        .unwrap_or_else(|_| "./tmp/wal".into());
+    let risk_addr: SocketAddr = env::var("RSX_RISK_CAST_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:9101".into())
+        .parse()
+        // SAFETY: fail-fast at startup
+        .expect("invalid RSX_RISK_CAST_ADDR");
+    let gw_addr: SocketAddr = env::var("RSX_GW_CAST_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:9102".into())
+        .parse()
+        // SAFETY: fail-fast at startup
+        .expect("invalid RSX_GW_CAST_ADDR");
+    let wal_dir = env::var("RSX_GW_WAL_DIR").unwrap_or_else(|_| "./tmp/wal".into());
 
     // casting/UDP: send orders to Risk
-    let cast_sender = CastSender::new(
-        risk_addr,
-        0,
-        &PathBuf::from(&wal_dir),
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to create cast sender");
+    let cast_sender = CastSender::new(risk_addr, 0, &PathBuf::from(&wal_dir))
+        // SAFETY: fail-fast at startup
+        .expect("failed to create cast sender");
 
     // casting/UDP: receive responses from Risk. Retry on AddrInUse:
     // a fast restart (fault-injection / supervisor) races the old
@@ -294,17 +270,12 @@ fn main() {
         }
     };
 
-    info!(
-        "gateway started on {}",
-        config.listen_addr,
-    );
+    info!("gateway started on {}", config.listen_addr,);
 
     let max_pending = config.max_pending;
     let order_timeout_ms = config.order_timeout_ms;
-    let heartbeat_interval_ns =
-        config.heartbeat_interval_ms * NS_PER_MS;
-    let heartbeat_timeout_ns =
-        config.heartbeat_timeout_ms * NS_PER_MS;
+    let heartbeat_interval_ns = config.heartbeat_interval_ms * NS_PER_MS;
+    let heartbeat_timeout_ns = config.heartbeat_timeout_ms * NS_PER_MS;
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
     let jwt_secret = config.jwt_secret.clone();
@@ -316,20 +287,16 @@ fn main() {
             let setup = rsx_types::cpu::setup_hot_thread(core_id);
             tracing::info!("gateway {}", setup);
             if setup.isolated == Some(false) {
-                tracing::warn!(
-                    "gateway core {} not isolated — expect tail spikes",
-                    core_id
-                );
+                tracing::warn!("gateway core {} not isolated — expect tail spikes", core_id);
             }
         }
     }
 
-    let mut rt =
-        monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-            .enable_timer()
-            .build()
-            // SAFETY: fail-fast at startup
-            .expect("failed to build monoio runtime");
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        // SAFETY: fail-fast at startup
+        .expect("failed to build monoio runtime");
 
     let listen_addr = config.listen_addr.clone();
     let rl_user = config.rate_limit_per_user;
@@ -351,8 +318,7 @@ fn main() {
             s.rate_limit_per_ip = rl_ip;
             s
         }));
-        let sender =
-            Rc::new(RefCell::new(cast_sender));
+        let sender = Rc::new(RefCell::new(cast_sender));
 
         // Spawn WS accept loop
         let ws_addr = listen_addr;
@@ -360,31 +326,18 @@ fn main() {
         let sender_accept = sender.clone();
         let jwt_secret_accept = jwt_secret.clone();
         monoio::spawn(async move {
-            if let Err(e) =
-                rsx_gateway::ws::ws_accept_loop(
-                    &ws_addr,
-                    move |stream, peer| {
-                        let st = state_accept.clone();
-                        let snd =
-                            sender_accept.clone();
-                        let secret =
-                            jwt_secret_accept.clone();
-                        monoio::spawn(async move {
-                            handle_connection(
-                                stream, peer, st, snd,
-                                &secret,
-                                hb_interval,
-                                hb_timeout,
-                            )
-                            .await;
-                        });
-                    },
-                )
-                .await
+            if let Err(e) = rsx_gateway::ws::ws_accept_loop(&ws_addr, move |stream, peer| {
+                let st = state_accept.clone();
+                let snd = sender_accept.clone();
+                let secret = jwt_secret_accept.clone();
+                monoio::spawn(async move {
+                    handle_connection(stream, peer, st, snd, &secret, hb_interval, hb_timeout)
+                        .await;
+                });
+            })
+            .await
             {
-                tracing::error!(
-                    "ws accept error: {e}"
-                );
+                tracing::error!("ws accept error: {e}");
             }
         });
 
@@ -399,14 +352,10 @@ fn main() {
         // POLL_ADD wakeup; the recv itself stays on the
         // receiver's own std socket via `try_recv_with`.
         let readiness = {
-            let dup = unsafe {
-                std::os::fd::BorrowedFd::borrow_raw(
-                    cast_receiver.as_raw_fd(),
-                )
-            }
-            .try_clone_to_owned()
-            // SAFETY: fail-fast at startup
-            .expect("dup casting fd for readiness poll");
+            let dup = unsafe { std::os::fd::BorrowedFd::borrow_raw(cast_receiver.as_raw_fd()) }
+                .try_clone_to_owned()
+                // SAFETY: fail-fast at startup
+                .expect("dup casting fd for readiness poll");
             monoio::net::udp::UdpSocket::from_std(dup.into())
                 // SAFETY: fail-fast at startup
                 .expect("wrap casting fd in monoio UdpSocket")
@@ -428,66 +377,67 @@ fn main() {
                 // outer loop, so the recv outcome is matched
                 // after it returns.
                 let outcome = cast_receiver.try_recv_with(|hdr, payload| {
-                match hdr.record_type {
-                    RECORD_FILL => if let Some(rec) = decode_payload::<FillRecord>(payload) {
-                        // Sub-stage: fill record arrived at
-                        // gateway's cast recv loop, about to
-                        // route. Anchor on taker_ts_ns (with
-                        // the >2024 plausibility guard).
-                        rsx_log::latency_sample!(
-                            "gateway_cast_recv",
-                            rec.taker_order_id_hi,
-                            rec.taker_order_id_lo,
-                            if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
-                                rec.taker_ts_ns
-                            } else {
-                                rec.ts_ns
+                    match hdr.record_type {
+                        RECORD_FILL => {
+                            if let Some(rec) = decode_payload::<FillRecord>(payload) {
+                                // Sub-stage: fill record arrived at
+                                // gateway's cast recv loop, about to
+                                // route. Anchor on taker_ts_ns (with
+                                // the >2024 plausibility guard).
+                                rsx_log::latency_sample!(
+                                    "gateway_cast_recv",
+                                    rec.taker_order_id_hi,
+                                    rec.taker_order_id_lo,
+                                    if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
+                                        rec.taker_ts_ns
+                                    } else {
+                                        rec.ts_ns
+                                    }
+                                );
+                                route_fill(&state, &rec);
                             }
-                        );
-                        route_fill(&state, &rec);
-                    }
-                    RECORD_ORDER_DONE => if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
-                        route_order_done(
-                            &state, &rec,
-                        );
-                    }
-                    RECORD_ORDER_CANCELLED => if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
-                        route_order_cancelled(
-                            &state, &rec,
-                        );
-                    }
-                    RECORD_ORDER_INSERTED => if let Some(rec) = decode_payload::<OrderInsertedRecord>(payload) {
-                        route_order_inserted(
-                            &state, &rec,
-                        );
-                    }
-                    RECORD_ORDER_FAILED => if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
-                        route_order_failed(
-                            &state, &rec,
-                        );
-                    }
-                    RECORD_LIQUIDATION => if let Some(rec) = decode_payload::<LiquidationRecord>(payload) {
-                        route_liquidation(
-                            &state, &rec,
-                        );
-                    }
-                    RECORD_CONFIG_APPLIED => if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
-                        let applied = state
-                            .borrow_mut()
-                            .apply_config_applied(
-                                rec.symbol_id,
-                                rec.config_version,
-                            );
-                        if !applied {
-                            tracing::warn!(
-                                "ignored CONFIG_APPLIED symbol={} version={}",
-                                rec.symbol_id,
-                                rec.config_version
-                            );
                         }
+                        RECORD_ORDER_DONE => {
+                            if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
+                                route_order_done(&state, &rec);
+                            }
+                        }
+                        RECORD_ORDER_CANCELLED => {
+                            if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
+                                route_order_cancelled(&state, &rec);
+                            }
+                        }
+                        RECORD_ORDER_INSERTED => {
+                            if let Some(rec) = decode_payload::<OrderInsertedRecord>(payload) {
+                                route_order_inserted(&state, &rec);
+                            }
+                        }
+                        RECORD_ORDER_FAILED => {
+                            if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
+                                route_order_failed(&state, &rec);
+                            }
+                        }
+                        RECORD_LIQUIDATION => {
+                            if let Some(rec) = decode_payload::<LiquidationRecord>(payload) {
+                                route_liquidation(&state, &rec);
+                            }
+                        }
+                        RECORD_CONFIG_APPLIED => {
+                            if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
+                                let applied = state
+                                    .borrow_mut()
+                                    .apply_config_applied(rec.symbol_id, rec.config_version);
+                                if !applied {
+                                    tracing::warn!(
+                                        "ignored CONFIG_APPLIED symbol={} version={}",
+                                        rec.symbol_id,
+                                        rec.config_version
+                                    );
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
                 });
                 match outcome {
                     CastRecvWith::Data => {}
@@ -505,11 +455,7 @@ fn main() {
                         cast_receiver.reset_after_replay(new_tip);
                     }
                     CastRecvWith::Reconnect { last_delivered_seq } => {
-                        let new_tip = handle_replay(
-                            last_delivered_seq,
-                            None,
-                            &wal_dir,
-                        );
+                        let new_tip = handle_replay(last_delivered_seq, None, &wal_dir);
                         cast_receiver.reset_after_replay(new_tip);
                     }
                 }
@@ -521,47 +467,28 @@ fn main() {
             sender.borrow_mut().recv_control();
 
             let now = time_ns();
-            if now - last_pending_sweep
-                >= PENDING_SWEEP_INTERVAL_US * 1000
-            {
-                let cutoff = now.saturating_sub(
-                    order_timeout_ms * NS_PER_MS,
-                );
-                let _ =
-                    state.borrow_mut().pending.remove_stale(cutoff);
+            if now - last_pending_sweep >= PENDING_SWEEP_INTERVAL_US * 1000 {
+                let cutoff = now.saturating_sub(order_timeout_ms * NS_PER_MS);
+                let _ = state.borrow_mut().pending.remove_stale(cutoff);
                 last_pending_sweep = now;
             }
 
             // Server heartbeat broadcast
-            if now - last_heartbeat_ns
-                >= heartbeat_interval_ns
-            {
+            if now - last_heartbeat_ns >= heartbeat_interval_ns {
                 let ts_ms = now / NS_PER_MS;
-                state
-                    .borrow_mut()
-                    .broadcast_heartbeat(ts_ms);
+                state.borrow_mut().broadcast_heartbeat(ts_ms);
                 last_heartbeat_ns = now;
             }
 
             // Reap stale connections
             {
-                let cutoff = now.saturating_sub(
-                    heartbeat_timeout_ns,
-                );
-                let stale: Vec<u64> = state
-                    .borrow()
-                    .stale_connections(cutoff);
+                let cutoff = now.saturating_sub(heartbeat_timeout_ns);
+                let stale: Vec<u64> = state.borrow().stale_connections(cutoff);
                 if !stale.is_empty() {
-                    let mut st =
-                        state.borrow_mut();
+                    let mut st = state.borrow_mut();
                     for id in &stale {
-                        if let Some(c) =
-                            st.connections.get(id)
-                        {
-                            info!(
-                                "closing idle connection user_id={}",
-                                c.user_id
-                            );
+                        if let Some(c) = st.connections.get(id) {
+                            info!("closing idle connection user_id={}", c.user_id);
                         }
                         st.remove_connection(*id);
                     }
@@ -572,14 +499,12 @@ fn main() {
             // runs once per monoio yield, not per message).
             {
                 let st = state.borrow();
-                gauges_inner.pending_orders.store(
-                    st.pending.len() as u64,
-                    Ordering::Relaxed,
-                );
-                gauges_inner.connections.store(
-                    st.connections.len() as u64,
-                    Ordering::Relaxed,
-                );
+                gauges_inner
+                    .pending_orders
+                    .store(st.pending.len() as u64, Ordering::Relaxed);
+                gauges_inner
+                    .connections
+                    .store(st.connections.len() as u64, Ordering::Relaxed);
             }
 
             // Park on the reactor: wake instantly on an

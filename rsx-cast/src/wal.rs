@@ -43,10 +43,7 @@ impl Framed {
     /// (persist + publish) and WAL-free publishers that frame
     /// a record without a `WalWriter` and hand it to
     /// `CastSender::send_framed`.
-    pub fn pack<T: CastRecord>(
-        record: &mut T,
-        seq: u64,
-    ) -> Framed {
+    pub fn pack<T: CastRecord>(record: &mut T, seq: u64) -> Framed {
         let payload_len = std::mem::size_of::<T>();
         let total = WalHeader::SIZE + payload_len;
         assert!(
@@ -60,17 +57,17 @@ impl Framed {
 
         let payload = as_bytes(record);
         let crc = compute_crc32(payload);
-        let header = WalHeader::new(
-            T::record_type(),
-            payload_len as u16,
-            crc,
-        );
+        let header = WalHeader::new(T::record_type(), payload_len as u16, crc);
 
         let mut wire = [0u8; FRAMED_WIRE_BYTES];
         wire[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
         wire[WalHeader::SIZE..total].copy_from_slice(payload);
 
-        Framed { wire, total: total as u16, seq }
+        Framed {
+            wire,
+            total: total as u16,
+            seq,
+        }
     }
 }
 
@@ -108,11 +105,7 @@ fn active_filename(stream_id: u32) -> String {
 
 /// Bare filename of a rotated, frozen segment covering
 /// seqs `first..=last`.
-fn segment_filename(
-    stream_id: u32,
-    first_seq: u64,
-    last_seq: u64,
-) -> String {
+fn segment_filename(stream_id: u32, first_seq: u64, last_seq: u64) -> String {
     format!("{}_{}_{}.wal", stream_id, first_seq, last_seq)
 }
 
@@ -136,11 +129,7 @@ pub struct WalWriter {
 }
 
 impl WalWriter {
-    pub fn new(
-        stream_id: u32,
-        wal_dir: &Path,
-        max_file_size: u64,
-    ) -> io::Result<Self> {
+    pub fn new(stream_id: u32, wal_dir: &Path, max_file_size: u64) -> io::Result<Self> {
         let dir = stream_dir(wal_dir, stream_id);
         fs::create_dir_all(&dir)?;
 
@@ -182,10 +171,7 @@ impl WalWriter {
     /// same record) MUST use this entry point — framing the
     /// same record twice recomputes CRC and the seq counters
     /// can drift. See `notes/crc.md`.
-    pub fn prepare<T: CastRecord>(
-        &mut self,
-        record: &mut T,
-    ) -> io::Result<Framed> {
+    pub fn prepare<T: CastRecord>(&mut self, record: &mut T) -> io::Result<Framed> {
         let framed = Framed::pack(record, self.next_seq);
         self.next_seq += 1;
         Ok(framed)
@@ -194,10 +180,7 @@ impl WalWriter {
     /// Append a pre-framed record to the in-memory buffer.
     /// No CRC compute, no seq assignment — caller already paid
     /// those costs in `prepare`. O(memcpy).
-    pub fn append_framed(
-        &mut self,
-        framed: &Framed,
-    ) -> io::Result<()> {
+    pub fn append_framed(&mut self, framed: &Framed) -> io::Result<()> {
         // backpressure: stall if buf > 2x max_file_size
         let limit = (self.max_file_size as usize)
             .saturating_mul(2)
@@ -209,11 +192,11 @@ impl WalWriter {
             ));
         }
         self.last_seq = framed.seq;
-        self.buf.extend_from_slice(&framed.wire[..framed.total as usize]);
+        self.buf
+            .extend_from_slice(&framed.wire[..framed.total as usize]);
         self.records_since_flush += 1;
         Ok(())
     }
-
 
     /// Discard the in-memory write buffer without flushing.
     /// Used in benchmarks to prevent unbounded allocation across
@@ -231,10 +214,7 @@ impl WalWriter {
 
         // rotate before writing if file has data and adding
         // the buffer would exceed the size limit
-        if self.file_size > 0
-            && self.file_size + self.buf.len() as u64
-                >= self.max_file_size
-        {
+        if self.file_size > 0 && self.file_size + self.buf.len() as u64 >= self.max_file_size {
             self.rotate()?;
         }
 
@@ -261,8 +241,7 @@ impl WalWriter {
     /// Rotate: rename active -> seq range, open new active,
     /// then prune segments older than `RETENTION_NS`.
     fn rotate(&mut self) -> io::Result<()> {
-        let active_path = self.wal_dir
-            .join(active_filename(self.stream_id));
+        let active_path = self.wal_dir.join(active_filename(self.stream_id));
         let rotated_path = self.wal_dir.join(segment_filename(
             self.stream_id,
             self.first_seq,
@@ -270,10 +249,7 @@ impl WalWriter {
         ));
 
         if let Err(e) = self.file.sync_all() {
-            error!(
-                "sync_all failed before wal rotate: {}",
-                e
-            );
+            error!("sync_all failed before wal rotate: {}", e);
             return Err(e);
         }
         drop(std::mem::replace(
@@ -313,11 +289,7 @@ impl WalWriter {
 /// `retention_ns`. Best-effort: any individual unlink failure
 /// is logged and skipped, never propagated. The active file is
 /// never touched.
-fn prune_old_segments(
-    wal_dir: &Path,
-    stream_id: u32,
-    retention_ns: u64,
-) {
+fn prune_old_segments(wal_dir: &Path, stream_id: u32, retention_ns: u64) {
     let now = std::time::SystemTime::now();
     let entries = match fs::read_dir(wal_dir) {
         Ok(e) => e,
@@ -356,10 +328,7 @@ fn prune_old_segments(
                     name,
                     age_ns / 1_000_000_000
                 ),
-                Err(e) => warn!(
-                    "prune: remove_file {} failed: {}",
-                    path.display(), e
-                ),
+                Err(e) => warn!("prune: remove_file {} failed: {}", path.display(), e),
             }
         }
     }
@@ -400,11 +369,7 @@ pub struct WalReader {
 
 impl WalReader {
     /// Open reader starting at target_seq.
-    pub fn open_from_seq(
-        stream_id: u32,
-        target_seq: u64,
-        wal_dir: &Path,
-    ) -> io::Result<Self> {
+    pub fn open_from_seq(stream_id: u32, target_seq: u64, wal_dir: &Path) -> io::Result<Self> {
         let hot_dir = wal_dir.join(stream_id.to_string());
         let dirs = [hot_dir.as_path()];
         let files = list_wal_files_across(stream_id, &dirs)?;
@@ -426,9 +391,7 @@ impl WalReader {
 
     /// Read next record. Returns None at EOF.
     #[allow(clippy::should_implement_trait)]
-    pub fn next(
-        &mut self,
-    ) -> io::Result<Option<RawWalRecord>> {
+    pub fn next(&mut self) -> io::Result<Option<RawWalRecord>> {
         loop {
             let file = match &mut self.file {
                 Some(f) => f,
@@ -437,10 +400,7 @@ impl WalReader {
 
             match file.read_exact(&mut self.header_buf) {
                 Ok(()) => {}
-                Err(e)
-                    if e.kind()
-                        == io::ErrorKind::UnexpectedEof =>
-                {
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                     if !self.advance_file()? {
                         return Ok(None);
                     }
@@ -449,24 +409,13 @@ impl WalReader {
                 Err(e) => return Err(e),
             }
 
-            let header =
-                WalHeader::from_bytes(&self.header_buf)
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "malformed header",
-                        )
-                    })?;
+            let header = WalHeader::from_bytes(&self.header_buf)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed header"))?;
             let mut payload = vec![0u8; header.len as usize];
             match file.read_exact(&mut payload) {
                 Ok(()) => {}
-                Err(e)
-                    if e.kind()
-                        == io::ErrorKind::UnexpectedEof =>
-                {
-                    warn!(
-                        "partial record at eof, truncating"
-                    );
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                    warn!("partial record at eof, truncating");
                     return Ok(None);
                 }
                 Err(e) => return Err(e),
@@ -481,19 +430,14 @@ impl WalReader {
                 return Ok(None);
             }
 
-            return Ok(Some(RawWalRecord {
-                header,
-                payload,
-            }));
+            return Ok(Some(RawWalRecord { header, payload }));
         }
     }
 
     fn advance_file(&mut self) -> io::Result<bool> {
         self.file_idx += 1;
         if self.file_idx < self.files.len() {
-            self.file = Some(File::open(
-                &self.files[self.file_idx].path,
-            )?);
+            self.file = Some(File::open(&self.files[self.file_idx].path)?);
             return Ok(true);
         }
         self.file = None;
@@ -512,10 +456,7 @@ pub struct RawWalRecord {
 /// single list sorted by `first_seq`. The active file
 /// (sentinel `first_seq=u64::MAX`) sorts last. Missing
 /// directories are treated as empty.
-pub fn list_wal_files_across(
-    stream_id: u32,
-    dirs: &[&Path],
-) -> io::Result<Vec<WalFileInfo>> {
+pub fn list_wal_files_across(stream_id: u32, dirs: &[&Path]) -> io::Result<Vec<WalFileInfo>> {
     let mut files = Vec::new();
     for dir in dirs {
         for f in list_wal_files(stream_id, dir)? {
@@ -530,19 +471,13 @@ pub fn list_wal_files_across(
 /// iteration should start for `target_seq`. Active file
 /// uses `u64::MAX` sentinels and is treated as the last
 /// entry.
-fn pick_start_idx(
-    files: &[WalFileInfo],
-    target_seq: u64,
-) -> usize {
+fn pick_start_idx(files: &[WalFileInfo], target_seq: u64) -> usize {
     if files.is_empty() || target_seq == 0 {
         return 0;
     }
     let mut idx = 0;
     for (i, f) in files.iter().enumerate() {
-        if !f.is_active
-            && target_seq >= f.first_seq
-            && target_seq <= f.last_seq
-        {
+        if !f.is_active && target_seq >= f.first_seq && target_seq <= f.last_seq {
             return i;
         }
         idx = i;
@@ -550,10 +485,7 @@ fn pick_start_idx(
     idx
 }
 
-fn list_wal_files(
-    stream_id: u32,
-    dir: &Path,
-) -> io::Result<Vec<WalFileInfo>> {
+fn list_wal_files(stream_id: u32, dir: &Path) -> io::Result<Vec<WalFileInfo>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -592,8 +524,8 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
         return None;
     }
     Some(u64::from_le_bytes([
-        payload[0], payload[1], payload[2], payload[3],
-        payload[4], payload[5], payload[6], payload[7],
+        payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
+        payload[7],
     ]))
 }
 
@@ -611,10 +543,7 @@ pub fn extract_seq(payload: &[u8]) -> Option<u64> {
 /// range by scanning it. Rotated files use the filename
 /// directly. Returns `None` when the active file is empty
 /// AND no rotated files exist.
-pub fn oldest_and_highest_seq(
-    stream_id: u32,
-    wal_dir: &Path,
-) -> io::Result<Option<(u64, u64)>> {
+pub fn oldest_and_highest_seq(stream_id: u32, wal_dir: &Path) -> io::Result<Option<(u64, u64)>> {
     let hot_dir = wal_dir.join(stream_id.to_string());
     let dirs = [hot_dir.as_path()];
     let files = list_wal_files_across(stream_id, &dirs)?;
@@ -642,9 +571,7 @@ pub fn oldest_and_highest_seq(
     }
 }
 
-fn scan_file_seq_range(
-    path: &Path,
-) -> io::Result<Option<(u64, u64)>> {
+fn scan_file_seq_range(path: &Path) -> io::Result<Option<(u64, u64)>> {
     let mut file = File::open(path)?;
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     let mut lo: Option<u64> = None;
@@ -652,10 +579,7 @@ fn scan_file_seq_range(
     loop {
         match file.read_exact(&mut hdr_buf) {
             Ok(()) => {}
-            Err(e)
-                if e.kind()
-                    == io::ErrorKind::UnexpectedEof =>
-            {
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                 break;
             }
             Err(e) => return Err(e),
@@ -667,10 +591,7 @@ fn scan_file_seq_range(
         let mut payload = vec![0u8; header.len as usize];
         match file.read_exact(&mut payload) {
             Ok(()) => {}
-            Err(e)
-                if e.kind()
-                    == io::ErrorKind::UnexpectedEof =>
-            {
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                 break;
             }
             Err(e) => return Err(e),
@@ -708,48 +629,33 @@ pub fn read_record_at_seq(
     let hot_dir = wal_dir.join(stream_id.to_string());
     let dirs = [hot_dir.as_path()];
     let files = list_wal_files_across(stream_id, &dirs)?;
-    if let Some(target) = pick_file_for_seq(&files, target_seq)
-    {
-        if let Some(rec) = scan_file_for_seq(
-            &target.path, target_seq,
-        )? {
+    if let Some(target) = pick_file_for_seq(&files, target_seq) {
+        if let Some(rec) = scan_file_for_seq(&target.path, target_seq)? {
             return Ok(Some(rec));
         }
     }
     Ok(None)
 }
 
-fn pick_file_for_seq(
-    files: &[WalFileInfo],
-    target_seq: u64,
-) -> Option<&WalFileInfo> {
+fn pick_file_for_seq(files: &[WalFileInfo], target_seq: u64) -> Option<&WalFileInfo> {
     // Rotated files have first_seq..=last_seq populated.
     // Active file has u64::MAX sentinels — always check
     // it last in case the seq is post-rotation.
     for f in files {
-        if !f.is_active
-            && target_seq >= f.first_seq
-            && target_seq <= f.last_seq
-        {
+        if !f.is_active && target_seq >= f.first_seq && target_seq <= f.last_seq {
             return Some(f);
         }
     }
     files.iter().find(|f| f.is_active)
 }
 
-fn scan_file_for_seq(
-    path: &Path,
-    target_seq: u64,
-) -> io::Result<Option<RawWalRecord>> {
+fn scan_file_for_seq(path: &Path, target_seq: u64) -> io::Result<Option<RawWalRecord>> {
     let mut file = File::open(path)?;
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     loop {
         match file.read_exact(&mut hdr_buf) {
             Ok(()) => {}
-            Err(e)
-                if e.kind()
-                    == io::ErrorKind::UnexpectedEof =>
-            {
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -761,10 +667,7 @@ fn scan_file_for_seq(
         let mut payload = vec![0u8; header.len as usize];
         match file.read_exact(&mut payload) {
             Ok(()) => {}
-            Err(e)
-                if e.kind()
-                    == io::ErrorKind::UnexpectedEof =>
-            {
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -777,10 +680,7 @@ fn scan_file_for_seq(
         }
         if let Some(seq) = extract_seq(&payload) {
             if seq == target_seq {
-                return Ok(Some(RawWalRecord {
-                    header,
-                    payload,
-                }));
+                return Ok(Some(RawWalRecord { header, payload }));
             }
             if seq > target_seq {
                 // Past the target without finding it.

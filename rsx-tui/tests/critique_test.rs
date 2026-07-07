@@ -23,8 +23,7 @@ fn type_str(app: &mut App, conn: &mut MockConn, s: &str) {
 }
 
 fn screen(app: &App) -> String {
-    let mut terminal =
-        Terminal::new(TestBackend::new(120, 30)).expect("terminal");
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("terminal");
     terminal.draw(|f| draw(f, app)).expect("draw");
     terminal
         .backend()
@@ -158,7 +157,11 @@ fn done_without_accept_never_underflows_open_orders() {
 fn trade_tape_is_bounded_and_newest_first() {
     let mut app = App::new("PENGU-PERP");
     for px in 0..60i64 {
-        app.apply_event(GwEvent::Trade { side: Side::Buy, px, qty: 1 });
+        app.apply_event(GwEvent::Trade {
+            side: Side::Buy,
+            px,
+            qty: 1,
+        });
     }
     assert_eq!(app.trades.len(), 50, "tape capped at MAX_TRADES");
     assert_eq!(app.trades.front().map(|t| t.1), Some(59), "newest first");
@@ -216,7 +219,12 @@ fn drain_folds_a_whole_burst_in_one_pass() {
     conn.push_events(vec![
         GwEvent::Connected,
         GwEvent::Accepted { oid: 1 },
-        GwEvent::Fill { oid: 1, px: 100, qty: 5, side: Side::Buy },
+        GwEvent::Fill {
+            oid: 1,
+            px: 100,
+            qty: 5,
+            side: Side::Buy,
+        },
         GwEvent::Done { oid: 1 },
     ]);
     drain(&mut app, &mut conn);

@@ -38,14 +38,22 @@ fn scripted_session_types_submits_and_folds_a_fill() {
     // WsConn.
     harness.push_mock_events([
         GwEvent::Accepted { oid: 1 },
-        GwEvent::Fill { oid: 1, px: 10_001, qty: 5, side: Side::Buy },
+        GwEvent::Fill {
+            oid: 1,
+            px: 10_001,
+            qty: 5,
+            side: Side::Buy,
+        },
         GwEvent::Done { oid: 1 },
     ]);
 
     let waited = harness
         .wait_for(|app| app.fills == 1, Duration::from_secs(1))
         .expect("Fill observed within timeout");
-    assert!(waited < Duration::from_secs(1), "wait_for reports elapsed time");
+    assert!(
+        waited < Duration::from_secs(1),
+        "wait_for reports elapsed time"
+    );
 
     harness.assert_state("fill folded", |app| app.fills == 1);
     harness.assert_state("order lifecycle closed", |app| app.open_orders == 0);

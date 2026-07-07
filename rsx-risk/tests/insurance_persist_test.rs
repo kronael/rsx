@@ -19,10 +19,7 @@ async fn setup_pg() -> (
         "host=localhost port={port} user=postgres \
          password=postgres dbname=postgres"
     );
-    let (client, conn) =
-        tokio_postgres::connect(&connstr, NoTls)
-            .await
-            .unwrap();
+    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
     tokio::spawn(async move {
         if let Err(e) = conn.await {
             eprintln!("pg conn error: {e}");
@@ -37,8 +34,7 @@ async fn setup_pg() -> (
 async fn insurance_fund_upsert_new() {
     let (_container, mut client) = setup_pg().await;
     let fund = InsuranceFund::new(100, 50_000);
-    let events =
-        vec![PersistEvent::InsuranceFund(fund.clone())];
+    let events = vec![PersistEvent::InsuranceFund(fund.clone())];
     flush_batch(&mut client, 0, &events).await.unwrap();
 
     let row = client
@@ -59,14 +55,12 @@ async fn insurance_fund_upsert_update() {
     let (_container, mut client) = setup_pg().await;
 
     let fund1 = InsuranceFund::new(100, 50_000);
-    let events1 =
-        vec![PersistEvent::InsuranceFund(fund1.clone())];
+    let events1 = vec![PersistEvent::InsuranceFund(fund1.clone())];
     flush_batch(&mut client, 0, &events1).await.unwrap();
 
     let mut fund2 = InsuranceFund::new(100, 50_000);
     fund2.deduct(10_000);
-    let events2 =
-        vec![PersistEvent::InsuranceFund(fund2.clone())];
+    let events2 = vec![PersistEvent::InsuranceFund(fund2.clone())];
     flush_batch(&mut client, 0, &events2).await.unwrap();
 
     let row = client
@@ -87,8 +81,7 @@ async fn insurance_fund_negative_balance_persisted() {
     let (_container, mut client) = setup_pg().await;
     let mut fund = InsuranceFund::new(100, 10_000);
     fund.deduct(20_000);
-    let events =
-        vec![PersistEvent::InsuranceFund(fund.clone())];
+    let events = vec![PersistEvent::InsuranceFund(fund.clone())];
     flush_batch(&mut client, 0, &events).await.unwrap();
 
     let row = client
@@ -136,20 +129,17 @@ async fn insurance_fund_version_increments() {
     let (_container, mut client) = setup_pg().await;
 
     let fund1 = InsuranceFund::new(100, 100_000);
-    let events1 =
-        vec![PersistEvent::InsuranceFund(fund1.clone())];
+    let events1 = vec![PersistEvent::InsuranceFund(fund1.clone())];
     flush_batch(&mut client, 0, &events1).await.unwrap();
 
     let mut fund2 = fund1.clone();
     fund2.deduct(10_000);
-    let events2 =
-        vec![PersistEvent::InsuranceFund(fund2.clone())];
+    let events2 = vec![PersistEvent::InsuranceFund(fund2.clone())];
     flush_batch(&mut client, 0, &events2).await.unwrap();
 
     let mut fund3 = fund2.clone();
     fund3.add(5_000);
-    let events3 =
-        vec![PersistEvent::InsuranceFund(fund3.clone())];
+    let events3 = vec![PersistEvent::InsuranceFund(fund3.clone())];
     flush_batch(&mut client, 0, &events3).await.unwrap();
 
     let row = client

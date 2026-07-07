@@ -51,26 +51,13 @@ fn env_bool(key: &str, default: bool) -> bool {
 }
 
 fn load_source(name: &str) -> SourceConfig {
-    let prefix =
-        format!("RSX_MARK_SOURCE_{}", name.to_uppercase());
+    let prefix = format!("RSX_MARK_SOURCE_{}", name.to_uppercase());
     SourceConfig {
         name: name.to_lowercase(),
-        ws_url: env_str(
-            &format!("{}_WS_URL", prefix),
-            "",
-        ),
-        enabled: env_bool(
-            &format!("{}_ENABLED", prefix),
-            false,
-        ),
-        reconnect_base_ms: env_u64(
-            &format!("{}_RECONNECT_BASE_MS", prefix),
-            1000,
-        ),
-        reconnect_max_ms: env_u64(
-            &format!("{}_RECONNECT_MAX_MS", prefix),
-            30000,
-        ),
+        ws_url: env_str(&format!("{}_WS_URL", prefix), ""),
+        enabled: env_bool(&format!("{}_ENABLED", prefix), false),
+        reconnect_base_ms: env_u64(&format!("{}_RECONNECT_BASE_MS", prefix), 1000),
+        reconnect_max_ms: env_u64(&format!("{}_RECONNECT_MAX_MS", prefix), 30000),
     }
 }
 
@@ -95,23 +82,12 @@ fn parse_symbol_map(raw: &str) -> crate::types::SymbolMap {
 }
 
 pub fn load_mark_config() -> io::Result<MarkConfig> {
-    let listen_addr = env_str(
-        "RSX_MARK_LISTEN_ADDR",
-        "0.0.0.0:9200",
-    );
-    let wal_dir = env_str(
-        "RSX_MARK_WAL_DIR",
-        "./wal/mark",
-    );
+    let listen_addr = env_str("RSX_MARK_LISTEN_ADDR", "0.0.0.0:9200");
+    let wal_dir = env_str("RSX_MARK_WAL_DIR", "./wal/mark");
     let stream_id = env_u32("RSX_MARK_STREAM_ID", 100);
-    let staleness_ns = env_u64(
-        "RSX_MARK_STALENESS_NS",
-        10_000_000_000,
-    );
+    let staleness_ns = env_u64("RSX_MARK_STALENESS_NS", 10_000_000_000);
     let price_scale = env_i64("RSX_MARK_PRICE_SCALE", 1_000_000);
-    let symbol_map = parse_symbol_map(
-        &env_str("RSX_MARK_SYMBOL_MAP", ""),
-    );
+    let symbol_map = parse_symbol_map(&env_str("RSX_MARK_SYMBOL_MAP", ""));
 
     let source_names = ["BINANCE", "COINBASE"];
     let sources: Vec<SourceConfig> = source_names

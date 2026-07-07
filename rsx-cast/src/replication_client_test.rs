@@ -143,8 +143,8 @@ fn consumer_reconnect_resets_on_success() {
 #[test]
 fn consumer_skips_unknown_record_types() {
     use crate::header::WalHeader;
-    use rsx_messages::RECORD_FILL;
     use crate::wal::RawWalRecord;
+    use rsx_messages::RECORD_FILL;
 
     let mut known_count = 0u32;
     let mut callback = |_record: RawWalRecord| {

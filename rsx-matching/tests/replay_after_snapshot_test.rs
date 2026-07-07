@@ -7,8 +7,8 @@
 //! identical to the pre-crash live state.
 
 use rsx_book::book::Orderbook;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::load_snapshot;
@@ -94,11 +94,7 @@ fn book_state(book: &Orderbook) -> Vec<(i64, i64, u8)> {
     for i in 0..book.orders.len() {
         let slot = book.orders.get(i);
         if slot.is_active() {
-            out.push((
-                slot.price.0,
-                slot.remaining_qty.0,
-                slot.side,
-            ));
+            out.push((slot.price.0, slot.remaining_qty.0, slot.side));
         }
     }
     out.sort();
@@ -111,16 +107,12 @@ fn replay_restores_orders_appended_after_snapshot() {
     let wal_dir = tmp.path().to_str().unwrap();
 
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
-    let mut writer = WalWriter::new(
-        SYM, tmp.path(), 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(SYM, tmp.path(), 64 * 1024 * 1024).unwrap();
 
     // 1. Resting buy, then snapshot.
     submit(&mut book, &mut writer, 10, 1, Side::Buy, 100, 5);
     writer.flush().unwrap();
-    save_snapshot(&book, wal_dir, SYM, writer.last_seq())
-        .unwrap();
+    save_snapshot(&book, wal_dir, SYM, writer.last_seq()).unwrap();
     let pre_snap = book_state(&book);
 
     // 2. Two further orders: one rests at a new price, one
@@ -139,8 +131,7 @@ fn replay_restores_orders_appended_after_snapshot() {
     // 3. Crash + restart.
     drop(writer);
 
-    let loaded =
-        load_snapshot(wal_dir, SYM).expect("snapshot exists");
+    let loaded = load_snapshot(wal_dir, SYM).expect("snapshot exists");
     let mut recovered = *loaded;
     assert_eq!(
         book_state(&recovered),
@@ -150,8 +141,7 @@ fn replay_restores_orders_appended_after_snapshot() {
 
     // 4. Replay the post-snap tail.
     let start = load_wal_seq(wal_dir, SYM).unwrap() + 1;
-    let mut order_index: FxHashMap<OrderKey, u32> =
-        FxHashMap::default();
+    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
     let mut dedup = DedupTracker::new();
     replay_wal_after_snapshot(
         &mut recovered,
@@ -175,10 +165,7 @@ fn replay_with_no_snapshot_replays_from_seq_1() {
     let wal_dir = tmp.path().to_str().unwrap();
 
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
-    let mut writer = WalWriter::new(
-        SYM, tmp.path(), 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(SYM, tmp.path(), 64 * 1024 * 1024).unwrap();
 
     submit(&mut book, &mut writer, 10, 1, Side::Buy, 100, 5);
     submit(&mut book, &mut writer, 20, 2, Side::Sell, 101, 7);
@@ -189,8 +176,7 @@ fn replay_with_no_snapshot_replays_from_seq_1() {
 
     // No snapshot present. Cold-start full replay from seq 1.
     let mut recovered = Orderbook::new(cfg(), 1024, 50_000);
-    let mut order_index: FxHashMap<OrderKey, u32> =
-        FxHashMap::default();
+    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
     let mut dedup = DedupTracker::new();
     replay_wal_after_snapshot(
         &mut recovered,

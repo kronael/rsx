@@ -170,14 +170,9 @@ fn find_by_client_order_id() {
     pending.push(order);
 
     assert!(pending.find_by_client_order_id(&cid).is_some());
-    assert_eq!(
-        pending.find_by_client_order_id(&cid).unwrap().user_id,
-        42,
-    );
+    assert_eq!(pending.find_by_client_order_id(&cid).unwrap().user_id, 42,);
 
     let mut other_cid = [0u8; 20];
     other_cid[..5].copy_from_slice(b"test2");
-    assert!(
-        pending.find_by_client_order_id(&other_cid).is_none()
-    );
+    assert!(pending.find_by_client_order_id(&other_cid).is_none());
 }

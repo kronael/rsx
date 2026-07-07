@@ -79,11 +79,7 @@ fn bench_apply_insert(c: &mut Criterion) {
             );
             // Drop the order so slab capacity stays bounded.
             // Cancel cost is benched separately below.
-            book.apply_cancel_by_order_id(
-                0,
-                oid_lo,
-                1_700_000_000_001,
-            );
+            book.apply_cancel_by_order_id(0, oid_lo, 1_700_000_000_001);
         });
     });
 }
@@ -128,10 +124,7 @@ fn bench_apply_cancel(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut book = populated_book(10);
-                book.apply_insert_by_id(
-                    99_490, 100, 0, 9_999,
-                    1_700_000_000_000, 0, 99_999,
-                );
+                book.apply_insert_by_id(99_490, 100, 0, 9_999, 1_700_000_000_000, 0, 99_999);
                 book
             },
             |mut book| {
@@ -151,29 +144,19 @@ fn bench_apply_cancel(c: &mut Criterion) {
 /// to all subscribers. Already covered by marketdata_bench,
 /// but reproduced here against a populated book to give the
 /// integration cost when chained after apply_*.
-fn bench_apply_insert_then_derive_bbo(
-    c: &mut Criterion,
-) {
-    c.bench_function(
-        "shadow_apply_insert_then_bbo",
-        |b| {
-            let mut book = populated_book(20);
-            let mut counter: u64 = 500_000;
-            b.iter(|| {
-                counter += 1;
-                let oid_lo = counter;
-                book.apply_insert_by_id(
-                    99_400, 10, 0, 1,
-                    1_700_000_000_000, 0, oid_lo,
-                );
-                let bbo = book.derive_bbo();
-                black_box(bbo);
-                book.apply_cancel_by_order_id(
-                    0, oid_lo, 1_700_000_000_001,
-                );
-            });
-        },
-    );
+fn bench_apply_insert_then_derive_bbo(c: &mut Criterion) {
+    c.bench_function("shadow_apply_insert_then_bbo", |b| {
+        let mut book = populated_book(20);
+        let mut counter: u64 = 500_000;
+        b.iter(|| {
+            counter += 1;
+            let oid_lo = counter;
+            book.apply_insert_by_id(99_400, 10, 0, 1, 1_700_000_000_000, 0, oid_lo);
+            let bbo = book.derive_bbo();
+            black_box(bbo);
+            book.apply_cancel_by_order_id(0, oid_lo, 1_700_000_000_001);
+        });
+    });
 }
 
 criterion_group!(

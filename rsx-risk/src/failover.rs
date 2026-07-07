@@ -10,8 +10,8 @@
 use crate::lease::AdvisoryLease;
 use crate::replay::apply_record;
 use crate::shard::RiskShard;
-use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
@@ -66,12 +66,15 @@ pub fn handle_replay(
         panic!(
             "{label} {} requires {env_var} pointing at the \
              producer's replication server",
-            if gap.is_some() { "FAULTED" } else { "RECONNECT" },
+            if gap.is_some() {
+                "FAULTED"
+            } else {
+                "RECONNECT"
+            },
         )
     });
-    let tip_file = std::path::PathBuf::from(wal_dir).join(
-        format!("risk_{label}_{stream_id}_replay_tip.bin"),
-    );
+    let tip_file =
+        std::path::PathBuf::from(wal_dir).join(format!("risk_{label}_{stream_id}_replay_tip.bin"));
     // Retry if the WAL hasn't flushed the gap records yet.
     // WAL flushes every 10ms; 5 retries × 15ms = 75ms covers
     // the window plus some slack for burst writes.
@@ -86,13 +89,12 @@ pub fn handle_replay(
             tip_file.clone(),
             tls.clone(),
             |raw| {
-                let seq = rsx_cast::wal::extract_seq(
-                    &raw.payload,
-                ).unwrap_or(0);
+                let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
                 tracing::debug!(
                     "{label} replay applied \
                      record_type={} seq={}",
-                    raw.header.record_type, seq,
+                    raw.header.record_type,
+                    seq,
                 );
             },
         )
@@ -109,16 +111,12 @@ pub fn handle_replay(
                  WAL not flushed yet (attempt {tip_retries}), \
                  retrying in 15ms"
             );
-            std::thread::sleep(
-                Duration::from_millis(15),
-            );
+            std::thread::sleep(Duration::from_millis(15));
         } else {
             break tip;
         }
     };
-    info!(
-        "{label} replay drained, new_tip={new_tip}, resuming",
-    );
+    info!("{label} replay drained, new_tip={new_tip}, resuming",);
     new_tip
 }
 
@@ -132,11 +130,7 @@ pub fn handle_replay(
 /// transport-only on this hop; the record is identified by its
 /// order_id. CRC is recomputed by `send_raw` over the restamped
 /// payload.
-pub fn forward_to_gw(
-    gw: &mut CastSender,
-    record_type: u16,
-    payload: &[u8],
-) {
+pub fn forward_to_gw(gw: &mut CastSender, record_type: u16, payload: &[u8]) {
     let plen = payload.len();
     if !(8..=256).contains(&plen) {
         warn!("risk: gw forward bad payload len={plen}");
@@ -194,9 +188,8 @@ pub fn run_warm_catchup(
     lease_poll_interval_ms: u64,
     tls: &TlsConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tip_file = std::path::PathBuf::from(wal_dir).join(
-        format!("risk_warm_me_{me_stream_id}_tip.bin"),
-    );
+    let tip_file =
+        std::path::PathBuf::from(wal_dir).join(format!("risk_warm_me_{me_stream_id}_tip.bin"));
     let mut consumer = ReplicationConsumer::new(
         me_stream_id,
         vec![me_repl_addr.to_owned()],
@@ -232,9 +225,7 @@ pub fn run_warm_catchup(
         let mut caught_live_seq: Option<u64> = None;
         let stream = rt.block_on(consumer.run_once(|raw| {
             if raw.header.record_type == RECORD_CAUGHT_UP {
-                if let Some(rec) =
-                    decode_payload::<CaughtUpRecord>(&raw.payload)
-                {
+                if let Some(rec) = decode_payload::<CaughtUpRecord>(&raw.payload) {
                     caught_live_seq = Some(rec.live_seq);
                 }
                 // Stop the stream so the outer loop can poll the
@@ -245,11 +236,7 @@ pub fn run_warm_catchup(
             if seq > applied_seq {
                 applied_seq = seq;
             }
-            apply_record(
-                shard,
-                raw.header.record_type,
-                &raw.payload,
-            );
+            apply_record(shard, raw.header.record_type, &raw.payload);
             true
         }));
 
@@ -298,8 +285,7 @@ pub fn run_warm_catchup(
         // Caught up: attempt the NON-BLOCKING lock. This is the
         // ONLY place try_acquire is called; the lock — not
         // catch-up — is the single-main fence (invariant #10).
-        let acquired = rt
-            .block_on(lease.try_acquire(pg_client))?;
+        let acquired = rt.block_on(lease.try_acquire(pg_client))?;
         if !acquired {
             // Another node is main. Stay warm; keep applying.
             std::thread::sleep(poll);
@@ -324,11 +310,7 @@ pub fn run_warm_catchup(
             if seq > applied_seq {
                 applied_seq = seq;
             }
-            apply_record(
-                shard,
-                raw.header.record_type,
-                &raw.payload,
-            );
+            apply_record(shard, raw.header.record_type, &raw.payload);
             true
         }));
         if let Err(e) = final_drain {
@@ -346,20 +328,12 @@ pub fn run_warm_catchup(
 /// Drain the mark CastReceiver into the shard during warm
 /// catchup. Mark is latest-wins state; FAULTED/RECONNECT are
 /// ignored (the next live mark supersedes any gap).
-pub fn drain_mark_warm(
-    mark_receiver: &mut CastReceiver,
-    shard: &mut RiskShard,
-) {
+pub fn drain_mark_warm(mark_receiver: &mut CastReceiver, shard: &mut RiskShard) {
     loop {
         let recv = mark_receiver.try_recv_with(|preamble, payload| {
             if preamble.record_type == RECORD_MARK_PRICE {
-                if let Some(rec) =
-                    decode_payload::<MarkPriceRecord>(payload)
-                {
-                    shard.update_mark(
-                        rec.symbol_id,
-                        rec.mark_price.0,
-                    );
+                if let Some(rec) = decode_payload::<MarkPriceRecord>(payload) {
+                    shard.update_mark(rec.symbol_id, rec.mark_price.0);
                 }
             }
         });

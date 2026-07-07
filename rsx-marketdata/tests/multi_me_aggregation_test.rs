@@ -9,8 +9,8 @@
 //!   * shadow books for ME-A and ME-B remain independent
 //!   * per-symbol seq tracking does not collide
 
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::Framed;
 use rsx_marketdata::state::MarketDataState;
@@ -40,11 +40,9 @@ fn make_endpoint(wal_dir: &std::path::Path) -> MeEndpoint {
     let recv_addr = recv_sock.local_addr().unwrap();
     drop(recv_sock);
 
-    let sender =
-        CastSender::new(recv_addr, 1, wal_dir).unwrap();
+    let sender = CastSender::new(recv_addr, 1, wal_dir).unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let receiver =
-        CastReceiver::new(recv_addr, sender_addr).unwrap();
+    let receiver = CastReceiver::new(recv_addr, sender_addr).unwrap();
     MeEndpoint { sender, receiver }
 }
 
@@ -58,12 +56,7 @@ fn base_config() -> SymbolConfig {
     }
 }
 
-fn insert_record(
-    symbol_id: u32,
-    seq: u64,
-    price: i64,
-    qty: i64,
-) -> OrderInsertedRecord {
+fn insert_record(symbol_id: u32, seq: u64, price: i64, qty: i64) -> OrderInsertedRecord {
     OrderInsertedRecord {
         seq,
         ts_ns: 1000 + seq,
@@ -81,12 +74,7 @@ fn insert_record(
     }
 }
 
-fn fill_record(
-    symbol_id: u32,
-    seq: u64,
-    maker_order_id_lo: u64,
-    qty: i64,
-) -> FillRecord {
+fn fill_record(symbol_id: u32, seq: u64, maker_order_id_lo: u64, qty: i64) -> FillRecord {
     FillRecord {
         seq,
         ts_ns: 2000 + seq,
@@ -105,7 +93,7 @@ fn fill_record(
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     }
 }
 
@@ -129,20 +117,27 @@ fn multi_me_streams_aggregate_per_symbol() {
         let mut me_a = make_endpoint(tmp_a.path());
         let mut me_b = make_endpoint(tmp_b.path());
 
-        let mut state =
-            MarketDataState::new(4, base_config(), 256, 100);
+        let mut state = MarketDataState::new(4, base_config(), 256, 100);
 
         // ME-A: symbol 1. Insert two orders.
         let mut ins_a1 = insert_record(1, 1, 1000, 10);
         let mut ins_a2 = insert_record(1, 2, 1001, 20);
-        me_a.sender.send_framed(&Framed::pack(&mut ins_a1, 1)).unwrap();
-        me_a.sender.send_framed(&Framed::pack(&mut ins_a2, 2)).unwrap();
+        me_a.sender
+            .send_framed(&Framed::pack(&mut ins_a1, 1))
+            .unwrap();
+        me_a.sender
+            .send_framed(&Framed::pack(&mut ins_a2, 2))
+            .unwrap();
 
         // ME-B: symbol 2. Insert one order then fill it.
         let mut ins_b1 = insert_record(2, 1, 2000, 50);
-        me_b.sender.send_framed(&Framed::pack(&mut ins_b1, 1)).unwrap();
+        me_b.sender
+            .send_framed(&Framed::pack(&mut ins_b1, 1))
+            .unwrap();
         let mut fill_b1 = fill_record(2, 2, 1, 30);
-        me_b.sender.send_framed(&Framed::pack(&mut fill_b1, 2)).unwrap();
+        me_b.sender
+            .send_framed(&Framed::pack(&mut fill_b1, 2))
+            .unwrap();
 
         // UDP delivery is async; give the loopback a beat.
         thread::sleep(Duration::from_millis(20));
@@ -155,22 +150,17 @@ fn multi_me_streams_aggregate_per_symbol() {
         // Symbol 1: two resting bids, no fills.
         let book_a = state.book_mut(1).expect("book A");
         let snap_a = book_a.derive_l2_snapshot(10);
-        let total_a: i64 =
-            snap_a.bids.iter().map(|l| l.qty).sum();
+        let total_a: i64 = snap_a.bids.iter().map(|l| l.qty).sum();
         assert_eq!(
             total_a, 30,
             "symbol 1 should hold full 10+20 from ME-A only",
         );
-        assert!(
-            snap_a.asks.is_empty(),
-            "symbol 1 had no ME-A ask flow",
-        );
+        assert!(snap_a.asks.is_empty(), "symbol 1 had no ME-A ask flow",);
 
         // Symbol 2: 50 inserted, 30 filled => 20 left.
         let book_b = state.book_mut(2).expect("book B");
         let snap_b = book_b.derive_l2_snapshot(10);
-        let total_b: i64 =
-            snap_b.bids.iter().map(|l| l.qty).sum();
+        let total_b: i64 = snap_b.bids.iter().map(|l| l.qty).sum();
         assert_eq!(
             total_b, 20,
             "symbol 2 should reflect ME-B insert minus fill",
@@ -178,10 +168,7 @@ fn multi_me_streams_aggregate_per_symbol() {
     });
 }
 
-fn drain_into(
-    receiver: &mut CastReceiver,
-    state: &mut MarketDataState,
-) {
+fn drain_into(receiver: &mut CastReceiver, state: &mut MarketDataState) {
     loop {
         let (hdr, payload) = match receiver.try_recv() {
             CastRecv::Data(h, p) => (h, p),
@@ -192,21 +179,14 @@ fn drain_into(
         };
         match hdr.record_type {
             RECORD_ORDER_INSERTED => {
-                if payload.len()
-                    < std::mem::size_of::<OrderInsertedRecord>()
-                {
+                if payload.len() < std::mem::size_of::<OrderInsertedRecord>() {
                     continue;
                 }
                 let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr()
-                            as *const OrderInsertedRecord,
-                    )
+                    std::ptr::read_unaligned(payload.as_ptr() as *const OrderInsertedRecord)
                 };
                 state.ensure_book(rec.symbol_id, rec.price.0);
-                if let Some(book) =
-                    state.book_mut(rec.symbol_id)
-                {
+                if let Some(book) = state.book_mut(rec.symbol_id) {
                     book.apply_insert_by_id(
                         rec.price.0,
                         rec.qty.0,
@@ -219,19 +199,12 @@ fn drain_into(
                 }
             }
             RECORD_FILL => {
-                if payload.len()
-                    < std::mem::size_of::<FillRecord>()
-                {
+                if payload.len() < std::mem::size_of::<FillRecord>() {
                     continue;
                 }
-                let rec = unsafe {
-                    std::ptr::read_unaligned(
-                        payload.as_ptr() as *const FillRecord,
-                    )
-                };
-                if let Some(book) =
-                    state.book_mut(rec.symbol_id)
-                {
+                let rec =
+                    unsafe { std::ptr::read_unaligned(payload.as_ptr() as *const FillRecord) };
+                if let Some(book) = state.book_mut(rec.symbol_id) {
                     book.apply_fill_by_order_id(
                         rec.maker_order_id_hi,
                         rec.maker_order_id_lo,

@@ -86,9 +86,7 @@ fn clients_for_symbol_returns_all_subscribers() {
 #[test]
 fn subscribe_bbo_and_depth_channels() {
     let mut mgr = SubscriptionManager::new();
-    mgr.subscribe(
-        1, 100, CHANNEL_BBO | CHANNEL_DEPTH, 10,
-    );
+    mgr.subscribe(1, 100, CHANNEL_BBO | CHANNEL_DEPTH, 10);
     assert!(mgr.has_bbo(1, 100));
     assert!(mgr.has_depth(1, 100));
 }

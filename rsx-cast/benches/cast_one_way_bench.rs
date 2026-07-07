@@ -36,8 +36,8 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::Framed;
 use rsx_messages::FillRecord;
@@ -106,8 +106,7 @@ fn bench_cmp_one_way(c: &mut Criterion) {
     )
     .unwrap();
     let sender_addr = sender.local_addr().unwrap();
-    let mut receiver =
-        CastReceiver::new(recv_bind, sender_addr).unwrap();
+    let mut receiver = CastReceiver::new(recv_bind, sender_addr).unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let recv_count = Arc::new(AtomicU64::new(0));

@@ -1,9 +1,3 @@
-use rsx_types::Price;
-use rsx_types::Qty;
-use rsx_messages::FillRecord;
-use rsx_messages::OrderCancelledRecord;
-use rsx_messages::OrderDoneRecord;
-use rsx_messages::OrderInsertedRecord;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::records::serialize;
@@ -13,6 +7,12 @@ use rsx_gateway::route::route_order_cancelled;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderCancelledRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderInsertedRecord;
+use rsx_types::Price;
+use rsx_types::Qty;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -25,13 +25,9 @@ fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
 
 #[test]
 fn order_lifecycle_fill_done_routes_to_user() {
-    let state = Rc::new(RefCell::new(GatewayState::new(
-        10, 10, 30_000, vec![],
-    )));
-    let conn_taker =
-        state.borrow_mut().add_connection(7).unwrap();
-    let conn_maker =
-        state.borrow_mut().add_connection(8).unwrap();
+    let state = Rc::new(RefCell::new(GatewayState::new(10, 10, 30_000, vec![])));
+    let conn_taker = state.borrow_mut().add_connection(7).unwrap();
+    let conn_maker = state.borrow_mut().add_connection(8).unwrap();
 
     let oid_hi = 0x0102_0304_0506_0708u64;
     let oid_lo = 0x090A_0B0C_0D0E_0F10u64;
@@ -92,7 +88,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     route_fill(&state, &fill);
 
@@ -140,11 +136,8 @@ taker_ts_ns: 0,
 
 #[test]
 fn order_cancel_routes_and_clears_pending() {
-    let state = Rc::new(RefCell::new(GatewayState::new(
-        10, 10, 30_000, vec![],
-    )));
-    let conn =
-        state.borrow_mut().add_connection(7).unwrap();
+    let state = Rc::new(RefCell::new(GatewayState::new(10, 10, 30_000, vec![])));
+    let conn = state.borrow_mut().add_connection(7).unwrap();
 
     let oid_hi = 0x1111_1111_1111_1111u64;
     let oid_lo = 0x2222_2222_2222_2222u64;

@@ -19,9 +19,7 @@ pub struct CompressionMap {
 }
 
 // Read on every order; keep it within ~2 cache lines.
-const _: () = assert!(
-    std::mem::size_of::<CompressionMap>() <= 128
-);
+const _: () = assert!(std::mem::size_of::<CompressionMap>() <= 128);
 
 impl CompressionMap {
     pub fn new(mid_price: i64, tick_size: i64) -> Self {
@@ -56,22 +54,13 @@ impl CompressionMap {
         // hot path); the config validates tick_size >= 1 upstream.
         let t = tick_size.max(1);
         let z0 = ((pct_5 * 2) / t).max(0) as u32;
-        let z1 =
-            (((pct_15 - pct_5) * 2) / (10 * t)).max(0) as u32;
-        let z2 =
-            (((pct_30 - pct_15) * 2) / (100 * t)).max(0) as u32;
-        let z3 =
-            (((pct_50 - pct_30) * 2) / (1000 * t)).max(0) as u32;
+        let z1 = (((pct_15 - pct_5) * 2) / (10 * t)).max(0) as u32;
+        let z2 = (((pct_30 - pct_15) * 2) / (100 * t)).max(0) as u32;
+        let z3 = (((pct_50 - pct_30) * 2) / (1000 * t)).max(0) as u32;
         let z4 = 2u32; // one per side
 
         let zone_slots = [z0, z1, z2, z3, z4];
-        let base_indices = [
-            0,
-            z0,
-            z0 + z1,
-            z0 + z1 + z2,
-            z0 + z1 + z2 + z3,
-        ];
+        let base_indices = [0, z0, z0 + z1, z0 + z1 + z2, z0 + z1 + z2 + z3];
 
         Self {
             mid_price,
@@ -85,17 +74,12 @@ impl CompressionMap {
 
     /// Bisection: 2-3 comparisons, no loops.
     #[inline(always)]
-    pub fn price_to_index(
-        &self,
-        price: i64,
-    ) -> u32 {
+    pub fn price_to_index(&self, price: i64) -> u32 {
         let signed = price - self.mid_price;
         // Raw-price distance from mid (thresholds are raw too).
-        let distance = signed.unsigned_abs()
-            .min(i64::MAX as u64) as i64;
+        let distance = signed.unsigned_abs().min(i64::MAX as u64) as i64;
         // ask=0 (price >= mid), bid=1 (price < mid)
-        let side: u32 =
-            if signed >= 0 { 0 } else { 1 };
+        let side: u32 = if signed >= 0 { 0 } else { 1 };
 
         let zone = if distance < self.thresholds[1] {
             if distance < self.thresholds[0] {
@@ -124,10 +108,8 @@ impl CompressionMap {
         if half == 0 {
             return self.base_indices[zone];
         }
-        let raw_per_slot =
-            self.compressions[zone] as i64 * self.tick_size;
-        let local_offset =
-            ((distance - zone_start) / raw_per_slot) as u32;
+        let raw_per_slot = self.compressions[zone] as i64 * self.tick_size;
+        let local_offset = ((distance - zone_start) / raw_per_slot) as u32;
         let local_offset = local_offset.min(half - 1);
 
         if side == 0 {
@@ -135,9 +117,7 @@ impl CompressionMap {
             self.base_indices[zone] + half + local_offset
         } else {
             // bid side: mid outward (reversed)
-            self.base_indices[zone] + half
-                - 1
-                - local_offset
+            self.base_indices[zone] + half - 1 - local_offset
         }
     }
 
@@ -146,12 +126,10 @@ impl CompressionMap {
     }
 
     pub fn min_price(&self) -> i64 {
-        self.mid_price
-            - self.thresholds[3]
+        self.mid_price - self.thresholds[3]
     }
 
     pub fn max_price(&self) -> i64 {
-        self.mid_price
-            + self.thresholds[3]
+        self.mid_price + self.thresholds[3]
     }
 }

@@ -2,18 +2,12 @@ use rsx_book::order::OrderSlot;
 
 #[test]
 fn order_slot_size_is_128_bytes() {
-    assert_eq!(
-        std::mem::size_of::<OrderSlot>(),
-        128
-    );
+    assert_eq!(std::mem::size_of::<OrderSlot>(), 128);
 }
 
 #[test]
 fn order_slot_alignment_is_64() {
-    assert_eq!(
-        std::mem::align_of::<OrderSlot>(),
-        64
-    );
+    assert_eq!(std::mem::align_of::<OrderSlot>(), 64);
 }
 
 #[test]

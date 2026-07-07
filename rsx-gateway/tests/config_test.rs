@@ -3,10 +3,7 @@ use rsx_gateway::config::load_gateway_config;
 #[test]
 fn config_defaults() {
     unsafe {
-        std::env::set_var(
-            "RSX_GW_JWT_SECRET",
-            "test-secret-padded-to-32-bytes-min!",
-        );
+        std::env::set_var("RSX_GW_JWT_SECRET", "test-secret-padded-to-32-bytes-min!");
     }
     let config = load_gateway_config();
     assert_eq!(config.listen_addr, "0.0.0.0:8080");

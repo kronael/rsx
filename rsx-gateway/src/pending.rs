@@ -16,9 +16,7 @@ pub struct PendingOrders {
 impl PendingOrders {
     pub fn new(capacity: usize) -> Self {
         Self {
-            queue: VecDeque::with_capacity(
-                capacity.min(10_000),
-            ),
+            queue: VecDeque::with_capacity(capacity.min(10_000)),
             capacity,
         }
     }
@@ -31,10 +29,7 @@ impl PendingOrders {
         true
     }
 
-    pub fn remove(
-        &mut self,
-        order_id: &[u8; 16],
-    ) -> Option<PendingOrder> {
+    pub fn remove(&mut self, order_id: &[u8; 16]) -> Option<PendingOrder> {
         if let Some(back) = self.queue.back() {
             if &back.order_id == order_id {
                 return self.queue.pop_back();
@@ -61,31 +56,18 @@ impl PendingOrders {
     }
 
     /// Find a pending order by order_id.
-    pub fn find_by_order_id(
-        &self,
-        order_id: &[u8; 16],
-    ) -> Option<&PendingOrder> {
-        self.queue
-            .iter()
-            .find(|o| &o.order_id == order_id)
+    pub fn find_by_order_id(&self, order_id: &[u8; 16]) -> Option<&PendingOrder> {
+        self.queue.iter().find(|o| &o.order_id == order_id)
     }
 
     /// Find a pending order by client_order_id.
-    pub fn find_by_client_order_id(
-        &self,
-        cid: &[u8; 20],
-    ) -> Option<&PendingOrder> {
-        self.queue
-            .iter()
-            .find(|o| &o.client_order_id == cid)
+    pub fn find_by_client_order_id(&self, cid: &[u8; 20]) -> Option<&PendingOrder> {
+        self.queue.iter().find(|o| &o.client_order_id == cid)
     }
 
     /// Remove orders older than `cutoff_ns` timestamp.
     /// Returns removed orders.
-    pub fn remove_stale(
-        &mut self,
-        cutoff_ns: u64,
-    ) -> Vec<PendingOrder> {
+    pub fn remove_stale(&mut self, cutoff_ns: u64) -> Vec<PendingOrder> {
         let mut stale = Vec::new();
         let mut i = 0;
         while i < self.queue.len() {

@@ -1,3 +1,4 @@
+use rsx_risk::types::RejectReason;
 use rsx_risk::Account;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
@@ -9,7 +10,6 @@ use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
-use rsx_risk::types::RejectReason;
 
 fn default_config() -> ShardConfig {
     ShardConfig {
@@ -27,10 +27,8 @@ fn default_config() -> ShardConfig {
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
         funding_config: FundingConfig::default(),
-        liquidation_config:
-            LiquidationConfig::default(),
-        replication_config:
-            ReplicationConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig::default(),
     }
 }
 
@@ -38,14 +36,7 @@ fn make_shard() -> RiskShard {
     RiskShard::new(default_config())
 }
 
-fn fill(
-    taker: u32,
-    maker: u32,
-    sym: u32,
-    price: i64,
-    qty: i64,
-    seq: u64,
-) -> FillEvent {
+fn fill(taker: u32, maker: u32, sym: u32, price: i64, qty: i64, seq: u64) -> FillEvent {
     FillEvent {
         seq,
         symbol_id: sym,
@@ -58,12 +49,7 @@ fn fill(
     }
 }
 
-fn order(
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-) -> OrderRequest {
+fn order(user_id: u32, symbol_id: u32, price: i64, qty: i64) -> OrderRequest {
     OrderRequest {
         seq: 1,
         user_id,
@@ -158,40 +144,27 @@ fn fill_taker_fee_deducted() {
     // fee = 10 * 100 * 5 / 10000 = 0 (floor)
     // With bigger numbers:
     let mut s2 = make_shard();
-    s2.accounts
-        .insert(0, Account::new(0, 1_000_000_000));
-    s2.process_fill(&fill(
-        0, 1, 0, 10_000, 10_000, 1,
-    ));
+    s2.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s2.process_fill(&fill(0, 1, 0, 10_000, 10_000, 1));
     // fee = 10000*10000*5/10000 = 50000
-    assert_eq!(
-        s2.accounts[&0].collateral,
-        1_000_000_000 - 50_000
-    );
+    assert_eq!(s2.accounts[&0].collateral, 1_000_000_000 - 50_000);
 }
 
 #[test]
 fn fill_maker_fee_deducted() {
     let mut s = make_shard();
     // user 2 in shard 0, as maker
-    s.accounts
-        .insert(2, Account::new(2, 1_000_000_000));
-    s.process_fill(&fill(
-        1, 2, 0, 10_000, 10_000, 1,
-    ));
+    s.accounts.insert(2, Account::new(2, 1_000_000_000));
+    s.process_fill(&fill(1, 2, 0, 10_000, 10_000, 1));
     // maker fee = 10000*10000*(-1)/10000 = -10000
     // deduct_fee(-10000) means collateral += 10000
-    assert_eq!(
-        s.accounts[&2].collateral,
-        1_000_000_000 + 10_000
-    );
+    assert_eq!(s.accounts[&2].collateral, 1_000_000_000 + 10_000);
 }
 
 #[test]
 fn fill_self_trade_same_user() {
     let mut s = make_shard();
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
     // User 0 is both taker and maker
     let f = fill(0, 0, 0, 10_000, 100, 1);
     s.process_fill(&f);
@@ -205,14 +178,11 @@ fn fill_self_trade_same_user() {
 #[test]
 fn order_accepted_margin_sufficient() {
     let mut s = make_shard();
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
     let o = order(0, 0, 10_000, 10);
     let resp = s.process_order(&o);
-    assert!(
-        matches!(resp, OrderResponse::Accepted { .. })
-    );
+    assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
 #[test]
@@ -238,16 +208,15 @@ fn order_nonpositive_price_or_qty_rejected() {
     // margin math — otherwise notional=price*qty goes negative
     // and the freeze *adds* available margin (solvency hole).
     let cases = [
-        (10_000, 0),       // zero qty
-        (10_000, -10),     // negative qty
-        (0, 10),           // zero price
-        (-10_000, 10),     // negative price
-        (-10_000, -10),    // both negative (positive notional!)
+        (10_000, 0),    // zero qty
+        (10_000, -10),  // negative qty
+        (0, 10),        // zero price
+        (-10_000, 10),  // negative price
+        (-10_000, -10), // both negative (positive notional!)
     ];
     for (price, qty) in cases {
         let mut s = make_shard();
-        s.accounts
-            .insert(0, Account::new(0, 1_000_000_000));
+        s.accounts.insert(0, Account::new(0, 1_000_000_000));
         s.mark_prices[0] = 10_000;
         let o = order(0, 0, price, qty);
         let resp = s.process_order(&o);
@@ -288,9 +257,7 @@ fn order_reduce_only_accepted() {
     let mut o = order(0, 0, 10_000, 100);
     o.reduce_only = true;
     let resp = s.process_order(&o);
-    assert!(
-        matches!(resp, OrderResponse::Accepted { .. })
-    );
+    assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
 #[test]
@@ -301,9 +268,7 @@ fn liquidation_order_accepted() {
     let mut o = order(0, 0, 10_000, 100);
     o.is_liquidation = true;
     let resp = s.process_order(&o);
-    assert!(
-        matches!(resp, OrderResponse::Accepted { .. })
-    );
+    assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
 // --- BBO + mark ---
@@ -351,9 +316,13 @@ fn missing_mark_falls_back_to_index_for_liquidation() {
     // Collateral is small; with index fallback, should be in liquidation
     let o = order(0, 0, 10_000, 1);
     let resp = s.process_order(&o);
-    assert!(
-        matches!(resp, OrderResponse::Rejected { reason: RejectReason::UserInLiquidation, .. })
-    );
+    assert!(matches!(
+        resp,
+        OrderResponse::Rejected {
+            reason: RejectReason::UserInLiquidation,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -417,11 +386,15 @@ fn funding_zero_sum_across_users_uneven_split() {
     s.mark_prices[0] = mark + 33;
     s.index_prices[0].price = mark;
     s.index_prices[0].valid = true;
-    let before: i64 =
-        [0u32, 2, 4, 6].iter().map(|u| s.accounts[u].collateral).sum();
+    let before: i64 = [0u32, 2, 4, 6]
+        .iter()
+        .map(|u| s.accounts[u].collateral)
+        .sum();
     s.maybe_settle_funding(28_800);
-    let after: i64 =
-        [0u32, 2, 4, 6].iter().map(|u| s.accounts[u].collateral).sum();
+    let after: i64 = [0u32, 2, 4, 6]
+        .iter()
+        .map(|u| s.accounts[u].collateral)
+        .sum();
     // Σ collateral delta == -Σ payments == 0.
     assert_eq!(before, after, "funding must be zero-sum per symbol");
     assert_eq!(s.last_funding_id, 1);
@@ -430,8 +403,7 @@ fn funding_zero_sum_across_users_uneven_split() {
 #[test]
 fn funding_settles_at_interval() {
     let mut s = make_shard();
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_100;
     s.index_prices[0].price = 10_000;
     s.index_prices[0].valid = true;
@@ -450,10 +422,8 @@ fn make_rings() -> (
     rtrb::Consumer<OrderResponse>,
     rtrb::Consumer<OrderRequest>,
 ) {
-    let (resp_p, resp_c) =
-        rtrb::RingBuffer::<OrderResponse>::new(4);
-    let (accepted_p, accepted_c) =
-        rtrb::RingBuffer::<OrderRequest>::new(4);
+    let (resp_p, resp_c) = rtrb::RingBuffer::<OrderResponse>::new(4);
+    let (accepted_p, accepted_c) = rtrb::RingBuffer::<OrderRequest>::new(4);
     let rings = rsx_risk::ShardRings {
         response_producer: resp_p,
         accepted_producer: accepted_p,
@@ -479,8 +449,7 @@ fn fills_processed_before_orders() {
     // position the fill created (no crash, order accepted with
     // the freed/updated margin state).
     let mut s = make_shard();
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
 
     // Fills drained first.
@@ -491,9 +460,7 @@ fn fills_processed_before_orders() {
     // Then the order's margin check runs against post-fill state.
     let resp = s.process_order(&order(0, 0, 10_000, 10));
     assert_eq!(s.orders_processed, 1);
-    assert!(
-        matches!(resp, OrderResponse::Accepted { .. })
-    );
+    assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
 // --- Phase 2 fill edge cases ---
@@ -626,10 +593,7 @@ fn config_applied_event_updates_symbol_params() {
     s.accounts.insert(2, Account::new(2, 1_000_000_000));
     s.process_fill(&f);
     // taker fee = 10000*10000*11/10000 = 110000
-    assert_eq!(
-        s.accounts[&0].collateral,
-        1_000_000_000 - 110_000
-    );
+    assert_eq!(s.accounts[&0].collateral, 1_000_000_000 - 110_000);
     s.process_config_applied(1, 42);
     assert_eq!(s.config_versions[1], 42);
     // Newer version overwrites
@@ -658,16 +622,13 @@ fn config_applied_forwarded_to_gateway() {
 #[test]
 fn partial_fill_releases_remaining_frozen() {
     let mut s = make_shard();
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
     let mut o = order(0, 0, 10_000, 10);
     o.order_id_hi = 0;
     o.order_id_lo = 42;
     let resp = s.process_order(&o);
-    assert!(
-        matches!(resp, OrderResponse::Accepted { .. })
-    );
+    assert!(matches!(resp, OrderResponse::Accepted { .. }));
     let frozen_before = s.frozen_for_user(0);
     assert!(frozen_before > 0);
     // Partial fill of 6 out of 10
@@ -717,7 +678,7 @@ fn liquidation_enqueued_via_index_when_mark_silent() {
     // index fallback, the same source as the pre-trade check.
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 100)); // tiny
-    // No mark for symbol 0 (silent feed).
+                                                // No mark for symbol 0 (silent feed).
     s.mark_prices[0] = 0;
     // Valid index via BBO (mid = 10_000), far above entry.
     s.process_bbo(&BboUpdate {
@@ -732,8 +693,8 @@ fn liquidation_enqueued_via_index_when_mark_silent() {
     let mut f = fill(0, 1, 0, 100, 100, 1);
     f.taker_side = 1;
     s.process_fill(&f); // triggers check_liquidation_for(0)
-    // Sanity: at the silent mark (0) the short is in profit,
-    // so only the index fallback exposes the loss.
+                        // Sanity: at the silent mark (0) the short is in profit,
+                        // so only the index fallback exposes the loss.
     assert!(
         s.liquidation.is_in_liquidation(0, 0),
         "short underwater-by-index must enqueue when mark==0"

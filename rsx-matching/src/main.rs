@@ -1,48 +1,48 @@
 use rsx_book::book::Orderbook;
+use rsx_book::event::CANCEL_USER;
+use rsx_book::event::REASON_CANCELLED;
 use rsx_book::matching::process_new_order;
-use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
+use rsx_cast::wal::WalWriter;
 use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
+use rsx_matching::config::load_applied_config;
+use rsx_matching::config::poll_scheduled_configs;
+use rsx_matching::config::write_applied_config;
+use rsx_matching::dedup::DedupTracker;
+use rsx_matching::wal::flush_if_due;
+use rsx_matching::wal::load_snapshot;
+use rsx_matching::wal::load_wal_seq;
+use rsx_matching::wal::publish_events;
+use rsx_matching::wal::replay_wal_after_snapshot;
+use rsx_matching::wal::save_snapshot;
+use rsx_matching::wire::OrderMessage;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
-use rsx_cast::wal::WalWriter;
-use rsx_matching::config::load_applied_config;
-use rsx_matching::config::poll_scheduled_configs;
-use rsx_matching::config::write_applied_config;
-use rsx_matching::wal::flush_if_due;
-use rsx_matching::wal::load_snapshot;
-use rsx_matching::wal::load_wal_seq;
-use rsx_matching::wal::replay_wal_after_snapshot;
-use rsx_matching::wal::save_snapshot;
-use rsx_matching::wal::publish_events;
-use rsx_book::event::CANCEL_USER;
-use rsx_book::event::REASON_CANCELLED;
-use rsx_matching::wire::OrderMessage;
-use rsx_types::NONE;
-use rsx_types::Price;
-use rsx_types::Qty;
 use rsx_types::install_panic_handler;
-use rsx_types::SymbolConfig;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
-use rsx_matching::dedup::DedupTracker;
+use rsx_types::Price;
+use rsx_types::Qty;
+use rsx_types::SymbolConfig;
+use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio_postgres::NoTls;
 use tracing::error;
@@ -62,10 +62,7 @@ type OrderKey = (u32, u64, u64);
 /// the order index in sync. Insert on OrderInserted, remove
 /// on OrderDone (which fires for every terminal transition,
 /// including fully-filled and cancelled).
-fn update_order_index(
-    events: &[rsx_book::event::Event],
-    index: &mut FxHashMap<OrderKey, u32>,
-) {
+fn update_order_index(events: &[rsx_book::event::Event], index: &mut FxHashMap<OrderKey, u32>) {
     for event in events {
         match *event {
             rsx_book::event::Event::OrderInserted {
@@ -75,10 +72,7 @@ fn update_order_index(
                 order_id_lo,
                 ..
             } => {
-                index.insert(
-                    (user_id, order_id_hi, order_id_lo),
-                    handle,
-                );
+                index.insert((user_id, order_id_hi, order_id_lo), handle);
             }
             rsx_book::event::Event::OrderDone {
                 user_id,
@@ -86,11 +80,7 @@ fn update_order_index(
                 order_id_lo,
                 ..
             } => {
-                index.remove(&(
-                    user_id,
-                    order_id_hi,
-                    order_id_lo,
-                ));
+                index.remove(&(user_id, order_id_hi, order_id_lo));
             }
             _ => {}
         }
@@ -115,10 +105,7 @@ fn rebuild_order_index_from_book(
         if !slot.is_active() {
             continue;
         }
-        index.insert(
-            (slot.user_id, slot.order_id_hi, slot.order_id_lo),
-            handle,
-        );
+        index.insert((slot.user_id, slot.order_id_hi, slot.order_id_lo), handle);
     }
 }
 
@@ -192,10 +179,8 @@ fn get_env_i64(key: &str) -> io::Result<i64> {
 
 fn load_config_from_env() -> io::Result<SymbolConfig> {
     let symbol_id = get_env_u32("RSX_ME_SYMBOL_ID")?;
-    let price_decimals =
-        get_env_u8("RSX_ME_PRICE_DECIMALS")?;
-    let qty_decimals =
-        get_env_u8("RSX_ME_QTY_DECIMALS")?;
+    let price_decimals = get_env_u8("RSX_ME_PRICE_DECIMALS")?;
+    let qty_decimals = get_env_u8("RSX_ME_QTY_DECIMALS")?;
     let tick_size = get_env_i64("RSX_ME_TICK_SIZE")?;
     let lot_size = get_env_i64("RSX_ME_LOT_SIZE")?;
     Ok(SymbolConfig {
@@ -211,9 +196,7 @@ fn main() {
     install_panic_handler();
 
     tracing_subscriber::fmt()
-        .with_ansi(std::io::IsTerminal::is_terminal(
-            &std::io::stdout(),
-        ))
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .init();
 
     // Drain hot-path latency samples out-of-band
@@ -236,10 +219,7 @@ fn main() {
             let setup = rsx_types::cpu::setup_hot_thread(core_id);
             info!("me {}", setup);
             if setup.isolated == Some(false) {
-                tracing::warn!(
-                    "me core {} not isolated — expect tail spikes",
-                    core_id
-                );
+                tracing::warn!("me core {} not isolated — expect tail spikes", core_id);
             }
         }
     }
@@ -258,11 +238,7 @@ fn main() {
         match rt.block_on(async {
             let (client, conn) = tokio_postgres::connect(url, NoTls)
                 .await
-                .map_err(|e| {
-                    io::Error::other(
-                        format!("db connect: {}", e),
-                    )
-                })?;
+                .map_err(|e| io::Error::other(format!("db connect: {}", e)))?;
             tokio::spawn(async move {
                 if let Err(e) = conn.await {
                     error!("db connection error: {}", e);
@@ -281,9 +257,7 @@ fn main() {
                         (Some(client), cfg.config_version)
                     }
                     Ok(None) => {
-                        info!(
-                            "no applied config found, using env config"
-                        );
+                        info!("no applied config found, using env config");
                         (Some(client), 0)
                     }
                     Err(e) => {
@@ -310,19 +284,13 @@ fn main() {
     // WAL just needs enough window to absorb a crash and
     // a snapshot-to-replay gap. 4 h ≫ 10 s snapshot
     // cadence with margin for a multi-hour ops outage.
-    let wal_dir = env::var("RSX_ME_WAL_DIR")
-        .unwrap_or_else(|_| "./tmp/wal".to_string());
-    let mut wal_writer = WalWriter::new(
-        symbol_id,
-        &PathBuf::from(&wal_dir),
-        64 * 1024 * 1024,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to create wal writer");
+    let wal_dir = env::var("RSX_ME_WAL_DIR").unwrap_or_else(|_| "./tmp/wal".to_string());
+    let mut wal_writer = WalWriter::new(symbol_id, &PathBuf::from(&wal_dir), 64 * 1024 * 1024)
+        // SAFETY: fail-fast at startup
+        .expect("failed to create wal writer");
 
     let mut dedup = DedupTracker::new();
-    let mut order_index: FxHashMap<OrderKey, u32> =
-        FxHashMap::default();
+    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
 
     // Restore book state from snapshot if available.
     // Recovery strategy (R-N1):
@@ -334,8 +302,7 @@ fn main() {
     //      this regenerates fills + emitted events deterministically.
     //   4. Bump wal_writer.next_seq so subsequent live writes
     //      don't collide with replayed seqs already on disk.
-    let snapshot_loaded =
-        load_snapshot(&wal_dir, symbol_id);
+    let snapshot_loaded = load_snapshot(&wal_dir, symbol_id);
     let replay_from = if let Some(loaded) = snapshot_loaded {
         book = *loaded;
         // The snapshot persists the book slab but not the
@@ -361,9 +328,7 @@ fn main() {
         // first new save_snapshot anyway.
         sidecar.map(|s| s + 1)
     } else {
-        info!(
-            "no snapshot found — replaying WAL from seq 1"
-        );
+        info!("no snapshot found — replaying WAL from seq 1");
         Some(1)
     };
     if let Some(start_seq) = replay_from {
@@ -412,49 +377,36 @@ fn main() {
         .expect("invalid RSX_ME_CAST_ADDR");
     // NAK destination: risk's ME sender bind addr
     // (RSX_RISK_ME_SEND_ADDR), with RSX_RISK_CAST_ADDR as fallback.
-    let risk_nak_addr: SocketAddr =
-        env::var("RSX_RISK_ME_SEND_ADDR")
-            .or_else(|_| env::var("RSX_RISK_CAST_ADDR"))
-            .unwrap_or_else(|_| "127.0.0.1:9101".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid NAK sender addr");
+    let risk_nak_addr: SocketAddr = env::var("RSX_RISK_ME_SEND_ADDR")
+        .or_else(|_| env::var("RSX_RISK_CAST_ADDR"))
+        .unwrap_or_else(|_| "127.0.0.1:9101".into())
+        .parse()
+        // SAFETY: fail-fast at startup
+        .expect("invalid NAK sender addr");
     // Risk's dedicated port for ME events (fills, BBO, etc.)
-    let risk_me_recv_addr: SocketAddr =
-        env::var("RSX_RISK_ME_RECV_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:28301".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_RISK_ME_RECV_ADDR");
+    let risk_me_recv_addr: SocketAddr = env::var("RSX_RISK_ME_RECV_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:28301".into())
+        .parse()
+        // SAFETY: fail-fast at startup
+        .expect("invalid RSX_RISK_ME_RECV_ADDR");
 
-    let mut cast_receiver = CastReceiver::new(
-        me_addr, risk_nak_addr,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to bind cast receiver");
+    let mut cast_receiver = CastReceiver::new(me_addr, risk_nak_addr)
+        // SAFETY: fail-fast at startup
+        .expect("failed to bind cast receiver");
 
-    let mut cast_sender = CastSender::new(
-        risk_me_recv_addr,
-        symbol_id,
-        &PathBuf::from(&wal_dir),
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to create cast sender");
+    let mut cast_sender = CastSender::new(risk_me_recv_addr, symbol_id, &PathBuf::from(&wal_dir))
+        // SAFETY: fail-fast at startup
+        .expect("failed to create cast sender");
 
     // casting/UDP: send events to Marketdata
-    let mkt_addr: SocketAddr =
-        env::var("RSX_MD_CAST_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9103".into())
-            .parse()
-            // SAFETY: fail-fast at startup
-            .expect("invalid RSX_MD_CAST_ADDR");
-    let mut mkt_sender = CastSender::new(
-        mkt_addr,
-        symbol_id,
-        &PathBuf::from(&wal_dir),
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to create MD cast sender");
+    let mkt_addr: SocketAddr = env::var("RSX_MD_CAST_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:9103".into())
+        .parse()
+        // SAFETY: fail-fast at startup
+        .expect("invalid RSX_MD_CAST_ADDR");
+    let mut mkt_sender = CastSender::new(mkt_addr, symbol_id, &PathBuf::from(&wal_dir))
+        // SAFETY: fail-fast at startup
+        .expect("failed to create MD cast sender");
     log_effective_matching_config(
         &book.config,
         &db_url,
@@ -480,16 +432,14 @@ fn main() {
                  (run scripts/gen-snakeoil-certs.sh)",
             );
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder
-                ::new_multi_thread()
+            let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 // SAFETY: fail-fast at startup
                 .expect("tokio runtime for dxs");
-            let service =
-                rsx_cast::ReplicationService::new(wal_path, tls)
-                    // SAFETY: fail-fast at startup
-                    .expect("failed to create dxs service");
+            let service = rsx_cast::ReplicationService::new(wal_path, tls)
+                // SAFETY: fail-fast at startup
+                .expect("failed to create dxs service");
             rt.block_on(async {
                 service
                     .serve(addr)
@@ -498,9 +448,7 @@ fn main() {
                     .expect("dxs server failed");
             });
         });
-        info!(
-            "dxs sidecar spawned on {}", dxs_addr
-        );
+        info!("dxs sidecar spawned on {}", dxs_addr);
     }
 
     // Emit CONFIG_APPLIED for this symbol on startup (if we have a version)
@@ -526,30 +474,26 @@ fn main() {
     if let Ok(addr_str) = env::var("RSX_ME_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             let g = gauges.clone();
-            rsx_health::spawn_health_server(addr, move || {
-                HealthSnapshot {
-                    live: g.live.load(Ordering::Relaxed),
-                    ready: g.ready.load(Ordering::Relaxed),
-                    saturation: 0.0,
-                    queues: vec![
-                        QueueGauge {
-                            name: "dedup_map",
-                            used: g.dedup_map_size.load(Ordering::Relaxed),
-                            cap: 65536,
-                        },
-                    ],
-                    counters: vec![
-                        CounterGauge {
-                            name: "orders_processed",
-                            value: g.orders_processed.load(Ordering::Relaxed),
-                        },
-                        CounterGauge {
-                            name: "publishes",
-                            value: g.publishes.load(Ordering::Relaxed),
-                        },
-                    ],
-                    state: g.state_label(),
-                }
+            rsx_health::spawn_health_server(addr, move || HealthSnapshot {
+                live: g.live.load(Ordering::Relaxed),
+                ready: g.ready.load(Ordering::Relaxed),
+                saturation: 0.0,
+                queues: vec![QueueGauge {
+                    name: "dedup_map",
+                    used: g.dedup_map_size.load(Ordering::Relaxed),
+                    cap: 65536,
+                }],
+                counters: vec![
+                    CounterGauge {
+                        name: "orders_processed",
+                        value: g.orders_processed.load(Ordering::Relaxed),
+                    },
+                    CounterGauge {
+                        name: "publishes",
+                        value: g.publishes.load(Ordering::Relaxed),
+                    },
+                ],
+                state: g.state_label(),
             });
         } else {
             warn!("RSX_ME_HEALTH_ADDR: invalid addr '{addr_str}'");
@@ -571,14 +515,8 @@ fn main() {
         SHUTDOWN.store(true, Ordering::SeqCst);
     }
     unsafe {
-        libc::signal(
-            libc::SIGINT,
-            on_signal as *const () as libc::sighandler_t,
-        );
-        libc::signal(
-            libc::SIGTERM,
-            on_signal as *const () as libc::sighandler_t,
-        );
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
     }
 
     info!("matching engine started");
@@ -589,12 +527,7 @@ fn main() {
             if let Err(e) = wal_writer.flush() {
                 error!("shutdown wal flush failed: {e}");
             }
-            if let Err(e) = save_snapshot(
-                &book,
-                &wal_dir,
-                symbol_id,
-                wal_writer.last_seq(),
-            ) {
+            if let Err(e) = save_snapshot(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
                 warn!("shutdown snapshot save failed: {e}");
             }
             info!("matching engine shutdown complete");
@@ -839,18 +772,14 @@ fn main() {
             // live rather than replay-or-panic. (ME's WAL replication
             // SERVER, RSX_ME_REPLICATION_BIND_ADDR, still lets RISK
             // recover FILL delivery — a different, still-required path.)
-            let skipped =
-                gap_end_inclusive.saturating_sub(gap_start) + 1;
+            let skipped = gap_end_inclusive.saturating_sub(gap_start) + 1;
             gauges.drops.fetch_add(skipped, Ordering::Relaxed);
             warn!(
                 "matching loop FAULTED: skipping unrecoverable order \
                  gap [{}..={}] ({} seq) after last_delivered={}; \
                  clients re-send dropped pre-ack orders (WAL dedup = \
                  exactly-once)",
-                gap_start,
-                gap_end_inclusive,
-                skipped,
-                last_delivered_seq,
+                gap_start, gap_end_inclusive, skipped, last_delivered_seq,
             );
             cast_receiver.reset_after_replay(gap_end_inclusive);
             continue;
@@ -864,10 +793,9 @@ fn main() {
         }
 
         dedup.maybe_cleanup();
-        gauges.dedup_map_size.store(
-            dedup.len() as u64,
-            Ordering::Relaxed,
-        );
+        gauges
+            .dedup_map_size
+            .store(dedup.len() as u64, Ordering::Relaxed);
 
         // Poll config every 10 minutes
         if last_config_poll.elapsed().as_secs() >= 600 {
@@ -885,12 +813,9 @@ fn main() {
                             book.update_config(new_config);
                             config_version = cfg.config_version;
                             let ts = time_ns();
-                            if let Err(e) = rt.block_on(write_applied_config(
-                                client,
-                                symbol_id,
-                                &cfg,
-                                ts,
-                            )) {
+                            if let Err(e) =
+                                rt.block_on(write_applied_config(client, symbol_id, &cfg, ts))
+                            {
                                 warn!("matching: write_applied_config failed: {e}");
                             }
                             emit_config_applied(
@@ -911,20 +836,13 @@ fn main() {
             last_config_poll = Instant::now();
         }
 
-        if let Err(e) = flush_if_due(
-            &mut wal_writer, &mut last_flush,
-        ) {
+        if let Err(e) = flush_if_due(&mut wal_writer, &mut last_flush) {
             warn!("matching: wal flush_if_due failed: {e}");
         }
 
         // Save snapshot every 10s
         if last_snapshot.elapsed().as_secs() >= 10 {
-            if let Err(e) = save_snapshot(
-                &book,
-                &wal_dir,
-                symbol_id,
-                wal_writer.last_seq(),
-            ) {
+            if let Err(e) = save_snapshot(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
                 warn!("snapshot save: {}", e);
             }
             last_snapshot = Instant::now();
@@ -1052,29 +970,21 @@ fn process_cancel(
     });
 
     // Emit BBO if best bid or ask changed
-    if book.best_bid_tick != old_bid
-        || book.best_ask_tick != old_ask
-    {
-        let (bid_px, bid_qty) =
-            if book.best_bid_tick != NONE {
-                let lvl = &book.active_levels
-                    [book.best_bid_tick as usize];
-                let px =
-                    book.orders.get(lvl.head).price.0;
-                (px, lvl.total_qty)
-            } else {
-                (0, 0)
-            };
-        let (ask_px, ask_qty) =
-            if book.best_ask_tick != NONE {
-                let lvl = &book.active_levels
-                    [book.best_ask_tick as usize];
-                let px =
-                    book.orders.get(lvl.head).price.0;
-                (px, lvl.total_qty)
-            } else {
-                (0, 0)
-            };
+    if book.best_bid_tick != old_bid || book.best_ask_tick != old_ask {
+        let (bid_px, bid_qty) = if book.best_bid_tick != NONE {
+            let lvl = &book.active_levels[book.best_bid_tick as usize];
+            let px = book.orders.get(lvl.head).price.0;
+            (px, lvl.total_qty)
+        } else {
+            (0, 0)
+        };
+        let (ask_px, ask_qty) = if book.best_ask_tick != NONE {
+            let lvl = &book.active_levels[book.best_ask_tick as usize];
+            let px = book.orders.get(lvl.head).price.0;
+            (px, lvl.total_qty)
+        } else {
+            (0, 0)
+        };
         book.emit(rsx_book::event::Event::BBO {
             bid_px: Price(bid_px),
             bid_qty: Qty(bid_qty),

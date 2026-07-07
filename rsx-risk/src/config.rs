@@ -78,8 +78,7 @@ fn env_u64(key: &str, default: u64) -> u64 {
 pub fn load_shard_config() -> io::Result<ShardConfig> {
     let shard_id = env_u32("RSX_RISK_SHARD_ID", 0);
     let shard_count = env_u32("RSX_RISK_SHARD_COUNT", 1);
-    let max_symbols =
-        env_usize("RSX_RISK_MAX_SYMBOLS", 64);
+    let max_symbols = env_usize("RSX_RISK_MAX_SYMBOLS", 64);
     if shard_count == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -107,7 +106,7 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
     let mut maker_fee_bps = Vec::with_capacity(max_symbols);
     for _ in 0..max_symbols {
         symbol_params.push(SymbolRiskParams {
-            initial_margin_rate: 1000, // 10%
+            initial_margin_rate: 1000,    // 10%
             maintenance_margin_rate: 500, // 5%
             max_leverage: 10,
         });
@@ -117,8 +116,7 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
 
     // Long-side liq price is mark*(10000-slip)/10000; slip
     // above 10_000 bps drives it negative. Fail fast.
-    let max_slip_bps =
-        env_u64("RSX_LIQUIDATION_MAX_SLIP_BPS", 9999);
+    let max_slip_bps = env_u64("RSX_LIQUIDATION_MAX_SLIP_BPS", 9999);
     if max_slip_bps > 10_000 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -129,10 +127,8 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         ));
     }
 
-    let lease_poll_interval_ms =
-        env_u64("RSX_RISK_LEASE_POLL_MS", 500);
-    let lease_renew_interval_ms =
-        env_u64("RSX_RISK_LEASE_RENEW_MS", 1000);
+    let lease_poll_interval_ms = env_u64("RSX_RISK_LEASE_POLL_MS", 500);
+    let lease_renew_interval_ms = env_u64("RSX_RISK_LEASE_RENEW_MS", 1000);
 
     Ok(ShardConfig {
         shard_id,
@@ -143,14 +139,9 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         maker_fee_bps,
         funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig {
-            base_delay_ns: env_u64(
-                "RSX_LIQUIDATION_BASE_DELAY_NS",
-                100_000_000,
-            ),
-            base_slip_bps: env_u64(
-                "RSX_LIQUIDATION_BASE_SLIP_BPS", 1),
-            max_rounds: env_u64(
-                "RSX_LIQUIDATION_MAX_ROUNDS", 10) as u32,
+            base_delay_ns: env_u64("RSX_LIQUIDATION_BASE_DELAY_NS", 100_000_000),
+            base_slip_bps: env_u64("RSX_LIQUIDATION_BASE_SLIP_BPS", 1),
+            max_rounds: env_u64("RSX_LIQUIDATION_MAX_ROUNDS", 10) as u32,
             max_slip_bps,
         },
         replication_config: ReplicationConfig {
@@ -173,15 +164,11 @@ pub fn parse_me_cast_addrs(raw: &str) -> HashMap<u32, SocketAddr> {
         }
         match part.parse::<SocketAddr>() {
             Ok(addr) => {
-                let sid =
-                    addr.port().saturating_sub(BASE_ME_CAST) as u32;
+                let sid = addr.port().saturating_sub(BASE_ME_CAST) as u32;
                 map.insert(sid, addr);
             }
             Err(e) => {
-                warn!(
-                    "skipping invalid ME addr '{}': {}",
-                    part, e
-                );
+                warn!("skipping invalid ME addr '{}': {}", part, e);
             }
         }
     }
@@ -239,39 +226,19 @@ impl RuntimeConfig {
     /// SocketAddrs fail-fast via `expect` — a bad addr must fail
     /// loudly at boot, not silently default mid-run.
     pub fn from_env() -> Self {
-        let db_url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL required for risk");
-        let wal_dir = PathBuf::from(
-            std::env::var("RSX_RISK_WAL_DIR")
-                .unwrap_or_else(|_| "./tmp/wal".into()),
-        );
-        let me_repl_addr = std::env::var("RSX_ME_REPLICATION_ADDR")
-            .expect(
-                "RSX_ME_REPLICATION_ADDR required (ME's replication \
+        let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for risk");
+        let wal_dir =
+            PathBuf::from(std::env::var("RSX_RISK_WAL_DIR").unwrap_or_else(|_| "./tmp/wal".into()));
+        let me_repl_addr = std::env::var("RSX_ME_REPLICATION_ADDR").expect(
+            "RSX_ME_REPLICATION_ADDR required (ME's replication \
                  server — the warm-catchup + FAULTED replay source)",
-            );
-        let mark_addr = parse_addr(
-            "RSX_RISK_MARK_CAST_ADDR",
-            "127.0.0.1:9105",
         );
-        let mark_sender_addr = parse_addr(
-            "RSX_MARK_CAST_ADDR",
-            "127.0.0.1:9106",
-        );
-        let risk_addr = parse_addr(
-            "RSX_RISK_CAST_ADDR",
-            "127.0.0.1:9101",
-        );
-        let gw_addr = parse_addr(
-            "RSX_GW_CAST_ADDR",
-            "127.0.0.1:9102",
-        );
-        let risk_me_recv_addr = parse_addr(
-            "RSX_RISK_ME_RECV_ADDR",
-            "127.0.0.1:28301",
-        );
-        let me_send_bind =
-            std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
+        let mark_addr = parse_addr("RSX_RISK_MARK_CAST_ADDR", "127.0.0.1:9105");
+        let mark_sender_addr = parse_addr("RSX_MARK_CAST_ADDR", "127.0.0.1:9106");
+        let risk_addr = parse_addr("RSX_RISK_CAST_ADDR", "127.0.0.1:9101");
+        let gw_addr = parse_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
+        let risk_me_recv_addr = parse_addr("RSX_RISK_ME_RECV_ADDR", "127.0.0.1:28301");
+        let me_send_bind = std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
         // Silent skip on unset OR unparseable (legacy: a bad
         // core id is a no-op, not a boot failure).
         let core_id = std::env::var("RSX_RISK_CORE_ID")

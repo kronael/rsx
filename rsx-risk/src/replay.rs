@@ -5,11 +5,11 @@ use crate::shard::RiskShard;
 use crate::types::BboUpdate;
 use crate::types::FillEvent;
 use rsx_cast::decode_payload;
+use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::RawWalRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
-use rsx_cast::wal::RawWalRecord;
-use rsx_cast::wal::extract_seq;
 use rsx_messages::decode_fill_record;
 use rsx_messages::BboRecord;
 use rsx_messages::ConfigAppliedRecord;
@@ -60,12 +60,7 @@ where
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut consumer = ReplicationConsumer::new(
-        stream_id,
-        vec![replay_addr],
-        tip_file,
-        tls,
-    )?;
+    let mut consumer = ReplicationConsumer::new(stream_id, vec![replay_addr], tip_file, tls)?;
     // Pre-seed tip so the request starts at last_delivered + 1
     // regardless of stale on-disk tip.
     consumer.tip = last_delivered_seq;
@@ -78,36 +73,30 @@ where
     const MAX_RETRIES: u8 = 3;
     let mut attempts = 0u8;
     let result = loop {
-        let r = rt.block_on(consumer.run_once(
-            |raw: RawWalRecord| -> bool {
-                if raw.header.record_type == RECORD_CAUGHT_UP {
-                    return false;
-                }
-                let seq = extract_seq(&raw.payload).unwrap_or(0);
-                if seq <= last_delivered_seq {
-                    skipped += 1;
-                    return true;
-                }
-                if seq > new_tip {
-                    new_tip = seq;
-                }
-                apply(&raw);
-                applied += 1;
-                true
-            },
-        ));
+        let r = rt.block_on(consumer.run_once(|raw: RawWalRecord| -> bool {
+            if raw.header.record_type == RECORD_CAUGHT_UP {
+                return false;
+            }
+            let seq = extract_seq(&raw.payload).unwrap_or(0);
+            if seq <= last_delivered_seq {
+                skipped += 1;
+                return true;
+            }
+            if seq > new_tip {
+                new_tip = seq;
+            }
+            apply(&raw);
+            applied += 1;
+            true
+        }));
         attempts += 1;
         match &r {
-            Err(e) if e.kind() == io::ErrorKind::NotFound
-                && attempts < MAX_RETRIES =>
-            {
+            Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < MAX_RETRIES => {
                 warn!(
                     "risk replay not available (attempt \
                      {attempts}), retrying in 15ms"
                 );
-                std::thread::sleep(
-                    std::time::Duration::from_millis(15),
-                );
+                std::thread::sleep(std::time::Duration::from_millis(15));
             }
             _ => break r,
         }
@@ -150,18 +139,12 @@ pub async fn load_from_postgres(
             "SELECT user_id, collateral, version \
              FROM accounts \
              WHERE user_id % $1 = $2",
-            &[
-                &(shard_count as i32),
-                &(shard_id as i32),
-            ],
+            &[&(shard_count as i32), &(shard_id as i32)],
         )
         .await?;
     for row in &rows {
         let user_id: i32 = row.get(0);
-        let mut acct = Account::new(
-            user_id as u32,
-            row.get::<_, i64>(1),
-        );
+        let mut acct = Account::new(user_id as u32, row.get::<_, i64>(1));
         acct.version = row.get::<_, i64>(2) as u64;
         accounts.insert(user_id as u32, acct);
     }
@@ -175,27 +158,21 @@ pub async fn load_from_postgres(
              last_fill_seq, version \
              FROM positions \
              WHERE user_id % $1 = $2",
-            &[
-                &(shard_count as i32),
-                &(shard_id as i32),
-            ],
+            &[&(shard_count as i32), &(shard_id as i32)],
         )
         .await?;
     for row in &rows {
         let uid: i32 = row.get(0);
         let sid: i32 = row.get(1);
-        let mut pos =
-            Position::new(uid as u32, sid as u32);
+        let mut pos = Position::new(uid as u32, sid as u32);
         pos.long_qty = row.get::<_, i64>(2);
         pos.short_qty = row.get::<_, i64>(3);
         pos.long_entry_cost = row.get::<_, i64>(4);
         pos.short_entry_cost = row.get::<_, i64>(5);
         pos.realized_pnl = row.get::<_, i64>(6);
-        pos.last_fill_seq =
-            row.get::<_, i64>(7) as u64;
+        pos.last_fill_seq = row.get::<_, i64>(7) as u64;
         pos.version = row.get::<_, i64>(8) as u64;
-        positions
-            .insert((uid as u32, sid as u32), pos);
+        positions.insert((uid as u32, sid as u32), pos);
     }
 
     let mut tips = vec![0u64; max_symbols];
@@ -224,8 +201,7 @@ pub async fn load_from_postgres(
         .await?;
     for row in &rows {
         let sid: i32 = row.get(0);
-        let mut fund =
-            InsuranceFund::new(sid as u32, row.get(1));
+        let mut fund = InsuranceFund::new(sid as u32, row.get(1));
         fund.version = row.get::<_, i64>(2) as u64;
         insurance_funds.insert(sid as u32, fund);
     }
@@ -236,10 +212,7 @@ pub async fn load_from_postgres(
             "SELECT user_id, order_id_hi, order_id_lo, \
              amount FROM frozen_orders \
              WHERE user_id % $1 = $2",
-            &[
-                &(shard_count as i32),
-                &(shard_id as i32),
-            ],
+            &[&(shard_count as i32), &(shard_id as i32)],
         )
         .await?;
     for row in &rows {
@@ -247,8 +220,7 @@ pub async fn load_from_postgres(
         let hi: i64 = row.get(1);
         let lo: i64 = row.get(2);
         let amount: i64 = row.get(3);
-        let key = ((hi as u64 as u128) << 64)
-            | (lo as u64 as u128);
+        let key = ((hi as u64 as u128) << 64) | (lo as u64 as u128);
         frozen_orders.insert(key, (uid as u32, amount));
     }
 
@@ -273,11 +245,7 @@ pub async fn load_from_postgres(
 /// not state. Idempotent re-apply is safe: `process_fill` dedups on the
 /// per-symbol tip (invariant #5), and freeze insert/release is keyed by
 /// order_id.
-pub fn apply_record(
-    shard: &mut RiskShard,
-    record_type: u16,
-    payload: &[u8],
-) -> bool {
+pub fn apply_record(shard: &mut RiskShard, record_type: u16, payload: &[u8]) -> bool {
     match record_type {
         RECORD_FILL => {
             if let Some(fill) = decode_fill_record(payload) {
@@ -296,36 +264,22 @@ pub fn apply_record(
         }
         RECORD_ORDER_DONE => {
             if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
-                shard.release_frozen_for_order(
-                    rec.user_id,
-                    rec.order_id_hi,
-                    rec.order_id_lo,
-                );
+                shard.release_frozen_for_order(rec.user_id, rec.order_id_hi, rec.order_id_lo);
             }
         }
         RECORD_ORDER_CANCELLED => {
             if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
-                shard.release_frozen_for_order(
-                    rec.user_id,
-                    rec.order_id_hi,
-                    rec.order_id_lo,
-                );
+                shard.release_frozen_for_order(rec.user_id, rec.order_id_hi, rec.order_id_lo);
             }
         }
         RECORD_ORDER_FAILED => {
             if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
-                shard.release_frozen_for_order(
-                    rec.user_id,
-                    rec.order_id_hi,
-                    rec.order_id_lo,
-                );
+                shard.release_frozen_for_order(rec.user_id, rec.order_id_hi, rec.order_id_lo);
             }
         }
         RECORD_ORDER_ACCEPTED => {
             if let Some(rec) = decode_payload::<OrderAcceptedRecord>(payload) {
-                if shard.user_in_shard(rec.user_id)
-                    && rec.reduce_only == 0
-                {
+                if shard.user_in_shard(rec.user_id) && rec.reduce_only == 0 {
                     shard.replay_freeze_order(
                         rec.user_id,
                         rec.order_id_hi,
@@ -351,10 +305,7 @@ pub fn apply_record(
         }
         RECORD_CONFIG_APPLIED => {
             if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
-                shard.process_config_applied(
-                    rec.symbol_id,
-                    rec.config_version,
-                );
+                shard.process_config_applied(rec.symbol_id, rec.config_version);
             }
         }
         _ => {}
@@ -379,15 +330,9 @@ pub fn replay_from_wal(
         );
         let tip = shard.tips[sid as usize];
         let start_seq = tip + 1;
-        let mut reader = WalReader::open_from_seq(
-            sid, start_seq, wal_dir,
-        )?;
+        let mut reader = WalReader::open_from_seq(sid, start_seq, wal_dir)?;
         while let Some(raw) = reader.next()? {
-            if apply_record(
-                shard,
-                raw.header.record_type,
-                &raw.payload,
-            ) {
+            if apply_record(shard, raw.header.record_type, &raw.payload) {
                 replayed += 1;
             }
         }
@@ -395,15 +340,9 @@ pub fn replay_from_wal(
     Ok(replayed)
 }
 
-pub async fn acquire_advisory_lock(
-    client: &Client,
-    shard_id: u32,
-) -> Result<(), Error> {
+pub async fn acquire_advisory_lock(client: &Client, shard_id: u32) -> Result<(), Error> {
     client
-        .execute(
-            "SELECT pg_advisory_lock($1::bigint)",
-            &[&(shard_id as i64)],
-        )
+        .execute("SELECT pg_advisory_lock($1::bigint)", &[&(shard_id as i64)])
         .await?;
     Ok(())
 }

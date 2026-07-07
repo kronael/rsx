@@ -105,10 +105,14 @@ fn ws_loopback_roundtrips_order_and_fill() {
 
     let url = format!("ws://{addr}");
     let token = mint_jwt(1, "test-secret");
-    let mut conn =
-        WsConn::connect(url, token.clone(), 10).expect("connect WsConn");
+    let mut conn = WsConn::connect(url, token.clone(), 10).expect("connect WsConn");
 
-    let want = OrderReq { side: Side::Buy, price: 10_001, qty: 5, tif: Tif::Ioc };
+    let want = OrderReq {
+        side: Side::Buy,
+        price: 10_001,
+        qty: 5,
+        tif: Tif::Ioc,
+    };
     conn.submit(want).expect("submit order");
 
     let mut saw_connected = false;
@@ -133,7 +137,12 @@ fn ws_loopback_roundtrips_order_and_fill() {
     assert_eq!(saw_accepted, Some(GwEvent::Accepted { oid: 7 }));
     assert_eq!(
         saw_fill,
-        Some(GwEvent::Fill { oid: 7, px: 10_001, qty: 5, side: Side::Buy }),
+        Some(GwEvent::Fill {
+            oid: 7,
+            px: 10_001,
+            qty: 5,
+            side: Side::Buy
+        }),
     );
 
     let auth = auth_rx

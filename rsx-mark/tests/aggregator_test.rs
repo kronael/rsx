@@ -25,11 +25,7 @@ fn aggregate(
     aggregate_with_staleness(state, update, now_ns, symbol_id, STALENESS_NS)
 }
 
-fn sweep_stale(
-    state: &mut SymbolMarkState,
-    now_ns: u64,
-    symbol_id: u32,
-) -> Option<MarkPriceEvent> {
+fn sweep_stale(state: &mut SymbolMarkState, now_ns: u64, symbol_id: u32) -> Option<MarkPriceEvent> {
     sweep_stale_with_staleness(state, now_ns, symbol_id, STALENESS_NS)
 }
 
@@ -165,23 +161,13 @@ fn staleness_threshold_exactly_10s() {
     // exactly at threshold boundary: now - ts = STALENESS_NS
     // < STALENESS_NS is fresh, so exactly == is stale
     let now_at_boundary = t0 + STALENESS_NS;
-    let evt = aggregate(
-        &mut state,
-        sp(0, 100, t0),
-        now_at_boundary,
-        0,
-    );
+    let evt = aggregate(&mut state, sp(0, 100, t0), now_at_boundary, 0);
     assert!(evt.is_none());
     assert_eq!(state.source_count, 0);
 
     // one ns before boundary: fresh
     let now_before = t0 + STALENESS_NS - 1;
-    let evt = aggregate(
-        &mut state,
-        sp(0, 100, t0),
-        now_before,
-        0,
-    );
+    let evt = aggregate(&mut state, sp(0, 100, t0), now_before, 0);
     assert!(evt.is_some());
     assert_eq!(state.source_count, 1);
 }
@@ -192,12 +178,7 @@ fn staleness_threshold_exactly_10s() {
 fn aggregate_source_id_out_of_range() {
     let mut state = SymbolMarkState::new();
     let now = 1_000_000_000u64;
-    let evt = aggregate(
-        &mut state,
-        sp(MAX_SOURCES as u8, 100, now),
-        now,
-        0,
-    );
+    let evt = aggregate(&mut state, sp(MAX_SOURCES as u8, 100, now), now, 0);
     assert!(evt.is_none());
 }
 
@@ -206,12 +187,7 @@ fn aggregate_max_8_sources() {
     let mut state = SymbolMarkState::new();
     let now = 1_000_000_000u64;
     for i in 0..8u8 {
-        aggregate(
-            &mut state,
-            sp(i, 1000 + i as i64, now),
-            now,
-            0,
-        );
+        aggregate(&mut state, sp(i, 1000 + i as i64, now), now, 0);
     }
     assert_eq!(state.source_count, 8);
     // sorted: 1000..1007, median of 8 = lower = idx 3 = 1003
@@ -339,18 +315,11 @@ fn sweep_interval_approximately_1s() {
 #[test]
 fn sweep_100_symbols_iterates_all() {
     let t0 = 1_000_000_000u64;
-    let mut states: Vec<SymbolMarkState> = (0..100)
-        .map(|_| SymbolMarkState::new())
-        .collect();
+    let mut states: Vec<SymbolMarkState> = (0..100).map(|_| SymbolMarkState::new()).collect();
 
     // Add a source to each symbol
     for (i, state) in states.iter_mut().enumerate() {
-        aggregate(
-            state,
-            sp(0, 1000 + i as i64, t0),
-            t0,
-            i as u32,
-        );
+        aggregate(state, sp(0, 1000 + i as i64, t0), t0, i as u32);
     }
 
     // Sweep all: all fresh, no changes

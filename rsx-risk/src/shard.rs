@@ -88,10 +88,7 @@ impl RiskShard {
             margin: PortfolioMargin {
                 symbol_params: config.symbol_params,
             },
-            index_prices: vec![
-                IndexPrice::default();
-                max
-            ],
+            index_prices: vec![IndexPrice::default(); max],
             mark_prices: vec![0i64; max],
             exposure: ExposureIndex::new(max),
             tips: vec![0u64; max],
@@ -112,19 +109,14 @@ impl RiskShard {
             mark_dirty: true,
             liquidation: LiquidationEngine::new(
                 config.liquidation_config.base_delay_ns,
-                config.liquidation_config.base_slip_bps
-                    as i64,
+                config.liquidation_config.base_slip_bps as i64,
                 config.liquidation_config.max_rounds,
-                config.liquidation_config.max_slip_bps
-                    as i64,
+                config.liquidation_config.max_slip_bps as i64,
             ),
         }
     }
 
-    pub fn set_persist_producer(
-        &mut self,
-        producer: Producer<PersistEvent>,
-    ) {
+    pub fn set_persist_producer(&mut self, producer: Producer<PersistEvent>) {
         self.persist_producer = Some(producer);
     }
 
@@ -152,8 +144,7 @@ impl RiskShard {
                 .insert(order_id, amount);
         }
         let len = self.tips.len().min(state.tips.len());
-        self.tips[..len]
-            .copy_from_slice(&state.tips[..len]);
+        self.tips[..len].copy_from_slice(&state.tips[..len]);
     }
 
     /// Sum of margin reserved for the user's open orders.
@@ -202,11 +193,7 @@ impl RiskShard {
             .or_insert_with(|| Account::new(user_id, 0));
     }
 
-    fn ensure_position(
-        &mut self,
-        user_id: u32,
-        symbol_id: u32,
-    ) {
+    fn ensure_position(&mut self, user_id: u32, symbol_id: u32) {
         match self.positions.entry((user_id, symbol_id)) {
             Entry::Occupied(_) => {
                 // Already present; index already has it
@@ -223,18 +210,15 @@ impl RiskShard {
         }
     }
 
-    fn iter_positions_for_user(
-        &self,
-        user_id: u32,
-    ) -> impl Iterator<Item = &Position> + '_ {
+    fn iter_positions_for_user(&self, user_id: u32) -> impl Iterator<Item = &Position> + '_ {
         let positions = &self.positions;
         self.positions_by_user
             .get(&user_id)
             .into_iter()
             .flat_map(move |symbols| {
-                symbols.iter().filter_map(move |&symbol_id| {
-                    positions.get(&(user_id, symbol_id))
-                })
+                symbols
+                    .iter()
+                    .filter_map(move |&symbol_id| positions.get(&(user_id, symbol_id)))
             })
     }
 
@@ -263,16 +247,10 @@ impl RiskShard {
         // Process taker if in shard
         if self.user_in_shard(fill.taker_user_id) {
             self.ensure_account(fill.taker_user_id);
-            self.ensure_position(
-                fill.taker_user_id,
-                fill.symbol_id,
-            );
+            self.ensure_position(fill.taker_user_id, fill.symbol_id);
             let Some(pos) = self
                 .positions
-                .get_mut(&(
-                    fill.taker_user_id,
-                    fill.symbol_id,
-                ))
+                .get_mut(&(fill.taker_user_id, fill.symbol_id))
             else {
                 error!(
                     "missing taker position after ensure: \
@@ -281,20 +259,9 @@ impl RiskShard {
                 );
                 return;
             };
-            pos.apply_fill(
-                fill.taker_side,
-                fill.price,
-                fill.qty,
-                fill.seq,
-            );
-            taker_fee_val = calculate_fee(
-                fill.qty,
-                fill.price,
-                self.taker_fee_bps[sid],
-            );
-            let Some(acct) =
-                self.accounts.get_mut(&fill.taker_user_id)
-            else {
+            pos.apply_fill(fill.taker_side, fill.price, fill.qty, fill.seq);
+            taker_fee_val = calculate_fee(fill.qty, fill.price, self.taker_fee_bps[sid]);
+            let Some(acct) = self.accounts.get_mut(&fill.taker_user_id) else {
                 error!(
                     "missing taker account after ensure: \
                      user={}",
@@ -303,30 +270,17 @@ impl RiskShard {
                 return;
             };
             acct.deduct_fee(taker_fee_val);
-            self.update_exposure(
-                fill.taker_user_id,
-                fill.symbol_id,
-            );
+            self.update_exposure(fill.taker_user_id, fill.symbol_id);
         }
 
         // Process maker if in shard
         if self.user_in_shard(fill.maker_user_id) {
             self.ensure_account(fill.maker_user_id);
-            self.ensure_position(
-                fill.maker_user_id,
-                fill.symbol_id,
-            );
-            let maker_side = if fill.taker_side == 0 {
-                1u8
-            } else {
-                0u8
-            };
+            self.ensure_position(fill.maker_user_id, fill.symbol_id);
+            let maker_side = if fill.taker_side == 0 { 1u8 } else { 0u8 };
             let Some(pos) = self
                 .positions
-                .get_mut(&(
-                    fill.maker_user_id,
-                    fill.symbol_id,
-                ))
+                .get_mut(&(fill.maker_user_id, fill.symbol_id))
             else {
                 error!(
                     "missing maker position after ensure: \
@@ -335,20 +289,9 @@ impl RiskShard {
                 );
                 return;
             };
-            pos.apply_fill(
-                maker_side,
-                fill.price,
-                fill.qty,
-                fill.seq,
-            );
-            maker_fee_val = calculate_fee(
-                fill.qty,
-                fill.price,
-                self.maker_fee_bps[sid],
-            );
-            let Some(acct) =
-                self.accounts.get_mut(&fill.maker_user_id)
-            else {
+            pos.apply_fill(maker_side, fill.price, fill.qty, fill.seq);
+            maker_fee_val = calculate_fee(fill.qty, fill.price, self.maker_fee_bps[sid]);
+            let Some(acct) = self.accounts.get_mut(&fill.maker_user_id) else {
                 error!(
                     "missing maker account after ensure: \
                      user={}",
@@ -357,24 +300,15 @@ impl RiskShard {
                 return;
             };
             acct.deduct_fee(maker_fee_val);
-            self.update_exposure(
-                fill.maker_user_id,
-                fill.symbol_id,
-            );
+            self.update_exposure(fill.maker_user_id, fill.symbol_id);
         }
 
         self.tips[sid] = fill.seq;
         self.fills_processed += 1;
 
         // Check liquidation for both sides
-        self.check_liquidation_for(
-            fill.taker_user_id,
-            fill.timestamp_ns,
-        );
-        self.check_liquidation_for(
-            fill.maker_user_id,
-            fill.timestamp_ns,
-        );
+        self.check_liquidation_for(fill.taker_user_id, fill.timestamp_ns);
+        self.check_liquidation_for(fill.maker_user_id, fill.timestamp_ns);
 
         // Persist fill + updated positions + tip
         self.push_persist(PersistEvent::Fill(FillRecord {
@@ -390,35 +324,19 @@ impl RiskShard {
             timestamp_ns: fill.timestamp_ns,
         }));
         if self.user_in_shard(fill.taker_user_id) {
-            if let Some(p) = self.positions.get(
-                &(fill.taker_user_id, fill.symbol_id),
-            ) {
-                self.push_persist(
-                    PersistEvent::Position(p.clone()),
-                );
+            if let Some(p) = self.positions.get(&(fill.taker_user_id, fill.symbol_id)) {
+                self.push_persist(PersistEvent::Position(p.clone()));
             }
-            if let Some(a) =
-                self.accounts.get(&fill.taker_user_id)
-            {
-                self.push_persist(
-                    PersistEvent::Account(a.clone()),
-                );
+            if let Some(a) = self.accounts.get(&fill.taker_user_id) {
+                self.push_persist(PersistEvent::Account(a.clone()));
             }
         }
         if self.user_in_shard(fill.maker_user_id) {
-            if let Some(p) = self.positions.get(
-                &(fill.maker_user_id, fill.symbol_id),
-            ) {
-                self.push_persist(
-                    PersistEvent::Position(p.clone()),
-                );
+            if let Some(p) = self.positions.get(&(fill.maker_user_id, fill.symbol_id)) {
+                self.push_persist(PersistEvent::Position(p.clone()));
             }
-            if let Some(a) =
-                self.accounts.get(&fill.maker_user_id)
-            {
-                self.push_persist(
-                    PersistEvent::Account(a.clone()),
-                );
+            if let Some(a) = self.accounts.get(&fill.maker_user_id) {
+                self.push_persist(PersistEvent::Account(a.clone()));
             }
         }
         self.push_persist(PersistEvent::Tip {
@@ -427,28 +345,18 @@ impl RiskShard {
         });
     }
 
-    fn update_exposure(
-        &mut self,
-        user_id: u32,
-        symbol_id: u32,
-    ) {
+    fn update_exposure(&mut self, user_id: u32, symbol_id: u32) {
         let pos = &self.positions[&(user_id, symbol_id)];
         if pos.is_empty() {
-            self.exposure
-                .remove_user(symbol_id as usize, user_id);
+            self.exposure.remove_user(symbol_id as usize, user_id);
         } else {
-            self.exposure
-                .add_user(symbol_id as usize, user_id);
+            self.exposure.add_user(symbol_id as usize, user_id);
         }
     }
 
     /// Check if user needs liquidation after fill.
     /// Enqueues into liquidation engine if so.
-    fn check_liquidation_for(
-        &mut self,
-        user_id: u32,
-        now_ns: u64,
-    ) {
+    fn check_liquidation_for(&mut self, user_id: u32, now_ns: u64) {
         if !self.user_in_shard(user_id) {
             return;
         }
@@ -495,11 +403,7 @@ impl RiskShard {
     }
 
     /// Convert LiquidationOrder to OrderRequest.
-    fn liq_to_order(
-        &self,
-        liq: &LiquidationOrder,
-        now_ns: u64,
-    ) -> OrderRequest {
+    fn liq_to_order(&self, liq: &LiquidationOrder, now_ns: u64) -> OrderRequest {
         OrderRequest {
             seq: 0,
             user_id: liq.user_id,
@@ -549,10 +453,7 @@ impl RiskShard {
     }
 
     /// RISK.md §6. Pre-trade risk check.
-    pub fn process_order(
-        &mut self,
-        order: &OrderRequest,
-    ) -> OrderResponse {
+    pub fn process_order(&mut self, order: &OrderRequest) -> OrderResponse {
         if !self.user_in_shard(order.user_id) {
             return OrderResponse::Rejected {
                 user_id: order.user_id,
@@ -594,9 +495,7 @@ impl RiskShard {
             mark_prices,
             frozen,
         );
-        if self.margin.needs_liquidation(&state)
-            && !order.is_liquidation
-        {
+        if self.margin.needs_liquidation(&state) && !order.is_liquidation {
             return OrderResponse::Rejected {
                 user_id: order.user_id,
                 reason: RejectReason::UserInLiquidation,
@@ -623,14 +522,9 @@ impl RiskShard {
             frozen,
         ) {
             Ok(margin_needed) => {
-                let key = order_key(
-                    order.order_id_hi,
-                    order.order_id_lo,
-                );
-                self.frozen_orders.insert(
-                    key,
-                    (order.user_id, margin_needed),
-                );
+                let key = order_key(order.order_id_hi, order.order_id_lo);
+                self.frozen_orders
+                    .insert(key, (order.user_id, margin_needed));
                 self.frozen_by_user
                     .entry(order.user_id)
                     .or_default()
@@ -684,30 +578,22 @@ impl RiskShard {
             Some(&(owner, amount)) if owner == user_id => amount,
             _ => return,
         };
-        self.push_persist(PersistEvent::FrozenInsert(
-            FrozenOrderRecord {
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                symbol_id,
-                amount,
-            },
-        ));
+        self.push_persist(PersistEvent::FrozenInsert(FrozenOrderRecord {
+            user_id,
+            order_id_hi,
+            order_id_lo,
+            symbol_id,
+            amount,
+        }));
     }
 
     /// Release frozen margin when order completes.
-    pub fn release_frozen_for_order(
-        &mut self,
-        user_id: u32,
-        order_id_hi: u64,
-        order_id_lo: u64,
-    ) {
+    pub fn release_frozen_for_order(&mut self, user_id: u32, order_id_hi: u64, order_id_lo: u64) {
         if !self.user_in_shard(user_id) {
             return;
         }
         let key = order_key(order_id_hi, order_id_lo);
-        let Some((owner, _)) = self.frozen_orders.remove(&key)
-        else {
+        let Some((owner, _)) = self.frozen_orders.remove(&key) else {
             return;
         };
         if owner != user_id {
@@ -742,31 +628,16 @@ impl RiskShard {
     ) {
         self.ensure_account(user_id);
         let sid = symbol_id as usize;
-        if sid >= self.taker_fee_bps.len()
-            || sid >= self.margin.symbol_params.len()
-        {
-            warn!(
-                "replay_freeze_order: sid {} out of bounds",
-                sid
-            );
+        if sid >= self.taker_fee_bps.len() || sid >= self.margin.symbol_params.len() {
+            warn!("replay_freeze_order: sid {} out of bounds", sid);
             return;
         }
-        let order_notional =
-            i64::try_from(price as i128 * qty as i128)
-                .unwrap_or(i64::MAX);
+        let order_notional = i64::try_from(price as i128 * qty as i128).unwrap_or(i64::MAX);
         let params = &self.margin.symbol_params[sid];
-        let im_128 = order_notional as i128
-            * params.initial_margin_rate as i128
-            / 10_000;
-        let order_im = i64::try_from(im_128)
-            .unwrap_or(i64::MAX);
-        let order_fee = calculate_fee(
-            qty,
-            price,
-            self.taker_fee_bps[sid],
-        );
-        let margin_needed =
-            order_im.saturating_add(order_fee);
+        let im_128 = order_notional as i128 * params.initial_margin_rate as i128 / 10_000;
+        let order_im = i64::try_from(im_128).unwrap_or(i64::MAX);
+        let order_fee = calculate_fee(qty, price, self.taker_fee_bps[sid]);
+        let margin_needed = order_im.saturating_add(order_fee);
         if !self.accounts.contains_key(&user_id) {
             error!(
                 "missing account after ensure during \
@@ -776,10 +647,7 @@ impl RiskShard {
             return;
         }
         let key = order_key(order_id_hi, order_id_lo);
-        self.frozen_orders.insert(
-            key,
-            (user_id, margin_needed),
-        );
+        self.frozen_orders.insert(key, (user_id, margin_needed));
         self.frozen_by_user
             .entry(user_id)
             .or_default()
@@ -790,11 +658,8 @@ impl RiskShard {
     /// filling zeros with valid index prices. Called once
     /// per price update, not per order.
     fn rebuild_fallback(&mut self) {
-        self.fallback_mark_prices
-            .copy_from_slice(&self.mark_prices);
-        for (i, v) in
-            self.fallback_mark_prices.iter_mut().enumerate()
-        {
+        self.fallback_mark_prices.copy_from_slice(&self.mark_prices);
+        for (i, v) in self.fallback_mark_prices.iter_mut().enumerate() {
             if *v == 0 {
                 if let Some(idx) = self.index_prices.get(i) {
                     if idx.valid && idx.price > 0 {
@@ -816,11 +681,7 @@ impl RiskShard {
         self.mark_dirty = true;
     }
 
-    pub fn update_mark(
-        &mut self,
-        symbol_id: u32,
-        price: i64,
-    ) {
+    pub fn update_mark(&mut self, symbol_id: u32, price: i64) {
         if (symbol_id as usize) >= self.mark_prices.len() {
             return;
         }
@@ -830,11 +691,7 @@ impl RiskShard {
 
     /// Track config version per symbol. Future:
     /// update symbol_params, fee rates from metadata.
-    pub fn process_config_applied(
-        &mut self,
-        symbol_id: u32,
-        config_version: u64,
-    ) {
+    pub fn process_config_applied(&mut self, symbol_id: u32, config_version: u64) {
         let sid = symbol_id as usize;
         if sid >= self.config_versions.len() {
             return;
@@ -848,48 +705,34 @@ impl RiskShard {
 
     fn reload_symbol_overrides(&mut self, symbol_id: u32) {
         let sid = symbol_id as usize;
-        let taker_key =
-            format!("RSX_SYMBOL_{}_TAKER_FEE_BPS", symbol_id);
+        let taker_key = format!("RSX_SYMBOL_{}_TAKER_FEE_BPS", symbol_id);
         if let Ok(v) = std::env::var(&taker_key) {
             if let Ok(parsed) = v.parse::<i64>() {
                 self.taker_fee_bps[sid] = parsed;
             }
         }
-        let maker_key =
-            format!("RSX_SYMBOL_{}_MAKER_FEE_BPS", symbol_id);
+        let maker_key = format!("RSX_SYMBOL_{}_MAKER_FEE_BPS", symbol_id);
         if let Ok(v) = std::env::var(&maker_key) {
             if let Ok(parsed) = v.parse::<i64>() {
                 self.maker_fee_bps[sid] = parsed;
             }
         }
-        let im_key = format!(
-            "RSX_SYMBOL_{}_INITIAL_MARGIN_RATE",
-            symbol_id
-        );
+        let im_key = format!("RSX_SYMBOL_{}_INITIAL_MARGIN_RATE", symbol_id);
         if let Ok(v) = std::env::var(&im_key) {
             if let Ok(parsed) = v.parse::<i64>() {
-                self.margin.symbol_params[sid].initial_margin_rate =
-                    parsed;
+                self.margin.symbol_params[sid].initial_margin_rate = parsed;
             }
         }
-        let mm_key = format!(
-            "RSX_SYMBOL_{}_MAINTENANCE_MARGIN_RATE",
-            symbol_id
-        );
+        let mm_key = format!("RSX_SYMBOL_{}_MAINTENANCE_MARGIN_RATE", symbol_id);
         if let Ok(v) = std::env::var(&mm_key) {
             if let Ok(parsed) = v.parse::<i64>() {
-                self.margin.symbol_params[sid]
-                    .maintenance_margin_rate = parsed;
+                self.margin.symbol_params[sid].maintenance_margin_rate = parsed;
             }
         }
-        let lev_key = format!(
-            "RSX_SYMBOL_{}_MAX_LEVERAGE",
-            symbol_id
-        );
+        let lev_key = format!("RSX_SYMBOL_{}_MAX_LEVERAGE", symbol_id);
         if let Ok(v) = std::env::var(&lev_key) {
             if let Ok(parsed) = v.parse::<i64>() {
-                self.margin.symbol_params[sid].max_leverage =
-                    parsed;
+                self.margin.symbol_params[sid].max_leverage = parsed;
             }
         }
     }
@@ -904,8 +747,7 @@ impl RiskShard {
 
     pub fn drain_stashed_bbos(&mut self, now_ns: u64) {
         for sid in 0..self.max_symbols {
-            if let Some(bbo) = self.stashed_bbo[sid].take()
-            {
+            if let Some(bbo) = self.stashed_bbo[sid].take() {
                 self.process_bbo(&bbo);
                 // RISK.md §7: margin scan on every BBO.
                 // Index once to get count, then re-index per
@@ -931,10 +773,7 @@ impl RiskShard {
     /// offsetting users live on other shards, and globally
     /// `Σ net_qty == 0` (invariant #4), so the aggregate payments
     /// cancel across shards.
-    pub fn maybe_settle_funding(
-        &mut self,
-        now_secs: u64,
-    ) {
+    pub fn maybe_settle_funding(&mut self, now_secs: u64) {
         if !funding::is_settlement_due(
             self.last_funding_id,
             now_secs,
@@ -943,10 +782,7 @@ impl RiskShard {
             return;
         }
 
-        let new_id = funding::interval_id(
-            now_secs,
-            self.funding_config.interval_secs,
-        );
+        let new_id = funding::interval_id(now_secs, self.funding_config.interval_secs);
 
         for sid in 0..self.max_symbols {
             let mark = self.mark_prices[sid];
@@ -954,59 +790,38 @@ impl RiskShard {
             if mark == 0 || index == 0 {
                 continue;
             }
-            let rate = funding::calculate_rate(
-                mark,
-                index,
-                &self.funding_config,
-            );
+            let rate = funding::calculate_rate(mark, index, &self.funding_config);
             // Funding settlement is periodic (not per-order hot
             // path). Collect exposed users' signed net_qty into a
             // slice with a parallel user_id list (alignment must be
             // exact), settle the whole symbol in one zero-sum pass,
             // then distribute payments back. Vec avoids a borrow
             // conflict with the &mut self calls below.
-            let users: Vec<u32> = self
-                .exposure
-                .users_for_symbol(sid)
-                .to_vec();
-            let mut settle_users: Vec<u32> =
-                Vec::with_capacity(users.len());
-            let mut net_qtys: Vec<i64> =
-                Vec::with_capacity(users.len());
+            let users: Vec<u32> = self.exposure.users_for_symbol(sid).to_vec();
+            let mut settle_users: Vec<u32> = Vec::with_capacity(users.len());
+            let mut net_qtys: Vec<i64> = Vec::with_capacity(users.len());
             for user_id in users {
-                if let Some(pos) =
-                    self.positions.get(&(user_id, sid as u32))
-                {
+                if let Some(pos) = self.positions.get(&(user_id, sid as u32)) {
                     settle_users.push(user_id);
                     net_qtys.push(pos.net_qty());
                 }
             }
-            let payments =
-                funding::settle_symbol(&net_qtys, mark, rate);
-            for (user_id, payment) in
-                settle_users.iter().zip(payments)
-            {
+            let payments = funding::settle_symbol(&net_qtys, mark, rate);
+            for (user_id, payment) in settle_users.iter().zip(payments) {
                 let user_id = *user_id;
-                if let Some(acct) =
-                    self.accounts.get_mut(&user_id)
-                {
+                if let Some(acct) = self.accounts.get_mut(&user_id) {
                     acct.deduct_fee(payment);
                 }
-                let acct_clone =
-                    self.accounts.get(&user_id).cloned();
-                self.push_persist(PersistEvent::Funding(
-                    FundingRecord {
-                        user_id,
-                        symbol_id: sid as u32,
-                        amount: payment,
-                        rate,
-                        settlement_ts: now_secs,
-                    },
-                ));
+                let acct_clone = self.accounts.get(&user_id).cloned();
+                self.push_persist(PersistEvent::Funding(FundingRecord {
+                    user_id,
+                    symbol_id: sid as u32,
+                    amount: payment,
+                    rate,
+                    settlement_ts: now_secs,
+                }));
                 if let Some(acct) = acct_clone {
-                    self.push_persist(
-                        PersistEvent::Account(acct),
-                    );
+                    self.push_persist(PersistEvent::Account(acct));
                 }
             }
         }
@@ -1016,22 +831,14 @@ impl RiskShard {
 
     /// LIQUIDATOR.md §9. Process socialized loss event.
     /// Deduct loss from insurance fund, persist events.
-    fn process_socialized_loss(
-        &mut self,
-        loss: &crate::liquidation::SocializedLoss,
-        now_ns: u64,
-    ) {
-        let loss_amount =
-            i64::try_from(loss.qty as i128 * loss.price as i128)
-                .unwrap_or(i64::MAX);
+    fn process_socialized_loss(&mut self, loss: &crate::liquidation::SocializedLoss, now_ns: u64) {
+        let loss_amount = i64::try_from(loss.qty as i128 * loss.price as i128).unwrap_or(i64::MAX);
 
         // Ensure insurance fund exists for symbol
         let fund = self
             .insurance_funds
             .entry(loss.symbol_id)
-            .or_insert_with(|| {
-                InsuranceFund::new(loss.symbol_id, 0)
-            });
+            .or_insert_with(|| InsuranceFund::new(loss.symbol_id, 0));
 
         // Deduct from insurance fund (balance can go negative)
         fund.deduct(loss_amount);
@@ -1042,35 +849,24 @@ impl RiskShard {
         warn!(
             "socialized loss: user={} symbol={} \
              round={} qty={} price={} loss={}",
-            loss.user_id,
-            loss.symbol_id,
-            loss.round,
-            loss.qty,
-            loss.price,
-            loss_amount
+            loss.user_id, loss.symbol_id, loss.round, loss.qty, loss.price, loss_amount
         );
 
         // Persist liquidation event with status=3 (socialized)
-        self.push_persist(
-            PersistEvent::Liquidation(
-                LiquidationRecord {
-                    user_id: loss.user_id,
-                    symbol_id: loss.symbol_id,
-                    round: loss.round,
-                    side: loss.side,
-                    price: loss.price,
-                    qty: loss.qty,
-                    slippage_bps: 0,
-                    status: 3,
-                    timestamp_ns: now_ns,
-                },
-            ),
-        );
+        self.push_persist(PersistEvent::Liquidation(LiquidationRecord {
+            user_id: loss.user_id,
+            symbol_id: loss.symbol_id,
+            round: loss.round,
+            side: loss.side,
+            price: loss.price,
+            qty: loss.qty,
+            slippage_bps: 0,
+            status: 3,
+            timestamp_ns: now_ns,
+        }));
 
         // Persist updated insurance fund
-        self.push_persist(
-            PersistEvent::InsuranceFund(fund_snapshot),
-        );
+        self.push_persist(PersistEvent::InsuranceFund(fund_snapshot));
     }
 
     /// One iteration of the main loop.
@@ -1081,11 +877,7 @@ impl RiskShard {
     /// `process_order`/`process_fill`/`stash_bbo`/`update_mark`.
     /// This keeps only the work that is time-driven rather than
     /// message-driven, plus the egress-ring backpressure stall.
-    pub fn tick(
-        &mut self,
-        rings: &mut ShardRings,
-        now_secs: u64,
-    ) {
+    pub fn tick(&mut self, rings: &mut ShardRings, now_secs: u64) {
         // Backpressure: stall if persist ring full
         if self.backpressured {
             if let Some(ref p) = self.persist_producer {
@@ -1104,9 +896,7 @@ impl RiskShard {
         // have to be dropped to push. Stall instead so
         // upstream (gateway/main-loop) sees the back-
         // pressure and queues at the receiver side.
-        if rings.accepted_producer.is_full()
-            || rings.response_producer.is_full()
-        {
+        if rings.accepted_producer.is_full() || rings.response_producer.is_full() {
             warn!(
                 "downstream ring full, stalling \
                  (accepted_full={} response_full={})",
@@ -1130,12 +920,7 @@ impl RiskShard {
             let mark_prices = &self.fallback_mark_prices;
             self.liquidation.maybe_process(
                 now_ns,
-                &|uid, sid| {
-                    positions
-                        .get(&(uid, sid))
-                        .map(|p| p.net_qty())
-                        .unwrap_or(0)
-                },
+                &|uid, sid| positions.get(&(uid, sid)).map(|p| p.net_qty()).unwrap_or(0),
                 &|sid| {
                     let idx = sid as usize;
                     if idx < mark_prices.len() {
@@ -1157,23 +942,15 @@ impl RiskShard {
             }
             let order = self.liq_to_order(liq, now_ns);
             let resp = self.process_order(&order);
-            if matches!(
-                resp,
-                OrderResponse::Accepted { .. }
-            ) {
-                rings.accepted_producer
-                    .push(order)
-                    .expect(
-                        "INVARIANT: accepted_producer \
+            if matches!(resp, OrderResponse::Accepted { .. }) {
+                rings.accepted_producer.push(order).expect(
+                    "INVARIANT: accepted_producer \
                          capacity checked above",
-                    );
+                );
                 info!(
                     "liquidation order sent: \
                      user={} symbol={} side={} qty={}",
-                    liq.user_id,
-                    liq.symbol_id,
-                    liq.side,
-                    liq.qty,
+                    liq.user_id, liq.symbol_id, liq.side, liq.qty,
                 );
             }
         }
@@ -1193,7 +970,6 @@ impl RiskShard {
         // 3. Funding settlement
         self.maybe_settle_funding(now_secs);
     }
-
 }
 
 fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {

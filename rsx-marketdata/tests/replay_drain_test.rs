@@ -25,18 +25,14 @@ fn reserve_port() -> SocketAddr {
 /// Self-signed cert used as BOTH server identity and client CA
 /// (single-box self-trust). Replication is TLS-mandatory.
 fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
-    let _ = rustls::crypto::aws_lc_rs::default_provider()
-        .install_default();
-    let cert = rcgen::generate_simple_self_signed(vec![
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-    ])
-    .unwrap();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .unwrap();
     let cert_path = dir.join("repl_cert.pem");
     let key_path = dir.join("repl_key.pem");
     std::fs::write(&cert_path, cert.cert.pem()).unwrap();
-    std::fs::write(&key_path, cert.key_pair.serialize_pem())
-        .unwrap();
+    std::fs::write(&key_path, cert.key_pair.serialize_pem()).unwrap();
     rsx_cast::TlsConfig {
         server: Some(rsx_cast::TlsServer {
             cert_path: cert_path.clone(),
@@ -75,10 +71,7 @@ fn drain_replay_walks_wal_and_invokes_apply() {
     let wal_dir = tmp.path().join("wal");
     std::fs::create_dir_all(&wal_dir).unwrap();
 
-    let mut writer = WalWriter::new(
-        STREAM_ID, &wal_dir, 64 * 1024 * 1024,
-    )
-    .unwrap();
+    let mut writer = WalWriter::new(STREAM_ID, &wal_dir, 64 * 1024 * 1024).unwrap();
     for i in 1..=5u64 {
         let mut rec = fill(i);
         let framed = writer.prepare(&mut rec).unwrap();
@@ -97,18 +90,13 @@ fn drain_replay_walks_wal_and_invokes_apply() {
             .enable_all()
             .build()
             .unwrap();
-        let service = ReplicationService::new(
-            wal_dir_srv, tls_srv,
-        )
-        .unwrap();
+        let service = ReplicationService::new(wal_dir_srv, tls_srv).unwrap();
         rt.block_on(async move {
             service.serve(replay_addr).await.unwrap();
         });
     });
-    let deadline =
-        std::time::Instant::now() + Duration::from_secs(2);
-    while std::net::TcpStream::connect(replay_addr).is_err()
-    {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::net::TcpStream::connect(replay_addr).is_err() {
         if std::time::Instant::now() > deadline {
             panic!("replication server failed to bind");
         }
@@ -124,8 +112,7 @@ fn drain_replay_walks_wal_and_invokes_apply() {
         tip_file,
         tls,
         |raw| {
-            let seq = rsx_cast::wal::extract_seq(&raw.payload)
-                .unwrap_or(0);
+            let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
             applied_seqs.push(seq);
         },
     )

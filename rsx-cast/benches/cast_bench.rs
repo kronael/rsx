@@ -48,10 +48,7 @@ fn bench_nak_encode(c: &mut Criterion) {
         b.iter(|| {
             let bytes = as_bytes(black_box(&nak));
             let crc = compute_crc32(bytes);
-            black_box(encode_record(
-                RECORD_NAK,
-                bytes,
-            ));
+            black_box(encode_record(RECORD_NAK, bytes));
             black_box(crc);
         })
     });
@@ -62,17 +59,12 @@ fn bench_nak_decode(c: &mut Criterion) {
     pin_worker();
     let nak = make_nak();
     let bytes = as_bytes(&nak);
-    let encoded =
-        encode_record(RECORD_NAK, bytes);
+    let encoded = encode_record(RECORD_NAK, bytes);
     let payload = &encoded[16..];
     c.bench_function("nak_decode", |b| {
         b.iter(|| {
             let p = black_box(payload);
-            let decoded = unsafe {
-                std::ptr::read_unaligned(
-                    p.as_ptr() as *const Nak,
-                )
-            };
+            let decoded = unsafe { std::ptr::read_unaligned(p.as_ptr() as *const Nak) };
             black_box(decoded);
         })
     });
@@ -86,10 +78,7 @@ fn bench_heartbeat_encode(c: &mut Criterion) {
         b.iter(|| {
             let bytes = as_bytes(black_box(&hb));
             let crc = compute_crc32(bytes);
-            black_box(encode_record(
-                RECORD_HEARTBEAT,
-                bytes,
-            ));
+            black_box(encode_record(RECORD_HEARTBEAT, bytes));
             black_box(crc);
         })
     });
@@ -100,18 +89,12 @@ fn bench_heartbeat_decode(c: &mut Criterion) {
     pin_worker();
     let hb = make_heartbeat();
     let bytes = as_bytes(&hb);
-    let encoded =
-        encode_record(RECORD_HEARTBEAT, bytes);
+    let encoded = encode_record(RECORD_HEARTBEAT, bytes);
     let payload = &encoded[16..];
     c.bench_function("heartbeat_decode", |b| {
         b.iter(|| {
             let p = black_box(payload);
-            let decoded = unsafe {
-                std::ptr::read_unaligned(
-                    p.as_ptr()
-                        as *const CastHeartbeat,
-                )
-            };
+            let decoded = unsafe { std::ptr::read_unaligned(p.as_ptr() as *const CastHeartbeat) };
             black_box(decoded);
         })
     });
@@ -125,30 +108,25 @@ fn bench_heartbeat_decode(c: &mut Criterion) {
 /// per-iteration cost is BTreeMap ops only (no Vec alloc,
 /// no map alloc). Previous version reallocated both per
 /// iteration which buried the BTreeMap cost we want.
-fn bench_reorder_buf_insert_lookup(
-    c: &mut Criterion,
-) {
+fn bench_reorder_buf_insert_lookup(c: &mut Criterion) {
     pin_worker();
     let mut buf: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
     let mut stash: Vec<u8> = vec![0u8; 80];
     let mut key: u64 = 0;
-    c.bench_function(
-        "reorder_buf_insert_lookup",
-        |b| {
-            b.iter(|| {
-                key = key.wrapping_add(1);
-                // Move the pre-allocated Vec into the map.
-                let payload = std::mem::take(&mut stash);
-                buf.insert(black_box(key), payload);
-                let entry = buf.first_entry();
-                black_box(&entry);
-                // Reclaim the Vec so the next iter doesn't alloc.
-                if let Some(v) = buf.remove(&key) {
-                    stash = v;
-                }
-            })
-        },
-    );
+    c.bench_function("reorder_buf_insert_lookup", |b| {
+        b.iter(|| {
+            key = key.wrapping_add(1);
+            // Move the pre-allocated Vec into the map.
+            let payload = std::mem::take(&mut stash);
+            buf.insert(black_box(key), payload);
+            let entry = buf.first_entry();
+            black_box(&entry);
+            // Reclaim the Vec so the next iter doesn't alloc.
+            if let Some(v) = buf.remove(&key) {
+                stash = v;
+            }
+        })
+    });
 }
 
 // Network-dependent benchmarks (skipped):

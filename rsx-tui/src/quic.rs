@@ -79,19 +79,21 @@ impl QuicConn {
         let (in_tx, inbound) = std::sync::mpsc::channel::<GwEvent>();
         let thread = std::thread::Builder::new()
             .name("rsx-tui-quic".to_owned())
-            .spawn(move || {
-                run_thread(server_addr, server_name, roots, out_rx, in_tx)
-            })
+            .spawn(move || run_thread(server_addr, server_name, roots, out_rx, in_tx))
             .map_err(io::Error::other)?;
-        Ok(QuicConn { out, inbound, _thread: thread })
+        Ok(QuicConn {
+            out,
+            inbound,
+            _thread: thread,
+        })
     }
 }
 
 impl GatewayConn for QuicConn {
     fn submit(&mut self, order: OrderReq) -> io::Result<()> {
-        self.out.send(order).map_err(|_| {
-            io::Error::new(io::ErrorKind::NotConnected, "quic link down")
-        })
+        self.out
+            .send(order)
+            .map_err(|_| io::Error::new(io::ErrorKind::NotConnected, "quic link down"))
     }
 
     fn poll_event(&mut self) -> Option<GwEvent> {
@@ -124,13 +126,7 @@ fn run_thread(
             return;
         }
     };
-    rt.block_on(run_client(
-        server_addr,
-        server_name,
-        roots,
-        out_rx,
-        inbound,
-    ));
+    rt.block_on(run_client(server_addr, server_name, roots, out_rx, inbound));
 }
 
 /// The async client: dial, open one bi stream, then pump orders out and
@@ -235,17 +231,22 @@ async fn run_client(
 /// fabricated 0 — when there is no order to pair against or the measured
 /// RTT is smaller than the server-reported time (clock skew / noise).
 /// Other events pass through unchanged.
-fn fill_net_leg(
-    ev: GwEvent,
-    pending: &mut VecDeque<Instant>,
-) -> GwEvent {
+fn fill_net_leg(ev: GwEvent, pending: &mut VecDeque<Instant>) -> GwEvent {
     match ev {
-        GwEvent::Latency { internal_ns, engine_ns, .. } => {
+        GwEvent::Latency {
+            internal_ns,
+            engine_ns,
+            ..
+        } => {
             let net_ns = pending.pop_front().and_then(|t| {
                 let rtt_ns = t.elapsed().as_nanos() as u64;
                 rtt_ns.checked_sub(internal_ns.saturating_add(engine_ns))
             });
-            GwEvent::Latency { net_ns, internal_ns, engine_ns }
+            GwEvent::Latency {
+                net_ns,
+                internal_ns,
+                engine_ns,
+            }
         }
         other => other,
     }

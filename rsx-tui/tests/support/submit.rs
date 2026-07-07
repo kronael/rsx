@@ -7,8 +7,8 @@
 #![allow(dead_code)]
 
 use super::harness::TuiHarness;
-use rsx_tui::App;
 use rsx_tui::conn::OrderReq;
+use rsx_tui::App;
 use std::time::Duration;
 
 /// Up to this many submit attempts before giving up on an ack. Casting

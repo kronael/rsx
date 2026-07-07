@@ -26,22 +26,12 @@ fn config_single_shard() -> ShardConfig {
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
         funding_config: FundingConfig::default(),
-        liquidation_config:
-            LiquidationConfig::default(),
-        replication_config:
-            ReplicationConfig::default(),
+        liquidation_config: LiquidationConfig::default(),
+        replication_config: ReplicationConfig::default(),
     }
 }
 
-fn fill(
-    taker: u32,
-    maker: u32,
-    sym: u32,
-    price: i64,
-    qty: i64,
-    side: u8,
-    seq: u64,
-) -> FillEvent {
+fn fill(taker: u32, maker: u32, sym: u32, price: i64, qty: i64, side: u8, seq: u64) -> FillEvent {
     FillEvent {
         seq,
         symbol_id: sym,
@@ -54,12 +44,7 @@ fn fill(
     }
 }
 
-fn order(
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-) -> OrderRequest {
+fn order(user_id: u32, symbol_id: u32, price: i64, qty: i64) -> OrderRequest {
     OrderRequest {
         seq: 1,
         user_id,
@@ -221,8 +206,7 @@ fn shard_position_flip_through_fills() {
 #[test]
 fn shard_cancel_restores_margin() {
     let mut s = RiskShard::new(config_single_shard());
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000));
     s.mark_prices[0] = 10_000;
 
     // Place order, margin frozen
@@ -320,8 +304,7 @@ fn shard_order_accepted_then_rejected_margin_used() {
 #[test]
 fn shard_mark_price_divergence_triggers_liquidation() {
     let mut s = RiskShard::new(config_single_shard());
-    s.accounts
-        .insert(0, Account::new(0, 1_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000));
     s.mark_prices[0] = 10_000;
 
     // Open long 10 at 10,000
@@ -345,9 +328,7 @@ fn shard_mark_price_divergence_triggers_liquidation() {
     s2.mark_prices[0] = 10_000;
 
     // Open large long: notional = 1000 * 10000 = 10M
-    s2.process_fill(
-        &fill(0, 1, 0, 10_000, 1000, 0, 1),
-    );
+    s2.process_fill(&fill(0, 1, 0, 10_000, 1000, 0, 1));
     // equity = 10,000 (coll) + upnl(0) = 10,000
     // maint = 1000*10000*500/10000 = 500,000
     // equity(10k) < maint(500k) -> liquidation
@@ -377,14 +358,8 @@ fn shard_idle_no_resource_leak() {
     }
 
     // State unchanged (no valid prices for funding)
-    assert_eq!(
-        s.accounts[&0].collateral,
-        acct_before.collateral,
-    );
-    assert_eq!(
-        s.positions[&(0, 0)].long_qty,
-        pos_before.long_qty,
-    );
+    assert_eq!(s.accounts[&0].collateral, acct_before.collateral,);
+    assert_eq!(s.positions[&(0, 0)].long_qty, pos_before.long_qty,);
 }
 
 // ----------------------------------------------------------------
@@ -415,10 +390,7 @@ fn full_lifecycle_order_to_settlement() {
         OrderResponse::Accepted {
             margin_reserved, ..
         } => margin_reserved,
-        other => panic!(
-            "expected Accepted, got {:?}",
-            other
-        ),
+        other => panic!("expected Accepted, got {:?}", other),
     };
     assert!(
         margin_reserved > 0,
@@ -434,10 +406,7 @@ fn full_lifecycle_order_to_settlement() {
         .positions
         .get(&(0, 0))
         .expect("position must exist after fill");
-    assert_eq!(
-        pos.long_qty, 100,
-        "long position must reflect fill qty"
-    );
+    assert_eq!(pos.long_qty, 100, "long position must reflect fill qty");
 
     // Step 4: mark > index -> long pays funding
     s.mark_prices[0] = 10_200;

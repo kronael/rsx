@@ -38,8 +38,7 @@ use rsx_types::TimeInForce;
 const SIZES_CURVE: [u64; 5] = [1, 100, 1_000, 10_000, 100_000];
 /// Deep points proving match/insert latency stays flat (RAM-bound:
 /// 10M resting ~ 1.3 GB). Kept separate so the curve groups stay quick.
-const SIZES_DEEP: [u64; 3] =
-    [100_000, 1_000_000, 10_000_000];
+const SIZES_DEEP: [u64; 3] = [100_000, 1_000_000, 10_000_000];
 /// Fixed depth for the by-order-type comparison.
 const TYPE_DEPTH: u64 = 10_000;
 
@@ -54,12 +53,7 @@ fn side(buy: bool) -> Side {
 /// Insert `consumed` back onto the maker side, spread across `levels`
 /// price points starting at the touch, so a sweep doesn't collapse the
 /// book into a single level over successive iterations.
-fn replenish(
-    book: &mut Orderbook,
-    buy: bool,
-    consumed: i64,
-    levels: i64,
-) {
+fn replenish(book: &mut Orderbook, buy: bool, consumed: i64, levels: i64) {
     if consumed <= 0 {
         return;
     }
@@ -72,11 +66,7 @@ fn replenish(
     let mut left = consumed;
     let mut l = 0_i64;
     while left > 0 && l < levels {
-        let q = if l == levels - 1 {
-            left
-        } else {
-            per.min(left)
-        };
+        let q = if l == levels - 1 { left } else { per.min(left) };
         let px = if buy { base_px + l } else { base_px - l };
         book.insert_resting(px, q, s, 0, 1, false, 1, 0, 0);
         left -= q;
@@ -87,13 +77,7 @@ fn replenish(
 /// Run a marketable taker of `qty` past the touch, then replenish the
 /// consumed quantity so the book stays ~N deep. `levels` controls how
 /// far the replenished quantity is spread.
-fn taker_fill(
-    book: &mut Orderbook,
-    tif: TimeInForce,
-    buy: bool,
-    qty: i64,
-    levels: i64,
-) {
+fn taker_fill(book: &mut Orderbook, tif: TimeInForce, buy: bool, qty: i64, levels: i64) {
     let px = if buy {
         MID + 1_000_000
     } else {
@@ -149,20 +133,13 @@ fn insert_group(c: &mut Criterion, name: &str, sizes: &[u64]) {
     for &n in sizes {
         let mut book = harness::build(n);
         let mut rng = harness::Rng::new(0xBEEF ^ n);
-        g.bench_with_input(
-            BenchmarkId::from_parameter(n),
-            &n,
-            |b, _| {
-                b.iter(|| {
-                    let (p, q, s) =
-                        harness::draw_resting(&mut rng);
-                    let h = book.insert_resting(
-                        p, q, s, 0, 1, false, 1, 0, 0,
-                    );
-                    black_box(book.cancel_order(h));
-                });
-            },
-        );
+        g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter(|| {
+                let (p, q, s) = harness::draw_resting(&mut rng);
+                let h = book.insert_resting(p, q, s, 0, 1, false, 1, 0, 0);
+                black_box(book.cancel_order(h));
+            });
+        });
     }
     g.finish();
 }
@@ -176,62 +153,34 @@ fn cancel_group(c: &mut Criterion, name: &str, sizes: &[u64]) {
     g.throughput(Throughput::Elements(1));
     for &n in sizes {
         let pool = (n as usize).clamp(1, 4096);
-        g.bench_with_input(
-            BenchmarkId::from_parameter(n),
-            &n,
-            |b, _| {
-                b.iter_custom(|iters| {
-                    let mut book = harness::build(n);
-                    let mut rng =
-                        harness::Rng::new(0xCA9 ^ n);
-                    let mut handles: Vec<u32> = (0..pool)
-                        .map(|_| {
-                            let (p, q, s) =
-                                harness::draw_resting(
-                                    &mut rng,
-                                );
-                            book.insert_resting(
-                                p, q, s, 0, 1, false, 1,
-                                0, 0,
-                            )
-                        })
-                        .collect();
-                    let mut done = 0_u64;
-                    let mut elapsed =
-                        std::time::Duration::ZERO;
-                    while done < iters {
-                        let batch = ((iters - done)
-                            as usize)
-                            .min(handles.len());
-                        let start =
-                            std::time::Instant::now();
-                        for h in
-                            handles.iter().take(batch)
-                        {
-                            black_box(
-                                book.cancel_order(*h),
-                            );
-                        }
-                        elapsed += start.elapsed();
-                        done += batch as u64;
-                        for slot in handles
-                            .iter_mut()
-                            .take(batch)
-                        {
-                            let (p, q, s) =
-                                harness::draw_resting(
-                                    &mut rng,
-                                );
-                            *slot = book.insert_resting(
-                                p, q, s, 0, 1, false, 1,
-                                0, 0,
-                            );
-                        }
+        g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_custom(|iters| {
+                let mut book = harness::build(n);
+                let mut rng = harness::Rng::new(0xCA9 ^ n);
+                let mut handles: Vec<u32> = (0..pool)
+                    .map(|_| {
+                        let (p, q, s) = harness::draw_resting(&mut rng);
+                        book.insert_resting(p, q, s, 0, 1, false, 1, 0, 0)
+                    })
+                    .collect();
+                let mut done = 0_u64;
+                let mut elapsed = std::time::Duration::ZERO;
+                while done < iters {
+                    let batch = ((iters - done) as usize).min(handles.len());
+                    let start = std::time::Instant::now();
+                    for h in handles.iter().take(batch) {
+                        black_box(book.cancel_order(*h));
                     }
-                    elapsed
-                });
-            },
-        );
+                    elapsed += start.elapsed();
+                    done += batch as u64;
+                    for slot in handles.iter_mut().take(batch) {
+                        let (p, q, s) = harness::draw_resting(&mut rng);
+                        *slot = book.insert_resting(p, q, s, 0, 1, false, 1, 0, 0);
+                    }
+                }
+                elapsed
+            });
+        });
     }
     g.finish();
 }
@@ -245,27 +194,13 @@ fn match_group(c: &mut Criterion, name: &str, sizes: &[u64]) {
     for &n in sizes {
         let mut book = harness::build(n);
         let mut rng = harness::Rng::new(0xF00D ^ n);
-        g.bench_with_input(
-            BenchmarkId::from_parameter(n),
-            &n,
-            |b, _| {
-                b.iter(|| {
-                    let buy = rng.next_u64() & 1 == 0;
-                    let q = (harness::BASE
-                        * (1.0 + rng.exp(1.0)))
-                    .round()
-                    .max(1.0)
-                        as i64;
-                    taker_fill(
-                        &mut book,
-                        TimeInForce::IOC,
-                        buy,
-                        q,
-                        1,
-                    );
-                });
-            },
-        );
+        g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter(|| {
+                let buy = rng.next_u64() & 1 == 0;
+                let q = (harness::BASE * (1.0 + rng.exp(1.0))).round().max(1.0) as i64;
+                taker_fill(&mut book, TimeInForce::IOC, buy, q, 1);
+            });
+        });
     }
     g.finish();
 }
@@ -298,39 +233,15 @@ fn bench_match_by_type(c: &mut Criterion) {
 
     g.bench_function("gtc_full_cross", |b| {
         let mut book = harness::build(TYPE_DEPTH);
-        b.iter(|| {
-            taker_fill(
-                &mut book,
-                TimeInForce::GTC,
-                true,
-                100,
-                1,
-            )
-        });
+        b.iter(|| taker_fill(&mut book, TimeInForce::GTC, true, 100, 1));
     });
     g.bench_function("ioc_full", |b| {
         let mut book = harness::build(TYPE_DEPTH);
-        b.iter(|| {
-            taker_fill(
-                &mut book,
-                TimeInForce::IOC,
-                true,
-                100,
-                1,
-            )
-        });
+        b.iter(|| taker_fill(&mut book, TimeInForce::IOC, true, 100, 1));
     });
     g.bench_function("fok_full", |b| {
         let mut book = harness::build(TYPE_DEPTH);
-        b.iter(|| {
-            taker_fill(
-                &mut book,
-                TimeInForce::FOK,
-                true,
-                100,
-                1,
-            )
-        });
+        b.iter(|| taker_fill(&mut book, TimeInForce::FOK, true, 100, 1));
     });
     g.bench_function("post_only_reject", |b| {
         let mut book = harness::build(TYPE_DEPTH);
@@ -338,15 +249,7 @@ fn bench_match_by_type(c: &mut Criterion) {
     });
     g.bench_function("sweep_10_levels", |b| {
         let mut book = harness::build(TYPE_DEPTH);
-        b.iter(|| {
-            taker_fill(
-                &mut book,
-                TimeInForce::IOC,
-                true,
-                1000,
-                10,
-            )
-        });
+        b.iter(|| taker_fill(&mut book, TimeInForce::IOC, true, 1000, 10));
     });
     g.finish();
 }

@@ -89,23 +89,19 @@ fn bench_flush_interval(c: &mut Criterion) {
         let mut rec = fill_record();
 
         group.throughput(Throughput::Elements(batch));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(label),
-            &batch,
-            |b, &batch| {
-                b.iter(|| {
-                    for _ in 0..batch {
-                        let framed = writer
-                            .prepare(&mut rec)
-                            .expect("WAL prepare must not fail mid-bench");
-                        writer
-                            .append_framed(&framed)
-                            .expect("WAL append must not fail mid-bench");
-                    }
-                    writer.flush().expect("WAL flush must not fail mid-bench");
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(label), &batch, |b, &batch| {
+            b.iter(|| {
+                for _ in 0..batch {
+                    let framed = writer
+                        .prepare(&mut rec)
+                        .expect("WAL prepare must not fail mid-bench");
+                    writer
+                        .append_framed(&framed)
+                        .expect("WAL append must not fail mid-bench");
+                }
+                writer.flush().expect("WAL flush must not fail mid-bench");
+            });
+        });
     }
 
     group.finish();

@@ -30,10 +30,7 @@ fn populate_wal(dir: &PathBuf) {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).unwrap();
 
-    let mut writer = WalWriter::new(
-        SYMBOL_ID, dir, 64 * 1024 * 1024,
-    )
-    .expect("wal writer");
+    let mut writer = WalWriter::new(SYMBOL_ID, dir, 64 * 1024 * 1024).expect("wal writer");
 
     for i in 0..N {
         // 1 accepted + 1 fill + 1 bbo per "logical order".
@@ -111,10 +108,7 @@ fn bench_wal_replay(c: &mut Criterion) {
 
     c.bench_function("wal_replay_30k_records", |b| {
         b.iter(|| {
-            let mut reader = WalReader::open_from_seq(
-                SYMBOL_ID, 0, &dir,
-            )
-            .expect("open");
+            let mut reader = WalReader::open_from_seq(SYMBOL_ID, 0, &dir).expect("open");
             let mut count = 0_u64;
             while let Ok(Some(rec)) = reader.next() {
                 black_box(&rec.header);

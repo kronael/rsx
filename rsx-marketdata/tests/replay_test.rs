@@ -1,9 +1,9 @@
-use rsx_types::Price;
-use rsx_types::Qty;
+use rsx_marketdata::state::MarketDataState;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
-use rsx_marketdata::state::MarketDataState;
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_types::SymbolConfig;
 
 fn base_config() -> SymbolConfig {
@@ -52,13 +52,8 @@ fn replay_events_apply_to_shadow_book() {
             _pad1: [0; 4],
         };
 
-        state.ensure_book(
-            insert_rec.symbol_id,
-            insert_rec.price.0,
-        );
-        if let Some(book) =
-            state.book_mut(insert_rec.symbol_id)
-        {
+        state.ensure_book(insert_rec.symbol_id, insert_rec.price.0);
+        if let Some(book) = state.book_mut(insert_rec.symbol_id) {
             book.apply_insert_by_id(
                 insert_rec.price.0,
                 insert_rec.qty.0,
@@ -70,9 +65,7 @@ fn replay_events_apply_to_shadow_book() {
             );
         }
 
-        if let Some(book) =
-            state.book_mut(insert_rec.symbol_id)
-        {
+        if let Some(book) = state.book_mut(insert_rec.symbol_id) {
             let bbo = book.derive_bbo();
             assert!(bbo.is_some());
             let bbo = bbo.unwrap();
@@ -102,13 +95,8 @@ fn replay_events_fill_reduces_qty() {
             _pad1: [0; 4],
         };
 
-        state.ensure_book(
-            insert_rec.symbol_id,
-            insert_rec.price.0,
-        );
-        if let Some(book) =
-            state.book_mut(insert_rec.symbol_id)
-        {
+        state.ensure_book(insert_rec.symbol_id, insert_rec.price.0);
+        if let Some(book) = state.book_mut(insert_rec.symbol_id) {
             book.apply_insert_by_id(
                 insert_rec.price.0,
                 insert_rec.qty.0,
@@ -138,12 +126,10 @@ fn replay_events_fill_reduces_qty() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-taker_ts_ns: 0,
+            taker_ts_ns: 0,
         };
 
-        if let Some(book) =
-            state.book_mut(fill_rec.symbol_id)
-        {
+        if let Some(book) = state.book_mut(fill_rec.symbol_id) {
             book.apply_fill_by_order_id(
                 fill_rec.maker_order_id_hi,
                 fill_rec.maker_order_id_lo,
@@ -152,9 +138,7 @@ taker_ts_ns: 0,
             );
         }
 
-        if let Some(book) =
-            state.book_mut(fill_rec.symbol_id)
-        {
+        if let Some(book) = state.book_mut(fill_rec.symbol_id) {
             let bbo = book.derive_bbo();
             assert!(bbo.is_some());
             let bbo = bbo.unwrap();
@@ -184,13 +168,8 @@ fn replay_events_cancel_removes_order() {
             _pad1: [0; 4],
         };
 
-        state.ensure_book(
-            insert_rec.symbol_id,
-            insert_rec.price.0,
-        );
-        if let Some(book) =
-            state.book_mut(insert_rec.symbol_id)
-        {
+        state.ensure_book(insert_rec.symbol_id, insert_rec.price.0);
+        if let Some(book) = state.book_mut(insert_rec.symbol_id) {
             book.apply_insert_by_id(
                 insert_rec.price.0,
                 insert_rec.qty.0,
@@ -217,9 +196,7 @@ fn replay_events_cancel_removes_order() {
             _pad1: [0; 4],
         };
 
-        if let Some(book) =
-            state.book_mut(cancel_rec.symbol_id)
-        {
+        if let Some(book) = state.book_mut(cancel_rec.symbol_id) {
             book.apply_cancel_by_order_id(
                 cancel_rec.order_id_hi,
                 cancel_rec.order_id_lo,
@@ -227,9 +204,7 @@ fn replay_events_cancel_removes_order() {
             );
         }
 
-        if let Some(book) =
-            state.book_mut(cancel_rec.symbol_id)
-        {
+        if let Some(book) = state.book_mut(cancel_rec.symbol_id) {
             let bbo = book.derive_bbo();
             assert!(bbo.is_none());
         }

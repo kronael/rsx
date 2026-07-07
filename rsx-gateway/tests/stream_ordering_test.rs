@@ -1,6 +1,3 @@
-use rsx_messages::FillRecord;
-use rsx_messages::OrderDoneRecord;
-use rsx_messages::OrderFailedRecord;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::records::parse;
@@ -9,6 +6,9 @@ use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::state::GatewayState;
+use rsx_messages::FillRecord;
+use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::cell::RefCell;
@@ -22,18 +22,12 @@ fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
 }
 
 fn setup() -> (Rc<RefCell<GatewayState>>, u64) {
-    let state = Rc::new(RefCell::new(
-        GatewayState::new(10, 10, 30_000, vec![]),
-    ));
-    let conn =
-        state.borrow_mut().add_connection(7).unwrap();
+    let state = Rc::new(RefCell::new(GatewayState::new(10, 10, 30_000, vec![])));
+    let conn = state.borrow_mut().add_connection(7).unwrap();
     (state, conn)
 }
 
-fn add_pending(
-    state: &Rc<RefCell<GatewayState>>,
-    oid: [u8; 16],
-) {
+fn add_pending(state: &Rc<RefCell<GatewayState>>, oid: [u8; 16]) {
     let pending = PendingOrder {
         order_id: oid,
         user_id: 7,
@@ -71,7 +65,7 @@ fn fills_precede_order_done_in_stream() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-taker_ts_ns: 0,
+        taker_ts_ns: 0,
     };
     route_fill(&state, &fill);
 
@@ -141,17 +135,12 @@ fn exactly_one_completion_per_order() {
 
     match parse(&msgs[0]).unwrap() {
         WsFrame::OrderUpdate {
-            order_id,
-            status,
-            ..
+            order_id, status, ..
         } => {
             assert_eq!(order_id, oid_hex);
             assert_eq!(status, 0); // filled
         }
-        other => panic!(
-            "expected OrderUpdate, got {:?}",
-            other,
-        ),
+        other => panic!("expected OrderUpdate, got {:?}", other,),
     }
 
     // Pending cleared after done
@@ -194,10 +183,7 @@ fn order_done_or_failed_never_both() {
             assert_eq!(status, 3); // failed
             assert_eq!(reason, 1);
         }
-        other => panic!(
-            "expected OrderUpdate, got {:?}",
-            other,
-        ),
+        other => panic!("expected OrderUpdate, got {:?}", other,),
     }
 
     // Pending cleared

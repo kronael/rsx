@@ -1,9 +1,9 @@
-use rsx_messages::decode_config_applied_record;
-use rsx_messages::ConfigAppliedRecord;
-use rsx_cast::CastRecord;
-use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
+use rsx_cast::CastRecord;
+use rsx_messages::decode_config_applied_record;
+use rsx_messages::ConfigAppliedRecord;
+use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_types::time_utils::time_ns;
 use tempfile::TempDir;
 
@@ -28,10 +28,7 @@ fn config_applied_record_has_version() {
 fn config_applied_can_be_written_to_wal() {
     let tmp = TempDir::new().unwrap();
     let wal_dir = tmp.path().to_path_buf();
-    let mut wal = WalWriter::new(
-        1, &wal_dir, 64 * 1024 * 1024,
-    )
-    .expect("wal");
+    let mut wal = WalWriter::new(1, &wal_dir, 64 * 1024 * 1024).expect("wal");
 
     let ts = time_ns();
     let mut record = ConfigAppliedRecord {
@@ -51,11 +48,9 @@ fn config_applied_can_be_written_to_wal() {
     wal.flush().expect("flush");
 
     // Verify active WAL file exists
-    let active_wal =
-        wal_dir.join("1").join("1_active.wal");
+    let active_wal = wal_dir.join("1").join("1_active.wal");
     assert!(active_wal.exists());
-    let metadata =
-        std::fs::metadata(&active_wal).unwrap();
+    let metadata = std::fs::metadata(&active_wal).unwrap();
     assert!(metadata.len() > 0);
 }
 
@@ -78,10 +73,7 @@ fn config_applied_record_type() {
 #[test]
 fn config_applied_emits_event() {
     let tmp = TempDir::new().unwrap();
-    let mut wal = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024,
-    )
-    .expect("wal");
+    let mut wal = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).expect("wal");
 
     let ts = time_ns();
     let mut record = ConfigAppliedRecord {
@@ -101,14 +93,11 @@ fn config_applied_emits_event() {
     wal.flush().expect("flush");
 
     // Read back the record
-    let mut reader =
-        WalReader::open_from_seq(1, 0, tmp.path())
-            .unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
     let raw = reader.next().unwrap().unwrap();
 
     assert_eq!(raw.header.record_type, RECORD_CONFIG_APPLIED);
-    let r = decode_config_applied_record(&raw.payload)
-        .expect("decode");
+    let r = decode_config_applied_record(&raw.payload).expect("decode");
     assert_eq!(r.symbol_id, 1);
     assert_eq!(r.config_version, 1);
     assert_eq!(r.applied_at_ns, ts);
@@ -117,10 +106,7 @@ fn config_applied_emits_event() {
 #[test]
 fn config_version_monotonic() {
     let tmp = TempDir::new().unwrap();
-    let mut wal = WalWriter::new(
-        1, tmp.path(), 64 * 1024 * 1024,
-    )
-    .expect("wal");
+    let mut wal = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).expect("wal");
 
     let ts = time_ns();
 
@@ -136,23 +122,18 @@ fn config_version_monotonic() {
             applied_at_ns: ts + version * 1000,
         };
         {
-        let framed = wal.prepare(&mut record).expect("prepare");
-        wal.append_framed(&framed).expect("append");
-    }
+            let framed = wal.prepare(&mut record).expect("prepare");
+            wal.append_framed(&framed).expect("append");
+        }
     }
     wal.flush().expect("flush");
 
     // Verify versions are monotonic
-    let mut reader =
-        WalReader::open_from_seq(1, 0, tmp.path())
-            .unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
     let mut last_version = 0u64;
     while let Ok(Some(raw)) = reader.next() {
         if raw.header.record_type == RECORD_CONFIG_APPLIED {
-            let r = decode_config_applied_record(
-                &raw.payload,
-            )
-            .expect("decode");
+            let r = decode_config_applied_record(&raw.payload).expect("decode");
             assert!(r.config_version > last_version);
             last_version = r.config_version;
         }

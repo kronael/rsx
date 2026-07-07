@@ -1,12 +1,12 @@
 use crate::circuit::CircuitBreaker;
 use crate::pending::PendingOrders;
 use crate::rate_limit::RateLimiter;
+use rsx_types::SymbolConfig;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use rsx_types::SymbolConfig;
 
 /// Hard cap on the per-IP limiter map. Above this, we evict
 /// the oldest entry on each new insert (FIFO). Bounds memory
@@ -56,9 +56,7 @@ impl GatewayState {
             next_conn_id: 0,
             user_limiters: FxHashMap::default(),
             ip_limiters: FxHashMap::default(),
-            ip_limiter_order: VecDeque::with_capacity(
-                IP_LIMITER_MAX,
-            ),
+            ip_limiter_order: VecDeque::with_capacity(IP_LIMITER_MAX),
             circuit: CircuitBreaker::new(
                 circuit_threshold,
                 Duration::from_millis(circuit_cooldown_ms),
@@ -71,11 +69,7 @@ impl GatewayState {
         }
     }
 
-    pub fn apply_config_applied(
-        &mut self,
-        symbol_id: u32,
-        config_version: u64,
-    ) -> bool {
+    pub fn apply_config_applied(&mut self, symbol_id: u32, config_version: u64) -> bool {
         let sid = symbol_id as usize;
         if sid >= self.config_versions.len() {
             return false;
@@ -93,31 +87,25 @@ impl GatewayState {
         if sid >= self.symbol_configs.len() {
             return;
         }
-        let tick_key =
-            format!("RSX_SYMBOL_{}_TICK_SIZE", symbol_id);
+        let tick_key = format!("RSX_SYMBOL_{}_TICK_SIZE", symbol_id);
         if let Ok(v) = std::env::var(&tick_key) {
             if let Ok(parsed) = v.parse::<i64>() {
                 self.symbol_configs[sid].tick_size = parsed;
             }
         }
-        let lot_key =
-            format!("RSX_SYMBOL_{}_LOT_SIZE", symbol_id);
+        let lot_key = format!("RSX_SYMBOL_{}_LOT_SIZE", symbol_id);
         if let Ok(v) = std::env::var(&lot_key) {
             if let Ok(parsed) = v.parse::<i64>() {
                 self.symbol_configs[sid].lot_size = parsed;
             }
         }
-        let pd_key = format!(
-            "RSX_SYMBOL_{}_PRICE_DECIMALS",
-            symbol_id
-        );
+        let pd_key = format!("RSX_SYMBOL_{}_PRICE_DECIMALS", symbol_id);
         if let Ok(v) = std::env::var(&pd_key) {
             if let Ok(parsed) = v.parse::<u8>() {
                 self.symbol_configs[sid].price_decimals = parsed;
             }
         }
-        let qd_key =
-            format!("RSX_SYMBOL_{}_QTY_DECIMALS", symbol_id);
+        let qd_key = format!("RSX_SYMBOL_{}_QTY_DECIMALS", symbol_id);
         if let Ok(v) = std::env::var(&qd_key) {
             if let Ok(parsed) = v.parse::<u8>() {
                 self.symbol_configs[sid].qty_decimals = parsed;
@@ -125,10 +113,7 @@ impl GatewayState {
         }
     }
 
-    pub fn add_connection(
-        &mut self,
-        user_id: u32,
-    ) -> Result<u64, &'static str> {
+    pub fn add_connection(&mut self, user_id: u32) -> Result<u64, &'static str> {
         let count = self
             .connections
             .values()
@@ -156,11 +141,7 @@ impl GatewayState {
         self.connections.remove(&conn_id);
     }
 
-    pub fn push_to_user(
-        &mut self,
-        user_id: u32,
-        msg: Arc<str>,
-    ) {
+    pub fn push_to_user(&mut self, user_id: u32, msg: Arc<str>) {
         for conn in self.connections.values_mut() {
             if conn.user_id == user_id {
                 conn.outbound.push_back(msg.clone());
@@ -168,98 +149,57 @@ impl GatewayState {
         }
     }
 
-    pub fn broadcast_heartbeat(
-        &mut self,
-        ts_ms: u64,
-    ) {
-        let msg: Arc<str> =
-            format!("{{\"H\":[{}]}}", ts_ms).into();
+    pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {
+        let msg: Arc<str> = format!("{{\"H\":[{}]}}", ts_ms).into();
         for conn in self.connections.values_mut() {
             conn.outbound.push_back(msg.clone());
         }
     }
 
-    pub fn stale_connections(
-        &self,
-        cutoff_ns: u64,
-    ) -> Vec<u64> {
+    pub fn stale_connections(&self, cutoff_ns: u64) -> Vec<u64> {
         self.connections
             .iter()
-            .filter(|(_, c)| {
-                c.last_activity_ns > 0
-                    && c.last_activity_ns < cutoff_ns
-            })
+            .filter(|(_, c)| c.last_activity_ns > 0 && c.last_activity_ns < cutoff_ns)
             .map(|(id, _)| *id)
             .collect()
     }
 
-    pub fn touch_connection(
-        &mut self,
-        conn_id: u64,
-        now_ns: u64,
-    ) {
-        if let Some(conn) =
-            self.connections.get_mut(&conn_id)
-        {
+    pub fn touch_connection(&mut self, conn_id: u64, now_ns: u64) {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.last_activity_ns = now_ns;
         }
     }
 
-    pub fn heartbeat_recv(
-        &mut self,
-        conn_id: u64,
-        now_ns: u64,
-    ) {
-        if let Some(conn) =
-            self.connections.get_mut(&conn_id)
-        {
+    pub fn heartbeat_recv(&mut self, conn_id: u64, now_ns: u64) {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.last_heartbeat_recv_ns = now_ns;
             conn.last_activity_ns = now_ns;
         }
     }
 
     /// Returns true if a heartbeat should be sent now.
-    pub fn should_send_heartbeat(
-        &self,
-        conn_id: u64,
-        now_ns: u64,
-        interval_ms: u64,
-    ) -> bool {
-        if let Some(conn) = self.connections.get(&conn_id)
-        {
+    pub fn should_send_heartbeat(&self, conn_id: u64, now_ns: u64, interval_ms: u64) -> bool {
+        if let Some(conn) = self.connections.get(&conn_id) {
             if conn.last_heartbeat_sent_ns == 0 {
                 return true;
             }
             let interval_ns = interval_ms * 1_000_000;
-            let since = now_ns
-                .saturating_sub(conn.last_heartbeat_sent_ns);
+            let since = now_ns.saturating_sub(conn.last_heartbeat_sent_ns);
             since >= interval_ns
         } else {
             false
         }
     }
 
-    pub fn mark_heartbeat_sent(
-        &mut self,
-        conn_id: u64,
-        now_ns: u64,
-    ) {
-        if let Some(conn) =
-            self.connections.get_mut(&conn_id)
-        {
+    pub fn mark_heartbeat_sent(&mut self, conn_id: u64, now_ns: u64) {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.last_heartbeat_sent_ns = now_ns;
         }
     }
 
     /// Returns true if heartbeat timed out.
-    pub fn is_heartbeat_timeout(
-        &self,
-        conn_id: u64,
-        now_ns: u64,
-        timeout_ms: u64,
-    ) -> bool {
-        if let Some(conn) = self.connections.get(&conn_id)
-        {
+    pub fn is_heartbeat_timeout(&self, conn_id: u64, now_ns: u64, timeout_ms: u64) -> bool {
+        if let Some(conn) = self.connections.get(&conn_id) {
             // Only check timeout after first heartbeat sent
             if conn.last_heartbeat_sent_ns == 0 {
                 return false;
@@ -272,21 +212,15 @@ impl GatewayState {
             if last_recv >= last_sent {
                 return false;
             }
-            let elapsed =
-                now_ns.saturating_sub(last_sent);
+            let elapsed = now_ns.saturating_sub(last_sent);
             elapsed >= timeout_ns
         } else {
             false
         }
     }
 
-    pub fn drain_outbound(
-        &mut self,
-        conn_id: u64,
-    ) -> Vec<Arc<str>> {
-        if let Some(conn) =
-            self.connections.get_mut(&conn_id)
-        {
+    pub fn drain_outbound(&mut self, conn_id: u64) -> Vec<Arc<str>> {
+        if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.outbound.drain(..).collect()
         } else {
             Vec::new()
@@ -296,28 +230,20 @@ impl GatewayState {
     /// Get-or-insert a per-IP rate limiter. Bounded by
     /// IP_LIMITER_MAX; on overflow, evicts the oldest IP
     /// (FIFO). Returns &mut so the caller can `try_consume`.
-    pub fn ip_limiter_for(
-        &mut self,
-        ip: IpAddr,
-    ) -> &mut RateLimiter {
+    pub fn ip_limiter_for(&mut self, ip: IpAddr) -> &mut RateLimiter {
         if !self.ip_limiters.contains_key(&ip) {
             // About to insert — evict if at capacity.
             if self.ip_limiters.len() >= IP_LIMITER_MAX {
-                if let Some(oldest) =
-                    self.ip_limiter_order.pop_front()
-                {
+                if let Some(oldest) = self.ip_limiter_order.pop_front() {
                     self.ip_limiters.remove(&oldest);
                 }
             }
             self.ip_limiter_order.push_back(ip);
             let cap = self.rate_limit_per_ip;
-            self.ip_limiters.insert(
-                ip,
-                RateLimiter::new(cap, cap),
-            );
+            self.ip_limiters.insert(ip, RateLimiter::new(cap, cap));
         }
-        self.ip_limiters.get_mut(&ip).expect(
-            "ip_limiter present after insert",
-        )
+        self.ip_limiters
+            .get_mut(&ip)
+            .expect("ip_limiter present after insert")
     }
 }

@@ -1,8 +1,8 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::FAIL_VALIDATION;
-use rsx_book::matching::IncomingOrder;
 use rsx_book::matching::process_new_order;
+use rsx_book::matching::IncomingOrder;
 use rsx_matching::dedup::DedupTracker;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
@@ -24,12 +24,7 @@ fn test_book() -> Orderbook {
     Orderbook::new(test_config(), 1024, 50_000)
 }
 
-fn make_order(
-    price: i64,
-    qty: i64,
-    side: Side,
-    user_id: u32,
-) -> IncomingOrder {
+fn make_order(price: i64, qty: i64, side: Side, user_id: u32) -> IncomingOrder {
     IncomingOrder {
         price,
         qty,
@@ -53,10 +48,9 @@ fn new_order_valid_tick_lot_accepted() {
     process_new_order(&mut book, &mut order);
     let events = book.events();
     // Should get OrderInserted (resting, no cross)
-    assert!(events.iter().any(|e| matches!(
-        e,
-        Event::OrderInserted { .. }
-    )));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::OrderInserted { .. })));
 }
 
 #[test]
@@ -138,9 +132,7 @@ fn new_order_after_dedup_window_accepted() {
     assert!(!dedup.check_and_insert(1, 0, 42));
     assert!(dedup.check_and_insert(1, 0, 42));
     // Force cleanup with future cutoff
-    dedup.cleanup_with_cutoff(
-        Instant::now() + Duration::from_secs(1),
-    );
+    dedup.cleanup_with_cutoff(Instant::now() + Duration::from_secs(1));
     assert_eq!(dedup.len(), 0);
     // Same ID now accepted again
     assert!(!dedup.check_and_insert(1, 0, 42));
@@ -171,9 +163,7 @@ fn dedup_exact_boundary() {
 fn fok_fail_exactly_one_completion() {
     let mut book = test_book();
     // Resting sell with insufficient qty
-    book.insert_resting(
-        50_000, 5, Side::Sell, 0, 1, false, 0, 0, 0,
-    );
+    book.insert_resting(50_000, 5, Side::Sell, 0, 1, false, 0, 0, 0);
     let mut order = IncomingOrder {
         price: 50_000,
         qty: 10,
@@ -198,19 +188,13 @@ fn fok_fail_exactly_one_completion() {
 
     let failures = events
         .iter()
-        .filter(|e| matches!(
-            e,
-            Event::OrderFailed { .. }
-        ))
+        .filter(|e| matches!(e, Event::OrderFailed { .. }))
         .count();
     assert_eq!(failures, 1);
 
     let dones = events
         .iter()
-        .filter(|e| matches!(
-            e,
-            Event::OrderDone { .. }
-        ))
+        .filter(|e| matches!(e, Event::OrderDone { .. }))
         .count();
     assert_eq!(dones, 0);
 }

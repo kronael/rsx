@@ -4,8 +4,8 @@ use clap::Parser;
 use rsx_book::book::Orderbook;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
-use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::cast::CastRecv;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::records::CastRecord;
@@ -139,8 +139,7 @@ fn main() {
     .unwrap();
     // gw_receiver listens on gw_recv_bind; sender_addr is
     // where it'd send NAKs (back at me_sender).
-    let mut gw_receiver =
-        CastReceiver::new(gw_recv_bind, me_send_bind).unwrap();
+    let mut gw_receiver = CastReceiver::new(gw_recv_bind, me_send_bind).unwrap();
 
     // me_sender → gw_recv_bind
     let mut me_sender = CastSender::with_config(
@@ -155,8 +154,7 @@ fn main() {
     .unwrap();
     // me_receiver listens on me_recv_bind; sender_addr is
     // where it'd send NAKs (back at gw_sender).
-    let mut me_receiver =
-        CastReceiver::new(me_recv_bind, gw_send_bind).unwrap();
+    let mut me_receiver = CastReceiver::new(me_recv_bind, gw_send_bind).unwrap();
 
     // Pre-populate the orderbook with N+warmup ask orders so
     // every gateway order has a maker to fill against. One
@@ -169,8 +167,7 @@ fn main() {
     .unwrap();
     let mut book = make_book_with_liquidity(total);
     let mut dedup = DedupTracker::new();
-    let mut order_index: FxHashMap<(u32, u64, u64), u32> =
-        FxHashMap::default();
+    let mut order_index: FxHashMap<(u32, u64, u64), u32> = FxHashMap::default();
 
     // Channel for ME stages → main thread.
     let (me_tx, me_rx) = mpsc::channel::<MeStages>();
@@ -211,11 +208,7 @@ fn main() {
             let _ = hdr;
             let oid_lo = order_msg.order_id_lo;
 
-            let is_dup = dedup.check_and_insert(
-                order_msg.user_id,
-                order_msg.order_id_hi,
-                oid_lo,
-            );
+            let is_dup = dedup.check_and_insert(order_msg.user_id, order_msg.order_id_hi, oid_lo);
             let t1 = now_ns();
             if is_dup {
                 continue;
@@ -246,8 +239,7 @@ fn main() {
             process_new_order(&mut book, &mut incoming);
             let t3 = now_ns();
 
-            write_events_to_wal(&mut wal, &book, SYMBOL_ID, t3)
-                .unwrap();
+            write_events_to_wal(&mut wal, &book, SYMBOL_ID, t3).unwrap();
             for ev in book.events() {
                 if let rsx_book::event::Event::OrderInserted {
                     handle,
@@ -257,10 +249,7 @@ fn main() {
                     ..
                 } = *ev
                 {
-                    order_index.insert(
-                        (user_id, order_id_hi, order_id_lo),
-                        handle,
-                    );
+                    order_index.insert((user_id, order_id_hi, order_id_lo), handle);
                 }
             }
             let t4 = now_ns();
@@ -309,8 +298,7 @@ fn main() {
     });
 
     // Gateway-side: send N orders, await each fill.
-    let mut samples: Vec<[u64; N_STAGES]> =
-        Vec::with_capacity(total);
+    let mut samples: Vec<[u64; N_STAGES]> = Vec::with_capacity(total);
     let mut gw_tick: u64 = 0;
     let mut gw_seq: u64 = 0;
     for i in 0..total {
@@ -364,9 +352,7 @@ fn main() {
                     if wait_tick & 0x3FF == 0 {
                         let _ = gw_sender.tick();
                         gw_sender.recv_control();
-                        if wait_start.elapsed()
-                            > Duration::from_millis(50)
-                        {
+                        if wait_start.elapsed() > Duration::from_millis(50) {
                             timed_out = true;
                             break;
                         }
@@ -436,10 +422,7 @@ fn main() {
     let _ = me;
 
     // Join ME stages by oid_lo (index 1..=total monotonic).
-    let me_stages: FxHashMap<u64, MeStages> = me_rx
-        .try_iter()
-        .map(|m| (m.oid_lo, m))
-        .collect();
+    let me_stages: FxHashMap<u64, MeStages> = me_rx.try_iter().map(|m| (m.oid_lo, m)).collect();
     for (i, s) in samples.iter_mut().enumerate() {
         let oid_lo = i as u64 + 1;
         if let Some(me) = me_stages.get(&oid_lo) {

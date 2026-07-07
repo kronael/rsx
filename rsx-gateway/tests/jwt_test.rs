@@ -124,9 +124,7 @@ fn test_validate_jwt_invalid_user_id() {
 
     let result = validate_jwt(&token, secret);
     assert!(result.is_err());
-    assert!(
-        result.unwrap_err().contains("invalid user_id")
-    );
+    assert!(result.unwrap_err().contains("invalid user_id"));
 }
 
 #[test]
@@ -139,9 +137,9 @@ fn test_validate_jwt_malformed() {
 #[test]
 fn test_validate_jwt_rejects_nbf_in_future() {
     use jsonwebtoken::encode;
+    use jsonwebtoken::Algorithm;
     use jsonwebtoken::EncodingKey;
     use jsonwebtoken::Header;
-    use jsonwebtoken::Algorithm;
     let secret = "a-secret-that-is-32-chars-long-padpadpad";
     let user_id = 7u32;
     let exp = now_secs() + 3600;
@@ -186,7 +184,7 @@ fn test_jti_tracker_evicts_oldest_when_full() {
     assert!(t.record(Some("a")));
     assert!(t.record(Some("b")));
     assert!(t.record(Some("c"))); // evicts "a"
-    // "a" is now fresh again because it was evicted.
+                                  // "a" is now fresh again because it was evicted.
     assert!(t.record(Some("a")));
     assert_eq!(t.len(), 2);
 }

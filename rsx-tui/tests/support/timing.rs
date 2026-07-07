@@ -65,7 +65,9 @@ pub struct Timer {
 
 impl Timer {
     pub fn start() -> Self {
-        Timer { start: Instant::now() }
+        Timer {
+            start: Instant::now(),
+        }
     }
 
     pub fn elapsed(&self) -> Duration {

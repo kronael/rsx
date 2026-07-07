@@ -13,8 +13,7 @@ fn singular_addr_parsed() {
 /// Multiple comma-separated addresses are all parsed.
 #[test]
 fn multi_addr_parsed() {
-    let addrs =
-        parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9103");
+    let addrs = parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9103");
     assert_eq!(addrs.len(), 2);
     assert_eq!(addrs[0].port(), 9110);
     assert_eq!(addrs[1].port(), 9103);
@@ -23,9 +22,7 @@ fn multi_addr_parsed() {
 /// Whitespace around commas is trimmed.
 #[test]
 fn whitespace_trimmed() {
-    let addrs = parse_me_cast_addrs(
-        " 127.0.0.1:9110 , 127.0.0.1:9103 ",
-    );
+    let addrs = parse_me_cast_addrs(" 127.0.0.1:9110 , 127.0.0.1:9103 ");
     assert_eq!(addrs.len(), 2);
 }
 
@@ -52,10 +49,7 @@ fn env_singular_addr_no_default() {
 /// RSX_ME_CAST_ADDRS takes priority over RSX_ME_CAST_ADDR.
 #[test]
 fn env_addrs_takes_priority() {
-    std::env::set_var(
-        "RSX_ME_CAST_ADDRS",
-        "127.0.0.1:9110,127.0.0.1:9103",
-    );
+    std::env::set_var("RSX_ME_CAST_ADDRS", "127.0.0.1:9110,127.0.0.1:9103");
     std::env::set_var("RSX_ME_CAST_ADDR", "127.0.0.1:9101");
     let addrs = me_cast_addrs_from_env();
     std::env::remove_var("RSX_ME_CAST_ADDRS");

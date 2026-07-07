@@ -31,9 +31,7 @@ fn main() -> io::Result<()> {
 /// Event loop: drain gateway events, redraw, then block up to 100ms
 /// for a key. `handle_key` mutates state / submits and says when to
 /// quit.
-fn run<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-) -> io::Result<()> {
+fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
     let mut app = App::new("PENGU-PERP");
 
     // One knob: RSX_GW_URL. Unset → the hosted deployment; `mock` → the
@@ -44,8 +42,7 @@ fn run<B: ratatui::backend::Backend>(
         Some(url) => {
             app.set_endpoint(&url);
             let user_id = env_u32("RSX_TUI_USER", 1);
-            let token = rsx_tui::ws::mint_jwt(
-                user_id, &rsx_tui::ws::jwt_secret());
+            let token = rsx_tui::ws::mint_jwt(user_id, &rsx_tui::ws::jwt_secret());
             Box::new(WsConn::connect(url, token, PENGU)?)
         }
         None => {
@@ -87,5 +84,8 @@ fn resolve_url() -> Option<String> {
 }
 
 fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }

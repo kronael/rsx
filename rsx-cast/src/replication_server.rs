@@ -14,18 +14,18 @@ use crate::records::RECORD_REPLICATION_NOT_AVAILABLE;
 use crate::records::RECORD_REPLICATION_REQUEST;
 use crate::time_utils::time_ns;
 use crate::tls::build_acceptor;
-use crate::wal::WalReader;
 use crate::wal::extract_seq;
 use crate::wal::oldest_and_highest_seq;
+use crate::wal::WalReader;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
-use std::time::Duration;
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
 use tracing::info;
@@ -38,10 +38,7 @@ pub struct ReplicationService {
 }
 
 impl ReplicationService {
-    pub fn new(
-        wal_dir: PathBuf,
-        tls: TlsConfig,
-    ) -> io::Result<Self> {
+    pub fn new(wal_dir: PathBuf, tls: TlsConfig) -> io::Result<Self> {
         let server = tls.server.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -56,25 +53,14 @@ impl ReplicationService {
         })
     }
 
-    pub async fn serve(
-        self,
-        addr: SocketAddr,
-    ) -> std::io::Result<()> {
+    pub async fn serve(self, addr: SocketAddr) -> std::io::Result<()> {
         let listener = TcpListener::bind(addr).await?;
-        info!(
-            "dxs replay server listening on {} (tls)",
-            addr
-        );
+        info!("dxs replay server listening on {} (tls)", addr);
         let svc = Arc::new(self);
         loop {
-            let (stream, peer) =
-                listener.accept().await?;
+            let (stream, peer) = listener.accept().await?;
             info!("dxs client connected from {}", peer);
-            tokio::spawn(dispatch_client(
-                svc.clone(),
-                peer,
-                stream,
-            ));
+            tokio::spawn(dispatch_client(svc.clone(), peer, stream));
         }
     }
 }
@@ -87,34 +73,22 @@ async fn dispatch_client(
     stream: tokio::net::TcpStream,
 ) {
     let result = match svc.tls_acceptor.accept(stream).await {
-        Ok(tls_stream) => {
-            handle_client(svc, tls_stream).await
-        }
-        Err(e) => Err(io::Error::other(format!(
-            "tls handshake failed: {}", e,
-        ))),
+        Ok(tls_stream) => handle_client(svc, tls_stream).await,
+        Err(e) => Err(io::Error::other(format!("tls handshake failed: {}", e,))),
     };
     if let Err(e) = result {
         warn!("dxs client {} error: {}", peer, e);
     }
 }
 
-async fn handle_client<S>(
-    svc: Arc<ReplicationService>,
-    mut stream: S,
-) -> io::Result<()>
+async fn handle_client<S>(svc: Arc<ReplicationService>, mut stream: S) -> io::Result<()>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     let mut hdr_buf = [0u8; WalHeader::SIZE];
     stream.read_exact(&mut hdr_buf).await?;
     let hdr = WalHeader::from_bytes(&hdr_buf)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "bad header",
-            )
-        })?;
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad header"))?;
     if hdr.record_type != RECORD_REPLICATION_REQUEST {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -132,14 +106,8 @@ where
             "replay request crc mismatch",
         ));
     }
-    let req = decode_payload::<ReplicationRequest>(
-        &payload_buf,
-    )
-    .ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "replay request too short",
-        )
+    let req = decode_payload::<ReplicationRequest>(&payload_buf).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "replay request too short")
     })?;
     let stream_id = req.stream_id;
     let from_seq = req.from_seq;
@@ -149,9 +117,7 @@ where
         stream_id, from_seq
     );
 
-    let range = oldest_and_highest_seq(
-        stream_id, &svc.wal_dir,
-    )?;
+    let range = oldest_and_highest_seq(stream_id, &svc.wal_dir)?;
     let (my_oldest, my_highest) = range.unwrap_or((0, 0));
     let endpoint_can_serve = match range {
         Some((oldest, _)) => from_seq == 0 || from_seq >= oldest,
@@ -170,31 +136,20 @@ where
             _pad: [0; 36],
         };
         let payload = as_bytes(&na);
-        let encoded = encode_record(
-            RECORD_REPLICATION_NOT_AVAILABLE,
-            payload,
-        );
+        let encoded = encode_record(RECORD_REPLICATION_NOT_AVAILABLE, payload);
         stream.write_all(&encoded).await?;
         stream.flush().await?;
         return Ok(());
     }
 
-    let mut reader = WalReader::open_from_seq(
-        stream_id,
-        from_seq,
-        &svc.wal_dir,
-    )?;
+    let mut reader = WalReader::open_from_seq(stream_id, from_seq, &svc.wal_dir)?;
 
     let mut last_seq = from_seq;
     loop {
         match reader.next() {
             Ok(Some(record)) => {
-                stream
-                    .write_all(record.header.to_bytes())
-                    .await?;
-                stream
-                    .write_all(&record.payload)
-                    .await?;
+                stream.write_all(record.header.to_bytes()).await?;
+                stream.write_all(&record.payload).await?;
                 if let Some(seq) = extract_seq(&record.payload) {
                     last_seq = seq;
                 }
@@ -216,42 +171,30 @@ where
         _pad1: [0; 40],
     };
     let payload = as_bytes(&caught_up);
-    let encoded = encode_record(
-        RECORD_CAUGHT_UP,
-        payload,
-    );
+    let encoded = encode_record(RECORD_CAUGHT_UP, payload);
     stream.write_all(&encoded).await?;
 
     loop {
         sleep(Duration::from_millis(100)).await;
 
-        let mut reader =
-            match WalReader::open_from_seq(
-                stream_id,
-                last_seq + 1,
-                &svc.wal_dir,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    error!(
-                        "wal open_from_seq failed stream_id={} seq={}: {}",
-                        stream_id,
-                        last_seq + 1,
-                        e
-                    );
-                    continue;
-                }
-            };
+        let mut reader = match WalReader::open_from_seq(stream_id, last_seq + 1, &svc.wal_dir) {
+            Ok(r) => r,
+            Err(e) => {
+                error!(
+                    "wal open_from_seq failed stream_id={} seq={}: {}",
+                    stream_id,
+                    last_seq + 1,
+                    e
+                );
+                continue;
+            }
+        };
 
         loop {
             match reader.next() {
                 Ok(Some(record)) => {
-                    stream
-                        .write_all(record.header.to_bytes())
-                        .await?;
-                    stream
-                        .write_all(&record.payload)
-                        .await?;
+                    stream.write_all(record.header.to_bytes()).await?;
+                    stream.write_all(&record.payload).await?;
                     if let Some(seq) = extract_seq(&record.payload) {
                         last_seq = seq;
                     }

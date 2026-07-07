@@ -21,9 +21,7 @@ pub struct OrderMessage {
 }
 
 impl OrderMessage {
-    pub fn to_incoming(
-        &self,
-    ) -> rsx_book::matching::IncomingOrder {
+    pub fn to_incoming(&self) -> rsx_book::matching::IncomingOrder {
         rsx_book::matching::IncomingOrder {
             price: self.price,
             qty: self.qty,
