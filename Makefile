@@ -1,4 +1,4 @@
-.PHONY: check test e2e integration wal smoke perf \
+.PHONY: check build-fast test-fast test e2e integration wal smoke perf \
        lint fmt fmt-check clean play play-overview play-topology \
        play-book play-risk play-wal play-logs \
        play-control play-faults play-verify \
@@ -245,6 +245,26 @@ check-links:
 # Type check only (fastest feedback, no codegen)
 check:
 	cargo check --workspace
+
+# Cranelift codegen backend: faster debug codegen than LLVM (nightly-only).
+# Opt-in — default `make`/`cargo` stay on stable LLVM, so these targets don't
+# change any existing build. NOT for release (cranelift does no optimization).
+# One-time setup: rustup component add rustc-codegen-cranelift-preview --toolchain nightly
+# The TLS stack (aws-lc-sys/aws-lc-rs/rustls) is pinned to LLVM: aws-lc's
+# C+asm symbols don't link under cranelift, so those crates keep the LLVM backend.
+CRANELIFT := -Zcodegen-backend \
+	--config 'profile.dev.codegen-backend="cranelift"' \
+	--config 'profile.dev.package.aws-lc-sys.codegen-backend="llvm"' \
+	--config 'profile.dev.package.aws-lc-rs.codegen-backend="llvm"' \
+	--config 'profile.dev.package.rustls.codegen-backend="llvm"'
+
+# Fast debug build via cranelift
+build-fast:
+	cargo +nightly build --workspace $(CRANELIFT)
+
+# Fast debug unit tests via cranelift (codegen of test binaries)
+test-fast:
+	cargo +nightly test --workspace --tests --lib $(CRANELIFT)
 
 # Unit tests - lib + integration test binaries (non-ignored).
 # Runs every Rust test that does not require Docker/Postgres.

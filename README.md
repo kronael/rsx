@@ -360,6 +360,11 @@ make lint         # clippy -D warnings
 Single crate: `cargo test -p rsx-book`. Single test:
 `cargo test -p rsx-book -- test_name`.
 
+Faster debug builds (optional): `make build-fast` / `make test-fast` use the
+cranelift codegen backend (~7× faster codegen on heavy crates). Nightly-only,
+opt-in — stable `make` is untouched. One-time:
+`rustup component add rustc-codegen-cranelift-preview --toolchain nightly`.
+
 ## What's not done
 
 The gaps a careful reader will hit:
