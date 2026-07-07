@@ -7,14 +7,10 @@ REAL `cargo bench` and records it live; numbers are never fabricated.
 ## The story: matching is O(1) in book depth
 Matching one order stays **~60-65 ns whether the book holds 100 K or 10 M
 resting orders** (`deep_flat_match`) — the happy path, where the touch level
-survives the fill. When a match CLEARS the touch level, next-best-level
-lookup stays O(depth=3) too (occupancy bitmap, `da9a2b4`): **145 ns**, still
-depth-invariant, no longer the O(compression-slots) scan that used to cost
-32-224 µs on that path (bugs.md `MATCHING-BENCH-ORDERTYPE-FIXTURE`, fixed).
-FOK's fill-or-kill feasibility check (`can_fill_fully`) was a separate O(N)
-full-book scan; fixed 2026-07-04 (bugs.md `FOK-AVAILABLE-LIQUIDITY-ON-SCAN`)
-by walking only the crossing levels in price order — no more O(N) outlier.
-Full numbers + caveats: `reports/YYYYMMDD_book-bench.md`.
+survives the fill. Clearing the touch level costs **145 ns**, still
+depth-invariant (occupancy bitmap, O(depth) next-best lookup). FOK
+feasibility (`can_fill_fully`) walks only the crossing levels, early-exit.
+Full numbers + caveats: `reports/20260704_book-bench.md`.
 
 ## Artifacts in this folder
 - `bench-live.sh` — runs the REAL `cargo bench -- deep_flat_match` and streams
@@ -63,14 +59,10 @@ says exactly this (`compare/cross-language-cited.md`); do not upgrade it to
 "10 M orders — still ~60 ns" is drawn from the live sweep just shown.
 
 ## Do NOT
-- Cite the OLD `match_by_type/*full` / `sweep` numbers (99 µs-1 ms) — those
-  were the pre-fix O(compression-slots) scan bug (MATCHING-BENCH-ORDERTYPE-
-  FIXTURE in bugs.md, fixed by `da9a2b4`), not a fixture artifact as first
-  triaged. Current numbers: `ioc_full`/`gtc_full_cross` ~80 ns,
-  `sweep_10_levels` ~700 ns. `fok_full` was ~296 µs (a separate O(N) FOK
-  pre-check) — also fixed 2026-07-04 (`FOK-AVAILABLE-LIQUIDITY-ON-SCAN`), now
-  in the same fast band as the other order types.
-- "Faster than X" now has a baseline: `rsx-book/benches/compare_naive_bench.rs`
-  (rsx-book vs. a naive `BTreeMap<price, VecDeque<order>>` book, same
-  harness/box/depths). 1.5-2x on match/insert+cancel, 5.5-10x on cancel
-  (widening with depth). See `reports/20260704_book-bench.md` for the table.
+- Cite µs-range `match_by_type`/`sweep`/`fok_full` figures from older
+  reports — superseded. Current band: `ioc_full`/`gtc_full_cross` ~80 ns,
+  `sweep_10_levels` ~700 ns, `fok_full` ~118 ns. Only cite
+  `reports/20260704_book-bench.md`.
+- "Faster than X" has exactly one baseline: `compare_naive_bench.rs`
+  (vs a naive `BTreeMap<price, VecDeque<order>>` book, same harness):
+  1.5-2x match/insert+cancel, 5.5-10x cancel. Same report.
