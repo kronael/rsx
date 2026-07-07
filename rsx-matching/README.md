@@ -1,6 +1,14 @@
 # rsx-matching
 
-Matching engine binary. One instance per symbol.
+The matching engine: it pairs orders. An incoming buy that meets a
+resting sell (or a sell that meets a resting buy) becomes a fill; an
+order that doesn't cross rests in the book and waits. One process per
+symbol. It takes orders from Risk, matches them against the book
+(`rsx-book`), records the fills to the WAL, and tells Risk and
+Marketdata what happened — the full accept path (dedup, WAL accept,
+match, event write, index) in **266 ns**, about **3.6M orders/s**,
+with the match itself flat in book depth (~30 ns at 1 or 100k resting
+orders). Numbers and method: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## What It Does
 

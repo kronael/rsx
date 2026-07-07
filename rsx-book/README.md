@@ -125,7 +125,7 @@ stream. Full table + per-contender notes:
   buys depth-invariant matching, O(1) cancel, and flat level ops:
   on deep cancel rsx-book is 5.5–10× faster and the gap grows with
   depth. A `BTreeMap` is O(log n), never O(book-size), so the gap
-  here is constant-factor, not asymptotic — the honest read.
+  here is constant-factor, not asymptotic.
 - **vs tuned C++ flat-array ITCH books** (e.g.
   `itch-order-book` at 61 ns/tick) — same neighborhood, but
   **cited only**, never benched here: different language, ~14-year-
@@ -374,7 +374,7 @@ If rsx-book doesn't fit, the peers benched or surveyed in
 
 - **What** — this README + the formal spec `specs/2/21-orderbook.md`.
 - **How** — [ARCHITECTURE.md](ARCHITECTURE.md): the data structures,
-  how they compose, the matching algorithm, the ME-tile plug-in.
+  how they compose, the matching algorithm, how the ME process drives it.
 - **Why + Numbers** — [`notes/`](notes/) for the design rationale
   (slab over malloc, hot/cold split, cache-line alignment, the
   occupancy bitmap's deep why) and

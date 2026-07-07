@@ -216,11 +216,11 @@ drains `book.events()` after each order and fans out to two
 transports (fills/BBO/done → risk; inserts/cancels/fills →
 marketdata); that fan-out lives in the ME process, not in this crate.
 
-## How it plugs into the ME tile
+## How it plugs into the ME process
 
 `rsx-book` is a library of pure data structures — no runtime, no
 threads, no I/O. The matching-engine process (`rsx-matching`) owns
-one `Orderbook` per symbol and drives it from a pinned tile loop:
+one `Orderbook` per symbol and drives it from a pinned loop:
 decode an incoming order off the transport, call
 `process_new_order`, drain `book.events()`, and publish. Because
 each book is single-owner state on one thread, it needs no locking;
@@ -266,5 +266,5 @@ follow from mid/tick via the compression map.
 **Runtime: none — pure data structures.** `rsx-book` is a library,
 not a process: no async runtime, no threading primitives, no I/O.
 The caller owns the loop and the threading model. Consumers today
-are `rsx-matching` (the ME tile) and `rsx-marketdata` (shadow book),
+are `rsx-matching` (the ME process) and `rsx-marketdata` (shadow book),
 both single-owner on whatever thread drives them.
