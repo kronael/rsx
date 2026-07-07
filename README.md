@@ -105,6 +105,18 @@ Supporting cast: `rsx-types` (fixed-point newtypes),
 cast), `rsx-recorder` (archival replay consumer), `rsx-log`
 (off-hot-path logging), `rsx-cli` (WAL inspect).
 
+## Specs vs ARCHITECTURE — intent vs what-is
+
+Everything here starts as a spec ([specs/2/](specs/2/), 47 of
+them) — they are referenced throughout the code and docs. A spec
+captures the **intent before the implementation**. The design is
+fluid: when implementation shows a spec impossible or impractical,
+the spec is refined rather than defended. The **ARCHITECTURE
+documents** (one at the repo root, one per crate) are the
+authoritative record of **how things are now**. Read them in that
+order: the spec for why it was designed, ARCHITECTURE for what
+actually runs.
+
 ## Architecture
 
 An order from user **U** on symbol **S** routes
@@ -120,7 +132,7 @@ Risk shards. The gateway is stateless and routes by both keys.
  │  Gateway  (monoio)         │ ◀── add instances    STATELESS
  │  WS · JWT · routes U→Risk, │     per connection    front; no
  │  S→ME · cast bridge        │     load              per-user
- └─────────────┬─────────────┘                       state held
+ └──────────────┬────────────┘                       state held
    order(user U │ symbol S)   │ casting/UDP
                 ▼
  ┌───────────────────────────┐
@@ -131,8 +143,8 @@ Risk shards. The gateway is stateless and routes by both keys.
  └──────┬───────────────▲─────┘
  reserve│ (sync)        │settle (async)  casting/UDP
         ▼               │
- ┌───────────────────────────┐
- │  ME  —  SHARD BY symbol    │ ◀── add engines =     one engine
+ ┌──────────────────────┴────┐
+ │  Matching — SHARD BY symbol│ ◀── add engines =     one engine
  │  ME[BTC] ME[ETH] … ME[sym] │     more symbols      PER symbol;
  │  single-thread, pinned,    │                       no shared
  │  busy-spin, zero-heap match│                       state across
@@ -161,7 +173,7 @@ Risk shards. The gateway is stateless and routes by both keys.
   warm-catchup + cutover, reusing the warm-standby path) — *not* a
   `user_id % shard_count` reshuffle of everyone. See
   [specs/2/28-risk.md](specs/2/28-risk.md) §Sharding & scale-out.
-- **ME (matching)** — shard by **`symbol_id`**. One pinned
+- **Matching** — shard by **`symbol_id`**. One pinned
   engine per tradeable instrument, no cross-symbol shared state.
   More symbols → more ME instances.
 - **Marketdata** — scale by **public subscriber count**; off the
