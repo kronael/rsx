@@ -255,10 +255,12 @@ pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
     book.rebuild_occupancy();
     book.best_bid_tick = best_bid_tick;
     book.best_ask_tick = best_ask_tick;
-    // Derive raw BBA prices from restored levels (sawtooth index is
-    // not a price proxy; snapshot format stores ticks only).
-    book.best_bid_px = book.price_at_tick(best_bid_tick);
-    book.best_ask_px = book.price_at_tick(best_ask_tick);
+    // Derive raw BBA prices from restored levels (sawtooth index is not
+    // a price proxy; snapshot format stores ticks only). Use the per-side
+    // top helpers — a compressed best level may hold both sides, so the
+    // FIFO head is not necessarily the best price of the tracked side.
+    book.best_bid_px = book.bid_top_at(best_bid_tick).0;
+    book.best_ask_px = book.ask_top_at(best_ask_tick).0;
     book.sequence = sequence;
     book.user_states = user_states;
     book.user_map = user_map;
@@ -330,11 +332,15 @@ fn write_level(w: &mut dyn Write, lvl: &PriceLevel) -> io::Result<()> {
 }
 
 fn read_level(r: &mut dyn Read) -> io::Result<PriceLevel> {
+    // bid_count/ask_count are not serialized (derivable): `load` calls
+    // `rebuild_occupancy`, which recomputes them from the linked orders.
     Ok(PriceLevel {
         head: read_u32(r)?,
         tail: read_u32(r)?,
         total_qty: read_i64(r)?,
         order_count: read_u32(r)?,
+        bid_count: 0,
+        ask_count: 0,
     })
 }
 

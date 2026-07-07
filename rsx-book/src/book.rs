@@ -200,8 +200,23 @@ impl Orderbook {
         level.total_qty += qty;
         level.order_count += 1;
 
-        // Level went empty -> non-empty: mark occupied on this side.
-        if was_empty {
+        // Per-side occupancy: a compressed slot can hold BOTH sides, so
+        // set the bit when THIS side's count goes 0 -> 1 — not on the
+        // aggregate empty -> non-empty transition (which missed the 2nd
+        // side and left occupancy stale: BOOK-STALE-OCC-ME-CRASH).
+        let side_was_empty = match side {
+            Side::Buy => {
+                let e = level.bid_count == 0;
+                level.bid_count += 1;
+                e
+            }
+            Side::Sell => {
+                let e = level.ask_count == 0;
+                level.ask_count += 1;
+                e
+            }
+        };
+        if side_was_empty {
             match side {
                 Side::Buy => self.bid_occ.set(tick),
                 Side::Sell => self.ask_occ.set(tick),
@@ -261,10 +276,19 @@ impl Orderbook {
         }
         level.total_qty = level.total_qty.saturating_sub(qty);
         level.order_count = level.order_count.saturating_sub(1);
-        let now_empty = level.order_count == 0;
 
-        // Level went non-empty -> empty: clear occupancy on this side.
-        if now_empty {
+        // Per-side occupancy: clear when THIS side's count reaches 0, even
+        // if the slot still holds the other side (mixed compressed slot).
+        // The old aggregate-empty check left a departed side's bit set
+        // while the other side remained (BOOK-STALE-OCC-ME-CRASH).
+        let side_now_empty = if side == Side::Buy as u8 {
+            level.bid_count = level.bid_count.saturating_sub(1);
+            level.bid_count == 0
+        } else {
+            level.ask_count = level.ask_count.saturating_sub(1);
+            level.ask_count == 0
+        };
+        if side_now_empty {
             if side == Side::Buy as u8 {
                 self.bid_occ.clear(tick);
             } else {
@@ -296,15 +320,17 @@ impl Orderbook {
 
         self.unlink_order(handle);
 
-        // Update BBA if needed
-        if self.active_levels[tick as usize].order_count == 0 {
-            if side == Side::Buy as u8 && tick == self.best_bid_tick {
-                self.best_bid_tick = self.scan_next_bid(tick);
-                self.best_bid_px = self.price_at_tick(self.best_bid_tick);
-            } else if side == Side::Sell as u8 && tick == self.best_ask_tick {
-                self.best_ask_tick = self.scan_next_ask(tick);
-                self.best_ask_px = self.price_at_tick(self.best_ask_tick);
+        // BBA can change even when the slot is NOT fully empty: a
+        // compressed slot may lose its best-priced order of `side` while
+        // other prices / the opposite side survive
+        // (BOOK-STALE-BBA-WRONGFUL-POSTONLY). Refresh the affected side
+        // whenever the cancelled order sat in that side's best level.
+        if side == Side::Buy as u8 {
+            if tick == self.best_bid_tick {
+                self.refresh_best_bid();
             }
+        } else if tick == self.best_ask_tick {
+            self.refresh_best_ask();
         }
 
         self.orders.get_mut(handle).set_active(false);
@@ -402,17 +428,97 @@ impl Orderbook {
         true
     }
 
-    /// Raw price of the head order at `tick`, or 0 if `tick == NONE`.
-    #[inline]
-    pub fn price_at_tick(&self, tick: u32) -> i64 {
+    /// Highest resting BUY price at `tick` and the aggregate qty at that
+    /// price, or (0, 0) if the slot holds no buys. Zone-0 slots hold one
+    /// price of one side (O(1) via head/total_qty); a compressed slot may
+    /// pack several prices and the opposite side, so it is walked. This is
+    /// the true best bid within the level — the FIFO head is NOT (it can
+    /// be a lower-priced buy, or a sell): BOOK-STALE-BBA-WRONGFUL-POSTONLY.
+    pub(crate) fn bid_top_at(&self, tick: u32) -> (i64, i64) {
         if tick == NONE {
-            return 0;
+            return (0, 0);
         }
-        let head = self.active_levels[tick as usize].head;
-        if head == NONE {
-            return 0;
+        let lvl = &self.active_levels[tick as usize];
+        if lvl.bid_count == 0 {
+            return (0, 0);
         }
-        self.orders.get(head).price.0
+        if (tick as usize) < self.compression.zone_slots[0] as usize {
+            // Zone 0 is 1:1 => single price, single side (buy here).
+            debug_assert_eq!(self.orders.get(lvl.head).side, Side::Buy as u8);
+            return (self.orders.get(lvl.head).price.0, lvl.total_qty);
+        }
+        let mut px = i64::MIN;
+        let mut qty = 0i64;
+        let mut cursor = lvl.head;
+        while cursor != NONE {
+            let o = self.orders.get(cursor);
+            if o.side == Side::Buy as u8 {
+                if o.price.0 > px {
+                    px = o.price.0;
+                    qty = o.remaining_qty.0;
+                } else if o.price.0 == px {
+                    qty += o.remaining_qty.0;
+                }
+            }
+            cursor = o.next;
+        }
+        (px, qty)
+    }
+
+    /// Lowest resting SELL price at `tick` and the aggregate qty at that
+    /// price, or (0, 0) if the slot holds no sells. Mirror of `bid_top_at`.
+    pub(crate) fn ask_top_at(&self, tick: u32) -> (i64, i64) {
+        if tick == NONE {
+            return (0, 0);
+        }
+        let lvl = &self.active_levels[tick as usize];
+        if lvl.ask_count == 0 {
+            return (0, 0);
+        }
+        if (tick as usize) < self.compression.zone_slots[0] as usize {
+            debug_assert_eq!(self.orders.get(lvl.head).side, Side::Sell as u8);
+            return (self.orders.get(lvl.head).price.0, lvl.total_qty);
+        }
+        let mut px = i64::MAX;
+        let mut qty = 0i64;
+        let mut cursor = lvl.head;
+        while cursor != NONE {
+            let o = self.orders.get(cursor);
+            if o.side == Side::Sell as u8 {
+                if o.price.0 < px {
+                    px = o.price.0;
+                    qty = o.remaining_qty.0;
+                } else if o.price.0 == px {
+                    qty += o.remaining_qty.0;
+                }
+            }
+            cursor = o.next;
+        }
+        (px, qty)
+    }
+
+    /// Recompute `best_bid_tick`/`best_bid_px` from occupancy. Correct
+    /// regardless of zone: `scan_next_bid` finds the highest-priced
+    /// bid-occupied slot and `bid_top_at` reads the true best buy inside
+    /// it. Call after any change that could touch the best bid.
+    pub(crate) fn refresh_best_bid(&mut self) {
+        self.best_bid_tick = self.scan_next_bid(NONE);
+        self.best_bid_px = self.bid_top_at(self.best_bid_tick).0;
+    }
+
+    pub(crate) fn refresh_best_ask(&mut self) {
+        self.best_ask_tick = self.scan_next_ask(NONE);
+        self.best_ask_px = self.ask_top_at(self.best_ask_tick).0;
+    }
+
+    /// (bid_px, bid_qty, ask_px, ask_qty) for a BBO event. Uses the
+    /// maintained best prices; qty is the resting qty of that side AT the
+    /// best price (a compressed slot can hold the other side / other
+    /// prices, so `total_qty` alone is not it).
+    pub fn current_bbo(&self) -> (i64, i64, i64, i64) {
+        let (bid_px, bid_qty) = self.bid_top_at(self.best_bid_tick);
+        let (ask_px, ask_qty) = self.ask_top_at(self.best_ask_tick);
+        (bid_px, bid_qty, ask_px, ask_qty)
     }
 
     /// Find the tick of the highest-priced non-empty BUY level.
@@ -446,22 +552,34 @@ impl Orderbook {
         NONE
     }
 
-    /// Rebuild both occupancy bitmaps from `active_levels`. Used after a
-    /// snapshot load replaces the level array wholesale (the normal
-    /// insert/cancel/match paths maintain the bitmaps incrementally).
+    /// Rebuild both occupancy bitmaps AND the per-side counts from the
+    /// orders linked into `active_levels`. Used after a snapshot load
+    /// replaces the level array wholesale (the normal insert/cancel/match
+    /// paths maintain both incrementally). A compressed slot can hold both
+    /// sides, so walk the whole level — never key off the FIFO head side.
     pub fn rebuild_occupancy(&mut self) {
         let n = self.active_levels.len() as u32;
         self.bid_occ = Occupancy::new(n);
         self.ask_occ = Occupancy::new(n);
         for i in 0..self.active_levels.len() {
-            let level = self.active_levels[i];
-            if level.order_count == 0 {
-                continue;
+            let mut bid_count = 0u32;
+            let mut ask_count = 0u32;
+            let mut cursor = self.active_levels[i].head;
+            while cursor != NONE {
+                let o = self.orders.get(cursor);
+                if o.side == Side::Buy as u8 {
+                    bid_count += 1;
+                } else {
+                    ask_count += 1;
+                }
+                cursor = o.next;
             }
-            let side = self.orders.get(level.head).side;
-            if side == Side::Buy as u8 {
+            self.active_levels[i].bid_count = bid_count;
+            self.active_levels[i].ask_count = ask_count;
+            if bid_count > 0 {
                 self.bid_occ.set(i as u32);
-            } else {
+            }
+            if ask_count > 0 {
                 self.ask_occ.set(i as u32);
             }
         }

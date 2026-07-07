@@ -28,7 +28,10 @@ fn config() -> SymbolConfig {
     }
 }
 
-/// Brute-force reference: tick of the highest-priced BUY-head level.
+/// Brute-force reference: tick of the level holding the highest-priced
+/// resting BUY. A compressed slot can hold both sides at several prices,
+/// so scan every order per level for the max buy — never key off the
+/// FIFO head's side/price.
 fn ref_bid(book: &Orderbook) -> u32 {
     let mut best = NONE;
     let mut best_px = i64::MIN;
@@ -36,19 +39,28 @@ fn ref_bid(book: &Orderbook) -> u32 {
         if lvl.order_count == 0 {
             continue;
         }
-        let head = book.orders.get(lvl.head);
-        if head.side != Side::Buy as u8 {
-            continue;
+        let mut level_max = i64::MIN;
+        let mut c = lvl.head;
+        while c != NONE {
+            let o = book.orders.get(c);
+            if o.side == Side::Buy as u8 && o.price.0 > level_max {
+                level_max = o.price.0;
+            }
+            c = o.next;
         }
-        if best == NONE || head.price.0 > best_px {
+        if level_max == i64::MIN {
+            continue; // no buys in this slot
+        }
+        if best == NONE || level_max > best_px {
             best = i as u32;
-            best_px = head.price.0;
+            best_px = level_max;
         }
     }
     best
 }
 
-/// Brute-force reference: tick of the lowest-priced SELL-head level.
+/// Brute-force reference: tick of the level holding the lowest-priced
+/// resting SELL. Mirror of `ref_bid`.
 fn ref_ask(book: &Orderbook) -> u32 {
     let mut best = NONE;
     let mut best_px = i64::MAX;
@@ -56,13 +68,21 @@ fn ref_ask(book: &Orderbook) -> u32 {
         if lvl.order_count == 0 {
             continue;
         }
-        let head = book.orders.get(lvl.head);
-        if head.side != Side::Sell as u8 {
-            continue;
+        let mut level_min = i64::MAX;
+        let mut c = lvl.head;
+        while c != NONE {
+            let o = book.orders.get(c);
+            if o.side == Side::Sell as u8 && o.price.0 < level_min {
+                level_min = o.price.0;
+            }
+            c = o.next;
         }
-        if best == NONE || head.price.0 < best_px {
+        if level_min == i64::MAX {
+            continue; // no sells in this slot
+        }
+        if best == NONE || level_min < best_px {
             best = i as u32;
-            best_px = head.price.0;
+            best_px = level_min;
         }
     }
     best

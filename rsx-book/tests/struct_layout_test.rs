@@ -12,8 +12,9 @@ fn order_slot_alignment_is_64() {
 }
 
 #[test]
-fn price_level_size_is_24_bytes() {
-    assert_eq!(std::mem::size_of::<PriceLevel>(), 24);
+fn price_level_size_is_32_bytes() {
+    // head/tail/total_qty/order_count + per-side bid_count/ask_count.
+    assert_eq!(std::mem::size_of::<PriceLevel>(), 32);
 }
 
 /// Hot fields (price, remaining_qty, side, flags,
