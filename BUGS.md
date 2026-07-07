@@ -44,6 +44,13 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   Confirmed 2026-07-07 by the `outage_recovery` bench: per-cycle recovery of a
   constant ~7.5 k-record gap drifts 262 → 786 ms across six cycles purely
   because the active WAL grows and each connection re-scans it.
+- **BENCH-NO-TIMEOUT-GATE** (MED, infra) — flagged 2026-07-07. Nothing
+  time-bounds bench execution: no `timeout` in `scripts/bench-gate.sh` or the
+  Makefile bench targets, and Criterion has no per-bench deadline. A hanging
+  bench (CAST-RTT-BENCH-DEADLOCKS-ON-LOSS hung 50 min, then 240 s again
+  2026-07-07) reads as "slow", not FAILED — a hang no clock converts into a
+  failure is invisible to automation. Fix: wrap each bench invocation in
+  `timeout <N>m` in bench-gate.sh / `make perf` so a hang goes red.
 - **CAST-RTT-BENCH-DEADLOCKS-ON-LOSS** (MED, bench) — flagged 2026-07-06.
   `cast_rtt_bench`'s A-side echo-wait is `loop { try_recv; spin_loop }` with NO
   in-loop NAK recovery: A sends seq=N, spins until B echoes. If that datagram
