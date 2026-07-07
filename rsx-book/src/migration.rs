@@ -146,10 +146,21 @@ impl Orderbook {
             }
             new_level.total_qty += qty;
             new_level.order_count += 1;
+            // Per-side occupancy: a migrated destination slot can receive
+            // BOTH sides, so key the bit on THIS side's count going 0 -> 1,
+            // not on the aggregate empty -> non-empty (BOOK-STALE-OCC).
+            let side_was_empty = if side == Side::Buy as u8 {
+                let e = new_level.bid_count == 0;
+                new_level.bid_count += 1;
+                e
+            } else {
+                let e = new_level.ask_count == 0;
+                new_level.ask_count += 1;
+                e
+            };
             self.orders.get_mut(cursor).tick_index = new_idx;
 
-            // First order into this new level: mark occupied.
-            if was_empty {
+            if side_was_empty {
                 if side == Side::Buy as u8 {
                     self.bid_occ.set(new_idx);
                 } else {

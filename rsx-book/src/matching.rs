@@ -41,6 +41,10 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     book.event_len = 0;
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
+    // Track px too: in a compressed slot the best price can move while the
+    // tick stays the same, and that still warrants a fresh BBO.
+    let old_bid_px = book.best_bid_px;
+    let old_ask_px = book.best_ask_px;
 
     if !validate_order(&book.config, Price(order.price), Qty(order.qty)) {
         book.emit(Event::OrderFailed {
@@ -130,36 +134,25 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     match order.side {
         Side::Buy => {
             while order.remaining_qty > 0 && book.best_ask_tick != NONE {
-                let ask_tick = book.best_ask_tick;
                 let before = order.remaining_qty;
-                match_at_level(book, ask_tick, order);
-                let level = &book.active_levels[ask_tick as usize];
-                if level.order_count == 0 {
-                    book.best_ask_tick = book.scan_next_ask(ask_tick);
-                    book.best_ask_px = book.price_at_tick(book.best_ask_tick);
-                }
+                match_at_level(book, book.best_ask_tick, order);
+                // The matched slot may have lost only its best-priced
+                // sells (compressed/mixed slot) while others survive, so
+                // recompute best ask from per-side occupancy rather than
+                // testing for a fully-empty level (BOOK-STALE-BBA /
+                // BOOK-STALE-OCC-ME-CRASH).
+                book.refresh_best_ask();
                 if order.remaining_qty == before {
-                    break;
-                }
-                if book.best_ask_tick == NONE {
-                    break;
+                    break; // best ask no longer crosses the taker limit
                 }
             }
         }
         Side::Sell => {
             while order.remaining_qty > 0 && book.best_bid_tick != NONE {
-                let bid_tick = book.best_bid_tick;
                 let before = order.remaining_qty;
-                match_at_level(book, bid_tick, order);
-                let level = &book.active_levels[bid_tick as usize];
-                if level.order_count == 0 {
-                    book.best_bid_tick = book.scan_next_bid(bid_tick);
-                    book.best_bid_px = book.price_at_tick(book.best_bid_tick);
-                }
+                match_at_level(book, book.best_bid_tick, order);
+                book.refresh_best_bid();
                 if order.remaining_qty == before {
-                    break;
-                }
-                if book.best_bid_tick == NONE {
                     break;
                 }
             }
@@ -236,27 +229,29 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
         });
     }
 
-    // Emit BBO if best bid or ask changed
-    if book.best_bid_tick != old_bid || book.best_ask_tick != old_ask {
+    // Emit BBO if best bid or ask changed (tick OR price).
+    if book.best_bid_tick != old_bid
+        || book.best_ask_tick != old_ask
+        || book.best_bid_px != old_bid_px
+        || book.best_ask_px != old_ask_px
+    {
         emit_bbo(book);
     }
 }
 
 fn emit_bbo(book: &mut Orderbook) {
-    let (bid_px, bid_qty) = if book.best_bid_tick != NONE {
-        let lvl = &book.active_levels[book.best_bid_tick as usize];
-        let px = book.orders.get(lvl.head).price.0;
-        (px, lvl.total_qty)
-    } else {
-        (0, 0)
-    };
-    let (ask_px, ask_qty) = if book.best_ask_tick != NONE {
-        let lvl = &book.active_levels[book.best_ask_tick as usize];
-        let px = book.orders.get(lvl.head).price.0;
-        (px, lvl.total_qty)
-    } else {
-        (0, 0)
-    };
+    // Tripwire: a best tick must point at a level actually resting the
+    // tracked side (per-side occupancy must be exact). A stale bit here
+    // is what drove BOOK-STALE-OCC-ME-CRASH (head == NONE deref).
+    debug_assert!(
+        book.best_bid_tick == NONE || book.active_levels[book.best_bid_tick as usize].bid_count > 0,
+        "best_bid_tick points at a level with no resting buy",
+    );
+    debug_assert!(
+        book.best_ask_tick == NONE || book.active_levels[book.best_ask_tick as usize].ask_count > 0,
+        "best_ask_tick points at a level with no resting sell",
+    );
+    let (bid_px, bid_qty, ask_px, ask_qty) = book.current_bbo();
     book.emit(Event::BBO {
         bid_px: Price(bid_px),
         bid_qty: Qty(bid_qty),
@@ -278,25 +273,26 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
     while cursor != NONE && aggressor.remaining_qty > 0 {
         let maker = book.orders.get(cursor);
         let maker_price = maker.price.0;
+        let maker_side = maker.side;
         let maker_qty = maker.remaining_qty.0;
         let maker_user_id = maker.user_id;
         let maker_oid_hi = maker.order_id_hi;
         let maker_oid_lo = maker.order_id_lo;
         let next_cursor = maker.next;
 
-        match aggressor.side {
-            Side::Buy => {
-                if maker_price > aggressor.price {
-                    cursor = next_cursor;
-                    continue;
-                }
-            }
-            Side::Sell => {
-                if maker_price < aggressor.price {
-                    cursor = next_cursor;
-                    continue;
-                }
-            }
+        // A compressed slot can hold BOTH sides and multiple raw prices
+        // (BOOK-MIXED-SIDE-SELF-TRADE), so match ONLY an opposite-side
+        // maker whose actual price crosses the taker limit. Same-side or
+        // non-crossing makers are left resting — one comparison per walked
+        // order, no extra work on the zone-0 happy path.
+        let crosses = maker_side != aggressor.side as u8
+            && match aggressor.side {
+                Side::Buy => maker_price <= aggressor.price,
+                Side::Sell => maker_price >= aggressor.price,
+            };
+        if !crosses {
+            cursor = next_cursor;
+            continue;
         }
 
         let fill_qty = aggressor.remaining_qty.min(maker_qty);
@@ -404,25 +400,31 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                             return true;
                         }
                     } else {
-                        // Compressed: sum only orders that truly cross.
-                        let mut min_px = i64::MAX;
+                        // Compressed slot: mixed sides + prices. Count only
+                        // opposite-side (sell) qty whose actual price
+                        // crosses — the same predicate as `match_at_level`,
+                        // so feasibility == the fill (a resting BUY in the
+                        // slot must NOT count as available for a buy taker).
+                        let mut min_sell = i64::MAX;
                         let mut c = lvl.head;
                         while c != NONE {
                             let o = book.orders.get(c);
-                            let px = o.price.0;
-                            if px < min_px {
-                                min_px = px;
-                            }
-                            if px <= limit_price {
-                                total += o.remaining_qty.0;
-                                if total >= needed {
-                                    return true;
+                            if o.side == Side::Sell as u8 {
+                                let px = o.price.0;
+                                if px < min_sell {
+                                    min_sell = px;
+                                }
+                                if px <= limit_price {
+                                    total += o.remaining_qty.0;
+                                    if total >= needed {
+                                        return true;
+                                    }
                                 }
                             }
                             c = o.next;
                         }
-                        if min_px > limit_price {
-                            return false; // whole band above limit
+                        if min_sell > limit_price {
+                            return false; // every sell in this band is above
                         }
                     }
                     cur = t + 1;
@@ -445,25 +447,29 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                             return true;
                         }
                     } else {
-                        // Compressed: sum only orders that truly cross.
-                        let mut max_px = i64::MIN;
+                        // Compressed slot: mixed sides + prices. Count only
+                        // opposite-side (buy) qty whose actual price crosses
+                        // — same predicate as `match_at_level`.
+                        let mut max_buy = i64::MIN;
                         let mut c = lvl.head;
                         while c != NONE {
                             let o = book.orders.get(c);
-                            let px = o.price.0;
-                            if px > max_px {
-                                max_px = px;
-                            }
-                            if px >= limit_price {
-                                total += o.remaining_qty.0;
-                                if total >= needed {
-                                    return true;
+                            if o.side == Side::Buy as u8 {
+                                let px = o.price.0;
+                                if px > max_buy {
+                                    max_buy = px;
+                                }
+                                if px >= limit_price {
+                                    total += o.remaining_qty.0;
+                                    if total >= needed {
+                                        return true;
+                                    }
                                 }
                             }
                             c = o.next;
                         }
-                        if max_px < limit_price {
-                            return false; // whole band below limit
+                        if max_buy < limit_price {
+                            return false; // every buy in this band is below
                         }
                     }
                     top = t;
