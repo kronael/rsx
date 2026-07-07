@@ -342,6 +342,13 @@ meaningless for benchmarks.
 
 **From source:**
 
+Prerequisites: stable Rust, and the **mold** linker —
+`.cargo/config.toml` links every crate with `-fuse-ld=mold`
+(`sudo apt install mold`, or `brew install mold`). Without it
+builds fail at link time with `cannot find 'mold'`; either
+install it or delete `.cargo/config.toml` to fall back to the
+default linker (slower links, same binaries).
+
 ```bash
 make check        # cargo check (fastest feedback)
 make test         # Rust unit + integration (~5s)
