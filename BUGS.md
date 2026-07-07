@@ -3,6 +3,71 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-07 — rsx-book compressed-level audit (fable)
+
+**OPEN (triage) — one root cause, four confirmed symptoms.** A compressed
+("smooshed") level can hold orders of **both sides and multiple raw prices**,
+but `match_at_level`, the per-side occupancy maintenance, and the best-bid/ask
+price cache each silently assume **one side / one price per level**. Existing
+smooshed-tick tests (`tests/matching_test.rs:447-520`) only ever put same-side
+orders in a band, so none of this is covered. Verified with a runnable repro
+(compiles against real `rsx-book`; #2 panics live). NOT fixed — recording only.
+
+- **BOOK-MIXED-SIDE-SELF-TRADE** (CRITICAL, correctness) — a taker fills a
+  resting order of the **same side** (position corruption). `matching.rs:287-300`
+  compares only maker *price*, never maker *side*; `book.rs:154-239` links
+  opposite sides into one level. Repro (mid=50_000, tick=1): GTC BUY 47_491/10,
+  GTC SELL 47_495/10 (rests at the same tick 5_499), GTC SELL 47_490/20 → the
+  sell taker fills the resting SELL @47_495. `update_positions_on_fill` then
+  *increases* the seller's net_qty. Post-only can also take liquidity via this
+  path. Violates fill semantics + invariant #4.
+- **BOOK-STALE-OCC-ME-CRASH** (CRITICAL, correctness/liveness) — a stale
+  side-occupancy bit points `best_*_tick` at an empty level → `emit_bbo`
+  dereferences `head == NONE` → **ME panics** (`slab.rs:92` index
+  4294967295), and WAL replay re-runs the sequence → **crash loop**.
+  `book.rs:204-209` sets side-occupancy only on empty→non-empty (2nd
+  opposite-side order never sets its bit); `book.rs:264-273` clears only the
+  departing side on →empty; `matching.rs:246-259` then hits the empty head.
+  Repro: the 3 orders above, then GTC BUY 47_000/10, GTC SELL 46_900/10 →
+  panic inside `process_new_order`. Even without the panic the stale bit
+  shadows real bids → persistently crossed book. Violates invariants #6/#7.
+  **This is the live-verified one (repro test panics).**
+- **BOOK-FOK-CLAMP-DIVERGENCE** (HIGH, correctness) — FOK feasibility
+  (`can_fill_fully`, `matching.rs:397-405`) treats a zone-0 level as
+  single-price, but `compression.rs:56,113` (floor-division `z0` + the
+  `local_offset.min(half-1)` clamp) aliases two distinct tick-aligned prices
+  into one zone-0 slot whenever `(mid*5/100) % tick_size != 0`. Repro
+  (mid=50_001, tick=3): sells @52_497 and @52_500 alias to one slot; FOK BUY
+  52_497/20 passes feasibility, matches only 10 → debug panic
+  `matching.rs:191`; **release compiles the assert out → emits a Fill AND
+  OrderFailed for the same taker with positions already mutated**. Violates
+  invariant #2 (exactly-one completion). No config validation prevents the
+  precondition.
+- **BOOK-STALE-BBA-WRONGFUL-POSTONLY** (MED, correctness) — `best_bid_px`/
+  `best_ask_px` go stale when a smooshed level *partially* empties (cancel or
+  partial fill leaves survivors at a different price); `book.rs:299-308` /
+  `matching.rs:136-158` rescan BBA only when the level fully empties. Repro:
+  sells @52_501 and @52_509 (same tick), cancel the @52_501 → `best_ask_px`
+  still 52_501; post-only BUY 52_505 → wrongly CANCEL_POST_ONLY though it
+  crosses nothing. `price_at_tick` also returns the head's price, not the
+  band's best.
+
+**PLAUSIBLE (code-traced, not run; lower exposure):**
+- **BOOK-MIGRATION-PARTIAL-BOOK** (traced) — matching during a recenter
+  ignores unmigrated levels (`migration.rs:22-80`; `resolve_level` has no
+  caller); missed fills / later crossed book. Dormant: `trigger_recenter`
+  has no production caller today.
+- **BOOK-MODIFY-STALE-HANDLE** (traced) — `modify_order_price`
+  (`book.rs:354-379`) reads slot data before any `is_active`/identity check;
+  no checked variant. No production caller (tests only) — latent API hazard.
+- **BOOK-ORDER-COUNT-U16-WRAP** (traced) — `UserState.order_count` is u16
+  unchecked (`book.rs:236`); ME slab cap is 65_536, so a user holding 65_536
+  orders wraps to 0 → `is_idle()` true → `try_reclaim` frees a live user.
+- **BOOK-SNAPSHOT-FREELIST-PERMUTE** (traced) — `snapshot.rs:179-183`
+  rebuilds the freelist descending, not the live LIFO order; handle
+  assignment diverges post-restore. Determinism hazard only if a consumer
+  keys on handles across restore.
+
 ## Status — 2026-05-30
 
 **OPEN (triage):**
