@@ -49,12 +49,12 @@ ALL_UNITS=(
 )
 # health addr per unit, in the order verified after start.
 HEALTH=(
-  127.0.0.1:9801 127.0.0.1:9802 127.0.0.1:9803  # me btc/eth/sol
-  127.0.0.1:9830                                  # mark
-  127.0.0.1:9810                                  # risk-0
-  127.0.0.1:9820                                  # gateway
-  127.0.0.1:9840                                  # marketdata
-  127.0.0.1:9851 127.0.0.1:9852 127.0.0.1:9853    # recorder btc/eth/sol
+  127.0.0.1:9801 127.0.0.1:9802 127.0.0.1:9803    # me btc/eth/sol
+  127.0.0.1:10100                                 # mark
+  127.0.0.1:9900                                  # risk-0
+  127.0.0.1:10000                                 # gateway
+  127.0.0.1:10200                                 # marketdata
+  127.0.0.1:10301 127.0.0.1:10302 127.0.0.1:10303 # recorder btc/eth/sol
 )
 
 say() { printf '%s %s\n' "$(date '+%b %d %H:%M:%S') INFO deploy:" "$*"; }
