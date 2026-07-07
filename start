@@ -137,17 +137,19 @@ BASE_RISK_MARK_CAST = 9600
 BASE_ME_REPLICATION = 9700
 
 # Health / metrics servers (RSX_*_HEALTH_ADDR). Each daemon binds a
-# small HTTP /health + /metrics endpoint here. 98xx band: clear of the
-# cast ports (91xx-97xx), the WS ports (8080/8180), and replication
-# (97xx). One 10-port block per daemon type so multi-instance (ME per
-# symbol, risk per shard) offsets by index without colliding. The
-# suggested 9200-9205 could NOT be used — 9200 is BASE_RISK_CAST.
+# small HTTP /health + /metrics endpoint here. 98xx-103xx band: clear
+# of the cast ports (91xx-97xx), the WS ports (8080/8180), and
+# replication (97xx). One 100-port block per daemon type so
+# multi-instance offsets (ME +sid, risk +shard/replica) stay inside
+# their own band instead of bleeding into the next tier — invariant:
+# offset must stay < 100 (sid, shard, gw counts are all well under
+# that in practice; PENGU alone already needs sid=10).
 BASE_ME_HEALTH = 9800        # + sid
-BASE_RISK_HEALTH = 9810      # + shard (replicas: + 10 + shard*2 + r)
-BASE_GW_HEALTH = 9820        # + gw
-BASE_MARK_HEALTH = 9830
-BASE_MD_HEALTH = 9840
-BASE_RECORDER_HEALTH = 9850
+BASE_RISK_HEALTH = 9900      # + shard (replicas: + 10 + shard*2 + r)
+BASE_GW_HEALTH = 10000       # + gw
+BASE_MARK_HEALTH = 10100
+BASE_MD_HEALTH = 10200
+BASE_RECORDER_HEALTH = 10300
 
 DEFAULT_PG_URL = (
     "postgres://rsx:rsx@127.0.0.1:5432/rsx"
@@ -296,13 +298,6 @@ def build_spawn_plan(config, pg_url, release=False):
                 "RSX_RISK_SHARD_ID": str(shard),
                 "RSX_RISK_SHARD_COUNT":
                     str(config["risk_shards"]),
-                # Dev default: reset stale frozen_margin on
-                # cold start. Without this, a crash mid-order
-                # or WAL-retention-expiry can leak frozen
-                # margin across runs until accounts become
-                # unusable. Production should reconcile vs
-                # ME book instead.
-                "RSX_RISK_RESET_FROZEN_ON_START": "1",
                 "RSX_RISK_MAX_SYMBOLS": str(max(s["id"] for s in symbols) + 1),
                 "RSX_RISK_CAST_ADDR":
                     f"127.0.0.1:{BASE_RISK_CAST + shard}",
@@ -336,7 +331,6 @@ def build_spawn_plan(config, pg_url, release=False):
                             str(config["risk_shards"]),
                         "RSX_RISK_MAX_SYMBOLS":
                             str(len(symbols)),
-                        "RSX_RISK_IS_REPLICA": "true",
                         "RSX_RISK_CAST_ADDR":
                             f"127.0.0.1:{BASE_RISK_CAST + 10 + shard * 2 + r}",
                         "RSX_GW_CAST_ADDR":

@@ -24,7 +24,8 @@ DATABASE_URL=postgres://... \
 cargo run -p rsx-risk
 ```
 
-For replica mode, add `RSX_RISK_IS_REPLICA=true`.
+Main/replica role is decided by advisory-lock acquisition at
+startup, not an env var.
 
 ## Environment Variables
 
@@ -33,7 +34,6 @@ For replica mode, add `RSX_RISK_IS_REPLICA=true`.
 | `RSX_RISK_SHARD_ID` | Shard ID |
 | `RSX_RISK_SHARD_COUNT` | Total shard count |
 | `RSX_RISK_MAX_SYMBOLS` | Max symbol count |
-| `RSX_RISK_IS_REPLICA` | `true` for replica mode |
 | `RSX_RISK_CORE_ID` | CPU core to pin to |
 | `RSX_RISK_WAL_DIR` | WAL directory |
 | `RSX_RISK_CAST_ADDR` | casting bind address |
