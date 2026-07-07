@@ -51,5 +51,5 @@ The recorder explicitly trades latency (TCP head-of-line
 blocking, kernel cwnd) for operational simplicity (one
 socket, no NAK state machine, no UDP rmem tuning). Archival
 runs offline of the GW→ME→GW critical path, so the tradeoff
-is the obvious one. See [`../notes/tiles.md`](../notes/tiles.md)
+is the obvious one. See [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md)
 for when each runtime applies.

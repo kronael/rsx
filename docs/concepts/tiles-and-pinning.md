@@ -24,11 +24,13 @@ no syscall, no allocation. A 50–170 ns ring hop is the relevant
 latency unit. Postgres write-behind lives on a separate tokio
 sidecar thread and shares no locks with the pinned loop.
 
-`rsx-matching` is a degenerate tile: the whole process is one
-pinned thread. There are no SPSC rings because there is no other
-thread to ring to. The loop drains UDP packets, runs the
-matching algorithm, appends to the WAL writer inline, and sends
-fills via UDP. Measured: 54 ns per single fill through the book.
+`rsx-matching` is a separate process, not a tile — a tile is a
+thread inside a process, and the matching engine is the whole
+process. It happens to be a single pinned thread, so it has no
+SPSC rings: there is no sibling thread to ring to. That one
+thread drains UDP packets, runs the matching algorithm, appends
+to the WAL writer inline, and sends fills back over UDP.
+Measured: 54 ns per single fill through the book.
 
 Gateway and marketdata use monoio with io_uring. Both processes
 handle many concurrent WebSocket connections — the gateway

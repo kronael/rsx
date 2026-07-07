@@ -176,4 +176,4 @@ marketdata is not on the GW→ME→GW critical path, so the
 extra core is better spent on gateway/risk. The shadow book
 is single-owner per-process state, but the surrounding loop
 is async (not a strict tile) because WS fan-out dominates.
-See [`../notes/tiles.md`](../notes/tiles.md).
+See [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md).
