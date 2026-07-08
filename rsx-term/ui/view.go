@@ -25,8 +25,8 @@ const (
 
 	depthBar      = "▊"
 	maxBarLen     = int64(24) // depth-bar cap, per specs/2/55-terminal.md
-	maxLadderRows = 8         // rows shown per book side
-	maxTapeRows   = 10        // trade prints shown
+	maxLadderRows = 8         // rows shown per book side, before a WindowSizeMsg
+	maxTapeRows   = 10        // trade prints shown, before a WindowSizeMsg
 	sparkSamples  = 32        // how much of the rolling window the sparkline shows
 
 	// mdStaleThreshold is how long since the last marketdata frame before the
@@ -105,6 +105,43 @@ func (m Model) viewMain() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
 }
 
+// ladderRows derives how many levels to show per book side from the
+// terminal height, so a tall terminal shows a deeper book instead of a wall
+// of empty space and a short one clips gracefully instead of a fixed 8.
+// m.height == 0 means no WindowSizeMsg has landed yet — fall back to the
+// spec default rather than guess.
+func (m Model) ladderRows() int {
+	if m.height <= 0 {
+		return maxLadderRows
+	}
+	// Chrome outside the book panel's own level rows: status bar, the two
+	// speed-strip lines, status line, help line, plus the book panel's own
+	// title + top/bottom border + spread-divider row.
+	const chrome = 1 + 2 + 1 + 1 + 4
+	return clamp((m.height-chrome)/2, 1, 20)
+}
+
+// tapeRows derives how many trade prints to show from the terminal height,
+// the trades-panel sibling of ladderRows. Same before-first-resize fallback.
+func (m Model) tapeRows() int {
+	if m.height <= 0 {
+		return maxTapeRows
+	}
+	// Chrome outside the trades panel's own rows: the same top-level chrome
+	// as ladderRows, plus the positions panel above trades (title + border +
+	// header + one row) and the trades panel's own title + border.
+	const chrome = 1 + 2 + 1 + 1 + 4 + 3
+	return clamp(m.height-chrome, 1, 20)
+}
+
+// narrow reports whether the terminal is known to be too narrow for the full
+// three-column layout. m.width == 0 (no WindowSizeMsg yet) is never treated
+// as narrow — there's nothing to degrade against yet.
+func (m Model) narrow() bool {
+	const layoutWidth = bookWidth + orderWidth + rightWidth
+	return m.width > 0 && m.width < layoutWidth
+}
+
 // viewBook draws the ladder: asks (red) worst-first down to the spread row,
 // then bids (green) best-first. Degraded to an amber row when the ladder is
 // empty or the marketdata link is down (specs/2/55-terminal.md).
@@ -115,40 +152,64 @@ func (m Model) viewBook() string {
 		return panel(" book ", bookWidth, rows...)
 	}
 
+	rowsWanted := m.ladderRows()
 	asks := m.book.Asks
 	an := len(asks)
-	if an > maxLadderRows {
-		an = maxLadderRows
+	if an > rowsWanted {
+		an = rowsWanted
 	}
-	// Best an asks, printed worst-first so the best ask sits above the spread.
-	for i := an - 1; i >= 0; i-- {
-		rows = append(rows, levelRow(asks[i], ColorAsk))
-	}
-
-	rows = append(rows, StyleMuted.Render(fmt.Sprintf("— %d —", m.book.Spread())))
-
 	bids := m.book.Bids
 	bn := len(bids)
-	if bn > maxLadderRows {
-		bn = maxLadderRows
+	if bn > rowsWanted {
+		bn = rowsWanted
 	}
+
+	// Right-align every level's px and qty to the widest value currently on
+	// screen, so the ladder reads as rigid columns instead of going ragged
+	// the moment a price crosses a digit boundary.
+	var pxs, qtys []int64
+	for _, l := range asks[:an] {
+		pxs, qtys = append(pxs, l.Px), append(qtys, l.Qty)
+	}
+	for _, l := range bids[:bn] {
+		pxs, qtys = append(pxs, l.Px), append(qtys, l.Qty)
+	}
+	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
+	showBar := !m.narrow()
+
+	// Best an asks, printed worst-first so the best ask sits above the spread.
+	for i := an - 1; i >= 0; i-- {
+		rows = append(rows, levelRow(asks[i], ColorAsk, pxW, qtyW, showBar))
+	}
+
+	// The spread row is the highest-frequency read on a ladder — bright/bold
+	// so a trader's eye snaps to it, same StyleTextBright as a focused field
+	// (no new colour meaning, just more weight).
+	rows = append(rows, StyleTextBright.Bold(true).Render(fmt.Sprintf("— %d —", m.book.Spread())))
+
 	for i := 0; i < bn; i++ {
-		rows = append(rows, levelRow(bids[i], ColorBid))
+		rows = append(rows, levelRow(bids[i], ColorBid, pxW, qtyW, showBar))
 	}
 
 	return panel(" book ", bookWidth, rows...)
 }
 
-// levelRow renders "<px> <qty> <bar>" with the px and bar coloured by side.
-func levelRow(l wire.Level, color lipgloss.Color) string {
+// levelRow renders "<px> <qty> <bar>" with px, qty right-aligned to pxW/qtyW
+// and the px + bar coloured by side. The bar is dropped (not just blanked)
+// when showBar is false — a narrow terminal degrades by shedding the widest
+// element rather than wrapping mid-row.
+func levelRow(l wire.Level, color lipgloss.Color, pxW, qtyW int, showBar bool) string {
+	side := lipgloss.NewStyle().Foreground(color)
+	row := fmt.Sprintf("%s %*d",
+		side.Render(fmt.Sprintf("%*d", pxW, l.Px)),
+		qtyW, l.Qty,
+	)
+	if !showBar {
+		return row
+	}
 	n := max(int64(0), min(l.Qty, maxBarLen))
 	bar := strings.Repeat(depthBar, int(n))
-	side := lipgloss.NewStyle().Foreground(color)
-	return fmt.Sprintf("%s %s %s",
-		side.Render(fmt.Sprintf("%d", l.Px)),
-		fmt.Sprintf("%d", l.Qty),
-		side.Render(bar),
-	)
+	return row + " " + side.Render(bar)
 }
 
 func (m Model) viewOrder() string {
@@ -199,8 +260,10 @@ func onOff(b bool) string {
 func (m Model) viewConfirm() string {
 	o := *m.pendingConfirm
 	side := lipgloss.NewStyle().Foreground(sideColor(o.Side))
+	notional := o.Px * o.Qty
+	notionalW := colWidth(8, notional)
 	line1 := fmt.Sprintf("confirm %s %d @ %d", side.Render(o.Side.Label()), o.Qty, o.Px)
-	line2 := fmt.Sprintf("notional %d  %s  ro:%s po:%s", o.Px*o.Qty, o.Tif.Label(), onOff(o.ReduceOnly), onOff(o.PostOnly))
+	line2 := fmt.Sprintf("notional %*d  %s  ro:%s po:%s", notionalW, notional, o.Tif.Label(), onOff(o.ReduceOnly), onOff(o.PostOnly))
 	line3 := StyleMuted.Render("liq  n/a")
 	legend := StyleMuted.Render("n/a fields need server support, not yet wired")
 	line4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc cancel")
@@ -270,17 +333,27 @@ func signed(v int64) string {
 // side. Each print is also prefixed with a B/S glyph so the side reads
 // without relying on colour.
 func (m Model) viewTrades() string {
+	entries := m.tape.Entries()
+	n := len(entries)
+	if rowsWanted := m.tapeRows(); n > rowsWanted {
+		n = rowsWanted
+	}
+	entries = entries[:n]
+
+	var pxs, qtys []int64
+	for _, e := range entries {
+		pxs, qtys = append(pxs, e.Px), append(qtys, e.Qty)
+	}
+	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
+
 	var rows []string
-	for i, e := range m.tape.Entries() {
-		if i >= maxTapeRows {
-			break
-		}
+	for _, e := range entries {
 		glyph := "B"
 		if e.Side == wire.Sell {
 			glyph = "S"
 		}
 		style := lipgloss.NewStyle().Foreground(sideColor(e.Side))
-		rows = append(rows, style.Render(fmt.Sprintf("%s %d %d", glyph, e.Px, e.Qty)))
+		rows = append(rows, style.Render(fmt.Sprintf("%s %*d %*d", glyph, pxW, e.Px, qtyW, e.Qty)))
 	}
 	if len(rows) == 0 {
 		rows = append(rows, StyleMuted.Render("no trades yet"))
