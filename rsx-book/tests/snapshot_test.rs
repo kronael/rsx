@@ -75,10 +75,7 @@ fn user_state_preserved() {
     book.insert_resting(49_990, 5, Side::Buy, 0, 42, false, 100, 0, 1);
     book.insert_resting(50_010, 3, Side::Sell, 0, 42, false, 200, 0, 2);
     let restored = roundtrip(&book);
-    let idx = restored.user_map.get(&42).unwrap();
-    let us = &restored.user_states[*idx as usize];
-    assert_eq!(us.user_id, 42);
-    assert_eq!(us.order_count, 2);
+    assert_eq!(restored.users.order_count(42), Some(2));
 }
 
 #[test]
@@ -141,11 +138,9 @@ fn fill_then_snapshot_user_positions() {
     let restored = roundtrip(&book);
 
     // User 1 (taker buy): +5 position
-    let idx1 = restored.user_map.get(&1).unwrap();
-    assert_eq!(restored.user_states[*idx1 as usize].net_qty, 5,);
+    assert_eq!(restored.users.net_qty(1), Some(5));
     // User 2 (maker sell): -5 position
-    let idx2 = restored.user_map.get(&2).unwrap();
-    assert_eq!(restored.user_states[*idx2 as usize].net_qty, -5,);
+    assert_eq!(restored.users.net_qty(2), Some(-5));
 }
 
 #[test]
@@ -238,36 +233,13 @@ fn snapshot_and_wal_recovery_restores_book() {
     assert_eq!(restored.best_ask_tick, final_best_ask,);
 
     // User 1: bought 7 from cross, has bid orders
-    let idx1 = restored.user_map.get(&1).unwrap();
-    let u1 = &restored.user_states[*idx1 as usize];
-    assert_eq!(
-        u1.net_qty,
-        book.user_states[*book.user_map.get(&1).unwrap() as usize].net_qty
-    );
-
+    assert_eq!(restored.users.net_qty(1), book.users.net_qty(1));
     // User 3: sold partial from ask, sold 3 agg
-    let idx3 = restored.user_map.get(&3).unwrap();
-    let u3 = &restored.user_states[*idx3 as usize];
-    assert_eq!(
-        u3.net_qty,
-        book.user_states[*book.user_map.get(&3).unwrap() as usize].net_qty
-    );
-
+    assert_eq!(restored.users.net_qty(3), book.users.net_qty(3));
     // User 4: had 12 ask at 50005, 7 filled
-    let idx4 = restored.user_map.get(&4).unwrap();
-    let u4 = &restored.user_states[*idx4 as usize];
-    assert_eq!(
-        u4.net_qty,
-        book.user_states[*book.user_map.get(&4).unwrap() as usize].net_qty
-    );
-
+    assert_eq!(restored.users.net_qty(4), book.users.net_qty(4));
     // User 5: 20 bid, 3 filled by agg sell
-    let idx5 = restored.user_map.get(&5).unwrap();
-    let u5 = &restored.user_states[*idx5 as usize];
-    assert_eq!(
-        u5.net_qty,
-        book.user_states[*book.user_map.get(&5).unwrap() as usize].net_qty
-    );
+    assert_eq!(restored.users.net_qty(5), book.users.net_qty(5));
 }
 
 #[test]

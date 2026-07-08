@@ -6,7 +6,6 @@ use crate::event::FAIL_REDUCE_ONLY;
 use crate::event::FAIL_VALIDATION;
 use crate::event::REASON_CANCELLED;
 use crate::event::REASON_FILLED;
-use crate::user::update_positions_on_fill;
 use rsx_types::validate_order;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -57,10 +56,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     }
 
     if order.reduce_only {
-        let net = book
-            .user_map
-            .get(&order.user_id)
-            .map(|&idx| book.user_states[idx as usize].net_qty);
+        let net = book.users.net_qty(order.user_id);
         match net {
             None => {
                 book.emit(Event::OrderFailed {
@@ -325,16 +321,8 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
             taker_ts_ns: aggressor.timestamp_ns,
         });
 
-        update_positions_on_fill(
-            &mut book.user_states,
-            &mut book.user_map,
-            &mut book.user_free_list,
-            &mut book.user_bump,
-            aggressor.user_id,
-            maker_user_id,
-            aggressor.side,
-            fill_qty,
-        );
+        book.users
+            .apply_fill(aggressor.user_id, maker_user_id, aggressor.side, fill_qty);
 
         if maker_remaining == 0 {
             book.unlink_order(cursor);
@@ -353,11 +341,7 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
             book.orders.get_mut(cursor).set_active(false);
             book.orders.free(cursor);
 
-            if let Some(&uidx) = book.user_map.get(&maker_user_id) {
-                book.user_states[uidx as usize].order_count = book.user_states[uidx as usize]
-                    .order_count
-                    .saturating_sub(1);
-            }
+            book.users.remove_order(maker_user_id);
         }
 
         cursor = next_cursor;

@@ -54,10 +54,7 @@ fn gtc(price: i64, qty: i64, side: Side, user_id: u32) -> IncomingOrder {
 }
 
 fn net_qty(book: &Orderbook, user_id: u32) -> i64 {
-    match book.user_map.get(&user_id) {
-        Some(&idx) => book.user_states[idx as usize].net_qty,
-        None => 0,
-    }
+    book.users.net_qty(user_id).unwrap_or(0)
 }
 
 fn fills(book: &Orderbook) -> Vec<(i64, i64, u32)> {

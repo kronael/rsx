@@ -4,11 +4,9 @@ use crate::compression::CompressionMap;
 use crate::level::PriceLevel;
 use crate::order::OrderSlot;
 use crate::slab::Slab;
-use crate::user::UserState;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::SymbolConfig;
-use rustc_hash::FxHashMap;
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -84,22 +82,7 @@ pub fn save(book: &Orderbook, w: &mut dyn Write) -> io::Result<()> {
     }
 
     // User state
-    w.write_all(&book.user_bump.to_le_bytes())?;
-    let user_count = book.user_map.len() as u32;
-    w.write_all(&user_count.to_le_bytes())?;
-    for (&uid, &idx) in &book.user_map {
-        w.write_all(&uid.to_le_bytes())?;
-        w.write_all(&idx.to_le_bytes())?;
-        let us = &book.user_states[idx as usize];
-        w.write_all(&us.net_qty.to_le_bytes())?;
-        w.write_all(&us.order_count.to_le_bytes())?;
-    }
-
-    let free_count = book.user_free_list.len() as u32;
-    w.write_all(&free_count.to_le_bytes())?;
-    for &idx in &book.user_free_list {
-        w.write_all(&idx.to_le_bytes())?;
-    }
+    book.users.write_snapshot(w)?;
 
     Ok(())
 }
@@ -206,44 +189,7 @@ pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
     }
 
     // User state
-    let user_bump = read_u16(r)?;
-    let user_count = read_u32(r)?;
-    let mut user_states = Vec::with_capacity(user_bump as usize);
-    user_states.resize_with(user_bump as usize, UserState::default);
-    let mut user_map: FxHashMap<u32, u16> = FxHashMap::default();
-
-    for _ in 0..user_count {
-        let uid = read_u32(r)?;
-        let idx = read_u16(r)?;
-        let net_qty = read_i64(r)?;
-        let order_count = read_u16(r)?;
-        if idx as usize >= user_bump as usize {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "user index out of bounds",
-            ));
-        }
-        user_map.insert(uid, idx);
-        let us = &mut user_states[idx as usize];
-        us.user_id = uid;
-        us.net_qty = net_qty;
-        us.order_count = order_count;
-    }
-
-    let free_count = read_u32(r)?;
-    let mut user_free_list = Vec::with_capacity(free_count as usize);
-    for _ in 0..free_count {
-        let fidx = read_u16(r)?;
-        if (fidx as usize) >= user_bump as usize {
-            tracing::warn!(
-                fidx,
-                user_bump,
-                "snapshot user free-list index out of range, skipping",
-            );
-            continue;
-        }
-        user_free_list.push(fidx);
-    }
+    let users = crate::user::UserRegistry::read_snapshot(r)?;
 
     // Box::new to heap-allocate immediately,
     // avoiding stack overflow from event_buf.
@@ -262,10 +208,7 @@ pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
     book.best_bid_px = book.bid_top_at(best_bid_tick).0;
     book.best_ask_px = book.ask_top_at(best_ask_tick).0;
     book.sequence = sequence;
-    book.user_states = user_states;
-    book.user_map = user_map;
-    book.user_free_list = user_free_list;
-    book.user_bump = user_bump;
+    book.users = users;
     Ok(book)
 }
 
@@ -348,12 +291,6 @@ fn read_u8(r: &mut dyn Read) -> io::Result<u8> {
     let mut buf = [0u8; 1];
     r.read_exact(&mut buf)?;
     Ok(buf[0])
-}
-
-fn read_u16(r: &mut dyn Read) -> io::Result<u16> {
-    let mut buf = [0u8; 2];
-    r.read_exact(&mut buf)?;
-    Ok(u16::from_le_bytes(buf))
 }
 
 fn read_u32(r: &mut dyn Read) -> io::Result<u32> {

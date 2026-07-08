@@ -3,7 +3,6 @@ use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::NONE;
-use rustc_hash::FxHashMap;
 
 use crate::compression::CompressionMap;
 use crate::event::Event;
@@ -12,7 +11,7 @@ use crate::level::PriceLevel;
 use crate::occupancy::Occupancy;
 use crate::order::OrderSlot;
 use crate::slab::Slab;
-use crate::user::UserState;
+use crate::user::UserRegistry;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BookState {
@@ -58,10 +57,7 @@ pub struct Orderbook {
     pub event_buf: Box<[Event; MAX_EVENTS]>,
     pub event_len: u32,
     // User position tracking
-    pub user_states: Vec<UserState>,
-    pub user_map: FxHashMap<u32, u16>,
-    pub user_free_list: Vec<u16>,
-    pub user_bump: u16,
+    pub users: UserRegistry,
     // Migration state
     pub old_levels: Option<Vec<PriceLevel>>,
     pub old_compression: Option<CompressionMap>,
@@ -103,10 +99,7 @@ impl Orderbook {
                      exactly MAX_EVENTS slots",
                 ),
             event_len: 0,
-            user_states: Vec::with_capacity(256),
-            user_map: FxHashMap::default(),
-            user_free_list: Vec::new(),
-            user_bump: 0,
+            users: UserRegistry::new(),
             old_levels: None,
             old_compression: None,
             bid_frontier: mid_price,
@@ -241,14 +234,7 @@ impl Orderbook {
         }
 
         // Track user order count
-        let uidx = crate::user::get_or_assign_user(
-            &mut self.user_states,
-            &mut self.user_map,
-            &mut self.user_free_list,
-            &mut self.user_bump,
-            user_id,
-        );
-        self.user_states[uidx as usize].order_count += 1;
+        self.users.add_order(user_id);
 
         handle
     }
@@ -337,11 +323,7 @@ impl Orderbook {
         self.orders.free(handle);
 
         // Decrement user order count
-        if let Some(&uidx) = self.user_map.get(&user_id) {
-            self.user_states[uidx as usize].order_count = self.user_states[uidx as usize]
-                .order_count
-                .saturating_sub(1);
-        }
+        self.users.remove_order(user_id);
 
         true
     }
