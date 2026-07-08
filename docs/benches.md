@@ -74,14 +74,14 @@ don't compose to a production p50 on their own.
 
 | Bench | Measures | Notes |
 |---|---|---|
-| `book_bench` | slab alloc/free, `CompressionMap::price_to_index` near + far, `CompressionMap::new`, single-order insert + match + cancel | The "54 ns single fill" Criterion bench lives here; that's the **inner match only**, surrounding plumbing adds ~3 µs in production (see `process_order_bench`) |
+| `book_bench` | slab alloc/free, `CompressionMap::price_to_index` near + far, `CompressionMap::new`, single-order insert + match + cancel | Depth-independent pure-match cost (~30 ns) is `match_by_depth` (rsx-matching); the fill bench here (`match_ioc_vs_1k_asks`) is the full `process_new_order` path + replenish, not an isolated single fill |
 
 ### rsx-matching (matching engine plumbing)
 
 | Bench | Measures | Production leg it isolates |
 |---|---|---|
 | `process_order_bench` | Full `me_in → me_out` cycle: dedup + WAL accept + `process_new_order` + `write_events_to_wal` + index update | `me_in → me_out` in production (the 158 µs leg). Production now goes through `publish_events` (one-CRC fan-out) instead; the bench uses `write_events_to_wal` directly because it isolates the WAL leg without the cast send-path noise. |
-| `match_n_levels_bench` | One incoming order sweeping 1, 5, 20, 100 resting levels | Algorithmic complexity check; n=1 here is 6.8 µs (includes book setup), pure-match is 54 ns |
+| `match_n_levels_bench` | One incoming order sweeping 1, 5, 20, 100 resting levels | Algorithmic complexity check; n=1 here is 6.8 µs (includes book setup), pure-match is ~30 ns (`match_by_depth`) |
 | `wal_replay_bench` | `WalReader::next` over a pre-written 30 K-record WAL | Cold-start recovery / snapshot reload — 228 ms @ 30 K records |
 | `matching_bench` | dedup duplicate check, single-slot alloc/free, cancel | Hot-path primitives |
 
@@ -190,7 +190,7 @@ sendmmsg batching, or kernel bypass (DPDK/AF_XDP).
 - **Criterion includes setup cost in `iter_batched` low-n
   cases.** `match_n_levels n=1` showed 6.8 µs (most of
   which is `Orderbook::new`). The "real" pure-match cost
-  is the 54 ns single-fill bench in `book_bench`. Use
+  is `match_by_depth` (~30 ns, depth-independent). Use
   `process_order_bench` (3.5 µs) for the true ME critical
   section cost.
 - **`bench-match-rt` is `std::net::UdpSocket`, not monoio.**
