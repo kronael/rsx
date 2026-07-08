@@ -7,7 +7,6 @@ use rsx_book::event::REASON_CANCELLED;
 use rsx_book::event::REASON_FILLED;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
-use rsx_book::user::get_or_assign_user;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
@@ -50,15 +49,9 @@ fn incoming(price: i64, qty: i64, side: Side, tif: TimeInForce, user_id: u32) ->
 #[test]
 fn reduce_only_ioc_empty_book_reports_zero_filled() {
     let mut book = test_book();
-    // Give user 7 a long position of 30, no resting book to hit.
-    let uidx = get_or_assign_user(
-        &mut book.user_states,
-        &mut book.user_map,
-        &mut book.user_free_list,
-        &mut book.user_bump,
-        7,
-    );
-    book.user_states[uidx as usize].net_qty = 30;
+    // Give user 7 a long position of 30 via a fill (counterparty 999),
+    // no resting book to hit.
+    book.users.apply_fill(7, 999, Side::Buy, 30);
 
     let mut order = IncomingOrder {
         price: 49_900,
@@ -405,11 +398,9 @@ fn position_tracking_on_fills() {
     process_new_order(&mut book, &mut order);
 
     // User 2 bought 100 -> net_qty = +100
-    let u2_idx = book.user_map.get(&2).unwrap();
-    assert_eq!(book.user_states[*u2_idx as usize].net_qty, 100);
+    assert_eq!(book.users.net_qty(2), Some(100));
     // User 1 sold 100 -> net_qty = -100
-    let u1_idx = book.user_map.get(&1).unwrap();
-    assert_eq!(book.user_states[*u1_idx as usize].net_qty, -100);
+    assert_eq!(book.users.net_qty(1), Some(-100));
 }
 
 #[test]
