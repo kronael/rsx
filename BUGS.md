@@ -3,6 +3,33 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — book+matching refine critique (merged from .matching-book-refine)
+
+Correctness findings from the refine-pass critique, confirmed still present in
+main. The minimization/doc findings were applied (`b2d3c52`).
+
+- **ME-FILL-DONE-STALE-SLOT-TIF** (MED-HIGH, correctness) — `emit_events`
+  (`rsx-matching/src/wal.rs`, Fill + OrderDone paths) reads
+  `book.orders.get(handle)` for `(reduce_only, tif)` **after** the match cycle.
+  In `rsx-book/src/matching.rs` a fully-filled maker's slot is `free()`d
+  mid-cycle, and a GTC taker with residual then `insert_resting` pops that same
+  slot off the LIFO freelist — so for "GTC taker fully fills ≥1 maker, residual
+  rests" the maker's `FillRecord`/`OrderDoneRecord` carry the **taker's**
+  `tif`/`reduce_only` on the wire. Fix: capture `tif`/`reduce_only` into
+  `Event::Fill`/`Event::OrderDone` at emission time (slot live), drop the
+  post-cycle derefs.
+- **MD-SHADOW-MIXED-SLOT-BBO-L2** (MED, correctness — marketdata) — the shadow
+  book reimplements BBO/L2 with the FIFO-head anti-pattern rsx-book fixed:
+  `rsx-marketdata/src/shadow.rs` `derive_bbo` (~:129) + `side_levels` use
+  `level.total_qty`/`order_count`/`head.price`, which in a mixed compressed
+  slot drops a side / misattributes qty. Fix: `derive_bbo` → `book.current_bbo()`;
+  `side_levels` → `bid_count`/`ask_count` per raw price.
+- **BOOK-USER-RECLAIM-UNWIRED-U16-CAP** (LOW-MED, liveness) — user reclamation
+  (`rsx-book/src/user.rs:95` `try_reclaim`) has no production caller, so
+  `get_or_assign_user`'s `user_bump` hits the u16 cap at 65 535 distinct users
+  per book → panic/wrap over a long run. Wire `try_reclaim` into the ME idle
+  loop, or delete it and document the cap.
+
 ## Status — 2026-07-08 — live latency legs not stamped (rsx-term speed strip)
 
 Design settled → **`specs/2/59-latency-observability.md`** (planned). The
