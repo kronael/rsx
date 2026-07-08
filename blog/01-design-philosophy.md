@@ -1,6 +1,6 @@
 # Design Philosophy: Why We Built RSX From Scratch
 
-RSX is a perpetual futures exchange built in Rust. Not a framework,
+RSX is a derivatives exchange built in Rust. Not a framework,
 not a library -- a complete exchange: matching engine, risk engine,
 gateway, market data, mark price aggregation, and WAL-based recovery.
 We wrote it from spec to working system in three days.

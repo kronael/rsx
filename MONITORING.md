@@ -1,6 +1,6 @@
 # RSX Monitoring & Alerts
 
-Metrics, dashboards, and alert thresholds for the RSX perpetuals exchange.
+Metrics, dashboards, and alert thresholds for the RSX derivatives exchange.
 Monitoring validates the guarantees in [GUARANTEES.md](GUARANTEES.md) and
 enables proactive detection of failures before user impact.
 

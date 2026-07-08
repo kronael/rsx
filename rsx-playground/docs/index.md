@@ -10,7 +10,7 @@
 
 ## Architecture
 
-RSX is a perpetuals exchange with separate processes
+RSX is a derivatives exchange with separate processes
 communicating over casting/UDP and WAL replication over TCP.
 
 ```

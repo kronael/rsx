@@ -1,6 +1,6 @@
 # RSX Engineering Blog
 
-Technical posts from building a perpetual futures exchange in Rust.
+Technical posts from building a derivatives exchange in Rust.
 
 ## Overview
 
@@ -181,7 +181,7 @@ becomes a test.
 
 **[Building RSX: A Spec-First, Agent-Driven Manual](29-building-rsx.md)**
 
-The vibe-book. How a perpetuals exchange got built solo by writing specs
+The vibe-book. How a derivatives exchange got built solo by writing specs
 first and driving AI agents through a disciplined loop — `/ship` →
 `/build` → `/refine`, hostile `cto-eval`/`ceo-eval` judges, hard gates,
 detached-HEAD git, filesystem memory. The method, using

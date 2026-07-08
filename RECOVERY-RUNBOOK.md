@@ -1,7 +1,7 @@
 # RSX Recovery Runbook
 
 Operational procedures for detecting and recovering from component failures in
-the RSX perpetuals exchange. This runbook enables 24/7 operations with step-by-
+the RSX derivatives exchange. This runbook enables 24/7 operations with step-by-
 step instructions for each failure scenario.
 
 **Prerequisites:**

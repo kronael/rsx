@@ -1,4 +1,4 @@
-# Blog Plan — Building a Perpetuals Exchange in Rust
+# Blog Plan — Building a Derivatives Exchange in Rust
 
 Target: engineers who have built distributed systems or worked near exchange
 infrastructure. Not a tutorial. A "here is what we learned and measured" post.
@@ -7,7 +7,7 @@ infrastructure. Not a tutorial. A "here is what we learned and measured" post.
 
 ## Working titles
 
-1. *Building a perpetuals exchange in Rust: what the numbers actually say*
+1. *Building a derivatives exchange in Rust: what the numbers actually say*
 2. *WAL = wire = stream: the design that makes exchange infra boring again*
 3. *54 ns to match a trade: what it costs and what it doesn't*
 
@@ -15,7 +15,7 @@ infrastructure. Not a tutorial. A "here is what we learned and measured" post.
 
 ## Core claim (one sentence)
 
-> We built a complete perpetuals exchange spec-first in Rust, measured every
+> We built a complete derivatives exchange spec-first in Rust, measured every
 > layer, and the surprising finding is that the matching algorithm itself is
 > almost free — the bottleneck is the network syscall, and that's solvable.
 

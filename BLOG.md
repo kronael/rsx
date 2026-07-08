@@ -1,4 +1,4 @@
-# Building a Perpetuals Exchange in Rust
+# Building a Derivatives Exchange in Rust
 
 ## What RSX Is
 
@@ -11,7 +11,7 @@ Two artifacts in one repo:
    rsx-cast --edges normal | grep rsx-` is empty. Any project
    that wants 50-µs-class messaging without Kafka can use it.
 
-2. **A complete perpetuals exchange built on it.** Gateway,
+2. **A complete derivatives exchange built on it.** Gateway,
    Risk, Matching Engine, Marketdata, Mark Price, Recorder —
    each a separate process. Spec-first: 47+ spec files
    written before any code. The exchange is both a real

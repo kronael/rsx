@@ -1,6 +1,6 @@
 # RSX Playground
 
-RSX is a perpetuals exchange playground for local development and testing.
+RSX is a derivatives exchange playground for local development and testing.
 
 ## Overview
 
