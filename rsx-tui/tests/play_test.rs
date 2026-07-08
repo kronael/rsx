@@ -124,11 +124,13 @@ fn q_and_esc_quit() {
 fn latency_events_fold_into_stats() {
     let mut app = App::new("PENGU-PERP");
     app.apply_event(GwEvent::Latency {
+        cid: 0,
         net_ns: Some(2_500),
         internal_ns: 7_600,
         engine_ns: 340,
     });
     app.apply_event(GwEvent::Latency {
+        cid: 0,
         net_ns: Some(2_300),
         internal_ns: 7_100,
         engine_ns: 310,
@@ -148,6 +150,7 @@ fn latency_events_fold_into_stats() {
     // An incomplete sample (net unmeasured) updates `last` for display
     // but must NOT enter the p50 / best window.
     app.apply_event(GwEvent::Latency {
+        cid: 0,
         net_ns: None,
         internal_ns: 5_000,
         engine_ns: 200,

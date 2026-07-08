@@ -101,13 +101,17 @@ pub enum GwEvent {
         upnl: i64,
     },
     /// A measured round-trip for one operation, broken into where the
-    /// time went (nanoseconds). `internal` = casting GW→Risk→ME→Risk→GW
-    /// (stamped by the gateway); `engine` = ME match + risk processing
-    /// (stamped by the gateway). `net_ns` = client↔gateway (the QUIC
-    /// leg): the gateway sends it `None`; the client fills it from the
-    /// measured round-trip, or leaves it `None` when it can't be paired
-    /// to a submitted order (so the display never shows a fabricated 0).
+    /// time went (nanoseconds). `cid` is the client correlation id the
+    /// gateway echoes so the client can pair this sample to the exact
+    /// order it submitted (`quic.rs`); it is not rendered. `internal` =
+    /// casting GW→Risk→ME→Risk→GW (stamped by the gateway); `engine` =
+    /// ME match + risk processing (stamped by the gateway). `net_ns` =
+    /// client↔gateway (the QUIC leg): the gateway sends it `None`; the
+    /// client fills it from the measured round-trip, or leaves it `None`
+    /// when it can't be paired to a submitted order (so the display never
+    /// shows a fabricated 0).
     Latency {
+        cid: u64,
         net_ns: Option<u64>,
         internal_ns: u64,
         engine_ns: u64,

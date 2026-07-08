@@ -227,6 +227,7 @@ impl App {
                 net_ns,
                 internal_ns,
                 engine_ns,
+                ..
             } => {
                 let lat = Latency {
                     net_ns,

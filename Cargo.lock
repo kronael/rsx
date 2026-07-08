@@ -2978,11 +2978,13 @@ dependencies = [
 name = "rsx-tui"
 version = "0.1.0"
 dependencies = [
+ "jsonwebtoken",
  "prost",
  "quinn",
  "ratatui",
  "rcgen",
  "rustls",
+ "serde",
  "tokio",
 ]
 

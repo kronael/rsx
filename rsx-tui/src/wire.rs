@@ -1,20 +1,31 @@
 //! Protobuf-over-QUIC frame codec.
 //!
 //! Length-delimited frames: a 4-byte big-endian length prefix followed
-//! by a protobuf (prost) body. Client→server frames carry a `WireOrder`;
-//! server→client frames carry a `WireEvent` — a `oneof` mirroring the
-//! subset of `GwEvent` that actually crosses the wire (`Connected` /
-//! `Disconnected` are synthesized locally by `QuicConn`, never sent).
+//! by a protobuf (prost) body. The stream is:
 //!
-//! The schema is deliberately minimal: exactly the fields the TUI submits
-//! (`OrderReq`) and renders (`GwEvent`), nothing speculative. The types
-//! are hand-derived `prost::Message`/`prost::Oneof` structs — no `.proto`
-//! file, no `prost-build`, no `protoc` at build time.
+//! - **first frame, client→server:** a `WireHello` carrying the session
+//!   JWT + user id — the auth first-frame. The gateway MUST validate it
+//!   before accepting any order (that server-side validation is a
+//!   follow-up, not built here); the client sends identity in-band
+//!   instead of connecting anonymously.
+//! - **then, client→server:** `WireOrder` frames — each carries a client
+//!   correlation id (`cid`) and the `symbol` it trades. The TUI is
+//!   single-market, so `symbol` is a per-session constant, not a field
+//!   of the UI's `OrderReq`.
+//! - **server→client:** `WireEvent` frames — a `oneof` mirroring the
+//!   subset of `GwEvent` that crosses the wire (`Connected` /
+//!   `Disconnected` are synthesized locally by `QuicConn`, never sent).
+//!   A `Latency` event echoes the order's `cid` so the client pairs the
+//!   sample to the submitted order (not FIFO-guess) and fills the net leg.
 //!
-//! Byte-level interop with a real gateway is a follow-up: no gateway
-//! speaks this protobuf-over-QUIC wire yet, so it is exercised against a
-//! loopback QUIC server (`tests/quic_test.rs`). The message set here is
-//! the contract that server would implement.
+//! The schema is deliberately minimal and hand-derived `prost::Message`/
+//! `prost::Oneof` structs — no `.proto`, no `prost-build`, no `protoc`.
+//! `wire_test.rs` pins the exact encoded bytes of each message so an
+//! accidental tag/field change fails a test.
+//!
+//! No gateway speaks this wire yet, so it is exercised against a loopback
+//! QUIC server (`tests/quic_test.rs`) — the reference for what a real
+//! gateway endpoint would implement.
 
 use crate::conn::GwEvent;
 use crate::conn::OrderReq;
@@ -37,18 +48,34 @@ fn to_io<E: std::fmt::Display>(e: E) -> io::Error {
 
 // --- protobuf schema (exactly what the TUI sends/renders) ---
 
-/// Client→server order submission. `side`/`tif` are small ints (0-based)
-/// rather than proto enums to keep the schema flat; the mapping lives in
-/// the conversions below.
+/// Auth first-frame (client→server): the session JWT and the user id it
+/// claims. Sent once, before any order. The gateway validates the JWT
+/// (server-side follow-up) and binds the connection to `user`.
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct WireHello {
+    #[prost(string, tag = "1")]
+    jwt: String,
+    #[prost(uint32, tag = "2")]
+    user: u32,
+}
+
+/// Client→server order submission. `cid` is the client correlation id
+/// (echoed on `Latency`); `symbol` is the instrument (the TUI trades
+/// one). `side`/`tif` are small ints (0-based) rather than proto enums
+/// to keep the schema flat; the mapping lives in the conversions below.
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireOrder {
-    #[prost(int32, tag = "1")]
+    #[prost(uint64, tag = "1")]
+    cid: u64,
+    #[prost(uint32, tag = "2")]
+    symbol: u32,
+    #[prost(int32, tag = "3")]
     side: i32,
-    #[prost(int64, tag = "2")]
+    #[prost(int64, tag = "4")]
     price: i64,
-    #[prost(int64, tag = "3")]
+    #[prost(int64, tag = "5")]
     qty: i64,
-    #[prost(int32, tag = "4")]
+    #[prost(int32, tag = "6")]
     tif: i32,
 }
 
@@ -116,15 +143,19 @@ struct Position {
     upnl: i64,
 }
 
-/// Server-stamped latency breakdown. `net_ns` is optional: the gateway
-/// leaves it unset (the client fills the net leg from its measured RTT).
+/// Server-stamped latency breakdown. `cid` echoes the submitting order's
+/// client correlation id so the client pairs the sample to that order.
+/// `net_ns` is optional: the gateway leaves it unset (the client fills
+/// the net leg from its measured RTT).
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct Latency {
-    #[prost(uint64, optional, tag = "1")]
+    #[prost(uint64, tag = "1")]
+    cid: u64,
+    #[prost(uint64, optional, tag = "2")]
     net_ns: Option<u64>,
-    #[prost(uint64, tag = "2")]
-    internal_ns: u64,
     #[prost(uint64, tag = "3")]
+    internal_ns: u64,
+    #[prost(uint64, tag = "4")]
     engine_ns: u64,
 }
 
@@ -157,6 +188,20 @@ struct WireEvent {
 
 // --- domain <-> wire conversions ---
 
+/// A decoded auth first-frame, as the server reads it.
+pub struct Hello {
+    pub jwt: String,
+    pub user: u32,
+}
+
+/// A decoded client order, as the server reads it: the correlation id
+/// and symbol the client stamped, plus the order fields.
+pub struct IncomingOrder {
+    pub cid: u64,
+    pub symbol: u32,
+    pub order: OrderReq,
+}
+
 fn side_to_i32(side: Side) -> i32 {
     match side {
         Side::Buy => 0,
@@ -164,10 +209,17 @@ fn side_to_i32(side: Side) -> i32 {
     }
 }
 
-fn side_from_i32(v: i32) -> Side {
+/// Decode a wire side. Errors — never coerces — on an unknown value, so
+/// a garbled or future-versioned frame fails the read instead of
+/// silently trading the wrong direction.
+fn side_from_i32(v: i32) -> io::Result<Side> {
     match v {
-        1 => Side::Sell,
-        _ => Side::Buy,
+        0 => Ok(Side::Buy),
+        1 => Ok(Side::Sell),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown side {other}"),
+        )),
     }
 }
 
@@ -179,33 +231,30 @@ fn tif_to_i32(tif: Tif) -> i32 {
     }
 }
 
-fn tif_from_i32(v: i32) -> Tif {
+/// Decode a wire time-in-force. Errors — never coerces — on an unknown
+/// value (see `side_from_i32`).
+fn tif_from_i32(v: i32) -> io::Result<Tif> {
     match v {
-        1 => Tif::Ioc,
-        2 => Tif::Fok,
-        _ => Tif::Gtc,
+        0 => Ok(Tif::Gtc),
+        1 => Ok(Tif::Ioc),
+        2 => Ok(Tif::Fok),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown tif {other}"),
+        )),
     }
 }
 
-impl From<&OrderReq> for WireOrder {
-    fn from(o: &OrderReq) -> Self {
-        WireOrder {
-            side: side_to_i32(o.side),
-            price: o.price,
-            qty: o.qty,
-            tif: tif_to_i32(o.tif),
-        }
-    }
-}
+impl TryFrom<WireOrder> for OrderReq {
+    type Error = io::Error;
 
-impl From<WireOrder> for OrderReq {
-    fn from(w: WireOrder) -> Self {
-        OrderReq {
-            side: side_from_i32(w.side),
+    fn try_from(w: WireOrder) -> io::Result<Self> {
+        Ok(OrderReq {
+            side: side_from_i32(w.side)?,
             price: w.price,
             qty: w.qty,
-            tif: tif_from_i32(w.tif),
-        }
+            tif: tif_from_i32(w.tif)?,
+        })
     }
 }
 
@@ -251,10 +300,12 @@ fn to_wire_event(ev: &GwEvent) -> io::Result<WireEvent> {
             upnl: *upnl,
         }),
         GwEvent::Latency {
+            cid,
             net_ns,
             internal_ns,
             engine_ns,
         } => Event::Latency(Latency {
+            cid: *cid,
             net_ns: *net_ns,
             internal_ns: *internal_ns,
             engine_ns: *engine_ns,
@@ -279,7 +330,7 @@ fn from_wire_event(w: WireEvent) -> io::Result<GwEvent> {
             asks: b.asks.into_iter().map(|l| (l.px, l.qty)).collect(),
         },
         Event::Trade(t) => GwEvent::Trade {
-            side: side_from_i32(t.side),
+            side: side_from_i32(t.side)?,
             px: t.px,
             qty: t.qty,
         },
@@ -288,7 +339,7 @@ fn from_wire_event(w: WireEvent) -> io::Result<GwEvent> {
             oid: f.oid,
             px: f.px,
             qty: f.qty,
-            side: side_from_i32(f.side),
+            side: side_from_i32(f.side)?,
         },
         Event::Done(o) => GwEvent::Done { oid: o.oid },
         Event::Rejected(r) => GwEvent::Rejected { reason: r.reason },
@@ -299,6 +350,7 @@ fn from_wire_event(w: WireEvent) -> io::Result<GwEvent> {
             upnl: p.upnl,
         },
         Event::Latency(l) => GwEvent::Latency {
+            cid: l.cid,
             net_ns: l.net_ns,
             internal_ns: l.internal_ns,
             engine_ns: l.engine_ns,
@@ -310,6 +362,14 @@ fn from_wire_event(w: WireEvent) -> io::Result<GwEvent> {
 // --- framing ---
 
 async fn write_frame(send: &mut SendStream, body: &[u8]) -> io::Result<()> {
+    // Reject an oversized body on write with the same bound the reader
+    // enforces, so a peer never emits a frame its own reader would drop.
+    if body.len() > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame length exceeds MAX_FRAME",
+        ));
+    }
     let len = u32::try_from(body.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame too large"))?;
     send.write_all(&len.to_be_bytes()).await.map_err(to_io)?;
@@ -332,18 +392,60 @@ async fn read_frame(recv: &mut RecvStream) -> io::Result<Vec<u8>> {
     Ok(body)
 }
 
-/// Client→server: encode and send one order frame.
-pub async fn write_order(send: &mut SendStream, order: &OrderReq) -> io::Result<()> {
-    let body = WireOrder::from(order).encode_to_vec();
+/// Client→server: send the auth first-frame (JWT + user id). Sent once,
+/// before any order frame.
+pub async fn write_hello(send: &mut SendStream, jwt: &str, user: u32) -> io::Result<()> {
+    let body = WireHello {
+        jwt: jwt.to_owned(),
+        user,
+    }
+    .encode_to_vec();
+    write_frame(send, &body).await
+}
+
+/// Server→client on the read side (or a test server): decode the auth
+/// first-frame.
+pub async fn read_hello(recv: &mut RecvStream) -> io::Result<Hello> {
+    let body = read_frame(recv).await?;
+    let hello = WireHello::decode(&body[..]).map_err(to_io)?;
+    Ok(Hello {
+        jwt: hello.jwt,
+        user: hello.user,
+    })
+}
+
+/// Client→server: encode and send one order frame, stamping the client
+/// correlation id and the session symbol.
+pub async fn write_order(
+    send: &mut SendStream,
+    symbol: u32,
+    cid: u64,
+    order: &OrderReq,
+) -> io::Result<()> {
+    let body = WireOrder {
+        cid,
+        symbol,
+        side: side_to_i32(order.side),
+        price: order.price,
+        qty: order.qty,
+        tif: tif_to_i32(order.tif),
+    }
+    .encode_to_vec();
     write_frame(send, &body).await
 }
 
 /// Server→client on the read side (or a test server): decode one order
-/// frame.
-pub async fn read_order(recv: &mut RecvStream) -> io::Result<OrderReq> {
+/// frame with its correlation id and symbol.
+pub async fn read_order(recv: &mut RecvStream) -> io::Result<IncomingOrder> {
     let body = read_frame(recv).await?;
-    let order = WireOrder::decode(&body[..]).map_err(to_io)?;
-    Ok(order.into())
+    let w = WireOrder::decode(&body[..]).map_err(to_io)?;
+    let cid = w.cid;
+    let symbol = w.symbol;
+    Ok(IncomingOrder {
+        cid,
+        symbol,
+        order: OrderReq::try_from(w)?,
+    })
 }
 
 /// Server→client: encode and send one event frame.
@@ -358,3 +460,7 @@ pub async fn read_event(recv: &mut RecvStream) -> io::Result<GwEvent> {
     let event = WireEvent::decode(&body[..]).map_err(to_io)?;
     from_wire_event(event)
 }
+
+#[cfg(test)]
+#[path = "wire_test.rs"]
+mod wire_test;
