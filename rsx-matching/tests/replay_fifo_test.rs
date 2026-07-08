@@ -15,7 +15,6 @@ use rsx_book::event::Event;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_cast::wal::WalWriter;
-use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::write_events_to_wal;
 use rsx_matching::wal::OrderKey;
@@ -132,16 +131,7 @@ fn replay_preserves_intra_level_fifo() {
     // Replay into a FRESH book from seq 1 (no snapshot).
     let mut recovered = Orderbook::new(cfg(), 1024, 50_000);
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
-    let mut dedup = DedupTracker::new();
-    replay_wal_after_snapshot(
-        &mut recovered,
-        &mut order_index,
-        &mut dedup,
-        wal_dir,
-        SYM,
-        1,
-    )
-    .unwrap();
+    replay_wal_after_snapshot(&mut recovered, &mut order_index, wal_dir, SYM, 1).unwrap();
 
     // Taker partially consumes the level: 25 lots against five
     // 10-lot rests → fills makers 10, 11, then half of 12.

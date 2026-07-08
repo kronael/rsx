@@ -13,6 +13,7 @@ use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::load_snapshot;
 use rsx_matching::wal::load_wal_seq;
+use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::save_snapshot;
 use rsx_matching::wal::write_events_to_wal;
@@ -142,16 +143,7 @@ fn replay_restores_orders_appended_after_snapshot() {
     // 4. Replay the post-snap tail.
     let start = load_wal_seq(wal_dir, SYM).unwrap() + 1;
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
-    let mut dedup = DedupTracker::new();
-    replay_wal_after_snapshot(
-        &mut recovered,
-        &mut order_index,
-        &mut dedup,
-        wal_dir,
-        SYM,
-        start,
-    )
-    .unwrap();
+    replay_wal_after_snapshot(&mut recovered, &mut order_index, wal_dir, SYM, start).unwrap();
     assert_eq!(
         book_state(&recovered),
         live,
@@ -177,15 +169,42 @@ fn replay_with_no_snapshot_replays_from_seq_1() {
     // No snapshot present. Cold-start full replay from seq 1.
     let mut recovered = Orderbook::new(cfg(), 1024, 50_000);
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
-    let mut dedup = DedupTracker::new();
-    replay_wal_after_snapshot(
-        &mut recovered,
-        &mut order_index,
-        &mut dedup,
-        wal_dir,
-        SYM,
-        1,
-    )
-    .unwrap();
+    replay_wal_after_snapshot(&mut recovered, &mut order_index, wal_dir, SYM, 1).unwrap();
     assert_eq!(book_state(&recovered), live);
+}
+
+/// ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD: an order accepted BEFORE the
+/// snapshot boundary must still be deduped after recovery. The book
+/// replay only re-seeds post-snapshot RECORD_ORDER_ACCEPTED records, so
+/// this exercises the WAL-driven dedup-window rebuild that covers the
+/// pre-snapshot record (no post-snapshot activity for order A exists).
+#[test]
+fn dedup_window_rebuilt_from_wal_for_pre_snapshot_order() {
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().to_str().unwrap();
+
+    let mut book = Orderbook::new(cfg(), 1024, 50_000);
+    let mut writer = WalWriter::new(SYM, tmp.path(), 64 * 1024 * 1024).unwrap();
+
+    // Accept order A (writes RECORD_ORDER_ACCEPTED to the WAL), snapshot,
+    // then no further activity for A. Crash + restart.
+    submit(&mut book, &mut writer, 10, 1, Side::Buy, 100, 5);
+    writer.flush().unwrap();
+    save_snapshot(&book, wal_dir, SYM, writer.last_seq()).unwrap();
+    drop(writer);
+
+    // Recover the dedup window from the WAL. The harness stamps every
+    // accepted record with ts_ns=1, so a restart clock of 1 keeps A's age
+    // at 0 (well inside DEDUP_WINDOW).
+    let mut dedup = DedupTracker::new();
+    let seeded = rebuild_dedup_window(&mut dedup, wal_dir, SYM, 1).unwrap();
+    assert_eq!(seeded, 1, "one accepted order in the window");
+
+    // A's (user, oid) is now known → a client resend is deduped.
+    assert!(
+        dedup.check_and_insert(10, 0, 1),
+        "resend of pre-snapshot order A must be deduped after recovery",
+    );
+    // An unrelated order is unaffected.
+    assert!(!dedup.check_and_insert(10, 0, 2));
 }

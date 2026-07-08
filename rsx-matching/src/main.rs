@@ -19,6 +19,7 @@ use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::load_snapshot;
 use rsx_matching::wal::load_wal_seq;
 use rsx_matching::wal::publish_events;
+use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::save_snapshot;
 use rsx_matching::wire::OrderMessage;
@@ -309,12 +310,10 @@ fn main() {
         // (user,oid)->handle index — rebuild it from the
         // restored resting orders so post-restart cancels for
         // pre-snapshot orders hit. WAL replay below layers its
-        // own OrderInserted/OrderDone deltas on top.
+        // own OrderInserted/OrderDone deltas on top. Dedup is
+        // rebuilt separately from the WAL after replay (see
+        // rebuild_dedup_window below).
         // (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, index half)
-        // TODO(bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD): dedup
-        // not restored across snapshot — pre-snapshot oids can
-        // re-accept; needs a persisted dedup snapshot or
-        // RECORD_ORDER_ACCEPTED replay.
         rebuild_order_index_from_book(&book, &mut order_index);
         let sidecar = load_wal_seq(&wal_dir, symbol_id);
         info!(
@@ -332,14 +331,8 @@ fn main() {
         Some(1)
     };
     if let Some(start_seq) = replay_from {
-        match replay_wal_after_snapshot(
-            &mut book,
-            &mut order_index,
-            &mut dedup,
-            &wal_dir,
-            symbol_id,
-            start_seq,
-        ) {
+        match replay_wal_after_snapshot(&mut book, &mut order_index, &wal_dir, symbol_id, start_seq)
+        {
             Ok(last_seq) if last_seq >= start_seq => {
                 wal_writer.set_next_seq(last_seq + 1);
             }
@@ -363,6 +356,18 @@ fn main() {
                 );
             }
         }
+    }
+
+    // Rebuild the dedup window from the WAL. The book snapshot does not
+    // persist the dedup set and only covers ~10 s, while the dedup window
+    // is 300 s — so seed every RECORD_ORDER_ACCEPTED still inside the
+    // window (pre- AND post-snapshot) with its remaining TTL. Without this,
+    // a client resend of a pre-snapshot order after a crash would
+    // re-execute (violates exactly-one-completion).
+    // (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, dedup half)
+    match rebuild_dedup_window(&mut dedup, &wal_dir, symbol_id, time_ns()) {
+        Ok(n) => info!("dedup window rebuilt from wal: {n} keys"),
+        Err(e) => warn!("dedup window rebuild failed: {e} — reduced dedup coverage"),
     }
 
     let mut last_flush = Instant::now();
