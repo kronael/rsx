@@ -112,22 +112,50 @@ code. Do NOT fix without founder go.
      look like loss.
   5. **Duplicate fills** — no dedup key (`fill_id` / `(symbol,seq)`); during any
      mixed rollout the client double-counts (`route.rs:34` pushes blind).
-  6. **Solvency hole for reduce-only** — reduce-only skips reservation
-     (`Ok(0)`, `28-risk.md:349`) and enforcement is delegated to ME
-     (`:351`), but ME is not shown to hold authoritative positions. Long 1 →
-     reduce-only sell 1 (ME flat, Risk unsettled) → second reduce-only sell 1:
-     Risk still sees long 1, freezes 0, ME opens a short with no margin. Breaks
-     "solvency never at risk."
-  7. **Liquidation race** — client reacts to a direct fill before Risk marks
-     `UserInLiquidation`, slipping a new order past stale equity
-     (`shard.rs:487`).
+  6. **Reduce-only solvency — FALSE POSITIVE (2026-07-08).** ME *does* hold
+     an authoritative per-symbol position (`net_qty`, `rsx-book/src/user.rs`)
+     and clamps/rejects reduce-only against it synchronously at match time
+     (`matching.rs:59-94`); the view is never stale (single-threaded, in-order
+     fills). The posited long-1 → double-reduce → naked-short cannot occur: the
+     second reduce-only hits `net_qty==0` → `FAIL_REDUCE_ONLY`. Risk's `Ok(0)`
+     is correct (reduce frees margin; enforcement is ME's — `28-risk.md:351`,
+     `47-validation-edge-cases.md:145`). Position recovery is exact (snapshot
+     `net_qty` + replay through `process_new_order`). No fix.
+  7. **Liquidation race — FALSE POSITIVE (2026-07-08).** `UserInLiquidation`
+     is checked synchronously at Risk pre-flight on the next order; the only
+     stale-position hazard was reduce-only, which ME owns (see 6). No
+     independent hole.
   8. **Exactly-one-completion** at risk — direct ORDER_DONE clears pending, a
      late Risk ORDER_FAILED emits a second terminal (`route.rs:105`).
-  It touches ME fan-out + WAL streams, Risk settlement/reject egress, gateway
-  receiver topology + replay, client ordering, dedup, recovery — **high risk**,
-  not a bounded hop-removal. Fix = rewrite the spec to pin one client sequence
-  (likely keep Risk as the single gateway producer but let ME pre-notify), close
-  the reduce-only zero-freeze, and define the replay/dedup story; then re-audit.
+  **Settled 2026-07-08.** The acceptance-commits invariant — once Risk
+  pre-flight accepts, the fill is guaranteed; Risk only *processes* fills, it
+  never vetoes — dissolves gaps 1, 2, 8: per order exactly one terminal
+  producer (Risk iff pre-flight-rejected, else ME), no cross-stream ordering
+  conflict, no late Risk terminal. Gaps 6, 7 are false-positives (above).
+  Remaining work is **mechanical transport only**: gateway as a full
+  ME-replication consumer (3, 4) + `fill_id` dedup (5). Still needs the spec
+  rewritten around the invariant + the transport story before implementation,
+  but it is a bounded feature, not the high-risk rewrite the audit implied.
+  See ME-HOLDS-USER-STATE for the related edge-buffer direction.
+
+- **ME-HOLDS-USER-STATE** (design, OPEN/DEFERRED — record-only) — ME
+  (`rsx-book`) holds two pieces of per-user state: `net_qty` (per-symbol
+  position, for the reduce-only clamp, `user.rs`) and the `DedupTracker`
+  (`(user_id, order_id)` idempotency, `dedup.rs`). Neither is an account — no
+  balances/margin/collateral (those are Risk's, which is *why* Risk shards by
+  user: portfolio margin ME structurally can't compute). The rule: **ME holds
+  exactly the per-user state whose decision must be made at the match sequence
+  point** — position-as-of-match for reduce-only, already-seen for dedup — the
+  truths Risk's async view can't provide in time. Cost: it drags in per-symbol
+  slab-GC for idle users (`order_count`/`zero_since_ns`/`RECLAIM_GRACE_NS`).
+  Open question: can the edge hold *less*? Direction is the generalization —
+  a pre-authorized risk **buffer** at the ME edge (Risk grants a conservative
+  per-symbol margin allowance; ME draws down synchronously; Risk tops-up /
+  revokes async), which would also let the *forward* Risk hop be skipped
+  (`GW→ME→GW`). Hard part = buffer sizing + cross-symbol partitioning +
+  revocation as mark moves; not the hot path. State is isolated behind
+  `UserRegistry` (`rsx-book/src/user.rs`) as a clean seam to change/remove.
+  Unsolved.
 
 ## Status — 2026-07-08 — eager recenter is a tail-latency spike (by design, revisit)
 
