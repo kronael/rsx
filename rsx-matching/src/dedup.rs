@@ -41,6 +41,40 @@ impl DedupTracker {
         false
     }
 
+    /// Seed a key on recovery with the age it was originally inserted,
+    /// so the existing Instant-based pruning expires it at the right
+    /// time. Used to rebuild the dedup window from the WAL after a
+    /// restart (see `wal::rebuild_dedup_window`). Skips keys already
+    /// outside the window (`inserted_ago >= DEDUP_WINDOW` — nothing left
+    /// to protect) and keys already tracked (idempotent). Callers should
+    /// seed in WAL/seq order (oldest records first, i.e. largest
+    /// `inserted_ago` first) so `inserted_at` is non-decreasing and
+    /// `pruning_queue` stays ordered for cleanup.
+    pub fn seed(
+        &mut self,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        inserted_ago: Duration,
+    ) {
+        if inserted_ago >= DEDUP_WINDOW {
+            return;
+        }
+        let key = (user_id, order_id_hi, order_id_lo);
+        if self.seen.contains_key(&key) {
+            return;
+        }
+        self.seen.insert(key, ());
+        // `inserted_ago < DEDUP_WINDOW`, so the subtraction is small; guard
+        // it anyway for a host with < DEDUP_WINDOW uptime (monotonic clock
+        // can't represent the past instant) — fall back to now, which keeps
+        // the key slightly longer (conservative, never a false negative).
+        let inserted_at = Instant::now()
+            .checked_sub(inserted_ago)
+            .unwrap_or_else(Instant::now);
+        self.pruning_queue.push_back((key, inserted_at));
+    }
+
     /// Prune entries older than 5 minutes.
     /// Call periodically (every 10s).
     pub fn maybe_cleanup(&mut self) {
@@ -108,6 +142,20 @@ mod tests {
         let mut d = DedupTracker::new();
         assert!(!d.check_and_insert(1, 0, 1));
         assert!(!d.check_and_insert(1, 0, 2));
+    }
+
+    #[test]
+    fn seed_respects_window() {
+        let mut d = DedupTracker::new();
+        // Seeded inside the window: a later resend is a duplicate.
+        d.seed(1, 0, 1, DEDUP_WINDOW - Duration::from_secs(1));
+        assert!(d.check_and_insert(1, 0, 1), "in-window seed → duplicate");
+        // Seeded at/after the window: skipped, so not a duplicate.
+        d.seed(2, 0, 2, DEDUP_WINDOW);
+        assert!(
+            !d.check_and_insert(2, 0, 2),
+            "expired seed → not a duplicate",
+        );
     }
 
     #[test]

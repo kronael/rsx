@@ -27,6 +27,7 @@ use std::io;
 use std::io::Read as _;
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
 use tracing::warn;
@@ -543,7 +544,6 @@ pub fn load_wal_seq(wal_dir: &str, symbol_id: u32) -> Option<u64> {
 pub fn replay_wal_after_snapshot(
     book: &mut Orderbook,
     order_index: &mut FxHashMap<OrderKey, u32>,
-    dedup: &mut crate::dedup::DedupTracker,
     wal_dir: &str,
     symbol_id: u32,
     start_seq: u64,
@@ -570,9 +570,10 @@ pub fn replay_wal_after_snapshot(
                 let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) else {
                     continue;
                 };
-                // Re-record dedup so a duplicate that arrives
-                // post-restart is still rejected.
-                let _ = dedup.check_and_insert(rec.user_id, rec.order_id_hi, rec.order_id_lo);
+                // Dedup is NOT re-seeded here — `rebuild_dedup_window`
+                // owns the whole 300 s window (pre- AND post-snapshot) in
+                // one ascending-seq pass, which keeps the pruning queue
+                // ordered. This forward pass only reconstructs book + index.
                 let mut incoming = IncomingOrder {
                     price: rec.price,
                     qty: rec.qty,
@@ -614,6 +615,54 @@ pub fn replay_wal_after_snapshot(
         accepted, cancelled, last_seq,
     );
     Ok(last_seq)
+}
+
+/// Rebuild the full dedup window from the WAL on recovery.
+///
+/// A book snapshot persists the slab but NOT the dedup set, and the
+/// snapshot cadence (~10 s) is far shorter than the dedup window
+/// (`DEDUP_WINDOW`, 300 s). Restoring dedup only from post-snapshot
+/// `RECORD_ORDER_ACCEPTED` records (as the book replay does) would leave
+/// every order accepted more than one snapshot interval before the crash
+/// unprotected — a legitimate client resend of its `(user_id, order_id)`
+/// within the window would then be treated as new and double-execute,
+/// violating exactly-one-completion.
+///
+/// Scan the retained WAL for `RECORD_ORDER_ACCEPTED` and seed each key
+/// still inside the window with its remaining TTL (`seed` skips the rest,
+/// keyed off the record's ME-stamped `ts_ns` vs `now_unix_ns`). Scanning
+/// in seq order feeds `seed` oldest-first, keeping the pruning queue
+/// ordered. Cold path, one-time; bounded by WAL retention (4 h ≫ 300 s).
+/// Covers both pre- and post-snapshot records and is idempotent (a set).
+/// (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, dedup half)
+pub fn rebuild_dedup_window(
+    dedup: &mut crate::dedup::DedupTracker,
+    wal_dir: &str,
+    symbol_id: u32,
+    now_unix_ns: u64,
+) -> io::Result<u64> {
+    let wal_path = PathBuf::from(wal_dir);
+    // Filter by ts_ns, not seq, so start from the earliest retained file.
+    let mut reader = WalReader::open_from_seq(symbol_id, 0, &wal_path)?;
+    let before = dedup.len();
+    while let Some(raw) = reader.next()? {
+        if raw.header.record_type != RECORD_ORDER_ACCEPTED {
+            continue;
+        }
+        let Some(rec) = decode_payload::<OrderAcceptedRecord>(&raw.payload) else {
+            continue;
+        };
+        let age_ns = now_unix_ns.saturating_sub(rec.ts_ns);
+        dedup.seed(
+            rec.user_id,
+            rec.order_id_hi,
+            rec.order_id_lo,
+            Duration::from_nanos(age_ns),
+        );
+    }
+    let seeded = dedup.len().saturating_sub(before) as u64;
+    info!("dedup window rebuild: seeded={} keys from wal", seeded);
+    Ok(seeded)
 }
 
 /// Local copy of main.rs's `update_order_index` so replay
