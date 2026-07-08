@@ -94,8 +94,11 @@ each with the problem it solves.
   as a single core can go (a symbol is one market — its book can't
   be sharded, so the match itself is the ceiling). One process per
   symbol, single-threaded, core-pinned, bare busy-spin, zero heap
-  on the hot path — 54 ns per fill, no allocation, no locks, no
-  async runtime. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
+  on the hot path — 54 ns for a single fill through the book, the
+  match itself flat in book depth (~30 ns at 1 or 100k resting),
+  and 266 ns for the full accept path (dedup → match → WAL →
+  fan-out) at ~3.6M orders/s. No allocation, no locks, no async
+  runtime. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-matching/README.md](rsx-matching/README.md).
 - **`rsx-risk` — per-user-shard risk engine.** *Release
   candidate.* The problem: keep solvency-critical margin state in
