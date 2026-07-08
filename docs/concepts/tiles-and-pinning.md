@@ -34,12 +34,22 @@ Measured: 54 ns per single fill through the book.
 
 Gateway and marketdata use monoio with io_uring. Both processes
 handle many concurrent WebSocket connections — the gateway
-muxes client orders onto the casting wire; marketdata fans
-order-book events out to public subscribers. The bottleneck in
-both cases is I/O multiplexing across N file descriptors, not
-computation. io_uring batches the syscalls. A tile would have
-to do the same WS parsing without gaining anything from
+muxes client orders onto the casting wire (fan-in); marketdata
+drains ME's casting firehose and fans order-book events out to
+public subscribers (fan-out). Neither uses SPSC rings: the
+fan-in/out happens inside the async reactor (per-connection
+tasks sharing a single-threaded `CastSender`/`CastReceiver`),
+because the bottleneck is I/O multiplexing across N file
+descriptors, not computation. io_uring batches the syscalls; a
+tile would do the same WS parsing without gaining anything from
 pinning.
+
+So `rsx-risk` is the worked example of the tile model here (and
+why it is the fastest arrangement for a compute-bound hot loop).
+Gateway and marketdata are the monoio counterpart, but both are
+still being finalized — the detailed design of their
+fan-in/fan-out I/O model belongs in their own crate docs once
+their shape settles, not here.
 
 SPSC ring measured performance: 50–170 ns per hop, from the
 `rsx-book` benchmarks.
