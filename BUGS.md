@@ -3,16 +3,6 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
-## Status — 2026-07-08 — pre-existing clippy red (found during graceful-shutdown wiring)
-
-Record-only (bug-triage protocol). Blocks `make lint` (`clippy --workspace
---all-targets -D warnings`) on HEAD, independent of the shutdown work.
-
-- **MD-STATE-CLONE-ON-COPY** (LOW, lint) — `rsx-marketdata/src/state.rs:163`
-  calls `.clone()` on `self.base_config` (`SymbolConfig` is `Copy`), tripping
-  `clippy::clone_on_copy` under `-D warnings`. Present in HEAD (`7ce8356`),
-  unrelated to any current change. Fix: drop the `.clone()`.
-
 ## Status — 2026-07-08 — rsx-matching release CTO review (see .ship/41-MATCHING-RELEASE/CTO-REPORT.md)
 
 Record-only (bug-triage protocol): findings from the release-pass review.
