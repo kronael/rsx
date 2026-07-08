@@ -78,7 +78,7 @@ def is_running():
         return False
     except OSError:
         # other OS error, assume stale
-        PID_FILE.unlink()
+        PID_FILE.unlink(missing_ok=True)
         return False
 
 
@@ -156,7 +156,7 @@ def stop_server():
         print("server stopped")
     except ProcessLookupError:
         if PID_FILE.exists():
-            PID_FILE.unlink()
+            PID_FILE.unlink(missing_ok=True)
         print("server already stopped")
     return 0
 
