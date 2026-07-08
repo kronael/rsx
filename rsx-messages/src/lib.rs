@@ -373,6 +373,30 @@ impl CastRecord for CancelRequest {
 const _: () = assert!(mem::size_of::<CancelRequest>() == 64);
 const _: () = assert!(mem::align_of::<CancelRequest>() == 64);
 
+/// Inbound order from the risk engine to a matching engine — the
+/// `RECORD_ORDER_REQUEST` payload on the risk→ME hop (risk builds it, ME
+/// decodes it, sent via `send_raw`). Per-symbol, so no `symbol_id` and no
+/// liquidation flag; risk resolved those upstream.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct OrderMessage {
+    pub seq: u64,
+    pub price: i64,
+    pub qty: i64,
+    pub side: u8,
+    pub tif: u8,
+    pub reduce_only: u8,
+    pub post_only: u8,
+    pub _pad1: [u8; 4],
+    pub user_id: u32,
+    pub _pad2: u32,
+    pub timestamp_ns: u64,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+}
+
+const _: () = assert!(mem::size_of::<OrderMessage>() == 64);
+
 /// Liquidation notification from risk to gateway.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
