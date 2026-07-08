@@ -7,11 +7,11 @@ page stays short on purpose.
 
 - **casting** — RSX's reliable-UDP *live* transport between processes: NAK
   gap-recovery + idle-only heartbeats, deliberately no flow control. The
-  hot path. → [reliable-udp](01-casting.md), [spec 4-cast](../../specs/2/4-cast.md)
+  hot path. → [casting](01-casting.md), [spec 4-cast](../../specs/2/4-cast.md)
 - **replication** — TCP replay of the *same* WAL records; the cold path
   (catch-up, recovery, warm-standby). → [spec 10-replication](../../specs/2/10-replication.md)
 - **WAL** — write-ahead log. The on-disk bytes = the casting wire frame =
-  the replication stream, no serialization step. → [wal-is-wire-is-stream](01-casting.md), [spec 48-wal](../../specs/2/48-wal.md)
+  the replication stream, no serialization step. → [casting](01-casting.md), [spec 48-wal](../../specs/2/48-wal.md)
 - **FAULTED** — a cast receiver's state when it detects a sequence gap;
   triggers TCP replay to recover. → [spec 4-cast](../../specs/2/4-cast.md)
 - **UDS** (Unix Domain Socket) — a Gateway→Risk transport *candidate* that
@@ -22,8 +22,9 @@ page stays short on purpose.
 
 ## Architecture
 
-- **tile** — a pinned OS thread + its SPSC rings; the unit of
-  intra-process concurrency. → [tiles-and-pinning](02-tiles-and-pinning.md), [spec 45-tiles](../../specs/2/45-tiles.md)
+- **tile** — a pinned OS thread running a busy-spin hot loop (plus any
+  SPSC rings to sibling threads); the unit of intra-process concurrency.
+  → [tiles-and-pinning](02-tiles-and-pinning.md), [spec 45-tiles](../../specs/2/45-tiles.md)
 - **Gateway / Risk / ME / Marketdata / Mark / Recorder** — the six
   processes. ME = matching engine. → [spec 1-architecture](../../specs/2/1-architecture.md)
 - **vshard / shardmap** — risk shards users by `hash(user_id) % N_VSHARDS`
