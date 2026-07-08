@@ -7,23 +7,51 @@ compute-bound loop.
 
 ## When to tile
 
-Tile when the hot loop is compute-bound and its service time is
-measured in tens or hundreds of nanoseconds. Use monoio/io_uring
-when the loop is I/O-bound across many file descriptors.
+Tile when one pinned thread owns compute-bound state and its
+service time is measured in tens or hundreds of ns. Do not tile an
+I/O multiplexer just because it is hot; use monoio/io_uring when
+the loop is waiting on many fds.
 
-`rsx-risk` is the canonical tile. One pinned busy-spin thread drains
-7 SPSC rings and drives the margin state machine. Margin work is
-pure computation: no I/O, no syscall, no allocation. The pre-trade
-check measures about 110 ns p50.
+There are 3 categories.
 
-`rsx-matching` is a separate process, not a tile; a tile is a thread
-inside a process. It has the same scheduling rationale: 1 pinned
-busy-spin thread owns the book, appends WAL records inline, and
-matches a single fill in about 54-65 ns.
+First: a single pinned loop is a tile. `rsx-matching` is the
+cleanest case because the process contains exactly 1 hot thread, so
+the tile fills the process. There is no sibling thread and no SPSC
+ring inside the matching process. The loop drains 1 casting/UDP
+order, checks dedup, appends the WAL record inline, runs the book
+match in about 54-65 ns, publishes WAL/cast events inline, and sends
+the fill back over casting/UDP. It is one in-sync sequence, not N
+concurrent tasks.
 
-Gateway and marketdata are the counterexample. They are monoio
-services because their bottleneck is many WebSocket sockets and
-kernel crossings, not compute. Their I/O model belongs in
+`rsx-risk` is also a tile, but the process has 2 threads: one
+pinned tile-thread and one tokio-thread. The tile-thread owns the
+risk state, drains casting/UDP, uses 3 SPSC rings today
+(`PersistEvent` 8 192, `OrderResponse` 2 048, accepted
+`OrderRequest` 2 048), and does the 110 ns pre-trade check. The
+tokio-thread is plain write-behind: it runs a current-thread Tokio
+runtime, drains the `PersistEvent` ring, and pays the blocking
+Postgres cost. It is not a sidecar process and not a tile.
+
+Second: a monoio reactor is not a tile and not a single loop in the
+matching sense. Gateway and marketdata multiplex many WebSocket fds
+concurrently on monoio/io_uring. Tile-NO: their bottleneck is I/O
+multiplexing plus kernel crossings across N fds, not arithmetic in
+cache. A pinned busy-spin thread would still make the same kernel
+crossings and would not turn a 3.5 us send syscall into a 60 ns
+match. Their model is [network-edge-io](network-edge-io.md).
+
+Third: sleepers are off-path and unpinned. Mark and recorder sleep
+between events and use about 0% CPU while idle. They are not on the
+order critical path, so spending 1 core on a busy-spin loop buys
+little.
+
+The rule is: tile compute-bound hot state; use monoio for I/O-bound
+fan-in/fan-out; leave sleepers unpinned. monoio is the right default
+for I/O-bound work. If the target is both the lowest latency floor
+and the highest event-rate ceiling, the last mile is a bespoke
+io_uring loop tuned to the workload: no generic reactor, direct
+SQE/CQE handling, SQPOLL, registered buffers, multishot recv, and
+GSO. That is the I/O-side version of hand-rolling a tile; see
 [network-edge-io](network-edge-io.md).
 
 ## What pinning removes
@@ -57,7 +85,11 @@ between events; an unpinned spinner eats 100%.
 
 The 6-core README layout formalizes this: core 0 carries the OS and
 off-path sleepers; cores 1-4 carry gateway, risk, matching, and
-marketdata; core 5 is headroom.
+marketdata; core 5 is spare margin. Core 5 is not kernel headroom,
+because core 0 already carries the OS and sleepers. It is burst
+capacity, or a future SO_REUSEPORT shard, or a future SQPOLL kernel
+thread. It is not required for correctness: a tight 5-core box can
+drop it if it accepts less margin.
 
 ## What you give up
 
@@ -67,9 +99,19 @@ operation inside the hot loop turns directly into tail latency: a
 it. The tile model requires no blocking I/O, no synchronous network
 calls, and no mutex held by another thread.
 
-That is why Risk sends Postgres writes to a tokio sidecar through
-an SPSC ring. The pinned loop does computation; the sidecar pays the
-blocking database cost.
+That is why Risk sends Postgres writes to a tokio-thread through
+an SPSC ring. The pinned tile-thread does computation; the
+tokio-thread pays the blocking database cost inside the same process.
+
+A pinned compute tile also must not block on io_uring waits.
+`io_uring_enter` can block when submitting and waiting for
+completions, so "add io_uring to the matching tile" is not free. The
+socket and polling must live either on a separate I/O thread that
+owns the ring and hands bytes to the tile over an SPSC ring, or in
+SQPOLL mode where the kernel polls the submission ring and the tile
+does not make the enter syscall. The compute loop itself stays
+non-blocking; the I/O wait lives somewhere allowed to block or burn
+a kernel polling thread. See [network-edge-io](network-edge-io.md).
 
 ---
 
