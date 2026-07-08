@@ -233,7 +233,7 @@ def api_get(path):
         return None
 
 
-def api_post(path, data=None, headers=None):
+def api_post(path, data=None, headers=None, timeout=120):
     """POST request to server API."""
     try:
         import httpx
@@ -248,7 +248,7 @@ def api_post(path, data=None, headers=None):
             f"{API_BASE}{path}",
             json=data or {},
             headers=headers or {},
-            timeout=30,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.status_code == 200
