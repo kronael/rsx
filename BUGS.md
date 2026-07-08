@@ -9,9 +9,16 @@ Record-only (bug-triage protocol): findings from the release-pass review.
 Full evidence + verdicts in the report; the top item was verified against
 code. Do NOT fix without founder go.
 
-- **ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD** (MED-HIGH, correctness) — dedup is
+- **ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD** (MED-HIGH, correctness) — **FIXED
+  2026-07-08** (`4a0df9d`): recovery now rebuilds the full 300 s dedup window
+  by scanning the WAL for `RECORD_ORDER_ACCEPTED` records within the window
+  and seeding `DedupTracker` with each entry's remaining TTL
+  (`DedupTracker::seed` + `wal::rebuild_dedup_window`), reusing the WAL as the
+  single source of truth (no new snapshot format). Integration test
+  `dedup_window_rebuilt_from_wal_for_pre_snapshot_order` proves a pre-snapshot
+  order's resend is deduped after recovery. Original defect: dedup was
   not reconstructed across a snapshot boundary, so a post-crash client
-  resend can double-execute. `rebuild_order_index_from_book`
+  resend could double-execute. `rebuild_order_index_from_book`
   (`rsx-matching/src/main.rs:98`) restores the order index from the slab but
   not `dedup`; `replay_wal_after_snapshot` only replays
   `RECORD_ORDER_ACCEPTED` for `seq >= start_seq` (post-snapshot). Snapshot
