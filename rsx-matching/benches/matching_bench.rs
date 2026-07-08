@@ -54,8 +54,7 @@ fn bench_dedup(c: &mut Criterion) {
             for i in 0..10_000_u64 {
                 dedup.check_and_insert(1, 0, i);
             }
-            dedup
-                .evict(std::time::Instant::now() + std::time::Duration::from_secs(1));
+            dedup.evict(std::time::Instant::now() + std::time::Duration::from_secs(1));
         });
     });
 
