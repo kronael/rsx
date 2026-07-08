@@ -141,7 +141,7 @@ No Kafka. No NATS. Producers serve their own WAL over TCP. Consumers
 connect directly, replay from sequence number. 10μs latency vs 10ms.
 50 lines of code vs Kafka cluster.
 
-**[Fills: 0ms Loss. Orders: Who Cares.](17-asymmetric-durability.md)**
+**[Fills: 0ms Loss. Orders: Who Cares.](17-08-asymmetric-durability.md)**
 
 Not all data is equal. Fills are sacred (0ms loss, fsync before send).
 Orders are ephemeral (lost on crash, user retries). Positions are
@@ -232,7 +232,7 @@ then [Development Journey](05-development-journey.md).
 [Risk Engine](03-risk-engine.md), [WAL and Recovery](04-wal-and-recovery.md),
 [How We Fit Bitcoin in 15MB](13-15mb-orderbook.md).
 
-**Design philosophy:** [Asymmetric Durability](17-asymmetric-durability.md),
+**Design philosophy:** [Asymmetric Durability](17-08-asymmetric-durability.md),
 [Backpressure or Death](15-backpressure-or-death.md),
 [Testing Like the System Wants to Lie](14-testing-hostility.md).
 

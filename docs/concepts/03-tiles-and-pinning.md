@@ -38,7 +38,7 @@ concurrently on monoio/io_uring. Tile-NO: their bottleneck is I/O
 multiplexing plus kernel crossings across N fds, not arithmetic in
 cache. A pinned busy-spin thread would still make the same kernel
 crossings and would not turn a 3.5 us send syscall into a 60 ns
-match. Their model is [network-edge-io](network-edge-io.md).
+match. Their model is [network-edge-io](05-network-edge-io.md).
 
 Third: sleepers are off-path and unpinned. Mark and recorder sleep
 between events and use about 0% CPU while idle. They are not on the
@@ -52,7 +52,7 @@ and the highest event-rate ceiling, the last mile is a bespoke
 io_uring loop tuned to the workload: no generic reactor, direct
 SQE/CQE handling, SQPOLL, registered buffers, multishot recv, and
 GSO. That is the I/O-side version of hand-rolling a tile; see
-[network-edge-io](network-edge-io.md).
+[network-edge-io](05-network-edge-io.md).
 
 ## What pinning removes
 
@@ -111,12 +111,12 @@ owns the ring and hands bytes to the tile over an SPSC ring, or in
 SQPOLL mode where the kernel polls the submission ring and the tile
 does not make the enter syscall. The compute loop itself stays
 non-blocking; the I/O wait lives somewhere allowed to block or burn
-a kernel polling thread. See [network-edge-io](network-edge-io.md).
+a kernel polling thread. See [network-edge-io](05-network-edge-io.md).
 
 ---
 
 Deeper: [blog/18-100ns-matching.md](../../blog/18-100ns-matching.md),
 [reports/20260704_book-bench.md](../../reports/20260704_book-bench.md),
 [specs/2/45-tiles.md](../../specs/2/45-tiles.md),
-[docs/concepts/spsc-rings.md](../../docs/concepts/spsc-rings.md),
-[docs/concepts/network-edge-io.md](../../docs/concepts/network-edge-io.md)
+[docs/concepts/04-spsc-rings.md](../../docs/concepts/04-spsc-rings.md),
+[docs/concepts/05-network-edge-io.md](../../docs/concepts/05-network-edge-io.md)

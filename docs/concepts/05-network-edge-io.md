@@ -4,7 +4,7 @@ Gateway and marketdata are monoio/io_uring services because they
 are I/O-bound fan-in/fan-out edges, not compute tiles. A pinned
 busy-spin loop does not beat a kernel boundary; it just spends a
 core waiting to pay the same syscall. The tradeoff is the same as
-[tiles-and-pinning](tiles-and-pinning.md): runtime first, hand-roll
+[tiles-and-pinning](03-tiles-and-pinning.md): runtime first, hand-roll
 only when the last-mile modes matter.
 
 ## Why batching beats spinning
