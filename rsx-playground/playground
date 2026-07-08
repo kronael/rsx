@@ -8,6 +8,8 @@ Server lifecycle:
     status             Check server status
 
 Process management:
+    demo [scenario]        Start server + E2E RSX demo
+    plan [scenario]        Print the scenario spawn plan
     start-all [scenario]   Build and start all RSX processes
     stop-all               Stop all RSX processes
     ps                     List all processes
@@ -35,6 +37,8 @@ import signal
 import time
 import os
 from pathlib import Path
+
+import runtime
 
 ROOT = Path(__file__).resolve().parent.parent
 PID_FILE = ROOT / "tmp" / "pids" / "playground-server.pid"
@@ -229,7 +233,7 @@ def api_get(path):
         return None
 
 
-def api_post(path, data=None):
+def api_post(path, data=None, headers=None):
     """POST request to server API."""
     try:
         import httpx
@@ -241,7 +245,10 @@ def api_post(path, data=None):
         return None
     try:
         resp = httpx.post(
-            f"{API_BASE}{path}", json=data or {}, timeout=30
+            f"{API_BASE}{path}",
+            json=data or {},
+            headers=headers or {},
+            timeout=30,
         )
         resp.raise_for_status()
         return resp.status_code == 200
@@ -263,10 +270,65 @@ def api_post(path, data=None):
 # ── Process management ──────────────────────────────────
 
 
+def print_plan(plan):
+    """Print a compact scenario plan."""
+    print("spawn plan:")
+    print(f"  {'name':<20} {'binary':<18} env")
+    print("  " + "-" * 60)
+    for name, binary, env in plan:
+        short_bin = binary.split("/")[-1]
+        items = [
+            f"{k}={v}" for k, v in sorted(env.items())
+            if k != "RUST_LOG"
+        ]
+        text = " ".join(items)
+        if len(text) > 80:
+            text = text[:77] + "..."
+        print(f"  {name:<20} {short_bin:<18} {text}")
+    print(f"\n  total: {len(plan)} processes")
+
+
+def scenario_plan(scenario="minimal"):
+    """Print the plan Playground will deploy."""
+    preset = runtime.SCENARIOS.get(scenario)
+    if not preset:
+        print(f"unknown scenario: {scenario}")
+        print(f"known: {', '.join(runtime.SCENARIOS)}")
+        return 1
+    config = {
+        "symbols": runtime.select_symbols(preset["symbols"]),
+        "gateways": preset["gateways"],
+        "risk_shards": 1,
+        "replication": preset["replication"],
+    }
+    pg_url = os.environ.get("DATABASE_URL", runtime.DEFAULT_PG_URL)
+    print_plan(runtime.build_spawn_plan(config, pg_url))
+    return 0
+
+
+def demo(scenario="minimal"):
+    """Start the Playground server and E2E RSX demo."""
+    if scenario not in runtime.SCENARIOS:
+        print(f"unknown scenario: {scenario}")
+        print(f"known: {', '.join(runtime.SCENARIOS)}")
+        return 1
+    if not ensure_server():
+        return 1
+    rc = start_all(scenario)
+    if rc != 0:
+        return rc
+    print(f"playground: {API_BASE}")
+    print("open the Playground to inspect processes, logs, books, and orders")
+    return 0
+
+
 def start_all(scenario="minimal"):
     """Start all processes via API."""
     print(f"starting all processes (scenario: {scenario})...")
-    resp = api_post(f"/api/processes/all/start?scenario={scenario}")
+    resp = api_post(
+        f"/api/processes/all/start?scenario={scenario}",
+        headers={"x-confirm": "yes"},
+    )
     if not resp:
         print("failed to start processes")
         return 1
@@ -277,7 +339,10 @@ def start_all(scenario="minimal"):
 def stop_all():
     """Stop all processes via API."""
     print("stopping all processes...")
-    resp = api_post("/api/processes/all/stop")
+    resp = api_post(
+        "/api/processes/all/stop",
+        headers={"x-confirm": "yes"},
+    )
     if not resp:
         print("failed to stop processes")
         return 1
@@ -525,6 +590,16 @@ def main():
         return status_server()
 
     # process management
+    elif cmd in ("demo", "run"):
+        scenario = (
+            sys.argv[2] if len(sys.argv) > 2 else "minimal"
+        )
+        return demo(scenario)
+    elif cmd == "plan":
+        scenario = (
+            sys.argv[2] if len(sys.argv) > 2 else "minimal"
+        )
+        return scenario_plan(scenario)
     elif cmd == "start-all":
         scenario = (
             sys.argv[2] if len(sys.argv) > 2 else "minimal"

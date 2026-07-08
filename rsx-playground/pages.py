@@ -1871,12 +1871,12 @@ def control_page():
         "Notes",
         '<ul class="text-xs text-slate-500 space-y-1 '
         'list-disc ml-4">'
-        '<li>Scenarios: <code class="bg-slate-800 px-1 '
-        'rounded">./start full|minimal|stress</code></li>'
-        '<li>Clean: <code class="bg-slate-800 px-1 '
-        'rounded">./start -c</code></li>'
-        '<li>Reset DB: <code class="bg-slate-800 px-1 '
-        'rounded">./start --reset-db</code></li></ul>',
+        '<li>Demo: <code class="bg-slate-800 px-1 '
+        'rounded">./rsx-playground/playground demo</code></li>'
+        '<li>Scenario: <code class="bg-slate-800 px-1 '
+        'rounded">./rsx-playground/playground demo full</code></li>'
+        '<li>Inspect: <code class="bg-slate-800 px-1 '
+        'rounded">./rsx-playground/playground plan minimal</code></li></ul>',
     )
     resources = _card(
         "Resource Usage",

@@ -93,7 +93,7 @@ test.describe("Control tab", () => {
     await page.goto("/control");
     // The heading is inside a flex wrapper; go up to the card div
     const notesCard = page.getByRole("heading", { name: "Notes" }).locator("../..");
-    await expect(notesCard).toContainText("./start");
+    await expect(notesCard).toContainText("./rsx-playground/playground demo");
   });
 
   test("scenario selector shows stress test options", async ({ page }) => {
