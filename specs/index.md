@@ -88,6 +88,7 @@ Active specs. Source of truth for system design.
 | [2/45-tiles.md](2/45-tiles.md) | partial | Tile pattern and per-process status (risk full, mark partial, gateway/marketdata async). |
 | [2/47-validation-edge-cases.md](2/47-validation-edge-cases.md) | shipped | Comprehensive documentation of edge cases for order validation |
 | [2/48-wal.md](2/48-wal.md) | shipped | > **Note:** The concrete WAL implementation (file format, writer, |
-| [2/49-webproto.md](2/49-webproto.md) | shipped | Gateway exposes a compact WebSocket protocol and translates |
+| [2/49-webproto.md](2/49-webproto.md) | partial | Client wire protocol: protobuf is the protocol, WS + QUIC/HTTP-3 are transports |
 | [2/57-config-server.md](2/57-config-server.md) | spec | Dedicated config server replaces ME's direct-Postgres config |
+| [2/58-http3.md](2/58-http3.md) | spec | HTTP/3 (QUIC) transport binding for the 49-webproto protobuf protocol |
 
