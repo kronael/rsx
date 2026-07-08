@@ -7,30 +7,20 @@ flow in under a minute. Single command, single dashboard.
 
 - Built debug binaries (`cargo build --workspace`).
 - Postgres reachable at `postgres://rsx:rsx@127.0.0.1:5432/rsx`
-  (the start script bootstraps the schema).
+  (the Playground runtime bootstraps the schema).
 - Python venv at `rsx-playground/.venv` with deps installed
   (one-time: `make prepare`).
 
 ## Steps
 
 ```bash
-# 1. Stop any running RSX bits (idempotent)
-pkill -f 'rsx-(gateway|risk|matching|marketdata|mark|recorder|maker)' 2>/dev/null
-pkill -f 'rsx-playground.*server.py' 2>/dev/null
+# Start Playground and the minimal E2E RSX stack
+./rsx-playground/playground demo minimal
 
-# 2. Start the playground dashboard
-./rsx-playground/playground start
-# → server started (pid N), visit http://localhost:49171
-
-# 3. Open the dashboard, click "Start All" on /walkthrough
-# Or via API:
-curl -X POST 'http://localhost:49171/api/processes/all/start?scenario=minimal' \
-     -H 'x-confirm: yes'
-
-# 4. Start the maker so the book has quotes:
+# Optional: start the maker so the book has quotes
 curl -X POST 'http://localhost:49171/api/maker/start' -H 'x-confirm: yes'
 
-# 5. Watch live depth
+# Watch live depth
 open http://localhost:49171/        # Process Control + Book
 # or, for the SPA Trade UI:
 open http://localhost:49171/trade/
@@ -64,10 +54,10 @@ curl -X POST http://localhost:49171/api/processes/all/stop -H 'x-confirm: yes'
 
 ## Auth in the demo
 
-`./rsx-playground/playground start` injects
+`./rsx-playground/playground demo` injects
 `RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` for the
 playground server when the operator hasn't already set one;
-the same secret is exported by the root `start` launcher
+the same secret is emitted by the Playground runtime plan
 when it spawns gateway / risk / ME. The maker, stress
 client, and Trade UI all mint JWTs against that secret.
 Production must override `RSX_GW_JWT_SECRET`; the demo
@@ -76,8 +66,8 @@ value is not safe for any internet-facing deploy.
 ## Troubleshooting
 
 - **Gateway panics with `RSX_GW_JWT_SECRET must be set`** —
-  you started the gateway from a stale `start` script (pre-`7e444dc`)
-  or unset the env. Re-run from the up-to-date `start`.
+  you started the gateway outside Playground or unset the env. Re-run
+  from `./rsx-playground/playground demo minimal`.
 - **Empty book / WAL** — historically caused by the
   frozen-margin leak (fixed in commit `9ca6f10`). If you see
   it, check that migration `004_frozen_orders.sql` ran

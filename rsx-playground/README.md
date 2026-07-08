@@ -5,11 +5,10 @@ Web-based development dashboard for the RSX exchange. Real-time monitoring, proc
 ## Quick Start
 
 ```bash
-# Start playground server (runs in background)
-./playground start
+# Start Playground and the minimal E2E RSX stack
+./playground demo minimal
 
-# Visit http://localhost:49171
-# Click "Start All" to launch RSX processes
+# Visit http://localhost:49171 to inspect processes, logs, books, and orders
 
 # Stop server when done
 ./playground stop
@@ -57,6 +56,8 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 ./playground status             # Check server status
 
 # Process management (via API)
+./playground demo [scenario]        # Start server + E2E RSX demo
+./playground plan [scenario]        # Print the scenario spawn plan
 ./playground start-all [scenario]   # Build and start all RSX processes
 ./playground stop-all               # Stop all processes
 ./playground ps                     # List processes
@@ -80,15 +81,14 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 
 ## Typical Workflow
 
-1. Start playground: `./playground start`
+1. Start the local E2E demo: `./playground demo minimal`
 2. Visit http://localhost:49171
-3. Click "Start All" (30-60s build time)
-4. Wait for processes to start (green dots in table)
-5. Orders tab: Submit test orders
-6. Book tab: Watch fills happen
-7. Logs tab: Monitor errors
-8. Faults tab: Kill a process, watch recovery
-9. Verify tab: Run invariant checks
+3. Wait for processes to start (green dots in table)
+4. Orders tab: Submit test orders
+5. Book tab: Watch fills happen
+6. Logs tab: Monitor errors
+7. Faults tab: Kill a process, watch recovery
+8. Verify tab: Run invariant checks
 
 ## Building RSX Binaries
 
@@ -158,11 +158,11 @@ Examples:
 ```bash
 # Start all processes
 curl -X POST http://localhost:49171/api/processes/all/start \
-  -H "Content-Type: application/json" \
-  -d '{"scenario": "minimal"}'
+  -H "x-confirm: yes"
 
 # Stop all processes
-curl -X POST http://localhost:49171/api/processes/all/stop
+curl -X POST http://localhost:49171/api/processes/all/stop \
+  -H "x-confirm: yes"
 
 # Submit test order
 curl -X POST http://localhost:49171/api/orders/test \

@@ -56,8 +56,8 @@ echo "   ✓ Gateway binary exists"
 # Check if Gateway is running
 echo "7. Checking Gateway status..."
 if ! pgrep -f rsx-gateway > /dev/null; then
-    echo "   Gateway not running. Start it with: ../target/debug/rsx-gateway &"
-    echo "   (or use ../start minimal)"
+    echo "   Gateway not running."
+    echo "   Start the E2E demo with: ./playground demo minimal"
 else
     echo "   ✓ Gateway is running"
 fi
@@ -65,11 +65,8 @@ fi
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "Start playground:"
-echo "  python3 server.py"
-echo ""
-echo "Or with uv:"
-echo "  uv run server.py"
+echo "Start the local E2E demo:"
+echo "  ./playground demo minimal"
 echo ""
 echo "Then visit: http://localhost:49171"
 echo ""

@@ -88,7 +88,7 @@ PLAYGROUND_ADMIN_TOKEN = os.environ.get(
 # proxy mints a JWT for this user when no auth is supplied.
 _GUEST_USER_ID = 99
 
-# ── import start script's config ────────────────────────
+# ── import local runtime plan ───────────────────────────
 
 import types
 try:
@@ -615,7 +615,7 @@ async def _stale_session_reaper():
 
 
 def get_spawn_plan(scenario="minimal"):
-    """Build spawn plan from start script."""
+    """Build the Playground-owned spawn plan."""
     preset = start_mod.SCENARIOS.get(scenario)
     if not preset:
         preset = start_mod.SCENARIOS["minimal"]
@@ -1596,7 +1596,7 @@ def scan_processes():
                 "total_restarts": rs.get("total_restarts", 0),
             })
 
-    # 2. PID files (from ./start or previous session)
+    # 2. PID files (from Playground or previous session)
     if PID_DIR.exists():
         for pid_file in sorted(PID_DIR.glob("*.pid")):
             name = pid_file.stem

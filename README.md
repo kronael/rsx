@@ -284,9 +284,8 @@ not needed to demo.
 ```bash
 git clone <repo-url> && cd rsx
 make prepare                              # one-time: venv + Playwright
-./rsx-playground/playground start         # FastAPI on :49171
-# visit http://localhost:49171, click "Start All",
-# submit orders, view fills, inspect WAL
+./rsx-playground/playground demo minimal  # starts Playground + RSX
+# visit http://localhost:49171 to inspect processes, books, orders, WAL
 ./rsx-playground/playground stop
 ```
 
@@ -294,10 +293,9 @@ make prepare                              # one-time: venv + Playwright
 
 ### Core layout (6-core host)
 
-Hot-path processes busy-spin, so each **must** own a dedicated
-core. Without pinning they float across cores and starve each
-other — a starved hot-path process stalls, so pin each one to
-its own core.
+The local Playground demo is laptop-safe by default and does not pin
+processes to cores. Core pinning is reserved for explicit performance
+or lab runs where the operator controls isolated cores.
 
 | Core | Process | Model |
 |---|---|---|
