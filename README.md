@@ -387,7 +387,12 @@ The order things get finalized and shipped:
 3. **`rsx-gateway` + `rsx-marketdata`** — finalize the I/O edge.
    The notify egress wake landed; next is the userspace-UDP work
    above (io_uring at the caller, `SQPOLL` gated on the dedicated-
-   core config, `SO_REUSEPORT` sharding for capacity).
+   core config, `SO_REUSEPORT` sharding for capacity). Also scoped
+   to this phase, each behind spec work first, not a bounded change:
+   the direct **ME→GW fill path** with async settle to Risk (blocked
+   on spec gaps — see `BUGS.md` `ME-GW-DIRECT-SPEC-GAPS`), and moving
+   ME/Risk **config polling off Postgres to a dedicated config
+   server** (`specs/2/57-config-server.md`).
 4. **`rsx-tui`** — the protobuf-over-QUIC trading terminal (needs
    the gateway QUIC listener that validates the auth first-frame).
 5. **Hosting** — complete the deploy so you can install and run
