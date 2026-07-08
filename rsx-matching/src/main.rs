@@ -952,24 +952,23 @@ fn process_cancel(
             return;
         }
     };
-    // Defensive: index says the order exists; verify the
-    // slab slot still matches before we cancel. This catches
-    // any drift between index and slab without crashing.
-    let slot_check = book.orders.get(found);
-    if !slot_check.is_active()
-        || slot_check.user_id != user_id
-        || slot_check.order_id_hi != order_id_hi
-        || slot_check.order_id_lo != order_id_lo
-    {
-        warn!(
-            "cancel: index/slab drift detected \
-             user={} id={:#x}/{:#x} handle={}",
-            user_id, order_id_hi, order_id_lo, found,
-        );
-        return;
-    }
-
+    // order_index is kept in lockstep with the slab (updated on
+    // every OrderInserted/OrderDone, rebuilt on restore), so a
+    // present key always points at a live slot for this
+    // (user, oid). Assert that invariant in debug; trust it in
+    // release rather than silently swallowing the cancel.
     let slot = book.orders.get(found);
+    debug_assert!(
+        slot.is_active()
+            && slot.user_id == user_id
+            && slot.order_id_hi == order_id_hi
+            && slot.order_id_lo == order_id_lo,
+        "order_index/slab drift: user={} id={:#x}/{:#x} handle={}",
+        user_id,
+        order_id_hi,
+        order_id_lo,
+        found,
+    );
     let remaining_qty = slot.remaining_qty;
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
