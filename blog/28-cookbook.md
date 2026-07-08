@@ -209,5 +209,5 @@ curl -X POST http://localhost:49171/api/processes/all/stop -H 'x-confirm: yes'
 ---
 
 For the 60-second guided version of recipes 1–4, see
-[`docs/DEMO.md`](../docs/DEMO.md). For *why* any of this is shaped the way
+[`docs/demo.md`](../docs/demo.md). For *why* any of this is shaped the way
 it is, start at [Design Philosophy](01-design-philosophy.md).

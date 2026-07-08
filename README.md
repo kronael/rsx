@@ -322,7 +322,7 @@ make prepare                              # one-time: venv + Playwright
 ./rsx-playground/playground stop
 ```
 
-60-second clean-boot path: [docs/DEMO.md](docs/DEMO.md).
+60-second clean-boot path: [docs/demo.md](docs/demo.md).
 
 ### Core layout (6-core host)
 

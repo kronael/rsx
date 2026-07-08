@@ -85,7 +85,7 @@ sonnet agent. Not part of the oracle sign-off.
   playground. Unchanged content; relabel as GUIDE.
 - **DOCS** = the platform itself. Sources already in repo:
   - `docs/concepts/*.md` (10 concept explainers + glossary)
-  - `docs/DEMO.md`, `docs/benches.md`
+  - `docs/demo.md`, `docs/benches.md`
   - selected `specs/2/*.md` (the authoritative spec)
 - Implementation: extend the existing `/docs/{filename:path}`
   route (server.py:2757). Today it resolves only under
