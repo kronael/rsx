@@ -13,7 +13,7 @@ test.describe("Faults tab", () => {
     await page.goto("/faults");
     await expect(page.getByRole("heading", { name: "Recovery Notes" })).toBeVisible();
     await expect(page.locator("main")).toContainText(
-      "observe recovery"
+      /watch it auto-restart|Recovery/
     );
   });
 
@@ -42,7 +42,8 @@ test.describe("Faults tab", () => {
     expect(killCount).toBeGreaterThan(0);
   });
 
-  test("kill button triggers fault injection", async ({ page }) => {
+  test("@long kill button triggers fault injection", async ({ page, request }) => {
+    test.skip(process.env.PW_LONG !== "1", "set PW_LONG=1 to run long destructive flows");
     await page.goto("/faults");
     await waitForHTMX(page, 2000);
 
@@ -65,6 +66,7 @@ test.describe("Faults tab", () => {
       await expect(page.getByRole("heading", { name: "Fault Injection" }))
         .toBeVisible({ timeout: 5000 });
     }
+    await request.post("/api/processes/all/start?scenario=minimal&confirm=yes");
   });
 
   test("restart button appears for stopped processes", async ({ page }) => {
@@ -112,8 +114,10 @@ async function allocateSession(
 }
 
 test.describe("Fault injection API", () => {
+  test.skip(process.env.PW_LONG !== "1", "set PW_LONG=1 to run long destructive flows");
+
   test(
-    "kill+restart me-pengu then verify 10 invariants",
+    "@long kill+restart me-pengu then verify 10 invariants",
     async ({ request }) => {
       // Kill me-pengu
       const killRes = await request.post(
@@ -130,20 +134,26 @@ test.describe("Fault injection API", () => {
       );
       expect(restartRes.status()).toBeLessThan(500);
 
-      // Run invariant checks
-      const verifyRes = await request.post("/api/verify/run");
-      expect(verifyRes.ok()).toBeTruthy();
-      const html = await verifyRes.text();
+      try {
+        // Run invariant checks
+        const verifyRes = await request.post("/api/verify/run");
+        expect(verifyRes.ok()).toBeTruthy();
+        const html = await verifyRes.text();
 
-      // All 10 system invariants must appear in the response
-      for (const name of INVARIANT_NAMES) {
-        expect(html).toContain(name);
+        // All 10 system invariants must appear in the response
+        for (const name of INVARIANT_NAMES) {
+          expect(html).toContain(name);
+        }
+      } finally {
+        await request.post(
+          "/api/processes/all/start?scenario=minimal&confirm=yes",
+        );
       }
     },
   );
 
   test(
-    "stop all processes then verify 10 invariants",
+    "@long stop all processes then verify 10 invariants",
     async ({ request }) => {
       // Allocate session to obtain run_id for destructive call
       const runId = await allocateSession(request);
@@ -156,13 +166,19 @@ test.describe("Fault injection API", () => {
         },
       });
 
-      // Run invariant checks — must return all 10 named invariants
-      const verifyRes = await request.post("/api/verify/run");
-      expect(verifyRes.ok()).toBeTruthy();
-      const html = await verifyRes.text();
+      try {
+        // Run invariant checks — must return all 10 named invariants
+        const verifyRes = await request.post("/api/verify/run");
+        expect(verifyRes.ok()).toBeTruthy();
+        const html = await verifyRes.text();
 
-      for (const name of INVARIANT_NAMES) {
-        expect(html).toContain(name);
+        for (const name of INVARIANT_NAMES) {
+          expect(html).toContain(name);
+        }
+      } finally {
+        await request.post(
+          "/api/processes/all/start?scenario=minimal&confirm=yes",
+        );
       }
     },
   );

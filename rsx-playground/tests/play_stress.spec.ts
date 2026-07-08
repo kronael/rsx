@@ -166,9 +166,9 @@ test.describe("Stress tab", () => {
     await page.locator("input[name='rate']").fill("10");
     await page.locator("input[name='duration']").fill("1");
     await page.locator("button", { hasText: "Run Stress Test" }).click();
-    // Wait for HTMX to swap the result (stress runs for ~1s then reports)
+    // HTMX returns an async start result; the report lands in the list later.
     await expect(page.locator("#stress-result")).toContainText(
-      /completed|submitted|gateway|error/i,
+      /running|started|already|gateway|error|failed/i,
       { timeout: 15000 }
     );
   });

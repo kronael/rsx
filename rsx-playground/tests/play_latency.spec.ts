@@ -4,7 +4,7 @@ import { expect } from "@playwright/test";
 const ORDER_DATA = {
   symbol_id: "10",
   side: "buy",
-  price: "50000",
+  price: "0.050",
   qty: "10",
   user_id: "1",
 };
@@ -83,14 +83,13 @@ test.describe("Latency", () => {
     request,
   }) => {
     const start = Date.now();
-    // A crossing limit (buy above the maker's asks; tick grid = 50)
+    // A crossing limit (buy above the maker's asks; human tick = 0.000050)
     // fills fast (fast ack). A resting GTC limit below the ask gets
     // no ack and burns the full 2s ack-wait, eating the budget.
-    // (Market orders — price 0 — are rejected by the gateway as
-    // non-tick-aligned, so a high crossing limit is the fill path.)
+    // (The order endpoint accepts human units, not raw fixed-point ticks.)
     const resp = await request.post(
       "/api/orders/test",
-      { form: { ...ORDER_DATA, price: "51000" } }
+      { form: { ...ORDER_DATA, price: "0.051" } }
     );
     const elapsed = Date.now() - start;
     expect(resp.ok()).toBeTruthy();
@@ -107,7 +106,7 @@ test.describe("Latency", () => {
         request.post("/api/orders/test", {
           form: {
             ...ORDER_DATA,
-            price: String(50000 + i),
+            price: (0.051 + i * 0.00005).toFixed(6),
           },
         })
     );
@@ -183,7 +182,7 @@ test.describe("Latency", () => {
           form: {
             symbol_id: "10",
             side: "buy",
-            price: "50000",
+            price: "0.050",
             qty: "100",
             cid: `lat-test-${i}`.padEnd(20, "0"),
           },
@@ -341,7 +340,7 @@ test.describe("Latency", () => {
             form: {
               symbol_id: "10",
               side: "sell",
-              price: "50000",
+              price: "0.050",
               qty: "10",
               user_id: "2",
             },
@@ -352,7 +351,7 @@ test.describe("Latency", () => {
             form: {
               symbol_id: "10",
               side: "buy",
-              price: "51000",
+              price: "0.051",
               qty: "10",
               user_id: "1",
             },
@@ -435,7 +434,7 @@ test.describe("Latency", () => {
   );
 
   // F23: latency-regression must label what it measures
-  // (gateway-response RTT), not pretend to be the engine
+  // (proxy/demo-path RTT), not pretend to be the engine
   // round-trip "GW->ME->GW".
   test("regression_label_matches_what_is_measured (F23)",
     async ({ request }) => {
@@ -444,7 +443,9 @@ test.describe("Latency", () => {
       const html = await r.text();
       expect(html).not.toContain("GW-&gt;ME-&gt;GW");
       expect(html).not.toContain("GW->ME->GW");
-      expect(html).toContain("Order ack RTT");
+      expect(html).toContain("Proxy round-trip p99");
+      expect(html).toContain("demo path");
+      expect(html).toContain("internal budget");
     },
   );
 });

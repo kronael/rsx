@@ -32,7 +32,7 @@ test.describe("Risk tab", () => {
 
   test("has liquidation queue card", async ({ page }) => {
     await page.goto("/risk");
-    await expect(page.locator("h2", { hasText: "Liquidation Queue" })).toBeVisible();
+    await expect(page.locator("main")).toContainText("Liquidation Queue");
   });
 
   // New interactive tests (13 total)
@@ -54,7 +54,7 @@ test.describe("Risk tab", () => {
     expect(content).toMatch(/user|no data|error|not connected/i);
   });
 
-  test("user lookup shows postgres not connected message when DB unavailable", async ({ page }) => {
+  test("user lookup shows a flat state for users with no WAL fills", async ({ page }) => {
     await page.goto("/risk");
     const riskData = page.locator("#risk-data");
 
@@ -62,8 +62,8 @@ test.describe("Risk tab", () => {
     await page.locator("button", { hasText: "Lookup" }).click();
     await waitForHTMX(page);
 
-    // Should show "no data" or "not connected" message
-    await expect(riskData).toContainText(/no data|not connected|postgres|error/i);
+    await expect(riskData).toContainText(/user 999/i);
+    await expect(riskData).toContainText(/flat|no fills/i);
   });
 
   test("freeze button triggers action", async ({ page }) => {
@@ -117,7 +117,7 @@ test.describe("Risk tab", () => {
         symbol_id: "10",
         side: "sell",
         order_type: "limit",
-        price: "50000",
+        price: "0.050",
         qty: "10",
         user_id: "2",
       },
@@ -127,7 +127,7 @@ test.describe("Risk tab", () => {
         symbol_id: "10",
         side: "buy",
         order_type: "limit",
-        price: "51000",
+        price: "0.051",
         qty: "10",
         user_id: "1",
       },
@@ -175,7 +175,7 @@ test.describe("Risk tab", () => {
         symbol_id: "10",
         side: "sell",
         order_type: "limit",
-        price: "50000",
+        price: "0.050",
         qty: "10",
         user_id: "1",
       },
@@ -185,7 +185,7 @@ test.describe("Risk tab", () => {
         symbol_id: "10",
         side: "buy",
         order_type: "limit",
-        price: "51000",
+        price: "0.051",
         qty: "10",
         user_id: "2",
       },
@@ -206,16 +206,21 @@ test.describe("Risk tab", () => {
 
   test("funding card auto-refreshes", async ({ page }) => {
     await page.goto("/risk");
-    const funding = page.locator("[hx-get='./x/funding']");
+    const funding = page.locator("[hx-get='./x/risk-overview']");
 
-    await verifyPolling(funding, "every 2s");
+    await verifyPolling(funding, "every 3s");
+    await expect(funding).toContainText(/Funding Rates/i, { timeout: 5000 });
   });
 
   test("liquidation queue auto-refreshes", async ({ page }) => {
     await page.goto("/risk");
-    const liqQueue = page.locator("[hx-get='./x/liquidations']");
+    const liqQueue = page.locator("[hx-get='./x/risk-overview']");
 
-    await verifyPolling(liqQueue, "every 2s");
+    await verifyPolling(liqQueue, "every 3s");
+    await expect(liqQueue).toContainText(
+      /Liquidation Queue/i,
+      { timeout: 5000 },
+    );
   });
 
   test("risk latency card auto-refreshes every 5s", async ({ page }) => {
@@ -281,8 +286,8 @@ test.describe("Risk tab", () => {
     // Verify all cards visible
     await expect(page.getByRole("heading", { name: "Position Heatmap" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Margin Ladder" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Funding", exact: true })).toBeVisible();
-    await expect(page.locator("h2", { hasText: "Liquidation Queue" })).toBeVisible();
+    await expect(page.locator("main")).toContainText("Funding Rates");
+    await expect(page.locator("main")).toContainText("Liquidation Queue");
     await expect(page.getByRole("heading", { name: "Risk Check Latency" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "User Actions" })).toBeVisible();
 

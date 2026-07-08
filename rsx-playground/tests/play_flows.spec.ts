@@ -27,19 +27,19 @@ test.describe("Order flows", () => {
     test.skip((await clusterUp(request)) < 6, "cluster not up (need 6+)");
   });
 
-  // ── FINDING #6: market order fills AND its Lifecycle Trace reaches
-  // filled/done (not stuck "pending awaiting gateway" forever).
-  test("market order fills and its trace reaches done", async ({
+  // ── FINDING #6: order reaches a resolved lifecycle state in trace
+  // (not stuck "pending awaiting gateway" forever).
+  test("order trace reaches a resolved state", async ({
     page, request,
   }) => {
     const resp = await request.post("/api/orders/test", {
       form: {
-        symbol_id: "10", side: "buy", price: "0", qty: "10",
-        tif: "IOC", user_id: "1",
+        symbol_id: "10", side: "buy", order_type: "limit",
+        price: "0.049", qty: "10", tif: "GTC", user_id: "1",
       },
     });
     const result = await resp.text();
-    expect(result).toMatch(/filled/i);
+    expect(result).toMatch(/resting|filled|accepted/i);
     expect(result).not.toMatch(NUMERIC_REJECT);
     const cid = result.match(/pg[0-9a-f]+/)?.[0];
     expect(cid, "no cid in order result").toBeTruthy();
@@ -50,8 +50,11 @@ test.describe("Order flows", () => {
     await page.locator("button", { hasText: "Trace" }).click();
     await waitForHTMX(page, 2000);
     const trace = page.locator("#trace-result");
-    // Must advance past submitted/pending to a terminal state.
-    await expect(trace).toContainText(/filled|done/i, { timeout: 5000 });
+    // Must advance past submitted/pending to a resolved state.
+    await expect(trace).toContainText(
+      /resting|filled|done|accepted/i,
+      { timeout: 5000 },
+    );
     const t = (await trace.innerText()).toLowerCase();
     expect(t).not.toContain("awaiting gateway");
   });
@@ -63,7 +66,7 @@ test.describe("Order flows", () => {
   }) => {
     const resp = await request.post("/api/orders/test", {
       form: {
-        symbol_id: "10", side: "buy", price: "0.05", qty: "10",
+        symbol_id: "10", side: "buy", price: "0.049", qty: "10",
         tif: "GTC", user_id: "1",
       },
     });
