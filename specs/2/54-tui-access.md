@@ -10,29 +10,34 @@ without minting a unix account or a bespoke client per trader.
 
 ## Identity model (shared by both paths)
 
-> **Transport note.** `rsx-tui` now speaks **protobuf-over-QUIC** only
-> (`rsx-tui/src/quic.rs`); the WebSocket client is gone. The identity
-> model below — authenticate a person, map them to one `RSX_TUI_USER`,
-> launch the TUI — is unchanged and transport-agnostic. What is deferred
-> is *carrying* that identity over QUIC: the current QUIC wire has no
-> auth handshake, so binding the JWT onto the QUIC connection (and the
-> env the dispatcher exports) lands with the gateway QUIC endpoint (see
-> `rsx-tui/ARCHITECTURE.md` "Server side"). The values below describe the
-> intended, gateway-checked identity.
+> **Transport note.** `rsx-tui` speaks **protobuf-over-QUIC** only
+> (`rsx-tui/src/quic.rs`); the WebSocket client is gone. Identity is now
+> carried in-band: on connect the client mints an HS256 JWT for its
+> `RSX_TUI_USER` and sends it in the QUIC **auth first-frame**
+> (`WireHello { jwt, user }`) before any order. What is deferred is the
+> gateway VALIDATING that frame — a QUIC listener that checks the JWT and
+> binds the connection to `user` (see `rsx-tui/ARCHITECTURE.md` "Server
+> side"). The access model below — authenticate a person, map them to one
+> `RSX_TUI_USER`, launch the TUI — is unchanged and transport-agnostic.
 
-A TUI session's identity is three values (see `rsx-tui/src/main.rs`):
+A TUI session's identity is these values (see `rsx-tui/src/main.rs`):
 
-- `RSX_TUI_USER` — the u32 the session trades as. The gateway-checked
-  JWT carries this as its `user_id` claim.
-- `RSX_GW_URL` — the gateway to dial (`wss://rsx.krons.cx` for the
-  WebSocket public API; the QUIC endpoint is a follow-up).
+- `RSX_TUI_USER` — the u32 the session trades as. The client mints a JWT
+  carrying this as its `user_id` claim and sends it in the auth
+  first-frame; the gateway validates it (server-side follow-up).
+- `RSX_TUI_SYMBOL` — the u32 symbol id the session trades (the TUI is
+  single-market; stamped on every order).
+- `RSX_GW_ADDR` — the gateway QUIC endpoint to dial (`ip:port`), with
+  `RSX_GW_CERT` (the DER cert to trust) and `RSX_GW_SERVER_NAME` (the TLS
+  name, default `localhost`).
 - `RSX_GW_JWT_SECRET` — the HS256 signing secret the gateway shares.
 
 The whole access problem is: **authenticate a person, map them to one
 `RSX_TUI_USER`, then launch `rsx-tui` with that env against the
 deployment.** The secret is a server-side value the launcher holds; it
-never travels to the client. This spec never adds a second identity
-system — it reuses the JWT the gateway already checks (spec 11-gateway,
+signs the JWT and never travels to the client as a secret (the client
+gets only the minted token). This spec never adds a second identity
+system — it reuses the JWT the gateway checks (spec 11-gateway,
 spec 49-webproto). Both front doors are, at bottom, an authenticated way
 to pick `RSX_TUI_USER`.
 
@@ -77,12 +82,13 @@ Example: `scripts/rsx-tui.authorized_keys.example`.
 2. Logs and drops `SSH_ORIGINAL_COMMAND` (whatever the client tried to
    run). `rsx-tui` takes no arguments.
 3. Sources `/etc/rsx-tui/env` (override with `RSX_TUI_ENV_FILE`), mode
-   `0400`, owner `rsx-tui` — this holds `RSX_GW_JWT_SECRET` and, if it
-   differs from the default, `RSX_GW_URL`. The secret lives here, never
-   in authorized_keys.
-4. Exports `RSX_TUI_USER=<user_id>` and `RSX_GW_URL` (default
-   `wss://rsx.krons.cx`), then `exec rsx-tui` (override the binary with
-   `RSX_TUI_BIN`).
+   `0400`, owner `rsx-tui` — this holds `RSX_GW_JWT_SECRET` and the
+   gateway QUIC endpoint (`RSX_GW_ADDR`, `RSX_GW_CERT`). The secret lives
+   here, never in authorized_keys; `rsx-tui` mints the session JWT from
+   it (the human never sees the token).
+4. Exports `RSX_TUI_USER=<user_id>` (and `RSX_TUI_SYMBOL` for the market),
+   then `exec rsx-tui` (override the binary with `RSX_TUI_BIN`). The QUIC
+   dial + auth first-frame follow from the sourced env.
 
 The client's PTY becomes the TUI; quitting the TUI ends the SSH session.
 
@@ -110,7 +116,8 @@ sudo install -m 0755 scripts/rsx-tui-dispatch /usr/local/bin/
 sudo install -m 0755 scripts/rsx-tui-authorize /usr/local/bin/
 sudo install -m 0755 <rsx-tui binary> /usr/local/bin/rsx-tui
 sudo install -d -o rsx-tui -g rsx-tui -m 0700 /etc/rsx-tui
-printf 'RSX_GW_JWT_SECRET=%s\nRSX_GW_URL=wss://rsx.krons.cx\n' "$SECRET" \
+printf 'RSX_GW_JWT_SECRET=%s\nRSX_GW_ADDR=%s\nRSX_GW_CERT=%s\n' \
+  "$SECRET" "$GW_ADDR" /etc/rsx-tui/gateway.der \
   | sudo install -o rsx-tui -g rsx-tui -m 0400 /dev/stdin /etc/rsx-tui/env
 ```
 
@@ -133,7 +140,8 @@ the wrappers.
 - **Trust boundary honored.** This adds no auth to casting — SSH pubkey
   auth gates *external* humans reaching the launcher; internal RSX peers
   remain L3-trusted (spec 4-cast §10.4, CLAUDE.md trust boundaries). The
-  gateway still validates the minted JWT.
+  client sends the minted JWT in the QUIC auth first-frame; the gateway
+  validating it is the pending server-side piece.
 
 ## Web terminal (specified; service deferred)
 
@@ -178,9 +186,9 @@ dev box in this pass, so it is specified, not half-built.
     trader, each pinned to a `<user_id>`, addressed by an
     auth-gated path. Simpler to reason about, does not scale to many
     users, wastes idle processes. Fine for a small demo cohort.
-- **Session isolation:** one PTY (hence one `rsx-tui`, one gateway WS, one
-  JWT) per browser connection. ttyd `--once` ties the process lifetime to
-  the connection so a closed tab reaps the session.
+- **Session isolation:** one PTY (hence one `rsx-tui`, one gateway QUIC
+  connection, one JWT) per browser connection. ttyd `--once` ties the
+  process lifetime to the connection so a closed tab reaps the session.
 - **Auth:** the browser is authenticated **before** ttyd — at the nginx /
   auth-proxy layer against `rsx-auth`, never by exposing
   `RSX_GW_JWT_SECRET` to the browser. The browser gets a terminal, not a
