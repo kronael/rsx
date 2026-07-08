@@ -3,7 +3,9 @@
 Gateway and marketdata are monoio/io_uring services because they
 are I/O-bound fan-in/fan-out edges, not compute tiles. A pinned
 busy-spin loop does not beat a kernel boundary; it just spends a
-core waiting to pay the same syscall.
+core waiting to pay the same syscall. The tradeoff is the same as
+[tiles-and-pinning](tiles-and-pinning.md): runtime first, hand-roll
+only when the last-mile modes matter.
 
 ## Why batching beats spinning
 
@@ -24,6 +26,24 @@ one `io_uring_enter`, and many CQEs are reaped together. That
 amortizes the boundary across ready connections. A compute tile
 helps when the work is a 60 ns match; it does not remove a 3.5 us
 send syscall.
+
+## Many events, one polling core
+
+SQPOLL moves submission polling into the kernel. The ring is created
+with `IORING_SETUP_SQPOLL`; a dedicated kernel thread watches the
+submission queue, so userspace can make SQEs visible without an
+`io_uring_enter` submit syscall. That is how the edge sustains a
+high event rate. The cost is blunt: the kernel thread busy-polls a
+core, so RSX should enable it only from the dedicated-core config,
+never from a manual "fast mode" flag.
+
+SQPOLL is not the whole win. Pair it with multishot recv and
+registered/provided buffers: 1 recv submission can produce many
+packet completions, and buffers are pre-pinned or supplied from a
+ring instead of set up per packet. Then add egress coalescing:
+`sendmmsg` or GSO packs many outbound bytes into 1 kernel crossing.
+The point is fewer crossings and less per-event setup, not a hotter
+spin loop.
 
 ## The scaling ladder
 
@@ -63,6 +83,42 @@ The tradeoff is operational. io_uring asks for Linux support,
 registered resources need lifecycle discipline, and SQPOLL consumes
 a core. RSX pays those costs at the many-connection edge, where the
 unit of work is a 3.5 us kernel crossing, not a 60 ns match.
+
+## Where hand-rolling starts
+
+monoio is a generic io_uring runtime. In monoio 0.2.4, the I/O op
+path is generic over `OpAble`, not a per-op `dyn` trait-object
+virtual call in the driver. The overhead that remains is generic
+reactor dispatch, an operation slab lookup, future polling, and
+waker bookkeeping. That is small: a few ns-scale operations are
+marginal next to a 3.5 us syscall.
+
+The real reason to hand-roll is indirect. A bespoke io_uring loop can
+drop the generic reactor, monomorphize the exact ops it needs, handle
+SQEs/CQEs directly, and expose modes a general runtime may not expose
+or may not compose for RSX's workload: SQPOLL with CPU placement,
+registered files and buffers, provided-buffer rings, multishot recv,
+and GSO. The direct saving is small; the mode unlock is large. That
+is the I/O version of tiles: monoio is the good default, and
+hand-rolling is what you do when you need both the latency floor and
+the throughput ceiling.
+
+## The tile bridge
+
+A pinned compute tile must not block. `io_uring_enter` can block when
+submitting and waiting for completions, so waiting inside the
+matching tile would turn a network stall into a book stall. That is
+why adding io_uring to matching is not free: the socket and polling
+must live somewhere.
+
+There are 2 workable shapes. First, a separate I/O thread owns the
+ring, does recv/send, and hands decoded bytes to the tile over an
+SPSC ring. The compute tile stays a 60 ns-class loop; the I/O thread
+is allowed to block in the kernel. Second, SQPOLL lets the kernel own
+the ring polling, so the tile can publish SQEs without the submit
+syscall. That still spends a polling core. Either way, the compute
+tile does not wait in `io_uring_enter`; an I/O thread or a kernel
+thread owns the wait.
 
 ---
 

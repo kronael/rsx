@@ -37,6 +37,16 @@ reservation but makes every handle two-part and every lookup one
 more indirection. The current tradeoff keeps the handle a flat
 array index and lets the kernel supply laziness at page granularity.
 
+Tail handling is fixed today. The order slab capacity is the
+`Orderbook::new(config, capacity, mid_price)` constructor argument;
+when `Slab::alloc` runs past that capacity it asserts `"slab
+exhausted"`. The per-cycle event buffer is also fixed:
+`Box<[Event; MAX_EVENTS]>` with `MAX_EVENTS = 65_536`; `emit`
+asserts before overflow instead of growing. The intended direction is
+automatic tail handling for both structures: with enough RAM, a
+pathological cascade such as 1 billion events should grow or spill
+instead of asserting.
+
 ## The CompressionMap
 
 Price levels use five distance-based zones centered on the mid:
