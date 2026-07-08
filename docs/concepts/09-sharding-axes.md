@@ -5,10 +5,12 @@ interfere with each other.
 
 ## The two axes
 
-Risk shards by `user_id`. Each shard owns a contiguous range
-of users and holds all of their positions and margin in RAM.
-The routing key is `user_id mod num_shards` (or an explicit
-range assignment). A shard processes every symbol for its users
+Risk shards by `user_id`. Each shard owns a set of users and
+holds all of their positions and margin in RAM. The routing key
+is a fixed virtual shard, `vshard = hash(user_id) % N_VSHARDS`,
+mapped through a mutable `shardmap` table to a node — so the
+cluster can grow without a global reshuffle. A shard processes
+every symbol for its users
 — it receives fills from all matching engines but only applies
 the ones belonging to its user range. Adding users means adding
 Risk shards.
@@ -56,28 +58,25 @@ itself cheaper.
 User U sends an order on symbol S:
 
 ```
-Gateway → Risk[U] → ME[S]
-                 ↓ (fill, async)
-            Risk[U] ← ME[S]
-Gateway ← (fill, direct from ME[S])
+Gateway → Risk[U] → ME[S] → Risk[U] → Gateway
 ```
 
 Gateway routes by `user_id`. Risk[U] validates margin and
-freezes collateral, then routes by `symbol_id` to ME[S]. ME[S]
-matches against the book and appends the fill to its WAL.
-The fill notification goes directly from ME to the gateway
-(3 hops to the client) while the settlement — updating the
-position and releasing the frozen margin — goes from ME back
-to Risk asynchronously (off the client's critical path).
+freezes collateral (worst-case: full notional plus fees), then
+routes by `symbol_id` to ME[S]. ME[S] matches against the book,
+appends the fill to its WAL, and sends the fill back to Risk[U].
+Risk applies the settlement — updates the position, releases the
+frozen margin — and forwards the fill to the gateway, which
+delivers it to the client. Five hops, one book per symbol, one
+margin authority per user.
 
-The margin reservation is synchronous and worst-case (full
-notional plus fees) so that the async settle gap never creates
-an over-leveraged position. The trade-off is that margin is
-eventually-consistent from the client's perspective: a very
-fast client recycling freed margin within the async lag (
-microseconds to one casting hop plus Risk queue) may see
-a spurious rejection on a subsequent order. Solvency is
-never at risk; only a fast client racing its own freed margin.
+Freezing worst-case at entry and settling on the return path
+means the client never sees margin freed before the fill: margin
+is consistent from the client's view, and solvency is never at
+risk. A planned optimization (see `28-risk.md`) would send the
+fill from ME straight to the gateway and settle to Risk
+asynchronously — shaving hops at the cost of eventually-consistent
+margin — but that split is not implemented today.
 
 ## Why the axes are orthogonal
 

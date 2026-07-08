@@ -6,9 +6,11 @@ slots. At 64 bytes per level, that is 6.4 GB for one symbol.
 RSX keeps the exact touch cheap by spending memory on two fixed
 arrays: a configurable order slab and a five-zone CompressionMap.
 
-Together they keep a 20-million-level theoretical book near 15 MB
-for price levels, with 2-5 ns price lookup and no malloc on the
-matching hot path.
+Together they compress that 100-million-slot address space down to
+about 617 000 price-level slots. Each `PriceLevel` is 32 bytes and
+the book holds two arrays of them (active plus a staging copy for
+recentering), so the level storage is about 40 MB, with 2-5 ns
+price lookup and no malloc on the matching hot path.
 
 ## The slab
 
@@ -75,8 +77,9 @@ For BTC-PERP at $50 000 with a $0.01 tick:
 - Zone 3: 30-50% -> 2 000 000 ticks / 1 000 -> 2 000 slots
 - Zone 4: everything else -> 2 slots
 
-Total: about 617 000 slots. That is the 20M-level theoretical
-book in about 15 MB.
+Total: about 617 000 slots — down from 100 million. At 32 bytes
+per `PriceLevel` across the active and staging arrays, that is
+about 40 MB of level storage.
 
 The lookup is fixed work. `CompressionMap::new` pre-computes
 four raw-distance thresholds at 5%, 15%, 30%, and 50% of mid.
@@ -104,12 +107,14 @@ price and one side per slot; that holds *only* at 1:1. So a stale mid
 is a correctness hazard, not just lost precision.
 
 Recentering is the guarantor. `should_recenter(mid)` fires once the mid
-drifts past half of zone 0's half-width; `trigger_recenter(new_mid)`
-rebuilds the map around the new mid and migrates resting orders (a
-frontier walk that moves a level lazily as it is next touched, with an
-idle batch draining the rest). The invariant it protects: **the touch
-always sits in zone 0, at 1:1 resolution.** That is what makes the
-compressed book correct — not an optimization on top of it.
+drifts past half of zone 0's half-width; live matching then calls
+`recenter_now`, which rebuilds the map around the new mid and migrates
+every resting order in one shot (the staging array is the swap target).
+`rsx-book` also has a lazy frontier-walk migration, but matching does
+not use it — lazy migration is not correct while the book is live. The
+invariant recentering protects: **the touch always sits in zone 0, at
+1:1 resolution.** That is what makes the compressed book correct — not
+an optimization on top of it.
 
 ## Recovery: the book is derived
 

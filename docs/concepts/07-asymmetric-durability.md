@@ -7,11 +7,13 @@ is expensive and wrong.
 
 A fill is the only event that changes a user's balance. Losing
 a fill means the user's balance is permanently wrong: a court-
-able offense, not a UX inconvenience. So fills are flushed to
-WAL and fsync'd before the fill notification is forwarded
-downstream. If the matching engine crashes a millisecond after
-the fsync, the fill is on disk. The WAL replay will reconstruct
-it on restart. Loss window: bounded by the 10 ms flush interval.
+able offense, not a UX inconvenience. So every fill is appended
+to the WAL the instant the matching engine produces it, and the
+WAL is fsync'd on a 10 ms flush cycle. The fill is forwarded
+downstream as soon as it is buffered, not held until the fsync —
+so a crash can lose the fills from the last unflushed window.
+WAL replay reconstructs everything up to the last fsync on
+restart. Loss window: bounded by the 10 ms flush interval.
 
 An order intent is not sacred. It is the client's request, not
 the exchange's commitment. If the gateway crashes after receiving
@@ -44,15 +46,16 @@ Positions are computed from fills, so they are derived. Derived
 state can always be recomputed; it does not need its own
 independent durability guarantee.
 
-The order-level idempotency key is the client-assigned `cid`
-(a 20-character string, unique per user per trading day). The
-matching engine persists accepted `cid`s in the WAL as
-`RECORD_ORDER_ACCEPTED`. On retry, the engine deduplicates
-by `cid`: if the WAL already contains that identifier, the
-order is acknowledged without re-executing. This means a
-client can safely retry an order submission after a connection
-drop without risking double execution, even if the first
-submission may have executed.
+The matching engine's dedup key is `(user_id, order_id)` — the
+exchange order id, not the client string. Each acceptance is
+persisted in the WAL as `RECORD_ORDER_ACCEPTED`, and an in-memory
+window (300 s) rejects a repeat of the same `(user_id, order_id)`
+without re-executing; replaying that record rebuilds the dedup set
+after a crash. The client-facing idempotency key is the
+20-character `cid`, tracked at the gateway, which holds pending
+orders by `cid`. So a client can safely retry an order after a
+connection drop without risking double execution, even if the
+first submission may have executed.
 
 ## What the alternative costs
 
