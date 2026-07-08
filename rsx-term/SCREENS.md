@@ -173,4 +173,5 @@ both link states, rtt p50/min, open/fills, spread, depth, last event:
 (`conn/mock.go` `DemoScript`) with no network — the reference screen for
 this catalogue and for a sales demo. On the mock, all three latency legs are
 real; live, only `net` is client-measured until the gateway stamps the
-internal/engine legs (they show `—`).
+internal/engine legs (they show `·· pending`, dim italic — never a bare
+dash, see `legValue`).
