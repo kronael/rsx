@@ -4175,11 +4175,17 @@ async def x_liquidations():
 
 @app.get("/x/verify", response_class=HTMLResponse)
 async def x_verify():
+    procs = scan_processes()
+    running, expected = process_counts(procs)
     if not verify_results:
         return HTMLResponse(
             '<span class="text-slate-600">'
+            f'processes running {running}/{expected}; '
             'click "Run All Checks" to verify</span>')
-    return HTMLResponse(pages.render_verify(verify_results))
+    return HTMLResponse(
+        '<div class="text-[10px] text-slate-500 mb-2">'
+        f'processes running {running}/{expected}</div>'
+        + pages.render_verify(verify_results))
 
 
 @app.get("/x/recent-orders", response_class=HTMLResponse)
@@ -5306,7 +5312,7 @@ async def _run_invariant_checks() -> list[dict]:
             "time": now,
             "detail": (
                 "no WAL fills and no session fills"
-                if running
+                if all_running
                 else "no processes running"
             ),
         })
