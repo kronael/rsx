@@ -76,7 +76,7 @@ round-trip is transport-bound (~4 casting hops), not compute-bound.
 |------|---------|
 | `main.rs` | Binary: casting setup, WAL init, match loop, event routing, cancel index |
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
-| `dedup.rs` | `DedupTracker` — 5-minute sliding-window duplicate detection |
+| `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |
 | `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` — Postgres config polling |
 | `wal.rs` | `publish_events()`, `flush_if_due()`, `write_events_to_wal()` (replay + bench helper) |
 
@@ -98,7 +98,7 @@ Tight busy-spin on the pinned core (`main.rs:403`):
 ```
 loop {
     1. cast_receiver.try_recv()       // OrderRequest or CancelRequest from risk
-    2. dedup.check_and_insert()       // 5-minute sliding window
+    2. dedup.check_and_insert()       // 1-hour sliding window
     3. wal.append_framed(ORDER_ACCEPTED) // authoritative — panic on err
     4. process_new_order(book)        // match against book; events in fixed buffer
     5. publish_events()               // one-CRC fan-out: WAL + cast(risk) + cast(mkt)
@@ -180,7 +180,7 @@ their own seq counter via `CastSender::send` for that record.
 ## Deduplication
 
 `DedupTracker` keeps `(user_id, oid_hi, oid_lo)` for a
-5-minute sliding window. On replay, the dedup set is
+1-hour sliding window. On replay, the dedup set is
 rebuilt from `RECORD_ORDER_ACCEPTED` records in the WAL —
 duplicate detection is WAL-persisted, not a memory-only
 guard.
