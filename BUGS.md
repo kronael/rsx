@@ -74,9 +74,10 @@ code. Do NOT fix without founder go.
   it doesn't pay the one extra BBO WAL-record write a BBO-moving accept (level
   drain, or a resting residual creating best-bid) would. Not a wrong number —
   honest for its scenario — but the headline may not represent a BBO-moving
-  accept. Decision (founder): relabel 266 as "fills without moving BBO", or
-  redesign the flagship scenario to move the BBO for a more representative
-  (slightly higher) figure. Record-only.
+  accept. **RESOLVED 2026-07-08 — relabeled** (founder chose relabel over
+  scenario redesign): the 266 ns headline now reads "one fill, BBO unchanged"
+  across README, rsx-matching README/ARCHITECTURE, and the Jul-03 report;
+  a BBO-moving accept adds one WAL record.
 - **ME-CANCEL-REIMPL** (LOW, duplication) — `process_cancel`
   (`main.rs:955`) reimplements the drift-check inline instead of
   `rsx-book::cancel_order_checked` (`book.rs:355`), missing its

@@ -87,7 +87,7 @@ Grouped by how much I trust each figure.
 | `match_by_depth/n=1000` | 29.3 ns | |
 | `match_by_depth/n=10000` | 32.7 ns | |
 | `match_by_depth/n=100000` | **29.7 ns** | **depth-INDEPENDENT** |
-| `me_accept_path/full` | **266 ns** | full `Me::accept` (dedup+match+buffered WAL+index), 1 fill |
+| `me_accept_path/full` | **266 ns** | full `Me::accept` (dedup+match+buffered WAL+index), 1 fill, BBO unchanged — a BBO-moving accept writes one more WAL record |
 | `me_throughput/orders` | 281 ns | ≈ **3.6M orders/s** (1 fill each) |
 | `dedup/insert_new` | 147 ns | FxHashMap insert |
 | `dedup/hit_duplicate` | **3.7 ns** | duplicate rejected |
@@ -99,7 +99,8 @@ Grouped by how much I trust each figure.
 
 **Headline:** the match itself is **~30 ns, flat across depth 1→100k**
 (depth-independent, consistent with the 52 ns deep-book figure in
-`20260530_component-benches.md`); a full single-order accept is **266 ns**;
+`20260530_component-benches.md`); a full single-order accept (one fill,
+BBO unchanged) is **266 ns**;
 duplicate rejection is **3.7 ns**.
 
 ### Order-type / multi-level-sweep: not measured here
