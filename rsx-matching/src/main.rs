@@ -214,7 +214,6 @@ fn main() {
         }
     };
 
-    // Pin to core if specified
     if let Ok(core_str) = env::var("RSX_ME_CORE_ID") {
         if let Ok(core_id) = core_str.parse::<usize>() {
             let setup = rsx_types::cpu::setup_hot_thread(core_id);
@@ -227,7 +226,6 @@ fn main() {
 
     let symbol_id = initial_config.symbol_id;
 
-    // Database connection (optional, for config polling)
     let db_url = env::var("RSX_ME_DATABASE_URL").ok();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -279,7 +277,6 @@ fn main() {
 
     let mut book = Orderbook::new(initial_config, 65_536, 50_000);
 
-    // WAL writer.
     // Hot retention is 4 h. Long-term durability is the
     // archive's job (see ARCHIVE setup in 48-wal.md); hot
     // WAL just needs enough window to absorb a crash and
@@ -293,7 +290,6 @@ fn main() {
     let mut dedup = DedupTracker::new();
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
 
-    // Restore book state from snapshot if available.
     // Recovery strategy (R-N1):
     //   1. Load snapshot.bin into `book` (if present).
     //   2. Read wal_seq.txt sidecar — the WAL seq at the
@@ -360,7 +356,7 @@ fn main() {
 
     // Rebuild the dedup window from the WAL. The book snapshot does not
     // persist the dedup set and only covers ~10 s, while the dedup window
-    // is 300 s — so seed every RECORD_ORDER_ACCEPTED still inside the
+    // is 1 h — so seed every RECORD_ORDER_ACCEPTED still inside the
     // window (pre- AND post-snapshot) with its remaining TTL. Without this,
     // a client resend of a pre-snapshot order after a crash would
     // re-execute (violates exactly-one-completion).
