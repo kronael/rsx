@@ -160,7 +160,7 @@ impl MarketDataState {
             return;
         }
         if self.books[idx].is_none() {
-            let mut cfg = self.base_config.clone();
+            let mut cfg = self.base_config;
             cfg.symbol_id = symbol_id;
             let mid = if mid_price_hint > 0 {
                 mid_price_hint
