@@ -146,6 +146,11 @@ export default defineConfig({
       timeout: 60_000,
       dependencies: ["readiness"],
     },
+    // Shard 5: terminal — embedded rsx-term browser/PTY smoke
+    {
+      name: "terminal",
+      testMatch: ["play_terminal.spec.ts"],
+    },
     // Shard 6: latency — performance and memory bounds (15 tests)
     {
       name: "latency",
