@@ -45,12 +45,11 @@ code** — processing millions of events per second with a
 target of **sub-10 µs latency over the network**. That target
 is aspirational today: the in-process round trip is 9.58 µs,
 but cross-process it is still 1.1 ms — the benchmark tables
-below show exactly where the time goes and why. The value is
-in reading a *working*, *measured*, *honestly-labelled*
-attempt: specs are written before the code (47 of them in
-`specs/2/`), every non-obvious choice has a tradeoff note, and
-gaps are labelled gaps rather than dressed up as ship-ready —
-no closed-source vendor handwaving.
+below show exactly where the time goes and why. Specs are
+written before the code — 47 of them in `specs/2/` — and every
+non-obvious choice carries a tradeoff note in the crate's
+`notes/`. Read the specs for intent, the code for what runs,
+and the benchmark tables for the numbers.
 
 Each component below is done and worth studying on its own;
 together they show how an exchange is wired end-to-end.
