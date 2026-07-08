@@ -5,6 +5,7 @@
 use crate::app::App;
 use crate::app::Field;
 use crate::conn::Side;
+use crate::palette;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
@@ -77,7 +78,7 @@ fn draw_trace_hud(f: &mut Frame, app: &App) {
     };
     let row = |k: &str, v: String| {
         Line::from(vec![
-            Span::styled(format!("{k:<9}"), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{k:<9}"), Style::default().fg(palette::MUTED)),
             Span::raw(v),
         ])
     };
@@ -85,7 +86,7 @@ fn draw_trace_hud(f: &mut Frame, app: &App) {
         Line::from(Span::styled(
             "TRACE — F3 to hide",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(palette::HEADING)
                 .add_modifier(Modifier::BOLD),
         )),
         row("endpoint", app.endpoint.clone()),
@@ -107,30 +108,30 @@ fn draw_trace_hud(f: &mut Frame, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("hud")
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(palette::RING));
     f.render_widget(Clear, area);
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let conn = if app.connected {
-        Span::styled("● live", Style::default().fg(Color::Green))
+        Span::styled("● live", Style::default().fg(palette::LIVE))
     } else {
-        Span::styled("● offline", Style::default().fg(Color::Yellow))
+        Span::styled("● offline", Style::default().fg(palette::DEGRADED))
     };
     let line = Line::from(vec![
         Span::styled(
             format!(" RSX  {} ", app.symbol),
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(palette::PAGE_BG)
+                .bg(palette::HEADING)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
         conn,
         Span::styled(
             format!("   open {}   fills {}", app.open_orders, app.fills),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette::MUTED),
         ),
     ]);
     f.render_widget(Paragraph::new(line), area);
@@ -152,8 +153,8 @@ fn fmt_ns(ns: u64) -> String {
 /// last round-trip split into net / internal / engine, plus rolling
 /// p50 and best. Dim until the first measurement arrives.
 fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
-    let cyan = Style::default().fg(Color::Cyan);
-    let dim = Style::default().fg(Color::DarkGray);
+    let cyan = Style::default().fg(palette::HEADING);
+    let dim = Style::default().fg(palette::MUTED);
     let spans = match app.last_lat {
         None => vec![Span::styled(
             " ⚡ latency: waiting for first round-trip…",
@@ -181,7 +182,7 @@ fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
                         fmt_ns(l.internal_ns),
                         fmt_ns(l.engine_ns),
                     ),
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(palette::TEXT),
                 ),
                 Span::styled(format!("   p50 {p50} · best {best}"), dim),
             ]
@@ -194,7 +195,7 @@ fn draw_speed(f: &mut Frame, area: Rect, app: &App) {
 fn draw_statusline(f: &mut Frame, area: Rect, app: &App) {
     let line = Line::from(Span::styled(
         format!(" {}", app.status),
-        Style::default().fg(Color::White),
+        Style::default().fg(palette::TEXT_BRIGHT),
     ));
     f.render_widget(Paragraph::new(line), area);
 }
@@ -203,7 +204,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let line = Line::from(Span::styled(
         " q quit  b/s side  t tif  tab field  0-9 type  \
          ⌫ del  enter submit  F3 trace ",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(palette::MUTED),
     ));
     f.render_widget(Paragraph::new(line), area);
 }
@@ -215,18 +216,18 @@ fn draw_book(f: &mut Frame, area: Rect, app: &App) {
     let mut rows: Vec<Row> = Vec::new();
     // Asks worst-first so the best ask sits just above the spread.
     for (px, qty) in app.asks.iter().rev() {
-        rows.push(level_row(*px, *qty, Color::Red));
+        rows.push(level_row(*px, *qty, palette::ASK));
     }
     rows.push(Row::new(vec![
         Cell::from(""),
         Cell::from(Span::styled(
             format!("— {} —", app.spread()),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette::MUTED),
         )),
         Cell::from(""),
     ]));
     for (px, qty) in &app.bids {
-        rows.push(level_row(*px, *qty, Color::Green));
+        rows.push(level_row(*px, *qty, palette::BID));
     }
     let table = Table::new(
         rows,
@@ -262,12 +263,12 @@ fn draw_order_entry(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled(
                 "  BUY  ",
-                Style::default().fg(Color::Green).add_modifier(buy),
+                Style::default().fg(palette::BID).add_modifier(buy),
             ),
             Span::raw("  "),
             Span::styled(
                 "  SELL  ",
-                Style::default().fg(Color::Red).add_modifier(sell),
+                Style::default().fg(palette::ASK).add_modifier(sell),
             ),
         ]),
         Line::from(""),
@@ -277,7 +278,7 @@ fn draw_order_entry(f: &mut Frame, area: Rect, app: &App) {
         Line::from(""),
         Line::from(Span::styled(
             "  enter → submit",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette::MUTED),
         )),
     ];
     let p = Paragraph::new(body).block(Block::default().borders(Borders::ALL).title(" order "));
@@ -293,10 +294,10 @@ fn field_span(label: &str, value: &str, focused: bool) -> Line<'static> {
     };
     let style = if focused {
         Style::default()
-            .fg(Color::White)
+            .fg(palette::TEXT_BRIGHT)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(palette::MUTED)
     };
     Line::from(Span::styled(shown, style))
 }
@@ -315,7 +316,11 @@ fn draw_positions(f: &mut Frame, area: Rect, app: &App) {
         .positions
         .iter()
         .map(|(sym, net, entry, upnl)| {
-            let pnl_color = if *upnl >= 0 { Color::Green } else { Color::Red };
+            let pnl_color = if *upnl >= 0 {
+                palette::LIVE
+            } else {
+                palette::ASK
+            };
             Row::new(vec![
                 Cell::from(sym.clone()),
                 Cell::from(net.to_string()),
@@ -337,7 +342,7 @@ fn draw_positions(f: &mut Frame, area: Rect, app: &App) {
         ],
     )
     .header(
-        Row::new(vec!["sym", "net", "entry", "upnl"]).style(Style::default().fg(Color::DarkGray)),
+        Row::new(vec!["sym", "net", "entry", "upnl"]).style(Style::default().fg(palette::MUTED)),
     )
     .block(Block::default().borders(Borders::ALL).title(" positions "));
     f.render_widget(table, area);
@@ -349,8 +354,8 @@ fn draw_trades(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .map(|(side, px, qty)| {
             let color = match side {
-                Side::Buy => Color::Green,
-                Side::Sell => Color::Red,
+                Side::Buy => palette::BID,
+                Side::Sell => palette::ASK,
             };
             Line::from(vec![
                 Span::styled(format!("{px:>7}"), Style::default().fg(color)),
