@@ -75,6 +75,15 @@ pub async fn handle_connection(
     state.borrow_mut().touch_connection(conn_id, time_ns());
     info!("connection {} user {}", conn_id, user_id);
 
+    // Egress wake handle: producers (route_fill / emit_to_user /
+    // broadcast_heartbeat) signal it right after queuing into this
+    // connection's `outbound`, so the loop below drains + writes
+    // the instant a message exists rather than on a timer.
+    let egress = state
+        .borrow()
+        .connection_egress(conn_id)
+        .expect("egress waker present for just-added connection");
+
     loop {
         let msgs = state.borrow_mut().drain_outbound(conn_id);
         for msg in msgs {
@@ -115,29 +124,27 @@ pub async fn handle_connection(
             }
         }
 
-        // Wait for inbound data, but cap the wait so a response
-        // routed into `outbound` by the cast loop is drained +
-        // written promptly instead of sitting until the next
-        // inbound frame. 500us bounds the egress-delivery tail
-        // (was 10ms — the dominant GW->ME->GW latency per the
-        // GATEWAY-LATENCY trace) without a separate egress tile;
-        // the timeout only cancels a readiness check (no read
-        // started) so the io_uring cancel-safety / byte-offset
-        // concern is unaffected. The eventual zero-poll fix is a
-        // per-conn wake (notify) or the egress tile-split.
-        let ready = monoio::time::timeout(
-            std::time::Duration::from_micros(500),
-            stream.readable(false),
-        )
-        .await;
-        if ready.is_err() {
-            // No data ready yet; loop back to drain outbound.
-            continue;
-        }
-        if let Ok(Err(e)) = ready {
-            info!("conn {} readable error: {e}", conn_id);
-            state.borrow_mut().remove_connection(conn_id);
-            return;
+        // Park until inbound readability or an egress signal. The
+        // cast/route loop signals this connection's `egress` right
+        // after queuing a response into `outbound`, so the write
+        // happens the instant the message exists — not on a timer.
+        // (monoio 0.2.4's timer wheel rounds sub-ms deadlines up to
+        // ~1ms, so a short egress poll cannot beat the notify.)
+        // Cancel-safe: the egress arm only cancels `readable`, a
+        // readiness check that issues no read, so no buffered bytes
+        // are lost; the frame read below runs after, un-raced.
+        monoio::select! {
+            r = stream.readable(false) => {
+                if let Err(e) = r {
+                    info!("conn {} readable error: {e}", conn_id);
+                    state.borrow_mut().remove_connection(conn_id);
+                    return;
+                }
+            }
+            _ = egress.wait() => {
+                // A message was queued; loop back to drain + write.
+                continue;
+            }
         }
 
         // Data is available; read the frame without timeout.
