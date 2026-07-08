@@ -3,6 +3,45 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — rsx-matching release CTO review (see .ship/41-MATCHING-RELEASE/CTO-REPORT.md)
+
+Record-only (bug-triage protocol): findings from the release-pass review.
+Full evidence + verdicts in the report; the top item was verified against
+code. Do NOT fix without founder go.
+
+- **ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD** (MED-HIGH, correctness) — dedup is
+  not reconstructed across a snapshot boundary, so a post-crash client
+  resend can double-execute. `rebuild_order_index_from_book`
+  (`rsx-matching/src/main.rs:98`) restores the order index from the slab but
+  not `dedup`; `replay_wal_after_snapshot` only replays
+  `RECORD_ORDER_ACCEPTED` for `seq >= start_seq` (post-snapshot). Snapshot
+  cadence ~10 s, dedup window 300 s (`dedup.rs:6`) — so any order accepted
+  >~10 s before a crash loses dedup on restart, and a legitimate resend of
+  its `cid` within 5 min is treated as new → double-fill. Violates the
+  exactly-one-completion invariant. **Known in code** (TODOs at
+  `main.rs:97,313-318`) but was never in BUGS.md until now. Fix (needs
+  design, NOT a coding-agent task yet): persist a dedup snapshot alongside
+  the book snapshot, or widen replay to cover the dedup window.
+- **ME-NEXT-SEQ-REGRESSION** (LOW, traceability) — the seq-regression guard
+  (`main.rs:346-357`) is correct, but its `bugs.md` code citation points at
+  a non-existent entry (this one). Filed for traceability; sweep the repo
+  for other orphaned `bugs.md` citations.
+- **ME-REASON-DUPLICATE-NAMESPACE** (LOW, correctness-latent) —
+  `REASON_DUPLICATE` (=3, `main.rs:52`) is disconnected from rsx-book's
+  `FAIL_*` enum (0-2, `event.rs:23-25`); a future `FAIL_*`=3 would silently
+  alias "duplicate" in `OrderFailedRecord.reason`. Fix: one shared enum.
+- **ME-WAL-WRITER-DUPLICATION** (MED, duplication → drift) —
+  `write_events_to_wal` (`wal.rs:54`) and `publish_events` (`wal.rs:240`)
+  are ~200-line near-duplicates that have already diverged: the former
+  no-ops on `Event::BBO` (`wal.rs:230`), the latter persists it
+  (`wal.rs:412`, SEQ-1 fix). This also makes the flagship "266 ns accept"
+  bench understate cost (it uses the BBO-skipping writer, undisclosed). Fix:
+  dedupe the two writers; re-bench.
+- **ME-CANCEL-REIMPL** (LOW, duplication) — `process_cancel`
+  (`main.rs:955`) reimplements the drift-check inline instead of
+  `rsx-book::cancel_order_checked` (`book.rs:355`), missing its
+  capacity-bound check.
+
 ## Status — 2026-07-08 — ME→GW-direct spec is NOT ship-ready (codex adversarial audit)
 
 - **ME-GW-DIRECT-SPEC-GAPS** (design blocker — do NOT hand to a coding agent
