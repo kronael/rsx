@@ -32,6 +32,26 @@ coverage requirements.
 
 ## 1. Consistency Model
 
+### 1.0 Delivery Guarantees by Stream
+
+RSX uses a different recovery contract per stream. A dropped UDP packet is
+safe only on streams whose application layer has a retry or supersession
+rule. The load-bearing asymmetry: the **risk→ME order stream is drop-safe**
+(clients retry, ME WAL dedup makes acceptance exactly-once), while the
+**ME→risk fill stream is not** (fills recover through ME WAL replication).
+
+| Stream | Drops OK? | Recovery mechanism | Delivery guarantee |
+|--------|-----------|--------------------|--------------------|
+| Client → Gateway (orders) | Yes, before a terminal update | Client retries with the same `cid` if no order-update/fill arrives before its timeout. No separate order-accepted ACK. | At-least-once client submission; exactly-once ME acceptance after `RECORD_ORDER_ACCEPTED` dedup. |
+| Gateway → Risk (orders) | Yes, before ME acceptance | Same client timeout/retry contract; gateway and risk hold no durable order-intent state. | At-most-once per transport attempt; at-least-once across client retries. |
+| Risk → ME (orders) | Yes, before ME acceptance | On `CastReceiver` `Faulted`, ME skips the gap and resumes live; the client resends on no-ack-timeout; ME dedups via WAL `RECORD_ORDER_ACCEPTED`. | Drop-safe order stream. At-most-once per attempt; exactly-once after ME WAL acceptance. |
+| ME → Risk (fills / results) | **No** | Risk treats FAULTED as a replay condition and pulls from the ME WAL replication server (`RSX_ME_REPLICATION_BIND_ADDR`) from its persisted tip. | Exactly-once at Risk via `(symbol_id, seq)` dedup over ME WAL replay. |
+| ME → Marketdata | Yes | Marketdata is derived state — missed BBO/L2 updates are superseded by later ones, and the shadow book rebuilds from ME WAL. | At-most-once live; eventually correct after supersession or rebuild. |
+
+Dropping an *unaccepted* order is sound only because clients retry on timeout
+and ME WAL dedup collapses repeated attempts into one accepted order. Dropping
+a *fill* is never sound.
+
 ### 1.1 Fills: Exactly-Once Semantics
 
 **Guarantee:** Once a fill is emitted by the matching engine, it is persisted in
@@ -41,7 +61,7 @@ WAL within 10ms and can be replayed indefinitely. Fills are NEVER lost.
 - ME writes fill to WAL buffer (in-memory)
 - WAL flush every 10ms OR 1000 records (whichever comes first)
 - fsync enforced (synchronous disk write)
-- replication server retains WAL for 10min minimum
+- replication server retains WAL for 4h (hot tier)
 - Risk deduplicates fills by `(symbol_id, seq)` on replay
 - Fills are idempotent (replaying same fill = no position change)
 
@@ -68,15 +88,18 @@ typical gap)
 - `position.long_qty = sum(fill.qty where side=buy and fill.seq <= tip)`
 - Verified after every recovery scenario
 
-### 1.3 Orders: At-Most-Once Submission
+### 1.3 Orders: Retry Until ME Acceptance
 
-**Guarantee:** In-flight orders can be lost without notification. If gateway
-crashes after accepting an order but before risk processes it, order is lost
-silently. If risk crashes after accepting but before matching engine receives
-it, order is lost silently.
+**Guarantee:** Order intents are not durable before ME WAL acceptance. The
+gateway, risk, and the risk→ME transport may drop an unaccepted order on
+crash, restart, or UDP FAULTED recovery, without notification. Clients must
+retry with the same `cid` if no order-update or fill arrives within their
+timeout. Once the ME records `RECORD_ORDER_ACCEPTED`, WAL dedup makes that
+order accepted exactly once (see §1.0).
 
-**Rationale:** Order intents are ephemeral. Users must resubmit on timeout.
-Fills are the source of truth, not order acceptance.
+**Rationale:** Order intents are ephemeral; fills are the source of truth,
+not order acceptance. Making the order path durable would cost an fsync and
+hops per trade for a failure the client already handles by retrying.
 
 **Mechanism:**
 - Gateway -> Risk: SPSC ring (no persistence)
