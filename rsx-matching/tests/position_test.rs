@@ -22,10 +22,7 @@ fn test_book() -> Orderbook {
 }
 
 fn user_net_qty(book: &Orderbook, user_id: u32) -> i64 {
-    book.user_map
-        .get(&user_id)
-        .map(|&idx| book.user_states[idx as usize].net_qty)
-        .unwrap_or(0)
+    book.users.net_qty(user_id).unwrap_or(0)
 }
 
 #[test]
@@ -99,7 +96,7 @@ fn position_sell_decreases_net_qty() {
 #[test]
 fn user_state_assigned_on_first_order() {
     let mut book = test_book();
-    assert!(!book.user_map.contains_key(&42));
+    assert!(!book.users.contains(42));
     let mut order = IncomingOrder {
         price: 50_000,
         qty: 10,
@@ -114,7 +111,7 @@ fn user_state_assigned_on_first_order() {
         order_id_lo: 1,
     };
     process_new_order(&mut book, &mut order);
-    assert!(book.user_map.contains_key(&42));
+    assert!(book.users.contains(42));
 }
 
 #[test]
