@@ -89,4 +89,5 @@ Active specs. Source of truth for system design.
 | [2/47-validation-edge-cases.md](2/47-validation-edge-cases.md) | shipped | Comprehensive documentation of edge cases for order validation |
 | [2/48-wal.md](2/48-wal.md) | shipped | > **Note:** The concrete WAL implementation (file format, writer, |
 | [2/49-webproto.md](2/49-webproto.md) | shipped | Gateway exposes a compact WebSocket protocol and translates |
+| [2/57-config-server.md](2/57-config-server.md) | spec | Dedicated config server replaces ME's direct-Postgres config |
 
