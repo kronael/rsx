@@ -557,7 +557,7 @@ or pin a git rev.
     `RSX_REPL_CA_PATH` (`./certs/ca.pem`) — replication TLS is
     **mandatory**; `TlsConfig::from_env` errors if any file is
     missing. For a co-located server+consumer the self-signed
-    cert doubles as its own CA (single-box self-trust).
+    cert doubles as its own CA.
 - **Metrics.** No Prometheus. Counters (drops, NAK retransmits,
   reorder overflows) emit as structured `tracing` log lines;
   a separate shipper turns them into metrics out-of-band.
