@@ -13,9 +13,10 @@ use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::write_events_to_wal;
-use rsx_matching::wire::OrderMessage;
+use rsx_matching::wire::to_incoming;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
+use rsx_messages::OrderMessage;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::Side;
@@ -235,7 +236,7 @@ fn main() {
             }
             let t2 = now_ns();
 
-            let mut incoming = order_msg.to_incoming();
+            let mut incoming = to_incoming(&order_msg);
             process_new_order(&mut book, &mut incoming);
             let t3 = now_ns();
 

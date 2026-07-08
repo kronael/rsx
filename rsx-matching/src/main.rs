@@ -23,11 +23,12 @@ use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::save_snapshot;
-use rsx_matching::wire::OrderMessage;
+use rsx_matching::wire::to_incoming;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderFailedRecord;
+use rsx_messages::OrderMessage;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::install_panic_handler;
@@ -686,8 +687,7 @@ fn main() {
                         order_msg.timestamp_ns
                     );
 
-                    let mut incoming =
-                        order_msg.to_incoming();
+                    let mut incoming = to_incoming(&order_msg);
                     process_new_order(
                         &mut book, &mut incoming,
                     );

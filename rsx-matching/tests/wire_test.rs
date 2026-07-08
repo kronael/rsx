@@ -1,7 +1,8 @@
 use rsx_cast::encode_utils::as_bytes;
-use rsx_matching::wire::OrderMessage;
+use rsx_matching::wire::to_incoming;
 use rsx_messages::decode_config_applied_record;
 use rsx_messages::ConfigAppliedRecord;
+use rsx_messages::OrderMessage;
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 
@@ -22,7 +23,7 @@ fn order_message_roundtrip_buy() {
         order_id_hi: 0,
         order_id_lo: 0,
     };
-    let incoming = msg.to_incoming();
+    let incoming = to_incoming(&msg);
     assert_eq!(incoming.price, 50_000);
     assert_eq!(incoming.qty, 100);
     assert_eq!(incoming.side, Side::Buy);
@@ -48,7 +49,7 @@ fn order_message_roundtrip_sell_ioc() {
         order_id_hi: 0,
         order_id_lo: 0,
     };
-    let incoming = msg.to_incoming();
+    let incoming = to_incoming(&msg);
     assert_eq!(incoming.side, Side::Sell);
     assert_eq!(incoming.tif, TimeInForce::IOC);
     assert!(incoming.reduce_only);
