@@ -48,6 +48,7 @@ use rsx_risk::OrderResponse;
 use rsx_risk::RejectReason;
 use rsx_risk::ShardConfig;
 use rsx_types::install_panic_handler;
+use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time;
 use rsx_types::FailureReason;
 use std::collections::HashMap;
@@ -168,6 +169,14 @@ fn main() {
         }
     }
 
+    // SIGTERM/SIGINT flip this flag. The live loop in `run_main`
+    // observes it, drains the persist ring to Postgres, stops the
+    // lease thread, and exits the process directly (so it never
+    // re-enters warm catchup). This top-level loop also checks it
+    // before each (re-)entry so a signal that lands during warm
+    // catchup or restart backoff exits instead of re-entering.
+    let shutdown = install_shutdown_handler();
+
     let mut attempts: usize = 0;
 
     // Every process is a warm candidate main. `run_main` boots
@@ -185,21 +194,25 @@ fn main() {
     // PG client, catchup consumer, persist worker, and lease
     // thread, and tears them all down before returning.
     loop {
-        let err: Box<dyn std::error::Error> = match run_main(shard_id, max_symbols, gauges.clone())
-        {
-            // Ok(()) means demoted (lease lost); re-enter warm
-            // catchup and re-try the non-blocking advisory lock.
-            Ok(()) => {
-                info!("lease lost; re-acquiring advisory lock");
-                // Back to warm catchup state: not ready until
-                // we win the lock again.
-                gauges.ready.store(false, Ordering::Relaxed);
-                gauges.set_state(DaemonState::WarmCatchup);
-                attempts = 0;
-                continue;
-            }
-            Err(e) => e,
-        };
+        if shutdown.load(Ordering::SeqCst) {
+            info!("shutdown signal received; exiting without re-entry");
+            std::process::exit(0);
+        }
+        let err: Box<dyn std::error::Error> =
+            match run_main(shard_id, max_symbols, gauges.clone(), shutdown) {
+                // Ok(()) means demoted (lease lost); re-enter warm
+                // catchup and re-try the non-blocking advisory lock.
+                Ok(()) => {
+                    info!("lease lost; re-acquiring advisory lock");
+                    // Back to warm catchup state: not ready until
+                    // we win the lock again.
+                    gauges.ready.store(false, Ordering::Relaxed);
+                    gauges.set_state(DaemonState::WarmCatchup);
+                    attempts = 0;
+                    continue;
+                }
+                Err(e) => e,
+            };
 
         attempts += 1;
         if attempts > MAX_RESTARTS {
@@ -264,6 +277,7 @@ fn run_main(
     shard_id: u32,
     max_symbols: usize,
     gauges: Arc<LoadGauges>,
+    shutdown: &AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_shard_config()?;
     let shard_count = config.shard_count;
@@ -466,6 +480,21 @@ fn run_main(
     info!("risk shard {} running state={:?}", shard_id, state);
 
     loop {
+        // Graceful shutdown: stop accepting new work, drain the
+        // persist ring to Postgres (durable positions/freezes),
+        // stop the lease thread, and exit directly. Exiting here —
+        // rather than returning — guarantees we do NOT re-enter
+        // warm catchup. The signal flag drives the existing
+        // per-subsystem stop flags (persist_shutdown, lease_stop);
+        // no second flag is introduced.
+        if shutdown.load(Ordering::SeqCst) {
+            info!("shutdown signal received, draining persist ring to postgres");
+            stop_persist_worker(&persist_shutdown, persist_handle);
+            rsx_risk::lease::stop_lease_thread(&lease_stop, lease_thread);
+            info!("risk shard {} shutdown complete", shard_id);
+            std::process::exit(0);
+        }
+
         let now_secs = time();
 
         // Events from ME (fills, BBO, order lifecycle) are
