@@ -437,7 +437,7 @@ pub fn replay_wal_after_snapshot(
                     continue;
                 };
                 // Dedup is NOT re-seeded here — `rebuild_dedup_window`
-                // owns the whole 300 s window (pre- AND post-snapshot) in
+                // owns the whole 1 h window (pre- AND post-snapshot) in
                 // one ascending-seq pass, which keeps the pruning queue
                 // ordered. This forward pass only reconstructs book + index.
                 let mut incoming = IncomingOrder {
@@ -487,7 +487,7 @@ pub fn replay_wal_after_snapshot(
 ///
 /// A book snapshot persists the slab but NOT the dedup set, and the
 /// snapshot cadence (~10 s) is far shorter than the dedup window
-/// (`DEDUP_WINDOW`, 300 s). Restoring dedup only from post-snapshot
+/// (`DEDUP_WINDOW`, 1 h). Restoring dedup only from post-snapshot
 /// `RECORD_ORDER_ACCEPTED` records (as the book replay does) would leave
 /// every order accepted more than one snapshot interval before the crash
 /// unprotected — a legitimate client resend of its `(user_id, order_id)`
