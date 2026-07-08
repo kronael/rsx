@@ -15,6 +15,7 @@ pub mod macros;
 pub mod time_utils;
 
 pub use macros::install_panic_handler;
+pub use macros::install_shutdown_handler;
 
 /// Price in smallest tick units. 1 = one tick.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
