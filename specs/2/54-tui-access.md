@@ -1,24 +1,24 @@
-# 54 — TUI Access (SSH + Web)
+# 54 — Terminal Access (SSH + Web)
 
 Status: **partial**. SSH forced-command dispatch is implemented
-(`scripts/rsx-tui-dispatch`, `scripts/rsx-tui-authorize`). The web
-terminal is specified with a config skeleton; its service is deferred.
+(`scripts/rsx-tui-dispatch`, `scripts/rsx-tui-authorize`). The local
+Playground web terminal is implemented at `/terminal`: xterm.js connects
+to `/ws/terminal`, which spawns a local PTY running `go run ./rsx-term`
+against the Playground-managed gateway and marketdata WebSockets.
+Production SSH/web hosting remains separate deployment work.
 
-Give anyone with a registered key their own live `rsx-tui` session
+Give anyone with a registered key their own live terminal session
 against the deployment, over two front doors — SSH and a browser —
 without minting a unix account or a bespoke client per trader.
 
 ## Identity model (shared by both paths)
 
-> **Transport note.** `rsx-tui` speaks **protobuf-over-QUIC** only
-> (`rsx-tui/src/quic.rs`); the WebSocket client is gone. Identity is now
-> carried in-band: on connect the client mints an HS256 JWT for its
-> `RSX_TUI_USER` and sends it in the QUIC **auth first-frame**
-> (`WireHello { jwt, user }`) before any order. What is deferred is the
-> gateway VALIDATING that frame — a QUIC listener that checks the JWT and
-> binds the connection to `user` (see `rsx-tui/ARCHITECTURE.md` "Server
-> side"). The access model below — authenticate a person, map them to one
-> `RSX_TUI_USER`, launch the TUI — is unchanged and transport-agnostic.
+> **Transport note.** The current terminal is `rsx-term` (Go / Bubble Tea).
+> It uses WebSocket connections: private order/event JSON frames to the
+> gateway and public protobuf marketdata frames to marketdata. QUIC and a
+> unified protobuf order channel are future transport work, not current
+> runtime behavior. The access model below — authenticate a person, map
+> them to one terminal user id, launch the terminal — is transport-agnostic.
 
 A TUI session's identity is these values (see `rsx-tui/src/main.rs`):
 

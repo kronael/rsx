@@ -2,22 +2,24 @@
 status: partial
 ---
 
-# Client Wire Protocol (protobuf)
+# Client Wire Protocol
 
-The client↔gateway protocol is **protobuf**. Transport is separable: the
-same protobuf messages ride a WebSocket binary stream **or** a QUIC /
-HTTP-3 stream, interchangeably. This spec defines the messages once and
-the transports as bindings under them.
+Current client state: `rsx-term` sends private order/event JSON text over
+WebSocket to the gateway, and consumes public marketdata protobuf binary
+frames over WebSocket from marketdata. A unified protobuf order channel and
+QUIC / HTTP-3 bindings are roadmap items; this spec captures that target
+schema and the marketdata protobuf that exists today.
 
 Source of truth is the proven, hand-derived prost schema in the client and
 feed codecs — not this prose. When they disagree, the code wins and this
 spec is the bug:
 
-- Order / event channel: `rsx-tui/src/wire.rs`, golden bytes pinned in
-  `rsx-tui/src/wire_test.rs`.
+- Current order / event channel: `rsx-term/wire/order.go`.
+- Target unified protobuf order/event schema: this document.
 - Public market-data feed: `rsx-marketdata/marketdata.proto` (canonical
   schema), encoder `rsx-marketdata/src/wire.rs`, Python decoder
-  `rsx-playground/md_wire.py`.
+  `rsx-playground/md_wire.py`, Go decoder `rsx-term/wire/md.go`, live
+  connector `rsx-term/conn/live.go`.
 
 ## Table of Contents
 
@@ -444,7 +446,7 @@ subscribe/heartbeat control (`records.rs`), pending its move to
 | Delivery guarantees (retry / exactly-once) | [../../GUARANTEES.md](../../GUARANTEES.md) §1.0 |
 | Market-data feed (records, WAL mapping) | [16-marketdata.md](16-marketdata.md) |
 | Terminal UX (the client that speaks this) | [55-terminal.md](55-terminal.md) |
-| TUI access / identity model | [54-tui-access.md](54-tui-access.md) |
+| Terminal access / identity model | [54-tui-access.md](54-tui-access.md) |
 | Error codes / reject reasons | [18-messages.md](18-messages.md) |
 | REST read endpoints (state restore) | [26-rest.md](26-rest.md) |
 | casting trust boundary (internal, unauthenticated) | [4-cast.md](4-cast.md) §10.4 |

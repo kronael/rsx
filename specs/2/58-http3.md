@@ -2,10 +2,9 @@
 
 Status: **spec** (not implemented). The QUIC / HTTP-3 transport binding for
 the [49-webproto.md](49-webproto.md) protobuf protocol — the gateway leg of
-README §Roadmap step 4 (`rsx-tui` protobuf-over-QUIC needs a gateway QUIC
-listener). **Transport only:** this spec maps the existing protobuf
-messages onto QUIC; it does not define or redefine any message (49 owns the
-schema).
+README §Roadmap step 4 (native terminal QUIC needs a gateway QUIC
+listener). **Transport only:** this spec maps the target protobuf messages
+onto QUIC; it does not define or redefine any message (49 owns the schema).
 
 ## Why
 
@@ -23,10 +22,10 @@ The protocol is protobuf; WebSocket is the interoperable floor (49
 - **Browser reach via WebTransport.** Browsers reach the same protobuf
   protocol over HTTP/3 WebTransport, with no JSON/WS shim.
 
-`rsx-tui` already speaks protobuf-over-QUIC client-side (`rsx-tui/src/wire.rs`
-+ `quic.rs`, golden bytes in `wire_test.rs`, loopback server in
-`rsx-tui/tests/quic_test.rs`). The gap is a gateway QUIC listener that
-terminates it and validates the auth first-frame.
+`rsx-term` currently speaks WebSocket: JSON for private orders/events and
+protobuf for public marketdata. The gap is both the terminal QUIC client
+binding and a gateway QUIC listener that terminates it and validates the
+auth first-frame.
 
 ## Scope
 
@@ -97,11 +96,9 @@ runtime question).
 
 ## Current state baseline
 
-- **Client:** `rsx-tui` speaks protobuf-over-QUIC (`rsx-tui/src/quic.rs`,
-  `wire.rs`; golden bytes `wire_test.rs`; loopback QUIC server
-  `rsx-tui/tests/quic_test.rs`). No gateway terminates it (README §Roadmap
-  step 4; `54-tui-access.md` "Server side" — the gateway validating the
-  first-frame is the pending piece).
+- **Client:** `rsx-term` currently uses WebSocket
+  (`rsx-term/conn/live.go`, `rsx-term/wire/order.go`,
+  `rsx-term/wire/md.go`). No gateway terminates QUIC yet.
 - **Gateway:** monoio WS reactor only (`11-gateway.md`). No QUIC listener,
   no WebTransport, no datagram path.
 - **Marketdata:** WS feed only (`16-marketdata.md`); any QUIC/datagram leg

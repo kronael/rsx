@@ -148,6 +148,7 @@ See [docs/scenarios.md](docs/scenarios.md) for details.
 - **Faults:** Fault injection (kill processes)
 - **Verify:** Invariant checks, reconciliation
 - **Orders:** Submit test orders, view recent orders
+- **Terminal:** Embedded `rsx-term` trading terminal
 
 See [docs/tabs.md](docs/tabs.md) for tab details.
 
