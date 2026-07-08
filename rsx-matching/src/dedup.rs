@@ -13,6 +13,10 @@ pub struct DedupTracker {
     seen: FxHashSet<Key>,
     pruning_queue: VecDeque<(Key, Instant)>,
     last_cleanup: Instant,
+    /// Coarse clock refreshed by the hot loop (see `refresh_clock`) so the
+    /// per-order path never pays `Instant::now()`. Precision to within the
+    /// loop's refresh interval is irrelevant against the hour-long window.
+    now: Instant,
 }
 
 impl Default for DedupTracker {
@@ -23,11 +27,20 @@ impl Default for DedupTracker {
 
 impl DedupTracker {
     pub fn new() -> Self {
+        let now = Instant::now();
         Self {
             seen: FxHashSet::default(),
             pruning_queue: VecDeque::new(),
-            last_cleanup: Instant::now(),
+            last_cleanup: now,
+            now,
         }
+    }
+
+    /// Advance the cached clock. The ME hot loop calls this once every N
+    /// spins with a freshly sampled `Instant`; `check_and_insert` and
+    /// `maybe_cleanup` read it instead of sampling per call.
+    pub fn refresh_clock(&mut self, now: Instant) {
+        self.now = now;
     }
 
     /// Returns true if duplicate (already seen).
@@ -36,7 +49,7 @@ impl DedupTracker {
         if !self.seen.insert(key) {
             return true;
         }
-        self.pruning_queue.push_back((key, Instant::now()));
+        self.pruning_queue.push_back((key, self.now));
         false
     }
 
@@ -74,12 +87,18 @@ impl DedupTracker {
     }
 
     /// Prune entries older than `DEDUP_WINDOW`. Call periodically (every 10s).
+    /// Uses the cached clock (`refresh_clock`).
     pub fn maybe_cleanup(&mut self) {
-        if self.last_cleanup.elapsed() < DEDUP_CLEANUP_INTERVAL {
+        if self.now.duration_since(self.last_cleanup) < DEDUP_CLEANUP_INTERVAL {
             return;
         }
-        self.evict(Instant::now() - DEDUP_WINDOW);
-        self.last_cleanup = Instant::now();
+        // `checked_sub` guards a host with < DEDUP_WINDOW uptime (the
+        // monotonic clock can't represent the pre-boot instant); nothing
+        // older than uptime can be in the queue, so skipping is correct.
+        if let Some(cutoff) = self.now.checked_sub(DEDUP_WINDOW) {
+            self.evict(cutoff);
+        }
+        self.last_cleanup = self.now;
     }
 
     pub fn len(&self) -> usize {

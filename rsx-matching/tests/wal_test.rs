@@ -161,7 +161,7 @@ fn flush_timer_fires_at_10ms() {
         let framed = writer.prepare(&mut dummy_record).unwrap();
         writer.append_framed(&framed).unwrap();
     }
-    flush_if_due(&mut writer, &mut last_flush).unwrap();
+    flush_if_due(&mut writer, &mut last_flush, Instant::now()).unwrap();
 
     let active = tmp.path().join("1").join("1_active.wal");
     let size1 = std::fs::metadata(&active).unwrap().len();
@@ -170,7 +170,7 @@ fn flush_timer_fires_at_10ms() {
 
     // Simulate 10ms passing
     std::thread::sleep(Duration::from_millis(15));
-    flush_if_due(&mut writer, &mut last_flush).unwrap();
+    flush_if_due(&mut writer, &mut last_flush, Instant::now()).unwrap();
 
     let size2 = std::fs::metadata(&active).unwrap().len();
     assert!(size2 > 0);
