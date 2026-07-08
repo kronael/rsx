@@ -118,8 +118,8 @@ rebuilt by replaying the ME's WAL from the tip — every accepted order
 and fill re-applied in sequence reconstructs the exact resting book. So
 the arena size and map shape are for speed, not durability; the durable
 record is the WAL. The book is a derived structure, like positions
-(see [08-asymmetric-durability](08-asymmetric-durability.md),
-[01-wal-is-wire-is-stream](01-wal-is-wire-is-stream.md)).
+(see [07-asymmetric-durability](07-asymmetric-durability.md),
+[01-casting](01-casting.md)).
 
 ## Why pre-allocation wins here
 

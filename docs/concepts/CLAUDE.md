@@ -50,4 +50,4 @@ further. Paths are `../../`-relative from here.
   a process). Gateway and marketdata are **monoio** (I/O-bound), not tiles.
 - It's a **derivatives** exchange (perpetuals are the product built today;
   options and SFDX are pending) — never "perpetuals exchange" as the descriptor.
-- Cite `13-glossary.md` terms rather than re-defining them inline.
+- Cite `11-glossary.md` terms rather than re-defining them inline.

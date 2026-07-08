@@ -445,7 +445,7 @@ start: [1-architecture.md](specs/2/1-architecture.md),
 | | |
 |---|---|
 | [docs/concepts/](docs/concepts/index.md) | the design choices, each explained — *why* it's the right call |
-| [docs/concepts/13-glossary.md](docs/concepts/13-glossary.md) | terms (casting, WAL, vshard, tile, BBO…) — one line each + read-more links |
+| [docs/concepts/11-glossary.md](docs/concepts/11-glossary.md) | terms (casting, WAL, vshard, tile, BBO…) — one line each + read-more links |
 | [blog/](blog/README.md) | engineering posts + the build manual ([vibe-book](blog/29-building-rsx.md)) + [ops cookbook](blog/28-cookbook.md) — *draft/AI-generated for now, the intended educational core, not yet edited* |
 
 ## Reference
