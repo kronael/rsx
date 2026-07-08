@@ -232,6 +232,193 @@ func TestLiveGatewayFoldsFrames(t *testing.T) {
 	}
 }
 
+// TestLiveGatewayReconnectsGwWithBackoff drops the private socket after
+// connect and asserts the reader redials: feed.GwDown fires, a second
+// dial arrives with a freshly minted JWT (not the same token replayed),
+// and feed.GwUp fires again once the new socket is up. Exercises the
+// auto-reconnect path with real (if short) backoff delay — no live
+// cluster required.
+func TestLiveGatewayReconnectsGwWithBackoff(t *testing.T) {
+	const symbolID = 7
+
+	gwConnCh := make(chan *websocket.Conn, 4)
+	gwAuthCh := make(chan string, 4)
+	gwDone := make(chan struct{})
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gwAuthCh <- r.Header.Get("Authorization")
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("gw accept: %v", err)
+			return
+		}
+		gwConnCh <- c
+		<-gwDone
+	}))
+	defer gwSrv.Close()
+	defer close(gwDone)
+
+	mdDone := make(chan struct{})
+	mdSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		_, _, _ = c.Read(r.Context())
+		<-mdDone
+	}))
+	defer mdSrv.Close()
+	defer close(mdDone)
+
+	live := NewLiveGateway(wsURL(gwSrv.URL), wsURL(mdSrv.URL), "test-secret-at-least-32-bytes-long!", 42, symbolID)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := live.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer live.Close()
+
+	auth1 := <-gwAuthCh
+	firstConn := <-gwConnCh
+	events := live.Events()
+	drainUntil(t, events, feed.GwUp{})
+	drainUntil(t, events, feed.MdUp{})
+
+	// Simulate a dropped link: close the server's side of the socket.
+	_ = firstConn.CloseNow()
+
+	drainUntil(t, events, feed.GwDown{})
+	auth2 := <-gwAuthCh
+	<-gwConnCh
+	drainUntil(t, events, feed.GwUp{})
+
+	if auth1 == auth2 {
+		t.Fatalf("reconnect replayed the same JWT %q, want a freshly minted token", auth1)
+	}
+}
+
+// TestLiveGatewayReconnectsMdAndResubscribes drops the marketdata socket
+// after connect and asserts the reader redials and re-sends the
+// {"S":[...]} subscribe frame — a resubscribe is required since the
+// gateway has no memory of a torn-down connection's subscription.
+func TestLiveGatewayReconnectsMdAndResubscribes(t *testing.T) {
+	const symbolID = 7
+
+	gwDone := make(chan struct{})
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		<-gwDone
+	}))
+	defer gwSrv.Close()
+	defer close(gwDone)
+
+	mdConnCh := make(chan *websocket.Conn, 4)
+	subCh := make(chan string, 4)
+	mdDone := make(chan struct{})
+	mdSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("md accept: %v", err)
+			return
+		}
+		_, sub, err := c.Read(r.Context())
+		if err == nil {
+			subCh <- string(sub)
+		}
+		mdConnCh <- c
+		<-mdDone
+	}))
+	defer mdSrv.Close()
+	defer close(mdDone)
+
+	live := NewLiveGateway(wsURL(gwSrv.URL), wsURL(mdSrv.URL), "test-secret-at-least-32-bytes-long!", 42, symbolID)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := live.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer live.Close()
+
+	events := live.Events()
+	drainUntil(t, events, feed.GwUp{})
+	drainUntil(t, events, feed.MdUp{})
+
+	sub1 := <-subCh
+	firstConn := <-mdConnCh
+	if sub1 != `{"S":[7,7]}` {
+		t.Fatalf("initial subscribe = %s, want {\"S\":[7,7]}", sub1)
+	}
+
+	// Simulate a marketdata-only flap: the private socket is untouched.
+	_ = firstConn.CloseNow()
+
+	drainUntil(t, events, feed.MdDown{})
+	sub2 := <-subCh
+	<-mdConnCh
+	drainUntil(t, events, feed.MdUp{})
+
+	if sub2 != `{"S":[7,7]}` {
+		t.Fatalf("resubscribe = %s, want {\"S\":[7,7]}", sub2)
+	}
+}
+
+// TestLiveGatewayCloseStopsReconnect asserts Close() during an in-flight
+// reconnect backoff ends the reader goroutine rather than redialing —
+// Close must win a race with a pending reconnect attempt.
+func TestLiveGatewayCloseStopsReconnect(t *testing.T) {
+	const symbolID = 7
+
+	gwConnCh := make(chan *websocket.Conn, 4)
+	gwDialCount := make(chan struct{}, 8)
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gwDialCount <- struct{}{}
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		gwConnCh <- c
+		<-r.Context().Done()
+	}))
+	defer gwSrv.Close()
+
+	mdSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		_, _, _ = c.Read(r.Context())
+		<-r.Context().Done()
+	}))
+	defer mdSrv.Close()
+
+	live := NewLiveGateway(wsURL(gwSrv.URL), wsURL(mdSrv.URL), "test-secret-at-least-32-bytes-long!", 42, symbolID)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := live.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	<-gwDialCount // initial dial
+	firstConn := <-gwConnCh
+	events := live.Events()
+	drainUntil(t, events, feed.GwUp{})
+	drainUntil(t, events, feed.MdUp{})
+
+	_ = firstConn.CloseNow()
+	drainUntil(t, events, feed.GwDown{})
+
+	// Close immediately, before the backoff-delayed redial fires.
+	live.Close()
+
+	select {
+	case <-gwDialCount:
+		t.Fatalf("reconnect redialed after Close")
+	case <-time.After(1 * time.Second):
+	}
+}
+
 // TestLiveGatewaySubmitBeforeConnectErrors asserts Submit/Cancel fail
 // (rather than nil-panicking) when the private socket never connected.
 func TestLiveGatewaySubmitBeforeConnectErrors(t *testing.T) {
