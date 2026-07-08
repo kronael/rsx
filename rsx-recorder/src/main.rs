@@ -10,6 +10,7 @@ use rsx_health::DaemonState;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_types::install_panic_handler;
+use rsx_types::install_shutdown_handler;
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -19,6 +20,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -192,9 +194,20 @@ async fn watchdog(gauges: Arc<LoadGauges>, stall: Duration) {
     }
 }
 
+/// Resolve once SIGTERM/SIGINT has flipped the shutdown flag.
+/// Polled (not signal-driven) so it composes in a `select!` with
+/// the replication stream, giving the otherwise-blocking
+/// `consumer.run` a wakeup point even when no records arrive.
+async fn await_shutdown(flag: &AtomicBool) {
+    while !flag.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     install_panic_handler();
+    let shutdown = install_shutdown_handler();
 
     tracing_subscriber::fmt::init();
 
@@ -247,19 +260,42 @@ async fn main() -> io::Result<()> {
 
     let state_clone = state.clone();
     let gauges_rec = gauges.clone();
-    consumer
-        .run(move |record: RawWalRecord| {
-            // SAFETY: recover from mutex poison
-            let mut s = state_clone.lock().unwrap_or_else(|e| e.into_inner());
-            if let Err(e) = s.write_record(&record) {
-                tracing::error!("write archive error: {}", e);
-            } else {
-                gauges_rec.publishes.fetch_add(1, Ordering::Relaxed);
-            }
-            true
-        })
-        .await?;
+    let run = consumer.run(move |record: RawWalRecord| {
+        // SAFETY: recover from mutex poison
+        let mut s = state_clone.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = s.write_record(&record) {
+            tracing::error!("write archive error: {}", e);
+        } else {
+            gauges_rec.publishes.fetch_add(1, Ordering::Relaxed);
+        }
+        // Archive this record, then stop the stream once shutdown
+        // is set so run() returns and the final flush below syncs.
+        !shutdown.load(Ordering::SeqCst)
+    });
 
+    // Race the stream against the shutdown flag. On signal the
+    // stream future is dropped — a safe TCP-read cancel, since the
+    // tip only advances past records already handed to the
+    // callback — then we fall through to the final flush.
+    tokio::select! {
+        r = run => r?,
+        _ = await_shutdown(shutdown) => {
+            info!("shutdown signal received, stopping replication");
+        }
+    }
+
+    // Final flush/sync of the archive buffer. write_record only
+    // syncs every 1000 records while the tip persists on an
+    // interval, so without this a shutdown could strand up to a
+    // batch of records the tip has already skipped past.
+    {
+        // SAFETY: recover from mutex poison
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = s.flush() {
+            tracing::error!("recorder shutdown flush failed: {}", e);
+        }
+    }
+    info!("recorder shutdown complete");
     Ok(())
 }
 
