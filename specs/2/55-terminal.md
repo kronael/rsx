@@ -1,9 +1,10 @@
-# 55 — Trade Terminal (rsx-tui) UX
+# 55 — Trade Terminal (rsx-term) UX
 
-Status: **draft**. The single-symbol perps terminal exists in code
-(`rsx-tui`, ratatui); the order form, ladder, positions table, and speed
-strip render today. This spec is the **target UX**: the perps screen in
-full, a new-trader (first-time) requirements bar, and the multi-market
+Status: **partial**. The single-symbol perps terminal ships in code
+(`rsx-term`, Go / Bubble Tea): live order form, ladder, trade tape,
+derived position, and the speed strip render against both the offline mock
+and a live cluster. This spec is the **UX contract**: the perps screen in
+full, a new-trader safety bar, and the multi-market
 vision (account · perps · options · structured derivatives · lending)
 with screen mockups. Fields that have no data source yet are labelled as
 gaps, not dressed up.
@@ -19,7 +20,7 @@ Companion specs: `49-webproto.md` (the wire the terminal speaks),
 - [Transport & data sources](#transport--data-sources)
 - [Palette](#palette)
 - [Perps terminal (the built screen)](#perps-terminal-the-built-screen)
-- [New-trader requirements & current scorecard](#new-trader-requirements--current-scorecard)
+- [New-trader safety requirements](#new-trader-safety-requirements)
 - [Multi-market vision](#multi-market-vision)
   - [Account Management](#account-management)
   - [Options](#options)
@@ -47,20 +48,25 @@ Companion specs: `49-webproto.md` (the wire the terminal speaks),
   reads a client estimate as an exchange figure.
 - **Guardrails before ergonomics.** A first-time trader must not lose
   money to a confusing screen: liquidation price, side, and a
-  submit confirmation outrank keystroke count (see the scorecard).
+  submit confirmation outrank keystroke count (see the safety requirements).
 
 ## Transport & data sources
 
-Per `54-tui-access.md`, the terminal speaks **protobuf-over-QUIC** to the
-gateway (the WebSocket client is being retired). Two logical streams,
-regardless of framing:
+The terminal (`rsx-term`, Go / Bubble Tea) connects over **WebSocket**
+(`coder/websocket`) — two independent sockets, mirroring the reference
+client `rsx-playground/market_maker.py`:
 
 - **Private (authenticated):** order submit/cancel and the account's own
-  updates — `N`/`C` out; `U`/`F`/`E`/`H` in (`49-webproto.md` §Order
-  Messages). Carries the trader's identity (`54` identity model).
+  updates — `N`/`C` out, `U`/`F`/`E`/`H` in, as **JSON text frames**
+  (`49-webproto.md` §Order Messages). Auth is a `Bearer <JWT>` header
+  (`54` identity model).
 - **Public (unauthenticated):** market data — subscribe `{S:[sym,7]}`
-  (bbo|depth|trades); receive `B`/`D`/`BBO`/`T` (`49` §Market Data). The
+  (bbo|depth|trades); receive `B`/`D`/`BBO`/`T` as **protobuf binary
+  frames** (`49` §Market Data, `rsx-marketdata/marketdata.proto`). The
   ladder and tape come from here.
+
+The two links reconnect independently with backoff; a marketdata drop
+never takes the order link down.
 
 Account queries `O`/`P`/`A`/`FL`/`FN` (`49`) are **Post-MVP: not
 implemented in v1**. Until they land, positions/uPnL are **derived
@@ -71,8 +77,8 @@ equity/margin, funding, and liquidation price have **no source** and show
 ## Palette
 
 The terminal uses the dashboard's **Ayam Cemani** palette — defined once
-in `rsx-tui/src/palette.rs` as `ratatui` RGB consts, mirroring the
-Tailwind retune in `rsx-playground/pages.py` and the semantics in
+in `rsx-term/ui/styles.go` as Lipgloss colours, mirroring the Tailwind
+retune in `rsx-playground/pages.py` and the semantics in
 `rsx-playground/CLAUDE.md`. Do **not** invent terminal-only colours; add
 one only when it maps to a new *meaning*.
 
@@ -89,11 +95,12 @@ one only when it maps to a new *meaning*.
 | degraded / stale / offline | `DEGRADED` | `#fbbf24` |
 | panel bg / page bg / border | `PANEL_BG` `#0d1712` · `PAGE_BG` `#040806` · `BORDER` `#16211b` |
 
-## Perps terminal (the built screen)
+## Perps terminal
 
 Three columns under a status bar, over a speed strip + status line + help.
-This is what `rsx-tui/src/render.rs` draws; new elements below are marked
-**[built]** / **[near-term]** / **[needs server]**.
+This is the perps screen `rsx-term/ui/view.go` renders. Fields whose data
+has no server source yet are marked **[needs server]**; what's sourced vs
+not is enumerated in the data-source table below.
 
 ```
  RSX  PENGU-PERP    ● live      open 2   fills 7          last 10001  mark 10000  index —   funding — in —:—:—
@@ -116,16 +123,16 @@ This is what `rsx-tui/src/render.rs` draws; new elements below are marked
 ### Panels
 
 - **book** — asks (red) descending to a spread row, bids (green)
-  ascending; a unicode depth bar (`▊`) scaled to resting qty. **[built]**
+  ascending; a unicode depth bar (`▊`) scaled to resting qty.
   When `connected` but the ladder is empty, show an amber
   `no live book — market-data stream down` row (degraded, not blank).
-  **[near-term]**
+ 
 - **order** — the entry form. `b`/`s` pick side (reversed-highlight the
   active one); `price`/`qty` are digit buffers (`tab` switches focus);
-  `t` cycles TIF (GTC→IOC→FOK). **[built]** Add `r`/`p` to toggle
+  `t` cycles TIF (GTC→IOC→FOK). Add `r`/`p` to toggle
   **reduce-only** / **post-only** (the `ro`/`po` fields already exist on
-  the `N` frame, `49`). **[near-term]** A **market** convenience (send IOC
-  at the far touch) is a TIF-adjacent option. **[near-term]** Leverage /
+  the `N` frame, `49`). A **market** convenience (send IOC
+  at the far touch) is a TIF-adjacent option. Leverage /
   margin-mode selectors are display-only until risk exposes them.
   **[needs server]**
 - **positions** — the account's open position(s): symbol, signed net
@@ -134,25 +141,25 @@ This is what `rsx-tui/src/render.rs` draws; new elements below are marked
   (`uPnL / margin`) and **liquidation price** once margin data exists.
   **[needs server]**
 - **trades** — the public tape, newest first, price coloured by taker
-  side. **[built]**
+  side.
 - **status bar** — symbol badge, link dot (`● live`/`● offline`), open /
-  fills counters. **[built]** Extend with `last` (from the tape), `mark`
+  fills counters. Extend with `last` (from the tape), `mark`
   (mid-derived, labelled), `index`, and a **funding** rate + countdown.
   **[needs server]**
 - **speed strip** — the ⚡ round-trip, split net / internal / engine, with
-  rolling p50 / best. **[built]** The terminal's signature: it *shows* the
+  rolling p50 / best. The terminal's signature: it *shows* the
   µs-class path other exchanges hide.
-- **status line / help** — last event; keybinding legend. **[built]**
+- **status line / help** — last event; keybinding legend.
 
 ### Order lifecycle & confirmation
 
-`enter` currently submits immediately. **[built]** The target flow adds a
+`enter` currently submits immediately. The target flow adds a
 **confirmation preview** (the single biggest new-trader guardrail): the
 first `enter` renders a preview line — side, qty, notional (`px*qty`),
 TIF, reduce-only, and the **resulting liquidation price** — and a second
 `enter` sends, `esc` cancels. **[near-term for the preview; liq needs
 server]** A `c` key cancels the selected/last resting order via the `C`
-frame (`49`). **[near-term]**
+frame (`49`).
 
 ### Keybindings
 
@@ -168,41 +175,26 @@ frame (`49`). **[near-term]**
 | `c` | cancel resting order | near-term |
 | `F3` | trace HUD overlay | built |
 
-## New-trader requirements & current scorecard
+## New-trader safety requirements
 
-The bar a first-time trader needs to not lose money to confusion, ranked,
-with where the terminal stands. (This is the "someone who has never traded
-perps" review lens.)
+A first-time trader must not lose money to a confusing screen. The terminal
+makes these unmissable, ranked by how badly a beginner is hurt without each:
 
-**MUST-HAVE**
+1. **Liquidation price** on the open position — the "you're wiped out here"
+   number, never buried.
+2. **Unmistakable side** — colour plus a LONG/SHORT word, everywhere.
+3. **uPnL in $ and ROE%**, live and colour-coded.
+4. **Available margin / free balance** — the over-sizing guard.
+5. **Confirm-before-submit** preview — side, size, notional, resulting liq
+   — the single biggest fat-finger guard.
+6. **Leverage** shown next to size.
+7. **Mark vs last** both labelled; a client-derived value (a mid-derived
+   mark, or uPnL off it) is rendered as a visible *estimate*, not with the
+   confidence of exchange data.
 
-| # | requirement | status | note |
-|---|---|---|---|
-| 1 | **Liquidation price** always visible on the position | ✗ missing | needs risk margin data (`28-risk.md`); no source in `49` yet |
-| 2 | **Unmistakable side** colour + label everywhere | ◑ partial | buy/sell coloured; long/short position sign shown, but no explicit "LONG/SHORT" word |
-| 3 | **uPnL in $ and ROE%**, live, colour-coded | ◑ partial | $ uPnL derived & coloured; ROE% needs margin |
-| 4 | **Available margin / free balance** | ✗ missing | needs `A` account query (Post-MVP) |
-| 5 | **Confirm-before-submit** preview (side/size/notional/liq) | ✗ missing | near-term; liq field needs server |
-| 6 | **Leverage shown** next to size | ✗ missing | leverage not in the order path |
-| 7 | **Mark vs last** both labelled | ◑ partial | last from tape; mark shown as mid-derived, labelled; true mark needs `15-mark.md` feed |
-
-**SHOULD-HAVE**
-
-| # | requirement | status | note |
-|---|---|---|---|
-| 8 | Funding rate + countdown | ✗ missing | no funding field in `49` market data yet |
-| 9 | Margin-ratio / distance-to-liq health bar | ✗ missing | needs margin |
-| 10 | Size as % of balance | ✗ missing | needs balance |
-| 11 | Reduce-only default on close actions | ✗ missing | pairs with the `r` toggle + a close action |
-| 12 | Spread / BBO visible | ✓ done | spread row + ladder |
-
-**NICE-TO-HAVE:** trades tape ✓ · open-interest / 24h stats ✗ · price
-sparkline ✗ · maker/taker fee estimate on preview ✗.
-
-The gating theme: the terminal's *market-data and execution* half is
-solid; its *risk/account* half (liq, margin, leverage, funding) is blocked
-on server features that are Post-MVP. Those are the highest-value next
-builds for trader safety — call them out rather than fake them.
+Should-have: funding rate + countdown, margin-ratio / distance-to-liq bar,
+size as % of balance, reduce-only as the default on a close. Fields with no
+server source (liq, margin, leverage, ROE%, funding) are dashed, not faked.
 
 ## Multi-market vision
 

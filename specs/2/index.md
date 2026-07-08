@@ -65,7 +65,7 @@ phase-1 historical specs.
 | 23 | [23-playground-dashboard.md](23-playground-dashboard.md) | draft | Playground (dev/test control plane) |
 | 27 | [27-risk-dashboard.md](27-risk-dashboard.md) | draft | Risk ops |
 | 54 | [54-tui-access.md](54-tui-access.md) | partial | TUI access — SSH forced-command dispatch (done) + web terminal (deferred) |
-| 55 | [55-terminal.md](55-terminal.md) | draft | Trade terminal UX — perps screen, new-trader bar, multi-market vision (acct/options/sfdx/lend) |
+| 55 | [55-terminal.md](55-terminal.md) | partial | Trade terminal UX — perps screen, new-trader bar, multi-market vision (acct/options/sfdx/lend) |
 | 56 | [56-network-edge-scaling.md](56-network-edge-scaling.md) | spec | Network-edge I/O scaling — SQPOLL gated on core config + userspace-UDP (cast decoupling) |
 
 ## REST + deploy
