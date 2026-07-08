@@ -92,6 +92,35 @@ but the price granularity is deliberately coarser away from the
 touch. The tradeoff is honest: exact priority where liquidity
 clusters, compressed storage where resolution is wasted.
 
+## Recentering keeps the touch exact
+
+The map is centered on one mid, fixed at construction. The market
+moves, so the mid drifts. Left alone, the touch would drift out of
+zone 0 into a coarsened zone — where two distinct prices share a slot
+and, because "side" in the map means above/below mid rather than
+buy/sell, a slot can even hold both order sides. Matching, the
+per-side occupancy bitmap, and the best-bid/ask cache all assume one
+price and one side per slot; that holds *only* at 1:1. So a stale mid
+is a correctness hazard, not just lost precision.
+
+Recentering is the guarantor. `should_recenter(mid)` fires once the mid
+drifts past half of zone 0's half-width; `trigger_recenter(new_mid)`
+rebuilds the map around the new mid and migrates resting orders (a
+frontier walk that moves a level lazily as it is next touched, with an
+idle batch draining the rest). The invariant it protects: **the touch
+always sits in zone 0, at 1:1 resolution.** That is what makes the
+compressed book correct — not an optimization on top of it.
+
+## Recovery: the book is derived
+
+The slab and the map hold no durable state. On a crash the book is
+rebuilt by replaying the ME's WAL from the tip — every accepted order
+and fill re-applied in sequence reconstructs the exact resting book. So
+the arena size and map shape are for speed, not durability; the durable
+record is the WAL. The book is a derived structure, like positions
+(see [08-asymmetric-durability](08-asymmetric-durability.md),
+[01-wal-is-wire-is-stream](01-wal-is-wire-is-stream.md)).
+
 ## Why pre-allocation wins here
 
 Dynamic allocation would also solve sparse prices. A hash map gives
