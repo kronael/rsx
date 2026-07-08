@@ -134,7 +134,7 @@ authoritative record of **how things are now**. Read them in that
 order: the spec for why it was designed, ARCHITECTURE for what
 actually runs.
 
-## Architecture
+## How it scales
 
 An order from user **U** on symbol **S** routes
 `GW → Risk[U] → ME[S] → Risk[U] → GW`. The two shard axes are
