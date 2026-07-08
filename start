@@ -23,6 +23,7 @@ Options:
     -g, --gateways N            Number of gateways
     --risk-shards N             Number of risk shards
     --replication none|replica|spare  Replication mode
+    --pin-cores                 Emit RSX_*_CORE_ID env vars (perf/lab only)
 """
 
 import argparse
@@ -32,6 +33,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 # ── symbol catalog ──────────────────────────────────────
 
@@ -696,6 +698,10 @@ def main():
         choices=["none", "replica", "spare"],
     )
     parser.add_argument(
+        "--pin-cores", action="store_true",
+        help="emit RSX_*_CORE_ID env vars for lab/perf runs",
+    )
+    parser.add_argument(
         "-c", "--clean", action="store_true",
         help="wipe ./tmp before starting",
     )
@@ -706,7 +712,12 @@ def main():
 
     args = parser.parse_args()
     config = resolve_scenario(args)
-    plan = build_spawn_plan(config, args.pg_url, args.release)
+    plan = build_spawn_plan(
+        config,
+        args.pg_url,
+        args.release,
+        pin_cores=args.pin_cores,
+    )
 
     if args.dry_run:
         print_plan(plan)
@@ -914,6 +925,21 @@ async def graceful_exit():
         status = "ok" if code == 0 else f"exit {code}"
         print(f"  {name}: {status}")
     sys.exit(0)
+
+
+_RUNTIME_DIR = Path(__file__).resolve().parent / "rsx-playground"
+if str(_RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(_RUNTIME_DIR))
+import runtime as _runtime
+
+SYMBOLS = _runtime.SYMBOLS
+SYMBOL_ORDER = _runtime.SYMBOL_ORDER
+SCENARIOS = _runtime.SCENARIOS
+DEFAULT_PG_URL = _runtime.DEFAULT_PG_URL
+PG_CONTAINER = _runtime.PG_CONTAINER
+select_symbols = _runtime.select_symbols
+resolve_scenario = _runtime.resolve_scenario
+build_spawn_plan = _runtime.build_spawn_plan
 
 
 if __name__ == "__main__":
