@@ -113,7 +113,7 @@ around the new mid and migrates the book **eagerly, in one shot** into
 the staging array. The cost is a scan of the old slot array (~617k
 slots), skipping empty levels in O(1) and remapping only the occupied
 ones — bounded by slot count, not order count, but still a spike far
-above a 60 ns match. That spike is the deliberate price of correctness.
+above a 30 ns match. That spike is the deliberate price of correctness.
 
 The eager choice is not laziness of implementation — `rsx-book` also has
 an incremental frontier-walk migration (`migrate_batch`), but live
@@ -142,7 +142,7 @@ record is the WAL. The book is a derived structure, like positions
 
 Dynamic allocation would also solve sparse prices. A hash map gives
 O(1) average lookup; a tree gives O(log n) order. But their constant
-cost is on the wrong side of the 60 ns match budget: hash lookup is
+cost is on the wrong side of the 30 ns match budget: hash lookup is
 30-50 ns, and a tree is pointer chasing through cache misses. An
 array index is a single load.
 

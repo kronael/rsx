@@ -72,7 +72,7 @@ each with the problem it solves.
   slow down as they fill. 65 536 pre-allocated `OrderSlot`s per
   symbol and a sparse-to-dense price compression (five distance
   zones, 1:1 near mid up to 1000:1 far) fit a 20M-level book in
-  ~15 MB, match in ~60 ns at any depth, and look a price up in
+  ~20 MB, match in ~30 ns at any depth, and look a price up in
   2–5 ns. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-book/README.md](rsx-book/README.md).
 - **`rsx-cast` — log-backed reliable UDP transport.**
@@ -228,7 +228,7 @@ keep in sync; this table is just the summary.
 
 | Layer | p50 | what it is |
 |---|---:|---|
-| Orderbook match | ~60 ns | pure match, any book depth (100 → 10M resting) |
+| Orderbook match | ~30 ns | pure match, any book depth (100 → 10M resting) |
 | Matching algorithm (dedup + match + WAL) | 340 ns | ME critical section, no transport |
 | In-process round-trip (`bench-match-rt`) | 7.82 µs (22.3 µs p99) | real casting + Orderbook + WAL, one box, no process boundary — the algorithmic floor |
 | Cross-process production (GW→ME→GW) | ~1.1 ms | separate processes, end to end |
@@ -236,7 +236,7 @@ keep in sync; this table is just the summary.
 
 The gap between the 7.82 µs in-process floor and the ~1.1 ms cross-process
 path is the whole story: **~99% of production latency is inter-process
-overhead** (monoio sleep, tokio schedule, syscalls), not the match (~60 ns
+overhead** (monoio sleep, tokio schedule, syscalls), not the match (~30 ns
 at any depth) or the transport framing (tens of ns). The io_uring/SQPOLL
 work on the roadmap targets exactly that gap. Per-stage budgets — Risk
 pre-trade <5 µs, ME match <500 ns — are met inside the components.

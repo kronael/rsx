@@ -118,7 +118,7 @@ Zone 3: $25,000-$35,000 + $65,000-$75,000 (30-50%)
 Zone 4: <$25,000 + >$75,000 (50%+)
                                   → 1 slot per side       = 2 slots
 
-Total: ~617,002 slots * 24B = ~14.8 MB
+Total: ~617,002 slots * 32B = ~19.7 MB
 ```
 
 The catch-all slots (zone 4) smoosh ALL far-from-mid orders into a single slot
@@ -306,10 +306,10 @@ section 2 for the shared abstraction and BookObserver trait.
 ### Price Level Array
 
 Prices map to array indices via compressed zone lookup (see section 2.5).
-`PriceLevel` is 24 bytes (`head`, `tail`, `total_qty`, `order_count`) — no
-`align(64)`, the level array is walked linearly and the 24B layout is enforced
-by a compile-time `assert!(size_of::<PriceLevel>() == 24)`.
-~617K slots * 24B = ~14.8 MB per array. Two arrays = ~30 MB.
+`PriceLevel` is 32 bytes (`head`, `tail`, `total_qty`, `order_count`) — no
+`align(64)`, the level array is walked linearly and the 32B layout is enforced
+by a compile-time `assert!(size_of::<PriceLevel>() == 32)`.
+~617K slots * 32B = ~19.7 MB per array. Two arrays = ~40 MB.
 
 `OrderSlot` is `#[repr(C, align(64))]` and exactly 128B (two cache lines,
 hot/cold split at 48B), both enforced by compile-time asserts on `size_of` and
