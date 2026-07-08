@@ -342,13 +342,12 @@ Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/
 `CORE_MD`). Off-path services (`mark`, `recorder`) sleep instead
 of spinning and stay unpinned.
 
-The dedicated cores are a **latency** requirement, not a
-correctness one. For testing on a small host you can pin several
-hot-path processes to the same core (or leave them unpinned) and
-everything still works — the scheduler time-slices the
-busy-spinners at millisecond quanta, so expect millisecond
-round-trips instead of microseconds. Fine for functional tests;
-meaningless for benchmarks.
+Dedicated cores are a **latency** requirement, not a correctness
+one. On a small host you can share a core or skip pinning
+entirely — everything still works, but the scheduler time-slices
+the busy-spinners into **millisecond** round-trips instead of
+microseconds: fine for functional tests, meaningless for
+benchmarks.
 
 **From source:**
 
@@ -372,10 +371,9 @@ make lint         # clippy -D warnings
 Single crate: `cargo test -p rsx-book`. Single test:
 `cargo test -p rsx-book -- test_name`.
 
-Debug builds use the **cranelift** codegen backend (~7× faster codegen on
-heavy crates than LLVM); `make build` / `cargo build`. `make release`
-(`--release`) uses LLVM, optimized. Configured in `.cargo/config.toml` +
-`rust-toolchain.toml` — no flags, nothing to remember.
+`make build` / `cargo build` use the **cranelift** codegen backend
+(~7× faster codegen than LLVM on heavy crates); `make release` uses LLVM.
+Wired in `.cargo/config.toml` + `rust-toolchain.toml`.
 
 ## What's not done
 
