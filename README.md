@@ -94,10 +94,9 @@ each with the problem it solves.
   as a single core can go (a symbol is one market — its book can't
   be sharded, so the match itself is the ceiling). One process per
   symbol, single-threaded, core-pinned, bare busy-spin, zero heap
-  on the hot path — 54 ns for a single fill through the book, the
-  match itself flat in book depth (~30 ns at 1 or 100k resting),
-  and 266 ns for the full accept path (dedup → match → WAL →
-  fan-out) at ~3.6M orders/s. No allocation, no locks, no async
+  on the hot path — the match itself flat in book depth (~30 ns at
+  1 or 100k resting), and 266 ns for the full accept path (dedup →
+  match → WAL → fan-out) at ~3.6M orders/s. No allocation, no locks, no async
   runtime. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-matching/README.md](rsx-matching/README.md).
 - **`rsx-risk` — per-user-shard risk engine.** *Release
@@ -229,7 +228,7 @@ keep in sync; this table is just the summary.
 | Layer | p50 | what it is |
 |---|---:|---|
 | Orderbook match | ~30 ns | pure match, any book depth (100 → 10M resting) |
-| Matching algorithm (dedup + match + WAL) | 340 ns | ME critical section, no transport |
+| Matching algorithm (dedup + match + WAL) | 266 ns | ME critical section, no transport |
 | In-process round-trip (`bench-match-rt`) | 7.82 µs (22.3 µs p99) | real casting + Orderbook + WAL, one box, no process boundary — the algorithmic floor |
 | Cross-process production (GW→ME→GW) | ~1.1 ms | separate processes, end to end |
 | **Target: <50 µs GW→ME→GW** | — | **aspirational** |

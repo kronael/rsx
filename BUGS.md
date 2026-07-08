@@ -61,13 +61,26 @@ code. Do NOT fix without founder go.
   `REASON_DUPLICATE` (=3, `main.rs:52`) is disconnected from rsx-book's
   `FAIL_*` enum (0-2, `event.rs:23-25`); a future `FAIL_*`=3 would silently
   alias "duplicate" in `OrderFailedRecord.reason`. Fix: one shared enum.
-- **ME-WAL-WRITER-DUPLICATION** (MED, duplication → drift) —
-  `write_events_to_wal` (`wal.rs:54`) and `publish_events` (`wal.rs:240`)
-  are ~200-line near-duplicates that have already diverged: the former
-  no-ops on `Event::BBO` (`wal.rs:230`), the latter persists it
-  (`wal.rs:412`, SEQ-1 fix). This also makes the flagship "266 ns accept"
-  bench understate cost (it uses the BBO-skipping writer, undisclosed). Fix:
-  dedupe the two writers; re-bench.
+- **ME-WAL-WRITER-DUPLICATION** (MED, duplication → drift) — **FIXED
+  2026-07-08** (`761aa94`). Two corrections to the original finding: (1) the
+  "~200-line near-duplicates" framing was already stale — the record-build
+  match lived in one place (`emit_events`); both public fns were 7-line
+  sink-picker wrappers, and the ONLY divergence was `WalSink::emit_bbo`
+  no-oping on `Event::BBO`. Fix removed the `emit_bbo` special method so BBO
+  flows through the shared `emit()` in both sinks. (2) The "understates the
+  266 ns accept" claim was WRONG for that bench: production always persisted
+  BBO (`FanoutSink` used the default), and the flagship accept scenario (1-lot
+  IOC into a deep, non-draining level) never moves the best price, so
+  `matching.rs:232` never fires `emit_bbo` → no BBO record to skip or write.
+  266 ns is honest for its scenario. See ME-ACCEPT-BENCH-NO-BBO below.
+- **ME-ACCEPT-BENCH-NO-BBO** (LOW, bench representativeness) — the flagship
+  `me_accept_path/full` (266 ns) uses a scenario that never moves the BBO, so
+  it doesn't pay the one extra BBO WAL-record write a BBO-moving accept (level
+  drain, or a resting residual creating best-bid) would. Not a wrong number —
+  honest for its scenario — but the headline may not represent a BBO-moving
+  accept. Decision (founder): relabel 266 as "fills without moving BBO", or
+  redesign the flagship scenario to move the BBO for a more representative
+  (slightly higher) figure. Record-only.
 - **ME-CANCEL-REIMPL** (LOW, duplication) — `process_cancel`
   (`main.rs:955`) reimplements the drift-check inline instead of
   `rsx-book::cancel_order_checked` (`book.rs:355`), missing its
