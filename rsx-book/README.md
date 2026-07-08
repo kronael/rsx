@@ -291,8 +291,8 @@ path.
   the security boundary.
 - **Fixed-point i64 only, no floats.** Prices and quantities are raw
   i64 units; conversion happens at the API boundary, not here.
-- **Memory is preallocated and config-driven.** The slab capacity
-  (order-slot count) is a constructor argument; the level array size
+- **Memory is preallocated and config-driven.** The slab's order-slot
+  capacity is a constructor argument; the level array size
   follows from mid/tick via the compression map. A production sizing
   (tens of millions of slots) reserves ~10 GB of **virtual** memory
   for the slab — physical pages fault in on use. The event buffer is
