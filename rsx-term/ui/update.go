@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -35,12 +36,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wire.Snapshot:
 		m.seq.ResetTo(v.Seq)
 		m.book.ApplySnapshot(v)
+		m.foldMdFrame(v.TsNs)
 	case wire.Delta:
 		m.seq.Observe(v.Seq)
 		m.book.ApplyDelta(v)
+		m.foldMdFrame(v.TsNs)
 	case wire.Bbo:
 		m.seq.Observe(v.Seq)
 		m.book.ApplyBbo(v)
+		m.foldMdFrame(v.TsNs)
 	case wire.MdTrade:
 		m.seq.Observe(v.Seq)
 		side := wire.Buy
@@ -48,6 +52,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			side = wire.Sell
 		}
 		m.tape.Push(book.TapeEntry{Side: side, Px: v.Px, Qty: v.Qty})
+		m.foldMdFrame(v.TsNs)
 
 	case wire.Accepted:
 		m.openOrders = append(m.openOrders, OpenOrder{
@@ -95,6 +100,28 @@ func (m *Model) foldRtt(rttNs int64) {
 		InternalNs: book.NsUnknown,
 		EngineNs:   book.NsUnknown,
 	}
+}
+
+// foldMdFrame records the client-measured age of an inbound marketdata frame
+// and marks its arrival for staleness tracking. Age is wall-clock now minus
+// the frame's server ts_ns (Unix epoch nanoseconds — rsx-types::time_utils,
+// SystemTime::now().duration_since(UNIX_EPOCH)). tsNs == 0 means the frame
+// carries no real timestamp (the offline demo script doesn't stamp one) —
+// that's not measurable, so it's left as book.NsUnknown rather than showing
+// a fabricated multi-decade age. Arrival time (for staleness) is recorded
+// either way, since it just answers "did a frame land."
+func (m *Model) foldMdFrame(tsNs uint64) {
+	m.lastMdAt = time.Now()
+	if tsNs == 0 {
+		m.lastMdAgeNs = book.NsUnknown
+		return
+	}
+	age := time.Now().UnixNano() - int64(tsNs)
+	if age < 0 {
+		age = 0 // clock skew guard — never show a negative age
+	}
+	m.lastMdAgeNs = age
+	m.mdAgeWindow.Add(age)
 }
 
 // removeOrder drops any open order with a matching oid (absent = no-op). It

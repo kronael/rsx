@@ -7,6 +7,8 @@
 package ui
 
 import (
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-term/book"
@@ -75,6 +77,17 @@ type Model struct {
 	latWindow book.Window
 	showTrace bool
 
+	// Marketdata-path telemetry: client-measured age of the most recent
+	// md frame (wall-clock now minus the frame's server ts_ns) and when it
+	// last arrived, for staleness. Real numbers, not placeholders — every
+	// md frame carries ts_ns (specs/2/49-webproto.md), so this needs no
+	// server change. A frame with ts_ns == 0 (the offline demo script
+	// doesn't stamp one) is not measurable and stays book.NsUnknown rather
+	// than showing a fabricated multi-decade age.
+	lastMdAgeNs int64
+	mdAgeWindow book.Window
+	lastMdAt    time.Time
+
 	width  int
 	height int
 }
@@ -84,8 +97,9 @@ type Model struct {
 // price field (all the useful zero values).
 func New(cfg Config) Model {
 	return Model{
-		cfg:    cfg,
-		status: "connecting…",
+		cfg:         cfg,
+		status:      "connecting…",
+		lastMdAgeNs: book.NsUnknown,
 	}
 }
 
