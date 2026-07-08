@@ -90,18 +90,11 @@ _GUEST_USER_ID = 99
 
 # ── import start script's config ────────────────────────
 
-import importlib.machinery
-import importlib.util
 import types
 try:
-    _loader = importlib.machinery.SourceFileLoader(
-        "start_mod", str(ROOT / "start"))
-    _spec = importlib.util.spec_from_loader(
-        "start_mod", _loader)
-    start_mod = importlib.util.module_from_spec(_spec)
-    _loader.exec_module(start_mod)
+    import runtime as start_mod
 except Exception:
-    # start file missing — provide default SYMBOLS
+    # runtime module missing — provide default SYMBOLS
     start_mod = types.ModuleType("start_mod")
     start_mod.SYMBOLS = {
         "BTC": {
