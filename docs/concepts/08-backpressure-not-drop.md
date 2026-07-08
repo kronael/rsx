@@ -7,7 +7,7 @@ stalls.
 ## Why dropping is wrong
 
 A dropped fill is an invisible fill. The accounting diverges
-silently. Prometheus increments a counter that no one watches
+silently. A metrics counter ticks up that nobody is watching
 at 3 AM. Three days later a user files a support ticket about
 a balance discrepancy. By then the fills that were dropped
 cannot be reconstructed.
@@ -24,8 +24,8 @@ invisible data loss.
 
 The WAL buffer is bounded. If the buffer fills — because the
 disk is slow and fsyncs are taking longer than 10 ms — the
-matching engine's `append` call returns `WouldBlock` rather
-than dropping the record. The engine handles this by flushing
+matching engine's `append_framed` call returns `WouldBlock`
+rather than dropping the record. The engine handles this by flushing
 immediately (blocking on fsync) and then retrying. While the
 engine waits for the disk, it processes no new orders. The
 gateway queues fill. Clients see elevated latency. The on-call
