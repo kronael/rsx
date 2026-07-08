@@ -22,7 +22,7 @@ feature-gated. Refinement history: ~28 `[refine]` commits since v0.1.0 plus
 |---|---|---|---|
 | rsx-types | done | newtypes, config, validation, invariant asserts | — |
 | rsx-book | in progress | snapshot, matching, compression | book bugs (BUGS.md); proptest harness |
-| rsx-matching | done | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | — |
+| rsx-matching | rc | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | — |
 | rsx-cast | done | WAL, casting/UDP, replication/TCP, V1 wire version byte, prealloc send_ring | — |
 | rsx-messages | done | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | — |
 | rsx-gateway | in progress | JWT, per-IP rate limit, circuit breaker, REST, monoio WS, 500µs egress-drain | tile parity (pinning, ring) |

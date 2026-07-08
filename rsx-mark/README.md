@@ -61,7 +61,7 @@ See `specs/2/39-testing-mark.md`.
 
 ## Gotchas
 
-- Uses tokio for exchange WS feeds (async) but the
+- Uses tokio for exchange WS feeds but the
   aggregation loop is a single-threaded busy-spin. The two
   communicate via one rtrb SPSC ring per source (cap 1024,
   drop-newest on full).
