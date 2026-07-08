@@ -72,8 +72,9 @@ the OS has 0 spare cores unless deployment reserves one.
 
 ## Why an unpinned spinner is dangerous
 
-An unpinned busy-spinner consumes 100% of whatever core CFS gives
-it and can float across cores under load balancing. If it lands on
+An unpinned busy-spinner consumes 100% of whatever core the Linux
+scheduler (CFS) gives it and can float across cores under load
+balancing. If it lands on
 a core owned by a pinned hot-path process, it starves that process:
 the victim stalls, UDP receive falls behind, and packets drop.
 
