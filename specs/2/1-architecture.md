@@ -4,7 +4,7 @@ status: shipped
 
 # Architecture
 
-derivatives exchange. Fixed-point arithmetic, single-threaded
+Derivatives exchange. Fixed-point arithmetic, single-threaded
 matching per symbol, casting/UDP between processes, WAL-based
 recovery.
 
