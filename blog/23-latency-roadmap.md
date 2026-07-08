@@ -102,7 +102,7 @@ The gateway is a monoio reactor multiplexing many WS fds and bridging
 orders onto the cast/UDP wire — not a tile, and no SPSC rings (those
 are intra-process, for the risk tile). The socket layer under the
 reactor is the only thing that changes in subsequent phases. Its I/O
-model is [network-edge-io](../docs/concepts/05-network-edge-io.md).
+model is [network-edge-io](../docs/concepts/04-network-edge-io.md).
 
 **Phase 2: DPDK or AF_XDP**
 

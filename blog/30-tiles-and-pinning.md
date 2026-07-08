@@ -61,10 +61,10 @@ pinned busy-spin thread cannot make a syscall cheaper. Spinning a core there
 buys nothing; the lever is batching syscalls, which an io_uring reactor does and
 a spin loop does not. Those processes run on monoio, not as tiles — and that is
 a deliberate choice, not an unfinished one. The concept page
-[network-edge-io](../docs/concepts/05-network-edge-io.md) works through why.
+[network-edge-io](../docs/concepts/04-network-edge-io.md) works through why.
 
 The one-line test: **if the hot loop is compute-bound and cache-resident, tile
 it and pin it. If it is I/O-bound, don't — batch the syscalls instead.**
 
-See also: `docs/concepts/03-tiles-and-pinning.md`, `specs/2/45-tiles.md`,
+See also: `docs/concepts/02-tiles-and-pinning.md`, `specs/2/45-tiles.md`,
 [The Matching Engine That Runs at 100ns](18-100ns-matching.md).

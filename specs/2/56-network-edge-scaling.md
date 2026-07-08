@@ -4,7 +4,7 @@ Status: **spec** (not implemented). Throughput/latency scaling for the
 gateway/marketdata I/O edge, past what testing needs. Off the critical
 publish path — see README §Roadmap step 3.
 
-Concept: [docs/concepts/05-network-edge-io.md](../../docs/concepts/05-network-edge-io.md).
+Concept: [docs/concepts/04-network-edge-io.md](../../docs/concepts/04-network-edge-io.md).
 
 ## Why
 

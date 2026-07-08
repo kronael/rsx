@@ -18,43 +18,39 @@ specs. For *how fast it goes*, read the benchmark tables.
 
 ## Pages
 
-- [wal-is-wire-is-stream](01-wal-is-wire-is-stream.md) — One
-  `repr(C)` layout serves as the on-disk WAL, the UDP wire
-  frame, and the TCP replay stream. No serialization step.
-- [reliable-udp](02-reliable-udp.md) — casting: NAK-based gap
-  recovery over UDP, idle-only heartbeats, deliberately no
-  flow control. Slow consumers fall back to TCP replay.
-- [tiles-and-pinning](03-tiles-and-pinning.md) — Pinned busy-spin
+- [casting](01-casting.md) — One `repr(C)` layout is the on-disk
+  WAL, the UDP frame, and the TCP replay stream (no serialization);
+  plus a NAK reliability layer over UDP with no flow control, so a
+  slow consumer never stalls the producer.
+- [tiles-and-pinning](02-tiles-and-pinning.md) — Pinned busy-spin
   hot loops spend 1 core to remove scheduler wakeups, context
   switches, and core migration from 60-110 ns compute paths.
-- [spsc-rings](04-spsc-rings.md) — rtrb SPSC rings pass data between
+- [spsc-rings](03-spsc-rings.md) — rtrb SPSC rings pass data between
   sibling threads in 50-170 ns; ring-full means producer stall,
   not silent drop.
-- [network-edge-io](05-network-edge-io.md) — Gateway and marketdata use
+- [network-edge-io](04-network-edge-io.md) — Gateway and marketdata use
   monoio/io_uring because many-connection edges are syscall-bound;
   batching beats busy-spinning there.
-- [slab-and-compression](06-slab-and-compression.md) — Pre-allocated
-  slab arena plus a five-zone CompressionMap: a 20M-level book
-  in ~15 MB with 2–5 ns lookup and zero malloc on the hot path.
-- [fixed-point](07-fixed-point.md) — All prices and quantities are
+- [slab-and-compression](05-slab-and-compression.md) — Pre-allocated
+  slab arena plus a five-zone CompressionMap: a 20M-level book in
+  ~15 MB with 2–5 ns lookup; recentering keeps the touch exact, and
+  the book is rebuilt by WAL replay.
+- [fixed-point](06-fixed-point.md) — All prices and quantities are
   `i64` in smallest units. Float is wrong for an exchange.
-- [asymmetric-durability](08-asymmetric-durability.md) — Fills are
+- [asymmetric-durability](07-asymmetric-durability.md) — Fills are
   durable (fsync before forwarding). Orders are ephemeral (lost
   on crash; client retries). Positions are derived (replay fills
   to rebuild). Not all data deserves the same treatment.
-- [backpressure-not-drop](09-backpressure-not-drop.md) — When a
+- [backpressure-not-drop](08-backpressure-not-drop.md) — When a
   bounded buffer fills, the producer stalls. Silent drops are
   invisible failures. Visible stalls are fixable.
-- [sharding-axes](10-sharding-axes.md) — Two orthogonal scale-out
+- [sharding-axes](09-sharding-axes.md) — Two orthogonal scale-out
   axes: Risk shards by user_id, ME shards by symbol. Gateway
   is stateless. Adding users and adding symbols are independent.
-- [tui-quic-protobuf](11-tui-quic-protobuf.md) — The terminal uses
-  protobuf-over-QUIC so the client edge stays binary, compact,
-  congestion-aware, and broker-free.
-- [keyboard-driven-terminal](12-keyboard-driven-terminal.md) —
-  A ratatui trading terminal turns order entry into home-row
-  hotkeys instead of serial pointer targeting.
-- [glossary](13-glossary.md) — RSX terms (casting, WAL, vshard,
+- [trading-terminal](10-trading-terminal.md) — The rsx-tui terminal:
+  protobuf-over-QUIC transport (binary, congestion-aware, broker-free)
+  and keyboard-driven input (home-row hotkeys, not pointer targeting).
+- [glossary](11-glossary.md) — RSX terms (casting, WAL, vshard,
   tile, BBO, mark vs index…), one line each + read-more links.
 
 ---
