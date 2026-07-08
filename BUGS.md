@@ -3,6 +3,30 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — live latency legs not stamped (rsx-term speed strip)
+
+The terminal's ⚡ speed/telemetry views are built for the full three-leg
+round-trip (net / internal / engine) and the webproto `Latency` message
+(`49-webproto.md`, field 8) + Go decoder already exist. On the **mock** all
+three legs are real; **live**, only `net` (client-measured) populates — the
+server never stamps the other two. The terminal shows them as marked
+placeholders pointing here. Two server tasks make them real:
+
+- **GW-STAMP-LATENCY-LIVE** (feature) — the gateway does not send a
+  `Latency` frame to the client on an order round-trip; it only has an
+  internal `latency_sample!` log trace (`rsx-gateway/src/handler.rs:301`).
+  Fix: measure the casting round-trip (Instant from casting-send of the
+  order to casting-recv of the response) and emit a `Latency{cid,
+  internal_ns}` webproto frame. internal_ns is fully measurable at the
+  gateway — no other component needed. Makes the live `internal` leg real.
+- **ME-ENGINE-LATENCY-NOT-REPORTED** (feature) — `engine_ns` (ME match +
+  risk processing, the slice *inside* the internal window) is not stamped
+  into the returned record, so the gateway can't populate the engine leg.
+  Fix: have ME/risk record their processing duration into a record field
+  the gateway reads (the `latency-trace` feature already measures per-stage
+  ns internally — surface it on the response record). Makes the live
+  `engine` leg real. Depends on GW-STAMP-LATENCY-LIVE for the transport.
+
 ## Status — 2026-07-08 — rsx-matching release CTO review (see .ship/41-MATCHING-RELEASE/CTO-REPORT.md)
 
 Record-only (bug-triage protocol): findings from the release-pass review.
