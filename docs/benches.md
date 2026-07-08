@@ -125,18 +125,24 @@ don't compose to a production p50 on their own.
 
 ## Most informative single number
 
-| Layer | p50 |
-|---|---:|
-| Matching algorithm only (dedup + match + WAL) | **340 ns** |
-| In-process round-trip (`bench-match-rt`) | **9.58 µs** |
-| Cross-process production (`SPEED-OFFHOT.md`) | 1 128 µs |
-| Cross-process via Python probe (`bench-baseline.json`) | 11 878 µs |
+| Layer | p50 | p99 |
+|---|---:|---:|
+| Matching algorithm only (dedup + match + WAL) | **~410 ns** | — |
+| In-process round-trip (`bench-match-rt`, `--n 20000`) | **7.82 µs** | **22.3 µs** |
+| Cross-process production (`SPEED-OFFHOT.md`) | 1 128 µs | — |
+| Cross-process via Python probe (`bench-baseline.json`) | 11 878 µs | — |
+
+Fresh `bench-match-rt` (this box, `--n 20000 --warmup 1000`) per stage p50/p99 ns:
+`gw_send` 3196/5480, `me_dedup` 70/1623, `me_wal_accept` 110/2104, `me_match`
+110/401, `me_wal_events` 120/2896, `me_send` 3276/11011, TOTAL 7824/22291. The
+two `~3.2 µs` send legs are `std::net::UdpSocket` sendto (bench uses std, not
+monoio); the compute stages sum to ~410 ns.
 
 `bench-match-rt` is the load-bearing measurement: it
 exercises every real production code path **except** the
 inter-process boundaries (separate processes, monoio's
 100 µs sleep, tokio reactor schedule, PG write-behind).
-Its 9.58 µs floor vs the cross-process 1 128 µs tells us
+Its 7.82 µs floor vs the cross-process 1 128 µs tells us
 **~99 % of production latency is inter-process overhead**,
 not algorithm or transport framing.
 
