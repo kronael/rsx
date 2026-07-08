@@ -41,12 +41,28 @@ func (w *Window) Add(ns int64) {
 // P50 returns sorted[len/2] of the window (matching the Rust App's
 // parity — not an average of the two middle values), or false if empty.
 func (w *Window) P50() (int64, bool) {
+	return w.percentile(50)
+}
+
+// P99 returns sorted[len*99/100] of the window (clamped to the last index
+// for small windows), or false if empty.
+func (w *Window) P99() (int64, bool) {
+	return w.percentile(99)
+}
+
+// percentile returns sorted[len*pct/100] of the window, clamped to the last
+// index. Shared by P50/P99 so both agree on the same sort + rounding.
+func (w *Window) percentile(pct int) (int64, bool) {
 	if len(w.samples) == 0 {
 		return 0, false
 	}
 	sorted := append([]int64(nil), w.samples...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	return sorted[len(sorted)/2], true
+	idx := len(sorted) * pct / 100
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx], true
 }
 
 // Min returns the smallest value in the window, or false if empty.
@@ -61,4 +77,23 @@ func (w *Window) Min() (int64, bool) {
 		}
 	}
 	return m, true
+}
+
+// Len returns the number of samples currently held.
+func (w *Window) Len() int { return len(w.samples) }
+
+// Recent returns a copy of the most recent n samples, oldest first (fewer
+// than n if the window hasn't filled yet, nil if empty). It copies so the
+// caller (the sparkline) can't retain a reference into window internals.
+func (w *Window) Recent(n int) []int64 {
+	if n <= 0 || len(w.samples) == 0 {
+		return nil
+	}
+	if n > len(w.samples) {
+		n = len(w.samples)
+	}
+	start := len(w.samples) - n
+	out := make([]int64, n)
+	copy(out, w.samples[start:])
+	return out
 }

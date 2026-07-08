@@ -66,8 +66,13 @@ var (
 	StyleDegraded = lipgloss.NewStyle().Foreground(ColorDegraded)
 	// StyleDerived renders client-computed values (mark, uPnL) — dim +
 	// italic, paired with a "~" prefix, so they never read as
-	// exchange-authoritative data.
+	// exchange-authoritative data. Also used for a legitimately-not-yet-real
+	// latency leg (the "·· pending" marker): same rule, it's not
+	// exchange-authoritative data yet either.
 	StyleDerived = lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)
+	// StyleAccent renders the secondary-accent violet — the sparkline, the
+	// one detail meant to draw the eye without competing with StyleHeading.
+	StyleAccent = lipgloss.NewStyle().Foreground(ColorAccent)
 
 	// PanelStyle is the standard bordered panel: a normal border in the muted
 	// border colour. Panels carry their title as their first content line.

@@ -3,9 +3,11 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"rsx-term/book"
 	"rsx-term/wire"
 )
 
@@ -15,11 +17,21 @@ const (
 	bookWidth  = 38
 	orderWidth = 36
 	rightWidth = 34
+	// traceWidth is wider than rightWidth: the F3 HUD carries the pending-leg
+	// legend line (bug IDs), which doesn't fit rightWidth without an ugly
+	// mid-word wrap. Only the trace panel uses it — it swaps the whole right
+	// column rather than sitting beside the other two (see viewMain).
+	traceWidth = 46
 
 	depthBar      = "▊"
 	maxBarLen     = int64(24) // depth-bar cap, per specs/2/55-terminal.md
 	maxLadderRows = 8         // rows shown per book side
 	maxTapeRows   = 10        // trade prints shown
+	sparkSamples  = 32        // how much of the rolling window the sparkline shows
+
+	// mdStaleThreshold is how long since the last marketdata frame before the
+	// book is flagged stale (amber) rather than merely "not the newest".
+	mdStaleThreshold = 2 * time.Second
 
 	degradedBookMsg = "no live book — market-data stream down"
 
@@ -281,35 +293,140 @@ func (m Model) viewTrades() string {
 // for the trace panel — the honest simple equivalent of the Rust trace overlay
 // (rsx-tui/src/render.rs draw_trace_hud). This is an intentional, noted
 // deviation.
+// legValue renders one RTT leg's value: the real duration in StyleText, or a
+// dim-italic "·· pending" (StyleDerived) for a leg the live server doesn't
+// stamp yet (book.NsUnknown). Never a bare dash and never a fabricated
+// number — a placeholder reads as "coming", not "broken" or "zero".
+func legValue(ns int64) string {
+	if ns == book.NsUnknown {
+		return StyleDerived.Render("·· pending")
+	}
+	return StyleText.Render(fmtNs(ns))
+}
+
+// legLabel is legValue prefixed with the leg's name, for the one-line ⚡ strip.
+func legLabel(name string, ns int64) string {
+	if ns == book.NsUnknown {
+		return StyleDerived.Render(fmt.Sprintf("%s ·· pending", name))
+	}
+	return StyleText.Render(fmt.Sprintf("%s %s", name, fmtNs(ns)))
+}
+
+// windowStats reads p50 / p99 / best off a book.Window as display strings,
+// "—" for a leg with no samples yet. Shared by the speed strip and the trace
+// HUD so both read the same numbers off the same window.
+func windowStats(w book.Window) (p50, p99, best string) {
+	p50, p99, best = "—", "—", "—"
+	if v, ok := w.P50(); ok {
+		p50 = fmtNs(v)
+	}
+	if v, ok := w.P99(); ok {
+		p99 = fmtNs(v)
+	}
+	if v, ok := w.Min(); ok {
+		best = fmtNs(v)
+	}
+	return p50, p99, best
+}
+
+// fmtAge renders a wall-clock duration: fmtNs's ns/µs/ms ladder for anything
+// under a second, else a plain "5.05s" (fmtNs has no seconds rung — md
+// staleness routinely runs into seconds, RTT legs never do).
+func fmtAge(age time.Duration) string {
+	if age >= time.Second {
+		return age.Round(10 * time.Millisecond).String()
+	}
+	return fmtNs(age.Nanoseconds())
+}
+
+// mdAgeRow renders the current marketdata-path latency (client_now minus the
+// frame's server ts_ns — real and client-measured, not a placeholder: every
+// md frame carries ts_ns). "no frame yet" before the first one arrives.
+func (m Model) mdAgeRow() string {
+	if m.lastMdAgeNs == book.NsUnknown {
+		return StyleMuted.Render("no frame yet")
+	}
+	return fmtNs(m.lastMdAgeNs)
+}
+
+// mdAgeStatsRow renders the rolling p50/p99/best of the md-path latency —
+// the same rolling-window treatment as the RTT legs, over the md age window.
+func (m Model) mdAgeStatsRow() string {
+	if m.lastMdAgeNs == book.NsUnknown {
+		return StyleMuted.Render("—")
+	}
+	p50, p99, best := windowStats(m.mdAgeWindow)
+	return fmt.Sprintf("p50 %s  p99 %s  best %s", p50, p99, best)
+}
+
+// mdStaleRow renders how long since the last marketdata frame arrived —
+// amber past mdStaleThreshold, pairing with the degraded "no live book" row.
+func (m Model) mdStaleRow() string {
+	if m.lastMdAt.IsZero() {
+		return StyleMuted.Render("no frame yet")
+	}
+	age := time.Since(m.lastMdAt)
+	txt := fmtAge(age) + " ago"
+	if age > mdStaleThreshold {
+		return StyleDegraded.Render(txt + " — STALE")
+	}
+	return StyleText.Render(txt)
+}
+
 func (m Model) viewTrace() string {
 	row := func(k, v string) string {
 		return StyleMuted.Render(fmt.Sprintf("%-9s", k)) + v
 	}
-	p50 := "—"
-	if v, ok := m.latWindow.P50(); ok {
-		p50 = fmtNs(v)
+	section := func(name string) string {
+		return StyleHeading.Render(name)
 	}
-	best := "—"
-	if v, ok := m.latWindow.Min(); ok {
-		best = fmtNs(v)
+
+	netLeg, intLeg, engLeg := legValue(book.NsUnknown), legValue(book.NsUnknown), legValue(book.NsUnknown)
+	pendingLegs := true
+	if m.lastLat != nil {
+		l := *m.lastLat
+		netLeg, intLeg, engLeg = legValue(l.NetNs), legValue(l.InternalNs), legValue(l.EngineNs)
+		pendingLegs = l.InternalNs == book.NsUnknown || l.EngineNs == book.NsUnknown
+	}
+	p50, p99, best := windowStats(m.latWindow)
+	spark := StyleMuted.Render("(no samples yet)")
+	if s := sparkline(m.latWindow.Recent(sparkSamples)); s != "" {
+		spark = StyleAccent.Render(s)
 	}
 
 	rows := []string{
 		StyleHeading.Bold(true).Render("TRACE — F3 to hide"),
-		row("endpoint", m.cfg.Endpoint),
-		row("md", m.cfg.MdEndpoint),
-		row("link", linkWord(m.gwConnected)),
-		row("md link", linkWord(m.mdConnected)),
-		row("rtt p50", p50),
-		row("rtt min", best),
+		"",
+		section("LINKS"),
+		row("gw", fmt.Sprintf("%s  %s", linkWord(m.gwConnected), m.cfg.Endpoint)),
+		row("md", fmt.Sprintf("%s  %s", linkWord(m.mdConnected), m.cfg.MdEndpoint)),
+		"",
+		section("LATENCY  (round-trip)"),
+		row("net", netLeg),
+		row("internal", intLeg),
+		row("engine", engLeg),
+		row("p50", fmt.Sprintf("%s   p99 %s   best %s", p50, p99, best)),
+		row("samples", fmt.Sprintf("%d", m.latWindow.Len())),
+		row("recent", spark),
+		"",
+		section("LATENCY  (marketdata)"),
+		row("age", m.mdAgeRow()),
+		row("since", m.mdStaleRow()),
+		"",
+		section("FLOW"),
 		row("open", fmt.Sprintf("%d", len(m.openOrders))),
 		row("fills", fmt.Sprintf("%d", m.fills)),
 		row("spread", fmt.Sprintf("%d", m.book.Spread())),
 		row("depth", fmt.Sprintf("%d bid / %d ask", len(m.book.Bids), len(m.book.Asks))),
 		row("last", m.status),
 	}
+	if pendingLegs {
+		rows = append(rows, "",
+			StyleMuted.Render("pending: internal→GW-STAMP-LATENCY-LIVE"),
+			StyleMuted.Render("         engine→ME-ENGINE-LATENCY-NOT-REPORTED"))
+	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	return RingPanelStyle.Width(rightWidth).Render(body)
+	return RingPanelStyle.Width(traceWidth).Render(body)
 }
 
 func linkWord(up bool) string {
@@ -320,27 +437,47 @@ func linkWord(up bool) string {
 }
 
 // viewSpeed is the ⚡ round-trip strip: last RTT split into net / internal /
-// engine (each leg "—" when unmeasured), plus rolling p50 / best. Dim until
-// the first sample arrives.
+// engine (a leg the live server doesn't stamp yet renders as a dim-italic
+// "·· pending", never a fabricated number or a bare dash — see legValue),
+// plus rolling p50 / p99 / best and a sparkline of the recent RTT window —
+// the "watch the latency live" touch. A trailing marketdata-path indicator
+// (client-measured frame age, real not placeholder) rides on the same line
+// when a frame has arrived. Dim until the first RTT sample arrives.
 func (m Model) viewSpeed() string {
 	if m.lastLat == nil {
 		return StyleMuted.Render(" ⚡ latency: waiting for first round-trip…")
 	}
 	l := *m.lastLat
 	rtt := StyleHeading.Bold(true).Render(fmt.Sprintf(" ⚡ RTT %s ", fmtNs(l.TotalNs)))
-	legs := StyleText.Render(fmt.Sprintf("= net %s + internal %s + engine %s",
-		fmtNsOrDash(l.NetNs), fmtNsOrDash(l.InternalNs), fmtNsOrDash(l.EngineNs)))
+	legs := StyleText.Render("= ") +
+		legLabel("net", l.NetNs) + StyleText.Render(" + ") +
+		legLabel("internal", l.InternalNs) + StyleText.Render(" + ") +
+		legLabel("engine", l.EngineNs)
 
-	p50 := "—"
-	if v, ok := m.latWindow.P50(); ok {
-		p50 = fmtNs(v)
+	p50, p99, best := windowStats(m.latWindow)
+	spark := sparkline(m.latWindow.Recent(sparkSamples))
+	stats := StyleMuted.Render(fmt.Sprintf("   p50 %s · p99 %s · best %s  ", p50, p99, best)) +
+		StyleAccent.Render(spark) +
+		mdIndicator(m)
+
+	return lipgloss.JoinVertical(lipgloss.Left, rtt+legs, stats)
+}
+
+// mdIndicator is the compact marketdata-freshness tag appended to the speed
+// strip's stats line: the current frame age when fresh, or an amber "md
+// stale" flag past mdStaleThreshold. Empty before the first md frame arrives
+// (nothing to report yet, not a placeholder).
+func mdIndicator(m Model) string {
+	if m.lastMdAt.IsZero() {
+		return ""
 	}
-	best := "—"
-	if v, ok := m.latWindow.Min(); ok {
-		best = fmtNs(v)
+	if age := time.Since(m.lastMdAt); age > mdStaleThreshold {
+		return StyleDegraded.Render(fmt.Sprintf("· md stale %s", fmtNs(age.Nanoseconds())))
 	}
-	stats := StyleMuted.Render(fmt.Sprintf("   p50 %s · best %s", p50, best))
-	return rtt + legs + stats
+	if m.lastMdAgeNs == book.NsUnknown {
+		return ""
+	}
+	return StyleMuted.Render("· md " + fmtNs(m.lastMdAgeNs))
 }
 
 func (m Model) viewStatusLine() string {
