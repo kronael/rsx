@@ -429,17 +429,3 @@ start: [1-architecture.md](specs/2/1-architecture.md),
 | [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure-mode catalogue (per-scenario loss matrix) |
 | [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | operator recovery procedures |
 | [TESTING.md](TESTING.md) | test taxonomy |
-
-## Next step in the experiment
-
-**`rsx-cast` moves from `std::net::UdpSocket` to io_uring.** Today it
-does one `sendto`/`recvfrom` syscall per packet — and on the loopback
-benches *that syscall is the dominant cost* (~99% of the in-process round
-trip). A single-message loopback bench won't show io_uring as faster:
-there's no NIC, no IRQ, and a lone packet has nothing to batch. The win
-appears under high packet rates on a real NIC, where io_uring amortizes
-submissions across a shared kernel/userspace ring and collapses the
-per-packet syscall. The move is gated on gateway/marketdata owning the
-socket — the zero-runtime-dep invariant in `rsx-cast` is load-bearing
-(see `rsx-cast/CLAUDE.md`). It's the next networking experiment, not a
-bug fix.
