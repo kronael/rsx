@@ -1,5 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::CANCEL_USER;
+use rsx_book::event::FAIL_DUPLICATE;
 use rsx_book::event::REASON_CANCELLED;
 use rsx_book::matching::process_new_order;
 use rsx_cast::cast::CastReceiver;
@@ -49,8 +50,6 @@ use tokio_postgres::NoTls;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-const REASON_DUPLICATE: u8 = 3;
 
 /// Key into the order index. The matching engine maintains
 /// `FxHashMap<OrderKey, slab_handle: u32>` so cancels are
@@ -588,7 +587,7 @@ fn main() {
                             .order_id_hi,
                         order_id_lo: order_msg
                             .order_id_lo,
-                        reason: REASON_DUPLICATE,
+                        reason: FAIL_DUPLICATE,
                         _pad: [0; 23],
                     };
                     {
