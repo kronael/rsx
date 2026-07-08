@@ -5,15 +5,14 @@ edition = "2021"
 
 # The RSX trading terminal. ratatui (re-exports crossterm) is the UI dep;
 # quinn + tokio + rustls back the QUIC client transport (QuicConn), the
-# sole client<->gateway leg. serde carries frame bodies. Internal casting
-# (rsx-cast) is a separate transport and is not a dep here.
+# sole client<->gateway leg. prost encodes the protobuf frame bodies.
+# Internal casting (rsx-cast) is a separate transport and is not a dep here.
 [dependencies]
 ratatui = "0.29"
 quinn = "0.11"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "net"] }
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+prost = "0.14"
 
 [dev-dependencies]
 rcgen = "0.13"
