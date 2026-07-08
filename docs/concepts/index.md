@@ -33,9 +33,9 @@ specs. For *how fast it goes*, read the benchmark tables.
   monoio/io_uring because many-connection edges are syscall-bound;
   batching beats busy-spinning there.
 - [slab-and-compression](05-slab-and-compression.md) — Pre-allocated
-  slab arena plus a five-zone CompressionMap: a 20M-level book in
-  ~15 MB with 2–5 ns lookup; recentering keeps the touch exact, and
-  the book is rebuilt by WAL replay.
+  slab arena plus a five-zone CompressionMap: a 100M-slot address space
+  down to ~617k level slots (~40 MB) with 2–5 ns lookup; recentering
+  keeps the touch exact, and the book is rebuilt by WAL replay.
 - [fixed-point](06-fixed-point.md) — All prices and quantities are
   `i64` in smallest units. Float is wrong for an exchange.
 - [asymmetric-durability](07-asymmetric-durability.md) — Fills are
