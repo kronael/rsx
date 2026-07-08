@@ -1,8 +1,10 @@
 # Architecture-Preserving Latency Upgrades
 
 We have a phased latency roadmap. Every phase changes exactly one
-thing: the I/O layer inside the gateway tile. The SPSC rings, the
-matching engine, and the risk engine are unchanged across all phases.
+thing: the socket layer under the gateway/marketdata I/O edge. The
+gateway is a monoio reactor, **not** a tile — it multiplexes many
+WebSocket fds and bridges orders onto the cast/UDP wire. The matching
+and risk engines (the actual tiles) are unchanged across all phases.
 
 ## Where the Latency Actually Is
 
@@ -87,8 +89,8 @@ average. The deployment requirement is NVMe-only.
 
 ## The Phased Roadmap
 
-The tile architecture makes this clean. Each phase swaps the I/O
-layer inside the gateway tile. Everything else is unchanged.
+The layering makes this clean. Each phase swaps the socket layer
+under the gateway's monoio reactor. Everything else is unchanged.
 
 **Phase 1 (current): monoio/io_uring, QUIC**
 
@@ -96,15 +98,17 @@ Gateway uses monoio instead of tokio. io_uring batches syscalls,
 reduces tail latency vs epoll. QUIC carries the WAL wire format
 between processes. Per-hop latency: 10–50µs.
 
-The gateway tile is a pinned thread with one SPSC downqueue (orders
-in) and one SPSC upqueue (fills out). The I/O multiplexing inside the
-tile is the only thing that changes in subsequent phases.
+The gateway is a monoio reactor multiplexing many WS fds and bridging
+orders onto the cast/UDP wire — not a tile, and no SPSC rings (those
+are intra-process, for the risk tile). The socket layer under the
+reactor is the only thing that changes in subsequent phases. Its I/O
+model is [network-edge-io](../docs/concepts/network-edge-io.md).
 
 **Phase 2: DPDK or AF_XDP**
 
 Replace kernel networking with userspace NIC access. NIC writes
 directly into ring buffers. No kernel, no syscalls per packet.
-Sub-microsecond gateway. Same tile architecture, same SPSC rings.
+Sub-microsecond gateway. Same reactor, same wire — only the socket layer changes.
 
 Only matters for the co-located cohort that needs <10µs.
 
