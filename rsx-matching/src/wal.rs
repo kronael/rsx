@@ -328,9 +328,13 @@ impl EventSink for FanoutSink<'_> {
     }
 }
 
-/// Flush WAL if 10ms have elapsed since last flush.
-pub fn flush_if_due(writer: &mut WalWriter, last_flush: &mut Instant) -> io::Result<()> {
-    let now = Instant::now();
+/// Flush WAL if 10ms have elapsed since last flush. `now` is the caller's
+/// cached loop clock, so the flush check costs no `Instant::now()`.
+pub fn flush_if_due(
+    writer: &mut WalWriter,
+    last_flush: &mut Instant,
+    now: Instant,
+) -> io::Result<()> {
     if now.duration_since(*last_flush).as_millis() >= 10 {
         writer.flush()?;
         *last_flush = now;

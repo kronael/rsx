@@ -373,6 +373,14 @@ fn main() {
     let mut last_snapshot = Instant::now();
     let mut last_config_poll = Instant::now();
 
+    // Cached monotonic clock: sampled once every CLOCK_REFRESH_SPINS loop
+    // iterations and reused for dedup pruning + the flush/snapshot/config
+    // timers, so the hot loop stops paying ~4 `Instant::now()` per spin.
+    // The hour-scale dedup window and 10 ms flush tolerate the coarse tick.
+    const CLOCK_REFRESH_SPINS: u32 = 1024;
+    let mut clock = Instant::now();
+    let mut spin_count: u32 = 0;
+
     // casting/UDP: receive orders from Risk
     let me_addr: SocketAddr = env::var("RSX_ME_CAST_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9100".into())
@@ -526,6 +534,12 @@ fn main() {
     info!("matching engine started");
 
     loop {
+        if spin_count.is_multiple_of(CLOCK_REFRESH_SPINS) {
+            clock = Instant::now();
+        }
+        spin_count = spin_count.wrapping_add(1);
+        dedup.refresh_clock(clock);
+
         if SHUTDOWN.load(Ordering::SeqCst) {
             info!("shutdown signal received, draining wal");
             if let Err(e) = wal_writer.flush() {
@@ -809,7 +823,7 @@ fn main() {
             .store(dedup.len() as u64, Ordering::Relaxed);
 
         // Poll config every 10 minutes
-        if last_config_poll.elapsed().as_secs() >= 600 {
+        if clock.duration_since(last_config_poll).as_secs() >= 600 {
             if let Some(ref client) = pg_client {
                 let now_ms = time_ms();
                 match rt.block_on(poll_scheduled_configs(
@@ -844,19 +858,19 @@ fn main() {
                     }
                 }
             }
-            last_config_poll = Instant::now();
+            last_config_poll = clock;
         }
 
-        if let Err(e) = flush_if_due(&mut wal_writer, &mut last_flush) {
+        if let Err(e) = flush_if_due(&mut wal_writer, &mut last_flush, clock) {
             warn!("matching: wal flush_if_due failed: {e}");
         }
 
         // Save snapshot every 10s
-        if last_snapshot.elapsed().as_secs() >= 10 {
+        if clock.duration_since(last_snapshot).as_secs() >= 10 {
             if let Err(e) = save_snapshot(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
                 warn!("snapshot save: {}", e);
             }
-            last_snapshot = Instant::now();
+            last_snapshot = clock;
         }
 
         if let Err(e) = cast_sender.tick() {
