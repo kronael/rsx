@@ -33,6 +33,9 @@ phase-1 historical specs.
 | 6 | [6-consistency.md](6-consistency.md) | shipped | Event fan-out consistency (matching engine → consumers) |
 | 49 | [49-webproto.md](49-webproto.md) | shipped | WebSocket overlay wire protocol |
 | 29 | [29-rpc.md](29-rpc.md) | shipped | Async RPC request handling |
+| 51 | [51-cmp-v2-multicast.md](51-cmp-v2-multicast.md) | draft | casting v2 — multicast streaming |
+| 53 | [53-read-service.md](53-read-service.md) | draft | WAL/Archive read service |
+| 58 | [58-http3.md](58-http3.md) | spec | HTTP/3 (QUIC) transport binding for the 49-webproto protocol |
 
 ## Exchange components
 
@@ -46,6 +49,7 @@ phase-1 historical specs.
 | 15 | [15-mark.md](15-mark.md) | shipped | Mark price aggregator (Binance + Coinbase + ...) |
 | 13 | [13-liquidator.md](13-liquidator.md) | partial | Liquidator |
 | 19 | [19-metadata.md](19-metadata.md) | shipped | Symbol config scheduling + propagation |
+| 57 | [57-config-server.md](57-config-server.md) | spec | Dedicated config server replaces ME's direct-Postgres config |
 | 24 | [24-position-edge-cases.md](24-position-edge-cases.md) | reference | Position tracking edge cases |
 | 47 | [47-validation-edge-cases.md](47-validation-edge-cases.md) | shipped | Order validation edge cases |
 
