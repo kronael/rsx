@@ -22,8 +22,10 @@ use rsx_tui::quic::Session;
 use rsx_tui::Control;
 use rsx_tui::GatewayConn;
 use rustls::pki_types::CertificateDer;
+use rustls::RootCertStore;
 use std::io;
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 fn main() -> io::Result<()> {
@@ -60,42 +62,81 @@ const SYMBOL: &str = "PENGU-PERP";
 /// the gateway's dev default. Never a production value.
 const DEFAULT_JWT_SECRET: &str = "rsx-dev-secret-not-for-prod-padpad";
 
-/// Resolve the gateway transport from the environment.
+/// The production gateway. Run `rsx-tui` with no config and it dials this.
+const PROD_HOST: &str = "rsx.krons.cx";
+const PROD_PORT: u16 = 4433;
+/// The local debug gateway (`RSX_GW_LOCAL=1`).
+const LOCAL_ADDR: &str = "127.0.0.1:4433";
+/// Default DER cert for the local debug gateway (override with `RSX_GW_CERT`).
+const DEFAULT_LOCAL_CERT: &str = "gateway.der";
+
+/// Which gateway `rsx-tui` dials. Simple by default: run it and it dials
+/// the production server; override for local work or the offline demo.
 ///
-/// `RSX_GW_ADDR` unset (or `mock`) → the offline demo feed (a `MockConn`
-/// seeded with `demo_events`): there is no production QUIC gateway
-/// listener yet, so a bare `rsx-tui` shows a live-looking book with
-/// nothing running. `RSX_GW_ADDR=<ip:port>` → a real protobuf-over-QUIC
-/// dial to that gateway, trusting the DER certificate at `RSX_GW_CERT`
-/// and validating the TLS name `RSX_GW_SERVER_NAME` (default `localhost`).
+/// - default (no env) → **`rsx.krons.cx`**, trusting the system's real CA
+///   roots — no cert file needed.
+/// - `RSX_GW_LOCAL=1` → a local debug gateway on `127.0.0.1:4433`, trusting
+///   the DER cert at `RSX_GW_CERT` (default `gateway.der`), TLS name
+///   `localhost` — the shape the local testing deployment produces.
+/// - `RSX_GW_ADDR=mock` → the offline demo feed (no server needed).
+/// - `RSX_GW_ADDR=<ip:port>` (+ `RSX_GW_CERT`) → an explicit pinned dial.
 ///
-/// Identity for the live dial: `RSX_TUI_USER` (the u32 the session trades
-/// as) is minted into an HS256 JWT with `RSX_GW_JWT_SECRET` and sent in
-/// the auth first-frame; `RSX_TUI_SYMBOL` (the u32 symbol id) stamps every
-/// order.
+/// Identity: `RSX_TUI_USER` is minted into an HS256 JWT (`RSX_GW_JWT_SECRET`)
+/// sent in the auth first-frame; `RSX_TUI_SYMBOL` stamps every order. (No
+/// gateway QUIC listener answers this wire yet — the dial is real, the
+/// server is the pending roadmap step.)
 fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
-    let addr = match std::env::var("RSX_GW_ADDR") {
-        Ok(a) if a != "mock" => a,
-        _ => {
-            let mut mock = MockConn::new();
-            mock.push_events(demo_events());
-            app.set_endpoint("mock://demo");
-            return Ok(Box::new(mock));
-        }
-    };
-    let server_addr: SocketAddr = addr
-        .parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("RSX_GW_ADDR: {e}")))?;
-    let cert_path = std::env::var("RSX_GW_CERT").map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "RSX_GW_ADDR is set but RSX_GW_CERT (path to the gateway's DER cert) is not",
-        )
-    })?;
-    let server_name =
-        std::env::var("RSX_GW_SERVER_NAME").unwrap_or_else(|_| "localhost".to_owned());
-    let der = CertificateDer::from(std::fs::read(&cert_path)?);
-    let store = roots([der])?;
+    let gw = std::env::var("RSX_GW_ADDR").ok();
+
+    // Offline demo: no server needed.
+    if gw.as_deref() == Some("mock") {
+        let mut mock = MockConn::new();
+        mock.push_events(demo_events());
+        app.set_endpoint("mock://demo");
+        return Ok(Box::new(mock));
+    }
+
+    let local = gw.as_deref() == Some("local") || std::env::var("RSX_GW_LOCAL").is_ok();
+
+    let (server_addr, server_name, store): (SocketAddr, String, RootCertStore) =
+        if let Some(explicit) = gw.filter(|a| a.as_str() != "local") {
+            // Explicit pinned dial (advanced): ip:port + RSX_GW_CERT.
+            let addr = explicit.parse().map_err(|e| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("RSX_GW_ADDR: {e}"))
+            })?;
+            let cert = std::env::var("RSX_GW_CERT").map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "RSX_GW_ADDR is set but RSX_GW_CERT (path to the gateway DER cert) is not",
+                )
+            })?;
+            let name =
+                std::env::var("RSX_GW_SERVER_NAME").unwrap_or_else(|_| "localhost".to_owned());
+            (
+                addr,
+                name,
+                roots([CertificateDer::from(std::fs::read(&cert)?)])?,
+            )
+        } else if local {
+            // Local debug gateway: localhost + pinned dev cert.
+            let addr = LOCAL_ADDR.parse().expect("LOCAL_ADDR is a valid SocketAddr");
+            let cert = std::env::var("RSX_GW_CERT").unwrap_or_else(|_| DEFAULT_LOCAL_CERT.to_owned());
+            (
+                addr,
+                "localhost".to_owned(),
+                roots([CertificateDer::from(std::fs::read(&cert)?)])?,
+            )
+        } else {
+            // Default: the production server, trusting real CA roots.
+            let addr = (PROD_HOST, PROD_PORT)
+                .to_socket_addrs()?
+                .next()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, format!("{PROD_HOST} did not resolve"))
+                })?;
+            (addr, PROD_HOST.to_owned(), prod_roots())
+        };
+
     let symbol_id = env_u32("RSX_TUI_SYMBOL", 0)?;
     let user = env_u32("RSX_TUI_USER", 0)?;
     let secret =
@@ -112,6 +153,14 @@ fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
             jwt,
         },
     )?))
+}
+
+/// The system's real CA roots (webpki-roots) — used for the production dial
+/// so no pinned cert file is needed.
+fn prod_roots() -> RootCertStore {
+    let mut store = RootCertStore::empty();
+    store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    store
 }
 
 /// Parse a `u32` environment variable, or `default` when unset. A

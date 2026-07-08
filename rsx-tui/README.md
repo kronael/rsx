@@ -27,9 +27,11 @@ To dial a real QUIC gateway:
 
 | Env | Meaning |
 |-----|---------|
-| `RSX_GW_ADDR` | Gateway socket address (`ip:port`). Unset or `mock` → offline demo. |
-| `RSX_GW_CERT` | Path to the gateway's DER certificate to trust. Required when `RSX_GW_ADDR` is set. |
-| `RSX_GW_SERVER_NAME` | TLS name to validate (default `localhost`). |
+| *(default, no env)* | Dial **`rsx.krons.cx`**, the production server — trusts real CA roots, no cert file needed. Just run `rsx-tui`. |
+| `RSX_GW_LOCAL` | Set → dial the local debug gateway `127.0.0.1:4433`; trusts the DER cert at `RSX_GW_CERT` (default `gateway.der`), TLS name `localhost`. |
+| `RSX_GW_ADDR` | `mock` → offline demo. `ip:port` → an explicit pinned dial (needs `RSX_GW_CERT`). Unset → production. |
+| `RSX_GW_CERT` | DER cert to trust for a local / explicit dial (not needed for production). |
+| `RSX_GW_SERVER_NAME` | TLS name for an explicit dial (default `localhost`). |
 | `RSX_TUI_USER` | User id (`u32`) the session trades as; minted into the auth-first-frame JWT's `user_id` claim (default `0`). |
 | `RSX_TUI_SYMBOL` | Symbol id (`u32`) stamped on every order (default `0`). |
 | `RSX_GW_JWT_SECRET` | HS256 secret used to sign the session JWT (dev default provided; the launcher holds the real one). |
