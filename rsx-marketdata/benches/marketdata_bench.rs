@@ -1,4 +1,4 @@
-//! Marketdata broader coverage: shadow book insert/fill, BBO derivation, L2 snapshot at 10/50 levels, L2 delta gen, WS serialize, sustained event throughput.
+//! Marketdata broader coverage: shadow book insert/fill, BBO derivation, L2 snapshot at 10/50 levels, L2 delta gen, protobuf BBO encode, sustained event throughput.
 //!
 //! See `docs/benches.md` for the full bench index +
 //! production-leg attribution.
@@ -137,10 +137,9 @@ fn bench_event_processing_throughput(c: &mut Criterion) {
     });
 }
 
-/// bench_ws_serialize_bbo (<500ns)
-/// BboUpdate does not derive Serialize; manual JSON
-/// formatting matches the wire protocol pattern.
-fn bench_ws_serialize_bbo(c: &mut Criterion) {
+/// bench_encode_bbo (<500ns)
+/// Measures the protobuf BBO encode that actually goes on the wire.
+fn bench_encode_bbo(c: &mut Criterion) {
     let bbo = BboUpdate {
         symbol_id: 1,
         bid_px: 49990,
@@ -152,21 +151,9 @@ fn bench_ws_serialize_bbo(c: &mut Criterion) {
         timestamp_ns: 1_700_000_000_000,
         seq: 42,
     };
-    c.bench_function("ws_serialize_bbo", |b| {
+    c.bench_function("encode_bbo", |b| {
         b.iter(|| {
-            let json = format!(
-                "{{\"B\":[{},{},{},{},{},{},{},{},{}]}}",
-                bbo.symbol_id,
-                bbo.bid_px,
-                bbo.bid_qty,
-                bbo.bid_count,
-                bbo.ask_px,
-                bbo.ask_qty,
-                bbo.ask_count,
-                bbo.timestamp_ns,
-                bbo.seq,
-            );
-            black_box(json);
+            black_box(rsx_marketdata::wire::encode_bbo(black_box(&bbo)));
         });
     });
 }
@@ -214,7 +201,7 @@ criterion_group!(
     bench_l2_snapshot_50_levels,
     bench_l2_delta_generation,
     bench_event_processing_throughput,
-    bench_ws_serialize_bbo,
+    bench_encode_bbo,
     bench_trade_derivation_from_fill,
     bench_event_routing_filter,
 );
