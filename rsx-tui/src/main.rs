@@ -1,10 +1,10 @@
 //! RSX trading terminal (ratatui) — binary entrypoint.
 //!
-//! Owns the terminal + event loop only. State, rendering, input, and
-//! the gateway transport live in the `rsx_tui` library so they run
-//! under a `TestBackend` in tests. Until the QUIC client lands this
-//! drives a `MockConn` seeded with a demo feed. Run: `cargo run -p
-//! rsx-tui`.
+//! Owns the terminal + event loop only. State, rendering, input, and the
+//! gateway transport live in the `rsx_tui` library so they run under a
+//! `TestBackend` in tests. The live transport is protobuf-over-QUIC
+//! (`QuicConn`); with no gateway configured it drives a `MockConn` seeded
+//! with a demo feed. Run: `cargo run -p rsx-tui`.
 
 use ratatui::crossterm::event;
 use ratatui::crossterm::event::Event;
@@ -15,10 +15,13 @@ use rsx_tui::demo_events;
 use rsx_tui::drain;
 use rsx_tui::draw;
 use rsx_tui::handle_key;
+use rsx_tui::quic::roots;
+use rsx_tui::quic::QuicConn;
 use rsx_tui::Control;
 use rsx_tui::GatewayConn;
-use rsx_tui::WsConn;
+use rustls::pki_types::CertificateDer;
 use std::io;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 fn main() -> io::Result<()> {
@@ -28,30 +31,11 @@ fn main() -> io::Result<()> {
     result
 }
 
-/// Event loop: drain gateway events, redraw, then block up to 100ms
-/// for a key. `handle_key` mutates state / submits and says when to
-/// quit.
+/// Event loop: drain gateway events, redraw, then block up to 100ms for a
+/// key. `handle_key` mutates state / submits and says when to quit.
 fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
-    let mut app = App::new("PENGU-PERP");
-
-    // One knob: RSX_GW_URL. Unset → the hosted deployment; `mock` → the
-    // offline demo feed; any `ws://`/`wss://` → that gateway (e.g. a
-    // local cluster at ws://127.0.0.1:8080). Trades as RSX_TUI_USER
-    // (default 1) on PENGU; JWT minted with RSX_GW_JWT_SECRET.
-    let mut conn: Box<dyn GatewayConn> = match resolve_url() {
-        Some(url) => {
-            app.set_endpoint(&url);
-            let user_id = env_u32("RSX_TUI_USER", 1);
-            let token = rsx_tui::ws::mint_jwt(user_id, &rsx_tui::ws::jwt_secret());
-            Box::new(WsConn::connect(url, token, PENGU)?)
-        }
-        None => {
-            let mut mock = MockConn::new();
-            mock.push_events(demo_events());
-            app.set_endpoint("mock://demo");
-            Box::new(mock)
-        }
-    };
+    let mut app = App::new(SYMBOL);
+    let mut conn = connect(&mut app)?;
 
     loop {
         drain(&mut app, conn.as_mut());
@@ -67,25 +51,44 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<(
     }
 }
 
-/// Hosted deployment — the default target. Override with `RSX_GW_URL`.
-const DEPLOYMENT_URL: &str = "wss://rsx.krons.cx";
+/// PENGU-PERP — the TUI's single market.
+const SYMBOL: &str = "PENGU-PERP";
 
-/// PENGU-PERP symbol id — the TUI's single market.
-const PENGU: u32 = 10;
-
-/// Resolve the gateway URL from `RSX_GW_URL`, or `None` for the offline
-/// mock. Unset → the deployment; `mock` → demo; else → the given URL.
-fn resolve_url() -> Option<String> {
-    match std::env::var("RSX_GW_URL") {
-        Ok(u) if u == "mock" => None,
-        Ok(u) => Some(u),
-        Err(_) => Some(DEPLOYMENT_URL.to_owned()),
-    }
-}
-
-fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
+/// Resolve the gateway transport from the environment.
+///
+/// `RSX_GW_ADDR` unset (or `mock`) → the offline demo feed (a `MockConn`
+/// seeded with `demo_events`): there is no production QUIC gateway
+/// listener yet, so a bare `rsx-tui` shows a live-looking book with
+/// nothing running. `RSX_GW_ADDR=<ip:port>` → a real protobuf-over-QUIC
+/// dial to that gateway, trusting the DER certificate at `RSX_GW_CERT`
+/// and validating the TLS name `RSX_GW_SERVER_NAME` (default `localhost`).
+fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
+    let addr = match std::env::var("RSX_GW_ADDR") {
+        Ok(a) if a != "mock" => a,
+        _ => {
+            let mut mock = MockConn::new();
+            mock.push_events(demo_events());
+            app.set_endpoint("mock://demo");
+            return Ok(Box::new(mock));
+        }
+    };
+    let server_addr: SocketAddr = addr
+        .parse()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("RSX_GW_ADDR: {e}")))?;
+    let cert_path = std::env::var("RSX_GW_CERT").map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "RSX_GW_ADDR is set but RSX_GW_CERT (path to the gateway's DER cert) is not",
+        )
+    })?;
+    let server_name =
+        std::env::var("RSX_GW_SERVER_NAME").unwrap_or_else(|_| "localhost".to_owned());
+    let der = CertificateDer::from(std::fs::read(&cert_path)?);
+    let store = roots([der])?;
+    app.set_endpoint(&format!("quic://{server_addr}"));
+    Ok(Box::new(QuicConn::connect(
+        server_addr,
+        server_name,
+        store,
+    )?))
 }

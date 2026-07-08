@@ -4,9 +4,8 @@
 //! `screen()` and `wait_for` observe the same buffer a real session
 //! would.
 
-// Dead-code is evaluated per test-binary crate; cluster-only test files
-// (e2e_*) never build the MockConn half of the harness, so its mock
-// helpers read as dead there. Mirror cluster.rs/timing.rs.
+// Dead-code is evaluated per test-binary crate, and each including test
+// exercises only the harness helpers it needs, so some read as dead there.
 #![allow(dead_code)]
 
 use ratatui::backend::TestBackend;
@@ -54,7 +53,7 @@ impl GatewayConn for SharedMock {
 }
 
 /// A headless TUI session: `App` state, a boxed `GatewayConn` (a
-/// `MockConn` for unit-style tests, a real `WsConn` for cluster e2e),
+/// `MockConn` for unit-style tests, or any caller-supplied transport),
 /// and a `TestBackend` terminal to render into.
 pub struct TuiHarness {
     pub app: App,
@@ -77,10 +76,10 @@ impl TuiHarness {
         harness
     }
 
-    /// A harness over a caller-supplied connection (a real `WsConn`
-    /// for cluster e2e tests). Draws once before returning so
-    /// `screen()` reflects the initial (pre-`Connected`) state right
-    /// away, without the caller needing a throwaway `tick()` first.
+    /// A harness over a caller-supplied connection (e.g. a `QuicConn`).
+    /// Draws once before returning so `screen()` reflects the initial
+    /// (pre-`Connected`) state right away, without the caller needing a
+    /// throwaway `tick()` first.
     pub fn new_with(conn: Box<dyn GatewayConn>) -> Self {
         let terminal =
             Terminal::new(TestBackend::new(COLS, ROWS)).expect("build TestBackend terminal");
@@ -96,8 +95,8 @@ impl TuiHarness {
 
     /// Queue events the `MockConn` behind this harness will yield on
     /// subsequent `tick`/`wait_for` polls. Panics if this harness was
-    /// not built with `new_mock()` — cluster e2e tests over a real
-    /// `WsConn` script the gateway itself, not this queue.
+    /// not built with `new_mock()` — a harness over a real transport
+    /// observes the gateway itself, not this queue.
     pub fn push_mock_events(&mut self, events: impl IntoIterator<Item = GwEvent>) {
         let mock = self
             .mock
@@ -146,10 +145,10 @@ impl TuiHarness {
 
     /// Tick in a loop (draining the connection each pass) until `pred`
     /// holds or `timeout` elapses. Returns the elapsed time on success,
-    /// `None` on timeout — the shape every cluster e2e test uses to
-    /// wait for an `Accepted`/`Fill`/`Done` to arrive over a real
-    /// `WsConn`, and a cheap way for `MockConn` tests to wait for
-    /// something already queued.
+    /// `None` on timeout — the shape a test uses to wait for an
+    /// `Accepted`/`Fill`/`Done` to arrive over a live transport, and a
+    /// cheap way for `MockConn` tests to wait for something already
+    /// queued.
     pub fn wait_for<F>(&mut self, pred: F, timeout: Duration) -> Option<Duration>
     where
         F: Fn(&App) -> bool,
