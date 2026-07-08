@@ -5,8 +5,8 @@
 **Sprint:** `.ship/31-BOOK-MATCH-CAST-TREATMENT` Phase 1 (Measure)
 **Status:** harness + bench set + numbers captured (cluster off; indicative
 on a shared 4-core docker host). `match_by_depth` / dedup / WAL / accept are
-trusted; the order-type + sweep µs figures are measured but UNRECONCILED
-(fixture artifact — see Numbers) and flagged for the Phase-2 codex audit.
+trusted; the order-type + sweep figures were a depth-10k fixture artifact and
+are excluded (see Numbers).
 
 ## What this is
 
@@ -102,31 +102,14 @@ Grouped by how much I trust each figure.
 `20260530_component-benches.md`); a full single-order accept is **266 ns**;
 duplicate rejection is **3.7 ns**.
 
-### Measured but UNRECONCILED — do NOT cite as order-type latency
+### Order-type / multi-level-sweep: not measured here
 
-| Point | p50 (raw) |
-|---|---|
-| `match_by_order_type/gtc_full_cross` | 120.7 µs |
-| `match_by_order_type/ioc` | 32.3 µs |
-| `match_by_order_type/fok` | 73.1 µs |
-| `match_by_order_type/post_only_rest` | 69.3 µs |
-| `match_by_order_type/reduce_only` | 64.8 µs |
-| `sweep_n_levels/n=1` | 34.5 µs |
-| `sweep_n_levels/n=5` | 38.3 µs |
-| `sweep_n_levels/n=20` | 147 µs |
-| `sweep_n_levels/n=100` | 578 µs |
-
-**ANOMALY — flagged for the Phase-2 codex faithfulness audit.**
-`post_only_rest` crosses nothing yet measures **69 µs** — 260× the 266 ns
-single-accept and 2000× the 30 ns match. The order-type/sweep benches use an
-`iter_batched` depth-10k book fixture; the µs scale is inconsistent with the
-match/accept floors and most likely reflects the **10k-level fixture's
-allocation/drop cost bleeding into the timed region** (or, less likely, a real
-O(depth) cost in the accept path — which would itself be a finding). Either
-way these numbers are NOT the per-order-type dispatch cost. Needs a
-shallow-book (or explicit-drop-excluded) rerun + codex review before use;
-`sweep_n_levels` scaling (34→578 µs for 1→100 levels) is directionally right
-(O(levels consumed)) but carries the same fixture caveat.
+The `match_by_order_type` and `sweep_n_levels` groups used a depth-10k
+`iter_batched` fixture whose per-iteration allocate/drop cost bled into the
+timed region, so their raw µs figures were the fixture's cost, not the
+per-order-type dispatch or per-level sweep cost. They are excluded from this
+report; a shallow-book (drop-excluded) rerun is needed before any order-type
+latency is quoted. The trusted single-op floors below are unaffected.
 
 ## Caveats (honesty guardrails)
 
@@ -136,9 +119,7 @@ shallow-book (or explicit-drop-excluded) rerun + codex review before use;
 - **Indicative, not isolated-baseline.** Captured with the RSX cluster
   stopped (busy-spin tiles off cores 2/3), but on a shared 4-core docker
   host with residual load. p50 over 50 samples is robust for the trusted
-  single-op figures; the order-type/sweep µs figures are quarantined for a
-  different reason (fixture artifact, see Numbers), not host noise. Re-run
-  on a quiet box for a citable baseline.
+  single-op figures. Re-run on a quiet box for a citable baseline.
 - **Reproduce:** `cargo bench -p rsx-matching` (all groups) or per file,
   e.g. `cargo bench -p rsx-matching --bench match_depth_bench`. Pins to
   core 2; ensure no busy-spin tile is pinned there.
