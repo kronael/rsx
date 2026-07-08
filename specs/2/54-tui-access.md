@@ -10,13 +10,22 @@ without minting a unix account or a bespoke client per trader.
 
 ## Identity model (shared by both paths)
 
-A TUI session's identity is three values (see `rsx-tui/src/main.rs`,
-`rsx-tui/src/ws.rs`):
+> **Transport note.** `rsx-tui` now speaks **protobuf-over-QUIC** only
+> (`rsx-tui/src/quic.rs`); the WebSocket client is gone. The identity
+> model below — authenticate a person, map them to one `RSX_TUI_USER`,
+> launch the TUI — is unchanged and transport-agnostic. What is deferred
+> is *carrying* that identity over QUIC: the current QUIC wire has no
+> auth handshake, so binding the JWT onto the QUIC connection (and the
+> env the dispatcher exports) lands with the gateway QUIC endpoint (see
+> `rsx-tui/ARCHITECTURE.md` "Server side"). The values below describe the
+> intended, gateway-checked identity.
 
-- `RSX_TUI_USER` — the u32 the session trades as. `WsConn` mints a JWT
-  whose `user_id` claim is this value.
-- `RSX_GW_URL` — the gateway to dial (`wss://rsx.krons.cx` in
-  production).
+A TUI session's identity is three values (see `rsx-tui/src/main.rs`):
+
+- `RSX_TUI_USER` — the u32 the session trades as. The gateway-checked
+  JWT carries this as its `user_id` claim.
+- `RSX_GW_URL` — the gateway to dial (`wss://rsx.krons.cx` for the
+  WebSocket public API; the QUIC endpoint is a follow-up).
 - `RSX_GW_JWT_SECRET` — the HS256 signing secret the gateway shares.
 
 The whole access problem is: **authenticate a person, map them to one
