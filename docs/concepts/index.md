@@ -25,9 +25,14 @@ specs. For *how fast it goes*, read the benchmark tables.
   recovery over UDP, idle-only heartbeats, deliberately no
   flow control. Slow consumers fall back to TCP replay.
 - [tiles-and-pinning](tiles-and-pinning.md) — Pinned busy-spin
-  tile for Risk, pinned process for matching, monoio io_uring
-  for gateway and marketdata. When each model wins, and why an
-  unpinned spinner is dangerous.
+  hot loops spend 1 core to remove scheduler wakeups, context
+  switches, and core migration from 60-110 ns compute paths.
+- [spsc-rings](spsc-rings.md) — rtrb SPSC rings pass data between
+  sibling threads in 50-170 ns; ring-full means producer stall,
+  not silent drop.
+- [network-edge-io](network-edge-io.md) — Gateway and marketdata use
+  monoio/io_uring because many-connection edges are syscall-bound;
+  batching beats busy-spinning there.
 - [slab-and-compression](slab-and-compression.md) — Pre-allocated
   slab arena plus a five-zone CompressionMap: a 20M-level book
   in ~15 MB with 2–5 ns lookup and zero malloc on the hot path.
@@ -51,3 +56,8 @@ specs. For *how fast it goes*, read the benchmark tables.
   hotkeys instead of serial pointer targeting.
 - [glossary](glossary.md) — RSX terms (casting, WAL, vshard,
   tile, BBO, mark vs index…), one line each + read-more links.
+
+---
+
+Deeper: [README.md](../../README.md),
+[specs/index.md](../../specs/index.md)

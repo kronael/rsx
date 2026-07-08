@@ -18,7 +18,7 @@ page stays short on purpose.
   was evaluated but **not** chosen (casting/UDP won). Still used off the
   hot path for log forwarding to Vector. → [rsx-risk/notes/uds.md](../../rsx-risk/notes/uds.md), [spec 33-telemetry](../../specs/2/33-telemetry.md)
 - **SPSC ring** — single-producer/single-consumer lock-free queue (rtrb),
-  intra-process only, ~50–170 ns/hop. → [tiles-and-pinning](tiles-and-pinning.md)
+  intra-process only, ~50–170 ns/hop. → [spsc-rings](spsc-rings.md)
 
 ## Architecture
 
@@ -32,8 +32,9 @@ page stays short on purpose.
 
 ## Orderbook & matching
 
-- **slab** — pre-allocated arena of fixed-size `OrderSlot`s (65 536 per
-  symbol); zero malloc on the hot path. → [slab-and-compression](slab-and-compression.md)
+- **slab** — pre-allocated arena of fixed-size `OrderSlot`s; capacity is
+  the `Orderbook::new` argument, often sized to tens of millions.
+  → [slab-and-compression](slab-and-compression.md)
 - **CompressionMap** — distance-zone price→index compression (1:1 near
   mid, up to 1000:1 far); a 20M-level book in ~15 MB. → [slab-and-compression](slab-and-compression.md), [spec 21-orderbook](../../specs/2/21-orderbook.md)
 - **BBO** — best bid & offer (top of book): `bid_px / bid_qty / ask_px /
@@ -59,3 +60,9 @@ page stays short on purpose.
 - **oid** — exchange order id, a UUIDv7 (16 bytes). → [spec 18-messages](../../specs/2/18-messages.md)
 - **seq** — per-stream monotonic sequence number on every WAL/cast record;
   gaps trigger FAULTED. → [spec 4-cast](../../specs/2/4-cast.md)
+
+---
+
+Deeper: [specs/2/1-architecture.md](../../specs/2/1-architecture.md),
+[specs/2/21-orderbook.md](../../specs/2/21-orderbook.md),
+[specs/2/45-tiles.md](../../specs/2/45-tiles.md)

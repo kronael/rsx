@@ -1,95 +1,100 @@
 # Slab and Compression
 
 A naive price-level array for BTC-PERP at a $0.01 tick size
-across a $1–$1 000 000 price range would need 100 million slots.
-At 64 bytes per level, that is 6.4 GB for one symbol. It does
-not fit in L3 cache. It barely fits in RAM.
+across a $1-$1 000 000 price range would need 100 million
+slots. At 64 bytes per level, that is 6.4 GB for one symbol.
+RSX keeps the exact touch cheap by spending memory on two fixed
+arrays: a configurable order slab and a five-zone CompressionMap.
 
-Two structures solve this: a slab arena for orders and a
-CompressionMap for price levels. Together they bring a
-20-million-level theoretical book to about 15 MB and price
-lookup to 2–5 ns.
+Together they keep a 20-million-level theoretical book near 15 MB
+for price levels, with 2-5 ns price lookup and no malloc on the
+matching hot path.
 
 ## The slab
 
-`rsx-book` pre-allocates 65 536 `OrderSlot`s per symbol at
-startup. Each slot is `#[repr(C, align(64))]` — one cache line.
-The slab is a flat array; an `alloc()` call returns an index
-into that array in a few nanoseconds by popping from a free-list
-of available indices. `free(handle)` pushes the index back.
-There is no `malloc`, no `Box`, no heap allocation on the hot
-path at any point during matching.
+`rsx-book` builds the order slab from `Orderbook::new(config,
+capacity, mid_price)`. `Slab::new(capacity)` pre-allocates that
+many `OrderSlot`s; the 65 536 constant belongs to the per-cycle
+event buffer (`MAX_EVENTS`), not to the order arena.
 
-Slab capacity bounds the maximum number of live resting orders
-per symbol: 65 536. This is a deliberate design constraint, not
-an accident. Bounded capacity means bounded memory, bounded
-iteration, and bounded worst-case time for any operation that
-walks active orders.
+Production sizing is tens of millions of slots. A 78M-slot arena
+is roughly 10 GB of virtual memory because each `OrderSlot` is
+128 bytes. Linux demand paging is the lazy allocator here: the
+address range is reserved up front, while physical pages are
+faulted in only as orders actually rest. Physical memory tracks
+live touched slots, not the 10 GB virtual reservation.
+
+The fixed arena buys determinism, not a small cap. Handles are
+stable `u32` indices into a flat array, so cancel-by-handle is
+O(1). Slots never move, so there is no realloc/copy spike. Alloc
+is either a bump of `bump_next` or a pop from the free list, and
+free pushes the index back. There is no `malloc`, no `Box`, and
+no heap growth inside matching.
+
+The alternative is a chunked slab: allocate new chunks on demand
+and make the handle `(chunk, offset)`. That reduces the virtual
+reservation but makes every handle two-part and every lookup one
+more indirection. The current tradeoff keeps the handle a flat
+array index and lets the kernel supply laziness at page granularity.
 
 ## The CompressionMap
 
-Instead of one array slot per market tick, the orderbook uses a
-five-zone mapping centered on the current mid-price:
+Price levels use five distance-based zones centered on the mid:
 
 ```
 Zone  Distance from mid  Ticks per slot
-  0   0–5%               1  (exact tick resolution)
-  1   5–15%              10
-  2   15–30%             100
-  3   30–50%             1 000
-  4   50%+               catch-all (one slot per side)
+  0   0-5%               1
+  1   5-15%              10
+  2   15-30%             100
+  3   30-50%             1 000
+  4   50%+               1 (two catch-all slots)
 ```
+
+Zone 0 is exact tick resolution because the touch lives within
+about +/-5% of mid; that is where matching happens and where
+price-time priority must not be blurred. Far from mid, exact
+ticks are mostly empty address space, so RSX coarsens by 10:1,
+100:1, then 1000:1. Beyond 50%, the map collapses to 2 slots:
+one bid side and one ask side.
 
 For BTC-PERP at $50 000 with a $0.01 tick:
 
-- Zone 0: ±5% → 500 000 ticks → 500 000 slots
-- Zone 1: 5–15% → 1 000 000 ticks ÷ 10 → 100 000 slots
-- Zone 2: 15–30% → 1 500 000 ticks ÷ 100 → 15 000 slots
-- Zone 3: 30–50% → 2 000 000 ticks ÷ 1 000 → 2 000 slots
-- Zone 4: everything else → 2 slots
+- Zone 0: +/-5% -> 500 000 ticks -> 500 000 slots
+- Zone 1: 5-15% -> 1 000 000 ticks / 10 -> 100 000 slots
+- Zone 2: 15-30% -> 1 500 000 ticks / 100 -> 15 000 slots
+- Zone 3: 30-50% -> 2 000 000 ticks / 1 000 -> 2 000 slots
+- Zone 4: everything else -> 2 slots
 
-Total: ~617 000 slots × 24 bytes = ~14.8 MB.
+Total: about 617 000 slots. That is the 20M-level theoretical
+book in about 15 MB.
 
-The zone lookup is bisection over four pre-computed thresholds:
-2–3 integer comparisons. Measured: 2–5 ns.
+The lookup is fixed work. `CompressionMap::new` pre-computes
+four raw-distance thresholds at 5%, 15%, 30%, and 50% of mid.
+`price_to_index` does a bisection over those 4 thresholds
+(2-3 integer comparisons), then one integer divide by the
+zone's raw price per slot and one add for the in-zone offset.
+Measured lookup is 2-5 ns and O(1) in book depth.
 
-Orders in coarser zones share an index slot. Each order still
-stores its exact price; matching walks the linked list and
-checks actual prices. Time priority within a slot is preserved
-by insertion order. Zone 0 — where market makers concentrate —
-has 1:1 resolution and no slot sharing.
-
-When mid-price drifts far enough that zone boundaries are
-misaligned, the book recenters incrementally. Migration is
-interleaved with order processing using two pre-allocated level
-arrays and two frontier pointers; there is no stop-the-world
-pause.
+Orders in coarser zones can share one slot. Each order still
+stores its exact price; matching checks the raw price before it
+crosses. Insertion order preserves time priority inside the slot,
+but the price granularity is deliberately coarser away from the
+touch. The tradeoff is honest: exact priority where liquidity
+clusters, compressed storage where resolution is wasted.
 
 ## Why pre-allocation wins here
 
-Dynamic allocation — a `HashMap` or a `BTreeMap` per price
-level — would solve the memory problem. Insertion is O(1)
-amortized for a hash map, O(log n) for a tree. But the
-constant factors matter at this scale. A hash lookup takes
-30–50 ns. A tree node is a pointer-chasing traversal.
-An array index is a single load that the prefetcher can
-anticipate.
+Dynamic allocation would also solve sparse prices. A hash map gives
+O(1) average lookup; a tree gives O(log n) order. But their constant
+cost is on the wrong side of the 60 ns match budget: hash lookup is
+30-50 ns, and a tree is pointer chasing through cache misses. An
+array index is a single load.
 
-The matching engine processes orders serially on one core. Its
-working set — the active levels near mid-price, the slab slots
-for resting orders — must stay in L1 or L2 cache. Zone 0 at
-BTC prices is 500 000 × 64 bytes = 32 MB, which does not fit
-in L1 or L2 but fits in L3 (~40 MB for 10 symbols). An L3
-hit costs ~20 ns. A DRAM miss costs ~100 ns. The compression
-keeps the hot zone resident and the cold zones invisible to
-the matching loop.
-
-The alternative rejected: a `HashMap<i64, Vec<Order>>`. Every
-insert is an allocation. Every tick traversal is a hash lookup
-plus pointer indirection into a heap-allocated vector.
-Benchmarks showed 30–50 ns per level access vs 2–5 ns with the
-slab plus CompressionMap. At 5 million operations per second,
-that difference is the budget.
+The matching engine is one pinned thread. Its hot path wants the
+active touch levels and live `OrderSlot`s in cache. The slab fixes
+order handles; the CompressionMap keeps far-away prices from
+turning into dead array space. The cost is up-front virtual address
+reservation and bounded capacity chosen at process start.
 
 ---
 
