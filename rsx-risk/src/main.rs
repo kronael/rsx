@@ -530,7 +530,7 @@ fn run_main(
                             // Stage `risk_out` = fill received from
                             // ME and about to be forwarded to gateway.
                             // Anchor against the taker's gateway-ingress
-                            // timestamp (fill.taker_ts_ns) so this delta
+                            // timestamp (fill.gw_in_ns) so this delta
                             // composes with gateway_in / risk_in / me_in
                             // on the same clock origin. Fall back to
                             // ts_ns if the field is missing (legacy WAL
@@ -540,10 +540,10 @@ fn run_main(
                                 "risk_out",
                                 fill.taker_order_id_hi,
                                 fill.taker_order_id_lo,
-                                if fill.taker_ts_ns == 0 {
+                                if fill.gw_in_ns == 0 {
                                     fill.ts_ns
                                 } else {
-                                    fill.taker_ts_ns
+                                    fill.gw_in_ns
                                 }
                             );
                             // Fills are correctness-critical:
@@ -571,17 +571,17 @@ fn run_main(
                             // Forward fill to GW
                             forward_to_gw(&mut gw_sender, RECORD_FILL, payload);
                             // Sub-stage: cast send to gateway completed.
-                            // Anchor on the same taker_ts_ns used by
+                            // Anchor on the same gw_in_ns used by
                             // risk_out (with the >2024 plausibility
                             // guard).
                             rsx_log::latency_sample!(
                                 "risk_cast_send_done",
                                 fill.taker_order_id_hi,
                                 fill.taker_order_id_lo,
-                                if fill.taker_ts_ns == 0 {
+                                if fill.gw_in_ns == 0 {
                                     fill.ts_ns
                                 } else {
-                                    fill.taker_ts_ns
+                                    fill.gw_in_ns
                                 }
                             );
                         }

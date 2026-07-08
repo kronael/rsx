@@ -61,17 +61,26 @@ pub fn write_events_to_wal(
     symbol_id: u32,
     ts_ns: u64,
 ) -> io::Result<()> {
-    emit_events(&mut WalSink { writer }, book, symbol_id, ts_ns)
+    emit_events(&mut WalSink { writer }, book, symbol_id, ts_ns, 0, 0)
 }
 
 /// Walk the book's event buffer once, build each event's wire record, and
 /// hand it to `sink`. The record-construction match lives here and nowhere
 /// else; the sink decides where the bytes go (WAL-only vs full fan-out).
+///
+/// `me_in_ns`/`match_done_ns` bound this match cycle (specs/2/
+/// 59-latency-observability.md "engine" leg) and are stamped onto every
+/// `FillRecord` this cycle emits — one match cycle, one pair of hop
+/// timestamps, same as `ts_ns` already is. `0` means "not measured" (e.g.
+/// replay/bench callers that pass 0).
+#[allow(clippy::too_many_arguments)]
 fn emit_events<S: EventSink>(
     sink: &mut S,
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
+    me_in_ns: u64,
+    match_done_ns: u64,
 ) -> io::Result<()> {
     for event in book.events() {
         match *event {
@@ -86,7 +95,7 @@ fn emit_events<S: EventSink>(
                 maker_order_id_lo,
                 taker_order_id_hi,
                 taker_order_id_lo,
-                taker_ts_ns,
+                gw_in_ns,
             } => {
                 let (reduce_only, tif) = if maker_handle != NONE {
                     let slot = book.orders.get(maker_handle);
@@ -112,7 +121,16 @@ fn emit_events<S: EventSink>(
                     tif,
                     post_only: 0,
                     _pad1: [0; 4],
-                    taker_ts_ns,
+                    gw_in_ns,
+                    // Cannot reach this record without growing the
+                    // risk->ME wire struct (`OrderMessage`, zero spare
+                    // capacity) — see FillRecord's doc comment.
+                    risk_in_ns: 0,
+                    me_in_ns,
+                    match_done_ns,
+                    // Stamped by the gateway just before it builds the
+                    // outbound client frame, not here.
+                    gw_out_ns: 0,
                 };
                 sink.emit(&mut record)?;
             }
@@ -277,6 +295,12 @@ fn emit_events<S: EventSink>(
 
 /// Publish each event once (WAL prepare = single CRC + seq), then fan out to
 /// WAL + risk + marketdata. Production path. See ARCHITECTURE.md.
+///
+/// `me_in_ns`/`match_done_ns`: this match cycle's engine-leg hop
+/// timestamps (specs/2/59-latency-observability.md), stamped onto every
+/// `FillRecord` emitted this cycle. Pass `0` if not measured (e.g. the
+/// cancel path, which has no `me_in`/match cycle of its own).
+#[allow(clippy::too_many_arguments)]
 pub fn publish_events(
     writer: &mut WalWriter,
     cmp: &mut CastSender,
@@ -284,8 +308,17 @@ pub fn publish_events(
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
+    me_in_ns: u64,
+    match_done_ns: u64,
 ) -> io::Result<()> {
-    emit_events(&mut FanoutSink { writer, cmp, mkt }, book, symbol_id, ts_ns)
+    emit_events(
+        &mut FanoutSink { writer, cmp, mkt },
+        book,
+        symbol_id,
+        ts_ns,
+        me_in_ns,
+        match_done_ns,
+    )
 }
 
 /// Sink for the wire records built from a match cycle's event buffer.

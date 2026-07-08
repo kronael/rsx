@@ -399,14 +399,14 @@ fn main() {
                             if let Some(rec) = decode_payload::<FillRecord>(payload) {
                                 // Sub-stage: fill record arrived at
                                 // gateway's cast recv loop, about to
-                                // route. Anchor on taker_ts_ns (with
+                                // route. Anchor on gw_in_ns (with
                                 // the >2024 plausibility guard).
                                 rsx_log::latency_sample!(
                                     "gateway_cast_recv",
                                     rec.taker_order_id_hi,
                                     rec.taker_order_id_lo,
-                                    if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
-                                        rec.taker_ts_ns
+                                    if rec.gw_in_ns > 1_700_000_000_000_000_000 {
+                                        rec.gw_in_ns
                                     } else {
                                         rec.ts_ns
                                     }

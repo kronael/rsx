@@ -47,10 +47,10 @@ pub enum Event {
         taker_order_id_hi: u64,
         taker_order_id_lo: u64,
         /// Taker order's gateway-ingress timestamp, echoed
-        /// onto FillRecord.taker_ts_ns so risk_out and
-        /// gateway_out can anchor t_us against the same t0
-        /// as gateway_in / risk_in / me_in.
-        taker_ts_ns: u64,
+        /// onto FillRecord.gw_in_ns so the internal/engine
+        /// per-hop deltas (specs/2/59-latency-observability.md)
+        /// anchor against the same t0 as risk_in / me_in.
+        gw_in_ns: u64,
     },
     OrderInserted {
         handle: u32,

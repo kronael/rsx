@@ -547,6 +547,10 @@ fn main() {
         let recv = cast_receiver.try_recv_with(|hdr, payload| {
             if hdr.record_type == RECORD_ORDER_REQUEST {
             if let Some(order_msg) = decode_payload::<OrderMessage>(payload) {
+                // specs/2/59-latency-observability.md: this hop's own
+                // ingress stamp, carried on every FillRecord this order's
+                // match cycle emits.
+                let me_in_ns = time_ns();
                 // F4.3 — per-stage latency trace. Stage
                 // `me_in` = order arrived at matching engine.
                 // t_us measured against gateway submit ts.
@@ -675,6 +679,10 @@ fn main() {
                     process_new_order(
                         &mut book, &mut incoming,
                     );
+                    // specs/2/59-latency-observability.md "engine" leg
+                    // closer: stamped onto every FillRecord this cycle
+                    // emits, alongside me_in_ns above.
+                    let match_done_ns = time_ns();
                     // Sub-stage: match cycle finished.
                     rsx_log::latency_sample!(
                         "me_match_done",
@@ -695,6 +703,8 @@ fn main() {
                         &book,
                         symbol_id,
                         ts_ns,
+                        me_in_ns,
+                        match_done_ns,
                     )
                     .expect("publish_events failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
                     gauges.publishes.fetch_add(
@@ -1017,8 +1027,9 @@ fn process_cancel(
     }
 
     let ts_ns = time_ns();
+    // Cancel path has no match cycle: no me_in/match_done to report.
     publish_events(
-        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns,
+        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns, 0, 0,
     )
     .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
 }

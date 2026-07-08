@@ -93,7 +93,11 @@ fn fill_record(symbol_id: u32, seq: u64, maker_order_id_lo: u64, qty: i64) -> Fi
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-        taker_ts_ns: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     }
 }
 

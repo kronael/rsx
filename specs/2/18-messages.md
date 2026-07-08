@@ -160,6 +160,27 @@ compile-time checks in each crate. Domain values 0–13 share
 the same numeric space as transport value 6 (`RECORD_CAUGHT_UP`);
 transport values ≥ 0x10 are disjoint from domain values.
 
+### FillRecord per-hop latency timestamps
+
+`FillRecord` carries five `u64` per-hop timestamps
+(`59-latency-observability.md`), filling what used to be
+tail padding — the record stays 128 bytes:
+
+| Field | Set by | Notes |
+|-------|--------|-------|
+| `gw_in_ns` | Gateway | Gateway ingress. Generalised from the former `taker_ts_ns`; echoed from `OrderRequest.timestamp_ns` through the order lifecycle. |
+| `risk_in_ns` | — | Always `0` today. The risk tile's ingress timestamp cannot reach this record without growing the risk→ME wire struct (`OrderMessage`, exactly 64 bytes, zero spare capacity) — a separate, not-yet-authorized wire change. |
+| `me_in_ns` | Matching | ME's own ingress timestamp for the order that produced this fill. |
+| `match_done_ns` | Matching | Stamped after the match cycle that produced this fill completes. `engine = match_done_ns - me_in_ns`. |
+| `gw_out_ns` | Gateway | Stamped just before the gateway turns this record into the outbound client frame. `internal = gw_out_ns - gw_in_ns`. |
+
+A consumer treats `0` as "unset", not as a real timestamp. A
+subtraction across hops assumes clock-synced hosts (PTP in
+production; trivially true on a single-box dev setup).
+`OrderDoneRecord`/`OrderInsertedRecord` are exactly 64 bytes
+with zero spare capacity and do NOT carry these fields — no
+room without growing the wire size.
+
 ### CancelReason constants
 
 `OrderCancelledRecord.reason` is a `u8`:

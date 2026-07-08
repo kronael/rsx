@@ -8,6 +8,7 @@ use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,6 +33,13 @@ fn emit_to_user(state: &Rc<RefCell<GatewayState>>, user_id: u32, frame: &WsFrame
 }
 
 pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
+    // specs/2/59-latency-observability.md: this hop's own egress stamp —
+    // the last leg of the GW->Risk->ME->Risk->GW round trip. Written onto
+    // a local copy; the wire record is already WAL'd upstream by ME and
+    // isn't re-persisted here.
+    let mut rec = *rec;
+    rec.gw_out_ns = time_ns();
+    let rec = &rec;
     let taker_oid = oid_hex(rec.taker_order_id_hi, rec.taker_order_id_lo);
     let maker_oid = oid_hex(rec.maker_order_id_hi, rec.maker_order_id_lo);
     let msg = serialize(&WsFrame::Fill {
@@ -44,7 +52,7 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
     });
     // F4.3 — per-stage latency trace. Stage `gateway_out`
     // closes the GW→ME→GW loop. Anchor against the taker's
-    // gateway-ingress timestamp (rec.taker_ts_ns) so the
+    // gateway-ingress timestamp (rec.gw_in_ns) so the
     // closing delta composes with gateway_in / risk_in /
     // me_in / me_out / risk_out on the same clock origin.
     // Falls back to rec.ts_ns (ME emit) for legacy records.
@@ -54,8 +62,8 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
         "gateway_route_serialize_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
-            rec.taker_ts_ns
+        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
+            rec.gw_in_ns
         } else {
             rec.ts_ns
         }
@@ -64,8 +72,8 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
         "gateway_out",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
-            rec.taker_ts_ns
+        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
+            rec.gw_in_ns
         } else {
             rec.ts_ns
         }
@@ -79,8 +87,8 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
         "gateway_route_push_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        if rec.taker_ts_ns > 1_700_000_000_000_000_000 {
-            rec.taker_ts_ns
+        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
+            rec.gw_in_ns
         } else {
             rec.ts_ns
         }
