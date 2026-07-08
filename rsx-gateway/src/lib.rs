@@ -3,6 +3,7 @@
 pub mod circuit;
 pub mod config;
 pub mod convert;
+pub mod egress;
 pub mod handler;
 pub mod jwt;
 pub mod order_id;

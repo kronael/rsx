@@ -1,10 +1,12 @@
 use crate::circuit::CircuitBreaker;
+use crate::egress::EgressWaker;
 use crate::pending::PendingOrders;
 use crate::rate_limit::RateLimiter;
 use rsx_types::SymbolConfig;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::net::IpAddr;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +21,9 @@ pub const IP_LIMITER_MAX: usize = 10_000;
 pub struct ConnectionState {
     pub user_id: u32,
     pub outbound: VecDeque<Arc<str>>,
+    /// Woken by producers right after they queue into `outbound`,
+    /// so the handler drains + writes without polling on a timer.
+    pub egress: Rc<EgressWaker>,
     pub last_activity_ns: u64,
     pub last_heartbeat_sent_ns: u64,
     pub last_heartbeat_recv_ns: u64,
@@ -129,6 +134,7 @@ impl GatewayState {
             ConnectionState {
                 user_id,
                 outbound: VecDeque::new(),
+                egress: Rc::new(EgressWaker::default()),
                 last_activity_ns: 0,
                 last_heartbeat_sent_ns: 0,
                 last_heartbeat_recv_ns: 0,
@@ -145,6 +151,7 @@ impl GatewayState {
         for conn in self.connections.values_mut() {
             if conn.user_id == user_id {
                 conn.outbound.push_back(msg.clone());
+                conn.egress.signal();
             }
         }
     }
@@ -153,6 +160,7 @@ impl GatewayState {
         let msg: Arc<str> = format!("{{\"H\":[{}]}}", ts_ms).into();
         for conn in self.connections.values_mut() {
             conn.outbound.push_back(msg.clone());
+            conn.egress.signal();
         }
     }
 
@@ -225,6 +233,13 @@ impl GatewayState {
         } else {
             Vec::new()
         }
+    }
+
+    /// Handle to a connection's egress wake, so its handler task can
+    /// park on it. Cloned once at connection setup; the producers
+    /// signal the original via the connection map.
+    pub fn connection_egress(&self, conn_id: u64) -> Option<Rc<EgressWaker>> {
+        self.connections.get(&conn_id).map(|c| c.egress.clone())
     }
 
     /// Get-or-insert a per-IP rate limiter. Bounded by
