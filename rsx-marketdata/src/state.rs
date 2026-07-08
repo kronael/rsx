@@ -1,3 +1,4 @@
+use crate::egress::EgressWaker;
 use crate::records::serialize_l2_snapshot;
 use crate::shadow::ShadowBook;
 use crate::subscription::SubscriptionManager;
@@ -6,10 +7,14 @@ use rsx_types::time_utils::time_ns;
 use rsx_types::SymbolConfig;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct ConnectionState {
     pub outbound: VecDeque<Arc<str>>,
+    /// Woken by producers right after they queue into `outbound`,
+    /// so the handler drains + writes without polling on a timer.
+    pub egress: Rc<EgressWaker>,
     pub last_heartbeat_ns: u64,
 }
 
@@ -59,6 +64,7 @@ impl MarketDataState {
             id,
             ConnectionState {
                 outbound: VecDeque::new(),
+                egress: Rc::new(EgressWaker::default()),
                 last_heartbeat_ns: time_ns(),
             },
         );
@@ -76,6 +82,7 @@ impl MarketDataState {
                 return false;
             }
             conn.outbound.push_back(msg);
+            conn.egress.signal();
             return true;
         }
         false
@@ -87,6 +94,13 @@ impl MarketDataState {
         } else {
             Vec::new()
         }
+    }
+
+    /// Handle to a client's egress wake, so its handler task can park
+    /// on it. Cloned once at connection setup; the producers signal
+    /// the original via the connection map.
+    pub fn connection_egress(&self, conn_id: u64) -> Option<Rc<EgressWaker>> {
+        self.connections.get(&conn_id).map(|c| c.egress.clone())
     }
 
     pub fn subscribe(&mut self, conn_id: u64, symbol_id: u32, channels: u32, depth: u32) -> bool {
@@ -255,6 +269,7 @@ impl MarketDataState {
         let msg: Arc<str> = format!("{{\"H\":[{}]}}", ts_ms).into();
         for conn in self.connections.values_mut() {
             conn.outbound.push_back(msg.clone());
+            conn.egress.signal();
         }
     }
 
