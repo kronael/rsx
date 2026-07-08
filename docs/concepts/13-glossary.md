@@ -7,36 +7,36 @@ page stays short on purpose.
 
 - **casting** — RSX's reliable-UDP *live* transport between processes: NAK
   gap-recovery + idle-only heartbeats, deliberately no flow control. The
-  hot path. → [reliable-udp](reliable-udp.md), [spec 4-cast](../../specs/2/4-cast.md)
+  hot path. → [reliable-udp](02-reliable-udp.md), [spec 4-cast](../../specs/2/4-cast.md)
 - **replication** — TCP replay of the *same* WAL records; the cold path
   (catch-up, recovery, warm-standby). → [spec 10-replication](../../specs/2/10-replication.md)
 - **WAL** — write-ahead log. The on-disk bytes = the casting wire frame =
-  the replication stream, no serialization step. → [wal-is-wire-is-stream](wal-is-wire-is-stream.md), [spec 48-wal](../../specs/2/48-wal.md)
+  the replication stream, no serialization step. → [wal-is-wire-is-stream](01-wal-is-wire-is-stream.md), [spec 48-wal](../../specs/2/48-wal.md)
 - **FAULTED** — a cast receiver's state when it detects a sequence gap;
   triggers TCP replay to recover. → [spec 4-cast](../../specs/2/4-cast.md)
 - **UDS** (Unix Domain Socket) — a Gateway→Risk transport *candidate* that
   was evaluated but **not** chosen (casting/UDP won). Still used off the
   hot path for log forwarding to Vector. → [rsx-risk/notes/uds.md](../../rsx-risk/notes/uds.md), [spec 33-telemetry](../../specs/2/33-telemetry.md)
 - **SPSC ring** — single-producer/single-consumer lock-free queue (rtrb),
-  intra-process only, ~50–170 ns/hop. → [spsc-rings](spsc-rings.md)
+  intra-process only, ~50–170 ns/hop. → [spsc-rings](04-spsc-rings.md)
 
 ## Architecture
 
 - **tile** — a pinned OS thread + its SPSC rings; the unit of
-  intra-process concurrency. → [tiles-and-pinning](tiles-and-pinning.md), [spec 45-tiles](../../specs/2/45-tiles.md)
+  intra-process concurrency. → [tiles-and-pinning](03-tiles-and-pinning.md), [spec 45-tiles](../../specs/2/45-tiles.md)
 - **Gateway / Risk / ME / Marketdata / Mark / Recorder** — the six
   processes. ME = matching engine. → [spec 1-architecture](../../specs/2/1-architecture.md)
 - **vshard / shardmap** — risk shards users by `hash(user_id) % N_VSHARDS`
   (fixed) → a mutable `shardmap` table → node. Lets the cluster grow
-  without a global reshuffle. → [sharding-axes](sharding-axes.md), [spec 28-risk §Sharding](../../specs/2/28-risk.md)
+  without a global reshuffle. → [sharding-axes](10-sharding-axes.md), [spec 28-risk §Sharding](../../specs/2/28-risk.md)
 
 ## Orderbook & matching
 
 - **slab** — pre-allocated arena of fixed-size `OrderSlot`s; capacity is
   the `Orderbook::new` argument, often sized to tens of millions.
-  → [slab-and-compression](slab-and-compression.md)
+  → [slab-and-compression](06-slab-and-compression.md)
 - **CompressionMap** — distance-zone price→index compression (1:1 near
-  mid, up to 1000:1 far); a 20M-level book in ~15 MB. → [slab-and-compression](slab-and-compression.md), [spec 21-orderbook](../../specs/2/21-orderbook.md)
+  mid, up to 1000:1 far); a 20M-level book in ~15 MB. → [slab-and-compression](06-slab-and-compression.md), [spec 21-orderbook](../../specs/2/21-orderbook.md)
 - **BBO** — best bid & offer (top of book): `bid_px / bid_qty / ask_px /
   ask_qty`. → [spec 16-marketdata](../../specs/2/16-marketdata.md)
 - **IOC / FOK / GTC** — time-in-force: immediate-or-cancel /
@@ -45,7 +45,7 @@ page stays short on purpose.
 ## Risk & pricing
 
 - **fixed-point** — every price/qty is an `i64` in smallest units; convert
-  only at the API boundary, never a float. → [fixed-point](fixed-point.md)
+  only at the API boundary, never a float. → [fixed-point](07-fixed-point.md)
 - **mark price** — median of external CEX feeds, computed by the Mark
   process; used for margin. → [spec 15-mark](../../specs/2/15-mark.md)
 - **index price** — size-weighted mid derived from the ME BBO by risk; the

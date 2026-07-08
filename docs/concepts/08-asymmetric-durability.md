@@ -73,6 +73,6 @@ own order submissions.
 
 ---
 
-Deeper: [blog/17-asymmetric-durability.md](../../blog/17-asymmetric-durability.md),
+Deeper: [blog/17-08-asymmetric-durability.md](../../blog/17-08-asymmetric-durability.md),
 [specs/2/48-wal.md](../../specs/2/48-wal.md),
 [specs/2/28-risk.md](../../specs/2/28-risk.md)

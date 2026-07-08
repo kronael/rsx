@@ -27,7 +27,7 @@ that stall.
 When a ring fills, the producer stalls. That is deliberate
 backpressure, not packet loss. The slow path becomes visible as
 ring occupancy and producer stall time, which ties directly to
-[backpressure-not-drop](backpressure-not-drop.md).
+[backpressure-not-drop](09-backpressure-not-drop.md).
 
 ## What SPSC is not
 
@@ -45,5 +45,5 @@ chosen up front, and a full ring stalls the producer by design.
 Deeper: [rsx-risk/notes/spsc.md](../../rsx-risk/notes/spsc.md),
 [specs/2/43-testing-smrb.md](../../specs/2/43-testing-smrb.md),
 [specs/2/45-tiles.md](../../specs/2/45-tiles.md),
-[docs/concepts/tiles-and-pinning.md](../../docs/concepts/tiles-and-pinning.md),
-[docs/concepts/backpressure-not-drop.md](../../docs/concepts/backpressure-not-drop.md)
+[docs/concepts/03-tiles-and-pinning.md](../../docs/concepts/03-tiles-and-pinning.md),
+[docs/concepts/09-backpressure-not-drop.md](../../docs/concepts/09-backpressure-not-drop.md)
