@@ -568,7 +568,9 @@ User ──ORDER──→ Gateway
 ```
 
 **Why Gateway validates:**
-- Matching Engine is stateless (no user balances, no positions)
+- Matching Engine holds no balances, margin, or collateral (only a
+  per-symbol net position for the reduce-only clamp) — so it cannot do
+  the pre-trade risk check
 - Risk checks require user context (margin, positions, collateral)
 - Faster rejection (no network round-trip to matching engine)
 
