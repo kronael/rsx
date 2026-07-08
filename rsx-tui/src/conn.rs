@@ -7,20 +7,18 @@
 //! `MockConn` with no network. Casting (the internal GW↔Risk↔ME
 //! transport) is unrelated and untouched; QUIC is user-facing only.
 
-use serde::Deserialize;
-use serde::Serialize;
 use std::collections::VecDeque;
 use std::io;
 
 /// A side for an order or a print.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
     Buy,
     Sell,
 }
 
 /// Time-in-force.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tif {
     Gtc,
     Ioc,
@@ -47,7 +45,7 @@ impl Tif {
 }
 
 /// An order the UI wants to submit.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OrderReq {
     pub side: Side,
     pub price: i64,
@@ -59,9 +57,9 @@ pub struct OrderReq {
 /// state each tick. Prices/quantities are raw i64 fixed-point, the
 /// wire representation (conversion to human units is a display
 /// concern, done at render). All fields are owned, so `GwEvent`
-/// decodes straight off a frame buffer (`DeserializeOwned`) — no
-/// borrowed mirror, no per-event leak.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+/// decodes straight off a protobuf frame — no borrowed mirror, no
+/// per-event leak.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum GwEvent {
     Connected,
     Disconnected,
