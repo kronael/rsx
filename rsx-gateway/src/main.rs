@@ -30,6 +30,7 @@ use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_types::install_panic_handler;
+use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
 use std::cell::RefCell;
 use std::env;
@@ -298,6 +299,15 @@ fn main() {
         // SAFETY: fail-fast at startup
         .expect("failed to build monoio runtime");
 
+    // SIGTERM/SIGINT flip this flag; the reactor loop polls it
+    // (it wakes at least every HOUSEKEEPING_INTERVAL) and exits.
+    // The gateway holds no durable buffer — pending orders live in
+    // RAM and are re-driven by risk re-emitting after its own
+    // replay — so a final cast_sender tick to flush in-flight
+    // egress is the whole drain; exiting the loop drops the
+    // runtime, which stops the WS accept task.
+    let shutdown = install_shutdown_handler();
+
     let listen_addr = config.listen_addr.clone();
     let rl_user = config.rate_limit_per_user;
     let rl_ip = config.rate_limit_per_ip;
@@ -370,6 +380,13 @@ fn main() {
         // woken by POLL_ADD the instant a datagram arrives;
         // the timer only bounds idle-time housekeeping.
         loop {
+            if shutdown.load(Ordering::SeqCst) {
+                info!("shutdown signal received, draining egress and exiting");
+                if let Err(e) = sender.borrow_mut().tick() {
+                    tracing::warn!("gateway: shutdown cast_sender tick failed: {e}");
+                }
+                break;
+            }
             loop {
                 // Zero-copy egress recv: route in-place from the
                 // receiver's internal buffer, no per-message Vec
