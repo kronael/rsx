@@ -193,8 +193,12 @@ func (m *Model) backspace() {
 	}
 }
 
-// handleEnter is the two-step confirm gate: the first enter builds a preview,
-// the second submits it.
+// handleEnter is the two-step confirm gate: the first enter builds a preview
+// and returns without submitting; only a second, separate enter — with
+// pendingConfirm already set from the first call — reaches Submit. Since
+// Bubble Tea delivers one KeyMsg per Update call, a rapid double-enter is
+// still two distinct calls through this gate: the preview always renders
+// (viewConfirm, driven by pendingConfirm) before the send branch can run.
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.pendingConfirm == nil {
 		o, ok := m.buildOrder()

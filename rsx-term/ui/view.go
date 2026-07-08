@@ -66,12 +66,16 @@ func (m Model) viewStatusBar() string {
 	if e, ok := m.tape.Last(); ok {
 		last = fmt.Sprintf("%d", e.Px)
 	}
-	// mark is book-mid-derived; index and funding have no source (always —).
-	mark := "—"
+	// mark is book-mid-derived, not exchange-authoritative; index and
+	// funding have no source (always —). The "~" prefix + dim/italic style
+	// (StyleDerived) mark it as a client-side estimate, never truth.
+	markLabel := "~mark — (mid)"
 	if mid, ok := m.book.Mid(); ok {
-		mark = fmt.Sprintf("%d", mid)
+		markLabel = fmt.Sprintf("~mark %d (mid)", mid)
 	}
-	market := StyleMuted.Render(fmt.Sprintf("last %s  mark %s (mid)  index —  funding —", last, mark))
+	market := StyleMuted.Render(fmt.Sprintf("last %s  ", last)) +
+		StyleDerived.Render(markLabel) +
+		StyleMuted.Render("  index —  funding —")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, badge, "  ", link, "  ", counts, "  ", market)
 }
@@ -146,10 +150,10 @@ func (m Model) viewOrder() string {
 
 	pxLine := fieldLine("price", m.pxBuf, m.focus == FocusPx)
 	qtyLine := fieldLine("qty  ", m.qtyBuf, m.focus == FocusQty)
-	tifLine := fmt.Sprintf("tif  : %s", m.tif.Label())
-	flagLine := fmt.Sprintf("ro   : %s   po: %s", onOff(m.reduceOnly), onOff(m.postOnly))
+	tifLine := fmt.Sprintf("time-in-force: %s", m.tif.Label())
+	flagLine := fmt.Sprintf("reduce-only: %s   post-only: %s", onOff(m.reduceOnly), onOff(m.postOnly))
 
-	tail := StyleMuted.Render("enter → confirm")
+	tail := StyleMuted.Render("enter → preview, enter again to send")
 	if m.pendingConfirm != nil {
 		tail = m.viewConfirm()
 	}
@@ -174,15 +178,20 @@ func onOff(b bool) string {
 }
 
 // viewConfirm renders the ring-bordered submit preview (specs/2/55-terminal.md
-// order lifecycle & confirmation). liq has no source yet — labelled, not faked.
+// order lifecycle & confirmation). This is always the first thing enter shows
+// for a fresh order — handleEnter only ever sets pendingConfirm here, never
+// submits without it having rendered first. liq has no source yet: shown as a
+// deliberate "n/a", with the reason in one shared legend line rather than
+// repeated inline per field.
 func (m Model) viewConfirm() string {
 	o := *m.pendingConfirm
 	side := lipgloss.NewStyle().Foreground(sideColor(o.Side))
 	line1 := fmt.Sprintf("confirm %s %d @ %d", side.Render(o.Side.Label()), o.Qty, o.Px)
 	line2 := fmt.Sprintf("notional %d  %s  ro:%s po:%s", o.Px*o.Qty, o.Tif.Label(), onOff(o.ReduceOnly), onOff(o.PostOnly))
-	line3 := StyleMuted.Render("liq — (needs server)")
-	line4 := "enter send · esc cancel"
-	body := lipgloss.JoinVertical(lipgloss.Left, line1, line2, line3, line4)
+	line3 := StyleMuted.Render("liq  n/a")
+	legend := StyleMuted.Render("n/a fields need server support, not yet wired")
+	line4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc cancel")
+	body := lipgloss.JoinVertical(lipgloss.Left, line1, line2, line3, legend, line4)
 	return RingPanelStyle.Render(body)
 }
 
@@ -194,9 +203,11 @@ func sideColor(s wire.Side) lipgloss.Color {
 }
 
 // viewPositions draws the client-derived position (mark=mid, labelled). uPnL
-// needs a mid; with none it shows "—" rather than a fabricated figure.
+// is derived from that same client-side mark, so its header carries the "~"
+// derived-value marker too. With no mid to price it against, it shows the
+// reason rather than a bare dash (mirrors the amber "no live book" caption).
 func (m Model) viewPositions() string {
-	header := StyleMuted.Render("sym  side  net  entry  uPnL")
+	header := StyleMuted.Render("sym  side  net  entry  ~uPnL")
 	if m.position.Flat() {
 		return panel(" positions (mark=mid) ", rightWidth, header, StyleMuted.Render("no position — fills build it"))
 	}
@@ -212,8 +223,8 @@ func (m Model) viewPositions() string {
 		entry = fmt.Sprintf("%d", e)
 	}
 
-	upnl := "—"
-	upnlStyle := StyleText
+	upnl := "—  (needs live book)"
+	upnlStyle := StyleDegraded
 	if mid, ok := m.book.Mid(); ok {
 		if u, ok := m.position.Upnl(mid); ok {
 			upnl = signed(u)
@@ -242,15 +253,21 @@ func signed(v int64) string {
 	return fmt.Sprintf("%d", v)
 }
 
-// viewTrades draws the public tape, newest first, price coloured by taker side.
+// viewTrades draws the public tape, newest first, price coloured by taker
+// side. Each print is also prefixed with a B/S glyph so the side reads
+// without relying on colour.
 func (m Model) viewTrades() string {
 	var rows []string
 	for i, e := range m.tape.Entries() {
 		if i >= maxTapeRows {
 			break
 		}
+		glyph := "B"
+		if e.Side == wire.Sell {
+			glyph = "S"
+		}
 		style := lipgloss.NewStyle().Foreground(sideColor(e.Side))
-		rows = append(rows, style.Render(fmt.Sprintf("%d %d", e.Px, e.Qty)))
+		rows = append(rows, style.Render(fmt.Sprintf("%s %d %d", glyph, e.Px, e.Qty)))
 	}
 	if len(rows) == 0 {
 		rows = append(rows, StyleMuted.Render("no trades yet"))

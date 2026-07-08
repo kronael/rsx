@@ -64,6 +64,10 @@ var (
 	StyleHeading = lipgloss.NewStyle().Foreground(ColorHeading)
 	// StyleDegraded renders degraded / stale / offline states.
 	StyleDegraded = lipgloss.NewStyle().Foreground(ColorDegraded)
+	// StyleDerived renders client-computed values (mark, uPnL) — dim +
+	// italic, paired with a "~" prefix, so they never read as
+	// exchange-authoritative data.
+	StyleDerived = lipgloss.NewStyle().Foreground(ColorMuted).Italic(true)
 
 	// PanelStyle is the standard bordered panel: a normal border in the muted
 	// border colour. Panels carry their title as their first content line.
