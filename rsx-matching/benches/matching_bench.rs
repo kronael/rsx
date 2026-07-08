@@ -55,7 +55,7 @@ fn bench_dedup(c: &mut Criterion) {
                 dedup.check_and_insert(1, 0, i);
             }
             dedup
-                .cleanup_with_cutoff(std::time::Instant::now() + std::time::Duration::from_secs(1));
+                .evict(std::time::Instant::now() + std::time::Duration::from_secs(1));
         });
     });
 
