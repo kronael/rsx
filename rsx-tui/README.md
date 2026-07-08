@@ -5,10 +5,13 @@ live orderbook ladder, order entry, positions, a trade tape, and a
 latency breakdown, driven over a single gateway connection.
 
 Transport is **protobuf-over-QUIC only** — one quinn connection, one
-bidirectional stream, length-delimited protobuf frames (`OrderReq` out,
-gateway events in). There is no WebSocket path. The internal casting
-(GW↔Risk↔ME) transport is unrelated and untouched; QUIC here is the
-user-facing client↔gateway leg.
+bidirectional stream, length-delimited protobuf frames. On connect the
+client sends an **auth first-frame** (`WireHello`: an HS256 JWT + the
+user id) before any order, so the session carries identity in-band; each
+order frame then carries the `symbol` it trades and a client correlation
+id echoed back on the latency report. There is no WebSocket path. The
+internal casting (GW↔Risk↔ME) transport is unrelated and untouched; QUIC
+here is the user-facing client↔gateway leg.
 
 ## Run
 
@@ -27,10 +30,14 @@ To dial a real QUIC gateway:
 | `RSX_GW_ADDR` | Gateway socket address (`ip:port`). Unset or `mock` → offline demo. |
 | `RSX_GW_CERT` | Path to the gateway's DER certificate to trust. Required when `RSX_GW_ADDR` is set. |
 | `RSX_GW_SERVER_NAME` | TLS name to validate (default `localhost`). |
+| `RSX_TUI_USER` | User id (`u32`) the session trades as; minted into the auth-first-frame JWT's `user_id` claim (default `0`). |
+| `RSX_TUI_SYMBOL` | Symbol id (`u32`) stamped on every order (default `0`). |
+| `RSX_GW_JWT_SECRET` | HS256 secret used to sign the session JWT (dev default provided; the launcher holds the real one). |
 
 No production gateway speaks this wire yet (see ARCHITECTURE.md
 "Server side"), so the real dial is exercised against a loopback QUIC
-server in `tests/quic_test.rs`.
+server in `tests/quic_test.rs`. The gateway VALIDATING the auth
+first-frame is the server-side follow-up; the client already sends it.
 
 ## Keys
 
