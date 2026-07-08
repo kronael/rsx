@@ -3,6 +3,49 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — ME→GW-direct spec is NOT ship-ready (codex adversarial audit)
+
+- **ME-GW-DIRECT-SPEC-GAPS** (design blocker — do NOT hand to a coding agent
+  yet) — the async-output-split in `specs/2/28-risk.md` (ME sends fill straight
+  to gateway; settle to Risk async) is `status: partial`/not-implemented, and an
+  adversarial audit found it underspecified and unsafe as written. Frontmatter
+  says `status: shipped` (`28-risk.md:1`) but the design is partial
+  (`28-risk.md:201`) — fix the frontmatter too. Verdict: **needs-spec-work-first**.
+  Gaps that must be closed BEFORE any implementation:
+  1. **No authoritative client sequence** once ME (per-symbol seq) and Risk
+     (risk-gw seq) both feed the gateway — two clients/replay can disagree on
+     order. Today Risk restamps one contiguous stream (`failover.rs:123`).
+  2. **Reject edge contradiction** — spec says the Risk→GW insufficient-margin
+     reject "cannot be removed" (`28-risk.md:173`) but also says Risk drops
+     `forward_to_gw`/response ring (`28-risk.md:206`); `forward_to_gw` carries
+     BOTH fills and rejects (`rsx-risk/src/main.rs:821`). Drop it and rejects
+     vanish → client can't tell rejection from transport loss.
+  3. **Gateway replay for the ME→GW stream is undefined** — no
+     `RSX_ME_GW_REPLICATION_ADDR`, no per-symbol tip/replay-source/dedup; today
+     gateway replays only Risk (`main.rs:87`). A dropped direct fill never
+     reaches the client.
+  4. **ME live-stream contents under-specified** → false FAULTED gaps: if the
+     gateway gets only fill/DONE/FAILED, the WAL-seq holes at ORDER_ACCEPTED/BBO
+     look like loss.
+  5. **Duplicate fills** — no dedup key (`fill_id` / `(symbol,seq)`); during any
+     mixed rollout the client double-counts (`route.rs:34` pushes blind).
+  6. **Solvency hole for reduce-only** — reduce-only skips reservation
+     (`Ok(0)`, `28-risk.md:349`) and enforcement is delegated to ME
+     (`:351`), but ME is not shown to hold authoritative positions. Long 1 →
+     reduce-only sell 1 (ME flat, Risk unsettled) → second reduce-only sell 1:
+     Risk still sees long 1, freezes 0, ME opens a short with no margin. Breaks
+     "solvency never at risk."
+  7. **Liquidation race** — client reacts to a direct fill before Risk marks
+     `UserInLiquidation`, slipping a new order past stale equity
+     (`shard.rs:487`).
+  8. **Exactly-one-completion** at risk — direct ORDER_DONE clears pending, a
+     late Risk ORDER_FAILED emits a second terminal (`route.rs:105`).
+  It touches ME fan-out + WAL streams, Risk settlement/reject egress, gateway
+  receiver topology + replay, client ordering, dedup, recovery — **high risk**,
+  not a bounded hop-removal. Fix = rewrite the spec to pin one client sequence
+  (likely keep Risk as the single gateway producer but let ME pre-notify), close
+  the reduce-only zero-freeze, and define the replay/dedup story; then re-audit.
+
 ## Status — 2026-07-08 — eager recenter is a tail-latency spike (by design, revisit)
 
 - **RECENTER-EAGER-TAIL-SPIKE** (MED, latency/design — not a correctness bug) —
