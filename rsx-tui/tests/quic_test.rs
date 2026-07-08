@@ -12,8 +12,10 @@ use rsx_tui::conn::GwEvent;
 use rsx_tui::conn::OrderReq;
 use rsx_tui::conn::Side;
 use rsx_tui::conn::Tif;
+use rsx_tui::quic::mint_jwt;
 use rsx_tui::quic::roots;
 use rsx_tui::quic::QuicConn;
+use rsx_tui::quic::Session;
 use rsx_tui::wire;
 use rsx_tui::MockConn;
 use std::net::SocketAddr;
@@ -36,10 +38,12 @@ fn self_signed() -> (CertificateDer<'static>, PrivatePkcs8KeyDer<'static>) {
     (der, key)
 }
 
-/// Accept one connection + one bi stream, read one order, report it, and
-/// echo a `Fill`. Then block reading until the client disconnects so the
-/// connection stays alive long enough for the client to receive the fill.
-async fn run_server(endpoint: Endpoint, got: mpsc::Sender<OrderReq>) {
+/// Accept one connection + one bi stream, read the auth first-frame then
+/// one order, report the order (with the user from the hello), and echo a
+/// `Fill` + a `Latency` carrying the order's `cid`. Then block reading
+/// until the client disconnects so the connection stays alive long enough
+/// for the client to receive the events.
+async fn run_server(endpoint: Endpoint, got: mpsc::Sender<(u32, OrderReq)>) {
     let Some(incoming) = endpoint.accept().await else {
         return;
     };
@@ -51,25 +55,34 @@ async fn run_server(endpoint: Endpoint, got: mpsc::Sender<OrderReq>) {
         Ok(stream) => stream,
         Err(_) => return,
     };
-    let order = match wire::read_order(&mut recv).await {
-        Ok(order) => order,
+    // Auth first-frame: the client sends WireHello (JWT + user) before any
+    // order. Reading it keeps the stream framed and proves identity is
+    // carried in-band.
+    let hello = match wire::read_hello(&mut recv).await {
+        Ok(hello) => hello,
         Err(_) => return,
     };
-    let _ = got.send(order);
+    let incoming = match wire::read_order(&mut recv).await {
+        Ok(incoming) => incoming,
+        Err(_) => return,
+    };
+    let _ = got.send((hello.user, incoming.order));
     let fill = GwEvent::Fill {
         oid: 7,
-        px: order.price,
-        qty: order.qty,
-        side: order.side,
+        px: incoming.order.price,
+        qty: incoming.order.qty,
+        side: incoming.order.side,
     };
     if wire::write_event(&mut send, &fill).await.is_err() {
         return;
     }
     // Timing report: the gateway knows internal (casting) + engine time;
     // net is `None` for the client to fill from the measured round-trip.
+    // The order's `cid` is echoed so the client pairs the sample by id.
     // Small stamps so the real loopback RTT always exceeds them and the
     // derived net is deterministically `Some` (not underflow → None).
     let lat = GwEvent::Latency {
+        cid: incoming.cid,
         net_ns: None,
         internal_ns: 500,
         engine_ns: 100,
@@ -99,11 +112,16 @@ fn quic_loopback_roundtrips_order_and_event() {
     });
     let addr = endpoint.local_addr().expect("bound addr");
 
-    let (order_tx, order_rx) = mpsc::channel::<OrderReq>();
+    let (order_tx, order_rx) = mpsc::channel::<(u32, OrderReq)>();
     rt.spawn(run_server(endpoint, order_tx));
 
     let store = roots([der]).expect("root store");
-    let mut conn = QuicConn::connect(addr, "localhost", store).expect("connect QuicConn");
+    let session = Session {
+        symbol_id: 42,
+        user: 1,
+        jwt: mint_jwt(1, "test-secret"),
+    };
+    let mut conn = QuicConn::connect(addr, "localhost", store, session).expect("connect QuicConn");
 
     let want = OrderReq {
         side: Side::Buy,
@@ -148,6 +166,7 @@ fn quic_loopback_roundtrips_order_and_event() {
             net_ns,
             internal_ns,
             engine_ns,
+            ..
         } => {
             assert_eq!(internal_ns, 500);
             assert_eq!(engine_ns, 100);
@@ -157,10 +176,17 @@ fn quic_loopback_roundtrips_order_and_event() {
         other => panic!("expected Latency, got {other:?}"),
     }
 
-    let got = order_rx
+    let (got_user, got_order) = order_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("server received the order");
-    assert_eq!(got, want, "server saw the exact order the client submitted");
+    assert_eq!(
+        got_user, 1,
+        "server saw the session user id from the auth first-frame",
+    );
+    assert_eq!(
+        got_order, want,
+        "server saw the exact order the client submitted",
+    );
 }
 
 /// The in-memory transport the UI is built and demoed against still

@@ -15,8 +15,10 @@ use rsx_tui::demo_events;
 use rsx_tui::drain;
 use rsx_tui::draw;
 use rsx_tui::handle_key;
+use rsx_tui::quic::mint_jwt;
 use rsx_tui::quic::roots;
 use rsx_tui::quic::QuicConn;
+use rsx_tui::quic::Session;
 use rsx_tui::Control;
 use rsx_tui::GatewayConn;
 use rustls::pki_types::CertificateDer;
@@ -54,6 +56,10 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<(
 /// PENGU-PERP — the TUI's single market.
 const SYMBOL: &str = "PENGU-PERP";
 
+/// Dev JWT signing secret when `RSX_GW_JWT_SECRET` is unset — matches
+/// the gateway's dev default. Never a production value.
+const DEFAULT_JWT_SECRET: &str = "rsx-dev-secret-not-for-prod-padpad";
+
 /// Resolve the gateway transport from the environment.
 ///
 /// `RSX_GW_ADDR` unset (or `mock`) → the offline demo feed (a `MockConn`
@@ -62,6 +68,11 @@ const SYMBOL: &str = "PENGU-PERP";
 /// nothing running. `RSX_GW_ADDR=<ip:port>` → a real protobuf-over-QUIC
 /// dial to that gateway, trusting the DER certificate at `RSX_GW_CERT`
 /// and validating the TLS name `RSX_GW_SERVER_NAME` (default `localhost`).
+///
+/// Identity for the live dial: `RSX_TUI_USER` (the u32 the session trades
+/// as) is minted into an HS256 JWT with `RSX_GW_JWT_SECRET` and sent in
+/// the auth first-frame; `RSX_TUI_SYMBOL` (the u32 symbol id) stamps every
+/// order.
 fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
     let addr = match std::env::var("RSX_GW_ADDR") {
         Ok(a) if a != "mock" => a,
@@ -85,10 +96,32 @@ fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
         std::env::var("RSX_GW_SERVER_NAME").unwrap_or_else(|_| "localhost".to_owned());
     let der = CertificateDer::from(std::fs::read(&cert_path)?);
     let store = roots([der])?;
+    let symbol_id = env_u32("RSX_TUI_SYMBOL", 0)?;
+    let user = env_u32("RSX_TUI_USER", 0)?;
+    let secret =
+        std::env::var("RSX_GW_JWT_SECRET").unwrap_or_else(|_| DEFAULT_JWT_SECRET.to_owned());
+    let jwt = mint_jwt(user, &secret);
     app.set_endpoint(&format!("quic://{server_addr}"));
     Ok(Box::new(QuicConn::connect(
         server_addr,
         server_name,
         store,
+        Session {
+            symbol_id,
+            user,
+            jwt,
+        },
     )?))
+}
+
+/// Parse a `u32` environment variable, or `default` when unset. A
+/// malformed value is a hard error — a typo'd id must not silently
+/// become the default and trade as the wrong user or symbol.
+fn env_u32(key: &str, default: u32) -> io::Result<u32> {
+    match std::env::var(key) {
+        Ok(v) => v
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("{key}: {e}"))),
+        Err(_) => Ok(default),
+    }
 }

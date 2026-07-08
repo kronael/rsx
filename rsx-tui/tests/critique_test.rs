@@ -64,6 +64,7 @@ fn f3_toggles_the_trace_hud_overlay() {
     // something real to show.
     app.apply_event(GwEvent::Connected);
     app.apply_event(GwEvent::Latency {
+        cid: 0,
         net_ns: Some(2_500),
         internal_ns: 7_600,
         engine_ns: 340,
@@ -176,6 +177,7 @@ fn latency_window_is_bounded() {
     let mut app = App::new("PENGU-PERP");
     for i in 0..140u64 {
         app.apply_event(GwEvent::Latency {
+            cid: 0,
             net_ns: Some(1_000 + i),
             internal_ns: 5_000,
             engine_ns: 200,

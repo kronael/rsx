@@ -60,11 +60,13 @@ pub fn demo_events() -> Vec<GwEvent> {
         // ~2.5 µs. Two samples so p50 / best differ. The live path
         // replaces these with what the gateway actually stamps.
         GwEvent::Latency {
+            cid: 0,
             net_ns: Some(2_500),
             internal_ns: 7_600,
             engine_ns: 340,
         },
         GwEvent::Latency {
+            cid: 0,
             net_ns: Some(2_300),
             internal_ns: 7_100,
             engine_ns: 310,
