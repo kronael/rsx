@@ -23,8 +23,9 @@ const (
 
 	degradedBookMsg = "no live book — market-data stream down"
 
-	// helpText is the keybinding legend, verbatim per specs/2/55-terminal.md.
-	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  c cancel  F3 trace "
+	// helpText is the keybinding legend. Verbatim per specs/2/55-terminal.md
+	// except for "x flatten", added ahead of the spec's next revision.
+	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  c cancel  x flatten  F3 trace "
 )
 
 // View renders the whole terminal: status bar / three-column main / speed

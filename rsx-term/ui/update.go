@@ -129,6 +129,8 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEnter()
 	case "c":
 		return m.handleCancel()
+	case "x":
+		return m.handleFlatten()
 	case "f3":
 		m.showTrace = !m.showTrace
 		return m, nil
@@ -259,6 +261,57 @@ func sentStatus(o wire.OrderReq) string {
 		s += " po"
 	}
 	return s
+}
+
+// handleFlatten begins closing the whole derived net position: 'x' builds
+// the reduce-only, marketable order that flattens it (Sell at the best bid
+// to close a long, Buy at the best ask to close a short, qty = |net|) and
+// routes it through the same pendingConfirm gate handleEnter's second
+// press already drives — a flatten is never a single fat-fingered
+// keystroke. A flat position, or a missing opposing best price (no live
+// book to price against), is a no-op with a status explaining why; it
+// never fabricates a price.
+func (m Model) handleFlatten() (tea.Model, tea.Cmd) {
+	if m.position.Flat() {
+		m.status = "no position to flatten"
+		return m, nil
+	}
+	o, ok := m.buildFlattenOrder()
+	if !ok {
+		m.status = "can't flatten: no live book to price against"
+		return m, nil
+	}
+	m.pendingConfirm = &o
+	return m, nil
+}
+
+// buildFlattenOrder builds the reduce-only IOC order that flattens the
+// current derived position at the best opposing price: Sell at the best
+// bid to close a long, Buy at the best ask to close a short. Reduce-only
+// means the exchange never lets this order carry the position past flat
+// (it can only shrink toward zero), so it can never flip the position.
+// Returns false when that side of the book is empty.
+func (m Model) buildFlattenOrder() (wire.OrderReq, bool) {
+	net := m.position.Net
+	if net == 0 {
+		return wire.OrderReq{}, false
+	}
+	qty := net
+	if qty < 0 {
+		qty = -qty
+	}
+	if net > 0 {
+		bid, ok := m.book.BestBid()
+		if !ok {
+			return wire.OrderReq{}, false
+		}
+		return wire.OrderReq{Side: wire.Sell, Px: bid.Px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true}, true
+	}
+	ask, ok := m.book.BestAsk()
+	if !ok {
+		return wire.OrderReq{}, false
+	}
+	return wire.OrderReq{Side: wire.Buy, Px: ask.Px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true}, true
 }
 
 // handleCancel cancels the newest open order carrying a cid.

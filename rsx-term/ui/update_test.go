@@ -370,3 +370,105 @@ func TestAcceptedRttFoldsLatency(t *testing.T) {
 		t.Fatalf("live leg should be NsUnknown, got %d", m.lastLat.NetNs)
 	}
 }
+
+// withBook returns m with a two-level book so buildFlattenOrder always has
+// a best bid/ask to price against.
+func withBook(m Model) Model {
+	return apply(m, wire.Snapshot{
+		Bids: []wire.Level{{Px: 9_999, Qty: 5}, {Px: 9_998, Qty: 5}},
+		Asks: []wire.Level{{Px: 10_001, Qty: 5}, {Px: 10_002, Qty: 5}},
+		Seq:  1,
+	})
+}
+
+func TestBuildFlattenOrderFlatIsNone(t *testing.T) {
+	m := withBook(newModel(&conn.MockGateway{}))
+	if _, ok := m.buildFlattenOrder(); ok {
+		t.Fatalf("flat position built a flatten order")
+	}
+}
+
+func TestBuildFlattenOrderLongSellsReduceOnly(t *testing.T) {
+	m := withBook(newModel(&conn.MockGateway{}))
+	m = apply(m, wire.Fill{Oid: 1, Px: 9_998, Qty: 7, Side: wire.Buy})
+
+	o, ok := m.buildFlattenOrder()
+	if !ok {
+		t.Fatalf("no flatten order for a long position")
+	}
+	want := wire.OrderReq{Side: wire.Sell, Px: 9_999, Qty: 7, Tif: wire.Ioc, ReduceOnly: true}
+	if o != want {
+		t.Fatalf("flatten order = %+v, want %+v", o, want)
+	}
+}
+
+func TestBuildFlattenOrderShortBuysReduceOnly(t *testing.T) {
+	m := withBook(newModel(&conn.MockGateway{}))
+	m = apply(m, wire.Fill{Oid: 1, Px: 10_002, Qty: 4, Side: wire.Sell})
+
+	o, ok := m.buildFlattenOrder()
+	if !ok {
+		t.Fatalf("no flatten order for a short position")
+	}
+	want := wire.OrderReq{Side: wire.Buy, Px: 10_001, Qty: 4, Tif: wire.Ioc, ReduceOnly: true}
+	if o != want {
+		t.Fatalf("flatten order = %+v, want %+v", o, want)
+	}
+}
+
+func TestBuildFlattenOrderNoOpposingBook(t *testing.T) {
+	m := newModel(&conn.MockGateway{}) // no book at all
+	m = apply(m, wire.Fill{Oid: 1, Px: 9_998, Qty: 7, Side: wire.Buy})
+	if _, ok := m.buildFlattenOrder(); ok {
+		t.Fatalf("built a flatten order with no book to price against")
+	}
+}
+
+func TestFlattenKeyFlatIsNoOp(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := withBook(newModel(mock))
+	m = press(m, "x")
+	if m.pendingConfirm != nil {
+		t.Fatalf("x on a flat position opened a confirm preview")
+	}
+	if !strings.Contains(m.status, "no position") {
+		t.Fatalf("status = %q, want mentions no position", m.status)
+	}
+	if len(mock.Submitted) != 0 {
+		t.Fatalf("flatten on a flat position submitted an order")
+	}
+}
+
+func TestFlattenKeyLongRequiresConfirm(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := withBook(newModel(mock))
+	m = apply(m, wire.Fill{Oid: 1, Px: 9_998, Qty: 7, Side: wire.Buy})
+
+	m = press(m, "x")
+	want := wire.OrderReq{Side: wire.Sell, Px: 9_999, Qty: 7, Tif: wire.Ioc, ReduceOnly: true}
+	if m.pendingConfirm == nil || *m.pendingConfirm != want {
+		t.Fatalf("preview after x = %+v, want %+v", m.pendingConfirm, want)
+	}
+	if len(mock.Submitted) != 0 {
+		t.Fatalf("x submitted before the confirm enter")
+	}
+
+	m = press(m, "enter")
+	if len(mock.Submitted) != 1 || mock.Submitted[0] != want {
+		t.Fatalf("submitted = %+v, want [%+v]", mock.Submitted, want)
+	}
+}
+
+func TestFlattenKeyNoBookIsNoOp(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := newModel(mock) // no book
+	m = apply(m, wire.Fill{Oid: 1, Px: 9_998, Qty: 7, Side: wire.Buy})
+
+	m = press(m, "x")
+	if m.pendingConfirm != nil {
+		t.Fatalf("x opened a confirm preview with no book to price against")
+	}
+	if !strings.Contains(m.status, "no live book") {
+		t.Fatalf("status = %q, want mentions no live book", m.status)
+	}
+}
