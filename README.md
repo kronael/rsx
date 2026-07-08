@@ -219,59 +219,24 @@ side is implemented; its gateway QUIC endpoint is a follow-up.
 
 ## How fast
 
-Measured at commit `7a6846a`, 6-core box, no core isolation, debug
-vs release noted. The sub-10 µs *network* target is aspirational — the
-in-process floor is there, the cross-process path isn't yet. Read
-top-down: the whole system first, then the cost between components, then
-inside each. Only the notable numbers are here — the deep per-component
-tables live in the crate READMEs. Full method + curves:
-[reports/20260530_load-curves.md](reports/20260530_load-curves.md).
+Headline numbers only. The full per-bench detail, method, and caveats
+live in **[docs/benches.md](docs/benches.md)** — that is the one doc to
+keep in sync; this table is just the summary.
 
-### Whole exchange — GW→ME→GW
+| Layer | p50 | what it is |
+|---|---:|---|
+| Orderbook match | ~60 ns | pure match, any book depth (100 → 10M resting) |
+| Matching algorithm (dedup + match + WAL) | 340 ns | ME critical section, no transport |
+| In-process round-trip (`bench-match-rt`) | 9.58 µs | real casting + Orderbook + WAL, one box, no process boundary — the algorithmic floor |
+| Cross-process production (GW→ME→GW) | ~1.1 ms | separate processes, end to end |
+| **Target: <50 µs GW→ME→GW** | — | **aspirational** |
 
-| Path | p50 | p99 | note |
-|---|---:|---:|---|
-| In-process round-trip (cast/UDP loopback + full ME) | 7.5 µs | 16.9 µs | transport-bound floor, measured |
-| Live WS single warmed stream | 2.25 ms | 18.8 ms | gateway reactor egress; **−80%** after the egress-drain fix (was 11.5 ms) |
-| REST `/health` (fresh conn) | ~115 µs | ~1.4 ms | measured |
-| **Target: <50 µs GW→ME→GW** | — | — | **aspirational** |
-
-The 7.5 µs in-process floor is transport-bound; the open gap is the
-cross-process whole-e2e path. The per-stage budgets — Risk pre-trade
-<5 µs, ME match <500 ns — are genuinely met inside the components
-(below). Parallel/flood whole-e2e is still blocked by
-`ME-FAULTED-NO-REPLAY-ADDR` (BUGS.md), so these are single-stream.
-
-### Between components — rsx-cast, loopback
-
-| Hop | p50 |
-|---|---:|
-| One-way (`CastSender::send` → `try_recv`) | 3.89 µs |
-| Round-trip echo (2 hops) | 7.60 µs |
-
-Loopback only — a real NIC adds IRQ + driver tx/rx. **~99% is the
-`sendto`/`recvfrom` syscall**, which the io_uring move targets. Wire
-encode/decode is tens of ns (Fill encode 23 ns / decode 9 ns, WAL append
-31 ns); an SPSC ring hop inside a tile is 50–170 ns.
-
-### Inside each component — service time
-
-Closed-loop CPU cost, no queue; the most notable only. Full per-op tables,
-depth sweeps, and load curves are in the crate READMEs
-([rsx-book](rsx-book/README.md), [rsx-matching](rsx-matching/README.md),
-rsx-risk).
-
-| Op | p50 |
-|---|---:|
-| Orderbook match — **~60 ns at any depth** (100 → 10M resting) | 60–65 ns |
-| ME full accept (dedup + WAL + match + events + index) | 205 ns |
-| Risk accept order (0 open/user) | 110 ns |
-
-The orderbook match holds ~60 ns whether the book has 100 or 10M resting
-orders — the compressed slab + occupancy bitmap make level lookup and
-next-best-find O(depth=3), not O(book size). Risk accept cost scales with
-a user's open-order count (the frozen-margin sum), and under persist
-backpressure the fill path stalls rather than drops.
+The gap between the 9.58 µs in-process floor and the ~1.1 ms cross-process
+path is the whole story: **~99% of production latency is inter-process
+overhead** (monoio sleep, tokio schedule, syscalls), not the match (~60 ns
+at any depth) or the transport framing (tens of ns). The io_uring/SQPOLL
+work on the roadmap targets exactly that gap. Per-stage budgets — Risk
+pre-trade <5 µs, ME match <500 ns — are met inside the components.
 
 ## Reading the code
 
