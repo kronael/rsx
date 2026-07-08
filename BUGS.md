@@ -3,6 +3,25 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — userspace-UDP blocked by cast socket coupling
+
+- **CAST-SOCKET-COUPLING-BLOCKS-IOURING** (roadmap, not a defect) — the
+  userspace-UDP / io_uring move (matching ME hot-path `recvfrom`/`sendto`;
+  gateway/marketdata edges) can't be done in the callers today because
+  `CastSender`/`CastReceiver` (`rsx-cast/src/cast.rs`) **own the `UdpSocket`
+  and couple framing with `recv`/`send`** — `try_recv_with` does recvfrom +
+  parse in one; `send_framed` writes the built `Framed` on the owned socket.
+  io_uring must live in the caller (rsx-cast stays runtime-dep-free), so the
+  caller needs to own the socket. **Fix (two additive cast APIs, a sanctioned
+  frozen-cast extension — needs founder sign-off, not a redesign):** (1) expose
+  a built `Framed`'s bytes (`Framed::as_bytes()` or similar) so the caller
+  io_uring-sends them; (2) a parse-already-received-bytes entry
+  (`CastReceiver::process(&[u8])` / a standalone frame parser) so the caller
+  io_uring-recvs then hands bytes to cast for framing/WAL. Single-packet
+  request-response gains little from batching — the real lever is SQPOLL — so
+  this is a throughput/scaling step, on the roadmap (README §Roadmap), not a
+  correctness fix. rsx-cast itself is sound for the current std-UDP path.
+
 ## Status — 2026-07-08 — gateway ↔ marketdata alignment (symmetry audit)
 
 Gateway (client-WS in → cast out) and marketdata (cast in → public-WS out) are
