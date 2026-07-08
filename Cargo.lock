@@ -2986,6 +2986,7 @@ dependencies = [
  "rustls",
  "serde",
  "tokio",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
