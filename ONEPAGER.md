@@ -1,6 +1,6 @@
 # RSX
 
-Spec-first perpetuals exchange. 12 Rust crates, 25k LOC, 887 tests.
+Spec-first derivatives exchange. 12 Rust crates, 25k LOC, 887 tests.
 
 ## Problem
 

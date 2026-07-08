@@ -17,7 +17,7 @@ phase-1 historical specs.
 
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
-| 1 | [1-architecture.md](1-architecture.md) | shipped | Perpetuals exchange: fixed-point i64, single-threaded ME, casting/UDP, WAL recovery |
+| 1 | [1-architecture.md](1-architecture.md) | shipped | derivatives exchange: fixed-point i64, single-threaded ME, casting/UDP, WAL recovery |
 | 25 | [25-process.md](25-process.md) | shipped | Process + tile composition per binary |
 | 45 | [45-tiles.md](45-tiles.md) | partial | Pinned-thread tile architecture |
 | 20 | [20-network.md](20-network.md) | shipped | System network topology |

@@ -4,7 +4,7 @@ status: shipped
 
 # Architecture
 
-Perpetuals exchange. Fixed-point arithmetic, single-threaded
+derivatives exchange. Fixed-point arithmetic, single-threaded
 matching per symbol, casting/UDP between processes, WAL-based
 recovery.
 

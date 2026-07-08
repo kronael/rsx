@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # RSX Exchange
 
-Spec-first perpetuals exchange. All specs in `specs/2/`.
+Spec-first derivatives exchange. All specs in `specs/2/`.
 
 ## Architecture (see specs/2/20-network.md, specs/2/45-tiles.md)
 

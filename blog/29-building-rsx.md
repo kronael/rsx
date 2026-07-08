@@ -1,6 +1,6 @@
 # Building RSX: A Spec-First, Agent-Driven Manual
 
-*The vibe-book. How one person built a perpetuals exchange — matching
+*The vibe-book. How one person built a derivatives exchange — matching
 engine, risk engine, WAL replication, gateway — by writing specs first
 and driving a fleet of AI agents through a disciplined loop. This is the
 method, not the marketing. If you want to build something serious this

@@ -2,7 +2,7 @@
 
 ## Thread
 
-1/ Building a perpetuals exchange in Rust. 9 crates,
+1/ Building a derivatives exchange in Rust. 9 crates,
 813 tests, ~35k LOC. Here's where we are.
 
 2/ The matching engine runs at 180ns per insert, 120ns

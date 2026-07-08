@@ -1,10 +1,10 @@
 # FEATURES.md
 
-Feature inventory for the RSX perpetuals exchange.
+Feature inventory for the RSX derivatives exchange.
 
 ## System Overview
 
-Spec-first perpetuals exchange with separate processes
+Spec-first derivatives exchange with separate processes
 communicating via casting (C structs over UDP) and WAL
 replication (TCP). Target: <50us GW->ME->GW round trip.
 

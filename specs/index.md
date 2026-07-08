@@ -45,7 +45,7 @@ Active specs. Source of truth for system design.
 
 | Spec | Status | Summary |
 |------|--------|---------|
-| [2/1-architecture.md](2/1-architecture.md) | shipped | Perpetuals exchange. Fixed-point arithmetic, single-threaded |
+| [2/1-architecture.md](2/1-architecture.md) | shipped | Derivatives exchange. Fixed-point arithmetic, single-threaded |
 | [2/3-cli.md](2/3-cli.md) | shipped | `rsx-cli` is an offline WAL debugging tool. It reads WAL files written |
 | [2/4-cast.md](2/4-cast.md) | shipped | Fixed-size C structs over the network. One wire format for |
 | [2/5-codepaths.md](2/5-codepaths.md) | shipped | This document enumerates major end-to-end codepaths and maps them to |

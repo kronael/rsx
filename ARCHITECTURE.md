@@ -1,6 +1,6 @@
 # RSX System Architecture
 
-Spec-first perpetuals exchange. ~22k LOC Rust across 14 crates.
+Spec-first derivatives exchange. ~22k LOC Rust across 14 crates.
 All specifications in `specs/2/`.
 
 ## System Diagram

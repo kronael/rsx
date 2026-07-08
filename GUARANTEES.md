@@ -1,7 +1,7 @@
 # RSX System Guarantees
 
 Formal specification of consistency, durability, and recovery guarantees for the
-RSX perpetuals exchange. This document defines what the system promises under
+RSX derivatives exchange. This document defines what the system promises under
 various failure scenarios.
 
 **Key Principles:**
