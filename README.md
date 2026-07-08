@@ -43,9 +43,10 @@ product surface that runs on top of it is sketched at
 The point of RSX is to learn how to write **fast distributed
 code** — processing millions of events per second with a
 target of **sub-10 µs latency over the network**. That target
-is aspirational today: the in-process round trip is 9.58 µs,
-but cross-process it is still 1.1 ms — the benchmark tables
-below show exactly where the time goes and why. Specs are
+is aspirational today: the in-process round-trip floor is
+7.5 µs p50 / 16.9 µs p99, but cross-process it is still
+1.1 ms — the benchmark tables below show exactly where the
+time goes and why. Specs are
 written before the code — 47 of them in `specs/2/` — and every
 non-obvious choice carries a tradeoff note in the crate's
 `notes/`. Read the specs for intent, the code for what runs,
