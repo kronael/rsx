@@ -85,7 +85,7 @@ AUTH_HTTP = os.environ.get(
 PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
-# Default user_id for unauthenticated loopback Trade UI sessions
+# Default user_id for unauthenticated loopback browser clients
 # in dev mode. Browsers cannot set custom WS headers, so the
 # proxy mints a JWT for this user when no auth is supplied.
 _GUEST_USER_ID = 99
@@ -8189,7 +8189,7 @@ async def x_maker_live():
     )
 
 
-# ── trading UI: WS proxy + REST proxy + static ─────────
+# ── client WS/REST proxy endpoints ─────────────────────
 
 
 async def _safe_ws_close(
@@ -8233,7 +8233,7 @@ async def ws_private_proxy(ws: WebSocket):
     elif loopback_dev:
         # Dev path: trusted local caller. Take x-user-id if
         # present (e.g. CLI tools, tests using headers); else
-        # default to a guest user so the in-tree Trade UI
+        # default to a guest user so in-tree browser clients
         # connects without a login flow. Mint a real JWT for
         # the gateway hop in either case.
         raw = ws.headers.get("x-user-id")
@@ -8841,7 +8841,7 @@ async def v1_orders(
 async def auth_proxy(path: str, request: Request):
     """Proxy /auth/* and /oauth/* to rsx-auth.
 
-    In dev, trade UI talks to playground; playground
+    In dev, browser clients talk to playground; playground
     forwards auth flows to rsx-auth on :8082. Production
     should use nginx or similar to route directly.
     """

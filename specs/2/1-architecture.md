@@ -78,7 +78,7 @@ topology.
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
 | rsx-messages | Wire-record catalogue (`Fill` / `BBO` / `Order*` / ...) |
 | rsx-log | Off-hot-path logging primitive (per-thread SPSC ring) |
-| rsx-tui | Trade surface: ratatui trading terminal |
+| rsx-term | Trade surface: Go Bubble Tea terminal, embedded by Playground at `/terminal` |
 
 Non-Rust supporting projects (not in Cargo workspace):
 
