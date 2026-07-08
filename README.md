@@ -141,6 +141,31 @@ An order from user **U** on symbol **S** routes
 independent: add symbols → add ME instances; add users → add
 Risk shards. The gateway is stateless and routes by both keys.
 
+**What scales as what:**
+
+- **Gateway** — stateless; scale by **connection count** (add
+  instances behind a load balancer). Holds no positions.
+- **Risk** — shard by **`user_id`**, using *virtual shards* so
+  growth never reshuffles everyone. Two levels of mapping: a user
+  hashes to one of a **fixed** number of virtual shards
+  (`vshard = hash(user_id) % N_VSHARDS`), and a small **`shardmap`**
+  assigns each vshard to a node. A node owns a set of vshards and
+  keeps those users' positions + margin in RAM. Because `N_VSHARDS`
+  is fixed, adding a node only **reassigns some vshards** to it —
+  just those users migrate (warm-catchup + cutover, reusing the
+  warm-standby path). A plain `user_id % node_count` would instead
+  remap *every* user the instant the node count changes. See
+  [specs/2/28-risk.md](specs/2/28-risk.md) §Sharding & scale-out.
+- **Matching** — shard by **`symbol_id`**. One pinned engine per
+  tradeable instrument, no cross-symbol shared state. More symbols
+  → more ME instances.
+- **Marketdata** — scale by **public subscriber count**; off the
+  order critical path, fan-out only.
+- The user axis and the symbol axis are **orthogonal** — grow
+  either without touching the other.
+
+The picture:
+
 ```
   many clients (WS, JSON)                       SCALE-OUT AXES
    │    │    │    │                              ──────────────
@@ -178,25 +203,6 @@ Risk shards. The gateway is stateless and routes by both keys.
 │by subs ││        ││        ││ shard  ││        │
 └────────┘└────────┘└────────┘└────────┘└────────┘
 ```
-
-**What scales as what:**
-- **Gateway** — stateless; scale by **connection count** (add
-  instances behind a load balancer). Holds no positions.
-- **Risk** — shard by **`user_id`** via *fixed virtual shards + a
-  map*: `vshard = hash(user_id) % N_VSHARDS` (N_VSHARDS fixed) →
-  `shardmap[vshard]` → node. Each shard owns a set of vshards and
-  holds those users' positions + margin in RAM. Adding a shard
-  moves only ~1/N of the vshard slots (and migrates those users by
-  warm-catchup + cutover, reusing the warm-standby path) — *not* a
-  `user_id % shard_count` reshuffle of everyone. See
-  [specs/2/28-risk.md](specs/2/28-risk.md) §Sharding & scale-out.
-- **Matching** — shard by **`symbol_id`**. One pinned
-  engine per tradeable instrument, no cross-symbol shared state.
-  More symbols → more ME instances.
-- **Marketdata** — scale by **public subscriber count**; off the
-  order critical path, fan-out only.
-- The user axis and the symbol axis are **orthogonal** — grow
-  either without touching the other.
 
 Three transports tie it together:
 - **Hot path** between processes: cast/UDP (NAK gap recovery,
