@@ -10,6 +10,7 @@
 pub mod app;
 pub mod conn;
 pub mod input;
+pub mod palette;
 pub mod quic;
 pub mod render;
 pub mod wire;
