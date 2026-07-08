@@ -72,7 +72,11 @@ fn populate_wal(dir: &PathBuf) {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-            taker_ts_ns: 1_700_000_000_000 + i,
+            gw_in_ns: 1_700_000_000_000 + i,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: 0,
+            gw_out_ns: 0,
         };
         {
             let framed = writer.prepare(&mut fill).unwrap();

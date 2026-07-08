@@ -124,7 +124,11 @@ fn dxs_replay_rebuilds_shadow_book() {
                 tif: 0,
                 post_only: 0,
                 _pad1: [0; 4],
-                taker_ts_ns: 0,
+                gw_in_ns: 0,
+                risk_in_ns: 0,
+                me_in_ns: 0,
+                match_done_ns: 0,
+                gw_out_ns: 0,
             };
 
             {

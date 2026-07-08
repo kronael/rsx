@@ -277,7 +277,11 @@ fn main() {
                 tif: 0,
                 post_only: 0,
                 _pad1: [0; 4],
-                taker_ts_ns: order_msg.timestamp_ns,
+                gw_in_ns: order_msg.timestamp_ns,
+                risk_in_ns: 0,
+                me_in_ns: 0,
+                match_done_ns: 0,
+                gw_out_ns: 0,
             };
             me_seq += 1;
             let framed = Framed::pack(&mut fill, me_seq);
@@ -414,7 +418,11 @@ fn main() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-        taker_ts_ns: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     };
     let _ = exit_fill;
     // The ME thread doesn't have a clean exit sentinel in

@@ -69,7 +69,11 @@ fn fill_record_encode_decode_roundtrip() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-        taker_ts_ns: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     };
     let encoded = encode_fill_record(&record);
     let header = WalHeader::from_bytes(&encoded).unwrap();
@@ -267,7 +271,11 @@ fn crc32_mismatch_detected() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-        taker_ts_ns: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     };
     let mut encoded = encode_fill_record(&record);
     // corrupt a payload byte
@@ -329,7 +337,11 @@ fn record_truncated_payload_detected() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-        taker_ts_ns: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     };
     let payload_bytes = as_bytes(&record);
     let truncated = &payload_bytes[..10];
@@ -363,7 +375,11 @@ fn cmp_record_trait_set_seq_roundtrip() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
-        taker_ts_ns: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     };
     assert_eq!(fill.seq(), 0);
     fill.set_seq(42);

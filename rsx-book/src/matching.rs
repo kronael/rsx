@@ -318,7 +318,7 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
             maker_order_id_lo: maker_oid_lo,
             taker_order_id_hi: aggressor.order_id_hi,
             taker_order_id_lo: aggressor.order_id_lo,
-            taker_ts_ns: aggressor.timestamp_ns,
+            gw_in_ns: aggressor.timestamp_ns,
         });
 
         book.users

@@ -197,7 +197,11 @@ fn wal_replay_rebuilds_positions_from_tip() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-            taker_ts_ns: 0,
+            gw_in_ns: 0,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: 0,
+            gw_out_ns: 0,
         };
         {
             let framed = writer.prepare(&mut rec).unwrap();
@@ -254,7 +258,11 @@ fn wal_replay_resumes_from_tip_skips_already_applied() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
-            taker_ts_ns: 0,
+            gw_in_ns: 0,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: 0,
+            gw_out_ns: 0,
         };
         {
             let framed = writer.prepare(&mut rec).unwrap();

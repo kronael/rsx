@@ -43,12 +43,31 @@ pub const CANCEL_REASON_OTHER: u8 = 5;
 
 /// FillRecord (64-byte aligned).
 ///
-/// `taker_ts_ns` is the taker order's gateway-ingress
-/// timestamp (echoed from `OrderRequest.timestamp_ns`), used
-/// as the t0 anchor for `risk_out` / `gateway_out` per-stage
-/// latency tracing. Older WAL records may have this slot as
-/// uninitialized memory; consumers must validate (non-zero
-/// + plausible epoch) and fall back to `ts_ns` if invalid.
+/// Carries the order lifecycle's per-hop latency timestamps
+/// (specs/2/59-latency-observability.md): each hop stamps only
+/// its own field as the record travels `GW -> Risk -> ME ->
+/// Risk -> GW`, so a consumer derives whatever delta it wants
+/// (`engine = match_done_ns minus me_in_ns`, `internal =
+/// gw_out_ns minus gw_in_ns`) without a bespoke sidecar frame.
+/// A duration measured within one host is always valid; a
+/// cross-hop subtraction assumes clock-synced hosts (true under
+/// PTP in production, trivially true on a single-box dev
+/// setup). An unset field is `0` — consumers must treat `0` as
+/// "unset", not as a real timestamp.
+///
+/// `gw_in_ns` (generalised from the former `taker_ts_ns`) is
+/// the taker order's gateway-ingress timestamp (echoed from
+/// `OrderRequest.timestamp_ns`). Older WAL records may have
+/// this slot as uninitialized memory; consumers must validate
+/// (non-zero + plausible epoch) and fall back to `ts_ns` if
+/// invalid.
+///
+/// `risk_in_ns` is always `0` today: the risk tile's ingress
+/// timestamp cannot reach this record without growing the
+/// risk->ME wire struct (`OrderMessage`, exactly 64 bytes, zero
+/// spare capacity) — a separate, not-yet-authorized wire
+/// change. See ARCHITECTURE.md / the 59-latency-observability
+/// increment-2 notes.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
@@ -69,7 +88,12 @@ pub struct FillRecord {
     pub tif: u8,
     pub post_only: u8,
     pub _pad1: [u8; 4],
-    pub taker_ts_ns: u64,
+    pub gw_in_ns: u64,
+    /// Always 0 today — see struct doc.
+    pub risk_in_ns: u64,
+    pub me_in_ns: u64,
+    pub match_done_ns: u64,
+    pub gw_out_ns: u64,
 }
 
 impl CastRecord for FillRecord {
@@ -84,7 +108,7 @@ impl CastRecord for FillRecord {
     }
 }
 
-const _: () = assert!(mem::size_of::<FillRecord>() == 128);
+const _: () = assert!(mem::size_of::<FillRecord>() == 128); // unchanged: new fields fill former tail padding
 const _: () = assert!(mem::align_of::<FillRecord>() == 64);
 
 /// BboRecord (64-byte aligned)
