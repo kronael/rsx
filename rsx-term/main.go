@@ -5,7 +5,7 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -92,11 +92,39 @@ type liveConfig struct {
 	symbolID  uint32
 }
 
-// runLive is the live gateway + marketdata path. Increment 4 replaces this
-// body with real WS conns feeding the model; for now it is a stub so the
-// binary fails fast instead of hanging on a missing gateway.
+// runLive builds a LiveGateway from cfg, connects both sockets, and runs
+// the model over it. The connection's own goroutines (one per socket, see
+// conn.LiveGateway) decode/fold wire frames into messages on Events();
+// drainEvents is the only extra goroutine main.go adds, mirroring feedDemo.
 func runLive(cfg liveConfig) error {
-	return errors.New("live gateway/marketdata conns land in increment 4 — run with RSX_GW_URL=mock")
+	live := conn.NewLiveGateway(cfg.gwURL, cfg.mdURL, cfg.jwtSecret, cfg.userID, cfg.symbolID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := live.Connect(ctx); err != nil {
+		return err
+	}
+	defer live.Close()
+
+	model := ui.New(ui.Config{
+		Symbol:     Symbol,
+		SymbolID:   cfg.symbolID,
+		Endpoint:   cfg.gwURL,
+		MdEndpoint: cfg.mdURL,
+		Sub:        live,
+	})
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	go drainEvents(p, live.Events())
+	_, err := p.Run()
+	return err
+}
+
+// drainEvents forwards every message the live connection decodes into the
+// running program, mirroring feedDemo's role for the offline path.
+func drainEvents(p *tea.Program, events <-chan any) {
+	for msg := range events {
+		p.Send(msg)
+	}
 }
 
 // envOr returns the env var value, or def when unset or empty.
