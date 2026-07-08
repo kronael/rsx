@@ -44,10 +44,18 @@ def page() -> str:
       selectionBackground: "#334155"
     }
   });
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type === "keydown") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return true;
+  });
   const fit = window.FitAddon ? new FitAddon.FitAddon() : null;
   if (fit) term.loadAddon(fit);
   term.open(el);
   if (fit) fit.fit();
+  term.focus();
 
   const url = new URL("./ws/terminal", window.location.href);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -67,6 +75,7 @@ def page() -> str:
   ws.addEventListener("open", () => {
     status.textContent = "connected";
     resize();
+    term.focus();
   });
   ws.addEventListener("message", (event) => {
     term.write(event.data);
@@ -82,6 +91,17 @@ def page() -> str:
       ws.send(JSON.stringify({type: "input", data}));
     }
   });
+  function editable(target) {
+    if (!target) return false;
+    const tag = target.tagName || "";
+    return target.isContentEditable ||
+      tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+  el.addEventListener("pointerdown", () => term.focus());
+  document.addEventListener("keydown", (event) => {
+    if (!editable(event.target)) term.focus();
+  }, true);
+  window.addEventListener("focus", () => term.focus());
   window.addEventListener("resize", resize);
 })();
 </script>'''
