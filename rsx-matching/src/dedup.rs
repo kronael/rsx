@@ -1,16 +1,16 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
-const DEDUP_WINDOW: Duration = Duration::from_secs(300);
+const DEDUP_WINDOW: Duration = Duration::from_secs(3600);
 const DEDUP_CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Dedup key: (user_id, order_id_hi, order_id_lo)
 type Key = (u32, u64, u64);
 
 pub struct DedupTracker {
-    seen: FxHashMap<Key, ()>,
+    seen: FxHashSet<Key>,
     pruning_queue: VecDeque<(Key, Instant)>,
     last_cleanup: Instant,
 }
@@ -24,7 +24,7 @@ impl Default for DedupTracker {
 impl DedupTracker {
     pub fn new() -> Self {
         Self {
-            seen: FxHashMap::default(),
+            seen: FxHashSet::default(),
             pruning_queue: VecDeque::new(),
             last_cleanup: Instant::now(),
         }
@@ -33,10 +33,9 @@ impl DedupTracker {
     /// Returns true if duplicate (already seen).
     pub fn check_and_insert(&mut self, user_id: u32, order_id_hi: u64, order_id_lo: u64) -> bool {
         let key = (user_id, order_id_hi, order_id_lo);
-        if self.seen.contains_key(&key) {
+        if !self.seen.insert(key) {
             return true;
         }
-        self.seen.insert(key, ());
         self.pruning_queue.push_back((key, Instant::now()));
         false
     }
@@ -61,10 +60,9 @@ impl DedupTracker {
             return;
         }
         let key = (user_id, order_id_hi, order_id_lo);
-        if self.seen.contains_key(&key) {
+        if !self.seen.insert(key) {
             return;
         }
-        self.seen.insert(key, ());
         // `inserted_ago < DEDUP_WINDOW`, so the subtraction is small; guard
         // it anyway for a host with < DEDUP_WINDOW uptime (monotonic clock
         // can't represent the past instant) — fall back to now, which keeps
@@ -75,20 +73,12 @@ impl DedupTracker {
         self.pruning_queue.push_back((key, inserted_at));
     }
 
-    /// Prune entries older than 5 minutes.
-    /// Call periodically (every 10s).
+    /// Prune entries older than `DEDUP_WINDOW`. Call periodically (every 10s).
     pub fn maybe_cleanup(&mut self) {
         if self.last_cleanup.elapsed() < DEDUP_CLEANUP_INTERVAL {
             return;
         }
-        let cutoff = Instant::now() - DEDUP_WINDOW;
-        while let Some(&(key, ts)) = self.pruning_queue.front() {
-            if ts >= cutoff {
-                break;
-            }
-            self.pruning_queue.pop_front();
-            self.seen.remove(&key);
-        }
+        self.evict(Instant::now() - DEDUP_WINDOW);
         self.last_cleanup = Instant::now();
     }
 
@@ -100,8 +90,8 @@ impl DedupTracker {
         self.seen.is_empty()
     }
 
-    /// Force cleanup with custom cutoff (bench/test).
-    pub fn cleanup_with_cutoff(&mut self, cutoff: Instant) {
+    /// Evict entries inserted before `cutoff`.
+    pub fn evict(&mut self, cutoff: Instant) {
         while let Some(&(key, ts)) = self.pruning_queue.front() {
             if ts >= cutoff {
                 break;
@@ -113,70 +103,5 @@ impl DedupTracker {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn new_order_not_duplicate() {
-        let mut d = DedupTracker::new();
-        assert!(!d.check_and_insert(1, 0, 1));
-        assert_eq!(d.len(), 1);
-    }
-
-    #[test]
-    fn same_order_is_duplicate() {
-        let mut d = DedupTracker::new();
-        assert!(!d.check_and_insert(1, 0, 1));
-        assert!(d.check_and_insert(1, 0, 1));
-    }
-
-    #[test]
-    fn different_user_not_duplicate() {
-        let mut d = DedupTracker::new();
-        assert!(!d.check_and_insert(1, 0, 1));
-        assert!(!d.check_and_insert(2, 0, 1));
-    }
-
-    #[test]
-    fn different_order_id_not_duplicate() {
-        let mut d = DedupTracker::new();
-        assert!(!d.check_and_insert(1, 0, 1));
-        assert!(!d.check_and_insert(1, 0, 2));
-    }
-
-    #[test]
-    fn seed_respects_window() {
-        let mut d = DedupTracker::new();
-        // Seeded inside the window: a later resend is a duplicate.
-        d.seed(1, 0, 1, DEDUP_WINDOW - Duration::from_secs(1));
-        assert!(d.check_and_insert(1, 0, 1), "in-window seed → duplicate");
-        // Seeded at/after the window: skipped, so not a duplicate.
-        d.seed(2, 0, 2, DEDUP_WINDOW);
-        assert!(
-            !d.check_and_insert(2, 0, 2),
-            "expired seed → not a duplicate",
-        );
-    }
-
-    #[test]
-    fn cleanup_removes_old_entries() {
-        let mut d = DedupTracker::new();
-        assert!(!d.check_and_insert(1, 0, 1));
-        assert_eq!(d.len(), 1);
-        // Force cleanup with future cutoff
-        d.cleanup_with_cutoff(Instant::now() + Duration::from_secs(1));
-        assert_eq!(d.len(), 0);
-        // No longer duplicate after pruning
-        assert!(!d.check_and_insert(1, 0, 1));
-    }
-
-    #[test]
-    fn cleanup_preserves_recent() {
-        let mut d = DedupTracker::new();
-        assert!(!d.check_and_insert(1, 0, 1));
-        // Cutoff in the past: nothing to prune
-        d.cleanup_with_cutoff(Instant::now() - Duration::from_secs(1));
-        assert_eq!(d.len(), 1);
-        assert!(d.check_and_insert(1, 0, 1));
-    }
-}
+#[path = "dedup_test.rs"]
+mod dedup_test;

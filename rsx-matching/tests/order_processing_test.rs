@@ -132,7 +132,7 @@ fn new_order_after_dedup_window_accepted() {
     assert!(!dedup.check_and_insert(1, 0, 42));
     assert!(dedup.check_and_insert(1, 0, 42));
     // Force cleanup with future cutoff
-    dedup.cleanup_with_cutoff(Instant::now() + Duration::from_secs(1));
+    dedup.evict(Instant::now() + Duration::from_secs(1));
     assert_eq!(dedup.len(), 0);
     // Same ID now accepted again
     assert!(!dedup.check_and_insert(1, 0, 42));
@@ -147,14 +147,14 @@ fn dedup_exact_boundary() {
     // Test 1: Entry just inserted, cleanup with future cutoff
     // should prune the entry (future cutoff means keep nothing)
     let future = t0 + Duration::from_secs(300);
-    dedup.cleanup_with_cutoff(future);
+    dedup.evict(future);
     assert_eq!(dedup.len(), 0, "future cutoff prunes all entries");
 
     // Test 2: Entry just inserted, cleanup with past cutoff
     // should keep the entry (past cutoff means keep recent entries)
     assert!(!dedup.check_and_insert(1, 0, 100));
     let past = Instant::now() - Duration::from_secs(1);
-    dedup.cleanup_with_cutoff(past);
+    dedup.evict(past);
     assert_eq!(dedup.len(), 1, "past cutoff keeps recent entries");
     assert!(dedup.check_and_insert(1, 0, 100));
 }
