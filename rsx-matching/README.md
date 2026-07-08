@@ -8,7 +8,8 @@ symbol. It takes orders from Risk, matches them against the book
 Marketdata what happened — the full accept path (dedup, WAL accept,
 match, event write, index) in **266 ns**, about **3.6M orders/s**,
 with the match itself flat in book depth (~30 ns at 1 or 100k resting
-orders). Numbers and method: [ARCHITECTURE.md](ARCHITECTURE.md).
+orders). The 266 ns is one fill that leaves the BBO unchanged; an accept
+that moves the best price writes one more WAL record. Numbers and method: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## What It Does
 

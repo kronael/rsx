@@ -58,7 +58,7 @@ pinned to core 2).
 | `dedup/hit_duplicate` | 3.7 ns | duplicate order rejected |
 | `dedup/insert_new` | 147 ns | FxHashMap insert |
 | `wal_events/append_1_fill` | 84 ns | serialize 1 fill (no fsync) |
-| `me_accept_path/full` | **266 ns** | full accept: dedup + WAL accept + match + WAL events + index, 1 fill |
+| `me_accept_path/full` | **266 ns** | full accept: dedup + WAL accept + match + WAL events + index; one fill, BBO unchanged (a BBO-moving accept adds one WAL record) |
 | `me_throughput/orders` | 281 ns | ≈ **3.6M orders/s** (1 fill each) |
 | `wal_replay_30k_records` | 32.8 ms | ≈ 915k records/s cold replay |
 
@@ -200,7 +200,9 @@ changes live. On startup, the current version emits one
 matching loop is the lowest-latency stage of the system —
 ~266 ns p50 for the full accept path (dedup + WAL accept +
 match + WAL events + order-index update), per the 2026-07-03
-bench (`me_accept_path/full`; see Measured Performance).
+bench (`me_accept_path/full`; see Measured Performance). That
+scenario fills one lot without moving the BBO; an accept that
+changes the best price adds one WAL record.
 Network I/O multiplexing does not appear in the inner loop;
 the only sockets are one `CastReceiver` (orders in) and two
 `CastSender`s (events to risk and marketdata). With nothing
