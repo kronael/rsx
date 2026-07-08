@@ -1,7 +1,7 @@
 use rsx_types::Side;
 use rsx_types::TimeInForce;
 
-/// Inbound order from risk engine via SPSC ring.
+/// Inbound order from the risk engine, received over casting/UDP.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct OrderMessage {
