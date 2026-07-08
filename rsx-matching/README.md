@@ -98,7 +98,7 @@ See `specs/2/41-testing-matching.md`.
 - Config updates are polled from Postgres every 10 minutes,
   not pushed. There is a delay between config change and
   application.
-- Dedup window is 5 minutes. Retries after 5 minutes will
+- Dedup window is 1 hour. Retries after 1 hour will
   be treated as new orders.
 - WAL flush is every 10ms. Events are not durable until
   the next flush.
