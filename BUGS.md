@@ -5,27 +5,23 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## Status — 2026-07-08 — live latency legs not stamped (rsx-term speed strip)
 
-The terminal's ⚡ speed/telemetry views are built for the full three-leg
-round-trip (net / internal / engine) and the webproto `Latency` message
-(`49-webproto.md`, field 8) + Go decoder already exist. On the **mock** all
-three legs are real; **live**, only `net` (client-measured) populates — the
-server never stamps the other two. The terminal shows them as marked
-placeholders pointing here. Two server tasks make them real:
+Design settled → **`specs/2/59-latency-observability.md`** (planned). The
+live internal/engine legs are delivered by **per-hop timestamps embedded in
+the normal records** (not a bespoke delta frame), derived under assumed clock
+sync (PTP in prod, single-box in dev); the client `net` leg stays
+client-measured. Aggregate latency is Prometheus via the existing
+`33-telemetry.md` Vector pipeline, not hand-rolled. The two tasks below are
+now increments of spec 59:
 
-- **GW-STAMP-LATENCY-LIVE** (feature) — the gateway does not send a
-  `Latency` frame to the client on an order round-trip; it only has an
-  internal `latency_sample!` log trace (`rsx-gateway/src/handler.rs:301`).
-  Fix: measure the casting round-trip (Instant from casting-send of the
-  order to casting-recv of the response) and emit a `Latency{cid,
-  internal_ns}` webproto frame. internal_ns is fully measurable at the
-  gateway — no other component needed. Makes the live `internal` leg real.
-- **ME-ENGINE-LATENCY-NOT-REPORTED** (feature) — `engine_ns` (ME match +
-  risk processing, the slice *inside* the internal window) is not stamped
-  into the returned record, so the gateway can't populate the engine leg.
-  Fix: have ME/risk record their processing duration into a record field
-  the gateway reads (the `latency-trace` feature already measures per-stage
-  ns internally — surface it on the response record). Makes the live
-  `engine` leg real. Depends on GW-STAMP-LATENCY-LIVE for the transport.
+- **GW-STAMP-LATENCY-LIVE** (feature, spec 59 inc 1-2) — gateway stamps
+  `gw_in_ns`/`gw_out_ns` into the returned record (generalising
+  `taker_ts_ns`); today it only logs a `latency_sample!` trace
+  (`rsx-gateway/src/handler.rs:301`). With the risk/ME stamps present the
+  terminal derives `internal = gw_out − gw_in` itself.
+- **ME-ENGINE-LATENCY-NOT-REPORTED** (feature, spec 59 inc 2) — ME stamps
+  `me_in_ns`/`match_done_ns` (reusing the `latency-trace` per-stage
+  measurement — a within-host duration, no clock-sync needed for this leg);
+  risk stamps `risk_in_ns`. Terminal derives `engine = match_done − me_in`.
 
 ## Status — 2026-07-08 — rsx-matching release CTO review (see .ship/41-MATCHING-RELEASE/CTO-REPORT.md)
 
