@@ -219,54 +219,13 @@ with a protobuf-over-QUIC feed (`rsx-tui`) planned.
 
 Measured at commit `7a6846a`, 6-core box, no core isolation, debug
 vs release noted. The sub-10 µs *network* target is aspirational — the
-in-process floor is there, the cross-process path isn't yet. Full method
-+ curves: [reports/20260530_load-curves.md](reports/20260530_load-curves.md).
+in-process floor is there, the cross-process path isn't yet. Read
+top-down: the whole system first, then the cost between components, then
+inside each. Only the notable numbers are here — the deep per-component
+tables live in the crate READMEs. Full method + curves:
+[reports/20260530_load-curves.md](reports/20260530_load-curves.md).
 
-### (A) Components under load — service time, fastest first
-
-Closed-loop service time (the CPU cost of the work; no queue). Each part
-absorbs the offered rate in the left column until it saturates.
-
-| Part | sustained | p50 | p99 |
-|---|---:|---:|---:|
-| Risk: reject (not-in-shard) | 96 M/s | 30 ns | 40 ns |
-| Orderbook: match, touch stays resting (book 100–10M deep) | — | 60-65 ns | — |
-| Orderbook: match that CLEARS the touch level | — | 145 ns | — |
-| Risk: reject (insufficient margin) | 26 M/s | 50 ns | 90 ns |
-| Risk: accept order (0 open/user) | 10.0 M/s | 110 ns | 181 ns |
-| ME: full accept (dedup + WAL + match + events + index) | — | 205 ns | — |
-| Risk: accept order (64 open/user) | 5.2 M/s | 191 ns | 321 ns |
-| Risk: process fill (hot users) | 4.8 M/s | 200 ns | 351 ns |
-| Risk: accept order (512 open/user) | 1.1 M/s | 852 ns | 1313 ns |
-
-The orderbook match holds **~60-65 ns p50 whether the book has 100, 1M, or
-10M resting orders** — the compressed slab + occupancy bitmap
-(`rsx-book/src/occupancy.rs`) make level lookup and next-best-level find
-O(depth=3), not O(book size). That "O(1) in depth" claim covers the
-match/next-best primitive specifically — matching a marketable order and,
-when it clears the touch level, finding the new best level (145 ns, still
-depth-invariant). It does NOT cover every op: FOK's fill-or-kill
-feasibility check is a separate full-book scan, still O(N) (bugs.md
-`FOK-AVAILABLE-LIQUIDITY-ON-SCAN`). Risk accept cost scales with a user's
-*open-order* count (the frozen-margin sum), shown by the depth sweep.
-**Load curve** (open-loop, no coordinated omission): the risk shard holds
-flat **~0.16 µs p50 up to ~4 M orders/s** offered, then knees at **~6 M/s**
-(accept ratio → 91%, p99 → 34 ms, backlog unbounded). Under persist
-backpressure the fill path **stalls, never drops**.
-
-### (B) Network stack — rsx-cast, loopback, pinned
-
-| Hop | p50 |
-|---|---:|
-| One-way (`CastSender::send` → `try_recv`) | 3.89 µs |
-| Round-trip echo (2 hops) | 7.60 µs |
-
-Loopback only — a real NIC adds IRQ + driver tx/rx. ~99% of this is the
-`sendto`/`recvfrom` syscall, which the io_uring move targets (see end).
-Wire microbenchmarks (release): WAL append 31 ns, Nak/Heartbeat encode
-43 ns, Fill encode 23 ns, decode 9 ns; SPSC ring hop 50–170 ns.
-
-### (C) Whole exchange GW→ME→GW — single stream
+### Whole exchange — GW→ME→GW
 
 | Path | p50 | p99 | note |
 |---|---:|---:|---|
@@ -275,14 +234,42 @@ Wire microbenchmarks (release): WAL append 31 ns, Nak/Heartbeat encode
 | REST `/health` (fresh conn) | ~115 µs | ~1.4 ms | measured |
 | **Target: <50 µs GW→ME→GW** | — | — | **aspirational** |
 
-Risk pre-trade (<5 µs budget) and ME match (<500 ns budget) are now
-*genuinely* met in the component numbers above (110 ns accept, 205 ns full
-accept, 145 ns even when a match clears the touch level) — before the
-occupancy-bitmap fix (`da9a2b4`, 2026-07-04) the <500 ns match budget was
-only met on the path that never clears a level; clearing one cost
-32-120 µs (bugs.md `MATCHING-BENCH-ORDERTYPE-FIXTURE`, now fixed). The
-open gap is the cross-process whole-e2e path. Parallel/flood whole-e2e is
-blocked by `ME-FAULTED-NO-REPLAY-ADDR` (bugs.md) — single-stream only.
+The 7.5 µs in-process floor is transport-bound; the open gap is the
+cross-process whole-e2e path. The per-stage budgets — Risk pre-trade
+<5 µs, ME match <500 ns — are genuinely met inside the components
+(below). Parallel/flood whole-e2e is still blocked by
+`ME-FAULTED-NO-REPLAY-ADDR` (BUGS.md), so these are single-stream.
+
+### Between components — rsx-cast, loopback
+
+| Hop | p50 |
+|---|---:|
+| One-way (`CastSender::send` → `try_recv`) | 3.89 µs |
+| Round-trip echo (2 hops) | 7.60 µs |
+
+Loopback only — a real NIC adds IRQ + driver tx/rx. **~99% is the
+`sendto`/`recvfrom` syscall**, which the io_uring move targets. Wire
+encode/decode is tens of ns (Fill encode 23 ns / decode 9 ns, WAL append
+31 ns); an SPSC ring hop inside a tile is 50–170 ns.
+
+### Inside each component — service time
+
+Closed-loop CPU cost, no queue; the most notable only. Full per-op tables,
+depth sweeps, and load curves are in the crate READMEs
+([rsx-book](rsx-book/README.md), [rsx-matching](rsx-matching/README.md),
+rsx-risk).
+
+| Op | p50 |
+|---|---:|
+| Orderbook match — **~60 ns at any depth** (100 → 10M resting) | 60–65 ns |
+| ME full accept (dedup + WAL + match + events + index) | 205 ns |
+| Risk accept order (0 open/user) | 110 ns |
+
+The orderbook match holds ~60 ns whether the book has 100 or 10M resting
+orders — the compressed slab + occupancy bitmap make level lookup and
+next-best-find O(depth=3), not O(book size). Risk accept cost scales with
+a user's open-order count (the frozen-margin sum), and under persist
+backpressure the fill path stalls rather than drops.
 
 ## Reading the code
 
