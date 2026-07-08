@@ -23,6 +23,10 @@ pub const REASON_CANCELLED: u8 = 1;
 pub const FAIL_VALIDATION: u8 = 0;
 pub const FAIL_REDUCE_ONLY: u8 = 1;
 pub const FAIL_FOK: u8 = 2;
+/// Duplicate order (ME dedup). Detected in `rsx-matching` before the book,
+/// but its `OrderFailedRecord.reason` code lives in this one namespace so
+/// no future `FAIL_*` value silently aliases it.
+pub const FAIL_DUPLICATE: u8 = 3;
 
 pub const CANCEL_USER: u8 = 0;
 pub const CANCEL_REDUCE_ONLY: u8 = 1;
