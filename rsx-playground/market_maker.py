@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 import aiohttp
 import jwt as pyjwt
 
+import md_wire
+
 _STATUS_FILE = (
     Path(__file__).resolve().parent.parent / "tmp" / "maker-status.json"
 )
@@ -258,9 +260,13 @@ class DummyMarketMaker:
                         async for msg in ws:
                             if not self._running:
                                 break
-                            if msg.type != aiohttp.WSMsgType.TEXT:
+                            # Feed is protobuf MdFrame over BINARY frames;
+                            # md_wire.decode yields the legacy dict shape.
+                            if msg.type != aiohttp.WSMsgType.BINARY:
                                 continue
-                            data = json.loads(msg.data)
+                            data = md_wire.decode(msg.data)
+                            if data is None:
+                                continue
                             if "BBO" in data:
                                 bbo = data["BBO"]
                                 sym = bbo[0]

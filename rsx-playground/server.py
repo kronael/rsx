@@ -37,6 +37,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 
 import cast_demo
+import md_wire
 import pages
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -216,11 +217,15 @@ async def _md_ws_subscriber():
                         heartbeat_loop())
 
                     async for msg in ws:
-                        if msg.type != aiohttp.WSMsgType.TEXT:
+                        # Feed is protobuf MdFrame over BINARY frames;
+                        # md_wire.decode returns the legacy JSON dict shape.
+                        if msg.type != aiohttp.WSMsgType.BINARY:
                             continue
                         try:
-                            frame = json.loads(msg.data)
+                            frame = md_wire.decode(msg.data)
                         except Exception:
+                            continue
+                        if frame is None:
                             continue
                         # L2 snapshot: {"B":[sym,[[px,qty,cnt],...],
                         #               [[px,qty,cnt],...],ts,seq]}
@@ -8318,7 +8323,11 @@ async def ws_public_proxy(ws: WebSocket):
                     nonlocal close_code, close_reason
                     try:
                         async for msg in upstream:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
+                            # Feed is protobuf over BINARY frames; forward
+                            # them as-is (TEXT kept for control/echo parity).
+                            if msg.type == aiohttp.WSMsgType.BINARY:
+                                await ws.send_bytes(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.TEXT:
                                 await ws.send_text(msg.data)
                             elif msg.type == aiohttp.WSMsgType.CLOSE:
                                 close_code = msg.data
