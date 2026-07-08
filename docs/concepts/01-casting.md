@@ -50,7 +50,7 @@ bytes. The sender keeps a 4096-entry ring of recent frames; the
 receiver a 2048-entry reorder buffer. A gap (`seq = N+2` after `N`)
 fires a NAK naming the missing seq; the sender retransmits from its
 ring, or — if the ring already wrapped — seeks the WAL on disk (the
-retransmit horizon is WAL retention, ~10 min on the hot tier). Idle
+retransmit horizon is WAL retention, ~4 h on the hot tier). Idle
 streams stay detectable via a 100 ms heartbeat carrying the highest
 seq; on busy streams the arriving seq is the liveness signal and
 heartbeats are suppressed. NAKs are debounced (50 ms/gap) and
