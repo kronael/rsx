@@ -56,56 +56,66 @@ together they show how an exchange is wired end-to-end.
 
 ## Components worth studying
 
-Each is a separate process or crate, built and tested (per-crate
-status in PROGRESS.md). Maturity is marked per component:
-**finalized** — API frozen, bugfixes only, safe to build on;
-**release candidate** — benched, demoed, and settling, the shape
-won't change much; **in development** — working but still being
-reshaped. Why each one repays a read:
+Each is a separate crate or process, built and tested (per-crate
+status in PROGRESS.md). Maturity: **finalized** — API frozen,
+bugfixes only, safe to build on; **release candidate** — benched,
+demoed, and settling; **in development** — working but still being
+reshaped. Libraries first, then the processes that run on them —
+each with the problem it solves.
 
-- **`rsx-cast` — log-backed reliable UDP transport.**
-  *Finalized: API frozen, bugfixes only.* The
-  load-bearing trick: the wire bytes, the on-disk WAL bytes,
-  and the TCP replay-stream bytes are *the same bytes* —
-  `repr(C)` records, no serialization step. Domain-agnostic
-  (`cargo tree -p rsx-cast --edges normal | grep rsx-` is
-  empty), so any project wanting 50-µs-class messaging without
-  Kafka can lift it. NAK gap-recovery + idle-only heartbeats;
-  slow consumers recover via TCP replay, never by stalling the
-  producer. [specs/2/4-cast.md](specs/2/4-cast.md),
-  [rsx-cast/README.md](rsx-cast/README.md).
-- **`rsx-matching` — the matching engine.** *Release
-  candidate.* Single-threaded,
-  core-pinned, bare busy-spin, zero heap on the hot path —
-  54 ns per single fill. Read it for how a price-time-priority
-  book runs with no allocation, no locks, no async runtime.
-  [specs/2/21-orderbook.md](specs/2/21-orderbook.md).
+**Libraries**
+
 - **`rsx-book` — slab + CompressionMap orderbook.** *Release
-  candidate.* 65 536
-  pre-allocated `OrderSlot`s per symbol; sparse-to-dense price
-  compression via five distance-based zones (1:1 near mid, up
-  to 1000:1 far). How you fit a 20M-level book in ~15 MB and
-  look a price up in 2–5 ns.
-- **`rsx-risk` — per-user-shard risk tile.** *Release
-  candidate.* The full tile
-  arrangement: one core-pinned busy-spin loop, SPSC rings, and
-  a tokio sidecar for Postgres write-behind *off* the hot path.
-  The cross-margin check iterates positions via a zero-alloc
-  index iterator. How to keep solvency-critical state in RAM on
-  the critical path while persisting asynchronously.
-  [specs/2/28-risk.md](specs/2/28-risk.md).
+  candidate.* The problem: keep a limit-order book fast when it
+  already holds millions of resting orders — the naive structures
+  slow down as they fill. 65 536 pre-allocated `OrderSlot`s per
+  symbol and a sparse-to-dense price compression (five distance
+  zones, 1:1 near mid up to 1000:1 far) fit a 20M-level book in
+  ~15 MB, match in ~60 ns at any depth, and look a price up in
+  2–5 ns. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
+  [rsx-book/README.md](rsx-book/README.md).
+- **`rsx-cast` — log-backed reliable UDP transport.**
+  *Finalized.* The problem: reliable, low-latency messaging
+  without a broker. The trick: the wire bytes, the on-disk WAL
+  bytes, and the TCP replay-stream bytes are *the same bytes* —
+  `repr(C)` records, no serialization step. Domain-agnostic
+  (`cargo tree -p rsx-cast --edges normal | grep rsx-` is empty),
+  so any project wanting 50-µs-class messaging without Kafka can
+  lift it; NAK gap-recovery + idle heartbeats let a slow consumer
+  recover via TCP replay instead of stalling the producer.
+  [specs/2/4-cast.md](specs/2/4-cast.md),
+  [rsx-cast/README.md](rsx-cast/README.md).
+
+**Processes**
+
+- **`rsx-matching` — the matching engine.** *Release candidate.*
+  The problem: pair orders with strict price-time priority as fast
+  as a single core can go (a symbol is one market — its book can't
+  be sharded, so the match itself is the ceiling). One process per
+  symbol, single-threaded, core-pinned, bare busy-spin, zero heap
+  on the hot path — 54 ns per fill, no allocation, no locks, no
+  async runtime. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
+  [rsx-matching/README.md](rsx-matching/README.md).
+- **`rsx-risk` — per-user-shard risk engine.** *Release
+  candidate.* The problem: keep solvency-critical margin state in
+  RAM on the order critical path while still persisting it durably.
+  One core-pinned busy-spin loop with SPSC rings and a tokio
+  sidecar for Postgres write-behind *off* the hot path; the
+  cross-margin check iterates positions via a zero-alloc index
+  iterator. [specs/2/28-risk.md](specs/2/28-risk.md).
 - **`rsx-gateway` — WebSocket ingress + cast bridge.** *In
-  development.* monoio /
-  io_uring for many concurrent WS fds, a hardened JWT
-  handshake, then a bridge onto the cast/UDP hot path. Where
-  async I/O multiplexing belongs vs where a pinned tile does.
+  development.* The problem: absorb many concurrent client
+  connections without slowing the hot path. monoio/io_uring for
+  many WS fds, a hardened JWT handshake, then a bridge onto the
+  cast/UDP hot path — where async I/O multiplexing belongs versus
+  where a pinned loop does.
   [specs/2/20-network.md](specs/2/20-network.md).
-- **`rsx-marketdata` — shadow book + fan-out.** *In
-  development.* monoio, off the
-  order critical path; drains ME's casting firehose and fans
-  L2 / BBO / trades out to public subscribers. The keep-up
-  problem: a slow consumer here must never back-pressure
-  matching. [specs/2/16-marketdata.md](specs/2/16-marketdata.md).
+- **`rsx-marketdata` — shadow book + fan-out.** *In development.*
+  The problem: fan market data out to the public without ever
+  back-pressuring matching. monoio, off the order critical path;
+  drains ME's casting firehose and fans L2 / BBO / trades to
+  subscribers, where a slow consumer must never stall the book.
+  [specs/2/16-marketdata.md](specs/2/16-marketdata.md).
 
 Supporting cast: `rsx-types` (fixed-point newtypes),
 `rsx-messages` (the wire records), `rsx-mark` (external feeds →
