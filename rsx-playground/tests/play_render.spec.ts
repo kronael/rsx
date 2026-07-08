@@ -15,7 +15,7 @@ import { waitForHTMX } from "./test_helpers";
 const NAV_PAGES = [
   "/overview", "/topology", "/book", "/risk", "/wal", "/logs",
   "/control", "/maker", "/faults", "/recovery", "/verify", "/orders",
-  "/stress", "/cast", "/latency", "/crates", "/components",
+  "/stress", "/terminal", "/cast", "/latency", "/crates", "/components",
 ];
 const NESTED_PAGES = [
   "/crate/rsx-cast", "/crate/rsx-matching", "/crate/rsx-cli",

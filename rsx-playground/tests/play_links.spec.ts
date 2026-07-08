@@ -15,7 +15,8 @@ import { test, expect, Page, APIRequestContext } from "@playwright/test";
 const NAV_PAGES = [
   "/", "/overview", "/topology", "/book", "/risk", "/wal", "/logs",
   "/control", "/maker", "/faults", "/recovery", "/verify", "/orders",
-  "/stress", "/cast", "/latency", "/docs", "/crates", "/components",
+  "/stress", "/terminal", "/cast", "/latency", "/docs", "/crates",
+  "/components",
 ];
 
 interface Link {
