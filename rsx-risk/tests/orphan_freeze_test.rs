@@ -1,5 +1,5 @@
-//! P0 tests for the orphan-freeze fix (bugs.md ORPHAN-FREEZE)
-//! and the WAL-replay freeze rebuild path.
+//! P0 tests for the orphan-freeze fix and the WAL-replay freeze
+//! rebuild path.
 //!
 //! The fix makes WAL `RECORD_ORDER_ACCEPTED` the sole authority
 //! for *durable* freezes: `process_order` keeps the in-memory
