@@ -13,14 +13,18 @@ real bugs are **mirror halves of the same missing symmetry** — each crate has
 the fix the other lacks. Record-only per triage. (SPSC/tile note: neither uses
 rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
 
-- **MD-EGRESS-STALL** (HIGH, latency) — **CONFIRMED (verified in code).**
-  `rsx-marketdata/src/handler.rs:40` blocks on `ws_read_frame(&mut stream)
-  .await` with NO timeout, so L2/BBO/trade messages queued into the per-client
-  `outbound` are only written when the client next SENDS a frame — a
-  listen-only client gets just the initial snapshot until its ~10 s heartbeat.
-  The gateway fixed exactly this at `handler.rs:129` (`monoio::time::timeout(
-  500µs, stream.readable(false))`). Port that bounded-readable loop to the
-  marketdata handler — it's the pure push-feed where it matters most.
+- **MD-EGRESS-STALL** (HIGH, latency) — **FIXED 2026-07-08** (`353b347`).
+  marketdata's handler blocked on `ws_read_frame` with no egress wake, so a
+  listen-only subscriber only got updates when it next sent a frame. Fixed
+  with the notify-based egress wake (below) — better than the originally
+  proposed bounded-poll port. A later fable analysis found the *gateway's*
+  own "500µs" poll was actually ~1–1.5 ms (monoio 0.2.4's timer wheel is
+  ms-granular and rounds up), so both gateway and marketdata got the
+  event-driven fix: a hand-rolled `!Sync` `EgressWaker` (`egress.rs` in each
+  crate), the per-conn handler `select!`s `{readable, egress.wait()}`, and
+  every `outbound.push_back` producer signals the waker. Zero extra cores,
+  cancel-safe (awaits readiness, not a buffered read). `+TCP_NODELAY` on
+  accept (`1ac4efa`). Commits `12de610` (gw) / `353b347` (md) / `1ac4efa`.
 - **GW-OUTBOUND-UNBOUNDED** (MED, resource/DoS) — CONFIRMED. `rsx-gateway/src/
   state.rs:144` (`push_to_user`) / `:152` (`broadcast_heartbeat`) `push_back`
   onto `outbound` with no cap; a slow/non-reading authed client accumulates
