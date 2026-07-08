@@ -39,7 +39,7 @@ specs. For *how fast it goes*, read the benchmark tables.
 - [fixed-point](06-fixed-point.md) — All prices and quantities are
   `i64` in smallest units. Float is wrong for an exchange.
 - [asymmetric-durability](07-asymmetric-durability.md) — Fills are
-  durable (fsync before forwarding). Orders are ephemeral (lost
+  durable (WAL-flushed, ≤10 ms loss bound). Orders are ephemeral (lost
   on crash; client retries). Positions are derived (replay fills
   to rebuild). Not all data deserves the same treatment.
 - [backpressure-not-drop](08-backpressure-not-drop.md) — When a

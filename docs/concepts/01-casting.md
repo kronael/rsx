@@ -8,10 +8,10 @@ a slow consumer stall the producer.
 ## WAL is wire is stream
 
 Most systems keep three representations of the same data — an
-in-memory struct, a wire encoding, a disk format — and pay to
-convert between them (FlatBuffers ~150 ns/message, hand-rolled
-msgpack ~80 ns). Across five hops (gateway → risk → matching → risk
-→ gateway) that adds up.
+in-memory struct, a wire encoding, a disk format — and pay a
+serialize/deserialize step to convert between them (tens to a few
+hundred ns per message, depending on the codec). Across five hops
+(gateway → risk → matching → risk → gateway) that adds up.
 
 Casting keeps **one** representation. Every record — fills, BBO
 updates, order events — is a `#[repr(C, align(64))]` struct with

@@ -33,13 +33,13 @@ team investigates the disk.
 
 SPSC rings are bounded by construction — `rtrb` ring buffers
 are fixed-size at creation. When a ring is full, the producer
-either spins waiting for space or sets a backpressure flag that
-suppresses further sends until the consumer drains the ring.
-Which behavior is chosen depends on the ring's criticality:
-the persist ring (risk → Postgres write-behind) stalls the hot
-path on full; BBO and mark-price rings drop newest on full
-and log a warning, because stale BBO is replaced by the next
-update anyway.
+stalls rather than dropping. Risk's rings all follow this rule:
+the persist ring (risk → Postgres write-behind), the accepted-
+order ring, and the order-response ring each check `is_full()`
+and back-pressure the hot loop instead of overwriting — there is
+no drop-newest path on the order flow. A full ring is surfaced
+as ring occupancy and producer stall time, the same signal the
+WAL buffer gives.
 
 ## Small buffers surface problems early
 

@@ -32,10 +32,13 @@ send syscall.
 SQPOLL moves submission polling into the kernel. The ring is created
 with `IORING_SETUP_SQPOLL`; a dedicated kernel thread watches the
 submission queue, so userspace can make SQEs visible without an
-`io_uring_enter` submit syscall. That is how the edge sustains a
-high event rate. The cost is blunt: the kernel thread busy-polls a
-core, so RSX should enable it only from the dedicated-core config,
-never from a manual "fast mode" flag.
+`io_uring_enter` submit syscall. That is how an edge sustains a high
+event rate. The cost is blunt: the kernel thread busy-polls a core,
+so RSX would enable it only from the dedicated-core config, never from
+a manual "fast mode" flag. Today gateway and marketdata build a plain
+monoio `FusionDriver` with no `uring_builder`; SQPOLL, multishot recv,
+registered buffers, and GSO below are the specced scaling ladder
+(`specs/2/56-network-edge-scaling.md`), not what ships now.
 
 SQPOLL is not the whole win. Pair it with multishot recv and
 registered/provided buffers: 1 recv submission can produce many

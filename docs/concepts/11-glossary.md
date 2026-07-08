@@ -37,7 +37,8 @@ page stays short on purpose.
   the `Orderbook::new` argument, often sized to tens of millions.
   → [slab-and-compression](05-slab-and-compression.md)
 - **CompressionMap** — distance-zone price→index compression (1:1 near
-  mid, up to 1000:1 far); a 20M-level book in ~15 MB. → [slab-and-compression](05-slab-and-compression.md), [spec 21-orderbook](../../specs/2/21-orderbook.md)
+  mid, up to 1000:1 far); collapses a 100M-slot address space to ~617k
+  price-level slots. → [slab-and-compression](05-slab-and-compression.md), [spec 21-orderbook](../../specs/2/21-orderbook.md)
 - **BBO** — best bid & offer (top of book): `bid_px / bid_qty / ask_px /
   ask_qty`. → [spec 16-marketdata](../../specs/2/16-marketdata.md)
 - **IOC / FOK / GTC** — time-in-force: immediate-or-cancel /
@@ -57,7 +58,8 @@ page stays short on purpose.
 ## Identifiers & ordering
 
 - **cid** — client order id, a 20-char string; the client's idempotency
-  key (dedup is persisted in the WAL on accept). → [spec 18-messages](../../specs/2/18-messages.md)
+  key, tracked at the gateway. The ME's own dedup key is `(user_id,
+  order_id)`, persisted in the WAL on accept. → [spec 18-messages](../../specs/2/18-messages.md)
 - **oid** — exchange order id, a UUIDv7 (16 bytes). → [spec 18-messages](../../specs/2/18-messages.md)
 - **seq** — per-stream monotonic sequence number on every WAL/cast record;
   gaps trigger FAULTED. → [spec 4-cast](../../specs/2/4-cast.md)
