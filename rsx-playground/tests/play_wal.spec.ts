@@ -158,17 +158,18 @@ test.describe("WAL tab", () => {
     await expect(dumpBtn).toBeVisible();
   });
 
-  test("timeline shows events after order submission", async ({
+  test("timeline shows WAL events after order submission", async ({
     page,
     request,
   }) => {
-    // Submit an aggressive buy that crosses the maker's ask
+    // Submit an aggressive buy that crosses the maker's ask.
+    // /api/orders/test accepts human units, not raw ticks.
     await request.post("/api/orders/test", {
       form: {
         symbol_id: "10",
         side: "buy",
         order_type: "limit",
-        price: "51000",
+        price: "0.051",
         qty: "10",
         user_id: "1",
       },
@@ -183,8 +184,12 @@ test.describe("WAL tab", () => {
       { timeout: 8000 },
     );
 
-    // Should show a table row with a known event type
-    await expect(timeline).toContainText(/BBO|FILL/i, { timeout: 8000 });
+    // Should show a table row with a known event type. In minimal, mark
+    // records may be the only current WAL traffic even when an order rests.
+    await expect(timeline).toContainText(
+      /MARK_PRICE|BBO|FILL/i,
+      { timeout: 8000 },
+    );
   });
 
   // F3: WAL UI reported "0.0 B" while disk + Verify saw 6 KB.

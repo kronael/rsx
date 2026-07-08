@@ -120,6 +120,8 @@ test.describe("Overview tab", () => {
 // live harness; skipped when the dashboard is unreachable. Leaves
 // the cluster running (+ maker) so downstream shards find it up.
 test.describe("Start/Stop All buttons drive the cluster", () => {
+  test.skip(process.env.PW_LONG !== "1", "set PW_LONG=1 to run long destructive flows");
+
   test("click Build & Start All → 6/6, Stop All → 0", async ({
     page,
     request,
