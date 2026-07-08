@@ -3,6 +3,28 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — stale latency/size numbers across docs (concepts CTO review)
+
+Surfaced while reconciling `docs/concepts/*` to the code. Both are
+doc-vs-doc / doc-vs-code number drift, not runtime defects. The concept
+pages were corrected to the code; the *authoritative* docs below still
+carry the stale figures. Record-only.
+
+- **DOC-RT-FLOOR-DRIFT** (LOW, docs) — the in-process round-trip floor is
+  stated three ways: `README.md:234` and the concept index say 7.5 µs p50 /
+  16.9 µs p99 ("measured"); `docs/benches.md:128` has `bench-match-rt` at
+  9.58 µs; `reports/20260703_cast-benches.md:13` has casting RTT *alone* at
+  8.802 µs p50 (which can't be under a full round-trip). The concept index
+  mirrors README per house rule (match the authoritative doc), so the fix is
+  to reconcile README ↔ benches.md ↔ the cast-bench report to one current,
+  dated number — not to edit the concept in isolation.
+- **DOC-PRICELEVEL-24B-STALE** (LOW, docs) — `specs/2/21-orderbook.md:309`
+  says `PriceLevel` is 24 B; the code is 32 B (`rsx-book/src/level.rs:20`,
+  `const _: assert!(size_of::<PriceLevel>() == 32)`), and `Orderbook::new`
+  allocates two arrays of them (active + staging), so ~40 MB of level
+  storage for the 617k-slot BTC-PERP example, not the ~15 MB the spec's math
+  implies. Concept page fixed; spec still stale.
+
 ## Status — 2026-07-08 — userspace-UDP blocked by cast socket coupling
 
 - **CAST-SOCKET-COUPLING-BLOCKS-IOURING** (roadmap, not a defect) — the
