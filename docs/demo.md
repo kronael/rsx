@@ -74,9 +74,9 @@ value is not safe for any internet-facing deploy.
   against your Postgres and that no stale `accounts.frozen_margin`
   column exists.
 - **Trade UI dot stays red** — the `/ws/private` proxy needs
-  `PLAYGROUND_ALLOW_INSECURE_USER_ID=1` (set by default in
-  the dev `start` script) to mint a guest JWT for the
-  unauthenticated Trade UI session.
+  `PLAYGROUND_ALLOW_INSECURE_USER_ID=1` (set by default in the
+  Playground dev path) to mint a guest JWT for the unauthenticated
+  Trade UI session.
 
 ## Security caveats (dev-only flags)
 

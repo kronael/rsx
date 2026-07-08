@@ -23,7 +23,7 @@ test.describe("Control tab", () => {
     await page.goto("/control");
     const scenarioSelect = page.locator("#scenario-select");
     await expect(scenarioSelect).toBeVisible();
-    await expect(scenarioSelect).toHaveValue("full");
+    await expect(scenarioSelect).toHaveValue("minimal");
   });
 
   test("scenario selector has all options", async ({ page }) => {

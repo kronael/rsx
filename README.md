@@ -286,6 +286,7 @@ git clone <repo-url> && cd rsx
 make prepare                              # one-time: venv + Playwright
 ./rsx-playground/playground demo minimal  # starts Playground + RSX
 # visit http://localhost:49171 to inspect processes, books, orders, WAL
+./rsx-playground/playground stop-all
 ./rsx-playground/playground stop
 ```
 
@@ -306,9 +307,10 @@ or lab runs where the operator controls isolated cores.
 | 4 | marketdata | hot path, pinned, monoio |
 | 5 | (spare headroom) | — |
 
-Pinning is wired in `start` (`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/
-`CORE_MD`). Off-path services (`mark`, `recorder`) sleep instead
-of spinning and stay unpinned.
+Optional pinning is wired in the Playground runtime plan
+(`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/`CORE_MD`) and enabled only for
+explicit lab/perf runs. Off-path services (`mark`, `recorder`) sleep
+instead of spinning and stay unpinned.
 
 Dedicated cores are a **latency** requirement, not a correctness
 one. On a small host you can share a core or skip pinning

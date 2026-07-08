@@ -332,8 +332,25 @@ def start_all(scenario="minimal"):
     if not resp:
         print("failed to start processes")
         return 1
+    if not _all_expected_processes_running():
+        return 1
     print(f"started {scenario} scenario")
     return 0
+
+
+def _all_expected_processes_running():
+    for _ in range(10):
+        procs = api_get("/api/processes")
+        if procs:
+            running = [p for p in procs if p.get("state") == "running"]
+            if len(running) == len(procs):
+                return True
+        time.sleep(0.5)
+    if not procs:
+        print("failed to verify process status")
+        return False
+    print(f"partial start: {len(running)}/{len(procs)} processes running")
+    return False
 
 
 def stop_all():
