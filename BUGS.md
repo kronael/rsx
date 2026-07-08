@@ -3,6 +3,29 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — eager recenter is a tail-latency spike (by design, revisit)
+
+- **RECENTER-EAGER-TAIL-SPIKE** (MED, latency/design — not a correctness bug) —
+  `maybe_recenter` → `Orderbook::recenter_now` migrates the whole book
+  **eagerly in one shot** (`rsx-book/src/migration.rs:254`,
+  `complete_migration_eager:236`). Cost is O(old slot count ≈ 617k for
+  BTC-PERP): it scans the old slot array, skips empty levels O(1), and remaps
+  the occupied ones — bounded by slot count, not order count, but still a
+  spike far above a 60 ns match, landing on whichever order triggers a >2.5%
+  mid drift (i.e. during volatility, when latency matters most). **Why eager:**
+  a lazy per-order `resolve_level(price)` scheme would let a marketable order's
+  crossing prices lie outside a partially-migrated band, so a half-migrated
+  book would miss crossing liquidity and break price-time priority
+  (`recenter_now` contract, `migration.rs:247`). The incremental
+  `migrate_batch` frontier walk exists but is test/non-live-only. **Fix (to
+  remove the spike):** a correct lazy/incremental migration for live matching —
+  either migrate only the crossing band eagerly and rest lazily on idle, or
+  make the matcher consult both old+new maps safely during the migration
+  window. Non-trivial ME change; needs a design + adversarial review before
+  code. Until then the engine trades a rare bounded spike for the correctness
+  guarantee. Concept page (`docs/concepts/05-slab-and-compression.md`) documents
+  the tradeoff honestly.
+
 ## Status — 2026-07-08 — stale latency/size numbers across docs (concepts CTO review)
 
 Surfaced while reconciling `docs/concepts/*` to the code. Both are

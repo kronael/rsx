@@ -107,14 +107,26 @@ price and one side per slot; that holds *only* at 1:1. So a stale mid
 is a correctness hazard, not just lost precision.
 
 Recentering is the guarantor. `should_recenter(mid)` fires once the mid
-drifts past half of zone 0's half-width; live matching then calls
-`recenter_now`, which rebuilds the map around the new mid and migrates
-every resting order in one shot (the staging array is the swap target).
-`rsx-book` also has a lazy frontier-walk migration, but matching does
-not use it — lazy migration is not correct while the book is live. The
-invariant recentering protects: **the touch always sits in zone 0, at
-1:1 resolution.** That is what makes the compressed book correct — not
-an optimization on top of it.
+drifts past half of zone 0's half-width (a >2.5% move), so it is rare.
+Live matching then calls `recenter_now`, which swaps in a map rebuilt
+around the new mid and migrates the book **eagerly, in one shot** into
+the staging array. The cost is a scan of the old slot array (~617k
+slots), skipping empty levels in O(1) and remapping only the occupied
+ones — bounded by slot count, not order count, but still a spike far
+above a 60 ns match. That spike is the deliberate price of correctness.
+
+The eager choice is not laziness of implementation — `rsx-book` also has
+an incremental frontier-walk migration (`migrate_batch`), but live
+matching does not use it. The reason is in `recenter_now`'s own contract:
+a marketable order's crossing prices can lie *outside* a partially
+migrated band, so a half-migrated book would let the matcher miss
+unmigrated crossing liquidity and violate price-time priority. Eager
+migration removes the partial-book window entirely. A correct lazy scheme
+is possible but would have to make the matcher safe against the mixed
+old/new map during the window; today the engine trades a rare bounded
+spike for that guarantee. The invariant it protects: **the touch always
+sits in zone 0, at 1:1 resolution** — what makes the compressed book
+correct, not an optimization on top of it.
 
 ## Recovery: the book is derived
 
