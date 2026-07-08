@@ -60,11 +60,29 @@ struct MarkPriceRecord {
   mark_price: i64,     // fixed-point, same scale as Price
   source_mask: u32,    // bitmask of contributing sources
   source_count: u32,   // number of non-stale sources
-  _pad1: [u8; 24],     // align to 64 bytes
+  max_source_lag_ns: u32, // planned (see Observation freshness) — 0 until emitted
+  _pad1: [u8; 20],     // align to 64 bytes
 }
 ```
 
 This record is emitted to both WAL and casting/UDP.
+
+### Observation freshness (planned)
+
+A mark price is only as current as the exchange observations behind it: a
+consumer needs to know not just *when the mark was computed* (`ts_ns`) but
+*how far before that the inputs were observed*. `max_source_lag_ns` carries
+that — `ts_ns − min(timestamp_ns)` over the contributing sources, i.e. the
+worst-case observation age of any source in this mark ("this mark is based
+on data observed no more than X ago"). It fits the existing `_pad1` (additive,
+64-byte record size unchanged, `0` until the mark engine populates it).
+
+Downstream use: the risk margin fallback chain (§4) can weight a mark by its
+freshness rather than only its binary stale/non-stale flag, and the trade
+terminal surfaces it as the mark's staleness in its telemetry — the mark's
+analogue of the order-path and marketdata latency legs (`55-terminal.md`).
+
+This is a spec extension only; the mark engine is not yet updated to emit it.
 
 ### In-memory
 
