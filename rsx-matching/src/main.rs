@@ -899,24 +899,11 @@ fn process_cancel(
             return;
         }
     };
-    // order_index is kept in lockstep with the slab (updated on
-    // every OrderInserted/OrderDone, rebuilt on restore), so a
-    // present key always points at a live slot for this
-    // (user, oid). Assert that invariant in debug; trust it in
-    // release rather than silently swallowing the cancel.
-    let slot = book.orders.get(found);
-    debug_assert!(
-        slot.is_active()
-            && slot.user_id == user_id
-            && slot.order_id_hi == order_id_hi
-            && slot.order_id_lo == order_id_lo,
-        "order_index/slab drift: user={} id={:#x}/{:#x} handle={}",
-        user_id,
-        order_id_hi,
-        order_id_lo,
-        found,
-    );
-    let remaining_qty = slot.remaining_qty;
+    // order_index is kept in lockstep with the slab (updated on every
+    // OrderInserted/OrderDone, rebuilt on restore), so a present key
+    // always points at a live slot for this (user, oid). Snapshot the
+    // pre-cancel qty and BBA before the slot is freed.
+    let remaining_qty = book.orders.get(found).remaining_qty;
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
     let old_bid_px = book.best_bid_px;
@@ -924,7 +911,25 @@ fn process_cancel(
 
     book.event_len = 0;
 
-    book.cancel_order(found);
+    // Checked cancel re-validates the handle (capacity bound + active +
+    // matching (user, oid)) in rsx-book, not inline here. The lockstep
+    // invariant means it always succeeds; a false return is index/slab
+    // drift — trip the debug assert, and in release warn + swallow
+    // rather than emit cancel events for a slot we did not cancel.
+    let cancelled = book.cancel_order_checked(found, user_id, order_id_hi, order_id_lo);
+    debug_assert!(
+        cancelled,
+        "order_index/slab drift: user={} id={:#x}/{:#x} handle={}",
+        user_id, order_id_hi, order_id_lo, found,
+    );
+    if !cancelled {
+        warn!(
+            "cancel: order_index/slab drift \
+             user={} id={:#x}/{:#x} handle={}",
+            user_id, order_id_hi, order_id_lo, found,
+        );
+        return;
+    }
 
     book.emit(rsx_book::event::Event::OrderCancelled {
         handle: found,
