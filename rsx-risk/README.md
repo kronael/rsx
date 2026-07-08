@@ -88,7 +88,7 @@ target; there is no separate path:
 4. Once caught up, take the non-blocking per-shard advisory lock. Win → go
    `Live`; lose → stay a warm standby and retry.
 
-Moving a vshard between nodes (migration) reuses exactly this path.
+Moving a vshard between nodes reuses exactly this path.
 
 ## Internal architecture
 
