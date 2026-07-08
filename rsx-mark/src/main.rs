@@ -14,11 +14,13 @@ use rsx_mark::source::PriceSource;
 use rsx_mark::types::SourcePrice;
 use rsx_mark::types::SymbolMarkState;
 use rsx_types::install_panic_handler;
+use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,7 +53,7 @@ fn log_effective_mark_config(config: &MarkConfig) {
     }
 }
 
-fn run(config: &MarkConfig) -> io::Result<()> {
+fn run(config: &MarkConfig, shutdown: &AtomicBool) -> io::Result<()> {
     // Mark busy-spins (see main loop below) and MUST own a
     // dedicated core. Unpinned, it floats onto a hot-path
     // core (gateway/risk/ME) and starves it — the starved
@@ -182,6 +184,19 @@ fn run(config: &MarkConfig) -> io::Result<()> {
     info!("mark aggregator started");
 
     loop {
+        // SIGTERM/SIGINT: stop aggregating and persist the last
+        // durable buffer (final WAL flush) so a restart's replica
+        // resumes from the tip without a gap. Return Ok so main()
+        // exits cleanly instead of restarting.
+        if shutdown.load(Ordering::SeqCst) {
+            info!("shutdown signal received, flushing wal");
+            if let Err(e) = wal_writer.flush() {
+                warn!("mark: shutdown wal flush failed: {e}");
+            }
+            info!("mark aggregator shutdown complete");
+            return Ok(());
+        }
+
         // 1. Drain source rings
         for cons in consumers.iter_mut() {
             while let Ok(update) = cons.pop() {
@@ -288,8 +303,12 @@ fn main() {
     info!("mark aggregator starting, listen={}", config.listen_addr);
     log_effective_mark_config(&config);
 
+    // SIGTERM/SIGINT flip this flag; run() drains its WAL and
+    // returns Ok, so this loop exits cleanly (no restart).
+    let shutdown = install_shutdown_handler();
+
     loop {
-        match run(&config) {
+        match run(&config, shutdown) {
             Ok(()) => break,
             Err(e) => {
                 tracing::error!("crashed: {e}, restarting in 5s");
