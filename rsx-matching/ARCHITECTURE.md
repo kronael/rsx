@@ -82,13 +82,11 @@ round-trip is transport-bound (~4 casting hops), not compute-bound.
 
 ## Execution: a single pinned loop
 
-Matching has no tile structure — it is **one core-pinned
-thread running a loop, with no SPSC rings** (what
-`specs/2/45-tiles.md` §3.1 calls a "degenerate tile"; with no
-rings between tiles, it is just a loop). All work — casting
-I/O, dedup, matching, WAL append, casting fan-out — happens
-inline on the pinned core. No intra-process IPC, no
-cross-thread queues on the hot path.
+Matching is **one core-pinned thread running a loop, no SPSC
+rings** (the "degenerate tile" of `specs/2/45-tiles.md` §3.1).
+All work — casting I/O, dedup, matching, WAL append, casting
+fan-out — runs inline on the pinned core; nothing crosses a
+thread on the hot path.
 
 Pinning: `RSX_ME_CORE_ID` selects the core
 (`core_affinity::set_for_current`, `main.rs:195-200`).
@@ -208,9 +206,8 @@ the only sockets are one `CastReceiver` (orders in) and two
 `CastSender`s (events to risk and marketdata). With nothing
 to multiplex, the cheapest reactor is no reactor: one
 pinned thread, busy-spin, all work inline on the cache-warm
-core — a loop, not a tile (the "degenerate tile" of
-[`../specs/2/45-tiles.md`](../specs/2/45-tiles.md) §3.1: no
-SPSC rings, so no tile structure).
+core — a loop, not a tile (see "Execution: a single pinned
+loop" above).
 
 A tokio sidecar handles the cold path — `poll_scheduled_configs()`
 queries Postgres every 10 minutes for symbol config updates.
