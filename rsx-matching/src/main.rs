@@ -32,6 +32,7 @@ use rsx_messages::OrderMessage;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::install_panic_handler;
+use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use rsx_types::Price;
@@ -43,7 +44,6 @@ use std::env;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
@@ -513,20 +513,8 @@ fn main() {
     // replay_wal_after_snapshot when applicable. After this
     // point only the live event loop mutates them.
 
-    // Graceful shutdown: SIGTERM/SIGINT flips the flag,
-    // the main loop notices and drains the WAL writer
-    // before exiting. Required so a parent process leaves
-    // the active WAL persisted (spec invariant 7) — the
-    // panic handler is left untouched so real crashes
-    // still surface.
-    static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-    extern "C" fn on_signal(_: libc::c_int) {
-        SHUTDOWN.store(true, Ordering::SeqCst);
-    }
-    unsafe {
-        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
-    }
+    // SIGTERM/SIGINT flip this flag; the loop drains the WAL before exit.
+    let shutdown = install_shutdown_handler();
 
     info!("matching engine started");
 
@@ -537,7 +525,7 @@ fn main() {
         spin_count = spin_count.wrapping_add(1);
         dedup.refresh_clock(clock);
 
-        if SHUTDOWN.load(Ordering::SeqCst) {
+        if shutdown.load(Ordering::SeqCst) {
             info!("shutdown signal received, draining wal");
             if let Err(e) = wal_writer.flush() {
                 error!("shutdown wal flush failed: {e}");
