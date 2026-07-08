@@ -76,14 +76,10 @@ code. Do NOT fix without founder go.
   `main.rs:97,313-318`) but was never in BUGS.md until now. Fix (needs
   design, NOT a coding-agent task yet): persist a dedup snapshot alongside
   the book snapshot, or widen replay to cover the dedup window.
-- **ME-NEXT-SEQ-REGRESSION** (LOW, traceability) — the seq-regression guard
-  (`main.rs:346-357`) is correct, but its `bugs.md` code citation points at
-  a non-existent entry (this one). Filed for traceability; sweep the repo
-  for other orphaned `bugs.md` citations.
-- **ME-REASON-DUPLICATE-NAMESPACE** (LOW, correctness-latent) —
-  `REASON_DUPLICATE` (=3, `main.rs:52`) is disconnected from rsx-book's
-  `FAIL_*` enum (0-2, `event.rs:23-25`); a future `FAIL_*`=3 would silently
-  alias "duplicate" in `OrderFailedRecord.reason`. Fix: one shared enum.
+- **Resolved LOW findings (2026-07-08)** — `ME-CANCEL-REIMPL` (route cancel
+  through `cancel_order_checked`, `b998b1b`), `ME-REASON-DUPLICATE-NAMESPACE`
+  (unified into rsx-book `FAIL_DUPLICATE=3`, `0f9f871`), `ME-NEXT-SEQ-REGRESSION`
+  + orphaned `bugs.md` citation sweep (`f6316cf`). Details in git.
 - **ME-WAL-WRITER-DUPLICATION** (MED, duplication → drift) — **FIXED
   2026-07-08** (`761aa94`). Two corrections to the original finding: (1) the
   "~200-line near-duplicates" framing was already stale — the record-build
@@ -105,10 +101,6 @@ code. Do NOT fix without founder go.
   scenario redesign): the 266 ns headline now reads "one fill, BBO unchanged"
   across README, rsx-matching README/ARCHITECTURE, and the Jul-03 report;
   a BBO-moving accept adds one WAL record.
-- **ME-CANCEL-REIMPL** (LOW, duplication) — `process_cancel`
-  (`main.rs:955`) reimplements the drift-check inline instead of
-  `rsx-book::cancel_order_checked` (`book.rs:355`), missing its
-  capacity-bound check.
 
 ## Status — 2026-07-08 — ME→GW-direct spec is NOT ship-ready (codex adversarial audit)
 
