@@ -2960,7 +2960,6 @@ dependencies = [
  "rsx-cast",
  "rsx-health",
  "rsx-log",
- "rsx-matching",
  "rsx-messages",
  "rsx-types",
  "rtrb",
