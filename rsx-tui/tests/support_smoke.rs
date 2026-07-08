@@ -34,8 +34,7 @@ fn scripted_session_types_submits_and_folds_a_fill() {
 
     // Fold a scripted Accepted -> Fill -> Done from the MockConn the
     // way a real gateway ack sequence would arrive, then wait_for
-    // observes it the same way a cluster e2e test waits on a real
-    // WsConn.
+    // observes it the same way a test waits on a live transport.
     harness.push_mock_events([
         GwEvent::Accepted { oid: 1 },
         GwEvent::Fill {

@@ -3,8 +3,8 @@
 //! The binary (`main.rs`) owns the terminal + event loop; this library
 //! owns UI state, event folding, key handling, the gateway transport
 //! abstraction, and rendering — all drivable headless against a
-//! `TestBackend` + `MockConn`. The live transport is a QUIC client
-//! (webproto 49, user-facing only); the internal casting path is
+//! `TestBackend` + `MockConn`. The live transport is a protobuf-over-QUIC
+//! client (`QuicConn`, user-facing only); the internal casting path is
 //! separate and untouched.
 
 pub mod app;
@@ -13,7 +13,6 @@ pub mod input;
 pub mod quic;
 pub mod render;
 pub mod wire;
-pub mod ws;
 
 pub use app::drain;
 pub use app::App;
@@ -29,11 +28,10 @@ pub use input::handle_key;
 pub use input::Control;
 pub use quic::QuicConn;
 pub use render::draw;
-pub use ws::WsConn;
 
 /// A scripted offline demo feed — the events `main` seeds into a
-/// `MockConn` so `cargo run -p rsx-tui` shows a live-looking book
-/// before the QUIC client is wired. Also handy in tests.
+/// `MockConn` so `cargo run -p rsx-tui` (with no gateway configured)
+/// shows a live-looking book with nothing running. Also handy in tests.
 pub fn demo_events() -> Vec<GwEvent> {
     vec![
         GwEvent::Connected,
