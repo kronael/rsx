@@ -65,7 +65,8 @@ Submit limit/market orders and cancel pending ones.
 Load test runner with configurable rate and duration.
 Shows throughput, latency histogram, and error rate.
 
-## Trade
+## Terminal
 
-Not served by the playground. Trading is via the `rsx-tui`
-terminal client (ratatui), a separate Rust binary.
+Embedded `rsx-term` session. The Playground opens a local PTY,
+runs the Go terminal against `ws://127.0.0.1:8080` and
+`ws://127.0.0.1:8180`, and streams it through xterm.js.
