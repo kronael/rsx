@@ -395,16 +395,42 @@ The gaps a careful reader will hit:
   UDP uses `std::net::UdpSocket`, one syscall per
   `sendto`/`recvfrom`; the kernel-bypass move (io_uring, later
   AF_XDP/DPDK) that would cut that syscall is not implemented.
-  It is gated on gateway/marketdata owning the socket
-  (the zero-runtime-dep invariant in `rsx-cast` is load-bearing
-  — see `rsx-cast/CLAUDE.md`), so the work lives in the callers,
-  not the transport.
+  It applies to every socket-owning caller — matching's ME
+  hot-path `recvfrom`/`sendto`, and the gateway/marketdata edges.
+  The zero-runtime-dep invariant in `rsx-cast` is load-bearing
+  (see `rsx-cast/CLAUDE.md`), so io_uring lives in the *caller*,
+  not the transport. The blocker: `CastSender`/`CastReceiver`
+  currently own the socket and couple framing with `recv`/`send`.
+  The fix is two *additive* cast APIs (expose a built `Framed`'s
+  bytes for the caller to io_uring-send; a parse-already-received-
+  bytes entry for recv) so the caller owns the socket — a
+  sanctioned frozen-cast extension, needing founder sign-off, not
+  a redesign.
 - **Per-consumer FAULTED recovery.** `rsx-matching` has a
   POC `CastRecv::Faulted` → replication-replay path; risk,
   marketdata, and gateway still panic with a pointer to the
   reference impl.
 - **`rsx-mark`/`rsx-marketdata` replay** still uses tokio
   for the replication client.
+
+## Roadmap
+
+The order things get finalized and shipped:
+
+1. **`rsx-book`** — the orderbook library.
+2. **`rsx-matching`** — the matching engine.
+3. **`rsx-gateway` + `rsx-marketdata`** — finalize the I/O edge.
+   The notify egress wake landed; next is the userspace-UDP work
+   above (io_uring at the caller, `SQPOLL` gated on the dedicated-
+   core config, `SO_REUSEPORT` sharding for capacity).
+4. **`rsx-tui`** — the protobuf-over-QUIC trading terminal (needs
+   the gateway QUIC listener that validates the auth first-frame).
+5. **Hosting** — complete the deploy so you can install and run
+   the terminal against a live exchange.
+6. **Blog** — the educational write-up, once the above is real.
+
+Libraries first, then the processes on them, then the client,
+then the front door.
 
 ## Specs
 
