@@ -51,197 +51,22 @@ fn done_final_status(reason: u8) -> u8 {
     }
 }
 
-/// Write all events from the book's event buffer to WAL.
+/// Write every event from the book's buffer to the WAL only (no cast).
+/// Replay/bench helper. BBO is skipped (re-derived on replay).
 pub fn write_events_to_wal(
     writer: &mut WalWriter,
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
 ) -> io::Result<()> {
-    for event in book.events() {
-        match *event {
-            Event::Fill {
-                maker_handle,
-                maker_user_id,
-                taker_user_id,
-                price,
-                qty,
-                side,
-                maker_order_id_hi,
-                maker_order_id_lo,
-                taker_order_id_hi,
-                taker_order_id_lo,
-                taker_ts_ns,
-            } => {
-                let (reduce_only, tif) = if maker_handle != NONE {
-                    let slot = book.orders.get(maker_handle);
-                    (slot.is_reduce_only() as u8, slot.tif)
-                } else {
-                    (0, 0)
-                };
-                let mut record = FillRecord {
-                    seq: 0,
-                    ts_ns,
-                    symbol_id,
-                    taker_user_id,
-                    maker_user_id,
-                    _pad0: 0,
-                    taker_order_id_hi,
-                    taker_order_id_lo,
-                    maker_order_id_hi,
-                    maker_order_id_lo,
-                    price,
-                    qty,
-                    taker_side: side,
-                    reduce_only,
-                    tif,
-                    post_only: 0,
-                    _pad1: [0; 4],
-                    taker_ts_ns,
-                };
-                {
-                    let framed = writer.prepare(&mut record)?;
-                    writer.append_framed(&framed)?;
-                }
-            }
-            Event::OrderInserted {
-                handle,
-                user_id,
-                side,
-                price,
-                qty,
-                order_id_hi,
-                order_id_lo,
-            } => {
-                let (reduce_only, tif) = if handle != NONE {
-                    let slot = book.orders.get(handle);
-                    (slot.is_reduce_only() as u8, slot.tif)
-                } else {
-                    (0, 0)
-                };
-                let mut record = OrderInsertedRecord {
-                    seq: 0,
-                    ts_ns,
-                    symbol_id,
-                    user_id,
-                    order_id_hi,
-                    order_id_lo,
-                    price,
-                    qty,
-                    side,
-                    reduce_only,
-                    tif,
-                    post_only: 0,
-                    _pad1: [0; 4],
-                };
-                {
-                    let framed = writer.prepare(&mut record)?;
-                    writer.append_framed(&framed)?;
-                }
-            }
-            Event::OrderCancelled {
-                handle,
-                user_id,
-                remaining_qty,
-                reason,
-                order_id_hi,
-                order_id_lo,
-            } => {
-                let (reduce_only, tif, post_only) = if handle != NONE {
-                    let slot = book.orders.get(handle);
-                    (slot.is_reduce_only() as u8, slot.tif, 0u8)
-                } else {
-                    (0, 0, 0)
-                };
-                let mut record = OrderCancelledRecord {
-                    seq: 0,
-                    ts_ns,
-                    symbol_id,
-                    user_id,
-                    order_id_hi,
-                    order_id_lo,
-                    remaining_qty,
-                    reason,
-                    reduce_only,
-                    tif,
-                    post_only,
-                    _pad1: [0; 4],
-                };
-                {
-                    let framed = writer.prepare(&mut record)?;
-                    writer.append_framed(&framed)?;
-                }
-            }
-            Event::OrderDone {
-                handle,
-                user_id,
-                reason,
-                filled_qty,
-                remaining_qty,
-                order_id_hi,
-                order_id_lo,
-            } => {
-                let (reduce_only, tif) = if handle != NONE {
-                    let slot = book.orders.get(handle);
-                    (slot.is_reduce_only() as u8, slot.tif)
-                } else {
-                    (0, 0)
-                };
-                let mut record = OrderDoneRecord {
-                    seq: 0,
-                    ts_ns,
-                    symbol_id,
-                    user_id,
-                    order_id_hi,
-                    order_id_lo,
-                    filled_qty,
-                    remaining_qty,
-                    final_status: done_final_status(reason),
-                    reduce_only,
-                    tif,
-                    post_only: 0,
-                    _pad1: [0; 4],
-                };
-                {
-                    let framed = writer.prepare(&mut record)?;
-                    writer.append_framed(&framed)?;
-                }
-            }
-            Event::OrderFailed {
-                user_id,
-                reason,
-                order_id_hi,
-                order_id_lo,
-            } => {
-                let mut record = OrderFailedRecord {
-                    seq: 0,
-                    ts_ns,
-                    user_id,
-                    _pad0: 0,
-                    order_id_hi,
-                    order_id_lo,
-                    reason,
-                    _pad: [0; 23],
-                };
-                {
-                    let framed = writer.prepare(&mut record)?;
-                    writer.append_framed(&framed)?;
-                }
-            }
-            Event::BBO { .. } => {
-                // BBO not persisted to WAL (derived on replay)
-            }
-        }
-    }
-    Ok(())
+    emit_events(&mut WalSink { writer }, book, symbol_id, ts_ns)
 }
 
-/// Publish each event once (WAL prepare = single CRC + seq), then fan out to WAL +
-/// risk-bound + (selectively) marketdata-bound `CastSender`. See ARCHITECTURE.md.
-pub fn publish_events(
-    writer: &mut WalWriter,
-    cmp: &mut CastSender,
-    mkt: &mut CastSender,
+/// Walk the book's event buffer once, build each event's wire record, and
+/// hand it to `sink`. The record-construction match lives here and nowhere
+/// else; the sink decides where the bytes go (WAL-only vs full fan-out).
+fn emit_events<S: EventSink>(
+    sink: &mut S,
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
@@ -287,7 +112,7 @@ pub fn publish_events(
                     _pad1: [0; 4],
                     taker_ts_ns,
                 };
-                fan_out(writer, cmp, mkt, &mut record)?;
+                sink.emit(&mut record)?;
             }
             Event::OrderInserted {
                 handle,
@@ -319,7 +144,7 @@ pub fn publish_events(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                fan_out(writer, cmp, mkt, &mut record)?;
+                sink.emit(&mut record)?;
             }
             Event::OrderCancelled {
                 handle,
@@ -349,7 +174,7 @@ pub fn publish_events(
                     post_only,
                     _pad1: [0; 4],
                 };
-                fan_out(writer, cmp, mkt, &mut record)?;
+                sink.emit(&mut record)?;
             }
             Event::OrderDone {
                 handle,
@@ -385,7 +210,7 @@ pub fn publish_events(
                 // only one consumer leaves a WAL-seq hole on the
                 // other → false FAULTED. marketdata ignores types
                 // it doesn't handle.
-                fan_out(writer, cmp, mkt, &mut record)?;
+                sink.emit(&mut record)?;
             }
             Event::OrderFailed {
                 user_id,
@@ -408,7 +233,7 @@ pub fn publish_events(
                 // ME. Fan out to both so the seq stays contiguous;
                 // the gateway also needs ORDER_FAILED to tell the
                 // client its order was rejected.
-                fan_out(writer, cmp, mkt, &mut record)?;
+                sink.emit(&mut record)?;
             }
             Event::BBO {
                 bid_px,
@@ -423,10 +248,8 @@ pub fn publish_events(
                 // every other record. Since BBO wasn't WAL'd, the
                 // two counters desynced and the wire seq regressed
                 // → "sender reset detected" → FAULTED. Route BBO
-                // through fan_out on the single WAL seq like every
-                // other record. It is now WAL'd (cheap; replay
-                // skips it since BBO is re-derived) so live seq ==
-                // replay seq and both streams stay contiguous.
+                // through the single WAL seq like every other record
+                // (the WAL-only sink skips it; replay re-derives it).
                 let mut record = rsx_messages::BboRecord {
                     seq: 0,
                     ts_ns,
@@ -441,25 +264,68 @@ pub fn publish_events(
                     ask_count: 0,
                     _pad2: 0,
                 };
-                fan_out(writer, cmp, mkt, &mut record)?;
+                sink.emit_bbo(&mut record)?;
             }
         }
     }
     Ok(())
 }
 
-/// Frame once via `WalWriter::prepare`, then fan to WAL + risk + marketdata.
-fn fan_out<T: rsx_cast::CastRecord>(
+/// Publish each event once (WAL prepare = single CRC + seq), then fan out to
+/// WAL + risk + marketdata. Production path. See ARCHITECTURE.md.
+pub fn publish_events(
     writer: &mut WalWriter,
     cmp: &mut CastSender,
     mkt: &mut CastSender,
-    record: &mut T,
+    book: &Orderbook,
+    symbol_id: u32,
+    ts_ns: u64,
 ) -> io::Result<()> {
-    let framed: Framed = writer.prepare(record)?;
-    writer.append_framed(&framed)?;
-    cmp.send_framed(&framed)?;
-    mkt.send_framed(&framed)?;
-    Ok(())
+    emit_events(&mut FanoutSink { writer, cmp, mkt }, book, symbol_id, ts_ns)
+}
+
+/// Sink for the wire records built from a match cycle's event buffer.
+/// `emit_events` builds each record once and hands it to the sink, so the
+/// record-construction match lives in exactly one place.
+trait EventSink {
+    fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()>;
+    /// BBO is re-derived on replay. The production fan-out WAL-sequences it
+    /// (SEQ-1: keeps live seq == replay seq); the WAL-only sink skips it.
+    fn emit_bbo(&mut self, record: &mut rsx_messages::BboRecord) -> io::Result<()> {
+        self.emit(record)
+    }
+}
+
+/// WAL-only sink: prepare (assign seq + CRC), then append. Replay/bench helper.
+struct WalSink<'a> {
+    writer: &'a mut WalWriter,
+}
+
+impl EventSink for WalSink<'_> {
+    fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
+        let framed = self.writer.prepare(record)?;
+        self.writer.append_framed(&framed)
+    }
+    fn emit_bbo(&mut self, _record: &mut rsx_messages::BboRecord) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Production sink: frame once (single CRC + seq), then fan out to WAL + risk
+/// + marketdata. See ARCHITECTURE.md.
+struct FanoutSink<'a> {
+    writer: &'a mut WalWriter,
+    cmp: &'a mut CastSender,
+    mkt: &'a mut CastSender,
+}
+
+impl EventSink for FanoutSink<'_> {
+    fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
+        let framed: Framed = self.writer.prepare(record)?;
+        self.writer.append_framed(&framed)?;
+        self.cmp.send_framed(&framed)?;
+        self.mkt.send_framed(&framed)
+    }
 }
 
 /// Flush WAL if 10ms have elapsed since last flush.
