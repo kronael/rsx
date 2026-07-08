@@ -235,23 +235,26 @@ writes never reuse a replayed seq.
 
 ## FAULTED → skip-the-gap
 
-When `CastReceiver::try_recv` returns `CastRecv::Faulted` (a gap
-that outran in-band NAK recovery), the matching loop **skips the
-gap and resumes live** — it does NOT replay and does NOT panic.
-On FAULTED it counts the skipped seqs (`gauges.drops`), warns with
-the gap range, then calls `cast_receiver.reset_after_replay(
+System-level delivery guarantees live in
+[`GUARANTEES.md` §1.0](../GUARANTEES.md#10-delivery-guarantees-by-stream).
+This section is only the ME-side implementation of the risk→ME
+order-stream rule: inbound order gaps are drop-safe; ME→risk fills
+are not.
+
+When `CastReceiver::try_recv` returns `CastRecv::Faulted` — a gap
+that outran in-band NAK recovery — the matching loop **skips the
+gap and resumes live**: it does NOT replay and does NOT panic. On
+FAULTED it counts the skipped seqs (`gauges.drops`), warns with the
+gap range, then calls `cast_receiver.reset_after_replay(
 gap_end_inclusive)` to resume live UDP delivery from
 `gap_end_inclusive + 1`.
 
-This is sound because the risk→ME **order** stream is recovered at
-the application layer, not the transport:
-
-- A dropped pre-ack order is re-sent by the client (no-ack-within-
-  timeout, `specs/2/49-webproto.md`) and deduped on the ME's WAL
-  (`RECORD_ORDER_ACCEPTED`) — exactly-once.
-- The ME **re-sequences on output** (its own WAL seq), so an
-  inbound gap is never an output gap: risk / recorder / marketdata
-  still see a contiguous ME stream.
+This is sound for orders because clients retry unacknowledged
+orders on no-ack-timeout (`specs/2/49-webproto.md`) and the ME WAL
+`RECORD_ORDER_ACCEPTED` dedups acceptance. The ME also re-sequences
+on its own output WAL seq, so an inbound order gap is never an
+output gap: risk / recorder / marketdata still see a contiguous ME
+stream.
 
 Fill delivery in the other direction (ME→risk) is what genuinely
 needs recovery, and it has its own path: the ME runs a WAL
