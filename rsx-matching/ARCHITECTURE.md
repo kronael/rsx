@@ -217,21 +217,39 @@ pattern.
 
 ## Cold-start snapshot + WAL replay (wal.rs)
 
-Snapshots are written every 10 s with atomic rename
-(`snapshot.bin` + `wal_seq.txt` sidecar). Between snapshots,
-SIGKILL would lose every fill — recovery replays the WAL from
-`sidecar + 1`:
+The book is derived state, rebuilt from the WAL. A snapshot is a
+periodic **checkpoint** that bounds how much WAL a cold start replays:
+without it, recovery would replay from seq 1 (every order the symbol
+ever took); with it, recovery loads the book at seq N (the
+`wal_seq.txt` sidecar) and replays only records `> N` — ≤ 10 s of WAL.
+Fills are durable in the WAL either way; the snapshot bounds replay
+time, not durability. It is the I-frame; the WAL records between
+snapshots are the deltas.
 
-- `RECORD_ORDER_ACCEPTED` → re-runs `process_new_order` to
-  deterministically regenerate fills + side-effect events.
-- `RECORD_ORDER_CANCELLED` → `book.cancel_order(handle)`
-  against the reconstructed `order_index`.
-- Other record types (Fill, OrderInserted, OrderDone, BBO)
-  are skipped — they are side effects of accepted-order replay.
+`save_snapshot` runs every 10 s: `rsx_book::snapshot::save` serializes
+the live book (config, compression mid, BBA, active `OrderSlot`s) and
+the sidecar seq — both fsync + atomic-rename, so a crash mid-write
+leaves the last good pair intact. Refused mid-recenter
+(`BookState::Migrating`), where the map image would be inconsistent.
 
-`replay_wal_after_snapshot` returns the highest WAL seq applied;
-caller seeds `WalWriter::next_seq = ret + 1` so subsequent live
-writes never reuse a replayed seq.
+Replay from `sidecar + 1`:
+
+- `RECORD_ORDER_ACCEPTED` → re-runs `process_new_order`, regenerating
+  fills + side-effect events deterministically.
+- `RECORD_ORDER_CANCELLED` → `book.cancel_order(handle)` against the
+  reconstructed `order_index`.
+- Fill / OrderInserted / OrderDone / BBO → skipped (side effects of
+  accepted-order replay).
+
+`replay_wal_after_snapshot` returns the highest seq applied; the caller
+seeds `WalWriter::next_seq = ret + 1` so live writes never reuse a
+replayed seq.
+
+A full snapshot every 10 s is O(active orders) — cheap now, but
+expensive for a multi-GB book (tens of millions of orders re-serialized
+each interval). The next step at that scale is incremental checkpoints:
+a base image plus per-interval deltas of only the levels touched since
+the last one, chained on recovery. Not needed at current sizes.
 
 ## FAULTED → skip-the-gap
 
