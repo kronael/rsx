@@ -2,6 +2,11 @@
 
 Technical posts from building a derivatives exchange in Rust.
 
+> **Draft — AI-generated, not yet human-edited (slop, for now).** This is
+> meant to be the educational core of the project — the *why* behind the
+> code — but it hasn't had a real editorial pass. Read the specs
+> (`specs/2/`) and code for anything authoritative until the rewrite lands.
+
 ## Overview
 
 RSX is a spec-first exchange: matching engine, risk engine, gateway,
