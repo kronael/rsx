@@ -3,27 +3,14 @@ use std::io;
 use tokio_postgres::Client;
 use tracing::info;
 
-/// Scheduled config from the database
+/// A scheduled config row: the `SymbolConfig` itself plus its schedule
+/// metadata. Composes `SymbolConfig` rather than re-declaring its fields,
+/// so there is no conversion step — callers read `.config` directly.
 #[derive(Debug, Clone)]
 pub struct ScheduledConfig {
+    pub config: SymbolConfig,
     pub config_version: u64,
     pub effective_at_ms: u64,
-    pub tick_size: i64,
-    pub lot_size: i64,
-    pub price_decimals: u8,
-    pub qty_decimals: u8,
-}
-
-impl ScheduledConfig {
-    pub fn to_symbol_config(&self, symbol_id: u32) -> SymbolConfig {
-        SymbolConfig {
-            symbol_id,
-            tick_size: self.tick_size,
-            lot_size: self.lot_size,
-            price_decimals: self.price_decimals,
-            qty_decimals: self.qty_decimals,
-        }
-    }
 }
 
 pub async fn poll_scheduled_configs(
@@ -52,15 +39,17 @@ pub async fn poll_scheduled_configs(
 
     let mut configs = Vec::new();
     for row in rows {
-        let config = ScheduledConfig {
+        configs.push(ScheduledConfig {
+            config: SymbolConfig {
+                symbol_id,
+                tick_size: row.get(2),
+                lot_size: row.get(3),
+                price_decimals: row.get::<_, i16>(4) as u8,
+                qty_decimals: row.get::<_, i16>(5) as u8,
+            },
             config_version: row.get::<_, i64>(0) as u64,
             effective_at_ms: row.get::<_, i64>(1) as u64,
-            tick_size: row.get(2),
-            lot_size: row.get(3),
-            price_decimals: row.get::<_, i16>(4) as u8,
-            qty_decimals: row.get::<_, i16>(5) as u8,
-        };
-        configs.push(config);
+        });
     }
     Ok(configs)
 }
@@ -93,10 +82,10 @@ pub async fn write_applied_config(
                 &(config.config_version as i64),
                 &(config.effective_at_ms as i64),
                 &(applied_at_ns as i64),
-                &config.tick_size,
-                &config.lot_size,
-                &(config.price_decimals as i16),
-                &(config.qty_decimals as i16),
+                &config.config.tick_size,
+                &config.config.lot_size,
+                &(config.config.price_decimals as i16),
+                &(config.config.qty_decimals as i16),
             ],
         )
         .await
@@ -125,11 +114,14 @@ pub async fn load_applied_config(
         .map_err(|e| io::Error::other(format!("load_applied_config: {}", e)))?;
 
     Ok(row.map(|r| ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id,
+            tick_size: r.get(2),
+            lot_size: r.get(3),
+            price_decimals: r.get::<_, i16>(4) as u8,
+            qty_decimals: r.get::<_, i16>(5) as u8,
+        },
         config_version: r.get::<_, i64>(0) as u64,
         effective_at_ms: r.get::<_, i64>(1) as u64,
-        tick_size: r.get(2),
-        lot_size: r.get(3),
-        price_decimals: r.get::<_, i16>(4) as u8,
-        qty_decimals: r.get::<_, i16>(5) as u8,
     }))
 }

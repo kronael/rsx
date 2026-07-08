@@ -88,7 +88,7 @@ pub const NONE: u32 = u32::MAX;
 /// Per-symbol tick/lot configuration. `tick_size` and `lot_size` are in raw
 /// units; `price_decimals`/`qty_decimals` drive human-readable formatting at
 /// the API boundary only.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SymbolConfig {
     pub symbol_id: u32,
     pub price_decimals: u8,

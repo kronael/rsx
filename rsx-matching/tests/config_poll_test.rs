@@ -2,6 +2,7 @@ use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::config::ScheduledConfig;
+use rsx_types::SymbolConfig;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use testcontainers::runners::AsyncRunner;
@@ -96,8 +97,8 @@ async fn poll_returns_config_when_effective() {
 
     assert_eq!(configs.len(), 1);
     assert_eq!(configs[0].config_version, 1);
-    assert_eq!(configs[0].tick_size, 1);
-    assert_eq!(configs[0].lot_size, 1000);
+    assert_eq!(configs[0].config.tick_size, 1);
+    assert_eq!(configs[0].config.lot_size, 1000);
 }
 
 #[tokio::test]
@@ -225,12 +226,15 @@ async fn write_applied_config_inserts_new() {
     let ts_ns = now * 1_000_000;
 
     let cfg = ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id,
+            tick_size: 1,
+            lot_size: 1000,
+            price_decimals: 8,
+            qty_decimals: 8,
+        },
         config_version: 1,
         effective_at_ms: now,
-        tick_size: 1,
-        lot_size: 1000,
-        price_decimals: 8,
-        qty_decimals: 8,
     };
 
     write_applied_config(&client, symbol_id, &cfg, ts_ns)
@@ -243,8 +247,8 @@ async fn write_applied_config_inserts_new() {
         .expect("config");
 
     assert_eq!(loaded.config_version, 1);
-    assert_eq!(loaded.tick_size, 1);
-    assert_eq!(loaded.lot_size, 1000);
+    assert_eq!(loaded.config.tick_size, 1);
+    assert_eq!(loaded.config.lot_size, 1000);
 }
 
 #[tokio::test]
@@ -256,24 +260,30 @@ async fn write_applied_config_updates_existing() {
     let ts_ns = now * 1_000_000;
 
     let cfg1 = ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id,
+            tick_size: 1,
+            lot_size: 1000,
+            price_decimals: 8,
+            qty_decimals: 8,
+        },
         config_version: 1,
         effective_at_ms: now,
-        tick_size: 1,
-        lot_size: 1000,
-        price_decimals: 8,
-        qty_decimals: 8,
     };
     write_applied_config(&client, symbol_id, &cfg1, ts_ns)
         .await
         .expect("write1");
 
     let cfg2 = ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id,
+            tick_size: 10,
+            lot_size: 10000,
+            price_decimals: 6,
+            qty_decimals: 6,
+        },
         config_version: 2,
         effective_at_ms: now + 1000,
-        tick_size: 10,
-        lot_size: 10000,
-        price_decimals: 6,
-        qty_decimals: 6,
     };
     write_applied_config(&client, symbol_id, &cfg2, ts_ns + 1000)
         .await
@@ -285,8 +295,8 @@ async fn write_applied_config_updates_existing() {
         .expect("config");
 
     assert_eq!(loaded.config_version, 2);
-    assert_eq!(loaded.tick_size, 10);
-    assert_eq!(loaded.lot_size, 10000);
+    assert_eq!(loaded.config.tick_size, 10);
+    assert_eq!(loaded.config.lot_size, 10000);
 }
 
 #[tokio::test]
@@ -300,22 +310,24 @@ async fn load_applied_config_returns_none_when_empty() {
     assert!(loaded.is_none());
 }
 
-#[tokio::test]
-async fn scheduled_config_to_symbol_config() {
+#[test]
+fn scheduled_config_composes_symbol_config() {
     let cfg = ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id: 42,
+            tick_size: 10,
+            lot_size: 1000,
+            price_decimals: 8,
+            qty_decimals: 6,
+        },
         config_version: 1,
         effective_at_ms: 0,
-        tick_size: 10,
-        lot_size: 1000,
-        price_decimals: 8,
-        qty_decimals: 6,
     };
 
-    let symbol_cfg = cfg.to_symbol_config(42);
-
-    assert_eq!(symbol_cfg.symbol_id, 42);
-    assert_eq!(symbol_cfg.tick_size, 10);
-    assert_eq!(symbol_cfg.lot_size, 1000);
-    assert_eq!(symbol_cfg.price_decimals, 8);
-    assert_eq!(symbol_cfg.qty_decimals, 6);
+    assert_eq!(cfg.config.symbol_id, 42);
+    assert_eq!(cfg.config.tick_size, 10);
+    assert_eq!(cfg.config.lot_size, 1000);
+    assert_eq!(cfg.config.price_decimals, 8);
+    assert_eq!(cfg.config.qty_decimals, 6);
+    assert_eq!(cfg.config_version, 1);
 }

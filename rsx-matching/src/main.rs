@@ -834,8 +834,7 @@ fn main() {
                 )) {
                     Ok(configs) => {
                         for cfg in configs {
-                            let new_config = cfg.to_symbol_config(symbol_id);
-                            book.update_config(new_config);
+                            book.update_config(cfg.config);
                             config_version = cfg.config_version;
                             let ts = time_ns();
                             if let Err(e) =
