@@ -119,8 +119,11 @@ fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
             )
         } else if local {
             // Local debug gateway: localhost + pinned dev cert.
-            let addr = LOCAL_ADDR.parse().expect("LOCAL_ADDR is a valid SocketAddr");
-            let cert = std::env::var("RSX_GW_CERT").unwrap_or_else(|_| DEFAULT_LOCAL_CERT.to_owned());
+            let addr = LOCAL_ADDR
+                .parse()
+                .expect("LOCAL_ADDR is a valid SocketAddr");
+            let cert =
+                std::env::var("RSX_GW_CERT").unwrap_or_else(|_| DEFAULT_LOCAL_CERT.to_owned());
             (
                 addr,
                 "localhost".to_owned(),
@@ -132,7 +135,10 @@ fn connect(app: &mut App) -> io::Result<Box<dyn GatewayConn>> {
                 .to_socket_addrs()?
                 .next()
                 .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, format!("{PROD_HOST} did not resolve"))
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("{PROD_HOST} did not resolve"),
+                    )
                 })?;
             (addr, PROD_HOST.to_owned(), prod_roots())
         };
