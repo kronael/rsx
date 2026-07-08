@@ -16,6 +16,7 @@ use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::write_events_to_wal;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::OrderAcceptedRecord;
@@ -209,35 +210,6 @@ impl Me {
             self.wal.reset_write_buf();
         }
 
-        update_index(self.book.events(), &mut self.index);
-    }
-}
-
-/// Mirror of the production `update_order_index` helper in
-/// rsx-matching/src/main.rs: a successful insert puts the handle into
-/// the index; a Done removes it.
-pub fn update_index(events: &[rsx_book::event::Event], index: &mut FxHashMap<OrderKey, u32>) {
-    use rsx_book::event::Event;
-    for event in events {
-        match *event {
-            Event::OrderInserted {
-                handle,
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                ..
-            } => {
-                index.insert((user_id, order_id_hi, order_id_lo), handle);
-            }
-            Event::OrderDone {
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                ..
-            } => {
-                index.remove(&(user_id, order_id_hi, order_id_lo));
-            }
-            _ => {}
-        }
+        update_order_index(self.book.events(), &mut self.index);
     }
 }
