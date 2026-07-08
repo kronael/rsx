@@ -389,11 +389,14 @@ The gaps a careful reader will hit:
   tokens faster than the legitimate jti is rotated could still
   evict it; long-window dedup needs a TTL ring or persistent
   table.
-- **`rsx-cast` UDP** uses `std::net::UdpSocket`, not monoio
-  io_uring. One syscall per `sendto`/`recvfrom`. The
-  io_uring move is gated on gateway/marketdata owning the
-  socket (zero-runtime-dep invariant in `rsx-cast` is
-  load-bearing — see `rsx-cast/CLAUDE.md`).
+- **Userspace UDP is not done — and should be.** `rsx-cast`
+  UDP uses `std::net::UdpSocket`, one syscall per
+  `sendto`/`recvfrom`; the kernel-bypass move (io_uring, later
+  AF_XDP/DPDK) that would cut that syscall is not implemented.
+  It is gated on gateway/marketdata owning the socket
+  (the zero-runtime-dep invariant in `rsx-cast` is load-bearing
+  — see `rsx-cast/CLAUDE.md`), so the work lives in the callers,
+  not the transport.
 - **Per-consumer FAULTED recovery.** `rsx-matching` has a
   POC `CastRecv::Faulted` → replication-replay path; risk,
   marketdata, and gateway still panic with a pointer to the
