@@ -81,6 +81,15 @@ SCENARIOS = {
     },
 }
 
+UI_SCENARIOS = [
+    "minimal",
+    "duo",
+    "full",
+    "stress-low",
+    "stress-high",
+    "stress-ultra",
+]
+
 BASE_ME_CAST = 9100
 BASE_RISK_CAST = 9200
 BASE_GW_CAST = 9300

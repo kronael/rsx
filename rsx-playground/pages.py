@@ -8,6 +8,8 @@ import html
 import os
 from pathlib import Path as _Path
 
+import runtime
+
 try:
     import markdown as _markdown
 except ImportError:
@@ -1825,21 +1827,43 @@ document.addEventListener('htmx:afterSwap', (e) => {
 
 # ── Screen 7: Control ────────────────────────────────────
 
+def _scenario_option(name):
+    cfg = runtime.SCENARIOS[name]
+    label = f"{name} ({cfg['symbols']} symbol"
+    if cfg["symbols"] != 1:
+        label += "s"
+    load = cfg.get("load")
+    if load:
+        label += f", {load['rate']} ord/s x {load['duration']}s"
+    else:
+        label += f", {cfg['replication']} replication"
+    label += ")"
+    selected = " selected" if name == "minimal" else ""
+    return (
+        f'<option value="{html.escape(name)}"{selected}>'
+        f'{html.escape(label)}</option>'
+    )
+
+
+def _scenario_options():
+    return "\n".join(
+        _scenario_option(name)
+        for name in runtime.UI_SCENARIOS
+        if name in runtime.SCENARIOS
+    )
+
+
 def control_page():
+    scenario_options = _scenario_options()
     scenario_selector = _card(
         "Scenario Selector",
-        '''<div class="space-y-3">
+        f'''<div class="space-y-3">
   <div class="flex flex-wrap gap-2 items-center">
     <span class="text-xs text-slate-500">Select scenario:</span>
     <select id="scenario-select"
       class="bg-slate-950 border border-slate-700 text-slate-300
         px-2 py-1 rounded text-xs">
-      <option value="minimal">minimal (1 symbol, no replication)</option>
-      <option value="duo">duo (2 symbols, no replication)</option>
-      <option value="full" selected>full (3 symbols, replication)</option>
-      <option value="stress-low">stress-low (10 ord/s × 60s)</option>
-      <option value="stress-high">stress-high (100 ord/s × 60s)</option>
-      <option value="stress-ultra">stress-ultra (500 ord/s × 10s)</option>
+      {scenario_options}
     </select>
     <button class="bg-blue-900/40 text-blue-400 px-3 py-1 rounded
       text-xs border border-blue-900 hover:bg-blue-900"

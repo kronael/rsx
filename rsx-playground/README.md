@@ -10,7 +10,8 @@ Web-based development dashboard for the RSX exchange. Real-time monitoring, proc
 
 # Visit http://localhost:49171 to inspect processes, logs, books, and orders
 
-# Stop server when done
+# Stop RSX processes and server when done
+./playground stop-all
 ./playground stop
 ```
 
@@ -125,9 +126,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ## Scenarios
 
-- **minimal (1Z):** 1 symbol, no replication, 5 processes, 20s startup
-- **duo (2Z):** 2 symbols, no replication, 6 processes, 25s startup
-- **full (3):** 3 symbols, mark price, 8 processes, 35s startup
+- **minimal (1Z):** 1 symbol, no replication, 6 processes, 20s startup
+- **duo (2Z):** 2 symbols, no replication, 7 processes, 25s startup
+- **full (3):** 3 symbols, mark price, 9 processes, 35s startup
 - **stress-low:** 10 orders/sec x 60s
 - **stress-high:** 100 orders/sec x 60s
 - **stress-ultra:** 500 orders/sec x 10s

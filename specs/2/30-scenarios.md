@@ -7,16 +7,16 @@ status: shipped
 Deployment scenarios for the RSX exchange. Defines which
 processes are spawned per scenario and how ports are allocated.
 
-The `start` script is Python (`./start`, shebang
-`#!/usr/bin/env python3`). It defines `SCENARIOS`,
-`SYMBOLS`, `select_symbols()`, `build_spawn_plan()`.
+The Playground runtime planner is Python
+(`rsx-playground/runtime.py`). It defines `SCENARIOS`, `SYMBOLS`,
+`select_symbols()`, and `build_spawn_plan()`.
 
 ## Current State
 
 ### What Works
 - `minimal` scenario: 1 ME (PENGU), 1 Risk, 1 Gateway, 1
   Marketdata, 1 Mark
-- `build_spawn_plan()` in `start` correctly iterates
+- `build_spawn_plan()` in `rsx-playground/runtime.py` correctly iterates
   `config["symbols"]` to spawn one ME per symbol
 - `get_spawn_plan()` in `rsx-playground/server.py` calls
   `start_mod.build_spawn_plan(config, PG_URL)` which
@@ -200,14 +200,14 @@ primary symbol only (simpler, sufficient for dev).
 
 Process counts per scenario:
 
-- `./start minimal` spawns 6: me-pengu, risk-0, gw-0,
+- `./rsx-playground/playground plan minimal` shows 6: me-pengu, risk-0, gw-0,
   marketdata, mark, recorder
-- `./start duo` spawns 7: me-pengu, me-sol, risk-0, gw-0,
+- `./rsx-playground/playground plan duo` shows 7: me-pengu, me-sol, risk-0, gw-0,
   marketdata, mark, recorder
-- `./start full` spawns 9: me-pengu, me-sol, me-btc,
+- `./rsx-playground/playground plan full` shows 9: me-pengu, me-sol, me-btc,
   risk-0, risk-0-replica-0, gw-0, marketdata, mark,
   recorder
-- `./start stress` spawns 12: me-pengu, me-sol, me-btc,
+- `./rsx-playground/playground plan stress` shows 12: me-pengu, me-sol, me-btc,
   risk-0, risk-0-replica-0, risk-0-replica-1, gw-0, gw-1,
   marketdata, mark, recorder
 
@@ -230,6 +230,6 @@ Playground:
 - Confirm no cross-symbol routing (PENGU fill not on SOL)
 
 `make smoke` — deployed system (requires running exchange):
-- `./start duo` then run stress against both symbols
+- `./rsx-playground/playground demo duo` then run stress against both symbols
 - Check Marketdata WS receives updates for both symbols
-- Check `./start stress` with 2 gateways load-balances
+- Check `./rsx-playground/playground demo stress` with 2 gateways load-balances
