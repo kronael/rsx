@@ -1,5 +1,4 @@
 use crate::egress::EgressWaker;
-use crate::records::serialize_l2_snapshot;
 use crate::shadow::ShadowBook;
 use crate::subscription::SubscriptionManager;
 use crate::types::BboUpdate;
@@ -11,7 +10,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct ConnectionState {
-    pub outbound: VecDeque<Arc<str>>,
+    /// Encoded protobuf `MdFrame` frames (see `crate::wire`), each an
+    /// already-framed WebSocket BINARY payload the handler writes as-is.
+    pub outbound: VecDeque<Arc<[u8]>>,
     /// Woken by producers right after they queue into `outbound`,
     /// so the handler drains + writes without polling on a timer.
     pub egress: Rc<EgressWaker>,
@@ -76,7 +77,7 @@ impl MarketDataState {
         self.subs.unsubscribe_all(conn_id);
     }
 
-    pub fn push_to_client(&mut self, conn_id: u64, msg: Arc<str>, max_outbound: usize) -> bool {
+    pub fn push_to_client(&mut self, conn_id: u64, msg: Arc<[u8]>, max_outbound: usize) -> bool {
         if let Some(conn) = self.connections.get_mut(&conn_id) {
             if conn.outbound.len() >= max_outbound {
                 return false;
@@ -88,7 +89,7 @@ impl MarketDataState {
         false
     }
 
-    pub fn drain_outbound(&mut self, conn_id: u64) -> Vec<Arc<str>> {
+    pub fn drain_outbound(&mut self, conn_id: u64) -> Vec<Arc<[u8]>> {
         if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.outbound.drain(..).collect()
         } else {
@@ -131,14 +132,16 @@ impl MarketDataState {
         self.subs.has_trades(conn_id, symbol_id)
     }
 
-    pub fn snapshot_msg(&self, symbol_id: u32, depth: u32) -> Option<String> {
+    /// Encoded L2 snapshot `MdFrame` (protobuf) for a symbol, or `None`
+    /// if the symbol index is out of range. Absent book => empty snapshot.
+    pub fn snapshot_msg(&self, symbol_id: u32, depth: u32) -> Option<Vec<u8>> {
         let book = self.books.get(symbol_id as usize)?;
         if let Some(book) = book.as_ref() {
-            return Some(serialize_l2_snapshot(
+            return Some(crate::wire::encode_l2_snapshot(
                 &book.derive_l2_snapshot(depth as usize),
             ));
         }
-        Some(serialize_l2_snapshot(&crate::types::L2Snapshot {
+        Some(crate::wire::encode_l2_snapshot(&crate::types::L2Snapshot {
             symbol_id,
             bids: Vec::new(),
             asks: Vec::new(),
@@ -231,7 +234,7 @@ impl MarketDataState {
     /// for a symbol (used after seq gap detection).
     pub fn resend_snapshot(&mut self, symbol_id: u32, depth: u32, max_outbound: usize) {
         if let Some(snapshot) = self.snapshot_msg(symbol_id, depth) {
-            let snapshot: Arc<str> = snapshot.into();
+            let snapshot: Arc<[u8]> = snapshot.into();
             let clients = self.subs.clients_for_symbol(symbol_id);
             for client_id in clients {
                 if self.subs.has_depth(client_id, symbol_id) {
@@ -266,7 +269,7 @@ impl MarketDataState {
     }
 
     pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {
-        let msg: Arc<str> = format!("{{\"H\":[{}]}}", ts_ms).into();
+        let msg: Arc<[u8]> = crate::wire::encode_heartbeat(ts_ms).into();
         for conn in self.connections.values_mut() {
             conn.outbound.push_back(msg.clone());
             conn.egress.signal();

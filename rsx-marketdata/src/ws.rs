@@ -22,7 +22,7 @@ where
     loop {
         let (stream, peer) = listener.accept().await?;
         // Disable Nagle: coalescing + delayed-ACK adds ms-scale tail
-        // latency to the small JSON frames fanned out to subscribers.
+        // latency to the small binary frames fanned out to subscribers.
         if let Err(e) = stream.set_nodelay(true) {
             warn!("set_nodelay failed for {peer}: {e}");
         }
@@ -149,10 +149,11 @@ pub async fn ws_read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> 
     Ok((opcode, payload))
 }
 
-/// Write a WebSocket text frame.
-pub async fn ws_write_text(stream: &mut TcpStream, data: &[u8]) -> io::Result<()> {
+/// Write a WebSocket BINARY frame. The public feed is protobuf, so the
+/// fanned-out payloads are binary `MdFrame` bytes (not UTF-8 text).
+pub async fn ws_write_binary(stream: &mut TcpStream, data: &[u8]) -> io::Result<()> {
     let mut frame = Vec::with_capacity(10 + data.len());
-    frame.push(0x81); // FIN + text opcode
+    frame.push(0x82); // FIN + binary opcode
 
     if data.len() <= 125 {
         frame.push(data.len() as u8);

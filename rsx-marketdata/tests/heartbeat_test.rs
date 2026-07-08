@@ -1,4 +1,5 @@
 use rsx_marketdata::state::MarketDataState;
+use rsx_marketdata::wire::encode_heartbeat;
 use rsx_types::SymbolConfig;
 use std::thread;
 use std::time::Duration;
@@ -21,10 +22,11 @@ fn heartbeat_broadcast_sends_to_all_clients() {
     let msgs1 = state.drain_outbound(conn1);
     let msgs2 = state.drain_outbound(conn2);
 
+    let expected = encode_heartbeat(12345);
     assert_eq!(msgs1.len(), 1);
     assert_eq!(msgs2.len(), 1);
-    assert_eq!(&*msgs1[0], "{\"H\":[12345]}");
-    assert_eq!(&*msgs2[0], "{\"H\":[12345]}");
+    assert_eq!(&*msgs1[0], expected.as_slice());
+    assert_eq!(&*msgs2[0], expected.as_slice());
 }
 
 #[test]

@@ -1,62 +1,8 @@
-use crate::types::BboUpdate;
-use crate::types::L2Delta;
-use crate::types::L2Level;
-use crate::types::L2Snapshot;
-use crate::types::TradeEvent;
+//! Inbound client control frames (subscribe / unsubscribe / heartbeat),
+//! parsed from JSON text. The OUTBOUND feed (BBO / snapshot / delta /
+//! trade / heartbeat) is protobuf — see `crate::wire`.
+
 use serde_json::Value;
-
-pub fn serialize_bbo(bbo: &BboUpdate) -> String {
-    format!(
-        "{{\"BBO\":[{},{},{},{},{},{},{},{},{}]}}",
-        bbo.symbol_id,
-        bbo.bid_px,
-        bbo.bid_qty,
-        bbo.bid_count,
-        bbo.ask_px,
-        bbo.ask_qty,
-        bbo.ask_count,
-        bbo.timestamp_ns,
-        bbo.seq,
-    )
-}
-
-pub fn serialize_l2_snapshot(snap: &L2Snapshot) -> String {
-    let fmt_levels = |levels: &[L2Level]| {
-        let parts: Vec<String> = levels
-            .iter()
-            .map(|l| format!("[{},{},{}]", l.price, l.qty, l.count))
-            .collect();
-        format!("[{}]", parts.join(","))
-    };
-    format!(
-        "{{\"B\":[{},{},{},{},{}]}}",
-        snap.symbol_id,
-        fmt_levels(&snap.bids),
-        fmt_levels(&snap.asks),
-        snap.timestamp_ns,
-        snap.seq,
-    )
-}
-
-pub fn serialize_l2_delta(delta: &L2Delta) -> String {
-    format!(
-        "{{\"D\":[{},{},{},{},{},{},{}]}}",
-        delta.symbol_id,
-        delta.side,
-        delta.price,
-        delta.qty,
-        delta.count,
-        delta.timestamp_ns,
-        delta.seq,
-    )
-}
-
-pub fn serialize_trade(trade: &TradeEvent) -> String {
-    format!(
-        "{{\"T\":[{},{},{},{},{},{}]}}",
-        trade.symbol_id, trade.price, trade.qty, trade.taker_side, trade.timestamp_ns, trade.seq,
-    )
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MdFrame {

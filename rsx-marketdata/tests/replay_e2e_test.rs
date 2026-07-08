@@ -2,6 +2,8 @@ use rsx_cast::ReplicationService;
 use rsx_cast::WalWriter;
 use rsx_marketdata::replay::run_replay_bootstrap;
 use rsx_marketdata::state::MarketDataState;
+use rsx_marketdata::types::L2Snapshot;
+use rsx_marketdata::wire::encode_l2_snapshot;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_types::Price;
@@ -330,7 +332,18 @@ fn recovery_snapshot_sent_after_catchup() {
             let snapshot_msg = state.snapshot_msg(1, 10);
             assert!(snapshot_msg.is_some());
             let msg = snapshot_msg.unwrap();
-            assert!(msg.contains("\"B\""));
+            // Protobuf snapshot frame: [len:4 BE][MdFrame body]; body byte
+            // 0 is the Snapshot oneof tag (field 2, wire type 2 = 0x12).
+            // The replayed book yields a larger frame than an empty book.
+            let empty = encode_l2_snapshot(&L2Snapshot {
+                symbol_id: 1,
+                bids: Vec::new(),
+                asks: Vec::new(),
+                timestamp_ns: 0,
+                seq: 0,
+            });
+            assert_eq!(msg[4], 18, "snapshot uses the Snapshot oneof tag");
+            assert!(msg.len() > empty.len(), "replayed snapshot carries levels");
         })
     });
 }

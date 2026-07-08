@@ -1,0 +1,101 @@
+// Public market-data feed schema (server -> subscriber).
+//
+// This .proto is the shared, canonical wire schema for the public
+// subscriber feed. It is NOT compiled by prost-build/protoc in this
+// repo: both sides hand-implement it to match, so the schema stays a
+// single documented source of truth without a codegen toolchain.
+//
+//   - Rust (producer): rsx-marketdata/src/wire.rs hand-derives the
+//     `prost::Message` structs below (named `Wire*`; the encoding
+//     depends only on the field tags here, not the Rust type names).
+//   - Python (subscriber): rsx-playground/md_wire.py hand-rolls a
+//     varint decoder that reads exactly these tags.
+//
+// Transport: each WebSocket BINARY frame carries one MdFrame, framed
+// as a 4-byte big-endian length prefix followed by the MdFrame body:
+//     [len:u32 BE][MdFrame protobuf bytes]
+// (The length prefix mirrors rsx-tui/src/wire.rs; WS is already
+// message-framed, so it is redundant on this transport but kept for
+// parity and transport-independence.)
+//
+// proto3 semantics: zero-valued scalars are omitted on the wire, so a
+// decoder MUST treat an absent scalar field as 0 (e.g. Delta.side==0
+// bid, Delta.qty==0 removal, Bbo.bid_px==0 empty side).
+//
+// All prices/quantities are i64 fixed-point (smallest units), never
+// floats. Tags are STABLE — appending a field is fine, renumbering is
+// a breaking change.
+
+syntax = "proto3";
+
+package rsx.marketdata;
+
+// One aggregated price level.
+message Level {
+  int64 px = 1;
+  int64 qty = 2;
+  uint32 count = 3;
+}
+
+// Best bid/offer. JSON legacy shape: {"BBO":[sym,bid_px,bid_qty,
+// bid_count,ask_px,ask_qty,ask_count,ts,seq]}.
+message Bbo {
+  uint32 symbol_id = 1;
+  int64 bid_px = 2;
+  int64 bid_qty = 3;
+  uint32 bid_count = 4;
+  int64 ask_px = 5;
+  int64 ask_qty = 6;
+  uint32 ask_count = 7;
+  uint64 timestamp_ns = 8;
+  uint64 seq = 9;
+}
+
+// Full L2 snapshot. JSON legacy shape: {"B":[sym,bids,asks,ts,seq]}
+// where bids/asks are [[px,qty,count],...].
+message Snapshot {
+  uint32 symbol_id = 1;
+  repeated Level bids = 2;
+  repeated Level asks = 3;
+  uint64 timestamp_ns = 4;
+  uint64 seq = 5;
+}
+
+// L2 delta for a single level. side: 0=bid, 1=ask. qty==0 removes the
+// level. JSON legacy shape: {"D":[sym,side,px,qty,count,ts,seq]}.
+message Delta {
+  uint32 symbol_id = 1;
+  uint32 side = 2;
+  int64 price = 3;
+  int64 qty = 4;
+  uint32 count = 5;
+  uint64 timestamp_ns = 6;
+  uint64 seq = 7;
+}
+
+// A trade print. taker_side: 0=buy, 1=sell. JSON legacy shape:
+// {"T":[sym,px,qty,taker_side,ts,seq]}.
+message Trade {
+  uint32 symbol_id = 1;
+  int64 price = 2;
+  int64 qty = 3;
+  uint32 taker_side = 4;
+  uint64 timestamp_ns = 5;
+  uint64 seq = 6;
+}
+
+// Server->client liveness ping. JSON legacy shape: {"H":[ts_ms]}.
+message Heartbeat {
+  uint64 timestamp_ms = 1;
+}
+
+// Envelope: exactly one variant is set per frame.
+message MdFrame {
+  oneof body {
+    Bbo bbo = 1;
+    Snapshot snapshot = 2;
+    Delta delta = 3;
+    Trade trade = 4;
+    Heartbeat heartbeat = 5;
+  }
+}

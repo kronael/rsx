@@ -1,6 +1,8 @@
 use rsx_marketdata::shadow::ShadowBook;
 use rsx_marketdata::state::MarketDataState;
 use rsx_marketdata::subscription::CHANNEL_DEPTH;
+use rsx_marketdata::types::L2Snapshot;
+use rsx_marketdata::wire::encode_l2_snapshot;
 use rsx_types::SymbolConfig;
 
 fn config() -> SymbolConfig {
@@ -51,8 +53,9 @@ fn snapshot_before_deltas_on_subscribe() {
     let conn = state.add_connection();
     state.subscribe(conn, 1, CHANNEL_DEPTH, 10);
 
-    // Push a delta before snapshot (simulates race)
-    state.push_to_client(conn, "{\"D\":[1,0,49990,50,1,1000,1]}".into(), 100);
+    // Push a delta frame before snapshot (simulates race). Content is
+    // irrelevant here — only that the queue is non-empty pre-snapshot.
+    state.push_to_client(conn, b"pending-delta".as_slice().into(), 100);
 
     // send_snapshot_to_client clears queue, pushes
     // snapshot as first message (no book = empty snap)
@@ -60,10 +63,13 @@ fn snapshot_before_deltas_on_subscribe() {
 
     let msgs = state.drain_outbound(conn);
     assert_eq!(msgs.len(), 1);
-    // First (and only) message must be a B snapshot
-    assert!(
-        msgs[0].starts_with("{\"B\":["),
-        "first message must be snapshot, got: {}",
-        msgs[0],
-    );
+    // First (and only) message must be the empty-book L2 snapshot frame.
+    let expected = encode_l2_snapshot(&L2Snapshot {
+        symbol_id: 1,
+        bids: Vec::new(),
+        asks: Vec::new(),
+        timestamp_ns: 0,
+        seq: 0,
+    });
+    assert_eq!(&*msgs[0], expected.as_slice());
 }

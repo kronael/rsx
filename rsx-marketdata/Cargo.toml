@@ -23,6 +23,7 @@ tokio = { version = "1", features = ["rt", "macros"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 serde_json = "1"
+prost = "0.14"
 sha1 = "0.10"
 base64 = "0.22"
 

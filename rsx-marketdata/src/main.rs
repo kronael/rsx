@@ -8,11 +8,11 @@ use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
 use rsx_marketdata::config::load_marketdata_config;
 use rsx_marketdata::handler::handle_connection;
-use rsx_marketdata::records::serialize_bbo;
-use rsx_marketdata::records::serialize_l2_delta;
-use rsx_marketdata::records::serialize_trade;
 use rsx_marketdata::replay::run_replay_bootstrap_blocking;
 use rsx_marketdata::state::MarketDataState;
+use rsx_marketdata::wire::encode_bbo;
+use rsx_marketdata::wire::encode_l2_delta;
+use rsx_marketdata::wire::encode_trade;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -519,7 +519,7 @@ fn handle_cancel(
 
 fn handle_fill(state: &Rc<RefCell<MarketDataState>>, rec: &FillRecord, max_outbound: usize) {
     let mut st = state.borrow_mut();
-    let mut trade_msg: Option<Arc<str>> = None;
+    let mut trade_msg: Option<Arc<[u8]>> = None;
     let update = match st.book_mut(rec.symbol_id) {
         Some(book) => {
             let update = book.apply_fill_by_order_id(
@@ -530,7 +530,7 @@ fn handle_fill(state: &Rc<RefCell<MarketDataState>>, rec: &FillRecord, max_outbo
             );
             if update.is_some() {
                 let trade = book.make_trade(rec.price.0, rec.qty.0, rec.taker_side, rec.ts_ns);
-                trade_msg = Some(serialize_trade(&trade).into());
+                trade_msg = Some(encode_trade(&trade).into());
             }
             update
         }
@@ -543,10 +543,9 @@ fn handle_fill(state: &Rc<RefCell<MarketDataState>>, rec: &FillRecord, max_outbo
         let clients = st.clients_for_symbol(rec.symbol_id);
         for client_id in clients {
             if st.has_trades(client_id, rec.symbol_id)
-                // HEAP: fan-out clone — push_to_client takes owned String
-                // (per-client VecDeque<String> outbound). One clone per
-                // subscriber per trade. JSON broadcast path, acceptable
-                // per spec; binary fan-out would replace this.
+                // HEAP: fan-out clone of the protobuf trade frame per
+                // trades subscriber (push_to_client takes an owned
+                // Arc<[u8]>). One Arc bump per subscriber per trade.
                 && !st.push_to_client(
                     client_id,
                     msg.clone(),
@@ -575,8 +574,8 @@ fn broadcast_updates(
         }
         None => return,
     };
-    let delta_msg: Arc<str> = serialize_l2_delta(&delta).into();
-    let mut bbo_msg: Option<Arc<str>> = None;
+    let delta_msg: Arc<[u8]> = encode_l2_delta(&delta).into();
+    let mut bbo_msg: Option<Arc<[u8]>> = None;
     if let Some(bbo) = bbo {
         let changed = match st.last_bbo_mut(symbol_id) {
             Some(last) => {
@@ -590,16 +589,15 @@ fn broadcast_updates(
             None => true,
         };
         if changed {
-            bbo_msg = Some(serialize_bbo(&bbo).into());
+            bbo_msg = Some(encode_bbo(&bbo).into());
         }
     }
 
     let clients = st.clients_for_symbol(symbol_id);
     for client_id in clients {
         if st.has_depth(client_id, symbol_id)
-            // HEAP: fan-out clone of L2 delta JSON per depth subscriber.
-            // push_to_client requires owned String. JSON broadcast path,
-            // acceptable per spec.
+            // HEAP: fan-out clone of the protobuf L2 delta frame per
+            // depth subscriber (push_to_client takes an owned Arc<[u8]>).
             && !st.push_to_client(
                 client_id,
                 delta_msg.clone(),
@@ -615,8 +613,8 @@ fn broadcast_updates(
         }
         if let Some(ref msg) = bbo_msg {
             if st.has_bbo(client_id, symbol_id) {
-                // HEAP: fan-out clone of BBO JSON per BBO subscriber.
-                // Same rationale as delta clone above.
+                // HEAP: fan-out clone of the protobuf BBO frame per BBO
+                // subscriber. Same rationale as the delta clone above.
                 // SAFETY: BBO is "latest wins" state; if
                 // client outbound is full the next BBO
                 // update supersedes anyway.
