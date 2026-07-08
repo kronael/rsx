@@ -83,8 +83,12 @@ fn wal_records_written_for_all_event_types() {
     while let Ok(Some(_)) = reader.next() {
         count += 1;
     }
-    // Fill + OrderDone(taker) + OrderInserted = 3
-    assert_eq!(count, 3);
+    // First order (buy crosses resting sell, best ask px/tick unchanged):
+    //   Fill + OrderDone(taker) = 2, no BBO (only qty at best changed).
+    // Second order (buy rests below, best bid none -> 49_900):
+    //   OrderInserted + BBO = 2 (bid appears -> best-bid tick changed).
+    // BBO is WAL-persisted (same records as the production fan-out).
+    assert_eq!(count, 4);
 }
 
 #[test]

@@ -52,7 +52,9 @@ fn done_final_status(reason: u8) -> u8 {
 }
 
 /// Write every event from the book's buffer to the WAL only (no cast).
-/// Replay/bench helper. BBO is skipped (re-derived on replay).
+/// Replay/bench helper — writes the SAME records as the production
+/// fan-out (`publish_events`), including BBO; it just doesn't cast to
+/// risk/marketdata.
 pub fn write_events_to_wal(
     writer: &mut WalWriter,
     book: &Orderbook,
@@ -248,8 +250,10 @@ fn emit_events<S: EventSink>(
                 // every other record. Since BBO wasn't WAL'd, the
                 // two counters desynced and the wire seq regressed
                 // → "sender reset detected" → FAULTED. Route BBO
-                // through the single WAL seq like every other record
-                // (the WAL-only sink skips it; replay re-derives it).
+                // through the single WAL seq like every other record.
+                // Replay re-derives BBO, so it's a skipped side effect
+                // there — but it MUST occupy a WAL seq to keep the
+                // stream contiguous (a hole reads as loss → FAULTED).
                 let mut record = rsx_messages::BboRecord {
                     seq: 0,
                     ts_ns,
@@ -264,7 +268,7 @@ fn emit_events<S: EventSink>(
                     ask_count: 0,
                     _pad2: 0,
                 };
-                sink.emit_bbo(&mut record)?;
+                sink.emit(&mut record)?;
             }
         }
     }
@@ -289,11 +293,6 @@ pub fn publish_events(
 /// record-construction match lives in exactly one place.
 trait EventSink {
     fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()>;
-    /// BBO is re-derived on replay. The production fan-out WAL-sequences it
-    /// (SEQ-1: keeps live seq == replay seq); the WAL-only sink skips it.
-    fn emit_bbo(&mut self, record: &mut rsx_messages::BboRecord) -> io::Result<()> {
-        self.emit(record)
-    }
 }
 
 /// WAL-only sink: prepare (assign seq + CRC), then append. Replay/bench helper.
@@ -305,9 +304,6 @@ impl EventSink for WalSink<'_> {
     fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
         let framed = self.writer.prepare(record)?;
         self.writer.append_framed(&framed)
-    }
-    fn emit_bbo(&mut self, _record: &mut rsx_messages::BboRecord) -> io::Result<()> {
-        Ok(())
     }
 }
 
