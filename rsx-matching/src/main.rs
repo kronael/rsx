@@ -23,6 +23,8 @@ use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::save_snapshot;
+use rsx_matching::wal::update_order_index;
+use rsx_matching::wal::OrderKey;
 use rsx_matching::wire::to_incoming;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
@@ -51,42 +53,6 @@ use tokio_postgres::NoTls;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-/// Key into the order index. The matching engine maintains
-/// `FxHashMap<OrderKey, slab_handle: u32>` so cancels are
-/// O(1) instead of an O(n) slab scan. Updated from
-/// `book.events()` after every match cycle: OrderInserted
-/// adds, OrderDone removes.
-type OrderKey = (u32, u64, u64);
-
-/// After a match cycle, walk `book.events()` once and keep
-/// the order index in sync. Insert on OrderInserted, remove
-/// on OrderDone (which fires for every terminal transition,
-/// including fully-filled and cancelled).
-fn update_order_index(events: &[rsx_book::event::Event], index: &mut FxHashMap<OrderKey, u32>) {
-    for event in events {
-        match *event {
-            rsx_book::event::Event::OrderInserted {
-                handle,
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                ..
-            } => {
-                index.insert((user_id, order_id_hi, order_id_lo), handle);
-            }
-            rsx_book::event::Event::OrderDone {
-                user_id,
-                order_id_hi,
-                order_id_lo,
-                ..
-            } => {
-                index.remove(&(user_id, order_id_hi, order_id_lo));
-            }
-            _ => {}
-        }
-    }
-}
 
 /// Rebuild `order_index` from a freshly restored book's
 /// active resting orders. A snapshot persists the book's slab
@@ -133,37 +99,7 @@ fn log_effective_matching_config(
     );
 }
 
-fn get_env_u32(key: &str) -> io::Result<u32> {
-    let raw = env::var(key).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("missing env var {}", key),
-        )
-    })?;
-    raw.parse().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {}: {}", key, raw),
-        )
-    })
-}
-
-fn get_env_u8(key: &str) -> io::Result<u8> {
-    let raw = env::var(key).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("missing env var {}", key),
-        )
-    })?;
-    raw.parse().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {}: {}", key, raw),
-        )
-    })
-}
-
-fn get_env_i64(key: &str) -> io::Result<i64> {
+fn get_env<T: std::str::FromStr>(key: &str) -> io::Result<T> {
     let raw = env::var(key).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -179,11 +115,11 @@ fn get_env_i64(key: &str) -> io::Result<i64> {
 }
 
 fn load_config_from_env() -> io::Result<SymbolConfig> {
-    let symbol_id = get_env_u32("RSX_ME_SYMBOL_ID")?;
-    let price_decimals = get_env_u8("RSX_ME_PRICE_DECIMALS")?;
-    let qty_decimals = get_env_u8("RSX_ME_QTY_DECIMALS")?;
-    let tick_size = get_env_i64("RSX_ME_TICK_SIZE")?;
-    let lot_size = get_env_i64("RSX_ME_LOT_SIZE")?;
+    let symbol_id = get_env::<u32>("RSX_ME_SYMBOL_ID")?;
+    let price_decimals = get_env::<u8>("RSX_ME_PRICE_DECIMALS")?;
+    let qty_decimals = get_env::<u8>("RSX_ME_QTY_DECIMALS")?;
+    let tick_size = get_env::<i64>("RSX_ME_TICK_SIZE")?;
+    let lot_size = get_env::<i64>("RSX_ME_LOT_SIZE")?;
     Ok(SymbolConfig {
         symbol_id,
         price_decimals,

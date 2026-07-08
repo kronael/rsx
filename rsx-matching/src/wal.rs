@@ -487,7 +487,7 @@ pub fn replay_wal_after_snapshot(
                     order_id_lo: rec.order_id_lo,
                 };
                 process_new_order(book, &mut incoming);
-                update_order_index_local(book.events(), order_index);
+                update_order_index(book.events(), order_index);
                 accepted += 1;
             }
             t if t == RECORD_ORDER_CANCELLED => {
@@ -560,11 +560,11 @@ pub fn rebuild_dedup_window(
     Ok(seeded)
 }
 
-/// Local copy of main.rs's `update_order_index` so replay
-/// doesn't need to import a private symbol. Keeps the same
-/// shape: a successful insert/restore puts the handle into
-/// the index; a Done removes it.
-fn update_order_index_local(events: &[Event], index: &mut FxHashMap<OrderKey, u32>) {
+/// The one order-index maintainer, shared by the live loop
+/// (`main.rs`), replay (below), and the bench harness: a
+/// successful insert/restore puts the handle into the index; a
+/// Done removes it.
+pub fn update_order_index(events: &[Event], index: &mut FxHashMap<OrderKey, u32>) {
     for ev in events {
         match *ev {
             Event::OrderInserted {
