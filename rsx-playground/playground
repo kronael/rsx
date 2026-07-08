@@ -59,14 +59,14 @@ def is_running():
         return True
     except ValueError:
         # invalid PID file
-        PID_FILE.unlink()
+        PID_FILE.unlink(missing_ok=True)
         return False
     except FileNotFoundError:
         # PID file deleted between exists() and read()
         return False
     except ProcessLookupError:
         # process doesn't exist
-        PID_FILE.unlink()
+        PID_FILE.unlink(missing_ok=True)
         return False
     except PermissionError:
         # Could be our process but different user, or different process.

@@ -15,6 +15,8 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::TlsConnector;
 
 pub fn build_connector(cfg: &TlsClient) -> io::Result<TlsConnector> {
+    install_crypto_provider();
+
     let mut root_store = RootCertStore::empty();
     let ca_pem = fs::read(&cfg.cert_path)?;
     for cert in load_certs(&ca_pem)? {
@@ -33,6 +35,8 @@ pub fn build_connector(cfg: &TlsClient) -> io::Result<TlsConnector> {
 }
 
 pub fn build_acceptor(cfg: &TlsServer) -> io::Result<TlsAcceptor> {
+    install_crypto_provider();
+
     let certs = load_certs(&fs::read(&cfg.cert_path)?)?;
     let key = load_private_key(&fs::read(&cfg.key_path)?)?;
 
@@ -46,6 +50,10 @@ pub fn build_acceptor(cfg: &TlsServer) -> io::Result<TlsAcceptor> {
             )
         })?;
     Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+fn install_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 pub fn extract_server_name(addr: &str) -> io::Result<ServerName<'static>> {
