@@ -3,6 +3,64 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-08 — gateway ↔ marketdata alignment (symmetry audit)
+
+Gateway (client-WS in → cast out) and marketdata (cast in → public-WS out) are
+two forks of one monoio shape (single reactor, `Rc<RefCell<State>>`,
+`ConnectionState.outbound: VecDeque`, `drain_outbound`, per-source
+`CastReceiver` + fault/replay). Most divergence is accidental drift; the two
+real bugs are **mirror halves of the same missing symmetry** — each crate has
+the fix the other lacks. Record-only per triage. (SPSC/tile note: neither uses
+rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
+
+- **MD-EGRESS-STALL** (HIGH, latency) — **CONFIRMED (verified in code).**
+  `rsx-marketdata/src/handler.rs:40` blocks on `ws_read_frame(&mut stream)
+  .await` with NO timeout, so L2/BBO/trade messages queued into the per-client
+  `outbound` are only written when the client next SENDS a frame — a
+  listen-only client gets just the initial snapshot until its ~10 s heartbeat.
+  The gateway fixed exactly this at `handler.rs:129` (`monoio::time::timeout(
+  500µs, stream.readable(false))`). Port that bounded-readable loop to the
+  marketdata handler — it's the pure push-feed where it matters most.
+- **GW-OUTBOUND-UNBOUNDED** (MED, resource/DoS) — CONFIRMED. `rsx-gateway/src/
+  state.rs:144` (`push_to_user`) / `:152` (`broadcast_heartbeat`) `push_back`
+  onto `outbound` with no cap; a slow/non-reading authed client accumulates
+  unbounded `Arc<str>`. Marketdata bounds the identical structure at
+  `state.rs:73` (`max_outbound` → drop + snapshot resync). Adopt that cap +
+  `RSX_GW_MAX_OUTBOUND`. (Mirror of MD-EGRESS-STALL, other direction.)
+- **WS-FORK-DRIFT** (MED, duplication) — CONFIRMED. `rsx-gateway/src/ws.rs`
+  and `rsx-marketdata/src/ws.rs` are forked copies of one WS impl; the gateway
+  hardened its reader (mask required, FIN=0 reject, 4 KB cap) and marketdata
+  kept the looser copy (mask optional, fragments accepted, **1 MB cap** on an
+  unauthenticated public endpoint — MD-FRAME-CAP / MD-WS-UNMASKED). Converge
+  the behavior in place (port the guards + 4 KB cap to marketdata); only THEN
+  consider hoisting the domain-agnostic core (`WS_MAGIC`, accept loop, frame
+  read/write) into a shared module. Auth/jti stays gateway-only.
+- **MD-ACCEPT-DROPS-PEER** (LOW, hardening) — CONFIRMED. `rsx-marketdata/src/
+  ws.rs:17` types the accept closure `Fn(TcpStream)` and discards `peer`
+  (`main.rs:332`); the public endpoint has no per-IP/connection cap and can't
+  even see the source IP. Keep the signature symmetric with the gateway
+  (`Fn(TcpStream, SocketAddr)`) so a cap becomes possible.
+- **MD-PIN-DOC-CONTRADICTION** (LOW, docs) — CONFIRMED. marketdata pinning is
+  described three contradictory ways: `ARCHITECTURE.md:174` "no core_affinity",
+  README "busy-spin loop", root `CLAUDE.md` "pinned for keep-up"; code pins iff
+  `RSX_MD_CORE_ID` set + busy-polls via `sleep(Duration::ZERO)`. Reconcile to
+  one story (busy-poll-for-keep-up, optionally pinned).
+- **GW/MD-README-ENV-DRIFT** (LOW, docs) — CONFIRMED. Both READMEs document
+  env names the code doesn't read (`RSX_GW_LISTEN_ADDR` vs code `RSX_GW_LISTEN`;
+  `RSX_GW_HEARTBEAT_INTERVAL_MS` vs `_S`; marketdata README `RSX_MKT_*` vs code
+  `RSX_MD_*`). Also `rsx-gateway/ARCHITECTURE.md:133` says "10ms" where code is
+  500µs. Fix the env tables on both.
+- **GW-HEARTBEAT-DUAL-PATH** (LOW, complexity) — CONFIRMED. Gateway sends
+  heartbeats from both the per-connection handler (`handler.rs:88`) and the
+  main-loop `broadcast_heartbeat` (`main.rs:477`), which doesn't update
+  `last_heartbeat_sent_ns` → ~2× heartbeats. Marketdata does only the main-loop
+  path. Collapse the gateway to the simpler shape.
+- **DRAIN-REPLAY-4X-DUP** (LOW, duplication — do NOT act) — `drain_replay` is
+  byte-identical across gateway/marketdata/matching/risk (4 copies) but builds
+  a tokio runtime, so its natural home (rsx-cast) can't take it — rsx-cast is
+  FROZEN and never gets a runtime dep. Extraction needs founder sign-off on a
+  NEW shared crate. Record only.
+
 ## Status — 2026-07-07 — rsx-book compressed-level audit (fable)
 
 **RESOLVED 2026-07-07 — all five below FIXED.** The compressed / mixed-slot
