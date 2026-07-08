@@ -1,5 +1,11 @@
 # Building a Derivatives Exchange in Rust
 
+> **Draft — AI-generated, not yet human-edited (slop, for now).** These
+> posts are meant to be the educational core of RSX — the *why* behind the
+> code — but they haven't had a real editorial pass yet. For anything
+> authoritative, read the specs (`specs/2/`) and the code. The blog gets a
+> proper rewrite before it becomes the front door.
+
 ## What RSX Is
 
 Two artifacts in one repo:
