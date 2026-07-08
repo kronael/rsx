@@ -287,7 +287,7 @@ pub fn publish_events(
                     _pad1: [0; 4],
                     taker_ts_ns,
                 };
-                fan_out(writer, cmp, Some(mkt), &mut record)?;
+                fan_out(writer, cmp, mkt, &mut record)?;
             }
             Event::OrderInserted {
                 handle,
@@ -319,7 +319,7 @@ pub fn publish_events(
                     post_only: 0,
                     _pad1: [0; 4],
                 };
-                fan_out(writer, cmp, Some(mkt), &mut record)?;
+                fan_out(writer, cmp, mkt, &mut record)?;
             }
             Event::OrderCancelled {
                 handle,
@@ -349,7 +349,7 @@ pub fn publish_events(
                     post_only,
                     _pad1: [0; 4],
                 };
-                fan_out(writer, cmp, Some(mkt), &mut record)?;
+                fan_out(writer, cmp, mkt, &mut record)?;
             }
             Event::OrderDone {
                 handle,
@@ -385,7 +385,7 @@ pub fn publish_events(
                 // only one consumer leaves a WAL-seq hole on the
                 // other → false FAULTED. marketdata ignores types
                 // it doesn't handle.
-                fan_out(writer, cmp, Some(mkt), &mut record)?;
+                fan_out(writer, cmp, mkt, &mut record)?;
             }
             Event::OrderFailed {
                 user_id,
@@ -408,7 +408,7 @@ pub fn publish_events(
                 // ME. Fan out to both so the seq stays contiguous;
                 // the gateway also needs ORDER_FAILED to tell the
                 // client its order was rejected.
-                fan_out(writer, cmp, Some(mkt), &mut record)?;
+                fan_out(writer, cmp, mkt, &mut record)?;
             }
             Event::BBO {
                 bid_px,
@@ -441,32 +441,28 @@ pub fn publish_events(
                     ask_count: 0,
                     _pad2: 0,
                 };
-                fan_out(writer, cmp, Some(mkt), &mut record)?;
+                fan_out(writer, cmp, mkt, &mut record)?;
             }
         }
     }
     Ok(())
 }
 
-/// Frame once via `WalWriter::prepare`, then fan to WAL + cmp + optional mkt.
-#[inline]
+/// Frame once via `WalWriter::prepare`, then fan to WAL + risk + marketdata.
 fn fan_out<T: rsx_cast::CastRecord>(
     writer: &mut WalWriter,
     cmp: &mut CastSender,
-    mkt: Option<&mut CastSender>,
+    mkt: &mut CastSender,
     record: &mut T,
 ) -> io::Result<()> {
     let framed: Framed = writer.prepare(record)?;
     writer.append_framed(&framed)?;
     cmp.send_framed(&framed)?;
-    if let Some(s) = mkt {
-        s.send_framed(&framed)?;
-    }
+    mkt.send_framed(&framed)?;
     Ok(())
 }
 
 /// Flush WAL if 10ms have elapsed since last flush.
-#[inline]
 pub fn flush_if_due(writer: &mut WalWriter, last_flush: &mut Instant) -> io::Result<()> {
     let now = Instant::now();
     if now.duration_since(*last_flush).as_millis() >= 10 {
