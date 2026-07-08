@@ -4,8 +4,8 @@ use crate::records::MdParseError;
 use crate::state::MarketDataState;
 use crate::ws::ws_handshake;
 use crate::ws::ws_read_frame;
+use crate::ws::ws_write_binary;
 use crate::ws::ws_write_raw;
-use crate::ws::ws_write_text;
 use monoio::net::TcpStream;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,7 +39,7 @@ pub async fn handle_connection(
     loop {
         let msgs = state.borrow_mut().drain_outbound(conn_id);
         for msg in msgs {
-            if let Err(e) = ws_write_text(&mut stream, msg.as_bytes()).await {
+            if let Err(e) = ws_write_binary(&mut stream, &msg).await {
                 warn!("write error conn {}: {e}", conn_id);
                 state.borrow_mut().remove_connection(conn_id);
                 return;
@@ -136,7 +136,7 @@ pub async fn handle_connection(
             Ok(MdFrame::Heartbeat { timestamp_ms }) => {
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
-                let echo: Arc<str> = format!("{{\"H\":[{}]}}", timestamp_ms).into();
+                let echo: Arc<[u8]> = crate::wire::encode_heartbeat(timestamp_ms).into();
                 // SAFETY: heartbeat echo is best-effort;
                 // a slow client with full outbound has
                 // bigger problems than a missed pong.
