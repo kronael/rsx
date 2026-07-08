@@ -29,9 +29,8 @@ This document describes the shared WAL architecture for the risk engine and the 
 
 - WAL uses **fixed-size records** (no protobuf, no extra envelope).
 - Records are `#[repr(C, align(64))]` with explicit little-endian fields.
-- Each record starts with a 16-byte header:
-  `{version: u8, _pad0: u8, record_type: u16, len: u16,
-  _pad1: u16, crc32: u32, _reserved: [u8; 4]}`. The
+- Each record starts with a 16-byte header — layout defined once in
+  [10-replication.md](10-replication.md) (reused for storage + streaming). The
   `version` byte (offset 0) carries the wire-format version
   (`V1` = current). Adding record types is additive and
   does NOT bump the version; bumping is reserved for
