@@ -12,8 +12,8 @@ The match is **price-agnostic** — it pairs orders on their own
 limit prices alone, with no notion of mark or index price (those
 live in Risk and Mark). And it is **flat**: the 2026-07-03 bench
 measures the match at ~30 ns whether the book holds one resting
-order or 100 000 (depth-independent — see Measured Performance
-below). Scale-out is by symbol: one matching-engine instance per
+order or 100 000; see Measured Performance below. Scale-out is by
+symbol: one matching-engine instance per
 tradeable symbol, added independently of user-shard (Risk)
 scale-out.
 
@@ -233,7 +233,7 @@ SIGKILL would lose every fill — recovery replays the WAL from
 caller seeds `WalWriter::next_seq = ret + 1` so subsequent live
 writes never reuse a replayed seq.
 
-## FAULTED → skip-the-gap (order stream is drop-safe)
+## FAULTED → skip-the-gap
 
 When `CastReceiver::try_recv` returns `CastRecv::Faulted` (a gap
 that outran in-band NAK recovery), the matching loop **skips the
