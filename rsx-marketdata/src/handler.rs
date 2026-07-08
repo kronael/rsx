@@ -27,6 +27,15 @@ pub async fn handle_connection(
     let conn_id = state.borrow_mut().add_connection();
     info!("md connection {}", conn_id);
 
+    // Egress wake handle: producers (push_to_client / the main
+    // broadcast loop) signal it right after queuing into this
+    // client's `outbound`, so a passive subscriber is served the
+    // instant a message exists — see the select below.
+    let egress = state
+        .borrow()
+        .connection_egress(conn_id)
+        .expect("egress waker present for just-added connection");
+
     loop {
         let msgs = state.borrow_mut().drain_outbound(conn_id);
         for msg in msgs {
@@ -34,6 +43,27 @@ pub async fn handle_connection(
                 warn!("write error conn {}: {e}", conn_id);
                 state.borrow_mut().remove_connection(conn_id);
                 return;
+            }
+        }
+
+        // Park until inbound readability or an egress signal. Without
+        // this, a passive subscriber (subscribe, then just listen)
+        // would only drain queued L2/BBO/trade messages when it next
+        // sent a frame. Cancel-safe: the egress arm only cancels the
+        // `readable` readiness check — no read is issued, no buffered
+        // bytes are lost. The multi-read `ws_read_frame` runs after,
+        // un-raced, so a frame is never torn mid-read.
+        monoio::select! {
+            r = stream.readable(false) => {
+                if let Err(e) = r {
+                    info!("conn {} closed: {e}", conn_id);
+                    state.borrow_mut().remove_connection(conn_id);
+                    return;
+                }
+            }
+            _ = egress.wait() => {
+                // A message was queued; loop back to drain + write.
+                continue;
             }
         }
 
