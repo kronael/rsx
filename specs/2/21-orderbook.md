@@ -317,9 +317,10 @@ hot/cold split at 48B), both enforced by compile-time asserts on `size_of` and
 bytes so it fits within two cache lines.
 
 `Slab<T>` is a `Vec` plus a free list chained through the slot's own `next`
-field — O(1) alloc/free, index IS the handle. The matching engine constructs
-`Orderbook::new(config, 65_536, mid_price)`: 65 536 order slots
-(~8 MiB) per symbol. Tests use smaller capacities (1 024 – 4 096).
+field — O(1) alloc/free, index IS the handle. The slab capacity is the
+`Orderbook::new` argument, not a compile-time order cap. Tests and bench
+binaries pass smaller capacities (1 024-200 000); production sizing can pass
+tens of millions of slots, with ~78M slots reserving ~10 GB virtual memory.
 
 ### FIFO Within Price Level (Invariant #3)
 
@@ -419,9 +420,10 @@ and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).
 ## 7. Memory Layout & Performance
 
 Pre-allocate everything. Roughly 30 MB for the two level arrays; the slab
-adds ~8 MiB at the production capacity of 65 536 `OrderSlot`s. (The
-~10 GB / ~78M-slot figure is the aspirational upper bound, not the current
-default — bump the `Orderbook::new` capacity argument to scale.)
+capacity is the `Orderbook::new` argument. The 65 536 constant is the
+per-cycle event buffer, not the order slab cap. Production can size the slab
+to tens of millions of `OrderSlot`s; ~78M slots reserves ~10 GB of virtual
+memory, with physical pages faulted in as orders actually rest.
 See bench results in `rsx-book/benches/`.
 
 Hot path is zero-allocation: slab provides all storage, the event buffer is a

@@ -1,94 +1,80 @@
 # Tiles and Pinning
 
-A "tile" is a thread that owns one CPU core, runs a tight
-loop, and communicates with sibling threads only through
-bounded SPSC rings. It never blocks on I/O. It never yields
-to the scheduler. From the OS's perspective, it is always
-runnable — so the kernel never takes it away.
-
-The pattern trades CPU cores for predictable latency. You
-spend one core to eliminate scheduler jitter, context switches,
-and cache eviction caused by the OS migrating the thread.
+A tile is a pinned OS thread that owns 1 CPU core and runs a
+busy-spin hot loop. The tradeoff is blunt: spend a whole core to
+remove scheduler jitter, wakeup latency, and cache migration from a
+compute-bound loop.
 
 ## When to tile
 
-The rule is: tile when the hot loop is compute-bound and you
-need single-digit-microsecond tail latency. Use an async
-runtime when the loop is I/O-bound across many file descriptors.
+Tile when the hot loop is compute-bound and its service time is
+measured in tens or hundreds of nanoseconds. Use monoio/io_uring
+when the loop is I/O-bound across many file descriptors.
 
-`rsx-risk` is the canonical tile. It runs one pinned busy-spin
-thread that drains seven SPSC rings (orders from gateway, fills
-from matching, BBO and mark-price updates) and drives the margin
-state machine. Margin computation is pure computation: no I/O,
-no syscall, no allocation. A 50–170 ns ring hop is the relevant
-latency unit. Postgres write-behind lives on a separate tokio
-sidecar thread and shares no locks with the pinned loop.
+`rsx-risk` is the canonical tile. One pinned busy-spin thread drains
+7 SPSC rings and drives the margin state machine. Margin work is
+pure computation: no I/O, no syscall, no allocation. The pre-trade
+check measures about 110 ns p50.
 
-`rsx-matching` is a separate process, not a tile — a tile is a
-thread inside a process, and the matching engine is the whole
-process. It happens to be a single pinned thread, so it has no
-SPSC rings: there is no sibling thread to ring to. That one
-thread drains UDP packets, runs the matching algorithm, appends
-to the WAL writer inline, and sends fills back over UDP.
-Measured: 54 ns per single fill through the book.
+`rsx-matching` is a separate process, not a tile; a tile is a thread
+inside a process. It has the same scheduling rationale: 1 pinned
+busy-spin thread owns the book, appends WAL records inline, and
+matches a single fill in about 54-65 ns.
 
-Gateway and marketdata use monoio with io_uring. Both processes
-handle many concurrent WebSocket connections — the gateway
-muxes client orders onto the casting wire (fan-in); marketdata
-drains ME's casting firehose and fans order-book events out to
-public subscribers (fan-out). Neither uses SPSC rings: the
-fan-in/out happens inside the async reactor (per-connection
-tasks sharing a single-threaded `CastSender`/`CastReceiver`),
-because the bottleneck is I/O multiplexing across N file
-descriptors, not computation. io_uring batches the syscalls; a
-tile would do the same WS parsing without gaining anything from
-pinning.
+Gateway and marketdata are the counterexample. They are monoio
+services because their bottleneck is many WebSocket sockets and
+kernel crossings, not compute. Their I/O model belongs in
+[network-edge-io](network-edge-io.md).
 
-So `rsx-risk` is the worked example of the tile model here (and
-why it is the fastest arrangement for a compute-bound hot loop).
-Gateway and marketdata are the monoio counterpart, but both are
-still being finalized — the detailed design of their
-fan-in/fan-out I/O model belongs in their own crate docs once
-their shape settles, not here.
+## What pinning removes
 
-SPSC ring measured performance: 50–170 ns per hop, from the
-`rsx-book` benchmarks.
+A context switch is hundreds of ns of register and TLB churn. A
+runtime park/unpark wakeup is on the us scale. Core migration under
+the OS load balancer evicts the L1/L2 cache that a hot loop spent
+warming.
+
+Tokio's work-stealing is the right default for many I/O tasks: idle
+workers park, tasks can move, and cores are shared. Those features
+are invisible taxes on a 60 ns match. A pinned busy-spinner never
+parks and never migrates, so the p99 stays near the p50; book bench
+tails show p99/p50 around 1.1-1.5x on the tight paths.
+
+The price is 100% CPU while idle. If 4 busy-spin loops own 4 cores,
+the OS has 0 spare cores unless deployment reserves one.
 
 ## Why an unpinned spinner is dangerous
 
-An unpinned busy-spinner is worse than useless: it consumes 100%
-of whatever core the OS assigns it and floats across cores under
-CFS load balancing. When it lands on a core already owned by a
-pinned hot-path process, it starves that process — the victim
-stalls, its UDP socket falls behind, and packets start to drop.
+An unpinned busy-spinner consumes 100% of whatever core CFS gives
+it and can float across cores under load balancing. If it lands on
+a core owned by a pinned hot-path process, it starves that process:
+the victim stalls, UDP receive falls behind, and packets drop.
 
-So the rule has two parts. Pin the processes that need pinning
-and document which cores they own. And keep off-path services
-(mark, recorder) on a sleep loop, not a spin loop — they are not
-on the order critical path and do not need busy-spin latency. An
-unpinned sleeper uses ~0% CPU between events; an unpinned spinner
-eats 100% and wanders.
+So the rule has 2 parts. Pin every busy-spin hot loop and document
+which core it owns. Keep off-path services such as mark and recorder
+on sleep loops; they are not on the order critical path and do not
+need busy-spin latency. An unpinned sleeper uses about 0% CPU
+between events; an unpinned spinner eats 100%.
 
-The six-core layout in the root README formalizes this: cores 1
-through 4 are owned by gateway, risk, matching, and marketdata
-respectively. Core 0 carries the OS and the sleeping off-path
-services. Core 5 is headroom.
+The 6-core README layout formalizes this: core 0 carries the OS and
+off-path sleepers; cores 1-4 carry gateway, risk, matching, and
+marketdata; core 5 is headroom.
 
 ## What you give up
 
-Each tile owns a core whether it is busy or idle. A 4-tile
-process on a 4-core machine leaves nothing for the OS. A
-blocking operation inside a tile — a syscall that takes 1 ms —
-is a 1 ms latency spike for every message that arrives while it
-is blocked. The tile model requires that the hot loop contains
-no blocking operations: no disk I/O, no synchronous network
-calls, no mutexes that might be held elsewhere.
+Each tile owns a core whether it is busy or idle. A blocking
+operation inside the hot loop turns directly into tail latency: a
+1 ms syscall is a 1 ms stall for every message that arrives behind
+it. The tile model requires no blocking I/O, no synchronous network
+calls, and no mutex held by another thread.
 
-This is why Postgres write-behind lives in a sidecar: writing to
-Postgres is a blocking operation and it must not be on the
-pinned thread.
+That is why Risk sends Postgres writes to a tokio sidecar through
+an SPSC ring. The pinned loop does computation; the sidecar pays the
+blocking database cost.
 
 ---
 
 Deeper: [blog/18-100ns-matching.md](../../blog/18-100ns-matching.md),
-[specs/2/45-tiles.md](../../specs/2/45-tiles.md)
+[reports/20260704_book-bench.md](../../reports/20260704_book-bench.md),
+[specs/2/45-tiles.md](../../specs/2/45-tiles.md),
+[docs/concepts/spsc-rings.md](../../docs/concepts/spsc-rings.md),
+[docs/concepts/network-edge-io.md](../../docs/concepts/network-edge-io.md)
