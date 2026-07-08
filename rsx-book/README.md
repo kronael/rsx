@@ -4,7 +4,7 @@ A matching engine is the core of any exchange: it pairs incoming buy
 and sell orders by price and then by time, deciding who trades with
 whom. The hard part is staying fast when the book is already full —
 millions of resting orders — because the obvious data structures slow
-down as they fill. rsx-book matches an order in about **60 nanoseconds**
+down as they fill. rsx-book matches an order in about **60 ns**
 (roughly the time light takes to travel 18 metres) and holds that speed
 whether a hundred orders are resting or ten million.
 
