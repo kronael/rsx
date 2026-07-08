@@ -115,9 +115,9 @@ COMPONENTS: dict = {
         "docs": [
             ("Spec: Gateway", "./docs/spec/11-gateway"),
             ("Concept: Tiles &amp; Pinning",
-             "./docs/concepts/tiles-and-pinning"),
+             "./docs/concepts/02-tiles-and-pinning"),
             ("Concept: Sharding Axes",
-             "./docs/concepts/sharding-axes"),
+             "./docs/concepts/09-sharding-axes"),
         ],
         "crate": "rsx-gateway",
         "log_key": "gateway",
@@ -136,9 +136,9 @@ COMPONENTS: dict = {
         "docs": [
             ("Spec: Risk", "./docs/spec/28-risk"),
             ("Concept: Sharding Axes",
-             "./docs/concepts/sharding-axes"),
+             "./docs/concepts/09-sharding-axes"),
             ("Concept: Tiles &amp; Pinning",
-             "./docs/concepts/tiles-and-pinning"),
+             "./docs/concepts/02-tiles-and-pinning"),
         ],
         "crate": "rsx-risk",
         "log_key": "risk",
@@ -157,7 +157,7 @@ COMPONENTS: dict = {
             ("Spec: Orderbook", "./docs/spec/21-orderbook"),
             ("Spec: Matching", "./docs/spec/17-matching"),
             ("Concept: Slab &amp; Compression",
-             "./docs/concepts/slab-and-compression"),
+             "./docs/concepts/05-slab-and-compression"),
         ],
         "crate": "rsx-matching",
         "log_key": "matching",
@@ -174,8 +174,8 @@ COMPONENTS: dict = {
         ),
         "docs": [
             ("Spec: Marketdata", "./docs/spec/16-marketdata"),
-            ("Concept: WAL = Wire = Stream",
-             "./docs/concepts/wal-is-wire-is-stream"),
+            ("Concept: WAL Durability",
+             "./docs/concepts/07-asymmetric-durability"),
         ],
         "crate": "rsx-marketdata",
         "log_key": "marketdata",
@@ -194,7 +194,7 @@ COMPONENTS: dict = {
         "docs": [
             ("Spec: Mark Price", "./docs/spec/15-mark"),
             ("Concept: Tiles &amp; Pinning",
-             "./docs/concepts/tiles-and-pinning"),
+             "./docs/concepts/02-tiles-and-pinning"),
         ],
         "crate": "rsx-mark",
         "log_key": "mark",
@@ -211,8 +211,8 @@ COMPONENTS: dict = {
         ),
         "docs": [
             ("Spec: Replication", "./docs/spec/10-replication"),
-            ("Concept: WAL = Wire = Stream",
-             "./docs/concepts/wal-is-wire-is-stream"),
+            ("Concept: WAL Durability",
+             "./docs/concepts/07-asymmetric-durability"),
         ],
         "crate": "rsx-recorder",
         "log_key": "recorder",
@@ -2604,7 +2604,7 @@ def orders_page():
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
       tracking-wider block mb-1">Price (human, e.g. 0.05)</label>
-    <input type="text" name="price" value="0"
+    <input type="text" name="price" value="0.049"
       placeholder="0 = market"
       class="w-full sm:w-28 bg-slate-950 border
         border-slate-700 text-slate-300 px-2 py-1
@@ -3084,7 +3084,7 @@ def render_invariant_status(checks, last_run=None):
             f'(last run {ts})</span>')
     if not checks:
         return ('<span class="text-slate-400 text-xs">'
-                'UNKNOWN</span>'
+                'check pending</span>'
                 '<span class="text-slate-600 text-xs ml-2">'
                 '(run checks on Verify tab)</span>')
     fails = [c for c in checks if c["status"] == "fail"]
