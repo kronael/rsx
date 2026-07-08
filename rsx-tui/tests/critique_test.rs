@@ -59,7 +59,7 @@ fn help_bar_advertises_the_f3_trace_hud() {
 fn f3_toggles_the_trace_hud_overlay() {
     let mut app = App::new("PENGU-PERP");
     let mut conn = MockConn::new();
-    app.set_endpoint("ws://demo:8080");
+    app.set_endpoint("quic://demo:8080");
     // Give it a connected link + one latency sample so the HUD has
     // something real to show.
     app.apply_event(GwEvent::Connected);
@@ -79,7 +79,7 @@ fn f3_toggles_the_trace_hud_overlay() {
     assert!(shown.contains("TRACE"), "overlay title visible");
     assert!(shown.contains("endpoint"), "endpoint row visible");
     assert!(shown.contains("rtt p50"), "rtt row visible");
-    assert!(shown.contains("ws://demo:8080"), "endpoint value shown");
+    assert!(shown.contains("quic://demo:8080"), "endpoint value shown");
 
     handle_key(&mut app, KeyCode::F(3), &mut conn);
     assert!(!app.show_trace, "F3 again flips it back off");

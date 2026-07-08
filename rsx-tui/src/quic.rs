@@ -79,7 +79,7 @@ pub struct Session {
 }
 
 /// HS256 claims. Field names/shape match `rsx-cli/src/bench_probe.rs`
-/// (and the removed WS path) so the gateway's auth extraction is
+/// so the gateway's auth extraction is
 /// identical regardless of which client minted the token.
 #[derive(Serialize)]
 struct Claims {
