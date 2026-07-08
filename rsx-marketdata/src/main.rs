@@ -21,6 +21,7 @@ use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_types::install_panic_handler;
+use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use rsx_types::SymbolConfig;
@@ -322,6 +323,12 @@ fn main() {
         // SAFETY: fail-fast at startup
         .expect("failed to build monoio runtime");
 
+    // SIGTERM/SIGINT flip this flag; the loop exits cleanly.
+    // Marketdata is derived/off-path — the shadow book rebuilds
+    // from ME replay on restart — so there is nothing durable to
+    // flush; a clean exit is the whole drain.
+    let shutdown = install_shutdown_handler();
+
     let gauges_inner = gauges.clone();
     rt.block_on(async move {
         let ws_addr = config.listen_addr.clone();
@@ -353,6 +360,10 @@ fn main() {
         let mut stream_expected: Vec<u64> = vec![0; cast_receivers.len()];
 
         loop {
+            if shutdown.load(Ordering::SeqCst) {
+                info!("shutdown signal received, exiting");
+                break;
+            }
             for (ri, cast_receiver) in cast_receivers.iter_mut().enumerate() {
                 loop {
                     let expected = &mut stream_expected[ri];
