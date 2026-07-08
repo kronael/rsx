@@ -30,6 +30,7 @@ A UI tool for developers to:
 - Monitor system health (processes, WAL, logs, metrics)
 - View orderbooks and fills in real-time
 - Inspect WAL events and replication lag
+- Open the local `rsx-term` trading terminal in-browser
 - Inject faults (kill processes, test recovery)
 - Verify correctness (10 invariants, reconciliation)
 

@@ -39,6 +39,7 @@ TABS = [
     ("Latency", "./latency"),
     ("Orders", "./orders"),
     ("Maker", "./maker"),
+    ("Terminal", "./terminal"),
     ("Control", "./control"),
     ("Logs", "./logs"),
     ("Verify", "./verify"),
@@ -92,7 +93,7 @@ PAGE_HINTS = {
     ),
     "./orders": (
         "submit test orders and watch them flow through the whole "
-        "system. for real trading, use the rsx-tui terminal client.",
+        "system. for terminal trading, open the Terminal tab.",
         None, None,
     ),
 }
@@ -424,8 +425,8 @@ document.addEventListener('htmx:afterSwap', function(e) {{
       class="text-blue-400 hover:text-blue-300">
       Playground Docs</a>
     <span class="text-slate-700">|</span>
-    <span class="text-slate-500">
-      Trade via the rsx-tui terminal client</span>
+    <a href="./terminal" class="text-blue-400 hover:text-blue-300">
+      Open rsx-term</a>
   </div>
 </footer>
 </body>
@@ -6045,10 +6046,10 @@ CRATES: dict = {
         "compare_note": "no external comparison yet.",
         "demo": None,
     },
-    "rsx-tui": {
-        "name": "rsx-tui",
+    "rsx-term": {
+        "name": "rsx-term",
         "tagline": (
-            "Trade surface: a ratatui trading terminal — orderbook "
+            "Trade surface: a Go terminal — orderbook "
             "ladder, order entry, positions/fills over the gateway WS."
         ),
         "reports": [],

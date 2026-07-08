@@ -216,8 +216,8 @@ Three transports tie it together:
   50–170 ns per hop.
 
 Public API to the world is WebSocket JSON (`rsx-gateway`). The
-`rsx-tui` terminal speaks protobuf-over-QUIC to the gateway — the client
-side is implemented; its gateway QUIC endpoint is a follow-up.
+`rsx-term` terminal speaks to the gateway and marketdata WebSockets;
+the Playground embeds it locally through an xterm.js PTY bridge.
 
 ## How fast
 
@@ -257,7 +257,7 @@ rsx-mark/       External mark-price feeds → cast to risk
 rsx-recorder/   Archival replication consumer
 rsx-cli/        WAL dump/inspect tool
 rsx-log/        Per-thread SPSC → drain → tracing
-rsx-tui/        ratatui trading terminal (trade surface)
+rsx-term/       Go Bubble Tea trading terminal (trade surface)
 ```
 
 Non-cargo subprojects: `rsx-playground/` (Python/FastAPI dev
@@ -395,8 +395,8 @@ The order things get finalized and shipped:
    on spec gaps — see `BUGS.md` `ME-GW-DIRECT-SPEC-GAPS`), and moving
    ME/Risk **config polling off Postgres to a dedicated config
    server** (`specs/2/57-config-server.md`).
-4. **`rsx-tui`** — the protobuf-over-QUIC trading terminal (needs
-   the gateway QUIC listener that validates the auth first-frame).
+4. **`rsx-term`** — the Go terminal trade surface, including the
+   Playground-embedded local view.
 5. **Hosting** — complete the deploy so you can install and run
    the terminal against a live exchange.
 6. **Blog** — the educational write-up, once the above is real.

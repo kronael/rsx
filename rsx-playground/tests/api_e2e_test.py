@@ -529,11 +529,22 @@ def test_stress_page(client):
     assert "text/html" in resp.headers["content-type"]
 
 
-# ── Trade UI (rsx-tui terminal client, not served here) ────
+# ── Terminal Page Route ────────────────────────────────────
+
+
+def test_terminal_page(client):
+    """GET /terminal returns the embedded rsx-term page."""
+    resp = client.get("/terminal")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "rsx-term" in resp.text
+
+
+# ── Removed Trade UI Route ─────────────────────────────────
 
 
 def test_trade_route_removed(client):
-    """GET /trade is gone; trading is via the rsx-tui terminal client."""
+    """GET /trade is gone; trading moved to /terminal."""
     resp = client.get("/trade", follow_redirects=False)
     assert resp.status_code == 404
 
