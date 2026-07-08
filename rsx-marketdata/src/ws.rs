@@ -7,6 +7,7 @@ use sha1::Digest;
 use sha1::Sha1;
 use std::io;
 use tracing::info;
+use tracing::warn;
 
 const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -20,6 +21,11 @@ where
     info!("ws listening on {}", addr);
     loop {
         let (stream, peer) = listener.accept().await?;
+        // Disable Nagle: coalescing + delayed-ACK adds ms-scale tail
+        // latency to the small JSON frames fanned out to subscribers.
+        if let Err(e) = stream.set_nodelay(true) {
+            warn!("set_nodelay failed for {peer}: {e}");
+        }
         info!("ws connection from {}", peer);
         handler(stream);
     }

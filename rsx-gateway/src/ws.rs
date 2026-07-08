@@ -32,6 +32,11 @@ where
     info!("ws listening on {}", addr);
     loop {
         let (stream, peer) = listener.accept().await?;
+        // Disable Nagle: coalescing + delayed-ACK adds ms-scale tail
+        // latency to the small JSON frames on the order round-trip.
+        if let Err(e) = stream.set_nodelay(true) {
+            warn!("set_nodelay failed for {peer}: {e}");
+        }
         info!("ws connection from {}", peer);
         handler(stream, peer);
     }
