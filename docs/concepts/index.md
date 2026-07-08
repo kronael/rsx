@@ -3,7 +3,7 @@
 RSX is a derivatives exchange and a study in fast distributed
 code. The goal — sub-10 µs latency from client to matching
 engine and back — is aspirational today. The in-process
-round-trip floor is 7.5 µs at the median (p50) and 16.9 µs at
+round-trip floor is 7.8 µs at the median (p50) and 22.3 µs at
 the 99th percentile (p99); cross-process it sits around 1.1 ms.
 The benchmark tables in the root README show exactly where that
 time goes.

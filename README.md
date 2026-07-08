@@ -44,7 +44,7 @@ The point of RSX is to learn how to write **fast distributed
 code** — processing millions of events per second with a
 target of **sub-10 µs latency over the network**. That target
 is aspirational today: the in-process round-trip floor is
-7.5 µs p50 / 16.9 µs p99, but cross-process it is still
+7.8 µs p50 / 22.3 µs p99, but cross-process it is still
 1.1 ms — the benchmark tables below show exactly where the
 time goes and why. Specs are
 written before the code — 47 of them in `specs/2/` — and every
@@ -230,11 +230,11 @@ keep in sync; this table is just the summary.
 |---|---:|---|
 | Orderbook match | ~60 ns | pure match, any book depth (100 → 10M resting) |
 | Matching algorithm (dedup + match + WAL) | 340 ns | ME critical section, no transport |
-| In-process round-trip (`bench-match-rt`) | 9.58 µs | real casting + Orderbook + WAL, one box, no process boundary — the algorithmic floor |
+| In-process round-trip (`bench-match-rt`) | 7.82 µs (22.3 µs p99) | real casting + Orderbook + WAL, one box, no process boundary — the algorithmic floor |
 | Cross-process production (GW→ME→GW) | ~1.1 ms | separate processes, end to end |
 | **Target: <50 µs GW→ME→GW** | — | **aspirational** |
 
-The gap between the 9.58 µs in-process floor and the ~1.1 ms cross-process
+The gap between the 7.82 µs in-process floor and the ~1.1 ms cross-process
 path is the whole story: **~99% of production latency is inter-process
 overhead** (monoio sleep, tokio schedule, syscalls), not the match (~60 ns
 at any depth) or the transport framing (tens of ns). The io_uring/SQPOLL
