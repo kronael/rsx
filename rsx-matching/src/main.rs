@@ -276,8 +276,7 @@ fn main() {
                 // snapshot implies — violating invariant #5
                 // (tips monotonic). Advance to the snapshot tip
                 // so the next live append never regresses below
-                // what the snapshot already covers.
-                // (bugs.md ME-NEXT-SEQ-REGRESSION)
+                // what the snapshot already covers (invariant #5).
                 wal_writer.set_next_seq(start_seq.max(1));
             }
             Err(e) => {
