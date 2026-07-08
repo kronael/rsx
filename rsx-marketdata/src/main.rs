@@ -162,7 +162,7 @@ fn main() {
 
     let mut state = MarketDataState::new(
         config.max_symbols,
-        base_config.clone(),
+        base_config,
         config.book_capacity,
         config.mid_price,
     );
