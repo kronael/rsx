@@ -1017,12 +1017,33 @@ def _ensure_repl_certs():
     TLS is mandatory on the replication TCP hop, so the RSX
     processes need cert/key/ca PEMs at ./certs (their cwd is the
     repo root; from_env's default). casting/UDP stays plaintext.
-    Idempotent: skips when certs already exist.
+    Idempotent: skips when a valid cert set already exists.
+
+    Self-heals the pre-fix breakage where cert.pem was a byte copy
+    of the CA (a CA:TRUE self-signed cert used as the server leaf):
+    rustls/webpki reject that with `CaUsedAsEndEntity`, so the
+    replication handshake — and thus risk warm-catchup — never
+    completes. That signature is cert.pem == ca.pem; force a
+    regen (proper CA + distinct leaf) when we see it.
     """
-    if (ROOT / "certs" / "cert.pem").exists():
-        return
+    cert = ROOT / "certs" / "cert.pem"
+    ca = ROOT / "certs" / "ca.pem"
+    force = False
+    if cert.exists():
+        if not ca.exists():
+            return
+        try:
+            if cert.read_bytes() == ca.read_bytes():
+                force = True  # CA-as-leaf: the old broken layout
+            else:
+                return
+        except OSError:
+            return
+    args = ["sh", str(ROOT / "scripts" / "gen-snakeoil-certs.sh")]
+    if force:
+        args.append("--force")
     result = subprocess.run(
-        ["sh", str(ROOT / "scripts" / "gen-snakeoil-certs.sh")],
+        args,
         cwd=str(ROOT),
         capture_output=True,
         timeout=30,
@@ -1033,7 +1054,8 @@ def _ensure_repl_certs():
             f"{result.stderr.decode(errors='replace').strip()}"
         )
     else:
-        print("generated snakeoil replication certs in ./certs")
+        action = "regenerated" if force else "generated"
+        print(f"{action} snakeoil replication certs in ./certs")
 
 
 async def start_all(scenario="minimal"):
