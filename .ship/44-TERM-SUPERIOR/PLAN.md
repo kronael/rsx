@@ -77,9 +77,39 @@ Colour = meaning (no new decorative colour); never fabricate a number (dash /
 
 All `go build`/`vet`/`test`/`-race` green.
 
-## Remaining (queued, not terminal-side-blocked-solo)
+## Shipped (2026-07-09, part 2)
 
-- **Wave 4 — decimal/tick formatting**: the raw-`i64` display. Needs the webproto `Metadata` frame (real per-symbol tick/lot) — hardcoding risks a *wrong* display, so this is queued for opus with a live cluster to verify (mock falls back to raw honestly). The last terminal-side "amateur tell".
-- **Wave 6 tail**: `+/-` improve-tick (needs the tick from wave 4), qty presets, confirm-off ARMED mode.
-- **Server-gated scaffolds** (honestly dashed today, no backend): liq price, margin-health bar, ROE%, funding countdown, and the live `internal`/`engine` latency legs (spec 59 inc 3).
-- **Polish**: cumulative-depth toggle, tick grouping, mouse click-to-price, colorblind theme.
+The whole terminal-side plan is now landed:
+
+- **Wave 4** `03f521a` — decimal/tick formatting: raw i64 → human decimals at the
+  render boundary (`fmtDec`/`strWidth`), PENGU 6/4 via env; wire stays raw.
+- **Decimal input** `370b8d8` — the coherent other half: `parseRaw` (fmtDec's
+  inverse) + `.` key, so you *type the price you read* (`0.010001`, not `10001`).
+  Fixed the read-decimal/type-raw mismatch (qty "5" previewed `0.0005`).
+- **Wave 6 tail** `961c59f` — `+/-` improve-tick (seeds from mid), `j/k` join
+  best bid/ask, `F2` ARMED confirm-off (single-enter fire, loud red banner; the
+  fat-finger guard still holds).
+- **Depth bars** `3b9b7dd` — restored the spec's `▊` per-level histogram (bid
+  grows left, ask right, converging on the spread).
+- **Positions** `b21ee10` — quote-precision uPnL + wrap-safe stacked layout +
+  honestly-dashed liq/ROE/margin-health risk row.
+- **Mouse click-to-price** `69e77db` — left-click a ladder row sets its price
+  (`priceAtY`, shared `resolvedCenter`); never submits.
+- **Responsive** `59ebf2d` — narrow terminals stack panels vertically (wired the
+  dead `narrow()`).
+- **Colorblind theme** `c864d97` — `RSX_TUI_THEME=colorblind` swaps bid/ask to a
+  deuteranopia-safe blue/orange.
+- **Confirm fix** `23be93e` — the preview no longer overflows the order panel.
+- Spec 55 + SCREENS/VISUALS reconciled to the actual UI at each step.
+
+## Still backend-gated (NOT terminal-side; honestly dashed today)
+
+- liq price, margin-health, ROE%, funding countdown, and the live
+  `internal`/`engine` latency legs — all need risk/mark/funding server work
+  (`59-latency-observability.md` inc 3). The terminal already gives them a fixed,
+  dashed home; wiring is a server task, not a terminal one.
+
+## Consciously skipped (low value for this instrument)
+
+- cumulative-depth toggle (per-level depth bars already show the shape),
+  tick grouping (PENGU is tick-1). Revisit only if a coarser-tick symbol lands.
