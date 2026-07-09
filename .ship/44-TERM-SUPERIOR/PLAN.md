@@ -64,3 +64,21 @@ floating DOMs, Nerd-Font glyphs (use core Unicode blocks only).
 Colour = meaning (no new decorative colour); never fabricate a number (dash /
 `·· pending`); stable keybindings; keep the mock demo working; every wave
 `go build`/`vet`/`test`/`gofmt` green before commit.
+
+## Shipped (2026-07-09)
+
+- **Wave 1** `45a0b6c` — fixed-width aligned columns, adaptive resize, spread emphasis.
+- **Wave 2** `98adce5` + `9047f4d` — own-order `▸` / last-trade `‹` markers, working-orders panel, cancel-by-selection (`↑↓`), `X` cancel-all.
+- **Wave 3** `d125396` + `95899fb` — **static price ladder** (fixed axis, bid-left/ask-right, recenter-on-drift, gaps show liquidity) + top-of-book imbalance gauge. The defining pro-DOM change.
+- **Wave 5** `ca39816` — latency stacked hop-bar (`net│internal│engine`) + SLA-breach RTT colour.
+- **Wave 6** `967ec00` `e6275c3` `2ec951f` — `m` market, `?` help overlay, `R` reverse, fat-finger hard-guard.
+- **Docs** `203d47f` — SCREENS/VISUALS synced.
+
+All `go build`/`vet`/`test`/`-race` green.
+
+## Remaining (queued, not terminal-side-blocked-solo)
+
+- **Wave 4 — decimal/tick formatting**: the raw-`i64` display. Needs the webproto `Metadata` frame (real per-symbol tick/lot) — hardcoding risks a *wrong* display, so this is queued for opus with a live cluster to verify (mock falls back to raw honestly). The last terminal-side "amateur tell".
+- **Wave 6 tail**: `+/-` improve-tick (needs the tick from wave 4), qty presets, confirm-off ARMED mode.
+- **Server-gated scaffolds** (honestly dashed today, no backend): liq price, margin-health bar, ROE%, funding countdown, and the live `internal`/`engine` latency legs (spec 59 inc 3).
+- **Polish**: cumulative-depth toggle, tick grouping, mouse click-to-price, colorblind theme.
