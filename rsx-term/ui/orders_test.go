@@ -274,3 +274,38 @@ func TestRiskRowIsHonestlyDashed(t *testing.T) {
 		t.Fatalf("risk row must not show a fabricated number:\n%s", out)
 	}
 }
+
+func TestNarrowStacksPanels(t *testing.T) {
+	m := New(Config{PriceDec: 6, QtyDec: 4, Tick: 1, Symbol: "PENGU-PERP"})
+	m.gwConnected, m.mdConnected = true, true
+	m.book.Asks = []wire.Level{{Px: 10002, Qty: 60000}}
+	m.book.Bids = []wire.Level{{Px: 10000, Qty: 70000}}
+	m.recenterLadder()
+	m.width, m.height = 90, 30 // 90 < bookWidth+orderWidth+rightWidth (114)
+	if !m.narrow() {
+		t.Fatal("90 cols should be narrow")
+	}
+	sharesLine := func(out, a, b string) bool {
+		for _, ln := range strings.Split(out, "\n") {
+			if strings.Contains(ln, a) && strings.Contains(ln, b) {
+				return true
+			}
+		}
+		return false
+	}
+	narrow := stripANSI(m.viewMain())
+	if sharesLine(narrow, "book", "positions") {
+		t.Fatal("narrow layout must stack: book and positions should not share a line")
+	}
+	if !strings.Contains(narrow, "book") || !strings.Contains(narrow, "positions") {
+		t.Fatal("narrow layout dropped a panel")
+	}
+	// Wide: the three titles ride the same top line (horizontal join).
+	m.width = 132
+	if m.narrow() {
+		t.Fatal("132 cols should not be narrow")
+	}
+	if !sharesLine(stripANSI(m.viewMain()), "book", "positions") {
+		t.Fatal("wide layout should place book and positions side by side")
+	}
+}

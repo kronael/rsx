@@ -120,6 +120,13 @@ func (m Model) viewMain() string {
 		panels = append(panels, m.viewTrades())
 		right = lipgloss.JoinVertical(lipgloss.Left, panels...)
 	}
+	if m.narrow() {
+		// Too narrow for three columns side by side: stacking them keeps every
+		// panel on-screen (each is <= bookWidth), instead of the terminal
+		// clipping the right column off the edge. Order form first — it's what
+		// you act with — then the book, then positions/orders/tape.
+		return lipgloss.JoinVertical(lipgloss.Left, mid, left, right)
+	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
 }
 
