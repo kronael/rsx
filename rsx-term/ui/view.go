@@ -212,7 +212,32 @@ func (m Model) viewBook() string {
 		}
 		rows = append(rows, ladderRow(p, bQ, bOk, aQ, aOk, pxW, qtyW, mark))
 	}
+
+	// Top-of-book imbalance: bid vs ask share of the visible depth — a fast
+	// "where's the pressure" read (research: DOM imbalance drives scalping).
+	var tb, ta int64
+	for _, q := range bidByPx {
+		tb += q
+	}
+	for _, q := range askByPx {
+		ta += q
+	}
+	if tb+ta > 0 {
+		rows = append(rows, imbalanceBar(tb, ta, 20))
+	}
 	return panel(" book ", bookWidth, rows...)
+}
+
+// imbalanceBar renders a green(bid)|red(ask) split bar of the visible depth
+// plus the bid share, so a trader sees buying vs selling pressure at a glance.
+func imbalanceBar(bid, ask int64, width int) string {
+	total := bid + ask
+	bw := int(int64(width) * bid / total)
+	if bw > width {
+		bw = width
+	}
+	bar := StyleLive.Render(strings.Repeat("█", bw)) + StyleAsk.Render(strings.Repeat("█", width-bw))
+	return bar + StyleMuted.Render(fmt.Sprintf(" %d%% bid", int(int64(100)*bid/total)))
 }
 
 // ladderRow renders one static-ladder price row: "<mark> <bidQ> <price> <askQ>"
