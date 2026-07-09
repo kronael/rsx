@@ -2,6 +2,7 @@
 name = "rsx-recorder"
 version = "0.2.0"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 rsx-cast = { path = "../rsx-cast" }

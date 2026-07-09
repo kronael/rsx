@@ -113,5 +113,5 @@ a `0.x` minor version.
 ## License
 
 Internal-use crate within the wider rsx exchange project.
-Licensed under `MIT OR Apache-2.0`. Not published to
-crates.io; distribution is the maintainer's decision.
+Licensed under the MIT license. Not published to crates.io;
+distribution is the maintainer's decision.

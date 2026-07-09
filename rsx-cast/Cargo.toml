@@ -4,7 +4,7 @@ version = "0.5.2"
 edition = "2021"
 description = "Log-backed reliable UDP (casting) + TCP replication for fixed-format binary records. Wire = disk = stream."
 repository = "https://github.com/kronael/rsx"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 keywords = ["wal", "udp", "reliable", "transport", "low-latency"]
 categories = ["network-programming", "data-structures"]
 readme = "README.md"

@@ -384,12 +384,4 @@ If rsx-book doesn't fit, the peers benched or surveyed in
 ## License
 
 Internal-use crate within the wider rsx exchange project.
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option. Unless you explicitly state otherwise, any
-contribution intentionally submitted for inclusion in rsx-book by
-you, as defined in the Apache-2.0 license, shall be dual licensed as
-above, without any additional terms or conditions.
+Licensed under the MIT license; see the repository root `LICENSE`.
