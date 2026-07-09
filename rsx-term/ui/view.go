@@ -632,16 +632,76 @@ func linkWord(up bool) string {
 // the "watch the latency live" touch. A trailing marketdata-path indicator
 // (client-measured frame age, real not placeholder) rides on the same line
 // when a frame has arrived. Dim until the first RTT sample arrives.
+// Internal round-trip SLA thresholds (ns): a µs-class GW→ME→GW path. Over
+// warn → the RTT reads amber, over crit → red, so the strip is a live health
+// light, not just a readout.
+const (
+	slaWarnNs = 50_000
+	slaCritNs = 100_000
+)
+
+// hopBar draws a proportional stacked bar of the *known* latency legs
+// (net│internal│engine), each coloured by leg — so a trader *sees* where the
+// time goes, not just reads three numbers. Pending legs contribute nothing
+// (honest): on the mock all three show, live it's the net leg until the
+// gateway stamps the rest.
+func hopBar(l book.Sample, width int) string {
+	type seg struct {
+		ns int64
+		st lipgloss.Style
+	}
+	var segs []seg
+	add := func(ns int64, st lipgloss.Style) {
+		if ns != book.NsUnknown && ns > 0 {
+			segs = append(segs, seg{ns, st})
+		}
+	}
+	add(l.NetNs, StyleHeading)
+	add(l.InternalNs, StyleAccent)
+	add(l.EngineNs, StyleLive)
+	var total int64
+	for _, s := range segs {
+		total += s.ns
+	}
+	if total <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	used := 0
+	for i, s := range segs {
+		w := int(int64(width) * s.ns / total)
+		if i == len(segs)-1 {
+			w = width - used // last segment fills the remainder exactly
+		}
+		if w < 0 {
+			w = 0
+		}
+		b.WriteString(s.st.Render(strings.Repeat("█", w)))
+		used += w
+	}
+	return b.String()
+}
+
 func (m Model) viewSpeed() string {
 	if m.lastLat == nil {
 		return StyleMuted.Render(" ⚡ latency: waiting for first round-trip…")
 	}
 	l := *m.lastLat
-	rtt := StyleHeading.Bold(true).Render(fmt.Sprintf(" ⚡ RTT %s ", fmtNs(l.TotalNs)))
+	rttStyle := StyleHeading
+	if l.TotalNs > slaCritNs {
+		rttStyle = StyleAsk
+	} else if l.TotalNs > slaWarnNs {
+		rttStyle = StyleDegraded
+	}
+	rtt := rttStyle.Bold(true).Render(fmt.Sprintf(" ⚡ RTT %s ", fmtNs(l.TotalNs)))
 	legs := StyleText.Render("= ") +
 		legLabel("net", l.NetNs) + StyleText.Render(" + ") +
 		legLabel("internal", l.InternalNs) + StyleText.Render(" + ") +
 		legLabel("engine", l.EngineNs)
+	bar := hopBar(l, 18)
+	if bar != "" {
+		legs += StyleText.Render("  ") + bar
+	}
 
 	p50, p99, best := windowStats(m.latWindow)
 	spark := sparkline(m.latWindow.Recent(sparkSamples))
