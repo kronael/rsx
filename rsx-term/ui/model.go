@@ -51,10 +51,11 @@ type OpenOrder struct {
 type Model struct {
 	cfg Config
 
-	book     book.Book
-	seq      book.SeqTracker
-	tape     book.Tape
-	position book.Position
+	book         book.Book
+	seq          book.SeqTracker
+	tape         book.Tape
+	position     book.Position
+	ladderCenter int64 // static-ladder centre price (0 = uninitialised)
 
 	gwConnected bool
 	mdConnected bool

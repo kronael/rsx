@@ -36,14 +36,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wire.Snapshot:
 		m.seq.ResetTo(v.Seq)
 		m.book.ApplySnapshot(v)
+		m.recenterLadder()
 		m.foldMdFrame(v.TsNs)
 	case wire.Delta:
 		m.seq.Observe(v.Seq)
 		m.book.ApplyDelta(v)
+		m.recenterLadder()
 		m.foldMdFrame(v.TsNs)
 	case wire.Bbo:
 		m.seq.Observe(v.Seq)
 		m.book.ApplyBbo(v)
+		m.recenterLadder()
 		m.foldMdFrame(v.TsNs)
 	case wire.MdTrade:
 		m.seq.Observe(v.Seq)
@@ -122,6 +125,25 @@ func (m *Model) foldMdFrame(tsNs uint64) {
 	}
 	m.lastMdAgeNs = age
 	m.mdAgeWindow.Add(age)
+}
+
+// recenterLadder keeps the static price ladder's centre stable: it moves only
+// when the mid drifts outside a small band, so the price axis doesn't
+// reshuffle on every tick — the classic DOM anti-pattern (TT/Sierra keep the
+// ladder stationary and recenter on demand).
+func (m *Model) recenterLadder() {
+	mid, ok := m.book.Mid()
+	if !ok {
+		return
+	}
+	const band = 6
+	d := mid - m.ladderCenter
+	if d < 0 {
+		d = -d
+	}
+	if m.ladderCenter == 0 || d > band {
+		m.ladderCenter = mid
+	}
 }
 
 // removeOrder drops any open order with a matching oid (absent = no-op). It
