@@ -450,3 +450,27 @@ func TestClickSetsPrice(t *testing.T) {
 		t.Fatal("mouse motion should not set a price")
 	}
 }
+
+func TestUseThemeColorblind(t *testing.T) {
+	// Default is the Ayam green/red.
+	UseTheme("")
+	if ColorBid != "#22f5a1" || ColorAsk != "#f87171" {
+		t.Fatalf("default theme wrong: bid=%v ask=%v", ColorBid, ColorAsk)
+	}
+	// Colorblind swaps to blue/orange and rebuilds the derived styles.
+	UseTheme("colorblind")
+	if ColorBid != "#2f9bff" || ColorAsk != "#ff9e3d" {
+		t.Fatalf("colorblind theme wrong: bid=%v ask=%v", ColorBid, ColorAsk)
+	}
+	if got := StyleLive.GetForeground(); got != ColorBid {
+		t.Fatalf("StyleLive not rebuilt: fg=%v want %v", got, ColorBid)
+	}
+	if got := StyleArmed.GetBackground(); got != ColorAsk {
+		t.Fatalf("StyleArmed bg not rebuilt: %v want %v", got, ColorAsk)
+	}
+	// Reset so theme state can't leak into other tests.
+	UseTheme("")
+	if ColorBid != "#22f5a1" {
+		t.Fatalf("reset failed: bid=%v", ColorBid)
+	}
+}
