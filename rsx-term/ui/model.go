@@ -77,6 +77,7 @@ type Model struct {
 	lastLat   *book.Sample
 	latWindow book.Window
 	showTrace bool
+	showHelp  bool
 
 	// Marketdata-path telemetry: client-measured age of the most recent
 	// md frame (wall-clock now minus the frame's server ts_ns) and when it
