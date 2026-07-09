@@ -152,86 +152,90 @@ func (m Model) narrow() bool {
 	return m.width > 0 && m.width < layoutWidth
 }
 
-// viewBook draws the ladder: asks (red) worst-first down to the spread row,
-// then bids (green) best-first. Degraded to an amber row when the ladder is
-// empty or the marketdata link is down (specs/2/55-terminal.md).
+// viewBook draws a STATIC price ladder: a fixed price axis centred on
+// ladderCenter (recentred only on drift — recenterLadder), bid qty on the
+// left of the price column, ask qty on the right, so the axis does not
+// reshuffle on every tick (TT/Sierra pattern). Empty prices are gaps — the
+// spread reads as the blank band between best bid and best ask. The trader's
+// own orders (▸) and the last print (‹) are marked on their rows. Degrades to
+// an amber row when the ladder is empty or marketdata is down.
 func (m Model) viewBook() string {
-	var rows []string
 	if m.book.Empty() || !m.mdConnected {
-		rows = append(rows, StyleDegraded.Render(degradedBookMsg))
-		return panel(" book ", bookWidth, rows...)
+		return panel(" book ", bookWidth, StyleDegraded.Render(degradedBookMsg))
 	}
 
-	rowsWanted := m.ladderRows()
-	asks := m.book.Asks
-	an := len(asks)
-	if an > rowsWanted {
-		an = rowsWanted
+	center := m.ladderCenter
+	if center == 0 {
+		if mid, ok := m.book.Mid(); ok {
+			center = mid
+		} else if len(m.book.Asks) > 0 {
+			center = m.book.Asks[0].Px
+		} else {
+			center = m.book.Bids[0].Px
+		}
 	}
-	bids := m.book.Bids
-	bn := len(bids)
-	if bn > rowsWanted {
-		bn = rowsWanted
-	}
+	half := int64(m.ladderRows())
 
-	// Right-align every level's px and qty to the widest value currently on
-	// screen, so the ladder reads as rigid columns instead of going ragged
-	// the moment a price crosses a digit boundary.
-	var pxs, qtys []int64
-	for _, l := range asks[:an] {
-		pxs, qtys = append(pxs, l.Px), append(qtys, l.Qty)
+	askByPx := map[int64]int64{}
+	for _, l := range m.book.Asks {
+		askByPx[l.Px] = l.Qty
 	}
-	for _, l := range bids[:bn] {
-		pxs, qtys = append(pxs, l.Px), append(qtys, l.Qty)
+	bidByPx := map[int64]int64{}
+	for _, l := range m.book.Bids {
+		bidByPx[l.Px] = l.Qty
 	}
-	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
-	showBar := !m.narrow()
-
-	// Draw the trader's own resting orders and the last print into the ladder
-	// (research: orders-in-the-ladder is the highest-value pro-DOM feature).
 	ownBids, ownAsks := m.ownOrderLevels()
 	lastPx, hasLast := int64(0), false
 	if e, ok := m.tape.Last(); ok {
 		lastPx, hasLast = e.Px, true
 	}
 
-	// Best an asks, printed worst-first so the best ask sits above the spread.
-	for i := an - 1; i >= 0; i-- {
-		mark := levelMarker(asks[i].Px, ownAsks, lastPx, hasLast)
-		rows = append(rows, levelRow(asks[i], ColorAsk, pxW, qtyW, showBar, mark))
+	var qtys []int64
+	for _, q := range askByPx {
+		qtys = append(qtys, q)
 	}
-
-	// The spread row is the highest-frequency read on a ladder — bright/bold
-	// so a trader's eye snaps to it, same StyleTextBright as a focused field
-	// (no new colour meaning, just more weight).
-	rows = append(rows, StyleTextBright.Bold(true).Render(fmt.Sprintf(" — %d —", m.book.Spread())))
-
-	for i := 0; i < bn; i++ {
-		mark := levelMarker(bids[i].Px, ownBids, lastPx, hasLast)
-		rows = append(rows, levelRow(bids[i], ColorBid, pxW, qtyW, showBar, mark))
+	for _, q := range bidByPx {
+		qtys = append(qtys, q)
 	}
+	pxW := colWidth(5, center+half, center-half)
+	qtyW := colWidth(3, qtys...)
 
+	var rows []string
+	for p := center + half; p >= center-half; p-- {
+		aQ, aOk := askByPx[p]
+		bQ, bOk := bidByPx[p]
+		mark := " "
+		if ownBids[p] || ownAsks[p] {
+			mark = StyleAccent.Render("▸")
+		} else if hasLast && p == lastPx {
+			mark = StyleTextBright.Render("‹")
+		}
+		rows = append(rows, ladderRow(p, bQ, bOk, aQ, aOk, pxW, qtyW, mark))
+	}
 	return panel(" book ", bookWidth, rows...)
 }
 
-// levelRow renders "<marker><px> <qty> <bar>" with px, qty right-aligned to
-// pxW/qtyW and the px + bar coloured by side. `marker` is a 1-wide column
-// (own-order / last-trade cue, or a space). The bar is dropped (not just
-// blanked) when showBar is false — a narrow terminal degrades by shedding the
-// widest element rather than wrapping mid-row.
-func levelRow(l wire.Level, color lipgloss.Color, pxW, qtyW int, showBar bool, marker string) string {
-	side := lipgloss.NewStyle().Foreground(color)
-	row := fmt.Sprintf("%s%s %*d",
-		marker,
-		side.Render(fmt.Sprintf("%*d", pxW, l.Px)),
-		qtyW, l.Qty,
-	)
-	if !showBar {
-		return row
+// ladderRow renders one static-ladder price row: "<mark> <bidQ> <price> <askQ>"
+// — bid qty (green) left of the price, ask qty (red) right, the price coloured
+// by whichever side rests there (muted in the empty spread band). Fixed-width
+// columns so the axis stays rigid.
+func ladderRow(px, bidQ int64, bidOk bool, askQ int64, askOk bool, pxW, qtyW int, mark string) string {
+	blank := strings.Repeat(" ", qtyW)
+	bidCol := blank
+	if bidOk {
+		bidCol = StyleLive.Render(fmt.Sprintf("%*d", qtyW, bidQ))
 	}
-	n := max(int64(0), min(l.Qty, maxBarLen))
-	bar := strings.Repeat(depthBar, int(n))
-	return row + " " + side.Render(bar)
+	askCol := blank
+	if askOk {
+		askCol = StyleAsk.Render(fmt.Sprintf("%*d", qtyW, askQ))
+	}
+	pxStyle := StyleMuted
+	if bidOk {
+		pxStyle = StyleLive
+	} else if askOk {
+		pxStyle = StyleAsk
+	}
+	return fmt.Sprintf("%s %s %s %s", mark, bidCol, pxStyle.Render(fmt.Sprintf("%*d", pxW, px)), askCol)
 }
 
 // ownOrderLevels splits this session's working orders into the set of bid /
