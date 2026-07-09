@@ -39,15 +39,14 @@ piece exists.
 ## Run the live demo
 
 ```bash
-make prepare
-./rsx-playground/playground demo minimal
+make demo
 ```
 
 Then open [http://localhost:49171](http://localhost:49171).
 
 What to try first:
 
-1. **Overview** — confirm the local RSX processes are running.
+1. **Overview** — confirm the local RSX processes and maker are running.
 2. **Book** — watch the PENGU order book and live fills.
 3. **Orders** — submit a test order and trace its lifecycle.
 4. **Terminal** — open the embedded `rsx-term` trading terminal.

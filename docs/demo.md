@@ -1,41 +1,37 @@
 # RSX 60-Second Demo
 
 Boot the RSX exchange from a clean slate and see live order
-flow in under a minute. Single command, single dashboard.
+flow in under a minute.
 
 ## Prerequisites
 
-- Built debug binaries (`cargo build --workspace`).
-- Postgres reachable at `postgres://rsx:rsx@127.0.0.1:5432/rsx`
-  (the Playground runtime bootstraps the schema).
-- Python venv at `rsx-playground/.venv` with deps installed
-  (one-time: `make prepare`).
+- `uv` is installed.
+- Go is installed for the embedded `rsx-term` terminal.
+- Postgres is reachable at `DATABASE_URL`, defaulting to
+  `postgres://rsx:rsx@127.0.0.1:5432/rsx`.
+- `cargo` is installed, unless debug binaries already exist.
 
 ## Steps
 
 ```bash
-# Start Playground and the minimal E2E RSX stack
-./rsx-playground/playground demo minimal
-
-# Optional: start the maker so the book has quotes
-curl -X POST 'http://localhost:49171/api/maker/start' -H 'x-confirm: yes'
+# Check prerequisites, start the stack, start maker.
+make demo
 
 # Watch live depth
 open http://localhost:49171/        # Process Control + Book
-# or, for the SPA Trade UI:
-open http://localhost:49171/trade/
+# or, for terminal trading:
+open http://localhost:49171/terminal
 ```
 
 Within ~30 seconds the order book at symbol PENGU (id=10)
-populates with two-sided quotes around mid=50000 and the
-Trade UI's connection dot turns green.
+populates with two-sided quotes around mid=0.050000 and the
+Terminal tab connects to local gateway + marketdata.
 
 ## Verifying
 
 ```bash
-# Maker status (orders_placed grows ~20/sec):
-curl -s http://localhost:49171/tmp/maker-status.json \
-  || curl -s http://localhost:49171/api/maker/status
+# Maker status:
+curl -s http://localhost:49171/api/maker/status
 
 # WAL records flowing (count grows over time):
 cargo run -q --bin rsx-cli -- dump tmp/wal/pengu/10/10_active.wal | wc -l
@@ -59,7 +55,7 @@ curl -X POST http://localhost:49171/api/processes/all/stop -H 'x-confirm: yes'
 playground server when the operator hasn't already set one;
 the same secret is emitted by the Playground runtime plan
 when it spawns gateway / risk / ME. The maker, stress
-client, and Trade UI all mint JWTs against that secret.
+client, and terminal all mint JWTs against that secret.
 Production must override `RSX_GW_JWT_SECRET`; the demo
 value is not safe for any internet-facing deploy.
 
@@ -73,10 +69,9 @@ value is not safe for any internet-facing deploy.
   it, check that migration `004_frozen_orders.sql` ran
   against your Postgres and that no stale `accounts.frozen_margin`
   column exists.
-- **Trade UI dot stays red** — the `/ws/private` proxy needs
-  `PLAYGROUND_ALLOW_INSECURE_USER_ID=1` (set by default in the
-  Playground dev path) to mint a guest JWT for the unauthenticated
-  Trade UI session.
+- **Terminal says connection refused** — run `make demo` so the
+  local gateway and marketdata sockets are up before opening
+  the Terminal tab.
 
 ## Security caveats (dev-only flags)
 

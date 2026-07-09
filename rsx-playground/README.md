@@ -6,13 +6,14 @@ Web-based development dashboard for the RSX exchange. Real-time monitoring, proc
 
 ```bash
 # Start Playground and the minimal E2E RSX stack
-./playground demo minimal
+cd ..
+make demo
 
 # Visit http://localhost:49171 to inspect processes, logs, books, and orders
 
 # Stop RSX processes and server when done
-./playground stop-all
-./playground stop
+./rsx-playground/playground stop-all
+./rsx-playground/playground stop
 ```
 
 Or manually start server:
@@ -83,7 +84,7 @@ Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX d
 
 ## Typical Workflow
 
-1. Start the local E2E demo: `./playground demo minimal`
+1. Start the local E2E demo: `make demo`
 2. Visit http://localhost:49171
 3. Wait for processes to start (green dots in table)
 4. Orders tab: Submit test orders
@@ -115,10 +116,11 @@ Binaries are written to `target/debug/`:
 
 ## Requirements
 
-- Python 3.14+
+- Python 3.11+
 - uv (Python package manager)
 - Rust/Cargo (for building RSX binaries)
-- PostgreSQL (optional, for risk/gateway features)
+- Go (for embedded `rsx-term`)
+- PostgreSQL
 
 Install uv:
 ```bash
