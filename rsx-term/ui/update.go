@@ -207,6 +207,15 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f3":
 		m.showTrace = !m.showTrace
 		return m, nil
+	case "f2":
+		m.armed = !m.armed
+		m.pendingConfirm = nil
+		if m.armed {
+			m.status = "ARMED — orders fire on one enter (no confirm)"
+		} else {
+			m.status = "confirm on — two-enter preview restored"
+		}
+		return m, nil
 	}
 
 	// Editing keys. Each also clears any pending confirm — its preview would
@@ -233,6 +242,14 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.reduceOnly = !m.reduceOnly
 	case key == "p":
 		m.postOnly = !m.postOnly
+	case key == "+" || key == "=":
+		m.stepPx(1)
+	case key == "-":
+		m.stepPx(-1)
+	case key == "j":
+		m.joinBid()
+	case key == "k":
+		m.joinAsk()
 	default:
 		edited = false
 	}
@@ -240,6 +257,62 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingConfirm = nil
 	}
 	return m, nil
+}
+
+// tick is the configured price increment, floored at 1 so the nudge keys always
+// move by something even when unset.
+func (m Model) tick() int64 {
+	if m.cfg.Tick > 0 {
+		return m.cfg.Tick
+	}
+	return 1
+}
+
+// currentPx is the price the buffer holds, or a seed (mid rounded down to the
+// tick, else one tick) when it's empty/unparseable — so `+`/`-` work before a
+// price is typed.
+func (m Model) currentPx() int64 {
+	if px, err := strconv.ParseInt(m.pxBuf, 10, 64); err == nil && px > 0 {
+		return px
+	}
+	if mid, ok := m.book.Mid(); ok && mid > 0 {
+		t := m.tick()
+		return (mid / t) * t
+	}
+	return m.tick()
+}
+
+// stepPx nudges the price buffer by n ticks (n may be negative), flooring at one
+// tick so it never reaches zero or negative, and focuses the price field.
+func (m *Model) stepPx(n int64) {
+	px := m.currentPx() + n*m.tick()
+	if px < m.tick() {
+		px = m.tick()
+	}
+	m.pxBuf = strconv.FormatInt(px, 10)
+	m.focus = FocusPx
+}
+
+// joinBid / joinAsk set the price buffer to the current best bid / ask — the
+// keyboard analog of clicking that level to rest right at the touch.
+func (m *Model) joinBid() {
+	b, ok := m.book.BestBid()
+	if !ok {
+		m.status = "no bid to join"
+		return
+	}
+	m.pxBuf = strconv.FormatInt(b.Px, 10)
+	m.focus = FocusPx
+}
+
+func (m *Model) joinAsk() {
+	a, ok := m.book.BestAsk()
+	if !ok {
+		m.status = "no ask to join"
+		return
+	}
+	m.pxBuf = strconv.FormatInt(a.Px, 10)
+	m.focus = FocusPx
 }
 
 // appendDigit adds r to the focused buffer, capping length so it always parses.
@@ -291,14 +364,19 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status = sentStatus(o)
+	m.clearForm()
+	return m, nil
+}
+
+// clearForm resets the order-entry fields after a send, keeping side and tif
+// for the next order (a trader usually works one side at a time).
+func (m *Model) clearForm() {
 	m.pxBuf = ""
 	m.qtyBuf = ""
 	m.focus = FocusPx
 	m.reduceOnly = false
 	m.postOnly = false
 	m.pendingConfirm = nil
-	// side and tif are intentionally kept for the next order.
-	return m, nil
 }
 
 // buildOrder parses the form into an OrderReq, or false if either buffer is
@@ -389,12 +467,23 @@ func (m Model) handleMarket() (tea.Model, tea.Cmd) {
 // lesson: soft warnings train click-through).
 const maxOrderQty = 1_000_000
 
-// arm applies the fat-finger guard, then sets the confirm preview. Every order
-// path (enter / market / flatten / reverse) goes through it, so nothing
-// oversized can even reach the confirm.
+// arm applies the fat-finger guard, then either sets the confirm preview or —
+// in ARMED (confirm-off) mode — submits straight away. Every order path (enter
+// / market / flatten / reverse) goes through it, so nothing oversized can even
+// reach the confirm, and ARMED uniformly skips the preview for all of them
+// while the size guard still holds.
 func (m Model) arm(o wire.OrderReq) (tea.Model, tea.Cmd) {
 	if o.Qty > maxOrderQty {
 		m.status = fmt.Sprintf("BLOCKED: qty %d exceeds max %d (fat-finger guard)", o.Qty, maxOrderQty)
+		return m, nil
+	}
+	if m.armed {
+		if err := m.cfg.Sub.Submit(o); err != nil {
+			m.status = "submit failed: " + err.Error()
+			return m, nil
+		}
+		m.status = sentStatus(o)
+		m.clearForm()
 		return m, nil
 	}
 	m.pendingConfirm = &o

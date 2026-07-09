@@ -29,6 +29,9 @@ type Config struct {
 	// 0 shows raw. Source: the symbol's price_decimals / qty_decimals.
 	PriceDec int
 	QtyDec   int
+	// Tick is the smallest raw price increment (`+`/`-` step this much). PENGU
+	// is 1; 0 falls back to 1 so the nudge keys always move by something.
+	Tick int64
 }
 
 // fmtPx / fmtQty render a raw price / qty as a human decimal using the
@@ -94,6 +97,9 @@ type Model struct {
 	latWindow book.Window
 	showTrace bool
 	showHelp  bool
+	// armed = confirm-off: orders fire on a single enter (no two-step preview).
+	// A loud banner warns while it's on; the fat-finger size guard still holds.
+	armed bool
 
 	// Marketdata-path telemetry: client-measured age of the most recent
 	// md frame (wall-clock now minus the frame's server ts_ns) and when it
