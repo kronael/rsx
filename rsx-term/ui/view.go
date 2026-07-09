@@ -568,10 +568,12 @@ func (m Model) viewRiskRow() string {
 	dash := StyleDerived.Render
 	// An all-empty bar: margin health is unknown, so no segment is filled.
 	// Dashed, not a fake reading — the trader must not read a health level
-	// off a number the terminal doesn't have.
+	// off a number the terminal doesn't have. Two explicit lines so the row
+	// fits rightWidth without relying on implicit word-wrap.
 	bar := StyleDerived.Render("░░░░░░░░")
-	return dash("liq —") + "   " + dash("ROE —") + "   " +
-		StyleMuted.Render("mgn ") + bar + "   " + dash("(needs risk engine)")
+	line1 := dash("liq —") + "   " + dash("ROE —") + "   " + StyleMuted.Render("mgn ") + bar
+	line2 := dash("(needs risk engine)")
+	return lipgloss.JoinVertical(lipgloss.Left, line1, line2)
 }
 
 // viewTrades draws the public tape, newest first, price coloured by taker
