@@ -64,8 +64,9 @@ help.
 
 `b`/`s` side · `0-9`/`⌫`/`tab` edit price+qty · `t` tif · `r`/`p`
 reduce-only/post-only · `+`/`-` nudge price a tick · `j`/`k` join best
-bid/ask · `enter` preview → `enter` send (`esc` cancels) · `m` market (IOC
-far touch) · `↑↓` select a working order · `c` cancel it · `X` cancel all ·
+bid/ask · **left-click** a ladder row to set its price · `enter` preview →
+`enter` send (`esc` cancels) · `m` market (IOC far touch) · `↑↓` select a
+working order · `c` cancel it · `X` cancel all ·
 `x` flatten (reduce-only) · `R` reverse the position · `F2` ARMED
 (confirm-off) · `F3` telemetry trace · `?` help · `q` quit. Orders over the
 fat-finger size cap are hard-blocked, never soft-warned.
