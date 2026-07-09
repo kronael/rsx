@@ -101,15 +101,17 @@ shows an amber message instead of a blank or fake ladder:
 
 ## Order entry — typing
 
-`b`/`s` pick side (active side reversed), `tab` moves focus, digits edit the
-focused field (bold + bright + `_` cursor), `t` cycles TIF, `r`/`p` toggle
-reduce-only / post-only:
+`b`/`s` pick side (active side reversed), `tab` moves focus, digits and `.`
+edit the focused field (bold + bright + `_` cursor), `t` cycles TIF, `r`/`p`
+toggle reduce-only / post-only. You type the **human decimal you read off the
+ladder** — `0.010001`, not the raw `10001`; it's reconstructed to the raw i64
+wire value at submit:
 
 ```
 ┌───────── order ─────────┐
 │   BUY      SELL          │   ← SELL reversed = active side
 │                          │
-│   price: 10001           │
+│   price: 0.010001        │
 │   qty  : 5_              │   ← focused field: bold, bright, cursor
 │   time-in-force: IOC     │
 │   reduce-only: on   post-only: off │
@@ -120,9 +122,10 @@ reduce-only / post-only:
 
 ## Confirm preview (submit guard)
 
-First `enter` never submits — it renders a violet-ringed preview inside the
-order panel. Second `enter` sends; `esc` cancels. `liq` has no server source
-yet, shown as a deliberate `n/a` with one shared legend, not a fake number.
+First `enter` never submits — it renders a violet-headed preview inline in the
+order panel (side, size, price, notional, TIF, flags). Second `enter` sends;
+`esc` cancels. `liq` has no server source yet, shown as a deliberate `n/a`, not
+a fake number.
 
 ```
 ┌─ (violet ring) ──────────┐

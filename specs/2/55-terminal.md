@@ -139,9 +139,11 @@ only on drift, so it doesn't reshuffle every tick (TT/Sierra pattern).
   row (degraded, not blank).
  
 - **order** — the entry form. `b`/`s` pick side (reversed-highlight the
-  active one); `price`/`qty` are digit buffers (`tab` switches focus);
-  `t` cycles TIF (GTC→IOC→FOK); `r`/`p` toggle **reduce-only** /
-  **post-only** (the `ro`/`po` fields exist on the `N` frame, `49`).
+  active one); `price`/`qty` accept **human decimals** (`0.010001`, not raw
+  `10001`) reconstructed to raw i64 at submit (`tab` switches focus, `.`
+  adds the point); `t` cycles TIF (GTC→IOC→FOK); `r`/`p` toggle
+  **reduce-only** / **post-only** (the `ro`/`po` fields exist on the `N`
+  frame, `49`).
   `+`/`-` nudge the price one tick (seeded from mid when empty); `j`/`k`
   join the best bid/ask; `m` sends a **market** IOC at the far touch.
   Every order path routes through a two-enter **confirm preview** and a
