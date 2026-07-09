@@ -93,3 +93,14 @@ func TestHandleMarket(t *testing.T) {
 		t.Fatal("no qty should be a no-op, not a confirm")
 	}
 }
+
+func TestHelpOverlayToggle(t *testing.T) {
+	m := press(newModel(&conn.MockGateway{}), "?")
+	if !m.showHelp {
+		t.Fatal("? should open help")
+	}
+	m = press(m, "b")
+	if m.showHelp {
+		t.Fatal("any key should close help")
+	}
+}

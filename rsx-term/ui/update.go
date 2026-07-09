@@ -142,9 +142,21 @@ func (m *Model) removeOrder(oid uint64) {
 // commands. Mirrors rsx-tui/src/input.rs plus specs/2/55-terminal.md.
 func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
+	// The help overlay is modal: any key dismisses it (q still quits), so it
+	// never traps the trader.
+	if m.showHelp {
+		if key == "q" || key == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.showHelp = false
+		return m, nil
+	}
 	switch key {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "?":
+		m.showHelp = true
+		return m, nil
 	case "esc":
 		if m.pendingConfirm != nil {
 			m.pendingConfirm = nil

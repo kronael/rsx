@@ -37,12 +37,15 @@ const (
 
 	// helpText is the keybinding legend. Verbatim per specs/2/55-terminal.md
 	// except for "x flatten", added ahead of the spec's next revision.
-	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  F3 trace "
+	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  F3 trace  ? help "
 )
 
 // View renders the whole terminal: status bar / three-column main / speed
 // strip / status line / help line. Mirrors rsx-tui/src/render.rs.
 func (m Model) View() string {
+	if m.showHelp {
+		return m.viewHelpOverlay()
+	}
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.viewStatusBar(),
@@ -258,6 +261,43 @@ func levelMarker(px int64, own map[int64]bool, lastPx int64, hasLast bool) strin
 		return StyleTextBright.Render("‹")
 	}
 	return " "
+}
+
+// viewHelpOverlay is the modal `?` key reference, grouped by function with
+// destructive keys (cancel / flatten / quit) in the ask/red style so they're
+// visibly the dangerous ones. Any key closes it (handleKey).
+func (m Model) viewHelpOverlay() string {
+	grp := func(h string) string { return StyleHeading.Render(h) }
+	key := func(k, d string) string {
+		return StyleTextBright.Render(fmt.Sprintf("  %-8s", k)) + StyleMuted.Render(d)
+	}
+	danger := func(k, d string) string {
+		return StyleAsk.Render(fmt.Sprintf("  %-8s", k)) + StyleMuted.Render(d)
+	}
+	rows := []string{
+		StyleHeading.Bold(true).Render("KEYS — ? or any key to close"),
+		"",
+		grp("order entry"),
+		key("b / s", "buy / sell side"),
+		key("0-9  ⌫", "type / delete the focused field"),
+		key("tab", "switch price / qty field"),
+		key("t", "cycle time-in-force (GTC / IOC / FOK)"),
+		key("r / p", "toggle reduce-only / post-only"),
+		key("enter", "preview → enter again to send · esc cancels"),
+		key("m", "market — IOC at the far touch"),
+		"",
+		grp("orders & position"),
+		key("↑ / ↓", "move the working-order cursor"),
+		danger("c", "cancel the selected order"),
+		danger("X", "cancel ALL working orders"),
+		danger("x", "flatten — reduce-only close the position"),
+		"",
+		grp("view"),
+		key("F3", "latency / telemetry trace"),
+		key("?", "this help"),
+		danger("q", "quit"),
+	}
+	return RingPanelStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
 // viewOpenOrders draws the trader's working orders — side, price, qty —
