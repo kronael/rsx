@@ -404,6 +404,7 @@ func (m Model) viewHelpOverlay() string {
 		key("r / p", "toggle reduce-only / post-only"),
 		key("+ / -", "nudge price one tick (seeds from mid)"),
 		key("j / k", "join best bid / ask"),
+		key("click", "left-click a ladder row to set its price"),
 		key("enter", "preview → enter again to send · esc cancels"),
 		key("m", "market — IOC at the far touch"),
 		"",
