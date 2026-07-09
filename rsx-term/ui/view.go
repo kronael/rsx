@@ -37,7 +37,7 @@ const (
 
 	// helpText is the keybinding legend. Verbatim per specs/2/55-terminal.md
 	// except for "x flatten", added ahead of the spec's next revision.
-	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  F3 trace  ? help "
+	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F3 trace  ? help "
 )
 
 // View renders the whole terminal: status bar / three-column main / speed
@@ -295,6 +295,7 @@ func (m Model) viewHelpOverlay() string {
 		danger("c", "cancel the selected order"),
 		danger("X", "cancel ALL working orders"),
 		danger("x", "flatten — reduce-only close the position"),
+		danger("R", "reverse — flip the position (crosses zero)"),
 		"",
 		grp("view"),
 		key("F3", "latency / telemetry trace"),

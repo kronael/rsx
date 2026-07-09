@@ -194,6 +194,8 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCancelAll()
 	case "x":
 		return m.handleFlatten()
+	case "R":
+		return m.handleReverse()
 	case "m":
 		return m.handleMarket()
 	case "up":
@@ -279,8 +281,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.status = "incomplete order (need price & qty)"
 			return m, nil
 		}
-		m.pendingConfirm = &o
-		return m, nil
+		return m.arm(o)
 	}
 
 	o := *m.pendingConfirm
@@ -352,8 +353,7 @@ func (m Model) handleFlatten() (tea.Model, tea.Cmd) {
 		m.status = "can't flatten: no live book to price against"
 		return m, nil
 	}
-	m.pendingConfirm = &o
-	return m, nil
+	return m.arm(o)
 }
 
 // handleMarket arms a marketable IOC at the far touch for the form's side +
@@ -381,8 +381,56 @@ func (m Model) handleMarket() (tea.Model, tea.Cmd) {
 		px = m.book.Bids[0].Px
 	}
 	o := wire.OrderReq{Side: m.side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: m.reduceOnly}
+	return m.arm(o)
+}
+
+// maxOrderQty is the fat-finger hard cap (lots). An order over it is BLOCKED
+// outright — a hard stop, not a dismissible soft warning (the Citi fat-finger
+// lesson: soft warnings train click-through).
+const maxOrderQty = 1_000_000
+
+// arm applies the fat-finger guard, then sets the confirm preview. Every order
+// path (enter / market / flatten / reverse) goes through it, so nothing
+// oversized can even reach the confirm.
+func (m Model) arm(o wire.OrderReq) (tea.Model, tea.Cmd) {
+	if o.Qty > maxOrderQty {
+		m.status = fmt.Sprintf("BLOCKED: qty %d exceeds max %d (fat-finger guard)", o.Qty, maxOrderQty)
+		return m, nil
+	}
 	m.pendingConfirm = &o
 	return m, nil
+}
+
+// handleReverse flips the net position: a marketable order of twice the net
+// size on the opposite side (+N → -N), through the confirm gate. Not
+// reduce-only — it deliberately crosses zero. Flat, or no book to cross, is a
+// no-op with a reason.
+func (m Model) handleReverse() (tea.Model, tea.Cmd) {
+	net := m.position.Net
+	if net == 0 {
+		m.status = "no position to reverse"
+		return m, nil
+	}
+	side, px := wire.Sell, int64(0)
+	if net < 0 { // short → buy to flip long
+		side = wire.Buy
+		if len(m.book.Asks) == 0 {
+			m.status = "reverse: no ask to cross"
+			return m, nil
+		}
+		px = m.book.Asks[0].Px
+	} else { // long → sell to flip short
+		if len(m.book.Bids) == 0 {
+			m.status = "reverse: no bid to cross"
+			return m, nil
+		}
+		px = m.book.Bids[0].Px
+	}
+	qty := net
+	if qty < 0 {
+		qty = -qty
+	}
+	return m.arm(wire.OrderReq{Side: side, Px: px, Qty: 2 * qty, Tif: wire.Ioc})
 }
 
 // buildFlattenOrder builds the reduce-only IOC order that flattens the
