@@ -8,14 +8,17 @@ import "github.com/charmbracelet/lipgloss"
 // specs/2/55-terminal.md. Colour is meaning, never decoration — add a const
 // only for a new *meaning*, never to "look nice".
 
-// ColorLive is live / long / bid / filled — the neon beetle-green.
-const ColorLive = lipgloss.Color("#22f5a1")
+// ColorLive is live / long / bid / filled — the neon beetle-green. It and
+// ColorBid / ColorAsk are vars, not consts, because UseTheme swaps the
+// bid/ask pair for a colorblind-safe blue/orange (red-green is the exact
+// deuteranopia failure case). Everything else in the palette is fixed.
+var ColorLive = lipgloss.Color("#22f5a1")
 
 // ColorBid is the bid side of the book (same green as live).
-const ColorBid = ColorLive
+var ColorBid = lipgloss.Color("#22f5a1")
 
 // ColorAsk is short / ask / down / reject.
-const ColorAsk = lipgloss.Color("#f87171")
+var ColorAsk = lipgloss.Color("#f87171")
 
 // ColorHeading is section heading / badge / the ⚡ speed motif — the violet sheen.
 const ColorHeading = lipgloss.Color("#bd83ff")
@@ -94,3 +97,28 @@ var (
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(ColorRing)
 )
+
+// UseTheme swaps the bid/ask colour pair for accessibility. "colorblind" (from
+// RSX_TUI_THEME) replaces the red-green pair — indistinguishable under
+// deuteranopia/protanopia, ~8% of men — with a blue(bid)/orange(ask) pair that
+// is. Any other name (incl. "") is the default Ayam Cemani green/red. It
+// reassigns the three colour vars, then rebuilds the styles that captured them
+// at init. Call once at startup, before the program renders; there is no
+// concurrency at that point.
+func UseTheme(name string) {
+	if name == "colorblind" {
+		ColorLive = lipgloss.Color("#2f9bff") // bid / long / positive — blue
+		ColorBid = lipgloss.Color("#2f9bff")
+		ColorAsk = lipgloss.Color("#ff9e3d") // ask / short / negative — orange
+	} else {
+		ColorLive = lipgloss.Color("#22f5a1") // Ayam Cemani green / red
+		ColorBid = lipgloss.Color("#22f5a1")
+		ColorAsk = lipgloss.Color("#f87171")
+	}
+	StyleLive = lipgloss.NewStyle().Foreground(ColorLive)
+	StyleAsk = lipgloss.NewStyle().Foreground(ColorAsk)
+	StyleArmed = lipgloss.NewStyle().
+		Foreground(ColorTextBright).
+		Background(ColorAsk).
+		Bold(true)
+}

@@ -42,6 +42,9 @@ func main() {
 	qtyDec := int(envU32("RSX_TUI_QTY_DECIMALS", 4))
 	// RSX_TUI_TICK: smallest raw price increment (+/- step). PENGU = 1.
 	tick := int64(envU32("RSX_TUI_TICK", 1))
+	// RSX_TUI_THEME=colorblind swaps the bid/ask red-green pair for a
+	// deuteranopia-safe blue/orange. Must run before any style is rendered.
+	ui.UseTheme(os.Getenv("RSX_TUI_THEME"))
 
 	if gwURL == "mock" {
 		runMock(symbolID, priceDec, qtyDec, tick)
