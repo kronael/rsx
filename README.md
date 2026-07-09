@@ -42,6 +42,8 @@ piece exists.
 make demo
 ```
 
+![RSX local demo](demo/rsx-local-demo.gif)
+
 Then open [http://localhost:49171](http://localhost:49171).
 
 What to try first:
