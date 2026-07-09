@@ -12,35 +12,55 @@ The canonical layout: status bar, three columns, speed strip, status line,
 help.
 
 ```
- RSX  PENGU-PERP   ● live   open 2  fills 7   last 10001  ~mark 10000 (mid)  index —  funding —
+ RSX  PENGU-PERP   ● live  open 1  fills 7  last —  ~mark 10000 (mid)  index —  funding —
 ┌────────── book ──────────┐┌───────── order ─────────┐┌──── positions (mark=mid) ────┐
-│ 10004  12 ▊▊▊▊           ││   BUY      SELL          ││ sym  side  net  entry  ~uPnL  │
-│ 10003   8 ▊▊▊            ││                          ││ PENGU-PERP LONG +14 9998 +28 │
-│ 10002  20 ▊▊▊▊▊▊▊        ││   price: 10001_          │└──────────────────────────────┘
-│ 10001   5 ▊▊             ││   qty  : 5               │┌──────── trades ──────────────┐
-│ — 1 —                    ││   time-in-force: GTC     ││ B 10001 5                    │
-│ 10000   7 ▊▊▊            ││   reduce-only: off  …    ││ S 10000 3                    │
-│  9999  15 ▊▊▊▊▊          ││                          ││ B  9999 8                    │
-│  9998   9 ▊▊▊            ││   enter → preview, …     ││                              │
-└──────────────────────────┘└──────────────────────────┘└──────────────────────────────┘
- ⚡ RTT 10.4 µs = net 2.5 µs + internal 7.6 µs + engine 0.34 µs    p50 9.9 µs · best 9.6 µs
+│      10006               ││  BUY      SELL           ││ sym  side  net  entry  ~uPnL │
+│      10005               ││                          ││ PENGU-PERP  LONG  +14  … +140 │
+│      10004  12           ││ price: _                 │└──────────────────────────────┘
+│      10003               ││ qty  :                   │┌──────── orders ──────────────┐
+│      10002  20           ││ time-in-force: GTC       ││ side  px  qty                │
+│      10001   5           ││ reduce-only: off  po: off││▸ BUY   9999 15               │
+│    7 10000               ││                          │└──────────────────────────────┘
+│▸  15  9999               ││ enter → preview → send   │┌──────── trades ──────────────┐
+│       9998               │└──────────────────────────┘│ B 10001 5                    │
+│   30  9997               │                            │ S 10000 3                    │
+│████████████ 58% bid      │                            └──────────────────────────────┘
+└──────────────────────────┘
+ ⚡ RTT 10.4 µs = net 2.5 µs + internal 7.6 µs + engine 340 ns  ██████████  p50 9.9 µs · p99 10.4 µs · best 9.0 µs  ▁▃█▅
  sent Buy 5 @ 10001 [GTC]
- q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  c cancel  x flatten  F3 trace
+ q quit  b/s side  t tif  r ro  p po  tab  0-9  ⌫  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F3  ? help
 ```
 
 - **status bar** — violet symbol badge; green `● live` link dot; open/fills
-  counts; `last` (last trade), `~mark N (mid)` in dim italic (a client
-  estimate, not exchange mark), `index —`, `funding —` (no source yet).
-- **book** — asks worst-first down to the `— spread —` divider, then bids
-  best-first; `▊` depth bar per lot (cap 24). Asks red, bids green.
-- **order** — side toggle (active side reversed), price/qty fields (focused
-  one bold+bright with `_`), time-in-force, reduce-only/post-only.
-- **positions** — `mark=mid` in the title flags the derived mark; `LONG`
-  green / `SHORT` red word; net, entry, `~uPnL` (dim-italic header, coloured
-  value).
+  counts; `last`, `~mark N (mid)` in dim italic (a client estimate, not the
+  exchange mark), `index —`, `funding —` (no source yet).
+- **book — a static price ladder.** A fixed price axis centred on the mid
+  (recentres only on drift, not every tick); **bid qty left / ask qty right**
+  of the price column; empty prices are gaps, so the spread and thin
+  liquidity read at a glance. Your resting orders are marked `▸` on their
+  rows, the last print `‹`; the price is coloured by the resting side. A
+  bottom **imbalance bar** shows bid-vs-ask share of the visible depth.
+- **order** — side toggle (active reversed), price/qty fields (focused one
+  bold+bright with `_`), time-in-force, reduce-only/post-only, the two-step
+  confirm hint.
+- **positions** — `mark=mid` flags the derived mark; `LONG` green / `SHORT`
+  red; net, entry, `~uPnL` (dim header, coloured value).
+- **orders** — your working orders (side/px/qty); the `▸` cursor marks the one
+  `c` cancels (`↑↓` move it, `X` cancels all). Only shown when you have some.
 - **trades** — newest first, `B`/`S` glyph + price/qty, coloured by side.
-- **speed strip** — the ⚡ round-trip split net / internal / engine + rolling
-  p50 / best.
+- **speed strip** — the ⚡ round-trip split net / internal / engine, a
+  **proportional hop-bar** showing where the time goes, and rolling
+  p50 / p99 / best + a sparkline. The RTT number goes amber/red on an SLA
+  breach.
+
+## Keys
+
+`b`/`s` side · `0-9`/`⌫`/`tab` edit price+qty · `t` tif · `r`/`p`
+reduce-only/post-only · `enter` preview → `enter` send (`esc` cancels) ·
+`m` market (IOC far touch) · `↑↓` select a working order · `c` cancel it ·
+`X` cancel all · `x` flatten (reduce-only) · `R` reverse the position · `F3`
+telemetry trace · `?` help · `q` quit. Orders over the fat-finger size cap
+are hard-blocked, never soft-warned.
 
 ## Startup — waiting for first round-trip
 

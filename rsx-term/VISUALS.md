@@ -71,9 +71,18 @@ One screen, vertically stacked (`view.go` `View`):
 
 ## Marks & glyphs
 
-- **Depth bar** `▊` (`depthBar`), one glyph per lot, capped at 24
-  (`maxBarLen`) so a fat level can't blow the column.
-- **Spread divider** `— N —` between asks and bids, muted.
+- **Static ladder** — a fixed price axis, bid qty (green) left of the price
+  column, ask qty (red) right; empty prices are gaps. The axis recentres only
+  on drift, never per tick.
+- **Own-order mark** `▸` (accent violet) on a ladder row (or the orders-panel
+  cursor row) — where the trader has a resting order.
+- **Last-trade mark** `‹` (bright) on the ladder row of the last print.
+- **Imbalance bar** — a green(bid)|red(ask) split of the visible depth under
+  the ladder, with the bid share.
+- **Latency hop-bar** — a proportional `net│internal│engine` segment bar in
+  the speed strip (each leg its own colour); the RTT number goes amber/red on
+  an SLA breach.
+- **Sparkline** `▁▂▃▄▅▆▇█` (accent) — the rolling RTT window.
 - **Link dot** `●` — green live / amber offline.
 - **Side buttons** `  BUY  ` / `  SELL  ` — the active side is `Reverse`d.
 - **Focused field** — bold + bright with a trailing `_` cursor; unfocused
