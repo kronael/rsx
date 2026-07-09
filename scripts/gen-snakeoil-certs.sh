@@ -2,11 +2,19 @@
 # gen-snakeoil-certs.sh — self-signed certs for RSX replication (TCP).
 #
 # Replication (rsx-cast ReplicationService/ReplicationConsumer) is
-# TLS-mandatory. This writes a throwaway self-signed cert+key the
-# replication server presents and the consumer trusts as its CA
-# (ca.pem is a copy of cert.pem: single-box self-trust). Real
-# deployments replace these with proper certs and point
-# RSX_REPL_CERT_PATH/KEY_PATH/CA_PATH at them.
+# TLS-mandatory. This writes a throwaway CA + a server leaf the
+# replication server presents and the consumer trusts:
+#
+#   ca.pem   — self-signed CA (CA:TRUE), the consumer's trust anchor
+#   cert.pem — server leaf (CA:FALSE, EKU serverAuth+clientAuth,
+#              SAN localhost/127.0.0.1) signed by that CA
+#   key.pem  — the server leaf's private key
+#
+# The leaf MUST be a distinct end-entity cert: rustls/webpki reject a
+# CA:TRUE cert presented as a leaf with `CaUsedAsEndEntity`, so the
+# old "ca.pem is a copy of cert.pem" scheme could not complete a
+# handshake. Real deployments replace these with proper certs and
+# point RSX_REPL_CERT_PATH/KEY_PATH/CA_PATH at them.
 #
 # The casting/UDP path stays plaintext by design (trusted LAN,
 # spec 4-cast §10.4) — these certs never touch it.
@@ -49,14 +57,45 @@ fi
 
 mkdir -p "$CERT_DIR"
 
+# Throwaway CA key + CSR live in a temp dir: the runtime needs only
+# ca.pem / cert.pem / key.pem, not the CA key (single-box snakeoil).
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT INT TERM
+CA_KEY="$TMP/ca-key.pem"
+CSR="$TMP/server.csr"
+EXT="$TMP/leaf.ext"
+
+# 1. Self-signed CA (CA:TRUE) — the consumer's trust anchor.
 openssl req -x509 -newkey rsa:2048 -nodes \
-    -keyout "$KEY" -out "$CERT" \
-    -days 3650 -subj "/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+    -keyout "$CA_KEY" -out "$CA" \
+    -days 3650 -subj "/CN=RSX Replication Snakeoil CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
     >/dev/null 2>&1
 
-cp "$CERT" "$CA"
+# 2. Server leaf key + CSR (CN=localhost).
+openssl req -newkey rsa:2048 -nodes \
+    -keyout "$KEY" -out "$CSR" \
+    -subj "/CN=localhost" \
+    >/dev/null 2>&1
+
+# 3. Sign the leaf with the CA: end-entity (CA:FALSE), serverAuth so
+#    webpki accepts it for ServerName validation, SAN for both the
+#    localhost DNS name and the 127.0.0.1 IP the peers dial.
+cat > "$EXT" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=DNS:localhost,IP:127.0.0.1
+EOF
+
+openssl x509 -req -in "$CSR" \
+    -CA "$CA" -CAkey "$CA_KEY" -CAcreateserial \
+    -days 3650 -out "$CERT" \
+    -extfile "$EXT" \
+    >/dev/null 2>&1
+
 chmod 600 "$KEY"
 
 log "wrote cert.pem key.pem ca.pem to $CERT_DIR \
-(CN=localhost SAN=localhost,127.0.0.1)"
+(leaf CN=localhost SAN=localhost,127.0.0.1 signed by snakeoil CA)"
