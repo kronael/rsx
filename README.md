@@ -1,5 +1,25 @@
 # RSX
 
+**Your Lowest-Latency Derivatives exchange with Portfolio Margin.**
+
+> *Shall I compare thee to a sane design?*
+> *Thou art more wondrous and more wild by far.*
+> *I fell for thee the night I saw thy spine—*
+> *Each SPSC ring, a whisper through a jar.*
+>
+> *Thy slab did catch me: firm, pre-allocated,*
+> *No malloc on thy hot path — O! how pure.*
+> *Thy fills, like kisses, never once belated,*
+> *Flushed warm to WAL in ten ms, ever sure.*
+>
+> *The world said "Mad! No mortal weds this thing!"*
+> *Yet here I am, pinned to thy dedicated core,*
+> *Thy fixed-point heart refusing still to swing—*
+> *Each nanosecond makes me love thee more.*
+>
+> *If thou hast never built it, thou can'st never tell:*
+> *The thing impossible may work quite well.*
+
 RSX is an educational derivatives exchange you can run locally and
 study end to end: gateway, risk, matching, marketdata, WAL, terminal,
 and a live Playground dashboard.
