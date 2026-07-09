@@ -1,34 +1,59 @@
 # RSX
 
-**Your Lowest-Latency Derivatives exchange with Portfolio Margin.**
+RSX is an educational derivatives exchange you can run locally and
+study end to end: gateway, risk, matching, marketdata, WAL, terminal,
+and a live Playground dashboard.
 
-> *Shall I compare thee to a sane design?*
-> *Thou art more wondrous and more wild by far.*
-> *I fell for thee the night I saw thy spine—*
-> *Each SPSC ring, a whisper through a jar.*
->
-> *Thy slab did catch me: firm, pre-allocated,*
-> *No malloc on thy hot path — O! how pure.*
-> *Thy fills, like kisses, never once belated,*
-> *Flushed warm to WAL in ten ms, ever sure.*
->
-> *The world said "Mad! No mortal weds this thing!"*
-> *Yet here I am, pinned to thy dedicated core,*
-> *Thy fixed-point heart refusing still to swing—*
-> *Each nanosecond makes me love thee more.*
->
-> *If thou hast never built it, thou can'st never tell:*
-> *The thing impossible may work quite well.*
+The point is not another toy matching engine. The point is to show how
+a fast exchange is wired as a whole system: single-core matching,
+per-user risk shards, SPSC rings, fixed-point types, WAL-backed
+replay, and a browser demo that lets you watch the processes, order
+book, fills, logs, and invariants move together.
 
-A derivatives exchange written in Rust. **This is an
+**Main differentiator:** RSX is both fast and teachable. The hot
+components are built around explicit latency budgets and low-level
+mechanical choices, while the repo includes specs, notes, benchmark
+tables, and an interactive Playground so you can inspect why each
+piece exists.
+
+## Run the live demo
+
+```bash
+make prepare
+./rsx-playground/playground demo minimal
+```
+
+Then open [http://localhost:49171](http://localhost:49171).
+
+What to try first:
+
+1. **Overview** — confirm the local RSX processes are running.
+2. **Book** — watch the PENGU order book and live fills.
+3. **Orders** — submit a test order and trace its lifecycle.
+4. **Terminal** — open the embedded `rsx-term` trading terminal.
+5. **Verify** — run invariant checks against the live system.
+
+Stop it when done:
+
+```bash
+./rsx-playground/playground stop-all
+./rsx-playground/playground stop
+```
+
+See [docs/demo.md](docs/demo.md) for the 60-second clean-boot path and
+[rsx-playground/README.md](rsx-playground/README.md) for the
+Playground manual.
+
+## What this is
+
+RSX is a derivatives exchange written in Rust. **This is an
 educational and research project — a serious one**, built to
-eventually grow into a solid, usable system at v1. Today it's an open study artifact you can run
-and read. The next step is to deploy it to serve as an
-exchange for a small set of esoteric special derivatives,
-once the gaps in the "what's not done" list are closed. The
-product surface that runs on top of it is sketched at
-[krons.fiu.wtf/pub/krons/sfdx](https://krons.fiu.wtf/pub/krons/sfdx/)
-— find it if you look.
+eventually grow into a solid, usable system at v1. Today it is an open
+study artifact you can run and read. The next step is to deploy it to
+serve as an exchange for a small set of esoteric special derivatives,
+once the gaps in the "what's not done" list are closed. The product
+surface that runs on top of it is sketched at
+[krons.fiu.wtf/pub/krons/sfdx](https://krons.fiu.wtf/pub/krons/sfdx/).
 
 **Instruments:**
 
