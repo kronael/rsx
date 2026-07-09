@@ -74,11 +74,19 @@ One screen, vertically stacked (`view.go` `View`):
 - **Static ladder** — a fixed price axis, bid qty (green) left of the price
   column, ask qty (red) right; empty prices are gaps. The axis recentres only
   on drift, never per tick.
+- **Depth bar** `▊` (side colour) — a per-level histogram scaled to the
+  deepest visible level; bid grows left, ask right, so the bars converge on
+  the spread. A lighter `▊` vs the imbalance bar's solid `█` keeps the
+  per-level texture secondary to the summary.
 - **Own-order mark** `▸` (accent violet) on a ladder row (or the orders-panel
   cursor row) — where the trader has a resting order.
 - **Last-trade mark** `‹` (bright) on the ladder row of the last print.
 - **Imbalance bar** — a green(bid)|red(ask) split of the visible depth under
   the ladder, with the bid share.
+- **ARMED banner** — bright text on ask-red, bold, full-width, persistent
+  while confirm-off (`F2`) is on: the guardrail-is-down warning (`StyleArmed`).
+- **Risk row** (positions) — `liq — · ROE — · mgn ░░░░` dashed in
+  `StyleDerived`: the risk surface's fixed home, never a fabricated number.
 - **Latency hop-bar** — a proportional `net│internal│engine` segment bar in
   the speed strip (each leg its own colour); the RTT number goes amber/red on
   an SLA breach.
