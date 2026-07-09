@@ -247,3 +247,30 @@ func TestArmedStillHonorsFatFingerGuard(t *testing.T) {
 		t.Fatalf("expected BLOCKED status, got %q", m.status)
 	}
 }
+
+func TestFmtNotionalQuotePrecision(t *testing.T) {
+	m := New(Config{PriceDec: 6, QtyDec: 4})
+	// 5 tokens (raw 50000) @ $0.010001 (raw 10001): raw product 500050000,
+	// money = $0.050005 shown at quote (price) precision, not 10 decimals.
+	if got := m.fmtNotional(10001 * 50000); got != "0.050005" {
+		t.Fatalf("notional = %q, want 0.050005 (no trailing qty-dec zeros)", got)
+	}
+	// A loss keeps its sign and truncates toward zero.
+	if got := m.fmtNotional(-2_500_000); got != "-0.000250" {
+		t.Fatalf("negative notional = %q, want -0.000250", got)
+	}
+}
+
+func TestRiskRowIsHonestlyDashed(t *testing.T) {
+	m := New(Config{PriceDec: 6, QtyDec: 4})
+	out := stripANSI(m.viewRiskRow())
+	for _, want := range []string{"liq —", "ROE —", "mgn", "needs risk engine"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("risk row missing %q:\n%s", want, out)
+		}
+	}
+	// It must never fabricate a number — no digits in the dashed figures.
+	if strings.ContainsAny(strings.ReplaceAll(out, "░", ""), "0123456789") {
+		t.Fatalf("risk row must not show a fabricated number:\n%s", out)
+	}
+}

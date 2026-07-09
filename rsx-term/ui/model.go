@@ -40,9 +40,20 @@ type Config struct {
 func (m Model) fmtPx(raw int64) string  { return fmtDec(raw, m.cfg.PriceDec) }
 func (m Model) fmtQty(raw int64) string { return fmtDec(raw, m.cfg.QtyDec) }
 
-// fmtNotional renders a raw price×qty product (notional, uPnL) — its scale is
-// price_dec + qty_dec, since both raw factors carried their own precision.
-func (m Model) fmtNotional(raw int64) string { return fmtDec(raw, m.cfg.PriceDec+m.cfg.QtyDec) }
+// fmtNotional renders a raw price×qty product (notional, uPnL) as money in the
+// quote currency. The raw product carries price_dec+qty_dec of scale, but a
+// money figure reads at the *quote's* precision (price_dec) — showing all
+// price_dec+qty_dec digits tacks on qty_dec meaningless trailing zeros
+// ($0.0500050000). So divide out the qty scale (10^qty_dec) to land back at
+// price-scale, then format at price_dec. Integer division truncates toward
+// zero, which is the right rounding for a sub-precision money remainder.
+func (m Model) fmtNotional(raw int64) string {
+	scale := int64(1)
+	for i := 0; i < m.cfg.QtyDec; i++ {
+		scale *= 10
+	}
+	return fmtDec(raw/scale, m.cfg.PriceDec)
+}
 
 // Focus is which order-entry field the digit keys edit.
 type Focus int

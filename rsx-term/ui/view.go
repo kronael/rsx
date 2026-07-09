@@ -438,9 +438,8 @@ func sideColor(s wire.Side) lipgloss.Color {
 // derived-value marker too. With no mid to price it against, it shows the
 // reason rather than a bare dash (mirrors the amber "no live book" caption).
 func (m Model) viewPositions() string {
-	header := StyleMuted.Render("sym  side  net  entry  ~uPnL")
 	if m.position.Flat() {
-		return panel(" positions (mark=mid) ", rightWidth, header, StyleMuted.Render("no position — fills build it"))
+		return panel(" positions (mark=mid) ", rightWidth, StyleMuted.Render("no position — fills build it"))
 	}
 
 	net := m.position.Net
@@ -458,37 +457,44 @@ func (m Model) viewPositions() string {
 		entry = m.fmtPx(e)
 	}
 
-	upnl := "—  (needs live book)"
-	upnlStyle := StyleDegraded
+	// Identity + size on one line, money on the next, risk on the last — the
+	// narrow (rightWidth) panel can't hold them side by side without wrapping,
+	// so they stack. Each row is short enough to never wrap.
+	sizeRow := fmt.Sprintf("%s  %s @ %s",
+		wordStyle.Render(word), netStr, entry)
+
+	upnl := StyleDegraded.Render("~uPnL —") + StyleMuted.Render(" (needs live book)")
 	if mid, ok := m.book.Mid(); ok {
 		if u, ok := m.position.Upnl(mid); ok {
-			upnl = m.fmtNotional(u)
+			v := m.fmtNotional(u)
+			st := StyleLive
 			if u > 0 {
-				upnl = "+" + upnl
+				v = "+" + v
+			} else if u < 0 {
+				st = StyleAsk
 			}
-			upnlStyle = StyleLive
-			if u < 0 {
-				upnlStyle = StyleAsk
-			}
+			upnl = StyleMuted.Render("~uPnL ") + st.Render(v)
 		}
 	}
 
-	row := fmt.Sprintf("%s  %s  %s  %s  %s",
-		m.cfg.Symbol,
-		wordStyle.Render(word),
-		netStr,
-		entry,
-		upnlStyle.Render(upnl),
-	)
-	return panel(" positions (mark=mid) ", rightWidth, header, row)
+	return panel(" positions (mark=mid) ", rightWidth, sizeRow, upnl, m.viewRiskRow())
 }
 
-// signed prefixes a "+" for positive values; negatives already carry "-".
-func signed(v int64) string {
-	if v > 0 {
-		return fmt.Sprintf("+%d", v)
-	}
-	return fmt.Sprintf("%d", v)
+// viewRiskRow is the position's risk surface — liquidation price, return-on-
+// equity, and a margin-health bar. Every figure needs the risk engine's
+// margin / leverage state, which the terminal has no feed for yet, so each is
+// honestly dashed in StyleDerived (the established "not real yet" marking, same
+// as a pending latency leg) rather than fabricated. It gives these new-trader
+// must-haves a fixed home for the moment the backend lands — the terminal
+// shows the whole risk picture's shape, and marks what's still pending.
+func (m Model) viewRiskRow() string {
+	dash := StyleDerived.Render
+	// An all-empty bar: margin health is unknown, so no segment is filled.
+	// Dashed, not a fake reading — the trader must not read a health level
+	// off a number the terminal doesn't have.
+	bar := StyleDerived.Render("░░░░░░░░")
+	return dash("liq —") + "   " + dash("ROE —") + "   " +
+		StyleMuted.Render("mgn ") + bar + "   " + dash("(needs risk engine)")
 }
 
 // viewTrades draws the public tape, newest first, price coloured by taker
