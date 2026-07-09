@@ -40,9 +40,11 @@ func main() {
 	// at render. Defaults are PENGU's (price 6, qty 4); override per symbol.
 	priceDec := int(envU32("RSX_TUI_PRICE_DECIMALS", 6))
 	qtyDec := int(envU32("RSX_TUI_QTY_DECIMALS", 4))
+	// RSX_TUI_TICK: smallest raw price increment (+/- step). PENGU = 1.
+	tick := int64(envU32("RSX_TUI_TICK", 1))
 
 	if gwURL == "mock" {
-		runMock(symbolID, priceDec, qtyDec)
+		runMock(symbolID, priceDec, qtyDec, tick)
 		return
 	}
 
@@ -54,6 +56,7 @@ func main() {
 		symbolID:  symbolID,
 		priceDec:  priceDec,
 		qtyDec:    qtyDec,
+		tick:      tick,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
@@ -63,7 +66,7 @@ func main() {
 
 // runMock builds the model over an offline MockGateway and streams the scripted
 // demo feed into the running program.
-func runMock(symbolID uint32, priceDec, qtyDec int) {
+func runMock(symbolID uint32, priceDec, qtyDec int, tick int64) {
 	mock := &conn.MockGateway{}
 	model := ui.New(ui.Config{
 		Symbol:     Symbol,
@@ -73,6 +76,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int) {
 		Sub:        mock,
 		PriceDec:   priceDec,
 		QtyDec:     qtyDec,
+		Tick:       tick,
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
@@ -100,6 +104,7 @@ type liveConfig struct {
 	symbolID  uint32
 	priceDec  int
 	qtyDec    int
+	tick      int64
 }
 
 // runLive builds a LiveGateway from cfg, connects both sockets, and runs
@@ -124,6 +129,7 @@ func runLive(cfg liveConfig) error {
 		Sub:        live,
 		PriceDec:   cfg.priceDec,
 		QtyDec:     cfg.qtyDec,
+		Tick:       cfg.tick,
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())

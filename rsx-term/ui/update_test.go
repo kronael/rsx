@@ -37,6 +37,8 @@ func press(m Model, key string) Model {
 		msg = tea.KeyMsg{Type: tea.KeyBackspace}
 	case "f3":
 		msg = tea.KeyMsg{Type: tea.KeyF3}
+	case "f2":
+		msg = tea.KeyMsg{Type: tea.KeyF2}
 	case "ctrl+c":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlC}
 	default:
@@ -471,4 +473,17 @@ func TestFlattenKeyNoBookIsNoOp(t *testing.T) {
 	if !strings.Contains(m.status, "no live book") {
 		t.Fatalf("status = %q, want mentions no live book", m.status)
 	}
+}
+
+// stripANSI removes SGR escape sequences so tests can assert on visible text.
+func stripANSI(s string) string {
+	for strings.Contains(s, "\x1b") {
+		i := strings.Index(s, "\x1b")
+		j := strings.Index(s[i:], "m")
+		if j < 0 {
+			break
+		}
+		s = s[:i] + s[i+j+1:]
+	}
+	return s
 }

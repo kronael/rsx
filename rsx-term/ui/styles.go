@@ -74,6 +74,14 @@ var (
 	// one detail meant to draw the eye without competing with StyleHeading.
 	StyleAccent = lipgloss.NewStyle().Foreground(ColorAccent)
 
+	// StyleArmed renders the confirm-off (ARMED) banner: bright text on the
+	// ask-red danger ground, bold — a persistent, unmistakable warning that the
+	// two-enter safety is off. Its own meaning: "the guardrail is down."
+	StyleArmed = lipgloss.NewStyle().
+			Foreground(ColorTextBright).
+			Background(ColorAsk).
+			Bold(true)
+
 	// PanelStyle is the standard bordered panel: a normal border in the muted
 	// border colour. Panels carry their title as their first content line.
 	PanelStyle = lipgloss.NewStyle().

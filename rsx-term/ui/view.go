@@ -37,7 +37,7 @@ const (
 
 	// helpText is the keybinding legend. Verbatim per specs/2/55-terminal.md
 	// except for "x flatten", added ahead of the spec's next revision.
-	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F3 trace  ? help "
+	helpText = " q quit  b/s side  t tif  r ro  p po  +/- tick  j/k join  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F2 armed  F3 trace  ? help "
 )
 
 // View renders the whole terminal: status bar / three-column main / speed
@@ -46,14 +46,22 @@ func (m Model) View() string {
 	if m.showHelp {
 		return m.viewHelpOverlay()
 	}
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.viewStatusBar(),
-		m.viewMain(),
-		m.viewSpeed(),
-		m.viewStatusLine(),
-		viewHelp(),
-	)
+	rows := []string{m.viewStatusBar()}
+	if b := m.viewArmedBanner(); b != "" {
+		rows = append(rows, b)
+	}
+	rows = append(rows, m.viewMain(), m.viewSpeed(), m.viewStatusLine(), viewHelp())
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// viewArmedBanner is the persistent confirm-off warning line: empty when the
+// two-enter confirm is on (the safe default), a loud red banner when ARMED so
+// the trader can never forget the guardrail is down. F2 toggles it.
+func (m Model) viewArmedBanner() string {
+	if !m.armed {
+		return ""
+	}
+	return StyleArmed.Render(" ⚠ ARMED — confirm OFF, orders fire on one enter · F2 to re-arm safety ")
 }
 
 // panel wraps a title (first line, muted) and body rows in the standard
@@ -312,6 +320,8 @@ func (m Model) viewHelpOverlay() string {
 		key("tab", "switch price / qty field"),
 		key("t", "cycle time-in-force (GTC / IOC / FOK)"),
 		key("r / p", "toggle reduce-only / post-only"),
+		key("+ / -", "nudge price one tick (seeds from mid)"),
+		key("j / k", "join best bid / ask"),
 		key("enter", "preview → enter again to send · esc cancels"),
 		key("m", "market — IOC at the far touch"),
 		"",
@@ -324,6 +334,7 @@ func (m Model) viewHelpOverlay() string {
 		"",
 		grp("view"),
 		key("F3", "latency / telemetry trace"),
+		danger("F2", "ARMED — toggle confirm OFF (single-enter fire)"),
 		key("?", "this help"),
 		danger("q", "quit"),
 	}

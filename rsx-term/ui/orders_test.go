@@ -152,3 +152,98 @@ func TestFmtDec(t *testing.T) {
 		t.Fatalf("0 decimals should be raw: %q", got)
 	}
 }
+
+func TestStepPxNudgesByTick(t *testing.T) {
+	m := New(Config{Sub: &conn.MockGateway{}, Tick: 5})
+	m.pxBuf = "100"
+	m = press(m, "+")
+	if m.pxBuf != "105" {
+		t.Fatalf("+ one tick: pxBuf=%q want 105", m.pxBuf)
+	}
+	m = press(m, "-")
+	m = press(m, "-")
+	if m.pxBuf != "95" {
+		t.Fatalf("- two ticks: pxBuf=%q want 95", m.pxBuf)
+	}
+}
+
+func TestStepPxFloorsAtOneTick(t *testing.T) {
+	m := New(Config{Sub: &conn.MockGateway{}, Tick: 10})
+	m.pxBuf = "10"
+	m = press(m, "-") // would go to 0 → floored at one tick
+	if m.pxBuf != "10" {
+		t.Fatalf("- must floor at one tick: pxBuf=%q want 10", m.pxBuf)
+	}
+}
+
+func TestStepPxSeedsFromMidWhenEmpty(t *testing.T) {
+	m := New(Config{Sub: &conn.MockGateway{}, Tick: 1})
+	m.book.Bids = []wire.Level{{Px: 100, Qty: 1}}
+	m.book.Asks = []wire.Level{{Px: 104, Qty: 1}}
+	m = press(m, "+") // mid=102 (rounded to tick) then +1 tick
+	if m.pxBuf != "103" {
+		t.Fatalf("+ from empty seeds from mid: pxBuf=%q want 103", m.pxBuf)
+	}
+}
+
+func TestJoinBidAsk(t *testing.T) {
+	m := New(Config{Sub: &conn.MockGateway{}, Tick: 1})
+	m.book.Bids = []wire.Level{{Px: 999, Qty: 1}}
+	m.book.Asks = []wire.Level{{Px: 1002, Qty: 1}}
+	if got := press(m, "j"); got.pxBuf != "999" {
+		t.Fatalf("j join bid: pxBuf=%q want 999", got.pxBuf)
+	}
+	if got := press(m, "k"); got.pxBuf != "1002" {
+		t.Fatalf("k join ask: pxBuf=%q want 1002", got.pxBuf)
+	}
+}
+
+func TestArmedTogglesAndBanner(t *testing.T) {
+	m := newModel(&conn.MockGateway{})
+	if m.viewArmedBanner() != "" {
+		t.Fatal("banner must be empty when confirm is on")
+	}
+	m = press(m, "f2")
+	if !m.armed {
+		t.Fatal("f2 should arm")
+	}
+	if !strings.Contains(stripANSI(m.viewArmedBanner()), "ARMED") {
+		t.Fatalf("armed banner missing:\n%s", m.viewArmedBanner())
+	}
+	m = press(m, "f2")
+	if m.armed {
+		t.Fatal("f2 should re-arm safety (toggle off)")
+	}
+}
+
+func TestArmedSubmitsOnSingleEnter(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := New(Config{Sub: mock})
+	m = press(m, "f2") // ARM
+	m = typeDigits(m, "100")
+	m = press(m, "tab")
+	m = typeDigits(m, "5")
+	m = press(m, "enter") // single enter fires in ARMED mode
+	if len(mock.Submitted) != 1 {
+		t.Fatalf("ARMED single-enter should submit once, got %d", len(mock.Submitted))
+	}
+	if m.pendingConfirm != nil {
+		t.Fatal("ARMED mode must not set a pending confirm")
+	}
+}
+
+func TestArmedStillHonorsFatFingerGuard(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := New(Config{Sub: mock})
+	m = press(m, "f2") // ARM
+	m = typeDigits(m, "1")
+	m = press(m, "tab")
+	m = typeDigits(m, "9999999") // over maxOrderQty
+	m = press(m, "enter")
+	if len(mock.Submitted) != 0 {
+		t.Fatalf("fat-finger guard must block even in ARMED mode, submitted %d", len(mock.Submitted))
+	}
+	if !strings.Contains(m.status, "BLOCKED") {
+		t.Fatalf("expected BLOCKED status, got %q", m.status)
+	}
+}
