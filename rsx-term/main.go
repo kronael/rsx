@@ -36,9 +36,13 @@ func main() {
 	symbolID := envU32("RSX_TUI_SYMBOL", 10)
 	// RSX_GW_JWT_SECRET: gateway JWT secret (dev default).
 	jwtSecret := envOr("RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod-padpad")
+	// Display precision — raw i64 px/qty become human decimals (raw / 10^dec)
+	// at render. Defaults are PENGU's (price 6, qty 4); override per symbol.
+	priceDec := int(envU32("RSX_TUI_PRICE_DECIMALS", 6))
+	qtyDec := int(envU32("RSX_TUI_QTY_DECIMALS", 4))
 
 	if gwURL == "mock" {
-		runMock(symbolID)
+		runMock(symbolID, priceDec, qtyDec)
 		return
 	}
 
@@ -48,6 +52,8 @@ func main() {
 		jwtSecret: jwtSecret,
 		userID:    userID,
 		symbolID:  symbolID,
+		priceDec:  priceDec,
+		qtyDec:    qtyDec,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
@@ -57,7 +63,7 @@ func main() {
 
 // runMock builds the model over an offline MockGateway and streams the scripted
 // demo feed into the running program.
-func runMock(symbolID uint32) {
+func runMock(symbolID uint32, priceDec, qtyDec int) {
 	mock := &conn.MockGateway{}
 	model := ui.New(ui.Config{
 		Symbol:     Symbol,
@@ -65,6 +71,8 @@ func runMock(symbolID uint32) {
 		Endpoint:   "mock://demo",
 		MdEndpoint: "mock://demo",
 		Sub:        mock,
+		PriceDec:   priceDec,
+		QtyDec:     qtyDec,
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
@@ -90,6 +98,8 @@ type liveConfig struct {
 	jwtSecret string
 	userID    uint32
 	symbolID  uint32
+	priceDec  int
+	qtyDec    int
 }
 
 // runLive builds a LiveGateway from cfg, connects both sockets, and runs
@@ -112,6 +122,8 @@ func runLive(cfg liveConfig) error {
 		Endpoint:   cfg.gwURL,
 		MdEndpoint: cfg.mdURL,
 		Sub:        live,
+		PriceDec:   cfg.priceDec,
+		QtyDec:     cfg.qtyDec,
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())

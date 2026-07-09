@@ -34,6 +34,42 @@ func colWidth(min int, vals ...int64) int {
 	return w
 }
 
+// fmtDec renders a raw fixed-point i64 as a human decimal with dec places
+// (raw / 10^dec) — the display-boundary conversion (CLAUDE.md: convert only
+// here; the wire stays raw i64). dec<=0 returns the plain integer, so a
+// tick-1 / no-decimals symbol reads as before.
+func fmtDec(raw int64, dec int) string {
+	if dec <= 0 {
+		return fmt.Sprintf("%d", raw)
+	}
+	neg := raw < 0
+	if neg {
+		raw = -raw
+	}
+	scale := int64(1)
+	for i := 0; i < dec; i++ {
+		scale *= 10
+	}
+	s := fmt.Sprintf("%d.%0*d", raw/scale, dec, raw%scale)
+	if neg {
+		s = "-" + s
+	}
+	return s
+}
+
+// strWidth is the widest string in ss, floored at min — for right-aligning a
+// column of formatted (decimal) values, the string-width sibling of colWidth.
+// Prices/qtys are ASCII so len() is the visible width.
+func strWidth(min int, ss ...string) int {
+	w := min
+	for _, s := range ss {
+		if len(s) > w {
+			w = len(s)
+		}
+	}
+	return w
+}
+
 // clamp restricts v to [lo, hi].
 func clamp(v, lo, hi int) int {
 	if v < lo {
