@@ -73,3 +73,23 @@ func TestCancelAll(t *testing.T) {
 		t.Fatalf("cancel-all should cancel every order: %v", mock.Cancelled)
 	}
 }
+
+func TestHandleMarket(t *testing.T) {
+	m := newModel(&conn.MockGateway{})
+	m.qtyBuf = "5"
+	m.side = wire.Buy
+	m.book.Asks = []wire.Level{{Px: 10002, Qty: 20}}
+	got, _ := m.handleMarket()
+	mm := got.(Model)
+	if mm.pendingConfirm == nil {
+		t.Fatal("market should arm a confirm")
+	}
+	o := *mm.pendingConfirm
+	if o.Side != wire.Buy || o.Px != 10002 || o.Qty != 5 || o.Tif != wire.Ioc {
+		t.Fatalf("market order wrong: %+v", o)
+	}
+	got2, _ := newModel(&conn.MockGateway{}).handleMarket()
+	if got2.(Model).pendingConfirm != nil {
+		t.Fatal("no qty should be a no-op, not a confirm")
+	}
+}
