@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -76,7 +76,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wire.Fill:
 		m.fills++
 		m.position.ApplyFill(v.Side, v.Px, v.Qty)
-		m.status = fmt.Sprintf("fill %d: %d @ %d", v.Oid, v.Qty, v.Px)
+		m.status = fmt.Sprintf("fill %d: %s @ %s", v.Oid, m.fmtQty(v.Qty), m.fmtPx(v.Px))
 
 	case feed.Latency:
 		s := v.Sample
@@ -224,6 +224,8 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case len(key) == 1 && key[0] >= '0' && key[0] <= '9':
 		m.appendDigit(rune(key[0]))
+	case key == ".":
+		m.appendDot()
 	case key == "backspace":
 		m.backspace()
 	case key == "tab":
@@ -268,11 +270,11 @@ func (m Model) tick() int64 {
 	return 1
 }
 
-// currentPx is the price the buffer holds, or a seed (mid rounded down to the
-// tick, else one tick) when it's empty/unparseable — so `+`/`-` work before a
-// price is typed.
+// currentPx is the raw price the buffer holds (decimal input reconstructed to
+// raw), or a seed (mid rounded down to the tick, else one tick) when it's
+// empty/unparseable — so `+`/`-` work before a price is typed.
 func (m Model) currentPx() int64 {
-	if px, err := strconv.ParseInt(m.pxBuf, 10, 64); err == nil && px > 0 {
+	if px, ok := parseRaw(m.pxBuf, m.cfg.PriceDec); ok && px > 0 {
 		return px
 	}
 	if mid, ok := m.book.Mid(); ok && mid > 0 {
@@ -283,25 +285,27 @@ func (m Model) currentPx() int64 {
 }
 
 // stepPx nudges the price buffer by n ticks (n may be negative), flooring at one
-// tick so it never reaches zero or negative, and focuses the price field.
+// tick so it never reaches zero or negative, and focuses the price field. The
+// buffer is written back as the human decimal the trader reads.
 func (m *Model) stepPx(n int64) {
 	px := m.currentPx() + n*m.tick()
 	if px < m.tick() {
 		px = m.tick()
 	}
-	m.pxBuf = strconv.FormatInt(px, 10)
+	m.pxBuf = m.fmtPx(px)
 	m.focus = FocusPx
 }
 
-// joinBid / joinAsk set the price buffer to the current best bid / ask — the
-// keyboard analog of clicking that level to rest right at the touch.
+// joinBid / joinAsk set the price buffer to the current best bid / ask (as the
+// human decimal) — the keyboard analog of clicking that level to rest at the
+// touch.
 func (m *Model) joinBid() {
 	b, ok := m.book.BestBid()
 	if !ok {
 		m.status = "no bid to join"
 		return
 	}
-	m.pxBuf = strconv.FormatInt(b.Px, 10)
+	m.pxBuf = m.fmtPx(b.Px)
 	m.focus = FocusPx
 }
 
@@ -311,8 +315,25 @@ func (m *Model) joinAsk() {
 		m.status = "no ask to join"
 		return
 	}
-	m.pxBuf = strconv.FormatInt(a.Px, 10)
+	m.pxBuf = m.fmtPx(a.Px)
 	m.focus = FocusPx
+}
+
+// appendDot adds a single decimal point to the focused buffer — ignored if one
+// is already there, the field has no fractional precision, or the buffer is
+// full. A leading dot is expanded to "0." so ".5" reads as "0.5".
+func (m *Model) appendDot() {
+	buf, dec := &m.pxBuf, m.cfg.PriceDec
+	if m.focus == FocusQty {
+		buf, dec = &m.qtyBuf, m.cfg.QtyDec
+	}
+	if dec <= 0 || strings.ContainsRune(*buf, '.') || len(*buf) >= digitCap {
+		return
+	}
+	if *buf == "" {
+		*buf = "0"
+	}
+	*buf += "."
 }
 
 // appendDigit adds r to the focused buffer, capping length so it always parses.
@@ -363,7 +384,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.status = "submit failed: " + err.Error()
 		return m, nil
 	}
-	m.status = sentStatus(o)
+	m.status = m.sentStatus(o)
 	m.clearForm()
 	return m, nil
 }
@@ -379,15 +400,12 @@ func (m *Model) clearForm() {
 	m.pendingConfirm = nil
 }
 
-// buildOrder parses the form into an OrderReq, or false if either buffer is
-// empty / unparseable / non-positive.
+// buildOrder parses the form (human-decimal px/qty) into a raw-i64 OrderReq, or
+// false if either buffer is empty / unparseable / non-positive.
 func (m Model) buildOrder() (wire.OrderReq, bool) {
-	if m.pxBuf == "" || m.qtyBuf == "" {
-		return wire.OrderReq{}, false
-	}
-	px, errPx := strconv.ParseInt(m.pxBuf, 10, 64)
-	qty, errQty := strconv.ParseInt(m.qtyBuf, 10, 64)
-	if errPx != nil || errQty != nil || px <= 0 || qty <= 0 {
+	px, okPx := parseRaw(m.pxBuf, m.cfg.PriceDec)
+	qty, okQty := parseRaw(m.qtyBuf, m.cfg.QtyDec)
+	if !okPx || !okQty || px <= 0 || qty <= 0 {
 		return wire.OrderReq{}, false
 	}
 	return wire.OrderReq{
@@ -400,10 +418,10 @@ func (m Model) buildOrder() (wire.OrderReq, bool) {
 	}, true
 }
 
-// sentStatus renders the confirmation line for a submitted order,
-// e.g. "sent BUY 5 @ 10001 [GTC] ro po".
-func sentStatus(o wire.OrderReq) string {
-	s := fmt.Sprintf("sent %s %d @ %d [%s]", o.Side.Label(), o.Qty, o.Px, o.Tif.Label())
+// sentStatus renders the confirmation line for a submitted order in human
+// decimals, e.g. "sent BUY 5.0000 @ 0.010001 [GTC] ro po".
+func (m Model) sentStatus(o wire.OrderReq) string {
+	s := fmt.Sprintf("sent %s %s @ %s [%s]", o.Side.Label(), m.fmtQty(o.Qty), m.fmtPx(o.Px), o.Tif.Label())
 	if o.ReduceOnly {
 		s += " ro"
 	}
@@ -439,8 +457,8 @@ func (m Model) handleFlatten() (tea.Model, tea.Cmd) {
 // routed through the same confirm gate. Empty/bad qty or no opposing book to
 // cross is a no-op with a reason; it never fabricates a price.
 func (m Model) handleMarket() (tea.Model, tea.Cmd) {
-	qty, err := strconv.ParseInt(m.qtyBuf, 10, 64)
-	if m.qtyBuf == "" || err != nil || qty <= 0 {
+	qty, ok := parseRaw(m.qtyBuf, m.cfg.QtyDec)
+	if !ok || qty <= 0 {
 		m.status = "market: enter a qty first"
 		return m, nil
 	}
@@ -474,7 +492,7 @@ const maxOrderQty = 1_000_000
 // while the size guard still holds.
 func (m Model) arm(o wire.OrderReq) (tea.Model, tea.Cmd) {
 	if o.Qty > maxOrderQty {
-		m.status = fmt.Sprintf("BLOCKED: qty %d exceeds max %d (fat-finger guard)", o.Qty, maxOrderQty)
+		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max %s (fat-finger guard)", m.fmtQty(o.Qty), m.fmtQty(maxOrderQty))
 		return m, nil
 	}
 	if m.armed {
@@ -482,7 +500,7 @@ func (m Model) arm(o wire.OrderReq) (tea.Model, tea.Cmd) {
 			m.status = "submit failed: " + err.Error()
 			return m, nil
 		}
-		m.status = sentStatus(o)
+		m.status = m.sentStatus(o)
 		m.clearForm()
 		return m, nil
 	}

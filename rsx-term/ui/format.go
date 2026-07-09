@@ -1,6 +1,10 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // fmtNs renders a nanosecond duration adaptively with integer math (never
 // floats): "340 ns", "9.6 µs", "1.28 ms". Mirrors rsx-tui render.rs fmt_ns.
@@ -55,6 +59,58 @@ func fmtDec(raw int64, dec int) string {
 		s = "-" + s
 	}
 	return s
+}
+
+// parseRaw is fmtDec's inverse: it turns a human-decimal input string into a
+// raw i64 at `dec` decimals — "0.010001"@6 → 10001, "5"@4 → 50000, "5.5"@4 →
+// 55000, ".5"@4 → 5000. So the trader types the price/qty they *read* off the
+// ladder, and the raw i64 wire value is reconstructed here. Returns false on a
+// second dot, a non-digit, an empty value, or more fractional digits than the
+// instrument has (which would silently drop precision). dec<=0 means integer
+// input (raw == the typed integer), so a tick-1 / no-decimals symbol is
+// unchanged.
+func parseRaw(s string, dec int) (int64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	intPart, fracPart := s, ""
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		intPart, fracPart = s[:i], s[i+1:]
+	}
+	if strings.IndexByte(fracPart, '.') >= 0 { // a second dot
+		return 0, false
+	}
+	if dec <= 0 {
+		if fracPart != "" {
+			return 0, false // no fractional part at zero decimals
+		}
+		return parseDigits(intPart)
+	}
+	if len(fracPart) > dec {
+		return 0, false // more precision than the instrument carries
+	}
+	for len(fracPart) < dec {
+		fracPart += "0"
+	}
+	return parseDigits(intPart + fracPart)
+}
+
+// parseDigits parses a pure-digit string to int64, rejecting empties and any
+// non-digit (so "1.2", "-1", "1e3" are all invalid — parseRaw handles the dot).
+func parseDigits(s string) (int64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 // strWidth is the widest string in ss, floored at min — for right-aligning a

@@ -309,3 +309,70 @@ func TestNarrowStacksPanels(t *testing.T) {
 		t.Fatal("wide layout should place book and positions side by side")
 	}
 }
+
+func TestParseRaw(t *testing.T) {
+	cases := []struct {
+		s    string
+		dec  int
+		want int64
+		ok   bool
+	}{
+		{"0.010001", 6, 10001, true}, // PENGU price the trader reads
+		{"5", 4, 50000, true},        // "5" tokens -> raw at 4dp
+		{"5.5", 4, 55000, true},
+		{".5", 4, 5000, true},
+		{"10001", 0, 10001, true},  // 0 decimals: raw == typed
+		{"1.5", 0, 0, false},       // fractional at 0 decimals rejected
+		{"0.0000001", 6, 0, false}, // more precision than the instrument
+		{"1.2.3", 4, 0, false},     // second dot
+		{"", 4, 0, false},
+		{"1x", 4, 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseRaw(c.s, c.dec)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Fatalf("parseRaw(%q,%d) = (%d,%v), want (%d,%v)", c.s, c.dec, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestDecimalInputSubmitsRaw(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := New(Config{Sub: mock, PriceDec: 6, QtyDec: 4, Tick: 1})
+	// Trader types the price and qty they READ off the ladder.
+	m = typeDigits(m, "0.010001") // '.' routes through appendDot
+	m = press(m, "tab")
+	m = typeDigits(m, "5")
+	m = press(m, "enter") // preview
+	m = press(m, "enter") // send
+	if len(mock.Submitted) != 1 {
+		t.Fatalf("submitted %d, want 1", len(mock.Submitted))
+	}
+	got := mock.Submitted[0]
+	if got.Px != 10001 || got.Qty != 50000 {
+		t.Fatalf("decimal input -> raw wrong: Px=%d Qty=%d, want 10001/50000", got.Px, got.Qty)
+	}
+	if !strings.Contains(m.status, "0.010001") || !strings.Contains(m.status, "5.0000") {
+		t.Fatalf("sent status not in decimals: %q", m.status)
+	}
+}
+
+func TestAppendDotRules(t *testing.T) {
+	m := New(Config{PriceDec: 6, QtyDec: 4})
+	m = typeDigits(m, "0.0.5") // second dot ignored
+	if strings.Count(m.pxBuf, ".") != 1 {
+		t.Fatalf("second dot should be ignored: %q", m.pxBuf)
+	}
+	// leading dot expands to 0.
+	m2 := New(Config{PriceDec: 6})
+	m2 = press(m2, ".")
+	if m2.pxBuf != "0." {
+		t.Fatalf("leading dot should expand to 0.: %q", m2.pxBuf)
+	}
+	// no fractional precision -> dot ignored
+	m3 := New(Config{PriceDec: 0})
+	m3 = press(m3, ".")
+	if m3.pxBuf != "" {
+		t.Fatalf("dot at 0 decimals should be ignored: %q", m3.pxBuf)
+	}
+}
