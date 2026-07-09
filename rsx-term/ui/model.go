@@ -71,6 +71,7 @@ type Model struct {
 
 	pendingConfirm *wire.OrderReq
 	openOrders     []OpenOrder // newest last
+	orderSel       int         // selection cursor into openOrders (for `c`)
 	fills          int
 
 	lastLat   *book.Sample

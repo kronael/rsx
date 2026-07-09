@@ -37,7 +37,7 @@ const (
 
 	// helpText is the keybinding legend. Verbatim per specs/2/55-terminal.md
 	// except for "x flatten", added ahead of the spec's next revision.
-	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  c cancel  x flatten  F3 trace "
+	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  ↑↓ sel  c cancel  X all  x flatten  F3 trace "
 )
 
 // View renders the whole terminal: status bar / three-column main / speed
@@ -271,13 +271,19 @@ func (m Model) viewOpenOrders() string {
 		pxs, qtys = append(pxs, o.Px), append(qtys, o.Qty)
 	}
 	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
+	sel := m.clampSel(m.orderSel)
 	rows := []string{header}
-	for _, o := range m.openOrders {
+	for i, o := range m.openOrders {
 		word, st := "BUY ", StyleLive
 		if o.Side == wire.Sell {
 			word, st = "SELL", StyleAsk
 		}
-		rows = append(rows, fmt.Sprintf("%s %*d %*d", st.Render(word), pxW, o.Px, qtyW, o.Qty))
+		// ▸ marks the order `c` will cancel (↑/↓ move it); no blind cancel.
+		cursor := "  "
+		if i == sel {
+			cursor = StyleAccent.Render("▸ ")
+		}
+		rows = append(rows, fmt.Sprintf("%s%s %*d %*d", cursor, st.Render(word), pxW, o.Px, qtyW, o.Qty))
 	}
 	return panel(" orders ", rightWidth, rows...)
 }

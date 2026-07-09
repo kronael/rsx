@@ -156,8 +156,16 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEnter()
 	case "c":
 		return m.handleCancel()
+	case "X":
+		return m.handleCancelAll()
 	case "x":
 		return m.handleFlatten()
+	case "up":
+		m.orderSel = m.clampSel(m.orderSel - 1)
+		return m, nil
+	case "down":
+		m.orderSel = m.clampSel(m.orderSel + 1)
+		return m, nil
 	case "f3":
 		m.showTrace = !m.showTrace
 		return m, nil
@@ -341,20 +349,54 @@ func (m Model) buildFlattenOrder() (wire.OrderReq, bool) {
 	return wire.OrderReq{Side: wire.Buy, Px: ask.Px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true}, true
 }
 
-// handleCancel cancels the newest open order carrying a cid.
+// clampSel keeps an open-orders selection index in [0, len-1], or 0 when the
+// list is empty, so the cursor is always valid as orders come and go.
+func (m Model) clampSel(i int) int {
+	n := len(m.openOrders)
+	if n == 0 {
+		return 0
+	}
+	return clamp(i, 0, n-1)
+}
+
+// handleCancel cancels the *selected* working order (up/down move the cursor,
+// the panel + ladder show which one) — not a blind cancel-newest, so a trader
+// can target a specific resting order.
 func (m Model) handleCancel() (tea.Model, tea.Cmd) {
-	for i := len(m.openOrders) - 1; i >= 0; i-- {
-		o := m.openOrders[i]
+	if len(m.openOrders) == 0 {
+		m.status = "no open order to cancel"
+		return m, nil
+	}
+	o := m.openOrders[m.clampSel(m.orderSel)]
+	if o.Cid == "" {
+		m.status = "selected order has no cid yet"
+		return m, nil
+	}
+	if err := m.cfg.Sub.Cancel(o.Cid); err != nil {
+		m.status = "cancel failed: " + err.Error()
+	} else {
+		m.status = "cancel sent for order " + fmt.Sprint(o.Oid)
+	}
+	return m, nil
+}
+
+// handleCancelAll cancels every working order carrying a cid.
+func (m Model) handleCancelAll() (tea.Model, tea.Cmd) {
+	n := 0
+	for _, o := range m.openOrders {
 		if o.Cid == "" {
 			continue
 		}
 		if err := m.cfg.Sub.Cancel(o.Cid); err != nil {
-			m.status = "cancel failed: " + err.Error()
-		} else {
-			m.status = "cancel sent for order " + fmt.Sprint(o.Oid)
+			m.status = "cancel-all failed: " + err.Error()
+			return m, nil
 		}
-		return m, nil
+		n++
 	}
-	m.status = "no open order to cancel"
+	if n == 0 {
+		m.status = "no open orders to cancel"
+	} else {
+		m.status = fmt.Sprintf("cancel-all sent (%d orders)", n)
+	}
 	return m, nil
 }
