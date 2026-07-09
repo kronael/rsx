@@ -18,26 +18,6 @@ func fmtNs(ns int64) string {
 	return fmt.Sprintf("%d.%02d ms", ns/1_000_000, (ns%1_000_000)/10_000)
 }
 
-// digitWidth is the character width of v printed in base 10, including a
-// leading '-' for negatives.
-func digitWidth(v int64) int {
-	return len(fmt.Sprintf("%d", v))
-}
-
-// colWidth is the widest digitWidth across vals, floored at min. Used to
-// right-align a price/qty/notional column to the widest value currently on
-// screen so the column stays rigid instead of going ragged the instant a
-// value crosses a digit boundary (e.g. 9998 -> 10004).
-func colWidth(min int, vals ...int64) int {
-	w := min
-	for _, v := range vals {
-		if d := digitWidth(v); d > w {
-			w = d
-		}
-	}
-	return w
-}
-
 // fmtDec renders a raw fixed-point i64 as a human decimal with dec places
 // (raw / 10^dec) — the display-boundary conversion (CLAUDE.md: convert only
 // here; the wire stays raw i64). dec<=0 returns the plain integer, so a
@@ -129,8 +109,8 @@ func parseDigits(s string) (int64, bool) {
 }
 
 // strWidth is the widest string in ss, floored at min — for right-aligning a
-// column of formatted (decimal) values, the string-width sibling of colWidth.
-// Prices/qtys are ASCII so len() is the visible width.
+// column of formatted (decimal) values so it stays rigid instead of going
+// ragged. Prices/qtys are ASCII so len() is the visible width.
 func strWidth(min int, ss ...string) int {
 	w := min
 	for _, s := range ss {

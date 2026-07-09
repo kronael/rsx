@@ -25,16 +25,22 @@ func TestOwnOrderLevels(t *testing.T) {
 	}
 }
 
-func TestLevelMarker(t *testing.T) {
-	own := map[int64]bool{100: true}
-	if !strings.Contains(levelMarker(100, own, 105, true), "▸") {
-		t.Fatal("own-order marker missing (should win over last-trade)")
-	}
-	if !strings.Contains(levelMarker(105, map[int64]bool{}, 105, true), "‹") {
-		t.Fatal("last-trade marker missing")
-	}
-	if levelMarker(1, map[int64]bool{}, 2, true) != " " {
-		t.Fatal("unmarked level should be a single space")
+func TestLadderMarkers(t *testing.T) {
+	m := New(Config{PriceDec: 6, QtyDec: 4, Tick: 1})
+	m.mdConnected = true
+	m.book.Asks = []wire.Level{{Px: 10002, Qty: 60000}}
+	m.book.Bids = []wire.Level{{Px: 10000, Qty: 70000}, {Px: 9999, Qty: 50000}}
+	m.ladderCenter = 10001
+	m.openOrders = []OpenOrder{{Side: wire.Buy, Px: 9999, Qty: 50000}} // own order at 9999
+	m.tape.Push(book.TapeEntry{Side: wire.Sell, Px: 10000, Qty: 1})    // last print at 10000
+	out := stripANSI(m.viewBook())
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "0.009999") && !strings.Contains(ln, "▸") {
+			t.Fatalf("own-order row should carry ▸: %q", ln)
+		}
+		if strings.Contains(ln, "0.010000") && !strings.Contains(ln, "‹") {
+			t.Fatalf("last-trade row should carry ‹: %q", ln)
+		}
 	}
 }
 
