@@ -2,9 +2,10 @@
 
 Every screen and state the terminal renders, with a mockup and what it means.
 One screen, one symbol (PENGU-PERP); states are variations of it, not separate
-pages. Rendering lives in `rsx-term/ui/view.go`; styling in `VISUALS.md`.
-Colours below are described by meaning (see the palette) — a terminal shows
-them, this file can't.
+pages. Rendering lives in `rsx-term/ui/view.go`; styling in `VISUALS.md`; the
+step-by-step user journeys through these screens are in `FLOWS.md` (each backed
+by a scenario test). Colours below are described by meaning (see the palette) —
+a terminal shows them, this file can't.
 
 ## Main screen (live, position open)
 
