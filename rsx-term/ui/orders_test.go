@@ -474,3 +474,23 @@ func TestUseThemeColorblind(t *testing.T) {
 		t.Fatalf("reset failed: bid=%v", ColorBid)
 	}
 }
+
+func TestSafeMulGuardsNotional(t *testing.T) {
+	if _, ok := safeMul(1<<40, 1<<40); ok {
+		t.Fatal("2^80 must report overflow")
+	}
+	if v, ok := safeMul(10001, 50000); !ok || v != 500050000 {
+		t.Fatalf("normal product = (%d,%v), want (500050000,true)", v, ok)
+	}
+	if v, ok := safeMul(0, 1<<62); !ok || v != 0 {
+		t.Fatalf("zero factor should be safe: (%d,%v)", v, ok)
+	}
+	// The confirm preview dashes an overflowing notional rather than lying.
+	m := New(Config{PriceDec: 6, QtyDec: 4})
+	o := wire.OrderReq{Side: wire.Buy, Px: 1 << 40, Qty: 1 << 40, Tif: wire.Gtc}
+	m.pendingConfirm = &o
+	out := stripANSI(m.viewConfirm())
+	if !strings.Contains(out, "notional —") {
+		t.Fatalf("overflowing notional must be dashed, got:\n%s", out)
+	}
+}
