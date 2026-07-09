@@ -38,7 +38,7 @@ curl -s http://localhost:49171/tmp/maker-status.json \
   || curl -s http://localhost:49171/api/maker/status
 
 # WAL records flowing (count grows over time):
-cargo run -q -p rsx-cli -- dump tmp/wal/pengu/10/10_active.wal | wc -l
+cargo run -q --bin rsx-cli -- dump tmp/wal/pengu/10/10_active.wal | wc -l
 
 # All processes running:
 curl -s http://localhost:49171/api/processes \
