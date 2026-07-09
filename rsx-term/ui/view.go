@@ -167,6 +167,51 @@ func (m Model) narrow() bool {
 	return m.width > 0 && m.width < layoutWidth
 }
 
+// resolvedCenter is the ladder's centre price: the sticky ladderCenter, else
+// the current mid, else whichever side has liquidity, else 0. Shared by viewBook
+// and the mouse click-to-price mapping so the two never drift apart.
+func (m Model) resolvedCenter() int64 {
+	if m.ladderCenter != 0 {
+		return m.ladderCenter
+	}
+	if mid, ok := m.book.Mid(); ok {
+		return mid
+	}
+	if len(m.book.Asks) > 0 {
+		return m.book.Asks[0].Px
+	}
+	if len(m.book.Bids) > 0 {
+		return m.book.Bids[0].Px
+	}
+	return 0
+}
+
+// priceAtY maps a screen row to the ladder price rendered on it, for mouse
+// click-to-price. It mirrors viewBook's row layout exactly: status bar (1) +
+// optional ARMED banner (1) + the book panel's top border (1) + title (1),
+// then one row per level from center+half down to center-half. Returns false
+// off the ladder, in the stacked (narrow) layout where these offsets differ,
+// or with no live book.
+func (m Model) priceAtY(y int) (int64, bool) {
+	if m.narrow() || m.book.Empty() || !m.mdConnected {
+		return 0, false
+	}
+	firstLevelY := 3 // status bar + book top border + title
+	if m.armed {
+		firstLevelY++
+	}
+	i := y - firstLevelY
+	half := m.ladderRows()
+	if i < 0 || i > 2*half {
+		return 0, false
+	}
+	price := m.resolvedCenter() + int64(half) - int64(i)
+	if price <= 0 {
+		return 0, false
+	}
+	return price, true
+}
+
 // viewBook draws a STATIC price ladder: a fixed price axis centred on
 // ladderCenter (recentred only on drift — recenterLadder), bid qty on the
 // left of the price column, ask qty on the right, so the axis does not
@@ -179,16 +224,7 @@ func (m Model) viewBook() string {
 		return panel(" book ", bookWidth, StyleDegraded.Render(degradedBookMsg))
 	}
 
-	center := m.ladderCenter
-	if center == 0 {
-		if mid, ok := m.book.Mid(); ok {
-			center = mid
-		} else if len(m.book.Asks) > 0 {
-			center = m.book.Asks[0].Px
-		} else {
-			center = m.book.Bids[0].Px
-		}
-	}
+	center := m.resolvedCenter()
 	half := int64(m.ladderRows())
 
 	askByPx := map[int64]int64{}

@@ -21,6 +21,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(v)
+	case tea.MouseMsg:
+		return m.handleMouse(v)
 
 	case feed.GwUp:
 		m.gwConnected = true
@@ -157,6 +159,29 @@ func (m *Model) removeOrder(oid uint64) {
 		}
 	}
 	m.openOrders = out
+}
+
+// handleMouse maps a left-click on a ladder row to that row's price (the mouse
+// analog of j/k / +/-). Only a left button-press inside the book column counts;
+// motion, other buttons, and clicks outside the ladder are ignored. It sets the
+// price and focuses it — it never submits (click-to-trade would bypass the
+// two-enter confirm), and it clears a stale preview since the form changed.
+func (m Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if e.X > bookWidth+1 { // outside the book column (border + content)
+		return m, nil
+	}
+	px, ok := m.priceAtY(e.Y)
+	if !ok {
+		return m, nil
+	}
+	m.pxBuf = m.fmtPx(px)
+	m.focus = FocusPx
+	m.pendingConfirm = nil
+	m.status = fmt.Sprintf("price %s (click)", m.fmtPx(px))
+	return m, nil
 }
 
 // handleKey applies one key. Digits / backspace / tab / b / s / t / r / p edit
