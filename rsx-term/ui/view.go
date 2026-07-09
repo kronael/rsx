@@ -674,7 +674,7 @@ func (m Model) mdAgeStatsRow() string {
 		return StyleMuted.Render("—")
 	}
 	p50, p99, best := windowStats(m.mdAgeWindow)
-	return fmt.Sprintf("p50 %s  p99 %s  best %s", p50, p99, best)
+	return fmt.Sprintf("%s   p99 %s   best %s", p50, p99, best)
 }
 
 // mdStaleRow renders how long since the last marketdata frame arrived —
@@ -729,6 +729,7 @@ func (m Model) viewTrace() string {
 		"",
 		section("LATENCY  (marketdata)"),
 		row("age", m.mdAgeRow()),
+		row("p50", m.mdAgeStatsRow()),
 		row("since", m.mdStaleRow()),
 		"",
 		section("FLOW"),
