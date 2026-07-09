@@ -115,3 +115,25 @@ func TestHopBar(t *testing.T) {
 		t.Fatalf("known legs should render a bar: %q", bar)
 	}
 }
+
+func TestFatFingerGuard(t *testing.T) {
+	got, _ := (Model{}).arm(wire.OrderReq{Side: wire.Buy, Px: 1, Qty: maxOrderQty + 1})
+	if got.(Model).pendingConfirm != nil {
+		t.Fatal("oversized order must be hard-blocked, not armed")
+	}
+	got2, _ := (Model{}).arm(wire.OrderReq{Side: wire.Buy, Px: 1, Qty: 10})
+	if got2.(Model).pendingConfirm == nil {
+		t.Fatal("normal order should arm")
+	}
+}
+
+func TestReverse(t *testing.T) {
+	m := newModel(&conn.MockGateway{})
+	m.book.Bids = []wire.Level{{Px: 9999, Qty: 50}}
+	m.position.Net = 20 // long → sell 40 to flip short
+	got, _ := m.handleReverse()
+	o := got.(Model).pendingConfirm
+	if o == nil || o.Side != wire.Sell || o.Qty != 40 || o.ReduceOnly {
+		t.Fatalf("reverse of +20 should be a non-reduce-only Sell 40: %+v", o)
+	}
+}
