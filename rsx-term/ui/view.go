@@ -460,16 +460,20 @@ func onOff(b bool) string {
 // submits without it having rendered first. liq has no source yet: shown as a
 // deliberate "n/a", with the reason in one shared legend line rather than
 // repeated inline per field.
+// viewConfirm renders the two-enter confirm preview inline within the order
+// panel. It is NOT its own bordered box: a nested border wider than orderWidth
+// wraps and shatters (the order panel's own border already frames it). A violet
+// divider gives it weight; every line fits orderWidth. liq is the one
+// server-gated field, marked n/a inline.
 func (m Model) viewConfirm() string {
 	o := *m.pendingConfirm
 	side := lipgloss.NewStyle().Foreground(sideColor(o.Side))
-	line1 := fmt.Sprintf("confirm %s %s @ %s", side.Render(o.Side.Label()), m.fmtQty(o.Qty), m.fmtPx(o.Px))
-	line2 := fmt.Sprintf("notional %s  %s  ro:%s po:%s", m.fmtNotional(o.Px*o.Qty), o.Tif.Label(), onOff(o.ReduceOnly), onOff(o.PostOnly))
-	line3 := StyleMuted.Render("liq  n/a")
-	legend := StyleMuted.Render("n/a fields need server support, not yet wired")
-	line4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc cancel")
-	body := lipgloss.JoinVertical(lipgloss.Left, line1, line2, line3, legend, line4)
-	return RingPanelStyle.Render(body)
+	div := lipgloss.NewStyle().Foreground(ColorRing).Render("── confirm ──────────────────")
+	l1 := fmt.Sprintf("%s %s @ %s", side.Render(o.Side.Label()), m.fmtQty(o.Qty), m.fmtPx(o.Px))
+	l2 := fmt.Sprintf("notional %s  %s", m.fmtNotional(o.Px*o.Qty), o.Tif.Label())
+	l3 := StyleMuted.Render(fmt.Sprintf("ro:%s  po:%s   liq n/a", onOff(o.ReduceOnly), onOff(o.PostOnly)))
+	l4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc")
+	return lipgloss.JoinVertical(lipgloss.Left, div, l1, l2, l3, l4)
 }
 
 func sideColor(s wire.Side) lipgloss.Color {
