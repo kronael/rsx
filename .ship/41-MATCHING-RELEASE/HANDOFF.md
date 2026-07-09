@@ -58,20 +58,28 @@ was audited as an 8-gap "high-risk rewrite." It is not:
 
 ## Open / needs a founder call or a clear box
 
-- **`make bench-gate`** (runtime check, box-blocked) — the numbers didn't move
-  (the WAL dedup was a no-op on the accept scenario), so `266 ns`/`~30 ns` stand
-  from the Jul-03 report; the gate still wants a run on a **quiet** box to
-  refresh the Criterion baseline. Deferred because a concurrent session is
-  holding the box with a live RSX cluster — contended numbers would be
-  meaningless. Run when the box is idle.
-- **Demo (Step 2)** (runtime check, box-blocked) — `scripts/demo-trade.sh`
-  end-to-end + fill-in-WAL assert. Its playground API (`/api/processes/all/start
-  ?scenario=minimal`, `/api/submit-order`, `/api/verify/run-json`) is intact. Not
-  run this pass: a concurrent session already has a full cluster up, so a fresh
-  `start-all` would port-collide. Run once that session releases the cluster.
+Both runtime checks were **run this pass** (box freed):
 
-Both are **runtime verifications, not code gaps** — the engine builds, tests,
-and lints clean; these two just need an idle box.
+- **Benchmarks — numbers do NOT reproduce on this shared box** (see
+  `reports/20260709_matching-benches.md`). Full-workspace `make bench-gate` is
+  nightly-scale and timed out mid-`rsx-book`. Ran the matching benches directly:
+  `match_by_depth` **~48 ns** (vs published 30 ns), `me_accept_path/full`
+  **~295 ns** (vs 266 ns), throughput **~3.46M/s** (vs 3.6M — stable). Match
+  stays depth-independent. Not a regression (the pre-refactor re-bench already
+  saw ~51 ns) — shared-host variance (~1.6× on the tight per-op benches). The
+  `30 ns`/`266 ns` figures need a **dedicated box** to be trustworthy as
+  published. Filed `MATCHING-BENCH-SHARED-HOST-VARIANCE`.
+- **Demo — could NOT drive a verified fill** (env/harness, not code).
+  `scripts/demo-trade.sh` is stale after the playground rework: it POSTs the
+  removed `/api/submit-order` (404) and checks the wrong WAL path (`tmp/wal/10`
+  — the pengu ME writes to `tmp/wal/pengu/10`). Via the current
+  `/api/orders/test` (form, human units), a maker **rested** (a real ME
+  round-trip) but takers time out ("no ME response in 2s") and the pengu WAL
+  stays 0 bytes — the live-cluster order round-trip isn't completing, though all
+  procs report running and rmem is tuned. This sits in the concurrent session's
+  in-flux playground/demo rework, not the engine. **The ME logic is verified by
+  the passing unit + integration suites** (which drive matching directly, not
+  through the demo cluster). Filed `DEMO-TRADE-SH-STALE`.
 - **ME→GW-direct** — spec rewrite around the acceptance-commits invariant, then
   the transport implementation. Bounded feature, not started.
 - **`ME-GW-DIRECT-SPEC-GAPS`, `ME-HOLDS-USER-STATE`** in `BUGS.md` carry the

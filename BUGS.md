@@ -3,6 +3,26 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-09 — matching release runtime checks (see .ship/41-MATCHING-RELEASE/HANDOFF.md)
+
+- **MATCHING-BENCH-SHARED-HOST-VARIANCE** (MED, methodology) — the published
+  matching latencies do not reproduce on the shared docker host. 2026-07-09
+  idle-box run: `match_by_depth` ~48 ns (vs 30 ns), `me_accept_path/full`
+  ~295 ns (vs 266 ns); throughput ~3.46M/s (vs 3.6M — stable, depth-independence
+  holds). Not a regression (the pre-refactor re-bench already saw ~51 ns) —
+  shared-host variance ~1.6× on the tight per-op benches. Fix: measure on a
+  dedicated box before publishing 30/266 as a floor, or re-baseline the docs
+  with an honest variance note. Full-workspace `make bench-gate` is nightly-scale
+  (times out in-session). See `reports/20260709_matching-benches.md`.
+- **DEMO-TRADE-SH-STALE** (LOW, tooling) — `scripts/demo-trade.sh` is broken
+  after the playground rework: it POSTs the removed `/api/submit-order` (→404)
+  and checks the wrong WAL path (`tmp/wal/10` vs the actual `tmp/wal/pengu/10`).
+  Current submit is `/api/orders/test` (form, **human units** — e.g. price 0.05
+  qty 10). A live-cluster smoke this pass rested a maker but takers timed out
+  with the ME WAL empty (round-trip not completing) — env/wiring in the
+  concurrent playground rework, not ME code (unit+integration suites pass). Fix:
+  update demo-trade.sh to the current API + WAL path once the rework settles.
+
 ## Status — 2026-07-08 — book+matching refine critique (merged from .matching-book-refine)
 
 Correctness findings from the refine-pass critique, confirmed still present in
