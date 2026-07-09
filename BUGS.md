@@ -14,14 +14,20 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   dedicated box before publishing 30/266 as a floor, or re-baseline the docs
   with an honest variance note. Full-workspace `make bench-gate` is nightly-scale
   (times out in-session). See `reports/20260709_matching-benches.md`.
-- **DEMO-TRADE-SH-STALE** (LOW, tooling) — `scripts/demo-trade.sh` is broken
-  after the playground rework: it POSTs the removed `/api/submit-order` (→404)
-  and checks the wrong WAL path (`tmp/wal/10` vs the actual `tmp/wal/pengu/10`).
-  Current submit is `/api/orders/test` (form, **human units** — e.g. price 0.05
-  qty 10). A live-cluster smoke this pass rested a maker but takers timed out
-  with the ME WAL empty (round-trip not completing) — env/wiring in the
-  concurrent playground rework, not ME code (unit+integration suites pass). Fix:
-  update demo-trade.sh to the current API + WAL path once the rework settles.
+## Status — 2026-07-09 — demo unusable: replication cert was CA-as-leaf (RESOLVED)
+
+The "takers time out with the ME WAL empty" symptom last pass was NOT the
+concurrent playground rework — it was a real bug. `gen-snakeoil-certs.sh`
+wrote a single CA:TRUE self-signed cert and copied it to both `cert.pem`
+and `ca.pem`; rustls/webpki reject a CA cert presented as a server leaf
+(`CaUsedAsEndEntity`), so the replication TLS handshake never completed.
+Risk stayed in WarmCatchup (which does no gateway ingress, `failover.rs:156`),
+never promoted to Live, and every order timed out with an empty ME WAL.
+Fixed: proper CA + distinct end-entity leaf (`fix` commit), playground
+self-heals old certs on start, demo-trade.sh + docs updated to the live
+`/api/orders/test` API and `tmp/wal/pengu/10` path, `rsx-cli` given a
+`default-run`. Verified end-to-end (maker rests, taker fills, FILL in WAL):
+demo-trade.sh PASS. Closes DEMO-TRADE-SH-STALE + DEMO-TRADE-SUBMIT-ORDER-404.
 
 ## Status — 2026-07-08 — book+matching refine critique (merged from .matching-book-refine)
 
@@ -1045,33 +1051,6 @@ durability oracle for orders submitted via any route today.
   `rsx-tui/tests/e2e_guarantees.rs`'s `fill_durability_recorded_in_wal`
   test, which works around it by reading the ME's active WAL file size
   directly instead of this endpoint.
-- **Status:** open
-- **Fix:** —
-
-## DEMO-TRADE-SUBMIT-ORDER-404 — scripts/demo-trade.sh posts to a route that no longer exists (MED)
-
-**Status: OPEN.** `scripts/demo-trade.sh` submits its maker/taker demo
-pair via `curl -sf -X POST "${PLAYGROUND}/api/submit-order" ...`, but no
-such route exists in `rsx-playground/server.py` today (`@app.post("/api`
-shows `/api/orders/test`, `/api/orders/quick`, `/api/orders/random`,
-`/api/orders/batch`, `/api/orders/{cid}/cancel` — no bare
-`/api/submit-order`). Live probe: `curl -s -w '%{http_code}'` against
-that exact path returns `404 {"detail":"Not Found"}`. The script's
-`curl -sf` swallows the 404 silently and falls back to `echo "{}"`, so
-its maker/taker submissions are silent no-ops; its actual pass/fail
-signal comes only from the later WAL-file-growth poll, which happens to
-still pass if something else already crossed the book on the shared
-long-lived book — otherwise it hangs to its own 30s timeout and reports
-`FAIL: no fill in WAL after 30s` with no hint the real cause was a 404 on
-the submit step. Likely the REST route was renamed/removed (to one of
-the `/api/orders/*` family above) without updating this script.
-
-- **Severity:** medium
-- **Scope:** scripts/demo-trade.sh
-- **Affected:** the demo-trade.sh maker/taker submission step
-- **Source:** scripts/demo-trade.sh:43-56; confirmed via direct curl
-  against a running playground (`start-all minimal`) during T4
-  (`.ship/33-TUI-SPEED-TESTS`) test debugging.
 - **Status:** open
 - **Fix:** —
 
