@@ -507,7 +507,11 @@ func (m Model) viewConfirm() string {
 	side := lipgloss.NewStyle().Foreground(sideColor(o.Side))
 	div := lipgloss.NewStyle().Foreground(ColorRing).Render("── confirm ──────────────────")
 	l1 := fmt.Sprintf("%s %s @ %s", side.Render(o.Side.Label()), m.fmtQty(o.Qty), m.fmtPx(o.Px))
-	l2 := fmt.Sprintf("notional %s  %s", m.fmtNotional(o.Px*o.Qty), o.Tif.Label())
+	notional := "—"
+	if n, ok := safeMul(o.Px, o.Qty); ok {
+		notional = m.fmtNotional(n)
+	}
+	l2 := fmt.Sprintf("notional %s  %s", notional, o.Tif.Label())
 	l3 := StyleMuted.Render(fmt.Sprintf("ro:%s  po:%s   liq n/a", onOff(o.ReduceOnly), onOff(o.PostOnly)))
 	l4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc")
 	return lipgloss.JoinVertical(lipgloss.Left, div, l1, l2, l3, l4)

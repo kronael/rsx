@@ -95,6 +95,21 @@ func parseRaw(s string, dec int) (int64, bool) {
 	return parseDigits(intPart + fracPart)
 }
 
+// safeMul multiplies two i64 and reports whether it stayed in range. A notional
+// (price × size) of absurd manual inputs can overflow i64; showing the wrapped
+// (often negative) result as a real number would break the terminal's "never
+// fabricate a figure" rule, so the caller dashes it instead.
+func safeMul(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	c := a * b
+	if c/b != a {
+		return 0, false
+	}
+	return c, true
+}
+
 // parseDigits parses a pure-digit string to int64, rejecting empties and any
 // non-digit (so "1.2", "-1", "1e3" are all invalid — parseRaw handles the dot).
 func parseDigits(s string) (int64, bool) {
