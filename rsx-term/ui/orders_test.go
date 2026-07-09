@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"rsx-term/book"
 	"rsx-term/conn"
 	"rsx-term/wire"
 )
@@ -102,5 +103,15 @@ func TestHelpOverlayToggle(t *testing.T) {
 	m = press(m, "b")
 	if m.showHelp {
 		t.Fatal("any key should close help")
+	}
+}
+
+func TestHopBar(t *testing.T) {
+	if hopBar(book.Sample{NetNs: book.NsUnknown, InternalNs: book.NsUnknown, EngineNs: book.NsUnknown}, 18) != "" {
+		t.Fatal("all-pending legs should render no bar")
+	}
+	bar := hopBar(book.Sample{NetNs: 2500, InternalNs: 7600, EngineNs: 340}, 18)
+	if !strings.Contains(bar, "█") {
+		t.Fatalf("known legs should render a bar: %q", bar)
 	}
 }
