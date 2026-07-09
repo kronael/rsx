@@ -100,7 +100,14 @@ func (m Model) viewMain() string {
 	if m.showTrace {
 		right = m.viewTrace()
 	} else {
-		right = lipgloss.JoinVertical(lipgloss.Left, m.viewPositions(), m.viewTrades())
+		// positions, then working orders (only when you have some — no dead
+		// panel when flat), then the tape.
+		panels := []string{m.viewPositions()}
+		if len(m.openOrders) > 0 {
+			panels = append(panels, m.viewOpenOrders())
+		}
+		panels = append(panels, m.viewTrades())
+		right = lipgloss.JoinVertical(lipgloss.Left, panels...)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
 }
@@ -177,30 +184,42 @@ func (m Model) viewBook() string {
 	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
 	showBar := !m.narrow()
 
+	// Draw the trader's own resting orders and the last print into the ladder
+	// (research: orders-in-the-ladder is the highest-value pro-DOM feature).
+	ownBids, ownAsks := m.ownOrderLevels()
+	lastPx, hasLast := int64(0), false
+	if e, ok := m.tape.Last(); ok {
+		lastPx, hasLast = e.Px, true
+	}
+
 	// Best an asks, printed worst-first so the best ask sits above the spread.
 	for i := an - 1; i >= 0; i-- {
-		rows = append(rows, levelRow(asks[i], ColorAsk, pxW, qtyW, showBar))
+		mark := levelMarker(asks[i].Px, ownAsks, lastPx, hasLast)
+		rows = append(rows, levelRow(asks[i], ColorAsk, pxW, qtyW, showBar, mark))
 	}
 
 	// The spread row is the highest-frequency read on a ladder — bright/bold
 	// so a trader's eye snaps to it, same StyleTextBright as a focused field
 	// (no new colour meaning, just more weight).
-	rows = append(rows, StyleTextBright.Bold(true).Render(fmt.Sprintf("— %d —", m.book.Spread())))
+	rows = append(rows, StyleTextBright.Bold(true).Render(fmt.Sprintf(" — %d —", m.book.Spread())))
 
 	for i := 0; i < bn; i++ {
-		rows = append(rows, levelRow(bids[i], ColorBid, pxW, qtyW, showBar))
+		mark := levelMarker(bids[i].Px, ownBids, lastPx, hasLast)
+		rows = append(rows, levelRow(bids[i], ColorBid, pxW, qtyW, showBar, mark))
 	}
 
 	return panel(" book ", bookWidth, rows...)
 }
 
-// levelRow renders "<px> <qty> <bar>" with px, qty right-aligned to pxW/qtyW
-// and the px + bar coloured by side. The bar is dropped (not just blanked)
-// when showBar is false — a narrow terminal degrades by shedding the widest
-// element rather than wrapping mid-row.
-func levelRow(l wire.Level, color lipgloss.Color, pxW, qtyW int, showBar bool) string {
+// levelRow renders "<marker><px> <qty> <bar>" with px, qty right-aligned to
+// pxW/qtyW and the px + bar coloured by side. `marker` is a 1-wide column
+// (own-order / last-trade cue, or a space). The bar is dropped (not just
+// blanked) when showBar is false — a narrow terminal degrades by shedding the
+// widest element rather than wrapping mid-row.
+func levelRow(l wire.Level, color lipgloss.Color, pxW, qtyW int, showBar bool, marker string) string {
 	side := lipgloss.NewStyle().Foreground(color)
-	row := fmt.Sprintf("%s %*d",
+	row := fmt.Sprintf("%s%s %*d",
+		marker,
 		side.Render(fmt.Sprintf("%*d", pxW, l.Px)),
 		qtyW, l.Qty,
 	)
@@ -210,6 +229,57 @@ func levelRow(l wire.Level, color lipgloss.Color, pxW, qtyW int, showBar bool) s
 	n := max(int64(0), min(l.Qty, maxBarLen))
 	bar := strings.Repeat(depthBar, int(n))
 	return row + " " + side.Render(bar)
+}
+
+// ownOrderLevels splits this session's working orders into the set of bid /
+// ask prices at which the trader has a resting order, so the ladder can mark
+// "my order is here" — the single highest-value pro-DOM cue.
+func (m Model) ownOrderLevels() (bids, asks map[int64]bool) {
+	bids, asks = map[int64]bool{}, map[int64]bool{}
+	for _, o := range m.openOrders {
+		if o.Side == wire.Buy {
+			bids[o.Px] = true
+		} else {
+			asks[o.Px] = true
+		}
+	}
+	return
+}
+
+// levelMarker is the 1-wide ladder cue for a price: a violet ▸ where the
+// trader has a working order (priority), else a bright ‹ at the last-trade
+// price, else blank. No new colour meaning — accent = your marker, bright =
+// the last print.
+func levelMarker(px int64, own map[int64]bool, lastPx int64, hasLast bool) string {
+	if own[px] {
+		return StyleAccent.Render("▸")
+	}
+	if hasLast && px == lastPx {
+		return StyleTextBright.Render("‹")
+	}
+	return " "
+}
+
+// viewOpenOrders draws the trader's working orders — side, price, qty —
+// right-aligned. Only rendered when there are orders (viewMain). The newest
+// (what `c` cancels today) is the last row; each row is also marked in the
+// ladder by ownOrderLevels.
+func (m Model) viewOpenOrders() string {
+	header := StyleMuted.Render("side  px  qty")
+	var pxs, qtys []int64
+	for _, o := range m.openOrders {
+		pxs, qtys = append(pxs, o.Px), append(qtys, o.Qty)
+	}
+	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
+	rows := []string{header}
+	for _, o := range m.openOrders {
+		word, st := "BUY ", StyleLive
+		if o.Side == wire.Sell {
+			word, st = "SELL", StyleAsk
+		}
+		rows = append(rows, fmt.Sprintf("%s %*d %*d", st.Render(word), pxW, o.Px, qtyW, o.Qty))
+	}
+	return panel(" orders ", rightWidth, rows...)
 }
 
 func (m Model) viewOrder() string {
