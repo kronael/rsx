@@ -102,44 +102,62 @@ This is the perps screen `rsx-term/ui/view.go` renders. Fields whose data
 has no server source yet are marked **[needs server]**; what's sourced vs
 not is enumerated in the data-source table below.
 
+Prices/qtys are shown as human decimals (raw i64 / 10^decimals, e.g. PENGU
+`10001` → `0.010001`); the wire stays raw i64. The ladder is a **static price
+axis** — bid qty left, ask qty right of a fixed price column that recentres
+only on drift, so it doesn't reshuffle every tick (TT/Sierra pattern).
+
 ```
- RSX  PENGU-PERP    ● live      open 2   fills 7          last 10001  mark 10000  index —   funding — in —:—:—
-┌──────── book ─────────┐┌──────── order ────────┐┌────── positions (mark=mid) ─────┐
-│ 10004    12  ▊▊▊▊     ││                        ││ sym         net  entry   uPnL   │
-│ 10003     8  ▊▊▊      ││   BUY      SELL         ││ PENGU-PERP  +14   9998   +28    │
-│ 10002    20  ▊▊▊▊▊▊▊  ││                        ││                                 │
-│ 10001     5  ▊▊       ││   price:  10001_        ││ (ROE% · liq — [needs server])   │
-│ — 1 —                 ││   qty  :  5             │└─────────────────────────────────┘
-│ 10000     7  ▊▊▊      ││   tif  :  GTC           │┌──────── trades ─────────────────┐
-│  9999    15  ▊▊▊▊▊    ││   ro   :  off  po: off  ││  10001   5                       │
-│  9998     9  ▊▊▊      ││                         ││  10000   3                       │
-│  9997    30  ▊▊▊▊▊▊▊  ││   enter → confirm       ││   9999   8                       │
-└───────────────────────┘└─────────────────────────┘└─────────────────────────────────┘
+ RSX  PENGU-PERP   ● live  open 1  fills 0   last 0.010000  ~mark 0.010002 (mid)  index —  funding —
+┌──────────── book ────────────┐┌────────── order ──────────┐┌───── positions (mark=mid) ──────┐
+│              0.010005 12 ▊▊   ││  BUY      SELL             ││ LONG  +15.0000 @ 0.009999       │
+│              0.010004  8 ▊    ││                            ││ ~uPnL +0.000045                 │
+│              0.010003 25 ▊▊▊▊▊││ price: 10001_              ││ liq —  ROE —  mgn ░░░░░░░░       │
+│              0.010002  6 ▊    ││ qty  : 5                   ││        (needs risk engine)      │
+│              0.010001         ││ time-in-force: GTC         │└─────────────────────────────────┘
+│‹      7 0.010000              ││ reduce-only: off  post:off │┌──────── orders ─────────────────┐
+│     ▊▊▊ 15 0.009999           ││                            ││ ▸ BUY  0.009998 9.0000          │
+│▸      9 0.009998              ││ enter → preview → enter    │└─────────────────────────────────┘
+│  ▊▊▊▊▊▊ 30 0.009997           ││                            │┌──────── trades ─────────────────┐
+│████████████ 54% bid           ││                            ││ S 0.010000 2.5000               │
+└───────────────────────────────┘└────────────────────────────┘└─────────────────────────────────┘
  ⚡ RTT 10.44 µs = net 2.5 µs + internal 7.6 µs + engine 0.34 µs      p50 9.9 µs · best 9.6 µs
- sent Buy 5 @ 10001 [GTC]
- q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  c cancel  F3 trace
+ sent BUY 5 @ 10001 [GTC]
+ q quit  b/s side  t tif  r ro  p po  +/- tick  j/k join  tab field  enter submit  m mkt  c cancel  X all  x flatten  R reverse  F2 armed  F3 trace  ? help
 ```
 
 ### Panels
 
-- **book** — asks (red) descending to a spread row, bids (green)
-  ascending; a unicode depth bar (`▊`) scaled to resting qty.
-  When `connected` but the ladder is empty, show an amber
-  `no live book — market-data stream down` row (degraded, not blank).
+- **book** — a static price axis: **bid qty left, ask qty right** of a fixed
+  price column. Each level draws a depth bar (`▊`) scaled to the deepest
+  visible level, in the side colour; bid depth grows left and ask right, so
+  the two bars converge on the spread (DOM/Bookmap depth read). The empty
+  band between best bid and best ask *is* the spread — gaps show where
+  liquidity isn't. Own orders `▸` and the last print `‹` mark their rows; a
+  top-of-book **imbalance bar** closes the panel. When `connected` but the
+  ladder is empty, show an amber `no live book — market-data stream down`
+  row (degraded, not blank).
  
 - **order** — the entry form. `b`/`s` pick side (reversed-highlight the
   active one); `price`/`qty` are digit buffers (`tab` switches focus);
-  `t` cycles TIF (GTC→IOC→FOK). Add `r`/`p` to toggle
-  **reduce-only** / **post-only** (the `ro`/`po` fields already exist on
-  the `N` frame, `49`). A **market** convenience (send IOC
-  at the far touch) is a TIF-adjacent option. Leverage /
+  `t` cycles TIF (GTC→IOC→FOK); `r`/`p` toggle **reduce-only** /
+  **post-only** (the `ro`/`po` fields exist on the `N` frame, `49`).
+  `+`/`-` nudge the price one tick (seeded from mid when empty); `j`/`k`
+  join the best bid/ask; `m` sends a **market** IOC at the far touch.
+  Every order path routes through a two-enter **confirm preview** and a
+  **fat-finger hard guard** (size over the cap is blocked outright, not
+  soft-warned). `F2` toggles **ARMED** (confirm-off, single-enter fire)
+  behind a persistent red banner — the size guard still holds. Leverage /
   margin-mode selectors are display-only until risk exposes them.
   **[needs server]**
-- **positions** — the account's open position(s): symbol, signed net
-  qty, avg entry, uPnL (green/red). **[built, client-derived]** Title is
-  `positions (mark=mid)` to flag the mark as book-mid-derived. Add ROE%
-  (`uPnL / margin`) and **liquidation price** once margin data exists.
-  **[needs server]**
+- **positions** — the account's open position(s), stacked so the narrow
+  column never wraps: side + signed net qty `@` entry, then `~uPnL`
+  (green/red, money at quote precision), then a **risk row** — liq price,
+  ROE%, and a margin-health bar — honestly dashed (`StyleDerived`) until
+  the risk feed lands, so the whole risk surface has a fixed home without
+  fabricating a number. **[position built client-derived; risk row needs
+  server]** Title is `positions (mark=mid)` to flag the mark as
+  book-mid-derived.
 - **trades** — the public tape, newest first, price coloured by taker
   side.
 - **status bar** — symbol badge, link dot (`● live`/`● offline`), open /
