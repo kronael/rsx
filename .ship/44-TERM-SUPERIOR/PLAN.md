@@ -70,6 +70,7 @@ Colour = meaning (no new decorative colour); never fabricate a number (dash /
 - **Wave 1** `45a0b6c` — fixed-width aligned columns, adaptive resize, spread emphasis.
 - **Wave 2** `98adce5` + `9047f4d` — own-order `▸` / last-trade `‹` markers, working-orders panel, cancel-by-selection (`↑↓`), `X` cancel-all.
 - **Wave 3** `d125396` + `95899fb` — **static price ladder** (fixed axis, bid-left/ask-right, recenter-on-drift, gaps show liquidity) + top-of-book imbalance gauge. The defining pro-DOM change.
+- **Wave 4** `03f521a` — **decimal/tick formatting**: raw i64 → human decimals at the display boundary (`fmtDec`/`strWidth`), PENGU 6/4 via env (`RSX_TUI_PRICE_DECIMALS`/`QTY_DECIMALS`). Ladder/tape/orders/positions/confirm/status/trace all read `0.010001`, not `10001`. The last "amateur tell" closed. Wire stays raw i64 (CLAUDE.md: convert only at the boundary).
 - **Wave 5** `ca39816` — latency stacked hop-bar (`net│internal│engine`) + SLA-breach RTT colour.
 - **Wave 6** `967ec00` `e6275c3` `2ec951f` — `m` market, `?` help overlay, `R` reverse, fat-finger hard-guard.
 - **Docs** `203d47f` — SCREENS/VISUALS synced.
