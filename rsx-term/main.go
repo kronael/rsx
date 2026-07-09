@@ -78,7 +78,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64) {
 		QtyDec:     qtyDec,
 		Tick:       tick,
 	})
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go feedDemo(p)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
@@ -131,7 +131,7 @@ func runLive(cfg liveConfig) error {
 		QtyDec:     cfg.qtyDec,
 		Tick:       cfg.tick,
 	})
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go drainEvents(p, live.Events())
 	_, err := p.Run()
 	return err
