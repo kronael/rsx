@@ -160,6 +160,8 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCancelAll()
 	case "x":
 		return m.handleFlatten()
+	case "m":
+		return m.handleMarket()
 	case "up":
 		m.orderSel = m.clampSel(m.orderSel - 1)
 		return m, nil
@@ -316,6 +318,35 @@ func (m Model) handleFlatten() (tea.Model, tea.Cmd) {
 		m.status = "can't flatten: no live book to price against"
 		return m, nil
 	}
+	m.pendingConfirm = &o
+	return m, nil
+}
+
+// handleMarket arms a marketable IOC at the far touch for the form's side +
+// qty (Buy crosses the best ask, Sell the best bid) — take liquidity now,
+// routed through the same confirm gate. Empty/bad qty or no opposing book to
+// cross is a no-op with a reason; it never fabricates a price.
+func (m Model) handleMarket() (tea.Model, tea.Cmd) {
+	qty, err := strconv.ParseInt(m.qtyBuf, 10, 64)
+	if m.qtyBuf == "" || err != nil || qty <= 0 {
+		m.status = "market: enter a qty first"
+		return m, nil
+	}
+	var px int64
+	if m.side == wire.Buy {
+		if len(m.book.Asks) == 0 {
+			m.status = "market: no ask to cross"
+			return m, nil
+		}
+		px = m.book.Asks[0].Px
+	} else {
+		if len(m.book.Bids) == 0 {
+			m.status = "market: no bid to cross"
+			return m, nil
+		}
+		px = m.book.Bids[0].Px
+	}
+	o := wire.OrderReq{Side: m.side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: m.reduceOnly}
 	m.pendingConfirm = &o
 	return m, nil
 }

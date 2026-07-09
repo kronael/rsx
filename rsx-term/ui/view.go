@@ -37,7 +37,7 @@ const (
 
 	// helpText is the keybinding legend. Verbatim per specs/2/55-terminal.md
 	// except for "x flatten", added ahead of the spec's next revision.
-	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  ↑↓ sel  c cancel  X all  x flatten  F3 trace "
+	helpText = " q quit  b/s side  t tif  r ro  p po  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  F3 trace "
 )
 
 // View renders the whole terminal: status bar / three-column main / speed
