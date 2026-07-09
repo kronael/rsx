@@ -368,20 +368,6 @@ func (m Model) ownOrderLevels() (bids, asks map[int64]bool) {
 	return
 }
 
-// levelMarker is the 1-wide ladder cue for a price: a violet ▸ where the
-// trader has a working order (priority), else a bright ‹ at the last-trade
-// price, else blank. No new colour meaning — accent = your marker, bright =
-// the last print.
-func levelMarker(px int64, own map[int64]bool, lastPx int64, hasLast bool) string {
-	if own[px] {
-		return StyleAccent.Render("▸")
-	}
-	if hasLast && px == lastPx {
-		return StyleTextBright.Render("‹")
-	}
-	return " "
-}
-
 // viewHelpOverlay is the modal `?` key reference, grouped by function with
 // destructive keys (cancel / flatten / quit) in the ask/red style so they're
 // visibly the dangerous ones. Any key closes it (handleKey).
