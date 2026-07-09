@@ -14,7 +14,7 @@ import (
 // Layout constants. Column content widths are sized so the widest honest row
 // fits without wrapping (the degraded book message, the confirm preview box).
 const (
-	bookWidth  = 38
+	bookWidth  = 44
 	orderWidth = 36
 	rightWidth = 34
 	// traceWidth is wider than rightWidth: the F3 HUD carries the pending-leg
@@ -23,11 +23,11 @@ const (
 	// column rather than sitting beside the other two (see viewMain).
 	traceWidth = 46
 
-	depthBar      = "▊"
-	maxBarLen     = int64(24) // depth-bar cap, per specs/2/55-terminal.md
-	maxLadderRows = 8         // rows shown per book side, before a WindowSizeMsg
-	maxTapeRows   = 10        // trade prints shown, before a WindowSizeMsg
-	sparkSamples  = 32        // how much of the rolling window the sparkline shows
+	depthGlyph    = "▊" // per-level depth-bar cell, per specs/2/55-terminal.md
+	ladderBarW    = 6   // depth-bar cells per side (bid grows left, ask right)
+	maxLadderRows = 8   // rows shown per book side, before a WindowSizeMsg
+	maxTapeRows   = 10  // trade prints shown, before a WindowSizeMsg
+	sparkSamples  = 32  // how much of the rolling window the sparkline shows
 
 	// mdStaleThreshold is how long since the last marketdata frame before the
 	// book is flagged stale (amber) rather than merely "not the newest".
@@ -200,11 +200,18 @@ func (m Model) viewBook() string {
 
 	pxW := strWidth(6, m.fmtPx(center+half), m.fmtPx(center-half))
 	var qtyStrs []string
+	var maxQty int64
 	for _, q := range askByPx {
 		qtyStrs = append(qtyStrs, m.fmtQty(q))
+		if q > maxQty {
+			maxQty = q
+		}
 	}
 	for _, q := range bidByPx {
 		qtyStrs = append(qtyStrs, m.fmtQty(q))
+		if q > maxQty {
+			maxQty = q
+		}
 	}
 	qtyW := strWidth(3, qtyStrs...)
 
@@ -218,7 +225,7 @@ func (m Model) viewBook() string {
 		} else if hasLast && p == lastPx {
 			mark = StyleTextBright.Render("‹")
 		}
-		rows = append(rows, ladderRow(m.fmtPx(p), m.fmtQty(bQ), m.fmtQty(aQ), bOk, aOk, pxW, qtyW, mark))
+		rows = append(rows, m.ladderRow(p, bQ, aQ, maxQty, bOk, aOk, pxW, qtyW, mark))
 	}
 
 	// Top-of-book imbalance: bid vs ask share of the visible depth — a fast
@@ -248,19 +255,26 @@ func imbalanceBar(bid, ask int64, width int) string {
 	return bar + StyleMuted.Render(fmt.Sprintf(" %d%% bid", int(int64(100)*bid/total)))
 }
 
-// ladderRow renders one static-ladder price row: "<mark> <bidQ> <price> <askQ>"
-// — bid qty (green) left of the (decimal-formatted) price, ask qty (red)
-// right, the price coloured by whichever side rests there (muted in the empty
-// spread band). Right-aligned to string widths so the axis stays rigid.
-func ladderRow(pxStr, bidStr, askStr string, bidOk, askOk bool, pxW, qtyW int, mark string) string {
+// ladderRow renders one static-ladder price row:
+// "<mark> <bidBar> <bidQ> <price> <askQ> <askBar>" — a depth bar (▊, scaled to
+// the deepest visible level) then bid qty (green) left of the decimal price,
+// ask qty (red) then its depth bar right, the price coloured by whichever side
+// rests there (muted in the empty spread band). Bid depth grows leftward and
+// ask depth rightward, so the two bars form a histogram pointing at the spread
+// (the DOM/Bookmap depth read). Right-aligned to string widths so the axis
+// stays rigid.
+func (m Model) ladderRow(p, bidQty, askQty, maxQty int64, bidOk, askOk bool, pxW, qtyW int, mark string) string {
 	blank := strings.Repeat(" ", qtyW)
-	bidCol := blank
+	barBlank := strings.Repeat(" ", ladderBarW)
+	bidCol, askCol := blank, blank
+	bidBar, askBar := barBlank, barBlank
 	if bidOk {
-		bidCol = StyleLive.Render(fmt.Sprintf("%*s", qtyW, bidStr))
+		bidCol = StyleLive.Render(fmt.Sprintf("%*s", qtyW, m.fmtQty(bidQty)))
+		bidBar = depthBar(bidQty, maxQty, ladderBarW, StyleLive, true)
 	}
-	askCol := blank
 	if askOk {
-		askCol = StyleAsk.Render(fmt.Sprintf("%*s", qtyW, askStr))
+		askCol = StyleAsk.Render(fmt.Sprintf("%*s", qtyW, m.fmtQty(askQty)))
+		askBar = depthBar(askQty, maxQty, ladderBarW, StyleAsk, false)
 	}
 	pxStyle := StyleMuted
 	if bidOk {
@@ -268,7 +282,32 @@ func ladderRow(pxStr, bidStr, askStr string, bidOk, askOk bool, pxW, qtyW int, m
 	} else if askOk {
 		pxStyle = StyleAsk
 	}
-	return fmt.Sprintf("%s %s %s %s", mark, bidCol, pxStyle.Render(fmt.Sprintf("%*s", pxW, pxStr)), askCol)
+	return fmt.Sprintf("%s %s %s %s %s %s", mark, bidBar, bidCol,
+		pxStyle.Render(fmt.Sprintf("%*s", pxW, m.fmtPx(p))), askCol, askBar)
+}
+
+// depthBar renders a proportional depth bar `width` cells wide: qty relative to
+// maxQty in ▊ cells, coloured by the side's style, so each level reads as a
+// horizontal histogram. leftGrow right-aligns the bar (bid side, grows toward
+// the edge); otherwise it's left-aligned (ask side). Any nonzero qty shows at
+// least one cell so a thin level never vanishes; an empty level is all spaces.
+func depthBar(qty, maxQty int64, width int, style lipgloss.Style, leftGrow bool) string {
+	n := 0
+	if maxQty > 0 && qty > 0 {
+		n = int(int64(width) * qty / maxQty)
+		if n == 0 {
+			n = 1
+		}
+		if n > width {
+			n = width
+		}
+	}
+	bar := style.Render(strings.Repeat(depthGlyph, n))
+	pad := strings.Repeat(" ", width-n)
+	if leftGrow {
+		return pad + bar
+	}
+	return bar + pad
 }
 
 // ownOrderLevels splits this session's working orders into the set of bid /
