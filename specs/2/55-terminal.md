@@ -95,6 +95,10 @@ one only when it maps to a new *meaning*.
 | degraded / stale / offline | `DEGRADED` | `#fbbf24` |
 | panel bg / page bg / border | `PANEL_BG` `#0d1712` · `PAGE_BG` `#040806` · `BORDER` `#16211b` |
 
+`RSX_TUI_THEME=colorblind` swaps *only* the bid/ask pair to a deuteranopia-safe
+blue(bid)/orange(ask); the rest is unchanged. Non-colour cues (B/S glyphs,
+LONG/SHORT, bid-left/ask-right geometry, `▸`/`‹`) carry the meaning colour-free.
+
 ## Perps terminal
 
 Three columns under a status bar, over a speed strip + status line + help.

@@ -13,6 +13,13 @@ down / rejected*. Amber is *degraded / stale / offline*. Violet is *heading /
 accent / overlay*. Nothing is coloured "to look nice." Add a colour only when
 it maps to a new **meaning** — never a new shade for its own sake.
 
+Because the whole scheme leans on green-vs-red, and that pair is invisible under
+deuteranopia/protanopia (~8% of men), `RSX_TUI_THEME=colorblind` swaps *only*
+the bid/ask pair to a colourblind-safe blue(bid)/orange(ask); the rest of the
+palette is unchanged. The non-colour cues (B/S tape glyphs, LONG/SHORT labels,
+bid-left/ask-right geometry, `▸`/`‹` marks) carry the same meaning without any
+colour at all.
+
 ## Palette — Ayam Cemani ("black iridescence")
 
 A green-tinged near-black base with the bird's beetle-green + violet
