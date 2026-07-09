@@ -28,7 +28,7 @@ help.
 └──────────────────────────┘
  ⚡ RTT 10.4 µs = net 2.5 µs + internal 7.6 µs + engine 340 ns  ██████████  p50 9.9 µs · p99 10.4 µs · best 9.0 µs  ▁▃█▅
  sent Buy 5 @ 10001 [GTC]
- q quit  b/s side  t tif  r ro  p po  tab  0-9  ⌫  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F3  ? help
+ q quit  b/s side  t tif  r ro  p po  +/- tick  j/k join  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F2 armed  F3 trace  ? help
 ```
 
 - **status bar** — violet symbol badge; green `● live` link dot; open/fills
@@ -37,14 +37,21 @@ help.
 - **book — a static price ladder.** A fixed price axis centred on the mid
   (recentres only on drift, not every tick); **bid qty left / ask qty right**
   of the price column; empty prices are gaps, so the spread and thin
-  liquidity read at a glance. Your resting orders are marked `▸` on their
-  rows, the last print `‹`; the price is coloured by the resting side. A
-  bottom **imbalance bar** shows bid-vs-ask share of the visible depth.
+  liquidity read at a glance. Each level draws a **depth bar** (`▊`) scaled to
+  the deepest visible level — bid depth grows left, ask right, so the bars
+  converge on the spread (a DOM depth read). Your resting orders are marked
+  `▸` on their rows, the last print `‹`; the price is coloured by the resting
+  side. A bottom **imbalance bar** shows bid-vs-ask share of the visible depth.
 - **order** — side toggle (active reversed), price/qty fields (focused one
   bold+bright with `_`), time-in-force, reduce-only/post-only, the two-step
-  confirm hint.
-- **positions** — `mark=mid` flags the derived mark; `LONG` green / `SHORT`
-  red; net, entry, `~uPnL` (dim header, coloured value).
+  confirm hint. `+`/`-` nudge the price a tick, `j`/`k` join the best
+  bid/ask, `m` sends a market IOC. `F2` arms **confirm-off** mode (a loud red
+  banner; single-enter fire) — the fat-finger size guard still holds.
+- **positions** — `mark=mid` flags the derived mark; stacked so the narrow
+  column never wraps: `LONG` green / `SHORT` red + net `@` entry, then
+  `~uPnL` (coloured, money at quote precision), then a dashed **risk row** —
+  liq / ROE / margin-health — held honest (no fabricated number) until the
+  risk feed lands.
 - **orders** — your working orders (side/px/qty); the `▸` cursor marks the one
   `c` cancels (`↑↓` move it, `X` cancels all). Only shown when you have some.
 - **trades** — newest first, `B`/`S` glyph + price/qty, coloured by side.
@@ -56,11 +63,12 @@ help.
 ## Keys
 
 `b`/`s` side · `0-9`/`⌫`/`tab` edit price+qty · `t` tif · `r`/`p`
-reduce-only/post-only · `enter` preview → `enter` send (`esc` cancels) ·
-`m` market (IOC far touch) · `↑↓` select a working order · `c` cancel it ·
-`X` cancel all · `x` flatten (reduce-only) · `R` reverse the position · `F3`
-telemetry trace · `?` help · `q` quit. Orders over the fat-finger size cap
-are hard-blocked, never soft-warned.
+reduce-only/post-only · `+`/`-` nudge price a tick · `j`/`k` join best
+bid/ask · `enter` preview → `enter` send (`esc` cancels) · `m` market (IOC
+far touch) · `↑↓` select a working order · `c` cancel it · `X` cancel all ·
+`x` flatten (reduce-only) · `R` reverse the position · `F2` ARMED
+(confirm-off) · `F3` telemetry trace · `?` help · `q` quit. Orders over the
+fat-finger size cap are hard-blocked, never soft-warned.
 
 ## Startup — waiting for first round-trip
 
