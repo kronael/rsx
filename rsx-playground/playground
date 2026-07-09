@@ -26,6 +26,7 @@ Info:
     logs [--follow]        View logs
     scenarios              List available scenarios
     health                 Health check (server + processes)
+    doctor                 Check local demo prerequisites
 
 Utils:
     reset                  Stop all and clean state
@@ -36,6 +37,7 @@ import subprocess
 import signal
 import time
 import os
+import shutil
 from pathlib import Path
 
 import runtime
@@ -152,7 +154,7 @@ def stop_server():
         else:
             print("timeout, killing...")
             os.kill(pid, signal.SIGKILL)
-        PID_FILE.unlink()
+        PID_FILE.unlink(missing_ok=True)
         print("server stopped")
     except ProcessLookupError:
         if PID_FILE.exists():
@@ -317,6 +319,9 @@ def demo(scenario="minimal"):
     rc = start_all(scenario)
     if rc != 0:
         return rc
+    if maker("start") != 0:
+        return 1
+    _wait_live_book()
     print(f"playground: {API_BASE}")
     print("open the Playground to inspect processes, logs, books, and orders")
     return 0
@@ -475,6 +480,40 @@ def stress_test(rate=100, duration=60):
     return 0
 
 
+def maker(action="start"):
+    if action not in ("start", "stop"):
+        print("usage: ./playground maker [start|stop]")
+        return 1
+    resp = api_post(
+        f"/api/maker/{action}",
+        headers={"x-confirm": "yes"},
+        timeout=30,
+    )
+    if not resp:
+        print(f"failed to {action} maker")
+        return 1
+    print("maker started" if action == "start" else "maker stopped")
+    return 0
+
+
+def _wait_live_book():
+    try:
+        import httpx
+    except ImportError:
+        return
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            html = httpx.get(f"{API_BASE}/x/book-stats", timeout=2).text
+            if "no book data yet" not in html:
+                print("book live")
+                return
+        except Exception:
+            pass
+        time.sleep(0.5)
+    print("warning: book not live yet")
+
+
 # ── Info ────────────────────────────────────────────────
 
 
@@ -522,6 +561,54 @@ def health():
             f"processes: {len(running)}/{len(procs)} running"
         )
 
+    return 0
+
+
+def doctor():
+    import socket
+    from urllib.parse import urlparse
+
+    fail = []
+    for cmd_name in ("uv", "python3"):
+        if shutil.which(cmd_name) is None:
+            fail.append(cmd_name)
+    go_bin = os.environ.get("RSX_GO_BIN", "").strip()
+    go_ok = go_bin and Path(go_bin).exists()
+    go_ok = go_ok or shutil.which("go") is not None
+    go_ok = go_ok or Path("/usr/local/go/bin/go").exists()
+    if not go_ok:
+        fail.append("go")
+    bins = [
+        "rsx-gateway", "rsx-risk", "rsx-matching",
+        "rsx-marketdata", "rsx-mark", "rsx-recorder",
+    ]
+    missing_bins = [
+        b for b in bins if not (ROOT / "target" / "debug" / b).exists()
+    ]
+    if missing_bins and shutil.which("cargo") is None:
+        fail.append("cargo")
+    url = urlparse(os.environ.get("DATABASE_URL", runtime.DEFAULT_PG_URL))
+    try:
+        with socket.create_connection(
+            (url.hostname or "127.0.0.1", url.port or 5432),
+            timeout=1,
+        ):
+            pass
+    except OSError:
+        fail.append("postgres")
+    cpus = os.cpu_count() or 0
+    if cpus and cpus < 4:
+        print(f"WARN cpus={cpus}")
+    rmem = Path("/proc/sys/net/core/rmem_max")
+    try:
+        if rmem.exists() and int(rmem.read_text()) < 26_214_400:
+            print("WARN udp_buf")
+    except ValueError:
+        pass
+    if fail:
+        print("FAIL " + " ".join(fail))
+        return 1
+    print("OK doctor")
     return 0
 
 
@@ -659,6 +746,9 @@ def main():
             print("usage: ./playground stress [rate] [duration]")
             return 1
         return stress_test(rate, dur)
+    elif cmd == "maker":
+        action = sys.argv[2] if len(sys.argv) > 2 else "start"
+        return maker(action)
 
     # info
     elif cmd == "logs":
@@ -668,6 +758,8 @@ def main():
         return scenarios()
     elif cmd == "health":
         return health()
+    elif cmd == "doctor":
+        return doctor()
 
     # utils
     elif cmd == "reset":
