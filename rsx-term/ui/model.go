@@ -24,7 +24,22 @@ type Config struct {
 	Endpoint   string
 	MdEndpoint string
 	Sub        feed.Submitter
+	// PriceDec / QtyDec convert raw i64 px/qty to human decimals at display
+	// (raw / 10^dec). PENGU is 6 / 4 (a ~$0.01 symbol: raw 10001 = 0.010001);
+	// 0 shows raw. Source: the symbol's price_decimals / qty_decimals.
+	PriceDec int
+	QtyDec   int
 }
+
+// fmtPx / fmtQty render a raw price / qty as a human decimal using the
+// symbol's configured precision — the one place raw i64 becomes a
+// trader-readable number.
+func (m Model) fmtPx(raw int64) string  { return fmtDec(raw, m.cfg.PriceDec) }
+func (m Model) fmtQty(raw int64) string { return fmtDec(raw, m.cfg.QtyDec) }
+
+// fmtNotional renders a raw price×qty product (notional, uPnL) — its scale is
+// price_dec + qty_dec, since both raw factors carried their own precision.
+func (m Model) fmtNotional(raw int64) string { return fmtDec(raw, m.cfg.PriceDec+m.cfg.QtyDec) }
 
 // Focus is which order-entry field the digit keys edit.
 type Focus int

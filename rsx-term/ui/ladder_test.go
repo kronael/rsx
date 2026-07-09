@@ -8,15 +8,15 @@ import (
 )
 
 func TestLadderRow(t *testing.T) {
-	bid := ladderRow(9999, 15, true, 0, false, 5, 3, " ")
+	bid := ladderRow("9999", "15", "", true, false, 5, 3, " ")
 	if !strings.Contains(bid, "15") || !strings.Contains(bid, "9999") {
 		t.Fatalf("bid row missing qty/price: %q", bid)
 	}
-	ask := ladderRow(10002, 0, false, 20, true, 5, 3, " ")
+	ask := ladderRow("10002", "", "20", false, true, 5, 3, " ")
 	if !strings.Contains(ask, "20") || !strings.Contains(ask, "10002") {
 		t.Fatalf("ask row missing qty/price: %q", ask)
 	}
-	empty := ladderRow(10005, 0, false, 0, false, 5, 3, " ")
+	empty := ladderRow("10005", "", "", false, false, 5, 3, " ")
 	if !strings.Contains(empty, "10005") {
 		t.Fatalf("empty row should still show its price: %q", empty)
 	}

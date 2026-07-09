@@ -137,3 +137,18 @@ func TestReverse(t *testing.T) {
 		t.Fatalf("reverse of +20 should be a non-reduce-only Sell 40: %+v", o)
 	}
 }
+
+func TestFmtDec(t *testing.T) {
+	if got := fmtDec(10001, 6); got != "0.010001" {
+		t.Fatalf("PENGU price raw 10001 @ 6dp = %q, want 0.010001", got)
+	}
+	if got := fmtDec(100000, 4); got != "10.0000" {
+		t.Fatalf("qty raw 100000 @ 4dp = %q, want 10.0000", got)
+	}
+	if got := fmtDec(-250, 6); got != "-0.000250" {
+		t.Fatalf("negative: %q", got)
+	}
+	if got := fmtDec(10001, 0); got != "10001" {
+		t.Fatalf("0 decimals should be raw: %q", got)
+	}
+}

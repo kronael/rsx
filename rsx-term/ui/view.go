@@ -80,14 +80,14 @@ func (m Model) viewStatusBar() string {
 
 	last := "—"
 	if e, ok := m.tape.Last(); ok {
-		last = fmt.Sprintf("%d", e.Px)
+		last = m.fmtPx(e.Px)
 	}
 	// mark is book-mid-derived, not exchange-authoritative; index and
 	// funding have no source (always —). The "~" prefix + dim/italic style
 	// (StyleDerived) mark it as a client-side estimate, never truth.
 	markLabel := "~mark — (mid)"
 	if mid, ok := m.book.Mid(); ok {
-		markLabel = fmt.Sprintf("~mark %d (mid)", mid)
+		markLabel = fmt.Sprintf("~mark %s (mid)", m.fmtPx(mid))
 	}
 	market := StyleMuted.Render(fmt.Sprintf("last %s  ", last)) +
 		StyleDerived.Render(markLabel) +
@@ -190,15 +190,15 @@ func (m Model) viewBook() string {
 		lastPx, hasLast = e.Px, true
 	}
 
-	var qtys []int64
+	pxW := strWidth(6, m.fmtPx(center+half), m.fmtPx(center-half))
+	var qtyStrs []string
 	for _, q := range askByPx {
-		qtys = append(qtys, q)
+		qtyStrs = append(qtyStrs, m.fmtQty(q))
 	}
 	for _, q := range bidByPx {
-		qtys = append(qtys, q)
+		qtyStrs = append(qtyStrs, m.fmtQty(q))
 	}
-	pxW := colWidth(5, center+half, center-half)
-	qtyW := colWidth(3, qtys...)
+	qtyW := strWidth(3, qtyStrs...)
 
 	var rows []string
 	for p := center + half; p >= center-half; p-- {
@@ -210,7 +210,7 @@ func (m Model) viewBook() string {
 		} else if hasLast && p == lastPx {
 			mark = StyleTextBright.Render("‹")
 		}
-		rows = append(rows, ladderRow(p, bQ, bOk, aQ, aOk, pxW, qtyW, mark))
+		rows = append(rows, ladderRow(m.fmtPx(p), m.fmtQty(bQ), m.fmtQty(aQ), bOk, aOk, pxW, qtyW, mark))
 	}
 
 	// Top-of-book imbalance: bid vs ask share of the visible depth — a fast
@@ -241,18 +241,18 @@ func imbalanceBar(bid, ask int64, width int) string {
 }
 
 // ladderRow renders one static-ladder price row: "<mark> <bidQ> <price> <askQ>"
-// — bid qty (green) left of the price, ask qty (red) right, the price coloured
-// by whichever side rests there (muted in the empty spread band). Fixed-width
-// columns so the axis stays rigid.
-func ladderRow(px, bidQ int64, bidOk bool, askQ int64, askOk bool, pxW, qtyW int, mark string) string {
+// — bid qty (green) left of the (decimal-formatted) price, ask qty (red)
+// right, the price coloured by whichever side rests there (muted in the empty
+// spread band). Right-aligned to string widths so the axis stays rigid.
+func ladderRow(pxStr, bidStr, askStr string, bidOk, askOk bool, pxW, qtyW int, mark string) string {
 	blank := strings.Repeat(" ", qtyW)
 	bidCol := blank
 	if bidOk {
-		bidCol = StyleLive.Render(fmt.Sprintf("%*d", qtyW, bidQ))
+		bidCol = StyleLive.Render(fmt.Sprintf("%*s", qtyW, bidStr))
 	}
 	askCol := blank
 	if askOk {
-		askCol = StyleAsk.Render(fmt.Sprintf("%*d", qtyW, askQ))
+		askCol = StyleAsk.Render(fmt.Sprintf("%*s", qtyW, askStr))
 	}
 	pxStyle := StyleMuted
 	if bidOk {
@@ -260,7 +260,7 @@ func ladderRow(px, bidQ int64, bidOk bool, askQ int64, askOk bool, pxW, qtyW int
 	} else if askOk {
 		pxStyle = StyleAsk
 	}
-	return fmt.Sprintf("%s %s %s %s", mark, bidCol, pxStyle.Render(fmt.Sprintf("%*d", pxW, px)), askCol)
+	return fmt.Sprintf("%s %s %s %s", mark, bidCol, pxStyle.Render(fmt.Sprintf("%*s", pxW, pxStr)), askCol)
 }
 
 // ownOrderLevels splits this session's working orders into the set of bid /
@@ -336,11 +336,11 @@ func (m Model) viewHelpOverlay() string {
 // ladder by ownOrderLevels.
 func (m Model) viewOpenOrders() string {
 	header := StyleMuted.Render("side  px  qty")
-	var pxs, qtys []int64
+	var pxs, qtys []string
 	for _, o := range m.openOrders {
-		pxs, qtys = append(pxs, o.Px), append(qtys, o.Qty)
+		pxs, qtys = append(pxs, m.fmtPx(o.Px)), append(qtys, m.fmtQty(o.Qty))
 	}
-	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
+	pxW, qtyW := strWidth(6, pxs...), strWidth(3, qtys...)
 	sel := m.clampSel(m.orderSel)
 	rows := []string{header}
 	for i, o := range m.openOrders {
@@ -353,7 +353,7 @@ func (m Model) viewOpenOrders() string {
 		if i == sel {
 			cursor = StyleAccent.Render("▸ ")
 		}
-		rows = append(rows, fmt.Sprintf("%s%s %*d %*d", cursor, st.Render(word), pxW, o.Px, qtyW, o.Qty))
+		rows = append(rows, fmt.Sprintf("%s%s %*s %*s", cursor, st.Render(word), pxW, m.fmtPx(o.Px), qtyW, m.fmtQty(o.Qty)))
 	}
 	return panel(" orders ", rightWidth, rows...)
 }
@@ -406,10 +406,8 @@ func onOff(b bool) string {
 func (m Model) viewConfirm() string {
 	o := *m.pendingConfirm
 	side := lipgloss.NewStyle().Foreground(sideColor(o.Side))
-	notional := o.Px * o.Qty
-	notionalW := colWidth(8, notional)
-	line1 := fmt.Sprintf("confirm %s %d @ %d", side.Render(o.Side.Label()), o.Qty, o.Px)
-	line2 := fmt.Sprintf("notional %*d  %s  ro:%s po:%s", notionalW, notional, o.Tif.Label(), onOff(o.ReduceOnly), onOff(o.PostOnly))
+	line1 := fmt.Sprintf("confirm %s %s @ %s", side.Render(o.Side.Label()), m.fmtQty(o.Qty), m.fmtPx(o.Px))
+	line2 := fmt.Sprintf("notional %s  %s  ro:%s po:%s", m.fmtNotional(o.Px*o.Qty), o.Tif.Label(), onOff(o.ReduceOnly), onOff(o.PostOnly))
 	line3 := StyleMuted.Render("liq  n/a")
 	legend := StyleMuted.Render("n/a fields need server support, not yet wired")
 	line4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc cancel")
@@ -439,17 +437,24 @@ func (m Model) viewPositions() string {
 	if net < 0 {
 		word, wordStyle = "SHORT", StyleAsk
 	}
+	netStr := m.fmtQty(net)
+	if net > 0 {
+		netStr = "+" + netStr
+	}
 
 	entry := "—"
 	if e, ok := m.position.Entry(); ok {
-		entry = fmt.Sprintf("%d", e)
+		entry = m.fmtPx(e)
 	}
 
 	upnl := "—  (needs live book)"
 	upnlStyle := StyleDegraded
 	if mid, ok := m.book.Mid(); ok {
 		if u, ok := m.position.Upnl(mid); ok {
-			upnl = signed(u)
+			upnl = m.fmtNotional(u)
+			if u > 0 {
+				upnl = "+" + upnl
+			}
 			upnlStyle = StyleLive
 			if u < 0 {
 				upnlStyle = StyleAsk
@@ -460,7 +465,7 @@ func (m Model) viewPositions() string {
 	row := fmt.Sprintf("%s  %s  %s  %s  %s",
 		m.cfg.Symbol,
 		wordStyle.Render(word),
-		signed(net),
+		netStr,
 		entry,
 		upnlStyle.Render(upnl),
 	)
@@ -486,11 +491,11 @@ func (m Model) viewTrades() string {
 	}
 	entries = entries[:n]
 
-	var pxs, qtys []int64
+	var pxs, qtys []string
 	for _, e := range entries {
-		pxs, qtys = append(pxs, e.Px), append(qtys, e.Qty)
+		pxs, qtys = append(pxs, m.fmtPx(e.Px)), append(qtys, m.fmtQty(e.Qty))
 	}
-	pxW, qtyW := colWidth(5, pxs...), colWidth(2, qtys...)
+	pxW, qtyW := strWidth(6, pxs...), strWidth(3, qtys...)
 
 	var rows []string
 	for _, e := range entries {
@@ -499,7 +504,7 @@ func (m Model) viewTrades() string {
 			glyph = "S"
 		}
 		style := lipgloss.NewStyle().Foreground(sideColor(e.Side))
-		rows = append(rows, style.Render(fmt.Sprintf("%s %*d %*d", glyph, pxW, e.Px, qtyW, e.Qty)))
+		rows = append(rows, style.Render(fmt.Sprintf("%s %*s %*s", glyph, pxW, m.fmtPx(e.Px), qtyW, m.fmtQty(e.Qty))))
 	}
 	if len(rows) == 0 {
 		rows = append(rows, StyleMuted.Render("no trades yet"))
@@ -635,7 +640,7 @@ func (m Model) viewTrace() string {
 		section("FLOW"),
 		row("open", fmt.Sprintf("%d", len(m.openOrders))),
 		row("fills", fmt.Sprintf("%d", m.fills)),
-		row("spread", fmt.Sprintf("%d", m.book.Spread())),
+		row("spread", m.fmtPx(m.book.Spread())),
 		row("depth", fmt.Sprintf("%d bid / %d ask", len(m.book.Bids), len(m.book.Asks))),
 		row("last", m.status),
 	}
