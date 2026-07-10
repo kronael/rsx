@@ -9,7 +9,7 @@
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
-       ci ci-full demo stop reset \
+       ci ci-full demo \
        term term-local term-demo term-ssh-setup \
        prepare check-links
 
@@ -23,12 +23,6 @@ prepare: ## set up local dev env (uv venv + playwright chromium)
 demo: ## run the minimal reproducible demo
 	./rsx-playground/playground doctor
 	./rsx-playground/playground demo minimal
-
-stop: ## stop all RSX processes (tear down demo/local cluster)
-	./rsx-playground/playground stop-all
-
-reset: ## stop all + wipe state (clean slate)
-	./rsx-playground/playground reset
 
 # Default target - show help
 help: ## Show this help
