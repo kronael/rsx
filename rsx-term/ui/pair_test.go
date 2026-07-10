@@ -92,7 +92,7 @@ func TestAssignCodesUniqueAndReserved(t *testing.T) {
 func TestPairArmAndBuyLifted(t *testing.T) {
 	mock := &conn.MockGateway{}
 	m := pairModel(t, mock)
-	code := m.instrumentFor(11).Code
+	code := m.instrumentFor(m.pairVenue(), 11).Code
 	m = press(m, code) // arm WIF
 	if m.armedSym != 11 {
 		t.Fatalf("letter %q should arm symbol 11, got %d", code, m.armedSym)
@@ -115,7 +115,7 @@ func TestPairArmAndBuyLifted(t *testing.T) {
 func TestPairVimCountSells(t *testing.T) {
 	mock := &conn.MockGateway{}
 	m := pairModel(t, mock)
-	m = press(m, m.instrumentFor(10).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 10).Code)
 	m = press(m, "3")
 	m = press(m, "s") // sell 3 lots — hits PENGU's bid
 	if len(mock.Submitted) != 1 {
@@ -135,7 +135,7 @@ func TestPairFlattenReduceOnly(t *testing.T) {
 	mock := &conn.MockGateway{}
 	m := pairModel(t, mock)
 	m = apply(m, wire.Fill{Oid: 1, Px: 21000, Qty: 500, Side: wire.Buy, Symbol: 11})
-	m = press(m, m.instrumentFor(11).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 11).Code)
 	m = press(m, ".")
 	if len(mock.Submitted) != 1 {
 		t.Fatalf(". should fire one order, got %d", len(mock.Submitted))
@@ -161,7 +161,7 @@ func TestPairUnarmedTradeIsNoop(t *testing.T) {
 func TestPairNotionalCapBlocks(t *testing.T) {
 	mock := &conn.MockGateway{}
 	m := pairModel(t, mock)
-	m = press(m, m.instrumentFor(11).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 11).Code)
 	m = press(m, "9")
 	m = press(m, "9") // 99 lots ≈ 9,900 notional < default cap 10,000 — passes
 	m = press(m, "b")
@@ -170,7 +170,7 @@ func TestPairNotionalCapBlocks(t *testing.T) {
 	}
 	// Tighten the cap and retry: blocked outright.
 	m.cfg.MaxNotional = 50
-	m = press(m, m.instrumentFor(11).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 11).Code)
 	m = press(m, "b")
 	if len(mock.Submitted) != 1 {
 		t.Fatalf("over-cap order must be BLOCKED, got %+v", mock.Submitted)
@@ -184,7 +184,7 @@ func TestPairViewRowsAndArmHighlight(t *testing.T) {
 	m := pairModel(t, &conn.MockGateway{})
 	// ~2 lots: 1 lot = 100 notional / mid 0.021002 → 47_614_512 raw qty.
 	m = apply(m, wire.Fill{Oid: 1, Px: 21000, Qty: 95_229_026, Side: wire.Buy, Symbol: 11})
-	m = press(m, m.instrumentFor(11).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 11).Code)
 	plain := stripANSI(m.View())
 	for _, want := range []string{"PENGU-PERP", "WIF-PERP", "0.021002", "ARMED WIF-PERP", "L+2.0"} {
 		if !strings.Contains(plain, want) {
@@ -200,7 +200,7 @@ func TestReduceOnlyToggleAppliesEverywhere(t *testing.T) {
 	mock := &conn.MockGateway{}
 	m := pairModel(t, mock)
 	m = press(m, "r") // persistent RO mode
-	m = press(m, m.instrumentFor(10).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 10).Code)
 	m = press(m, "b")
 	if len(mock.Submitted) != 1 || !mock.Submitted[0].ReduceOnly {
 		t.Fatalf("RO toggle must apply to pair orders: %+v", mock.Submitted)
@@ -222,7 +222,7 @@ func TestBookSymbolSwitcher(t *testing.T) {
 	if !m.switching {
 		t.Fatalf("x should open the symbol switcher")
 	}
-	m = press(m, m.instrumentFor(11).Code)
+	m = press(m, m.instrumentFor(m.pairVenue(), 11).Code)
 	if m.active != 11 || m.switching {
 		t.Fatalf("code should switch the book instantly: active %d", m.active)
 	}
@@ -239,10 +239,10 @@ func TestPerSymbolPositionsIndependent(t *testing.T) {
 	m := pairModel(t, &conn.MockGateway{})
 	m = apply(m, wire.Fill{Oid: 1, Px: 9999, Qty: 100, Side: wire.Buy, Symbol: 10})
 	m = apply(m, wire.Fill{Oid: 2, Px: 21000, Qty: 50, Side: wire.Sell, Symbol: 11})
-	if got := m.marketFor(10).position.Net; got != 100 {
+	if got := m.marketFor("rsx", 10).position.Net; got != 100 {
 		t.Fatalf("symbol 10 net = %d, want +100", got)
 	}
-	if got := m.marketFor(11).position.Net; got != -50 {
+	if got := m.marketFor("rsx", 11).position.Net; got != -50 {
 		t.Fatalf("symbol 11 net = %d, want -50", got)
 	}
 }

@@ -69,7 +69,7 @@ const pairLegend = " q quit  tab view  letter arm  [count] b buy  s sell  . flat
 // pairRow renders one symbol's line (see the file header for the anatomy).
 // The armed row is highlighted — you must SEE what the next b/s fires at.
 func (m Model) pairRow(id uint32) string {
-	mk := m.marketFor(id)
+	mk := m.marketFor(m.pairVenue(), id)
 	armed := id == m.armedSym
 
 	sel := StyleMuted.Render("[" + mk.ins.Code + "]")

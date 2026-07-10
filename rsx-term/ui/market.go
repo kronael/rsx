@@ -120,11 +120,13 @@ func pickCode(name string, used map[string]bool) string {
 	return "??" // >600 symbols: beyond the terminal's design point
 }
 
-// watchlist is one named set of instruments the pair view rotates through
-// ([ / ] switch lists; letters select within the active list).
+// watchlist is one named set of instruments on ONE venue that the pair view
+// rotates through ([ / ] switch lists; letters select within the active
+// list).
 type watchlist struct {
-	name string
-	ids  []uint32
+	name  string
+	venue string
+	ids   []uint32
 }
 
 // foldPairReads advances a market's pair-view metrics at bin cadence: the mid

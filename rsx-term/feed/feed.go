@@ -34,9 +34,25 @@ type Latency struct {
 	Sample book.Sample
 }
 
-// Submitter is how the UI sends orders: implemented by the offline mock now
-// and by the live gateway conn in a future increment.
+// Submitter is how the UI sends orders: implemented by the offline mock, the
+// live RSX gateway, and (as a read-only stub for now) other venues.
 type Submitter interface {
 	Submit(o wire.OrderReq) error
 	Cancel(cid string) error
 }
+
+// VenueMsg tags a market-data message with the venue it came from, for
+// multi-venue sessions (the generic-terminal seam: any source that emits
+// normalized wire.Snapshot/Delta/Bbo/MdTrade wrapped in VenueMsg plugs into
+// the same folds). Untagged messages belong to the primary venue — the
+// single-venue DOM path never sees a VenueMsg.
+type VenueMsg struct {
+	Venue string
+	Msg   any
+}
+
+// VenueUp / VenueDown report a non-primary venue's feed link state.
+type VenueUp struct{ Venue string }
+
+// VenueDown signals a venue's feed dropped (it keeps reconnecting).
+type VenueDown struct{ Venue string }
