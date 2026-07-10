@@ -9,7 +9,8 @@
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
-       ci ci-full demo \
+       ci ci-full demo stop reset \
+       term term-local term-demo term-ssh-setup \
        prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
@@ -22,6 +23,12 @@ prepare: ## set up local dev env (uv venv + playwright chromium)
 demo: ## run the minimal reproducible demo
 	./rsx-playground/playground doctor
 	./rsx-playground/playground demo minimal
+
+stop: ## stop all RSX processes (tear down demo/local cluster)
+	./rsx-playground/playground stop-all
+
+reset: ## stop all + wipe state (clean slate)
+	./rsx-playground/playground reset
 
 # Default target - show help
 help: ## Show this help
@@ -262,30 +269,30 @@ local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 	./rsx-playground/playground start-all minimal
 	@sleep 3
 	-curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' -H 'x-confirm: yes' >/dev/null
-	@echo "-> local cluster up with a live PENGU book. Trade: make tui-local"
+	@echo "-> local cluster up with a live PENGU book. Trade: make term-local"
 
 # Guarded: the terminal (rsx-term, Go) defaults to wss://rsx.krons.cx
 # (production) when RSX_GW_URL is unset. This Makefile is dev-only
 # (CLAUDE.md: no external publish/deploy one `make` away) — production
-# trading must be an explicit, deliberate command, not a bare `make tui`.
-# Use tui-local/tui-demo for dev.
-tui: ## disabled here — production trading is manual-only, see comment
-	@echo "make tui is disabled: it would connect to the hosted production" >&2
+# trading must be an explicit, deliberate command, not a bare `make term`.
+# Use term-local/term-demo for dev.
+term: ## disabled here — production trading is manual-only, see comment
+	@echo "make term is disabled: it would connect to the hosted production" >&2
 	@echo "deployment (wss://rsx.krons.cx) by default. This Makefile is" >&2
 	@echo "dev-only; production trading must be explicit, not one 'make' away." >&2
 	@echo "" >&2
-	@echo "Dev alternatives: make tui-local (local cluster), make tui-demo (mock feed)." >&2
+	@echo "Dev alternatives: make term-local (local cluster), make term-demo (mock feed)." >&2
 	@echo "To trade against production intentionally, run directly:" >&2
 	@echo "  cd rsx-term && RSX_GW_URL=wss://rsx.krons.cx go run ." >&2
 	@exit 1
 
-tui-local: ## trade against your local cluster (run 'make local' first)
+term-local: ## trade against your local cluster (run 'make local' first)
 	cd rsx-term && RSX_GW_URL=ws://127.0.0.1:8080 RSX_MD_URL=ws://127.0.0.1:8180 go run .
 
-tui-demo: ## the Go terminal offline, mock feed (no cluster needed)
+term-demo: ## the Go terminal offline, mock feed (no cluster needed)
 	cd rsx-term && RSX_GW_URL=mock go run .
 
-tui-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access.md)
+term-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access.md)
 	@bash -n scripts/rsx-tui-dispatch && bash -n scripts/rsx-tui-authorize \
 	  && echo "wrappers: syntax ok"
 	@echo "-> install the shared SSH user + wrappers (run as root on the gateway host):"
@@ -299,7 +306,7 @@ tui-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access
 	@echo "   example authorized_keys: scripts/rsx-tui.authorized_keys.example"
 
 # Print the single-machine production deploy steps. Guarded like
-# tui-ssh-setup: this dev Makefile never runs the production deploy —
+# term-ssh-setup: this dev Makefile never runs the production deploy —
 # deploy/deploy.sh runs ON the target (rsx.krons.cx), by the founder.
 deploy-help: ## print single-machine production deploy steps (deploy/README.md)
 	@bash -n deploy/deploy.sh && echo "deploy/deploy.sh: syntax ok"
