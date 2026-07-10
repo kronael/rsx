@@ -36,20 +36,16 @@ func main() {
 	symbolID := envU32("RSX_TUI_SYMBOL", 10)
 	// RSX_GW_JWT_SECRET: gateway JWT secret (dev default).
 	jwtSecret := envOr("RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod-padpad")
-	// Display precision — raw i64 px/qty become human decimals (raw / 10^dec)
-	// at render. Defaults are PENGU's (price 6, qty 4); override per symbol.
-	priceDec := int(envU32("RSX_TUI_PRICE_DECIMALS", 6))
-	qtyDec := int(envU32("RSX_TUI_QTY_DECIMALS", 4))
-	// RSX_TUI_TICK: smallest raw price increment (+/- step). PENGU = 1.
-	tick := int64(envU32("RSX_TUI_TICK", 1))
 	// RSX_TUI_THEME=colorblind swaps the bid/ask red-green pair for a
 	// deuteranopia-safe blue/orange. Must run before any style is rendered.
 	ui.UseTheme(os.Getenv("RSX_TUI_THEME"))
 
 	if gwURL == "mock" {
+		priceDec, qtyDec, tick := displayConfig("", symbolID)
 		runMock(symbolID, priceDec, qtyDec, tick)
 		return
 	}
+	priceDec, qtyDec, tick := displayConfig(gwURL, symbolID)
 
 	err := runLive(liveConfig{
 		gwURL:     gwURL,
@@ -65,6 +61,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
 		os.Exit(1)
 	}
+}
+
+// displayConfig resolves the symbol's display precision + tick. Base values
+// come from the gateway's /v1/symbols (the authoritative per-symbol config) on
+// the live path; gwURL == "" (mock) skips the fetch. A fetch failure falls back
+// to PENGU's values (price 6, qty 4, tick 1) with a note — config discovery
+// must never keep the terminal from starting. RSX_TUI_PRICE_DECIMALS /
+// RSX_TUI_QTY_DECIMALS / RSX_TUI_TICK, when set, override whatever base won.
+func displayConfig(gwURL string, symbolID uint32) (priceDec, qtyDec int, tick int64) {
+	priceDec, qtyDec, tick = 6, 4, 1
+	if gwURL != "" {
+		if cfg, err := conn.FetchSymbolConfig(gwURL, symbolID); err == nil {
+			priceDec, qtyDec, tick = cfg.PriceDec, cfg.QtyDec, cfg.TickSize
+		} else {
+			fmt.Fprintf(os.Stderr, "rsx-term: symbol config fetch failed (%v); using defaults\n", err)
+		}
+	}
+	priceDec = int(envU32("RSX_TUI_PRICE_DECIMALS", uint32(priceDec)))
+	qtyDec = int(envU32("RSX_TUI_QTY_DECIMALS", uint32(qtyDec)))
+	tick = int64(envU32("RSX_TUI_TICK", uint32(tick)))
+	return priceDec, qtyDec, tick
 }
 
 // runMock builds the model over an offline MockGateway and streams the scripted
