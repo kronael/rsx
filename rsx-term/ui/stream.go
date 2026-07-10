@@ -499,8 +499,13 @@ func (m Model) modeLine() string {
 		}
 		return StyleMuted.Render(" " + name + " off ")
 	}
+	venue := m.activeVenue
+	if m.screen == screenPair || m.screen == screenNews {
+		venue = m.pairVenue()
+	}
 	parts := []string{
 		tag,
+		StyleHeading.Render(" " + venue + " "),
 		mod("RO", m.reduceOnly),
 		mod("PO", m.postOnly),
 		StyleMuted.Render(fmt.Sprintf(" size %s [%d] ", m.fmtQty(m.sizePreset()), m.sizeSel+1)),
@@ -509,9 +514,16 @@ func (m Model) modeLine() string {
 	if m.switching {
 		parts = append(parts, StyleTextBright.Bold(true).Render(" switch: "+m.switchBuf+"_ ")+m.switchCandidates())
 	}
+	if m.venuePicking {
+		var vs []string
+		for _, v := range m.venues {
+			vs = append(vs, v.Code+" "+v.Name)
+		}
+		parts = append(parts, StyleTextBright.Bold(true).Render(" venue? ")+StyleMuted.Render(strings.Join(vs, " · ")))
+	}
 	if m.screen == screenPair {
 		if m.armedSym != 0 {
-			armed := m.instrumentFor(m.armedSym).Name
+			armed := m.instrumentFor(m.pairVenue(), m.armedSym).Name
 			if m.countBuf != "" {
 				armed += " ×" + m.countBuf
 			}
@@ -523,13 +535,19 @@ func (m Model) modeLine() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
-// switchCandidates lists the watchlist's code → name pairs that still match
-// the switcher buffer.
+// switchCandidates lists the active venue's code → name pairs that still
+// match the switcher buffer (capped — a 150-symbol venue must not overflow
+// the mode line).
 func (m Model) switchCandidates() string {
+	venue, _ := m.venueByName(m.activeVenue)
 	var parts []string
-	for _, ins := range m.cfg.Instruments {
+	for _, ins := range venue.Instruments {
 		if strings.HasPrefix(ins.Code, m.switchBuf) {
 			parts = append(parts, ins.Code+" "+ins.Name)
+		}
+		if len(parts) == 8 {
+			parts = append(parts, "…")
+			break
 		}
 	}
 	if len(parts) == 0 {
@@ -619,7 +637,7 @@ func (m Model) viewStreamHelp() string {
 // ACTIVE symbol, so the map itself shows them (◇) — they are re-marked every
 // frame at their live price column, never lost as history drifts up.
 func (m Model) markOwnOrders(cells []cell, anchor, tick int64) {
-	for _, o := range m.ownOrdersFor(m.active) {
+	for _, o := range m.ownOrdersFor(m.activeVenue, m.active) {
 		col, ok := book.FisheyeCol(o.Px, anchor, tick, len(cells))
 		if !ok {
 			continue
@@ -720,7 +738,7 @@ func (m Model) rulerLine(anchor, tick int64) string {
 	if half >= 1 {
 		marks[half-1], marks[half] = glyphs.touchTick, glyphs.touchTick
 	}
-	for _, o := range m.ownOrdersFor(m.active) {
+	for _, o := range m.ownOrdersFor(m.activeVenue, m.active) {
 		col, ok := book.FisheyeCol(o.Px, anchor, tick, m.heatW)
 		if !ok {
 			continue

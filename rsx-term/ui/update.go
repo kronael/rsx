@@ -48,11 +48,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recenterLadder()
 			m.foldMdFrame(v.TsNs)
 		}
-		if m.cfg.Stream {
-			mk := m.marketFor(m.frameSymbol(v.SymbolID))
-			mk.book.ApplySnapshot(v)
-			mk.persist.ObserveSnapshot(v.Bids, v.Asks, time.Now().UnixNano())
-		}
+		m.foldVenueMd(m.cfg.Venue, msg)
 	case wire.Delta:
 		if m.primaryFrame(v.SymbolID) {
 			m.seq.Observe(v.Seq)
@@ -60,11 +56,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recenterLadder()
 			m.foldMdFrame(v.TsNs)
 		}
-		if m.cfg.Stream {
-			mk := m.marketFor(m.frameSymbol(v.SymbolID))
-			mk.book.ApplyDelta(v)
-			mk.persist.ObserveDelta(v, time.Now().UnixNano())
-		}
+		m.foldVenueMd(m.cfg.Venue, msg)
 	case wire.Bbo:
 		if m.primaryFrame(v.SymbolID) {
 			m.seq.Observe(v.Seq)
@@ -72,25 +64,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recenterLadder()
 			m.foldMdFrame(v.TsNs)
 		}
-		if m.cfg.Stream {
-			m.marketFor(m.frameSymbol(v.SymbolID)).book.ApplyBbo(v)
-		}
+		m.foldVenueMd(m.cfg.Venue, msg)
 	case wire.MdTrade:
-		side := wire.Buy
-		if v.TakerSide != 0 {
-			side = wire.Sell
-		}
-		entry := book.TapeEntry{Side: side, Px: v.Px, Qty: v.Qty}
 		if m.primaryFrame(v.SymbolID) {
 			m.seq.Observe(v.Seq)
-			m.tape.Push(entry)
+			m.tape.Push(book.TapeEntry{Side: takerSide(v.TakerSide), Px: v.Px, Qty: v.Qty})
 			m.foldMdFrame(v.TsNs)
 		}
-		if m.cfg.Stream {
-			mk := m.marketFor(m.frameSymbol(v.SymbolID))
-			mk.tape.Push(entry)
-			mk.pending = append(mk.pending, entry)
-		}
+		m.foldVenueMd(m.cfg.Venue, msg)
+
+	case feed.VenueMsg:
+		m.foldVenueMd(v.Venue, v.Msg)
+	case feed.VenueUp:
+		m.status = v.Venue + " feed up"
+	case feed.VenueDown:
+		m.status = v.Venue + " feed down (reconnecting)"
 
 	case wire.Accepted:
 		m.openOrders = append(m.openOrders, OpenOrder{
@@ -115,7 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.position.ApplyFill(v.Side, v.Px, v.Qty)
 		}
 		if m.cfg.Stream {
-			m.marketFor(m.frameSymbol(v.Symbol)).position.ApplyFill(v.Side, v.Px, v.Qty)
+			m.marketFor(m.cfg.Venue, m.frameSymbol(v.Symbol)).position.ApplyFill(v.Side, v.Px, v.Qty)
 		}
 		m.status = fmt.Sprintf("fill %d: %s @ %s", v.Oid, m.fmtQty(v.Qty), m.fmtPx(v.Px))
 
@@ -157,6 +145,9 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.switching {
 		return m.handleSwitchKey(key)
 	}
+	if m.venuePicking {
+		return m.handleVenuePick(key)
+	}
 	switch key {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -168,6 +159,12 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "shift+tab":
 		m.screen = m.screen.prev()
+		return m, nil
+	case "f9":
+		m.venuePicking = len(m.venues) > 1
+		if !m.venuePicking {
+			m.status = "one venue configured (" + m.activeVenue + ")"
+		}
 		return m, nil
 	case "r":
 		m.reduceOnly = !m.reduceOnly
@@ -239,7 +236,7 @@ func (m Model) handleSwitchKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
 		m.switchBuf += key
-		if ins, ok := m.instrumentByCode(m.switchBuf); ok {
+		if ins, ok := m.instrumentByCode(m.activeVenue, m.switchBuf); ok {
 			m.switchTo(ins)
 			return m, nil
 		}
@@ -252,9 +249,13 @@ func (m Model) handleSwitchKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// instrumentByCode finds a watchlist instrument by its switcher code.
-func (m Model) instrumentByCode(code string) (Instrument, bool) {
-	for _, ins := range m.cfg.Instruments {
+// instrumentByCode finds an instrument by its switcher code on a venue.
+func (m Model) instrumentByCode(venue, code string) (Instrument, bool) {
+	v, ok := m.venueByName(venue)
+	if !ok {
+		return Instrument{}, false
+	}
+	for _, ins := range v.Instruments {
 		if ins.Code == code {
 			return ins, true
 		}
@@ -267,9 +268,47 @@ func (m Model) instrumentByCode(code string) (Instrument, bool) {
 // instant).
 func (m *Model) switchTo(ins Instrument) {
 	m.active = ins.ID
+	m.lastActive[m.activeVenue] = ins.ID
 	m.switching = false
 	m.switchBuf = ""
 	m.status = "book → " + ins.Name
+}
+
+// handleVenuePick is the F9 venue picker: the venue's letter switches the
+// book view onto it (its last active symbol, or its first instrument).
+// Mirrors the symbol switcher; esc cancels.
+func (m Model) handleVenuePick(key string) (tea.Model, tea.Cmd) {
+	m.venuePicking = false
+	if key == "esc" || key == "f9" {
+		return m, nil
+	}
+	for _, v := range m.venues {
+		if v.Code != key {
+			continue
+		}
+		m.activeVenue = v.Name
+		m.active = m.lastActive[v.Name]
+		if m.active == 0 && len(v.Instruments) > 0 {
+			m.active = v.Instruments[0].ID
+		}
+		m.lastActive[v.Name] = m.active
+		m.status = "venue → " + v.Name
+		return m, nil
+	}
+	m.status = fmt.Sprintf("no venue keyed %q", key)
+	return m, nil
+}
+
+// pairVenue is the venue the pair/news screens read: the active watchlist's.
+func (m Model) pairVenue() string { return m.lists[m.listSel].venue }
+
+// venueSub is a venue's order path, or an explanation why there isn't one.
+func (m Model) venueSub(venue string) (feed.Submitter, string) {
+	v, ok := m.venueByName(venue)
+	if !ok || v.Sub == nil {
+		return nil, venue + " is read-only here (market data only)"
+	}
+	return v.Sub, ""
 }
 
 // shiftDigitSel maps the shifted digit row (!@#$%) back to preset index 0-4.
@@ -349,7 +388,7 @@ func (m Model) handlePlace() (tea.Model, tea.Cmd) {
 			px = a.Px
 		}
 	}
-	return m.fire(wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Gtc})
+	return m.fire(m.activeVenue, wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Gtc})
 }
 
 // handleCross fires an aggressive IOC of preset sel at the far touch — the
@@ -373,14 +412,14 @@ func (m Model) handleCross(sel int) (tea.Model, tea.Cmd) {
 		}
 		px = b.Px
 	}
-	return m.fire(wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Ioc})
+	return m.fire(m.activeVenue, wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Ioc})
 }
 
 // handleStreamCancel cancels the own resting order on the active symbol
 // nearest the cursor (the point-and-delete of game entry); with no cursor it
 // cancels the newest.
 func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
-	own := m.ownOrdersFor(m.active)
+	own := m.ownOrdersFor(m.activeVenue, m.active)
 	if len(own) == 0 {
 		m.status = "no open order to cancel"
 		return m, nil
@@ -411,8 +450,12 @@ func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ownOrdersFor filters this session's working orders to one symbol.
-func (m Model) ownOrdersFor(id uint32) []OpenOrder {
+// ownOrdersFor filters this session's working orders to one symbol on one
+// venue. Only the primary venue can trade, so any other venue has none.
+func (m Model) ownOrdersFor(venue string, id uint32) []OpenOrder {
+	if venue != m.cfg.Venue {
+		return nil
+	}
 	var out []OpenOrder
 	for _, o := range m.openOrders {
 		if m.frameSymbol(o.Symbol) == id {
@@ -453,7 +496,7 @@ func (m Model) handlePairKey(key string) (tea.Model, tea.Cmd) {
 	case key == ".":
 		return m.handlePairFlatten()
 	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
-		if ins, ok := m.instrumentByCode(key); ok && m.inActiveList(ins.ID) {
+		if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok && m.inActiveList(ins.ID) {
 			m.armedSym = ins.ID
 			m.countBuf = ""
 			m.status = "armed " + ins.Name
@@ -489,7 +532,7 @@ func (m Model) handlePairTrade(side wire.Side) (tea.Model, tea.Cmd) {
 		m.status = "arm a symbol first (its letter key)"
 		return m, nil
 	}
-	mk := m.marketFor(m.armedSym)
+	mk := m.marketFor(m.pairVenue(), m.armedSym)
 	var px int64
 	if side == wire.Buy {
 		a, ok := mk.book.BestAsk()
@@ -517,7 +560,7 @@ func (m Model) handlePairTrade(side wire.Side) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.countBuf = ""
-	return m.fire(wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc})
+	return m.fire(m.pairVenue(), wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc})
 }
 
 // handlePairFlatten fires the reduce-only IOC that closes the armed symbol's
@@ -527,7 +570,7 @@ func (m Model) handlePairFlatten() (tea.Model, tea.Cmd) {
 		m.status = "arm a symbol first (its letter key)"
 		return m, nil
 	}
-	mk := m.marketFor(m.armedSym)
+	mk := m.marketFor(m.pairVenue(), m.armedSym)
 	net := mk.position.Net
 	if net == 0 {
 		m.status = "no position on " + mk.ins.Name
@@ -554,7 +597,7 @@ func (m Model) handlePairFlatten() (tea.Model, tea.Cmd) {
 		}
 		px = a.Px
 	}
-	return m.fire(wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true})
+	return m.fire(m.pairVenue(), wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true})
 }
 
 // lotQty sizes ONE lot of an instrument at a price: the configured base
@@ -609,14 +652,20 @@ func (m Model) handleLLMKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// fire applies the fat-finger guards and submits immediately — the streaming
-// terminal's single-keypress path. Guards: the hard qty cap (maxOrderQty,
-// same as the DOM confirm path) and the notional ceiling (MaxNotional, human
-// quote units). Over either, the order is BLOCKED outright. The persistent
-// modifier toggles (r/p, shown on the mode line) apply to every order here:
-// reduce-only to all, post-only to resting (GTC) orders.
-func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
-	ins := m.instrumentFor(m.frameSymbol(o.Symbol))
+// fire applies the fat-finger guards and submits immediately on the venue —
+// the streaming terminal's single-keypress path. Guards: the hard qty cap
+// (maxOrderQty, same intent as the DOM confirm path) and the notional
+// ceiling (MaxNotional, human quote units). Over either, the order is
+// BLOCKED outright. A read-only venue (no Submitter) blocks with the reason.
+// The persistent modifier toggles (r/p, shown on the mode line) apply to
+// every order here: reduce-only to all, post-only to resting (GTC) orders.
+func (m Model) fire(venue string, o wire.OrderReq) (tea.Model, tea.Cmd) {
+	sub, whyNot := m.venueSub(venue)
+	if sub == nil {
+		m.status = "BLOCKED: " + whyNot
+		return m, nil
+	}
+	ins := m.instrumentFor(venue, m.frameSymbol(o.Symbol))
 	if qtyCap, ok := safeMul(maxOrderQty, pow10(ins.QtyDec)); ok && o.Qty > qtyCap {
 		// The DOM cap is raw units for the primary symbol; here it scales to
 		// the instrument's precision (1e6 WHOLE units) — the notional ceiling
@@ -635,7 +684,7 @@ func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
 	if o.Tif == wire.Gtc {
 		o.PostOnly = o.PostOnly || m.postOnly
 	}
-	if err := m.cfg.Sub.Submit(o); err != nil {
+	if err := sub.Submit(o); err != nil {
 		m.status = "submit failed: " + err.Error()
 		return m, nil
 	}
@@ -648,6 +697,42 @@ func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
 // an unspecified id from the mock/demo and older tests.
 func (m Model) primaryFrame(id uint32) bool {
 	return id == 0 || id == m.cfg.SymbolID
+}
+
+// takerSide maps a marketdata taker side (0 buy / 1 sell) to wire.Side.
+func takerSide(v uint32) wire.Side {
+	if v != 0 {
+		return wire.Sell
+	}
+	return wire.Buy
+}
+
+// foldVenueMd folds one market-data message into its venue's market. This is
+// the generic multi-venue seam: any source emitting normalized wire frames
+// (tagged with feed.VenueMsg, or untagged = the primary venue) feeds the
+// same folds. Streaming only — the DOM view keeps its legacy single-symbol
+// fields.
+func (m *Model) foldVenueMd(venue string, msg any) {
+	if !m.cfg.Stream {
+		return
+	}
+	switch v := msg.(type) {
+	case wire.Snapshot:
+		mk := m.marketFor(venue, m.frameSymbol(v.SymbolID))
+		mk.book.ApplySnapshot(v)
+		mk.persist.ObserveSnapshot(v.Bids, v.Asks, time.Now().UnixNano())
+	case wire.Delta:
+		mk := m.marketFor(venue, m.frameSymbol(v.SymbolID))
+		mk.book.ApplyDelta(v)
+		mk.persist.ObserveDelta(v, time.Now().UnixNano())
+	case wire.Bbo:
+		m.marketFor(venue, m.frameSymbol(v.SymbolID)).book.ApplyBbo(v)
+	case wire.MdTrade:
+		mk := m.marketFor(venue, m.frameSymbol(v.SymbolID))
+		entry := book.TapeEntry{Side: takerSide(v.TakerSide), Px: v.Px, Qty: v.Qty}
+		mk.tape.Push(entry)
+		mk.pending = append(mk.pending, entry)
+	}
 }
 
 // frameSymbol resolves a frame's symbol id, mapping the unspecified 0 to the

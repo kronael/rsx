@@ -7,6 +7,7 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,6 +43,13 @@ type Config struct {
 	// Instruments is the streaming watchlist (first entry = the primary
 	// symbol). Empty falls back to the single legacy Symbol/SymbolID.
 	Instruments []Instrument
+	// Venue names the primary venue (default "rsx"). Sub and Instruments
+	// above belong to it.
+	Venue string
+	// Venues are ADDITIONAL venues beyond the primary — the generic
+	// multi-venue seam (e.g. read-only Hyperliquid market data). Their
+	// tagged feed.VenueMsg events fold into per-venue markets.
+	Venues []VenueConfig
 	// LotNotional is the pair view's base lot size in HUMAN quote units
 	// (1 lot ≈ LotNotional × instrument.LotMult% of notional). 0 → 100.
 	LotNotional int64
@@ -69,6 +77,22 @@ func (m Model) sizePreset() int64 {
 	return presets[sel]
 }
 
+// VenueConfig is one venue behind the generic-terminal seam: a name, its
+// picker letter, its instrument universe, and its order Submitter (nil =
+// read-only market data; trading there shows an honest block).
+type VenueConfig struct {
+	Name        string
+	Code        string
+	Instruments []Instrument
+	Sub         feed.Submitter
+}
+
+// venueKey addresses one market: a symbol on a venue.
+type venueKey struct {
+	venue string
+	id    uint32
+}
+
 // fmtPx / fmtQty render a raw price / qty as a human decimal using the
 // ACTIVE instrument's precision — the one place raw i64 becomes a
 // trader-readable number. With no watchlist (the DOM view) the active
@@ -77,14 +101,19 @@ func (m Model) fmtPx(raw int64) string  { return fmtDec(raw, m.ins().PriceDec) }
 func (m Model) fmtQty(raw int64) string { return fmtDec(raw, m.ins().QtyDec) }
 
 // ins returns the active instrument.
-func (m Model) ins() Instrument { return m.instrumentFor(m.active) }
+func (m Model) ins() Instrument { return m.instrumentFor(m.activeVenue, m.active) }
 
-// instrumentFor resolves an instrument by symbol id, falling back to the
+// instrumentFor resolves an instrument on a venue, falling back to the
 // legacy single-symbol cfg fields for the primary (or an unknown) id.
-func (m Model) instrumentFor(id uint32) Instrument {
-	for _, ins := range m.cfg.Instruments {
-		if ins.ID == id {
-			return ins
+func (m Model) instrumentFor(venue string, id uint32) Instrument {
+	for _, v := range m.venues {
+		if v.Name != venue {
+			continue
+		}
+		for _, ins := range v.Instruments {
+			if ins.ID == id {
+				return ins
+			}
 		}
 	}
 	return Instrument{
@@ -94,6 +123,16 @@ func (m Model) instrumentFor(id uint32) Instrument {
 		QtyDec:   m.cfg.QtyDec,
 		Tick:     m.cfg.Tick,
 	}
+}
+
+// venueByName finds a configured venue (false for an unknown name).
+func (m Model) venueByName(name string) (VenueConfig, bool) {
+	for _, v := range m.venues {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return VenueConfig{}, false
 }
 
 // fmtNotional renders a raw price×qty product (notional, uPnL) as money in the
@@ -184,23 +223,28 @@ type Model struct {
 	width  int
 	height int
 
-	// Streaming state (RSX_TERM_STREAM). Every watched symbol folds into its
-	// own market (book/tape/heatmap/persistence/position); active names the
-	// one the book view renders. news feeds the rail + news view (defaults
-	// to news.Off — always offline). heatW is the heatmap's column count
-	// (0 until the first WindowSizeMsg).
-	mkts   map[uint32]*market
-	active uint32
-	screen screen
-	heatW  int
-	news   news.Source
+	// Streaming state (RSX_TERM_STREAM). Every watched (venue, symbol) folds
+	// into its own market (book/tape/heatmap/persistence/position);
+	// activeVenue+active name the one the book view renders. news feeds the
+	// rail + news view (defaults to news.Off — always offline). heatW is the
+	// heatmap's column count (0 until the first WindowSizeMsg).
+	venues      []VenueConfig
+	mkts        map[venueKey]*market
+	activeVenue string
+	active      uint32
+	lastActive  map[string]uint32
+	screen      screen
+	heatW       int
+	news        news.Source
 
 	// Game order entry: the armed size preset (1-5, book view).
 	sizeSel int
 
-	// Book-view symbol switcher (x + letter code).
-	switching bool
-	switchBuf string
+	// Book-view symbol switcher (x + letter code) and the venue picker
+	// (F9 + venue letter).
+	switching    bool
+	switchBuf    string
+	venuePicking bool
 
 	// Pair view: named watchlists, the armed symbol (0 = none), and the
 	// vim-count buffer (digits before b/s).
@@ -259,37 +303,63 @@ func New(cfg Config) Model {
 	if cfg.MaxNotional <= 0 {
 		cfg.MaxNotional = 100 * cfg.LotNotional
 	}
+	if cfg.Venue == "" {
+		cfg.Venue = "rsx"
+	}
 	assignCodes(cfg.Instruments)
+	for i := range cfg.Venues {
+		assignCodes(cfg.Venues[i].Instruments)
+	}
 
 	m := Model{
 		cfg:         cfg,
 		status:      "connecting…",
 		lastMdAgeNs: book.NsUnknown,
 		news:        news.Off{},
-		mkts:        map[uint32]*market{},
+		mkts:        map[venueKey]*market{},
+		activeVenue: cfg.Venue,
 		active:      cfg.SymbolID,
+		lastActive:  map[string]uint32{},
 	}
-	ids := make([]uint32, 0, len(cfg.Instruments))
-	for _, ins := range cfg.Instruments {
-		m.mkts[ins.ID] = newMarket(ins)
-		ids = append(ids, ins.ID)
+	primary := VenueConfig{Name: cfg.Venue, Code: venuePickCode(cfg.Venue), Instruments: cfg.Instruments, Sub: cfg.Sub}
+	m.venues = []VenueConfig{primary}
+	m.venues = append(m.venues, cfg.Venues...)
+
+	// Extra (breadth) venues list first: the pair/news screens default to
+	// the widest universe (e.g. Hyperliquid) when one is configured.
+	for i := len(m.venues) - 1; i >= 0; i-- {
+		v := m.venues[i]
+		ids := make([]uint32, 0, len(v.Instruments))
+		for _, ins := range v.Instruments {
+			m.mkts[venueKey{v.Name, ins.ID}] = newMarket(ins)
+			ids = append(ids, ins.ID)
+		}
+		m.lists = append(m.lists, watchlist{name: v.Name, venue: v.Name, ids: ids})
 	}
-	m.lists = []watchlist{{name: "all", ids: ids}}
 	return m
 }
 
-// mkt returns the active market (creating it defensively for an unknown id).
-func (m Model) mkt() *market { return m.marketFor(m.active) }
+// venuePickCode is a venue's F9-picker letter: its first letter.
+func venuePickCode(name string) string {
+	if name == "" {
+		return "?"
+	}
+	return strings.ToLower(name[:1])
+}
 
-// marketFor returns the market for a symbol id, creating one on first sight
-// (an unsubscribed frame or a fill on a symbol outside the watchlist must
-// not crash the fold).
-func (m Model) marketFor(id uint32) *market {
-	if mk, ok := m.mkts[id]; ok {
+// mkt returns the active market (creating it defensively for an unknown id).
+func (m Model) mkt() *market { return m.marketFor(m.activeVenue, m.active) }
+
+// marketFor returns the market for a symbol on a venue, creating one on
+// first sight (an unsubscribed frame or a fill on a symbol outside the
+// watchlist must not crash the fold).
+func (m Model) marketFor(venue string, id uint32) *market {
+	key := venueKey{venue, id}
+	if mk, ok := m.mkts[key]; ok {
 		return mk
 	}
-	mk := newMarket(m.instrumentFor(id))
-	m.mkts[id] = mk
+	mk := newMarket(m.instrumentFor(venue, id))
+	m.mkts[key] = mk
 	return mk
 }
 
