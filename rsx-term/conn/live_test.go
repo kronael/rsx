@@ -430,3 +430,79 @@ func TestLiveGatewaySubmitBeforeConnectErrors(t *testing.T) {
 		t.Fatalf("cancel before connect did not error")
 	}
 }
+
+// TestLiveGatewayWatchSymbolsAndRouting: WatchSymbols adds peer md
+// subscriptions (one S frame each), and Submit routes o.Symbol into the N
+// frame (0 falls back to the connection's configured symbol).
+func TestLiveGatewayWatchSymbolsAndRouting(t *testing.T) {
+	gwConnCh := make(chan *websocket.Conn, 1)
+	gwDone := make(chan struct{})
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("gw accept: %v", err)
+			return
+		}
+		gwConnCh <- c
+		<-gwDone
+	}))
+	defer gwSrv.Close()
+	defer close(gwDone)
+
+	mdConnCh := make(chan *websocket.Conn, 1)
+	mdDone := make(chan struct{})
+	mdSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("md accept: %v", err)
+			return
+		}
+		mdConnCh <- c
+		<-mdDone
+	}))
+	defer mdSrv.Close()
+	defer close(mdDone)
+
+	live := NewLiveGateway(wsURL(gwSrv.URL), wsURL(mdSrv.URL), "test-secret-at-least-32-bytes-long!", 42, 7)
+	live.WatchSymbols([]uint32{11, 7}) // 7 dedupes (already primary)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := live.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer live.Close()
+
+	gwServerConn := <-gwConnCh
+	mdServerConn := <-mdConnCh
+	for _, want := range []string{`{"S":[7,7]}`, `{"S":[11,7]}`} {
+		_, sub, err := mdServerConn.Read(ctx)
+		if err != nil {
+			t.Fatalf("md subscribe read: %v", err)
+		}
+		if string(sub) != want {
+			t.Fatalf("md subscribe = %s, want %s", sub, want)
+		}
+	}
+
+	if err := live.Submit(wire.OrderReq{Symbol: 11, Side: wire.Buy, Px: 5, Qty: 6}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	_, frame, err := gwServerConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("gw read: %v", err)
+	}
+	if !strings.HasPrefix(string(frame), `{"N":[11,`) {
+		t.Fatalf("order should route to symbol 11: %s", frame)
+	}
+
+	if err := live.Submit(wire.OrderReq{Side: wire.Sell, Px: 5, Qty: 6}); err != nil {
+		t.Fatalf("submit default: %v", err)
+	}
+	_, frame, err = gwServerConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("gw read: %v", err)
+	}
+	if !strings.HasPrefix(string(frame), `{"N":[7,`) {
+		t.Fatalf("symbol 0 should fall back to the configured symbol: %s", frame)
+	}
+}

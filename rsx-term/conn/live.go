@@ -56,6 +56,7 @@ type LiveGateway struct {
 	jwtSecret string
 	userID    uint32
 	symbolID  uint32
+	watch     []uint32 // peer symbols also subscribed on the md socket
 
 	// baseCtx bounds every read/write for the lifetime of the connection;
 	// canceling it (via Close's caller) tears down both sockets. Storing
@@ -155,21 +156,35 @@ func (g *LiveGateway) connectMd(ctx context.Context) {
 	go g.readMd(ctx)
 }
 
-// dialMd dials the marketdata socket and sends the subscribe frame,
-// returning the connected socket or the first error (dial or write).
-// Called both by connectMd and by every reconnect attempt, so a reconnect
-// re-subscribes exactly like the initial connect.
+// WatchSymbols adds peer symbols to the marketdata subscription (the
+// primary symbolID is always subscribed). Call before Connect; the set is
+// re-subscribed on every marketdata reconnect.
+func (g *LiveGateway) WatchSymbols(ids []uint32) {
+	for _, id := range ids {
+		if id != g.symbolID {
+			g.watch = append(g.watch, id)
+		}
+	}
+}
+
+// dialMd dials the marketdata socket and sends one subscribe frame per
+// watched symbol, returning the connected socket or the first error (dial or
+// write). Called both by connectMd and by every reconnect attempt, so a
+// reconnect re-subscribes exactly like the initial connect.
 func (g *LiveGateway) dialMd(ctx context.Context) (*websocket.Conn, error) {
 	conn, _, err := websocket.Dial(ctx, g.mdURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	frame := fmt.Sprintf(`{"S":[%d,%d]}`, g.symbolID, mdChannels)
-	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
-	defer cancel()
-	if err := conn.Write(wctx, websocket.MessageText, []byte(frame)); err != nil {
-		_ = conn.CloseNow()
-		return nil, err
+	for _, id := range append([]uint32{g.symbolID}, g.watch...) {
+		frame := fmt.Sprintf(`{"S":[%d,%d]}`, id, mdChannels)
+		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+		err := conn.Write(wctx, websocket.MessageText, []byte(frame))
+		cancel()
+		if err != nil {
+			_ = conn.CloseNow()
+			return nil, err
+		}
 	}
 	return conn, nil
 }
@@ -224,7 +239,8 @@ func nextBackoff(cur time.Duration) time.Duration {
 }
 
 // Submit satisfies feed.Submitter: encodes o as a webproto-49 "N" frame and
-// writes it to the private socket. It records the send time against the
+// writes it to the private socket. o.Symbol routes the order (0 = the
+// connection's configured symbol). It records the send time against the
 // generated cid first (Folder.Sent) so the RTT on the paired "U" accept is
 // measured from the actual wire write, not from whenever the caller reads
 // the resulting event.
@@ -236,11 +252,15 @@ func (g *LiveGateway) Submit(o wire.OrderReq) error {
 	cid := wire.Cid(atomic.AddUint64(&g.cidCounter, 1))
 	now := time.Now()
 
+	symbol := o.Symbol
+	if symbol == 0 {
+		symbol = g.symbolID
+	}
 	g.folderMu.Lock()
 	g.folder.Sent(o, cid, now)
 	g.folderMu.Unlock()
 
-	frame := wire.EncodeNew(g.symbolID, cid, o)
+	frame := wire.EncodeNew(symbol, cid, o)
 	ctx, cancel := context.WithTimeout(g.baseCtx, writeTimeout)
 	defer cancel()
 	if err := conn.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
