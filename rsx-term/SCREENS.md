@@ -208,3 +208,87 @@ this catalogue and for a sales demo. On the mock, all three latency legs are
 real; live, only `net` is client-measured until the gateway stamps the
 internal/engine legs (they show `·· pending`, dim italic — never a bare
 dash, see `legValue`).
+
+## Streaming heatmap (RSX_TERM_STREAM=1)
+
+A prototype "text Bookmap": time runs **top → bottom**, one row per ~100ms
+bin, **newest at the bottom**, older bins aging upward off a fixed-length
+ring. Price runs **left → right** through a **mid-centred fisheye** — bids
+left, asks right, the touch at 1 tick/cell, deep levels aggregating many
+ticks into one column. The axis re-anchors on the mid only when it drifts
+(hysteresis), so the picture doesn't reshuffle every tick. Rendering is in
+`ui/stream.go`; the ring/fisheye/binning in `book/heatmap.go`. The classic
+DOM view (above) is the default; this view is opt-in via `RSX_TERM_STREAM=1`.
+
+**Each cell is two channels** (the shade ramp ` ░▒▒▓█` below stands in for
+colour, which a terminal shows and this file can't):
+
+- **Background colour = resting SIZE**, log-scaled (sizes are heavy-tailed):
+  the side's hue, dim → saturated as size grows. Bid hue / ask hue are the
+  palette's bid/ask pair (the colorblind theme swaps them for blue/orange).
+- **Glyph (` ░▒▓█`) = resting ORDER COUNT**: one whale (huge size, 1 order)
+  reads as a bright cell with a faint `░`; a wall of many small orders reads
+  as a fuller `▓`/`█`. So "one big order" and "a crowd" look different even at
+  the same size.
+- **Trades** overlay a bright `◆` in the **aggressor's** hue at the trade
+  column, brightest on the newest row and **decaying** over the next couple of
+  rows as they age upward.
+- Degrades: full two-channel RGB on 256/true-colour; **shades-only** (size via
+  glyph, side via 16-colour hue) on a plain-colour terminal; a **colourless
+  glyph ladder** when colour is unavailable (`RSX_TERM_COLOR=plain|shade|true`
+  forces the tier; `NO_COLOR` is honoured).
+- **Left rail** `│` is the **news axis** (placeholder): markers `►` line up
+  with the bin they hit. The default source is off (`news.Off`), so offline the
+  rail is a plain gutter — no network call is made at startup or on render. A
+  live `news.TreeOfAlpha` stub documents `wss://news.treeofalpha.com/ws` but
+  ships disabled.
+- **Pinned footer** (does not scroll): exact live touch (best bid/ask px×size),
+  position + `~uPnL` (mid-marked), latency (`⚡`), a one-line **LLM placeholder**
+  (`? assistant …`), and the control legend.
+
+**Idle** — a stable book: two resting clusters straddle the mid gap, the same
+shape scrolling down bin after bin.
+
+```
+ RSX  PENGU-PERP   ● live  ◀ bids  mid 0.010000  asks ▶
+│        ░░▒▒▓░░       ░░▒▓▓░░
+│        ░░▒▒▓░░       ░░▒▓▓░░
+│        ░░▒▒▓░░       ░░▒▓▓░░
+│        ░░▒▒▓░░       ░░▒▓▓░░
+│        ░░▒▒▓░░       ░░▒▓▓░░
+bid 0.009999 × 0.0005   ask 0.010001 × 0.0006   spread 2
+pos flat — fills build it
+⚡ RTT 10.4 µs   p50 9.9 µs · p99 10.4 µs · best 9.0 µs
+? assistant — context ready (placeholder)
+ q quit  b/s side  +/- tick  enter submit  F3 trace  ? help  · streaming heatmap (RSX_TERM_STREAM)
+```
+
+**Wall building** — a large ask order stacks a tick above the touch (bright
+background = big size; solid `█` because it's many orders — a real wall):
+
+```
+│        ░░▒▒▓░░     █▓░▒▓▓░░
+│        ░░▒▒▓░░     █▓░▒▓▓░░
+│        ░░▒▒▓░░     ██░▒▓▓░░
+│        ░░▒▒▓░░     ██░▒▓▓░░   ← ask wall thickening into the touch
+```
+
+**Trade burst** — market buys lift the offer; bright `◆` marks print on the
+newest rows at the trade column and decay upward:
+
+```
+│        ░░▒▒▓░░       ░░▒▓▓░░
+│        ░░▒▒▓░░      ◆░░▒▓▓░░   ← older prints, dimmer
+│        ░░▒▒▓░░     ◆◆░░▒▓▓░░
+│        ░░▒▒▓░░    ◆◆◆░▒▓▓░░   ← newest bin, brightest
+```
+
+**Your fill** — after a fill the footer flips from flat to a live position and
+mid-marked uPnL (the map itself is unchanged — your resting orders are a DOM
+cue, deferred this prototype pass):
+
+```
+bid 0.009999 × 0.0005   ask 0.010001 × 0.0006   spread 2
+pos LONG +0.0014 @ 0.009998   ~uPnL +0.000140
+⚡ RTT 10.4 µs   p50 9.9 µs · p99 10.4 µs · best 9.0 µs
+```

@@ -39,10 +39,13 @@ func main() {
 	// RSX_TUI_THEME=colorblind swaps the bid/ask red-green pair for a
 	// deuteranopia-safe blue/orange. Must run before any style is rendered.
 	ui.UseTheme(os.Getenv("RSX_TUI_THEME"))
+	// RSX_TERM_STREAM=1 selects the streaming "text Bookmap" heatmap view;
+	// unset (the default) keeps the classic DOM three-column view.
+	stream := os.Getenv("RSX_TERM_STREAM") == "1"
 
 	if gwURL == "mock" {
 		priceDec, qtyDec, tick := displayConfig("", symbolID)
-		runMock(symbolID, priceDec, qtyDec, tick)
+		runMock(symbolID, priceDec, qtyDec, tick, stream)
 		return
 	}
 	priceDec, qtyDec, tick := displayConfig(gwURL, symbolID)
@@ -56,6 +59,7 @@ func main() {
 		priceDec:  priceDec,
 		qtyDec:    qtyDec,
 		tick:      tick,
+		stream:    stream,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
@@ -86,7 +90,7 @@ func displayConfig(gwURL string, symbolID uint32) (priceDec, qtyDec int, tick in
 
 // runMock builds the model over an offline MockGateway and streams the scripted
 // demo feed into the running program.
-func runMock(symbolID uint32, priceDec, qtyDec int, tick int64) {
+func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool) {
 	mock := &conn.MockGateway{}
 	model := ui.New(ui.Config{
 		Symbol:     Symbol,
@@ -97,6 +101,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64) {
 		PriceDec:   priceDec,
 		QtyDec:     qtyDec,
 		Tick:       tick,
+		Stream:     stream,
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go feedDemo(p)
@@ -125,6 +130,7 @@ type liveConfig struct {
 	priceDec  int
 	qtyDec    int
 	tick      int64
+	stream    bool
 }
 
 // runLive builds a LiveGateway from cfg, connects both sockets, and runs
@@ -150,6 +156,7 @@ func runLive(cfg liveConfig) error {
 		PriceDec:   cfg.priceDec,
 		QtyDec:     cfg.qtyDec,
 		Tick:       cfg.tick,
+		Stream:     cfg.stream,
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go drainEvents(p, live.Events())

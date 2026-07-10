@@ -13,6 +13,7 @@ import (
 
 	"rsx-term/book"
 	"rsx-term/feed"
+	"rsx-term/news"
 	"rsx-term/wire"
 )
 
@@ -32,6 +33,9 @@ type Config struct {
 	// Tick is the smallest raw price increment (`+`/`-` step this much). PENGU
 	// is 1; 0 falls back to 1 so the nudge keys always move by something.
 	Tick int64
+	// Stream selects the streaming "text Bookmap" heatmap view (RSX_TERM_STREAM=1).
+	// Off (the default) renders the classic DOM three-column view, unchanged.
+	Stream bool
 }
 
 // fmtPx / fmtQty render a raw price / qty as a human decimal using the
@@ -125,6 +129,13 @@ type Model struct {
 
 	width  int
 	height int
+
+	// Streaming heatmap state (RSX_TERM_STREAM). heat is nil until the first
+	// WindowSizeMsg sizes the ring; pendingTrades accumulates prints between bin
+	// ticks; news feeds the left rail (defaults to news.Off — always offline).
+	heat          *book.Heatmap
+	pendingTrades []book.TapeEntry
+	news          news.Source
 }
 
 // New builds a fresh model. Zero-value book / seq / tape / position /
@@ -135,12 +146,19 @@ func New(cfg Config) Model {
 		cfg:         cfg,
 		status:      "connecting…",
 		lastMdAgeNs: book.NsUnknown,
+		news:        news.Off{},
 	}
 }
 
 // Init satisfies tea.Model. The live/mock feeds are driven externally
-// (main.go), so there is no startup command.
-func (m Model) Init() tea.Cmd { return nil }
+// (main.go), so the only startup command is the streaming heatmap's bin tick
+// (DOM mode has none — it returns nil, unchanged).
+func (m Model) Init() tea.Cmd {
+	if m.cfg.Stream {
+		return binTickCmd()
+	}
+	return nil
+}
 
 // Position returns the client-derived position. Exported so external tests
 // (and a future account panel) can read the folded net / entry / uPnL without

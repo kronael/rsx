@@ -56,7 +56,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.TakerSide != 0 {
 			side = wire.Sell
 		}
-		m.tape.Push(book.TapeEntry{Side: side, Px: v.Px, Qty: v.Qty})
+		entry := book.TapeEntry{Side: side, Px: v.Px, Qty: v.Qty}
+		m.tape.Push(entry)
+		if m.cfg.Stream {
+			m.pendingTrades = append(m.pendingTrades, entry)
+		}
 		m.foldMdFrame(v.TsNs)
 
 	case wire.Accepted:
@@ -88,8 +92,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
+		if m.cfg.Stream {
+			m.resizeHeat()
+		}
+
+	case binTickMsg:
+		if m.cfg.Stream {
+			m.foldBin(time.Time(v).UnixNano())
+			return m, binTickCmd()
+		}
 	}
 	return m, nil
+}
+
+// foldBin closes the current heatmap time bin: it folds the live book snapshot
+// and the trades accumulated since the last tick into a fresh ring row, then
+// clears the pending-trade buffer. No-op until the ring is sized.
+func (m *Model) foldBin(binTs int64) {
+	if m.heat == nil {
+		return
+	}
+	m.heat.Ingest(m.book.Bids, m.book.Asks, m.pendingTrades, binTs)
+	m.pendingTrades = m.pendingTrades[:0]
+}
+
+// resizeHeat (re)builds the heatmap ring to fit the terminal. It reallocates on
+// a size change (dropping history — acceptable for a live stream), and clears
+// the ring when the terminal is too small to render.
+func (m *Model) resizeHeat() {
+	w, h := streamDims(m.width, m.height)
+	if w < 2 || h < 1 {
+		m.heat = nil
+		return
+	}
+	if m.heat == nil || m.heat.Width() != w || m.heat.Height() != h {
+		tick := m.cfg.Tick
+		if tick <= 0 {
+			tick = 1
+		}
+		m.heat = book.NewHeatmap(w, h, tick)
+	}
+}
+
+// streamDims derives the heatmap's column and row counts from the terminal size:
+// one column of news rail on the left, and reserved rows for the header + the
+// pinned footer. Width is forced even so the mid splits the axis cleanly.
+func streamDims(width, height int) (int, int) {
+	const rail = 1
+	const reserved = 1 + 5 // header line + 5 footer lines
+	w := width - rail
+	if w%2 != 0 {
+		w--
+	}
+	h := height - reserved
+	if h > 60 {
+		h = 60
+	}
+	return w, h
 }
 
 // foldRtt records a measured round-trip from a private event. A negative RttNs
