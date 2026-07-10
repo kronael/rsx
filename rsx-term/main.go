@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -51,20 +52,95 @@ func main() {
 	priceDec, qtyDec, tick := displayConfig(gwURL, symbolID)
 
 	err := runLive(liveConfig{
-		gwURL:     gwURL,
-		mdURL:     mdURL,
-		jwtSecret: jwtSecret,
-		userID:    userID,
-		symbolID:  symbolID,
-		priceDec:  priceDec,
-		qtyDec:    qtyDec,
-		tick:      tick,
-		stream:    stream,
+		gwURL:       gwURL,
+		mdURL:       mdURL,
+		jwtSecret:   jwtSecret,
+		userID:      userID,
+		symbolID:    symbolID,
+		priceDec:    priceDec,
+		qtyDec:      qtyDec,
+		tick:        tick,
+		stream:      stream,
+		instruments: watchInstruments(gwURL, symbolID, priceDec, qtyDec, tick, stream),
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
 		os.Exit(1)
 	}
+}
+
+// watchInstruments builds the streaming watchlist: every symbol the gateway
+// serves (decimals/tick from /v1/symbols) named/coded via RSX_TERM_WATCH
+// ("id:name[:code[:multPct]]", comma-separated — the endpoint carries no
+// names yet, so unnamed ids show as SYM-<id>). The primary symbol always
+// leads. DOM mode (stream off) keeps the single-symbol list.
+func watchInstruments(gwURL string, primary uint32, priceDec, qtyDec int, tick int64, stream bool) []ui.Instrument {
+	primaryIns := ui.Instrument{
+		ID: primary, Name: Symbol, PriceDec: priceDec, QtyDec: qtyDec, Tick: tick,
+	}
+	if !stream {
+		return []ui.Instrument{primaryIns}
+	}
+	names, codes, mults := parseWatchEnv(os.Getenv("RSX_TERM_WATCH"))
+	if n, ok := names[primary]; ok {
+		primaryIns.Name = n
+	}
+	primaryIns.Code = codes[primary]
+	primaryIns.LotMult = mults[primary]
+	out := []ui.Instrument{primaryIns}
+
+	symbols, err := conn.FetchSymbols(gwURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: symbol list fetch failed (%v); single-symbol watchlist\n", err)
+		return out
+	}
+	for _, s := range symbols {
+		if s.ID == primary {
+			continue
+		}
+		name, ok := names[s.ID]
+		if !ok {
+			name = fmt.Sprintf("SYM-%d", s.ID)
+		}
+		out = append(out, ui.Instrument{
+			ID:       s.ID,
+			Name:     name,
+			Code:     codes[s.ID],
+			PriceDec: s.PriceDec,
+			QtyDec:   s.QtyDec,
+			Tick:     s.TickSize,
+			LotMult:  mults[s.ID],
+		})
+	}
+	return out
+}
+
+// parseWatchEnv parses RSX_TERM_WATCH: "id:name[:code[:multPct]]" entries,
+// comma-separated. Malformed entries are skipped (config sugar must never
+// stop the terminal).
+func parseWatchEnv(raw string) (names map[uint32]string, codes map[uint32]string, mults map[uint32]int64) {
+	names, codes, mults = map[uint32]string{}, map[uint32]string{}, map[uint32]int64{}
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) < 2 || parts[0] == "" {
+			continue
+		}
+		id64, err := strconv.ParseUint(parts[0], 10, 32)
+		if err != nil {
+			continue
+		}
+		id := uint32(id64)
+		names[id] = parts[1]
+		if len(parts) > 2 && parts[2] != "" {
+			codes[id] = parts[2]
+		}
+		if len(parts) > 3 {
+			if mult, err := strconv.ParseInt(parts[3], 10, 64); err == nil && mult > 0 {
+				mults[id] = mult
+			}
+		}
+	}
+	return names, codes, mults
 }
 
 // displayConfig resolves the symbol's display precision + tick. Base values
@@ -89,19 +165,31 @@ func displayConfig(gwURL string, symbolID uint32) (priceDec, qtyDec int, tick in
 }
 
 // runMock builds the model over an offline MockGateway and streams the scripted
-// demo feed into the running program.
+// demo feed into the running program. Streaming mode watches the demo peer
+// symbol too, so the pair view has breadth offline.
 func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool) {
 	mock := &conn.MockGateway{}
+	instruments := []ui.Instrument{
+		{ID: symbolID, Name: Symbol, PriceDec: priceDec, QtyDec: qtyDec, Tick: tick},
+	}
+	if stream {
+		instruments = append(instruments, ui.Instrument{
+			ID: conn.DemoPeerID, Name: "WIF-PERP", PriceDec: priceDec, QtyDec: qtyDec, Tick: tick,
+		})
+	}
 	model := ui.New(ui.Config{
-		Symbol:     Symbol,
-		SymbolID:   symbolID,
-		Endpoint:   "mock://demo",
-		MdEndpoint: "mock://demo",
-		Sub:        mock,
-		PriceDec:   priceDec,
-		QtyDec:     qtyDec,
-		Tick:       tick,
-		Stream:     stream,
+		Symbol:      Symbol,
+		SymbolID:    symbolID,
+		Endpoint:    "mock://demo",
+		MdEndpoint:  "mock://demo",
+		Sub:         mock,
+		PriceDec:    priceDec,
+		QtyDec:      qtyDec,
+		Tick:        tick,
+		Stream:      stream,
+		Instruments: instruments,
+		LotNotional: envI64("RSX_TERM_LOT", 0),
+		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go feedDemo(p)
@@ -122,15 +210,16 @@ func feedDemo(p *tea.Program) {
 
 // liveConfig is everything the live gateway + marketdata path needs.
 type liveConfig struct {
-	gwURL     string
-	mdURL     string
-	jwtSecret string
-	userID    uint32
-	symbolID  uint32
-	priceDec  int
-	qtyDec    int
-	tick      int64
-	stream    bool
+	gwURL       string
+	mdURL       string
+	jwtSecret   string
+	userID      uint32
+	symbolID    uint32
+	priceDec    int
+	qtyDec      int
+	tick        int64
+	stream      bool
+	instruments []ui.Instrument
 }
 
 // runLive builds a LiveGateway from cfg, connects both sockets, and runs
@@ -139,6 +228,11 @@ type liveConfig struct {
 // drainEvents is the only extra goroutine main.go adds, mirroring feedDemo.
 func runLive(cfg liveConfig) error {
 	live := conn.NewLiveGateway(cfg.gwURL, cfg.mdURL, cfg.jwtSecret, cfg.userID, cfg.symbolID)
+	var watch []uint32
+	for _, ins := range cfg.instruments {
+		watch = append(watch, ins.ID)
+	}
+	live.WatchSymbols(watch)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -148,15 +242,18 @@ func runLive(cfg liveConfig) error {
 	defer live.Close()
 
 	model := ui.New(ui.Config{
-		Symbol:     Symbol,
-		SymbolID:   cfg.symbolID,
-		Endpoint:   cfg.gwURL,
-		MdEndpoint: cfg.mdURL,
-		Sub:        live,
-		PriceDec:   cfg.priceDec,
-		QtyDec:     cfg.qtyDec,
-		Tick:       cfg.tick,
-		Stream:     cfg.stream,
+		Symbol:      Symbol,
+		SymbolID:    cfg.symbolID,
+		Endpoint:    cfg.gwURL,
+		MdEndpoint:  cfg.mdURL,
+		Sub:         live,
+		PriceDec:    cfg.priceDec,
+		QtyDec:      cfg.qtyDec,
+		Tick:        cfg.tick,
+		Stream:      cfg.stream,
+		Instruments: cfg.instruments,
+		LotNotional: envI64("RSX_TERM_LOT", 0),
+		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go drainEvents(p, live.Events())
@@ -178,6 +275,21 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envI64 parses an int64 env var, or def when unset/empty/malformed (sizing
+// sugar — a bad value falls back rather than blocking launch).
+func envI64(key string, def int64) int64 {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: %s=%q is not a valid integer; using %d\n", key, v, def)
+		return def
+	}
+	return n
 }
 
 // envU32 parses a u32 env var, or def when unset/empty. A present-but-malformed

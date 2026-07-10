@@ -404,30 +404,47 @@ func hexRGB(h string) (int, int, int) {
 	return int(r), int(g), int(b)
 }
 
-// viewStream renders the whole streaming screen as a fixed grid (see the file
-// header). Selected by RSX_TERM_STREAM; the DOM View is untouched when the
-// flag is off.
+// viewStream renders the active streaming screen as a fixed grid (see the
+// file header): the depth BOOK (default), the multi-pair chase grid, the
+// news overview, or the LLM assistant. Selected by RSX_TERM_STREAM; the DOM
+// View is untouched when the flag is off.
 func (m Model) viewStream() string {
 	if m.showHelp {
 		return m.viewStreamHelp()
 	}
-	if m.heat == nil {
+	switch m.screen {
+	case screenPair:
+		return m.viewPair()
+	case screenNews:
+		return m.viewNews()
+	case screenLLM:
+		return m.viewLLM()
+	default:
+		return m.viewBookScreen()
+	}
+}
+
+// viewBookScreen is the depth heatmap: hand market-making on ONE symbol
+// (hop symbols with x + letter code; cover breadth in the pair view).
+func (m Model) viewBookScreen() string {
+	if m.heatW == 0 {
 		return StyleMuted.Render("streaming heatmap — sizing… (waiting for terminal size / first frame)")
 	}
+	mk := m.mkt()
 	mode := detectMode()
 	nowNs := time.Now().UnixNano()
-	now := book.LiveFold(m.book.Bids, m.book.Asks, m.pendingTrades, m.persist, m.lastBinNs, nowNs)
-	refMax, tradeMax := m.stableBases(now)
-	anchor := m.heat.Anchor()
-	tick := m.heat.Tick()
+	now := book.LiveFold(mk.book.Bids, mk.book.Asks, mk.pending, mk.persist, mk.lastBinNs, nowNs)
+	refMax, tradeMax := stableBases(mk, now)
+	anchor := mk.heat.Anchor()
+	tick := mk.heat.Tick()
 
-	rows := m.heat.Rows()
-	far := m.heat.FarRows()
-	body := make([]string, 0, far+m.heat.LiveCap()+1)
+	rows := mk.heat.Rows()
+	far := mk.heat.FarRows()
+	body := make([]string, 0, far+mk.heat.LiveCap()+1)
 	for _, row := range rows[:far] {
 		body = append(body, m.renderRow(row, anchor, tick, refMax, tradeMax, mode, false))
 	}
-	for i := 0; i < m.heat.LiveCap()-m.heat.LiveLen(); i++ {
+	for i := 0; i < mk.heat.LiveCap()-mk.heat.LiveLen(); i++ {
 		body = append(body, m.blankRow())
 	}
 	for _, row := range rows[far:] {
@@ -440,7 +457,7 @@ func (m Model) viewStream() string {
 	}
 
 	lines := make([]string, 0, m.height)
-	lines = append(lines, m.streamHeader())
+	lines = append(lines, m.streamHeader(), m.modeLine())
 	lines = append(lines, body...)
 	lines = append(lines, m.rulerLine(anchor, tick))
 	lines = append(lines, m.streamFooter()...)
@@ -451,8 +468,8 @@ func (m Model) viewStream() string {
 // floored by whatever the live frame shows right now, so a fresh spike still
 // registers between bin ticks while the view never renormalises downward
 // frame-to-frame.
-func (m Model) stableBases(now book.Row) (refMax, tradeMax int64) {
-	refMax, tradeMax = m.sizeBasis, m.tradeBasis
+func stableBases(mk *market, now book.Row) (refMax, tradeMax int64) {
+	refMax, tradeMax = mk.sizeBasis, mk.tradeBasis
 	for _, l := range now.Levels {
 		if l.Size > refMax {
 			refMax = l.Size
@@ -464,6 +481,61 @@ func (m Model) stableBases(now book.Row) (refMax, tradeMax int64) {
 		}
 	}
 	return refMax, tradeMax
+}
+
+// modeLine is the persistent status strip under the header: the active
+// screen, the RO/PO modifier toggles (always visible — the trader must know
+// what mode the next keystroke fires in), the armed size, the watchlist, and
+// screen-specific state (the armed pair symbol, the switcher buffer).
+func (m Model) modeLine() string {
+	tag := lipgloss.NewStyle().
+		Foreground(ColorPageBg).
+		Background(ColorAccent).
+		Bold(true).
+		Render(" " + m.screen.label() + " ")
+	mod := func(name string, on bool) string {
+		if on {
+			return StyleArmed.Render(" " + name + " ")
+		}
+		return StyleMuted.Render(" " + name + " off ")
+	}
+	parts := []string{
+		tag,
+		mod("RO", m.reduceOnly),
+		mod("PO", m.postOnly),
+		StyleMuted.Render(fmt.Sprintf(" size %s [%d] ", m.fmtQty(m.sizePreset()), m.sizeSel+1)),
+		StyleMuted.Render(" list " + m.lists[m.listSel].name + " "),
+	}
+	if m.switching {
+		parts = append(parts, StyleTextBright.Bold(true).Render(" switch: "+m.switchBuf+"_ ")+m.switchCandidates())
+	}
+	if m.screen == screenPair {
+		if m.armedSym != 0 {
+			armed := m.instrumentFor(m.armedSym).Name
+			if m.countBuf != "" {
+				armed += " ×" + m.countBuf
+			}
+			parts = append(parts, StyleArmed.Render(" ARMED "+armed+" "))
+		} else {
+			parts = append(parts, StyleMuted.Render(" press a letter to arm "))
+		}
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
+
+// switchCandidates lists the watchlist's code → name pairs that still match
+// the switcher buffer.
+func (m Model) switchCandidates() string {
+	var parts []string
+	for _, ins := range m.cfg.Instruments {
+		if strings.HasPrefix(ins.Code, m.switchBuf) {
+			parts = append(parts, ins.Code+" "+ins.Name)
+		}
+	}
+	if len(parts) == 0 {
+		return StyleAsk.Render("no match")
+	}
+	return StyleMuted.Render(strings.Join(parts, " · "))
 }
 
 // renderRow renders one body line: news rail + heatmap cells + time gutter.
@@ -496,7 +568,7 @@ const tapeRailWidth = 14
 // level in the heatmap AND in this feed.
 func (m Model) tapeRail(rows int, tradeMax int64) []string {
 	out := make([]string, rows)
-	entries := m.tape.Entries()
+	entries := m.mkt().tape.Entries()
 	blank := StyleMuted.Render(" ┆") + strings.Repeat(" ", tapeRailWidth-2)
 	for i := 0; i < rows; i++ {
 		if i >= len(entries) {
@@ -543,11 +615,11 @@ func (m Model) viewStreamHelp() string {
 	return RingPanelStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
-// markOwnOrders flags the cells where this session's orders rest, so the map
-// itself shows them (◉) — they are re-marked every frame at their live price
-// column, never lost as history drifts up.
+// markOwnOrders flags the cells where this session's orders rest on the
+// ACTIVE symbol, so the map itself shows them (◇) — they are re-marked every
+// frame at their live price column, never lost as history drifts up.
 func (m Model) markOwnOrders(cells []cell, anchor, tick int64) {
-	for _, o := range m.openOrders {
+	for _, o := range m.ownOrdersFor(m.active) {
 		col, ok := book.FisheyeCol(o.Px, anchor, tick, len(cells))
 		if !ok {
 			continue
@@ -648,7 +720,7 @@ func (m Model) rulerLine(anchor, tick int64) string {
 	if half >= 1 {
 		marks[half-1], marks[half] = glyphs.touchTick, glyphs.touchTick
 	}
-	for _, o := range m.openOrders {
+	for _, o := range m.ownOrdersFor(m.active) {
 		col, ok := book.FisheyeCol(o.Px, anchor, tick, m.heatW)
 		if !ok {
 			continue
@@ -660,8 +732,8 @@ func (m Model) rulerLine(anchor, tick int64) string {
 		}
 		styles[col] = StyleAccent.Bold(true)
 	}
-	if m.cursorPx > 0 {
-		if col, ok := book.FisheyeCol(m.cursorPx, anchor, tick, m.heatW); ok {
+	if cursor := m.mkt().cursorPx; cursor > 0 {
+		if col, ok := book.FisheyeCol(cursor, anchor, tick, m.heatW); ok {
 			marks[col] = glyphs.cursor
 			styles[col] = StyleTextBright.Bold(true)
 		}
@@ -682,13 +754,13 @@ func (m Model) streamHeader() string {
 		Foreground(ColorPageBg).
 		Background(ColorHeading).
 		Bold(true).
-		Render(fmt.Sprintf(" RSX  %s ", m.cfg.Symbol))
+		Render(fmt.Sprintf(" RSX  %s ", m.ins().Name))
 	link := StyleLive.Render("● live")
 	if !m.gwConnected {
 		link = StyleDegraded.Render("● offline")
 	}
 	mid := "—"
-	if p := m.heat.MidPx(); p > 0 {
+	if p := m.mkt().heat.MidPx(); p > 0 {
 		mid = m.fmtPx(p)
 	}
 	axis := StyleMuted.Render("◀ bids") +
@@ -698,14 +770,15 @@ func (m Model) streamHeader() string {
 }
 
 // streamLegend is the one-line control hint pinned under the heatmap.
-const streamLegend = " q quit  b/s side  1-5 size  h/l·←/→ cursor  j/k touch  f place  d cancel  ⇧1-5 cross  F3 trace  ? help "
+const streamLegend = " q quit  tab view  x symbol  b/s side  1-5 size  ⇧1-5 cross  h/l j/k cursor  f place  d cancel  r/p RO/PO  ? help "
 
 // streamFooter is the pinned status block: the exact touch ladder (two
 // lines), position, latency, and the control legend.
 func (m Model) streamFooter() []string {
+	mk := m.mkt()
 	return []string{
-		m.touchLadderLine(m.book.Asks, "ask ", StyleAsk),
-		m.touchLadderLine(m.book.Bids, "bid ", StyleLive),
+		m.touchLadderLine(mk.book.Asks, "ask ", StyleAsk),
+		m.touchLadderLine(mk.book.Bids, "bid ", StyleLive),
 		m.streamPosLine(),
 		m.streamLatLine(),
 		StyleMuted.Render(streamLegend),
@@ -731,15 +804,15 @@ func (m Model) touchLadderLine(levels []wire.Level, label string, style lipgloss
 	return out + style.Render(strings.Join(parts, "  "))
 }
 
-// streamPosLine shows the client-derived position and mid-marked uPnL,
-// mirroring the DOM positions panel's honesty (dashed uPnL until a mid
-// exists), plus the armed size preset.
+// streamPosLine shows the ACTIVE symbol's client-derived position and
+// mid-marked uPnL, mirroring the DOM positions panel's honesty (dashed uPnL
+// until a mid exists).
 func (m Model) streamPosLine() string {
-	preset := StyleMuted.Render(fmt.Sprintf(" size %s [%d]   ", m.fmtQty(m.sizePreset()), m.sizeSel+1))
-	if m.position.Flat() {
-		return preset + StyleMuted.Render("pos flat — fills build it")
+	mk := m.mkt()
+	if mk.position.Flat() {
+		return StyleMuted.Render(" pos flat — fills build it")
 	}
-	net := m.position.Net
+	net := mk.position.Net
 	word, st := "LONG", StyleLive
 	if net < 0 {
 		word, st = "SHORT", StyleAsk
@@ -749,12 +822,12 @@ func (m Model) streamPosLine() string {
 		netStr = "+" + netStr
 	}
 	entry := "—"
-	if e, ok := m.position.Entry(); ok {
+	if e, ok := mk.position.Entry(); ok {
 		entry = m.fmtPx(e)
 	}
 	upnl := StyleDegraded.Render("~uPnL —") + StyleMuted.Render(" (needs live book)")
-	if mid, ok := m.book.Mid(); ok {
-		if u, ok := m.position.Upnl(mid); ok {
+	if mid, ok := mk.book.Mid(); ok {
+		if u, ok := mk.position.Upnl(mid); ok {
 			v, us := m.fmtNotional(u), StyleLive
 			if u > 0 {
 				v = "+" + v
@@ -764,7 +837,7 @@ func (m Model) streamPosLine() string {
 			upnl = StyleMuted.Render("~uPnL ") + us.Render(v)
 		}
 	}
-	return preset + StyleMuted.Render("pos ") + st.Render(word) + " " +
+	return StyleMuted.Render(" pos ") + st.Render(word) + " " +
 		StyleText.Render(netStr+" @ "+entry) + "   " + upnl
 }
 

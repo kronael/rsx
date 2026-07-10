@@ -42,46 +42,64 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mdConnected = false
 
 	case wire.Snapshot:
-		m.seq.ResetTo(v.Seq)
-		m.book.ApplySnapshot(v)
-		m.recenterLadder()
-		m.foldMdFrame(v.TsNs)
+		if m.primaryFrame(v.SymbolID) {
+			m.seq.ResetTo(v.Seq)
+			m.book.ApplySnapshot(v)
+			m.recenterLadder()
+			m.foldMdFrame(v.TsNs)
+		}
 		if m.cfg.Stream {
-			m.persist.ObserveSnapshot(v.Bids, v.Asks, time.Now().UnixNano())
+			mk := m.marketFor(m.frameSymbol(v.SymbolID))
+			mk.book.ApplySnapshot(v)
+			mk.persist.ObserveSnapshot(v.Bids, v.Asks, time.Now().UnixNano())
 		}
 	case wire.Delta:
-		m.seq.Observe(v.Seq)
-		m.book.ApplyDelta(v)
-		m.recenterLadder()
-		m.foldMdFrame(v.TsNs)
+		if m.primaryFrame(v.SymbolID) {
+			m.seq.Observe(v.Seq)
+			m.book.ApplyDelta(v)
+			m.recenterLadder()
+			m.foldMdFrame(v.TsNs)
+		}
 		if m.cfg.Stream {
-			m.persist.ObserveDelta(v, time.Now().UnixNano())
+			mk := m.marketFor(m.frameSymbol(v.SymbolID))
+			mk.book.ApplyDelta(v)
+			mk.persist.ObserveDelta(v, time.Now().UnixNano())
 		}
 	case wire.Bbo:
-		m.seq.Observe(v.Seq)
-		m.book.ApplyBbo(v)
-		m.recenterLadder()
-		m.foldMdFrame(v.TsNs)
+		if m.primaryFrame(v.SymbolID) {
+			m.seq.Observe(v.Seq)
+			m.book.ApplyBbo(v)
+			m.recenterLadder()
+			m.foldMdFrame(v.TsNs)
+		}
+		if m.cfg.Stream {
+			m.marketFor(m.frameSymbol(v.SymbolID)).book.ApplyBbo(v)
+		}
 	case wire.MdTrade:
-		m.seq.Observe(v.Seq)
 		side := wire.Buy
 		if v.TakerSide != 0 {
 			side = wire.Sell
 		}
 		entry := book.TapeEntry{Side: side, Px: v.Px, Qty: v.Qty}
-		m.tape.Push(entry)
-		if m.cfg.Stream {
-			m.pendingTrades = append(m.pendingTrades, entry)
+		if m.primaryFrame(v.SymbolID) {
+			m.seq.Observe(v.Seq)
+			m.tape.Push(entry)
+			m.foldMdFrame(v.TsNs)
 		}
-		m.foldMdFrame(v.TsNs)
+		if m.cfg.Stream {
+			mk := m.marketFor(m.frameSymbol(v.SymbolID))
+			mk.tape.Push(entry)
+			mk.pending = append(mk.pending, entry)
+		}
 
 	case wire.Accepted:
 		m.openOrders = append(m.openOrders, OpenOrder{
-			Oid:  v.Oid,
-			Cid:  v.Cid,
-			Side: v.Order.Side,
-			Px:   v.Order.Px,
-			Qty:  v.Order.Qty,
+			Oid:    v.Oid,
+			Cid:    v.Cid,
+			Side:   v.Order.Side,
+			Px:     v.Order.Px,
+			Qty:    v.Order.Qty,
+			Symbol: m.frameSymbol(v.Order.Symbol),
 		})
 		m.status = fmt.Sprintf("order %d accepted", v.Oid)
 		m.foldRtt(v.RttNs)
@@ -93,7 +111,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "rejected: " + v.Reason
 	case wire.Fill:
 		m.fills++
-		m.position.ApplyFill(v.Side, v.Px, v.Qty)
+		if m.primaryFrame(v.Symbol) {
+			m.position.ApplyFill(v.Side, v.Px, v.Qty)
+		}
+		if m.cfg.Stream {
+			m.marketFor(m.frameSymbol(v.Symbol)).position.ApplyFill(v.Side, v.Px, v.Qty)
+		}
 		m.status = fmt.Sprintf("fill %d: %s @ %s", v.Oid, m.fmtQty(v.Qty), m.fmtPx(v.Px))
 
 	case feed.Latency:
@@ -117,10 +140,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleStreamKey is the streaming view's game order entry: size presets,
-// a price cursor, single-key place/cancel, single-key crosses. Orders fire
-// on ONE keypress (no two-enter confirm — that is the decided design for
-// this view); the fat-finger size cap still hard-blocks in fire.
+// handleStreamKey routes a key by the active screen. Global chrome first
+// (quit, help, tab view-cycle, r/p modifier toggles — persistent modes shown
+// on the top mode line); then the screen's own grammar. Orders fire on ONE
+// keypress everywhere in the streaming terminal (no two-enter confirm — the
+// decided design); the fat-finger caps still hard-block in fire.
 func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
 	if m.showHelp {
@@ -130,11 +154,52 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		return m, nil
 	}
+	if m.switching {
+		return m.handleSwitchKey(key)
+	}
 	switch key {
-	case "q", "ctrl+c", "esc":
+	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
 		m.showHelp = true
+		return m, nil
+	case "tab":
+		m.screen = m.screen.next()
+		return m, nil
+	case "shift+tab":
+		m.screen = m.screen.prev()
+		return m, nil
+	case "r":
+		m.reduceOnly = !m.reduceOnly
+		m.status = "reduce-only " + onOff(m.reduceOnly) + " (applies to every order until toggled)"
+		return m, nil
+	case "p":
+		m.postOnly = !m.postOnly
+		m.status = "post-only " + onOff(m.postOnly) + " (applies to resting orders until toggled)"
+		return m, nil
+	}
+	switch m.screen {
+	case screenPair:
+		return m.handlePairKey(key)
+	case screenNews:
+		return m.handleNewsKey(key)
+	case screenLLM:
+		return m.handleLLMKey(key)
+	default:
+		return m.handleBookKey(key)
+	}
+}
+
+// handleBookKey is the depth/book view's game order entry: size presets, a
+// price cursor, single-key place/cancel, single-key crosses, and the x
+// symbol switcher.
+func (m Model) handleBookKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		return m, tea.Quit
+	case "x":
+		m.switching = true
+		m.switchBuf = ""
 	case "b":
 		m.side = wire.Buy
 	case "s":
@@ -160,6 +225,53 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSwitchKey is the book view's rapid symbol switcher: x, then the
+// symbol's letter code (shown in the mode line). Exact code match switches
+// instantly; esc cancels; backspace edits.
+func (m Model) handleSwitchKey(key string) (tea.Model, tea.Cmd) {
+	switch {
+	case key == "esc" || key == "x":
+		m.switching = false
+		m.switchBuf = ""
+	case key == "backspace":
+		if len(m.switchBuf) > 0 {
+			m.switchBuf = m.switchBuf[:len(m.switchBuf)-1]
+		}
+	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
+		m.switchBuf += key
+		if ins, ok := m.instrumentByCode(m.switchBuf); ok {
+			m.switchTo(ins)
+			return m, nil
+		}
+		if len(m.switchBuf) >= 2 {
+			m.status = fmt.Sprintf("no symbol coded %q", m.switchBuf)
+			m.switching = false
+			m.switchBuf = ""
+		}
+	}
+	return m, nil
+}
+
+// instrumentByCode finds a watchlist instrument by its switcher code.
+func (m Model) instrumentByCode(code string) (Instrument, bool) {
+	for _, ins := range m.cfg.Instruments {
+		if ins.Code == code {
+			return ins, true
+		}
+	}
+	return Instrument{}, false
+}
+
+// switchTo makes ins the active symbol: the book view re-anchors onto its
+// market's heatmap (already folding in the background, so the hop is
+// instant).
+func (m *Model) switchTo(ins Instrument) {
+	m.active = ins.ID
+	m.switching = false
+	m.switchBuf = ""
+	m.status = "book → " + ins.Name
+}
+
 // shiftDigitSel maps the shifted digit row (!@#$%) back to preset index 0-4.
 func shiftDigitSel(key string) int {
 	switch key {
@@ -176,35 +288,40 @@ func shiftDigitSel(key string) int {
 	}
 }
 
-// stepCursor nudges the price cursor n ticks, seeding it from the mid the
-// first time. Floored at one tick.
+// stepCursor nudges the active market's price cursor n ticks, seeding it
+// from the mid the first time. Floored at one tick.
 func (m *Model) stepCursor(n int64) {
-	t := m.tick()
-	if m.cursorPx == 0 {
-		if mid, ok := m.book.Mid(); ok {
-			m.cursorPx = (mid / t) * t
+	mk := m.mkt()
+	t := mk.ins.Tick
+	if t <= 0 {
+		t = 1
+	}
+	if mk.cursorPx == 0 {
+		if mid, ok := mk.book.Mid(); ok {
+			mk.cursorPx = (mid / t) * t
 		} else {
-			m.cursorPx = t
+			mk.cursorPx = t
 		}
 	}
-	m.cursorPx += n * t
-	if m.cursorPx < t {
-		m.cursorPx = t
+	mk.cursorPx += n * t
+	if mk.cursorPx < t {
+		mk.cursorPx = t
 	}
 }
 
 // cursorToTouch snaps the cursor to the touch: j → best bid, k → best ask.
 func (m *Model) cursorToTouch(side wire.Side) {
+	mk := m.mkt()
 	if side == wire.Buy {
-		if b, ok := m.book.BestBid(); ok {
-			m.cursorPx = b.Px
+		if b, ok := mk.book.BestBid(); ok {
+			mk.cursorPx = b.Px
 			return
 		}
 		m.status = "no bid to join"
 		return
 	}
-	if a, ok := m.book.BestAsk(); ok {
-		m.cursorPx = a.Px
+	if a, ok := mk.book.BestAsk(); ok {
+		mk.cursorPx = a.Px
 		return
 	}
 	m.status = "no ask to join"
@@ -213,17 +330,18 @@ func (m *Model) cursorToTouch(side wire.Side) {
 // handlePlace fires a resting limit at the cursor (or, unset, the side's own
 // touch): the quoting keystroke. Side b/s, size = the armed preset, GTC.
 func (m Model) handlePlace() (tea.Model, tea.Cmd) {
-	px := m.cursorPx
+	mk := m.mkt()
+	px := mk.cursorPx
 	if px == 0 {
 		if m.side == wire.Buy {
-			b, ok := m.book.BestBid()
+			b, ok := mk.book.BestBid()
 			if !ok {
 				m.status = "place: no bid to join (move the cursor first)"
 				return m, nil
 			}
 			px = b.Px
 		} else {
-			a, ok := m.book.BestAsk()
+			a, ok := mk.book.BestAsk()
 			if !ok {
 				m.status = "place: no ask to join (move the cursor first)"
 				return m, nil
@@ -231,44 +349,47 @@ func (m Model) handlePlace() (tea.Model, tea.Cmd) {
 			px = a.Px
 		}
 	}
-	return m.fire(wire.OrderReq{Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Gtc})
+	return m.fire(wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Gtc})
 }
 
 // handleCross fires an aggressive IOC of preset sel at the far touch — the
 // hit/lift keystroke (shift+1-5). Buy crosses the best ask, sell the best bid.
 func (m Model) handleCross(sel int) (tea.Model, tea.Cmd) {
-	m.sizeSel = clamp(sel, 0, len(m.cfg.SizePresets)-1)
+	m.sizeSel = clamp(sel, 0, 4)
+	mk := m.mkt()
 	var px int64
 	if m.side == wire.Buy {
-		a, ok := m.book.BestAsk()
+		a, ok := mk.book.BestAsk()
 		if !ok {
 			m.status = "cross: no ask to lift"
 			return m, nil
 		}
 		px = a.Px
 	} else {
-		b, ok := m.book.BestBid()
+		b, ok := mk.book.BestBid()
 		if !ok {
 			m.status = "cross: no bid to hit"
 			return m, nil
 		}
 		px = b.Px
 	}
-	return m.fire(wire.OrderReq{Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Ioc})
+	return m.fire(wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Ioc})
 }
 
-// handleStreamCancel cancels the own resting order nearest the cursor (the
-// point-and-delete of game entry); with no cursor it cancels the newest.
+// handleStreamCancel cancels the own resting order on the active symbol
+// nearest the cursor (the point-and-delete of game entry); with no cursor it
+// cancels the newest.
 func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
-	if len(m.openOrders) == 0 {
+	own := m.ownOrdersFor(m.active)
+	if len(own) == 0 {
 		m.status = "no open order to cancel"
 		return m, nil
 	}
-	idx := len(m.openOrders) - 1
-	if m.cursorPx > 0 {
+	idx := len(own) - 1
+	if cursor := m.mkt().cursorPx; cursor > 0 {
 		best := int64(-1)
-		for i, o := range m.openOrders {
-			d := o.Px - m.cursorPx
+		for i, o := range own {
+			d := o.Px - cursor
 			if d < 0 {
 				d = -d
 			}
@@ -277,7 +398,7 @@ func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	o := m.openOrders[idx]
+	o := own[idx]
 	if o.Cid == "" {
 		m.status = "selected order has no cid yet"
 		return m, nil
@@ -290,13 +411,229 @@ func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// fire applies the fat-finger hard cap and submits immediately — the
-// streaming view's single-keypress path. The cap is the same maxOrderQty the
-// DOM confirm path enforces; over it the order is BLOCKED outright.
-func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
-	if o.Qty > maxOrderQty {
-		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max %s (fat-finger guard)", m.fmtQty(o.Qty), m.fmtQty(maxOrderQty))
+// ownOrdersFor filters this session's working orders to one symbol.
+func (m Model) ownOrdersFor(id uint32) []OpenOrder {
+	var out []OpenOrder
+	for _, o := range m.openOrders {
+		if m.frameSymbol(o.Symbol) == id {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// handlePairKey is the pair view's chase/directional grammar: a symbol
+// LETTER arms its row; an optional digit count then `b`/`s` fires that many
+// lots at market (IOC, aggressive is the default here); `.` flattens
+// (reduce-only); `[`/`]` switch watchlists; esc clears the arm. No passive
+// quoting in this view — that is the book view's job.
+func (m Model) handlePairKey(key string) (tea.Model, tea.Cmd) {
+	switch {
+	case key == "esc":
+		m.armedSym = 0
+		m.countBuf = ""
+	case key == "[" || key == "]":
+		n := len(m.lists)
+		if key == "[" {
+			m.listSel = (m.listSel + n - 1) % n
+		} else {
+			m.listSel = (m.listSel + 1) % n
+		}
+		m.armedSym = 0
+		m.countBuf = ""
+		m.status = "list " + m.lists[m.listSel].name
+	case len(key) == 1 && key[0] >= '0' && key[0] <= '9':
+		if m.armedSym != 0 && len(m.countBuf) < 2 {
+			m.countBuf += key
+		}
+	case key == "b":
+		return m.handlePairTrade(wire.Buy)
+	case key == "s":
+		return m.handlePairTrade(wire.Sell)
+	case key == ".":
+		return m.handlePairFlatten()
+	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
+		if ins, ok := m.instrumentByCode(key); ok && m.inActiveList(ins.ID) {
+			m.armedSym = ins.ID
+			m.countBuf = ""
+			m.status = "armed " + ins.Name
+		}
+	}
+	return m, nil
+}
+
+// inActiveList reports whether a symbol is on the active watchlist.
+func (m Model) inActiveList(id uint32) bool {
+	for _, lid := range m.lists[m.listSel].ids {
+		if lid == id {
+			return true
+		}
+	}
+	return false
+}
+
+// lots parses the vim-count buffer (digits typed before b/s), defaulting 1.
+func (m Model) lots() int64 {
+	n, ok := parseDigits(m.countBuf)
+	if !ok || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// handlePairTrade fires `lots` lots at market on the armed symbol: buy lifts
+// the offer, sell hits the bid. IOC always — the pair view is aggressive by
+// design. The notional fat-finger cap hard-blocks in fire.
+func (m Model) handlePairTrade(side wire.Side) (tea.Model, tea.Cmd) {
+	if m.armedSym == 0 {
+		m.status = "arm a symbol first (its letter key)"
 		return m, nil
+	}
+	mk := m.marketFor(m.armedSym)
+	var px int64
+	if side == wire.Buy {
+		a, ok := mk.book.BestAsk()
+		if !ok {
+			m.status = "no ask to lift on " + mk.ins.Name
+			return m, nil
+		}
+		px = a.Px
+	} else {
+		b, ok := mk.book.BestBid()
+		if !ok {
+			m.status = "no bid to hit on " + mk.ins.Name
+			return m, nil
+		}
+		px = b.Px
+	}
+	lotQty, ok := m.lotQty(mk.ins, px)
+	if !ok {
+		m.status = "can't size a lot on " + mk.ins.Name
+		return m, nil
+	}
+	qty, ok := safeMul(lotQty, m.lots())
+	if !ok {
+		m.status = "BLOCKED: lot count overflows"
+		return m, nil
+	}
+	m.countBuf = ""
+	return m.fire(wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc})
+}
+
+// handlePairFlatten fires the reduce-only IOC that closes the armed symbol's
+// derived position at its far touch (`.`).
+func (m Model) handlePairFlatten() (tea.Model, tea.Cmd) {
+	if m.armedSym == 0 {
+		m.status = "arm a symbol first (its letter key)"
+		return m, nil
+	}
+	mk := m.marketFor(m.armedSym)
+	net := mk.position.Net
+	if net == 0 {
+		m.status = "no position on " + mk.ins.Name
+		return m, nil
+	}
+	qty := net
+	side := wire.Sell
+	if net < 0 {
+		qty, side = -net, wire.Buy
+	}
+	var px int64
+	if side == wire.Sell {
+		b, ok := mk.book.BestBid()
+		if !ok {
+			m.status = "no bid to hit on " + mk.ins.Name
+			return m, nil
+		}
+		px = b.Px
+	} else {
+		a, ok := mk.book.BestAsk()
+		if !ok {
+			m.status = "no ask to lift on " + mk.ins.Name
+			return m, nil
+		}
+		px = a.Px
+	}
+	return m.fire(wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true})
+}
+
+// lotQty sizes ONE lot of an instrument at a price: the configured base
+// notional (human quote units) scaled by the instrument's multiplier — a
+// consistent risk unit per symbol, in raw qty. Integer math throughout.
+func (m Model) lotQty(ins Instrument, px int64) (int64, bool) {
+	if px <= 0 {
+		return 0, false
+	}
+	scaled, ok := safeMul(m.cfg.LotNotional, pow10(ins.PriceDec+ins.QtyDec))
+	if !ok {
+		return 0, false
+	}
+	qty := scaled / px
+	mult := ins.LotMult
+	if mult <= 0 {
+		mult = 100
+	}
+	qty, ok = safeMul(qty, mult)
+	if !ok {
+		return 0, false
+	}
+	qty /= 100
+	if qty < 1 {
+		qty = 1
+	}
+	return qty, true
+}
+
+// pow10 is 10^n as i64 (n small, display-precision scale).
+func pow10(n int) int64 {
+	out := int64(1)
+	for i := 0; i < n; i++ {
+		out *= 10
+	}
+	return out
+}
+
+// handleNewsKey / handleLLMKey — the news and assistant views' keys (esc
+// returns to the book; their own grammars live with their views).
+func (m Model) handleNewsKey(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.screen = screenBook
+	}
+	return m, nil
+}
+
+func (m Model) handleLLMKey(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.screen = screenBook
+	}
+	return m, nil
+}
+
+// fire applies the fat-finger guards and submits immediately — the streaming
+// terminal's single-keypress path. Guards: the hard qty cap (maxOrderQty,
+// same as the DOM confirm path) and the notional ceiling (MaxNotional, human
+// quote units). Over either, the order is BLOCKED outright. The persistent
+// modifier toggles (r/p, shown on the mode line) apply to every order here:
+// reduce-only to all, post-only to resting (GTC) orders.
+func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
+	ins := m.instrumentFor(m.frameSymbol(o.Symbol))
+	if qtyCap, ok := safeMul(maxOrderQty, pow10(ins.QtyDec)); ok && o.Qty > qtyCap {
+		// The DOM cap is raw units for the primary symbol; here it scales to
+		// the instrument's precision (1e6 WHOLE units) — the notional ceiling
+		// below is the guard that actually bites first.
+		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max (fat-finger guard)", m.fmtQty(o.Qty))
+		return m, nil
+	}
+	if notional, ok := safeMul(o.Px, o.Qty); ok {
+		ceiling, ceilOk := safeMul(m.cfg.MaxNotional, pow10(ins.PriceDec+ins.QtyDec))
+		if ceilOk && notional > ceiling {
+			m.status = fmt.Sprintf("BLOCKED: notional over %d (fat-finger guard)", m.cfg.MaxNotional)
+			return m, nil
+		}
+	}
+	o.ReduceOnly = o.ReduceOnly || m.reduceOnly
+	if o.Tif == wire.Gtc {
+		o.PostOnly = o.PostOnly || m.postOnly
 	}
 	if err := m.cfg.Sub.Submit(o); err != nil {
 		m.status = "submit failed: " + err.Error()
@@ -306,22 +643,45 @@ func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// foldBin closes the open heatmap time bin at nowNs: it folds the live book,
-// the trades accumulated since the last tick, and the level ages into a fresh
-// live row, advances the stable ramp bases (rise instantly, decay slowly —
-// never per-frame renormalisation), then clears the pending-trade buffer.
-// No-op until the grid is sized.
+// primaryFrame reports whether a frame belongs to the legacy single-symbol
+// state (the DOM view's book/tape/position): the configured symbol, or 0 —
+// an unspecified id from the mock/demo and older tests.
+func (m Model) primaryFrame(id uint32) bool {
+	return id == 0 || id == m.cfg.SymbolID
+}
+
+// frameSymbol resolves a frame's symbol id, mapping the unspecified 0 to the
+// primary symbol.
+func (m Model) frameSymbol(id uint32) uint32 {
+	if id == 0 {
+		return m.cfg.SymbolID
+	}
+	return id
+}
+
+// foldBin closes the open time bin at nowNs for EVERY watched market: each
+// folds its live book, its pending trades, and its level ages into a fresh
+// live row, advances its stable ramp bases and pair-view reads, then clears
+// its pending buffer. No-op per market until the grid is sized.
 func (m *Model) foldBin(nowNs int64) {
-	if m.heat == nil {
-		return
+	for _, mk := range m.mkts {
+		mk.foldBinAt(nowNs)
 	}
-	if m.lastBinNs == 0 {
-		m.lastBinNs = nowNs - int64(binInterval)
+}
+
+// foldBinAt is one market's bin fold (see foldBin).
+func (mk *market) foldBinAt(nowNs int64) {
+	if mk.heat.LiveCap() == 0 {
+		return // not sized yet
 	}
-	m.heat.Ingest(m.book.Bids, m.book.Asks, m.pendingTrades, m.persist, m.lastBinNs, nowNs)
-	m.foldBases()
-	m.lastBinNs = nowNs
-	m.pendingTrades = m.pendingTrades[:0]
+	if mk.lastBinNs == 0 {
+		mk.lastBinNs = nowNs - int64(binInterval)
+	}
+	mk.heat.Ingest(mk.book.Bids, mk.book.Asks, mk.pending, mk.persist, mk.lastBinNs, nowNs)
+	mk.foldBases()
+	mk.foldPairReads()
+	mk.lastBinNs = nowNs
+	mk.pending = mk.pending[:0]
 }
 
 // basisDecayShift decays each ramp basis by 1/256 per bin (~18s half-life at
@@ -331,26 +691,26 @@ const basisDecayShift = 8
 
 // foldBases advances the stable size/trade references: jump to any new
 // visible max, otherwise decay geometrically. Floored at 1.
-func (m *Model) foldBases() {
+func (mk *market) foldBases() {
 	var maxLevel int64
-	for _, l := range m.book.Bids {
+	for _, l := range mk.book.Bids {
 		if l.Qty > maxLevel {
 			maxLevel = l.Qty
 		}
 	}
-	for _, l := range m.book.Asks {
+	for _, l := range mk.book.Asks {
 		if l.Qty > maxLevel {
 			maxLevel = l.Qty
 		}
 	}
 	var maxTrade int64
-	for _, t := range m.pendingTrades {
+	for _, t := range mk.pending {
 		if t.Qty > maxTrade {
 			maxTrade = t.Qty
 		}
 	}
-	m.sizeBasis = foldBasis(m.sizeBasis, maxLevel)
-	m.tradeBasis = foldBasis(m.tradeBasis, maxTrade)
+	mk.sizeBasis = foldBasis(mk.sizeBasis, maxLevel)
+	mk.tradeBasis = foldBasis(mk.tradeBasis, maxTrade)
 }
 
 // foldBasis is one basis step: rise instantly to observed, else decay.
@@ -365,35 +725,34 @@ func foldBasis(basis, observed int64) int64 {
 	return basis
 }
 
-// resizeHeat refits the heatmap grid to the terminal. Rows are price-space,
-// so history SURVIVES a resize (the live ring trims to the new cap; far tiers
-// rebuild only when their count changes). Too small to render clears the
-// grid.
+// resizeHeat refits every market's heatmap grid to the terminal. Rows are
+// price-space, so history SURVIVES a resize (each live ring trims to the new
+// cap; far tiers rebuild only when their count changes). Too small to render
+// zeroes the width, which the view reports.
 func (m *Model) resizeHeat() {
 	w, rows := streamDims(m.width, m.height)
 	if w < 8 || rows < 3 {
-		m.heat = nil
+		m.heatW = 0
 		return
 	}
-	if m.heat == nil {
-		m.heat = book.NewHeatmap(m.cfg.Tick)
-	}
 	far := clamp((rows-1)/3, 0, maxFarRows)
-	m.heat.Configure(rows-1-far, far)
+	for _, mk := range m.mkts {
+		mk.heat.Configure(rows-1-far, far)
+	}
 	m.heatW = w
 }
 
 // streamDims derives the heatmap's column count and total body-row count
 // (far + live + now) from the terminal size. Horizontal budget: news rail (1)
-// + heat columns + time gutter + trade-tape rail; vertical: header (1) +
-// body + ruler (1) + footer (5). Width is forced even so the mid splits the
-// axis cleanly.
+// + heat columns + time gutter + trade-tape rail; vertical: header (2: title
+// + mode line) + body + ruler (1) + footer (5). Width is forced even so the
+// mid splits the axis cleanly.
 func streamDims(width, height int) (int, int) {
 	w := width - 1 - gutterWidth - tapeRailWidth
 	if w%2 != 0 {
 		w--
 	}
-	rows := height - (1 + 1 + 5)
+	rows := height - (2 + 1 + 5)
 	if rows > 72 {
 		rows = 72
 	}
@@ -495,23 +854,24 @@ func (m Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 // handleStreamMouse maps a left-click on the heatmap to the price cursor via
 // the inverse fisheye (the mouse analog of h/l/j/k). It only moves the
 // cursor — firing stays on the keyboard (f / shift+1-5), so a stray click
-// can never trade.
+// can never trade. Book view only.
 func (m Model) handleStreamMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
 		return m, nil
 	}
-	if m.heat == nil {
+	if m.screen != screenBook || m.heatW == 0 {
 		return m, nil
 	}
 	col := e.X - 1 // news rail occupies column 0
 	if col < 0 || col >= m.heatW {
 		return m, nil
 	}
-	px := book.FisheyePx(col, m.heat.Anchor(), m.heat.Tick(), m.heatW)
+	mk := m.mkt()
+	px := book.FisheyePx(col, mk.heat.Anchor(), mk.heat.Tick(), m.heatW)
 	if px <= 0 {
 		return m, nil
 	}
-	m.cursorPx = px
+	mk.cursorPx = px
 	m.status = fmt.Sprintf("cursor %s (click)", m.fmtPx(px))
 	return m, nil
 }
