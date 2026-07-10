@@ -13,65 +13,19 @@
        prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
-prepare:
+prepare: ## set up local dev env (uv venv + playwright chromium)
 	UV_CACHE_DIR=$(CURDIR)/tmp/uv-cache \
 		uv sync --project rsx-playground
 	UV_CACHE_DIR=$(CURDIR)/tmp/uv-cache \
 		cd rsx-playground && .venv/bin/playwright install --with-deps chromium
 
-demo:
+demo: ## run the minimal reproducible demo
 	./rsx-playground/playground doctor
 	./rsx-playground/playground demo minimal
 
 # Default target - show help
-help:
-	@echo "RSX Test Suite - Available Targets:"
-	@echo ""
-	@echo "Unit Tests (fast, isolated):"
-	@echo "  make test          - Rust unit tests ONLY (~5s)"
-	@echo "  make check         - Type check only (fastest, no tests)"
-	@echo ""
-	@echo "E2E Tests (comprehensive, uses real system):"
-	@echo "  make e2e           - ALL E2E tests (Rust + API + Playwright, ~3min)"
-	@echo "  make play          - Playwright E2E only (154 tests, ~30s)"
-	@echo "  make api-unit      - API E2E fast subset (~20s, 230 tests)"
-	@echo "  make api-integration - API E2E comprehensive (~40s, 330 tests)"
-	@echo ""
-	@echo "Specialized Tests:"
-	@echo "  make wal           - WAL correctness tests"
-	@echo "  make integration   - Testcontainers (1-5min)"
-	@echo "  make api-stress    - Stress tests with latency (3+ min)"
-	@echo "  make smoke         - Smoke tests (not implemented)"
-	@echo ""
-	@echo "Release Gates (ordered, each requires previous to pass):"
-	@echo "  make gate              - Run all 4 gates in order (startup->partials->api->playwright)"
-	@echo "  make gate-1-startup    - Gate 1: server imports cleanly"
-	@echo "  make gate-2-partials   - Gate 2: all routes + HTMX partials HTTP 200"
-	@echo "  make gate-3-api        - Gate 3: full API test suite"
-	@echo "  make gate-4-playwright - Gate 4: Playwright 421/421 (requires gate-3 first)"
-	@echo ""
-	@echo "Quality:"
-	@echo "  make lint          - clippy --all-targets, warnings as errors"
-	@echo "  make fmt-check     - verify default rustfmt formatting"
-	@echo "  make fmt           - apply default rustfmt formatting"
-	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
-	@echo "  make clean         - Clean build artifacts"
-	@echo ""
-	@echo "Individual Playwright Tests:"
-	@echo "  make play-orders, play-control, play-overview, play-book,"
-	@echo "  play-risk, play-wal, play-logs, play-verify, play-topology,"
-	@echo "  play-faults, play-nav, play-api"
-	@echo ""
-	@echo "CI Lane (deterministic, single-worker, fan-out blocked by default):"
-	@echo "  make ci                - Phases 1-3 + infra-smoke; fan-out locked"
-	@echo "  make ci-full           - Phases 1-3 + shards-gated; fan-out after N=3 greens"
-	@echo ""
-	@echo "Shard Targets:"
-	@echo "  make shard-infra-smoke - Single validation lane (infra only)"
-	@echo "  make shard-maker       - Market-maker lifecycle shard"
-	@echo "  make shards            - Run all 5 product shards"
-	@echo "  make shards-gated      - Single-worker lane; fan-out after N=3 greens"
-	@echo "  make shards-report     - All shards; combined pass/fail report"
+help: ## Show this help
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 
 # ── Release Gates ───────────────────────────────────────────────────
 # Hard-ordered gates: each must be green before the next runs.
@@ -86,17 +40,17 @@ help:
 PYTEST := rsx-playground/.venv/bin/pytest
 PY     := rsx-playground/.venv/bin/python3
 
-gate: gate-1-startup gate-2-partials gate-3-api gate-4-playwright
+gate: gate-1-startup gate-2-partials gate-3-api gate-4-playwright ## run all 4 release gates in order
 	@echo "==> All release gates passed."
 
 # Gate 1: server imports cleanly (no startup crash)
-gate-1-startup:
+gate-1-startup: ## gate 1: server imports cleanly
 	@echo "==> [Gate 1] startup/imports"
 	cd rsx-playground && $(abspath $(PY)) -c "import server; print('ok')"
 	@echo "    PASS: server imports cleanly"
 
 # Gate 2: all page routes + HTMX partials return HTTP 200
-gate-2-partials: gate-1-startup
+gate-2-partials: gate-1-startup ## gate 2: routes + HTMX partials return 200
 	@echo "==> [Gate 2] routing/partials"
 	cd rsx-playground && $(abspath $(PYTEST)) tests/test_htmx_partials.py \
 		--tb=short -q
@@ -105,7 +59,7 @@ gate-2-partials: gate-1-startup
 # Gate 3: API test suite (processes, risk, WAL, orders, edge cases, proxy).
 # Excludes stress tests and integration tests requiring live Rust processes.
 # Writes tmp/gate-3-report.json; diffs vs prev in tmp/gate-3-diff.json.
-gate-3-api: gate-2-partials
+gate-3-api: gate-2-partials ## gate 3: API test suite
 	@echo "==> [Gate 3] API tests"
 	cd rsx-playground && $(abspath $(PYTEST)) \
 		tests/api_processes_test.py \
@@ -123,7 +77,7 @@ gate-3-api: gate-2-partials
 # Gate 4: full Playwright suite — one execution, timestamped JSON+JUnit proof.
 # play-full.sh writes artifacts to tmp/play-artifacts/run-<ts>/ and copies
 # the canonical report to tmp/play-artifacts/full-run/{report.json,report.xml}.
-gate-4-playwright: gate-3-api
+gate-4-playwright: gate-3-api ## gate 4: full Playwright suite (JSON+JUnit)
 	@echo "==> [Gate 4] Playwright (full run, JSON+JUnit artifacts)"
 	cd rsx-playground/tests && bash play-full.sh
 	@echo "    PASS: Playwright suite green"
@@ -149,34 +103,34 @@ SHARD := rsx-playground/tests/play-shard.sh
 # Consecutive green infra-smoke runs required before fan-out unlocks
 INFRA_SMOKE_STREAK_N := 3
 
-shard-infra-smoke:
+shard-infra-smoke: ## playwright infra-smoke shard (validation lane)
 	@bash $(SHARD) infra-smoke
 
-shard-routing:
+shard-routing: ## playwright routing shard (nav+overview+topology)
 	@bash $(SHARD) routing
 
-shard-htmx:
+shard-htmx: ## playwright htmx-partials shard (book/risk/wal/logs)
 	@bash $(SHARD) htmx-partials
 
-shard-control:
+shard-control: ## playwright process-control shard (control+orders)
 	@bash $(SHARD) process-control
 
-shard-maker:
+shard-maker: ## playwright market-maker lifecycle shard
 	@bash $(SHARD) market-maker
 
-shards: shard-routing shard-htmx shard-control shard-maker
+shards: shard-routing shard-htmx shard-control shard-maker ## run all playwright product shards
 	@echo "==> All shards passed."
 
 # shards-report: run all shards (continue on failure); publish combined
 # per-shard pass/fail counts + failing test IDs to
 # tmp/play-artifacts/shards-report/report.txt.
-shards-report:
+shards-report: ## run all shards, combined pass/fail report
 	@bash rsx-playground/tests/play-shards-report.sh
 
 # Gated fan-out: run infra-smoke first; only fan out to all product
 # shards once infra-smoke has been green >= INFRA_SMOKE_STREAK_N
 # consecutive times.  Single-worker validation lane by default.
-shards-gated: shard-infra-smoke
+shards-gated: shard-infra-smoke ## shards with gated fan-out (after N greens)
 	@STREAK=0; \
 	STREAK_FILE=rsx-playground/tmp/play-sig/infra-smoke.streak; \
 	if [ -f "$$STREAK_FILE" ]; then \
@@ -202,11 +156,11 @@ shards-gated: shard-infra-smoke
 # Fan-out to product shards is unlocked only by make ci-full once
 # the infra-smoke streak reaches INFRA_SMOKE_STREAK_N.
 
-ci: gate-1-startup gate-2-partials gate-3-api integration shard-infra-smoke
+ci: gate-1-startup gate-2-partials gate-3-api integration shard-infra-smoke ## CI lane: gates 1-3 + integration + infra-smoke
 	@echo "==> [ci] PROGRESS ok + phases 1-3 + integration + infra-smoke passed"
 	@echo "    Run 'make ci-full' to unlock product-shard fan-out."
 
-ci-full: gate-1-startup gate-2-partials gate-3-api integration shards-gated
+ci-full: gate-1-startup gate-2-partials gate-3-api integration shards-gated ## ci + shards-gated fan-out
 	@echo "==> [ci-full] all acceptance phases passed."
 
 # CI check: no root-absolute href/src in dist HTML or rendered pages.
@@ -231,11 +185,11 @@ check-links:
 	@echo "    PASS: no root-absolute links in rendered HTML"
 
 # Type check only (fastest feedback, no codegen)
-check:
+check: ## type-check the workspace (fastest feedback)
 	cargo check --workspace
 
 # Debug build. Uses the cranelift codegen backend (see .cargo/config.toml).
-build:
+build: ## debug build the workspace
 	cargo build --workspace
 
 # Optimized release build (LLVM).
@@ -245,7 +199,7 @@ release:
 # Unit tests - lib + integration test binaries (non-ignored).
 # Runs every Rust test that does not require Docker/Postgres.
 # Ignored tests (testcontainer-gated) run under `make integration`.
-test:
+test: ## Rust unit + integration tests (no Docker)
 	@echo "==> Running Rust unit + integration tests..."
 	cargo test --workspace --tests --lib
 	@echo ""
@@ -253,7 +207,7 @@ test:
 	@echo "    (Use 'make e2e' to run full integration tests)"
 
 # E2E tests - ALL E2E tests (Rust + ALL API tests + Playwright)
-e2e:
+e2e: ## full E2E: Rust + all API + Playwright
 	@echo "==> Running Rust E2E tests..."
 	cargo test --workspace --test '*' --no-fail-fast \
 		--exclude rsx-risk
@@ -270,7 +224,7 @@ e2e:
 # Integration tests (1-5min) - testcontainers (Postgres).
 # Hard-fails if Docker is unavailable so CI cannot pretend
 # "0 failures" while skipping every testcontainer-gated test.
-integration:
+integration: ## testcontainer integration tests (needs Docker)
 	@echo "==> [integration] checking Docker daemon..."
 	@if ! docker info >/dev/null 2>&1 \
 		&& ! sudo -n docker info >/dev/null 2>&1; then \
@@ -283,11 +237,11 @@ integration:
 		-- --ignored --test-threads=1
 
 # WAL correctness tests (<10s)
-wal:
+wal: ## WAL correctness tests (rsx-cast)
 	cargo test -p rsx-cast
 
 # Smoke tests (<1min) - deployed systems
-smoke:
+smoke: ## smoke tests against a deployed system
 	bash scripts/smoke.sh
 
 # Bump UDP socket buffer sizes so the auto-maker can run without
@@ -365,11 +319,11 @@ demo-trade:
 
 # Performance benchmarks (Rust). timeout: a hung bench must FAIL
 # (exit 124), not just read as "slow" (BENCH-NO-TIMEOUT-GATE).
-perf:
+perf: ## Rust Criterion benchmarks
 	timeout 600 cargo bench
 
 # Criterion regression gate (developer-local, baseline in tmp/)
-bench-gate:
+bench-gate: ## Criterion regression gate (baseline in tmp/)
 	bash scripts/bench-gate.sh
 
 bench-save:
@@ -389,7 +343,7 @@ latency-publish:
 # if p50 regresses more than THRESHOLD% (default 10).
 # specs/2/22-perf-verification.md §4 specifies this gate.
 # Pre: cluster up via `./rsx-playground/playground start-all`.
-bench-gate-e2e:
+bench-gate-e2e: ## E2E latency regression gate (GW->ME->GW p50)
 	bash scripts/bench-gate-e2e.sh
 
 # Snapshot the current measured e2e_us into bench-reference.json.
@@ -399,22 +353,23 @@ bench-gate-e2e-save:
 	bash scripts/bench-gate-e2e.sh --save-reference
 
 # Lint — all targets so warnings can't hide in tests/benches.
-lint:
+lint: ## clippy --all-targets, warnings as errors
 	cargo clippy --workspace --all-targets -- -D warnings
 
 # Format check — default rustfmt is the source of truth (no rustfmt.toml).
-fmt-check:
+fmt-check: ## verify default rustfmt formatting
 	cargo fmt --all --check
 
 # Apply formatting.
-fmt:
+fmt: ## apply default rustfmt formatting
 	cargo fmt --all
 
 # Clean build artifacts
-clean:
+clean: ## remove build artifacts (cargo clean)
 	cargo clean
 
 # Playwright e2e tests for RSX Playground
+play: ## run the full Playwright E2E suite
 play: play-infra play-overview play-topology play-book play-risk \
      play-wal play-logs play-control play-faults \
      play-verify play-orders play-nav play-api
@@ -459,16 +414,16 @@ play-api:
 	cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
 
 # API tests - fast subset (no stress tests)
-api-unit:
+api-unit: ## API tests: fast subset (no stress)
 	@echo "==> Running API E2E tests (fast subset, no stress)..."
 	cd rsx-playground && uv run pytest tests/api_processes_test.py tests/api_risk_test.py tests/api_wal_test.py tests/api_logs_metrics_test.py tests/api_verify_test.py -v --tb=short
 
 # API tests - comprehensive subset (includes orders, edge cases)
-api-integration:
+api-integration: ## API tests: comprehensive (orders + edge cases)
 	@echo "==> Running API E2E tests (comprehensive)..."
 	cd rsx-playground && uv run pytest tests/api_orders_test.py tests/api_integration_test.py tests/api_edge_cases_test.py -v --tb=short
 
 # Stress tests with latency measurement (3+ minutes)
-api-stress:
+api-stress: ## API stress tests with latency (3+ min)
 	@echo "==> Running stress tests (may take 3+ minutes)..."
 	cd rsx-playground && uv run pytest tests/api_orders_test.py -k stress -v -s
