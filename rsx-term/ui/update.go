@@ -20,8 +20,14 @@ const digitCap = 18
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
+		if m.cfg.Stream {
+			return m.handleStreamKey(v)
+		}
 		return m.handleKey(v)
 	case tea.MouseMsg:
+		if m.cfg.Stream {
+			return m.handleStreamMouse(v)
+		}
 		return m.handleMouse(v)
 
 	case feed.GwUp:
@@ -40,11 +46,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.book.ApplySnapshot(v)
 		m.recenterLadder()
 		m.foldMdFrame(v.TsNs)
+		if m.cfg.Stream {
+			m.persist.ObserveSnapshot(v.Bids, v.Asks, time.Now().UnixNano())
+		}
 	case wire.Delta:
 		m.seq.Observe(v.Seq)
 		m.book.ApplyDelta(v)
 		m.recenterLadder()
 		m.foldMdFrame(v.TsNs)
+		if m.cfg.Stream {
+			m.persist.ObserveDelta(v, time.Now().UnixNano())
+		}
 	case wire.Bbo:
 		m.seq.Observe(v.Seq)
 		m.book.ApplyBbo(v)
@@ -105,50 +117,287 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// foldBin closes the current heatmap time bin: it folds the live book snapshot
-// and the trades accumulated since the last tick into a fresh ring row, then
-// clears the pending-trade buffer. No-op until the ring is sized.
-func (m *Model) foldBin(binTs int64) {
+// handleStreamKey is the streaming view's game order entry: size presets,
+// a price cursor, single-key place/cancel, single-key crosses. Orders fire
+// on ONE keypress (no two-enter confirm — that is the decided design for
+// this view); the fat-finger size cap still hard-blocks in fire.
+func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := k.String()
+	if m.showHelp {
+		if key == "q" || key == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.showHelp = false
+		return m, nil
+	}
+	switch key {
+	case "q", "ctrl+c", "esc":
+		return m, tea.Quit
+	case "?":
+		m.showHelp = true
+	case "b":
+		m.side = wire.Buy
+	case "s":
+		m.side = wire.Sell
+	case "1", "2", "3", "4", "5":
+		m.sizeSel = int(key[0] - '1')
+		m.status = fmt.Sprintf("size %s armed", m.fmtQty(m.sizePreset()))
+	case "!", "@", "#", "$", "%":
+		return m.handleCross(shiftDigitSel(key))
+	case "h", "left":
+		m.stepCursor(-1)
+	case "l", "right":
+		m.stepCursor(+1)
+	case "j", "down":
+		m.cursorToTouch(wire.Buy)
+	case "k", "up":
+		m.cursorToTouch(wire.Sell)
+	case "f":
+		return m.handlePlace()
+	case "d":
+		return m.handleStreamCancel()
+	}
+	return m, nil
+}
+
+// shiftDigitSel maps the shifted digit row (!@#$%) back to preset index 0-4.
+func shiftDigitSel(key string) int {
+	switch key {
+	case "!":
+		return 0
+	case "@":
+		return 1
+	case "#":
+		return 2
+	case "$":
+		return 3
+	default:
+		return 4
+	}
+}
+
+// stepCursor nudges the price cursor n ticks, seeding it from the mid the
+// first time. Floored at one tick.
+func (m *Model) stepCursor(n int64) {
+	t := m.tick()
+	if m.cursorPx == 0 {
+		if mid, ok := m.book.Mid(); ok {
+			m.cursorPx = (mid / t) * t
+		} else {
+			m.cursorPx = t
+		}
+	}
+	m.cursorPx += n * t
+	if m.cursorPx < t {
+		m.cursorPx = t
+	}
+}
+
+// cursorToTouch snaps the cursor to the touch: j → best bid, k → best ask.
+func (m *Model) cursorToTouch(side wire.Side) {
+	if side == wire.Buy {
+		if b, ok := m.book.BestBid(); ok {
+			m.cursorPx = b.Px
+			return
+		}
+		m.status = "no bid to join"
+		return
+	}
+	if a, ok := m.book.BestAsk(); ok {
+		m.cursorPx = a.Px
+		return
+	}
+	m.status = "no ask to join"
+}
+
+// handlePlace fires a resting limit at the cursor (or, unset, the side's own
+// touch): the quoting keystroke. Side b/s, size = the armed preset, GTC.
+func (m Model) handlePlace() (tea.Model, tea.Cmd) {
+	px := m.cursorPx
+	if px == 0 {
+		if m.side == wire.Buy {
+			b, ok := m.book.BestBid()
+			if !ok {
+				m.status = "place: no bid to join (move the cursor first)"
+				return m, nil
+			}
+			px = b.Px
+		} else {
+			a, ok := m.book.BestAsk()
+			if !ok {
+				m.status = "place: no ask to join (move the cursor first)"
+				return m, nil
+			}
+			px = a.Px
+		}
+	}
+	return m.fire(wire.OrderReq{Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Gtc})
+}
+
+// handleCross fires an aggressive IOC of preset sel at the far touch — the
+// hit/lift keystroke (shift+1-5). Buy crosses the best ask, sell the best bid.
+func (m Model) handleCross(sel int) (tea.Model, tea.Cmd) {
+	m.sizeSel = clamp(sel, 0, len(m.cfg.SizePresets)-1)
+	var px int64
+	if m.side == wire.Buy {
+		a, ok := m.book.BestAsk()
+		if !ok {
+			m.status = "cross: no ask to lift"
+			return m, nil
+		}
+		px = a.Px
+	} else {
+		b, ok := m.book.BestBid()
+		if !ok {
+			m.status = "cross: no bid to hit"
+			return m, nil
+		}
+		px = b.Px
+	}
+	return m.fire(wire.OrderReq{Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Ioc})
+}
+
+// handleStreamCancel cancels the own resting order nearest the cursor (the
+// point-and-delete of game entry); with no cursor it cancels the newest.
+func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
+	if len(m.openOrders) == 0 {
+		m.status = "no open order to cancel"
+		return m, nil
+	}
+	idx := len(m.openOrders) - 1
+	if m.cursorPx > 0 {
+		best := int64(-1)
+		for i, o := range m.openOrders {
+			d := o.Px - m.cursorPx
+			if d < 0 {
+				d = -d
+			}
+			if best < 0 || d < best {
+				best, idx = d, i
+			}
+		}
+	}
+	o := m.openOrders[idx]
+	if o.Cid == "" {
+		m.status = "selected order has no cid yet"
+		return m, nil
+	}
+	if err := m.cfg.Sub.Cancel(o.Cid); err != nil {
+		m.status = "cancel failed: " + err.Error()
+	} else {
+		m.status = fmt.Sprintf("cancel sent for order %d @ %s", o.Oid, m.fmtPx(o.Px))
+	}
+	return m, nil
+}
+
+// fire applies the fat-finger hard cap and submits immediately — the
+// streaming view's single-keypress path. The cap is the same maxOrderQty the
+// DOM confirm path enforces; over it the order is BLOCKED outright.
+func (m Model) fire(o wire.OrderReq) (tea.Model, tea.Cmd) {
+	if o.Qty > maxOrderQty {
+		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max %s (fat-finger guard)", m.fmtQty(o.Qty), m.fmtQty(maxOrderQty))
+		return m, nil
+	}
+	if err := m.cfg.Sub.Submit(o); err != nil {
+		m.status = "submit failed: " + err.Error()
+		return m, nil
+	}
+	m.status = m.sentStatus(o)
+	return m, nil
+}
+
+// foldBin closes the open heatmap time bin at nowNs: it folds the live book,
+// the trades accumulated since the last tick, and the level ages into a fresh
+// live row, advances the stable ramp bases (rise instantly, decay slowly —
+// never per-frame renormalisation), then clears the pending-trade buffer.
+// No-op until the grid is sized.
+func (m *Model) foldBin(nowNs int64) {
 	if m.heat == nil {
 		return
 	}
-	m.heat.Ingest(m.book.Bids, m.book.Asks, m.pendingTrades, binTs)
+	if m.lastBinNs == 0 {
+		m.lastBinNs = nowNs - int64(binInterval)
+	}
+	m.heat.Ingest(m.book.Bids, m.book.Asks, m.pendingTrades, m.persist, m.lastBinNs, nowNs)
+	m.foldBases()
+	m.lastBinNs = nowNs
 	m.pendingTrades = m.pendingTrades[:0]
 }
 
-// resizeHeat (re)builds the heatmap ring to fit the terminal. It reallocates on
-// a size change (dropping history — acceptable for a live stream), and clears
-// the ring when the terminal is too small to render.
+// basisDecayShift decays each ramp basis by 1/256 per bin (~18s half-life at
+// 100ms bins) — slow enough that the view never flickers, alive enough to
+// follow a regime change.
+const basisDecayShift = 8
+
+// foldBases advances the stable size/trade references: jump to any new
+// visible max, otherwise decay geometrically. Floored at 1.
+func (m *Model) foldBases() {
+	var maxLevel int64
+	for _, l := range m.book.Bids {
+		if l.Qty > maxLevel {
+			maxLevel = l.Qty
+		}
+	}
+	for _, l := range m.book.Asks {
+		if l.Qty > maxLevel {
+			maxLevel = l.Qty
+		}
+	}
+	var maxTrade int64
+	for _, t := range m.pendingTrades {
+		if t.Qty > maxTrade {
+			maxTrade = t.Qty
+		}
+	}
+	m.sizeBasis = foldBasis(m.sizeBasis, maxLevel)
+	m.tradeBasis = foldBasis(m.tradeBasis, maxTrade)
+}
+
+// foldBasis is one basis step: rise instantly to observed, else decay.
+func foldBasis(basis, observed int64) int64 {
+	if observed > basis {
+		return observed
+	}
+	basis -= basis >> basisDecayShift
+	if basis < 1 {
+		basis = 1
+	}
+	return basis
+}
+
+// resizeHeat refits the heatmap grid to the terminal. Rows are price-space,
+// so history SURVIVES a resize (the live ring trims to the new cap; far tiers
+// rebuild only when their count changes). Too small to render clears the
+// grid.
 func (m *Model) resizeHeat() {
-	w, h := streamDims(m.width, m.height)
-	if w < 2 || h < 1 {
+	w, rows := streamDims(m.width, m.height)
+	if w < 8 || rows < 3 {
 		m.heat = nil
 		return
 	}
-	if m.heat == nil || m.heat.Width() != w || m.heat.Height() != h {
-		tick := m.cfg.Tick
-		if tick <= 0 {
-			tick = 1
-		}
-		m.heat = book.NewHeatmap(w, h, tick)
+	if m.heat == nil {
+		m.heat = book.NewHeatmap(m.cfg.Tick)
 	}
+	far := clamp((rows-1)/3, 0, maxFarRows)
+	m.heat.Configure(rows-1-far, far)
+	m.heatW = w
 }
 
-// streamDims derives the heatmap's column and row counts from the terminal size:
-// one column of news rail on the left, and reserved rows for the header + the
-// pinned footer. Width is forced even so the mid splits the axis cleanly.
+// streamDims derives the heatmap's column count and total body-row count
+// (far + live + now) from the terminal size. Horizontal budget: news rail (1)
+// + heat columns + time gutter + trade-tape rail; vertical: header (1) +
+// body + ruler (1) + footer (5). Width is forced even so the mid splits the
+// axis cleanly.
 func streamDims(width, height int) (int, int) {
-	const rail = 1
-	const reserved = 1 + 5 // header line + 5 footer lines
-	w := width - rail
+	w := width - 1 - gutterWidth - tapeRailWidth
 	if w%2 != 0 {
 		w--
 	}
-	h := height - reserved
-	if h > 60 {
-		h = 60
+	rows := height - (1 + 1 + 5)
+	if rows > 72 {
+		rows = 72
 	}
-	return w, h
+	return w, rows
 }
 
 // foldRtt records a measured round-trip from a private event. A negative RttNs
@@ -240,6 +489,30 @@ func (m Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	m.focus = FocusPx
 	m.pendingConfirm = nil
 	m.status = fmt.Sprintf("price %s (click)", m.fmtPx(px))
+	return m, nil
+}
+
+// handleStreamMouse maps a left-click on the heatmap to the price cursor via
+// the inverse fisheye (the mouse analog of h/l/j/k). It only moves the
+// cursor — firing stays on the keyboard (f / shift+1-5), so a stray click
+// can never trade.
+func (m Model) handleStreamMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if m.heat == nil {
+		return m, nil
+	}
+	col := e.X - 1 // news rail occupies column 0
+	if col < 0 || col >= m.heatW {
+		return m, nil
+	}
+	px := book.FisheyePx(col, m.heat.Anchor(), m.heat.Tick(), m.heatW)
+	if px <= 0 {
+		return m, nil
+	}
+	m.cursorPx = px
+	m.status = fmt.Sprintf("cursor %s (click)", m.fmtPx(px))
 	return m, nil
 }
 

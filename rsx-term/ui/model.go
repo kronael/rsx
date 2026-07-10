@@ -36,6 +36,26 @@ type Config struct {
 	// Stream selects the streaming "text Bookmap" heatmap view (RSX_TERM_STREAM=1).
 	// Off (the default) renders the classic DOM three-column view, unchanged.
 	Stream bool
+	// SizePresets are the five game-entry order sizes (raw qty) the 1-5 keys
+	// arm in the streaming view. Empty falls back to defaultSizePresets.
+	SizePresets []int64
+}
+
+// defaultSizePresets builds the streaming view's stock size ladder — 1, 2, 5,
+// 10, 25 whole units at the symbol's qty precision.
+func defaultSizePresets(qtyDec int) []int64 {
+	unit := int64(1)
+	for i := 0; i < qtyDec; i++ {
+		unit *= 10
+	}
+	return []int64{1 * unit, 2 * unit, 5 * unit, 10 * unit, 25 * unit}
+}
+
+// sizePreset is the currently armed game-entry size (raw qty).
+func (m Model) sizePreset() int64 {
+	presets := m.cfg.SizePresets
+	sel := clamp(m.sizeSel, 0, len(presets)-1)
+	return presets[sel]
 }
 
 // fmtPx / fmtQty render a raw price / qty as a human decimal using the
@@ -131,22 +151,45 @@ type Model struct {
 	height int
 
 	// Streaming heatmap state (RSX_TERM_STREAM). heat is nil until the first
-	// WindowSizeMsg sizes the ring; pendingTrades accumulates prints between bin
-	// ticks; news feeds the left rail (defaults to news.Off — always offline).
+	// WindowSizeMsg sizes the grid; pendingTrades accumulates prints between
+	// bin ticks; news feeds the left rail (defaults to news.Off — always
+	// offline); persist is the L2 level-persistence proxy behind the
+	// book.AgeSource seam; lastBinNs is the open bin's start.
 	heat          *book.Heatmap
+	heatW         int
 	pendingTrades []book.TapeEntry
 	news          news.Source
+	persist       *book.Persistence
+	lastBinNs     int64
+
+	// sizeBasis / tradeBasis are the STABLE references the size ramp and the
+	// trade-magnitude ramp quantize against: they rise instantly to a new
+	// visible max and decay slowly (per bin), so the view never flickers from
+	// per-frame renormalisation. Sizes shown are tiers, never exact.
+	sizeBasis  int64
+	tradeBasis int64
+
+	// Game order entry (streaming view): the armed size preset (1-5) and the
+	// ruler's price cursor (0 = unset, f seeds from the touch).
+	sizeSel  int
+	cursorPx int64
 }
 
 // New builds a fresh model. Zero-value book / seq / tape / position /
 // latWindow are ready to fold; side defaults to Buy, tif to GTC, focus to the
 // price field (all the useful zero values).
 func New(cfg Config) Model {
+	if len(cfg.SizePresets) == 0 {
+		cfg.SizePresets = defaultSizePresets(cfg.QtyDec)
+	}
 	return Model{
 		cfg:         cfg,
 		status:      "connecting…",
 		lastMdAgeNs: book.NsUnknown,
 		news:        news.Off{},
+		persist:     book.NewPersistence(),
+		sizeBasis:   1,
+		tradeBasis:  1,
 	}
 }
 

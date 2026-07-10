@@ -7,31 +7,75 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rsx-term/book"
+	"rsx-term/conn"
 	"rsx-term/wire"
 )
 
-// streamModel builds a stream-mode model sized to a known terminal.
-func streamModel(t *testing.T) Model {
+// streamModel builds a stream-mode model over a mock, sized to a known
+// terminal, with a live book folded and one bin sealed (so the axis is
+// anchored).
+func streamModel(t *testing.T, mock *conn.MockGateway) Model {
 	t.Helper()
-	m := New(Config{Symbol: "PENGU-PERP", Stream: true, PriceDec: 6, QtyDec: 4, Tick: 1})
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
-	return next.(Model)
+	m := New(Config{
+		Symbol:   "PENGU-PERP",
+		SymbolID: 10,
+		Sub:      mock,
+		PriceDec: 6,
+		QtyDec:   4,
+		Tick:     1,
+		Stream:   true,
+	})
+	m = apply(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = apply(m, wire.Snapshot{
+		SymbolID: 10,
+		Bids:     []wire.Level{{Px: 9999, Qty: 50000, Count: 1}, {Px: 9998, Qty: 80000, Count: 3}},
+		Asks:     []wire.Level{{Px: 10001, Qty: 60000, Count: 1}, {Px: 10002, Qty: 40000, Count: 2}},
+		Seq:      1,
+	})
+	m = apply(m, binTickMsg(time.Now()))
+	return m
 }
 
 func TestDefaultViewUnchanged(t *testing.T) {
 	// Stream OFF renders the classic DOM view (its book panel + help legend).
+	// Byte-for-byte lock is TestDomViewGolden; this asserts mode selection.
 	dom := stripANSI(New(Config{Symbol: "PENGU-PERP"}).View())
 	if !strings.Contains(dom, "book") || !strings.Contains(dom, "q quit  b/s side") {
 		t.Fatalf("default view should be the DOM view: %q", dom)
 	}
-	if strings.Contains(dom, "streaming heatmap") {
-		t.Fatalf("default view must not render the stream legend")
+	if strings.Contains(dom, "now") && strings.Contains(dom, "cursor") {
+		t.Fatalf("default view must not render the stream chrome")
 	}
-	// Stream ON (sized) renders the heatmap header + legend, never the DOM panel.
-	str := stripANSI(streamModel(t).View())
-	if !strings.Contains(str, "mid") || !strings.Contains(str, "streaming heatmap") {
-		t.Fatalf("stream view should render the heatmap: %q", str)
+	str := stripANSI(streamModel(t, &conn.MockGateway{}).View())
+	for _, want := range []string{"mid", "now", "f place"} {
+		if !strings.Contains(str, want) {
+			t.Fatalf("stream view missing %q:\n%s", want, str)
+		}
+	}
+}
+
+func TestStreamFixedGrid(t *testing.T) {
+	// The view is a FIXED grid repainted in place: exactly `height` lines,
+	// whether the ring is empty or full — never an append-scroll log.
+	m := streamModel(t, &conn.MockGateway{})
+	if got := strings.Count(m.View(), "\n") + 1; got != 30 {
+		t.Fatalf("fresh grid = %d lines, want 30", got)
+	}
+	for i := 0; i < 40; i++ {
+		m = apply(m, binTickMsg(time.Now()))
+	}
+	if got := strings.Count(m.View(), "\n") + 1; got != 30 {
+		t.Fatalf("full grid = %d lines, want 30", got)
+	}
+}
+
+func TestStreamGutterShowsHorizons(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	plain := stripANSI(m.View())
+	for _, want := range []string{"−10s", "−1m", "−2m", "now"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("time gutter missing %q:\n%s", want, plain)
+		}
 	}
 }
 
@@ -42,8 +86,7 @@ func TestSizeTierLogScaled(t *testing.T) {
 	if got := sizeTier(1, 1000); got < 1 {
 		t.Fatalf("any nonzero size => at least tier 1, got %d", got)
 	}
-	small := sizeTier(5, 1000)
-	big := sizeTier(1000, 1000)
+	small, big := sizeTier(5, 1000), sizeTier(1000, 1000)
 	if big <= small {
 		t.Fatalf("bigger size => higher tier: small %d, big %d", small, big)
 	}
@@ -52,95 +95,197 @@ func TestSizeTierLogScaled(t *testing.T) {
 	}
 }
 
-func TestCountTierWhaleVsWall(t *testing.T) {
-	whale := countTier(1)
-	wall := countTier(20)
-	if whale >= wall {
-		t.Fatalf("one whale should read fainter than a wall: whale %d, wall %d", whale, wall)
+func TestCellCountChannel(t *testing.T) {
+	// Glyph = order count, colour = size: a whale (huge size, one order) shows
+	// the faint density glyph; a wall of many orders shows the solid one.
+	whale := cell{size: 1000, count: 1}
+	wall := cell{size: 10, count: 20}
+	if !strings.ContainsRune(cellStr(whale, 1000, 1, modeTrue), glyphs.countRamp[1]) {
+		t.Fatalf("whale (count 1) should render the faint density glyph")
 	}
-	if shades[whale] == shades[wall] {
-		t.Fatalf("whale and wall must pick different glyphs")
+	if !strings.ContainsRune(cellStr(wall, 1000, 1, modeTrue), glyphs.countRamp[4]) {
+		t.Fatalf("wall (count 20) should render the solid density glyph")
 	}
 }
 
-func TestCellEncodingChannelsIndependent(t *testing.T) {
-	// True-colour cell: background = size (log), glyph = order count. A whale
-	// (huge size, one order) shows a faint ░; a retail wall (small size, many
-	// orders) shows a solid █ — the two channels move independently.
-	whale := book.Cell{Size: 1000, Count: 1, Side: -1}
-	wall := book.Cell{Size: 10, Count: 20, Side: -1}
-	if !strings.ContainsRune(cellStr(whale, 1000, 1, modeTrue), '░') {
-		t.Fatalf("whale (count 1) should render the ░ glyph")
+func TestCellPersistenceGlyph(t *testing.T) {
+	held := cell{size: 100, count: 2, ageNs: int64(persistThreshold)}
+	if !strings.ContainsRune(cellStr(held, 1000, 1, modeTrue), glyphs.persistent) {
+		t.Fatalf("long-standing liquidity should render %q", glyphs.persistent)
 	}
-	if !strings.ContainsRune(cellStr(wall, 1000, 1, modeTrue), '█') {
-		t.Fatalf("wall (count 20) should render the █ glyph")
+	fresh := cell{size: 100, count: 2, ageNs: int64(persistThreshold) - 1}
+	if strings.ContainsRune(cellStr(fresh, 1000, 1, modeTrue), glyphs.persistent) {
+		t.Fatalf("fresh liquidity must not carry the persistence mark")
+	}
+}
+
+func TestCellTradeLayerCoEqual(t *testing.T) {
+	// A print renders the aggressor-hued magnitude glyph OVER the resting
+	// book — big prints pick a heavier glyph than small ones.
+	small := cell{size: 100, count: 2, tradeQty: 2, tradeSide: wire.Sell}
+	big := cell{size: 100, count: 2, tradeQty: 1000, tradeSide: wire.Buy}
+	sGlyph := stripANSI(cellStr(small, 1000, 1000, modeTrue))
+	bGlyph := stripANSI(cellStr(big, 1000, 1000, modeTrue))
+	if sGlyph == bGlyph {
+		t.Fatalf("trade magnitude must scale the glyph: small %q vs big %q", sGlyph, bGlyph)
+	}
+	if !strings.ContainsRune(string(glyphs.tradeRamp), rune([]rune(bGlyph)[0])) {
+		t.Fatalf("trade glyph %q not from the trade ramp", bGlyph)
 	}
 }
 
 func TestCellPlainDegrade(t *testing.T) {
-	// Plain mode emits no ANSI and encodes size via the glyph (single channel).
-	c := book.Cell{Size: 500, Count: 3, Side: 1}
+	c := cell{size: 500, count: 3}
 	s := cellStr(c, 1000, 1, modePlain)
 	if strings.Contains(s, "\x1b") {
 		t.Fatalf("plain mode must emit no colour escapes: %q", s)
 	}
-	if s != string(shades[sizeTier(500, 1000)]) {
+	if s != string(glyphs.countRamp[sizeTier(500, 1000)]) {
 		t.Fatalf("plain glyph should encode the size tier: %q", s)
 	}
 }
 
-func TestCellTradeOverlay(t *testing.T) {
-	c := book.Cell{Size: 100, Count: 2, Side: -1, SellTrade: 9}
-	if !strings.ContainsRune(stripANSI(cellStr(c, 1000, 1, modeTrue)), tradeGlyph) {
-		t.Fatalf("a bin with a trade should overlay the trade glyph")
-	}
-}
-
-func TestStreamFooterShowsTouch(t *testing.T) {
-	m := streamModel(t)
-	snap := wire.Snapshot{
-		Bids: []wire.Level{{Px: 9999, Qty: 5, Count: 1}},
-		Asks: []wire.Level{{Px: 10001, Qty: 6, Count: 1}},
-		Seq:  1,
-	}
-	next, _ := m.Update(snap)
-	m = next.(Model)
-	foot := stripANSI(m.streamTouchLine())
-	if !strings.Contains(foot, m.fmtPx(9999)) || !strings.Contains(foot, m.fmtPx(10001)) {
-		t.Fatalf("touch line should show both sides at display precision: %q", foot)
-	}
-	if !strings.Contains(foot, "spread 2") {
-		t.Fatalf("touch line should show the spread: %q", foot)
-	}
-}
-
-func TestViewStreamRendersRing(t *testing.T) {
-	m := streamModel(t)
-	snap := wire.Snapshot{
-		Bids: []wire.Level{{Px: 9999, Qty: 5, Count: 1}, {Px: 9998, Qty: 8, Count: 3}},
-		Asks: []wire.Level{{Px: 10001, Qty: 6, Count: 1}, {Px: 10002, Qty: 4, Count: 2}},
-		Seq:  1,
-	}
-	next, _ := m.Update(snap)
-	m = next.(Model)
-	// A trade this bin should be captured and overlaid.
-	tr, _ := m.Update(wire.MdTrade{Px: 10001, Qty: 3, TakerSide: 0, Seq: 2})
-	m = tr.(Model)
-	for i := 0; i < 3; i++ {
-		bt, _ := m.Update(binTickMsg(time.Now()))
-		m = bt.(Model)
-	}
-
-	out := m.View()
-	plain := stripANSI(out)
-	for _, want := range []string{"RSX", "mid", "bid", "ask", "⚡", "assistant", "streaming heatmap"} {
+func TestStreamFooterTouchLadder(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	plain := stripANSI(m.View())
+	// Exact levels, nearest the touch first, at display precision.
+	for _, want := range []string{"0.009999×5.0000", "0.009998×8.0000", "0.010001×6.0000"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("stream view missing %q:\n%s", want, plain)
+			t.Fatalf("touch ladder missing %q:\n%s", want, plain)
 		}
 	}
-	// Full screen = header (1) + body (heat height) + footer (5).
-	wantLines := 1 + m.heat.Height() + 5
-	if got := strings.Count(out, "\n") + 1; got != wantLines {
-		t.Fatalf("stream view = %d lines, want %d", got, wantLines)
+}
+
+func TestGameEntryPresetAndPlace(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := streamModel(t, mock)
+	m = press(m, "3") // arm preset 3 = 5 whole units
+	m = press(m, "f") // place at the cursor (unset → joins own-side touch)
+	if len(mock.Submitted) != 1 {
+		t.Fatalf("f should fire exactly one order, got %d", len(mock.Submitted))
+	}
+	o := mock.Submitted[0]
+	if o.Side != wire.Buy || o.Px != 9999 || o.Qty != 50000 || o.Tif != wire.Gtc {
+		t.Fatalf("place = %+v, want BUY 50000 @ 9999 GTC", o)
+	}
+}
+
+func TestGameEntryCursorMovesAndPlaces(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := streamModel(t, mock)
+	m = press(m, "j") // snap to best bid 9999
+	m = press(m, "h")
+	m = press(m, "h") // two ticks deeper: 9997
+	m = press(m, "f")
+	if len(mock.Submitted) != 1 || mock.Submitted[0].Px != 9997 {
+		t.Fatalf("cursor place = %+v, want px 9997", mock.Submitted)
+	}
+}
+
+func TestGameEntryCrossIsIocAtFarTouch(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := streamModel(t, mock)
+	m = press(m, "s") // sell side
+	m = press(m, "@") // shift+2: cross with preset 2
+	if len(mock.Submitted) != 1 {
+		t.Fatalf("cross should fire one order, got %d", len(mock.Submitted))
+	}
+	o := mock.Submitted[0]
+	if o.Side != wire.Sell || o.Px != 9999 || o.Qty != 20000 || o.Tif != wire.Ioc {
+		t.Fatalf("cross = %+v, want SELL 20000 @ 9999 IOC", o)
+	}
+}
+
+func TestGameEntryFatFingerStillBlocks(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := New(Config{
+		Symbol: "PENGU-PERP", Sub: mock, Stream: true, Tick: 1,
+		SizePresets: []int64{2_000_000, 1, 1, 1, 1},
+	})
+	m = apply(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = apply(m, wire.Snapshot{
+		Bids: []wire.Level{{Px: 9999, Qty: 5, Count: 1}},
+		Asks: []wire.Level{{Px: 10001, Qty: 5, Count: 1}},
+		Seq:  1,
+	})
+	m = press(m, "1")
+	m = press(m, "f")
+	if len(mock.Submitted) != 0 {
+		t.Fatalf("over-cap order must be BLOCKED, got %+v", mock.Submitted)
+	}
+	if !strings.Contains(m.status, "BLOCKED") {
+		t.Fatalf("status should say BLOCKED: %q", m.status)
+	}
+}
+
+func TestGameEntryCancelNearestCursor(t *testing.T) {
+	mock := &conn.MockGateway{}
+	m := streamModel(t, mock)
+	m = apply(m, wire.Accepted{Oid: 1, Cid: "a", Order: wire.OrderReq{Side: wire.Buy, Px: 9995, Qty: 1}})
+	m = apply(m, wire.Accepted{Oid: 2, Cid: "b", Order: wire.OrderReq{Side: wire.Buy, Px: 9999, Qty: 1}})
+	m = press(m, "j") // cursor to best bid 9999
+	m = press(m, "d")
+	if len(mock.Cancelled) != 1 || mock.Cancelled[0] != "b" {
+		t.Fatalf("d should cancel the order nearest the cursor: %v", mock.Cancelled)
+	}
+}
+
+func TestStreamClickSetsCursor(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	half := m.heatW / 2
+	click := tea.MouseMsg{
+		X: 1 + half, Y: 10,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	}
+	m = apply(m, click)
+	if m.cursorPx != 10001 {
+		t.Fatalf("click on the ask touch column should set cursor 10001, got %d", m.cursorPx)
+	}
+}
+
+func TestStreamOwnOrdersMarkedOnMapAndRuler(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	m = apply(m, wire.Accepted{Oid: 9, Cid: "c", Order: wire.OrderReq{Side: wire.Buy, Px: 9998, Qty: 30000}})
+	plain := stripANSI(m.View())
+	if !strings.ContainsRune(plain, glyphs.ownOrder) {
+		t.Fatalf("own resting order must be marked %q on the map:\n%s", glyphs.ownOrder, plain)
+	}
+	if !strings.ContainsRune(plain, glyphs.ownBuy) {
+		t.Fatalf("own buy must show %q on the ruler:\n%s", glyphs.ownBuy, plain)
+	}
+}
+
+func TestStreamTapeRailShowsPrints(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	m = apply(m, wire.MdTrade{Px: 10001, Qty: 30000, TakerSide: 0, Seq: 2})
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "┆") || !strings.Contains(plain, "0.010001") {
+		t.Fatalf("tape rail should list the print:\n%s", plain)
+	}
+}
+
+func TestStableBasisNeverFlickersDown(t *testing.T) {
+	basis := foldBasis(1, 1000) // rise instantly
+	if basis != 1000 {
+		t.Fatalf("basis should jump to a new max, got %d", basis)
+	}
+	decayed := foldBasis(basis, 10) // decay slowly, never snap down
+	if decayed >= basis || decayed < basis-basis>>basisDecayShift {
+		t.Fatalf("basis should decay by 1/256 per bin: %d → %d", basis, decayed)
+	}
+	if foldBasis(1, 0) != 1 {
+		t.Fatalf("basis floors at 1")
+	}
+}
+
+func TestStreamHelpOverlay(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	m = press(m, "?")
+	if !strings.Contains(stripANSI(m.View()), "game order entry") {
+		t.Fatalf("? should open the stream key reference")
+	}
+	m = press(m, "x")
+	if strings.Contains(stripANSI(m.View()), "game order entry") {
+		t.Fatalf("any key should close the help overlay")
 	}
 }
