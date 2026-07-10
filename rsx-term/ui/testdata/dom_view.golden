@@ -1,0 +1,32 @@
+ RSX  PENGU-PERP   ● live  open 0  fills 1  last 10000  ~mark 10000 (mid)  index —  funding —                                                                                        
+┌────────────────────────────────────────────┐┌────────────────────────────────────┐┌──────────────────────────────────┐                                                             
+│ book                                       ││ order                              ││ positions (mark=mid)             │                                                             
+│              10011                         ││  BUY      SELL                     ││LONG  +14 @ 9998                  │                                                             
+│              10010                         ││                                    ││~uPnL +28                         │                                                             
+│              10009                         ││price: _                            ││liq —   ROE —   mgn ░░░░░░░░      │                                                             
+│              10008                         ││qty  :                              ││(needs risk engine)               │                                                             
+│              10007                         ││time-in-force: GTC                  │└──────────────────────────────────┘                                                             
+│              10006                         ││reduce-only: off   post-only: off   │┌──────────────────────────────────┐                                                             
+│              10005                         ││                                    ││ trades                           │                                                             
+│              10004  12 ▊▊                  ││enter → preview, enter again to send││S  10000   3                      │                                                             
+│              10003   8 ▊                   │└────────────────────────────────────┘│B  10001   5                      │                                                             
+│              10002  20 ▊▊▊▊                │                                      └──────────────────────────────────┘                                                             
+│              10001   5 ▊                   │                                                                                                                                       
+│‹      ▊   7  10000                         │                                                                                                                                       
+│     ▊▊▊  15   9999                         │                                                                                                                                       
+│       ▊   9   9998                         │                                                                                                                                       
+│  ▊▊▊▊▊▊  30   9997                         │                                                                                                                                       
+│               9996                         │                                                                                                                                       
+│               9995                         │                                                                                                                                       
+│               9994                         │                                                                                                                                       
+│               9993                         │                                                                                                                                       
+│               9992                         │                                                                                                                                       
+│               9991                         │                                                                                                                                       
+│               9990                         │                                                                                                                                       
+│               9989                         │                                                                                                                                       
+│████████████████████ 57% bid                │                                                                                                                                       
+└────────────────────────────────────────────┘                                                                                                                                       
+ ⚡ RTT 9.7 µs = net 2.3 µs + internal 7.1 µs + engine 310 ns  ██████████████████                                                                                                    
+   p50 10.4 µs · p99 10.4 µs · best 9.7 µs  ██▁                                                                                                                                      
+ order 7 done                                                                                                                                                                        
+ q quit  b/s side  t tif  r ro  p po  +/- tick  j/k join  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F2 armed  F3 trace  ? help 
