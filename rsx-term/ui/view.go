@@ -43,6 +43,9 @@ const (
 // View renders the whole terminal: status bar / three-column main / speed
 // strip / status line / help line. Mirrors rsx-tui/src/render.rs.
 func (m Model) View() string {
+	if m.cfg.Stream {
+		return m.viewStream()
+	}
 	if m.showHelp {
 		return m.viewHelpOverlay()
 	}
