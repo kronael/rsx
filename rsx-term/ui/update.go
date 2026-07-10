@@ -77,8 +77,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.foldVenueMd(v.Venue, v.Msg)
 	case feed.VenueUp:
 		m.status = v.Venue + " feed up"
+		if v.Venue == m.cfg.Venue { // standalone non-RSX terminal: the feed IS the link
+			m.gwConnected = true
+			m.mdConnected = true
+		}
 	case feed.VenueDown:
 		m.status = v.Venue + " feed down (reconnecting)"
+		if v.Venue == m.cfg.Venue {
+			m.gwConnected = false
+			m.mdConnected = false
+		}
 
 	case wire.Accepted:
 		m.openOrders = append(m.openOrders, OpenOrder{

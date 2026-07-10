@@ -43,10 +43,26 @@ func main() {
 	// RSX_TERM_STREAM=1 selects the streaming "text Bookmap" heatmap view;
 	// unset (the default) keeps the classic DOM three-column view.
 	stream := os.Getenv("RSX_TERM_STREAM") == "1"
+	// RSX_TERM_VENUE: rsx (default, no external calls) | hyperliquid
+	// (standalone read-only HL terminal) | both (RSX primary + HL breadth).
+	venueSel := envOr("RSX_TERM_VENUE", "rsx")
+
+	if venueSel == "hyperliquid" {
+		if err := runHL(); err != nil {
+			fmt.Fprintln(os.Stderr, "rsx-term:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	var hlCfg *ui.VenueConfig
+	var hl *conn.HL
+	if venueSel == "both" || venueSel == "rsx,hyperliquid" {
+		hlCfg, hl = hlVenue()
+	}
 
 	if gwURL == "mock" {
 		priceDec, qtyDec, tick := displayConfig("", symbolID)
-		runMock(symbolID, priceDec, qtyDec, tick, stream)
+		runMock(symbolID, priceDec, qtyDec, tick, stream, hlCfg, hl)
 		return
 	}
 	priceDec, qtyDec, tick := displayConfig(gwURL, symbolID)
@@ -62,11 +78,98 @@ func main() {
 		tick:        tick,
 		stream:      stream,
 		instruments: watchInstruments(gwURL, symbolID, priceDec, qtyDec, tick, stream),
+		hlCfg:       hlCfg,
+		hl:          hl,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
 		os.Exit(1)
 	}
+}
+
+// hlCoins is the watched Hyperliquid coin set: RSX_TERM_HL_COINS (comma list,
+// "all" = whole universe) or the curated default.
+func hlCoins() []string {
+	raw := os.Getenv("RSX_TERM_HL_COINS")
+	if raw == "all" {
+		return nil
+	}
+	if raw == "" {
+		return conn.DefaultHLCoins
+	}
+	return strings.Split(raw, ",")
+}
+
+// hlVenue fetches the Hyperliquid universe and builds the extra read-only
+// venue + its source. A fetch failure degrades to no HL venue (warned), never
+// blocks the RSX terminal.
+func hlVenue() (*ui.VenueConfig, *conn.HL) {
+	meta, err := conn.FetchHLMeta()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: hyperliquid meta fetch failed (%v); continuing without it\n", err)
+		return nil, nil
+	}
+	hl := conn.NewHL(meta, hlCoins())
+	return &ui.VenueConfig{
+		Name:        conn.HLVenueName,
+		Code:        "h",
+		Instruments: hlInstruments(hl),
+		Sub:         nil, // read-only: HL trading needs EIP-712 signing (TODO, see conn/hyperliquid.go)
+	}, hl
+}
+
+// hlInstruments maps the source's universe to UI instruments.
+func hlInstruments(hl *conn.HL) []ui.Instrument {
+	out := make([]ui.Instrument, 0, len(hl.Instruments()))
+	for _, ins := range hl.Instruments() {
+		out = append(out, ui.Instrument{
+			ID:       ins.ID,
+			Name:     ins.Coin,
+			PriceDec: ins.PriceDec,
+			QtyDec:   ins.QtyDec,
+			Tick:     1,
+		})
+	}
+	return out
+}
+
+// runHL is the standalone read-only Hyperliquid terminal: the whole app
+// (book/pair/news screens) over HL market data, no RSX cluster needed.
+// Streaming is forced — the DOM view is an RSX order-entry screen.
+func runHL() error {
+	meta, err := conn.FetchHLMeta()
+	if err != nil {
+		return fmt.Errorf("hyperliquid meta: %w", err)
+	}
+	hl := conn.NewHL(meta, hlCoins())
+	instruments := hlInstruments(hl)
+	if len(instruments) == 0 {
+		return fmt.Errorf("hyperliquid: no instruments after coin filter")
+	}
+	first := instruments[0]
+	model := ui.New(ui.Config{
+		Symbol:      first.Name,
+		SymbolID:    first.ID,
+		Endpoint:    "wss://api.hyperliquid.xyz/ws",
+		MdEndpoint:  "wss://api.hyperliquid.xyz/ws",
+		Venue:       conn.HLVenueName,
+		Sub:         nil, // read-only (see conn/hyperliquid.go TODO)
+		PriceDec:    first.PriceDec,
+		QtyDec:      first.QtyDec,
+		Tick:        first.Tick,
+		Stream:      true,
+		Instruments: instruments,
+		LotNotional: envI64("RSX_TERM_LOT", 0),
+		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hl.Start(ctx)
+	defer hl.Close()
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	go drainEvents(p, hl.Events())
+	_, err = p.Run()
+	return err
 }
 
 // watchInstruments builds the streaming watchlist: every symbol the gateway
@@ -166,8 +269,9 @@ func displayConfig(gwURL string, symbolID uint32) (priceDec, qtyDec int, tick in
 
 // runMock builds the model over an offline MockGateway and streams the scripted
 // demo feed into the running program. Streaming mode watches the demo peer
-// symbol too, so the pair view has breadth offline.
-func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool) {
+// symbol too, so the pair view has breadth offline; an optional HL venue
+// (RSX_TERM_VENUE=both) rides along exactly as on the live path.
+func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlCfg *ui.VenueConfig, hl *conn.HL) {
 	mock := &conn.MockGateway{}
 	instruments := []ui.Instrument{
 		{ID: symbolID, Name: Symbol, PriceDec: priceDec, QtyDec: qtyDec, Tick: tick},
@@ -188,15 +292,35 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool) {
 		Tick:        tick,
 		Stream:      stream,
 		Instruments: instruments,
+		Venues:      extraVenues(hlCfg),
 		LotNotional: envI64("RSX_TERM_LOT", 0),
 		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go feedDemo(p)
+	startHL(p, hl)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
 		os.Exit(1)
 	}
+}
+
+// extraVenues lifts an optional venue into the Config slice.
+func extraVenues(hlCfg *ui.VenueConfig) []ui.VenueConfig {
+	if hlCfg == nil {
+		return nil
+	}
+	return []ui.VenueConfig{*hlCfg}
+}
+
+// startHL launches the HL source and its event pump (no-op without one).
+// The source owns reconnects; Close rides on process exit.
+func startHL(p *tea.Program, hl *conn.HL) {
+	if hl == nil {
+		return
+	}
+	hl.Start(context.Background())
+	go drainEvents(p, hl.Events())
 }
 
 // feedDemo replays the scripted offline demo into the running program, pacing
@@ -220,6 +344,8 @@ type liveConfig struct {
 	tick        int64
 	stream      bool
 	instruments []ui.Instrument
+	hlCfg       *ui.VenueConfig
+	hl          *conn.HL
 }
 
 // runLive builds a LiveGateway from cfg, connects both sockets, and runs
@@ -252,11 +378,13 @@ func runLive(cfg liveConfig) error {
 		Tick:        cfg.tick,
 		Stream:      cfg.stream,
 		Instruments: cfg.instruments,
+		Venues:      extraVenues(cfg.hlCfg),
 		LotNotional: envI64("RSX_TERM_LOT", 0),
 		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go drainEvents(p, live.Events())
+	startHL(p, cfg.hl)
 	_, err := p.Run()
 	return err
 }
