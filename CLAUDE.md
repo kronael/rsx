@@ -243,10 +243,8 @@ The repo enforces a 4-gate pipeline; never run `gate-4` directly.
 
 ```bash
 make gate              # all 4 gates in order
-make ci                # check-progress + gates 1-3 + infra-smoke (no fan-out)
+make ci                # gates 1-3 + integration + infra-smoke (no fan-out)
 make ci-full           # ci + shards-gated (fan-out after 3 green infra-smokes)
-make status-doctor     # required before any PROGRESS.md update
-make release-gate      # blocks unless Playwright == 421/421 + all green
 ```
 
 Gate ordering: `gate-1-startup` (server imports) → `gate-2-partials`

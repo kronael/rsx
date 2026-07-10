@@ -40,7 +40,6 @@
 | bench gate | `make bench-gate` | regression gate (10%) | varies |
 | latency | `make latency-publish` | GW→ME→GW probe, publish histogram | varies |
 | Playwright | `make play` | all browser tests | ~60s |
-| release gate | `make release-gate` | blocks unless 421/421 + all green | varies |
 
 ## Test Coverage Summary
 
