@@ -34,30 +34,41 @@ type symbolsResponse struct {
 // gateway, short enough that a dead endpoint doesn't stall launch.
 const fetchTimeout = 2 * time.Second
 
-// FetchSymbolConfig GETs the gateway's /v1/symbols and returns the config for
-// symbolID. gwURL is the WS URL the terminal already has (ws://host:port);
-// the REST endpoint lives on the same listener, so only the scheme changes.
-func FetchSymbolConfig(gwURL string, symbolID uint32) (SymbolConfig, error) {
+// FetchSymbols GETs the gateway's /v1/symbols and returns every symbol's
+// config (the endpoint carries no names — names come from the caller's
+// watchlist config until the server grows them). gwURL is the WS URL the
+// terminal already has (ws://host:port); the REST endpoint lives on the same
+// listener, so only the scheme changes.
+func FetchSymbols(gwURL string) ([]SymbolConfig, error) {
 	url := restURL(gwURL) + "/v1/symbols"
 	client := &http.Client{Timeout: fetchTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
-		return SymbolConfig{}, fmt.Errorf("fetch %s: %w", url, err)
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return SymbolConfig{}, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
 	}
 	var body symbolsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return SymbolConfig{}, fmt.Errorf("decode %s: %w", url, err)
+		return nil, fmt.Errorf("decode %s: %w", url, err)
 	}
-	for _, s := range body.Symbols {
+	return body.Symbols, nil
+}
+
+// FetchSymbolConfig returns the config for one symbolID via FetchSymbols.
+func FetchSymbolConfig(gwURL string, symbolID uint32) (SymbolConfig, error) {
+	symbols, err := FetchSymbols(gwURL)
+	if err != nil {
+		return SymbolConfig{}, err
+	}
+	for _, s := range symbols {
 		if s.ID == symbolID {
 			return s, nil
 		}
 	}
-	return SymbolConfig{}, fmt.Errorf("symbol %d not in %s (%d symbols)", symbolID, url, len(body.Symbols))
+	return SymbolConfig{}, fmt.Errorf("symbol %d not served by %s (%d symbols)", symbolID, gwURL, len(symbols))
 }
 
 // restURL converts the gateway WS URL to its HTTP sibling on the same

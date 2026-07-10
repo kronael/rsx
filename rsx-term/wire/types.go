@@ -57,8 +57,11 @@ func (t Tif) Next() Tif {
 }
 
 // OrderReq is a new order request, in fixed-point tick/lot units
-// (Px/Qty), ready to be encoded as a webproto-49 "N" frame.
+// (Px/Qty), ready to be encoded as a webproto-49 "N" frame. Symbol is
+// the target symbol id; 0 means the connection's configured default
+// (the single-symbol paths never set it).
 type OrderReq struct {
+	Symbol     uint32
 	Side       Side
 	Px         int64
 	Qty        int64

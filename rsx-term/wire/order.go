@@ -125,12 +125,14 @@ type Rejected struct {
 }
 
 // Fill is the folded event for an "F" frame naming an oid this
-// connection submitted.
+// connection submitted. Symbol is recovered from the paired order
+// (F frames carry no symbol); 0 when the fill couldn't be paired.
 type Fill struct {
-	Oid  uint64
-	Px   int64
-	Qty  int64
-	Side Side
+	Oid    uint64
+	Px     int64
+	Qty    int64
+	Side   Side
+	Symbol uint32
 }
 
 // pendingOrder is an order submitted on this connection but not yet
@@ -353,16 +355,17 @@ func (f *Folder) foldFill(arr []json.RawMessage) (any, bool) {
 
 	var ownOid uint64
 	var side Side
+	var symbol uint32
 	if p, known := f.oidSide[taker64]; known {
-		ownOid, side = taker64, p.side
+		ownOid, side, symbol = taker64, p.side, p.order.Symbol
 	} else if p, known := f.oidSide[maker64]; known {
-		ownOid, side = maker64, p.side
+		ownOid, side, symbol = maker64, p.side, p.order.Symbol
 	} else {
 		f.UnknownSideFills++
 		ownOid, side = taker64, Buy
 	}
 
-	return Fill{Oid: ownOid, Px: rawI64(pxRaw), Qty: rawI64(qtyRaw), Side: side}, true
+	return Fill{Oid: ownOid, Px: rawI64(pxRaw), Qty: rawI64(qtyRaw), Side: side, Symbol: symbol}, true
 }
 
 // foldError handles {"E":[code,msg]}.

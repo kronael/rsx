@@ -2,6 +2,7 @@ package wire
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -246,5 +247,29 @@ func TestFolderUnknownAndMalformedFrames(t *testing.T) {
 	}
 	if _, ok := f.Fold(`{"H":[123]}`, time.Unix(0, 0)); ok {
 		t.Error("heartbeat should yield no event")
+	}
+}
+
+func TestFoldFillRecoversSymbol(t *testing.T) {
+	f := NewFolder()
+	f.Sent(OrderReq{Symbol: 12, Side: Sell, Px: 100, Qty: 7}, Cid(1), time.Unix(0, 0))
+	// Accept pairs the pending order (qty 7) to the oid.
+	if _, ok := f.Fold(`{"U":["00000000000000ff",1,0,7,0]}`, time.Unix(0, 1000)); !ok {
+		t.Fatalf("accept did not fold")
+	}
+	ev, ok := f.Fold(`{"F":["00000000000000ff","00000000000000ee",100,7,0,0]}`, time.Unix(0, 2000))
+	if !ok {
+		t.Fatalf("fill did not fold")
+	}
+	fill := ev.(Fill)
+	if fill.Symbol != 12 || fill.Side != Sell {
+		t.Fatalf("fill should recover symbol+side from the paired order: %+v", fill)
+	}
+}
+
+func TestEncodeNewCarriesRoutedSymbol(t *testing.T) {
+	frame := EncodeNew(9, Cid(1), OrderReq{Symbol: 9, Side: Buy, Px: 5, Qty: 6})
+	if !strings.HasPrefix(frame, `{"N":[9,`) {
+		t.Fatalf("N frame should route to symbol 9: %s", frame)
 	}
 }
