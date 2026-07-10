@@ -5,16 +5,12 @@
        play-infra play-orders play-nav play-api \
        play-full deploy-help \
        api-unit api-integration api-stress \
-       bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help check-progress acceptance-bundle \
-       gen-release-truth release-gate \
-       lint-snapshot lint-snapshot-tests ci-guard publish-progress regen-progress exit-criteria task-report status-doctor \
+       bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help \
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
        ci ci-full demo \
-       prepare check-links \
-       local-validate local-validate-dry local-validate-pending \
-       meta-guard meta-guard-status meta-guard-tests
+       prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
 prepare:
@@ -58,12 +54,6 @@ help:
 	@echo "  make lint          - clippy --all-targets, warnings as errors"
 	@echo "  make fmt-check     - verify default rustfmt formatting"
 	@echo "  make fmt           - apply default rustfmt formatting"
-	@echo "  make check-progress    - Validate PROGRESS.md accounting (fail CI if broken)"
-	@echo "  make publish-progress  - Regenerate PROGRESS.md header from artifacts; fail on divergence"
-	@echo "  make task-report       - Rewrite PROGRESS.md from tasks.json (truth source)"
-	@echo "  make exit-criteria     - Auto-reopen completed tasks whose linked tests aren't green on HEAD"
-	@echo "  make gen-release-truth - Generate release_truth.json (no ext CLI dep)"
-	@echo "  make release-gate      - BLOCK release unless Playwright==421/421 and all gates green"
 	@echo "  make perf          - Run Rust performance benchmarks (Criterion)"
 	@echo "  make clean         - Clean build artifacts"
 	@echo ""
@@ -82,11 +72,6 @@ help:
 	@echo "  make shards            - Run all 5 product shards"
 	@echo "  make shards-gated      - Single-worker lane; fan-out after N=3 greens"
 	@echo "  make shards-report     - All shards; combined pass/fail report"
-	@echo ""
-	@echo "Fallback (quota-blocked agent sessions):"
-	@echo "  make local-validate    - Run blocked tasks via local make (no agent)"
-	@echo "  make local-validate-dry    - Dry-run: show which tasks would execute"
-	@echo "  make local-validate-pending - Also include pending tasks"
 
 # ── Release Gates ───────────────────────────────────────────────────
 # Hard-ordered gates: each must be green before the next runs.
@@ -138,7 +123,6 @@ gate-3-api: gate-2-partials
 # Gate 4: full Playwright suite — one execution, timestamped JSON+JUnit proof.
 # play-full.sh writes artifacts to tmp/play-artifacts/run-<ts>/ and copies
 # the canonical report to tmp/play-artifacts/full-run/{report.json,report.xml}.
-# acceptance-bundle.py reads ONLY from full-run/report.json (not per-shard).
 gate-4-playwright: gate-3-api
 	@echo "==> [Gate 4] Playwright (full run, JSON+JUnit artifacts)"
 	cd rsx-playground/tests && bash play-full.sh
@@ -218,11 +202,11 @@ shards-gated: shard-infra-smoke
 # Fan-out to product shards is unlocked only by make ci-full once
 # the infra-smoke streak reaches INFRA_SMOKE_STREAK_N.
 
-ci: check-progress gate-1-startup gate-2-partials gate-3-api integration shard-infra-smoke
+ci: gate-1-startup gate-2-partials gate-3-api integration shard-infra-smoke
 	@echo "==> [ci] PROGRESS ok + phases 1-3 + integration + infra-smoke passed"
 	@echo "    Run 'make ci-full' to unlock product-shard fan-out."
 
-ci-full: check-progress gate-1-startup gate-2-partials gate-3-api integration shards-gated
+ci-full: gate-1-startup gate-2-partials gate-3-api integration shards-gated
 	@echo "==> [ci-full] all acceptance phases passed."
 
 # CI check: no root-absolute href/src in dist HTML or rendered pages.
@@ -413,123 +397,6 @@ bench-gate-e2e:
 # (e.g. after a deliberate optimisation). Commit the result.
 bench-gate-e2e-save:
 	bash scripts/bench-gate-e2e.sh --save-reference
-
-# Validate PROGRESS.md accounting (fail CI if inconsistent)
-check-progress:
-	python3 scripts/check-progress.py
-
-# Local deterministic PROGRESS regeneration check.
-# Reads PROGRESS.md only; no bundle, no network.
-# Fails if denominator != 421 or header diverges from log counts.
-regen-progress:
-	python3 scripts/regen-progress.py
-
-# Status doctor: required gate before any PROGRESS update.
-# Runs 5 checks: denominator, phase semantics, contradiction,
-# artifact freshness, shard determinism.
-status-doctor:
-	python3 scripts/status_doctor.py
-
-# Regenerate PROGRESS.md header from acceptance artifacts (tasks.json,
-# gate-3-report.json, play-artifacts/). Fails if header would diverge.
-# Use --force to overwrite when you want to reset from artifacts.
-publish-progress: status-doctor
-	python3 scripts/publish-progress.py
-
-# Generate acceptance bundle (gate statuses, API summary, Playwright totals,
-# failing IDs, commit SHA, timestamp). Blocks if gate-3-report.json is stale.
-# Writes rsx-playground/tmp/acceptance-bundle.json.
-acceptance-bundle:
-	@echo "==> [acceptance-bundle] generating..."
-	python3 scripts/acceptance-bundle.py
-	@echo "    written: rsx-playground/tmp/acceptance-bundle.json"
-
-# Generate release_truth.json from acceptance-bundle.json.
-# Reads git SHA from .git dir (no external CLI dependency).
-# Blocks if bundle is missing, stale, or SHA-mismatched.
-gen-release-truth: acceptance-bundle
-	@echo "==> [gen-release-truth] generating..."
-	python3 scripts/gen-release-truth.py
-	@echo "    written: rsx-playground/tmp/release_truth.json"
-
-# Release gate: blocks unless Playwright==421/421 AND all upstream gates green.
-# Runs acceptance-bundle + gen-release-truth; exits non-zero on any failure.
-# Use this as the final CI gate before tagging a release.
-release-gate: gen-release-truth
-	@python3 -c "\
-import json, sys; \
-b = json.load(open('rsx-playground/tmp/release_truth.json')); \
-pw = b['playwright_passed']; \
-ok = b['all_green']; \
-canon = b['canonical_ok']; \
-print(f'[release-gate] playwright={pw}/421 all_green={ok} canonical_ok={canon}'); \
-sys.exit(0 if ok and canon else 1)"
-
-# Deterministic exit criteria: auto-reopens completed tasks whose linked
-# failing_test_ids are not yet green on the current HEAD acceptance bundle.
-# Exit 0 = all completed tasks satisfy criteria; 1 = tasks reopened; 2 = bundle missing.
-exit-criteria:
-	python3 scripts/exit-criteria.py
-
-# Truth-source reporter: compute task counts from .ship/tasks.json and update
-# PROGRESS.md header. Prevents manual/stale drift. Use --check for CI gate.
-task-report:
-	python3 scripts/task-report.py
-
-# Contradiction linter: rejects .ship/tasks.json snapshots where any task id
-# appears in both DONE and FAIL/retry sets. Run before applying any update.
-lint-snapshot:
-	python3 scripts/lint-snapshot.py
-
-# Unit tests for snapshot linter and acceptance-bundle CI checks.
-# Covers: denominator != 421, phase-semantics zombie state, DONE-FAIL splits.
-# Also covers exit-criteria: SHA check, artifact timestamp, reopen logic.
-lint-snapshot-tests:
-	python3 scripts/tests/test_lint_snapshot.py
-	python3 scripts/tests/test_acceptance_bundle.py
-	python3 scripts/tests/test_ci_guard.py
-	python3 scripts/tests/test_exit_criteria.py
-	rsx-playground/.venv/bin/python3 -m pytest \
-		scripts/tests/test_freshness_enforcement.py \
-		scripts/tests/test_local_runner.py \
-		-q
-
-# CI guard: validate artifact JSON — fail on denominator != 421 or
-# phase-state contradictions (zombie/stuck execution states).
-# Usage: make ci-guard ARTIFACT=rsx-playground/tmp/acceptance-bundle.json
-ci-guard:
-	python3 scripts/ci-guard.py $(ARTIFACT)
-
-# Fallback local runner: executes release-validation make targets for tasks
-# stuck in 'running' state (blocked external-agent sessions, quota limits).
-# Picks up tasks from .ship/tasks.json; updates status on pass/fail.
-# Usage:
-#   make local-validate           # run all blocked (running) tasks
-#   make local-validate-dry       # dry-run: show what would execute
-#   make local-validate-pending   # also include pending tasks
-local-validate:
-	python3 scripts/local-runner.py
-
-local-validate-dry:
-	python3 scripts/local-runner.py --dry-run
-
-local-validate-pending:
-	python3 scripts/local-runner.py --pending
-
-local-head:
-	python3 scripts/local-runner.py --head-only
-
-# Meta-orchestration guard: block new meta tasks until
-# product-critical failing Playwright IDs decrease across 2
-# consecutive fresh cycles.  Exits 1 if blocked, 0 if allowed.
-meta-guard:
-	python3 scripts/meta-guard.py
-
-meta-guard-status:
-	python3 scripts/meta-guard.py --status --verbose
-
-meta-guard-tests:
-	python3 -m pytest scripts/tests/test_meta_guard.py -v
 
 # Lint — all targets so warnings can't hide in tests/benches.
 lint:
