@@ -107,9 +107,13 @@ has no server source yet are marked **[needs server]**; what's sourced vs
 not is enumerated in the data-source table below.
 
 Prices/qtys are shown as human decimals (raw i64 / 10^decimals, e.g. PENGU
-`10001` → `0.010001`); the wire stays raw i64. The ladder is a **static price
-axis** — bid qty left, ask qty right of a fixed price column that recentres
-only on drift, so it doesn't reshuffle every tick (TT/Sierra pattern).
+`10001` → `0.010001`); the wire stays raw i64. The decimals + tick come from
+the gateway's `GET /v1/symbols` at startup (the authoritative per-symbol
+config, same listener as the WS); env vars override, and a failed fetch falls
+back to defaults so discovery never blocks launch. The ladder is a **static
+price axis** — bid qty left, ask qty right of a fixed price column that
+recentres only on drift, so it doesn't reshuffle every tick (TT/Sierra
+pattern).
 
 ```
  RSX  PENGU-PERP   ● live  open 1  fills 0   last 0.010000  ~mark 0.010002 (mid)  index —  funding —
