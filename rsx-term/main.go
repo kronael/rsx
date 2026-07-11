@@ -277,8 +277,9 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		{ID: symbolID, Name: Symbol, PriceDec: priceDec, QtyDec: qtyDec, Tick: tick},
 	}
 	if stream {
+		// SOL-PERP per the exchange config: price_dec 4, qty_dec 6, tick 1.
 		instruments = append(instruments, ui.Instrument{
-			ID: conn.DemoPeerID, Name: "WIF-PERP", PriceDec: priceDec, QtyDec: qtyDec, Tick: tick,
+			ID: conn.DemoPeerID, Name: "SOL-PERP", PriceDec: 4, QtyDec: 6, Tick: 1,
 		})
 	}
 	model := ui.New(ui.Config{
