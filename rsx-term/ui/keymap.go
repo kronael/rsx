@@ -42,15 +42,6 @@ const (
 	actCancel       action = "cancel"
 	actQuitBook     action = "quit-book" // esc in the book = quit (top layer)
 
-	actPairBuy  action = "pair-buy"
-	actPairSell action = "pair-sell"
-	actPairDown action = "pair-down"
-	actPairUp   action = "pair-up"
-	actFlatten  action = "flatten"
-	actListPrev action = "list-prev"
-	actListNext action = "list-next"
-	actClearArm action = "clear-arm"
-
 	actSearch   action = "search"
 	actFeedDown action = "feed-down"
 	actFeedUp   action = "feed-up"
@@ -82,12 +73,10 @@ type classDoc struct {
 type keymap struct {
 	global []binding
 	book   []binding
-	pair   []binding
 	news   []binding
 	llm    []binding
 
 	bookClasses []classDoc
-	pairClasses []classDoc
 	newsClasses []classDoc
 }
 
@@ -96,7 +85,7 @@ func defaultKeymap() *keymap {
 	return &keymap{
 		global: []binding{
 			{action: actQuit, key: "q", alts: []string{"ctrl+c"}, help: "quit", hint: "q quit"},
-			{action: actNextView, key: "tab", help: "next view (book → pair → news → assistant)", hint: "tab view"},
+			{action: actNextView, key: "tab", help: "next view (book → news → assistant)", hint: "tab view"},
 			{action: actPrevView, key: "shift+tab", help: "previous view"},
 			{action: actVenuePick, key: "f9", help: "venue picker (then the venue's letter)"},
 			{action: actReduceOnly, key: "r", help: "toggle reduce-only (applies to every order)", hint: "r RO"},
@@ -116,16 +105,6 @@ func defaultKeymap() *keymap {
 			{action: actCancel, key: "d", help: "cancel own order nearest the cursor", hint: "d cancel", danger: true},
 			{action: actQuitBook, key: "esc", help: "quit"},
 		},
-		pair: []binding{
-			{action: actPairBuy, key: "b", help: "buy — lift the armed symbol's offer (count × lots, IOC)", hint: "b buy", danger: true},
-			{action: actPairSell, key: "s", help: "sell — hit the armed symbol's bid (count × lots, IOC)", hint: "s sell", danger: true},
-			{action: actPairDown, key: "j", alts: []string{"down"}, help: "arm the next symbol", hint: "j/k arm"},
-			{action: actPairUp, key: "k", alts: []string{"up"}, help: "arm the previous symbol"},
-			{action: actFlatten, key: ".", help: "flatten the armed symbol (reduce-only IOC)", hint: ". flatten", danger: true},
-			{action: actListPrev, key: "[", help: "previous watchlist", hint: "[ ] list"},
-			{action: actListNext, key: "]", help: "next watchlist"},
-			{action: actClearArm, key: "esc", help: "clear the armed symbol / count"},
-		},
 		news: []binding{
 			{action: actSearch, key: "/", help: "search the feed (type, enter keeps, esc clears)", hint: "/ search"},
 			{action: actFeedDown, key: "j", alts: []string{"down"}, help: "select next headline", hint: "j/k select"},
@@ -140,10 +119,6 @@ func defaultKeymap() *keymap {
 			{keys: "1-5", help: "arm a size preset"},
 			{keys: "⇧1-5", help: "cross NOW — IOC at the far touch, preset size", danger: true},
 		},
-		pairClasses: []classDoc{
-			{keys: "a-z", help: "arm a symbol (its [letter])"},
-			{keys: "1-9", help: "lot count for the next b/s (vim-style prefix)"},
-		},
 		newsClasses: []classDoc{
 			{keys: "a-z", help: "jump into the symbol's book view"},
 		},
@@ -153,8 +128,6 @@ func defaultKeymap() *keymap {
 // screenBindings returns a screen's own table.
 func (k *keymap) screenBindings(s screen) []binding {
 	switch s {
-	case screenPair:
-		return k.pair
 	case screenNews:
 		return k.news
 	case screenLLM:
@@ -167,8 +140,6 @@ func (k *keymap) screenBindings(s screen) []binding {
 // screenClasses returns a screen's fixed key classes.
 func (k *keymap) screenClasses(s screen) []classDoc {
 	switch s {
-	case screenPair:
-		return k.pairClasses
 	case screenNews:
 		return k.newsClasses
 	case screenLLM:
@@ -211,7 +182,7 @@ func (b binding) matches(key string) bool {
 // on the same screen (or a fixed class key) are rejected — a broken keymap
 // must fail loudly at startup, not silently swallow a trading key.
 func (k *keymap) ApplyOverrides(overrides map[string]string) error {
-	tables := [][]binding{k.global, k.book, k.pair, k.news, k.llm}
+	tables := [][]binding{k.global, k.book, k.news, k.llm}
 	for name, key := range overrides {
 		if key == "" {
 			return fmt.Errorf("keymap: action %q bound to an empty key", name)
@@ -235,7 +206,7 @@ func (k *keymap) ApplyOverrides(overrides map[string]string) error {
 // checkConflicts rejects two actions sharing a key within one screen's
 // effective map (screen + globals).
 func (k *keymap) checkConflicts() error {
-	for _, s := range []screen{screenBook, screenPair, screenNews, screenLLM} {
+	for _, s := range []screen{screenBook, screenNews, screenLLM} {
 		seen := map[string]action{}
 		effective := append(append([]binding{}, k.screenBindings(s)...), k.global...)
 		for _, b := range effective {
@@ -319,7 +290,7 @@ func keysLabel(b binding) string {
 // actionNames lists every rebindable action, sorted, for the help footer.
 func (k *keymap) actionNames() []string {
 	var names []string
-	for _, table := range [][]binding{k.global, k.book, k.pair, k.news, k.llm} {
+	for _, table := range [][]binding{k.global, k.book, k.news, k.llm} {
 		for _, b := range table {
 			names = append(names, string(b.action))
 		}

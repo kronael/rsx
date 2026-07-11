@@ -282,11 +282,11 @@ func TestStreamHelpOverlay(t *testing.T) {
 	if strings.Contains(stripANSI(m.View()), "KEYS — BOOK") {
 		t.Fatalf("any key should close the help overlay")
 	}
-	// Context-sensitive: on the pair screen the overlay shows pair verbs.
+	// Context-sensitive: on the news screen the overlay shows news verbs.
 	m = press(m, "tab")
 	m = press(m, "?")
 	plain = stripANSI(m.View())
-	if !strings.Contains(plain, "KEYS — PAIR") || !strings.Contains(plain, "lift the armed symbol") {
-		t.Fatalf("pair help should show the pair grammar:\n%s", plain)
+	if !strings.Contains(plain, "KEYS — NEWS") || !strings.Contains(plain, "hand the headline") {
+		t.Fatalf("news help should show the news grammar:\n%s", plain)
 	}
 }

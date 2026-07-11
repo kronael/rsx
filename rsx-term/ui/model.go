@@ -51,11 +51,8 @@ type Config struct {
 	// multi-venue seam (e.g. read-only Hyperliquid market data). Their
 	// tagged feed.VenueMsg events fold into per-venue markets.
 	Venues []VenueConfig
-	// LotNotional is the pair view's base lot size in HUMAN quote units
-	// (1 lot ≈ LotNotional × instrument.LotMult% of notional). 0 → 100.
-	LotNotional int64
-	// MaxNotional is the pair view's fat-finger ceiling in human quote units
-	// per order — over it the order is hard-blocked. 0 → 100 × LotNotional.
+	// MaxNotional is the streaming view's fat-finger ceiling in human quote
+	// units per order — over it the order is hard-blocked. 0 → defaultMaxNotional.
 	MaxNotional int64
 	// News is the headline source (nil → news.Off, fully offline). The live
 	// Tree of Alpha reader plugs in behind RSX_TERM_NEWS=1.
@@ -248,6 +245,10 @@ type Model struct {
 	// activeVenue+active name the one the book view renders. news feeds the
 	// rail + news view (defaults to news.Off — always offline). heatW is the
 	// heatmap's column count (0 until the first WindowSizeMsg).
+	//
+	// The watchlist model (lists / listSel / watchVenue) is the neutral
+	// venue-markets seam the NEWS view reads and the BOOK switcher shares — it
+	// is no longer a "pair" concept.
 	keys        *keymap
 	venues      []VenueConfig
 	mkts        map[venueKey]*market
@@ -267,12 +268,10 @@ type Model struct {
 	switchBuf    string
 	venuePicking bool
 
-	// Pair view: named watchlists, the armed symbol (0 = none), and the
-	// vim-count buffer (digits before b/s).
-	lists    []watchlist
-	listSel  int
-	armedSym uint32
-	countBuf string
+	// Watchlist model: named venue-markets lists and the active one. Shared by
+	// the NEWS view (its breadth venue) and the BOOK symbol switcher.
+	lists   []watchlist
+	listSel int
 
 	// News view: feed selection, search state; the assistant handoff (the
 	// packaged context + the instrument it was priced with).
@@ -283,22 +282,22 @@ type Model struct {
 	assistIns  Instrument
 }
 
-// screen is which streaming view is on: the depth book (default), the
-// multi-pair chase grid, the news feed, or the LLM assistant.
+// screen is which streaming view is on: the depth book (default), the news
+// overview, or the LLM assistant.
 type screen int
 
 const (
 	screenBook screen = iota
-	screenPair
 	screenNews
 	screenLLM
 )
 
+// screenCount is how many screens the tab/shift+tab cycle rotates through.
+const screenCount = 3
+
 // label renders the screen's mode-line tag.
 func (s screen) label() string {
 	switch s {
-	case screenPair:
-		return "PAIR"
 	case screenNews:
 		return "NEWS"
 	case screenLLM:
@@ -308,9 +307,9 @@ func (s screen) label() string {
 	}
 }
 
-// next / prev cycle the four screens (tab / shift+tab).
-func (s screen) next() screen { return (s + 1) % 4 }
-func (s screen) prev() screen { return (s + 3) % 4 }
+// next / prev cycle the screens (tab / shift+tab): book → news → llm.
+func (s screen) next() screen { return (s + 1) % screenCount }
+func (s screen) prev() screen { return (s + screenCount - 1) % screenCount }
 
 // New builds a fresh model. Zero-value book / seq / tape / position /
 // latWindow are ready to fold; side defaults to Buy, tif to GTC, focus to the
@@ -326,11 +325,8 @@ func New(cfg Config) Model {
 			Tick:     cfg.Tick,
 		}}
 	}
-	if cfg.LotNotional <= 0 {
-		cfg.LotNotional = 100
-	}
 	if cfg.MaxNotional <= 0 {
-		cfg.MaxNotional = 100 * cfg.LotNotional
+		cfg.MaxNotional = defaultMaxNotional
 	}
 	if cfg.Venue == "" {
 		cfg.Venue = "rsx"

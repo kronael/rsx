@@ -196,7 +196,6 @@ func runHL() error {
 		Tick:         first.Tick,
 		Stream:       true,
 		Instruments:  instruments,
-		LotNotional:  envI64("RSX_TERM_LOT", 0),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(context.Background()),
 		KeyOverrides: keyOverrides(),
@@ -239,7 +238,7 @@ func symbolByID(symbols []conn.SymbolConfig, id uint32) (conn.SymbolConfig, bool
 
 // watchInstruments builds the streaming watchlist from an already-fetched
 // symbol list: every symbol the gateway serves (decimals/tick from
-// /v1/symbols) named/coded via RSX_TERM_WATCH ("id:name[:code[:multPct]]",
+// /v1/symbols) named/coded via RSX_TERM_WATCH ("id:name[:code]",
 // comma-separated — the endpoint carries no names yet, so unnamed ids show
 // as SYM-<id>). The primary symbol always leads. DOM mode (stream off)
 // keeps the single-symbol list. symbols == nil (mock path, or a failed
@@ -251,12 +250,11 @@ func watchInstruments(symbols []conn.SymbolConfig, primary uint32, priceDec, qty
 	if !stream {
 		return []ui.Instrument{primaryIns}
 	}
-	names, codes, mults := parseWatchEnv(os.Getenv("RSX_TERM_WATCH"))
+	names, codes := parseWatchEnv(os.Getenv("RSX_TERM_WATCH"))
 	if n, ok := names[primary]; ok {
 		primaryIns.Name = n
 	}
 	primaryIns.Code = codes[primary]
-	primaryIns.LotMult = mults[primary]
 	out := []ui.Instrument{primaryIns}
 
 	for _, s := range symbols {
@@ -274,17 +272,16 @@ func watchInstruments(symbols []conn.SymbolConfig, primary uint32, priceDec, qty
 			PriceDec: s.PriceDec,
 			QtyDec:   s.QtyDec,
 			Tick:     s.TickSize,
-			LotMult:  mults[s.ID],
 		})
 	}
 	return out
 }
 
-// parseWatchEnv parses RSX_TERM_WATCH: "id:name[:code[:multPct]]" entries,
+// parseWatchEnv parses RSX_TERM_WATCH: "id:name[:code]" entries,
 // comma-separated. Malformed entries are skipped (config sugar must never
 // stop the terminal).
-func parseWatchEnv(raw string) (names map[uint32]string, codes map[uint32]string, mults map[uint32]int64) {
-	names, codes, mults = map[uint32]string{}, map[uint32]string{}, map[uint32]int64{}
+func parseWatchEnv(raw string) (names map[uint32]string, codes map[uint32]string) {
+	names, codes = map[uint32]string{}, map[uint32]string{}
 	for _, entry := range strings.Split(raw, ",") {
 		parts := strings.Split(strings.TrimSpace(entry), ":")
 		if len(parts) < 2 || parts[0] == "" {
@@ -299,13 +296,8 @@ func parseWatchEnv(raw string) (names map[uint32]string, codes map[uint32]string
 		if len(parts) > 2 && parts[2] != "" {
 			codes[id] = parts[2]
 		}
-		if len(parts) > 3 {
-			if mult, err := strconv.ParseInt(parts[3], 10, 64); err == nil && mult > 0 {
-				mults[id] = mult
-			}
-		}
 	}
-	return names, codes, mults
+	return names, codes
 }
 
 // displayConfig resolves the symbol's display precision + tick from an
@@ -357,7 +349,6 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		Stream:       stream,
 		Instruments:  instruments,
 		Venues:       extraVenues(hlCfg),
-		LotNotional:  envI64("RSX_TERM_LOT", 0),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(context.Background()),
 		KeyOverrides: keyOverrides(),
@@ -445,7 +436,6 @@ func runLive(cfg liveConfig) error {
 		Stream:       cfg.stream,
 		Instruments:  cfg.instruments,
 		Venues:       extraVenues(cfg.hlCfg),
-		LotNotional:  envI64("RSX_TERM_LOT", 0),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(ctx),
 		KeyOverrides: keyOverrides(),

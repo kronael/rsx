@@ -30,8 +30,7 @@ func TestKeymapDefaultLookup(t *testing.T) {
 		{screenBook, "f", actPlace},
 		{screenBook, "left", actCursorDown}, // alternate key
 		{screenBook, "q", actQuit},          // global falls through
-		{screenPair, "b", actPairBuy},       // screen shadows nothing global
-		{screenPair, ".", actFlatten},
+		{screenBook, "b", actBuySide},       // screen verb
 		{screenNews, "/", actSearch},
 		{screenNews, "enter", actHandoff},
 		{screenLLM, "esc", actBack},
