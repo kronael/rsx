@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -504,5 +505,75 @@ func TestLiveGatewayWatchSymbolsAndRouting(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(frame), `{"N":[7,`) {
 		t.Fatalf("symbol 0 should fall back to the configured symbol: %s", frame)
+	}
+}
+
+// TestLiveGatewayMdInitialDialFailureRetries is a regression for
+// LIVE-MD-INITIAL-DIAL-NO-RETRY: a marketdata dial/subscribe failure on the
+// very FIRST connect attempt used to emit feed.MdDown and stop — no reader,
+// no reconnect loop — so a terminal started while marketdata was briefly
+// down stayed MD-down forever. The fixed connectMd hands off to the same
+// bounded-backoff reconnect loop a later read error would use, so md must
+// come up on its own once the peer is reachable.
+func TestLiveGatewayMdInitialDialFailureRetries(t *testing.T) {
+	const symbolID = 7
+
+	gwDone := make(chan struct{})
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true}); err != nil {
+			return
+		}
+		<-gwDone
+	}))
+	defer gwSrv.Close()
+	defer close(gwDone)
+
+	var attempts atomic.Int32
+	subCh := make(chan string, 4)
+	mdDone := make(chan struct{})
+	mdSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			// The first dial attempt fails outright — no upgrade, no accept —
+			// exactly like a marketdata process that is briefly unreachable
+			// at terminal startup.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		_, sub, err := c.Read(r.Context())
+		if err == nil {
+			subCh <- string(sub)
+		}
+		<-mdDone
+	}))
+	defer mdSrv.Close()
+	defer close(mdDone)
+
+	live := NewLiveGateway(wsURL(gwSrv.URL), wsURL(mdSrv.URL), "test-secret-at-least-32-bytes-long!", 42, symbolID)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := live.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer live.Close()
+
+	events := live.Events()
+	drainUntil(t, events, feed.GwUp{})
+	drainUntil(t, events, feed.MdDown{}) // the failed initial dial
+
+	// Before the fix, nothing else ever arrived here — no reconnect loop was
+	// started after connectMd's initial dial failure.
+	drainUntil(t, events, feed.MdUp{})
+
+	select {
+	case sub := <-subCh:
+		if sub != `{"S":[7,7]}` {
+			t.Fatalf("resubscribe = %s, want {\"S\":[7,7]}", sub)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for the retried subscribe frame")
 	}
 }
