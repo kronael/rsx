@@ -108,6 +108,25 @@ func TestDecodeHLTradesFrame(t *testing.T) {
 	}
 }
 
+func TestDecodeHLTradesFrameSkipsMalformedSide(t *testing.T) {
+	h := hlFixture()
+	// A malformed/unknown side must be skipped, not silently reported as a
+	// buy aggressor (HL-MALFORMED-TRADE-SIDE-BECOMES-BUY).
+	frame := []byte(`{"channel":"trades","data":[
+		{"coin":"ETH","side":"S","px":"2250.55","sz":"2.5","time":1700000000500,"tid":42},
+		{"coin":"ETH","side":"","px":"2250.55","sz":"2.5","time":1700000000500,"tid":43},
+		{"coin":"BTC","side":"B","px":"43000.0","sz":"0.1","time":1700000000501,"tid":44}
+	]}`)
+	msgs := h.DecodeHLMessage(frame)
+	if len(msgs) != 1 {
+		t.Fatalf("trades frame → %d msgs, want 1 (malformed sides skipped)", len(msgs))
+	}
+	buy := msgs[0].(feed.VenueMsg).Msg.(wire.MdTrade)
+	if buy.SymbolID != 1 || buy.TakerSide != 0 || buy.Seq != 44 {
+		t.Fatalf("surviving buy print mapping: %+v", buy)
+	}
+}
+
 func TestDecodeHLIgnoresOtherChannels(t *testing.T) {
 	h := hlFixture()
 	for _, frame := range []string{

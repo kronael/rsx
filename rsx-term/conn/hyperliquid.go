@@ -362,9 +362,19 @@ func (h *HL) DecodeHLMessage(data []byte) []any {
 			if !okPx || !okQty {
 				continue
 			}
-			taker := uint32(0) // "B" = buy aggressor
-			if tr.Side == "A" {
+			// "B" = buy aggressor, "A" = sell aggressor (wire.MdTrade.TakerSide:
+			// 0=buy, 1=sell). Anything else (malformed frame, a future side
+			// code) is skipped rather than defaulting to buy — a silent
+			// default here would misreport the aggressor on every unknown
+			// value (HL-MALFORMED-TRADE-SIDE-BECOMES-BUY).
+			var taker uint32
+			switch tr.Side {
+			case "B":
+				taker = 0
+			case "A":
 				taker = 1
+			default:
+				continue
 			}
 			out = append(out, feed.VenueMsg{Venue: HLVenueName, Msg: wire.MdTrade{
 				SymbolID:  ins.ID,
