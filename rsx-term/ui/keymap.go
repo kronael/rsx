@@ -268,7 +268,7 @@ func (k *keymap) helpLines(s screen) []string {
 		if danger {
 			style = StyleAsk
 		}
-		return style.Render(fmt.Sprintf("  %-9s", keys)) + StyleMuted.Render(help)
+		return style.Render(fmt.Sprintf("  %-11s", keys)) + StyleMuted.Render(help)
 	}
 	out := []string{
 		StyleHeading.Bold(true).Render("KEYS — " + s.label() + " · any key to close"),
