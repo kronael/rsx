@@ -270,10 +270,16 @@ func (k *keymap) helpLines(s screen) []string {
 		}
 		return style.Render(fmt.Sprintf("  %-11s", keys)) + StyleMuted.Render(help)
 	}
+	// The single-key-fire caveat is a BOOK-screen truth only; the news and
+	// assistant screens have no order keys, so their section header is plain.
+	section := s.label()
+	if s == screenBook {
+		section += " (orders fire on ONE key — the size + notional caps still hard-block)"
+	}
 	out := []string{
 		StyleHeading.Bold(true).Render("KEYS — " + s.label() + " · any key to close"),
 		"",
-		StyleHeading.Render(s.label() + " (orders fire on ONE key — the size + notional caps still hard-block)"),
+		StyleHeading.Render(section),
 	}
 	for _, b := range k.screenBindings(s) {
 		out = append(out, row(keysLabel(b), b.help, b.danger))
@@ -297,12 +303,18 @@ func keysLabel(b binding) string {
 	return strings.Join(keys, " ")
 }
 
-// actionNames lists every rebindable action, sorted, for the help footer.
+// actionNames lists every rebindable action, sorted and de-duplicated, for the
+// help footer (an action bound on more than one screen — e.g. back — appears
+// once).
 func (k *keymap) actionNames() []string {
+	seen := map[string]bool{}
 	var names []string
 	for _, table := range [][]binding{k.global, k.book, k.news, k.llm} {
 		for _, b := range table {
-			names = append(names, string(b.action))
+			if name := string(b.action); !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
 		}
 	}
 	sort.Strings(names)
