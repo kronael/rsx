@@ -171,8 +171,7 @@ func (m Model) narrow() bool {
 }
 
 // resolvedCenter is the ladder's centre price: the sticky ladderCenter, else
-// the current mid, else whichever side has liquidity, else 0. Shared by viewBook
-// and the mouse click-to-price mapping so the two never drift apart.
+// the current mid, else whichever side has liquidity, else 0.
 func (m Model) resolvedCenter() int64 {
 	if m.ladderCenter != 0 {
 		return m.ladderCenter
@@ -187,32 +186,6 @@ func (m Model) resolvedCenter() int64 {
 		return m.book.Bids[0].Px
 	}
 	return 0
-}
-
-// priceAtY maps a screen row to the ladder price rendered on it, for mouse
-// click-to-price. It mirrors viewBook's row layout exactly: status bar (1) +
-// optional ARMED banner (1) + the book panel's top border (1) + title (1),
-// then one row per level from center+half down to center-half. Returns false
-// off the ladder, in the stacked (narrow) layout where these offsets differ,
-// or with no live book.
-func (m Model) priceAtY(y int) (int64, bool) {
-	if m.narrow() || m.book.Empty() || !m.mdConnected {
-		return 0, false
-	}
-	firstLevelY := 3 // status bar + book top border + title
-	if m.armed {
-		firstLevelY++
-	}
-	i := y - firstLevelY
-	half := m.ladderRows()
-	if i < 0 || i > 2*half {
-		return 0, false
-	}
-	price := m.resolvedCenter() + int64(half) - int64(i)
-	if price <= 0 {
-		return 0, false
-	}
-	return price, true
 }
 
 // viewBook draws a STATIC price ladder: a fixed price axis centred on
@@ -393,7 +366,6 @@ func (m Model) viewHelpOverlay() string {
 		key("r / p", "toggle reduce-only / post-only"),
 		key("+ / -", "nudge price one tick (seeds from mid)"),
 		key("j / k", "join best bid / ask"),
-		key("click", "left-click a ladder row to set its price"),
 		key("enter", "preview → enter again to send · esc cancels"),
 		key("m", "market — IOC at the far touch"),
 		"",

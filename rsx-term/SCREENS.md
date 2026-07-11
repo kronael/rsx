@@ -65,7 +65,7 @@ help.
 
 `b`/`s` side · `0-9`/`⌫`/`tab` edit price+qty · `t` tif · `r`/`p`
 reduce-only/post-only · `+`/`-` nudge price a tick · `j`/`k` join best
-bid/ask · **left-click** a ladder row to set its price · `enter` preview →
+bid/ask · `enter` preview →
 `enter` send (`esc` cancels) · `m` market (IOC far touch) · `↑↓` select a
 working order · `c` cancel it · `X` cancel all ·
 `x` flatten (reduce-only) · `R` reverse the position · `F2` ARMED
@@ -277,7 +277,7 @@ rebindable via `RSX_TERM_KEYMAP` (JSON `{"action":"key"}`).
 - **News rail** (left): severity-graded marker per row window (`· ► ► ‼`,
   muted→red); the headline itself lives in the NEWS screen.
 - **Game order entry:** `b`/`s` side · `1-5` size presets · `h/l` cursor a
-  tick, `j/k` to the touch, click the map · `f` places a resting limit at
+  tick, `j/k` to the touch · `f` places a resting limit at
   the cursor · `⇧1-5` crosses NOW (IOC at the far touch) · `d` cancels the
   own order nearest the cursor. ONE keypress fires — the qty cap and the
   notional ceiling still hard-block (`BLOCKED: …`).

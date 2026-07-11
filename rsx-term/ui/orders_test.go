@@ -4,18 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"rsx-term/book"
 	"rsx-term/conn"
 	"rsx-term/wire"
 )
-
-// clickAt sends a left button-press at (x,y) and returns the updated model.
-func clickAt(m Model, x, y int) Model {
-	got, _ := m.handleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y})
-	return got.(Model)
-}
 
 func TestOwnOrderLevels(t *testing.T) {
 	m := Model{openOrders: []OpenOrder{{Side: wire.Buy, Px: 100}, {Side: wire.Sell, Px: 110}}}
@@ -388,72 +380,6 @@ func TestAppendDotRules(t *testing.T) {
 	m3 = press(m3, ".")
 	if m3.pxBuf != "" {
 		t.Fatalf("dot at 0 decimals should be ignored: %q", m3.pxBuf)
-	}
-}
-
-func TestPriceAtY(t *testing.T) {
-	m := New(Config{PriceDec: 6, QtyDec: 4, Tick: 1})
-	m.mdConnected = true
-	m.book.Asks = []wire.Level{{Px: 10002, Qty: 1}}
-	m.book.Bids = []wire.Level{{Px: 10000, Qty: 1}}
-	m.ladderCenter = 10001
-	m.width, m.height = 120, 29 // half = clamp((29-9)/2,1,20) = 10
-	half := m.ladderRows()
-	if half != 10 {
-		t.Fatalf("test setup: half=%d, want 10", half)
-	}
-	// firstLevelY=3: top row is center+half, each row down is -1.
-	cases := []struct {
-		y    int
-		want int64
-		ok   bool
-	}{
-		{3, 10011, true},  // i=0  -> center+half
-		{13, 10001, true}, // i=10 -> center
-		{23, 9991, true},  // i=20 -> center-half
-		{24, 0, false},    // i=21 -> below the ladder (imbalance bar)
-		{2, 0, false},     // above the first level
-	}
-	for _, c := range cases {
-		got, ok := m.priceAtY(c.y)
-		if ok != c.ok || (ok && got != c.want) {
-			t.Fatalf("priceAtY(%d) = (%d,%v), want (%d,%v)", c.y, got, ok, c.want, c.ok)
-		}
-	}
-	// ARMED shifts every row down by one (banner line).
-	m.armed = true
-	if got, ok := m.priceAtY(4); !ok || got != 10011 {
-		t.Fatalf("armed priceAtY(4) = (%d,%v), want (10011,true)", got, ok)
-	}
-	// Narrow layout: mapping is disabled (offsets differ when stacked).
-	m.armed, m.width = false, 90
-	if _, ok := m.priceAtY(3); ok {
-		t.Fatal("priceAtY must be disabled in the narrow/stacked layout")
-	}
-}
-
-func TestClickSetsPrice(t *testing.T) {
-	m := New(Config{PriceDec: 6, QtyDec: 4, Tick: 1})
-	m.mdConnected = true
-	m.book.Asks = []wire.Level{{Px: 10002, Qty: 1}}
-	m.book.Bids = []wire.Level{{Px: 10000, Qty: 1}}
-	m.ladderCenter = 10001
-	m.width, m.height = 120, 29
-	got := clickAt(m, 5, 13)
-	if got.pxBuf != "0.010001" { // center row, as a human decimal
-		t.Fatalf("click set pxBuf=%q, want 0.010001", got.pxBuf)
-	}
-	if got.focus != FocusPx {
-		t.Fatal("click should focus the price field")
-	}
-	// A click outside the book column is ignored.
-	if got2 := clickAt(m, bookWidth+5, 13); got2.pxBuf != "" {
-		t.Fatalf("click outside book column set pxBuf=%q", got2.pxBuf)
-	}
-	// Motion (not a press) is ignored.
-	motion := tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 5, Y: 13}
-	if got3, _ := m.handleMouse(motion); got3.(Model).pxBuf != "" {
-		t.Fatal("mouse motion should not set a price")
 	}
 }
 

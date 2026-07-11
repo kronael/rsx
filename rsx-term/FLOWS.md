@@ -98,42 +98,36 @@ For fast trading, `F2` removes the two-enter step:
 ARMED removes the *confirm*, never the **fat-finger guard** — an oversized
 order is still hard-blocked.
 
-## 10. Mouse click-to-price — `TestFlowClickToPrice`
-
-Left-click any ladder row → that row's price loads into the price field and it
-takes focus. A click never submits (that would bypass the confirm). Disabled in
-the narrow stacked layout, where the row offsets differ.
-
-## 11. Price helpers — `TestFlowPriceHelpers`
+## 10. Price helpers — `TestFlowPriceHelpers`
 
 - `j` / `k` — join the best bid / ask (loads that price).
 - `+` / `-` — nudge the price one tick (seeded from the mid if the field is
   empty), floored at one tick.
 
-## 12. Fat-finger block — `TestFlowFatFingerBlock`
+## 11. Fat-finger block — `TestFlowFatFingerBlock`
 
 An order over the size cap is refused outright — never previewed, never sent;
 the status reads `BLOCKED: qty … exceeds max …`. A hard stop, not a dismissible
 soft warning (the Citi lesson: soft warnings train click-through).
 
-## 13. Reject — `TestFlowReject`
+## 12. Reject — `TestFlowReject`
 
 An exchange rejection surfaces in the status line with its reason
 (`rejected: insufficient margin`).
 
-## 14. Marketdata down & recovery — `TestFlowMarketdataDegraded`
+## 13. Marketdata down & recovery — `TestFlowMarketdataDegraded`
 
 If the marketdata link drops, the ladder degrades to the amber `no live book`
 row rather than showing a stale or blank book. When the link recovers and a
 fresh update lands, the ladder restores.
 
-## 15. Gateway down — `TestFlowGatewayDegraded`
+## 14. Gateway down — `TestFlowGatewayDegraded`
 
 If the order link drops, the link dot flips to `● offline` and orders can't be
 sent (auto-reconnect with backoff). The marketdata link is independent and
 stays live — you keep seeing the book.
 
-## 16. Overlays — `TestFlowOverlays`
+## 15. Overlays — `TestFlowOverlays`
 
 - `F3` → the **latency trace** HUD (round-trip and marketdata p50/p99/best,
   link state, flow counters).

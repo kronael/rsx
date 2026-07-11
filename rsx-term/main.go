@@ -204,7 +204,7 @@ func runHL() error {
 	defer cancel()
 	hl.Start(ctx)
 	defer hl.Close()
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, hl.Events())
 	_, err = p.Run()
 	return err
@@ -337,7 +337,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		News:         newsSource(context.Background()),
 		KeyOverrides: keyOverrides(),
 	})
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
 	startHL(p, hl)
 	if _, err := p.Run(); err != nil {
@@ -425,7 +425,7 @@ func runLive(cfg liveConfig) error {
 		News:         newsSource(ctx),
 		KeyOverrides: keyOverrides(),
 	})
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())
 	startHL(p, cfg.hl)
 	_, err := p.Run()
