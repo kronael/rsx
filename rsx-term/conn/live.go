@@ -86,6 +86,13 @@ type LiveGateway struct {
 	cidCounter uint64
 
 	events chan any
+
+	// done is closed exactly once by Close, independently of baseCtx (the
+	// caller cancels baseCtx separately — see baseCtx's doc comment). Every
+	// send on events selects against done too, so a reader that fills the
+	// events buffer while the UI pump is stalled unblocks on Close instead
+	// of wedging forever (LIVE-EVENTS-CAN-BLOCK-READERS).
+	done chan struct{}
 }
 
 // NewLiveGateway builds a LiveGateway. Call Connect before Submit/Cancel or
@@ -99,6 +106,17 @@ func NewLiveGateway(gwURL, mdURL, jwtSecret string, userID, symbolID uint32) *Li
 		symbolID:  symbolID,
 		folder:    wire.NewFolder(),
 		events:    make(chan any, eventBuffer),
+		done:      make(chan struct{}),
+	}
+}
+
+// sendEvent delivers ev on g.events, or drops it if Close has run first — the
+// select against done means a reader blocked here (events buffer full, UI
+// pump stalled) is released by Close instead of leaking forever.
+func (g *LiveGateway) sendEvent(ev any) {
+	select {
+	case g.events <- ev:
+	case <-g.done:
 	}
 }
 
@@ -123,7 +141,7 @@ func (g *LiveGateway) Connect(ctx context.Context) error {
 		return fmt.Errorf("conn: dial gateway %s: %w", g.gwURL, err)
 	}
 	g.gwConn.Store(gwConn)
-	g.events <- feed.GwUp{}
+	g.sendEvent(feed.GwUp{})
 	go g.readGw(ctx)
 
 	g.connectMd(ctx)
@@ -144,16 +162,31 @@ func (g *LiveGateway) dialGw(ctx context.Context) (*websocket.Conn, error) {
 
 // connectMd dials the marketdata socket and sends the subscribe frame. A
 // failure at either step is a degraded-but-running terminal (order path is
-// unaffected), reported as feed.MdDown rather than returned to the caller.
+// unaffected), reported as feed.MdDown rather than returned to the caller —
+// but the terminal must not then stay MD-down forever: a failed initial dial
+// hands off to the same bounded-backoff reconnect loop a later read error
+// would use (LIVE-MD-INITIAL-DIAL-NO-RETRY), so a marketdata outage at
+// startup self-heals exactly like one that happens later.
 func (g *LiveGateway) connectMd(ctx context.Context) {
 	mdConn, err := g.dialMd(ctx)
 	if err != nil {
-		g.events <- feed.MdDown{}
+		g.sendEvent(feed.MdDown{})
+		go g.mdReconnectLoop(ctx)
 		return
 	}
 	g.mdConn.Store(mdConn)
-	g.events <- feed.MdUp{}
+	g.sendEvent(feed.MdUp{})
 	go g.readMd(ctx)
+}
+
+// mdReconnectLoop drives reconnectMd's bounded backoff until it connects (or
+// Close()/ctx-cancel gives up), then hands off to readMd — the same path a
+// mid-stream read error takes, reused here for the initial-dial-failure case.
+func (g *LiveGateway) mdReconnectLoop(ctx context.Context) {
+	backoff := time.Duration(0)
+	if g.reconnectMd(ctx, &backoff) {
+		g.readMd(ctx)
+	}
 }
 
 // WatchSymbols adds peer symbols to the marketdata subscription (the
@@ -195,9 +228,13 @@ func (g *LiveGateway) dialMd(ctx context.Context) (*websocket.Conn, error) {
 // never connected (connectMd leaves mdConn nil on failure). Marks the
 // connection closed first so neither reader's reconnect loop redials
 // after this — a read error racing CloseNow is treated as shutdown, not
-// a link drop.
+// a link drop. Also closes done (guarded by the closed CAS so a repeat call
+// never double-closes it), which releases any reader currently blocked in
+// sendEvent because the UI pump stalled with the events buffer full.
 func (g *LiveGateway) Close() {
-	g.closed.Store(true)
+	if g.closed.CompareAndSwap(false, true) {
+		close(g.done)
+	}
 	if c := g.gwConn.Load(); c != nil {
 		_ = c.CloseNow()
 	}
@@ -240,10 +277,12 @@ func nextBackoff(cur time.Duration) time.Duration {
 
 // Submit satisfies feed.Submitter: encodes o as a webproto-49 "N" frame and
 // writes it to the private socket. o.Symbol routes the order (0 = the
-// connection's configured symbol). It records the send time against the
-// generated cid first (Folder.Sent) so the RTT on the paired "U" accept is
-// measured from the actual wire write, not from whenever the caller reads
-// the resulting event.
+// connection's configured symbol). The send time is captured before the
+// write so the RTT on the paired "U" accept is measured from the actual wire
+// write, not from whenever the caller reads the resulting event — but it is
+// only recorded into the Folder (Folder.Sent) AFTER the write succeeds: a
+// write failure must not leave a phantom pending cid that a later accepted
+// order could mis-pair against (LIVE-SUBMIT-PHANTOM-PENDING-ON-WRITE-FAIL).
 func (g *LiveGateway) Submit(o wire.OrderReq) error {
 	conn := g.gwConn.Load()
 	if conn == nil {
@@ -256,9 +295,6 @@ func (g *LiveGateway) Submit(o wire.OrderReq) error {
 	if symbol == 0 {
 		symbol = g.symbolID
 	}
-	g.folderMu.Lock()
-	g.folder.Sent(o, cid, now)
-	g.folderMu.Unlock()
 
 	frame := wire.EncodeNew(symbol, cid, o)
 	ctx, cancel := context.WithTimeout(g.baseCtx, writeTimeout)
@@ -266,6 +302,10 @@ func (g *LiveGateway) Submit(o wire.OrderReq) error {
 	if err := conn.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
 		return fmt.Errorf("conn: submit: %w", err)
 	}
+
+	g.folderMu.Lock()
+	g.folder.Sent(o, cid, now)
+	g.folderMu.Unlock()
 	return nil
 }
 
@@ -301,7 +341,8 @@ func (g *LiveGateway) readGw(ctx context.Context) {
 			if g.stopping(ctx) {
 				return
 			}
-			g.events <- feed.GwDown{}
+			g.sendEvent(feed.GwDown{})
+
 			if !g.reconnectGw(ctx, &backoff) {
 				return
 			}
@@ -318,7 +359,8 @@ func (g *LiveGateway) readGw(ctx context.Context) {
 		event, ok := g.folder.Fold(text, time.Now())
 		g.folderMu.Unlock()
 		if ok {
-			g.events <- event
+			g.sendEvent(event)
+
 		}
 	}
 }
@@ -352,7 +394,8 @@ func (g *LiveGateway) reconnectGw(ctx context.Context, backoff *time.Duration) b
 			return false
 		}
 		g.gwConn.Store(conn)
-		g.events <- feed.GwUp{}
+		g.sendEvent(feed.GwUp{})
+
 		return true
 	}
 }
@@ -378,7 +421,8 @@ func (g *LiveGateway) readMd(ctx context.Context) {
 			if g.stopping(ctx) {
 				return
 			}
-			g.events <- feed.MdDown{}
+			g.sendEvent(feed.MdDown{})
+
 			if !g.reconnectMd(ctx, &backoff) {
 				return
 			}
@@ -393,7 +437,8 @@ func (g *LiveGateway) readMd(ctx context.Context) {
 			writeMdText(ctx, conn, fmt.Sprintf(`{"H":[%d]}`, hb.TsMs))
 			continue
 		}
-		g.events <- decoded
+		g.sendEvent(decoded)
+
 	}
 }
 
@@ -422,7 +467,8 @@ func (g *LiveGateway) reconnectMd(ctx context.Context, backoff *time.Duration) b
 			return false
 		}
 		g.mdConn.Store(conn)
-		g.events <- feed.MdUp{}
+		g.sendEvent(feed.MdUp{})
+
 		return true
 	}
 }
