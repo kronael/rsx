@@ -3,6 +3,27 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-11 — 3-token demo (display + maker polish)
+
+The exchange core is fixed and correct — 3 tokens trade live, orders fill, MEs
+FAULT=0 (the SEQ-1 per-ME fan-out re-sequencing + reset PG-wipe, in git). These
+two are display/maker-tuning follow-ups; neither is an exchange fault.
+
+- **DEMO-MD-DISPLAY-STARVE** (MED, playground) — the dashboard's own marketdata
+  reconstruction (`rsx-playground/server.py` `_book_snap`, the MD-WS subscriber
+  ~200-300) starves after the racy demo startup (drops the app-level heartbeat
+  or misses the initial `B` snapshot), so `/api/bbo` + `/api/book` freeze and
+  drift crossed. The EXCHANGE is correct: the authoritative direct MD WS
+  (`ws://127.0.0.1:8180`) shows moving, uncrossed books (that's what the demo
+  GIF `demo/run.py` reads). The BBO-reconcile commit uncrosses the top but does
+  not cure the starve. Fix candidate: reconnect + re-subscribe + re-request a
+  snapshot on drop; keep the heartbeat alive.
+- **DEMO-MAKER-TOUCH-LOCK** (LOW, maker) — with `RSX_MAKER_JITTER_BPS` on, the
+  maker's jittered cancel-replace leaves same-price orders on both sides, so the
+  top-of-book locks (bid==ask, 0bps in the GIF) instead of showing the 20bps
+  spread. Cosmetic. Fix candidate: ensure the prior ladder fully cancels before
+  the new one rests (or widen spread relative to jitter).
+
 ## Status — 2026-07-11 — HFT portfolio and AI-development audit
 
 Record-only from the career-facing evidence audit. These findings do not claim
