@@ -42,6 +42,10 @@ func (p *Position) ApplyFill(side wire.Side, px, qty int64) {
 
 	r := min64(abs64(signed), abs64(p.Net))
 	prevAbs := abs64(p.Net)
+	// Integer division truncates toward zero on every partial reduce, so cost
+	// basis drifts down by up to 1 unit per reduce (Entry reads slightly
+	// favorable over a long series of small closes). Acceptable for a display
+	// figure; prevAbs is non-zero here since this branch only runs when Net != 0.
 	p.Cost = p.Cost * (prevAbs - r) / prevAbs
 	p.Net += signed
 

@@ -89,13 +89,22 @@ func TestFisheyeColBidsLeftAsksRight(t *testing.T) {
 
 func TestFisheyePxRoundTrip(t *testing.T) {
 	const width = 40
-	anchor := int64(20000)
-	for col := 0; col < width; col++ {
-		px := FisheyePx(col, anchor, 1, width)
-		back, ok := FisheyeCol(px, anchor, 1, width)
-		if !ok || back != col {
-			t.Fatalf("col %d → px %d → col %d (%v)", col, px, back, ok)
+	// Both anchor parities: an odd anchor (bid+ask odd — the common 1-tick-spread
+	// case) previously dropped a half-tick on the bid side, breaking the inverse.
+	for _, anchor := range []int64{20000, 20001} {
+		for col := 0; col < width; col++ {
+			px := FisheyePx(col, anchor, 1, width)
+			back, ok := FisheyeCol(px, anchor, 1, width)
+			if !ok || back != col {
+				t.Fatalf("anchor %d: col %d → px %d → col %d (%v)", anchor, col, px, back, ok)
+			}
 		}
+	}
+	// Regression: the best bid at an odd anchor must recover exactly, not one
+	// tick low (anchor 20001 ⇒ bid 10000 / ask 10001).
+	col, _ := FisheyeCol(10000, 20001, 1, width)
+	if got := FisheyePx(col, 20001, 1, width); got != 10000 {
+		t.Fatalf("odd-anchor best bid: col %d → px %d, want 10000", col, got)
 	}
 }
 
