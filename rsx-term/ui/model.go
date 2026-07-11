@@ -56,6 +56,9 @@ type Config struct {
 	// MaxNotional is the pair view's fat-finger ceiling in human quote units
 	// per order — over it the order is hard-blocked. 0 → 100 × LotNotional.
 	MaxNotional int64
+	// News is the headline source (nil → news.Off, fully offline). The live
+	// Tree of Alpha reader plugs in behind RSX_TERM_NEWS=1.
+	News news.Source
 }
 
 // defaultSizePresets builds the streaming view's stock size ladder — 1, 2, 5,
@@ -311,11 +314,15 @@ func New(cfg Config) Model {
 		assignCodes(cfg.Venues[i].Instruments)
 	}
 
+	newsSrc := cfg.News
+	if newsSrc == nil {
+		newsSrc = news.Off{}
+	}
 	m := Model{
 		cfg:         cfg,
 		status:      "connecting…",
 		lastMdAgeNs: book.NsUnknown,
-		news:        news.Off{},
+		news:        newsSrc,
 		mkts:        map[venueKey]*market{},
 		activeVenue: cfg.Venue,
 		active:      cfg.SymbolID,
