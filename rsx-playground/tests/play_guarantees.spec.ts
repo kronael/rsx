@@ -2,6 +2,12 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 import { waitForHTMX } from "./test_helpers";
 
 type Check = { name: string; status: string; detail: string };
+type VerifyRun = {
+  checks: Check[];
+  ready: boolean;
+  failed: number;
+  run_at_ms: number;
+};
 
 // DB-dependent checks fail without live processes
 const DB_SKIP = ["Position", "Funding"];
@@ -9,9 +15,21 @@ const DB_SKIP = ["Position", "Funding"];
 async function runChecks(
   request: APIRequestContext,
 ): Promise<Check[]> {
+  return (await runVerify(request)).checks;
+}
+
+async function runVerify(
+  request: APIRequestContext,
+): Promise<VerifyRun> {
   const res = await request.post("/api/verify/run-json");
   expect(res.ok()).toBeTruthy();
-  return (await res.json()).checks as Check[];
+  const run = (await res.json()) as VerifyRun;
+  expect(run.run_at_ms).toBeGreaterThan(0);
+  expect(run.failed).toBe(
+    run.checks.filter((c) => c.status === "fail").length,
+  );
+  expect(run.ready).toBe(run.failed === 0);
+  return run;
 }
 
 function nonDbFails(checks: Check[]): Check[] {
@@ -61,6 +79,35 @@ async function cross(request: APIRequestContext) {
 
 const sleep = (ms: number) =>
   new Promise((r) => setTimeout(r, ms));
+
+async function processState(
+  request: APIRequestContext,
+  name: string,
+): Promise<{ pid: number | string; state: string } | undefined> {
+  const res = await request.get("/api/processes");
+  expect(res.ok()).toBeTruthy();
+  const processes = await res.json() as Array<{
+    name: string; pid: number | string; state: string;
+  }>;
+  return processes.find((process) => process.name === name);
+}
+
+async function waitForRestart(
+  request: APIRequestContext,
+  name: string,
+  oldPid: number | string,
+  timeoutMs = Number(process.env.RSX_RECOVERY_TIMEOUT_MS ?? 15_000),
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const process = await processState(request, name);
+    if (process?.state === "running" && process.pid !== oldPid) {
+      return process;
+    }
+    await sleep(250);
+  }
+  throw new Error(`${name} did not restart within ${timeoutMs}ms`);
+}
 
 test.describe("Invariants", () => {
   // These verify invariants GIVEN a healthy system (crash-recovery is
@@ -189,18 +236,40 @@ test.describe("Order at-most-once", () => {
 });
 
 test.describe("Crash recovery", () => {
-  test("invariants hold after kill+restart", async ({
+  test("ME crash recovers, resumes traffic, and preserves invariants", async ({
     request,
   }) => {
-    await request.post("/api/processes/me-pengu/kill");
-    await sleep(500);
-    await request.post("/api/processes/me-pengu/restart");
-    await sleep(1000);
-    const failed = nonDbFails(await runChecks(request))
+    const before = await runVerify(request);
+    expect(nonDbFails(before.checks), JSON.stringify(before.checks))
+      .toHaveLength(0);
+
+    const initial = await processState(request, "me-pengu");
+    expect(initial?.state).toBe("running");
+    const beforeOrder = await order(request, {
+      key: `before-recovery-${Date.now()}`,
+    });
+    expect(beforeOrder.status()).toBeLessThan(500);
+
+    const fault = await request.post("/api/fault/kill/me-pengu");
+    expect(fault.ok()).toBeTruthy();
+    await waitForRestart(request, "me-pengu", initial!.pid);
+
+    const afterOrder = await order(request, {
+      key: `after-recovery-${Date.now()}`,
+    });
+    expect(afterOrder.status()).toBeLessThan(500);
+
+    const after = await runVerify(request);
+    expect(after.run_at_ms).toBeGreaterThanOrEqual(before.run_at_ms);
+    const failed = nonDbFails(after.checks)
       .filter((c) => !c.name.includes("processes"));
     expect(
       failed, JSON.stringify(failed),
     ).toHaveLength(0);
+    expect(findCheck(after.checks, "Exactly-one").status)
+      .not.toBe("fail");
+    expect(findCheck(after.checks, "Tips monotonic").status)
+      .not.toBe("fail");
   });
 
   test("invariants hold after all-stop → all-start",

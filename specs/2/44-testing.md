@@ -87,6 +87,15 @@ appropriate. Run on every PR.
 
 ## 3. `make integration` - Integration Tests (with testcontainers)
 
+Service recovery uses the same fault endpoints and Verify checks as the
+Playground. A recovery case must establish a green Verify result before the
+fault, observe the affected process return with a new PID inside the configured
+readiness budget, prove that order traffic resumes, and run Verify again.
+Duplicate terminal outcomes, decreasing tips, unaccounted state, or any failed
+non-optional invariant fail the case. Browser-visible recovery remains in the
+`play_guarantees.spec.ts` shard; `RSX_RECOVERY_TIMEOUT_MS` changes only its
+bounded readiness wait, not the correctness requirements.
+
 **Purpose:** Full system stack validation with real components. Run on every
 PR or on-demand.
 
