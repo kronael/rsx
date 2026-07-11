@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"rsx-term/book"
 	"rsx-term/news"
 	"rsx-term/wire"
 )
@@ -430,6 +431,56 @@ func (m Model) handoffToAssistant() (tea.Model, tea.Cmd) {
 	m.screen = screenLLM
 	m.status = "context → assistant: " + ins.Name
 	return m, nil
+}
+
+// freezeToAssistant hands the row under the BOOK microscope cursor to the
+// assistant — a FREEZE of a row already in the heatmap ring, not a replay
+// (there is no replay buffer). STEP 4 makes the handoff generic; today it
+// reuses the news context shape with an honest book-freeze marker. Far rows
+// are aggregate time-weighted windows, never restored books, and the label
+// says so.
+func (m Model) freezeToAssistant() (tea.Model, tea.Cmd) {
+	mk := m.mkt()
+	rows := mk.heat.Rows()
+	if m.rowCursor < 0 || m.rowCursor >= len(rows) {
+		m.status = "microscope: move the row cursor first (↑/↓)"
+		return m, nil
+	}
+	row := rows[m.rowCursor]
+	label := rowFreezeLabel(row)
+	bids, asks := rowToLevels(row)
+	ins := m.ins()
+	marker := news.Marker{Text: "book freeze — " + label, Source: "book", TsNs: row.ToNs}
+	ctx := news.PackageContext(m.activeVenue, ins.Name, time.Now().UnixNano(), marker, bids, asks, mk.heat.MidPx())
+	m.assistCtx = &ctx
+	m.assistIns = ins
+	m.screen = screenLLM
+	m.status = "frozen → assistant: " + ins.Name + " (" + label + ")"
+	return m, nil
+}
+
+// rowToLevels splits a heatmap row's price-space profile into wire bid/ask
+// levels (Side<0 bid, >0 ask) for the assistant handoff.
+func rowToLevels(row book.Row) (bids, asks []wire.Level) {
+	for _, l := range row.Levels {
+		lv := wire.Level{Px: l.Px, Qty: l.Size, Count: uint32(l.Count)}
+		if l.Side < 0 {
+			bids = append(bids, lv)
+		} else {
+			asks = append(asks, lv)
+		}
+	}
+	return bids, asks
+}
+
+// rowFreezeLabel is a frozen row's honest description: a far row is an
+// aggregate time-weighted window (NOT a restored book), a live row an exact
+// ~100ms bin.
+func rowFreezeLabel(row book.Row) string {
+	if row.Span > 0 {
+		return "~" + fmtSpan(row.Span) + " window (aggregate, not a restored book)"
+	}
+	return "exact ~100ms bin"
 }
 
 // matchHeadlineSymbol links a headline's symbol tags (BTC, WIFUSDT, …) to an

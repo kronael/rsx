@@ -38,6 +38,9 @@ const (
 	actCursorUp     action = "cursor-up"
 	actCursorBid    action = "cursor-bid"
 	actCursorAsk    action = "cursor-ask"
+	actRowUp        action = "row-up"   // microscope: cursor toward older rows
+	actRowDown      action = "row-down" // microscope: cursor toward newer rows
+	actFreeze       action = "freeze"   // microscope: hand the cursor row to the assistant
 	actPlace        action = "place"
 	actCancel       action = "cancel"
 	actQuitBook     action = "quit-book" // esc in the book = quit (top layer)
@@ -99,11 +102,14 @@ func defaultKeymap() *keymap {
 			{action: actSellSide, key: "s", help: "side: sell"},
 			{action: actCursorDown, key: "h", alts: []string{"left"}, help: "cursor one tick down", hint: "h/l cursor"},
 			{action: actCursorUp, key: "l", alts: []string{"right"}, help: "cursor one tick up"},
-			{action: actCursorBid, key: "j", alts: []string{"down"}, help: "cursor to the best bid", hint: "j/k touch"},
-			{action: actCursorAsk, key: "k", alts: []string{"up"}, help: "cursor to the best ask"},
+			{action: actCursorBid, key: "j", help: "cursor to the best bid", hint: "j/k touch"},
+			{action: actCursorAsk, key: "k", help: "cursor to the best ask"},
+			{action: actRowUp, key: "up", help: "microscope: cursor to an older row (freeze, not replay)"},
+			{action: actRowDown, key: "down", help: "microscope: cursor to a newer row"},
+			{action: actFreeze, key: "enter", help: "freeze the cursor row → assistant", danger: false},
 			{action: actPlace, key: "f", help: "place resting limit at the cursor", hint: "f place", danger: true},
 			{action: actCancel, key: "d", help: "cancel own order nearest the cursor", hint: "d cancel", danger: true},
-			{action: actQuitBook, key: "esc", help: "quit"},
+			{action: actQuitBook, key: "esc", help: "quit (esc again if the microscope is on turns it off first)"},
 		},
 		news: []binding{
 			{action: actSearch, key: "/", help: "search the feed (type, enter keeps, esc clears)", hint: "/ search"},
