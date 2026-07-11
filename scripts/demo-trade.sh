@@ -114,8 +114,11 @@ verify_trade() {
     local before=$1 before_user_fills=$2
     local fills positions book
     [[ $(fill_count) -gt $before ]] || return 1
+    # The fills API currently emits zeroed order IDs, so exact taker-order
+    # correlation is unavailable. Use the same cap as the baseline and prove
+    # the authenticated user's fill history advanced.
     fills=$(curl -sf -H "x-user-id: ${TAKER_USER}" \
-        "${PLAYGROUND}/v1/fills?user_id=${TAKER_USER}&sym=${SYMBOL_ID}&limit=10") || return 1
+        "${PLAYGROUND}/v1/fills?user_id=${TAKER_USER}&sym=${SYMBOL_ID}&limit=1000") || return 1
     positions=$(curl -sf "${PLAYGROUND}/api/risk/users/${TAKER_USER}") || return 1
     book=$(curl -sf "${PLAYGROUND}/api/book/${SYMBOL_ID}") || return 1
     python3 -c '

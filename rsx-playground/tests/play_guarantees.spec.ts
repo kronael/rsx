@@ -68,13 +68,18 @@ async function order(
 }
 
 async function cross(request: APIRequestContext) {
-  await order(request, {
+  const maker = await order(request, {
     side: "buy", price: "56000", user_id: "1",
   });
-  await order(request, {
+  const taker = await order(request, {
     side: "sell", price: "54000", user_id: "2",
   });
   await new Promise((r) => setTimeout(r, 500));
+  expect(maker.ok()).toBeTruthy();
+  expect(taker.ok()).toBeTruthy();
+  const outcomes = [await maker.text(), await taker.text()];
+  expect(outcomes.join("\n")).toMatch(/filled/i);
+  return outcomes;
 }
 
 const sleep = (ms: number) =>
@@ -254,10 +259,9 @@ test.describe("Crash recovery", () => {
     expect(fault.ok()).toBeTruthy();
     await waitForRestart(request, "me-pengu", initial!.pid);
 
-    const afterOrder = await order(request, {
-      key: `after-recovery-${Date.now()}`,
-    });
-    expect(afterOrder.status()).toBeLessThan(500);
+    // A non-500 response can still be a queued/error page. Crossing two
+    // orders proves the restarted engine accepted traffic and filled it.
+    await cross(request);
 
     const after = await runVerify(request);
     expect(after.run_at_ms).toBeGreaterThanOrEqual(before.run_at_ms);
