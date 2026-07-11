@@ -31,6 +31,8 @@ specifies one.
 - [4. End-to-end harness (planned)](#4-end-to-end-harness-planned)
 - [5. Gateway mode endpoint (planned)](#5-gateway-mode-endpoint-planned)
 - [6. What the numbers mean](#6-what-the-numbers-mean)
+- [7. Measurement caveats / limitations](#7-measurement-caveats--limitations)
+- [8. Future implementation](#8-future-implementation)
 
 ---
 
@@ -249,3 +251,65 @@ The §4 E2E harness is the bridge between microbench
 numbers and the design budget. Until it lands, the spec
 keeps the budget but explicitly disclaims it as
 unmeasured.
+
+## 7. Measurement caveats / limitations
+
+Everything in §1-§4 is real and reproducible, but it was all
+collected on the same kind of box, with the same kind of
+network path. State that plainly:
+
+- **Loopback / in-process, shared development machine.**
+  Every number above — Criterion benches, the playground
+  `/api/latency` numbers, and the §4 E2E probe — runs on a
+  single shared dev machine, with gateway/risk/ME either
+  loopback UDP or in-process. None of it crossed a real NIC
+  or a real switch.
+- **No tuned-host test.** There is no run with controlled IRQ
+  placement, NUMA affinity, isolated CPUs (`isolcpus`), CPU
+  frequency control (governor pinned / turbo disabled), or PTP
+  time sync. The numbers reflect whatever the shared dev box's
+  scheduler and clock happened to be doing at run time, not a
+  host configured for latency measurement.
+- **DPDK and AF_XDP are not implemented and not measured.**
+  Where this repo discusses kernel-bypass networking (see
+  `specs/2/56-network-edge-scaling.md`), it is design
+  discussion of future work, not a measured code path. No
+  latency or throughput number anywhere in this repo comes
+  from a DPDK or AF_XDP run.
+- **No sustained-load / soak test.** §4 notes the E2E probe is
+  one-shot. There is no steady-state throughput test that runs
+  the system under realistic sustained load for a realistic
+  duration; all latency numbers are point-in-time, low-order
+  samples, not a distribution measured under continuous
+  production-like load.
+
+Treat every latency number in this repo — including the <50 µs
+design budget in §6 — as a development-machine, loopback-path
+measurement (or, for the design budget, a component-math
+estimate) until the work in §8 lands.
+
+## 8. Future implementation
+
+Not implemented, not scheduled to a specific milestone. Recorded
+here so the gap stays visible instead of getting silently
+implied by the existence of §1-§4.
+
+- **Real-NIC, tuned-host test.** A dedicated (non-shared) host
+  with IRQ affinity pinned off the hot cores, NUMA-local memory
+  and NIC queues, `isolcpus` reserving the hot-path cores,
+  fixed CPU frequency (governor `performance`, turbo disabled
+  or accounted for), and PTP time sync for cross-host timestamp
+  comparison. Needed before any cross-host latency number can
+  be trusted.
+- **DPDK / AF_XDP.** Kernel-bypass I/O as a swap-in under the
+  existing tile interfaces (see architecture note in
+  `CLAUDE.md` and the userspace-UDP prerequisite in
+  `specs/2/56-network-edge-scaling.md` Part B). Today this is
+  design discussion only — no implementation, no benchmark.
+- **Sustained production-load test.** A soak harness that drives
+  steady-state order flow at a fixed target rate for a realistic
+  duration (minutes-to-hours, not one probe) and reports the
+  resulting latency distribution and any degradation over time.
+  This is distinct from the one-shot §4 probe and from the
+  Criterion microbenches, both of which measure a single
+  operation or a single round-trip, not sustained throughput.
