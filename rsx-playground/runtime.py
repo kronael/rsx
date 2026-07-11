@@ -279,11 +279,22 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
                     {
                         "RSX_RISK_SHARD_ID": str(shard),
                         "RSX_RISK_SHARD_COUNT": str(config["risk_shards"]),
-                        "RSX_RISK_MAX_SYMBOLS": str(len(symbols)),
+                        # Must span the full symbol_id space (arrays are
+                        # indexed by symbol_id), matching the primary — not
+                        # len(symbols): PENGU is id 10, so a count of 3 makes
+                        # the warm replica panic (index OOB) on the first fill.
+                        "RSX_RISK_MAX_SYMBOLS":
+                            str(max(s["id"] for s in symbols) + 1),
                         "RSX_RISK_CAST_ADDR":
                             f"127.0.0.1:{BASE_RISK_CAST + 10 + shard * 2 + r}",
                         "RSX_GW_CAST_ADDR": f"127.0.0.1:{BASE_GW_CAST}",
                         "RSX_ME_CAST_ADDRS": me_cast_addrs,
+                        # The warm replica catches up the SAME single ME replay
+                        # stream the primary uses (rsx-risk main.rs: one
+                        # ReplicationConsumer against RSX_ME_REPLICATION_ADDR,
+                        # first symbol's stream_id). Required — its absence made
+                        # the replica panic at boot (config.rs from_env expect).
+                        "RSX_ME_REPLICATION_ADDR": me_replication_addr,
                         "RSX_RISK_WAL_DIR": "./tmp/wal",
                         "RSX_RISK_HEALTH_ADDR":
                             f"127.0.0.1:{BASE_RISK_HEALTH + 10 + shard * 2 + r}",

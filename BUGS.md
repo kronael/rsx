@@ -67,7 +67,18 @@ entries below.
   links to that report; DPDK/AF_XDP/FPGA/SmartNIC remain explicitly “not
   implemented” until a runnable artifact and measurement exist.
 
-- **DEMO-RISK-REPLICA-MISSING-REPLAY-CONFIG** (HIGH, config) — the current
+- **DEMO-RISK-REPLICA-MISSING-REPLAY-CONFIG** (HIGH, config) — **FIXED
+  2026-07-11 (commit pending — refine round 1).** The replica spawn in
+  `rsx-playground/runtime.py build_spawn_plan` now sets `RSX_ME_REPLICATION_ADDR`
+  = `me_replication_addr` (the same single first-symbol replay addr the primary
+  uses) and `RSX_RISK_MAX_SYMBOLS` = `max(id)+1` (was `len(symbols)`, which made
+  the warm replica index OOB on the first PENGU fill, id 10). Verified: `demo
+  full` brings up all 10 processes incl `risk-0-replica-0` (state=running); the
+  replica warm-catches ONE stream (`dxs consumer stream_id=10 … 127.0.0.1:9710`,
+  `warm catchup: consuming ME replication stream_id=10 … caught up`); and `rg -i
+  'panic|Name or service not known' log/risk-0-replica-0.log` is empty. The
+  original report follows.
+  The current
   replica log reaches its health-listener startup and then panics because
   `RSX_ME_REPLICATION_ADDR` is absent (`log/risk-0-replica-0.log:32-34`). This
   overlaps `STARTUP-ORDERING-FRAGILITY` below but adds a concrete spawn-plan
