@@ -85,7 +85,25 @@ cd /tmp
 "${U1000[@]}" "$ARIZUKO_SRC/arizuko" send "$INST" main "hello — do you see the RSX context?" --wait
 
 # HTTP path (what rsx-term uses): mint a route token once, then POST /chat/{token}.
-#   TOKEN=$("${U1000[@]}" "$ARIZUKO_SRC/arizuko" token "$INST" issue chat main | tail -1)
+#
+# SPLIT-TOPOLOGY QUIRK (verified 2026-07-11): `arizuko token issue` writes
+# route_tokens into $DATA/store/messages.db (cmd/arizuko/token.go → store.Open),
+# but webd resolves tokens against $DATA/store/routd.db (webd/main.go →
+# store.OpenRoutd) — so a freshly CLI-minted token 404s ("route token not
+# found" in webd logs). Until the arizuko CLI is split-aware, copy the rows
+# over after minting (as uid 1000, matching the containers):
+#
+#   TOKEN=$("${U1000[@]}" "$ARIZUKO_SRC/arizuko" token "$INST" issue chat main | awk '/^token:/{print $2}')
+#   "${U1000[@]}" python3 - <<'PY'
+#   import sqlite3
+#   src = sqlite3.connect("/home/onvos/.arizuko/data/arizuko_rsx/store/messages.db")
+#   dst = sqlite3.connect("/home/onvos/.arizuko/data/arizuko_rsx/store/routd.db")
+#   rows = src.execute("SELECT token_hash, jid, owner_folder, created_at FROM route_tokens").fetchall()
+#   dst.executemany("INSERT OR IGNORE INTO route_tokens(token_hash, jid, owner_folder, created_at) VALUES (?,?,?,?)", rows)
+#   dst.commit()
+#   PY
 #   curl -N -X POST "http://localhost:8095/chat/$TOKEN" \
 #     -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
 #     -d '{"content":"[RSX CONTEXT]...","topic":"t-<unixms>-rsx-BTC"}'
+#
+# Then: RSX_TERM_ASSIST="http://localhost:8095/chat/$TOKEN" for the terminal.
