@@ -334,6 +334,8 @@ BOOK.
 
 ### LLM — the assistant pane
 
+Offline (the default, `RSX_TERM_ASSIST` unset):
+
 ```
   ASSISTANT  (no model wired — the context below is exactly what one will receive)
   ── context handed off ─────────────────────────
@@ -346,9 +348,39 @@ BOOK.
   ~ placeholder — wiring an LLM is a follow-up; nothing here is generated
 ```
 
-The model is a PLACEHOLDER; the handoff is REAL: `news.AssistantContext`
-{venue, symbol, timestamp, headline, deep-copied book snapshot, mid} — the
-exact contract a wired model receives. `esc` returns to NEWS.
+Wired (`RSX_TERM_ASSIST=http://127.0.0.1:8095/chat/<token>`):
+
+```
+  ASSISTANT  (live — arizuko · reply streams below)
+  ── context handed off ─────────────────────────
+  market   rsx · SOL-PERP  at 05:49:33
+  headline ► Binance lists SOL pair
+  book     mid 150.0000  (1 bid / 1 ask levels frozen)
+  asks 150.0050×35.000000
+  bids 149.9950×40.000000
+  ── assistant reply ────────────────────────────
+  asst SOL is bid-heavy at the touch; 40 lots vs 35 offered.
+  > what's my position?_
+```
+
+The handoff is REAL either way: `news.AssistantContext` {venue, symbol,
+timestamp, headline, deep-copied book snapshot, mid} plus the trader's
+client-folded positions/fills/open-orders are serialized (`assistant.Render`,
+a pure function) into an `[RSX CONTEXT]` / `[TRADER STATE]` prompt — the exact
+contract the agent receives.
+
+- **Offline by default.** No `RSX_TERM_ASSIST` → nil client, zero dials, the
+  pane is byte-identical to the placeholder above. The single env var (the full
+  chat URL incl. the minted route token) is the whole gate.
+- **A handoff starts a thread.** Each `enter` (news headline or book freeze)
+  mints a fresh topic `t-<ms>-<venue>-<symbol>`; typed follow-ups reuse it, so
+  the agent keeps context across turns.
+- **Honest states.** A turn in flight shows `⏳ waiting for the assistant…` in
+  the status line, never fake content; only received SSE text renders in the
+  reply pane; a failure renders as `assistant unreachable — <err>`.
+- **Keys (live):** type to chat · `enter` sends the follow-up on the same
+  thread · `esc` clears a draft, then backs out to NEWS · `tab`/`shift+tab`
+  still cycle views. Offline, `esc` returns to NEWS.
 
 ### Venues
 

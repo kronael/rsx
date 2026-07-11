@@ -13,3 +13,6 @@ see SCREENS.md; for *why*, here.
 - **venue-seam.md** — why an exchange is a plugin behind two tiny interfaces
   (Source + Submitter), not a fork; how RSX / Hyperliquid / mock all normalise
   to one wire model so the terminal is generic multi-exchange.
+- **assistant.md** — why the chat pane talks to a locally deployed arizuko over
+  a route token + SSE, and why the prompt carries a snapshot (not live tools yet)
+  — without regressing the offline default or the goldens.

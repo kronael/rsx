@@ -19,7 +19,8 @@ Follow the `doc-topology` skill (itself distilled from rsx-cast/rsx-book):
 
 `notes/` is the *why* layer: `compression.md` (the three nonlinear
 compressions), `glyph-bank.md` (empirical glyph calibration), `honesty.md`
-(never fabricate), `venue-seam.md` (exchange = plugin). Add one per new
+(never fabricate), `venue-seam.md` (exchange = plugin), `assistant.md`
+(chat pane → arizuko over a route token + SSE). Add one per new
 non-obvious decision.
 
 ## Keeper invariants — do NOT regress
