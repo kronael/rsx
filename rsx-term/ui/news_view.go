@@ -425,7 +425,7 @@ func (m Model) handoffToAssistant() (tea.Model, tea.Cmd) {
 	}
 	mk := m.marketFor(venue, ins.ID)
 	mid, _ := mk.book.Mid()
-	ctx := news.PackageContext(venue, ins.Name, time.Now().UnixNano(), h, mk.book.Bids, mk.book.Asks, mid)
+	ctx := news.PackageNews(venue, ins.Name, time.Now().UnixNano(), h, mk.book.Bids, mk.book.Asks, mid)
 	m.assistCtx = &ctx
 	m.assistIns = ins
 	m.screen = screenLLM
@@ -450,8 +450,7 @@ func (m Model) freezeToAssistant() (tea.Model, tea.Cmd) {
 	label := rowFreezeLabel(row)
 	bids, asks := rowToLevels(row)
 	ins := m.ins()
-	marker := news.Marker{Text: "book freeze — " + label, Source: "book", TsNs: row.ToNs}
-	ctx := news.PackageContext(m.activeVenue, ins.Name, time.Now().UnixNano(), marker, bids, asks, mk.heat.MidPx())
+	ctx := news.PackageBookFreeze(m.activeVenue, ins.Name, time.Now().UnixNano(), label, bids, asks, mk.heat.MidPx())
 	m.assistCtx = &ctx
 	m.assistIns = ins
 	m.screen = screenLLM
@@ -510,7 +509,7 @@ func (m Model) viewLLM() string {
 	lines = append(lines, "", StyleHeading.Bold(true).Render("  ASSISTANT")+StyleMuted.Render("  (no model wired — the context below is exactly what one will receive)"))
 
 	if m.assistCtx == nil {
-		lines = append(lines, "", StyleMuted.Render("  no context yet — select a headline in the news view and press enter"))
+		lines = append(lines, "", StyleMuted.Render("  no context yet — select a headline (news) or freeze a row (book microscope) and press enter"))
 	} else {
 		lines = append(lines, m.assistContextLines()...)
 	}
@@ -523,20 +522,18 @@ func (m Model) viewLLM() string {
 	return strings.Join(lines, "\n")
 }
 
-// assistContextLines renders the frozen handoff: headline, market, and the
-// book snapshot at handoff time.
+// assistContextLines renders the frozen handoff: the market, an origin block
+// (a news headline OR a book-freeze note), and the frozen level snapshot.
 func (m Model) assistContextLines() []string {
 	ctx := *m.assistCtx
 	ins := m.assistIns
 	ts := time.Unix(0, ctx.TsNs).Format("15:04:05")
-	hts := time.Unix(0, ctx.Headline.TsNs).Format("15:04:05")
 	out := []string{
 		"",
 		StyleMuted.Render("  ── context handed off ─────────────────────────"),
 		StyleMuted.Render("  market   ") + StyleTextBright.Render(ctx.Venue+" · "+ctx.Symbol) + StyleMuted.Render("  at "+ts),
-		StyleMuted.Render("  headline ") + newsMarker(ctx.Headline.Tier) + " " + StyleText.Render(ctx.Headline.Text),
-		StyleMuted.Render("           " + hts + " · " + ctx.Headline.Source + " · severity " + fmt.Sprint(ctx.Headline.Tier)),
 	}
+	out = append(out, m.assistOriginLines(ctx)...)
 	mid := "—"
 	if ctx.MidPx > 0 {
 		mid = fmtDec(ctx.MidPx, ins.PriceDec)
@@ -550,6 +547,25 @@ func (m Model) assistContextLines() []string {
 		StyleDerived.Render("  ~ placeholder — wiring an LLM is a follow-up; nothing here is generated"),
 	)
 	return out
+}
+
+// assistOriginLines renders the origin-specific block: a news headline (with
+// its source + severity) or a book-freeze note (the honest row window). A book
+// freeze carries NO headline, so it never fabricates a news marker.
+func (m Model) assistOriginLines(ctx news.AssistantContext) []string {
+	if ctx.Origin == news.OriginBookFreeze || ctx.Headline == nil {
+		note := ctx.Note
+		if note == "" {
+			note = ctx.Origin.Label()
+		}
+		return []string{StyleMuted.Render("  origin   ") + StyleTextBright.Render(ctx.Origin.Label()) + StyleMuted.Render(" · "+note)}
+	}
+	h := *ctx.Headline
+	hts := time.Unix(0, h.TsNs).Format("15:04:05")
+	return []string{
+		StyleMuted.Render("  headline ") + newsMarker(h.Tier) + " " + StyleText.Render(h.Text),
+		StyleMuted.Render("           " + hts + " · " + h.Source + " · severity " + fmt.Sprint(h.Tier)),
+	}
 }
 
 // snapshotLine renders up to three frozen levels of one side.

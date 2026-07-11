@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"rsx-term/conn"
+	"rsx-term/news"
 )
 
 func TestMicroscopeEnterMoveExit(t *testing.T) {
@@ -70,8 +71,30 @@ func TestMicroscopeFreezeHandsRowToAssistant(t *testing.T) {
 	if m.assistCtx == nil {
 		t.Fatalf("freeze must package a context")
 	}
-	if m.assistCtx.Headline.Source != "book" {
-		t.Fatalf("book freeze should carry a book-origin marker: %+v", m.assistCtx.Headline)
+	if m.assistCtx.Origin != news.OriginBookFreeze {
+		t.Fatalf("book freeze should tag OriginBookFreeze, got %v", m.assistCtx.Origin)
+	}
+	if m.assistCtx.Headline != nil {
+		t.Fatalf("a book freeze must NOT fake a news marker: %+v", m.assistCtx.Headline)
+	}
+	if m.assistCtx.Note == "" {
+		t.Fatalf("book freeze should carry an honest note")
+	}
+}
+
+func TestBookFreezeAssistantRendersOriginNote(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	m = press(m, "up")    // enter the microscope at the newest (live) row
+	m = press(m, "enter") // freeze → assistant
+	plain := stripANSI(m.View())
+	for _, want := range []string{"ASSISTANT", "book freeze", "exact ~100ms bin", "placeholder"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("book-freeze assistant view missing %q:\n%s", want, plain)
+		}
+	}
+	// It must NOT render a headline severity block — no faked news marker.
+	if strings.Contains(plain, "severity") {
+		t.Fatalf("book freeze must not render a news headline block:\n%s", plain)
 	}
 }
 
