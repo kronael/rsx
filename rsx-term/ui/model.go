@@ -7,6 +7,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -109,8 +110,9 @@ func (m Model) fmtQty(raw int64) string { return fmtDec(raw, m.ins().QtyDec) }
 // ins returns the active instrument.
 func (m Model) ins() Instrument { return m.instrumentFor(m.activeVenue, m.active) }
 
-// instrumentFor resolves an instrument on a venue, falling back to the
-// legacy single-symbol cfg fields for the primary (or an unknown) id.
+// instrumentFor resolves an instrument on a venue. The primary id falls back
+// to the legacy single-symbol cfg fields; any other unknown id gets an honest
+// SYM-<id> stub for the REQUESTED id (never the primary's name/scale).
 func (m Model) instrumentFor(venue string, id uint32) Instrument {
 	for _, v := range m.venues {
 		if v.Name != venue {
@@ -120,6 +122,18 @@ func (m Model) instrumentFor(venue string, id uint32) Instrument {
 			if ins.ID == id {
 				return ins
 			}
+		}
+	}
+	if id != m.cfg.SymbolID {
+		// Unknown id (not on any configured venue): a stub carrying the requested
+		// id, not the primary — otherwise an unwatched symbol renders under the
+		// primary's name and price/qty scale. Precision is a best-effort default.
+		return Instrument{
+			ID:       id,
+			Name:     fmt.Sprintf("SYM-%d", id),
+			PriceDec: m.cfg.PriceDec,
+			QtyDec:   m.cfg.QtyDec,
+			Tick:     m.cfg.Tick,
 		}
 	}
 	return Instrument{
