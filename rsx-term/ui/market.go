@@ -19,7 +19,8 @@ type Instrument struct {
 	PriceDec int
 	QtyDec   int
 	Tick     int64
-	LotMult  int64 // percent of the base lot notional; 0 → 100
+	LotMult  int64  // percent of the base lot notional; 0 → 100
+	Sector   string // news-view market-map grouping ("" → "perps")
 }
 
 // market is one symbol's live state in the streaming terminal: its book,

@@ -205,6 +205,8 @@ func (m Model) handleBookKey(key string) (tea.Model, tea.Cmd) {
 	case "x":
 		m.switching = true
 		m.switchBuf = ""
+	case "n":
+		m.screen = screenNews
 	case "b":
 		m.side = wire.Buy
 	case "s":
@@ -642,22 +644,6 @@ func pow10(n int) int64 {
 		out *= 10
 	}
 	return out
-}
-
-// handleNewsKey / handleLLMKey — the news and assistant views' keys (esc
-// returns to the book; their own grammars live with their views).
-func (m Model) handleNewsKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" {
-		m.screen = screenBook
-	}
-	return m, nil
-}
-
-func (m Model) handleLLMKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" {
-		m.screen = screenBook
-	}
-	return m, nil
 }
 
 // fire applies the fat-finger guards and submits immediately on the venue —
