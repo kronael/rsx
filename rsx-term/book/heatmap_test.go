@@ -58,6 +58,61 @@ func TestCompressTicksTriangular(t *testing.T) {
 	}
 }
 
+// TestFisheyeColAbsurdPxStaysBounded is a regression for
+// HEATMAP-FISHEYE-UNBOUNDED-COMPRESS-LOOP: a malformed public MD level far
+// from the anchor (e.g. Px=1e18 with tick=1) must resolve in bounded time and
+// clamp onto the visible edge column, not spin an O(sqrt(distance)) loop
+// billions of iterations deep.
+func TestFisheyeColAbsurdPxStaysBounded(t *testing.T) {
+	const width = 20
+	anchor := int64(20000) // mid 10000
+
+	boundedFisheyeCol := func(t *testing.T, px int64) (int, bool) {
+		t.Helper()
+		type result struct {
+			col int
+			ok  bool
+		}
+		done := make(chan result, 1)
+		go func() {
+			col, ok := FisheyeCol(px, anchor, 1, width)
+			done <- result{col, ok}
+		}()
+		select {
+		case r := <-done:
+			return r.col, r.ok
+		case <-time.After(2 * time.Second):
+			t.Fatalf("FisheyeCol(%d) did not return within 2s", px)
+			return 0, false
+		}
+	}
+
+	if col, ok := boundedFisheyeCol(t, 1_000_000_000_000_000_000); !ok || col != width-1 {
+		t.Fatalf("absurd ask Px should clamp to the last column: col=%d ok=%v", col, ok)
+	}
+	if col, ok := boundedFisheyeCol(t, -1_000_000_000_000_000_000); !ok || col != 0 {
+		t.Fatalf("absurd bid Px should clamp to the first column: col=%d ok=%v", col, ok)
+	}
+}
+
+func TestCompressTicksBoundedOnHugeExtra(t *testing.T) {
+	// extra ~ 1e18/tick range: a counting loop here would run ~1.4e9 times.
+	// The closed-form implementation must still return quickly.
+	got := compressTicks(1_000_000_000_000_000_000)
+	if got < linearTicks {
+		t.Fatalf("compressTicks(huge) = %d, want a large column offset", got)
+	}
+	// n(n+1)/2 must be >= extra and (n-1)*n/2 must be < extra (exact boundary).
+	n := int64(got)
+	extra := int64(1_000_000_000_000_000_000)
+	if n*(n+1)/2 < extra {
+		t.Fatalf("compressTicks(%d) = %d undershoots the triangular bound", extra, got)
+	}
+	if (n-1)*n/2 >= extra {
+		t.Fatalf("compressTicks(%d) = %d is not the smallest valid n", extra, got)
+	}
+}
+
 func TestFisheyeColBidsLeftAsksRight(t *testing.T) {
 	const width = 20
 	anchor := int64(20000) // mid 10000
@@ -190,6 +245,42 @@ func TestCascadeSealsTenSecondWindow(t *testing.T) {
 	ten := rows[1]
 	if ten.Span != 10*time.Second {
 		t.Fatalf("second row span %v, want 10s", ten.Span)
+	}
+}
+
+// TestCascadeSplitsOvershootAcrossTiers is a regression for
+// HEATMAP-CASCADE-OVERSHOOT-DROPS-TIME: a row whose own [fromNs,toNs) span
+// (e.g. after a scheduler stall) is far wider than the tier it expires into
+// must be split across tier fills, not folded whole into a single sealed
+// row that then resets the tier to fully empty. 35s of book state expiring
+// into a 10s-span tier 0 should seal three whole 10s chunks into tier 1 and
+// leave 5s of PARTIAL accumulation still live in the reset tier 0 — not an
+// entirely fresh, empty tier 0.
+func TestCascadeSplitsOvershootAcrossTiers(t *testing.T) {
+	h := NewHeatmap(1)
+	h.Configure(1, 2) // tiers: 10s then 60s
+	bids := []wire.Level{{Px: 9999, Qty: 8, Count: 2}}
+	asks := []wire.Level{{Px: 10001, Qty: 4, Count: 1}}
+
+	const stallNs = int64(35 * time.Second)
+	h.Ingest(bids, asks, nil, nil, 0, stallNs) // one wide bin: a 35s stall
+	// A tiny follow-up bin expires the stalled bin off the (cap-1) live ring,
+	// driving it through cascade.
+	h.Ingest(bids, asks, nil, nil, stallNs, stallNs+int64(binNs))
+
+	rows := h.Rows()
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 1 far(60s) + 1 far(10s) + 1 live", len(rows))
+	}
+	sixty, ten := rows[0], rows[1]
+	if sixty.Span != 60*time.Second || ten.Span != 10*time.Second {
+		t.Fatalf("tier spans = %v, %v; want 60s, 10s", sixty.Span, ten.Span)
+	}
+	if len(ten.Levels) == 0 {
+		t.Fatalf("10s tier should still carry its 5s of leftover accumulation, not reset empty")
+	}
+	if len(sixty.Levels) == 0 {
+		t.Fatalf("60s tier should have received the promoted 30s of sealed 10s chunks")
 	}
 }
 

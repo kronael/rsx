@@ -1,6 +1,7 @@
 package book
 
 import (
+	"math"
 	"time"
 
 	"rsx-term/wire"
@@ -188,33 +189,79 @@ func (h *Heatmap) Ingest(bids, asks []wire.Level, trades []TapeEntry, ages AgeSo
 	for len(h.live) > h.liveCap {
 		expired := h.live[0]
 		h.live = h.live[1:]
-		h.cascade(0, expired)
+		h.cascade(0, expired, rowSpanMs(expired))
 	}
 }
 
-// cascade folds an expired row into tier i, sealing and promoting the tier's
-// window upward whenever it completes. Past the last tier the history rolls
-// off the top.
-func (h *Heatmap) cascade(i int, row Row) {
+// cascade folds row into tier i — weighted by ms, the exact amount of time
+// this fold represents for tier i — sealing and promoting the tier's window
+// upward whenever it completes. ms is threaded explicitly rather than
+// recomputed from row.FromNs/ToNs at each level: a row whose own duration
+// exceeds the tier's remaining span (e.g. after a scheduler stall — Ingest
+// is only called with whatever [fromNs,toNs) the caller observed, which can
+// be much wider than one bin) is split across as many full-span fills as it
+// spans, and each chunk's promoted weight is that chunk's own capacity, not
+// the original row's full (and by then stale) duration — recomputing from
+// FromNs/ToNs at each level would re-derive the full original span every
+// time and cascade far more aggressively than the actual time covered. Each
+// full chunk seals and promotes before the next chunk starts, so the
+// residual time is never silently dropped into a single undersized "sealed"
+// row (HEATMAP-CASCADE-OVERSHOOT-DROPS-TIME). Past the last tier the
+// history rolls off the top.
+func (h *Heatmap) cascade(i int, row Row, ms int64) {
 	if i >= len(h.tiers) {
 		return
 	}
+	remainingMs := ms
+	chunk := row // trades are exact events, not time-weighted — attribute them
+	// to the first chunk only so a split row never double- (or triple-)counts
+	// its trade-flow across the tiers its overshoot spans.
+	for {
+		t := h.tiers[i]
+		capacity := t.span.Milliseconds() - t.coveredMs
+		if capacity <= 0 {
+			capacity = t.span.Milliseconds()
+		}
+		if remainingMs <= capacity {
+			t.foldWeighted(chunk, remainingMs)
+			break
+		}
+		t.foldWeighted(chunk, capacity)
+		sealed := t.snapshot()
+		h.tiers[i] = newTier(t.span)
+		h.cascade(i+1, sealed, capacity)
+		remainingMs -= capacity
+		chunk.Trades = nil
+	}
 	t := h.tiers[i]
-	t.fold(row)
 	if t.coveredMs >= t.span.Milliseconds() {
 		sealed := t.snapshot()
 		h.tiers[i] = newTier(t.span)
-		h.cascade(i+1, sealed)
+		h.cascade(i+1, sealed, t.coveredMs)
 	}
 }
 
-// fold accumulates one row (time-weighted by its wall-clock duration) into
-// the tier's window.
-func (t *tier) fold(row Row) {
+// rowSpanMs is a row's wall-clock duration in whole milliseconds, floored at
+// 1 so a zero-width row still counts as covering something.
+func rowSpanMs(row Row) int64 {
 	ms := (row.ToNs - row.FromNs) / int64(time.Millisecond)
 	if ms < 1 {
 		ms = 1
 	}
+	return ms
+}
+
+// fold accumulates one row (time-weighted by its own wall-clock duration)
+// into the tier's window.
+func (t *tier) fold(row Row) {
+	t.foldWeighted(row, rowSpanMs(row))
+}
+
+// foldWeighted is fold's split-aware core: it accumulates row into the
+// tier's window weighted by ms, which may be less than the row's own
+// duration when cascade is splitting an overshooting row across tier
+// boundaries.
+func (t *tier) foldWeighted(row Row, ms int64) {
 	for _, l := range row.Levels {
 		acc := t.levels[l.Px]
 		if acc == nil {
@@ -444,10 +491,29 @@ func fisheyeOffset(ticks int64) int {
 // compressTicks maps an extra tick distance (beyond the linear zone) to an
 // added column offset: the k-th extra column spans k ticks (cumulative
 // k(k+1)/2), so far levels aggregate progressively wider price ranges.
+// Computed in closed form (the triangular-number inverse), not by counting
+// up from n=1: a malformed public MD level far from the anchor (e.g. an
+// absurd Px with tick=1) can hand this a tick distance in the billions, and
+// an O(sqrt(extra)) counting loop would spin that long before the caller
+// clamps the resulting column to the visible width
+// (HEATMAP-FISHEYE-UNBOUNDED-COMPRESS-LOOP).
 func compressTicks(extra int64) int {
-	n := 1
-	for int64(n)*int64(n+1)/2 < extra {
+	if extra <= 1 {
+		return 1
+	}
+	// Smallest n with n(n+1)/2 >= extra: n = ceil((sqrt(8*extra+1)-1)/2).
+	// float64 rounds imprecisely for huge extra, so nudge to the exact
+	// boundary afterward — the correction loop below runs at most a couple
+	// of iterations regardless of extra's magnitude.
+	n := int64(math.Ceil((math.Sqrt(8*float64(extra)+1) - 1) / 2))
+	if n < 1 {
+		n = 1
+	}
+	for n > 1 && (n-1)*n/2 >= extra {
+		n--
+	}
+	for n*(n+1)/2 < extra {
 		n++
 	}
-	return n
+	return int(n)
 }
