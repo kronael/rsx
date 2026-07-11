@@ -443,16 +443,16 @@ func (m Model) viewBookScreen() string {
 	rows := mk.heat.Rows()
 	far := mk.heat.FarRows()
 	body := make([]string, 0, far+mk.heat.LiveCap()+1)
-	for _, row := range rows[:far] {
-		body = append(body, m.renderRow(row, anchor, tick, refMax, tradeMax, mode, false))
+	for i, row := range rows[:far] {
+		body = append(body, m.renderRow(row, anchor, tick, refMax, tradeMax, mode, false, m.rowCursor == i))
 	}
 	for i := 0; i < mk.heat.LiveCap()-mk.heat.LiveLen(); i++ {
 		body = append(body, m.blankRow())
 	}
-	for _, row := range rows[far:] {
-		body = append(body, m.renderRow(row, anchor, tick, refMax, tradeMax, mode, false))
+	for j, row := range rows[far:] {
+		body = append(body, m.renderRow(row, anchor, tick, refMax, tradeMax, mode, false, m.rowCursor == far+j))
 	}
-	body = append(body, m.renderRow(now, anchor, tick, refMax, tradeMax, mode, true))
+	body = append(body, m.renderRow(now, anchor, tick, refMax, tradeMax, mode, true, false))
 	tape := m.tapeRail(len(body), tradeMax)
 	for i := range body {
 		body[i] += tape[i]
@@ -549,13 +549,18 @@ func (m Model) switchCandidates() string {
 
 // renderRow renders one body line: news rail + heatmap cells + time gutter.
 // The NOW row (isNow) uses micro-bar glyphs and carries your resting orders.
-func (m Model) renderRow(row book.Row, anchor, tick, refMax, tradeMax int64, mode renderMode, isNow bool) string {
+// selected marks the microscope's row cursor — its rail becomes an accent ▸.
+func (m Model) renderRow(row book.Row, anchor, tick, refMax, tradeMax int64, mode renderMode, isNow, selected bool) string {
 	cells := foldCells(row, anchor, tick, m.heatW)
 	if isNow {
 		m.markOwnOrders(cells, anchor, tick)
 	}
 	var sb strings.Builder
-	sb.WriteString(m.railChar(row))
+	if selected {
+		sb.WriteString(StyleAccent.Bold(true).Render("▸"))
+	} else {
+		sb.WriteString(m.railChar(row))
+	}
 	for _, c := range cells {
 		if isNow {
 			sb.WriteString(microCellStr(c, refMax, tradeMax, mode))
@@ -765,16 +770,35 @@ func (m Model) hintLine() string {
 }
 
 // streamFooter is the pinned status block: the exact touch ladder (two
-// lines), position, latency, and the control legend.
+// lines), position, latency, and the control legend — the last line becomes
+// the microscope status while the row cursor is active.
 func (m Model) streamFooter() []string {
 	mk := m.mkt()
+	last := m.hintLine()
+	if m.rowCursor >= 0 {
+		last = m.microscopeLine()
+	}
 	return []string{
 		m.touchLadderLine(mk.book.Asks, "ask ", StyleAsk),
 		m.touchLadderLine(mk.book.Bids, "bid ", StyleLive),
 		m.streamPosLine(),
 		m.streamLatLine(),
-		m.hintLine(),
+		last,
 	}
+}
+
+// microscopeLine is the book view's microscope status (shown while the row
+// cursor is active, replacing the hint line): the frozen row's HONEST window
+// label plus the freeze/exit keys. Far rows are aggregate windows, live rows
+// exact bins — never a "restored book".
+func (m Model) microscopeLine() string {
+	rows := m.mkt().heat.Rows()
+	if m.rowCursor < 0 || m.rowCursor >= len(rows) {
+		return m.hintLine()
+	}
+	return StyleAccent.Bold(true).Render(" microscope ") +
+		StyleText.Render(rowFreezeLabel(rows[m.rowCursor])) +
+		StyleMuted.Render("  ·  ↑↓ move · enter freeze → assistant · esc off")
 }
 
 // touchLadderLine renders up to three exact levels of one side — precise

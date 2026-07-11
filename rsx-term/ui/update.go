@@ -197,6 +197,11 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleBookKey(act action, key string) (tea.Model, tea.Cmd) {
 	switch act {
 	case actQuitBook:
+		if m.rowCursor >= 0 { // esc first steps out of the microscope
+			m.rowCursor = -1
+			m.status = "microscope off"
+			return m, nil
+		}
 		return m, tea.Quit
 	case actSwitchSymbol:
 		m.switching = true
@@ -215,6 +220,12 @@ func (m Model) handleBookKey(act action, key string) (tea.Model, tea.Cmd) {
 		m.cursorToTouch(wire.Buy)
 	case actCursorAsk:
 		m.cursorToTouch(wire.Sell)
+	case actRowUp:
+		m.stepRow(-1)
+	case actRowDown:
+		m.stepRow(+1)
+	case actFreeze:
+		return m.freezeToAssistant()
 	case actPlace:
 		return m.handlePlace()
 	case actCancel:
@@ -280,6 +291,7 @@ func (m *Model) switchTo(ins Instrument) {
 	m.lastActive[m.activeVenue] = ins.ID
 	m.switching = false
 	m.switchBuf = ""
+	m.rowCursor = -1 // the microscope indexed the old symbol's rows
 	m.status = "book → " + ins.Name
 }
 
@@ -301,6 +313,7 @@ func (m Model) handleVenuePick(key string) (tea.Model, tea.Cmd) {
 			m.active = v.Instruments[0].ID
 		}
 		m.lastActive[v.Name] = m.active
+		m.rowCursor = -1 // the microscope indexed the old venue's book
 		m.status = "venue → " + v.Name
 		return m, nil
 	}
@@ -356,6 +369,24 @@ func (m *Model) stepCursor(n int64) {
 	if mk.cursorPx < t {
 		mk.cursorPx = t
 	}
+}
+
+// stepRow moves the microscope row-cursor over the rows the heatmap already
+// holds (Heatmap.Rows(): far windows on top, live bins below — index 0 is the
+// farthest/oldest). The first arrow press ENTERS the microscope at the newest
+// held row; further presses walk it (dir -1 = older/up, +1 = newer/down). No
+// replay buffer is created — this only points at rows already in the ring.
+func (m *Model) stepRow(dir int) {
+	n := len(m.mkt().heat.Rows())
+	if n == 0 {
+		m.status = "microscope: no rows yet"
+		return
+	}
+	if m.rowCursor < 0 {
+		m.rowCursor = n - 1 // enter at the newest held row
+		return
+	}
+	m.rowCursor = clamp(m.rowCursor+dir, 0, n-1)
 }
 
 // cursorToTouch snaps the cursor to the touch: j → best bid, k → best ask.

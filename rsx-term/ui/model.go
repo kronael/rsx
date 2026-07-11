@@ -262,6 +262,13 @@ type Model struct {
 	// Game order entry: the armed size preset (1-5, book view).
 	sizeSel int
 
+	// Book-view microscope: a keyboard row-cursor (↑/↓) over the rows the
+	// heatmap already holds (Heatmap.Rows() — far + live, NOT the now row).
+	// -1 = off. Freezing the cursor row hands it to the assistant. This is a
+	// FREEZE of rows already in the ring, NOT a replay buffer: far rows are
+	// aggregate time-weighted windows, never restored books.
+	rowCursor int
+
 	// Book-view symbol switcher (x + letter code) and the venue picker
 	// (F9 + venue letter).
 	switching    bool
@@ -358,6 +365,7 @@ func New(cfg Config) Model {
 		activeVenue: cfg.Venue,
 		active:      cfg.SymbolID,
 		lastActive:  map[string]uint32{},
+		rowCursor:   -1,
 	}
 	primary := VenueConfig{Name: cfg.Venue, Code: venuePickCode(cfg.Venue), Instruments: cfg.Instruments, Sub: cfg.Sub}
 	m.venues = []VenueConfig{primary}
