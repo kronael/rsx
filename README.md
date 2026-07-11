@@ -36,6 +36,12 @@ mechanical choices, while the repo includes specs, notes, benchmark
 tables, and an interactive Playground so you can inspect why each
 piece exists.
 
+I built RSX with Claude Code and Codex. They wrote a meaningful amount of the
+code, tests, specs, and documentation; I directed the work, challenged the
+results, and decided what shipped. The repository keeps the mistakes and
+corrections visible too—AI made the project faster to build, not automatically
+correct.
+
 ## Run the live demo
 
 ```bash
