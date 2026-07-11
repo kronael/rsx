@@ -10,7 +10,7 @@
        shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
        ci ci-full demo stop reset \
-       term term-local term-demo term-ssh-setup \
+       term term-local term-demo term-ssh-setup maker \
        prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
@@ -262,9 +262,16 @@ tune-host:
 	@echo "net.core.rmem_max/wmem_max set to 25 MB"
 	@echo "To persist: echo 'net.core.rmem_max=26214400' | sudo tee /etc/sysctl.d/99-rsx.conf"
 
+# Build the Go market maker (rsx-maker). When present, the playground
+# launches this binary; without it, do_maker_start falls back to the
+# Python market_maker.py so the demo still comes up.
+maker: ## build the Go market maker binary (rsx-maker)
+	cd rsx-maker && go build -o rsx-maker .
+
 # ── Local trading: spin up a cluster, then trade via the TUI ──
 local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 	-$(MAKE) tune-host
+	-$(MAKE) maker
 	./rsx-playground/playground start
 	./rsx-playground/playground start-all minimal
 	@sleep 3
@@ -338,8 +345,9 @@ bench-save:
 
 # Drive the F1 latency probe under load and write measured
 # E2E p50/p99 (GW->ME->GW round trip) into bench-baseline.json.
-# Pre: rsx-playground/playground start-all (which starts the
-# Python market_maker.py — there is no Rust maker).
+# Pre: rsx-playground/playground start-all, then start the maker
+# (`make maker` builds the Go rsx-maker; the playground launches it,
+# falling back to the Python market_maker.py when unbuilt).
 # Default N=2000; override with N=10000 etc.
 latency-publish:
 	bash scripts/latency-publish.sh
