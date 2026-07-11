@@ -327,7 +327,10 @@ func (g *LiveGateway) readGw(ctx context.Context) {
 // (backoffInitial doubling to backoffMax, advanced via backoff) until it
 // connects or the connection is closing. On success it stores the new
 // socket, emits feed.GwUp, and returns true; it returns false only when
-// the caller should give up because Close()/ctx-cancel fired.
+// the caller should give up because Close()/ctx-cancel fired. The dial
+// itself is unbounded by stopping(), so it re-checks after a successful
+// dial and CloseNow's + discards the new socket rather than Store it if
+// Close() ran while the dial was in flight (TERM-CONN-RECONNECT-CLOSE-TOCTOU).
 func (g *LiveGateway) reconnectGw(ctx context.Context, backoff *time.Duration) bool {
 	for {
 		if g.stopping(ctx) {
@@ -343,6 +346,10 @@ func (g *LiveGateway) reconnectGw(ctx context.Context, backoff *time.Duration) b
 		conn, err := g.dialGw(ctx)
 		if err != nil {
 			continue
+		}
+		if g.stopping(ctx) {
+			_ = conn.CloseNow()
+			return false
 		}
 		g.gwConn.Store(conn)
 		g.events <- feed.GwUp{}
@@ -392,7 +399,8 @@ func (g *LiveGateway) readMd(ctx context.Context) {
 
 // reconnectMd redials the marketdata socket (and re-subscribes, via
 // dialMd) with the same bounded backoff as reconnectGw, independently of
-// the private socket's own reconnect state.
+// the private socket's own reconnect state. Mirrors reconnectGw's post-dial
+// stopping() re-check (TERM-CONN-RECONNECT-CLOSE-TOCTOU).
 func (g *LiveGateway) reconnectMd(ctx context.Context, backoff *time.Duration) bool {
 	for {
 		if g.stopping(ctx) {
@@ -408,6 +416,10 @@ func (g *LiveGateway) reconnectMd(ctx context.Context, backoff *time.Duration) b
 		conn, err := g.dialMd(ctx)
 		if err != nil {
 			continue
+		}
+		if g.stopping(ctx) {
+			_ = conn.CloseNow()
+			return false
 		}
 		g.mdConn.Store(conn)
 		g.events <- feed.MdUp{}
