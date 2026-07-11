@@ -2281,7 +2281,7 @@ gap-2 text-xs">
 Run locally with
 <code class="bg-slate-800 px-1 rounded">make perf</code>
 or
-<code class="bg-slate-800 px-1 rounded">make bench-gate</code>
+<code class="bg-slate-800 px-1 rounded">make perf-gate</code>
 (10% regression check vs saved baseline).</p>""",
     )
     budget = _card(

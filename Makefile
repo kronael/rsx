@@ -1,4 +1,4 @@
-.PHONY: check build release test e2e integration wal smoke perf \
+.PHONY: check build release test e2e integration wal smoke perf perf-gate perf-save perf-load perf-e2e-gate perf-e2e-save \
        lint fmt fmt-check clean play play-overview play-topology \
        play-book play-risk play-wal play-logs \
        play-control play-faults play-verify \
@@ -6,8 +6,8 @@
        play-full deploy-help \
        api-unit api-integration api-stress \
        bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help \
-       gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
-       shard-infra-smoke shard-routing shard-htmx shard-control \
+       gate _gate-startup _gate-partials _gate-api _gate-playwright gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
+       _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
        ci ci-full demo demo-gif stop reset \
        term term-local term-demo term-smoke-llm term-ssh-setup maker \
@@ -39,28 +39,22 @@ help: ## Show this help
 
 # ── Release Gates ───────────────────────────────────────────────────
 # Hard-ordered gates: each must be green before the next runs.
-# Usage: make gate        (runs all gates in order, stops on first fail)
-#        make gate-1-startup   (imports only, ~1s)
-#        make gate-2-partials  (routing + HTMX partials, ~5s)
-#        make gate-3-api       (API unit tests, ~30s)
-#        make gate-4-playwright (full Playwright suite, 421 tests, ~2min)
-#
-# NEVER run gate-4-playwright directly — use 'make gate' to enforce order.
+# Internal stages remain hard-ordered; use `make gate` for the release check.
 
 PYTEST := rsx-playground/.venv/bin/pytest
 PY     := rsx-playground/.venv/bin/python3
 
-gate: gate-1-startup gate-2-partials gate-3-api gate-4-playwright ## run all 4 release gates in order
+gate: _gate-playwright ## ordered Playground release check
 	@echo "==> All release gates passed."
 
 # Gate 1: server imports cleanly (no startup crash)
-gate-1-startup: ## gate 1: server imports cleanly
+_gate-startup:
 	@echo "==> [Gate 1] startup/imports"
 	cd rsx-playground && $(abspath $(PY)) -c "import server; print('ok')"
 	@echo "    PASS: server imports cleanly"
 
 # Gate 2: all page routes + HTMX partials return HTTP 200
-gate-2-partials: gate-1-startup ## gate 2: routes + HTMX partials return 200
+_gate-partials: _gate-startup
 	@echo "==> [Gate 2] routing/partials"
 	cd rsx-playground && $(abspath $(PYTEST)) tests/test_htmx_partials.py \
 		--tb=short -q
@@ -69,7 +63,7 @@ gate-2-partials: gate-1-startup ## gate 2: routes + HTMX partials return 200
 # Gate 3: API test suite (processes, risk, WAL, orders, edge cases, proxy).
 # Excludes stress tests and integration tests requiring live Rust processes.
 # Writes tmp/gate-3-report.json; diffs vs prev in tmp/gate-3-diff.json.
-gate-3-api: gate-2-partials ## gate 3: API test suite
+_gate-api: _gate-partials
 	@echo "==> [Gate 3] API tests"
 	cd rsx-playground && $(abspath $(PYTEST)) \
 		tests/api_processes_test.py \
@@ -87,14 +81,14 @@ gate-3-api: gate-2-partials ## gate 3: API test suite
 # Gate 4: full Playwright suite — one execution, timestamped JSON+JUnit proof.
 # play-full.sh writes artifacts to tmp/play-artifacts/run-<ts>/ and copies
 # the canonical report to tmp/play-artifacts/full-run/{report.json,report.xml}.
-gate-4-playwright: gate-3-api ## gate 4: full Playwright suite (JSON+JUnit)
+_gate-playwright: _gate-api
 	@echo "==> [Gate 4] Playwright (full run, JSON+JUnit artifacts)"
 	cd rsx-playground/tests && bash play-full.sh
 	@echo "    PASS: Playwright suite green"
 
 # play-full: standalone full Playwright run (no gate dependencies).
 # Writes timestamped artifacts + updates full-run/ canonical.
-play-full:
+_play-full:
 	@echo "==> [play-full] Playwright full run"
 	cd rsx-playground/tests && bash play-full.sh
 
@@ -103,32 +97,30 @@ play-full:
 # signatures and blocks re-runs when signature is unchanged and no
 # domain files changed (exit 2 = blocked, exit 1 = new failures).
 #
-# Usage: make shard-routing   (navigation+overview+topology, 29 tests)
-#        make shard-htmx      (book+risk+wal+logs+faults+verify, 83 tests)
-#        make shard-control   (control+orders, 35 tests)
-#        make shards          (all shards in order)
+# Internal shard recipes back `make shards-gated`. Run a focused Playwright
+# spec directly when debugging one browser domain.
 
 SHARD := rsx-playground/tests/play-shard.sh
 
 # Consecutive green infra-smoke runs required before fan-out unlocks
 INFRA_SMOKE_STREAK_N := 3
 
-shard-infra-smoke: ## playwright infra-smoke shard (validation lane)
+_shard-infra-smoke:
 	@bash $(SHARD) infra-smoke
 
-shard-routing: ## playwright routing shard (nav+overview+topology)
+_shard-routing:
 	@bash $(SHARD) routing
 
-shard-htmx: ## playwright htmx-partials shard (book/risk/wal/logs)
+_shard-htmx:
 	@bash $(SHARD) htmx-partials
 
-shard-control: ## playwright process-control shard (control+orders)
+_shard-control:
 	@bash $(SHARD) process-control
 
-shard-maker: ## playwright market-maker lifecycle shard
+_shard-maker:
 	@bash $(SHARD) market-maker
 
-shards: shard-routing shard-htmx shard-control shard-maker ## run all playwright product shards
+shards: _shard-routing _shard-htmx _shard-control _shard-maker
 	@echo "==> All shards passed."
 
 # shards-report: run all shards (continue on failure); publish combined
@@ -140,7 +132,7 @@ shards-report: ## run all shards, combined pass/fail report
 # Gated fan-out: run infra-smoke first; only fan out to all product
 # shards once infra-smoke has been green >= INFRA_SMOKE_STREAK_N
 # consecutive times.  Single-worker validation lane by default.
-shards-gated: shard-infra-smoke ## shards with gated fan-out (after N greens)
+shards-gated: _shard-infra-smoke ## advanced: browser shards after 3 green infra runs
 	@STREAK=0; \
 	STREAK_FILE=rsx-playground/tmp/play-sig/infra-smoke.streak; \
 	if [ -f "$$STREAK_FILE" ]; then \
@@ -151,7 +143,7 @@ shards-gated: shard-infra-smoke ## shards with gated fan-out (after N greens)
 		echo "    Run 'make shards-gated' $(INFRA_SMOKE_STREAK_N) consecutive times to unlock."; \
 	else \
 		echo "==> [shards-gated] streak=$$STREAK >= $(INFRA_SMOKE_STREAK_N): unlocking full fan-out"; \
-		$(MAKE) shard-routing shard-htmx shard-control shard-maker; \
+		$(MAKE) _shard-routing _shard-htmx _shard-control _shard-maker; \
 		echo "==> All shards passed."; \
 	fi
 
@@ -166,11 +158,11 @@ shards-gated: shard-infra-smoke ## shards with gated fan-out (after N greens)
 # Fan-out to product shards is unlocked only by make ci-full once
 # the infra-smoke streak reaches INFRA_SMOKE_STREAK_N.
 
-ci: gate-1-startup gate-2-partials gate-3-api integration shard-infra-smoke ## CI lane: gates 1-3 + integration + infra-smoke
+ci: _gate-api integration _shard-infra-smoke ## CI lane: API gate + integration + browser smoke
 	@echo "==> [ci] PROGRESS ok + phases 1-3 + integration + infra-smoke passed"
 	@echo "    Run 'make ci-full' to unlock product-shard fan-out."
 
-ci-full: gate-1-startup gate-2-partials gate-3-api integration shards-gated ## ci + shards-gated fan-out
+ci-full: _gate-api integration shards-gated ## CI lane with gated browser fan-out
 	@echo "==> [ci-full] all acceptance phases passed."
 
 # CI check: no root-absolute href/src in dist HTML or rendered pages.
@@ -229,7 +221,7 @@ e2e: ## full E2E: Rust + all API + Playwright
 	cd rsx-playground && uv run pytest tests/api_*.py -v --tb=short -x
 	@echo ""
 	@echo "==> Running Playwright E2E tests..."
-	$(MAKE) play
+	$(MAKE) _play-full
 
 # Integration tests (1-5min) - testcontainers (Postgres).
 # Hard-fails if Docker is unavailable so CI cannot pretend
@@ -345,10 +337,10 @@ perf: ## Rust Criterion benchmarks
 	timeout 600 cargo bench
 
 # Criterion regression gate (developer-local, baseline in tmp/)
-bench-gate: ## Criterion regression gate (baseline in tmp/)
+perf-gate: ## gate Criterion results against the local baseline
 	bash scripts/bench-gate.sh
 
-bench-save:
+perf-save: ## save the current Criterion baseline
 	bash scripts/bench-gate.sh --save-baseline
 
 # Drive the F1 latency probe under load and write measured
@@ -357,22 +349,22 @@ bench-save:
 # (`make maker` builds the Go rsx-maker; the playground launches it,
 # falling back to the Python market_maker.py when unbuilt).
 # Default N=2000; override with N=10000 etc.
-latency-publish:
+perf-load: ## measure sustained GW→ME→GW latency under load
 	bash scripts/latency-publish.sh
 
-# E2E latency regression gate. Drives latency-publish under
+# E2E latency regression gate. Drives the sustained load publisher under
 # a small N (default 200), compares the resulting e2e_us.p50
 # against a sealed reference (bench-reference.json), fails
 # if p50 regresses more than THRESHOLD% (default 10).
 # specs/2/22-perf-verification.md §4 specifies this gate.
 # Pre: cluster up via `./rsx-playground/playground start-all`.
-bench-gate-e2e: ## E2E latency regression gate (GW->ME->GW p50)
+perf-e2e-gate: ## gate GW→ME→GW latency against sealed reference
 	bash scripts/bench-gate-e2e.sh
 
 # Snapshot the current measured e2e_us into bench-reference.json.
 # Use this only when intentionally accepting a new floor
 # (e.g. after a deliberate optimisation). Commit the result.
-bench-gate-e2e-save:
+perf-e2e-save: ## save the GW→ME→GW latency reference
 	bash scripts/bench-gate-e2e.sh --save-reference
 
 # Lint — all targets so warnings can't hide in tests/benches.
@@ -391,50 +383,95 @@ fmt: ## apply default rustfmt formatting
 clean: ## remove build artifacts (cargo clean)
 	cargo clean
 
-# Playwright e2e tests for RSX Playground
-play: ## run the full Playwright E2E suite
-play: play-infra play-overview play-topology play-book play-risk \
-     play-wal play-logs play-control play-faults \
-     play-verify play-orders play-nav play-api
+# One-release compatibility aliases. Canonical commands are e2e and perf-*.
+play play-full:
+	@echo "DEPRECATED: use 'make e2e'" >&2
+	@$(MAKE) e2e
+
+bench-gate:
+	@echo "DEPRECATED: use 'make perf-gate'" >&2
+	@$(MAKE) perf-gate
+
+bench-save:
+	@echo "DEPRECATED: use 'make perf-save'" >&2
+	@$(MAKE) perf-save
+
+latency-publish:
+	@echo "DEPRECATED: use 'make perf-load'" >&2
+	@$(MAKE) perf-load
+
+bench-gate-e2e:
+	@echo "DEPRECATED: use 'make perf-e2e-gate'" >&2
+	@$(MAKE) perf-e2e-gate
+
+bench-gate-e2e-save:
+	@echo "DEPRECATED: use 'make perf-e2e-save'" >&2
+	@$(MAKE) perf-e2e-save
+
+# Focused compatibility aliases print the direct Playwright replacement.
 
 play-infra:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_infra.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_infra.spec.ts
 
 play-overview:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_overview.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_overview.spec.ts
 
 play-topology:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_topology.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_topology.spec.ts
 
 play-book:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_book.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_book.spec.ts
 
 play-risk:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_risk.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_risk.spec.ts
 
 play-wal:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_wal.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_wal.spec.ts
 
 play-logs:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_logs.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_logs.spec.ts
 
 play-control:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_control.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_control.spec.ts
 
 play-faults:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_faults.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_faults.spec.ts
 
 play-verify:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_verify.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_verify.spec.ts
 
 play-orders:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_orders.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_orders.spec.ts
 
 play-nav:
+	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_navigation.spec.ts'" >&2
 	cd rsx-playground/tests && bunx playwright test play_navigation.spec.ts
 
 play-api:
+	@echo "DEPRECATED: run 'cd rsx-playground && uv run pytest tests/api_e2e_test.py -v'" >&2
 	cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
+
+# Former public gate/shard stages remain callable for one release.
+gate-1-startup: _gate-startup
+gate-2-partials: _gate-partials
+gate-3-api: _gate-api
+gate-4-playwright: _gate-playwright
+shard-infra-smoke: _shard-infra-smoke
+shard-routing: _shard-routing
+shard-htmx: _shard-htmx
+shard-control: _shard-control
+shard-maker: _shard-maker
 
 # API tests - fast subset (no stress tests)
 api-unit: ## API tests: fast subset (no stress)

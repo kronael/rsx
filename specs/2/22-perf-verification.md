@@ -70,8 +70,8 @@ Parses Criterion estimates, compares against
 `bench-baseline.json`. No cluster required.
 
 ```
-make bench-save   # save current Criterion run as baseline
-make bench-gate   # diff current run against baseline
+make perf-save   # save current Criterion run as baseline
+make perf-gate   # diff current run against baseline
 ```
 
 **`scripts/bench-gate-e2e.sh` — E2E latency gate.**
@@ -82,14 +82,14 @@ compares against a **sealed** reference in
 (`./rsx-playground/playground start-all`).
 
 ```
-make bench-gate-e2e-save  # snapshot current e2e_us as reference
-make bench-gate-e2e       # fail if p99 regresses >10%
+make perf-e2e-save  # snapshot current e2e_us as reference
+make perf-e2e-gate  # fail if p99 regresses >10%
 ```
 
-`bench-baseline.json` is rolling — `make latency-publish`
+`bench-baseline.json` is rolling — `make perf-load`
 rewrites the `e2e_us` block on every run. `bench-reference.json`
 only changes when the operator explicitly accepts a new
-floor with `make bench-gate-e2e-save`. This split prevents
+floor with `make perf-e2e-save`. This split prevents
 the silent baseline-creep that would hide regressions.
 
 The publisher uses the corrected open-loop stress client against the external
@@ -110,11 +110,11 @@ ratio and PASS/FAIL.
 
 The baseline lives at `bench-baseline.json` at the repo
 root and is checked in. Update it locally with
-`make bench-save`, then commit the result so CI runs
+`make perf-save`, then commit the result so CI runs
 have a stable reference. The script exits cleanly with a
 guidance message when no baseline exists yet, so a fresh
 clone doesn't fail the gate before anyone has run
-`bench-save`.
+`perf-save`.
 
 ## 3. Playground latency pipeline (shipped)
 

@@ -36,10 +36,15 @@
 | WAL | `make wal` | WAL correctness | <10s |
 | e2e | `make e2e` | Rust E2E + Playwright (421/424) | ~3min |
 | integration | `make integration` | testcontainers (PG) | 1-5min |
-| benchmarks | `make perf` | Criterion | varies |
-| bench gate | `make bench-gate` | regression gate (10%) | varies |
-| latency | `make latency-publish` | GW→ME→GW probe, publish histogram | varies |
-| Playwright | `make play` | all browser tests | ~60s |
+| performance | `make perf` | Criterion characterization | varies |
+| perf gate | `make perf-gate` | Criterion regression gate (10%) | varies |
+| load latency | `make perf-load` | sustained GW→ME→GW measurement | varies |
+| E2E perf gate | `make perf-e2e-gate` | full-route regression gate | varies |
+
+`make gate` is the ordered Playground release check. `make ci` and
+`make ci-full` are automation lanes; `make shards-gated` is an advanced
+browser-debugging lane. Focused browser specs should be run directly with
+`cd rsx-playground/tests && bunx playwright test <spec>`.
 
 ## Test Coverage Summary
 

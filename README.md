@@ -404,8 +404,14 @@ make check        # cargo check (fastest feedback)
 make test         # Rust unit + integration (~5s)
 make e2e          # Rust + API + Playwright (~3 min)
 make perf         # Criterion benches
+make perf-gate    # compare Criterion results with the baseline
+make perf-load    # sustained external-route latency measurement
 make lint         # clippy -D warnings
 ```
+
+The five public test levels are `test`, `e2e`, `integration`, `smoke`, and
+`perf`. Use `make gate` for the ordered Playground release check; the
+individual gate and browser-shard stages are internal debugging tools.
 
 Single crate: `cargo test -p rsx-book`. Single test:
 `cargo test -p rsx-book -- test_name`.

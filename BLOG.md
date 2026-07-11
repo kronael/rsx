@@ -29,7 +29,7 @@ to gateway egress, under 500 nanoseconds for a match inside
 the matching engine. The match-engine number is measured
 (54 ns single fill, Criterion). The end-to-end number is a
 component-sum budget — the continuous probe that asserts it
-is now wired (`make latency-publish` writes p50/p99 to
+is now wired (`make perf-load` writes the measured distribution to
 `bench-baseline.json`), with the cid-matching fix from
 F22 making the first reliable number trustworthy.
 

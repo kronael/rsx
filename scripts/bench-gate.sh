@@ -74,7 +74,7 @@ fi
 # only meaningful with a committed reference.
 if [ ! -f "$BASELINE" ]; then
     echo "==> no baseline at $BASELINE"
-    echo "    create one with: make bench-save"
+    echo "    create one with: make perf-save"
     echo "    then commit $BASELINE so CI has a reference"
     exit 0
 fi
