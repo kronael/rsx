@@ -22,7 +22,11 @@ In scope: (1) SQPOLL for gateway + marketdata reactors, gated on the
 dedicated-core config; (2) the userspace-UDP prerequisite (cast API
 decoupling). Out of scope: multishot recv / registered buffers / GSO
 (later rungs), DPDK/AF_XDP (much later), any rsx-cast behavior change
-beyond the two additive APIs below.
+beyond the two additive APIs below. DPDK/AF_XDP and real-NIC/tuned-host
+testing (IRQ, NUMA, isolcpus, frequency, PTP) remain unimplemented and
+unmeasured — tracked as future work in
+`specs/2/22-perf-verification.md` §8, which also states the current
+measurement caveats (loopback/in-process/shared-machine only).
 
 ## Part A — SQPOLL, gated on the core config
 
