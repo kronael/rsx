@@ -507,7 +507,7 @@ def _overview_intro():
   </thead>
   <tbody class="text-slate-300">
     <tr><td class="py-1 px-2">Gateway</td>
-      <td class="py-1 px-2">8080</td>
+      <td class="py-1 px-2">8088</td>
       <td class="py-1 px-2">WS ingress, JWT auth,
         rate limit, circuit breaker</td></tr>
     <tr><td class="py-1 px-2">Risk</td>

@@ -54,7 +54,7 @@ async def serve_rsx_term(ws: WebSocket, root: Path) -> None:
     env.update({
         "TERM": "xterm-256color",
         "COLORTERM": "truecolor",
-        "RSX_GW_URL": "ws://127.0.0.1:8080",
+        "RSX_GW_URL": "ws://127.0.0.1:8088",
         "RSX_MD_URL": "ws://127.0.0.1:8180",
     })
 
