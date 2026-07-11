@@ -63,11 +63,12 @@ func main() {
 	}
 
 	if gwURL == "mock" {
-		priceDec, qtyDec, tick := displayConfig("", symbolID)
+		priceDec, qtyDec, tick := displayConfig(nil, symbolID)
 		runMock(symbolID, priceDec, qtyDec, tick, stream, hlCfg, hl)
 		return
 	}
-	priceDec, qtyDec, tick := displayConfig(gwURL, symbolID)
+	symbols := fetchSymbolList(gwURL)
+	priceDec, qtyDec, tick := displayConfig(symbols, symbolID)
 
 	err := runLive(liveConfig{
 		gwURL:       gwURL,
@@ -79,7 +80,7 @@ func main() {
 		qtyDec:      qtyDec,
 		tick:        tick,
 		stream:      stream,
-		instruments: watchInstruments(gwURL, symbolID, priceDec, qtyDec, tick, stream),
+		instruments: watchInstruments(symbols, symbolID, priceDec, qtyDec, tick, stream),
 		hlCfg:       hlCfg,
 		hl:          hl,
 	})
@@ -210,12 +211,40 @@ func runHL() error {
 	return err
 }
 
-// watchInstruments builds the streaming watchlist: every symbol the gateway
-// serves (decimals/tick from /v1/symbols) named/coded via RSX_TERM_WATCH
-// ("id:name[:code[:multPct]]", comma-separated — the endpoint carries no
-// names yet, so unnamed ids show as SYM-<id>). The primary symbol always
-// leads. DOM mode (stream off) keeps the single-symbol list.
-func watchInstruments(gwURL string, primary uint32, priceDec, qtyDec int, tick int64, stream bool) []ui.Instrument {
+// fetchSymbolList is the terminal's single /v1/symbols GET on the live
+// startup path: displayConfig's precision lookup and watchInstruments'
+// peer list both read from this one result instead of each fetching their
+// own (TERM-STARTUP-DOUBLE-SYMBOLS-FETCH — the redundant second round trip
+// doubled startup latency in live+streaming mode). A fetch failure is
+// reported once here; both callers already fall back to their own defaults
+// on an empty/nil list, so config discovery still never blocks startup.
+func fetchSymbolList(gwURL string) []conn.SymbolConfig {
+	symbols, err := conn.FetchSymbols(gwURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: symbol list fetch failed (%v); using defaults\n", err)
+		return nil
+	}
+	return symbols
+}
+
+// symbolByID finds one symbol's config in an already-fetched list.
+func symbolByID(symbols []conn.SymbolConfig, id uint32) (conn.SymbolConfig, bool) {
+	for _, s := range symbols {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return conn.SymbolConfig{}, false
+}
+
+// watchInstruments builds the streaming watchlist from an already-fetched
+// symbol list: every symbol the gateway serves (decimals/tick from
+// /v1/symbols) named/coded via RSX_TERM_WATCH ("id:name[:code[:multPct]]",
+// comma-separated — the endpoint carries no names yet, so unnamed ids show
+// as SYM-<id>). The primary symbol always leads. DOM mode (stream off)
+// keeps the single-symbol list. symbols == nil (mock path, or a failed
+// fetch) degrades to that single-symbol list too.
+func watchInstruments(symbols []conn.SymbolConfig, primary uint32, priceDec, qtyDec int, tick int64, stream bool) []ui.Instrument {
 	primaryIns := ui.Instrument{
 		ID: primary, Name: Symbol, PriceDec: priceDec, QtyDec: qtyDec, Tick: tick,
 	}
@@ -230,11 +259,6 @@ func watchInstruments(gwURL string, primary uint32, priceDec, qtyDec int, tick i
 	primaryIns.LotMult = mults[primary]
 	out := []ui.Instrument{primaryIns}
 
-	symbols, err := conn.FetchSymbols(gwURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "rsx-term: symbol list fetch failed (%v); single-symbol watchlist\n", err)
-		return out
-	}
 	for _, s := range symbols {
 		if s.ID == primary {
 			continue
@@ -284,20 +308,21 @@ func parseWatchEnv(raw string) (names map[uint32]string, codes map[uint32]string
 	return names, codes, mults
 }
 
-// displayConfig resolves the symbol's display precision + tick. Base values
-// come from the gateway's /v1/symbols (the authoritative per-symbol config) on
-// the live path; gwURL == "" (mock) skips the fetch. A fetch failure falls back
-// to PENGU's values (price 6, qty 4, tick 1) with a note — config discovery
-// must never keep the terminal from starting. RSX_TUI_PRICE_DECIMALS /
-// RSX_TUI_QTY_DECIMALS / RSX_TUI_TICK, when set, override whatever base won.
-func displayConfig(gwURL string, symbolID uint32) (priceDec, qtyDec int, tick int64) {
+// displayConfig resolves the symbol's display precision + tick from an
+// already-fetched symbol list (see fetchSymbolList — the live+streaming path
+// fetches /v1/symbols exactly once and shares it with watchInstruments).
+// symbols == nil (mock path) skips the lookup. A missing symbolID (fetch
+// failed, or the gateway doesn't serve it) falls back to PENGU's values
+// (price 6, qty 4, tick 1) with a note when the list itself is non-empty —
+// config discovery must never keep the terminal from starting.
+// RSX_TUI_PRICE_DECIMALS / RSX_TUI_QTY_DECIMALS / RSX_TUI_TICK, when set,
+// override whatever base won.
+func displayConfig(symbols []conn.SymbolConfig, symbolID uint32) (priceDec, qtyDec int, tick int64) {
 	priceDec, qtyDec, tick = 6, 4, 1
-	if gwURL != "" {
-		if cfg, err := conn.FetchSymbolConfig(gwURL, symbolID); err == nil {
-			priceDec, qtyDec, tick = cfg.PriceDec, cfg.QtyDec, cfg.TickSize
-		} else {
-			fmt.Fprintf(os.Stderr, "rsx-term: symbol config fetch failed (%v); using defaults\n", err)
-		}
+	if cfg, ok := symbolByID(symbols, symbolID); ok {
+		priceDec, qtyDec, tick = cfg.PriceDec, cfg.QtyDec, cfg.TickSize
+	} else if len(symbols) > 0 {
+		fmt.Fprintf(os.Stderr, "rsx-term: symbol %d not served; using defaults\n", symbolID)
 	}
 	priceDec = int(envU32("RSX_TUI_PRICE_DECIMALS", uint32(priceDec)))
 	qtyDec = int(envU32("RSX_TUI_QTY_DECIMALS", uint32(qtyDec)))
