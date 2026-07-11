@@ -5427,11 +5427,17 @@ def stress_report_page(data):
     )
 
     # Latency card
-    p50 = latency.get("p50", 0)
-    p95 = latency.get("p95", 0)
-    p99 = latency.get("p99", 0)
-    min_lat = latency.get("min", 0)
-    max_lat = latency.get("max", 0)
+    p50_raw = latency.get("p50")
+    p95_raw = latency.get("p95")
+    p99_raw = latency.get("p99")
+    p99_9_raw = latency.get("p99_9")
+    min_raw = latency.get("min")
+    max_raw = latency.get("max")
+    p50, p95, p99 = p50_raw or 0, p95_raw or 0, p99_raw or 0
+    p99_9, min_lat, max_lat = p99_9_raw or 0, min_raw or 0, max_raw or 0
+
+    def latency_text(value):
+        return "—" if value is None else f"{value:,}µs"
 
     def latency_color(lat_us):
         if lat_us < 1000:
@@ -5451,26 +5457,30 @@ def stress_report_page(data):
         "Latency Distribution (microseconds)",
         f"""
 <div class="space-y-4">
-  <div class="grid grid-cols-5 gap-3">
+  <div class="grid grid-cols-6 gap-3">
     <div>
       <div class="text-[10px] text-slate-500 uppercase">Min</div>
-      <div class="text-lg {lc_min[0]}">{min_lat:,}µs</div>
+      <div class="text-lg {lc_min[0]}">{latency_text(min_raw)}</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">p50</div>
-      <div class="text-lg {lc_p50[0]}">{p50:,}µs</div>
+      <div class="text-lg {lc_p50[0]}">{latency_text(p50_raw)}</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">p95</div>
-      <div class="text-lg {lc_p95[0]}">{p95:,}µs</div>
+      <div class="text-lg {lc_p95[0]}">{latency_text(p95_raw)}</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">p99</div>
-      <div class="text-lg {lc_p99[0]}">{p99:,}µs</div>
+      <div class="text-lg {lc_p99[0]}">{latency_text(p99_raw)}</div>
+    </div>
+    <div>
+      <div class="text-[10px] text-slate-500 uppercase">p99.9</div>
+      <div class="text-lg {latency_color(p99_9)[0]}">{latency_text(p99_9_raw)}</div>
     </div>
     <div>
       <div class="text-[10px] text-slate-500 uppercase">Max</div>
-      <div class="text-lg {lc_max[0]}">{max_lat:,}µs</div>
+      <div class="text-lg {lc_max[0]}">{latency_text(max_raw)}</div>
     </div>
   </div>
   <div class="space-y-2">
@@ -5480,7 +5490,7 @@ def stress_report_page(data):
         <div class="{lc_p50[1]} h-full"
           style="width: {min(100, p50 * 100 / max(max_lat, 1)):.1f}%"></div>
       </div>
-      <span class="text-xs {lc_p50[0]} w-20 text-right">{p50:,}µs</span>
+      <span class="text-xs {lc_p50[0]} w-20 text-right">{latency_text(p50_raw)}</span>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">p95</span>
@@ -5488,7 +5498,7 @@ def stress_report_page(data):
         <div class="{lc_p95[1]} h-full"
           style="width: {min(100, p95 * 100 / max(max_lat, 1)):.1f}%"></div>
       </div>
-      <span class="text-xs {lc_p95[0]} w-20 text-right">{p95:,}µs</span>
+      <span class="text-xs {lc_p95[0]} w-20 text-right">{latency_text(p95_raw)}</span>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">p99</span>
@@ -5496,14 +5506,14 @@ def stress_report_page(data):
         <div class="{lc_p99[1]} h-full"
           style="width: {min(100, p99 * 100 / max(max_lat, 1)):.1f}%"></div>
       </div>
-      <span class="text-xs {lc_p99[0]} w-20 text-right">{p99:,}µs</span>
+      <span class="text-xs {lc_p99[0]} w-20 text-right">{latency_text(p99_raw)}</span>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-xs text-slate-400 w-16">max</span>
       <div class="flex-1 bg-slate-800 rounded h-2 overflow-hidden">
         <div class="{lc_max[1]} h-full" style="width: 100%"></div>
       </div>
-      <span class="text-xs {lc_max[0]} w-20 text-right">{max_lat:,}µs</span>
+      <span class="text-xs {lc_max[0]} w-20 text-right">{latency_text(max_raw)}</span>
     </div>
   </div>
 </div>
@@ -5512,10 +5522,14 @@ def stress_report_page(data):
 
     # Pass/Fail Assessment
     passed_rate = accept_rate >= 95
-    passed_p99 = p99 < 10000  # 10ms
+    passed_p99 = p99_raw is not None and p99 < 10000  # 10ms
     passed_errors = (errors / max(submitted, 1) * 100) < 1
 
-    status = "PASS" if (passed_rate and passed_p99 and passed_errors) else "FAIL"
+    status = str(data.get("status", "")).upper()
+    if status not in {"PASSED", "FAILED"}:
+        status = "PASS" if (passed_rate and passed_p99 and passed_errors) else "FAIL"
+    else:
+        status = "PASS" if status == "PASSED" else "FAIL"
     if status == "PASS":
         status_bg = "bg-emerald-900/40"
         status_border = "border-emerald-800"

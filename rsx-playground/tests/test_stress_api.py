@@ -231,7 +231,7 @@ async def test_run_stress_test_gateway_down_includes_config():
 
 @pytest.mark.asyncio
 async def test_run_stress_test_gateway_down_includes_latency():
-    """run_stress_test error result includes latency_us block with zeros."""
+    """No samples are represented as null percentiles, never fake zeroes."""
     from stress_client import StressConfig
     from stress_client import run_stress_test
 
@@ -244,5 +244,62 @@ async def test_run_stress_test_gateway_down_includes_latency():
     result = await run_stress_test(config)
     assert "latency_us" in result
     lat = result["latency_us"]
-    assert lat["p50"] == 0
-    assert lat["p99"] == 0
+    assert lat["samples"] == 0
+    assert lat["p50"] is None
+    assert lat["p99"] is None
+
+
+def _valid_result(**metrics):
+    base = {
+        "offered": 100, "submitted": 100, "accepted": 96,
+        "rejected": 4, "completed": 100, "timed_out": 0,
+        "pending": 0, "errors": 0, "send_errors": 0,
+    }
+    base.update(metrics)
+    return {
+        "metrics": base,
+        "latency_us": {
+            "samples": base["accepted"], "p50": 10, "p95": 20,
+            "p99": 30, "p99_9": 35, "min": 5, "max": 40,
+        },
+    }
+
+
+def test_zero_acceptance_is_invalid():
+    from stress import validate_results
+    result = _valid_result(
+        accepted=0, rejected=100, completed=100,
+    )
+    result["latency_us"] = {
+        "samples": 0, "p50": None, "p95": None, "p99": None,
+        "p99_9": None, "min": None, "max": None,
+    }
+    assert (
+        "zero accepted/completed latency samples"
+        in validate_results(result, 50)
+    )
+
+
+def test_partial_acceptance_with_closed_accounting_is_valid():
+    from stress import validate_results
+    assert validate_results(_valid_result(), 50) == []
+
+
+def test_open_accounting_is_invalid():
+    from stress import validate_results
+    failures = validate_results(_valid_result(submitted=101), 50)
+    assert "order accounting does not close" in failures
+
+
+def test_timeout_accounting_is_valid_above_terminal_threshold():
+    from stress import validate_results
+    result = _valid_result(
+        accepted=95, rejected=0, completed=95, timed_out=5,
+    )
+    result["latency_us"]["samples"] = 95
+    assert validate_results(result, 50) == []
+
+
+def test_malformed_result_is_invalid():
+    from stress import validate_results
+    assert validate_results({"metrics": []}, 50) == ["malformed stress result"]

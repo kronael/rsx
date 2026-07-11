@@ -60,9 +60,45 @@ def _print_stats(results: dict) -> None:
         f"{ts} submitted={m.get('submitted', 0)} "
         f"accepted={m.get('accepted', 0)} "
         f"rate={m.get('actual_rate', 0)}/s "
-        f"p50={lat.get('p50', 0)}us "
-        f"p99={lat.get('p99', 0)}us"
+        f"p50={lat.get('p50')}us "
+        f"p99={lat.get('p99')}us"
     )
+
+
+def validate_results(results: dict, target_p99: int) -> list[str]:
+    """Return correctness failures before evaluating latency."""
+    if "error" in results:
+        return [str(results["error"])]
+    metrics = results.get("metrics")
+    latency = results.get("latency_us")
+    if not isinstance(metrics, dict) or not isinstance(latency, dict):
+        return ["malformed stress result"]
+    failures = []
+    submitted = metrics.get("submitted", 0)
+    accepted = metrics.get("accepted", 0)
+    completed = metrics.get("completed", 0)
+    timed_out = metrics.get("timed_out", 0)
+    errors = metrics.get("errors", 0)
+    pending = metrics.get("pending", 0)
+    if accepted == 0 or completed == 0 or latency.get("samples", 0) == 0:
+        failures.append("zero accepted/completed latency samples")
+    if submitted != completed + timed_out + pending:
+        failures.append("order accounting does not close")
+    if completed != accepted + metrics.get("rejected", 0) + errors:
+        failures.append("response accounting does not close")
+    if metrics.get("offered", 0) != submitted + metrics.get("send_errors", 0):
+        failures.append("offered accounting does not close")
+    terminal = completed + timed_out
+    if submitted and terminal / submitted < 0.95:
+        failures.append("terminal outcomes below 95%")
+    if pending:
+        failures.append("unclassified pending orders remain")
+    p99 = latency.get("p99")
+    if p99 is None:
+        failures.append("p99 unavailable")
+    elif p99 >= target_p99:
+        failures.append(f"p99={p99}us >= target={target_p99}us")
+    return failures
 
 
 async def _run_with_stats(config: StressConfig) -> dict:
@@ -105,14 +141,15 @@ async def _run_with_stats(config: StressConfig) -> dict:
                 "connections": config.connections,
             },
             "metrics": {
-                "submitted": 0, "accepted": 0,
-                "rejected": 0, "errors": 0,
+                "offered": 0, "submitted": 0, "accepted": 0,
+                "rejected": 0, "completed": 0, "timed_out": 0,
+                "pending": 0, "errors": 0,
                 "elapsed_sec": round(time.time() - start, 2),
                 "actual_rate": 0.0, "accept_rate": 0.0,
             },
             "latency_us": {
-                "p50": 0, "p95": 0, "p99": 0,
-                "min": 0, "max": 0,
+                "samples": 0, "p50": None, "p95": None, "p99": None,
+                "p99_9": None, "min": None, "max": None,
             },
         }
 
@@ -137,30 +174,22 @@ async def main() -> int:
 
     results = await _run_with_stats(config)
 
+    failures = validate_results(results, TARGET_P99)
+    results["status"] = "failed" if failures else "passed"
+    results["failures"] = failures
+
     _print_stats(results)
 
     path = _save_report(results, REPORT_DIR)
     print(f"report: {path}")
 
-    if "error" in results:
-        print(f"error: {results['error']}", file=sys.stderr)
-        return 1
-
-    submitted = results.get("metrics", {}).get("submitted", 0)
-    if submitted == 0:
-        print("no orders submitted: fail", file=sys.stderr)
-        return 1
-
-    p99 = results.get("latency_us", {}).get("p99", 0)
-    if p99 < TARGET_P99:
+    if not failures:
+        p99 = results["latency_us"]["p99"]
         print(f"p99={p99}us < target={TARGET_P99}us: pass")
         return 0
-    else:
-        print(
-            f"p99={p99}us >= target={TARGET_P99}us: fail",
-            file=sys.stderr,
-        )
-        return 1
+    for failure in failures:
+        print(f"{failure}: fail", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

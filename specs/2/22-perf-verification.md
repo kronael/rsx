@@ -108,6 +108,16 @@ clone doesn't fail the gate before anyone has run
 
 ## 3. Playground latency pipeline (shipped)
 
+The existing `stress.py` workflow is an open-loop measurement: send pacing is
+independent of response latency, and responses are drained after the send
+window. Its report records offered, submitted, accepted, rejected by reason,
+completed, timed out, pending, and error counts. A valid run closes both send
+and response accounting, classifies at least 95% of submitted orders, has at
+least one accepted latency sample, and leaves no pending orders. Percentiles
+are `null` when no samples exist and include p50, p95, p99, p99.9, min, and
+max. Correctness validity is checked before the configured p99 target; an
+invalid measurement exits non-zero and is never a latency pass.
+
 The playground records gateway round-trip latency on every
 order submission. State and endpoints:
 
