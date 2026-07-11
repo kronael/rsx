@@ -131,8 +131,9 @@ entries below.
   reviewer cannot distinguish model-generated drafts from human-selected
   architecture, implementation, adversarial review, measurement, and final
   verification; the commit volume and internal agent artifacts make that
-  ambiguity more visible, not less. **Fix:** add a root “How this was built with
-  LLMs” page and a short README summary. For each workflow (specification,
+  ambiguity more visible, not less. **Fix:** add
+  `docs/ai-development.md` (“How this was built with LLMs”) and only a 3–4 line
+  README disclosure linking to it. In the detailed page, for each workflow (specification,
   implementation, test generation, bug hunting, documentation), show one
   concrete input→output→human-review example; name the model/tool; state what
   it could change; link the resulting commit/spec/test; and show the independent
