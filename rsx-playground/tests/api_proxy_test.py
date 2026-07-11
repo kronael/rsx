@@ -23,8 +23,11 @@ Run with:
 import json
 import os
 import socket
+import urllib.parse
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import server
 
 
 def _port_open(host: str, port: int, timeout: float = 0.2) -> bool:
@@ -37,18 +40,28 @@ def _port_open(host: str, port: int, timeout: float = 0.2) -> bool:
         return False
 
 
+def _url_port(url: str, default: int) -> int:
+    """Host port the proxy actually targets for `url`."""
+    return urllib.parse.urlparse(url).port or default
+
+
 def _skip_if_gateway_up():
-    if _port_open("127.0.0.1", 8080):
+    # Probe the RSX gateway the proxy forwards to (GATEWAY_HTTP, :8088 by
+    # default). NOT :8080 — arizuko's routd container owns :8080, so a
+    # fixed :8080 probe would always see "up" and falsely skip.
+    port = _url_port(server.GATEWAY_HTTP, 8088)
+    if _port_open("127.0.0.1", port):
         pytest.skip(
-            "live gateway on :8080 — proxy 'gateway down' "
+            f"live gateway on :{port} — proxy 'gateway down' "
             "tests need it stopped to exercise failure path"
         )
 
 
 def _skip_if_marketdata_up():
-    if _port_open("127.0.0.1", 8180):
+    port = _url_port(server.MARKETDATA_WS, 8180)
+    if _port_open("127.0.0.1", port):
         pytest.skip(
-            "live marketdata on :8180 — proxy 'marketdata "
+            f"live marketdata on :{port} — proxy 'marketdata "
             "down' tests need it stopped"
         )
 
@@ -224,7 +237,7 @@ def test_ws_private_returns_1013_when_gateway_down(client):
     _skip_if_gateway_up()
     with client.websocket_connect("/ws/private") as ws:
         # Expect the server to close immediately with 1013
-        # since gateway (port 8080) is not running.
+        # since the gateway (port 8088) is not running.
         try:
             data = ws.receive_json()
         except Exception:
@@ -388,7 +401,7 @@ def test_healthz_has_gateway_field(client):
 
 
 def test_healthz_gateway_false_when_no_gateway(client):
-    """/healthz reports gateway=false when port 8080 closed."""
+    """/healthz reports gateway=false when the gateway port is closed."""
     _skip_if_gateway_up()
     resp = client.get("/healthz")
     # Gateway not running in test env → False
