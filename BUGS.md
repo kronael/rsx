@@ -3,37 +3,20 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
-## Status — 2026-07-11 — terminal + maker refine pass (deferred findings)
+## Status — 2026-07-11 — maker refine pass (deferred findings)
 
 Review-pass findings verified but deliberately not applied (low severity /
 speculative / risky-to-fix). Applied fixes are in git: fisheye inverse
 `e7a0373`, ui stub/leak `3587538`, HL Close `30b7e86`, maker dial-timeout
-`4a2829f`.
+`4a2829f`. TERM-CONN-RECONNECT-CLOSE-TOCTOU (fixed `69f7188`) and
+TERM-STARTUP-DOUBLE-SYMBOLS-FETCH (fixed `471b027`) are resolved — closed
+below. TERM-HEATMAP-NO-OVERFLOW-GUARD, TERM-STREAM-LEGACY-FOLD, and
+TERM-DEFAULT-NOT-OFFLINE were speculative/by-design, not actionable bugs —
+dropped from the queue.
 
-- **TERM-CONN-RECONNECT-CLOSE-TOCTOU** (LOW, race) — `conn/live.go`
-  `reconnectGw`/`reconnectMd` check `stopping()` before dialing; if `Close()`
-  runs in the window before the dial completes, the new socket is Stored and
-  never CloseNow'd, leaking an fd until process exit. Harmless in practice
-  (main cancels ctx after Close). Fix: re-check `stopping()` after dial and
-  CloseNow if closed.
-- **TERM-STARTUP-DOUBLE-SYMBOLS-FETCH** (LOW, efficiency) — live+streaming
-  startup GETs `/v1/symbols` twice (`main.go` displayConfig + watchInstruments),
-  doubling startup latency. Fetch once and reuse.
-- **TERM-HEATMAP-NO-OVERFLOW-GUARD** (LOW, speculative) — `book/heatmap.go`
-  `2*px` / `2*ticks*tick` have no checked-mul guard; unreachable at real
-  fixed-point prices (bounded well under i64/2), flagged only vs the repo's
-  checked-mul convention.
 - **MAKER-READCONFIGMID-PER-SYMBOL** (LOW, efficiency) — `maker.go` re-reads +
   unmarshals the config file once per symbol per cycle; a non-issue while
   `Config.Symbols` is length 1. Hoist out of the loop if multi-symbol lands.
-- **TERM-STREAM-LEGACY-FOLD** (INFO) — in stream mode, primary frames still
-  fold into the legacy DOM state (`m.book`/`seq`/`ladderCenter`); its output is
-  dead in stream mode but kept because `Position()` depends on it. Not removed
-  — untangling risks the golden DOM path.
-- **TERM-DEFAULT-NOT-OFFLINE** (INFO, by design) — bare `rsx-term` (no env)
-  dials the local RSX gateway by default (fails safe: nothing listens in
-  CI/dev). Intended (documented in main.go); the offline-by-default guarantee
-  applies to the opt-in HL/news venues, which hold.
 
 ## Status — 2026-07-09 — matching release runtime checks (see .ship/41-MATCHING-RELEASE/HANDOFF.md)
 
