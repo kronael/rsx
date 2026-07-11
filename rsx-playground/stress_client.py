@@ -8,6 +8,7 @@ import uuid
 import json
 import os
 import time
+from collections import Counter, deque
 from dataclasses import dataclass
 import aiohttp
 from datetime import datetime
@@ -31,15 +32,23 @@ class StressConfig:
 
 @dataclass
 class OrderMetrics:
+    offered: int = 0
     submitted: int = 0
     accepted: int = 0
     rejected: int = 0
+    completed: int = 0
+    timed_out: int = 0
+    pending: int = 0
     errors: int = 0
+    send_errors: int = 0
+    rejected_by_reason: dict[str, int] = None
     latencies_us: list[int] = None
 
     def __post_init__(self):
         if self.latencies_us is None:
             self.latencies_us = []
+        if self.rejected_by_reason is None:
+            self.rejected_by_reason = {}
 
 
 class StressClient:
@@ -108,45 +117,18 @@ class StressClient:
             ]
         })
 
-    async def submit_order(self, ws) -> int | None:
-        """Submit order and measure latency."""
-        frame = self.generate_order()
-
-        start = time.perf_counter_ns()
-        await ws.send_str(frame)
-        self.metrics.submitted += 1
-
-        try:
-            response = await asyncio.wait_for(
-                ws.receive(timeout=1.0), timeout=1.0,
-            )
-            latency_ns = time.perf_counter_ns() - start
-
-            if response.type == aiohttp.WSMsgType.TEXT:
-                msg = json.loads(response.data)
-                if "U" in msg:
-                    self.metrics.accepted += 1
-                    return latency_ns // 1000
-                elif "E" in msg:
-                    self.metrics.rejected += 1
-                elif "H" in msg:
-                    # Server heartbeat, not an order response
-                    pass
-                else:
-                    self.metrics.errors += 1
-            else:
-                self.metrics.errors += 1
-
-        except asyncio.TimeoutError:
-            # No response = order pending (no Risk/ME)
-            pass
-        except Exception:
-            self.metrics.errors += 1
-
+    @staticmethod
+    def _reject_reason(msg: dict) -> str | None:
+        if "E" in msg:
+            error = msg["E"]
+            return str(error[0] if error else "protocol_error")
+        update = msg.get("U", [])
+        if len(update) > 1 and update[1] == 3:
+            return str(update[4] if len(update) > 4 else "unknown")
         return None
 
     async def run_worker(self, rate_per_worker: float, duration: int):
-        """Run stress test for this worker"""
+        """Send open-loop at the configured rate and drain responses."""
         interval = 1.0 / rate_per_worker if rate_per_worker > 0 else 0.1
 
         try:
@@ -156,20 +138,87 @@ class StressClient:
                     headers=self._headers(),
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as ws:
-                    end_time = time.time() + duration
+                    loop = asyncio.get_running_loop()
+                    pending = deque()
+                    send_done = asyncio.Event()
 
-                    while time.time() < end_time:
-                        loop_start = time.time()
+                    async def sender():
+                        started = loop.time()
+                        next_send = started
+                        while loop.time() - started < duration:
+                            if next_send - started >= duration:
+                                break
+                            delay = next_send - loop.time()
+                            if delay > 0:
+                                await asyncio.sleep(delay)
+                            self.metrics.offered += 1
+                            try:
+                                await ws.send_str(self.generate_order())
+                            except Exception:
+                                self.metrics.send_errors += 1
+                                next_send += interval
+                                continue
+                            self.metrics.submitted += 1
+                            pending.append(time.perf_counter_ns())
+                            next_send += interval
+                        send_done.set()
 
-                        latency = await self.submit_order(ws)
+                    async def receiver():
+                        drain_deadline = None
+                        while True:
+                            if send_done.is_set() and drain_deadline is None:
+                                drain_deadline = loop.time() + 1.0
+                            if send_done.is_set() and not pending:
+                                return
+                            if drain_deadline is not None and loop.time() >= drain_deadline:
+                                return
+                            timeout = 0.1
+                            if drain_deadline is not None:
+                                timeout = min(
+                                    timeout,
+                                    max(0.001, drain_deadline - loop.time()),
+                                )
+                            try:
+                                response = await ws.receive(timeout=timeout)
+                            except asyncio.TimeoutError:
+                                continue
+                            if response.type != aiohttp.WSMsgType.TEXT:
+                                if pending:
+                                    pending.popleft()
+                                    self.metrics.errors += 1
+                                    self.metrics.completed += 1
+                                continue
+                            try:
+                                msg = json.loads(response.data)
+                            except (TypeError, json.JSONDecodeError):
+                                if pending:
+                                    pending.popleft()
+                                    self.metrics.errors += 1
+                                    self.metrics.completed += 1
+                                continue
+                            if "H" in msg:
+                                continue
+                            if not pending:
+                                self.metrics.errors += 1
+                                continue
+                            sent_ns = pending.popleft()
+                            reason = self._reject_reason(msg)
+                            if reason is not None:
+                                self.metrics.rejected += 1
+                                counts = Counter(self.metrics.rejected_by_reason)
+                                counts[reason] += 1
+                                self.metrics.rejected_by_reason = dict(counts)
+                            elif "U" in msg or "F" in msg:
+                                self.metrics.accepted += 1
+                                self.metrics.latencies_us.append(
+                                    (time.perf_counter_ns() - sent_ns) // 1000)
+                            else:
+                                self.metrics.errors += 1
+                            self.metrics.completed += 1
 
-                        if latency is not None:
-                            self.metrics.latencies_us.append(latency)
-
-                        elapsed = time.time() - loop_start
-                        sleep_time = max(0, interval - elapsed)
-                        if sleep_time > 0:
-                            await asyncio.sleep(sleep_time)
+                    await asyncio.gather(sender(), receiver())
+                    self.metrics.timed_out += len(pending)
+                    pending.clear()
 
         except (
             aiohttp.ClientConnectorError,
@@ -244,14 +293,16 @@ async def run_stress_test(config: StressConfig) -> dict:
                 "connections": config.connections,
             },
             "metrics": {
-                "submitted": 0, "accepted": 0,
-                "rejected": 0, "errors": 1,
+                "offered": 0, "submitted": 0, "accepted": 0,
+                "rejected": 0, "completed": 0, "timed_out": 0,
+                "pending": 0, "errors": 1, "rejected_by_reason": {},
+                "send_errors": 0,
                 "elapsed_sec": 0.0,
                 "actual_rate": 0.0, "accept_rate": 0.0,
             },
             "latency_us": {
-                "p50": 0, "p95": 0, "p99": 0,
-                "min": 0, "max": 0,
+                "samples": 0, "p50": None, "p95": None, "p99": None,
+                "p99_9": None, "min": None, "max": None,
             },
         }
 
@@ -293,14 +344,17 @@ async def run_stress_test(config: StressConfig) -> dict:
                 "connections": config.connections,
             },
             "metrics": {
-                "submitted": 0, "accepted": 0,
-                "rejected": 0, "errors": len(all_errors),
+                "offered": 0, "submitted": 0, "accepted": 0,
+                "rejected": 0, "completed": 0, "timed_out": 0,
+                "pending": 0, "errors": len(all_errors),
+                "rejected_by_reason": {},
+                "send_errors": 0,
                 "elapsed_sec": round(elapsed, 2),
                 "actual_rate": 0.0, "accept_rate": 0.0,
             },
             "latency_us": {
-                "p50": 0, "p95": 0, "p99": 0,
-                "min": 0, "max": 0,
+                "samples": 0, "p50": None, "p95": None, "p99": None,
+                "p99_9": None, "min": None, "max": None,
             },
         }
 
@@ -309,10 +363,18 @@ async def run_stress_test(config: StressConfig) -> dict:
     all_latencies = []
 
     for worker in workers:
+        total_metrics.offered += worker.metrics.offered
         total_metrics.submitted += worker.metrics.submitted
         total_metrics.accepted += worker.metrics.accepted
         total_metrics.rejected += worker.metrics.rejected
+        total_metrics.completed += worker.metrics.completed
+        total_metrics.timed_out += worker.metrics.timed_out
+        total_metrics.pending += worker.metrics.pending
         total_metrics.errors += worker.metrics.errors
+        total_metrics.send_errors += worker.metrics.send_errors
+        counts = Counter(total_metrics.rejected_by_reason)
+        counts.update(worker.metrics.rejected_by_reason)
+        total_metrics.rejected_by_reason = dict(counts)
         all_latencies.extend(worker.metrics.latencies_us)
 
     # Calculate percentiles
@@ -320,7 +382,7 @@ async def run_stress_test(config: StressConfig) -> dict:
 
     def percentile(data, p):
         if not data:
-            return 0
+            return None
         k = (len(data) - 1) * p / 100
         f = int(k)
         c = f + 1
@@ -331,6 +393,7 @@ async def run_stress_test(config: StressConfig) -> dict:
     p50 = percentile(all_latencies, 50)
     p95 = percentile(all_latencies, 95)
     p99 = percentile(all_latencies, 99)
+    p99_9 = percentile(all_latencies, 99.9)
 
     actual_rate = total_metrics.submitted / elapsed
 
@@ -341,20 +404,33 @@ async def run_stress_test(config: StressConfig) -> dict:
             "connections": config.connections,
         },
         "metrics": {
+            "offered": total_metrics.offered,
             "submitted": total_metrics.submitted,
             "accepted": total_metrics.accepted,
             "rejected": total_metrics.rejected,
+            "rejected_by_reason": total_metrics.rejected_by_reason,
+            "completed": total_metrics.completed,
+            "timed_out": total_metrics.timed_out,
+            "pending": total_metrics.pending,
             "errors": total_metrics.errors,
+            "send_errors": total_metrics.send_errors,
             "elapsed_sec": round(elapsed, 2),
             "actual_rate": round(actual_rate, 2),
-            "accept_rate": round(100 * total_metrics.accepted / max(total_metrics.submitted, 1), 2),
+            "achieved_rate": round(total_metrics.completed / elapsed, 2),
+            "accept_rate": round(
+                100 * total_metrics.accepted
+                / max(total_metrics.submitted, 1),
+                2,
+            ),
         },
         "latency_us": {
-            "p50": round(p50),
-            "p95": round(p95),
-            "p99": round(p99),
-            "min": all_latencies[0] if all_latencies else 0,
-            "max": all_latencies[-1] if all_latencies else 0,
+            "samples": len(all_latencies),
+            "p50": round(p50) if p50 is not None else None,
+            "p95": round(p95) if p95 is not None else None,
+            "p99": round(p99) if p99 is not None else None,
+            "p99_9": round(p99_9) if p99_9 is not None else None,
+            "min": all_latencies[0] if all_latencies else None,
+            "max": all_latencies[-1] if all_latencies else None,
         }
     }
 

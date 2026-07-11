@@ -161,6 +161,29 @@ def test_stress_report_generation():
     assert "245" in html
 
 
+def test_stress_report_renders_empty_latency_truthfully():
+    """An invalid zero-sample report renders an em dash, not fake 0us."""
+    import pages
+
+    data = {
+        "status": "failed",
+        "metrics": {
+            "offered": 10, "submitted": 10, "accepted": 0,
+            "rejected": 10, "completed": 10, "timed_out": 0,
+            "pending": 0, "errors": 0, "actual_rate": 10.0,
+            "accept_rate": 0.0, "elapsed_sec": 1.0,
+        },
+        "latency_us": {
+            "samples": 0, "p50": None, "p95": None, "p99": None,
+            "p99_9": None, "min": None, "max": None,
+        },
+    }
+    html = pages.stress_report_page(data)
+    assert "p99.9" in html
+    assert "—" in html
+    assert "FAIL" in html
+
+
 def test_stress_page_renders():
     """Test that stress test page renders without errors."""
     import pages
