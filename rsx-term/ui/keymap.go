@@ -44,6 +44,8 @@ const (
 
 	actPairBuy  action = "pair-buy"
 	actPairSell action = "pair-sell"
+	actPairDown action = "pair-down"
+	actPairUp   action = "pair-up"
 	actFlatten  action = "flatten"
 	actListPrev action = "list-prev"
 	actListNext action = "list-next"
@@ -117,6 +119,8 @@ func defaultKeymap() *keymap {
 		pair: []binding{
 			{action: actPairBuy, key: "b", help: "buy — lift the armed symbol's offer (count × lots, IOC)", hint: "b buy", danger: true},
 			{action: actPairSell, key: "s", help: "sell — hit the armed symbol's bid (count × lots, IOC)", hint: "s sell", danger: true},
+			{action: actPairDown, key: "j", alts: []string{"down"}, help: "arm the next symbol", hint: "j/k arm"},
+			{action: actPairUp, key: "k", alts: []string{"up"}, help: "arm the previous symbol"},
 			{action: actFlatten, key: ".", help: "flatten the armed symbol (reduce-only IOC)", hint: ". flatten", danger: true},
 			{action: actListPrev, key: "[", help: "previous watchlist", hint: "[ ] list"},
 			{action: actListNext, key: "]", help: "next watchlist"},

@@ -136,6 +136,10 @@ func binTickCmd() tea.Cmd { return tea.Tick(binInterval, toBinTick) }
 // convention).
 func toBinTick(t time.Time) tea.Msg { return binTickMsg(t) }
 
+// BinTickAt exposes the bin-tick message for external drivers (the live
+// venue smoke test paces its own clock instead of a running tea.Program).
+func BinTickAt(t time.Time) tea.Msg { return binTickMsg(t) }
+
 // detectMode picks the render tier from the environment. RSX_TERM_COLOR
 // (plain|shade|true) forces it; otherwise NO_COLOR / TERM / COLORTERM decide.
 // lipgloss further maps RGB down to the real terminal's palette, so modeTrue is
