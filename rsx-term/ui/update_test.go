@@ -39,6 +39,8 @@ func press(m Model, key string) Model {
 		msg = tea.KeyMsg{Type: tea.KeyF3}
 	case "f2":
 		msg = tea.KeyMsg{Type: tea.KeyF2}
+	case "f9":
+		msg = tea.KeyMsg{Type: tea.KeyF9}
 	case "ctrl+c":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlC}
 	default:
