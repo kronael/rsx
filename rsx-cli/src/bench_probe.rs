@@ -440,7 +440,7 @@ async fn main() {
         }
         None => {
             println!(
-                "(no e2e_us block in {} — run `make latency-publish` first)",
+                "(no e2e_us block in {} — run `make perf-load` first)",
                 args.baseline.display()
             );
         }

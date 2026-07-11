@@ -228,11 +228,10 @@ React SPA (rsx-webui, removed). Reuses `rsx-types`/
 | lint            | `make lint`       | clippy                 |
 | unit tests      | `make test`       | unit tests (<5s)       |
 | WAL tests       | `make wal`        | WAL correctness        |
-| E2E             | `make e2e`        | Rust E2E + Playwright  |
+| E2E             | `make e2e`        | Rust + API + Playwright |
 | integration     | `make integration`| testcontainers (PG)    |
 | benchmarks      | `make perf`       | Criterion              |
-| bench gate      | `make bench-gate` | regression gate (10%)  |
-| Playwright      | `make play`       | 421 browser tests (canonical) |
+| perf gate       | `make perf-gate` | Criterion regression gate (10%) |
 | release gate    | `make gate`       | all 4 release gates    |
 | CI              | `make ci`         | phases 1-3             |
 | CI full         | `make ci-full`    | all phases + shard fan |

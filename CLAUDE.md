@@ -239,7 +239,8 @@ processes, inject faults. See `rsx-playground/README.md`.
 
 ## Release Gates (acceptance pipeline)
 
-The repo enforces a 4-gate pipeline; never run `gate-4` directly.
+The repo enforces a four-stage pipeline through `make gate`; do not bypass it
+by running an internal browser stage directly.
 
 ```bash
 make gate              # all 4 gates in order
@@ -247,9 +248,9 @@ make ci                # gates 1-3 + integration + infra-smoke (no fan-out)
 make ci-full           # ci + shards-gated (fan-out after 3 green infra-smokes)
 ```
 
-Gate ordering: `gate-1-startup` (server imports) → `gate-2-partials`
-(HTMX 200s) → `gate-3-api` (Python API tests) → `gate-4-playwright`
-(full Playwright suite, JSON+JUnit artifacts).
+`make gate` is the hard-ordered Playground release check: imports, HTMX
+routes, API regressions, then the full browser suite. Its stages are internal;
+run the complete gate so later checks cannot bypass earlier failures.
 
 ## Testing
 
@@ -276,9 +277,9 @@ internal latency, and it must never be treated as a latency test.
   Key ones: `rsx-matching/benches/{match_depth,process_order}_bench.rs`
   (match ~30 ns, depth-independent), `rsx-gateway/benches/ws_order_latency.rs`
   (order round-trip), `rsx-cast` benches (transport RTT).
-- **Gate** (`make bench-gate` → `scripts/bench-gate.sh`): Criterion regression
-  detection (>10% = fail, baseline in `tmp/`); plus the F1 e2e latency probe
-  that drives real load and writes GW→ME→GW p50/p99 to `bench-baseline.json`.
+- **Gates** (`make perf-gate`, `make perf-e2e-gate`): Criterion and full-route
+  regression detection (>10% = fail). `make perf-load` drives real load and
+  writes GW→ME→GW percentiles to `bench-baseline.json`.
   Spec: `specs/2/22-perf-verification.md`.
 
 So: to check or change a latency claim, run/extend the **benches + gate** — the

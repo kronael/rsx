@@ -32,6 +32,14 @@ RSX testing is organized into five levels with corresponding make targets,
 providing a clear workflow from fast iteration to full validation to
 performance characterization.
 
+The public levels are `make test`, `make e2e`, `make integration`,
+`make smoke`, and `make perf`. Performance operations share one family:
+`perf-gate`, `perf-save`, `perf-load`, `perf-e2e-gate`, and
+`perf-e2e-save`. `make gate` is the ordered Playground release check;
+`ci` and `ci-full` compose its internal stages for automation. Individual
+gate stages and browser shards are implementation details, except
+`shards-gated`, which remains available for advanced browser debugging.
+
 ---
 
 ## 1. `make test` - Unit Tests (<5s)
