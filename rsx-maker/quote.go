@@ -1,9 +1,10 @@
 package main
 
 // Quote math. Pure integer functions on raw fixed-point prices.
-// Ported faithfully from rsx-playground/market_maker.py's quote cycle:
-// half-spread = ref * spread_bps / 10000, level offsets widen by
-// half-spread/2 per level, bids floor to the tick, asks ceil to it.
+// Ported from rsx-playground/market_maker.py's quote cycle (minus the
+// cosmetic per-level qty jitter, intentionally omitted): half-spread =
+// ref * spread_bps / 10000, level offsets widen by half-spread/2 per
+// level, bids floor to the tick, asks ceil to it.
 
 // halfSpread returns the per-side distance from ref in raw price
 // units for a given spread in basis points. At least one tick-less
