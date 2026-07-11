@@ -310,6 +310,30 @@ func TestLLMLiveTypedFollowUp(t *testing.T) {
 	}
 }
 
+// TestLLMBusyGatesFollowUp proves one-turn-in-flight per thread: enter while
+// the assistant is busy must not post (a second POST on the same topic would
+// cross-subscribe the webd hub key — duplicated reply, orphaned second turn).
+// The draft survives so nothing typed is lost.
+func TestLLMBusyGatesFollowUp(t *testing.T) {
+	m := liveThreadModel(t, "t-busy")
+	m.assistBusy = true
+	for _, r := range "hi" {
+		m = press(m, string(r))
+	}
+	m = press(m, "enter")
+	if m.assistInput != "hi" {
+		t.Fatalf("the draft must survive a gated enter: %q", m.assistInput)
+	}
+	for _, ln := range m.assistLog {
+		if ln.role == "you" {
+			t.Fatalf("a gated enter must not echo a 'you' row: %+v", m.assistLog)
+		}
+	}
+	if !strings.Contains(m.status, "busy") {
+		t.Fatalf("the gate should explain itself in the status line: %q", m.status)
+	}
+}
+
 // liveThreadModel is an enabled model parked on a thread WITHOUT dialing (no
 // Ask), for pure event-folding assertions.
 func liveThreadModel(t *testing.T, topic string) Model {

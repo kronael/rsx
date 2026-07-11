@@ -131,7 +131,6 @@ func (c *Client) streamTurn(topic, content string) {
 	var event, data string
 	gotReply := false
 	for scanner.Scan() {
-		idle.Reset(idleCutoff)
 		line := scanner.Text()
 		switch {
 		case line == "":
@@ -150,10 +149,15 @@ func (c *Client) streamTurn(topic, content string) {
 			}
 			event, data = "", ""
 		case strings.HasPrefix(line, ":"):
-			// SSE comment (": ok" keep-alive) — ignore.
+			// SSE comment (": ok" / ": ping") — webd keep-alives every 15s
+			// forever, even on a turn whose round_done will never come, so a
+			// comment must NOT reset the idle timer: only real frame lines
+			// below count as progress, or a wedged turn is never abandoned.
 		case strings.HasPrefix(line, "event:"):
+			idle.Reset(idleCutoff)
 			event = strings.TrimSpace(line[len("event:"):])
 		case strings.HasPrefix(line, "data:"):
+			idle.Reset(idleCutoff)
 			data = strings.TrimSpace(line[len("data:"):])
 		}
 	}
