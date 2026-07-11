@@ -409,16 +409,14 @@ func hexRGB(h string) (int, int, int) {
 }
 
 // viewStream renders the active streaming screen as a fixed grid (see the
-// file header): the depth BOOK (default), the multi-pair chase grid, the
-// news overview, or the LLM assistant. Selected by RSX_TERM_STREAM; the DOM
-// View is untouched when the flag is off.
+// file header): the depth BOOK (default), the news overview, or the LLM
+// assistant. Selected by RSX_TERM_STREAM; the DOM View is untouched when the
+// flag is off.
 func (m Model) viewStream() string {
 	if m.showHelp {
 		return m.viewStreamHelp()
 	}
 	switch m.screen {
-	case screenPair:
-		return m.viewPair()
 	case screenNews:
 		return m.viewNews()
 	case screenLLM:
@@ -504,8 +502,8 @@ func (m Model) modeLine() string {
 		return StyleMuted.Render(" " + name + " off ")
 	}
 	venue := m.activeVenue
-	if m.screen == screenPair || m.screen == screenNews {
-		venue = m.pairVenue()
+	if m.screen == screenNews {
+		venue = m.watchVenue()
 	}
 	parts := []string{
 		tag,
@@ -524,17 +522,6 @@ func (m Model) modeLine() string {
 			vs = append(vs, v.Code+" "+v.Name)
 		}
 		parts = append(parts, StyleTextBright.Bold(true).Render(" venue? ")+StyleMuted.Render(strings.Join(vs, " · ")))
-	}
-	if m.screen == screenPair {
-		if m.armedSym != 0 {
-			armed := m.instrumentFor(m.pairVenue(), m.armedSym).Name
-			if m.countBuf != "" {
-				armed += " ×" + m.countBuf
-			}
-			parts = append(parts, StyleArmed.Render(" ARMED "+armed+" "))
-		} else {
-			parts = append(parts, StyleMuted.Render(" press a letter to arm "))
-		}
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }

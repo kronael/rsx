@@ -121,6 +121,14 @@ func strWidth(min int, ss ...string) int {
 	return w
 }
 
+// abs64 is the absolute value of an int64.
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // clamp restricts v to [lo, hi].
 func clamp(v, lo, hi int) int {
 	if v < lo {

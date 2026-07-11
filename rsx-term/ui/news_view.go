@@ -61,7 +61,7 @@ func (m Model) viewNews() string {
 // sectorMapLines renders the breadth venue's instruments as one line of
 // move-coloured tiles per sector, sector-labelled, alphabetical.
 func (m Model) sectorMapLines() []string {
-	venue, ok := m.venueByName(m.pairVenue())
+	venue, ok := m.venueByName(m.watchVenue())
 	if !ok {
 		return nil
 	}
@@ -103,7 +103,7 @@ func (m Model) sectorMapLines() []string {
 // on the diverging red↔green scale (theme-aware: the colorblind theme turns
 // it blue↔orange). No mid yet reads neutral, never fabricated.
 func (m Model) tile(ins Instrument) string {
-	mk := m.marketFor(m.pairVenue(), ins.ID)
+	mk := m.marketFor(m.watchVenue(), ins.ID)
 	label := fmt.Sprintf(" %-6s", tileName(ins.Name))
 	bp, ok := mk.moveBp()
 	if !ok {
@@ -231,8 +231,8 @@ func (m Model) handleNewsKey(act action, key string) (tea.Model, tea.Cmd) {
 		return m.handoffToAssistant()
 	default: // the fixed key class: symbol letters jump into their book
 		if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
-			if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok {
-				m.activeVenue = m.pairVenue()
+			if ins, ok := m.instrumentByCode(m.watchVenue(), key); ok {
+				m.activeVenue = m.watchVenue()
 				m.switchTo(ins)
 				m.screen = screenBook
 			}
@@ -282,7 +282,7 @@ func (m Model) handoffToAssistant() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	h := headlines[clamp(m.newsSel, 0, len(headlines)-1)]
-	venue := m.pairVenue()
+	venue := m.watchVenue()
 	ins, ok := m.matchHeadlineSymbol(venue, h)
 	if !ok { // unlinked headline: hand off the active book instead
 		venue = m.activeVenue

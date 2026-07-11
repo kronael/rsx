@@ -47,17 +47,6 @@ func TestBookViewGolden(t *testing.T) {
 	goldenCompare(t, "book_view.golden", stripANSI(m.View()))
 }
 
-// TestPairViewGolden locks the pair screen's layout: two symbols, one armed
-// with a pending count, positions on both.
-func TestPairViewGolden(t *testing.T) {
-	m := pairModel(t, &conn.MockGateway{})
-	m = apply(m, wire.Fill{Oid: 1, Px: 9999, Qty: 100_000, Side: wire.Buy, Symbol: 10})
-	m = apply(m, wire.Fill{Oid: 2, Px: 21000, Qty: 47_614_512, Side: wire.Sell, Symbol: 11})
-	m = press(m, m.instrumentFor(m.pairVenue(), 11).Code)
-	m = press(m, "3")
-	goldenCompare(t, "pair_view.golden", stripANSI(m.View()))
-}
-
 // TestNewsViewFixedShape asserts the news screen's structural rows (the feed
 // carries wall-clock strings, so it is shape-checked, not byte-locked).
 func TestNewsViewFixedShape(t *testing.T) {

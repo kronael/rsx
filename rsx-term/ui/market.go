@@ -8,10 +8,9 @@ import (
 )
 
 // Instrument is one tradeable symbol's display/config surface: id, name, the
-// switcher letter code, display precision, tick, and the pair-view lot
-// multiplier (percent, 100 = 1×). The gateway's /v1/symbols carries no names
-// yet, so names come from the watch config (RSX_TERM_WATCH) with an honest
-// SYM-<id> fallback.
+// switcher letter code, display precision, and tick. The gateway's /v1/symbols
+// carries no names yet, so names come from the watch config (RSX_TERM_WATCH)
+// with an honest SYM-<id> fallback.
 type Instrument struct {
 	ID       uint32
 	Name     string
@@ -19,7 +18,6 @@ type Instrument struct {
 	PriceDec int
 	QtyDec   int
 	Tick     int64
-	LotMult  int64  // percent of the base lot notional; 0 → 100
 	Sector   string // news-view market-map grouping ("" → "perps")
 }
 
@@ -149,6 +147,16 @@ func (mk *market) foldPairReads() {
 	mk.flowBuy -= mk.flowBuy >> 5 // ~2s half-life at 100ms bins
 	mk.flowSell -= mk.flowSell >> 5
 	mk.depthBasis = foldBasis(mk.depthBasis, mk.totalDepth())
+}
+
+// moveBp is the mid's move vs the session reference (the oldest retained
+// spark), in basis points. The news view's sector tiles read it.
+func (mk *market) moveBp() (int64, bool) {
+	mid, ok := mk.book.Mid()
+	if !ok || len(mk.sparks) == 0 || mk.sparks[0] <= 0 {
+		return 0, false
+	}
+	return (mid - mk.sparks[0]) * 10_000 / mk.sparks[0], true
 }
 
 // totalDepth is the whole visible book's resting size, both sides.

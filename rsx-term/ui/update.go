@@ -182,8 +182,6 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch m.screen {
-	case screenPair:
-		return m.handlePairKey(act, key)
 	case screenNews:
 		return m.handleNewsKey(act, key)
 	case screenLLM:
@@ -310,8 +308,9 @@ func (m Model) handleVenuePick(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// pairVenue is the venue the pair/news screens read: the active watchlist's.
-func (m Model) pairVenue() string { return m.lists[m.listSel].venue }
+// watchVenue is the venue the watchlist model exposes (the NEWS view's
+// breadth universe): the active watchlist's.
+func (m Model) watchVenue() string { return m.lists[m.listSel].venue }
 
 // venueSub is a venue's order path, or an explanation why there isn't one.
 func (m Model) venueSub(venue string) (feed.Submitter, string) {
@@ -476,195 +475,6 @@ func (m Model) ownOrdersFor(venue string, id uint32) []OpenOrder {
 		}
 	}
 	return out
-}
-
-// handlePairKey is the pair view's chase/directional grammar: a symbol
-// LETTER arms its row; an optional digit count then `b`/`s` fires that many
-// lots at market (IOC, aggressive is the default here); `.` flattens
-// (reduce-only); `[`/`]` switch watchlists; esc clears the arm. No passive
-// quoting in this view — that is the book view's job.
-func (m Model) handlePairKey(act action, key string) (tea.Model, tea.Cmd) {
-	switch act {
-	case actClearArm:
-		m.armedSym = 0
-		m.countBuf = ""
-	case actListPrev, actListNext:
-		n := len(m.lists)
-		if act == actListPrev {
-			m.listSel = (m.listSel + n - 1) % n
-		} else {
-			m.listSel = (m.listSel + 1) % n
-		}
-		m.armedSym = 0
-		m.countBuf = ""
-		m.status = "list " + m.lists[m.listSel].name
-	case actPairBuy:
-		return m.handlePairTrade(wire.Buy)
-	case actPairSell:
-		return m.handlePairTrade(wire.Sell)
-	case actPairDown:
-		m.stepArm(+1)
-	case actPairUp:
-		m.stepArm(-1)
-	case actFlatten:
-		return m.handlePairFlatten()
-	default: // the fixed key classes: counts and symbol letters
-		switch {
-		case len(key) == 1 && key[0] >= '0' && key[0] <= '9':
-			if m.armedSym != 0 && len(m.countBuf) < 2 {
-				m.countBuf += key
-			}
-		case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
-			if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok && m.inActiveList(ins.ID) {
-				m.armedSym = ins.ID
-				m.countBuf = ""
-				m.status = "armed " + ins.Name
-			}
-		}
-	}
-	return m, nil
-}
-
-// stepArm moves the armed selection through the active watchlist (the j/k
-// row cursor — the letter grammar's sequential sibling). Wraps; clears any
-// pending count so a hop never inherits a stale size.
-func (m *Model) stepArm(dir int) {
-	ids := m.lists[m.listSel].ids
-	if len(ids) == 0 {
-		return
-	}
-	idx := 0
-	for i, id := range ids {
-		if id == m.armedSym {
-			idx = (i + dir + len(ids)) % len(ids)
-			break
-		}
-	}
-	m.armedSym = ids[idx]
-	m.countBuf = ""
-	m.status = "armed " + m.instrumentFor(m.pairVenue(), m.armedSym).Name
-}
-
-// inActiveList reports whether a symbol is on the active watchlist.
-func (m Model) inActiveList(id uint32) bool {
-	for _, lid := range m.lists[m.listSel].ids {
-		if lid == id {
-			return true
-		}
-	}
-	return false
-}
-
-// lots parses the vim-count buffer (digits typed before b/s), defaulting 1.
-func (m Model) lots() int64 {
-	n, ok := parseDigits(m.countBuf)
-	if !ok || n < 1 {
-		return 1
-	}
-	return n
-}
-
-// handlePairTrade fires `lots` lots at market on the armed symbol: buy lifts
-// the offer, sell hits the bid. IOC always — the pair view is aggressive by
-// design. The notional fat-finger cap hard-blocks in fire.
-func (m Model) handlePairTrade(side wire.Side) (tea.Model, tea.Cmd) {
-	if m.armedSym == 0 {
-		m.status = "arm a symbol first (its letter key)"
-		return m, nil
-	}
-	mk := m.marketFor(m.pairVenue(), m.armedSym)
-	var px int64
-	if side == wire.Buy {
-		a, ok := mk.book.BestAsk()
-		if !ok {
-			m.status = "no ask to lift on " + mk.ins.Name
-			return m, nil
-		}
-		px = a.Px
-	} else {
-		b, ok := mk.book.BestBid()
-		if !ok {
-			m.status = "no bid to hit on " + mk.ins.Name
-			return m, nil
-		}
-		px = b.Px
-	}
-	lotQty, ok := m.lotQty(mk.ins, px)
-	if !ok {
-		m.status = "can't size a lot on " + mk.ins.Name
-		return m, nil
-	}
-	qty, ok := safeMul(lotQty, m.lots())
-	if !ok {
-		m.status = "BLOCKED: lot count overflows"
-		return m, nil
-	}
-	m.countBuf = ""
-	return m.fire(m.pairVenue(), wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc})
-}
-
-// handlePairFlatten fires the reduce-only IOC that closes the armed symbol's
-// derived position at its far touch (`.`).
-func (m Model) handlePairFlatten() (tea.Model, tea.Cmd) {
-	if m.armedSym == 0 {
-		m.status = "arm a symbol first (its letter key)"
-		return m, nil
-	}
-	mk := m.marketFor(m.pairVenue(), m.armedSym)
-	net := mk.position.Net
-	if net == 0 {
-		m.status = "no position on " + mk.ins.Name
-		return m, nil
-	}
-	qty := net
-	side := wire.Sell
-	if net < 0 {
-		qty, side = -net, wire.Buy
-	}
-	var px int64
-	if side == wire.Sell {
-		b, ok := mk.book.BestBid()
-		if !ok {
-			m.status = "no bid to hit on " + mk.ins.Name
-			return m, nil
-		}
-		px = b.Px
-	} else {
-		a, ok := mk.book.BestAsk()
-		if !ok {
-			m.status = "no ask to lift on " + mk.ins.Name
-			return m, nil
-		}
-		px = a.Px
-	}
-	return m.fire(m.pairVenue(), wire.OrderReq{Symbol: m.armedSym, Side: side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: true})
-}
-
-// lotQty sizes ONE lot of an instrument at a price: the configured base
-// notional (human quote units) scaled by the instrument's multiplier — a
-// consistent risk unit per symbol, in raw qty. Integer math throughout.
-func (m Model) lotQty(ins Instrument, px int64) (int64, bool) {
-	if px <= 0 {
-		return 0, false
-	}
-	scaled, ok := safeMul(m.cfg.LotNotional, pow10(ins.PriceDec+ins.QtyDec))
-	if !ok {
-		return 0, false
-	}
-	qty := scaled / px
-	mult := ins.LotMult
-	if mult <= 0 {
-		mult = 100
-	}
-	qty, ok = safeMul(qty, mult)
-	if !ok {
-		return 0, false
-	}
-	qty /= 100
-	if qty < 1 {
-		qty = 1
-	}
-	return qty, true
 }
 
 // pow10 is 10^n as i64 (n small, display-precision scale).
@@ -1261,6 +1071,10 @@ func (m Model) handleMarket() (tea.Model, tea.Cmd) {
 // outright — a hard stop, not a dismissible soft warning (the Citi fat-finger
 // lesson: soft warnings train click-through).
 const maxOrderQty = 1_000_000
+
+// defaultMaxNotional is the streaming view's per-order notional ceiling (human
+// quote units) when Config.MaxNotional is unset — the fire() fat-finger guard.
+const defaultMaxNotional = 10_000
 
 // arm applies the fat-finger guard, then either sets the confirm preview or —
 // in ARMED (confirm-off) mode — submits straight away. Every order path (enter

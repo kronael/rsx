@@ -89,13 +89,13 @@ func TestReadOnlyVenueBlocksOrders(t *testing.T) {
 	}
 }
 
-func TestPairDefaultsToBreadthVenue(t *testing.T) {
+func TestWatchlistDefaultsToBreadthVenue(t *testing.T) {
 	m := venueModel(t, &conn.MockGateway{})
-	if got := m.pairVenue(); got != "hyperliquid" {
-		t.Fatalf("pair list should default to the breadth venue, got %q", got)
+	if got := m.watchVenue(); got != "hyperliquid" {
+		t.Fatalf("watchlist should default to the breadth venue, got %q", got)
 	}
-	m = press(m, "tab") // pair screen
+	m = press(m, "tab") // news screen
 	if !strings.Contains(stripANSI(m.View()), "BTC") {
-		t.Fatalf("pair view should list the hl universe")
+		t.Fatalf("news view should list the hl universe")
 	}
 }

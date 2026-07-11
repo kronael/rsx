@@ -59,8 +59,7 @@ func newsModel(t *testing.T, mock *conn.MockGateway) Model {
 		Seq:      1,
 	})
 	m = apply(m, binTickMsg(time.Now()))
-	m = press(m, "tab")
-	m = press(m, "tab") // book → pair → news
+	m = press(m, "tab") // book → news
 	return m
 }
 
