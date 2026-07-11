@@ -1005,6 +1005,10 @@ async def do_maker_start() -> bool:
             _mcfg.get("refresh_ms", 500)),
         "RSX_MAKER_LEVELS": str(
             _mcfg.get("levels", 5)),
+        # Small per-cycle price jitter so the demo books visibly move
+        # (the maker random-walks the mid within this band each refresh).
+        "RSX_MAKER_JITTER_BPS": str(
+            _mcfg.get("jitter_bps", 8)),
     }
     full_env = {**os.environ, **env}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
