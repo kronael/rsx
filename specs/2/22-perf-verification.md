@@ -76,7 +76,7 @@ make perf-gate   # diff current run against baseline
 
 **`scripts/bench-gate-e2e.sh` — E2E latency gate.**
 Drives `latency-publish.sh`, rejects invalid accounting or missing samples,
-then reads `e2e_us.p99` from `bench-baseline.json` and
+then reads `e2e_us.p99` from `bench-e2e-latest.json` and
 compares against a **sealed** reference in
 `bench-reference.json`. Requires the cluster to be live
 (`./rsx-playground/playground start-all`).
@@ -86,8 +86,8 @@ make perf-e2e-save  # snapshot current e2e_us as reference
 make perf-e2e-gate  # fail if p99 regresses >10%
 ```
 
-`bench-baseline.json` is rolling — `make perf-load`
-rewrites the `e2e_us` block on every run. `bench-reference.json`
+`bench-e2e-latest.json` is rolling — `make perf-load`
+rewrites it on every run. `bench-reference.json`
 only changes when the operator explicitly accepts a new
 floor with `make perf-e2e-save`. This split prevents
 the silent baseline-creep that would hide regressions.
@@ -102,10 +102,15 @@ regression and measurement invalidity are reported separately. `RATE`,
 `DURATION`, `N`, and `MIN_SAMPLES` configure practical local or staircase
 steps without introducing a second load runner.
 
-Implementation: pure bash + jq, no Python or npm. Reads
+Each stress connection stays on one symbol so its response stream comes from
+one matching engine. This makes the first oid-to-cid binding deterministic;
+the compact gateway U/F frames carry server oid but do not echo client cid.
+Workers still spread load across the configured symbols.
+
+The Criterion gate uses Bash, jq, and Criterion output. It reads
 `target/criterion/<name>/new/estimates.json`, extracts
 `mean.point_estimate`, compares against
-`tmp/bench-baseline.json`. Prints a per-bench table with
+`bench-baseline.json`. It prints a per-bench table with
 ratio and PASS/FAIL.
 
 The baseline lives at `bench-baseline.json` at the repo

@@ -19,6 +19,8 @@ ones below.
 """
 
 import pytest
+from collections import deque
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from server import app
@@ -303,3 +305,94 @@ def test_timeout_accounting_is_valid_above_terminal_threshold():
 def test_malformed_result_is_invalid():
     from stress import validate_results
     assert validate_results({"metrics": []}, 50) == ["malformed stress result"]
+
+
+def test_stress_response_routes_interleaved_fills_by_order_id():
+    """F is non-terminal; only the matching terminal U closes each order."""
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    awaiting = deque(["cid-a", "cid-b"])
+    pending = {"cid-a": 1_000_000, "cid-b": 2_000_000}
+    by_oid = {}
+    with patch("stress_client.time.perf_counter_ns", return_value=5_000_000):
+        client._handle_response(
+            {"F": ["oid-a", "maker-x", 100, 2, 3, 0]},
+            awaiting, pending, by_oid,
+        )
+        client._handle_response(
+            {"F": ["oid-a", "maker-y", 100, 3, 4, 0]},
+            awaiting, pending, by_oid,
+        )
+        assert client.metrics.completed == 0
+        assert set(pending) == {"cid-a", "cid-b"}
+
+        # B's update can arrive before A's terminal update.
+        by_oid["oid-b"] = awaiting.popleft()
+        client._handle_response(
+            {"U": ["oid-b", 1, 0, 5, 0]},
+            awaiting, pending, by_oid,
+        )
+        client._handle_response(
+            {"U": ["oid-a", 0, 5, 0, 0]},
+            awaiting, pending, by_oid,
+        )
+
+    assert client.metrics.completed == 2
+    assert client.metrics.accepted == 2
+    assert pending == {}
+    assert sorted(client.metrics.latencies_us) == [3000, 4000]
+
+
+def test_stress_terminal_reject_closes_bound_order():
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    awaiting = deque(["cid-a"])
+    pending = {"cid-a": 1}
+    client._handle_response(
+        {"U": ["oid-a", 3, 0, 1, 7]}, awaiting, pending, {})
+    assert client.metrics.completed == 1
+    assert client.metrics.rejected == 1
+    assert client.metrics.rejected_by_reason == {"7": 1}
+    assert pending == {}
+
+
+def test_stress_report_names_do_not_collide_within_one_second(tmp_path):
+    from stress import _save_report
+
+    first = _save_report({"run": 1}, tmp_path)
+    second = _save_report({"run": 2}, tmp_path)
+    assert first != second
+    assert first.exists() and second.exists()
+
+
+def test_failed_report_list_preserves_failure_and_null_p99(
+    client, tmp_path, monkeypatch,
+):
+    import json
+    import server
+
+    monkeypatch.setattr(server, "STRESS_REPORTS_DIR", tmp_path)
+    report = {
+        "config": {"target_rate": 100, "duration": 1},
+        "metrics": {
+            "submitted": 100, "accepted": 0, "accept_rate": 0,
+        },
+        "latency_us": {"p99": None},
+        "status": "failed",
+        "failures": ["zero accepted/completed latency samples"],
+    }
+    (tmp_path / "stress-20260711-010203-000001.json").write_text(
+        json.dumps(report)
+    )
+
+    listing = client.get("/api/stress/reports").json()
+    assert listing[0]["status"] == "failed"
+    assert listing[0]["failures"] == report["failures"]
+    assert listing[0]["p99_latency"] is None
+
+    html_response = client.get("/x/stress-reports-list")
+    assert html_response.status_code == 200
+    assert "unavailable (failed)" in html_response.text
+    assert report["failures"][0] in html_response.text

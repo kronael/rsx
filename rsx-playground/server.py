@@ -6291,6 +6291,8 @@ async def api_stress_reports():
                     "accepted": data["metrics"]["accepted"],
                     "accept_rate": data["metrics"]["accept_rate"],
                     "p99_latency": data["latency_us"]["p99"],
+                    "status": data.get("status", "unknown"),
+                    "failures": data.get("failures", []),
                 })
             except Exception as e:
                 reports.append({
@@ -6402,6 +6404,14 @@ async def x_stress_reports_list():
 
     rows = []
     for r in reports:
+        if r.get("corrupt"):
+            report_id = html.escape(str(r["id"]))
+            error = html.escape(r.get("error", "corrupt report"))
+            rows.append(
+                f'<tr><td class="px-2 py-1 text-xs text-red-400" '
+                f'colspan="6">{report_id}: {error}</td></tr>'
+            )
+            continue
         timestamp_fmt = r["timestamp"]
         # Format: 20260213-211030 -> 2026-02-13 21:10:30
         if len(timestamp_fmt) == 15:
@@ -6418,12 +6428,16 @@ async def x_stress_reports_list():
         accept_color = ("text-emerald-400"
                         if r["accept_rate"] >= 95
                         else "text-amber-400")
+        p99 = r["p99_latency"]
         latency_color = ("text-emerald-400"
-                         if r["p99_latency"] < 1000
-                         else "text-amber-400")
+                         if p99 is not None and p99 < 1000
+                         else "text-red-400")
+        p99_text = f"{p99}us" if p99 is not None else "unavailable"
+        failure_title = html.escape("; ".join(map(str, r["failures"])))
+        status = html.escape(str(r["status"]))
 
         rows.append(
-            f'<tr class="hover:bg-slate-800/30">'
+            f'<tr class="hover:bg-slate-800/30" title="{failure_title}">'
             f'<td class="px-2 py-1 text-xs">'
             f'<a href="./stress/{id_escaped}"'
             f' class="text-blue-400 hover:underline">'
@@ -6435,7 +6449,7 @@ async def x_stress_reports_list():
             f'<td class="px-2 py-1 text-xs text-right'
             f' {accept_color}">{r["accept_rate"]}%</td>'
             f'<td class="px-2 py-1 text-xs text-right'
-            f' {latency_color}">{r["p99_latency"]}us</td>'
+            f' {latency_color}">{p99_text} ({status})</td>'
             f'</tr>'
         )
 
