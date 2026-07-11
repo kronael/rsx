@@ -44,7 +44,7 @@ signal.signal(signal.SIGINT, _handle_sigterm)
 
 def _save_report(results: dict, report_dir: Path) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     path = report_dir / f"stress-{ts}.json"
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(results, indent=2))

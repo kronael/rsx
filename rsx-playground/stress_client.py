@@ -58,6 +58,10 @@ class StressClient:
         self.worker_id = worker_id
         self.config = config
         self.user_id = (worker_id % config.users) + 1
+        # U/F responses carry server oid, not the submitted cid. Keeping each
+        # connection on one ME preserves the order needed for the first
+        # oid-to-cid binding while workers still spread load across symbols.
+        self.symbol_id = (1, 2, 3, 10)[worker_id % 4]
         self.metrics = OrderMetrics()
         self.order_counter = 0
 
@@ -93,7 +97,7 @@ class StressClient:
         """Generate compact wire-format order frame."""
         import random
 
-        symbol_id = random.choice([1, 2, 3, 10])
+        symbol_id = self.symbol_id
         side = random.choice([0, 1])
 
         # Fixed-point i64 price in tick units
@@ -118,6 +122,88 @@ class StressClient:
         })
 
     @staticmethod
+    def _client_order_id(frame: str) -> str:
+        """Return the cid carried by a generated N frame."""
+        return str(json.loads(frame)["N"][4])
+
+    def _handle_response(
+        self,
+        msg: dict,
+        awaiting: deque[str],
+        pending_by_cid: dict[str, int],
+        oid_to_cid: dict[str, str],
+    ) -> None:
+        """Account for one gateway frame using protocol order identity.
+
+        New-order replies do not echo cid.  The first frame carrying a new
+        server oid binds it to the oldest unbound cid; subsequent fills and
+        updates are routed by oid.  Fills are deliberately non-terminal -- a
+        possibly interleaved terminal U owns the latency sample.
+        """
+        if "H" in msg:
+            return
+
+        if "F" in msg:
+            fill = msg.get("F", [])
+            if len(fill) < 2:
+                self.metrics.errors += 1
+                return
+            # A taker's first frame may be F (fills precede ORDER_DONE).
+            taker_oid = str(fill[0])
+            if taker_oid not in oid_to_cid and awaiting:
+                oid_to_cid[taker_oid] = awaiting.popleft()
+            return
+
+        if "E" in msg:
+            if not awaiting:
+                self.metrics.errors += 1
+                return
+            cid = awaiting.popleft()
+            if pending_by_cid.pop(cid, None) is None:
+                self.metrics.errors += 1
+                return
+            reason = self._reject_reason(msg) or "protocol_error"
+            counts = Counter(self.metrics.rejected_by_reason)
+            counts[reason] += 1
+            self.metrics.rejected_by_reason = dict(counts)
+            self.metrics.rejected += 1
+            self.metrics.completed += 1
+            return
+
+        if "U" not in msg:
+            self.metrics.errors += 1
+            return
+
+        update = msg.get("U", [])
+        if len(update) < 2:
+            self.metrics.errors += 1
+            return
+        oid = str(update[0])
+        cid = oid_to_cid.get(oid)
+        if cid is None and awaiting:
+            cid = awaiting.popleft()
+            oid_to_cid[oid] = cid
+        if cid is None:
+            self.metrics.errors += 1
+            return
+        sent_ns = pending_by_cid.pop(cid, None)
+        if sent_ns is None:
+            self.metrics.errors += 1
+            return
+
+        reason = self._reject_reason(msg)
+        if reason is not None:
+            self.metrics.rejected += 1
+            counts = Counter(self.metrics.rejected_by_reason)
+            counts[reason] += 1
+            self.metrics.rejected_by_reason = dict(counts)
+        else:
+            self.metrics.accepted += 1
+            self.metrics.latencies_us.append(
+                (time.perf_counter_ns() - sent_ns) // 1000)
+        self.metrics.completed += 1
+
+    @staticmethod
     def _reject_reason(msg: dict) -> str | None:
         if "E" in msg:
             error = msg["E"]
@@ -139,7 +225,9 @@ class StressClient:
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as ws:
                     loop = asyncio.get_running_loop()
-                    pending = deque()
+                    awaiting = deque()
+                    pending_by_cid: dict[str, int] = {}
+                    oid_to_cid: dict[str, str] = {}
                     send_done = asyncio.Event()
 
                     async def sender():
@@ -153,13 +241,16 @@ class StressClient:
                                 await asyncio.sleep(delay)
                             self.metrics.offered += 1
                             try:
-                                await ws.send_str(self.generate_order())
+                                frame = self.generate_order()
+                                cid = self._client_order_id(frame)
+                                await ws.send_str(frame)
                             except Exception:
                                 self.metrics.send_errors += 1
                                 next_send += interval
                                 continue
                             self.metrics.submitted += 1
-                            pending.append(time.perf_counter_ns())
+                            pending_by_cid[cid] = time.perf_counter_ns()
+                            awaiting.append(cid)
                             next_send += interval
                         send_done.set()
 
@@ -168,7 +259,7 @@ class StressClient:
                         while True:
                             if send_done.is_set() and drain_deadline is None:
                                 drain_deadline = loop.time() + 1.0
-                            if send_done.is_set() and not pending:
+                            if send_done.is_set() and not pending_by_cid:
                                 return
                             if drain_deadline is not None and loop.time() >= drain_deadline:
                                 return
@@ -183,42 +274,19 @@ class StressClient:
                             except asyncio.TimeoutError:
                                 continue
                             if response.type != aiohttp.WSMsgType.TEXT:
-                                if pending:
-                                    pending.popleft()
-                                    self.metrics.errors += 1
-                                    self.metrics.completed += 1
+                                self.metrics.errors += 1
                                 continue
                             try:
                                 msg = json.loads(response.data)
                             except (TypeError, json.JSONDecodeError):
-                                if pending:
-                                    pending.popleft()
-                                    self.metrics.errors += 1
-                                    self.metrics.completed += 1
-                                continue
-                            if "H" in msg:
-                                continue
-                            if not pending:
                                 self.metrics.errors += 1
                                 continue
-                            sent_ns = pending.popleft()
-                            reason = self._reject_reason(msg)
-                            if reason is not None:
-                                self.metrics.rejected += 1
-                                counts = Counter(self.metrics.rejected_by_reason)
-                                counts[reason] += 1
-                                self.metrics.rejected_by_reason = dict(counts)
-                            elif "U" in msg or "F" in msg:
-                                self.metrics.accepted += 1
-                                self.metrics.latencies_us.append(
-                                    (time.perf_counter_ns() - sent_ns) // 1000)
-                            else:
-                                self.metrics.errors += 1
-                            self.metrics.completed += 1
+                            self._handle_response(
+                                msg, awaiting, pending_by_cid, oid_to_cid)
 
                     await asyncio.gather(sender(), receiver())
-                    self.metrics.timed_out += len(pending)
-                    pending.clear()
+                    self.metrics.timed_out += len(pending_by_cid)
+                    pending_by_cid.clear()
 
         except (
             aiohttp.ClientConnectorError,
