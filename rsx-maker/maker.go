@@ -75,13 +75,21 @@ func (m *Maker) Run(ctx context.Context) {
 	}
 }
 
+// dialTimeout bounds each gateway WS handshake so a half-open or stalled dial
+// can't wedge the quote loop indefinitely (mirrors the Python maker's
+// ClientTimeout=3s, and cancelAll's own timeout). Only the dial is bounded;
+// writes on the returned conn use the run ctx.
+const dialTimeout = 3 * time.Second
+
 // awaitGateway blocks until a gateway connection succeeds, backing off
 // on failure. Returns an error only if ctx is cancelled first.
 func (m *Maker) awaitGateway(ctx context.Context) error {
 	delay := time.Second
 	const maxDelay = 16 * time.Second
 	for {
-		conn, err := dialGateway(ctx, m.cfg)
+		dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+		conn, err := dialGateway(dctx, m.cfg)
+		cancel()
 		if err == nil {
 			conn.Close(websocket.StatusNormalClosure, "")
 			return nil
@@ -189,7 +197,9 @@ func (m *Maker) overrideMid() (int64, bool) {
 // quoteCycle cancels the previous quotes and places a fresh ladder on
 // both sides of the reference for every symbol, over one connection.
 func (m *Maker) quoteCycle(ctx context.Context) error {
-	conn, err := dialGateway(ctx, m.cfg)
+	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	conn, err := dialGateway(dctx, m.cfg)
+	cancel()
 	if err != nil {
 		return err
 	}
