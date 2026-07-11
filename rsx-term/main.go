@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
 	"rsx-term/ui"
@@ -170,6 +171,28 @@ func newsSource(ctx context.Context) news.Source {
 	return src
 }
 
+// assistSource builds the LLM chat client from RSX_TERM_ASSIST — the full
+// arizuko /chat/{token} URL. Unset (the default) returns nil: the assistant
+// pane stays the offline placeholder and makes zero dials, mirroring
+// newsSource. The one env var is the whole gate; timeouts and topic are
+// internal.
+func assistSource() *assistant.Client {
+	url := os.Getenv("RSX_TERM_ASSIST")
+	if url == "" {
+		return nil
+	}
+	return assistant.New(url)
+}
+
+// startAssist pumps the assistant client's event stream into the program (the
+// reply frames fold in Update). No-op without a client, mirroring startHL.
+func startAssist(p *tea.Program, assist *assistant.Client) {
+	if assist == nil {
+		return
+	}
+	go drainEvents(p, assist.Events())
+}
+
 // runHL is the standalone read-only Hyperliquid terminal: the whole app
 // (book/pair/news screens) over HL market data, no RSX cluster needed.
 // Streaming is forced — the DOM view is an RSX order-entry screen.
@@ -184,6 +207,7 @@ func runHL() error {
 		return fmt.Errorf("hyperliquid: no instruments after coin filter")
 	}
 	first := instruments[0]
+	assist := assistSource()
 	model := ui.New(ui.Config{
 		Symbol:       first.Name,
 		SymbolID:     first.ID,
@@ -198,6 +222,7 @@ func runHL() error {
 		Instruments:  instruments,
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(context.Background()),
+		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -206,6 +231,7 @@ func runHL() error {
 	defer hl.Close()
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, hl.Events())
+	startAssist(p, assist)
 	_, err = p.Run()
 	return err
 }
@@ -337,6 +363,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 			ID: conn.DemoPeerID, Name: "SOL-PERP", PriceDec: 4, QtyDec: 6, Tick: 1,
 		})
 	}
+	assist := assistSource()
 	model := ui.New(ui.Config{
 		Symbol:       Symbol,
 		SymbolID:     symbolID,
@@ -351,11 +378,13 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		Venues:       extraVenues(hlCfg),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(context.Background()),
+		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
 	startHL(p, hl)
+	startAssist(p, assist)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
 		os.Exit(1)
@@ -424,6 +453,7 @@ func runLive(cfg liveConfig) error {
 	}
 	defer live.Close()
 
+	assist := assistSource()
 	model := ui.New(ui.Config{
 		Symbol:       Symbol,
 		SymbolID:     cfg.symbolID,
@@ -438,11 +468,13 @@ func runLive(cfg liveConfig) error {
 		Venues:       extraVenues(cfg.hlCfg),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(ctx),
+		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())
 	startHL(p, cfg.hl)
+	startAssist(p, assist)
 	_, err := p.Run()
 	return err
 }

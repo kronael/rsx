@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"rsx-term/assistant"
 	"rsx-term/book"
 	"rsx-term/news"
 	"rsx-term/wire"
@@ -430,6 +431,7 @@ func (m Model) handoffToAssistant() (tea.Model, tea.Cmd) {
 	m.assistIns = ins
 	m.screen = screenLLM
 	m.status = "context → assistant: " + ins.Name
+	m.beginAssist(ctx)
 	return m, nil
 }
 
@@ -455,6 +457,7 @@ func (m Model) freezeToAssistant() (tea.Model, tea.Cmd) {
 	m.assistIns = ins
 	m.screen = screenLLM
 	m.status = "frozen → assistant: " + ins.Name + " (" + label + ")"
+	m.beginAssist(ctx)
 	return m, nil
 }
 
@@ -506,18 +509,27 @@ func (m Model) matchHeadlineSymbol(venue string, h news.Marker) (Instrument, boo
 func (m Model) viewLLM() string {
 	lines := make([]string, 0, m.height)
 	lines = append(lines, m.streamHeader(), m.modeLine())
-	lines = append(lines, "", StyleHeading.Bold(true).Render("  ASSISTANT")+StyleMuted.Render("  (no model wired — the context below is exactly what one will receive)"))
+	head := StyleHeading.Bold(true).Render("  ASSISTANT") + StyleMuted.Render("  (no model wired — the context below is exactly what one will receive)")
+	if m.assist.Enabled() {
+		head = StyleHeading.Bold(true).Render("  ASSISTANT") + StyleMuted.Render("  (live — arizuko · reply streams below)")
+	}
+	lines = append(lines, "", head)
 
 	if m.assistCtx == nil {
 		lines = append(lines, "", StyleMuted.Render("  no context yet — select a headline (news) or freeze a row (book microscope) and press enter"))
 	} else {
 		lines = append(lines, m.assistContextLines()...)
+		lines = append(lines, m.assistReplyLines(m.height-2-len(lines))...)
 	}
 
 	for len(lines) < m.height-2 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, StyleTextBright.Render(" "+m.status))
+	status := m.status
+	if m.assistBusy {
+		status = "⏳ waiting for the assistant… · " + m.status
+	}
+	lines = append(lines, StyleTextBright.Render(" "+status))
 	lines = append(lines, m.hintLine())
 	return strings.Join(lines, "\n")
 }
@@ -541,11 +553,108 @@ func (m Model) assistContextLines() []string {
 	out = append(out, StyleMuted.Render("  book     ")+StyleText.Render("mid "+mid+"  ("+fmt.Sprint(len(ctx.Bids))+" bid / "+fmt.Sprint(len(ctx.Asks))+" ask levels frozen)"))
 	out = append(out, "  "+m.snapshotLine("asks", ctx.Asks, ins, StyleAsk))
 	out = append(out, "  "+m.snapshotLine("bids", ctx.Bids, ins, StyleLive))
-	out = append(out,
+	return out
+}
+
+// assistReplyLines renders the reply pane below the context block. OFFLINE (no
+// client) it is the honest placeholder — byte-identical to the pre-wiring pane,
+// so the golden view never drifts. LIVE it is the streamed transcript plus the
+// input caret, trimmed to the rows that fit (budget) so the fixed grid never
+// overflows. Only received text ever appears; a failure is an error row, never
+// a fabricated reply.
+func (m Model) assistReplyLines(budget int) []string {
+	if !m.assist.Enabled() {
+		return []string{
+			"",
+			StyleMuted.Render("  ── assistant reply ────────────────────────────"),
+			StyleDerived.Render("  ~ placeholder — wiring an LLM is a follow-up; nothing here is generated"),
+		}
+	}
+	out := []string{
 		"",
 		StyleMuted.Render("  ── assistant reply ────────────────────────────"),
-		StyleDerived.Render("  ~ placeholder — wiring an LLM is a follow-up; nothing here is generated"),
-	)
+	}
+	out = append(out, m.assistTranscriptLines(budget-len(out)-1)...)
+	out = append(out, StyleText.Render("  > "+m.assistInput+"_"))
+	return out
+}
+
+// assistTranscriptLines renders the chat transcript, wrapped to the pane width
+// and trimmed to the most recent `room` visual rows (older rows scroll off) so
+// the reply pane fits the fixed grid.
+func (m Model) assistTranscriptLines(room int) []string {
+	if room <= 0 {
+		return nil
+	}
+	width := m.width - 4
+	if width < 24 {
+		width = 24
+	}
+	var all []string
+	for _, ln := range m.assistLog {
+		all = append(all, wrapLogLine(ln, width)...)
+	}
+	if len(all) > room {
+		all = all[len(all)-room:]
+	}
+	return all
+}
+
+// wrapLogLine renders one transcript entry: a role tag (you / asst / err) on
+// the first visual line, continuation lines indented, word-wrapped to width.
+func wrapLogLine(ln assistLine, width int) []string {
+	tag, style := "you  ", StyleTextBright
+	switch ln.role {
+	case "assistant":
+		tag, style = "asst ", StyleText
+	case "error":
+		tag, style = "err  ", StyleAsk
+	}
+	cont := strings.Repeat(" ", len(tag))
+	var out []string
+	for _, para := range strings.Split(ln.text, "\n") {
+		chunks := wrapText(para, width-len(tag))
+		if len(chunks) == 0 {
+			chunks = []string{""}
+		}
+		for _, chunk := range chunks {
+			out = append(out, "  "+StyleMuted.Render(tag)+style.Render(chunk))
+			tag = cont
+		}
+	}
+	return out
+}
+
+// wrapText greedily word-wraps s to width columns (a single over-long word is
+// hard-split), returning one string per visual line.
+func wrapText(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var out []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		for len(word) > width {
+			if line != "" {
+				out = append(out, line)
+				line = ""
+			}
+			out = append(out, word[:width])
+			word = word[width:]
+		}
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) <= width:
+			line += " " + word
+		default:
+			out = append(out, line)
+			line = word
+		}
+	}
+	if line != "" {
+		out = append(out, line)
+	}
 	return out
 }
 
@@ -584,12 +693,104 @@ func (m Model) snapshotLine(label string, levels []wire.Level, ins Instrument, s
 	return StyleMuted.Render(label+" ") + style.Render(strings.Join(parts, "  "))
 }
 
-// handleLLMKey: back (esc) returns to the news view — the layer above.
+// handleLLMKey: back (esc) returns to the news view — the layer above. This is
+// the OFFLINE grammar; when the client is live, update.go captures typing
+// before the keymap and routes it to handleLLMInput.
 func (m Model) handleLLMKey(act action) (tea.Model, tea.Cmd) {
 	if act == actBack {
 		m.screen = screenNews
 	}
 	return m, nil
+}
+
+// handleLLMInput is the LIVE assistant screen's typing grammar (reached only
+// when the client is enabled; tab/shift+tab are handled before this as view
+// cycling). Printable keys extend the prompt, backspace edits, enter posts the
+// follow-up on the current thread, esc clears a draft or backs out, ctrl+c
+// quits.
+func (m Model) handleLLMInput(key string) (tea.Model, tea.Cmd) {
+	switch {
+	case key == "ctrl+c":
+		return m, tea.Quit
+	case key == "esc":
+		if m.assistInput != "" {
+			m.assistInput = ""
+			return m, nil
+		}
+		m.screen = screenNews
+	case key == "enter":
+		text := strings.TrimSpace(m.assistInput)
+		if text == "" || m.assistTopic == "" {
+			return m, nil
+		}
+		m.assistLog = append(m.assistLog, assistLine{role: "you", text: text})
+		m.assistInput = ""
+		m.assistBusy = true
+		m.assist.Ask(m.assistTopic, text)
+	case key == "backspace":
+		if len(m.assistInput) > 0 {
+			m.assistInput = m.assistInput[:len(m.assistInput)-1]
+		}
+	case len(key) == 1 && key[0] >= ' ' && key[0] <= '~':
+		if len(m.assistInput) < 512 {
+			m.assistInput += key
+		}
+	}
+	return m, nil
+}
+
+// beginAssist opens a fresh assistant thread for a handoff when the client is
+// live: it mints a new topic (each handoff = a new thread), clears the prior
+// transcript, and posts the rendered context + snapshot as the opening turn.
+// Offline it is a no-op — the pane stays the placeholder, zero dials.
+func (m *Model) beginAssist(ctx news.AssistantContext) {
+	if !m.assist.Enabled() {
+		return
+	}
+	m.assistTopic = newAssistTopic(ctx.Venue, ctx.Symbol)
+	m.assistLog = nil
+	m.assistInput = ""
+	m.assistBusy = true
+	m.assist.Ask(m.assistTopic, assistant.Render(ctx, m.assistSnapshot()))
+}
+
+// assistSnapshot folds the trader's client-side account state for the handed-off
+// symbol into an assistant.Snapshot: net position, entry, uPnL at the frozen
+// mid, this session's resting orders, and the session fill count — all state the
+// terminal already derives from its own fill stream. Unknowns stay unset so the
+// pure Render dashes them rather than fabricating a figure.
+func (m Model) assistSnapshot() assistant.Snapshot {
+	ins := m.assistIns
+	venue := m.cfg.Venue
+	if m.assistCtx != nil {
+		venue = m.assistCtx.Venue
+	}
+	pos := m.marketFor(venue, ins.ID).position
+	snap := assistant.Snapshot{
+		PriceDec: ins.PriceDec,
+		QtyDec:   ins.QtyDec,
+		Net:      pos.Net,
+		Fills:    m.fills,
+	}
+	if entry, ok := pos.Entry(); ok {
+		snap.Entry, snap.HasEntry = entry, true
+	}
+	if m.assistCtx != nil && m.assistCtx.MidPx > 0 {
+		if up, ok := pos.Upnl(m.assistCtx.MidPx); ok {
+			snap.Upnl, snap.HasUpnl = up, true
+		}
+	}
+	for _, o := range m.ownOrdersFor(venue, ins.ID) {
+		snap.Orders = append(snap.Orders, assistant.SnapshotOrder{Side: o.Side, Px: o.Px, Qty: o.Qty})
+	}
+	return snap
+}
+
+// newAssistTopic mints a thread id for a handoff: t-<unixms>-<venue>-<symbol>.
+// Each handoff is a new thread; arizuko never returns its own auto-topic, so the
+// client generates and resends its own to keep one coherent multi-turn session.
+func newAssistTopic(venue, symbol string) string {
+	return fmt.Sprintf("t-%d-%s-%s", time.Now().UnixMilli(), venue, symbol)
 }
 
 func maxInt(a, b int) int {
