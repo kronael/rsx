@@ -382,9 +382,9 @@ func FisheyeCol(px, anchor, tick int64, width int) (int, bool) {
 	return col, true
 }
 
-// FisheyePx is FisheyeCol's inverse for interaction (cursor, click): the raw
-// price at the inner (touch-side) edge of the column's bucket, so a click on
-// an aggregated deep column lands on its nearest — least surprising — price.
+// FisheyePx is FisheyeCol's inverse for cursor placement: the raw price at
+// the inner (touch-side) edge of the column's bucket, so landing on an
+// aggregated deep column resolves to its nearest — least surprising — price.
 // Returns 0 when unanchored.
 func FisheyePx(col int, anchor, tick int64, width int) int64 {
 	if anchor == 0 || width < 2 {

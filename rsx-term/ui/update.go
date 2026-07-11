@@ -24,12 +24,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleStreamKey(v)
 		}
 		return m.handleKey(v)
-	case tea.MouseMsg:
-		if m.cfg.Stream {
-			return m.handleStreamMouse(v)
-		}
-		return m.handleMouse(v)
-
 	case feed.GwUp:
 		m.gwConnected = true
 		m.status = "connected"
@@ -943,54 +937,6 @@ func (m *Model) removeOrder(oid uint64) {
 	m.openOrders = out
 }
 
-// handleMouse maps a left-click on a ladder row to that row's price (the mouse
-// analog of j/k / +/-). Only a left button-press inside the book column counts;
-// motion, other buttons, and clicks outside the ladder are ignored. It sets the
-// price and focuses it — it never submits (click-to-trade would bypass the
-// two-enter confirm), and it clears a stale preview since the form changed.
-func (m Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
-		return m, nil
-	}
-	if e.X > bookWidth+1 { // outside the book column (border + content)
-		return m, nil
-	}
-	px, ok := m.priceAtY(e.Y)
-	if !ok {
-		return m, nil
-	}
-	m.pxBuf = m.fmtPx(px)
-	m.focus = FocusPx
-	m.pendingConfirm = nil
-	m.status = fmt.Sprintf("price %s (click)", m.fmtPx(px))
-	return m, nil
-}
-
-// handleStreamMouse maps a left-click on the heatmap to the price cursor via
-// the inverse fisheye (the mouse analog of h/l/j/k). It only moves the
-// cursor — firing stays on the keyboard (f / shift+1-5), so a stray click
-// can never trade. Book view only.
-func (m Model) handleStreamMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
-		return m, nil
-	}
-	if m.screen != screenBook || m.heatW == 0 {
-		return m, nil
-	}
-	col := e.X - 1 // news rail occupies column 0
-	if col < 0 || col >= m.heatW {
-		return m, nil
-	}
-	mk := m.mkt()
-	px := book.FisheyePx(col, mk.heat.Anchor(), mk.heat.Tick(), m.heatW)
-	if px <= 0 {
-		return m, nil
-	}
-	mk.cursorPx = px
-	m.status = fmt.Sprintf("cursor %s (click)", m.fmtPx(px))
-	return m, nil
-}
-
 // handleKey applies one key. Digits / backspace / tab / b / s / t / r / p edit
 // the form (and always invalidate a stale confirm preview); the rest are
 // commands. Mirrors rsx-tui/src/input.rs plus specs/2/55-terminal.md.
@@ -1128,9 +1074,8 @@ func (m *Model) stepPx(n int64) {
 	m.focus = FocusPx
 }
 
-// joinBid / joinAsk set the price buffer to the current best bid / ask (as the
-// human decimal) — the keyboard analog of clicking that level to rest at the
-// touch.
+// joinBid / joinAsk set the price buffer to the current best bid / ask (as
+// the human decimal), so an order rests at the touch.
 func (m *Model) joinBid() {
 	b, ok := m.book.BestBid()
 	if !ok {

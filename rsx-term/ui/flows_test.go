@@ -5,7 +5,7 @@ package ui
 // book, place an order, see it accepted, get filled, manage the position. Each
 // test mirrors one section of FLOWS.md (same number/name), so the walkthrough
 // doc and the executable checks stay in lockstep. They compose the same helpers
-// the unit tests use (press / typeDigits / apply / clickAt / stripANSI).
+// the unit tests use (press / typeDigits / apply / stripANSI).
 
 import (
 	"strings"
@@ -243,25 +243,7 @@ func TestFlowArmedConfirmOff(t *testing.T) {
 	}
 }
 
-// Flow 10 — Mouse click-to-price: left-clicking a ladder row loads that row's
-// price into the form (it never submits).
-func TestFlowClickToPrice(t *testing.T) {
-	mock := &conn.MockGateway{}
-	m := live(mock)
-	m.ladderCenter = 10001
-	m = clickAt(m, 5, 13) // centre row of the ladder (see priceAtY)
-	if m.pxBuf == "" {
-		t.Fatal("a ladder click should load a price")
-	}
-	if m.focus != FocusPx {
-		t.Fatal("a click should focus the price field")
-	}
-	if len(mock.Submitted) != 0 {
-		t.Fatal("a click must never submit")
-	}
-}
-
-// Flow 11 — Price helpers: +/- nudge a tick, j/k join the best bid/ask.
+// Flow 10 — Price helpers: +/- nudge a tick, j/k join the best bid/ask.
 func TestFlowPriceHelpers(t *testing.T) {
 	m := live(&conn.MockGateway{})
 	m = press(m, "j") // join best bid (10000)
@@ -278,7 +260,7 @@ func TestFlowPriceHelpers(t *testing.T) {
 	}
 }
 
-// Flow 12 — Fat-finger block: an oversized order is refused outright, never
+// Flow 11 — Fat-finger block: an oversized order is refused outright, never
 // previewed, never sent.
 func TestFlowFatFingerBlock(t *testing.T) {
 	mock := &conn.MockGateway{}
@@ -295,7 +277,7 @@ func TestFlowFatFingerBlock(t *testing.T) {
 	}
 }
 
-// Flow 13 — Reject: an exchange rejection surfaces in the status line.
+// Flow 12 — Reject: an exchange rejection surfaces in the status line.
 func TestFlowReject(t *testing.T) {
 	m := live(&conn.MockGateway{})
 	m = apply(m, wire.Rejected{Reason: "insufficient margin"})
@@ -304,7 +286,7 @@ func TestFlowReject(t *testing.T) {
 	}
 }
 
-// Flow 14 — Marketdata down: the ladder degrades to an honest amber row, not a
+// Flow 13 — Marketdata down: the ladder degrades to an honest amber row, not a
 // blank or stale book; recovering restores it.
 func TestFlowMarketdataDegraded(t *testing.T) {
 	m := live(&conn.MockGateway{})
@@ -322,7 +304,7 @@ func TestFlowMarketdataDegraded(t *testing.T) {
 	}
 }
 
-// Flow 15 — Gateway down: the link dot flips to offline; marketdata is
+// Flow 14 — Gateway down: the link dot flips to offline; marketdata is
 // independent and stays up.
 func TestFlowGatewayDegraded(t *testing.T) {
 	m := live(&conn.MockGateway{})
@@ -335,7 +317,7 @@ func TestFlowGatewayDegraded(t *testing.T) {
 	}
 }
 
-// Flow 16 — Overlays: F3 opens the latency trace, ? the help; any key closes
+// Flow 15 — Overlays: F3 opens the latency trace, ? the help; any key closes
 // help.
 func TestFlowOverlays(t *testing.T) {
 	m := live(&conn.MockGateway{})

@@ -139,7 +139,6 @@ func defaultKeymap() *keymap {
 		bookClasses: []classDoc{
 			{keys: "1-5", help: "arm a size preset"},
 			{keys: "⇧1-5", help: "cross NOW — IOC at the far touch, preset size", danger: true},
-			{keys: "click", help: "set the cursor from the map"},
 		},
 		pairClasses: []classDoc{
 			{keys: "a-z", help: "arm a symbol (its [letter])"},

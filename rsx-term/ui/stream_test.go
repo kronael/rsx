@@ -230,19 +230,6 @@ func TestGameEntryCancelNearestCursor(t *testing.T) {
 	}
 }
 
-func TestStreamClickSetsCursor(t *testing.T) {
-	m := streamModel(t, &conn.MockGateway{})
-	half := m.heatW / 2
-	click := tea.MouseMsg{
-		X: 1 + half, Y: 10,
-		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
-	}
-	m = apply(m, click)
-	if got := m.mkt().cursorPx; got != 10001 {
-		t.Fatalf("click on the ask touch column should set cursor 10001, got %d", got)
-	}
-}
-
 func TestStreamOwnOrdersMarkedOnMapAndRuler(t *testing.T) {
 	m := streamModel(t, &conn.MockGateway{})
 	m = apply(m, wire.Accepted{Oid: 9, Cid: "c", Order: wire.OrderReq{Side: wire.Buy, Px: 9998, Qty: 30000}})

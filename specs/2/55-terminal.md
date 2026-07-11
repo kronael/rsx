@@ -156,8 +156,7 @@ pattern).
   **reduce-only** / **post-only** (the `ro`/`po` fields exist on the `N`
   frame, `49`).
   `+`/`-` nudge the price one tick (seeded from mid when empty); `j`/`k`
-  join the best bid/ask; a **left-click** on a ladder row sets that row's
-  price; `m` sends a **market** IOC at the far touch.
+  join the best bid/ask; `m` sends a **market** IOC at the far touch.
   Every order path routes through a two-enter **confirm preview** and a
   **fat-finger hard guard** (size over the cap is blocked outright, not
   soft-warned). `F2` toggles **ARMED** (confirm-off, single-enter fire)
