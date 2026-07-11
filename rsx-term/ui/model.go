@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-term/assistant"
 	"rsx-term/book"
 	"rsx-term/feed"
 	"rsx-term/news"
@@ -57,6 +58,10 @@ type Config struct {
 	// News is the headline source (nil → news.Off, fully offline). The live
 	// Tree of Alpha reader plugs in behind RSX_TERM_NEWS=1.
 	News news.Source
+	// Assist is the LLM chat client (nil → offline, the placeholder pane and
+	// zero dials). A live arizuko client plugs in behind RSX_TERM_ASSIST — the
+	// single dial gate, mirroring News.
+	Assist *assistant.Client
 	// KeyOverrides rebinds verb keys ({"action":"key"}, from RSX_TERM_KEYMAP).
 	// An invalid map falls back to the defaults with a loud status.
 	KeyOverrides map[string]string
@@ -287,6 +292,23 @@ type Model struct {
 	newsQuery  string
 	assistCtx  *news.AssistantContext
 	assistIns  Instrument
+
+	// Assistant chat (screenLLM, only live when cfg.Assist is enabled): the
+	// current thread id, the transcript, the in-progress input line, and
+	// whether a turn is awaiting a reply. All empty/false offline.
+	assist      *assistant.Client
+	assistTopic string
+	assistLog   []assistLine
+	assistInput string
+	assistBusy  bool
+}
+
+// assistLine is one rendered transcript row: who said it ("you" / "assistant" /
+// "error") and the text. Only received text ever fills an assistant row — a
+// failure is an "error" row, never a fabricated reply.
+type assistLine struct {
+	role string
+	text string
 }
 
 // screen is which streaming view is on: the depth book (default), the news
@@ -361,6 +383,7 @@ func New(cfg Config) Model {
 		status:      keymapStatus,
 		lastMdAgeNs: book.NsUnknown,
 		news:        newsSrc,
+		assist:      cfg.Assist,
 		mkts:        map[venueKey]*market{},
 		activeVenue: cfg.Venue,
 		active:      cfg.SymbolID,

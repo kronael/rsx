@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-term/assistant"
 	"rsx-term/book"
 	"rsx-term/feed"
 	"rsx-term/wire"
@@ -114,6 +115,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastLat = &s
 		m.latWindow.Add(v.Sample.TotalNs)
 
+	case assistant.Reply:
+		if v.Topic == m.assistTopic {
+			m.assistLog = append(m.assistLog, assistLine{role: "assistant", text: v.Text})
+			m.assistBusy = false
+		}
+	case assistant.Status:
+		if v.Topic == m.assistTopic {
+			m.status = v.Text
+		}
+	case assistant.Failed:
+		if v.Topic == m.assistTopic {
+			m.assistLog = append(m.assistLog, assistLine{role: "error", text: "assistant unreachable — " + v.Err})
+			m.assistBusy = false
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -152,6 +168,9 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == screenNews && m.newsSearch {
 		return m.handleNewsSearchKey(key) // typing captures everything, incl. q
+	}
+	if m.screen == screenLLM && m.assist.Enabled() && key != "tab" && key != "shift+tab" {
+		return m.handleLLMInput(key) // live chat: typing captures everything but view-cycling
 	}
 	act := m.keys.lookup(m.screen, key)
 	switch act {

@@ -81,6 +81,7 @@ type keymap struct {
 
 	bookClasses []classDoc
 	newsClasses []classDoc
+	llmClasses  []classDoc
 }
 
 // defaultKeymap is the shipped table.
@@ -128,6 +129,9 @@ func defaultKeymap() *keymap {
 		newsClasses: []classDoc{
 			{keys: "a-z", help: "jump into the symbol's book view"},
 		},
+		llmClasses: []classDoc{
+			{keys: "type", help: "type to chat · enter sends · esc backs out (when the assistant is wired via RSX_TERM_ASSIST)"},
+		},
 	}
 }
 
@@ -149,7 +153,7 @@ func (k *keymap) screenClasses(s screen) []classDoc {
 	case screenNews:
 		return k.newsClasses
 	case screenLLM:
-		return nil
+		return k.llmClasses
 	default:
 		return k.bookClasses
 	}
