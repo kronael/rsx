@@ -394,13 +394,17 @@ func FisheyePx(col int, anchor, tick int64, width int) int64 {
 		tick = 1
 	}
 	half := width / 2
-	mid := anchor / 2
+	// Stay in doubled-price units to match FisheyeCol (num = 2*px - anchor): an
+	// odd anchor (the common 1-tick-spread case, bid+ask odd) must not drop a
+	// half-tick via anchor/2. Inner (touch-side) edge of the bucket `ticks`
+	// steps from the mid: lowest ask = ceil((anchor+1)/2), highest bid =
+	// floor((anchor-1)/2), each stepped outward by (ticks-1) whole ticks.
 	if col >= half { // ask side
 		ticks := offsetTicks(col - half + 1)
-		return mid + ticks*tick
+		return (anchor+2)/2 + (ticks-1)*tick
 	}
 	ticks := offsetTicks(half - col)
-	px := mid - ticks*tick
+	px := (anchor-1)/2 - (ticks-1)*tick
 	if px < tick {
 		px = tick
 	}
