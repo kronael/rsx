@@ -40,7 +40,7 @@ class DummyMarketMaker:
 
     def __init__(
         self,
-        gateway_url="ws://127.0.0.1:8080",
+        gateway_url="ws://127.0.0.1:8088",
         marketdata_ws="ws://127.0.0.1:8180",
         symbol_ids=None,
         spread_bps=10,
@@ -601,7 +601,7 @@ if __name__ == "__main__":
 
     maker = DummyMarketMaker(
         gateway_url=os.environ.get(
-            "GATEWAY_URL", "ws://127.0.0.1:8080"),
+            "GATEWAY_URL", "ws://127.0.0.1:8088"),
         marketdata_ws=os.environ.get(
             "MARKETDATA_WS", "ws://127.0.0.1:8180"),
         spread_bps=_env_int("RSX_MAKER_SPREAD_BPS", 10),

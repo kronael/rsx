@@ -238,7 +238,7 @@ cd rsx-playground
 **Orders not submitting:**
 ```bash
 # Check Gateway running
-curl http://localhost:8080/health
+curl http://localhost:8088/health
 
 # Restart Gateway
 curl -X POST http://localhost:49171/api/processes/gateway/restart

@@ -22,7 +22,7 @@ from stress_client import run_stress_test
 
 
 GW_URL = os.environ.get(
-    "RSX_STRESS_GW_URL", "ws://localhost:8080")
+    "RSX_STRESS_GW_URL", "ws://localhost:8088")
 USERS = int(os.environ.get("RSX_STRESS_USERS", "10"))
 RATE = int(os.environ.get("RSX_STRESS_RATE", "1000"))
 DURATION = int(os.environ.get("RSX_STRESS_DURATION", "60"))
