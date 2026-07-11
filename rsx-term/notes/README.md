@@ -10,5 +10,6 @@ see SCREENS.md; for *why*, here.
   ranked), not guessed; why braille is excluded (tofu in the default font).
 - **honesty.md** — why the terminal never fabricates a number: dash the unknown,
   label the estimate, hard-block not soft-warn, withhold on overflow.
-
-_More to come as the docs are built out (the generic venue seam)._
+- **venue-seam.md** — why an exchange is a plugin behind two tiny interfaces
+  (Source + Submitter), not a fork; how RSX / Hyperliquid / mock all normalise
+  to one wire model so the terminal is generic multi-exchange.
