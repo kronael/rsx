@@ -272,6 +272,61 @@ labeled it honestly ("WAL stream lag (proxy)", "synthetic
 demo index"). A dashboard that admits ignorance beats one
 that performs confidence.
 
+## The Terminal — an Order Book You Can Read
+
+Most of RSX is machinery a human never sees: casting frames, WAL bytes, matching
+in tens of nanoseconds. `rsx-term` is the opposite — the one surface a person
+actually looks at — and it asks a different question: how does a *human* read
+order flow?
+
+The pros' answer is Bookmap: a heavy, closed, GPU heatmap in its own window that
+shows resting liquidity over time, so you can watch walls appear and get pulled
+(spoofing) or trades pound a level that won't shrink (absorption). We built that
+in text. `rsx-term` renders a live liquidity heatmap into a character grid: **time
+flows up** on a logarithmic cadence (live → 10 s → minutes → hours), **price** runs
+on a fisheye (fine at the touch, compressed into the deep book), and each cell's
+colour and glyph carry resting size and order count. Trades overlay as a second
+layer. Patterns you'd otherwise infer after the fact become shapes you watch
+happen.
+
+The trick that fits a whole book *plus its history* into an 80×40 grid is one idea
+applied three times: **replace a linear axis with a nonlinear one that magnifies
+what matters and compresses the periphery.** Time is logarithmic (recent fine,
+distant coarse); price is a fisheye (touch fine, deep aggregated); size is a log
+colour ramp (so one whale doesn't black out the rest). Each keeps full fidelity
+where a trader looks and gracefully coarsens the rest — a focus-plus-context lens
+on the market. Derivation: `rsx-term/notes/compression.md`.
+
+Two deliberate constraints. There is **no mouse** — in a fast trading surface a
+mouse is a fat-finger and latency liability; every action is a keystroke, and a
+price cursor on `h`/`l` covers what a click would. And it **never fabricates a
+number**: a value with no source shows a dash, an estimate is marked `~`, an order
+over the fat-finger cap is hard-blocked (not a dismissable warning), and a P&L
+that would overflow i64 is *withheld* rather than shown wrapped. A dash you can
+see beats a number you can't trust.
+
+## Measuring Every Glyph
+
+A tangent worth its own entry, because it's the kind of thing you only catch by
+looking. The heatmap paints each cell with a character, and the obvious intensity
+ramp is the Unicode shade family — space, `░`, `▒`, `▓`, `█` — assumed to be
+0/25/50/75/100 % ink. Rasterise them in the actual terminal font, count the black
+pixels, and they measure **0, 22, 56, 86, 100** — not evenly spaced; a ramp built
+on the assumption bands at the low end. Worse, braille (`U+2800`–`U+28FF`), which
+*promises* eight sub-cell pixels for a finer ramp, renders as an identical empty
+`.notdef` box for every codepoint in the default monospace font — an invisible
+channel that *looks* like it's working.
+
+So the glyph vocabulary is calibrated empirically: rasterise every candidate,
+measure its coverage, and order by what the font actually draws — the same trick
+ASCII-art renderers use, pointed at a trading heatmap. The measurement sorts
+glyphs into roles: shades give four coarse uniform levels (colour carries the fine
+gradation), letters fill the light end finely and render *everywhere*, distinct
+markers (`●◆■`) carry the trade layer, braille is dropped. The lesson generalises
+well past this terminal: **a character is a picture; measure its ink, don't trust
+its name.** (`rsx-term/notes/glyph-bank.md`, and the tool that does the measuring,
+`rsx-term/tools/glyphbank/`.)
+
 ## What's Next
 
 The exchange runs end-to-end. The open questions we're actively
