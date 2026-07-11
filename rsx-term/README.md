@@ -64,7 +64,16 @@ RSX_TERM_STREAM=1 make term-local
 
 # As a standalone Hyperliquid terminal (real books, read-only):
 cd rsx-term && RSX_TERM_STREAM=1 RSX_TERM_VENUE=hyperliquid go run .
+
+# Or a standalone phoenix.trade terminal (Solana perp DEX, read-only):
+cd rsx-term && RSX_TERM_STREAM=1 RSX_TERM_VENUE=phoenix go run .
 ```
+
+`RSX_TERM_VENUE` selects the market-data venue(s): `rsx` (default) ·
+`hyperliquid` · `phoenix` (standalone read-only over one venue's feed) ·
+`both` (RSX + HL) · `all` (RSX + HL + Phoenix) · or a comma list
+(`rsx,phoenix`). `RSX_TERM_HL_COINS` / `RSX_TERM_PHX_SYMBOLS` pick the watch set
+(`all` = every market).
 
 `RSX_TERM_NEWS=1` enables the Tree of Alpha news reader;
 `RSX_TERM_ASSIST=http://127.0.0.1:8095/chat/<token>` wires the LLM pane to a
