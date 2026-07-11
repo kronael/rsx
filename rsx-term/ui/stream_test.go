@@ -281,11 +281,25 @@ func TestStableBasisNeverFlickersDown(t *testing.T) {
 func TestStreamHelpOverlay(t *testing.T) {
 	m := streamModel(t, &conn.MockGateway{})
 	m = press(m, "?")
-	if !strings.Contains(stripANSI(m.View()), "game order entry") {
-		t.Fatalf("? should open the stream key reference")
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "KEYS — BOOK") {
+		t.Fatalf("? should open the book key reference:\n%s", plain)
 	}
-	m = press(m, "x")
-	if strings.Contains(stripANSI(m.View()), "game order entry") {
+	// Generated from the keymap table: verbs, classes, and the rebind note.
+	for _, want := range []string{"place resting limit", "⇧1-5", "RSX_TERM_KEYMAP"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("help missing %q:\n%s", want, plain)
+		}
+	}
+	m = press(m, "z")
+	if strings.Contains(stripANSI(m.View()), "KEYS — BOOK") {
 		t.Fatalf("any key should close the help overlay")
+	}
+	// Context-sensitive: on the pair screen the overlay shows pair verbs.
+	m = press(m, "tab")
+	m = press(m, "?")
+	plain = stripANSI(m.View())
+	if !strings.Contains(plain, "KEYS — PAIR") || !strings.Contains(plain, "lift the armed symbol") {
+		t.Fatalf("pair help should show the pair grammar:\n%s", plain)
 	}
 }

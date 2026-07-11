@@ -604,33 +604,10 @@ func (m Model) tapeRail(rows int, tradeMax int64) []string {
 	return out
 }
 
-// viewStreamHelp is the streaming view's modal key reference (any key closes).
+// viewStreamHelp is the modal key reference, GENERATED from the keymap for
+// the ACTIVE screen (context-sensitive; any key closes).
 func (m Model) viewStreamHelp() string {
-	grp := func(h string) string { return StyleHeading.Render(h) }
-	key := func(k, d string) string {
-		return StyleTextBright.Render(fmt.Sprintf("  %-9s", k)) + StyleMuted.Render(d)
-	}
-	danger := func(k, d string) string {
-		return StyleAsk.Render(fmt.Sprintf("  %-9s", k)) + StyleMuted.Render(d)
-	}
-	rows := []string{
-		StyleHeading.Bold(true).Render("KEYS — streaming · any key to close"),
-		"",
-		grp("game order entry (fires on ONE key — size cap still hard-blocks)"),
-		key("b / s", "side buy / sell"),
-		key("1-5", "arm a size preset"),
-		key("h l ← →", "move the price cursor a tick"),
-		key("j / k", "snap cursor to best bid / ask"),
-		key("click", "set the cursor from the map"),
-		danger("f", "place resting limit at the cursor"),
-		danger("⇧1-5", "cross NOW — IOC at the far touch, preset size"),
-		danger("d", "cancel own order nearest the cursor"),
-		"",
-		grp("view"),
-		key("?", "this help"),
-		danger("q / esc", "quit"),
-	}
-	return RingPanelStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return RingPanelStyle.Render(lipgloss.JoinVertical(lipgloss.Left, m.keys.helpLines(m.screen)...))
 }
 
 // markOwnOrders flags the cells where this session's orders rest on the
@@ -787,26 +764,11 @@ func (m Model) streamHeader() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, badge, "  ", link, "  ", axis)
 }
 
-// streamLegend is the one-line control hint pinned under the heatmap.
-const streamLegend = " q quit  tab view  x symbol  n news  b/s side  1-5 size  ⇧1-5 cross  h/l j/k cursor  f place  d cancel  r/p RO/PO  ? help "
-
-// newsLegend / llmLegend are the news and assistant screens' hint lines.
-const newsLegend = " q quit  tab view  / search  j/k select  enter → assistant  letter → book  esc back "
-const llmLegend = " q quit  tab view  esc → news "
-
-// hintLine is the persistent context-sensitive hint for the active screen
-// (the k9s pattern: the keys that matter right now, ? for the full map).
+// hintLine is the persistent context-sensitive hint for the active screen —
+// GENERATED from the keymap table (the k9s pattern: the keys that matter
+// right now, ? for the full map), so a rebound verb shows its real key.
 func (m Model) hintLine() string {
-	switch m.screen {
-	case screenPair:
-		return StyleMuted.Render(pairLegend)
-	case screenNews:
-		return StyleMuted.Render(newsLegend)
-	case screenLLM:
-		return StyleMuted.Render(llmLegend)
-	default:
-		return StyleMuted.Render(streamLegend)
-	}
+	return StyleMuted.Render(m.keys.hintFor(m.screen))
 }
 
 // streamFooter is the pinned status block: the exact touch ladder (two

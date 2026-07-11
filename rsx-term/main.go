@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -135,6 +136,27 @@ func hlInstruments(hl *conn.HL) []ui.Instrument {
 	return out
 }
 
+// keyOverrides loads the RSX_TERM_KEYMAP JSON file ({"action":"key"}) when
+// set. A missing/broken file warns and keeps the defaults — startup never
+// blocks on config sugar (the UI still flags a rejected map loudly).
+func keyOverrides() map[string]string {
+	path := os.Getenv("RSX_TERM_KEYMAP")
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: keymap %s unreadable (%v); defaults active\n", path, err)
+		return nil
+	}
+	var overrides map[string]string
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: keymap %s is not a JSON object of action→key (%v); defaults active\n", path, err)
+		return nil
+	}
+	return overrides
+}
+
 // newsSource builds the headline source: the live Tree of Alpha reader when
 // RSX_TERM_NEWS=1 — the ONLY place the news feed dials, and an explicit
 // opt-in, so default/offline/CI runs never touch the network. nil = news.Off.
@@ -162,20 +184,21 @@ func runHL() error {
 	}
 	first := instruments[0]
 	model := ui.New(ui.Config{
-		Symbol:      first.Name,
-		SymbolID:    first.ID,
-		Endpoint:    "wss://api.hyperliquid.xyz/ws",
-		MdEndpoint:  "wss://api.hyperliquid.xyz/ws",
-		Venue:       conn.HLVenueName,
-		Sub:         nil, // read-only (see conn/hyperliquid.go TODO)
-		PriceDec:    first.PriceDec,
-		QtyDec:      first.QtyDec,
-		Tick:        first.Tick,
-		Stream:      true,
-		Instruments: instruments,
-		LotNotional: envI64("RSX_TERM_LOT", 0),
-		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
-		News:        newsSource(context.Background()),
+		Symbol:       first.Name,
+		SymbolID:     first.ID,
+		Endpoint:     "wss://api.hyperliquid.xyz/ws",
+		MdEndpoint:   "wss://api.hyperliquid.xyz/ws",
+		Venue:        conn.HLVenueName,
+		Sub:          nil, // read-only (see conn/hyperliquid.go TODO)
+		PriceDec:     first.PriceDec,
+		QtyDec:       first.QtyDec,
+		Tick:         first.Tick,
+		Stream:       true,
+		Instruments:  instruments,
+		LotNotional:  envI64("RSX_TERM_LOT", 0),
+		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:         newsSource(context.Background()),
+		KeyOverrides: keyOverrides(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -298,20 +321,21 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		})
 	}
 	model := ui.New(ui.Config{
-		Symbol:      Symbol,
-		SymbolID:    symbolID,
-		Endpoint:    "mock://demo",
-		MdEndpoint:  "mock://demo",
-		Sub:         mock,
-		PriceDec:    priceDec,
-		QtyDec:      qtyDec,
-		Tick:        tick,
-		Stream:      stream,
-		Instruments: instruments,
-		Venues:      extraVenues(hlCfg),
-		LotNotional: envI64("RSX_TERM_LOT", 0),
-		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
-		News:        newsSource(context.Background()),
+		Symbol:       Symbol,
+		SymbolID:     symbolID,
+		Endpoint:     "mock://demo",
+		MdEndpoint:   "mock://demo",
+		Sub:          mock,
+		PriceDec:     priceDec,
+		QtyDec:       qtyDec,
+		Tick:         tick,
+		Stream:       stream,
+		Instruments:  instruments,
+		Venues:       extraVenues(hlCfg),
+		LotNotional:  envI64("RSX_TERM_LOT", 0),
+		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:         newsSource(context.Background()),
+		KeyOverrides: keyOverrides(),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go feedDemo(p)
@@ -385,20 +409,21 @@ func runLive(cfg liveConfig) error {
 	defer live.Close()
 
 	model := ui.New(ui.Config{
-		Symbol:      Symbol,
-		SymbolID:    cfg.symbolID,
-		Endpoint:    cfg.gwURL,
-		MdEndpoint:  cfg.mdURL,
-		Sub:         live,
-		PriceDec:    cfg.priceDec,
-		QtyDec:      cfg.qtyDec,
-		Tick:        cfg.tick,
-		Stream:      cfg.stream,
-		Instruments: cfg.instruments,
-		Venues:      extraVenues(cfg.hlCfg),
-		LotNotional: envI64("RSX_TERM_LOT", 0),
-		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
-		News:        newsSource(ctx),
+		Symbol:       Symbol,
+		SymbolID:     cfg.symbolID,
+		Endpoint:     cfg.gwURL,
+		MdEndpoint:   cfg.mdURL,
+		Sub:          live,
+		PriceDec:     cfg.priceDec,
+		QtyDec:       cfg.qtyDec,
+		Tick:         cfg.tick,
+		Stream:       cfg.stream,
+		Instruments:  cfg.instruments,
+		Venues:       extraVenues(cfg.hlCfg),
+		LotNotional:  envI64("RSX_TERM_LOT", 0),
+		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:         newsSource(ctx),
+		KeyOverrides: keyOverrides(),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go drainEvents(p, live.Events())

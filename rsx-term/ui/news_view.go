@@ -213,30 +213,29 @@ func (m Model) filteredNews() []news.Marker {
 // handleNewsKey is the news view's grammar: / search (typed text filters the
 // feed), j/k select, enter hands the selection to the assistant, a symbol's
 // letter jumps into its book, esc backs out one layer.
-func (m Model) handleNewsKey(key string) (tea.Model, tea.Cmd) {
-	if m.newsSearch {
-		return m.handleNewsSearchKey(key)
-	}
-	switch {
-	case key == "esc":
+func (m Model) handleNewsKey(act action, key string) (tea.Model, tea.Cmd) {
+	switch act {
+	case actBack:
 		if m.newsQuery != "" {
 			m.newsQuery = ""
 			return m, nil
 		}
 		m.screen = screenBook
-	case key == "/":
+	case actSearch:
 		m.newsSearch = true
-	case key == "j" || key == "down":
+	case actFeedDown:
 		m.newsSel = m.clampNewsSel(m.newsSel + 1)
-	case key == "k" || key == "up":
+	case actFeedUp:
 		m.newsSel = m.clampNewsSel(m.newsSel - 1)
-	case key == "enter":
+	case actHandoff:
 		return m.handoffToAssistant()
-	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
-		if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok {
-			m.activeVenue = m.pairVenue()
-			m.switchTo(ins)
-			m.screen = screenBook
+	default: // the fixed key class: symbol letters jump into their book
+		if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
+			if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok {
+				m.activeVenue = m.pairVenue()
+				m.switchTo(ins)
+				m.screen = screenBook
+			}
 		}
 	}
 	return m, nil
@@ -384,9 +383,9 @@ func (m Model) snapshotLine(label string, levels []wire.Level, ins Instrument, s
 	return StyleMuted.Render(label+" ") + style.Render(strings.Join(parts, "  "))
 }
 
-// handleLLMKey: esc returns to the news view (the layer above).
-func (m Model) handleLLMKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" {
+// handleLLMKey: back (esc) returns to the news view — the layer above.
+func (m Model) handleLLMKey(act action) (tea.Model, tea.Cmd) {
+	if act == actBack {
 		m.screen = screenNews
 	}
 	return m, nil
