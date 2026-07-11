@@ -736,11 +736,18 @@ fn run_main(
                         }
                     }
                     RECORD_CANCEL_REQUEST => {
-                        if let Some(cancel) = decode_payload::<CancelRequest>(payload) {
-                            // Forward cancel to correct ME.
+                        if let Some(mut cancel) = decode_payload::<CancelRequest>(payload) {
+                            // Forward cancel to correct ME, re-sequenced
+                            // onto that ME's own contiguous cast stream
+                            // (see the order fan-out below for why the
+                            // gateway's global seq must not be reused).
                             if let Some(s) = me_senders.get_mut(&cancel.symbol_id) {
-                                if let Err(e) = s.send_raw(RECORD_CANCEL_REQUEST, payload) {
-                                    warn!("risk: forward cancel to me failed: {e}");
+                                cancel.seq = s.next_seq();
+                                match s.send_raw(RECORD_CANCEL_REQUEST, as_bytes(&cancel)) {
+                                    Ok(()) => s.advance_seq(),
+                                    Err(e) => {
+                                        warn!("risk: forward cancel to me failed: {e}");
+                                    }
                                 }
                             } else {
                                 warn!(
@@ -883,28 +890,39 @@ fn run_main(
 
         // Drain accepted orders -> cast to correct ME
         while let Ok(order) = accepted_cons.pop() {
-            let msg = OrderMessage {
-                seq: order.seq,
-                price: order.price,
-                qty: order.qty,
-                side: order.side,
-                tif: order.tif,
-                reduce_only: if order.reduce_only { 1 } else { 0 },
-                post_only: if order.post_only { 1 } else { 0 },
-                _pad1: [0; 4],
-                user_id: order.user_id,
-                _pad2: 0,
-                timestamp_ns: order.timestamp_ns,
-                order_id_hi: order.order_id_hi,
-                order_id_lo: order.order_id_lo,
-            };
             let send_failed = match me_senders.get_mut(&order.symbol_id) {
                 Some(s) => {
-                    if let Err(e) = s.send_raw(RECORD_ORDER_REQUEST, as_bytes(&msg)) {
-                        warn!("risk: forward order to me failed: {e}");
-                        true
-                    } else {
-                        false
+                    // Re-sequence onto THIS ME's own contiguous cast
+                    // stream. order.seq is the gateway's GLOBAL order
+                    // seq; each ME receives only its symbol's subset,
+                    // so forwarding the global seq makes the ME's cast
+                    // receiver perceive every other symbol's order as a
+                    // gap and FAULT forever (SEQ-1 fan-out rule: the
+                    // producer re-sequences per consumer stream).
+                    let msg = OrderMessage {
+                        seq: s.next_seq(),
+                        price: order.price,
+                        qty: order.qty,
+                        side: order.side,
+                        tif: order.tif,
+                        reduce_only: if order.reduce_only { 1 } else { 0 },
+                        post_only: if order.post_only { 1 } else { 0 },
+                        _pad1: [0; 4],
+                        user_id: order.user_id,
+                        _pad2: 0,
+                        timestamp_ns: order.timestamp_ns,
+                        order_id_hi: order.order_id_hi,
+                        order_id_lo: order.order_id_lo,
+                    };
+                    match s.send_raw(RECORD_ORDER_REQUEST, as_bytes(&msg)) {
+                        Ok(()) => {
+                            s.advance_seq();
+                            false
+                        }
+                        Err(e) => {
+                            warn!("risk: forward order to me failed: {e}");
+                            true
+                        }
                     }
                 }
                 None => {
