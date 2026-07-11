@@ -78,10 +78,18 @@ sudo docker compose -f "$COMPOSE" up -d --remove-orphans
 cd /tmp
 "${U1000[@]}" "$ARIZUKO_SRC/arizuko" group "$INST" add web:main main || true
 #
-# >>> LIVE TURN NEEDS THE CREDENTIAL <<<
-#   Uncomment ONE in $DATA/.env, then `arizuko generate` + `docker compose up -d --force-recreate runed`:
-#     ANTHROPIC_API_KEY=sk-ant-...
-#     CLAUDE_CODE_OAUTH_TOKEN=...   # from `claude setup-token`
+# >>> CREDENTIAL — the agent's Anthropic auth (VERIFIED 2026-07-11) <<<
+# runed's readSecrets (container/runner.go:707) reads CLAUDE_CODE_OAUTH_TOKEN /
+# ANTHROPIC_API_KEY from runed's OWN container env and injects it into the agent
+# as the operator anchor. It is NOT in compose's env passlist, so putting it in
+# $DATA/.env does NOTHING (verified: it never reaches runed.env). It must land in
+# runed's env_file directly. `generate` rewrites env/runed.env, so append AFTER
+# generate (re-append after every regenerate):
+#   TOKEN=$(grep -E '^\s*export\s+CLAUDE_CODE_OAUTH_TOKEN=' ~/.bashrc | grep -v '^\s*#' | \
+#           tail -1 | sed -E 's/^\s*export\s+CLAUDE_CODE_OAUTH_TOKEN=//; s/^"//; s/"$//')
+#   printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$TOKEN" | "${U1000[@]}" tee -a "$DATA/env/runed.env" >/dev/null
+#   sudo docker compose -f "$COMPOSE" up -d --force-recreate runed
+# (A host `claude setup-token` OAuth token works; so does ANTHROPIC_API_KEY=sk-ant-…)
 "${U1000[@]}" "$ARIZUKO_SRC/arizuko" send "$INST" main "hello — do you see the RSX context?" --wait
 
 # HTTP path (what rsx-term uses): mint a route token once, then POST /chat/{token}.
