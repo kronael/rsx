@@ -36,7 +36,7 @@ func loadConfig() Config {
 		ConfigFile:   envStr("RSX_MAKER_CONFIG_FILE", ""),
 		JWTSecret:    envStr("RSX_GW_JWT_SECRET", ""),
 		UserID:       uint32(envInt("RSX_MAKER_USER", 99)),
-		Symbols:      []uint32{uint32(envInt("RSX_MAKER_SYMBOL", 10))},
+		Symbols:      envSymbols(),
 		SpreadBps:    envInt("RSX_MAKER_SPREAD_BPS", 10),
 		QtyPerLevel:  envInt("RSX_MAKER_QTY", 10),
 		Levels:       int(envInt("RSX_MAKER_LEVELS", 5)),
@@ -81,4 +81,22 @@ func envInt(key string, def int64) int64 {
 		return def
 	}
 	return n
+}
+
+// envSymbols reads the maker's symbol set: RSX_MAKER_SYMBOLS as a comma list of
+// ids (so one maker quotes a whole scenario, e.g. "10,3,1"), else the single
+// RSX_MAKER_SYMBOL (default 10). quoteCycle places a ladder for every id.
+func envSymbols() []uint32 {
+	if v := strings.TrimSpace(os.Getenv("RSX_MAKER_SYMBOLS")); v != "" {
+		var ids []uint32
+		for _, p := range strings.Split(v, ",") {
+			if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && n > 0 {
+				ids = append(ids, uint32(n))
+			}
+		}
+		if len(ids) > 0 {
+			return ids
+		}
+	}
+	return []uint32{uint32(envInt("RSX_MAKER_SYMBOL", 10))}
 }

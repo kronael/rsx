@@ -210,9 +210,14 @@ func (m *Maker) quoteCycle(ctx context.Context) error {
 			return err
 		}
 	}
-	drainFor(ctx, conn, 100*time.Millisecond)
 	m.active = m.active[:0]
 
+	// No drain here: drainFor bounds its read with a deadline context, and
+	// coder/websocket CLOSES the whole conn when a Read's context is
+	// cancelled. Draining mid-cycle would kill the conn before the order
+	// writes below, so every sendNewOrder would fail "use of closed
+	// network connection". All writes go out on the live conn first; the
+	// single drain at the end reads acks, then the conn is closed anyway.
 	for _, sym := range m.cfg.Symbols {
 		mid := m.midFor(sym)
 		spec := m.specFor(sym)
