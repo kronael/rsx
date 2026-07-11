@@ -1,20 +1,24 @@
 .PHONY: rec gif clean
 
-COLS := 88
-ROWS := 26
+COLS := 96
+ROWS := 18
 CAST := ../tmp/rsx-local-demo.cast
 GIF := rsx-local-demo.gif
 
-$(CAST): run.sh
+# The demo GIF is the 3-token live board (run.py) — the RSX system must already
+# be up (`make demo` at the repo root) since run.py reads the live playground
+# API for PENGU / SOL / BTC and paints their moving order books.
+$(CAST): run.py
 	mkdir -p ../tmp
-	TERM=xterm-256color asciinema rec --overwrite \
+	TERM=xterm-256color COLUMNS=$(COLS) LINES=$(ROWS) asciinema rec --overwrite \
 		--cols $(COLS) --rows $(ROWS) \
-		-c "bash run.sh" $(CAST)
+		-c "../rsx-playground/.venv/bin/python3 run.py" $(CAST)
 
 rec: $(CAST)
 
-$(GIF): $(CAST) render_cast.py
-	python3 render_cast.py $(CAST) $(GIF) --cols $(COLS) --rows $(ROWS)
+$(GIF): $(CAST)
+	agg --theme github-dark --font-size 16 --cols $(COLS) --rows $(ROWS) \
+		--idle-time-limit 2 --last-frame-duration 4 $(CAST) $(GIF)
 
 gif: $(GIF)
 

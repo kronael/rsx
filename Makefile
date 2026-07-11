@@ -9,7 +9,7 @@
        gate gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
        shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
-       ci ci-full demo stop reset \
+       ci ci-full demo demo-gif stop reset \
        term term-local term-demo term-smoke-llm term-ssh-setup maker \
        prepare check-links
 
@@ -23,6 +23,9 @@ prepare: ## set up local dev env (uv venv + playwright chromium)
 demo: ## turnkey demo: 3 tokens (PENGU/SOL/BTC) trading live + maker
 	./rsx-playground/playground doctor
 	./rsx-playground/playground demo trio
+
+demo-gif: ## record + render the 3-token demo GIF (run `make demo` first)
+	$(MAKE) -C demo gif
 
 stop: ## stop all RSX processes (tear down demo/local cluster)
 	./rsx-playground/playground stop-all
