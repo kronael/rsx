@@ -1,0 +1,30 @@
+ RSX  PENGU-PERP   ● offline  ◀ bids  mid 0.010000  asks ▶
+ BOOK  rsx  RO off  PO off  size 1.0000 [1]  list rsx 
+│                                                                                 −1h ┆ ■ 0.010001 
+│                                                                                 −1h ┆ ● 0.010001 
+│                                                                                −10m ┆ ● 0.010001 
+│                                                                                 −5m ┆ ● 0.010001 
+│                                                                                 −2m ┆ ● 0.010001 
+│                                                                                 −1m ┆ ● 0.010001 
+│                                                                                −10s ┆            
+│                                                                                     ┆            
+│                                                                                     ┆            
+│                                                                                     ┆            
+│                                                                                     ┆            
+│                                                                                     ┆            
+│                                                                                     ┆            
+│                                                                                     ┆            
+│                                     ▒░░▒                                            ┆            
+│                                     ▒░●▓                                            ┆            
+│                                     ▒░●▓                                            ┆            
+│                                     ▒░●▓                                            ┆            
+│                                     ▒░●▓                                            ┆            
+│                                     ▒░●█                                            ┆            
+│                                     ▒░■█                                            ┆            
+│                                     ◇▁▁█                                        now ┆            
+│─────────────────────────────────────▲┃┼──────────────────────────────────────      
+ ask 0.010001×6.0000  0.010002×40.0000
+ bid 0.009999×5.0000  0.009998×8.0000
+ pos flat — fills build it
+ ⚡ RTT 0 ns   p50 0 ns · p99 0 ns · best 0 ns
+ x symbol  n news  b/s side  h/l cursor  j/k touch  f place  d cancel  q quit  tab view  r RO  ? help 

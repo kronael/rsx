@@ -592,6 +592,7 @@ func (m Model) tapeRail(rows int, tradeMax int64) []string {
 	out := make([]string, rows)
 	entries := m.mkt().tape.Entries()
 	blank := StyleMuted.Render(" ┆") + strings.Repeat(" ", tapeRailWidth-2)
+	maxPx := tapeRailWidth - 5 // " ┆ " + magnitude glyph + " "
 	for i := 0; i < rows; i++ {
 		if i >= len(entries) {
 			out[i] = blank
@@ -599,11 +600,12 @@ func (m Model) tapeRail(rows int, tradeMax int64) []string {
 		}
 		e := entries[i]
 		glyph := string(glyphs.tradeRamp[tradeTier(e.Qty, tradeMax)-1])
-		txt := fmt.Sprintf("%s %s", glyph, m.fmtPx(e.Px))
-		if len(txt) > tapeRailWidth-3 {
-			txt = txt[:tapeRailWidth-3]
+		px := m.fmtPx(e.Px)
+		if len(px) > maxPx {
+			px = px[:maxPx]
 		}
-		out[i] = StyleMuted.Render(" ┆") + aggressorStyle(e.Side).Render(fmt.Sprintf(" %-*s", tapeRailWidth-3, txt))
+		out[i] = StyleMuted.Render(" ┆ ") +
+			aggressorStyle(e.Side).Render(glyph+" "+px+strings.Repeat(" ", maxPx-len(px)))
 	}
 	return out
 }
