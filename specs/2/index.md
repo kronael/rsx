@@ -1,6 +1,6 @@
 # Specs — Phase 2
 
-Master index for the 47 phase-2 specs. Phase 2 is the
+Master index for the 53 phase-2 specs. Phase 2 is the
 current architecture. See [../index.md](../index.md) for
 phase-1 historical specs.
 
@@ -71,6 +71,7 @@ phase-1 historical specs.
 | 54 | [54-tui-access.md](54-tui-access.md) | partial | Terminal access — Playground `/terminal` is implemented; production SSH/web deployment remains separate |
 | 55 | [55-terminal.md](55-terminal.md) | partial | Trade terminal UX — perps screen, new-trader bar, multi-market vision (acct/options/sfdx/lend) |
 | 56 | [56-network-edge-scaling.md](56-network-edge-scaling.md) | spec | Network-edge I/O scaling — SQPOLL gated on core config + userspace-UDP (cast decoupling) |
+| 60 | [60-terminal-assistant.md](60-terminal-assistant.md) | draft | Terminal assistant — Claude Code agent in rsx-term via arizuko's unchanged runner (vantage blocks + MCP fetch/control + agent folder) |
 
 ## REST + deploy
 

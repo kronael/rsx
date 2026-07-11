@@ -88,6 +88,29 @@ The screen model uses a single **keymap table** that drives dispatch, the hint
 line, *and* the generated `?` help — so help can't drift from the bindings — and
 is rebindable via `RSX_TERM_KEYMAP` JSON.
 
+## Assistant (agent runner)
+
+The assistant behind the LLM screen is a **Claude Code agent** run per turn in
+an isolated Docker container by arizuko's runner (`container.Run`, imported as
+a Go library, unchanged) — rsx-term supplies only data: a prompt, an agent
+folder, and a unix socket it hosts. `Run`'s stdout is discarded; the agent's
+reply and resume id come back over that socket as a newline-framed `submit_turn`
+message, so rsx-term's handler demuxes `submit_turn`/`submit_status` before
+serving MCP on the same socket. Three channels feed the agent: a per-message
+**vantage block** (the screen + focus + folded state the trader was looking at,
+a pure provider generalizing `assistant/prompt.go`); an in-process **MCP
+server** giving live read tools for every screen (off an atomic `StateMirror`)
+and control verbs delivered through `p.Send` as **semantic messages** the same
+state machine handles — never synthesized `tea.KeyMsg` — so the fat-finger hard
+block and confirm gates bind the agent identically (order entry stops at a
+ticket the trader key-confirms; the agent never executes); and a mounted
+**agent folder** (`assistant/agentdir/`) whose CLAUDE.md/PERSONA.md carry the
+standing RSX literacy. Multi-turn rides Claude Code's own session resume (the
+`submit_turn` session id), tracked as a `thread→sessionID` map. Selected by
+`RSX_TERM_ASSIST` (unset = the offline placeholder, unchanged); the container's
+egress is currently open — the design's sharpest open question. Full design:
+`specs/2/60-terminal-assistant.md`.
+
 ## Invariants & trust model
 
 - **Offline by default.** The mock/default path makes zero network calls; every
