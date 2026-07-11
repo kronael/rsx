@@ -1,7 +1,17 @@
 # PROGRESS
 
-Per-crate status and current counts. Each crate is **done** (no open work)
-or **in progress** (open items in the last column) — no "% complete."
+Per-component status and current counts. Status means:
+
+- **signed off** — frozen for v1; bug fixes only unless the founder approves a
+  change;
+- **release candidate** — working and through its current gates, but not signed
+  off;
+- **working** — runs and passes the tracked checks, but has not entered final
+  sign-off;
+- **in development** — runs, but known work still changes its release shape.
+
+None of the crates or binaries is published to an external registry. Git tags
+through `v0.7.1` are pre-v1 source releases, not component sign-off.
 
 | Metric | Value | Source |
 |---|---|---|
@@ -20,19 +30,30 @@ feature-gated. Refinement history: ~28 `[refine]` commits since v0.1.0 plus
 
 | Crate | Status | Delivers | Open |
 |---|---|---|---|
-| rsx-types | done | newtypes, config, validation, invariant asserts | — |
-| rsx-book | in progress | snapshot, matching, compression | book bugs (BUGS.md); proptest harness |
-| rsx-matching | rc | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | — |
-| rsx-cast | done | WAL, casting/UDP, replication/TCP, V1 wire version byte, prealloc send_ring | — |
-| rsx-messages | done | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | — |
-| rsx-gateway | in progress | JWT, per-IP rate limit, circuit breaker, REST, monoio WS, 500µs egress-drain | tile parity (pinning, ring) |
-| rsx-risk | done | replication, funding, liquidation, PG write-behind, full tile, warm-standby promotion | MIGRATIONS-UNLOCKED (BUGS.md) |
-| rsx-marketdata | in progress | shadow book, seq-gap recovery, multi-ME, Arc fan-out | tile parity (pinning, ring) |
-| rsx-mark | done | Binance/Coinbase aggregation, off-path (sleeps, unpinned) | — |
-| rsx-recorder | done | daily rotation, buffered writes | — |
-| rsx-cli | done | WAL dump (filters, stats, follow, scale) | — |
-| rsx-log | done | per-thread SPSC → drain → tracing; `latency_sample!` gate | — |
-| rsx-health | done | `/health` `/ready` `/metrics`, port per daemon | — |
+| rsx-types | working | newtypes, config, validation, invariant asserts | — |
+| rsx-book | in development | snapshot, matching, compression | book bugs (BUGS.md); proptest harness |
+| rsx-matching | release candidate | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | final sign-off |
+| rsx-cast | signed off | WAL, casting/UDP, replication/TCP, V1 wire version byte, prealloc send_ring | — |
+| rsx-messages | working | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | final sign-off |
+| rsx-gateway | in development | JWT, per-IP rate limit, circuit breaker, REST, monoio WS, 500µs egress-drain | tile parity (pinning, ring) |
+| rsx-risk | working | replication, funding, liquidation, PG write-behind, full tile, warm-standby promotion | MIGRATIONS-UNLOCKED (BUGS.md); final sign-off |
+| rsx-marketdata | in development | shadow book, seq-gap recovery, multi-ME, Arc fan-out | tile parity (pinning, ring) |
+| rsx-mark | working | Binance/Coinbase aggregation, off-path (sleeps, unpinned) | final sign-off |
+| rsx-recorder | working | daily rotation, buffered writes | final sign-off |
+| rsx-cli | working | WAL dump (filters, stats, follow, scale) | final sign-off |
+| rsx-log | working | per-thread SPSC → drain → tracing; `latency_sample!` gate | final sign-off |
+| rsx-health | working | `/health` `/ready` `/metrics`, port per daemon | final sign-off |
+
+## Other required v1 surfaces
+
+| Surface | Status | Open |
+|---|---|---|
+| rsx-term | in development | final RSX integration and sign-off |
+| production deploy | in development | founder-run host deployment and sign-off |
+
+RSX reaches v1 only when every crate and surface in these two tables passes its
+release gates and is explicitly signed off. A green test suite, a working demo,
+or a tagged pre-v1 release is not sign-off.
 
 Not yet: GW→ME→GW p50/p99 under sustained parallel load (blocked on
 `ME-FAULTED-NO-REPLAY-ADDR`), wire schema versioning, tile parity for

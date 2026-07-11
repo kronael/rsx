@@ -36,11 +36,31 @@ mechanical choices, while the repo includes specs, notes, benchmark
 tables, and an interactive Playground so you can inspect why each
 piece exists.
 
-I built RSX with Claude Code and Codex. They wrote a meaningful amount of the
-code, tests, specs, and documentation; I directed the work, challenged the
-results, and decided what shipped. The repository keeps the mistakes and
-corrections visible too—AI made the project faster to build, not automatically
-correct.
+I built RSX with Claude Code and Codex. They materially wrote specs, code,
+tests, audits, and docs, and ran benchmark harnesses; I set the scope, made the
+final calls, and corrected or rejected their work. The latency numbers come
+from executable runs, not model estimates. AI made the build faster, not
+automatically right.
+
+## Project status
+
+RSX is a working end-to-end exchange research system, but it is still
+experimental and pre-v1.
+
+| Maturity | Components |
+|---|---|
+| **Signed off** | `rsx-cast` |
+| **Release candidate** | `rsx-matching` |
+| **Working, not signed off** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
+| **In development** | `rsx-book`, `rsx-gateway`, `rsx-marketdata`, `rsx-term`, production deploy |
+
+No crate or binary is published to an external registry. The source repository
+has tagged pre-v1 releases, currently through `v0.7.1`. See
+[PROGRESS.md](PROGRESS.md) for what works and what remains open.
+
+**The v1 rule:** every required component above must pass its release gates and
+be explicitly signed off; a component being runnable, tested, or marked
+working does not make it signed off.
 
 ## Run the live demo
 
@@ -104,22 +124,19 @@ non-obvious choice carries a tradeoff note in the crate's
 `notes/`. Read the specs for intent, the code for what runs,
 and the benchmark tables for the numbers.
 
-Each component below is done and worth studying on its own;
-together they show how an exchange is wired end-to-end.
+Each component below works well enough to study on its own; together they show
+how an exchange is wired end-to-end. Working does not mean signed off for v1.
 
 ## Components worth studying
 
-Each is a separate crate or process, built and tested (per-crate
-status in PROGRESS.md). Maturity: **finalized** — API frozen,
-bugfixes only, safe to build on; **release candidate** — benched,
-demoed, and settling; **in development** — working but still being
-reshaped. Libraries first, then the processes that run on them —
-each with the problem it solves.
+Each is a separate crate or process. [PROGRESS.md](PROGRESS.md) is the
+source of truth for maturity and open work. Libraries come first, then the
+processes that run on them — each with the problem it solves.
 
 **Libraries**
 
-- **`rsx-book` — slab + CompressionMap orderbook.** *Release
-  candidate.* The problem: keep a limit-order book fast when it
+- **`rsx-book` — slab + CompressionMap orderbook.** *In
+  development.* The problem: keep a limit-order book fast when it
   already holds millions of resting orders — the naive structures
   slow down as they fill. 65 536 pre-allocated `OrderSlot`s per
   symbol and a sparse-to-dense price compression (five distance
@@ -128,7 +145,7 @@ each with the problem it solves.
   2–5 ns. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-book/README.md](rsx-book/README.md).
 - **`rsx-cast` — log-backed reliable UDP transport.**
-  *Finalized.* The problem: reliable, low-latency messaging
+  *Signed off.* The problem: reliable, low-latency messaging
   without a broker. The trick: the wire bytes, the on-disk WAL
   bytes, and the TCP replay-stream bytes are *the same bytes* —
   `repr(C)` records, no serialization step. Domain-agnostic
@@ -152,8 +169,8 @@ each with the problem it solves.
   ~3.6M orders/s. No allocation, no locks, no async
   runtime. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-matching/README.md](rsx-matching/README.md).
-- **`rsx-risk` — per-user-shard risk engine.** *Release
-  candidate.* The problem: keep solvency-critical margin state in
+- **`rsx-risk` — per-user-shard risk engine.** *Working, not
+  signed off.* The problem: keep solvency-critical margin state in
   RAM on the order critical path while still persisting it durably.
   One core-pinned busy-spin loop with SPSC rings and a tokio
   sidecar for Postgres write-behind *off* the hot path; the
