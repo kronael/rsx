@@ -10,7 +10,7 @@
        shard-infra-smoke shard-routing shard-htmx shard-control \
        shard-maker shards shards-gated shards-report \
        ci ci-full demo stop reset \
-       term term-local term-demo term-ssh-setup maker \
+       term term-local term-demo term-smoke-llm term-ssh-setup maker \
        prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
@@ -298,6 +298,11 @@ term-local: ## trade against your local cluster (run 'make local' first)
 
 term-demo: ## the Go terminal offline, mock feed (no cluster needed)
 	cd rsx-term && RSX_GW_URL=mock go run .
+
+term-smoke-llm: ## LLM smoke: exercise the assistant live over SOL/ETH/XRP (needs the arizuko stack up)
+	@url=$$(.ship/45-ARIZUKO-LLM/chat-token.sh 2>/dev/null | awk -F= '/^RSX_TERM_ASSIST=/{print $$2}'); \
+	 [ -n "$$url" ] || { echo "no chat token — is the arizuko stack up? see .ship/45-ARIZUKO-LLM/deploy-local.sh" >&2; exit 1; }; \
+	 cd rsx-term && RSX_TERM_ASSIST="$$url" go test ./assistant/ -run TestLLMSmoke -v -count=1 -timeout 600s
 
 term-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access.md)
 	@bash -n scripts/rsx-tui-dispatch && bash -n scripts/rsx-tui-authorize \
