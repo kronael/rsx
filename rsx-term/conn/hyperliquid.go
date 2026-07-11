@@ -178,6 +178,7 @@ type HL struct {
 	byCoin      map[string]HLInstrument
 	events      chan any
 	closed      atomic.Bool
+	active      atomic.Pointer[websocket.Conn]
 }
 
 // NewHL builds the source over a fetched universe, watching only the listed
@@ -211,8 +212,16 @@ func (h *HL) Start(ctx context.Context) {
 	go h.readLoop(ctx)
 }
 
-// Close stops the reader at its next reconnect check.
-func (h *HL) Close() { h.closed.Store(true) }
+// Close stops the reader and interrupts a blocked read: it marks the source
+// closed (so the reconnect loop won't redial) and CloseNows the active socket
+// so an idle Read returns immediately — mirroring LiveGateway.Close, safe to
+// wire to a live venue-off toggle.
+func (h *HL) Close() {
+	h.closed.Store(true)
+	if c := h.active.Load(); c != nil {
+		_ = c.CloseNow()
+	}
+}
 
 // readLoop dials, subscribes, and folds frames until the source closes; on
 // any error it reports VenueDown and redials with bounded backoff. The
@@ -233,12 +242,14 @@ func (h *HL) readLoop(ctx context.Context) {
 			continue
 		}
 		backoff = 0
+		h.active.Store(conn)
 		h.emit(feed.VenueUp{Venue: HLVenueName})
 		pingCtx, stopPing := context.WithCancel(ctx)
 		go h.pingLoop(pingCtx, conn)
 		h.drain(ctx, conn)
 		stopPing()
 		_ = conn.CloseNow()
+		h.active.Store(nil)
 		if h.closed.Load() || ctx.Err() != nil {
 			return
 		}
