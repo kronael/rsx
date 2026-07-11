@@ -119,11 +119,18 @@ func (m Model) tile(ins Instrument) string {
 	if !ok {
 		return StyleMuted.Render(label + fmt.Sprintf("%7s ", "—"))
 	}
+	// Sign is explicit off bp's sign and the magnitude off |bp| — otherwise a
+	// move in (-1%, 0) drops its minus (integer bp/100 truncates to 0 for a
+	// small negative), rendering a down-move as if flat/up.
 	sign := ""
-	if bp > 0 {
+	switch {
+	case bp > 0:
 		sign = "+"
+	case bp < 0:
+		sign = "-"
 	}
-	text := label + fmt.Sprintf("%7s ", fmt.Sprintf("%s%d.%02d%%", sign, bp/100, abs64(bp%100)))
+	mag := abs64(bp)
+	text := label + fmt.Sprintf("%7s ", fmt.Sprintf("%s%d.%02d%%", sign, mag/100, mag%100))
 	hue := ColorBid
 	if bp < 0 {
 		hue = ColorAsk
