@@ -4355,14 +4355,30 @@ async def api_reset(request: Request):
             else:
                 child.unlink(missing_ok=True)
         cleared.append("wal")
-    # Wipe persisted risk state so the Lookup can't show a position
-    # with no backing fills after the WAL is gone (see #10). Positions
-    # are rebuilt from fills; accounts keep their seeded collateral.
-    pg_res = await pg_query("DELETE FROM positions")
+    # Wipe persisted risk state so a cold restart boots at the same seq
+    # baseline (0) as the freshly wiped WAL above. Critically this
+    # includes `tips` — the replication resume-seq checkpoint: if risk
+    # resumes a stale tips.last_seq while the ME WAL is empty, the ME
+    # cast receiver FAULTs forever on the mismatch. `accounts` (seeded
+    # collateral, re-run by seed_accounts on start) and `users` (auth)
+    # are intentionally kept. Schema-guarded so a partial schema no-ops.
+    risk_tables = (
+        "tips, positions, fills, funding, "
+        "insurance_fund, liquidations, frozen_orders"
+    )
+    pg_res = await pg_query(
+        "DO $$ DECLARE t text; BEGIN "
+        "FOREACH t IN ARRAY string_to_array("
+        f"'{risk_tables.replace(' ', '')}', ',') LOOP "
+        "IF EXISTS (SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = t) THEN "
+        "EXECUTE format('TRUNCATE TABLE %I RESTART IDENTITY', t); "
+        "END IF; END LOOP; END $$;"
+    )
     if pg_res is not None and not (
         isinstance(pg_res, dict) and "error" in pg_res
     ):
-        cleared.append("positions")
+        cleared.append("risk-state")
     # replay tips
     (TMP / "md.tip").unlink(missing_ok=True)
     for tip in TMP.glob("recorder-tip-*"):
