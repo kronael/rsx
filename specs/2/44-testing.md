@@ -146,11 +146,15 @@ post-deployment.
 
 **Scope:**
 - Run against live/staging deployments
-- Basic health checks:
-  - Order submission works (simple buy/sell)
-  - Cancellation works
-  - Position updates propagate to risk engine
-  - Market data streaming works
+- Require every process declared by the active scenario, including the market
+  maker, to be running and the gateway and marketdata probes to be ready
+- Wait for real two-sided maker liquidity, then submit one identified taker
+- Prove that trade at each reliable observation boundary: client response, a
+  new ME WAL fill, the taker's persisted risk position, and the live
+  marketdata book
+- Run Verify and require every non-optional trade invariant to pass
+- Reject new panic, fatal, or missing-required-configuration log lines
+- Stop only processes started by the script when an assertion fails
 - No destructive operations
 - Quick validation (<1min)
 - Non-exhaustive (just "is it alive?")
