@@ -788,7 +788,26 @@ func (m Model) streamHeader() string {
 }
 
 // streamLegend is the one-line control hint pinned under the heatmap.
-const streamLegend = " q quit  tab view  x symbol  b/s side  1-5 size  ⇧1-5 cross  h/l j/k cursor  f place  d cancel  r/p RO/PO  ? help "
+const streamLegend = " q quit  tab view  x symbol  n news  b/s side  1-5 size  ⇧1-5 cross  h/l j/k cursor  f place  d cancel  r/p RO/PO  ? help "
+
+// newsLegend / llmLegend are the news and assistant screens' hint lines.
+const newsLegend = " q quit  tab view  / search  j/k select  enter → assistant  letter → book  esc back "
+const llmLegend = " q quit  tab view  esc → news "
+
+// hintLine is the persistent context-sensitive hint for the active screen
+// (the k9s pattern: the keys that matter right now, ? for the full map).
+func (m Model) hintLine() string {
+	switch m.screen {
+	case screenPair:
+		return StyleMuted.Render(pairLegend)
+	case screenNews:
+		return StyleMuted.Render(newsLegend)
+	case screenLLM:
+		return StyleMuted.Render(llmLegend)
+	default:
+		return StyleMuted.Render(streamLegend)
+	}
+}
 
 // streamFooter is the pinned status block: the exact touch ladder (two
 // lines), position, latency, and the control legend.
@@ -799,7 +818,7 @@ func (m Model) streamFooter() []string {
 		m.touchLadderLine(mk.book.Bids, "bid ", StyleLive),
 		m.streamPosLine(),
 		m.streamLatLine(),
-		StyleMuted.Render(streamLegend),
+		m.hintLine(),
 	}
 }
 

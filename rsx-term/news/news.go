@@ -25,21 +25,27 @@ type Marker struct {
 }
 
 // Source is a stream of news markers. Implementations must be non-blocking:
-// Markers reads an in-memory buffer, never the network.
+// Markers and All read an in-memory buffer, never the network.
 type Source interface {
 	// Markers returns markers whose TsNs falls within [sinceNs, untilNs]. A
 	// disabled source returns nil.
 	Markers(sinceNs, untilNs int64) []Marker
+	// All returns every buffered headline, newest first (the news view's
+	// feed). A disabled source returns nil.
+	All() []Marker
 	// Enabled reports whether the source is live. Off by default.
 	Enabled() bool
 }
 
-// Off is the always-empty source and the prototype default: it connects to
-// nothing and returns no markers, so the terminal renders fully offline.
+// Off is the always-empty source and the default: it connects to nothing and
+// returns no markers, so the terminal renders fully offline.
 type Off struct{}
 
 // Markers always returns nil.
 func (Off) Markers(_, _ int64) []Marker { return nil }
+
+// All always returns nil.
+func (Off) All() []Marker { return nil }
 
 // Enabled always returns false.
 func (Off) Enabled() bool { return false }

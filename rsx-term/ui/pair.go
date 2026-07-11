@@ -59,7 +59,7 @@ func (m Model) viewPair() string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, StyleTextBright.Render(" "+m.status))
-	lines = append(lines, StyleMuted.Render(pairLegend))
+	lines = append(lines, m.hintLine())
 	return strings.Join(lines, "\n")
 }
 
@@ -196,29 +196,4 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
-}
-
-// viewNews / viewLLM — their real bodies land with the news reader and the
-// assistant handoff; until then each is an honest fixed-grid placeholder.
-func (m Model) viewNews() string {
-	return m.placeholderScreen("news — market overview + Tree of Alpha feed",
-		"enable the live feed with RSX_TERM_NEWS=1")
-}
-
-func (m Model) viewLLM() string {
-	return m.placeholderScreen("assistant (placeholder)",
-		"select a headline in the news view to hand its context here")
-}
-
-// placeholderScreen keeps the fixed grid for a screen that has no data yet.
-func (m Model) placeholderScreen(title, hint string) string {
-	lines := make([]string, 0, m.height)
-	lines = append(lines, m.streamHeader(), m.modeLine())
-	lines = append(lines, "", StyleHeading.Render("  "+title), StyleMuted.Render("  "+hint))
-	for len(lines) < m.height-2 {
-		lines = append(lines, "")
-	}
-	lines = append(lines, StyleTextBright.Render(" "+m.status))
-	lines = append(lines, StyleMuted.Render(" q quit  tab view  esc book "))
-	return strings.Join(lines, "\n")
 }

@@ -255,6 +255,14 @@ type Model struct {
 	listSel  int
 	armedSym uint32
 	countBuf string
+
+	// News view: feed selection, search state; the assistant handoff (the
+	// packaged context + the instrument it was priced with).
+	newsSel    int
+	newsSearch bool
+	newsQuery  string
+	assistCtx  *news.AssistantContext
+	assistIns  Instrument
 }
 
 // screen is which streaming view is on: the depth book (default), the

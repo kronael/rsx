@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-term/conn"
+	"rsx-term/news"
 	"rsx-term/ui"
 )
 
@@ -128,9 +129,22 @@ func hlInstruments(hl *conn.HL) []ui.Instrument {
 			PriceDec: ins.PriceDec,
 			QtyDec:   ins.QtyDec,
 			Tick:     1,
+			Sector:   conn.SectorOf(ins.Coin),
 		})
 	}
 	return out
+}
+
+// newsSource builds the headline source: the live Tree of Alpha reader when
+// RSX_TERM_NEWS=1 — the ONLY place the news feed dials, and an explicit
+// opt-in, so default/offline/CI runs never touch the network. nil = news.Off.
+func newsSource(ctx context.Context) news.Source {
+	if os.Getenv("RSX_TERM_NEWS") != "1" {
+		return nil
+	}
+	src := news.NewTreeOfAlpha()
+	src.Start(ctx)
+	return src
 }
 
 // runHL is the standalone read-only Hyperliquid terminal: the whole app
@@ -161,6 +175,7 @@ func runHL() error {
 		Instruments: instruments,
 		LotNotional: envI64("RSX_TERM_LOT", 0),
 		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:        newsSource(context.Background()),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -296,6 +311,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		Venues:      extraVenues(hlCfg),
 		LotNotional: envI64("RSX_TERM_LOT", 0),
 		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:        newsSource(context.Background()),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go feedDemo(p)
@@ -382,6 +398,7 @@ func runLive(cfg liveConfig) error {
 		Venues:      extraVenues(cfg.hlCfg),
 		LotNotional: envI64("RSX_TERM_LOT", 0),
 		MaxNotional: envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:        newsSource(ctx),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	go drainEvents(p, live.Events())
