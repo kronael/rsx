@@ -59,6 +59,9 @@ type Config struct {
 	// News is the headline source (nil → news.Off, fully offline). The live
 	// Tree of Alpha reader plugs in behind RSX_TERM_NEWS=1.
 	News news.Source
+	// KeyOverrides rebinds verb keys ({"action":"key"}, from RSX_TERM_KEYMAP).
+	// An invalid map falls back to the defaults with a loud status.
+	KeyOverrides map[string]string
 }
 
 // defaultSizePresets builds the streaming view's stock size ladder — 1, 2, 5,
@@ -231,6 +234,7 @@ type Model struct {
 	// activeVenue+active name the one the book view renders. news feeds the
 	// rail + news view (defaults to news.Off — always offline). heatW is the
 	// heatmap's column count (0 until the first WindowSizeMsg).
+	keys        *keymap
 	venues      []VenueConfig
 	mkts        map[venueKey]*market
 	activeVenue string
@@ -326,9 +330,18 @@ func New(cfg Config) Model {
 	if newsSrc == nil {
 		newsSrc = news.Off{}
 	}
+	keys := defaultKeymap()
+	keymapStatus := "connecting…"
+	if len(cfg.KeyOverrides) > 0 {
+		if err := keys.ApplyOverrides(cfg.KeyOverrides); err != nil {
+			keys = defaultKeymap() // a broken keymap must not half-apply
+			keymapStatus = "KEYMAP REJECTED: " + err.Error() + " — defaults active"
+		}
+	}
 	m := Model{
 		cfg:         cfg,
-		status:      "connecting…",
+		keys:        keys,
+		status:      keymapStatus,
 		lastMdAgeNs: book.NsUnknown,
 		news:        newsSrc,
 		mkts:        map[venueKey]*market{},

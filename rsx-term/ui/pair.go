@@ -63,9 +63,6 @@ func (m Model) viewPair() string {
 	return strings.Join(lines, "\n")
 }
 
-// pairLegend is the pair view's control hint.
-const pairLegend = " q quit  tab view  letter arm  [count] b buy  s sell  . flatten  1-9 lots  [ ] list  r RO  esc clear  ? help "
-
 // pairRow renders one symbol's line (see the file header for the anatomy).
 // The armed row is highlighted — you must SEE what the next b/s fires at.
 func (m Model) pairRow(id uint32) string {

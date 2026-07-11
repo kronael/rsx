@@ -156,78 +156,85 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.venuePicking {
 		return m.handleVenuePick(key)
 	}
-	switch key {
-	case "q", "ctrl+c":
+	if m.screen == screenNews && m.newsSearch {
+		return m.handleNewsSearchKey(key) // typing captures everything, incl. q
+	}
+	act := m.keys.lookup(m.screen, key)
+	switch act {
+	case actQuit:
 		return m, tea.Quit
-	case "?":
+	case actHelp:
 		m.showHelp = true
 		return m, nil
-	case "tab":
+	case actNextView:
 		m.screen = m.screen.next()
 		return m, nil
-	case "shift+tab":
+	case actPrevView:
 		m.screen = m.screen.prev()
 		return m, nil
-	case "f9":
+	case actVenuePick:
 		m.venuePicking = len(m.venues) > 1
 		if !m.venuePicking {
 			m.status = "one venue configured (" + m.activeVenue + ")"
 		}
 		return m, nil
-	case "r":
+	case actReduceOnly:
 		m.reduceOnly = !m.reduceOnly
 		m.status = "reduce-only " + onOff(m.reduceOnly) + " (applies to every order until toggled)"
 		return m, nil
-	case "p":
+	case actPostOnly:
 		m.postOnly = !m.postOnly
 		m.status = "post-only " + onOff(m.postOnly) + " (applies to resting orders until toggled)"
 		return m, nil
 	}
 	switch m.screen {
 	case screenPair:
-		return m.handlePairKey(key)
+		return m.handlePairKey(act, key)
 	case screenNews:
-		return m.handleNewsKey(key)
+		return m.handleNewsKey(act, key)
 	case screenLLM:
-		return m.handleLLMKey(key)
+		return m.handleLLMKey(act)
 	default:
-		return m.handleBookKey(key)
+		return m.handleBookKey(act, key)
 	}
 }
 
 // handleBookKey is the depth/book view's game order entry: size presets, a
 // price cursor, single-key place/cancel, single-key crosses, and the x
 // symbol switcher.
-func (m Model) handleBookKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "esc":
+func (m Model) handleBookKey(act action, key string) (tea.Model, tea.Cmd) {
+	switch act {
+	case actQuitBook:
 		return m, tea.Quit
-	case "x":
+	case actSwitchSymbol:
 		m.switching = true
 		m.switchBuf = ""
-	case "n":
+	case actOpenNews:
 		m.screen = screenNews
-	case "b":
+	case actBuySide:
 		m.side = wire.Buy
-	case "s":
+	case actSellSide:
 		m.side = wire.Sell
-	case "1", "2", "3", "4", "5":
-		m.sizeSel = int(key[0] - '1')
-		m.status = fmt.Sprintf("size %s armed", m.fmtQty(m.sizePreset()))
-	case "!", "@", "#", "$", "%":
-		return m.handleCross(shiftDigitSel(key))
-	case "h", "left":
+	case actCursorDown:
 		m.stepCursor(-1)
-	case "l", "right":
+	case actCursorUp:
 		m.stepCursor(+1)
-	case "j", "down":
+	case actCursorBid:
 		m.cursorToTouch(wire.Buy)
-	case "k", "up":
+	case actCursorAsk:
 		m.cursorToTouch(wire.Sell)
-	case "f":
+	case actPlace:
 		return m.handlePlace()
-	case "d":
+	case actCancel:
 		return m.handleStreamCancel()
+	default: // the fixed key classes: presets and crosses
+		switch key {
+		case "1", "2", "3", "4", "5":
+			m.sizeSel = int(key[0] - '1')
+			m.status = fmt.Sprintf("size %s armed", m.fmtQty(m.sizePreset()))
+		case "!", "@", "#", "$", "%":
+			return m.handleCross(shiftDigitSel(key))
+		}
 	}
 	return m, nil
 }
@@ -480,14 +487,14 @@ func (m Model) ownOrdersFor(venue string, id uint32) []OpenOrder {
 // lots at market (IOC, aggressive is the default here); `.` flattens
 // (reduce-only); `[`/`]` switch watchlists; esc clears the arm. No passive
 // quoting in this view — that is the book view's job.
-func (m Model) handlePairKey(key string) (tea.Model, tea.Cmd) {
-	switch {
-	case key == "esc":
+func (m Model) handlePairKey(act action, key string) (tea.Model, tea.Cmd) {
+	switch act {
+	case actClearArm:
 		m.armedSym = 0
 		m.countBuf = ""
-	case key == "[" || key == "]":
+	case actListPrev, actListNext:
 		n := len(m.lists)
-		if key == "[" {
+		if act == actListPrev {
 			m.listSel = (m.listSel + n - 1) % n
 		} else {
 			m.listSel = (m.listSel + 1) % n
@@ -495,21 +502,24 @@ func (m Model) handlePairKey(key string) (tea.Model, tea.Cmd) {
 		m.armedSym = 0
 		m.countBuf = ""
 		m.status = "list " + m.lists[m.listSel].name
-	case len(key) == 1 && key[0] >= '0' && key[0] <= '9':
-		if m.armedSym != 0 && len(m.countBuf) < 2 {
-			m.countBuf += key
-		}
-	case key == "b":
+	case actPairBuy:
 		return m.handlePairTrade(wire.Buy)
-	case key == "s":
+	case actPairSell:
 		return m.handlePairTrade(wire.Sell)
-	case key == ".":
+	case actFlatten:
 		return m.handlePairFlatten()
-	case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
-		if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok && m.inActiveList(ins.ID) {
-			m.armedSym = ins.ID
-			m.countBuf = ""
-			m.status = "armed " + ins.Name
+	default: // the fixed key classes: counts and symbol letters
+		switch {
+		case len(key) == 1 && key[0] >= '0' && key[0] <= '9':
+			if m.armedSym != 0 && len(m.countBuf) < 2 {
+				m.countBuf += key
+			}
+		case len(key) == 1 && key[0] >= 'a' && key[0] <= 'z':
+			if ins, ok := m.instrumentByCode(m.pairVenue(), key); ok && m.inActiveList(ins.ID) {
+				m.armedSym = ins.ID
+				m.countBuf = ""
+				m.status = "armed " + ins.Name
+			}
 		}
 	}
 	return m, nil
