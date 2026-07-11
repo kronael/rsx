@@ -3,6 +3,124 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-11 — HFT portfolio and AI-development audit
+
+Record-only from the career-facing evidence audit. These findings do not claim
+that RSX is production-ready; they identify where public claims, measurements,
+and the demo currently fail to prove the low-latency/HFT capability they are
+intended to demonstrate. Existing runtime issues remain under their original
+entries below.
+
+- **DOC-UNSUPPORTED-LOWEST-LATENCY-CLAIM** (HIGH, traceability) — the first
+  public claim is “Your Lowest-Latency Derivatives exchange” at `README.md:3`,
+  but the same README reports the actual cross-process path at ~1.1 ms
+  (`README.md:91-94,275-281`) and contains no controlled competitor comparison.
+  A careful hiring reviewer can disprove the superlative from the next screen,
+  weakening trust in the valid component results. **Fix:** replace the headline
+  with a factual scope statement (“A spec-first derivatives exchange and
+  low-latency systems laboratory”), keep the <50 µs number explicitly labelled
+  as a target, and add a generated claim check that fails if “lowest”, “fastest”,
+  or “sub-10 µs” appears without “target”/“aspirational” in the same paragraph.
+  **Accept:** `rg -n -i 'lowest.latency|fastest' README.md ONEPAGER.md` returns
+  no matches, while the How-fast table still exposes in-process and
+  cross-process results separately.
+
+- **STRESS-ZERO-ACCEPT-FALSE-PASS** (HIGH, bench) — the stress reporter treats
+  an empty latency sample as zero and compares it with the target, producing
+  `submitted=10 accepted=0 ... p99=0us` followed by `p99=0us ... pass`
+  (`log/stress.log:127-150`; at least 20 such runs in the current sample).
+  This converts total order-path failure into a green performance result.
+  **Fix:** require `accepted > 0`, `accepted/submitted >= 0.95`, a configured
+  minimum sample count (default 1,000), and no invariant failures before
+  computing or grading percentiles; emit `FAIL: no accepted samples` with a
+  non-zero exit code otherwise. Add fixtures for zero accepted, partial
+  acceptance, all accepted, and missing latency samples. **Accept:** the
+  zero-acceptance fixture exits non-zero and contains no `pass`; a live run's
+  JSON records submitted, accepted, rejected by reason, acceptance ratio,
+  sample count, p50/p99/p99.9/max, and overall status.
+
+- **BENCH-CROSSPROCESS-TAIL-LOAD-PROOF-MISSING** (roadmap, not a defect) — the
+  public proof ladder stops at a cross-process p50 of 1,128 µs with no p99
+  (`docs/benches.md:132`), while the strong 7.82/22.3 µs p50/p99 result is
+  explicitly in-process (`docs/benches.md:137-147`). There is no reproducible
+  sustained production-path report combining accepted throughput, p99/p99.9,
+  maximum, loss, invariant results, CPU/queue saturation, and recovery. **Fix:**
+  add a checked-in `scripts/portfolio-load.sh` that runs the real
+  GW→Risk→ME→Risk→GW path for ten minutes, fails below 95% acceptance or on any
+  invariant/loss, repeats three times, and writes a dated report containing
+  commit, exact command, topology, sample count, offered/accepted rates,
+  p50/p99/p99.9/max, CPU, queue depth, and failures. **Accept:** three successive
+  reports complete without manual edits and p99 varies by <=10%; until then the
+  README labels cross-process performance as incomplete evidence, not HFT parity.
+
+- **BENCH-HARDWARE-CONTROLS-NOT-DEMONSTRATED** (roadmap, not a defect) — the
+  strongest load report explicitly uses a shared 6-core box with no CPU
+  isolation (`reports/20260530_load-curves.md:11-14`), and the July rerun calls
+  its tails noisy on a shared host (`reports/20260708_bench-rerun.md:55-59`).
+  Deployment prose mentions `isolcpus`/pinning, but no reproduced result proves
+  real NIC, IRQ/queue placement, NUMA locality, frequency/C-state policy, PTP or
+  clock source, or before/after kernel tuning. **Fix:** produce one bare-metal
+  report capturing `lscpu -e`, `/proc/cmdline`, governor/turbo/C-state state,
+  `numactl --hardware`, `ethtool -i/-l/-x/-S`, `/proc/interrupts`, thread/core
+  mapping, clock source/PTP status, kernel/compiler versions, and three
+  before/after production-path runs. **Accept:** every published hardware claim
+  links to that report; DPDK/AF_XDP/FPGA/SmartNIC remain explicitly “not
+  implemented” until a runnable artifact and measurement exist.
+
+- **DEMO-RISK-REPLICA-MISSING-REPLAY-CONFIG** (HIGH, config) — the current
+  replica log reaches its health-listener startup and then panics because
+  `RSX_ME_REPLICATION_ADDR` is absent (`log/risk-0-replica-0.log:32-34`). This
+  overlaps `STARTUP-ORDERING-FRAGILITY` below but adds a concrete spawn-plan
+  configuration defect: a portfolio demo can display a partially green cluster
+  while redundancy is dead. **Fix:** make the playground spawn-plan constructor
+  derive and validate the ME replay address for every risk primary/replica
+  before launching any process; fail the whole scenario atomically with a named
+  config error, and make readiness require every declared replica. Add a spawn-
+  plan unit test plus a clean-start acceptance test. **Accept:** after
+  `./rsx-playground/playground reset && make demo`,
+  `rg -i 'panic|fatal|required.*NotPresent' log/risk-*-replica-*.log` returns no
+  matches, the process API reports all declared processes ready, and Verify
+  fails if any replica is removed.
+
+- **DOC-HIRING-FIRST-FOLD-BURIES-EVIDENCE** (MED, docs) — `README.md:5-21`
+  spends the first screen on a poem before stating scope, while ownership,
+  measured-vs-target status, and the strongest reproducible result are scattered
+  later. The material is distinctive but delays the evidence a recruiter needs
+  to classify the project. **Fix:** move the poem into an expandable/later
+  “personality” section and make the first fold contain: one-sentence problem,
+  one-sentence personal contribution, `make demo`, a four-row proof ladder, and
+  an explicit “research system; no production users/SLA” boundary. **Accept:**
+  the first 60 rendered README lines contain those five elements and every
+  headline number links to a dated report.
+
+- **DOC-AI-DEVELOPMENT-METHOD-NOT-EXPLAINED** (MED, traceability) — the
+  repo labels the blog AI-generated (`README.md:468`, `BLOG.md:3`) but has no
+  repository-level explanation of how LLMs were used to develop RSX. A hiring
+  reviewer cannot distinguish model-generated drafts from human-selected
+  architecture, implementation, adversarial review, measurement, and final
+  verification; the commit volume and internal agent artifacts make that
+  ambiguity more visible, not less. **Fix:** add a root “How this was built with
+  LLMs” page and a short README summary. For each workflow (specification,
+  implementation, test generation, bug hunting, documentation), show one
+  concrete input→output→human-review example; name the model/tool; state what
+  it could change; link the resulting commit/spec/test; and show the independent
+  acceptance command or benchmark that caught errors. Explicitly document that
+  the maintainer chose the architecture, resolved conflicting suggestions,
+  executed verification, and owns every shipped defect. Include failures such
+  as the zero-acceptance false-green stress result to demonstrate that AI output
+  is treated as untrusted until checked. **Accept:** the page lets a reviewer
+  trace at least three shipped features from prompt/plan through code review and
+  executable verification, distinguishes generated text from measured evidence,
+  and avoids both “AI built it autonomously” and “no AI was used” narratives.
+
+- **DOC-UPSTREAM-NOTICE-MISSING** (MED, traceability) — no `NOTICE` file records
+  imported or adapted upstream work, including the arizuko runner used by the
+  terminal assistant (`rsx-term/ARCHITECTURE.md:93-108`). **Fix:** inventory
+  named upstream code and add `NOTICE` entries with author, URL, license,
+  copyright, and whether it was imported, adapted, or merely invoked; retain
+  upstream headers and licenses. **Accept:** `NOTICE` exists, every named
+  adapted/imported upstream has provenance, and the README links it.
+
 ## Status — 2026-07-11 — maker refine pass (deferred findings)
 
 Review-pass findings verified but deliberately not applied (low severity /
