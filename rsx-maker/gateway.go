@@ -62,6 +62,10 @@ func writeJSON(ctx context.Context, conn *websocket.Conn, v any) error {
 // (the every-cycle cancel-replace keeps the active set honest). E[1005]
 // ("order not found") is expected churn — a quote filled between
 // cycles is already gone — and is never surfaced here.
+//
+// MUST be the LAST operation on conn: coder/websocket closes the whole
+// connection when a Read's context is cancelled, so hitting the deadline
+// here closes conn. Never drain before a write on the same conn.
 func drainFor(ctx context.Context, conn *websocket.Conn, d time.Duration) {
 	deadline, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
