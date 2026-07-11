@@ -2,6 +2,12 @@
 
 Web-based development dashboard for the RSX exchange. Real-time monitoring, process control, order submission, and fault injection.
 
+![dashboard walkthrough](demo/dashboard.gif)
+
+*Guided tour of the live dashboard — boot → topology → live book → orders →
+maker → latency → cast → embedded terminal → invariant checks. Regenerate with
+`./demo/dashboard-walkthrough.sh` (from the repo root, system up via `make demo`).*
+
 ## Quick Start
 
 ```bash

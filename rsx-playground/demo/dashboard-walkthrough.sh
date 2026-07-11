@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Comprehensive dashboard walkthrough → demo/rsx-local-demo.gif.
+# Comprehensive dashboard walkthrough → rsx-playground/demo/dashboard.gif.
 # Drives a real browser (agent-browser) over the live RSX playground dashboard,
 # screenshots the key pages, and assembles them into a looping GIF. The system
 # must be up first: `make demo` (3 tokens trading live).
 #
-#   ./demo/walkthrough.sh        # from the repo root
+#   ./rsx-playground/demo/dashboard-walkthrough.sh   # from the repo root
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."   # repo root
 
 BASE=http://localhost:49171
 OUT=tmp/walkthrough
-GIF=demo/rsx-local-demo.gif
+GIF=rsx-playground/demo/dashboard.gif
 mkdir -p "$OUT"
 
 curl -sf -o /dev/null "$BASE/overview" \
