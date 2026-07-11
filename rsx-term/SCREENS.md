@@ -209,86 +209,152 @@ real; live, only `net` is client-measured until the gateway stamps the
 internal/engine legs (they show `·· pending`, dim italic — never a bare
 dash, see `legValue`).
 
-## Streaming heatmap (RSX_TERM_STREAM=1)
+## Streaming terminal (RSX_TERM_STREAM=1) — four screens
 
-A prototype "text Bookmap": time runs **top → bottom**, one row per ~100ms
-bin, **newest at the bottom**, older bins aging upward off a fixed-length
-ring. Price runs **left → right** through a **mid-centred fisheye** — bids
-left, asks right, the touch at 1 tick/cell, deep levels aggregating many
-ticks into one column. The axis re-anchors on the mid only when it drifts
-(hysteresis), so the picture doesn't reshuffle every tick. Rendering is in
-`ui/stream.go`; the ring/fisheye/binning in `book/heatmap.go`. The classic
-DOM view (above) is the default; this view is opt-in via `RSX_TERM_STREAM=1`.
+Opt-in via `RSX_TERM_STREAM=1`; the classic DOM view above stays the default.
+To promote streaming to the default, flip the `stream` check in `main.go` to
+default-on (one line) — the founder decides that.
 
-**Each cell is two channels** (the shade ramp ` ░▒▒▓█` below stands in for
-colour, which a terminal shows and this file can't):
+One keypress apart, four screens (`tab` cycles, `shift+tab` reverses):
 
-- **Background colour = resting SIZE**, log-scaled (sizes are heavy-tailed):
-  the side's hue, dim → saturated as size grows. Bid hue / ask hue are the
-  palette's bid/ask pair (the colorblind theme swaps them for blue/orange).
-- **Glyph (` ░▒▓█`) = resting ORDER COUNT**: one whale (huge size, 1 order)
-  reads as a bright cell with a faint `░`; a wall of many small orders reads
-  as a fuller `▓`/`█`. So "one big order" and "a crowd" look different even at
-  the same size.
-- **Trades** overlay a bright `◆` in the **aggressor's** hue at the trade
-  column, brightest on the newest row and **decaying** over the next couple of
-  rows as they age upward.
-- Degrades: full two-channel RGB on 256/true-colour; **shades-only** (size via
-  glyph, side via 16-colour hue) on a plain-colour terminal; a **colourless
-  glyph ladder** when colour is unavailable (`RSX_TERM_COLOR=plain|shade|true`
-  forces the tier; `NO_COLOR` is honoured).
-- **Left rail** `│` is the **news axis** (placeholder): markers `►` line up
-  with the bin they hit. The default source is off (`news.Off`), so offline the
-  rail is a plain gutter — no network call is made at startup or on render. A
-  live `news.TreeOfAlpha` stub documents `wss://news.treeofalpha.com/ws` but
-  ships disabled.
-- **Pinned footer** (does not scroll): exact live touch (best bid/ask px×size),
-  position + `~uPnL` (mid-marked), latency (`⚡`), a one-line **LLM placeholder**
-  (`? assistant …`), and the control legend.
+```
+ BOOK  ── depth, ONE symbol      quoting / market-making on the heatmap
+ PAIR  ── breadth, MANY symbols  aggressive directional lots, no depth
+ NEWS  ── market context         sector map + Tree of Alpha feed
+ LLM   ── research               assistant pane fed by a real context handoff
+```
 
-**Idle** — a stable book: two resting clusters straddle the mid gap, the same
-shape scrolling down bin after bin.
+Every screen is a FIXED grid repainted in place (no scrollback): header,
+mode line, body, then status + a context-sensitive hint line. The **mode
+line** always shows: screen tag, active venue, `RO`/`PO` modifier toggles
+(loud red when on), the armed size preset, and the active watchlist; the
+pair screen adds the ARMED symbol, the switcher/venue-picker add their
+capture prompt. Keys live in ONE table (`ui/keymap.go`): the dispatcher,
+the hint line, and the `?` overlay are all generated from it; verbs are
+rebindable via `RSX_TERM_KEYMAP` (JSON `{"action":"key"}`).
+
+### BOOK — the depth heatmap
 
 ```
  RSX  PENGU-PERP   ● live  ◀ bids  mid 0.010000  asks ▶
-│        ░░▒▒▓░░       ░░▒▓▓░░
-│        ░░▒▒▓░░       ░░▒▓▓░░
-│        ░░▒▒▓░░       ░░▒▓▓░░
-│        ░░▒▒▓░░       ░░▒▓▓░░
-│        ░░▒▒▓░░       ░░▒▓▓░░
-bid 0.009999 × 0.0005   ask 0.010001 × 0.0006   spread 2
-pos flat — fills build it
-⚡ RTT 10.4 µs   p50 9.9 µs · p99 10.4 µs · best 9.0 µs
-? assistant — context ready (placeholder)
- q quit  b/s side  +/- tick  enter submit  F3 trace  ? help  · streaming heatmap (RSX_TERM_STREAM)
+ BOOK  rsx  RO off  PO off  size 1.0000 [1]  list rsx
+│                                                       −1h ┆ ■ 0.010001
+│                                                      −10m ┆ ● 0.010001
+│                                                       −1m ┆ ● 0.010001
+│                                     ▒░░▒             −10s ┆
+│                                     ▒░░▒                  ┆
+│                                     ▒░●▓                  ┆   ← trade ● at its price
+│                                     ▒░●█                  ┆   ← ask wall thickening
+│                                     ▒░■█                  ┆
+│                                     ◇▁▁█              now ┆   ← NOW row: micro-bars + your ◇
+│─────────────────────────────────────▲┃┼──────────────
+ ask 0.010001×6.0000  0.010002×40.0000
+ bid 0.009999×5.0000  0.009998×8.0000
+ pos LONG +3.0000 @ 0.009998   ~uPnL +0.000006
+ ⚡ RTT 10.4 µs   p50 9.9 µs · p99 10.4 µs · best 9.0 µs
+ x symbol  n news  b/s side  h/l cursor  j/k touch  f place  d cancel  q quit  tab view  r RO  ? help
 ```
 
-**Wall building** — a large ask order stacks a tick above the touch (bright
-background = big size; solid `█` because it's many orders — a real wall):
+- **Time axis (vertical, multi-resolution).** Bottom = the NOW row, the
+  current book repainted every frame — it never scrolls. Above it, live
+  ~100ms rows; above those, each far row aggregates an exponentially longer
+  window on a fixed schedule (10s, 60s, 120s, 300s, 600s, then hours —
+  `book.FarSpan`), labelled in the right gutter. Near = exact levels; far =
+  time-weighted liquidity profile of the whole book. History survives a
+  resize (rows are price-space).
+- **Price axis (horizontal, fisheye).** Mid-centred, bids left / asks right,
+  1 tick/cell at the touch, deep levels aggregating into edge columns —
+  every row reads near-touch detail AND whole-book depth. Recenters on
+  drift only (hysteresis), and re-aligns history too (render-time mapping).
+- **Cell channels** — see VISUALS.md for the full glyph legend: background
+  = resting size on ONE sequential ramp (side is position, never colour);
+  glyph density ░▒▓█ = order count; ▚ = long-standing liquidity (L2
+  persistence proxy, ≥30s); trade prints overlay in the AGGRESSOR's hue
+  with a magnitude ramp ○◆●■; your orders are ◇ on the map and ▲/▼ on the
+  ruler; the price cursor is ┃.
+- **Trade tape rail** (right): the same prints as a feed, newest at top —
+  magnitude glyph + exact price, aggressor-hued.
+- **News rail** (left): severity-graded marker per row window (`· ► ► ‼`,
+  muted→red); the headline itself lives in the NEWS screen.
+- **Game order entry:** `b`/`s` side · `1-5` size presets · `h/l` cursor a
+  tick, `j/k` to the touch, click the map · `f` places a resting limit at
+  the cursor · `⇧1-5` crosses NOW (IOC at the far touch) · `d` cancels the
+  own order nearest the cursor. ONE keypress fires — the qty cap and the
+  notional ceiling still hard-block (`BLOCKED: …`).
+- **`x` symbol switcher:** type the symbol's letter code (mode line shows
+  candidates); hopping is instant — every watched market folds its own
+  heatmap in the background. **`F9` venue picker:** switch the book between
+  venues (rsx / hyperliquid); read-only venues render fully but BLOCK
+  orders with the reason.
+- **`n`** jumps to NEWS.
+
+States: sizing (before the first WindowSizeMsg), `● offline` link dot,
+empty side reads `ask —` in the touch ladder, `pos flat — fills build it`.
+
+### PAIR — breadth, aggressive lots
 
 ```
-│        ░░▒▒▓░░     █▓░▒▓▓░░
-│        ░░▒▒▓░░     █▓░▒▓▓░░
-│        ░░▒▒▓░░     ██░▒▓▓░░
-│        ░░▒▒▓░░     ██░▒▓▓░░   ← ask wall thickening into the touch
+ PAIR  rsx  RO off  PO off  size 1.0000 [1]  list rsx  ARMED WIF-PERP ×3
+ [e] PENGU-PERP      0.010000    +0.32%  ▄▄  ██    L+2.0
+ [w] WIF-PERP        0.021002    -1.10%  ▁█  ██    S-1.0
+  │        │             │          │     │   │      └ position, in LOTS
+  │        │             │          │     │   └ flow bar: intensity, hue = dominant aggressor
+  │        │             │          │     └ depth state: bid|ask thickness vs its own past
+  │        │             │          └ move vs session reference
+  └ [letter] — press to ARM
 ```
 
-**Trade burst** — market buys lift the offer; bright `◆` marks print on the
-newest rows at the trade column and decay upward:
+Grammar: a **letter arms** its row (or `j`/`k` steps the arm); digits set a
+vim-style **count**; `b` buys (lifts the offer), `s` sells (hits the bid) —
+count × lots, always IOC; `.` flattens reduce-only; `[`/`]` cycle
+watchlists (each list is one venue's universe — with Hyperliquid configured
+the breadth venue's list is first); `esc` clears. **1 lot = RSX_TERM_LOT
+notional × the symbol's multiplier** (`RSX_TERM_WATCH id:name:code:multPct`)
+— a consistent risk unit across symbols. No passive quoting here; that is
+the BOOK's job.
+
+### NEWS — sector map + feed
 
 ```
-│        ░░▒▒▓░░       ░░▒▓▓░░
-│        ░░▒▒▓░░      ◆░░▒▓▓░░   ← older prints, dimmer
-│        ░░▒▒▓░░     ◆◆░░▒▓▓░░
-│        ░░▒▒▓░░    ◆◆◆░▒▓▓░░   ← newest bin, brightest
+ NEWS  rsx  RO off  PO off  size 1.0000 [1]  list rsx
+ majors   SOL    +0.45%   BTC    -0.12%
+ meme     PENGU  +2.10%
+ ── news feed ── / search · j/k select · enter → assistant ──
+▸ 03:33:20 ‼ Exchange halts withdrawals
+  01:46:40 ► Binance lists SOL pair [SOLUSDT]
 ```
 
-**Your fill** — after a fill the footer flips from flat to a live position and
-mid-marked uPnL (the map itself is unchanged — your resting orders are a DOM
-cue, deferred this prototype pass):
+Tiles = the breadth venue's symbols grouped by sector, coloured by move vs
+the session reference on a diverging bid/ask-hue scale (colorblind theme
+swaps it to blue/orange). Feed = Tree of Alpha (`RSX_TERM_NEWS=1`; off =
+labelled off, never an error), severity-graded, `/`-searchable (search
+captures every key — `q` types, not quits). `enter` hands the selected
+headline to the assistant; a symbol's **letter** dives straight into its
+BOOK.
+
+### LLM — the assistant pane
 
 ```
-bid 0.009999 × 0.0005   ask 0.010001 × 0.0006   spread 2
-pos LONG +0.0014 @ 0.009998   ~uPnL +0.000140
-⚡ RTT 10.4 µs   p50 9.9 µs · p99 10.4 µs · best 9.0 µs
+  ASSISTANT  (no model wired — the context below is exactly what one will receive)
+  ── context handed off ─────────────────────────
+  market   rsx · SOL-PERP  at 05:49:33
+  headline ► Binance lists SOL pair
+  book     mid 150.0000  (1 bid / 1 ask levels frozen)
+  asks 150.0050×35.000000
+  bids 149.9950×40.000000
+  ── assistant reply ────────────────────────────
+  ~ placeholder — wiring an LLM is a follow-up; nothing here is generated
 ```
+
+The model is a PLACEHOLDER; the handoff is REAL: `news.AssistantContext`
+{venue, symbol, timestamp, headline, deep-copied book snapshot, mid} — the
+exact contract a wired model receives. `esc` returns to NEWS.
+
+### Venues
+
+`RSX_TERM_VENUE=rsx` (default, no external dials) · `hyperliquid`
+(standalone read-only terminal over Hyperliquid market data — all four
+screens work; orders are honestly BLOCKED until HL signing lands) · `both`
+(RSX primary + HL breadth; PAIR/NEWS default to the HL universe, `F9`
+switches the BOOK's venue). HL coins: `RSX_TERM_HL_COINS` (default curated
+24, `all` for the whole universe).
