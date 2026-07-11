@@ -1,0 +1,2 @@
+# Compiled maker binary (built by `make maker` / `go build -o rsx-maker .`)
+/rsx-maker
