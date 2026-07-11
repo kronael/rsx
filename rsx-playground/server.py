@@ -282,18 +282,40 @@ async def _md_ws_subscriber():
                             bid_qty = int(arr[2])
                             ask_px = int(arr[4])
                             ask_qty = int(arr[5])
-                            # Only update BBO if no depth snap yet
-                            if sid not in _book_snap:
-                                snap: dict = {"bids": [], "asks": []}
-                                if bid_px:
-                                    snap["bids"] = [
-                                        {"px": bid_px, "qty": bid_qty}
-                                    ]
-                                if ask_px:
-                                    snap["asks"] = [
-                                        {"px": ask_px, "qty": ask_qty}
-                                    ]
-                                _book_snap[sid] = snap
+                            # The BBO is the AUTHORITATIVE touch. Depth deltas
+                            # drift (a dropped 'D' leaves a stale level that
+                            # crosses), so reconcile every BBO: drop levels that
+                            # cross the real touch, then upsert the top of each
+                            # side. Deeper levels still come from the deltas.
+                            snap = _book_snap.setdefault(
+                                sid, {"bids": [], "asks": []})
+                            if ask_px:
+                                snap["bids"] = [
+                                    l for l in snap["bids"]
+                                    if l["px"] < ask_px
+                                ]
+                            if bid_px:
+                                snap["asks"] = [
+                                    l for l in snap["asks"]
+                                    if l["px"] > bid_px
+                                ]
+                            for key, px, qty, desc in (
+                                ("bids", bid_px, bid_qty, True),
+                                ("asks", ask_px, ask_qty, False),
+                            ):
+                                if not px:
+                                    continue
+                                lvl = next(
+                                    (l for l in snap[key]
+                                     if l["px"] == px), None)
+                                if lvl:
+                                    lvl["qty"] = qty
+                                else:
+                                    snap[key].append(
+                                        {"px": px, "qty": qty})
+                                snap[key].sort(
+                                    key=lambda l: -l["px"] if desc
+                                    else l["px"])
                         # Trade: {"T":[sym,px,qty,taker_side,
                         #              ts_ns,seq]}
                         elif "T" in frame:
