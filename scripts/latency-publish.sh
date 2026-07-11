@@ -1,111 +1,89 @@
 #!/usr/bin/env bash
-#
-# scripts/latency-publish.sh — drive the F1 latency probe
-# under a fixed N-orders load and write measured p50/p99 to
-# bench-baseline.json so the README "What's measured" table
-# can stop calling the GW->ME->GW number a "design budget."
-#
-# Pre-conditions:
-#   - rsx-playground/playground start-all is up (gateway,
-#     risk, ME, marketdata, mark, recorder all healthy)
-#   - market_maker.py is running (so probe orders match
-#     against resting liquidity)
-#   - The local test JWT secret is set in env (the playground
-#     mints one on `start-all`)
-#
-# Usage:
-#   make latency-publish               # default N=2000
-#   N=10000 make latency-publish       # heavier load
-#
-# Output:
-#   - prints p50/p99/count to stdout
-#   - merges {"e2e_us": {"p50": ..., "p99": ..., "n": ...,
-#     "ts": ...}} into bench-baseline.json (creates if absent)
-#
-# This script is the founder-runnable companion to commit
-# `bded133` (F1 probe shipped) and closes the audit's T2.3
-# "the <50us claim is unmeasured" gap. Once `bench-baseline.json`
-# carries an `e2e_us` block, README §"What's measured" can
-# move that line out of the "design budget" column.
-
+# Publish sustained external WebSocket latency using the existing stress client.
 set -euo pipefail
-
-N=${N:-2000}
-ENDPOINT=${ENDPOINT:-http://127.0.0.1:49171}
-SYMBOL=${SYMBOL:-10}
-BASELINE=${BASELINE:-bench-baseline.json}
-WARMUP=${WARMUP:-50}
-
 cd "$(dirname "$0")/.."
 
-echo "[latency-publish] endpoint=${ENDPOINT} symbol=${SYMBOL} N=${N} warmup=${WARMUP}"
+BASELINE=${BASELINE:-bench-baseline.json}
+REPORT_DIR=${REPORT_DIR:-rsx-playground/tmp/bench}
+RATE=${RATE:-1000}
+N=${N:-2000}
+DURATION=${DURATION:-$(( (N + RATE - 1) / RATE ))}
+MIN_SAMPLES=${MIN_SAMPLES:-$N}
+MIN_RATIO=${MIN_RATIO:-0.95}
+USERS=${USERS:-10}
+GW_URL=${RSX_STRESS_GW_URL:-ws://127.0.0.1:8088}
+VALIDATE=""
+[ "${1:-}" != "--validate-report" ] || { [ "$#" -eq 2 ] || exit 2; VALIDATE=$2; }
+[ "$#" -eq 0 ] || [ -n "$VALIDATE" ] || { echo "unknown argument: $1" >&2; exit 2; }
+mkdir -p "$REPORT_DIR"
 
-# Health check first — fail fast if the cluster isn't up.
-if ! curl -fsS -m 2 "${ENDPOINT}/healthz" >/dev/null 2>&1; then
-    echo "[latency-publish] cluster not reachable at ${ENDPOINT}" >&2
-    echo "[latency-publish] start it with: ./rsx-playground/playground start-all" >&2
-    exit 2
-fi
-
-# Drain any stale latencies from the in-memory ring so the
-# percentiles we read back reflect this run only.
-curl -fsS -X POST "${ENDPOINT}/api/latency/reset" >/dev/null 2>&1 \
-    || echo "[latency-publish] /api/latency/reset not present, continuing"
-
-# Warmup: discard the first WARMUP probes (cold caches, slow path).
-echo "[latency-publish] warmup ${WARMUP} probes..."
-for _ in $(seq 1 "$WARMUP"); do
-    curl -fsS -X POST "${ENDPOINT}/api/latency-probe?symbol_id=${SYMBOL}" \
-        >/dev/null 2>&1 || true
-done
-curl -fsS -X POST "${ENDPOINT}/api/latency/reset" >/dev/null 2>&1 || true
-
-# Measurement run.
-echo "[latency-publish] measurement ${N} probes..."
-ok=0
-fail=0
-for i in $(seq 1 "$N"); do
-    if curl -fsS -X POST "${ENDPOINT}/api/latency-probe?symbol_id=${SYMBOL}" \
-        >/dev/null 2>&1; then
-        ok=$((ok + 1))
-    else
-        fail=$((fail + 1))
-    fi
-done
-echo "[latency-publish] probe results: ok=${ok} fail=${fail}"
-
-if [ "$ok" -eq 0 ]; then
-    echo "[latency-publish] all probes failed; aborting" >&2
-    exit 3
-fi
-
-# Read percentiles from the server's own e2e_latencies ring.
-RAW=$(curl -fsS "${ENDPOINT}/api/latency")
-P50=$(echo "$RAW" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('e2e',{}).get('p50','null'))")
-P99=$(echo "$RAW" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('e2e',{}).get('p99','null'))")
-COUNT=$(echo "$RAW" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('e2e',{}).get('count',0))")
-
-echo "[latency-publish] e2e p50=${P50}us p99=${P99}us count=${COUNT}"
-
-# Merge into bench-baseline.json without clobbering other keys.
-python3 - "$BASELINE" "$P50" "$P99" "$COUNT" <<'PYEOF'
-import json, sys, os, time
-path, p50, p99, count = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-data = {}
-if os.path.exists(path):
-    with open(path) as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError:
-            data = {}
-data["e2e_us"] = {
-    "p50": float(p50) if p50 != "null" else None,
-    "p99": float(p99) if p99 != "null" else None,
-    "n": int(count),
-    "ts": int(time.time()),
+validate() {
+python3 - "$1" "$2" "$3" <<'PY'
+import json, math, sys
+path, need, ratio = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
+try: d=json.load(open(path)); m=d['metrics']; lat=d['latency_us']
+except (OSError,json.JSONDecodeError,KeyError,TypeError) as e:
+ print(f'invalid measurement: malformed report: {e}',file=sys.stderr); raise SystemExit(1)
+bad=[]
+def count(k, src=m):
+ v=src.get(k)
+ if not isinstance(v,int) or isinstance(v,bool) or v<0: bad.append(f'invalid {k}'); return 0
+ return v
+offered,submitted=count('offered'),count('submitted'); accepted,rejected=count('accepted'),count('rejected')
+completed,timed_out=count('completed'),count('timed_out'); pending,errors=count('pending'),count('errors')
+send_errors=count('send_errors'); samples=count('samples',lat)
+if offered != submitted+send_errors: bad.append('offered accounting is open')
+if submitted != completed+timed_out+pending: bad.append('order accounting is open')
+if completed != accepted+rejected+errors: bad.append('response accounting is open')
+if pending: bad.append('pending outcomes remain')
+terminal=(completed+timed_out)/submitted if submitted else 0
+achieved=m.get('achieved_rate'); target=d.get('config',{}).get('target_rate')
+throughput=achieved/target if isinstance(achieved,(int,float)) and target else 0
+if terminal < ratio: bad.append('terminal ratio below threshold')
+if throughput < ratio: bad.append('achieved/offered ratio below threshold')
+if accepted<=0 or samples<=0: bad.append('zero accepted latency samples')
+if samples != accepted: bad.append('samples do not equal accepted')
+if samples < need: bad.append(f'insufficient samples ({samples} < {need})')
+for k in ('p50','p95','p99','p99_9','max'):
+ v=lat.get(k)
+ if not isinstance(v,(int,float)) or isinstance(v,bool) or not math.isfinite(v) or v<0: bad.append(f'{k} unavailable')
+nonperf=[x for x in d.get('failures',[]) if not str(x).startswith('p99=')]
+if nonperf: bad.append('stress correctness failed: '+'; '.join(nonperf))
+if bad: print('invalid measurement: '+'; '.join(dict.fromkeys(bad)),file=sys.stderr); raise SystemExit(1)
+print(json.dumps({'valid':True,'terminal_ratio':terminal,'throughput_ratio':throughput,'report':d}))
+PY
 }
-with open(path, "w") as f:
-    json.dump(data, f, indent=2, sort_keys=True)
-    f.write("\n")
-print(f"[latency-publish] merged into {path}")
-PYEOF
+
+if [ -n "$VALIDATE" ]; then validate "$VALIDATE" "$MIN_SAMPLES" "$MIN_RATIO" >/dev/null; exit; fi
+
+curl -fsS -m 2 http://127.0.0.1:49171/healthz >/dev/null || { echo '[latency-publish] playground unhealthy' >&2; exit 2; }
+curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
+ -H 'x-confirm: yes' >/dev/null || { echo '[latency-publish] maker unavailable' >&2; exit 2; }
+before=$(find "$REPORT_DIR" -name 'stress-*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2- || true)
+set +e
+RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$RATE" RSX_STRESS_DURATION="$DURATION" \
+ RSX_STRESS_USERS="$USERS" RSX_STRESS_TARGET_P99=9223372036854775807 \
+ RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py
+rc=$?
+set -e
+report=$(find "$REPORT_DIR" -name 'stress-*.json' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+[ -n "$report" ] && [ "$report" != "$before" ] || { echo '[latency-publish] no new report' >&2; exit 1; }
+[ "$rc" -eq 0 ] || echo "[latency-publish] stress exit=$rc; checking validity" >&2
+row=$(validate "$report" "$MIN_SAMPLES" "$MIN_RATIO")
+
+# Invalid runs exit above, before the atomic baseline update.
+python3 - "$BASELINE" "$row" <<'PY'
+import json,os,sys,tempfile,time
+path,row=sys.argv[1],json.loads(sys.argv[2]); r=row['report']; m=r['metrics']; l=r['latency_us']
+try: data=json.load(open(path))
+except (OSError,json.JSONDecodeError): data={}
+data['e2e_us']={'p50':l['p50'],'p95':l['p95'],'p99':l['p99'],'p99_9':l['p99_9'],'max':l['max'],
+ 'n':l['samples'],'accepted':m['accepted'],'accepted_throughput':m['accepted']/m['elapsed_sec'],
+ 'achieved_rate':m['achieved_rate'],'offered':m['offered'],'submitted':m['submitted'],
+ 'rejected':m['rejected'],'timed_out':m['timed_out'],'pending':m['pending'],'errors':m['errors'],
+ 'send_errors':m['send_errors'],'terminal_ratio':row['terminal_ratio'],'throughput_ratio':row['throughput_ratio'],
+ 'environment':'shared-host','valid':True,'timestamp_legs':'not emitted (spec 59 planned)','ts':int(time.time())}
+fd,tmp=tempfile.mkstemp(prefix='.bench-baseline.',dir=os.path.dirname(path) or '.',text=True)
+with os.fdopen(fd,'w') as f: json.dump(data,f,indent=2,sort_keys=True); f.write('\n')
+os.replace(tmp,path); print(f'[latency-publish] published valid result to {path}')
+PY

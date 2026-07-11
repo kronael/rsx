@@ -75,15 +75,15 @@ make bench-gate   # diff current run against baseline
 ```
 
 **`scripts/bench-gate-e2e.sh` — E2E latency gate.**
-Drives `latency-publish.sh` under a small N, reads the
-resulting `e2e_us.p50` from `bench-baseline.json`, and
+Drives `latency-publish.sh`, rejects invalid accounting or missing samples,
+then reads `e2e_us.p99` from `bench-baseline.json` and
 compares against a **sealed** reference in
 `bench-reference.json`. Requires the cluster to be live
 (`./rsx-playground/playground start-all`).
 
 ```
 make bench-gate-e2e-save  # snapshot current e2e_us as reference
-make bench-gate-e2e       # fail if p50 regresses >10%
+make bench-gate-e2e       # fail if p99 regresses >10%
 ```
 
 `bench-baseline.json` is rolling — `make latency-publish`
@@ -91,6 +91,16 @@ rewrites the `e2e_us` block on every run. `bench-reference.json`
 only changes when the operator explicitly accepts a new
 floor with `make bench-gate-e2e-save`. This split prevents
 the silent baseline-creep that would hide regressions.
+
+The publisher uses the corrected open-loop stress client against the external
+gateway WebSocket route. It requires closed send and response accounting, no
+pending outcomes, at least 95% terminal and achieved/offered ratios, and a
+configurable accepted-sample floor. It records p50/p95/p99/p99.9/max,
+accepted throughput, and loss counters, and labels the result `shared-host`.
+Invalid runs cannot update either baseline or reference; performance
+regression and measurement invalidity are reported separately. `RATE`,
+`DURATION`, `N`, and `MIN_SAMPLES` configure practical local or staircase
+steps without introducing a second load runner.
 
 Implementation: pure bash + jq, no Python or npm. Reads
 `target/criterion/<name>/new/estimates.json`, extracts
