@@ -411,7 +411,6 @@ func (m Model) handlePlace() (tea.Model, tea.Cmd) {
 // handleCross fires an aggressive IOC of preset sel at the far touch — the
 // hit/lift keystroke (shift+1-5). Buy crosses the best ask, sell the best bid.
 func (m Model) handleCross(sel int) (tea.Model, tea.Cmd) {
-	m.sizeSel = clamp(sel, 0, 4)
 	mk := m.mkt()
 	var px int64
 	if m.side == wire.Buy {
@@ -429,6 +428,9 @@ func (m Model) handleCross(sel int) (tea.Model, tea.Cmd) {
 		}
 		px = b.Px
 	}
+	// Set the size preset only once the cross will actually fire — a rejected
+	// keystroke (no liquidity on the far side) must not mutate sizeSel.
+	m.sizeSel = clamp(sel, 0, 4)
 	return m.fire(m.activeVenue, wire.OrderReq{Symbol: m.active, Side: m.side, Px: px, Qty: m.sizePreset(), Tif: wire.Ioc})
 }
 
