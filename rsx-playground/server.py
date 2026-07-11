@@ -5777,7 +5777,13 @@ async def api_verify_run():
 @app.post("/api/verify/run-json")
 async def api_verify_run_json():
     checks = await _run_invariant_checks()
-    return JSONResponse({"checks": checks})
+    failed = [check for check in checks if check["status"] == "fail"]
+    return JSONResponse({
+        "checks": checks,
+        "ready": not failed,
+        "failed": len(failed),
+        "run_at_ms": int(verify_last_run * 1000),
+    })
 
 
 @app.post("/api/orders/{cid}/cancel")

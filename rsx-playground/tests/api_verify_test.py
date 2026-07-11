@@ -3,6 +3,8 @@
 Run with: cd rsx-playground && uv run pytest tests/api_verify_test.py -v
 """
 
+import time
+
 import pytest
 from test_utils import assert_verify_result_structure
 
@@ -21,6 +23,29 @@ def test_verify_run_executes_checks(client):
     """Verify run executes all checks."""
     resp = client.post("/api/verify/run")
     assert resp.status_code == 200
+
+
+def test_verify_json_reports_readiness_and_run_timestamp(client):
+    """Machine consumers can gate recovery on this exact Verify run."""
+    before_ms = time.time_ns() // 1_000_000
+    resp = client.post("/api/verify/run-json")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["ready"], bool)
+    assert body["failed"] == sum(
+        check["status"] == "fail" for check in body["checks"]
+    )
+    assert body["ready"] is (body["failed"] == 0)
+    assert body["run_at_ms"] >= before_ms
+
+
+def test_verify_json_not_ready_when_a_check_fails(client):
+    """A failed invariant cannot be represented as recovery-ready."""
+    body = client.post("/api/verify/run-json").json()
+
+    assert body["failed"] > 0
+    assert body["ready"] is False
 
 
 def test_verify_results_stored(client):
