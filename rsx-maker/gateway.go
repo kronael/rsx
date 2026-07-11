@@ -57,25 +57,6 @@ func writeJSON(ctx context.Context, conn *websocket.Conn, v any) error {
 	return conn.Write(ctx, websocket.MessageText, data)
 }
 
-// drainFor reads and discards gateway frames until the deadline. The
-// maker does not track resting order ids, so acks/errors are drained
-// (the every-cycle cancel-replace keeps the active set honest). E[1005]
-// ("order not found") is expected churn — a quote filled between
-// cycles is already gone — and is never surfaced here.
-//
-// MUST be the LAST operation on conn: coder/websocket closes the whole
-// connection when a Read's context is cancelled, so hitting the deadline
-// here closes conn. Never drain before a write on the same conn.
-func drainFor(ctx context.Context, conn *websocket.Conn, d time.Duration) {
-	deadline, cancel := context.WithTimeout(ctx, d)
-	defer cancel()
-	for {
-		if _, _, err := conn.Read(deadline); err != nil {
-			return
-		}
-	}
-}
-
 // mintJWT builds an HS256 gateway token. Claims match the contract the
 // gateway enforces (rsx-gateway/src/jwt.rs): aud=rsx-gateway,
 // iss=rsx-auth, HS256 over the shared secret, plus a fresh jti so the
