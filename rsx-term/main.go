@@ -30,8 +30,10 @@ const demoTick = 30 * time.Millisecond
 
 func main() {
 	// RSX_GW_URL: private (order) gateway URL. The literal "mock" runs the
-	// offline demo with no network. Default is the dev gateway WS.
-	gwURL := envOr("RSX_GW_URL", "ws://127.0.0.1:8080")
+	// offline demo with no network. Default is the dev gateway WS (:8088 —
+	// the playground runs the RSX gateway there since arizuko's routd claims
+	// :8080 in the combined demo).
+	gwURL := envOr("RSX_GW_URL", "ws://127.0.0.1:8088")
 	// RSX_MD_URL: public marketdata URL.
 	mdURL := envOr("RSX_MD_URL", "ws://127.0.0.1:8180")
 	// RSX_TUI_USER: the trader's u32 user id.

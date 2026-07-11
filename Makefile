@@ -20,9 +20,9 @@ prepare: ## set up local dev env (uv venv + playwright chromium)
 	UV_CACHE_DIR=$(CURDIR)/tmp/uv-cache \
 		cd rsx-playground && .venv/bin/playwright install --with-deps chromium
 
-demo: ## run the minimal reproducible demo
+demo: ## turnkey demo: 3 tokens (PENGU/SOL/BTC) trading live + maker
 	./rsx-playground/playground doctor
-	./rsx-playground/playground demo minimal
+	./rsx-playground/playground demo trio
 
 stop: ## stop all RSX processes (tear down demo/local cluster)
 	./rsx-playground/playground stop-all
@@ -294,7 +294,7 @@ term: ## disabled here — production trading is manual-only, see comment
 	@exit 1
 
 term-local: ## trade against your local cluster (run 'make local' first)
-	cd rsx-term && RSX_GW_URL=ws://127.0.0.1:8080 RSX_MD_URL=ws://127.0.0.1:8180 go run .
+	cd rsx-term && RSX_GW_URL=ws://127.0.0.1:8088 RSX_MD_URL=ws://127.0.0.1:8180 go run .
 
 term-demo: ## the Go terminal offline, mock feed (no cluster needed)
 	cd rsx-term && RSX_GW_URL=mock go run .
