@@ -110,11 +110,14 @@ func TestNewsSelectionAndHandoff(t *testing.T) {
 		t.Fatalf("handoff must package a context")
 	}
 	ctx := *m.assistCtx
+	if ctx.Origin != news.OriginNews {
+		t.Fatalf("a headline handoff should tag OriginNews, got %v", ctx.Origin)
+	}
 	if ctx.Symbol != "SOL-PERP" || ctx.Venue != "rsx" {
 		t.Fatalf("headline should link to SOL's market: %+v", ctx)
 	}
-	if ctx.Headline.Text != "Binance lists SOL pair" {
-		t.Fatalf("wrong headline packaged: %q", ctx.Headline.Text)
+	if ctx.Headline == nil || ctx.Headline.Text != "Binance lists SOL pair" {
+		t.Fatalf("wrong headline packaged: %+v", ctx.Headline)
 	}
 	if len(ctx.Bids) != 1 || ctx.Bids[0].Px != 1_499_950 {
 		t.Fatalf("book snapshot not frozen into the context: %+v", ctx.Bids)
