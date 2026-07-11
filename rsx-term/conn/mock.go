@@ -55,10 +55,11 @@ func (m *MockGateway) Cancel(cid string) error {
 // demoSymbolID is the symbol the scripted feed trades (playground PENGU-PERP).
 const demoSymbolID uint32 = 10
 
-// DemoPeerID is the offline demo's second symbol ("WIF-PERP"), so the
-// streaming pair view has a second row to arm. The DOM view ignores its
-// frames (they carry a non-primary symbol id).
-const DemoPeerID uint32 = 11
+// DemoPeerID is the offline demo's second symbol — SOL-PERP, matching the
+// exchange config (id 3, price_dec 4, qty_dec 6, tick 1) — so the streaming
+// pair view has a second row to arm. The DOM view ignores its frames (they
+// carry a non-primary symbol id).
+const DemoPeerID uint32 = 3
 
 // demoOid is the gateway-assigned oid the scripted own-order lifecycle uses.
 const demoOid uint64 = 7
@@ -108,19 +109,21 @@ func DemoScript() []any {
 		feed.Latency{Sample: book.Sample{TotalNs: 9_710, NetNs: 2_300, InternalNs: 7_100, EngineNs: 310}},
 		// The demo peer symbol (streaming pair view breadth; the DOM view
 		// ignores non-primary symbol ids).
+		// SOL trades near $150: raw px at price_dec 4 (150.0000 = 1_500_000),
+		// raw qty at qty_dec 6.
 		wire.Snapshot{
 			SymbolID: DemoPeerID,
 			Bids: []wire.Level{
-				{Px: 21_000, Qty: 40, Count: 2},
-				{Px: 20_995, Qty: 90, Count: 5},
+				{Px: 1_499_950, Qty: 40_000_000, Count: 2},
+				{Px: 1_499_900, Qty: 90_000_000, Count: 5},
 			},
 			Asks: []wire.Level{
-				{Px: 21_010, Qty: 35, Count: 1},
-				{Px: 21_015, Qty: 60, Count: 4},
+				{Px: 1_500_050, Qty: 35_000_000, Count: 1},
+				{Px: 1_500_100, Qty: 60_000_000, Count: 4},
 			},
 			Seq: 1,
 		},
-		wire.MdTrade{SymbolID: DemoPeerID, Px: 21_010, Qty: 12, TakerSide: 0, Seq: 2},
-		wire.MdTrade{SymbolID: DemoPeerID, Px: 21_000, Qty: 7, TakerSide: 1, Seq: 3},
+		wire.MdTrade{SymbolID: DemoPeerID, Px: 1_500_050, Qty: 12_000_000, TakerSide: 0, Seq: 2},
+		wire.MdTrade{SymbolID: DemoPeerID, Px: 1_499_950, Qty: 7_000_000, TakerSide: 1, Seq: 3},
 	}
 }
