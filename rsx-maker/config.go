@@ -24,6 +24,7 @@ type Config struct {
 	Refresh      time.Duration
 	MidOverride  int64
 	HasMid       bool
+	JitterBps    int64
 }
 
 // loadConfig reads the environment into a Config, applying the same
@@ -40,6 +41,7 @@ func loadConfig() Config {
 		SpreadBps:    envInt("RSX_MAKER_SPREAD_BPS", 10),
 		QtyPerLevel:  envInt("RSX_MAKER_QTY", 10),
 		Levels:       int(envInt("RSX_MAKER_LEVELS", 5)),
+		JitterBps:    envInt("RSX_MAKER_JITTER_BPS", 0),
 		Refresh:      time.Duration(envInt("RSX_MAKER_REFRESH_MS", 2000)) * time.Millisecond,
 	}
 	if v := strings.TrimSpace(os.Getenv("RSX_MAKER_MID_OVERRIDE")); v != "" {
