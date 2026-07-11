@@ -48,8 +48,12 @@ func main() {
 	// RSX_TERM_STREAM=1 selects the streaming "text Bookmap" heatmap view;
 	// unset (the default) keeps the classic DOM three-column view.
 	stream := os.Getenv("RSX_TERM_STREAM") == "1"
-	// RSX_TERM_VENUE: rsx (default, no external calls) | hyperliquid
-	// (standalone read-only HL terminal) | both (RSX primary + HL breadth).
+	// RSX_TERM_VENUE selects the market-data venue(s):
+	//   rsx (default, no external calls) | hyperliquid | phoenix
+	//     — a standalone read-only terminal over that one venue's feed;
+	//   both (RSX primary + HL) | all (RSX + HL + Phoenix) | a comma list
+	//     ("rsx,hyperliquid", "rsx,phoenix", …) — RSX primary plus the named
+	//     read-only venues riding alongside.
 	venueSel := envOr("RSX_TERM_VENUE", "rsx")
 
 	if venueSel == "hyperliquid" {
@@ -59,15 +63,28 @@ func main() {
 		}
 		return
 	}
+	if venueSel == "phoenix" {
+		if err := runPhoenix(); err != nil {
+			fmt.Fprintln(os.Stderr, "rsx-term:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	wantHL, wantPhx := selectedVenues(venueSel)
 	var hlCfg *ui.VenueConfig
 	var hl *conn.HL
-	if venueSel == "both" || venueSel == "rsx,hyperliquid" {
+	if wantHL {
 		hlCfg, hl = hlVenue()
+	}
+	var phxCfg *ui.VenueConfig
+	var phx *conn.Phoenix
+	if wantPhx {
+		phxCfg, phx = phxVenue()
 	}
 
 	if gwURL == "mock" {
 		priceDec, qtyDec, tick := displayConfig(nil, symbolID)
-		runMock(symbolID, priceDec, qtyDec, tick, stream, hlCfg, hl)
+		runMock(symbolID, priceDec, qtyDec, tick, stream, hlCfg, hl, phxCfg, phx)
 		return
 	}
 	symbols := fetchSymbolList(gwURL)
@@ -86,11 +103,34 @@ func main() {
 		instruments: watchInstruments(symbols, symbolID, priceDec, qtyDec, tick, stream),
 		hlCfg:       hlCfg,
 		hl:          hl,
+		phxCfg:      phxCfg,
+		phx:         phx,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
 		os.Exit(1)
 	}
+}
+
+// selectedVenues resolves which read-only venues ride alongside the RSX
+// primary for a multi-venue RSX_TERM_VENUE. "both" = HL (legacy alias),
+// "all" = HL + Phoenix, otherwise a comma list naming each venue.
+func selectedVenues(sel string) (hl, phoenix bool) {
+	switch sel {
+	case "both":
+		return true, false
+	case "all":
+		return true, true
+	}
+	for _, part := range strings.Split(sel, ",") {
+		switch strings.TrimSpace(part) {
+		case "hyperliquid":
+			hl = true
+		case "phoenix":
+			phoenix = true
+		}
+	}
+	return hl, phoenix
 }
 
 // hlCoins is the watched Hyperliquid coin set: RSX_TERM_HL_COINS (comma list,
@@ -135,6 +175,53 @@ func hlInstruments(hl *conn.HL) []ui.Instrument {
 			QtyDec:   ins.QtyDec,
 			Tick:     1,
 			Sector:   conn.SectorOf(ins.Coin),
+		})
+	}
+	return out
+}
+
+// phxSymbols is the watched Phoenix symbol set: RSX_TERM_PHX_SYMBOLS (comma
+// list, "all" = every market) or the curated default.
+func phxSymbols() []string {
+	raw := os.Getenv("RSX_TERM_PHX_SYMBOLS")
+	if raw == "all" {
+		return nil
+	}
+	if raw == "" {
+		return conn.DefaultPhoenixSymbols
+	}
+	return strings.Split(raw, ",")
+}
+
+// phxVenue fetches the Phoenix markets and builds the extra read-only venue +
+// its source. A fetch failure degrades to no Phoenix venue (warned), never
+// blocks the RSX terminal (mirrors hlVenue).
+func phxVenue() (*ui.VenueConfig, *conn.Phoenix) {
+	markets, err := conn.FetchPhxMarkets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rsx-term: phoenix markets fetch failed (%v); continuing without it\n", err)
+		return nil, nil
+	}
+	phx := conn.NewPhoenix(markets, phxSymbols())
+	return &ui.VenueConfig{
+		Name:        conn.PhoenixVenueName,
+		Code:        "p",
+		Instruments: phxInstruments(phx),
+		Sub:         nil, // read-only: Phoenix orders settle on-chain (see conn/phoenix.go TODO)
+	}, phx
+}
+
+// phxInstruments maps the source's universe to UI instruments.
+func phxInstruments(phx *conn.Phoenix) []ui.Instrument {
+	out := make([]ui.Instrument, 0, len(phx.Instruments()))
+	for _, ins := range phx.Instruments() {
+		out = append(out, ui.Instrument{
+			ID:       ins.ID,
+			Name:     ins.Symbol,
+			PriceDec: ins.PriceDec,
+			QtyDec:   ins.QtyDec,
+			Tick:     1,
+			Sector:   conn.SectorOf(ins.Symbol),
 		})
 	}
 	return out
@@ -233,6 +320,50 @@ func runHL() error {
 	defer hl.Close()
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, hl.Events())
+	startAssist(p, assist)
+	_, err = p.Run()
+	return err
+}
+
+// runPhoenix is the standalone read-only Phoenix terminal: the whole app
+// (book/pair/news screens) over Phoenix market data, no RSX cluster needed.
+// Streaming is forced — the DOM view is an RSX order-entry screen. Mirrors
+// runHL.
+func runPhoenix() error {
+	markets, err := conn.FetchPhxMarkets()
+	if err != nil {
+		return fmt.Errorf("phoenix markets: %w", err)
+	}
+	phx := conn.NewPhoenix(markets, phxSymbols())
+	instruments := phxInstruments(phx)
+	if len(instruments) == 0 {
+		return fmt.Errorf("phoenix: no instruments after symbol filter")
+	}
+	first := instruments[0]
+	assist := assistSource()
+	model := ui.New(ui.Config{
+		Symbol:       first.Name,
+		SymbolID:     first.ID,
+		Endpoint:     "wss://perp-api.phoenix.trade/v1/ws",
+		MdEndpoint:   "wss://perp-api.phoenix.trade/v1/ws",
+		Venue:        conn.PhoenixVenueName,
+		Sub:          nil, // read-only (see conn/phoenix.go TODO)
+		PriceDec:     first.PriceDec,
+		QtyDec:       first.QtyDec,
+		Tick:         first.Tick,
+		Stream:       true,
+		Instruments:  instruments,
+		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
+		News:         newsSource(context.Background()),
+		Assist:       assist,
+		KeyOverrides: keyOverrides(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	phx.Start(ctx)
+	defer phx.Close()
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	go drainEvents(p, phx.Events())
 	startAssist(p, assist)
 	_, err = p.Run()
 	return err
@@ -354,7 +485,7 @@ func displayConfig(symbols []conn.SymbolConfig, symbolID uint32) (priceDec, qtyD
 // demo feed into the running program. Streaming mode watches the demo peer
 // symbol too, so the pair view has breadth offline; an optional HL venue
 // (RSX_TERM_VENUE=both) rides along exactly as on the live path.
-func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlCfg *ui.VenueConfig, hl *conn.HL) {
+func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlCfg *ui.VenueConfig, hl *conn.HL, phxCfg *ui.VenueConfig, phx *conn.Phoenix) {
 	mock := &conn.MockGateway{}
 	instruments := []ui.Instrument{
 		{ID: symbolID, Name: Symbol, PriceDec: priceDec, QtyDec: qtyDec, Tick: tick},
@@ -377,7 +508,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		Tick:         tick,
 		Stream:       stream,
 		Instruments:  instruments,
-		Venues:       extraVenues(hlCfg),
+		Venues:       extraVenues(hlCfg, phxCfg),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(context.Background()),
 		Assist:       assist,
@@ -386,6 +517,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
 	startHL(p, hl)
+	startPhoenix(p, phx)
 	startAssist(p, assist)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "rsx-term:", err)
@@ -393,12 +525,19 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 	}
 }
 
-// extraVenues lifts an optional venue into the Config slice.
-func extraVenues(hlCfg *ui.VenueConfig) []ui.VenueConfig {
-	if hlCfg == nil {
+// extraVenues lifts the optional read-only venues into the Config slice, in
+// order, skipping any that failed to build (nil).
+func extraVenues(cfgs ...*ui.VenueConfig) []ui.VenueConfig {
+	out := make([]ui.VenueConfig, 0, len(cfgs))
+	for _, c := range cfgs {
+		if c != nil {
+			out = append(out, *c)
+		}
+	}
+	if len(out) == 0 {
 		return nil
 	}
-	return []ui.VenueConfig{*hlCfg}
+	return out
 }
 
 // startHL launches the HL source and its event pump (no-op without one).
@@ -409,6 +548,16 @@ func startHL(p *tea.Program, hl *conn.HL) {
 	}
 	hl.Start(context.Background())
 	go drainEvents(p, hl.Events())
+}
+
+// startPhoenix launches the Phoenix source and its event pump (no-op without
+// one), mirroring startHL.
+func startPhoenix(p *tea.Program, phx *conn.Phoenix) {
+	if phx == nil {
+		return
+	}
+	phx.Start(context.Background())
+	go drainEvents(p, phx.Events())
 }
 
 // feedDemo replays the scripted offline demo into the running program, pacing
@@ -434,6 +583,8 @@ type liveConfig struct {
 	instruments []ui.Instrument
 	hlCfg       *ui.VenueConfig
 	hl          *conn.HL
+	phxCfg      *ui.VenueConfig
+	phx         *conn.Phoenix
 }
 
 // runLive builds a LiveGateway from cfg, connects both sockets, and runs
@@ -467,7 +618,7 @@ func runLive(cfg liveConfig) error {
 		Tick:         cfg.tick,
 		Stream:       cfg.stream,
 		Instruments:  cfg.instruments,
-		Venues:       extraVenues(cfg.hlCfg),
+		Venues:       extraVenues(cfg.hlCfg, cfg.phxCfg),
 		MaxNotional:  envI64("RSX_TERM_MAX_NOTIONAL", 0),
 		News:         newsSource(ctx),
 		Assist:       assist,
@@ -476,6 +627,7 @@ func runLive(cfg liveConfig) error {
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())
 	startHL(p, cfg.hl)
+	startPhoenix(p, cfg.phx)
 	startAssist(p, assist)
 	_, err := p.Run()
 	return err
