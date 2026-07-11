@@ -3,7 +3,9 @@
 Status: **partial**. The single-symbol perps terminal ships in code
 (`rsx-term`, Go / Bubble Tea): live order form, ladder, trade tape,
 derived position, and the speed strip render against both the offline mock
-and a live cluster. This spec is the **UX contract**: the perps screen in
+and a live cluster. A four-screen streaming terminal (BOOK heatmap / PAIR
+breadth / NEWS / LLM) ships behind `RSX_TERM_STREAM=1` — see
+[Streaming terminal (four screens)](#streaming-terminal-four-screens). This spec is the **UX contract**: the perps screen in
 full, a new-trader safety bar, and the multi-market
 vision (account · perps · options · structured derivatives · lending)
 with screen mockups. Fields that have no data source yet are labelled as
@@ -20,6 +22,7 @@ Companion specs: `49-webproto.md` (the wire the terminal speaks),
 - [Transport & data sources](#transport--data-sources)
 - [Palette](#palette)
 - [Perps terminal (the built screen)](#perps-terminal-the-built-screen)
+- [Streaming terminal (four screens)](#streaming-terminal-four-screens)
 - [New-trader safety requirements](#new-trader-safety-requirements)
 - [Multi-market vision](#multi-market-vision)
   - [Account Management](#account-management)
@@ -204,6 +207,60 @@ frame (`49`).
 | `c` | cancel resting order | near-term |
 | `F3` | trace HUD overlay | built |
 
+## Streaming terminal (four screens)
+
+Status: **built**, opt-in via `RSX_TERM_STREAM=1` (the DOM screen above
+stays the default; promoting streaming is a one-line default flip in
+`main.go`, left to the founder). Full catalogue with frames:
+`rsx-term/SCREENS.md`; encoding language + glyph legend:
+`rsx-term/VISUALS.md`.
+
+An altitude ladder, one keypress apart (`tab` cycles):
+
+| screen | altitude | for |
+|---|---|---|
+| BOOK | depth, one symbol | quoting / market-making on a "text Bookmap" heatmap |
+| PAIR | breadth, many symbols | aggressive directional lots, chase/hit/lift |
+| NEWS | market context | sector map (diverging move tiles) + Tree of Alpha feed |
+| LLM | research | assistant pane fed by a real context handoff |
+
+Design decisions (founder-set, implemented):
+
+- **BOOK is a multi-resolution heatmap.** Vertical = log-time: a NOW row
+  repainted every frame, ~100ms live rows, then far rows on a fixed
+  schedule (10s/60s/120s/300s/600s/hours) holding time-weighted
+  liquidity profiles of the whole book. Horizontal = a mid-centred price
+  fisheye (1 tick/cell at the touch, deep levels aggregated to the
+  edges). Resting size renders on ONE sequential colour ramp (side is
+  position, never hue) against a stable rise-fast/decay-slow reference;
+  order count is the ░▒▓█ density glyph; executed trades are a co-equal
+  overlay (aggressor hue, ○◆●■ magnitude) plus a tape rail; level
+  persistence (≥30s, client L2 proxy behind `book.AgeSource`) marks ▚ —
+  an engine order-age feed can replace the proxy with no UI change.
+- **Game order entry.** Single-keypress verbs (side, size presets, price
+  cursor, `f` place, `d` cancel, `⇧1-5` cross) — no two-enter confirm in
+  the streaming terminal; the qty cap and a notional ceiling
+  (`RSX_TERM_MAX_NOTIONAL`) hard-block instead, and the persistent
+  RO/PO/armed state is always on the mode line.
+- **PAIR trades in lots.** 1 lot = `RSX_TERM_LOT` quote notional × a
+  per-symbol multiplier — a consistent risk unit; letter-armed rows,
+  vim-count × `b`/`s` market IOC, `.` reduce-only flatten. No depth, no
+  passive quoting (BOOK's job).
+- **Venues are a seam.** `feed.VenueMsg`-tagged sources fold into
+  per-venue markets; `RSX_TERM_VENUE=hyperliquid` runs the whole terminal
+  read-only over Hyperliquid l2Book/trades (standalone, no RSX cluster),
+  `both` adds HL breadth beside RSX with `F9` venue switching. Read-only
+  venues BLOCK orders with the reason (HL trading needs EIP-712 signing —
+  a documented TODO in `conn/hyperliquid.go`).
+- **News is progressive disclosure.** Severity-graded rail markers on the
+  BOOK (`·►►‼`), full feed + search in NEWS (`RSX_TERM_NEWS=1`, Tree of
+  Alpha WS, cached ring, never blocks startup/render), and `enter` hands
+  {venue, symbol, timestamp, headline, frozen book} —
+  `news.AssistantContext` — to the LLM pane (model itself: placeholder).
+- **One keymap table** (`ui/keymap.go`) drives dispatch, the per-screen
+  hint line, and the `?` overlay; verbs rebind via `RSX_TERM_KEYMAP`
+  (JSON), collisions rejected loudly.
+
 ## New-trader safety requirements
 
 A first-time trader must not lose money to a confusing screen. The terminal
@@ -361,6 +418,12 @@ Every terminal field and whether it has a source today.
 | options chain / greeks / IV | options ME + pricing | **needs server** |
 | sfdx basis / implied / payoff price | sfdx engine | **needs server (frontier)** |
 | lending APY / utilisation / health | lending engine | **needs server** |
+| streaming BOOK/PAIR/NEWS/LLM screens | rsx-term (`RSX_TERM_STREAM=1`) | **live (opt-in)** |
+| level persistence age (▚ mark) | client L2 proxy (`book.AgeSource`) | derived; true order age needs engine |
+| Hyperliquid market data | HL public WS (read-only venue) | **live (opt-in)** |
+| Hyperliquid trading | EIP-712 signing | **not wired** — blocked with reason |
+| news headlines / severity | Tree of Alpha WS (`RSX_TERM_NEWS=1`) | **live (opt-in)**; severity is a keyword heuristic |
+| assistant replies | LLM | **placeholder** — the context handoff is real |
 
 The pattern: **market data + execution are live; everything risk-,
 account-, and new-market-shaped is a labelled gap.** The terminal never

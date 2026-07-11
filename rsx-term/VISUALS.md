@@ -124,3 +124,73 @@ One screen, vertically stacked (`view.go` `View`):
 - Any client-derived number gets `StyleDerived` + `~`. No exceptions — this
   is what keeps the terminal honest about what's real vs estimated.
 - A missing server field is a dash, never a plausible-looking zero.
+
+## Streaming terminal encoding (RSX_TERM_STREAM=1)
+
+The four-screen streaming terminal keeps the palette and adds a dense cell
+language on the BOOK heatmap. Three principles govern it:
+
+1. **Colour is magnitude, position is side.** Resting liquidity renders on
+   ONE sequential ramp (page-bg → live hue, log-scaled) for BOTH sides —
+   bids sit left of the mid gap, asks right, so side never needs a hue.
+   The scale reference is STABLE (rises instantly to a new max, decays
+   slowly) — the map never flickers from per-frame renormalisation, and a
+   shown size is always a tier, never an exact number.
+2. **Shape is a channel of its own.** Each glyph means exactly one thing
+   (the table below); the whole vocabulary lives in one data table
+   (`ui/stream.go` `glyphs`) so a re-calibrated set drops in without
+   touching the renderer.
+3. **Trades are co-equal with the book.** Executed flow overlays resting
+   liquidity in the AGGRESSOR's hue (the bid/ask pair — free, since the
+   book no longer uses it) with its own magnitude ramp, plus a tape rail
+   listing the same prints.
+
+### Glyph legend
+
+| Glyph(s) | Channel | Meaning |
+|---|---|---|
+| ` ░▒▓█` | count density | resting ORDER COUNT: 0 · 1 (whale) · 2-3 · 4-7 · 8+ (wall) |
+| `▁▂▃▄▅▆▇█` | micro-bar | NOW-row exact live depth (even ~0.13/step ink ladder) |
+| `○◆●■` | trade magnitude | print size small → huge, aggressor-hued |
+| `▚` | persistence | long-standing liquidity (level held ≥ 30s; L2 proxy behind `book.AgeSource`) |
+| `◇` | own order | your resting order on the map (accent) |
+| `▲` `▼` | own order | your buy / sell on the ruler (side by shape) |
+| `┃` | cursor | the price cursor (game entry: `f` fires here) |
+| `┼` | touch ticks | the two touch columns on the ruler |
+| `─` | ruler | fisheye baseline |
+| `│` | rail idle | news rail with nothing in the window |
+| `·►►‼` | news severity | routine · tagged · market-moving (amber) · critical (red, bold) |
+| `┆` | tape rail | trade-feed separator |
+| `▸` | selection | list selection cursor (news feed; DOM orders panel) |
+
+Calibration (DejaVuSansMono ink coverage, from the glyph-bank rasterizer):
+`░▒▓█` = 0.22/0.56/0.86/1.00 — NOT an even ladder, so it only carries the
+coarse categorical count channel; fine intensity rides on colour. `○◆●■` =
+0.16/0.26/0.40/0.51 ascending-ink distinct shapes. Eighth-blocks are the
+one even family (linear bars). Braille is EXCLUDED — tofu in
+DejaVuSansMono. Re-run the rasterizer per deployment font before swapping
+the table.
+
+### Degradation tiers
+
+`RSX_TERM_COLOR=true|shade|plain` forces; else COLORTERM/TERM/NO_COLOR
+decide. `true`: full ramp background + all channels. `shade` (16-colour):
+glyph density carries size, trades keep aggressor hues, no ramp background.
+`plain`: glyphs only, zero escapes.
+
+### Diverging tiles (NEWS sector map)
+
+The one place a red↔green diverging scale exists: sector tiles coloured by
+move vs the session reference, |move| graded 10/50/200/800 bp. It reuses
+the bid/ask pair, so `RSX_TUI_THEME=colorblind` turns it blue↔orange
+automatically. A symbol with no mid yet is a muted `—` tile — never a
+fabricated 0.00%.
+
+### Mode line
+
+`⟦SCREEN⟧ venue RO PO size [n] list …` — the persistent answer to "what
+does my next keystroke do": screen tag (accent), active venue, the RO/PO
+modifier toggles (StyleArmed red when ON), armed size preset, active
+watchlist, plus the pair screen's ARMED symbol and any capture-mode prompt
+(x switcher, F9 venue picker). Orders fire on one key in the streaming
+terminal, so the mode line is a safety surface, not decoration.
