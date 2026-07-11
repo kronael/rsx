@@ -723,6 +723,15 @@ func (m Model) handleLLMInput(key string) (tea.Model, tea.Cmd) {
 		if text == "" || m.assistTopic == "" {
 			return m, nil
 		}
+		if m.assistBusy {
+			// One turn in flight per thread: a second POST on the same topic
+			// opens a second SSE subscription on the same webd hub key, which
+			// receives the FIRST turn's reply and round_done too — the reply
+			// duplicates and the second turn's reply lands after both
+			// connections closed, i.e. nowhere. The draft stays in the input.
+			m.status = "assistant is busy — wait for the reply"
+			return m, nil
+		}
 		m.assistLog = append(m.assistLog, assistLine{role: "you", text: text})
 		m.assistInput = ""
 		m.assistBusy = true
