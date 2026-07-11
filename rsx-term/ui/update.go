@@ -506,6 +506,10 @@ func (m Model) handlePairKey(act action, key string) (tea.Model, tea.Cmd) {
 		return m.handlePairTrade(wire.Buy)
 	case actPairSell:
 		return m.handlePairTrade(wire.Sell)
+	case actPairDown:
+		m.stepArm(+1)
+	case actPairUp:
+		m.stepArm(-1)
 	case actFlatten:
 		return m.handlePairFlatten()
 	default: // the fixed key classes: counts and symbol letters
@@ -523,6 +527,26 @@ func (m Model) handlePairKey(act action, key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// stepArm moves the armed selection through the active watchlist (the j/k
+// row cursor — the letter grammar's sequential sibling). Wraps; clears any
+// pending count so a hop never inherits a stale size.
+func (m *Model) stepArm(dir int) {
+	ids := m.lists[m.listSel].ids
+	if len(ids) == 0 {
+		return
+	}
+	idx := 0
+	for i, id := range ids {
+		if id == m.armedSym {
+			idx = (i + dir + len(ids)) % len(ids)
+			break
+		}
+	}
+	m.armedSym = ids[idx]
+	m.countBuf = ""
+	m.status = "armed " + m.instrumentFor(m.pairVenue(), m.armedSym).Name
 }
 
 // inActiveList reports whether a symbol is on the active watchlist.
