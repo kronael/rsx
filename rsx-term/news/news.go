@@ -9,12 +9,18 @@ package news
 // Marker is one headline pinned to a point in time.
 type Marker struct {
 	// TsNs is the headline's wall-clock time (Unix epoch nanoseconds), matched
-	// against a heatmap row's bin timestamp to place the rail marker.
+	// against a heatmap row's window to place the rail marker.
 	TsNs int64
 	// Text is the one-line headline.
 	Text string
-	// Tier ranks importance (0 = routine, higher = louder). The rail can pick a
-	// brighter glyph for higher tiers.
+	// Source names the feed's origin tag (e.g. "Twitter", "Blogs").
+	Source string
+	// Symbols are the feed's symbol tags (upper-case, possibly pair-suffixed
+	// like BTCUSDT), for cross-linking a headline to a market.
+	Symbols []string
+	// Tier ranks severity 0 (routine) … 3 (critical); the rail marker's
+	// glyph/hue grades with it (progressive disclosure — the full headline
+	// lives in the news view, never inline on the map).
 	Tier int
 }
 
