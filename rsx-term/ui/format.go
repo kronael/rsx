@@ -129,6 +129,18 @@ func abs64(v int64) int64 {
 	return v
 }
 
+// sign64 is -1, 0, or +1 for a negative, zero, or positive int64.
+func sign64(v int64) int {
+	switch {
+	case v < 0:
+		return -1
+	case v > 0:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // clamp restricts v to [lo, hi].
 func clamp(v, lo, hi int) int {
 	if v < lo {

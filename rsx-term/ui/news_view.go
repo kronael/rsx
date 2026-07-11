@@ -14,10 +14,12 @@ import (
 )
 
 // The NEWS view: market context at a glance — a finviz-style sector map of
-// the breadth venue (tiles coloured by move on a diverging scale) over the
-// searchable Tree of Alpha feed. Severity is the rail glyph language
-// (newsMarker) reused per headline. From here one keypress goes DOWN an
-// altitude: a symbol's letter jumps into its BOOK view, enter hands the
+// the breadth venue (tiles coloured by move on a diverging scale), a
+// cross-symbol co-movement overview (each symbol's ~6s together-ness with a
+// BTC/ETH reference — breadth, NOT a trading grid, and NOT a lead-lag/causal
+// read), then the searchable Tree of Alpha feed. Severity is the rail glyph
+// language (newsMarker) reused per headline. From here one keypress goes DOWN
+// an altitude: a symbol's letter jumps into its BOOK view, enter hands the
 // selected headline (with the linked market's frozen book) to the ASSISTANT
 // view. No TUI treemap prior art exists — a labelled grid of uniform tiles
 // is the deliberate simple form.
@@ -46,7 +48,13 @@ func (m Model) viewNews() string {
 	}
 	lines = append(lines, tiles...)
 
-	feedRows := body - len(tiles) - 1
+	comove := m.coMoveLines()
+	lines = append(lines, comove...)
+
+	feedRows := body - len(tiles) - len(comove) - 1
+	if feedRows < 0 {
+		feedRows = 0
+	}
 	lines = append(lines, m.feedHeader())
 	lines = append(lines, m.feedLines(feedRows)...)
 
@@ -140,6 +148,132 @@ func moveTier(bp int64) int {
 		}
 	}
 	return tier
+}
+
+// coMoveMinBins is the fewest shared mid-return samples before a co-movement
+// read is honest — under it the overview shows "gathering…" instead of a
+// figure built on two or three ticks.
+const coMoveMinBins = 5
+
+// coMove is the CONTEMPORANEOUS directional co-movement of a symbol's mid with
+// the reference's over their overlapping recent sparks (~6s of 100ms bins):
+// the sign-agreement of per-bin mid returns, in [-1, +1] — +1 moves together,
+// 0 independent, -1 inverse. This is a together-ness read, NOT a lead-lag /
+// causal one: 100ms repeated-mid samples with WS jitter can't support a
+// reliable lead-lag, so none is computed (deliberately). ok=false when the two
+// rings share too few bins.
+func coMove(sym, ref []int64) (float64, bool) {
+	n := len(sym)
+	if len(ref) < n {
+		n = len(ref)
+	}
+	if n < coMoveMinBins {
+		return 0, false
+	}
+	sym = sym[len(sym)-n:]
+	ref = ref[len(ref)-n:]
+	agree, disagree := 0, 0
+	for i := 1; i < n; i++ {
+		ds := sign64(sym[i] - sym[i-1])
+		dr := sign64(ref[i] - ref[i-1])
+		if ds == 0 || dr == 0 {
+			continue // a flat bin says nothing about direction
+		}
+		if ds == dr {
+			agree++
+		} else {
+			disagree++
+		}
+	}
+	total := agree + disagree
+	if total == 0 {
+		return 0, false
+	}
+	return float64(agree-disagree) / float64(total), true
+}
+
+// coMoveRef picks the venue's co-movement reference instrument: BTC, else ETH,
+// else the first instrument — the anchor every symbol's together-ness reads
+// against.
+func (m Model) coMoveRef(venue string) (Instrument, bool) {
+	v, ok := m.venueByName(venue)
+	if !ok || len(v.Instruments) == 0 {
+		return Instrument{}, false
+	}
+	for _, want := range []string{"BTC", "ETH"} {
+		for _, ins := range v.Instruments {
+			if strings.HasPrefix(strings.ToUpper(tileName(ins.Name)), want) {
+				return ins, true
+			}
+		}
+	}
+	return v.Instruments[0], true
+}
+
+// coMoveGlyph renders a co-movement value as a together-ness cell: the shape
+// carries coupling (≡/= together, · independent, ≠ inverse) and the hue the
+// sign (live = moves with the reference, ask = moves against it).
+func coMoveGlyph(co float64) string {
+	switch {
+	case co >= 0.6:
+		return StyleLive.Bold(true).Render("≡")
+	case co >= 0.25:
+		return StyleLive.Render("=")
+	case co <= -0.6:
+		return StyleAsk.Bold(true).Render("≠")
+	case co <= -0.25:
+		return StyleAsk.Render("≠")
+	default:
+		return StyleMuted.Render("·")
+	}
+}
+
+// coMoveLines renders the cross-symbol co-movement overview: each breadth
+// symbol's ~6s directional together-ness with the reference (BTC/ETH),
+// most-coupled first. A breadth read, NOT a trading grid — no prices, no
+// entry, and no lead-lag. Empty until enough shared bins accumulate.
+func (m Model) coMoveLines() []string {
+	venue := m.watchVenue()
+	ref, ok := m.coMoveRef(venue)
+	if !ok {
+		return nil
+	}
+	v, _ := m.venueByName(venue)
+	refSparks := m.marketFor(venue, ref.ID).sparks
+	type coRow struct {
+		name string
+		co   float64
+	}
+	var rows []coRow
+	for _, ins := range v.Instruments {
+		if ins.ID == ref.ID {
+			continue
+		}
+		co, ok := coMove(m.marketFor(venue, ins.ID).sparks, refSparks)
+		if !ok {
+			continue
+		}
+		rows = append(rows, coRow{tileName(ins.Name), co})
+	}
+	prefix := StyleMuted.Render(fmt.Sprintf(" co-move vs %s ~6s  ", tileName(ref.Name)))
+	if len(rows) == 0 {
+		return []string{prefix + StyleMuted.Render("gathering…")}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].co > rows[j].co })
+	perLine := (m.width - 24) / 8
+	if perLine < 1 {
+		perLine = 1
+	}
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	for i, r := range rows {
+		if i >= perLine {
+			sb.WriteString(StyleMuted.Render("…"))
+			break
+		}
+		sb.WriteString(coMoveGlyph(r.co) + StyleText.Render(fmt.Sprintf(" %-6s", r.name)))
+	}
+	return []string{sb.String()}
 }
 
 // feedHeader is the divider over the headline feed, carrying the live search
