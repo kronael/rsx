@@ -68,5 +68,5 @@ Shows throughput, latency histogram, and error rate.
 ## Terminal
 
 Embedded `rsx-term` session. The Playground opens a local PTY,
-runs the Go terminal against `ws://127.0.0.1:8080` and
+runs the Go terminal against `ws://127.0.0.1:8088` and
 `ws://127.0.0.1:8180`, and streams it through xterm.js.

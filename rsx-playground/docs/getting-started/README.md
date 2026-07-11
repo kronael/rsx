@@ -26,7 +26,7 @@ The playground starts and manages these RSX processes:
 
 | Process | Port | Role |
 |---------|------|------|
-| gateway | 8080 | WebSocket ingress, order routing |
+| gateway | 8088 | WebSocket ingress, order routing |
 | marketdata | 8081 | L2/BBO/trade streaming |
 | risk-0 | — | Margin validation, positions |
 | me-\<symbol\> | — | Matching engine (one per symbol) |

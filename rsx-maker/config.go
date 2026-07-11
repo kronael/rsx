@@ -30,7 +30,7 @@ type Config struct {
 // defaults as market_maker.py's __main__ block.
 func loadConfig() Config {
 	c := Config{
-		GatewayURL:   envStr("GATEWAY_URL", "ws://127.0.0.1:8080"),
+		GatewayURL:   envStr("GATEWAY_URL", "ws://127.0.0.1:8088"),
 		MarketdataWS: envStr("MARKETDATA_WS", "ws://127.0.0.1:8180"),
 		SymbolsURL:   envStr("RSX_SYMBOLS_URL", ""),
 		ConfigFile:   envStr("RSX_MAKER_CONFIG_FILE", ""),

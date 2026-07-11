@@ -429,7 +429,7 @@ _RSX_BINS = [
 def _plan_ports(plan) -> list[int]:
     """Every local port the spawn plan binds, derived from its env.
 
-    We scan bare host:port env values (127.0.0.1:9100 / 0.0.0.0:8080)
+    We scan bare host:port env values (127.0.0.1:9100 / 0.0.0.0:8088)
     and skip URL values (postgres://, http://, wss://) so Postgres
     (5432), the dashboard (49171), and the Binance feed (9443) are
     never in the clear-set. This replaces the old hardcoded list that
@@ -6095,7 +6095,7 @@ async def api_stress_run(
     from urllib.parse import urlparse
     parsed = urlparse(target_url)
     host = parsed.hostname or "localhost"
-    port = parsed.port or 8080
+    port = parsed.port or 8088
     reachable = False
     try:
         reader, writer = await asyncio.wait_for(
@@ -8419,11 +8419,11 @@ async def ws_public_proxy(ws: WebSocket):
 
 
 async def _probe_gateway_tcp() -> bool:
-    """Return True if gateway TCP port :8080 is reachable."""
+    """Return True if gateway TCP port :8088 is reachable."""
     import urllib.parse
     parsed = urllib.parse.urlparse(GATEWAY_HTTP)
     host = parsed.hostname or "localhost"
-    port = parsed.port or 8080
+    port = parsed.port or 8088
     try:
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port),
