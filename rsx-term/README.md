@@ -66,9 +66,12 @@ RSX_TERM_STREAM=1 make term-local
 cd rsx-term && RSX_TERM_STREAM=1 RSX_TERM_VENUE=hyperliquid go run .
 ```
 
-`RSX_TERM_NEWS=1` enables the Tree of Alpha news reader; `RSX_TERM_COLOR=plain|shade|true`
-forces the render mode. Everything is env-configured; nothing dials the network
-unless you opt in.
+`RSX_TERM_NEWS=1` enables the Tree of Alpha news reader;
+`RSX_TERM_ASSIST=http://127.0.0.1:8095/chat/<token>` wires the LLM pane to a
+locally deployed arizuko agent (the full chat URL incl. the minted route token —
+unset keeps the offline placeholder and dials nothing);
+`RSX_TERM_COLOR=plain|shade|true` forces the render mode. Everything is
+env-configured; nothing dials the network unless you opt in.
 
 ## Guarantees
 
