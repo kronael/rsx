@@ -963,7 +963,17 @@ async def do_maker_start() -> bool:
         return True
     if MAKER_NAME in managed:
         await _remove_managed_process(MAKER_NAME)
-    if not MAKER_SCRIPT.exists():
+    # Prefer the Go maker binary; fall back to the Python script so a
+    # box without the Go toolchain still gets a live book.
+    if MAKER_BIN.exists():
+        argv = [str(MAKER_BIN)]
+        cwd = str(ROOT)
+        label = str(MAKER_BIN)
+    elif MAKER_SCRIPT.exists():
+        argv = [sys.executable, str(MAKER_SCRIPT)]
+        cwd = str(ROOT / "rsx-playground")
+        label = str(MAKER_SCRIPT)
+    else:
         return False
     # Load saved maker config if present
     _mcfg: dict = {}
@@ -975,6 +985,8 @@ async def do_maker_start() -> bool:
         "GATEWAY_URL": GATEWAY_URL,
         "MARKETDATA_WS": MARKETDATA_WS,
         "RSX_SYMBOLS_URL": f"http://localhost:{49171}/v1/symbols",
+        # Live mid override: both makers poll this file each cycle.
+        "RSX_MAKER_CONFIG_FILE": str(MAKER_CONFIG),
         "RSX_MAKER_SPREAD_BPS": str(
             _mcfg.get("spread_bps", 20)),
         "RSX_MAKER_QTY": str(
@@ -989,16 +1001,16 @@ async def do_maker_start() -> bool:
     full_env = {**os.environ, **env}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(MAKER_SCRIPT),
+        *argv,
         env=full_env,
-        cwd=str(ROOT / "rsx-playground"),
+        cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
     _register_managed_process(
         MAKER_NAME,
         proc,
-        str(MAKER_SCRIPT),
+        label,
         env,
     )
     PID_DIR.mkdir(parents=True, exist_ok=True)
@@ -7693,6 +7705,11 @@ async def api_auth_stop(request: Request):
 # ── market maker ────────────────────────────────────────
 
 MAKER_SCRIPT = ROOT / "rsx-playground" / "market_maker.py"
+# Prefer the compiled Go maker (rsx-maker) when it has been built;
+# do_maker_start falls back to MAKER_SCRIPT (Python) when it is absent
+# so the demo still comes up on a box without the Go toolchain. Build
+# it with `make maker` (or `go build -o rsx-maker .` in rsx-maker/).
+MAKER_BIN = ROOT / "rsx-maker" / "rsx-maker"
 MAKER_NAME = "maker"
 MAKER_STATUS_FILE = TMP / "maker-status.json"
 
